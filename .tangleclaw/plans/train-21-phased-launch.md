@@ -1805,8 +1805,8 @@ an explicit disposition. Diagnostic runs are labelled diagnostic and are not fin
       **Reviews found this in three rounds, each time on the sibling the last fix pointed at**: the
       first round caught the prime, the second caught the all-acked page and `kickoffLine`, the
       third caught the already-attested page. The family was never enumerated, only walked. A
-      single-owner construction for this text is the real fix and is NOT done — worth filing if a
-      fifth surface appears.
+      single-owner construction for this text is the real fix and is NOT done — filed as **#1693**,
+      triggered by a fifth surface or by the next edit to any of the four.
     - The fix is text the product generates, so its regression coverage is over generated text:
       `test/launch-steps.test.js` pins the stated order, the explicit authorization, the preserved
       gate, and the absence of any retroactive first-message command. Golden fixtures regenerated
@@ -1834,8 +1834,17 @@ an explicit disposition. Diagnostic runs are labelled diagnostic and are not fin
       rather than from a number written here, because a number here would go stale the next time
       this text is edited and nothing would catch it. No fixture covered this combination before:
       every other sequence-bearing one is a paste engine whose prime is far smaller.
-  - [ ] #1673 — automate the crash-recovery clear
-  - [ ] #1685 — wrap prompt delivery receipt
+  - [x] #1673 — CLOSED 2026-09-20 without code, and deliberately. The capability it asks for
+    already ships: in `advisory` mode a session clears its own recovery by attesting READY
+    (`lib/launch-sequence.js`, clearance `agent-reconciled`). What sends the operator to the
+    dashboard is `operator` mode, the shipped default **per ruling R3** — so the gap was a
+    governance decision, not a defect. Operator ruled 2026-09-20: report it, leave R3 standing.
+    Per-project opt-in remains `launchSequence.recoveryMode: advisory`.
+  - [ ] #1685 — wrap prompt delivery receipt. **NOT STARTED — split out of this chunk by the
+    operator 2026-09-20** and owed its own session. `lib/wrap-steps/ai-content.js` logs
+    `prompt sent` when `sendKeys` returns, which is not evidence the engine accepted a task;
+    closing that needs an engine-aware submission/receipt with duplicate-submission prevention,
+    and its acceptance explicitly refuses fixture-only evidence.
 - [ ] Chunk 04 — IN PROGRESS. `Type: cumulative-final`, so 21.12's review IS the train final; no
   separate one is run.
   - [x] Car 21.10 — per-rule drift reconciliation in step 3 (#1588). Built 2026-09-19 on
