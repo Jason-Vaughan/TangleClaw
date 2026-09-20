@@ -41,7 +41,7 @@ const CODEX = 'codex';
 
 test('wrap delivery receipt', async (t) => {
   await t.test('an engine with no declared wake vocabulary answers unknown, never accepted', async () => {
-    const r = await receipt.verifySubmission('s', 'aider', 'prompt', {
+    const r = await receipt.verifySubmission('s', 'aider', 'NONCE-x', {
       capturePane: () => { throw new Error('must not be read'); },
       cursorInfo: () => { throw new Error('must not be read'); }
     });
@@ -50,7 +50,7 @@ test('wrap delivery receipt', async (t) => {
   });
 
   await t.test('openclaw, the other no-vocabulary engine, also answers unknown', async () => {
-    const r = await receipt.verifySubmission('s', 'openclaw', 'prompt', {
+    const r = await receipt.verifySubmission('s', 'openclaw', 'NONCE-x', {
       capturePane: () => { throw new Error('must not be read'); },
       cursorInfo: () => { throw new Error('must not be read'); }
     });
@@ -61,18 +61,22 @@ test('wrap delivery receipt', async (t) => {
     const busy = medusaWake.ENGINE_WAKE_PROFILES[CODEX].busyMarker;
     const pane = paneScript([{ lines: [`  ${busy}  `] }]);
     const clock = fakeClock(400);
-    const r = await receipt.verifySubmission('s', CODEX, '[TangleClaw wrap — step 2 of 3]', {
+    const r = await receipt.verifySubmission('s', CODEX, 'NONCE-abc123', {
       capturePane: pane.capturePane, cursorInfo: pane.cursorInfo, now: clock.now, sleep: clock.sleep
     });
     assert.equal(r.outcome, 'accepted');
     assert.match(r.reason, /working/);
   });
 
-  await t.test('an echoed prompt header is accepted even when the pane reads idle', async () => {
-    const header = '[TangleClaw wrap — step 2 of 3: learnings-capture]';
-    const pane = paneScript([{ lines: ['› Ask Codex to do anything', header, '· Ready ·'] }]);
+  await t.test("a nonce echoed OUTSIDE the composer is accepted even when the pane reads idle", async () => {
+    // cursor.y = 0 marks line 0 as the composer; the nonce is on line 1, in the
+    // transcript, which only a SUBMITTED prompt can reach.
+    const pane = paneScript([{
+      lines: ['› \u001b[2mAsk Codex to do anything\u001b[0m', 'NONCE-abc123 running', '· Ready ·'],
+      cursor: { x: 2, y: 0, line: '› \u001b[2mAsk Codex to do anything\u001b[0m' }
+    }]);
     const clock = fakeClock(400);
-    const r = await receipt.verifySubmission('s', CODEX, `${header}\n\nbody text`, {
+    const r = await receipt.verifySubmission('s', CODEX, 'NONCE-abc123', {
       capturePane: pane.capturePane, cursorInfo: pane.cursorInfo, now: clock.now, sleep: clock.sleep
     });
     assert.equal(r.outcome, 'accepted');
@@ -91,7 +95,7 @@ test('wrap delivery receipt', async (t) => {
       cursor: { x: 17, y: 0, line: '› [TangleClaw wrap' }
     }]);
     const clock = fakeClock(400);
-    const r = await receipt.verifySubmission('s', CODEX, 'ZZZ-no-echo-match', {
+    const r = await receipt.verifySubmission('s', CODEX, 'NONCE-unmatched', {
       capturePane: pane.capturePane, cursorInfo: pane.cursorInfo, now: clock.now, sleep: clock.sleep
     });
     assert.equal(r.outcome, 'not-accepted');
@@ -99,9 +103,13 @@ test('wrap delivery receipt', async (t) => {
   });
 
   await t.test('an at-rest pane with an empty composer stays unknown — it is not evidence either way', async () => {
-    const pane = paneScript([{ lines: ['› Ask Codex to do anything', '· Ready ·'] }]);
+    // The cursor is REQUIRED for this case: claiming "empty composer" without
+    // one would assert something nothing observed, which the cursor-failure
+    // branch exists to prevent.
+    const line = '› \u001b[2mAsk Codex to do anything\u001b[0m';
+    const pane = paneScript([{ lines: [line, '· Ready ·'], cursor: { x: 2, y: 0, line } }]);
     const clock = fakeClock(1000);
-    const r = await receipt.verifySubmission('s', CODEX, 'ZZZ-no-echo-match', {
+    const r = await receipt.verifySubmission('s', CODEX, 'NONCE-unmatched', {
       capturePane: pane.capturePane, cursorInfo: pane.cursorInfo, now: clock.now, sleep: clock.sleep, windowMs: 2000
     });
     assert.equal(r.outcome, 'unknown');
@@ -112,7 +120,7 @@ test('wrap delivery receipt', async (t) => {
 
   await t.test('an unreadable pane is unknown, and says the read failed', async () => {
     const clock = fakeClock(1000);
-    const r = await receipt.verifySubmission('s', CODEX, 'p', {
+    const r = await receipt.verifySubmission('s', CODEX, 'NONCE-x', {
       capturePane: () => { throw new Error('pane gone'); },
       cursorInfo: () => null,
       now: clock.now, sleep: clock.sleep, windowMs: 2000
@@ -125,7 +133,7 @@ test('wrap delivery receipt', async (t) => {
   await t.test('a cursor read that throws does not lose the evidence in the tail', async () => {
     const busy = medusaWake.ENGINE_WAKE_PROFILES[CODEX].busyMarker;
     const clock = fakeClock(400);
-    const r = await receipt.verifySubmission('s', CODEX, 'p', {
+    const r = await receipt.verifySubmission('s', CODEX, 'NONCE-x', {
       capturePane: () => ({ lines: [`  ${busy}  `] }),
       cursorInfo: () => { throw new Error('no cursor'); },
       now: clock.now, sleep: clock.sleep
@@ -136,12 +144,12 @@ test('wrap delivery receipt', async (t) => {
   await t.test('acceptance is detected on a later poll, not only the first', async () => {
     const busy = medusaWake.ENGINE_WAKE_PROFILES[CODEX].busyMarker;
     const pane = paneScript([
-      { lines: ['› Ask Codex to do anything'] },
-      { lines: ['› Ask Codex to do anything'] },
+      { lines: ['› \u001b[2mAsk Codex to do anything\u001b[0m'] },
+      { lines: ['› \u001b[2mAsk Codex to do anything\u001b[0m'] },
       { lines: [`  ${busy}  `] }
     ]);
     const clock = fakeClock(400);
-    const r = await receipt.verifySubmission('s', CODEX, 'ZZZ-no-echo-match', {
+    const r = await receipt.verifySubmission('s', CODEX, 'NONCE-unmatched', {
       capturePane: pane.capturePane, cursorInfo: pane.cursorInfo, now: clock.now, sleep: clock.sleep
     });
     assert.equal(r.outcome, 'accepted');
@@ -149,11 +157,13 @@ test('wrap delivery receipt', async (t) => {
   });
 
   await t.test('the echo check strips SGR, so styled output still matches', async () => {
-    const header = '[TangleClaw wrap — step 2 of 3: learnings-capture]';
-    const styled = `\u001b[2m${header}\u001b[0m`;
-    const pane = paneScript([{ lines: ['› Ask Codex to do anything', styled] }]);
+    const styled = '\u001b[2mNONCE-abc123\u001b[0m';
+    const pane = paneScript([{
+      lines: ['› \u001b[2mAsk Codex to do anything\u001b[0m', styled, '· Ready ·'],
+      cursor: { x: 2, y: 0, line: '› \u001b[2mAsk Codex to do anything\u001b[0m' }
+    }]);
     const clock = fakeClock(400);
-    const r = await receipt.verifySubmission('s', CODEX, `${header}\n\nbody`, {
+    const r = await receipt.verifySubmission('s', CODEX, 'NONCE-abc123', {
       capturePane: pane.capturePane, cursorInfo: pane.cursorInfo, now: clock.now, sleep: clock.sleep
     });
     assert.equal(r.outcome, 'accepted');
@@ -161,24 +171,128 @@ test('wrap delivery receipt', async (t) => {
   });
 });
 
-test('echo needle', async (t) => {
-  await t.test('takes the first non-blank line, trimmed to the slice', () => {
-    const n = receipt._echoNeedle('\n\n  [TangleClaw wrap — step 1]  \nbody\n');
-    assert.equal(n, '[TangleClaw wrap — step 1]');
+test('#1685 R-1 — the composer must never be read as an echo', async (t) => {
+  await t.test('an UNSUBMITTED prompt sitting in the composer is not-accepted, even though it contains the nonce', async () => {
+    // THE regression. sendKeys clears the composer, pastes, then sends Enter —
+    // so a prompt that was never submitted renders ON the composer line, nonce
+    // and all, inside the very capture the echo check reads. The first cut of
+    // this module ran the echo check first over the whole capture and answered
+    // `accepted` for exactly the case it exists to catch. The original fixture
+    // hid it by passing a nonce that appeared nowhere.
+    const pane = paneScript([{
+      lines: ['› NONCE-live123 please do the thing', '· Ready ·'],
+      cursor: { x: 20, y: 0, line: '› NONCE-live123 please do the thing' }
+    }]);
+    const clock = fakeClock(400);
+    const r = await receipt.verifySubmission('s', CODEX, 'NONCE-live123', {
+      capturePane: pane.capturePane, cursorInfo: pane.cursorInfo, now: clock.now, sleep: clock.sleep
+    });
+    assert.equal(r.outcome, 'not-accepted');
+    assert.match(r.reason, /never submitted/);
   });
 
-  await t.test('is bounded, so a long first line cannot become the whole prompt', () => {
-    const n = receipt._echoNeedle('x'.repeat(500));
-    assert.equal(n.length, receipt.ECHO_SLICE_CHARS);
+  await t.test('with no cursor the echo check does not run — the composer cannot be located', async () => {
+    // Without a cursor there is no way to tell the composer line from the
+    // transcript, so accepting on an echo would restore the collision above by
+    // another route. Answer unknown instead.
+    const clock = fakeClock(1000);
+    const r = await receipt.verifySubmission('s', CODEX, 'NONCE-live123', {
+      capturePane: () => ({ lines: ['› NONCE-live123 pasted', '· Ready ·'] }),
+      cursorInfo: () => null,
+      now: clock.now, sleep: clock.sleep, windowMs: 2000
+    });
+    assert.notEqual(r.outcome, 'accepted');
   });
 
-  await t.test('a non-string prompt yields no needle rather than throwing', () => {
-    assert.equal(receipt._echoNeedle(undefined), '');
-    assert.equal(receipt._echoNeedle(null), '');
+  await t.test('a persistent cursor failure is reported, not narrated as an empty composer', async () => {
+    const clock = fakeClock(1000);
+    const r = await receipt.verifySubmission('s', CODEX, 'NONCE-x', {
+      capturePane: () => ({ lines: ['› \u001b[2mAsk Codex to do anything\u001b[0m', '· Ready ·'] }),
+      cursorInfo: () => { throw new Error('no cursor'); },
+      now: clock.now, sleep: clock.sleep, windowMs: 2000
+    });
+    assert.equal(r.outcome, 'unknown');
+    assert.match(r.reason, /cursor could not be read/);
+    // The claim it must NOT make: that it saw an empty composer.
+    assert.doesNotMatch(r.reason, /at rest with an empty composer/);
+  });
+});
+
+test('#1685 R-1 — a stale echo from a previous attempt must not be accepted', async (t) => {
+  await t.test("a retry does not match the FAILED attempt's text still in scrollback", async () => {
+    // The needle is this send's nonce, not the step header, which is
+    // byte-identical on every attempt. A header needle matches scrollback left
+    // by the attempt that just failed — the same stale-scrollback trap the
+    // per-send nonce already closes for the completion marker.
+    const pane = paneScript([{
+      lines: [
+        '[TangleClaw wrap — step 2 of 3: learnings-capture]',
+        'NONCE-oldattempt output from the previous try',
+        '› \u001b[2mAsk Codex to do anything\u001b[0m',
+        '· Ready ·'
+      ],
+      cursor: { x: 2, y: 2, line: '› \u001b[2mAsk Codex to do anything\u001b[0m' }
+    }]);
+    const clock = fakeClock(1000);
+    const r = await receipt.verifySubmission('s', CODEX, 'NONCE-newattempt', {
+      capturePane: pane.capturePane, cursorInfo: pane.cursorInfo, now: clock.now, sleep: clock.sleep, windowMs: 2000
+    });
+    assert.notEqual(r.outcome, 'accepted');
+  });
+});
+
+test('#1685 R-2 — the claude profile, whose shape differs from codex', async (t) => {
+  await t.test('claude declares no idleMarker, and a busy pane is still accepted', async () => {
+    const busy = medusaWake.ENGINE_WAKE_PROFILES.claude.busyMarker;
+    const clock = fakeClock(400);
+    const r = await receipt.verifySubmission('s', 'claude', 'NONCE-x', {
+      capturePane: () => ({ lines: [`  ${busy}  `] }),
+      cursorInfo: () => null,
+      now: clock.now, sleep: clock.sleep
+    });
+    assert.equal(r.outcome, 'accepted');
   });
 
-  await t.test('an all-blank prompt yields no needle, so the echo check is skipped', () => {
-    assert.equal(receipt._echoNeedle('\n\n   \n'), '');
+  await t.test('claude input in the composer is not-accepted', async () => {
+    const profile = medusaWake.ENGINE_WAKE_PROFILES.claude;
+    const line = `${profile.promptGlyph} NONCE-live typed text`;
+    const clock = fakeClock(400);
+    const r = await receipt.verifySubmission('s', 'claude', 'NONCE-live', {
+      capturePane: () => ({ lines: [line] }),
+      cursorInfo: () => ({ x: line.length - 1, y: 0, line }),
+      now: clock.now, sleep: clock.sleep
+    });
+    assert.equal(r.outcome, 'not-accepted');
+  });
+});
+
+test('#1685 R-3 — an engine that says it discarded the submission', async (t) => {
+  await t.test("antigravity's declared rejection marker is not-accepted, not a 300s wait", async () => {
+    const marker = medusaWake.ENGINE_WAKE_PROFILES.antigravity.pasteRejectedMarker;
+    assert.ok(marker, 'the fixture depends on this engine declaring the marker');
+    const clock = fakeClock(400);
+    const r = await receipt.verifySubmission('s', 'antigravity', 'NONCE-x', {
+      capturePane: () => ({ lines: [`something. ${marker}`] }),
+      cursorInfo: () => null,
+      now: clock.now, sleep: clock.sleep
+    });
+    assert.equal(r.outcome, 'not-accepted');
+    assert.match(r.reason, /discarded the submission/);
+  });
+
+  await t.test('an engine that declares no such marker is unaffected', async () => {
+    assert.equal(medusaWake.ENGINE_WAKE_PROFILES[CODEX].pasteRejectedMarker, undefined);
+  });
+});
+
+test('transcript outside the composer', async (t) => {
+  await t.test('drops the cursor line and keeps the rest', () => {
+    const out = receipt._transcriptOutsideComposer(['a', 'b', 'c'], { y: 1 });
+    assert.equal(out, 'a\nc');
+  });
+
+  await t.test('with no cursor it yields nothing, so no echo can match', () => {
+    assert.equal(receipt._transcriptOutsideComposer(['a', 'b'], null), '');
   });
 });
 

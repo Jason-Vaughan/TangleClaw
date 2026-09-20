@@ -545,3 +545,31 @@ a repair could not be applied.
 
 **Ordering on the launch path.** The repair runs before `launchBaseline.capture`, so the file it
 moves is not counted as the new session's own change and put in front of the operator at wrap.
+
+## Extended 2026-09-20 — a step may report whether its prompt reached the engine (#1685)
+
+A step handler's result may now carry a fourth field beside `{ok, status, output, blockers}`:
+
+```
+deliveryOutcome?: 'accepted' | 'not-accepted' | 'unknown'
+```
+
+**Why it belongs in the contract rather than inside one step.** The pipeline builds each recorded
+row, and the SSE `step-done` / `step-blocked` frames, from an explicit field list. A value a step
+measures is therefore lost at that boundary unless the contract names it — which is exactly what
+happened when this field was first wired: the receipt was taken, logged, and dropped one hop later,
+and the drawer went on showing the generic blocked report while the server knew better.
+
+**Present only when measured.** A step that never asks the question omits the field entirely. It is
+absent, never `null` and never `'unknown'`: a step that did not look must not be recorded as one
+that looked and could not tell. That distinction is the whole value of the field, and collapsing it
+would repeat the flattening this amendment exists to prevent.
+
+**Why three values.** `sendKeys` returning proves only that tmux accepted characters into a pty.
+`accepted` and `not-accepted` are each positive evidence — the engine is working or echoed the
+send's nonce; the composer is still holding the text. `unknown` covers the genuinely undecidable
+pane, and the engines that declare no wake vocabulary at all (aider, openclaw), which must keep
+wrapping exactly as they did before. Consumers must treat `unknown` as its own answer; reading it
+as either neighbour reintroduces the defect.
+
+`lib/wrap-delivery-receipt.js` is the only producer today, via the `ai-content` step.

@@ -262,6 +262,18 @@
    * @returns {string|null}
    */
   function deriveDetail(stepResult) {
+    // #1685 — delivery first, because it answers a question the other details
+    // cannot: whether the prompt ever became a task. A step that blocked
+    // without delivery is NOT a slow model, and the row has to say which it was
+    // or the operator reads five minutes of silence as the model's fault.
+    // `undefined` means the step never measured delivery and is left alone —
+    // only a measured value speaks.
+    if (stepResult.deliveryOutcome === 'not-accepted') {
+      return 'prompt never reached the engine — not a slow model';
+    }
+    if (stepResult.deliveryOutcome === 'unknown') {
+      return 'delivery unconfirmed — the pane could not say whether the prompt landed';
+    }
     const output = stepResult.output && typeof stepResult.output === 'object' ? stepResult.output : null;
     // Canonical skip signal is the step status (#204). Handle it once, above
     // the switch, so every kind's skip renders uniformly from the handler's
@@ -1414,6 +1426,12 @@
     row.status = typeof event.status === 'string' && event.status ? event.status : fallbackStatus;
     row.output = event.output === undefined ? null : event.output;
     row.blockers = Array.isArray(event.blockers) ? event.blockers : [];
+    // #1685 — carried, not rebuilt away. This row is assembled from an explicit
+    // field list, so a value the server measured is lost here unless it is named:
+    // that is how the delivery outcome disappeared between the pipeline and the
+    // drawer the first time. Absent stays absent — a step that never measured
+    // delivery must not read as a measured `unknown`.
+    if (typeof event.deliveryOutcome === 'string') row.deliveryOutcome = event.deliveryOutcome;
     if (event.halted === true) next.blockedAt = event.stepId;
     if (next.currentStepId === event.stepId) {
       next.currentStepId = null;

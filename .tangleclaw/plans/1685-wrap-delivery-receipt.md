@@ -64,13 +64,29 @@ TangleClaw already owns the vocabulary. `data/engines/*.json` declare `capabilit
 `ai-content.js` uses none of it (`grep busyMarker|idleMarker|promptPattern|capabilities.wake`
 against that file returns zero hits). The receipt is a **wiring** job, not an invention.
 
-**After submit, poll the pane briefly for evidence the prompt became a task:**
+**After submit, poll the pane briefly for evidence the prompt became a task.**
 
-- **accepted** — the pane left its at-rest state: busy marker present, or the composer no longer
-  shows the at-rest prompt pattern.
-- **not-accepted** — the pane is still at rest AND the composer still matches the at-rest prompt
-  after the bounded window. The prompt did not become a task.
-- **unknown** — the engine declares no vocabulary, or the pane could not be read.
+> **As-built correction (Critic round 1, R-8).** The design below is what SHIPPED. The original
+> draft had this near-inverted — it proposed accepting whenever the pane "left its at-rest state"
+> and refusing when the composer "still matches the at-rest prompt". Both were wrong in the same
+> direction: absence of the at-rest marker is not evidence of work, and a composer holding text is
+> evidence of *failure*, not of rest. Recorded rather than quietly rewritten, because the inversion
+> is the instructive part.
+
+Checked in this order, and **the order is load-bearing**:
+
+1. **accepted** — `_assessPane` reports `turn-in-flight` or `agents-running`. Only these two count;
+   `not-at-rest` means merely that the idle marker was absent from the captured tail, which a
+   scrolled pane also produces.
+2. **not-accepted** — `_assessPane` reports `composer-has-input`. The text was pasted and never
+   submitted. This is checked BEFORE the echo, because `sendKeys` pastes into the composer, so an
+   unsubmitted prompt renders inside the very capture an echo check reads.
+3. **accepted** — this send's **nonce** appears in the transcript *outside the cursor's line*. The
+   nonce rather than the step header, which is identical on every attempt and so matches a failed
+   attempt's scrollback. Skipped entirely when the cursor is unknown: without it there is no way to
+   tell composer from transcript, and guessing there is the whole bug.
+4. **unknown** — anything else: an at-rest pane with an empty composer, an engine that declares no
+   vocabulary, a pane that could not be read, or a cursor that never read on any poll.
 
 ### The one defect class to design against
 

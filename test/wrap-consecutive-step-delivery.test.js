@@ -100,7 +100,10 @@ test('#1685 consecutive content steps', async (t) => {
       // It times out here because nothing ever completes, which is the PRE-EXISTING
       // behaviour for an accepted-but-unfinished step. The point is that it got
       // past the receipt rather than being blocked by it.
-      assert.notEqual(r.deliveryOutcome, 'not-accepted');
+      // EXACT, not notEqual: `notEqual(undefined, 'not-accepted')` is green when
+      // the field is dropped entirely, which is how the value went missing the
+      // first time it was wired.
+      assert.equal(r.deliveryOutcome, 'accepted');
       assert.equal(polled, true, 'an accepted prompt must still reach the completion wait');
     } finally { restore(); }
   });
@@ -125,8 +128,20 @@ test('#1685 consecutive content steps', async (t) => {
       // PRE-EXISTING timeout path and is exactly what must be preserved. What
       // must NOT happen is the receipt itself blocking the step: an engine with
       // no declared vocabulary would otherwise have every wrap refused.
-      assert.notEqual(r.deliveryOutcome, 'not-accepted');
+      assert.equal(r.deliveryOutcome, 'unknown');
       assert.equal(polled, true, 'unknown must reach the completion wait, not short-circuit');
+    } finally { restore(); }
+  });
+
+  await t.test('a step whose send THREW carries no deliveryOutcome — absent, not a measured unknown', async () => {
+    const restore = patchInternal({
+      sendKeys: () => { throw new Error('tmux gone'); },
+      verifySubmission: async () => { throw new Error('must not be reached'); }
+    });
+    try {
+      const r = await aiContent._runTmuxCapture(ctx());
+      assert.equal(r.status, 'blocked');
+      assert.equal(Object.prototype.hasOwnProperty.call(r, 'deliveryOutcome'), false);
     } finally { restore(); }
   });
 
@@ -134,8 +149,10 @@ test('#1685 consecutive content steps', async (t) => {
     const seen = [];
     const restore = patchInternal({
       sendKeys: () => {},
-      verifySubmission: async (_s, engineId) => {
+      verifySubmission: async (_s, engineId, nonce) => {
         seen.push(engineId);
+        assert.equal(typeof nonce, 'string');
+        assert.ok(nonce.length > 0, 'the receipt must be given this send\'s nonce');
         return { outcome: 'not-accepted', reason: 'r' };
       }
     });
