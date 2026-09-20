@@ -1447,6 +1447,149 @@ Every box above is ticked, the suite is green, `/prawduct:critic` has run at `ch
 unresolved blocking findings, the four amendments above are implemented or verified, and the PR
 closes #1588.
 
+## 4d. Car 21.11 build plan (#1589) — engine parity CERTIFICATION
+
+**Branch:** `feat/train-21-car-21-11`. **Schema:** no DB migration. **Critic mode:** `chunk` — the
+chunk is `cumulative-final`, so 21.12's review is the train final. **Type:** feature. **Size:**
+medium.
+
+**This section was rewritten wholesale on 2026-09-19** against the Architect's formal #1650 ruling
+(`/Users/jasonvaughan/Documents/Projects/TangleClaw-Architect/.tangleclaw/plans/train-21-preflight-evaluation-failure-ruling.md`,
+recorded on the issue). The prior draft is preserved in commit `b53412fab` for diffing and is
+**superseded, not amended**: it was built around *existence* — does `tc` resolve, does READY land —
+and the ruling replaces that oracle outright. Two of its premises were also false, and both are
+corrected below.
+
+### What the prior draft got wrong, recorded so it is not re-derived
+
+1. **"Nobody has confirmed `tc` resolves in codex/aider/antigravity panes" was FALSE.** The live
+   `launch_sequences` table already separates the three engines: **codex** seq 29 reached READY with
+   no unready transition and 0 nudges; **antigravity** seq 27 went unready → 1 nudge → READY, so its
+   outcome was nudge-ASSISTED and the assistance is recorded; **aider** seq 33 went unready → **0
+   nudges** → READY 13 minutes later, so the outcome is real but the mechanism is **unattributed**.
+   That third row is the Architect's "assisted READY, candidate qualification missing" — and it is
+   the actual finding, not the absence the draft claimed.
+   *Re-verified read-only against `launch_sequences` on 2026-09-19 before this rewrite was
+   committed: `nudge_count` 0/1/0 and `unready_at` null/set/set for seq 29/27/33 respectively, with
+   `page_budget` 7332 on all three. The numbers are the table's, not a recollection.*
+2. **"A stale pass is visible in a git diff" was REJECTED** by the Architect as an acceptance case.
+   A git diff is not a mechanism. Staleness must be detected by the binding described below, not by
+   a human noticing a diff.
+3. Measured overhead is **668**, not the 301 the draft's harmlessness claim assumed — all three
+   engines carry `page_budget 7332`. `toolOutput` 8000 with `measured:false` is already honest and
+   stays.
+
+### The oracle, restated: READY alone certifies nothing
+
+Per the ruling, a probe may no longer assert "READY lands". Three distinct outcomes, none of which
+substitutes for another:
+
+| Scenario | Passes when | Does NOT establish |
+|---|---|---|
+| **Normal success** | the verdict is *successfully evaluated*, recovery state is correct, rule delivery and acknowledgements are current, and READY is bound to the SAME launch and final revision | anything about failure handling |
+| **Injected evaluation failure** | the configured gate REFUSES — `operator` withholds the task step and refuses READY; `advisory` warns and requires written reconciliation plus atomic clearance | successful-preflight evidence, ever |
+| **Cleared recovery** | a separately NAMED scenario: clearance was granted under the configured policy AND the failed-evaluation provenance survives it | that the evaluation succeeded — clearance is permission, not evaluation |
+
+Neither `not-evaluated` nor missing evaluation evidence qualifies the normal-success case, **even
+after a clearance**. A required engine failure is recorded as failed or blocked — never `N/A`
+merely to close the car.
+
+### Certification binding — what a result is bound to, and what invalidates it
+
+A pass certifies a **configuration**, not an engine name. Every recorded result binds to all of:
+
+- engine id **and version**
+- the effective relevant **config fingerprint**
+- **source / deployed runtime identity** (what actually ran, not what the repo says)
+- the **same launch and session**, and the same **final revision**
+- **assistance attribution** — automatic, nudge-assisted, or unattributed, carried explicitly
+
+**Any changed input demotes the result to `historical` / `stale`. It is never reported as
+current-verified.** Invalidation is mechanical, derived from the binding — not a reviewer noticing.
+The three engine rows above are today's evidence and are `historical` by this rule until re-run
+under a recorded binding.
+
+### Acceptance cases — DERIVED, and flagged as such
+
+Same treatment as §4c: #1589 says Chunk 04's cases are in the plan; they are not. These are derived
+from the approved §2.9 text plus the #1650 ruling, marked derived, and carried to the Architect with
+ADR 0017. `Requirements Confidence: MEDIUM` on that dependency.
+
+1. A normal-success probe on an engine establishes all five bindings and a verdict of successfully
+   evaluated; READY is bound to the same launch and final revision.
+2. An injected context-evaluation failure in **`operator`** mode: the task step is withheld and
+   READY is refused until a bound clear. Asserted through the REAL evaluator → stored preflight →
+   snapshot → task/READY path, not a hand-built `requiresRecovery: true` fixture.
+3. The same injected failure in **`advisory`** mode: warning served, written reconciliation and
+   atomic `agent-reconciled` clearance required; no silent acceptance.
+4. A **valid bound clearance** clears; a **wrong or stale** clearance does not.
+5. After clearance, the **failed verdict and its provenance are still readable**.
+6. The **missing/malformed result** fallback on a launch that required the check does NOT yield an
+   open gate.
+7. **Legitimate first launch** is CHECKED, reaches a positive evaluated verdict through the real
+   evaluator, and proceeds on THAT — never on an absence. Covered end to end through the real
+   evaluator and snapshot, not by a fixture that omits `preflight`.
+8. An **unattributed** READY (aider's shape: no nudge, delayed transition) is recorded as
+   unattributed and does **not** qualify as automatic.
+
+### Bounds in force (ProjectManager, 2026-09-19) — unchanged by the rewrite
+
+Probes are serial, bounded and isolated. No second implementing Builder. No injection into an
+operator pane. Required parity rests on actual same-launch in-pane `tc` output **and** a server-side
+READY record. A blocked or failed probe is recorded as blocked or failed. Manual startup is
+distinguished from automatic activation.
+
+### The discriminator, RESOLVED — and my premise was wrong
+
+I had proposed splitting the constant on "was the check required", assuming a legitimate first
+launch arrives with **no** preflight. **The Architect corrected the premise** (clarification dated
+2026-09-19 against main `202dcb75d`): an omitted preflight was never first-launch evidence.
+
+Production calls `launchPreflight.evaluate` BEFORE constructing the snapshot, and the evaluator
+reaches `first-launch` only after establishing no sessions, no publication rows, no continuity
+index and an absent handoff — with integrity checks preceding it. **A failed read or a missing
+argument cannot establish those absences.** First launch is a positively evaluated verdict that
+happens to be benign, not an absence of evaluation.
+
+So the contract is simpler than the split I proposed, and the split would have been actively
+harmful — it would have created exactly the permissive omitted-argument path that reopens the hole:
+
+- Applicable current launches require the check, **including first launches**.
+- Missing, null or malformed at the snapshot boundary **owes recovery**. ONE default — not a
+  permissive constructor case beside a restrictive fallback case.
+- Legitimate first-launch behaviour is preserved by passing its **explicit successful evaluation**,
+  never by leaving `preflight` out.
+- Attempted-failure and missing-evidence stay **distinct for provenance** ("we tried and it broke"
+  and "nothing ever ran" send a reader to different places). Neither satisfies a required
+  successful check.
+- **No** `preflightRequired: false` flag and no "no handoff means no check" exemption. #1623's
+  not-applicable path must not become a backdoor for applicable sequences.
+
+Normalization placement is the Builder's, provided storage, renderer and gate carry one consistent
+contract. Construction fixtures intending a healthy launch pass an explicit valid evaluated
+preflight; omission, null and malformed each get their own negative test.
+
+**#1650's production correction is tracked separately from this parity car**, per the ruling — its
+own branch and PR, not folded in here.
+
+### Explicitly out of scope
+
+- **#1623** (no usable sequence) — a separate gap. Fixing the sequenced path does not close it and
+  does not certify an affected no-sequence case.
+- **#1648** evaluated-`stale` semantics — unchanged by the ruling.
+- Historical engine-capability probe failures remain **non-gating** for supported governance
+  delivery.
+- Historical pre-gate rows stay historical. No bulk rewrite of their outcomes.
+
+### Done when
+
+**Probes RUN with any outcome does NOT close #1589** (Architect, binding). Required cases must PASS,
+or the operator explicitly amends scope. Beyond that: every box ticked, suite green,
+`/prawduct:critic` at `chunk` with no unresolved blocking findings, ADR 0017 carrying the #1650
+ruling and returned for Architect review, and **final parity acceptance still HELD** until the
+#1650 correction is integrated into the identified candidate and the whole-trajectory findings have
+an explicit disposition. Diagnostic runs are labelled diagnostic and are not final certification.
+
 ## 5. Open assumptions
 
 - `[ASSUMPTION: tc output reaches the model intact up to toolOutput.maxChars per engine | HIGH | Chunk 01 spike measures it; unknown engines default to a conservative 8000 and say so]`
