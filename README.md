@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>A local-first platform for orchestrating AI teams across the Software Development Life Cycle (SDLC)</strong><br>
+  <strong>An open-source, local-first AI-native SDLC orchestration platform</strong><br>
   <em>Persistent memory &middot; Agent-to-Agent Switchboard &middot; Fleet Governance &middot; Multi-Engine Management</em>
 </p>
 
