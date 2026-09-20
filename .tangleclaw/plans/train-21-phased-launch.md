@@ -1866,7 +1866,7 @@ an explicit disposition. Diagnostic runs are labelled diagnostic and are not fin
       moving `h1` → `CHANGED` with `hasDrift` pinned false. Running the suite could never have
       caught it; only reading the assertion could. Treat a green suite over this module as evidence
       about what could have made it red, nothing more.
-  - [ ] Car 21.11 — engine parity probes (#1589)
+  - [x] Car 21.11 — engine parity probes (#1589) (CLOSED: Scope amendment. Aider moved to #1645; certification machinery removed)
   - [ ] Car 21.12 — ADR 0017 and the doc set (#1590). Bound 4: the draft goes to the Architect
     BEFORE this merges.
   - The car's one class of defect, worth reading before touching the drift path: failure, absence
