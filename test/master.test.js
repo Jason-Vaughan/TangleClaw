@@ -373,6 +373,25 @@ describe('getMasterStatus', () => {
   // reports no guard posture at all, which is the deterministic answer.
   const NO_HOME = path.join(os.tmpdir(), 'tc-master-status-no-home-does-not-exist');
 
+  it('#1589 — records WHY the Master pane gets no launch sequence, rather than leaving it absent', () => {
+    const status = master.getMasterStatus({ tmuxLib: fakeTmux({ alive: true }), home: NO_HOME });
+    const ls = status.settings.launchSequence;
+
+    // Stated, not absent. An absence reads the same whether the answer is "no"
+    // or whether nobody ever asked, and that confusion is what Train 21 removes.
+    assert.ok(ls, 'the Master pane must state its launch-sequence applicability');
+    assert.equal(ls.applicable, false);
+    assert.equal(typeof ls.reason, 'string');
+    assert.ok(ls.reason.length > 0, 'a not-applicable verdict owes a reason');
+
+    // The reason must be about the PANE, not the engine. Master usually resolves
+    // an engine that declares launchSequence.supported: true, so an
+    // engine-derived answer would say "applicable" for exactly the pane where it
+    // is least true. This is the mutation that matters: re-deriving this field
+    // from the resolved engine's capability flips it and this assertion catches it.
+    assert.match(ls.reason, /not a project session/);
+  });
+
   it('reports liveness straight from tmux', () => {
     assert.equal(master.getMasterStatus({ tmuxLib: fakeTmux({ alive: true }), home: NO_HOME }).exists, true);
     assert.equal(master.getMasterStatus({ tmuxLib: fakeTmux({ alive: false }), home: NO_HOME }).exists, false);
