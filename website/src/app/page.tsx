@@ -8,10 +8,10 @@ export default function Home() {
   const [selectedImage, setSelectedImage] = useState<{src: string, alt: string} | null>(null);
 
   const detailedCards = [
-    { title: "Management & Governance", desc: "Project Master orchestration, roadmap planning, strict rule enforcement, Feature Index tracking, and comprehensive Global & Project Settings for fine-grained AI co-author and access governance." },
+    { title: "Management & Governance", desc: "Project Master orchestration, roadmap planning, an automated self-learning loop, Feature Index tracking, and comprehensive settings for fine-grained AI access governance." },
     { title: "Specialized Agent Roles", desc: "Deploy a complete virtual team with distinct roles—from Architects and Project Managers to parallel Builders, plus built-in templates to create your own." },
     { title: "LLM-Agnostic Communication", desc: "Real-time cross-talk across frontier, open-source, local, or API/OAuth models. The system auto-detects and coordinates any CLI-based or Aider-compatible LLM." },
-    { title: "Quality & Auditing", desc: "Critic methodology, Eval Audit Mode, and strict protocols enforcing unit and regression testing (including Vite). Fully integrated with GitHub for robust triage, PR, and CI support." },
+    { title: "Quality & Auditing", desc: "Critic methodology, Eval Audit Mode, and strict protocols enforcing unit and regression testing (including Vite). Fully integrated with GitHub for robust triage, PRs, and CI." },
     { title: "Operations & Supervision", desc: "Fleet health monitoring, automatic DHCP-like port lease management to prevent port collisions, and built-in troubleshooting utilities to quickly clear and fix errors." },
     { title: "Security Integration", desc: "Caddy-supported username and password authentication today, with TangleScan and SecurityClaw architecture on the roadmap." }
   ];
