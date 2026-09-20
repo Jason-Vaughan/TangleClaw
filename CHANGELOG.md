@@ -184,6 +184,20 @@ All notable changes to TangleClaw are documented in this file.
 - **A wrap that finishes now ends the session, even when it had nothing to commit** (#1558). The session used to end only when the wrap made a commit. When a session's work had already merged by pull request, and the wrap's own notes went to ignored files, a full wrap reported "no changes to commit" and left the session running. Now any wrap that finishes records the session as wrapped, closes its terminal and releases its document locks, commit or not. A wrap that stops for you, fails or crashes still leaves the session open so you can answer or retry. The finished report now says "Wrapped — nothing new to commit" and whether the session ended or is still running. Wrap results (the stream's `run-done` and `GET /wrap/status`) carry `sessionOutcome`: `ended`, `kept` (kept on request and still running), or `null` when the run didn't finish or the session ended another way, such as a Kill during the wrap.
 
 ### Internal
+- **Train 21's plan resolves to a gate again, and two records catch up to the code** (Train 21 housekeeping).
+  The plan's frontmatter carried `branch: feat/train-21-car-21-9` — a branch that no longer exists — directly
+  below its own comment explaining that this plan deliberately claims no branch, because a Train spanning twelve
+  cars would orphan every other car's branch by claiming one. Branch derivation therefore matched nothing and the
+  `active_build_plan` pointer it names was `null`, so no gate could grade this Train at all: `verify-records`
+  reported no plan rather than a pass. The false claim is deleted and the pointer set, which is the arrangement
+  the comment always described; the lint now grades chunk 04 with zero findings.
+  - **The Status block said car 21.10 was awaiting a merge it had already had.** #1588 merged via PR #1646;
+    the bullet still read "NOT merged — awaiting the operator's go", which is the exact staleness the same
+    bullet warns about two sentences later. Corrected to name the PR.
+  - **The Feature Index and Project Map gain what a squash-merge dropped.** `lib/launch-kickoff.js` and its
+    test reached `main` as #1671's squash while the wrap bookkeeping recording them stayed behind on the
+    branch, and `website/` had never been mapped. Both are described rather than restored as `TBD` stubs.
+
 - **Update PM roadmap board and learnings (#1674).** Updated the master roadmap, regenerated the roadmap board, and added an entry to the project learnings regarding the session peeking API.
 
 - **Car 21.11's certification plan is rewritten around what a pass actually certifies** (#1589, #1650 — Train 21). Plan-only; no code. The previous draft asked whether the launch sequence *exists* on each engine — does `tc` resolve, does READY land — and the Architect's #1650 ruling replaces that oracle, so the section was rewritten rather than amended. READY alone now certifies nothing: a normal success needs a successfully-evaluated verdict plus coherent launch, revision, config and source evidence; an injected evaluation failure passes by the gate correctly *refusing*; and a cleared recovery is a separately named case that keeps the failed-evaluation provenance. A pass certifies a **configuration** — engine and version, config fingerprint, deployed runtime identity, same launch and session, and how the outcome was assisted — so any changed input demotes the result to historical rather than current-verified, mechanically rather than by a reviewer noticing.
