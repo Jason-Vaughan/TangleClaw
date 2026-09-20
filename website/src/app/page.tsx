@@ -4,7 +4,7 @@ export default function Home() {
   const detailedCards = [
     { title: "Management & Governance", desc: "Project Master orchestration, roadmap planning, and strict rule enforcement." },
     { title: "Specialized Agent Roles", desc: "Deploy a complete virtual team with distinct roles—from Architects and Project Managers to parallel Builders." },
-    { title: "Communication", desc: "Session Switchboard (Medusa) for real-time inter-agent messaging and coordination." },
+    { title: "LLM-Agnostic Communication", desc: "The Medusa Switchboard enables real-time cross-talk, allowing team agents running on completely different LLMs to seamlessly coordinate." },
     { title: "Quality & Auditing", desc: "Critic methodology, Eval Audit Mode, and adversarial-agent primitives." },
     { title: "Operations & Supervision", desc: "Fleet health monitoring, idle/wedged detection, and PortHub service supervision." },
     { title: "Security Integration", desc: "Robust authentication and governance today, with TangleScan and SecurityClaw architecture on the roadmap." }
@@ -37,7 +37,7 @@ export default function Home() {
           </div>
 
           <div className="space-y-6 max-w-3xl">
-            <h1 className="text-5xl md:text-7xl font-bold tracking-tighter text-transparent bg-clip-text bg-gradient-to-br from-white via-green-400 to-green-700 pb-1">
+            <h1 className="text-5xl md:text-7xl font-bold tracking-tighter text-transparent bg-clip-text bg-gradient-to-br from-zinc-100 via-zinc-400 to-zinc-600 pb-1">
               TangleClaw
             </h1>
             <p className="text-xl md:text-2xl text-zinc-400 font-medium tracking-tight mb-8">
