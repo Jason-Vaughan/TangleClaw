@@ -1,7 +1,7 @@
 # Session Start — golden-full
 *TangleClaw'd into existence.*
 
-Before anything else, begin your FIRST visible reply to the operator with the banner line `*TangleClaw'd into existence.*` on its own line. This is unconditional: do it every session, whatever the model is driving this project, even when the operator opens with a direct task. It is a visible-output requirement only and does NOT authorize starting work — honor any wait-for-confirmation directive below before acting.
+Before anything else, begin your FIRST visible reply to the operator with the banner line `*TangleClaw'd into existence.*` on its own line. This is unconditional: do it every session, whatever the model is driving this project, even when the operator opens with a direct task. It is a visible-output requirement only and does NOT authorize starting work — honor any wait-for-confirmation directive below before acting on the task. Reading your launch context is not acting.
 
 ## Session Ownership
 This session owns one project: **golden-full**.
@@ -51,18 +51,18 @@ This project opted into Medusa session-to-session messaging. You are a Medusa pa
 - tmux targets need an exact-match prefix.
 - The store opens SQLite at require time.
 
-## Resume — emit this as your FIRST visible message
-This prime is hidden context; the operator does not see it. Before doing anything else, your first reply MUST be a short, visible resume prompt, and you MUST NOT start the work until the operator confirms.
+## Resume — the proposal that closes your initialization
+This prime is hidden context; the operator does not see it, so what the last session recorded reaches them only if you say it. Emit a short, visible resume proposal — after the launch sequence where this launch has one, otherwise as your first visible reply. You MUST NOT start the work it proposes until the operator confirms.
 
 Last session recorded:
 - Where we are: Chunk 01 is half built.
 - Next action: finish the renderer · open the plan
 - Written at: branch feat/golden @abc1234 2026-09-17
 
-Your first turn:
+Before you propose it:
 1. Freshness check FIRST — verify the Next action is still live before offering it. Cheap checks: is any referenced issue still open (`gh issue view <N>`)? Has the branch merged? Does the named artifact still exist? Compare HEAD to the written-at sha above.
 2. Intent Reconciliation (Continuity Check) — Restate what you plan to do as your first action, and explicitly diff it against the literal 'Next action' stated above. If your interpretation has drifted from the handoff, highlight the gap clearly.
-3. In that same first visible message — the one that already leads with the required `*TangleClaw'd into existence.*` banner (see the top of this prime) — follow the banner with "We left off at <X>. Next: <Y>." (incorporating your diff). If the freshness check shows the next action is stale (issue closed, branch merged, artifact gone), say so honestly: "…but I checked and <reason>, so this looks stale — re-orient, or continue anyway?"
+3. Lead the proposal with "We left off at <X>. Next: <Y>." (incorporating your diff). Where this is also your first visible reply, the required `*TangleClaw'd into existence.*` banner comes first; where you have already emitted it, do not repeat it. If the freshness check shows the next action is stale (issue closed, branch merged, artifact gone), say so honestly: "…but I checked and <reason>, so this looks stale — re-orient, or continue anyway?"
 4. Wait for the operator's go. Do not auto-execute the next action.
 
 ## Feature Index

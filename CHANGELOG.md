@@ -104,6 +104,31 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **A launching session no longer asks the operator for permission to read its own launch context**
+  (#1680). The prime carried two directives that each claimed the session's first turn — the banner
+  block claimed the first visible *reply*, and the Resume section claimed the first visible
+  *message* — beside a wait-for-confirmation rule that named no scope. A session reading all three
+  concluded that even initializing needed approval, stopped before its first `tc start next`, and
+  asked the operator whether it should load; the operator had no way to answer, because
+  initializing was never a choice they were offered. On a pull the collision is structural rather
+  than a matter of interpretation: the Resume section **is** the fourth step, so its instruction to
+  be the first thing said could only ever arrive after the session had already spoken.
+  - **The order is now stated once, in the first step, before any directive that claims a turn** —
+    banner and a one-line status, then the sequence and its acknowledgements, then the read-only
+    freshness checks and `tc start ready`, then the proposed project action.
+  - **Initialization is declared authorized, and the confirmation rule is scoped to the work.**
+    Reading and attesting are named as routine and pre-authorized, and a session is told not to read
+    a wait-for-confirmation rule as gating them. The gate itself is untouched: the proposed action
+    still waits, and the text says in as many words that initializing never authorizes executing the
+    recorded next action, editing another project, or dispatching unrequested work — and that any
+    explicit preflight, recovery or privileged-action approval still applies in full.
+  - **The Resume section no longer claims a turn it cannot have.** It names its own place in the
+    stated order — the proposal that closes initialization — instead of demanding to be the first
+    visible message, and the banner stays unconditional and separate.
+  - Applies to both delivery paths and every engine; the ordering block ships only where a launch
+    actually has a sequence, so a legacy or no-sequence launch is unchanged apart from the scoped
+    wording. Prime budgeting behaviour is unchanged.
+
 - **A wrap that could not read git no longer hands the next session a clean bill of health** (#1649).
   A handoff records `worktree: null` to mean "this project is not a git repository" — and the next
   launch reads that as licence to skip both of its workspace checks, which is one of the conditions
@@ -189,6 +214,14 @@ All notable changes to TangleClaw are documented in this file.
 - **A wrap that finishes now ends the session, even when it had nothing to commit** (#1558). The session used to end only when the wrap made a commit. When a session's work had already merged by pull request, and the wrap's own notes went to ignored files, a full wrap reported "no changes to commit" and left the session running. Now any wrap that finishes records the session as wrapped, closes its terminal and releases its document locks, commit or not. A wrap that stops for you, fails or crashes still leaves the session open so you can answer or retry. The finished report now says "Wrapped — nothing new to commit" and whether the session ended or is still running. Wrap results (the stream's `run-done` and `GET /wrap/status`) carry `sessionOutcome`: `ended`, `kept` (kept on request and still running), or `null` when the run didn't finish or the session ended another way, such as a Kill during the wrap.
 
 ### Internal
+- **The Medusa-contract yield test derives its budget instead of naming one** (#1680). It squeezed
+  the prime against a hardcoded 4,400 characters, which cleared the irreducible floor — directives,
+  yielded sections' pointers, the contract's own pointer — by fifteen characters. Nothing about the
+  contract it tests depends on that number, so adding one sentence anywhere in the prime failed it,
+  with a message about the contract for a cause that was not the contract. It now measures the floor
+  by rendering against an impossible budget and squeezes to that, keeping the squeeze genuinely
+  tight (the contract must still reduce to its pointer) without sitting on a cliff edge. The
+  assertions are unchanged.
 - **The Feature Index's auto-stubbed backlog is emptied** (Train 21 wrap). Five entries the wrap had
   stubbed as `TBD` when a session first touched their files are described and moved under their real
   categories: the Contributor Covenant, car 21.10's rule-drift diff, and the three test files for the

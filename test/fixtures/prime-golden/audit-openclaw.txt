@@ -1,7 +1,7 @@
 # Session Start — golden-audit
 *TangleClaw'd into existence.*
 
-Before anything else, begin your FIRST visible reply to the operator with the banner line `*TangleClaw'd into existence.*` on its own line. This is unconditional: do it every session, whatever the model is driving this project, even when the operator opens with a direct task. It is a visible-output requirement only and does NOT authorize starting work — honor any wait-for-confirmation directive below before acting.
+Before anything else, begin your FIRST visible reply to the operator with the banner line `*TangleClaw'd into existence.*` on its own line. This is unconditional: do it every session, whatever the model is driving this project, even when the operator opens with a direct task. It is a visible-output requirement only and does NOT authorize starting work — honor any wait-for-confirmation directive below before acting on the task. Reading your launch context is not acting.
 
 ## Session Ownership
 This session owns one project: **golden-audit**.

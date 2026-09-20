@@ -912,6 +912,23 @@ Chunks are sequential; each one merges before the next begins.
 Governance checkpoints: after Chunk 01 (does the single renderer and frozen snapshot hold?) and after
 Chunk 03 (a whole-trajectory review before parity).
 
+### Launch reliability — what the built sequence got wrong in use (`Type: chunk`)
+
+Not part of the original twelve cars. These are defects the sequence surfaced once real sessions ran
+against it, dispatched by the ProjectManager on 2026-09-20 and listed on the shared MASTER_ROADMAP.
+
+- **#1680** the prime's opening order — two directives each claiming the session's first turn, beside
+  an unscoped wait-for-confirmation rule, so a session stopped to ask permission to initialize
+- **#1673** automate the crash-recovery clear, rather than sending the operator to the dashboard
+- **#1685** wrap reports a content prompt delivered that the engine never accepted as a task
+
+**This is a separate chunk from the `cumulative-final` one above, and does not consume it.** The
+roadmap and this plan both call a chunk "04", and they do not mean the same set: the roadmap's is
+these three defects, while the plan's is 21.10/21.11/21.12 — of which only 21.10 (#1588) has closed.
+Ticking one for the other would disarm the train's final review while two cars are still open, so
+the two are recorded apart and the final review stays where it was. The numbering itself is the
+ProjectManager's to reconcile; it is reported, not resolved here.
+
 ---
 
 ## 4a. Chunk 02 implementation decisions
@@ -1771,6 +1788,27 @@ an explicit disposition. Diagnostic runs are labelled diagnostic and are not fin
     building a fixture — an earlier hand-built one passed `worktreeTarget: null`, a value no producer
     emits, which is how it hid the bug.
   - `git.getInfo` now takes `{ fresh: true }`, for anything recorded into a frozen document.
+- [ ] Launch reliability (#1680, #1673, #1685) — IN PROGRESS, `Type: chunk`. Dispatched by the
+  ProjectManager 2026-09-20; branch `feat/train-21-chunk-04`. A separate chunk from the
+  `cumulative-final` one below, which it does not consume — see §4's entry for why the two share a
+  number on the roadmap and must not share a tick.
+  - [x] #1680 — the opening order. Built 2026-09-20. The order is stated once in the launch step
+    that arrives FIRST, initialization is declared authorized, and the confirmation gate is scoped
+    to the proposed work rather than to reading context. The Resume section stops claiming a turn
+    that, on a pull, it is served too late to take.
+    - The fix is text the product generates, so its regression coverage is over generated text:
+      `test/launch-steps.test.js` pins the stated order, the explicit authorization, the preserved
+      gate, and the absence of any retroactive first-message command. Golden fixtures regenerated
+      for all six scenarios; the ordering block ships only where a launch has a sequence.
+    - **Generated-text evidence is not a live launch.** Acceptance criterion 3 asks for a real
+      launch reaching READY without a second operator prompt; that is a VRF owed, not something
+      these fixtures establish.
+    - One test changed for a reason unrelated to the contract it guards: the Medusa-contract yield
+      test squeezed against a hardcoded budget sitting fifteen characters above the prime's
+      irreducible floor, so any directive edit failed it. It now derives the budget from that
+      floor. Assertions unchanged.
+  - [ ] #1673 — automate the crash-recovery clear
+  - [ ] #1685 — wrap prompt delivery receipt
 - [ ] Chunk 04 — IN PROGRESS. `Type: cumulative-final`, so 21.12's review IS the train final; no
   separate one is run.
   - [x] Car 21.10 — per-rule drift reconciliation in step 3 (#1588). Built 2026-09-19 on
