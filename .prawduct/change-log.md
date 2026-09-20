@@ -90,7 +90,8 @@ an absent result, a malformed one, and an omitted constructor argument.
    answered false, so a caller handing over nothing got an open gate. Not named in the ruling; found
    by reading the predicate the ruling pointed at.
 4. `sessions.js#_storedPreflight` carries the provenance into storage, so it survives a clearance.
-5. `launch-sequence.js#PREFLIGHT_NOT_EVALUATED` requires recovery and says nothing ever ran.
+5. `launch-sequence.js#PREFLIGHT_NOT_EVALUATED` requires recovery and records that no usable result
+   is available.
 6. `buildSnapshot` NORMALIZES the preflight instead of relying on its default parameter.
 
 **Seam 6 was a hole in the first version of this fix, and the new tests caught it.** A default

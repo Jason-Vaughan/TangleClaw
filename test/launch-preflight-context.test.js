@@ -353,8 +353,9 @@ describe('what the launch path actually produces', () => {
     // operator-mode recovery, so demanding one here would name a gate the
     // launch is not standing at.
     assert.equal(result.requiresReconciliation, false);
-    // Attempted and failed — distinct from evidence that never arrived. Both
-    // owe recovery; they differ in where a reader goes to look.
+    // A POSITIVELY OBSERVED failure: called, and it threw. Distinct from
+    // `evaluationMissing`, which is the weaker claim that no usable result is
+    // available. Both owe recovery.
     assert.equal(result.evaluationFailed, true);
     assert.equal(result.evaluationMissing, false);
   });
