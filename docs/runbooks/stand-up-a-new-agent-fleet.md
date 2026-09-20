@@ -194,8 +194,21 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
 
     | project | `releaseMode` | why |
     |---|---|---|
-    | the release owner | `ask` | authors the version bump, with a prompt rather than silently |
+    | the release owner | `auto` **or** `ask` | either may author the bump — the difference is who is consulted, below |
     | every other project, **including PM and Architect** | `off` | they contribute changelog entries, never version files |
+
+    **The mode names describe who is *consulted*, not how much is automated** — read them carefully,
+    because `auto` does not mean unattended:
+
+    | mode | who decides |
+    |---|---|
+    | `auto` | the **AI**. The `release-recommendation` wrap step runs and its answer is weighed against the readiness verdict. If the two disagree, it escalates to the operator — neither overrules the other. It proceeds on its own only when readiness says `ready` and the AI does not say hold. |
+    | `ask` | the **operator**. The wrap cuts only on an explicit Cut; the AI's view is demoted to a hint in the reason. |
+    | `off` | nobody — the step stops before any of this. |
+
+    In both `auto` and `ask` a decision made in the wrap modal wins outright, so the operator sees a
+    confirmation either way. Pick `auto` when you want the agent's judgement in the loop, `ask` when
+    you want every cut to be your own call.
 
     Verify against the group's **actual members**, not a name prefix, and read the mode from
     `GET /api/projects` — the PATCH response omits `releaseMode`, so it cannot confirm this:
@@ -222,7 +235,7 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
     that resolves to no project, more or fewer than one owner, or a non-owner whose mode is not
     `off` (a `null` or unrecognised mode counts). Fix it before any Builder wraps.
     Valid values are `off`, `auto`, `ask`; anything else is treated as `ask` with a warning, which
-    is itself how a second owner appears by accident.
+    is itself how a second owner appears by accident — an unrecognised mode is not `off`.
 
     Leave changelog updating **enabled everywhere**: each Builder still writes its own entry under
     `[Unreleased]`. Only the promotion of those entries and the `version.json` bump belong to the
