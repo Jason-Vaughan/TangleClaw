@@ -2020,8 +2020,8 @@ summary, and only the written distinction survives.
     `prompt sent` when `sendKeys` returns, which is not evidence the engine accepted a task;
     closing that needs an engine-aware submission/receipt with duplicate-submission prevention,
     and its acceptance explicitly refuses fixture-only evidence.
-- [ ] Chunk 04 — IN PROGRESS. `Type: cumulative-final`, so 21.12's review IS the train final; no
-  separate one is run.
+- [x] Chunk 04 — COMPLETE 2026-09-20. `Type: cumulative-final`, so 21.12's review IS the train
+  final; no separate one is run.
   - [x] Car 21.10 — per-rule drift reconciliation in step 3 (#1588). Built 2026-09-19 on
     `feat/train-21-car-21-10`. Build plan and as-built deltas: §4c. MERGED via PR #1646; #1588 is
     closed. The review history is the governance ledger's, not this
@@ -2057,7 +2057,7 @@ summary, and only the written distinction survives.
     versioned JSON carried the binding solely while it preserved that binding in full — so it should
     not be quoted as an unqualified no-migration answer. Follow-ups filed: #1712, #1713; retention
     was already #1595.
-  - [ ] Car 21.12 — ADR 0017 and the doc set (#1590). Built 2026-09-20 on
+  - [x] Car 21.12 — ADR 0017 and the doc set (#1590). Built 2026-09-20 on
     `feat/train-21-car-21-12`. Build plan, the measured per-file gap and acceptance cases: §4e.
     `docs/adr/0017-phased-launch.md` states shipped vs desired as a table, per the Architect's
     ruling on #1589, with #1611 and #1623 named there rather than left to inference; it carries R1,

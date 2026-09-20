@@ -1,8 +1,8 @@
 # ADR 0017: Phased launch — a session's context is served, acknowledged and attested, not pushed once
 
-**Status:** **Proposed (2026-09-20).** Written by car 21.12 (#1590) at the close of Train 21, against
-a mechanism that is already built and running. It is submitted to the Architect for review before
-its PR merges — bound 4 of the train's plan. Cars 21.1–21.10 shipped (v40–v43); car 21.11's
+**Status:** **Accepted (2026-09-20, Architect-approved under bound 4).** Written by car 21.12
+(#1590) at the close of Train 21, against a mechanism that is already built and running.
+Cars 21.1–21.10 shipped (v40–v43); car 21.11's
 certification half was **cancelled by an operator scope amendment** rather than built — cancelled,
 not blocked, and not carried forward — and this ADR says so in § "What was descoped".
 **Source issues:** #1579–#1590, tracking #1591. Rulings on #1589 and #1650.
