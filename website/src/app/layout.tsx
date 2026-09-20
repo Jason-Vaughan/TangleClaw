@@ -24,7 +24,7 @@ export const metadata: Metadata = {
     siteName: "TangleClaw",
     images: [
       {
-        url: "/logo.png",
+        url: "/tangleclaw-logo-real.png",
         width: 800,
         height: 600,
         alt: "TangleClaw Logo",
@@ -37,7 +37,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "TangleClaw",
     description: "An open-source, local-first AI-native SDLC orchestration platform.",
-    images: ["/logo.png"],
+    images: ["/tangleclaw-logo-real.png"],
   },
 };
 

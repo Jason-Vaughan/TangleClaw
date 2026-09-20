@@ -19,7 +19,7 @@ export default function Home() {
           {/* Logo Placeholder */}
           <div className="relative w-32 h-32 md:w-40 md:h-40 bg-zinc-900 rounded-[2rem] border border-white/10 flex items-center justify-center overflow-hidden shadow-2xl">
             <Image
-              src="/logo.png"
+              src="/tangleclaw-logo-real.png"
               alt="TangleClaw Logo"
               width={160}
               height={160}
