@@ -275,3 +275,132 @@ describe('the step reads only what wrap-scope actually produces', () => {
       'the second staging must see the write — a cached reading would still say false');
   });
 });
+
+/*
+ * #1649 — a failed git probe must not freeze "this project has no worktree".
+ *
+ * `wrap-scope` keeps two states apart that the handoff flattened: a root that
+ * is not a git repository, and a root whose git probe could not run. Both leave
+ * `workToplevel` null, and `worktree: null` is the single field that disables
+ * the launch's two workspace checks and satisfies a precondition of `ok`. So a
+ * wrap whose probe timed out froze a clean bill of health for a tree nobody
+ * measured — and the bytes are frozen at staging, so nothing could repair it.
+ *
+ * These drive REAL `wrapScope.resolve` calls rather than literals. A hand-built
+ * scope would supply whichever discriminator the code happens to read, which is
+ * exactly how the sibling defects in this file went undetected.
+ */
+describe('a probe failure and a non-git root are different handoffs (#1649)', () => {
+  const wrapScope = require('../lib/wrap-scope.js');
+
+  /** A scope resolved against an exec that cannot run git at all.
+   * @returns {Promise<object>} the resolved scope */
+  async function scopeWithFailedProbe() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-1649-failed-'));
+    tmpDirs.push(dir);
+    const proj = { id: project.id, name: project.name, path: dir, configPath: dir };
+    return wrapScope.resolve(proj, null, {
+      exec: async () => {
+        const err = new Error('git rev-parse timed out after 5000ms');
+        err.code = 'ETIMEDOUT';
+        throw err;
+      },
+      paneCurrentPath: async () => null
+    });
+  }
+
+  it('a scope whose git probe failed yields no facts AND a stated reason', async () => {
+    const scope = await scopeWithFailedProbe();
+
+    // The producer's half of the contract, asserted by TYPE against the real
+    // resolver: if `workTreeProblem` ever stopped being a reason string, the
+    // discriminator below would silently read every failure as a non-repo.
+    assert.equal(scope.workToplevel, null);
+    assert.equal(typeof scope.workTreeProblem, 'string');
+    assert.ok(scope.workTreeProblem.trim(), 'a probe failure must name itself');
+
+    assert.equal(stageStep._worktreeFacts(scope), null,
+      'there are no facts to record — that part is unchanged');
+    assert.equal(stageStep._worktreeProblem(scope), scope.workTreeProblem,
+      'the null must be accompanied by the reason, or it reads as "no worktree"');
+  });
+
+  it('a genuine non-git root still records a bare null, with no reason', async () => {
+    // The case the null was always FOR, and the one that must not regress: an
+    // ordinary directory. If this started carrying a problem string, every
+    // non-git project would be pushed into reconciliation forever.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-1649-plain-'));
+    tmpDirs.push(dir);
+    const proj = { id: project.id, name: project.name, path: dir, configPath: dir };
+    const scope = await wrapScope.resolve(proj, null, { paneCurrentPath: async () => null });
+
+    assert.equal(scope.workToplevel, null, 'a plain directory has no git identity');
+    assert.equal(stageStep._worktreeFacts(scope), null);
+    assert.equal(stageStep._worktreeProblem(scope), null,
+      'nothing failed here — the null means what the schema says it means');
+  });
+
+  it('a readable repository records facts and no reason', async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-1649-repo-'));
+    tmpDirs.push(repo);
+    const { execFileSync } = require('node:child_process');
+    const run = (args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
+    run(['init', '-q', '-b', 'main']);
+    run(['config', 'user.email', 't@example.com']);
+    run(['config', 'user.name', 'Test']);
+    fs.writeFileSync(path.join(repo, 'f.txt'), 'x\n');
+    run(['add', '.']);
+    run(['commit', '-q', '-m', 'init']);
+
+    const proj = { id: project.id, name: project.name, path: repo, configPath: repo };
+    const scope = await wrapScope.resolve(proj, null, {});
+
+    assert.ok(stageStep._worktreeFacts(scope), 'a readable tree produces facts');
+    assert.equal(stageStep._worktreeProblem(scope), null,
+      'the reason is load-bearing only where it explains a missing fact');
+  });
+
+  // The JOIN, which every test above leaves unpinned: each one asserts a side.
+  // Delete `worktreeProblem: _worktreeProblem(scope)` from the step's
+  // `buildHandoffDocument` call and all of them stay green while the frozen
+  // bytes silently lose the discriminator — the same seam failure this file's
+  // header records for #1585. So drive the REAL step with a REAL failed-probe
+  // scope and read the staged bytes back off disk.
+  it('the staged bytes carry the probe failure, not just the helper', async () => {
+    const scope = await scopeWithFailedProbe();
+    const stepResult = await stageStep.run({
+      project,
+      session: { id: 7, engineId: 'claude' },
+      previousResults: [],
+      scope,
+      options: { keepSessionRunning: false },
+      wrapRunId: 'run-1649'
+    });
+
+    const staged = lockfile.readHandoffFile(lockfile.stagedPath(project, stepResult.output.publicationId));
+    assert.equal(staged.outcome, 'ok', 'the staged document must still read back as a handoff');
+    assert.equal(staged.doc.worktree, null);
+    assert.equal(staged.doc.worktreeProblem, scope.workTreeProblem,
+      'the reason must reach the frozen bytes — the whole point is that they cannot be repaired later');
+  });
+
+  it('refuses to build a document that records both facts and a failure', async () => {
+    // The two are mutually exclusive by construction, so the honesty contract
+    // is enforced where the bytes are made rather than discovered by a reader
+    // who has no safe way to pick a side.
+    const { buildHandoffDocument } = require('../lib/handoff-publication.js');
+    const base = {
+      publicationId: 'pid-x', projectId: project.id, sessionId: 1, wrapRunId: 'run-x',
+      engineId: 'claude', kind: 'final', stagedAt: new Date().toISOString(),
+      wrapOutcome: 'complete', rules: []
+    };
+    assert.throws(
+      () => buildHandoffDocument({
+        ...base,
+        worktree: { path: '/repo', toplevel: '/repo' },
+        worktreeProblem: 'git could not be run'
+      }),
+      /cannot record worktree facts and a probe failure at once/
+    );
+  });
+});

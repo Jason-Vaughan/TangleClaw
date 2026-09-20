@@ -420,6 +420,12 @@ lives only in the DB, so the staged digest *is* the published digest:
                // it was whole, so a consumer can tell "this tree has no commits" from "git could
                // not be read" — which a bare null cannot say, and frozen bytes can never revisit.
                "unestablished": ["headSha"], "readFailure": "read-timed-out"},  // null for non-git
+  // WHY `worktree` is null, when the reason is that nobody could look (#1649). `wrap-scope`
+  // reports an unreadable work tree and a genuine non-repo identically — `workToplevel` is null
+  // in both — and a bare null here is read as "no git", which skips checks 13/14 and satisfies a
+  // precondition of `ok`. Mutually exclusive with a `worktree` object; absent on every pre-#1649
+  // document, where absence keeps meaning "not a git repository".
+  "worktreeProblem": "git could not be run in /abs: timed out | null",
   "rules": [{"id": 12, "source": "project", "revision": 3, "contentHash": "…"}],
   // Car 21.10 widened this block: `rules` rows also carry `label` and `measured`,
   // and a top-level `manifestSources` names what was read. §4c is the authority on
@@ -569,7 +575,7 @@ Definitions used below:
 | 12 | `handoff-behind` | a current publication exists, but the newest prior session id > its producing `sessionId`: a later session ended `wrapped` without an eligible publication (a crash is already 5) | yes |
 | 13 | `workspace-unavailable` | current publication with non-null `worktree` whose `toplevel` no longer exists | **reconciliation required**; recovery **yes** if `worktree.dirty` was true, else no |
 | 14 | `stale` | current publication, and `worktree.headSha` ≠ the live HEAD of `worktree.toplevel` (or the branch moved) | no; reconciliation required |
-| 15 | **`ok`** (positive) | all of: a **current publication** exists; its identity matches (`projectId` only — see *Identity*); its `sessionId` **is** the newest prior session; that session is `wrapped` (final) or still-kept `active` (checkpoint); `worktree` is null (no-git, recorded) or its HEAD and branch match | no |
+| 15 | **`ok`** (positive) | all of: a **current publication** exists; its identity matches (`projectId` only — see *Identity*); its `sessionId` **is** the newest prior session; that session is `wrapped` (final) or still-kept `active` (checkpoint); `worktree` is null **with no `worktreeProblem`** (no-git, recorded) or its HEAD and branch match | no |
 | 16 | `unclassified` | nothing above matched. Example: a continuity index with no session history and no publications (`baseline = 'empty'`). `reasons[]` lists every predicate that failed | yes |
 
 **Identity — amended 2026-09-18 (Architect ruling). Rev 4's rows 2 and 15 said
@@ -625,7 +631,16 @@ session produces an eligible, published final. The newest prior session is then 
 **Workspace unavailable (13).** The registered root's HEAD is reported as **diagnosis only**
 (`evidence.fallbackRootHead`). It never turns the verdict into `ok`.
 
-**Non-git project.** `worktree: null`, so 13–14 are recorded as `skipped: no-git`, and 15 accepts them only with that recorded skip.
+**Non-git project.** `worktree: null` **and no `worktreeProblem`**, so 13–14 are recorded as
+`skipped: no-git`, and 15 accepts them only with that recorded skip.
+
+**A probe that failed (#1649).** `worktree: null` WITH a `worktreeProblem`. `wrap-scope` reports an
+unreadable work tree and a genuine non-repo identically, so the bare null above was written for
+both and the reassuring reading won. The reason now rides beside the null, and this case sets
+`worktreeHeadUnverified` rather than answering on its own — so 15 collects it with its other failed
+preconditions and 16 owes recovery. It cannot owe LESS than a reading that merely went short,
+which already lands there: git never answering is strictly weaker evidence than git answering
+incompletely. Absent on every pre-#1649 document, where absence keeps meaning no-git.
 
 **Migration boundary — amended 2026-09-17 (Architect ruling); rev-4's approval history is preserved
 above, this supersedes only the version number and the already-v41 case.**

@@ -104,6 +104,32 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **A wrap that could not read git no longer hands the next session a clean bill of health** (#1649).
+  A handoff records `worktree: null` to mean "this project is not a git repository" — and the next
+  launch reads that as licence to skip both of its workspace checks, which is one of the conditions
+  it requires before reporting everything is fine. The wrap wrote that same null when its git probe
+  merely **failed**: timed out, was refused, or came back unreadable. So a wrap that could not look
+  at the tree froze a document asserting there was no tree to look at, and the next session was told
+  its continuity was sound for a working tree nobody had measured. The document's bytes are frozen
+  when they are staged, so nothing could correct it afterwards.
+  - **The document now says which kind of nothing it means.** A probe failure is recorded beside the
+    null, naming what went wrong; a project that genuinely has no git still records a bare null and
+    behaves exactly as before. A document can never carry both — claiming it read the tree and could
+    not read the tree is refused where the bytes are made, rather than left for a reader with no safe
+    way to choose.
+  - **The launch now owes recovery instead of reporting `ok`.** It says the probe failed and what it
+    said, alongside anything else that was wrong with the handoff, rather than answering on the
+    worktree alone. It cannot ask for less than the case where git *did* answer and only the commit
+    or branch went short — that already required recovery, and a probe that never ran is less
+    evidence, not more. Handoffs written before this change are unaffected: they carry no such
+    field, and its absence keeps meaning "not a git repository".
+  - **The worktree block is now validated when it is read**, rather than trusted and indexed into. A
+    block missing the paths every reader needs used to surface as a worktree the document never had.
+  - **A corrupt handoff now says what is wrong with it.** The reader already named the reason — not
+    JSON, wrong schema, no publication id — and it was dropped before anyone could see it, so an
+    operator sent to recovery was told only that the file was invalid. The reason now reaches the
+    verdict, for every reason the reader can give rather than only the ones added here.
+
 - **A newly launched session now starts reading its own context instead of waiting to be asked** (#1635). Where the prime is delivered silently — through the engine's session-start hook rather than by typing into the pane — a session was handed everything it needed as hidden context and asked nothing, so it sat at an empty prompt with no turn to answer. Nothing in the launch path typed into that pane, because skipping the paste is exactly what silent prime does; the only writer left was the unready monitor, whose window is ten minutes by default. Two launches on the record show the shape: one waited out that window to the second, the other was rescued by a person typing. TangleClaw now sends one line at launch asking the session to read its launch context, which is the turn the silent path removed.
   - **Once, and never over someone's typing.** One line per session, claimed before it is sent rather than after, so a send still in flight can never become a second one. It goes out only through the shared idle gate, which refuses a pane that is working or that holds an unsent draft — the half-typed message stays half-typed. The claim is given back on the paths where nothing was typed at all, so a session whose engine was still booting keeps its kickoff instead of spending it on a window that passed; the window itself is ninety seconds, long enough to outlast the slowest engine boot on record.
   - **A session that already started is not told to start.** The line states how many steps have been acknowledged, and that number is read from the launch sequence at the moment of sending rather than assumed to be zero. If the session began reading on its own while its pane was being watched — a person typing is one of the two launches on the record — it is left alone entirely.
