@@ -456,6 +456,40 @@ describe('#1619 — the committed carrier may only point at routes that answer',
   });
 });
 
+describe('#1626 — the carrier tells the reader to send its project binding', () => {
+  const section = engines._buildSharedDocsSection(
+    [{ id: 'x', name: 'D', groupName: 'G', filePath: '/p/d.md', injectMode: 'reference' }],
+    { committedCarrier: true }
+  );
+
+  it('names both binding headers with the env vars that carry them', () => {
+    // The server scopes shared-docs and groups answers to the project a launch
+    // id resolves to; a reader told only the routes would call them unbound.
+    assert.ok(section.includes('x-tangleclaw-project-id: $TANGLECLAW_PROJECT_ID'));
+    assert.ok(section.includes('x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID'));
+  });
+
+  it('carries only the variable names, never a launch-time value', () => {
+    // The carrier is tracked and shared by every checkout: a real launch id
+    // written here would bind every reader to one session.
+    assert.doesNotMatch(section, /x-tangleclaw-launch-id: (?!\$TANGLECLAW_LAUNCH_ID)/);
+    assert.doesNotMatch(section, /x-tangleclaw-project-id: (?!\$TANGLECLAW_PROJECT_ID)/);
+  });
+
+  it('the static guide names the same binding, for engine-private configs', () => {
+    const guide = fs.readFileSync(path.join(__dirname, '..', 'data', 'shared-docs-guide.md'), 'utf8');
+    assert.match(guide, /### Identify Your Project/);
+    assert.ok(guide.includes('x-tangleclaw-project-id: $TANGLECLAW_PROJECT_ID'));
+    assert.ok(guide.includes('x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID'));
+  });
+
+  it('the header names match what the resolver reads', () => {
+    const access = require('../lib/shared-docs-access');
+    assert.ok(section.includes(access.PROJECT_HEADER));
+    assert.ok(section.includes(access.LAUNCH_HEADER));
+  });
+});
+
 describe('#1619 — "unclassified fails toward shared" is a property, not a construction', () => {
   const rules = {
     serviceTokenEnabled: true,

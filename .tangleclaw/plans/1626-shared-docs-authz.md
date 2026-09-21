@@ -165,18 +165,26 @@ identity on its own:
 - [ASSUMPTION: The Master's binding survives a server restart, because the Master pane does. | MED
   impact: if it didn't, the Master would lose access after every restart. | Chunk 02 persists it and
   answers the lock-in questions listed there first.]
-- [ASSUMPTION: No caller outside this repo (Medusa, ClawBridge, Monad, the website) reads
-  `/api/shared-docs*` or `/api/groups*`. | HIGH impact if wrong, because it would break silently. |
-  Chunk 01 verifies this with a grep across `~/Documents/Projects/*` and the access log before any
-  enforcement ships.]
+- **Outside callers: checked in Chunk 01, and the assumption was WRONG in one place.** A grep across
+  `~/Documents/Projects/*` (excluding TangleClaw's own clones) found one hand-written caller:
+  `PV-AI-Guidebook/instruction.json` tells its agent to `GET …/api/shared-docs?groupId=habitat`,
+  with no binding headers. `habitat` is a group *name*, not an id, so today that call already returns
+  an empty list. PV-AI-Guidebook is a TangleClaw-managed project, so its panes do carry both
+  variables. That repo belongs to another session, so the fix goes through the PM: the instruction
+  should send both headers and resolve the group id through `/api/groups`. **This must land before
+  Chunk 03 enforces**, or that caller moves from an empty answer to a 403. No other outside caller
+  was found (the other hits were prose in issue summaries and archived notes). The server log since
+  2026-09-20 shows `GET /api/groups` (mostly dashboard polling) and `GET /api/shared-docs` as the
+  only traffic on these routes. The log records no caller identity, so it cannot separate the
+  dashboard from agents.
 
 ## Requirements Confidence: **Medium**
 
 The problem, success criteria and scope are each clear in a sentence. The PM ruled on D1–D4 and the
-scope on 2026-09-21. Confidence stays Medium, not High, because two things are unverified: the
-outside-caller assumption, and the persistence design for the Master binding. **What would raise
-it:** Chunk 01's outside-caller grep coming back empty, and Chunk 02's lock-in questions being
-answered.
+scope on 2026-09-21. Confidence stays Medium, not High, because two things are still open:
+the PV-AI-Guidebook caller has to migrate before Chunk 03, and the persistence design for the Master
+binding is not settled. **What would raise it:** the PM routing that migration, and Chunk 02's
+lock-in questions being answered.
 
 ## Chunks
 
