@@ -1,0 +1,82 @@
+{
+  "trains": {
+    "A": {
+      "name": "Version 5 Bridge Train A",
+      "purpose": "Restore trust in the delivery loop",
+      "release_owner": "ProjectManager",
+      "status": "PREEMPTED_BY_B1",
+      "cars": [
+        {
+          "id": "A1",
+          "name": "live checkout and coordinated freshness truth",
+          "issues": [993, 1678],
+          "acceptance_gate": "Operator, controller, PM, and Builder must observe the same checkout identity and freshness facts before mutating workflows begin. Reports and gates only; does not auto-checkout."
+        },
+        {
+          "id": "A2",
+          "name": "updater ownership and authored-data preservation",
+          "issues": [1537, 1730],
+          "acceptance_gate": "Classify product-owned, generated, and operator-authored paths explicitly; never delete/overwrite authored state; produce actionable blocked result when reconciliation is required."
+        },
+        {
+          "id": "A3",
+          "name": "wrap intent, artifact admission, and honest cancellation",
+          "issues": [1707, 1708, 1724, 1507, 1675, 1738],
+          "acceptance_gate": "Intent is explicit, unsupported cancellation is honest, tracked-file admission is a positive decision, unavailable draft preservation fails visibly, and successful wrap binds to the exact final publication consumed by the next launch while exposing stale/fallback provenance before action. Engine portability is required: wrap gates must be classified as portable (always run) or provider-specific. Provider-specific required methodology gates return CAPABILITY_UNAVAILABLE and block completion/release authority, but MUST NOT block a state-only checkpoint, durable handoff, safe wrap, or engine replacement. Round-trip preservation is required: unsupported attempts treat PRAWDUCT state as dormant/read-only; on return to Claude, reattach and run /prawduct:doctor to restore methodology authority safely."
+        },
+        {
+          "id": "A4",
+          "name": "exact release proof and workflow supply-chain floor",
+          "issues": [1551, 1436],
+          "acceptance_gate": "Release cannot publish unless the exact approved SHA was tested and tag dereferences to it; privileged dependencies are immutable and mechanically checked."
+        },
+        {
+          "id": "A5",
+          "name": "atomic rule authority",
+          "issues": [1696, 1709, 1053],
+          "acceptance_gate": "Rule approval/replacement are versioned atomic transitions. Cannot leave contradictory rules active or approve content different from reviewed snapshot."
+        }
+      ],
+      "exit_gate": [
+        "Every car has independent tests and review evidence.",
+        "Live installation reports exact checkout and release identity.",
+        "Failure-injection rehearsal proves updater preservation, wrap intent, release SHA binding, and atomic rule replacement.",
+        "Release and deployment explicitly initiated after integration candidate is frozen.",
+        "Project Manager performs state-only final checkpoint with no surprise repository PR.",
+        "Operator receives one consolidated decision at genuinely privileged boundary."
+      ]
+    },
+    "B1": {
+      "name": "Version 5 Hotfix B.1",
+      "purpose": "Targeted active-reachability containment (#1626)",
+      "release_owner": "ProjectManager",
+      "issues": [1626],
+      "acceptance_gate": "Require explicit server-side caller/project/group authorization; deny bare or unbound enumeration; prevent cross-group document and absolute-path disclosure. Cover authorized same-group, missing binding, invalid binding, and cross-group tests. Preserve supported callers or migrate them explicitly. Leave current main releasable."
+    },
+    "B2": {
+      "name": "Version 5 Train B.2",
+      "purpose": "Fail-closed security investigation and patch",
+      "release_owner": "ProjectManager",
+      "issues": [1261, 1381, 814, 853, 1444, 1484, 1739],
+      "investigation_note": "Not conclusively probed due to destructive action requirement. Treat as fail-closed. Requires non-destructive fixture/test-harness probes and independent admission decisions."
+    },
+    "B3": {
+      "name": "Version 5 Train B.3",
+      "purpose": "Security containment",
+      "issues": [1240],
+      "investigation_note": "Verified not actively reachable on this installation right now, but not closed globally."
+    },
+    "C_E": {
+      "name": "Version 5 Subsequent (Trains C-E)",
+      "purpose": "Bounded waves of explicit dependency and Version 6 reuse",
+      "themes": [
+        "test and validation substrate",
+        "context-budget measurement and progressive delivery",
+        "platform-neutral service and deployment seams",
+        "engine capability truth and instruction-carrier parity",
+        "changelog fragments and parallel-work merge hygiene",
+        "operator observability that exposes desired, observed, and blocked state"
+      ]
+    }
+  }
+}
