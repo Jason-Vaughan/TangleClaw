@@ -547,7 +547,8 @@ To set up auto-discover:
 
 File names become document names (e.g., `NETWORK.md` becomes "NETWORK").
 
-You can also trigger sync via the API:
+A session in a project that belongs to the group can also trigger sync via the API, sending its
+project binding (see "Who may change shared documents" below):
 ```
 POST /api/groups/<group-id>/sync
 ```
@@ -558,12 +559,26 @@ Shared documents are markdown files registered to a group. When a project belong
 
 ### Document Locking
 
-Before editing a shared document, lock it to prevent conflicts:
+Before editing a shared document's contents, lock it to prevent conflicts:
 ```
 POST /api/shared-docs/<doc-id>/lock
+x-tangleclaw-project-id: $TANGLECLAW_PROJECT_ID
+x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID
 { "sessionId": <id>, "projectName": "my-project" }
 ```
 Locks expire after 30 minutes and are auto-released when sessions wrap or are killed.
+
+### Who may change shared documents
+
+A session sends its project binding (the two headers above, both exported into every pane) on
+every groups and shared-docs request, and is answered only for the groups its project belongs to;
+another group's documents answer `404`. Within its own groups a session can register a document,
+lock and unlock one, notify its readers, and sync the shared directory.
+
+Changing a document's registration (its file path, name or injection settings), deleting one, and
+creating, changing or deleting a group or its members are yours alone, from the dashboard. A session
+that tries gets `403 OPERATOR_ONLY`, because a document's file path decides what is injected into
+every member project's engine config. The Project Master reads every group and changes nothing.
 
 ### Served Plan Documents
 

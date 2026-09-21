@@ -487,14 +487,21 @@ describe('#1626 — the carrier tells the reader to send its project binding', (
   });
 
   it('both texts say the binding is required and scopes the answer, and the guide keeps the groupId rule', () => {
-    // The read routes refuse an unbound caller and show a bound one only its
-    // own groups; a reader must be told both, or it will call them bare and
-    // read the 403 as an outage.
+    // The routes refuse an unbound caller, answer a bound one only within its
+    // own groups, and keep some writes for the operator; a reader must be told
+    // all three, or it will call them bare and read the 403 as an outage.
     const guide = fs.readFileSync(path.join(__dirname, '..', 'data', 'shared-docs-guide.md'), 'utf8');
     for (const text of [guide, section]) {
-      assert.match(text, /read without them is refused with `403`/);
-      assert.match(text, /shown only the groups your project belongs to/);
-      assert.match(text, /answers `404`, as if it did not exist/);
+      assert.match(text, /request without them is refused with `403`/);
+      assert.match(text, /read and change documents only in the groups your project belongs to/);
+      // Scoped to these routes: GET /api/projects still shows every project's
+      // groups, so "as if it did not exist" is not true install-wide.
+      assert.match(text, /on these routes, another project's group or document answers `404`, as if it did not exist/);
+      assert.match(text, /`403 OPERATOR_ONLY`/);
+      // Only the registration is the operator's; a reader told "editing is the
+      // operator's" would read the lock instructions as contradicting it.
+      assert.match(text, /Changing a document's registration/);
+      assert.match(text, /Editing a document's contents is not a registration change; lock it first/);
       assert.doesNotMatch(text, /do not narrow what you are shown/);
     }
     assert.match(guide, /\*\*Send `groupId`\*\* when listing documents/);

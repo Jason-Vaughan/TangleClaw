@@ -155,26 +155,38 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
 
 ## Phase 3 — canon and guardrails
 
-7. Create the canon directory and the group in one step. **Absolute path — the store does not
-   expand `~`:**
+> **Steps 7 and 8 are the operator's, in the dashboard.** Creating, changing or deleting a group
+> and its members is operator-only (#1626): from a pane, `curl` gets `403 OPERATOR_ONLY` whatever
+> it sends. Reading a group needs the pane's binding, and shows only groups its project is in, so
+> run the checks below from a pane of one of the **fleet** projects, once step 8 has added it:
+>
+> ```sh
+> BIND=(-H "x-tangleclaw-project-id: $TANGLECLAW_PROJECT_ID" -H "x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID")
+> ```
+
+7. Create the canon directory, then the group. **Absolute path — the store does not expand `~`:**
 
    ```sh
-   mkdir -p "$HOME/Documents/Projects/Acme-Shared"
-   GID=$(curl -fsS -X POST "$TANGLECLAW_API/api/groups" -H 'Content-Type: application/json' \
-     -d "{\"name\":\"Acme-Shared\",\"sharedDir\":\"$HOME/Documents/Projects/Acme-Shared\"}" \
-     | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
-   curl -fsS "$TANGLECLAW_API/api/groups/$GID"
+   mkdir -p "$HOME/Documents/Projects/Acme-Shared"; echo "$HOME/Documents/Projects/Acme-Shared"
    ```
-   Expected: the response contains `"sharedDir"` with the absolute path you set.
-   If it is absent or empty: set it with `PUT $TANGLECLAW_API/api/groups/$GID` and body
-   `{"sharedDir":"<absolute path>"}`, then re-read.
+   In the dashboard's Groups panel, create a group named `Acme-Shared` and paste the printed path
+   as its shared directory.
+   Expected: the group's row shows that path under its name.
 
-8. Add every project from step 5 — `POST $TANGLECLAW_API/api/groups/$GID/members` with
-   `{"projectId": <id>}` for each.
-   Expected: `curl -fsS "$TANGLECLAW_API/api/groups/$GID/members"` lists all six.
+8. In the same panel, add every project from step 5 to the group. Then, from a fleet project's pane:
 
-9. Put the fleet canon (`.md` files) in the shared directory, then register it:
-   `curl -fsS -X POST "$TANGLECLAW_API/api/groups/$GID/sync"`
+   ```sh
+   GID=$(curl -fsS "$TANGLECLAW_API/api/groups" "${BIND[@]}" \
+     | python3 -c 'import json,sys;print(next(g["id"] for g in json.load(sys.stdin)["groups"] if g["name"]=="Acme-Shared"))')
+   curl -fsS "$TANGLECLAW_API/api/groups/$GID/members" "${BIND[@]}"
+   ```
+   Expected: the members list names all six, and the group's `sharedDir` (`GET /api/groups/$GID`)
+   is the absolute path from step 7.
+   If `GID` is empty: this pane's project is not in the group yet — add it, or use another fleet pane.
+
+9. Put the fleet canon (`.md` files) in the shared directory, then register it with the group's
+   **Sync** button in the dashboard, or from the fleet pane:
+   `curl -fsS -X POST "$TANGLECLAW_API/api/groups/$GID/sync" "${BIND[@]}"`
    Expected: the response names each `.md` file found.
    If it returns `"Group has no sharedDir configured"`: step 7's verification was skipped — go back.
 
@@ -201,7 +213,7 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
     `GET /api/projects` — the PATCH response omits `releaseMode`, so it cannot confirm this:
 
     ```sh
-    curl -fsS "$TANGLECLAW_API/api/groups/$GID/members" -o /tmp/tc-members.json
+    curl -fsS "$TANGLECLAW_API/api/groups/$GID/members" "${BIND[@]}" -o /tmp/tc-members.json
     curl -fsS "$TANGLECLAW_API/api/projects" -o /tmp/tc-projects.json
     python3 - /tmp/tc-members.json /tmp/tc-projects.json <<'EOF'
     import json,sys
@@ -252,7 +264,8 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
 
 - `launchctl print gui/$(id -u)/com.tangleclaw.server | grep 'working directory'` names `Acme-Core`.
 - `curl -s -o /dev/null -w '%{http_code}\n' "$TANGLECLAW_API/api/health"` prints `200`.
-- `curl -fsS "$TANGLECLAW_API/api/groups/$GID/members"` lists every fleet project.
+- `curl -fsS "$TANGLECLAW_API/api/groups/$GID/members" "${BIND[@]}"`, from a fleet project's pane,
+  lists every fleet project.
 - `tc rules` in one Builder's launched pane prints the live-checkout rule, and it names `Acme-Core`
   — not that Builder's own path.
 - 10a's check prints `OWNERS_OK`: **exactly one** group member is `ask` (or `auto`) and every other

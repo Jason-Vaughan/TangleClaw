@@ -7434,18 +7434,19 @@ route('GET', '/api/tmux/mouse/:session', (_req, res, params) => {
 
 /**
  * Resolve who is asking a shared-docs or groups route, and send the refusal
- * when the caller has no usable binding.
+ * when the caller cannot do what the route needs.
  *
  * A caller that is refused never learns whether the group or document it named
  * exists: the refusal is sent before any lookup.
  * @param {http.IncomingMessage} req - The request
  * @param {http.ServerResponse} res - The response, written only on refusal
+ * @param {string} [need] - One of `sharedDocsAccess.NEEDS`; defaults to read
  * @returns {{kind: string, projectId: (number|null), groupIds: string[], reason: (string|null)}|null}
  *   The resolved caller, or null when a refusal has been sent.
  */
-function sharedDocsCaller(req, res) {
+function sharedDocsCaller(req, res, need = sharedDocsAccess.NEEDS.READ) {
   const access = sharedDocsAccess.resolveAccess(req);
-  const refusal = sharedDocsAccess.refusalFor(access);
+  const refusal = sharedDocsAccess.refusalFor(access, need);
   if (refusal) {
     // Enough to tell a caller that never bound from a stale or mismatched
     // binding, or from a Master check tmux never answered. The launch id is
@@ -7454,6 +7455,7 @@ function sharedDocsCaller(req, res) {
       method: req.method,
       path: reqUrl(req).pathname,
       code: refusal.code,
+      need,
       kind: access.kind,
       reason: access.reason,
       cause: access.cause || null,
@@ -7481,7 +7483,8 @@ route('GET', '/api/groups', (req, res) => {
 });
 
 // POST /api/groups
-route('POST', '/api/groups', (_req, res, _params, body) => {
+route('POST', '/api/groups', (req, res, _params, body) => {
+  if (!sharedDocsCaller(req, res, sharedDocsAccess.NEEDS.OPERATOR)) return;
   if (!body || !body.name) {
     return errorResponse(res, 400, 'name is required', 'BAD_REQUEST');
   }
@@ -7516,7 +7519,8 @@ route('GET', '/api/groups/:id', (req, res, params) => {
 });
 
 // PUT /api/groups/:id
-route('PUT', '/api/groups/:id', (_req, res, params, body) => {
+route('PUT', '/api/groups/:id', (req, res, params, body) => {
+  if (!sharedDocsCaller(req, res, sharedDocsAccess.NEEDS.OPERATOR)) return;
   if (!body || typeof body !== 'object') {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
@@ -7535,7 +7539,8 @@ route('PUT', '/api/groups/:id', (_req, res, params, body) => {
 });
 
 // DELETE /api/groups/:id
-route('DELETE', '/api/groups/:id', (_req, res, params) => {
+route('DELETE', '/api/groups/:id', (req, res, params) => {
+  if (!sharedDocsCaller(req, res, sharedDocsAccess.NEEDS.OPERATOR)) return;
   try {
     store.projectGroups.delete(params.id);
     jsonResponse(res, 200, { ok: true, id: params.id });
@@ -7548,9 +7553,11 @@ route('DELETE', '/api/groups/:id', (_req, res, params) => {
 });
 
 // POST /api/groups/:id/sync — Sync shared docs from group's sharedDir
-route('POST', '/api/groups/:id/sync', (_req, res, params) => {
+route('POST', '/api/groups/:id/sync', (req, res, params) => {
+  const access = sharedDocsCaller(req, res, sharedDocsAccess.NEEDS.WRITE);
+  if (!access) return;
   const group = store.projectGroups.get(params.id);
-  if (!group) {
+  if (!group || !sharedDocsAccess.canWriteGroup(access, group.id)) {
     return errorResponse(res, 404, `Group "${params.id}" not found`, 'NOT_FOUND');
   }
   if (!group.sharedDir) {
@@ -7580,7 +7587,8 @@ route('GET', '/api/groups/:id/members', (req, res, params) => {
 });
 
 // POST /api/groups/:id/members
-route('POST', '/api/groups/:id/members', (_req, res, params, body) => {
+route('POST', '/api/groups/:id/members', (req, res, params, body) => {
+  if (!sharedDocsCaller(req, res, sharedDocsAccess.NEEDS.OPERATOR)) return;
   const group = store.projectGroups.get(params.id);
   if (!group) {
     return errorResponse(res, 404, `Group "${params.id}" not found`, 'NOT_FOUND');
@@ -7597,7 +7605,8 @@ route('POST', '/api/groups/:id/members', (_req, res, params, body) => {
 });
 
 // DELETE /api/groups/:id/members/:projectId
-route('DELETE', '/api/groups/:id/members/:projectId', (_req, res, params) => {
+route('DELETE', '/api/groups/:id/members/:projectId', (req, res, params) => {
+  if (!sharedDocsCaller(req, res, sharedDocsAccess.NEEDS.OPERATOR)) return;
   const group = store.projectGroups.get(params.id);
   if (!group) {
     return errorResponse(res, 404, `Group "${params.id}" not found`, 'NOT_FOUND');
@@ -7630,9 +7639,16 @@ route('GET', '/api/shared-docs', (req, res) => {
 });
 
 // POST /api/shared-docs
-route('POST', '/api/shared-docs', (_req, res, _params, body) => {
+route('POST', '/api/shared-docs', (req, res, _params, body) => {
+  const access = sharedDocsCaller(req, res, sharedDocsAccess.NEEDS.WRITE);
+  if (!access) return;
   if (!body || !body.groupId || !body.name || !body.filePath) {
     return errorResponse(res, 400, 'groupId, name, and filePath are required', 'BAD_REQUEST');
+  }
+  // Registering into a group the caller is not in answers like registering
+  // into one that does not exist (the store's own 404 below).
+  if (!sharedDocsAccess.canWriteGroup(access, body.groupId)) {
+    return errorResponse(res, 404, `Group "${body.groupId}" not found`, 'NOT_FOUND');
   }
   try {
     const doc = store.sharedDocs.create(body);
@@ -7666,7 +7682,8 @@ route('GET', '/api/shared-docs/:id', (req, res, params) => {
 });
 
 // PUT /api/shared-docs/:id
-route('PUT', '/api/shared-docs/:id', (_req, res, params, body) => {
+route('PUT', '/api/shared-docs/:id', (req, res, params, body) => {
+  if (!sharedDocsCaller(req, res, sharedDocsAccess.NEEDS.OPERATOR)) return;
   if (!body || typeof body !== 'object') {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
@@ -7686,10 +7703,14 @@ route('PUT', '/api/shared-docs/:id', (_req, res, params, body) => {
 });
 
 // POST /api/shared-docs/:id/notify
-route('POST', '/api/shared-docs/:id/notify', async (_req, res, params) => {
+route('POST', '/api/shared-docs/:id/notify', async (req, res, params) => {
+  const access = sharedDocsCaller(req, res, sharedDocsAccess.NEEDS.WRITE);
+  if (!access) return;
   try {
     const doc = store.sharedDocs.get(params.id);
-    if (!doc) return errorResponse(res, 404, 'Shared document not found', 'NOT_FOUND');
+    if (!doc || !sharedDocsAccess.canWriteGroup(access, doc.groupId)) {
+      return errorResponse(res, 404, `Shared document "${params.id}" not found`, 'NOT_FOUND');
+    }
 
     const { notified, coalesced, errors } = await broadcastSharedDocUpdate(params.id);
     // `coalescedCount` is reported so a zero `notifiedCount` is never mistaken
@@ -7709,7 +7730,8 @@ route('POST', '/api/shared-docs/:id/notify', async (_req, res, params) => {
 });
 
 // DELETE /api/shared-docs/:id
-route('DELETE', '/api/shared-docs/:id', (_req, res, params) => {
+route('DELETE', '/api/shared-docs/:id', (req, res, params) => {
+  if (!sharedDocsCaller(req, res, sharedDocsAccess.NEEDS.OPERATOR)) return;
   try {
     store.sharedDocs.delete(params.id);
     closeSharedDocWatcher(params.id);
@@ -7725,7 +7747,13 @@ route('DELETE', '/api/shared-docs/:id', (_req, res, params) => {
 // ── Document Locks API ──
 
 // POST /api/shared-docs/:id/lock
-route('POST', '/api/shared-docs/:id/lock', (_req, res, params, body) => {
+route('POST', '/api/shared-docs/:id/lock', (req, res, params, body) => {
+  const access = sharedDocsCaller(req, res, sharedDocsAccess.NEEDS.WRITE);
+  if (!access) return;
+  const doc = store.sharedDocs.get(params.id);
+  if (!doc || !sharedDocsAccess.canWriteGroup(access, doc.groupId)) {
+    return errorResponse(res, 404, `Shared document "${params.id}" not found`, 'NOT_FOUND');
+  }
   if (!body || !body.sessionId || !body.projectName) {
     return errorResponse(res, 400, 'sessionId and projectName are required', 'BAD_REQUEST');
   }
@@ -7756,9 +7784,11 @@ route('GET', '/api/shared-docs/:id/lock', (req, res, params) => {
 });
 
 // DELETE /api/shared-docs/:id/lock
-route('DELETE', '/api/shared-docs/:id/lock', (_req, res, params) => {
+route('DELETE', '/api/shared-docs/:id/lock', (req, res, params) => {
+  const access = sharedDocsCaller(req, res, sharedDocsAccess.NEEDS.WRITE);
+  if (!access) return;
   const doc = store.sharedDocs.get(params.id);
-  if (!doc) {
+  if (!doc || !sharedDocsAccess.canWriteGroup(access, doc.groupId)) {
     return errorResponse(res, 404, `Shared document "${params.id}" not found`, 'NOT_FOUND');
   }
   store.documentLocks.release(params.id);

@@ -130,6 +130,19 @@ describe('AUTH-4 — service-token gate over HTTP', () => {
     assert.deepEqual(withTok.data.docs.map((d) => d.id), [ownDocId]);
   });
 
+  it('gated shared-docs writes: a bound project still needs the token, and with it writes its own group', async () => {
+    const { headers, sessionId } = boundCaller();
+    const lockBody = { sessionId, projectName: boundProject.name };
+    const noTok = await request(server, 'POST', `/api/shared-docs/${ownDocId}/lock`, lockBody, headers);
+    assert.equal(noTok.status, 401);
+    assert.equal(store.documentLocks.check(ownDocId), null, 'the refused lock was not taken');
+    const token = store.config.load().serviceToken;
+    const withTok = await request(server, 'POST', `/api/shared-docs/${ownDocId}/lock`, lockBody, { ...headers, ...bearer(token) });
+    assert.equal(withTok.status, 200);
+    const unlock = await request(server, 'DELETE', `/api/shared-docs/${ownDocId}/lock`, null, { ...headers, ...bearer(token) });
+    assert.equal(unlock.status, 200);
+  });
+
   it('a valid token does not bind a project: shared-docs still needs the launch binding', async () => {
     const token = store.config.load().serviceToken;
     const { status, data } = await request(server, 'GET', '/api/shared-docs', null, bearer(token));

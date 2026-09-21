@@ -253,9 +253,19 @@ describe('#1626 shared-docs and groups reads answer only a bound caller', () => 
       const calls = master.liveMasterLaunchId.mock.calls.length;
       master.liveMasterLaunchId.mock.mockImplementationOnce(
         () => ({ launchId: null, answered: false, cause: 'read-timed-out' }));
-      const res = await get(server, '/api/shared-docs', {
-        'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': MASTER_LAUNCH_ID
-      });
+      const lines = [];
+      const logger = require('../lib/logger');
+      logger.setLevel('warn');
+      logger.setConsoleStream({ write: (line) => { lines.push(String(line)); return true; } });
+      let res;
+      try {
+        res = await get(server, '/api/shared-docs', {
+          'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': MASTER_LAUNCH_ID
+        });
+      } finally {
+        logger.setConsoleStream(process.stderr);
+        logger.setLevel('error');
+      }
       assert.equal(res.status, 403);
       assert.equal(res.data.code, 'SHARED_DOCS_BINDING_INVALID');
       assert.match(res.data.error, /master-unverifiable/);
@@ -265,6 +275,12 @@ describe('#1626 shared-docs and groups reads answer only a bound caller', () => 
       // wedged tmux holds the server for tmux's full default timeout.
       assert.deepEqual(asked[0].arguments, [{ timeout: sharedDocsAccess.MASTER_READ_TIMEOUT_MS }]);
       assert.ok(sharedDocsAccess.MASTER_READ_TIMEOUT_MS <= 1000);
+      // Why tmux did not answer is what tells a hung tmux from a bad binding,
+      // so the route's refusal line carries it.
+      const refused = lines.filter((l) => l.includes('Shared-docs caller refused'));
+      assert.equal(refused.length, 1, lines.join(''));
+      assert.match(refused[0], /cause=read-timed-out/);
+      assert.match(refused[0], /master-unverifiable/);
     });
 
     it('a refusal is logged with its reason, and never with the launch id', async () => {
