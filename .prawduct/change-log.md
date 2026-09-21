@@ -34,6 +34,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-21 — Shared-docs and groups reads answer only a bound caller, scoped to its groups (#1626)
+
+<!-- prawduct: type=bugfix | scope=hotfix-b1-shared-docs-authz -->
+
+Hotfix B.1 Chunk 03. `server.js#sharedDocsCaller` resolves the caller and sends the refusal before any lookup. The six read routes (`/api/groups`, `/api/groups/:id`, `/api/groups/:id/members`, `/api/shared-docs`, `/api/shared-docs/:id`, `/api/shared-docs/:id/lock`) filter on `canSeeGroup`. A non-member group or document answers 404, identical to a missing id; the bare list is scoped, not refused. Both preconditions were checked first: the live Master carries a launch id, and PV-AI-Guidebook sends both headers. D6 bounds the Master's synchronous tmux read at 1s (`MASTER_READ_TIMEOUT_MS`), failing closed. The plan said the dashboard tests would pass unchanged, but they were bare machine clients, not dashboard-shaped. They now declare their caller through `test/_shared-docs-callers.js`, and none is weakened. The guide and carrier text flipped from "does not narrow" to describing the scoped answer. The Critic raised four warnings, none blocking: refusals are now logged (never with the launch id), the timeout is pinned by a route test, and `tc docs` no longer claims nothing is hidden. `GET /api/projects` still maps projects to groups and paths; that is filed as #1739, outside B.1. Writes remain for Chunk 04; its PR, not this one, closes the issue.
+
 ## 2026-09-21 — The Project Master gets a shared-docs launch binding, ahead of enforcement (#1626)
 
 <!-- prawduct: type=bugfix | scope=hotfix-b1-shared-docs-authz -->

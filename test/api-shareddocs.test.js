@@ -8,6 +8,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
+const { operatorHeaders } = require('./_shared-docs-callers');
 const { createServer, _sharedDocWatchers, _sharedDocDebounceTimers } = require('../server');
 
 setLevel('error');
@@ -28,7 +29,9 @@ function request(server, method, urlPath, body) {
       port: addr.port,
       path: urlPath,
       method,
-      headers: { 'Content-Type': 'application/json' }
+      // These suites exercise the dashboard's group and document management,
+      // so every request is the operator's; a bare machine request is refused.
+      headers: { 'Content-Type': 'application/json', ...operatorHeaders(server) }
     };
 
     const req = http.request(options, (res) => {

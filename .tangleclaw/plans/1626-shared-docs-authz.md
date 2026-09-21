@@ -1,6 +1,6 @@
 ---
 title: "#1626 — Shared documents answer only to a caller bound to a project in the group"
-status: IN PROGRESS — PM verified traceability 2026-09-21 (msg fbae32e1); Chunks 01–02 done, Chunks 03–04 each need their own go
+status: IN PROGRESS — PM verified traceability 2026-09-21 (msg fbae32e1); Chunks 01–03 done, Chunk 04 needs its own go
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-21 (message 2ecd5ef4) — Hotfix B.1, PRAWDUCT planning only; Train A HELD
 issue: 1626
 governed_by:
@@ -10,7 +10,7 @@ governed_by:
   - .prawduct/artifacts/api-contract.md                # §13 Groups, §14 Shared Documents, §21 tc provenance headers
   - project rule: ENGINE-AGNOSTIC BY CONSTRUCTION
 scope: hotfix-b1-shared-docs-authz
-branch: fix/1626-chunk02-master-binding   # each chunk ships from its own branch; update this when the next one starts
+branch: fix/1626-chunk03-read-enforcement   # each chunk ships from its own branch; update this when the next one starts
 partition: serial — every chunk edits the same route block in server.js and the same new access module
 ---
 
@@ -273,6 +273,20 @@ Each chunk ships as **its own PR**, and main stays releasable after each one. Th
 - **Precondition (from Chunk 02):** the live Project Master has been relaunched since Chunk 02
   deployed, so it carries a launch id. Check this before merging: `tmux show-environment -t
   '=tangleclaw-master:' TANGLECLAW_LAUNCH_ID` prints a value.
+- **Preconditions, checked 2026-09-21 before building:** the live Master carries a launch id
+  (`tmux show-environment -t '=tangleclaw-master:' TANGLECLAW_LAUNCH_ID` printed a value; the
+  session was created 19:11Z, after Chunk 02 deployed), and PV-AI-Guidebook's `instruction.json`
+  sends both binding headers and resolves the group id through `/api/groups` (its commit `c2ec2a1`).
+- **[DECISION D6: A Master claim's tmux read is bounded at 1s (`MASTER_READ_TIMEOUT_MS`), not
+  accepted at tmux's 5s default.** | Why: the read is a synchronous subprocess on the request path,
+  so a wedged tmux would stall the event loop for the full default on each Master read; a healthy
+  tmux answers in milliseconds, and a read that runs out is refused (`master-unverifiable`, with
+  tmux's cause logged), never passed. | vetoable → accept the 5s default, or add a short cache
+  keyed on the session's creation time.]
+- **Out of scope, filed as #1739:** `GET /api/projects` still maps every project to its groups and
+  absolute path for any caller, so group membership stays confirmable there. The disposition table
+  above covers only the groups and shared-docs routes; the projects route has many callers and
+  needs its own inventory.
 - `tc docs` (bare `GET /api/shared-docs`, identity headers sent by `bin/tc`) gets the scoped view
   for a project and the full view for the bound Master. Add a test.
 - **Decide the cost of a Master claim before wiring the resolver into routes.** `resolveAccess` →
@@ -359,5 +373,5 @@ Each chunk ships as **its own PR**, and main stays releasable after each one. Th
 
 - [x] Chunk 01: binding primitive and caller migration
 - [x] Chunk 02: the Master launch binding. Built 2026-09-21. Critic: 0 blocking; R-1 (the Master's `tc start` regressed) was fixed, and R-2 (synchronous tmux read) was carried into Chunk 03. Lock-in answered by D5: nothing is persisted.
-- [ ] Chunk 03: enforce on every read door
+- [x] Chunk 03: enforce on every read door. Built 2026-09-21 (PM named go, msg 4452df60). Critic: 0 blocking; R-1/R-2/R-4/R-5/R-6 fixed and verified (rev-20260921T194856Z-8002842e), R-3 filed as #1739, R-7/R-8 accepted. O-3/O-4 carried into Chunk 04. D6: the Master's tmux read is bounded at 1s.
 - [ ] Chunk 04: enforce on writes and record the model
