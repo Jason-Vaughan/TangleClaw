@@ -34,6 +34,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-21 — Shared-docs and groups writes are limited to the caller's own groups; registration and group management are operator-only (#1626)
+
+<!-- prawduct: type=bugfix | scope=hotfix-b1-shared-docs-authz -->
+
+Hotfix B.1 Chunk 04. `sharedDocsCaller` now takes a need (`lib/shared-docs-access.js#NEEDS`: read, write, operator), and `refusalFor` answers it before any lookup. Register, lock, unlock, notify and sync admit only the operator and a member project (`canWriteGroup`); another group answers 404 like a missing id. `PUT`/`DELETE` of a document and all group and membership changes are operator-only. D8: every non-operator, even an unbound one, gets `OPERATOR_ONLY`, because no binding would help. D7: the Master gets `SHARED_DOCS_READ_ONLY` on member writes, since `OPERATOR_ONLY` would misstate those routes. The Chunk 03 review items O-3 ("on these routes") and O-4 (the tmux cause in the refusal log) are carried in. The Critic had no blocking findings. Its observations fixed here: the fleet runbook and user guide still curled operator-only routes from a pane; the guide's "editing is the operator's" contradicted "lock before editing" (it now names the registration); and the Master's write refusal rested on each route passing `NEEDS.WRITE`, which `canWriteGroup` now backs. Only two notify tests wrote as bare clients; they now call as the operator, and none is weakened. This PR closes #1626.
+
 ## 2026-09-21 — Shared-docs and groups reads answer only a bound caller, scoped to its groups (#1626)
 
 <!-- prawduct: type=bugfix | scope=hotfix-b1-shared-docs-authz -->
