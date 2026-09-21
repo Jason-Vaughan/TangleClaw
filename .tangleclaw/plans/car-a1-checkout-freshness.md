@@ -123,13 +123,17 @@ computes its own. No read ever reports "current" without a fresh observation.
 
 ## Status
 
-- [ ] Chunk 01: Live-install checkout snapshot, honest origin observation, dashboard + prime (#993)
+- [x] Chunk 01: Live-install checkout snapshot, honest origin observation, dashboard + prime (#993)
 - [ ] Chunk 02: Classify what changed: executable vs records-only (#1678, refinement comment)
 - [ ] Chunk 03: Per-session checkout facts in every session banner and launch (#1678)
 - [ ] Chunk 04: Related-session coordination view for the PM (#1678)
 - [ ] Chunk 05: Hard freshness gate on mutating workflows (car acceptance; UNSCOPED pending ruling)
-Context: PM verified traceability and authorized Chunk 01 only (2026-09-21). Chunk 01 in progress on
-`feat/993-checkout-freshness`.
+Context: Chunk 01 was built, then reviewed by the Critic: 1 blocking finding and 6 warnings, all
+fixed, and verify-resolutions came back clean. It shipped on `feat/993-checkout-freshness`.
+Next: Chunk 02 (delta classification), but only once the PM authorizes it by name. Chunk 03 must
+first generalize the origin observation, which is currently per-process and fixed to the live
+install. Chunk 05 is unscoped until a ruling. VRF-993-live-checkout-banner (a check on a phone) is
+pending with the operator.
 
 ## Build Chunks
 
