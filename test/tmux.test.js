@@ -1014,7 +1014,10 @@ describe('tmux', () => {
       // reading `pane_current_path`, so a wrap can tell which worktree the
       // session's pane is in; it is wrapped, and it checks the session exists
       // first because `display-message` falls back to the attached client.
-      assert.equal(targets.length, 25, `expected 25 -t sites in lib/tmux.js, found ${targets.length}`);
+      // 26 since `readSessionEnv` (#1626) added a `show-environment`, which reads
+      // back the Project Master's launch id; it is wrapped, and unlike
+      // `display-message` it fails on an absent session rather than falling back.
+      assert.equal(targets.length, 26, `expected 26 -t sites in lib/tmux.js, found ${targets.length}`);
       for (const expr of targets) {
         assert.match(
           expr,
@@ -1098,5 +1101,57 @@ describe('tmux', () => {
         }
       });
     });
+  });
+});
+
+describe('tmux — reading back a session\'s launch environment (#1626)', () => {
+  const { execFileSync } = require('node:child_process');
+  const name = `tc-read-env-1626-${process.pid}`;
+
+  it('returns the value a session was created with, and nothing for an unset one', () => {
+    // A REAL session, started with `-e` exactly as `createSession` does, because
+    // what is under test is that tmux keeps `-e` values in the session
+    // environment. A stub would assert that belief instead of checking it.
+    execFileSync('tmux', ['new-session', '-d', '-s', name, '-e', 'TC_PROBE_1626=abc-123', 'sleep 60']);
+    try {
+      assert.deepEqual(tmux.readSessionEnv(name, 'TC_PROBE_1626'),
+        { value: 'abc-123', answered: true, cause: null });
+      assert.deepEqual(tmux.readSessionEnv(name, 'TC_NOT_SET_1626'),
+        { value: null, answered: true, cause: null });
+    } finally {
+      execFileSync('tmux', ['kill-session', '-t', `=${name}`]);
+    }
+  });
+
+  it('answers "no value" for a session that does not exist, and matches names exactly', () => {
+    execFileSync('tmux', ['new-session', '-d', '-s', `${name}-longer`, '-e', 'TC_PROBE_1626=wrong', 'sleep 60']);
+    try {
+      // A prefix of a live session's name must not read that session.
+      assert.deepEqual(tmux.readSessionEnv(name, 'TC_PROBE_1626'),
+        { value: null, answered: true, cause: null });
+    } finally {
+      execFileSync('tmux', ['kill-session', '-t', `=${name}-longer`]);
+    }
+  });
+
+  it('says tmux did not answer when the read times out, rather than "no value"', () => {
+    const os = require('node:os');
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-slow-tmux-env-'));
+    fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
+    const realPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${realPath}`;
+    try {
+      assert.deepEqual(tmux.readSessionEnv('anything', 'TC_PROBE_1626', { timeout: 300 }),
+        { value: null, answered: false, cause: 'read-timed-out' });
+    } finally {
+      process.env.PATH = realPath;
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a variable name that is not a plain identifier', () => {
+    for (const bad of ['a b', 'X;rm', '', 'lower']) {
+      assert.throws(() => tmux.readSessionEnv(name, bad), /Invalid environment variable name/);
+    }
   });
 });

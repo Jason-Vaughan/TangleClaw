@@ -1,6 +1,6 @@
 ---
 title: "#1626 — Shared documents answer only to a caller bound to a project in the group"
-status: IN PROGRESS — PM verified traceability 2026-09-21 (msg fbae32e1); Chunk 01 authorized, later chunks need their own go
+status: IN PROGRESS — PM verified traceability 2026-09-21 (msg fbae32e1); Chunks 01–02 done, Chunks 03–04 each need their own go
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-21 (message 2ecd5ef4) — Hotfix B.1, PRAWDUCT planning only; Train A HELD
 issue: 1626
 governed_by:
@@ -10,7 +10,7 @@ governed_by:
   - .prawduct/artifacts/api-contract.md                # §13 Groups, §14 Shared Documents, §21 tc provenance headers
   - project rule: ENGINE-AGNOSTIC BY CONSTRUCTION
 scope: hotfix-b1-shared-docs-authz
-branch: fix/1626-shared-docs-authz
+branch: fix/1626-chunk02-master-binding   # each chunk ships from its own branch; update this when the next one starts
 partition: serial — every chunk edits the same route block in server.js and the same new access module
 ---
 
@@ -71,7 +71,16 @@ Established by reading the code at `a3155b7c7`. None of this is taken from the i
      cannot bind it yet (see decision D1 and Chunk 02).
    - Server-internal readers (engine-config injection, the shared-doc watchers, broadcast) call the
      store directly. They never go through HTTP and are unaffected.
-   - `tc` has no shared-docs verb.
+   - `tc docs` calls the bare `GET /api/shared-docs`. (The plan's first draft said `tc` had no
+     shared-docs verb. That was wrong, and Chunk 02 corrected it.) `bin/tc` already sends
+     `x-tangleclaw-project-id`, `x-tangleclaw-launch-id` and `x-tangleclaw-role` from the pane's
+     environment on every request, so `tc docs` binds with no change: a project's `tc docs` resolves
+     as that project, and the Master's resolves as `master` once Chunk 02 exports its launch id.
+     Because `bin/tc` sends that id on **every** request, every other reader of
+     `x-tangleclaw-launch-id` also sees it. The only other reader is `server.js#_launchIdentity`, used
+     by the `tc start` routes, and Chunk 02 makes it treat a Master request as a pane with no launch
+     sequence. Otherwise the Master's id, which the store has never recorded, reads as a launch that is
+     still recording.
 
 ## Threat model this fix answers, and what it does not claim
 
@@ -222,6 +231,33 @@ Each chunk ships as **its own PR**, and main stays releasable after each one. Th
   id is the live Master's? Did this id belong to a Master that has since been replaced or ended? When
   was it minted (for diagnostics)? Prefer the smallest store addition that answers exactly those
   three, and record the choice in data-model.md.
+
+  **Answered (2026-09-21), and the answer is that nothing is added to the store:**
+
+  | Question | Answered by |
+  |---|---|
+  | Which launch id is the live Master's? | The `TANGLECLAW_LAUNCH_ID` in the environment of the live `tangleclaw-master` tmux session, read with `tmux show-environment`. `tmux new-session -e` sets the session environment as well as the launch command's, so the id is stored alongside the pane it belongs to. |
+  | Was this id's Master replaced or ended? | Any presented id that is not that value is stale. No session means the Master ended. Either way the answer is `invalid` (`master-launch-stale`). If tmux does not answer, the result is `invalid` (`master-unverifiable`), so the check fails closed. A stale id and an id that never existed look the same, deliberately. |
+  | When was it minted? | When the session was created (`tmux.sessionCreatedAt`), because the id is minted in the same call that creates the session. The launch log line records the event. The id itself is never logged. |
+
+  **[DECISION D5: The Master's binding lives only in its tmux session environment. There is no table,
+  settings row or file for it.** | Why: the pane is the only holder whose value matters. A copy
+  anywhere else can drift from it: a Master killed outside TangleClaw would leave a recorded id that
+  is still honoured. The tmux value survives a server restart because the pane does, which settles
+  the restart assumption, and it takes no schema version, so it cannot collide with Train 21.9's.
+  Trade-off: one `tmux show-environment` for each request that claims the Master role, and it fails
+  closed. A same-user process can read the value, which is the same local-process class as reading a
+  project pane's environment. | vetoable → a single-row store record, at the cost of a schema
+  version and a liveness check against tmux anyway.]
+- **Resolution order.** The launch id is looked up in the store first. An id that resolves to a
+  project launch follows the project path whatever the role header says, so a project pane cannot
+  become `master` by adding `x-tangleclaw-role: master`. Only an id the store does not know, sent with
+  the role header, is checked against the live Master. Without the role header, an unknown id is
+  refused exactly as in Chunk 01.
+- **The Master running at deploy time has no launch id,** because it was launched before this chunk.
+  It resolves as `unbound` until it is relaunched. That changes nothing now, since no route enforces.
+  **Chunk 03 must not enforce until the live Master has been relaunched**, or the Master loses
+  shared-docs reads.
 - Add the `master` kind to `resolveAccess`, with tests: a live binding plus the role header gives
   `master`; a stale (replaced) Master id gives `invalid`; the role header with no id gives
   `unbound`; a project launch id with the role header gives `project`, never `master`.
@@ -233,6 +269,18 @@ Each chunk ships as **its own PR**, and main stays releasable after each one. Th
 ### Chunk 03: enforce on every read door
 
 **Type:** code · **Critic mode:** final
+
+- **Precondition (from Chunk 02):** the live Project Master has been relaunched since Chunk 02
+  deployed, so it carries a launch id. Check this before merging: `tmux show-environment -t
+  '=tangleclaw-master:' TANGLECLAW_LAUNCH_ID` prints a value.
+- `tc docs` (bare `GET /api/shared-docs`, identity headers sent by `bin/tc`) gets the scoped view
+  for a project and the full view for the bound Master. Add a test.
+- **Decide the cost of a Master claim before wiring the resolver into routes.** `resolveAccess` →
+  `master.liveMasterLaunchId` → `tmux.readSessionEnv` is a synchronous `execSync`, and it can take up
+  to the 5s tmux timeout. Once routes consult the resolver, every request that claims the Master role
+  with an id the store does not know runs one blocking subprocess on the event loop. Either accept that
+  and record it (the Master's read rate is low, and a timeout fails closed), or bound it with a short
+  read timeout and/or a brief cache keyed on the tmux session's creation time.
 
 - Wire `resolveAccess` into `GET /api/shared-docs`, `GET /api/shared-docs/:id`,
   `GET /api/shared-docs/:id/lock`, `GET /api/groups`, `GET /api/groups/:id` and
@@ -310,6 +358,6 @@ Each chunk ships as **its own PR**, and main stays releasable after each one. Th
 ## Status
 
 - [x] Chunk 01: binding primitive and caller migration
-- [ ] Chunk 02: the Master launch binding
+- [x] Chunk 02: the Master launch binding. Built 2026-09-21. Critic: 0 blocking; R-1 (the Master's `tc start` regressed) was fixed, and R-2 (synchronous tmux read) was carried into Chunk 03. Lock-in answered by D5: nothing is persisted.
 - [ ] Chunk 03: enforce on every read door
 - [ ] Chunk 04: enforce on writes and record the model

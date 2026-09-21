@@ -34,6 +34,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-21 — The Project Master gets a shared-docs launch binding, ahead of enforcement (#1626)
+
+<!-- prawduct: type=bugfix | scope=hotfix-b1-shared-docs-authz -->
+
+Hotfix B.1 Chunk 02. Each Master launch (`lib/master.js#ensureMasterSession`) now mints a `TANGLECLAW_LAUNCH_ID` into the pane. `resolveAccess` gains a `master` kind: `x-tangleclaw-role: master` together with the id held in the live `tangleclaw-master` tmux session environment (`tmux.readSessionEnv`, `master.liveMasterLaunchId`). A replaced or ended Master's id is `master-launch-stale`. If tmux does not answer, the claim is refused as `master-unverifiable`. The store is checked first, so a project's launch id is never promoted by adding the role header. D5: the binding is deliberately not persisted, because the tmux value cannot drift from the pane and needs no schema version. The Master's prompt and its `tc whoami` capability line now name both headers. The Critic's R-1 found that `bin/tc` forwards the new id on every request, which broke the Master's `tc start` (LAUNCH_NOT_BOUND). `server.js#_launchIdentity` now answers a Master request as a pane with no launch sequence. R-2 (a synchronous tmux read on the request path) is carried into Chunk 03. Chunk 03 must not enforce until the live Master has been relaunched.
+
 ## 2026-09-21 — Shared-docs callers carry a project binding, ahead of enforcement (#1626)
 
 <!-- prawduct: type=bugfix | scope=hotfix-b1-shared-docs-authz -->

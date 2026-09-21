@@ -177,6 +177,29 @@ describe('tc start (car 21.3)', () => {
     assert.equal(legacy.body.code, 'LAUNCH_ID_REQUIRED');
   });
 
+  it('the Project Master\'s launch id is not a sequence: it gets the no-sequence answer, not LAUNCH_NOT_BOUND (#1626)', async () => {
+    // The Master pane exports TANGLECLAW_LAUNCH_ID as its shared-docs binding,
+    // and `bin/tc` sends it on every request with the role header and no
+    // project claim. An id the store has never seen would otherwise read as a
+    // launch still recording.
+    const masterHeaders = {
+      'x-tangleclaw-cli': 'tc', 'x-tangleclaw-role': 'master',
+      'x-tangleclaw-launch-id': launchSequence.mintLaunchId()
+    };
+    const status = await request(server, 'GET', '/api/tc/start/status', masterHeaders);
+    assert.equal(status.status, 200);
+    assert.equal(status.body.sequence, 'none');
+    for (const route of ['/api/tc/start/next', '/api/tc/start/ready']) {
+      const res = await request(server, 'POST', route, masterHeaders, {});
+      assert.equal(res.status, 409, route);
+      assert.equal(res.body.code, 'LAUNCH_ID_REQUIRED', route);
+    }
+    // A project pane is not exempted by adding the role header.
+    const project = await request(server, 'POST', '/api/tc/start/next',
+      { ...paneHeaders(), 'x-tangleclaw-launch-id': launchSequence.mintLaunchId(), 'x-tangleclaw-role': 'master' }, {});
+    assert.equal(project.body.code, 'LAUNCH_NOT_BOUND');
+  });
+
   it('the refusal body carries the code and the retry hint a client branches on', async () => {
     const unbound = await request(server, 'POST', '/api/tc/start/next', {
       ...paneHeaders(), 'x-tangleclaw-launch-id': launchSequence.mintLaunchId()
