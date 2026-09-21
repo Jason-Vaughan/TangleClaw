@@ -1,6 +1,6 @@
 ---
 title: "#1626 — Shared documents answer only to a caller bound to a project in the group"
-status: IN PROGRESS — PM verified traceability 2026-09-21 (msg fbae32e1); Chunks 01–03 done, Chunk 04 needs its own go
+status: COMPLETE — Chunks 01–04 shipped; the Chunk 04 PR closes #1626 (archived with it)
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-21 (message 2ecd5ef4) — Hotfix B.1, PRAWDUCT planning only; Train A HELD
 issue: 1626
 governed_by:
@@ -10,7 +10,7 @@ governed_by:
   - .prawduct/artifacts/api-contract.md                # §13 Groups, §14 Shared Documents, §21 tc provenance headers
   - project rule: ENGINE-AGNOSTIC BY CONSTRUCTION
 scope: hotfix-b1-shared-docs-authz
-branch: fix/1626-chunk03-read-enforcement   # each chunk ships from its own branch; update this when the next one starts
+branch: fix/1626-chunk04-write-enforcement   # each chunk ships from its own branch; update this when the next one starts
 partition: serial — every chunk edits the same route block in server.js and the same new access module
 ---
 
@@ -334,7 +334,14 @@ Each chunk ships as **its own PR**, and main stays releasable after each one. Th
 - Docs, in the same commit: api-contract §13 and §14 (the access table and the new error codes),
   security-model §3 Authorization (the threat model above, the residuals, and D4), and a README or
   guide note if an operator-visible behaviour changed. CHANGELOG `### Security` entry citing #1626.
-- Test: a bound Master gets 403 `OPERATOR_ONLY` on every write route (read-only, per D1).
+- Test: a bound Master gets 403 on every write route (read-only, per D1).
+- **[DECISION D7: The Master's refusal on a member write (register, lock, unlock, notify, sync) is
+  403 `SHARED_DOCS_READ_ONLY`, not `OPERATOR_ONLY`; on the operator-only routes it is `OPERATOR_ONLY`
+  like every other non-operator.** | Why: those routes are not operator-only — a member project may
+  call them — so `OPERATOR_ONLY` would misstate the rule to the Master. | vetoable → one code for both.]
+- **[DECISION D8: An operator-only route answers every non-operator with `OPERATOR_ONLY`, including
+  an unbound or invalid caller, rather than a binding error.** | Why: no binding would make the call
+  succeed, so telling the caller to send headers would send it down a dead end. | vetoable]
 - `Fixes #1626` goes on this chunk's PR only.
 
 ## Governing-norm reconciliation
@@ -374,4 +381,4 @@ Each chunk ships as **its own PR**, and main stays releasable after each one. Th
 - [x] Chunk 01: binding primitive and caller migration
 - [x] Chunk 02: the Master launch binding. Built 2026-09-21. Critic: 0 blocking; R-1 (the Master's `tc start` regressed) was fixed, and R-2 (synchronous tmux read) was carried into Chunk 03. Lock-in answered by D5: nothing is persisted.
 - [x] Chunk 03: enforce on every read door. Built 2026-09-21 (PM named go, msg 4452df60). Critic: 0 blocking; R-1/R-2/R-4/R-5/R-6 fixed and verified (rev-20260921T194856Z-8002842e), R-3 filed as #1739, R-7/R-8 accepted. O-3/O-4 carried into Chunk 04. D6: the Master's tmux read is bounded at 1s.
-- [ ] Chunk 04: enforce on writes and record the model
+- [x] Chunk 04: enforce on writes and record the model. Built 2026-09-21 (PM named go, msg ae8e114b). Critic: 0 blocking (rev-20260921T210436Z-382a461c); O-1..O-4 fixed and verified (rev-20260921T211229Z-6fdcdbd1), O-5/O-6 accepted. D7 (Master gets SHARED_DOCS_READ_ONLY on member writes), D8 (operator-only answers every non-operator OPERATOR_ONLY).

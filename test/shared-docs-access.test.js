@@ -208,6 +208,25 @@ describe('canSeeGroup', () => {
   });
 });
 
+describe('canWriteGroup', () => {
+  it('lets the operator write any group and a project only its own', () => {
+    assert.equal(access.canWriteGroup({ kind: KINDS.OPERATOR, groupIds: [] }, 'g1'), true);
+    assert.equal(access.canWriteGroup({ kind: KINDS.PROJECT, groupIds: ['g1'] }, 'g1'), true);
+    assert.equal(access.canWriteGroup({ kind: KINDS.PROJECT, groupIds: ['g1'] }, 'g2'), false);
+  });
+
+  it('never lets the Master write, although it may see every group', () => {
+    const masterAccess = { kind: KINDS.MASTER, groupIds: [] };
+    assert.equal(access.canSeeGroup(masterAccess, 'g1'), true);
+    assert.equal(access.canWriteGroup(masterAccess, 'g1'), false);
+  });
+
+  it('lets no unbound or invalid caller write', () => {
+    assert.equal(access.canWriteGroup({ kind: KINDS.UNBOUND, groupIds: [] }, 'g1'), false);
+    assert.equal(access.canWriteGroup({ kind: KINDS.INVALID, groupIds: ['g1'] }, 'g1'), false);
+  });
+});
+
 describe('refusalFor', () => {
   it('refuses unbound and invalid callers with 403 and names the headers and env vars', () => {
     const unbound = access.refusalFor({ kind: KINDS.UNBOUND, reason: null });
@@ -240,6 +259,38 @@ describe('refusalFor', () => {
         assert.ok(r.message.includes(needle), `${reason} names ${needle}`);
       }
       assert.ok(!r.message.includes('$TANGLECLAW_PROJECT_ID'), 'the Master has no project id to send');
+    }
+  });
+
+  it('a write admits the operator and a bound project, and refuses the Master as read-only', () => {
+    const { WRITE } = access.NEEDS;
+    assert.equal(access.refusalFor({ kind: KINDS.OPERATOR, reason: null }, WRITE), null);
+    assert.equal(access.refusalFor({ kind: KINDS.PROJECT, reason: null }, WRITE), null);
+    const master = access.refusalFor({ kind: KINDS.MASTER, reason: null }, WRITE);
+    assert.equal(master.status, 403);
+    assert.equal(master.code, 'SHARED_DOCS_READ_ONLY');
+  });
+
+  it('a write refuses an unbound or invalid caller exactly as a read does', () => {
+    for (const a of [{ kind: KINDS.UNBOUND, reason: null }, { kind: KINDS.INVALID, reason: INVALID_REASONS.UNKNOWN_LAUNCH }]) {
+      assert.deepEqual(access.refusalFor(a, access.NEEDS.WRITE), access.refusalFor(a));
+    }
+  });
+
+  it('an operator-only route admits the operator alone, and says no binding would help', () => {
+    const { OPERATOR } = access.NEEDS;
+    assert.equal(access.refusalFor({ kind: KINDS.OPERATOR, reason: null }, OPERATOR), null);
+    const others = [
+      { kind: KINDS.PROJECT, reason: null },
+      { kind: KINDS.MASTER, reason: null },
+      { kind: KINDS.UNBOUND, reason: null },
+      { kind: KINDS.INVALID, reason: INVALID_REASONS.PROJECT_MISMATCH }
+    ];
+    for (const a of others) {
+      const r = access.refusalFor(a, OPERATOR);
+      assert.equal(r.status, 403, a.kind);
+      assert.equal(r.code, 'OPERATOR_ONLY', a.kind);
+      assert.match(r.message, /no project or Project Master binding/, a.kind);
     }
   });
 });
