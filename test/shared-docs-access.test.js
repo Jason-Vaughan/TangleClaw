@@ -150,6 +150,7 @@ describe('resolveAccess — Project Master binding', () => {
     const a = access.resolveAccess(req(MASTER), silent);
     assert.equal(a.kind, KINDS.INVALID);
     assert.equal(a.reason, INVALID_REASONS.MASTER_UNVERIFIABLE);
+    assert.equal(a.cause, 'read-timed-out', 'why tmux did not answer travels with the refusal');
   });
 
   it('the role header with no launch id is unbound', () => {

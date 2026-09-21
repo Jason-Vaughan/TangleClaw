@@ -20,6 +20,7 @@ setLevel('error');
 
 const store = require('../lib/store');
 const master = require('../lib/master');
+const sharedDocsAccess = require('../lib/shared-docs-access');
 const { createServer } = require('../server');
 const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
 
@@ -246,6 +247,44 @@ describe('#1626 shared-docs and groups reads answer only a bound caller', () => 
         assert.match(res.data.error, /session-not-active/, route);
       }
       store.projectGroups.removeMember(groupA.id, ended.id);
+    });
+
+    it('a Master claim is checked with a bounded tmux read, and a read that never answers is refused', async () => {
+      const calls = master.liveMasterLaunchId.mock.calls.length;
+      master.liveMasterLaunchId.mock.mockImplementationOnce(
+        () => ({ launchId: null, answered: false, cause: 'read-timed-out' }));
+      const res = await get(server, '/api/shared-docs', {
+        'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': MASTER_LAUNCH_ID
+      });
+      assert.equal(res.status, 403);
+      assert.equal(res.data.code, 'SHARED_DOCS_BINDING_INVALID');
+      assert.match(res.data.error, /master-unverifiable/);
+      const asked = master.liveMasterLaunchId.mock.calls.slice(calls);
+      assert.equal(asked.length, 1);
+      // The read runs synchronously on the request; without this bound a
+      // wedged tmux holds the server for tmux's full default timeout.
+      assert.deepEqual(asked[0].arguments, [{ timeout: sharedDocsAccess.MASTER_READ_TIMEOUT_MS }]);
+      assert.ok(sharedDocsAccess.MASTER_READ_TIMEOUT_MS <= 1000);
+    });
+
+    it('a refusal is logged with its reason, and never with the launch id', async () => {
+      const lines = [];
+      const logger = require('../lib/logger');
+      logger.setLevel('warn');
+      logger.setConsoleStream({ write: (line) => { lines.push(String(line)); return true; } });
+      try {
+        await get(server, '/api/shared-docs', {
+          'x-tangleclaw-project-id': String(projectB.id), 'x-tangleclaw-launch-id': bindingA.launchId
+        });
+      } finally {
+        logger.setConsoleStream(process.stderr);
+        logger.setLevel('error');
+      }
+      const refused = lines.filter((l) => l.includes('Shared-docs caller refused'));
+      assert.equal(refused.length, 1, lines.join(''));
+      assert.match(refused[0], /project-mismatch/);
+      assert.match(refused[0], /SHARED_DOCS_BINDING_INVALID/);
+      assert.ok(!refused[0].includes(bindingA.launchId), 'the binding itself is never logged');
     });
 
     it('a stale Master launch id is refused', async () => {

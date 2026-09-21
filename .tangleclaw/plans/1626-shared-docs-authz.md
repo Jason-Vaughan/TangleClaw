@@ -273,6 +273,20 @@ Each chunk ships as **its own PR**, and main stays releasable after each one. Th
 - **Precondition (from Chunk 02):** the live Project Master has been relaunched since Chunk 02
   deployed, so it carries a launch id. Check this before merging: `tmux show-environment -t
   '=tangleclaw-master:' TANGLECLAW_LAUNCH_ID` prints a value.
+- **Preconditions, checked 2026-09-21 before building:** the live Master carries a launch id
+  (`tmux show-environment -t '=tangleclaw-master:' TANGLECLAW_LAUNCH_ID` printed a value; the
+  session was created 19:11Z, after Chunk 02 deployed), and PV-AI-Guidebook's `instruction.json`
+  sends both binding headers and resolves the group id through `/api/groups` (its commit `c2ec2a1`).
+- **[DECISION D6: A Master claim's tmux read is bounded at 1s (`MASTER_READ_TIMEOUT_MS`), not
+  accepted at tmux's 5s default.** | Why: the read is a synchronous subprocess on the request path,
+  so a wedged tmux would stall the event loop for the full default on each Master read; a healthy
+  tmux answers in milliseconds, and a read that runs out is refused (`master-unverifiable`, with
+  tmux's cause logged), never passed. | vetoable → accept the 5s default, or add a short cache
+  keyed on the session's creation time.]
+- **Out of scope, filed as #1739:** `GET /api/projects` still maps every project to its groups and
+  absolute path for any caller, so group membership stays confirmable there. The disposition table
+  above covers only the groups and shared-docs routes; the projects route has many callers and
+  needs its own inventory.
 - `tc docs` (bare `GET /api/shared-docs`, identity headers sent by `bin/tc`) gets the scoped view
   for a project and the full view for the bound Master. Add a test.
 - **Decide the cost of a Master claim before wiring the resolver into routes.** `resolveAccess` →

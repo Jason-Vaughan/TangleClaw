@@ -52,6 +52,7 @@ describe('AUTH-4 — service-token gate over HTTP', () => {
   let tmpDir;
   let server;
   let boundProject;
+  let ownDocId;
   /** A fresh launch binding for the scratch project, as its pane would send it. */
   const boundCaller = () => bindProject(boundProject);
 
@@ -62,6 +63,11 @@ describe('AUTH-4 — service-token gate over HTTP', () => {
     const projectDir = path.join(tmpDir, 'bound-project');
     fs.mkdirSync(projectDir);
     boundProject = store.projects.create({ name: 'bound-project', path: projectDir, engine: 'claude' });
+    const own = store.projectGroups.create({ name: 'own-group' });
+    store.projectGroups.addMember(own.id, boundProject.id);
+    ownDocId = store.sharedDocs.create({ groupId: own.id, name: 'OWN', filePath: path.join(tmpDir, 'own.md') }).id;
+    const other = store.projectGroups.create({ name: 'other-group' });
+    store.sharedDocs.create({ groupId: other.id, name: 'OTHER', filePath: path.join(tmpDir, 'other.md') });
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   });
@@ -120,6 +126,8 @@ describe('AUTH-4 — service-token gate over HTTP', () => {
     const token = store.config.load().serviceToken;
     const withTok = await request(server, 'GET', '/api/shared-docs', null, { ...headers, ...bearer(token) });
     assert.equal(withTok.status, 200);
+    // The token admits the caller; the binding still scopes what it sees.
+    assert.deepEqual(withTok.data.docs.map((d) => d.id), [ownDocId]);
   });
 
   it('a valid token does not bind a project: shared-docs still needs the launch binding', async () => {

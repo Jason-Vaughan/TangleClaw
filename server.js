@@ -7447,6 +7447,19 @@ function sharedDocsCaller(req, res) {
   const access = sharedDocsAccess.resolveAccess(req);
   const refusal = sharedDocsAccess.refusalFor(access);
   if (refusal) {
+    // Enough to tell a caller that never bound from a stale or mismatched
+    // binding, or from a Master check tmux never answered. The launch id is
+    // never logged: it is the binding itself.
+    log.warn('Shared-docs caller refused', {
+      method: req.method,
+      path: reqUrl(req).pathname,
+      code: refusal.code,
+      kind: access.kind,
+      reason: access.reason,
+      cause: access.cause || null,
+      claimedProjectId: req.headers[sharedDocsAccess.PROJECT_HEADER] || null,
+      claimedRole: req.headers[sharedDocsAccess.ROLE_HEADER] || null
+    });
     errorResponse(res, refusal.status, refusal.message, refusal.code);
     return null;
   }

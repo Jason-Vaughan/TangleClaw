@@ -190,7 +190,10 @@ describe('tc verb roster (lib/tc-verbs)', () => {
     });
 
     it('docs / learnings: absence is an answer, presence lists the rows', () => {
-      assert.match(renderDocs({ docs: [] }), /No shared documents are registered/);
+      assert.match(renderDocs({ docs: [] }), /No shared documents in the groups this pane may read/);
+      // The answer is scoped to the caller's groups, so an empty one must not
+      // claim the install has no documents.
+      assert.doesNotMatch(renderDocs({ docs: [] }), /nothing hidden/);
       assert.match(
         renderDocs({ docs: [{ id: 1, name: 'NETWORK', groupId: 'g1', filePath: '/x/NETWORK.md' }] }),
         /NETWORK \(id 1, group g1\)/
