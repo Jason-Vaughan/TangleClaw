@@ -12,6 +12,10 @@ All notable changes to TangleClaw are documented in this file.
   - **No route consults the resolver yet**, so every existing caller behaves exactly as before. Later chunks give the Project Master a binding of its own and then enforce on the read and write routes.
 - **The Project Master now gets a launch binding of its own for shared documents. Nothing refuses a call yet** (#1626, Hotfix B.1 Chunk 02). The Master has no project and no session row, and its `x-tangleclaw-role: master` header is only a claim, so until now the server had no way to tell the Master's reads from anyone else's. Each Master launch now exports a fresh `TANGLECLAW_LAUNCH_ID` into its pane. The resolver accepts a Master claim only when it carries that exact id. The id is read back from the live Master's tmux session, so a relaunch replaces it, an ended Master takes it with it, and TangleClaw keeps no copy that could go stale. A project's launch id stays that project's, even when it is sent with the Master role header. The Master's prompt and its `tc whoami` capability line now tell it to send both headers, and `tc docs` already sends them. **Relaunch the Project Master once after upgrading.** A Master started before this change has no launch id, so it cannot bind. That costs nothing until enforcement lands.
 
+### Internal
+
+- **Feature Index: carry one graduated entry from the 2026-09-21 session wrap onto main.** The wrap step shortened a `FEATURES.md` entry on a detached checkout, and the commit never reached a branch. It lands here unchanged.
+
 ## [5.29.0] - 2026-09-20
 
 ### Added
