@@ -254,6 +254,9 @@ Each chunk ships as **its own PR**, and main stays releasable after each one. Th
   are **migrated to bind** and are not weakened. Each one is listed in the PR.
 - AUTH-4 composition test: with the token gate on, a bound project without the bearer token still
   gets 401, and with the token it gets the scoped view.
+- When enforcement lands, rewrite the guide and carrier sentence "they do not narrow what you are
+  shown — `groupId` does" to describe the scoped answer, and update the comment in the #1626 describe
+  block of `test/tracked-carrier-identity.test.js`, which already states scoping as fact.
 - Live check on a scratch server (per live-verification-traps): a real project pane's `curl` from
   the new guide gets its own groups, and a bare `curl` gets 403.
 
@@ -305,7 +308,7 @@ Each chunk ships as **its own PR**, and main stays releasable after each one. Th
 
 ## Status
 
-- [ ] Chunk 01: binding primitive and caller migration
+- [x] Chunk 01: binding primitive and caller migration
 - [ ] Chunk 02: the Master launch binding
 - [ ] Chunk 03: enforce on every read door
 - [ ] Chunk 04: enforce on writes and record the model
