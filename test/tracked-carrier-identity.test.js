@@ -446,13 +446,16 @@ describe('#1619 — the committed carrier may only point at routes that answer',
     assert.match(server, /['`"]\/api\/groups['"`]/, 'and the route we DO name is served');
   });
 
-  it('tells the reader to stop rather than issue the unfiltered request', () => {
+  it('tells the reader what the bare list holds, and to name the group it means', () => {
+    // The server scopes the bare list to the caller's own groups, so the
+    // carrier says so rather than warning the reader off an install-wide list.
     const section = engines._buildSharedDocsSection(
       [{ id: 'x', name: 'D', groupName: 'G', filePath: '/p/d.md', injectMode: 'reference' }],
       { committedCarrier: true }
     );
-    assert.match(section, /ALWAYS send `groupId`/);
-    assert.match(section, /say so and stop rather than issuing the bare request/);
+    assert.match(section, /Send `groupId` to name the group you mean/);
+    assert.match(section, /every group your project is in, never another project's/);
+    assert.doesNotMatch(section, /unfiltered one|every group's documents and their absolute paths/);
   });
 });
 
@@ -483,16 +486,19 @@ describe('#1626 — the carrier tells the reader to send its project binding', (
     assert.ok(guide.includes('x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID'));
   });
 
-  it('neither text claims the binding narrows the answer, and the guide keeps the groupId rule', () => {
-    // Until a route consults the binding, the bare list is still unfiltered;
-    // a reader told otherwise would issue it and receive every group's paths.
+  it('both texts say the binding is required and scopes the answer, and the guide keeps the groupId rule', () => {
+    // The read routes refuse an unbound caller and show a bound one only its
+    // own groups; a reader must be told both, or it will call them bare and
+    // read the 403 as an outage.
     const guide = fs.readFileSync(path.join(__dirname, '..', 'data', 'shared-docs-guide.md'), 'utf8');
     for (const text of [guide, section]) {
-      assert.doesNotMatch(text, /answer(s)? for your project/);
-      assert.match(text, /do not narrow what you are shown/);
+      assert.match(text, /read without them is refused with `403`/);
+      assert.match(text, /shown only the groups your project belongs to/);
+      assert.match(text, /answers `404`, as if it did not exist/);
+      assert.doesNotMatch(text, /do not narrow what you are shown/);
     }
-    assert.match(guide, /ALWAYS send `groupId`/);
-    assert.match(guide, /say so and stop rather than issuing the bare request/);
+    assert.match(guide, /\*\*Send `groupId`\*\* when listing documents/);
+    assert.match(guide, /never another project's/);
   });
 
   it('the header names match what the resolver reads', () => {

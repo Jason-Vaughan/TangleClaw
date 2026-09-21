@@ -10,7 +10,7 @@ governed_by:
   - .prawduct/artifacts/api-contract.md                # §13 Groups, §14 Shared Documents, §21 tc provenance headers
   - project rule: ENGINE-AGNOSTIC BY CONSTRUCTION
 scope: hotfix-b1-shared-docs-authz
-branch: fix/1626-chunk02-master-binding   # each chunk ships from its own branch; update this when the next one starts
+branch: fix/1626-chunk03-read-enforcement   # each chunk ships from its own branch; update this when the next one starts
 partition: serial — every chunk edits the same route block in server.js and the same new access module
 ---
 

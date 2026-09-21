@@ -267,6 +267,7 @@ const sessions = require('./lib/sessions');
 const launchSequence = require('./lib/launch-sequence');
 const ciStatus = require('./lib/ci-status');
 const master = require('./lib/master');
+const sharedDocsAccess = require('./lib/shared-docs-access');
 const actions = require('./lib/actions');
 const porthub = require('./lib/porthub');
 const uploads = require('./lib/uploads');
@@ -7431,9 +7432,32 @@ route('GET', '/api/tmux/mouse/:session', (_req, res, params) => {
 
 // ── Groups API ──
 
+/**
+ * Resolve who is asking a shared-docs or groups route, and send the refusal
+ * when the caller has no usable binding.
+ *
+ * A caller that is refused never learns whether the group or document it named
+ * exists: the refusal is sent before any lookup.
+ * @param {http.IncomingMessage} req - The request
+ * @param {http.ServerResponse} res - The response, written only on refusal
+ * @returns {{kind: string, projectId: (number|null), groupIds: string[], reason: (string|null)}|null}
+ *   The resolved caller, or null when a refusal has been sent.
+ */
+function sharedDocsCaller(req, res) {
+  const access = sharedDocsAccess.resolveAccess(req);
+  const refusal = sharedDocsAccess.refusalFor(access);
+  if (refusal) {
+    errorResponse(res, refusal.status, refusal.message, refusal.code);
+    return null;
+  }
+  return access;
+}
+
 // GET /api/groups
-route('GET', '/api/groups', (_req, res) => {
-  const groups = store.projectGroups.list();
+route('GET', '/api/groups', (req, res) => {
+  const access = sharedDocsCaller(req, res);
+  if (!access) return;
+  const groups = store.projectGroups.list().filter(g => sharedDocsAccess.canSeeGroup(access, g.id));
   // Enrich with member count and doc count
   const enriched = groups.map(g => {
     const members = store.projectGroups.listMembers(g.id);
@@ -7460,9 +7484,13 @@ route('POST', '/api/groups', (_req, res, _params, body) => {
 });
 
 // GET /api/groups/:id
-route('GET', '/api/groups/:id', (_req, res, params) => {
+route('GET', '/api/groups/:id', (req, res, params) => {
+  const access = sharedDocsCaller(req, res);
+  if (!access) return;
   const group = store.projectGroups.get(params.id);
-  if (!group) {
+  // A group the caller is not in answers exactly like one that does not exist,
+  // so the response is not an oracle for another project's group ids.
+  if (!group || !sharedDocsAccess.canSeeGroup(access, group.id)) {
     return errorResponse(res, 404, `Group "${params.id}" not found`, 'NOT_FOUND');
   }
   const memberIds = store.projectGroups.listMembers(group.id);
@@ -7522,9 +7550,11 @@ route('POST', '/api/groups/:id/sync', (_req, res, params) => {
 // ── Group Members API ──
 
 // GET /api/groups/:id/members
-route('GET', '/api/groups/:id/members', (_req, res, params) => {
+route('GET', '/api/groups/:id/members', (req, res, params) => {
+  const access = sharedDocsCaller(req, res);
+  if (!access) return;
   const group = store.projectGroups.get(params.id);
-  if (!group) {
+  if (!group || !sharedDocsAccess.canSeeGroup(access, group.id)) {
     return errorResponse(res, 404, `Group "${params.id}" not found`, 'NOT_FOUND');
   }
   const memberIds = store.projectGroups.listMembers(params.id);
@@ -7567,11 +7597,22 @@ route('DELETE', '/api/groups/:id/members/:projectId', (_req, res, params) => {
 
 // GET /api/shared-docs
 route('GET', '/api/shared-docs', (req, res) => {
+  const access = sharedDocsCaller(req, res);
+  if (!access) return;
   const urlObj = reqUrl(req);
   const query = parseQuery(urlObj.search);
   const options = {};
-  if (query.groupId) options.groupId = query.groupId;
-  const docs = store.sharedDocs.list(options);
+  if (query.groupId) {
+    // Naming a group the caller is not in answers like naming one that does
+    // not exist, rather than confirming the id with an empty list.
+    if (!sharedDocsAccess.canSeeGroup(access, query.groupId)) {
+      return errorResponse(res, 404, `Group "${query.groupId}" not found`, 'NOT_FOUND');
+    }
+    options.groupId = query.groupId;
+  }
+  // With no groupId a project gets its own groups' documents, never the
+  // install-wide list.
+  const docs = store.sharedDocs.list(options).filter(d => sharedDocsAccess.canSeeGroup(access, d.groupId));
   jsonResponse(res, 200, { docs });
 });
 
@@ -7599,9 +7640,11 @@ route('POST', '/api/shared-docs', (_req, res, _params, body) => {
 });
 
 // GET /api/shared-docs/:id
-route('GET', '/api/shared-docs/:id', (_req, res, params) => {
+route('GET', '/api/shared-docs/:id', (req, res, params) => {
+  const access = sharedDocsCaller(req, res);
+  if (!access) return;
   const doc = store.sharedDocs.get(params.id);
-  if (!doc) {
+  if (!doc || !sharedDocsAccess.canSeeGroup(access, doc.groupId)) {
     return errorResponse(res, 404, `Shared document "${params.id}" not found`, 'NOT_FOUND');
   }
   // Include lock status
@@ -7688,9 +7731,11 @@ route('POST', '/api/shared-docs/:id/lock', (_req, res, params, body) => {
 });
 
 // GET /api/shared-docs/:id/lock
-route('GET', '/api/shared-docs/:id/lock', (_req, res, params) => {
+route('GET', '/api/shared-docs/:id/lock', (req, res, params) => {
+  const access = sharedDocsCaller(req, res);
+  if (!access) return;
   const doc = store.sharedDocs.get(params.id);
-  if (!doc) {
+  if (!doc || !sharedDocsAccess.canSeeGroup(access, doc.groupId)) {
     return errorResponse(res, 404, `Shared document "${params.id}" not found`, 'NOT_FOUND');
   }
   const lock = store.documentLocks.check(params.id);

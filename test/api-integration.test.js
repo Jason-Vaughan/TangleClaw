@@ -11,6 +11,7 @@ const os = require('node:os');
 
 const store = require('../lib/store');
 const { createServer } = require('../server');
+const { operatorHeaders } = require('./_shared-docs-callers');
 
 let server;
 let baseUrl;
@@ -20,6 +21,7 @@ let testDir;
  * Make an HTTP request to the test server.
  * @param {string} urlPath
  * @param {object} [opts]
+ * @param {Record<string, string>} [opts.headers] - Extra request headers
  * @returns {Promise<{status: number, data: object}>}
  */
 function request(urlPath, opts = {}) {
@@ -30,7 +32,7 @@ function request(urlPath, opts = {}) {
       port: url.port,
       path: url.pathname + url.search,
       method: opts.method || 'GET',
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) }
     };
 
     const bodyStr = opts.body ? JSON.stringify(opts.body) : null;
@@ -448,14 +450,22 @@ describe('Landing Page API Integration', () => {
     let testDocId;
     let testProjectId;
 
+    /**
+     * The dashboard's request: these routes refuse a caller with no binding.
+     * @param {string} urlPath
+     * @param {object} [opts]
+     * @returns {Promise<{status: number, data: object}>}
+     */
+    const asOperator = (urlPath, opts = {}) => request(urlPath, { ...opts, headers: operatorHeaders(server) });
+
     it('GET /api/groups should return groups array', async () => {
-      const res = await request('/api/groups');
+      const res = await asOperator('/api/groups');
       assert.equal(res.status, 200);
       assert.ok(Array.isArray(res.data.groups));
     });
 
     it('POST /api/groups should create a group with expected shape', async () => {
-      const res = await request('/api/groups', {
+      const res = await asOperator('/api/groups', {
         method: 'POST',
         body: { name: 'integ-test-group', description: 'Integration test group' }
       });
@@ -468,7 +478,7 @@ describe('Landing Page API Integration', () => {
     });
 
     it('GET /api/groups/:id should return group with members and docs arrays', async () => {
-      const res = await request(`/api/groups/${testGroupId}`);
+      const res = await asOperator(`/api/groups/${testGroupId}`);
       assert.equal(res.status, 200);
       assert.equal(res.data.id, testGroupId);
       assert.equal(res.data.name, 'integ-test-group');
@@ -484,7 +494,7 @@ describe('Landing Page API Integration', () => {
       });
       testProjectId = projRes.data.id;
 
-      const res = await request(`/api/groups/${testGroupId}/members`, {
+      const res = await asOperator(`/api/groups/${testGroupId}/members`, {
         method: 'POST',
         body: { projectId: testProjectId }
       });
@@ -493,7 +503,7 @@ describe('Landing Page API Integration', () => {
     });
 
     it('GET /api/groups/:id/members should return members with project names', async () => {
-      const res = await request(`/api/groups/${testGroupId}/members`);
+      const res = await asOperator(`/api/groups/${testGroupId}/members`);
       assert.equal(res.status, 200);
       assert.ok(Array.isArray(res.data.members));
       assert.ok(res.data.members.length >= 1);
@@ -503,7 +513,7 @@ describe('Landing Page API Integration', () => {
     });
 
     it('POST /api/shared-docs should create a doc with expected shape', async () => {
-      const res = await request('/api/shared-docs', {
+      const res = await asOperator('/api/shared-docs', {
         method: 'POST',
         body: {
           groupId: testGroupId,
@@ -524,7 +534,7 @@ describe('Landing Page API Integration', () => {
     });
 
     it('GET /api/shared-docs should list docs, filterable by groupId', async () => {
-      const res = await request(`/api/shared-docs?groupId=${testGroupId}`);
+      const res = await asOperator(`/api/shared-docs?groupId=${testGroupId}`);
       assert.equal(res.status, 200);
       assert.ok(Array.isArray(res.data.docs));
       assert.ok(res.data.docs.length >= 1);
@@ -537,7 +547,7 @@ describe('Landing Page API Integration', () => {
     });
 
     it('GET /api/shared-docs/:id should include lock status', async () => {
-      const res = await request(`/api/shared-docs/${testDocId}`);
+      const res = await asOperator(`/api/shared-docs/${testDocId}`);
       assert.equal(res.status, 200);
       assert.equal(res.data.id, testDocId);
       // lock should be null when no lock acquired
@@ -555,12 +565,12 @@ describe('Landing Page API Integration', () => {
     });
 
     it('DELETE /api/groups/:id should cascade delete', async () => {
-      const res = await request(`/api/groups/${testGroupId}`, { method: 'DELETE' });
+      const res = await asOperator(`/api/groups/${testGroupId}`, { method: 'DELETE' });
       assert.equal(res.status, 200);
       assert.ok(res.data.ok);
 
       // Docs should be gone
-      const docRes = await request(`/api/shared-docs/${testDocId}`);
+      const docRes = await asOperator(`/api/shared-docs/${testDocId}`);
       assert.equal(docRes.status, 404);
 
       // Cleanup project

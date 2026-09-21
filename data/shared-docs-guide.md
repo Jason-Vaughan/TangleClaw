@@ -19,9 +19,9 @@ x-tangleclaw-project-id: $TANGLECLAW_PROJECT_ID
 x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID
 ```
 
-TangleClaw exports both variables into every pane it launches, whatever the engine. They identify which project is asking: the launch id names your live session, and the project claim must agree with it. They do not narrow what you are shown — `groupId` does. With `curl`, that is `-H "x-tangleclaw-project-id: $TANGLECLAW_PROJECT_ID" -H "x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID"`. A pane with no `TANGLECLAW_LAUNCH_ID` predates launch binding: relaunch the session.
+TangleClaw exports both variables into every pane it launches, whatever the engine. They identify which project is asking: the launch id names your live session, and the project claim must agree with it. They are required: a shared-docs or groups read without them is refused with `403`, and with them you are shown only the groups your project belongs to — another project's group or document answers `404`, as if it did not exist. With `curl`, that is `-H "x-tangleclaw-project-id: $TANGLECLAW_PROJECT_ID" -H "x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID"`. A pane with no `TANGLECLAW_LAUNCH_ID` predates launch binding: relaunch the session.
 
-**ALWAYS send `groupId`** when listing documents. Omitting it is not a narrower query, it is an unfiltered one: it answers with every group's documents and their absolute paths across this whole install, which is other projects' business, not yours. If you cannot determine your group, say so and stop rather than issuing the bare request.
+**Send `groupId`** when listing documents, to name the group you mean. Without it the list holds the documents of every group your project is in, never another project's. To find your group's id, `GET /api/groups` lists the groups your project is in.
 
 ### API Operations
 

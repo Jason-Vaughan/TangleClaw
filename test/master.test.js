@@ -2767,4 +2767,12 @@ describe('liveMasterLaunchId (#1626)', () => {
     const absent = { readSessionEnv: () => ({ value: null, answered: true, cause: null }) };
     assert.deepEqual(master.liveMasterLaunchId({ tmuxLib: absent }), { launchId: null, answered: true, cause: null });
   });
+
+  it('passes a caller\'s read timeout to tmux, and none when the caller sets none', () => {
+    const opts = [];
+    const t = { readSessionEnv: (_name, _key, o) => { opts.push(o); return { value: 'id-1', answered: true, cause: null }; } };
+    master.liveMasterLaunchId({ tmuxLib: t, timeout: 250 });
+    master.liveMasterLaunchId({ tmuxLib: t });
+    assert.deepEqual(opts, [{ timeout: 250 }, {}]);
+  });
 });
