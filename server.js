@@ -4559,7 +4559,7 @@ route('GET', '/api/tc/whoami', (req, res) => {
       capabilities: [
         {
           id: 'read-api', enabled: true,
-          detail: `the fleet-wide Read API is yours: ${api}/api/awareness (you appear in its master entry), ${api}/api/tc/sessions, ${api}/api/ports, ${api}/api/shared-docs`
+          detail: `the fleet-wide Read API is yours: ${api}/api/awareness (you appear in its master entry), ${api}/api/tc/sessions, ${api}/api/ports, ${api}/api/shared-docs (send x-tangleclaw-role: master and x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID)`
         },
         {
           id: 'switchboard', enabled: masterMedusaEnabled && !!workspaceId,

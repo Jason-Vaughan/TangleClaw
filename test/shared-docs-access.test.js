@@ -31,7 +31,8 @@ function fakeDeps() {
   return {
     getLaunch: (id) => launches[id] || null,
     getSession: (id) => sessions[id] || null,
-    groupsForProject: (pid) => groups[pid] || []
+    groupsForProject: (pid) => groups[pid] || [],
+    liveMasterLaunch: () => ({ launchId: 'master-live', answered: true, cause: null })
   };
 }
 
@@ -128,6 +129,67 @@ describe('resolveAccess — project binding', () => {
   });
 });
 
+const MASTER = { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': 'master-live' };
+
+describe('resolveAccess — Project Master binding', () => {
+  it('the live Master\'s launch id with the role header is the Master', () => {
+    const a = access.resolveAccess(req(MASTER), fakeDeps());
+    assert.deepEqual(a, { kind: KINDS.MASTER, projectId: null, groupIds: [], reason: null });
+  });
+
+  it('a replaced or ended Master\'s id is invalid, never the Master', () => {
+    const a = access.resolveAccess(req({ ...MASTER, 'x-tangleclaw-launch-id': 'master-before-relaunch' }), fakeDeps());
+    assert.equal(a.kind, KINDS.INVALID);
+    assert.equal(a.reason, INVALID_REASONS.MASTER_LAUNCH_STALE);
+    const ended = { ...fakeDeps(), liveMasterLaunch: () => ({ launchId: null, answered: true, cause: null }) };
+    assert.equal(access.resolveAccess(req(MASTER), ended).reason, INVALID_REASONS.MASTER_LAUNCH_STALE);
+  });
+
+  it('refuses when tmux cannot say which id is the live Master\'s', () => {
+    const silent = { ...fakeDeps(), liveMasterLaunch: () => ({ launchId: null, answered: false, cause: 'read-timed-out' }) };
+    const a = access.resolveAccess(req(MASTER), silent);
+    assert.equal(a.kind, KINDS.INVALID);
+    assert.equal(a.reason, INVALID_REASONS.MASTER_UNVERIFIABLE);
+  });
+
+  it('the role header with no launch id is unbound', () => {
+    assert.equal(access.resolveAccess(req({ 'x-tangleclaw-role': 'master' }), fakeDeps()).kind, KINDS.UNBOUND);
+  });
+
+  it('a project launch id with the role header is that project, never the Master', () => {
+    const a = access.resolveAccess(req({ ...BOUND_7, 'x-tangleclaw-role': 'master' }), fakeDeps());
+    assert.equal(a.kind, KINDS.PROJECT);
+    assert.equal(a.projectId, 7);
+    // Even without its project claim, it is refused as a project, not promoted.
+    const noClaim = access.resolveAccess(req({ 'x-tangleclaw-launch-id': 'live-7', 'x-tangleclaw-role': 'master' }), fakeDeps());
+    assert.equal(noClaim.kind, KINDS.INVALID);
+    assert.equal(noClaim.reason, INVALID_REASONS.PROJECT_CLAIM_MISSING);
+  });
+
+  it('the live Master\'s id without the role header is not the Master', () => {
+    const a = access.resolveAccess(req({ 'x-tangleclaw-launch-id': 'master-live', 'x-tangleclaw-project-id': '7' }), fakeDeps());
+    assert.equal(a.kind, KINDS.INVALID);
+    assert.equal(a.reason, INVALID_REASONS.UNKNOWN_LAUNCH);
+  });
+
+  it('asks tmux only for a request that claims the Master role', () => {
+    let asked = 0;
+    const counting = { ...fakeDeps(), liveMasterLaunch: () => { asked += 1; return { launchId: 'master-live', answered: true, cause: null }; } };
+    access.resolveAccess(req(BOUND_7), counting);
+    access.resolveAccess(req({ 'x-tangleclaw-launch-id': 'forged', 'x-tangleclaw-project-id': '7' }), counting);
+    access.resolveAccess(req({ ...BOUND_7, 'x-tangleclaw-role': 'master' }), counting);
+    assert.equal(asked, 0);
+    access.resolveAccess(req(MASTER), counting);
+    assert.equal(asked, 1);
+  });
+
+  it('a role other than master changes nothing', () => {
+    const a = access.resolveAccess(req({ ...MASTER, 'x-tangleclaw-role': 'Master' }), fakeDeps());
+    assert.equal(a.kind, KINDS.INVALID);
+    assert.equal(a.reason, INVALID_REASONS.PROJECT_CLAIM_MISSING);
+  });
+});
+
 describe('canSeeGroup', () => {
   it('the operator sees every group; a project only its own; nobody else any', () => {
     assert.equal(access.canSeeGroup({ kind: KINDS.OPERATOR, groupIds: [] }, 'g-z'), true);
@@ -136,6 +198,12 @@ describe('canSeeGroup', () => {
     assert.equal(access.canSeeGroup(bound, 'g-c'), false);
     assert.equal(access.canSeeGroup({ kind: KINDS.UNBOUND, groupIds: ['g-a'] }, 'g-a'), false);
     assert.equal(access.canSeeGroup({ kind: KINDS.INVALID, groupIds: ['g-a'] }, 'g-a'), false);
+  });
+
+  it('the bound Master sees every group', () => {
+    const m = access.resolveAccess(req(MASTER), fakeDeps());
+    assert.equal(access.canSeeGroup(m, 'g-a'), true);
+    assert.equal(access.canSeeGroup(m, 'g-z'), true);
   });
 });
 
@@ -158,6 +226,20 @@ describe('refusalFor', () => {
   it('refuses nobody who is bound', () => {
     assert.equal(access.refusalFor({ kind: KINDS.OPERATOR, reason: null }), null);
     assert.equal(access.refusalFor({ kind: KINDS.PROJECT, reason: null }), null);
+    assert.equal(access.refusalFor({ kind: KINDS.MASTER, reason: null }), null);
+  });
+
+  it('tells a refused Master how the Master binds, not how a project does', () => {
+    for (const reason of [INVALID_REASONS.MASTER_LAUNCH_STALE, INVALID_REASONS.MASTER_UNVERIFIABLE]) {
+      const r = access.refusalFor({ kind: KINDS.INVALID, reason });
+      assert.equal(r.status, 403);
+      assert.equal(r.code, 'SHARED_DOCS_BINDING_INVALID');
+      assert.ok(r.message.includes(reason));
+      for (const needle of ['x-tangleclaw-role: master', 'x-tangleclaw-launch-id', '$TANGLECLAW_LAUNCH_ID', 'relaunch the Project Master']) {
+        assert.ok(r.message.includes(needle), `${reason} names ${needle}`);
+      }
+      assert.ok(!r.message.includes('$TANGLECLAW_PROJECT_ID'), 'the Master has no project id to send');
+    }
   });
 });
 
@@ -213,6 +295,23 @@ describe('resolveAccess against a real store', () => {
       'x-tangleclaw-launch-id': bound.launchId, 'x-tangleclaw-project-id': String(other.id)
     }));
     assert.equal(a.reason, INVALID_REASONS.PROJECT_MISMATCH);
+  });
+
+  it('by default asks lib/master for the live Master\'s id, after the store says the id is no project\'s', () => {
+    // Patched on the module object the lazy require returns, so this never
+    // reads the Master session actually running on the test host.
+    const master = require('../lib/master');
+    const real = master.liveMasterLaunchId;
+    master.liveMasterLaunchId = () => ({ launchId: 'master-live', answered: true, cause: null });
+    try {
+      assert.equal(access.resolveAccess(req({ 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': 'master-live' })).kind, KINDS.MASTER);
+      const promoted = access.resolveAccess(req({
+        'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': bound.launchId, 'x-tangleclaw-project-id': String(project.id)
+      }));
+      assert.equal(promoted.kind, KINDS.PROJECT, 'a real project launch id stays that project\'s');
+    } finally {
+      master.liveMasterLaunchId = real;
+    }
   });
 
   it('stops honouring the launch once its session is wrapped', () => {
