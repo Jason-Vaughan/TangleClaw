@@ -1,6 +1,6 @@
 ---
 title: "#1626 — Shared documents answer only to a caller bound to a project in the group"
-status: PLANNED — awaiting PM traceability verification; no implementation authorized yet
+status: IN PROGRESS — PM verified traceability 2026-09-21 (msg fbae32e1); Chunk 01 authorized, later chunks need their own go
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-21 (message 2ecd5ef4) — Hotfix B.1, PRAWDUCT planning only; Train A HELD
 issue: 1626
 governed_by:
@@ -68,7 +68,7 @@ Established by reading the code at `a3155b7c7`. None of this is taken from the i
    - The Project Master: `lib/master.js` lists `GET /api/shared-docs?groupId=<id>` in its Read API
      reference, and the capability line gives it `/api/shared-docs` as fleet-wide read. The Master
      pane has `TANGLECLAW_ROLE=master` only: **no launch id and no session row**, so the server
-     cannot bind it (see decision D1).
+     cannot bind it yet (see decision D1 and Chunk 02).
    - Server-internal readers (engine-config injection, the shared-doc watchers, broadcast) call the
      store directly. They never go through HTTP and are unaffected.
    - `tc` has no shared-docs verb.
@@ -102,10 +102,11 @@ identity on its own:
 | `operator` | the gate is live and `req.tcSession` is an authenticated session, **or** the gate stands down (`open`/`fallback`) and the request is browser-shaped | everything, unchanged |
 | `project` | the request carries `x-tangleclaw-launch-id`, it resolves to a session row, that row's project equals `x-tangleclaw-project-id` (**both required**), and the session is not ended | only the groups that project is a member of |
 | `unbound` | the request carries no launch id | nothing: **403 `SHARED_DOCS_BINDING_REQUIRED`**, and the message names the two headers and their env vars |
+| `master` | (added in Chunk 02) the launch id equals the server-recorded binding of the live Master session **and** `x-tangleclaw-role: master` is sent | every group, **read only** |
 | `invalid` | the launch id is unknown, the project claim is missing or doesn't match, or the session has ended | nothing: **403 `SHARED_DOCS_BINDING_INVALID`**, with the reason (unknown / mismatch / ended) |
 
-- The rule is **deny by default**: anything that is not `operator` and not a valid `project` is
-  refused. A non-loopback, non-browser caller (for example, curl from another tailnet host while the
+- The rule is **deny by default**: anything that is not `operator`, a valid `project` or (from Chunk 02) a
+  valid `master` is refused. A non-loopback, non-browser caller (for example, curl from another tailnet host while the
   gate is open) is treated as unbound. It is not treated as the operator.
 - **No existence oracle.** A `project` caller asking about a group it doesn't belong to gets the
   same **404 `NOT_FOUND`** as a group id that doesn't exist. The same applies to a document id in
@@ -128,19 +129,17 @@ identity on its own:
 | `POST /api/shared-docs` (register) | unchanged | only into one of its groups, else 404 | documented agent operation |
 | `POST/GET/DELETE /api/shared-docs/:id/lock`, `POST …/notify` | unchanged | member-group docs only | documented agent operations |
 | `POST /api/groups/:id/sync` | unchanged | member groups only | documented agent operation |
-| `PUT`/`DELETE /api/shared-docs/:id`, group create/update/delete, membership add/remove | unchanged | **403 `OPERATOR_ONLY`** | not in any agent guide. This is the cross-group context-injection write from finding 2. Migration is explicit (see Chunk 03) |
+| `PUT`/`DELETE /api/shared-docs/:id`, group create/update/delete, membership add/remove | unchanged | **403 `OPERATOR_ONLY`** | not in any agent guide. This is the cross-group context-injection write from finding 2. Migration is explicit (see Chunk 04) |
 
 ## Decisions (each one vetoable)
 
-- **[DECISION D1: The Project Master loses unbound shared-docs access in this hotfix. Its Read API
-  line changes to state that shared-docs requires a project binding the Master does not have, and a
-  follow-up issue is filed to give the Master a server-bound identity.** | Why: the Master has no
-  launch id and no session row, and `TANGLECLAW_ROLE=master` is a claim any process can send. If
-  that claim unlocked a fleet-wide view, the fix would be defeated by adding one header. Minting a
-  Master launch binding is new identity plumbing and does not belong in a hotfix. It is an explicit
-  migration, not a silent drop, and the gate allows that. | PM/operator can veto: the alternative is
-  to add a Master launch binding as Chunk 01b before any enforcement, which costs about one more
-  chunk.]
+- **D1 (original proposal VETOED by the PM on 2026-09-21; the alternative is adopted): the Project
+  Master keeps its fleet-wide shared-docs read access through a server-bound Master launch
+  binding, which is built in Chunk 02 before any enforcement.** Why the veto: the gate says
+  "preserve supported callers", and the Master is one. Why it has to be a binding and not the role
+  header: `TANGLECLAW_ROLE=master` is a claim any process can send, so honouring it would defeat the
+  fix with a single header. The Master gets read access only; D3's operator-only writes apply to it
+  too.
 - **[DECISION D2: Non-member group and document ids return 404, not 403.** | Why: a 403 would
   confirm that the id exists in someone else's group. | vetoable]
 - **[DECISION D3: Editing document metadata, deleting documents, and managing groups and
@@ -163,6 +162,9 @@ identity on its own:
 - [ASSUMPTION: Panes launched before Train 21 (no `TANGLECLAW_LAUNCH_ID`) fail with a message
   saying "relaunch the session". | LOW impact: every live pane since 2026-09-18 carries it. |
   can override]
+- [ASSUMPTION: The Master's binding survives a server restart, because the Master pane does. | MED
+  impact: if it didn't, the Master would lose access after every restart. | Chunk 02 persists it and
+  answers the lock-in questions listed there first.]
 - [ASSUMPTION: No caller outside this repo (Medusa, ClawBridge, Monad, the website) reads
   `/api/shared-docs*` or `/api/groups*`. | HIGH impact if wrong, because it would break silently. |
   Chunk 01 verifies this with a grep across `~/Documents/Projects/*` and the access log before any
@@ -170,10 +172,11 @@ identity on its own:
 
 ## Requirements Confidence: **Medium**
 
-The problem, success criteria and scope are each clear in a sentence. The confidence is Medium, not
-High, for three reasons: D1 (the Master) is a real capability change that needs a yes; the
-outside-caller assumption hasn't been verified yet; and D3 narrows agent writes. **What would raise
-it:** a PM/operator ruling on D1 and D3, plus Chunk 01's outside-caller grep coming back empty.
+The problem, success criteria and scope are each clear in a sentence. The PM ruled on D1–D4 and the
+scope on 2026-09-21. Confidence stays Medium, not High, because two things are unverified: the
+outside-caller assumption, and the persistence design for the Master binding. **What would raise
+it:** Chunk 01's outside-caller grep coming back empty, and Chunk 02's lock-in questions being
+answered.
 
 ## Chunks
 
@@ -190,16 +193,36 @@ Each chunk ships as **its own PR**, and main stays releasable after each one. Th
   gate with a browser-shaped request), bound project, unbound (no headers; project header only),
   and invalid (unknown launch id, mismatched project, ended session, non-integer project id). Plus
   one test showing that a non-loopback, non-browser caller is not `operator`.
-- **Migration, sent ahead of enforcement.** `data/shared-docs-guide.md`, the committed-carrier
-  text in `lib/engines.js`, and the `lib/master.js` Read API line each tell callers to send
+- **Migration, sent ahead of enforcement.** `data/shared-docs-guide.md` and the committed-carrier
+  text in `lib/engines.js` tell project callers to send
   `x-tangleclaw-project-id: $TANGLECLAW_PROJECT_ID` and
-  `x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID` (the Master line changes per D1). Extend the
-  #1619 carrier-route pin test so the carrier's example requests carry both headers.
+  `x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID`. Extend the #1619 carrier-route pin test so the
+  carrier's example requests carry both headers. The Master's Read API line is migrated in Chunk 02,
+  together with the binding it will name.
 - Verify the outside-caller assumption: grep across sibling repos plus a server-log sample of
   `/api/shared-docs` and `/api/groups` user agents. Record the result in the plan.
 - Done when the suite is green, no route behaviour has changed, and the Critic is clean.
 
-### Chunk 02: enforce on every read door
+### Chunk 02: the Master launch binding (still no enforcement)
+
+**Type:** code · **Critic mode:** final
+
+- At Master launch (`lib/master.js`), mint a launch id the same way `lib/sessions.js` does, export
+  it into the Master pane as `TANGLECLAW_LAUNCH_ID`, and record it server-side. Replace it on each
+  relaunch, and treat it as ended when the Master session ends.
+- **Persisted format, so lock-in. Answer these questions before designing any fields:** Which launch
+  id is the live Master's? Did this id belong to a Master that has since been replaced or ended? When
+  was it minted (for diagnostics)? Prefer the smallest store addition that answers exactly those
+  three, and record the choice in data-model.md.
+- Add the `master` kind to `resolveAccess`, with tests: a live binding plus the role header gives
+  `master`; a stale (replaced) Master id gives `invalid`; the role header with no id gives
+  `unbound`; a project launch id with the role header gives `project`, never `master`.
+- Migrate the `lib/master.js` Read API line and capability line to send the launch id and role
+  headers. Update test pins on the Master prime.
+- Done when the Master can be resolved, no route behaviour has changed yet, and the Critic is
+  clean.
+
+### Chunk 03: enforce on every read door
 
 **Type:** code · **Critic mode:** final
 
@@ -215,6 +238,8 @@ Each chunk ships as **its own PR**, and main stays releasable after each one. Th
   id, B's doc id and B's members, and neither the bare list nor `GET /api/groups` contains any of
   B's `filePath` or member `path` values). Assert on the absence of B's absolute paths anywhere in
   the response body, not only on the status code.
+- Master regression: a bound Master still sees every group's docs, and a Master sending only the
+  role header gets 403.
 - Operator regression: the existing dashboard-path tests (`test/api-groups.test.js`,
   `test/api-shareddocs.test.js`, `test/identity-matrix.test.js`) still pass unchanged, which proves
   the operator path is preserved. Existing tests that call these routes as unbound machine clients
@@ -224,7 +249,7 @@ Each chunk ships as **its own PR**, and main stays releasable after each one. Th
 - Live check on a scratch server (per live-verification-traps): a real project pane's `curl` from
   the new guide gets its own groups, and a bare `curl` gets 403.
 
-### Chunk 03: enforce on writes and record the model
+### Chunk 04: enforce on writes and record the model
 
 **Type:** code · **Critic mode:** final
 
@@ -235,7 +260,7 @@ Each chunk ships as **its own PR**, and main stays releasable after each one. Th
 - Docs, in the same commit: api-contract §13 and §14 (the access table and the new error codes),
   security-model §3 Authorization (the threat model above, the residuals, and D4), and a README or
   guide note if an operator-visible behaviour changed. CHANGELOG `### Security` entry citing #1626.
-- File the follow-up issue for a server-bound Master identity (D1). Search for duplicates first.
+- Test: a bound Master gets 403 `OPERATOR_ONLY` on every write route (read-only, per D1).
 - `Fixes #1626` goes on this chunk's PR only.
 
 ## Governing-norm reconciliation
@@ -255,27 +280,24 @@ Each chunk ships as **its own PR**, and main stays releasable after each one. Th
 
 ## Risks I'd flag
 
-- **Adding D3's operator-only writes to a hotfix enlarges it.** The smallest change that satisfies
-  the gate is reads only (Chunks 01 and 02). I still recommend Chunk 03, because the cross-group
-  `PUT filePath` is the more harmful half of the same missing check, and the gate's wording ("prevent
-  cross-group document … disclosure", "explicit … group authorization") covers it. If you want the
-  hotfix smaller, ship 01 and 02 as B.1 and split 03 out as B.2.
-- **Sessions launched before Chunk 01 have the old guide text.** After Chunk 02 they will get 403s.
+- **Write enforcement makes the hotfix larger.** The PM ruled on 2026-09-21 that it stays in B.1.
+- **Sessions launched before Chunk 01 have the old guide text.** After Chunk 03 they will get 403s.
   Those 403s carry the exact headers to send, so an agent can recover without relaunching.
 
 ## Traceability: gate clause → where it is discharged
 
 | Gate clause | Chunk | Evidence |
 |---|---|---|
-| explicit server-side caller/project/group authorization | 01 (resolver), 02 and 03 (wired into every route) | `resolveAccess` unit tests; the disposition table covers every shared-docs and groups route |
-| deny bare or unbound enumeration | 02 | missing-binding 403s; the bare form is scoped for bound callers; `GET /api/groups` is scoped |
-| prevent cross-group document and absolute-path disclosure | 02 (reads), 03 (writes that expose or steer paths) | cross-group tests assert B's `filePath` and member paths are absent from response bodies |
-| tests: authorized same-group / missing / invalid / cross-group | 02, 03 | the four named test classes, run through `handleRequest` on a scratch store |
-| preserve supported callers or migrate explicitly | 01 (migration first), 02 (operator regression), D1 (Master, explicit) | guide, carrier and Master text changes; unchanged dashboard tests; the follow-up issue |
+| explicit server-side caller/project/group authorization | 01 (resolver), 02 (Master binding), 03 and 04 (wired into every route) | `resolveAccess` unit tests; the disposition table covers every shared-docs and groups route |
+| deny bare or unbound enumeration | 03 | missing-binding 403s; the bare form is scoped for bound callers; `GET /api/groups` is scoped |
+| prevent cross-group document and absolute-path disclosure | 03 (reads), 04 (writes that expose or steer paths) | cross-group tests assert B's `filePath` and member paths are absent from response bodies |
+| tests: authorized same-group / missing / invalid / cross-group | 03, 04 | the four named test classes, run through `handleRequest` on a scratch store |
+| preserve supported callers or migrate explicitly | 01 (project migration), 02 (Master binding), 03 (operator and Master regression) | guide and carrier changes; Master binding tests; unchanged dashboard tests |
 | leave current main releasable | every chunk | migrate-before-enforce order; each chunk is its own green PR |
 
 ## Status
 
 - [ ] Chunk 01: binding primitive and caller migration
-- [ ] Chunk 02: enforce on every read door
-- [ ] Chunk 03: enforce on writes and record the model
+- [ ] Chunk 02: the Master launch binding
+- [ ] Chunk 03: enforce on every read door
+- [ ] Chunk 04: enforce on writes and record the model
