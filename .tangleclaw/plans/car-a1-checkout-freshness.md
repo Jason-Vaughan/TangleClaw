@@ -141,7 +141,7 @@ pending with the operator.
 
 - **Issues:** #993 (all three expected items); the shared-observation half of #1678.
 - **Description:** The thin vertical slice. It builds the snapshot module for the serving checkout
-  and replaces `behind-origin`'s count with an honest observation. The result appears on
+  and adds an honest observation beside `behind-origin`'s count, which is unchanged. The result appears on
   `/api/server-info`, in the dashboard banner and on the prime `state` step. It proves one snapshot
   feeds every surface before the per-session widening.
 - **Depends on:** none
