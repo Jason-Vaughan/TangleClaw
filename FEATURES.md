@@ -678,3 +678,9 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 
 - **TBD** — touched in this session: `lib/shared-docs-access.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/shared-docs-access.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-09-21)
+
+- **TBD** — touched in this session: `test/_shared-docs-callers.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/api-service-token.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/api-shareddocs-read-enforcement.test.js`. <!-- describe -->
