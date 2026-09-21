@@ -256,7 +256,8 @@ Each chunk ships as **its own PR**, and main stays releasable after each one. Th
   gets 401, and with the token it gets the scoped view.
 - When enforcement lands, rewrite the guide and carrier sentence "they do not narrow what you are
   shown — `groupId` does" to describe the scoped answer, and update the comment in the #1626 describe
-  block of `test/tracked-carrier-identity.test.js`, which already states scoping as fact.
+  block of `test/tracked-carrier-identity.test.js` and the module header of `lib/shared-docs-access.js`
+  ("asked by every shared-docs and groups route"), both of which already state enforcement as fact.
 - Live check on a scratch server (per live-verification-traps): a real project pane's `curl` from
   the new guide gets its own groups, and a bare `curl` gets 403.
 
