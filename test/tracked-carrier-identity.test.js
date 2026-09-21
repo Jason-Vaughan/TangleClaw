@@ -483,6 +483,18 @@ describe('#1626 — the carrier tells the reader to send its project binding', (
     assert.ok(guide.includes('x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID'));
   });
 
+  it('neither text claims the binding narrows the answer, and the guide keeps the groupId rule', () => {
+    // Until a route consults the binding, the bare list is still unfiltered;
+    // a reader told otherwise would issue it and receive every group's paths.
+    const guide = fs.readFileSync(path.join(__dirname, '..', 'data', 'shared-docs-guide.md'), 'utf8');
+    for (const text of [guide, section]) {
+      assert.doesNotMatch(text, /answer(s)? for your project/);
+      assert.match(text, /do not narrow what you are shown/);
+    }
+    assert.match(guide, /ALWAYS send `groupId`/);
+    assert.match(guide, /say so and stop rather than issuing the bare request/);
+  });
+
   it('the header names match what the resolver reads', () => {
     const access = require('../lib/shared-docs-access');
     assert.ok(section.includes(access.PROJECT_HEADER));

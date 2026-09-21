@@ -19,7 +19,9 @@ x-tangleclaw-project-id: $TANGLECLAW_PROJECT_ID
 x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID
 ```
 
-TangleClaw exports both variables into every pane it launches, whatever the engine. The server resolves the launch id to your live session and checks that the project claim agrees with it, so it answers for your project's groups rather than every group on the install. With `curl`, that is `-H "x-tangleclaw-project-id: $TANGLECLAW_PROJECT_ID" -H "x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID"`. A pane with no `TANGLECLAW_LAUNCH_ID` predates launch binding: relaunch the session.
+TangleClaw exports both variables into every pane it launches, whatever the engine. They identify which project is asking: the launch id names your live session, and the project claim must agree with it. They do not narrow what you are shown — `groupId` does. With `curl`, that is `-H "x-tangleclaw-project-id: $TANGLECLAW_PROJECT_ID" -H "x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID"`. A pane with no `TANGLECLAW_LAUNCH_ID` predates launch binding: relaunch the session.
+
+**ALWAYS send `groupId`** when listing documents. Omitting it is not a narrower query, it is an unfiltered one: it answers with every group's documents and their absolute paths across this whole install, which is other projects' business, not yours. If you cannot determine your group, say so and stop rather than issuing the bare request.
 
 ### API Operations
 
