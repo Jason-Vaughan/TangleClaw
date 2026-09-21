@@ -1,6 +1,6 @@
 ---
 title: Car A1 — Live checkout and coordinated freshness truth (#993, #1678)
-status: rev 2 — PM verified plan-to-car traceability 2026-09-21 and authorized Chunk 01 ONLY. Chunks 02–05 are not authorized.
+status: rev 3 — HALTED 2026-09-21 by PM preemption (Hotfix B.1, #1626). Chunk 01 built and reviewed; PR #1731 held as a DRAFT, not to merge until the PM re-authorizes. No further A1 work is authorized.
 authorized_by: TangleClaw-ProjectManager (tangleclaw-projectmanager-6129df86), 2026-09-21 — PRAWDUCT product planning only
 issues: [993, 1678]
 scope: car-a1-checkout-freshness
@@ -51,19 +51,15 @@ not auto-checkout.
 
 **Why:** Both issues are specific, and the existing code (stale-server check, behind-origin banner,
 launch preflight, prime state step) is inventoried below. The PM settled the related-sessions rule
-and the blocking gate's place in the car. Still open: Chunk 05's scope, and how #1672 moves the
-serving checkout underneath this work.
+and the Architect ruled that A1 adds no workflow block. Still open: how #1672 moves the serving
+checkout underneath this work.
 
 **Open assumptions / unknowns:**
-- [DECISION: Chunks 01–04 build the facts; a **hard block on mutating workflows** is part of the
-  car's final acceptance and lands as Chunk 05 | PM ruling 2026-09-21: "The hard block on mutating
-  workflows is part of the car's final acceptance, but Chunk 01 does not need to introduce the block
-  yet." This supersedes the rev 1 assumption that no workflow would be blocked. #993's rejection of
-  refusing-to-serve still binds: the block refuses the *action*, never the server | PM/operator can
-  veto]
-- [ASSUMPTION: Chunk 05's blocked workflows, blocking conditions and override holder are UNSCOPED —
-  raised with the PM 2026-09-21 for an Architect/operator ruling | HIGH impact | blocks planning 05,
-  not 01–04]
+- [DECISION: **A1 is strictly informational and adds NO workflow block.** | Architect ruling
+  2026-09-21, relayed by the PM. It supersedes the PM's earlier reading that a hard block was part
+  of the car's acceptance, and the rev 2 Chunk 05 that followed from it. Override is N/A because
+  nothing blocks. The blocking policy is a **scoped follow-up for a future ADR**, not an A1 chunk |
+  Architect/operator can revisit only through that ADR]
 - Related sessions = the same **normalized origin URL**, or **explicit** project-group membership.
   Nothing is inferred from a path or a name. The Architect (no remote) is related only through its
   group. *Confirmed by the PM 2026-09-21.*
@@ -127,14 +123,14 @@ computes its own. No read ever reports "current" without a fresh observation.
 - [ ] Chunk 02: Classify what changed: executable vs records-only (#1678, refinement comment)
 - [ ] Chunk 03: Per-session checkout facts in every session banner and launch (#1678)
 - [ ] Chunk 04: Related-session coordination view for the PM (#1678)
-- [ ] Chunk 05: Hard freshness gate on mutating workflows (car acceptance; UNSCOPED pending ruling)
-Context: Chunk 01 was built, then reviewed by the Critic: 1 blocking finding and 6 warnings, all
-fixed, and verify-resolutions came back clean. It shipped on `feat/993-checkout-freshness`.
-Next: Chunk 02 (delta classification), but only once the PM authorizes it by name. Chunk 03 must
-first generalize the origin observation, which is currently per-process and fixed to the live
-install. Chunk 05 is unscoped until a ruling. VRF-993-live-checkout-banner (a check on a phone) is
-pending with the operator.
-
+Context: Chunk 01 was built and reviewed. The Critic's first pass found 1 blocking finding and 6
+warnings, all fixed; verify-resolutions was clean, and the independent PR reviewer was clean too.
+**HALTED 2026-09-21:** the PM preempted Train A for Hotfix B.1 (#1626). That order was sent before
+Chunk 01 was built but reached this session only after PR #1731 was open. The PR is now a
+**draft with auto-merge disabled**, and it has not merged. Do not merge it or continue A1 until
+the PM re-authorizes. When A1 resumes: the PR is the checkpoint, and Chunk 02 is next, on a named
+go. Chunk 03 must first generalize the origin observation, which is per-process today.
+VRF-993-live-checkout-banner stays pending until the PR merges.
 ## Build Chunks
 
 ### Chunk 01: Live-install checkout snapshot, honest origin observation, dashboard + prime
@@ -268,21 +264,12 @@ pending with the operator.
 - **Acceptance criteria:** This meets the car gate. The operator (dashboard), the PM (`tc
   freshness --related`), the Builders (session banner + prime) and the controller (`/api/...`) all
   render the same origin SHA, `checkedAt` and per-checkout facts from one snapshot.
+- **Type:** cumulative-final
 - **Done when:**
   1. The acceptance criteria are met and tests pass.
-  2. `/prawduct:critic` has run and its blocking findings are resolved.
-  3. It is committed and the chunk is marked `[x]`.
-
-### Chunk 05: Hard freshness gate on mutating workflows
-
-- **Issues:** car A1 acceptance (PM ruling 2026-09-21); no issue filed yet. File one once it is scoped.
-- **Description:** UNSCOPED. Needs a ruling on (1) which workflows are blocked (wrap, PR merge,
-  server restart?), (2) which conditions block them (unavailable evidence, a live checkout that is
-  not on main or is dirty, an executable delta?), and (3) who can override. The block refuses the
-  mutating action. It never refuses to serve.
-- **Depends on:** Chunk 04
-- **Type:** cumulative-final
-- **Done when:** scoped by ruling, then the standard cycle, with the cumulative Critic.
+  2. It is committed, then `/prawduct:critic cumulative` has run and its blocking findings are
+     resolved.
+  3. The chunk is marked `[x]`.
 
 ## Governance Checkpoints
 
@@ -290,7 +277,7 @@ pending with the operator.
   computes its own freshness, before widening to per-session probes.
 - **After Chunk 03:** re-check #1672's status. If the serving install has moved, re-point the
   live-install snapshot's root before 04.
-- **After Chunk 05 (cumulative):** the car gate is demonstrated live on real sessions, not only in
+- **After Chunk 04 (cumulative):** the car gate is demonstrated live on real sessions, not only in
   fixtures.
 
 **Cadence:** one chunk per session, each with its own PR. The PM authorizes each chunk by name.
@@ -299,12 +286,15 @@ pending with the operator.
 
 - Pulling, fast-forwarding, restarting and stashing are all #1710's job, and none happen here.
 - Relocating the runtime is #1672.
-- Refusing to serve or blocking a workflow on freshness would be a separate ruling (see the HIGH
-  assumption above).
+- Refusing to serve, or blocking any workflow on freshness, is out of scope. The Architect ruled
+  2026-09-21 that A1 adds no block, and the blocking policy belongs to a future ADR.
 
 ## Revision log
 
 - **rev 1** (2026-09-21): first draft for PM traceability review.
+- **rev 3** (2026-09-21): Architect rulings via the PM remove Chunk 05, so A1 is informational
+  only and the blocking policy goes to a future ADR. Chunk 04 is the cumulative-final chunk again.
+  A1 was halted by the Hotfix B.1 preemption, with PR #1731 held as a draft.
 - **rev 2** (2026-09-21): the PM verified traceability, confirmed the related-sessions rule, ruled the
   hard block into car acceptance (new Chunk 05, unscoped), and authorized Chunk 01. The
   cumulative-final marker moves from 04 to 05.
