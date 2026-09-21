@@ -1,6 +1,6 @@
 ---
 title: "#1626 — Shared documents answer only to a caller bound to a project in the group"
-status: IN PROGRESS — PM verified traceability 2026-09-21 (msg fbae32e1); Chunks 01–02 done, Chunks 03–04 each need their own go
+status: IN PROGRESS — PM verified traceability 2026-09-21 (msg fbae32e1); Chunks 01–03 done, Chunk 04 needs its own go
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-21 (message 2ecd5ef4) — Hotfix B.1, PRAWDUCT planning only; Train A HELD
 issue: 1626
 governed_by:
@@ -373,5 +373,5 @@ Each chunk ships as **its own PR**, and main stays releasable after each one. Th
 
 - [x] Chunk 01: binding primitive and caller migration
 - [x] Chunk 02: the Master launch binding. Built 2026-09-21. Critic: 0 blocking; R-1 (the Master's `tc start` regressed) was fixed, and R-2 (synchronous tmux read) was carried into Chunk 03. Lock-in answered by D5: nothing is persisted.
-- [ ] Chunk 03: enforce on every read door
+- [x] Chunk 03: enforce on every read door. Built 2026-09-21 (PM named go, msg 4452df60). Critic: 0 blocking; R-1/R-2/R-4/R-5/R-6 fixed and verified (rev-20260921T194856Z-8002842e), R-3 filed as #1739, R-7/R-8 accepted. O-3/O-4 carried into Chunk 04. D6: the Master's tmux read is bounded at 1s.
 - [ ] Chunk 04: enforce on writes and record the model
