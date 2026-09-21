@@ -673,3 +673,8 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 
 - `test/wrap-consecutive-step-delivery.test.js` — #1685's consecutive-step contract: a first content step that completes via its marker, followed by a second whose prompt was dropped, rejected or never submitted. The PAIR is the subject — the incident was invisible until the second send, so a single-step fixture could not have caught it, and the file exists to keep that hop covered.
 - `test/wrap-delivery-receipt.test.js` — the receipt's verdict table: which pane states yield `not-accepted`, which yield `unknown`, and the reason each carries. Covers the claude profile as well as codex, whose pane shape differs, so the engine-agnostic claim is tested rather than assumed.
+
+## TODO (auto-stubbed 2026-09-21)
+
+- **TBD** — touched in this session: `lib/shared-docs-access.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/shared-docs-access.test.js`. <!-- describe -->
