@@ -34,6 +34,26 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-21 — The live checkout says what it is serving (#993)
+
+<!-- prawduct: type=feature | scope=car-a1-checkout-freshness -->
+
+Car A1, Chunk 01. The ProjectManager authorized only this chunk, after verifying that the plan traced to the car.
+
+The server runs and serves straight from a git checkout. That makes the checkout's branch, its unpushed commits and its uncommitted or untracked files production facts, and none of them was visible to an operator who is rarely at the machine. `lib/checkout-freshness.js` reads those local facts and assesses them against an origin observation, writing one sentence per finding. The dashboard banner, the `state` launch step for TangleClaw's own sessions and `tc whoami` all print those same sentences. Anything not established is said as unknown and never as current. Nothing here acts on the checkout.
+
+**What was read first.** `lib/behind-origin.js` skips a detached HEAD and collapses every failure to `0`. Both behaviours are pinned by `deepEqual` tests, and the existing blue banner depends on them. So the observation was added *beside* that legacy count, reusing the same fetch, rather than replacing it; the legacy payload is unchanged. The plan's motivating claim was checked against the real checkout before the CHANGELOG was written, and it was wrong. The checkout is detached exactly at release tag `v5.29.0`, which equals origin/main. That is the self-updater's healthy state, so a HEAD detached exactly at a release tag is recorded as a decision in the plan: it is not a finding.
+
+**The Critic's first pass** raised one blocking finding and six warnings, all fixed, and `verify-resolutions` came back clean:
+- The whoami route and the launch warm-up had no positive-path tests.
+- Findings promised a refresh and a re-measure that nothing started. `liveInstallSnapshot` now starts both.
+- The live root was computed in two modules.
+- "Ahead" was reported twice on `main`.
+- `isLiveInstall` resolved an operator-chosen path on the event loop. It now compares strings only.
+- The plan described a per-URL shared observation that was never built. Chunk 03 now owns that generalization.
+
+**A guard test that could not fail.** The read-only test passed with `GIT_OPTIONAL_LOCKS` removed, because its fixture never made git want to rewrite the index. Removing the guard on purpose exposed this. The fixture now changes a tracked file's mtime without changing its content, and the test fails when the guard is removed.
+
 ## 2026-09-19 — The handoff records one tree at one moment (#1648)
 
 <!-- prawduct: type=bugfix | scope=handoff-1648 -->
