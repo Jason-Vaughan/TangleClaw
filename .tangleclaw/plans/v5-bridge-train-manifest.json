@@ -57,7 +57,7 @@
       "name": "Version 5 Train B.2",
       "purpose": "Fail-closed security investigation and patch",
       "release_owner": "ProjectManager",
-      "issues": [1261, 1381, 814, 853, 1444, 1484, 1739],
+      "issues": [1261, 1381, 814, 853, 1484, 1739, 1746],
       "investigation_note": "Not conclusively probed due to destructive action requirement. Treat as fail-closed. Requires non-destructive fixture/test-harness probes and independent admission decisions."
     },
     "B3": {
