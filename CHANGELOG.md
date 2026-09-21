@@ -11,6 +11,10 @@ All notable changes to TangleClaw are documented in this file.
   - **A new resolver (`lib/shared-docs-access.js`)** decides who is asking. A signed-in dashboard is the operator. A launch id that resolves to a live session, sent with a matching project claim, is that project. Anything else is refused by default: a missing binding is unbound, and an unknown, mismatched or ended one is invalid. The project comes from what the server recorded at launch; the caller's claim only has to agree with it.
   - **No route consults the resolver yet**, so every existing caller behaves exactly as before. Later chunks give the Project Master a binding of its own and then enforce on the read and write routes.
 
+### Internal
+
+- **Feature Index: carry one graduated entry from the 2026-09-21 session wrap onto main.** The wrap step shortened a `FEATURES.md` entry on a detached checkout, and the commit never reached a branch. It lands here unchanged.
+
 ## [5.29.0] - 2026-09-20
 
 ### Added
