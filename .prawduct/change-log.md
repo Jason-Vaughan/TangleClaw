@@ -34,6 +34,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-21 — Shared-docs callers carry a project binding, ahead of enforcement (#1626)
+
+<!-- prawduct: type=bugfix | scope=hotfix-b1-shared-docs-authz -->
+
+Hotfix B.1 Chunk 01. Adds `lib/shared-docs-access.js`. `resolveAccess` decides who is asking: an operator (signed-in session, or a browser-shaped request when the gate stands down), a project (a live launch id with an agreeing project claim), unbound, or invalid. Anything but operator or project is refused by default. The shared-docs guide and the committed carrier now tell sessions to send `x-tangleclaw-project-id` and `x-tangleclaw-launch-id`. No route consults the resolver yet, so no caller's behaviour changes. Why: the issue's proposed fix (filter on the project-id header) rests on a claim; the launch id is the only binding the server can check itself. The plan also found four more doors (the groups routes and `shared-docs/:id`), cross-group writes, and an unbound Project Master. Chunks 02–04 cover those, with the Master binding before any enforcement at the PM's ruling. The outside-caller check found `PV-AI-Guidebook/instruction.json` calling the bare route; it must migrate before read enforcement.
+
 ## 2026-09-19 — The handoff records one tree at one moment (#1648)
 
 <!-- prawduct: type=bugfix | scope=handoff-1648 -->
