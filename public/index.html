@@ -390,6 +390,18 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
     <div id="behindOriginBanner" class="orphan-banner behind-origin-banner hidden" role="status">
       <span class="orphan-banner-text" id="behindOriginBannerText"></span>
     </div>
+    <!-- Live checkout banner (#993). Hidden until /api/server-info reports the
+         checkout this server runs from needs attention or cannot be read: a
+         branch other than main, a detached HEAD, unpushed commits, uncommitted
+         or untracked files, or an unestablished relation to origin/main.
+         role=status: it reports; nothing on it acts on the checkout. -->
+    <div id="liveCheckoutBanner" class="orphan-banner live-checkout-banner hidden" role="status">
+      <div class="orphan-banner-text">
+        <strong id="liveCheckoutBannerTitle"></strong>
+        <div class="live-checkout-identity" id="liveCheckoutBannerIdentity"></div>
+        <ul class="live-checkout-findings" id="liveCheckoutBannerList"></ul>
+      </div>
+    </div>
     <!-- Caddyfile divergence banner (#1394). Hidden until /api/server-info
          reports caddyDriftNotice. A banner rather than a dash-bar chip because
          the chip truncates at 42ch behind a hover tooltip, and the operator

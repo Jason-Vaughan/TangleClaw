@@ -202,6 +202,30 @@ describe('sessions', () => {
       assert.match(prompt, /1\. TangleClaw global rules — `data\/global-rules.md`, carried in the managed block/, 'a vendored project still gets the full managed block');
     });
 
+    it('tells a session of the live install what its checkout is serving, and no other project (#993)', () => {
+      const checkoutFreshness = require('../lib/checkout-freshness');
+      const project = store.projects.getByName('prime-test');
+      const engine = store.engines.get('claude');
+      assert.doesNotMatch(sessions.generatePrimePrompt(project, engine), /Live install checkout/,
+        'a project that is not the live install is not told about it');
+      const realIs = checkoutFreshness.isLiveInstall;
+      const realSnap = checkoutFreshness.liveInstallSnapshot;
+      try {
+        checkoutFreshness.isLiveInstall = (p) => p === project.path;
+        checkoutFreshness.liveInstallSnapshot = () => ({
+          status: 'attention', identity: 'Checkout: /live — detached at 1234567; origin/main 89abcde (fresh, observed T)',
+          findings: [{ code: 'detached', severity: 'warn', text: 'HEAD is detached at 1234567, not on main, and that commit is not a release tag.' }]
+        });
+        const prompt = sessions.generatePrimePrompt(project, engine);
+        assert.match(prompt, /## Live install checkout: \*\*NEEDS ATTENTION\*\*/);
+        assert.match(prompt, /- HEAD is detached at 1234567, not on main/);
+        assert.match(prompt, /do not pull, check out, stash or restart it/);
+      } finally {
+        checkoutFreshness.isLiveInstall = realIs;
+        checkoutFreshness.liveInstallSnapshot = realSnap;
+      }
+    });
+
     it('tells the session its base branch is red, and says unknown when it could not look (#991)', () => {
       const ciStatus = require('../lib/ci-status');
       const project = store.projects.getByName('prime-test');

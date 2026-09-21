@@ -278,6 +278,7 @@ const updateChecker = require('./lib/update-checker');
 const updateApplier = require('./lib/update-applier');
 const serverInfo = require('./lib/server-info');
 const behindOrigin = require('./lib/behind-origin');
+const checkoutFreshness = require('./lib/checkout-freshness');
 const bindPolicy = require('./lib/bind-policy');
 const wrapRunRegistry = require('./lib/wrap-run-registry');
 const wrapHandback = require('./lib/wrap-handback');
@@ -1405,6 +1406,10 @@ route('GET', '/api/server-info', (_req, res) => {
   // the network — a stale cache starts one background fetch for the next poll.
   // `enabled: false` when the operator turned the check off in config.
   info.behindOrigin = behindOrigin.snapshot(cfg);
+  // #993: what the live checkout is serving — branch or detached, unpushed
+  // commits, uncommitted and untracked files, and its relation to origin/main,
+  // with every unestablished fact said as unknown. Cached reads only.
+  info.checkout = checkoutFreshness.liveInstallSnapshot(cfg);
   jsonResponse(res, 200, info);
 });
 
@@ -4590,6 +4595,14 @@ route('GET', '/api/tc/whoami', (req, res) => {
       note: `Never hand the operator a localhost link — they are almost never on this machine; ${sessionOwnership.operatorLinkDirective(operatorHost)}.`
     },
     capabilities,
+    // #993: present only for the live install's own project — the one checkout
+    // whose state is a production fact.
+    liveInstall: project && checkoutFreshness.isLiveInstall(project.path, checkoutFreshness.LIVE_INSTALL_ROOT)
+      ? (() => {
+        const snap = checkoutFreshness.liveInstallSnapshot(config);
+        return { status: snap.status, lines: checkoutFreshness.primeLines(snap) };
+      })()
+      : undefined,
     receiptRecorded: !!receipt
   });
 });
@@ -5854,6 +5867,15 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
   // synchronous launch reads it for the prime. Never rejects; a failed probe
   // is an honest unknown in the prime, not a failed launch.
   await ciStatus.refresh(project.path);
+
+  // #993: a session of the live install's own project is told what that
+  // checkout is serving. The local read is warmed here (short, local git
+  // calls); the origin observation is never awaited — `snapshot` only starts
+  // one, and an unobserved origin is said as unknown in the prime.
+  if (checkoutFreshness.isLiveInstall(project.path, checkoutFreshness.LIVE_INSTALL_ROOT)) {
+    await checkoutFreshness.refresh(checkoutFreshness.LIVE_INSTALL_ROOT);
+    behindOrigin.snapshot(store.config.load());
+  }
 
   // The operator's own request carries the host they actually reached this
   // server on — better evidence than probing this machine, which names the box

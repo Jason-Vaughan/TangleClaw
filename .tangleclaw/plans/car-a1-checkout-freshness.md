@@ -84,8 +84,17 @@ spike.
   repo root is fixed to the server's own directory.
 - `lib/behind-origin.js` drives the blue "N new commits upstream" banner. It fetches origin every
   15 minutes and returns only a *behind* count. **It skips a detached HEAD and collapses every
-  failure to `0`.** The live checkout is detached right now, so the banner is silent at exactly the
-  moment it matters. #1678 forbids that failure mode ("never an unqualified up-to-date").
+  failure to `0`.** #1678 forbids that failure mode ("never an unqualified up-to-date"). *Corrected
+  during Chunk 01:* rev 1 said the live checkout was detached at an arbitrary commit with the banner
+  silent. A read-only check found it detached exactly at release tag `v5.29.0`, which equals
+  origin/main. That is the self-updater's healthy state, and staying silent there is right. The
+  gap is real for a HEAD detached at a commit that is *not* a release tag, which Chunk 01 now
+  observes.
+- [DECISION: a HEAD detached exactly at a release tag is **not** a finding, even though #993 asks
+  to warn when the checkout "is not on main" | every non-developer install sits there by design
+  (the self-updater's path), so warning would fire permanently on healthy installs and teach
+  operators to ignore the banner. A detached HEAD off a tag is still a warning | PM/operator can
+  veto]
 - `lib/git.js` `getInfo` already runs `git status --porcelain=v1 --branch`, but discards the
   `[ahead N, behind M]` counts and does not separate untracked files from modified ones.
 - The launch preflight (`lib/launch-preflight*.js`) compares HEAD against the *handoff*, not
@@ -127,38 +136,38 @@ Context: PM verified traceability and authorized Chunk 01 only (2026-09-21). Chu
   `/api/server-info`, in the dashboard banner and on the prime `state` step. It proves one snapshot
   feeds every surface before the per-session widening.
 - **Depends on:** none
-- **Deliverables:**
-  - New `lib/checkout-freshness.js`:
-    - `snapshot(repoRoot)`: branch or detached; `headSha`; `trackedDirty` and `untracked` counts
-      (from `status --porcelain=v1 --branch`); `unpushed` (ahead of upstream, or `null` + reason
-      when there is no upstream).
-    - `observeOrigin(repoRoot)`: one fetch per normalized origin URL, single-flight, 15-minute
-      cache; returns `{originMainSha, checkedAt, evidence}`.
-    - `relation(head, originMain)`: `equal` / `ahead` / `behind` / `diverged` with both counts,
-      via `rev-list --left-right --count`.
-  - `lib/behind-origin.js` becomes a thin adapter over the observation. **A detached HEAD is
-    measured, not skipped**, and a failure is `unavailable`, not `0`. The existing `snapshot()`
-    shape is kept for the current banner consumer (additive only).
-  - `/api/server-info` gains an additive `checkout` block. The api-contract entry is updated in the
-    same commit.
-  - The dashboard banner in `public/landing.js` + `public/index.html` warns when the live checkout
-    is not on `main`, is detached, has unpushed commits, or has tracked/untracked changes. It names
-    the branch, the counts and the serving SHA vs origin/main. `unavailable`/`stale` evidence is
-    shown as such.
-  - The prime `state` step gets ≤3 lines through a cached, no-spawn `primeLines`, mirroring
-    `ci-status`.
-  - `tc` exposes the same snapshot (`tc whoami` or a `tc freshness` verb; decided at build time
-    against `lib/tc-verbs.js`'s conventions, and recorded).
-- **Tests:** `test/checkout-freshness.test.js` against real temp git repos with a bare "origin". The
-  cases are: on main and clean; feature branch with unpushed commits; detached; untracked-only;
-  tracked-dirty; no remote; fetch failure → `unavailable`, never `equal`; cache aging → `stale`;
-  diverged. `behind-origin.test.js` gains a regression test that a detached HEAD is measured.
-  `api-system.test.js` gains the `checkout` block. `prime-golden` gets a scenario for the state
-  line. None of these tests reads the live store or the live checkout.
-- **Acceptance criteria:** Each of #993's 2026-08-18 conditions gets its own named line in the
-  dashboard banner and the prime: feature branch, unpushed commits and untracked files. A detached
-  live checkout (today's real state) produces a visible line. With the network down, no surface
-  says "up to date".
+- **Deliverables** (as built; the rev 1 wording planned the observation inside the new module
+  instead):
+  - New `lib/checkout-freshness.js`. It holds the local facts for any repo root: branch or
+    detached, HEAD, release tag, upstream ahead/behind, tracked-change and untracked counts. These
+    come from `status --porcelain=v1 --branch`, read with `GIT_OPTIONAL_LOCKS=0`, cached for 30
+    seconds and single-flight. It also holds `assess(local, origin)`, which produces the findings
+    and one sentence per finding; `snapshot`, `primeLines` and `isLiveInstall`; and
+    `liveInstallSnapshot`, the single call every live-install surface makes.
+  - `lib/behind-origin.js` owns the origin observation. `observation()` returns origin/main's SHA,
+    the HEAD it was measured against, ahead/behind/relation, `checkedAt` and the evidence state.
+    It reuses the legacy count's fetch, so a refresh still makes one call to origin. A HEAD
+    detached off a release tag is now observed. **The legacy `snapshot()` payload and its tests are
+    unchanged**; they are pinned by `deepEqual` and still drive the existing blue banner. Keeping
+    them rather than rewriting them was deliberate: the new facts are additive.
+  - `/api/server-info` gains `checkout`, recorded in the api-contract.
+  - `#liveCheckoutBanner` on the dashboard, built with `textContent`.
+  - The prime's `state` step and `tc whoami` (the verb question is settled: `whoami`, not a new
+    verb) both print `primeLines`, for the live install's own project only.
+  - Docs: `FEATURES.md`, `docs/configuration-reference.md`, and the `lib/server-info.js`
+    docstring.
+- **Tests:** the new `test/checkout-freshness.test.js` reads real temp repos with a bare origin:
+  clean on main, a feature branch with unpushed commits, tracked vs untracked, detached off and on
+  a tag, no-git, a failed read, and a read-only guarantee (the index bytes are unchanged). It also
+  covers every evidence state in `assess`, the cache, `primeLines` and `isLiveInstall`, plus the
+  banner renderer lifted from `landing.js`. `behind-origin.test.js` gains the observation suite,
+  including one fetch per refresh, no fetch at a release tag, and redaction. `api-system` covers
+  the `checkout` block reading `unknown` under the test runner. `api-plan-docs` checks that a
+  non-live project gets no `liveInstall`. `sessions` checks the prime lines appear for the live
+  install only, and `tc-verbs` checks the whoami rendering.
+- **Acceptance criteria:** each of #993's 2026-08-18 conditions gets its own named line in the
+  dashboard banner and the prime: feature branch, unpushed commits and untracked files. A HEAD
+  detached off a release tag gets a line. With origin unreachable, no surface says current.
 - **Visual change:** yes. Check the banner at 320–375px on the phone, and confirm it names the state
   in text, not color alone.
 - **Done when:**

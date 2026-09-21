@@ -230,6 +230,8 @@ async function loadServerInfo() {
   // branches below because those `return` — and a checkout that is both
   // behind upstream and ahead of the running process must show both.
   renderBehindOriginBanner(data.behindOrigin);
+  // #993: what the live checkout is serving. Also before the returns below.
+  renderLiveCheckoutBanner(data.checkout);
 
   // A new `startedAt` means a different process is answering. The update beacon
   // is derived from the old one and can now be advertising an update that has
@@ -509,6 +511,45 @@ function renderBehindOriginBanner(info) {
     `ℹ <strong>${commitsAhead} new commit${commitsAhead === 1 ? '' : 's'} upstream on origin/main.</strong> ` +
     'This checkout is behind — pull them when convenient. ' +
     '(An install pinned to a release tag updates through <em>Update now</em> instead.)';
+  banner.classList.remove('hidden');
+}
+
+/**
+ * Show or hide the live checkout banner (#993) from the `checkout` field of
+ * `/api/server-info`. The server writes every sentence — the prime and
+ * `tc whoami` print the same ones — so this only places them.
+ *
+ * Shown for `attention` (something is wrong) and `unknown` (something could
+ * not be established — which is not the same as fine). Hidden for `ok`, for
+ * `not-a-checkout` (a tarball install) and for an older server that omits the
+ * field. Built with `textContent`, never `innerHTML`: a branch name is text the
+ * checkout's owner chose, and it must not become markup.
+ *
+ * @param {{status?: string, identity?: string, findings?: Array<{text?: string}>}|null|undefined} snap
+ * @returns {void}
+ */
+function renderLiveCheckoutBanner(snap) {
+  const banner = document.getElementById('liveCheckoutBanner');
+  const title = document.getElementById('liveCheckoutBannerTitle');
+  const identity = document.getElementById('liveCheckoutBannerIdentity');
+  const list = document.getElementById('liveCheckoutBannerList');
+  if (!banner || !title || !identity || !list) return;
+  const status = snap && typeof snap.status === 'string' ? snap.status : null;
+  if (status !== 'attention' && status !== 'unknown') {
+    banner.classList.add('hidden');
+    return;
+  }
+  title.textContent = status === 'attention'
+    ? '⚠ The live checkout needs attention — this is what the server is running and serving.'
+    : '? The live checkout could not be fully checked — unknown, not current.';
+  identity.textContent = typeof snap.identity === 'string' ? snap.identity : '';
+  list.textContent = '';
+  for (const f of Array.isArray(snap.findings) ? snap.findings : []) {
+    if (!f || typeof f.text !== 'string') continue;
+    const li = document.createElement('li');
+    li.textContent = f.text;
+    list.appendChild(li);
+  }
   banner.classList.remove('hidden');
 }
 

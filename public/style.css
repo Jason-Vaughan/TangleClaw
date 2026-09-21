@@ -245,6 +245,14 @@ html[data-tc-keyboard] body {
   color: #fff;
 }
 .behind-origin-banner .orphan-banner-text { color: inherit; }
+/* Live checkout variant (#993). Keeps the base amber: a checkout serving
+   something other than a clean main is a warning, not an outage. Stacks its
+   list so each finding wraps on its own line at 320px. */
+.live-checkout-banner { align-items: flex-start; }
+.live-checkout-banner .orphan-banner-text { min-width: 0; overflow-wrap: anywhere; }
+.live-checkout-identity { font-weight: 400; margin-top: 2px; }
+.live-checkout-findings { margin: 4px 0 0 0; padding-left: 18px; font-weight: 400; }
+.live-checkout-findings li + li { margin-top: 2px; }
 .behind-origin-banner code {
   background: rgba(0, 0, 0, 0.25);
   padding: 1px 4px;

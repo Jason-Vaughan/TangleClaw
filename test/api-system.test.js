@@ -272,6 +272,20 @@ describe('API — system, engines, tmux', () => {
       }
     });
 
+    it('carries the live checkout snapshot, and says unknown rather than current when git cannot be read (#993)', async () => {
+      const { status, data } = await request('GET', '/api/server-info');
+      assert.equal(status, 200);
+      assert.ok(data.checkout, 'server-info must carry the checkout block');
+      assert.equal(typeof data.checkout.identity, 'string');
+      assert.ok(Array.isArray(data.checkout.findings));
+      // Under the test runner the checkout reader spawns nothing, so nothing
+      // about the checkout is established — and that must read as unknown.
+      assert.equal(data.checkout.status, 'unknown');
+      assert.ok(data.checkout.findings.length > 0);
+      assert.ok(data.checkout.origin && typeof data.checkout.origin.evidence === 'string');
+      assert.notEqual(data.checkout.origin.evidence, 'fresh');
+    });
+
     it('refuses a non-boolean behindOriginCheckEnabled', async () => {
       const { status, data } = await request('PATCH', '/api/config', { behindOriginCheckEnabled: 'no' });
       assert.equal(status, 400);

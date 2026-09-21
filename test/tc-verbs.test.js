@@ -117,6 +117,17 @@ describe('tc verb roster (lib/tc-verbs)', () => {
   });
 
   describe('renderers report honest emptiness — never blank output, never invented success', () => {
+    it('whoami prints the live checkout lines the server wrote, and nothing when there are none (#993)', () => {
+      const base = { project: { name: 'p', id: 1 }, sessionId: 's', api: { origin: 'http://localhost:3102', note: 'n' },
+        operator: { host: 'h.ts.net', note: 'n' }, capabilities: [] };
+      const withLines = require('../lib/tc-verbs').renderWhoami({ ...base, liveInstall: { status: 'attention',
+        lines: ['## Live install checkout: **NEEDS ATTENTION**', 'Checkout: /r — feat/x @ 1234567', '- 2 untracked paths are in the checkout.', ''] } });
+      assert.match(withLines, /Live install checkout: \*\*NEEDS ATTENTION\*\*/);
+      assert.match(withLines, /- 2 untracked paths are in the checkout\./);
+      const without = require('../lib/tc-verbs').renderWhoami(base);
+      assert.doesNotMatch(without, /Live install checkout/);
+    });
+
     it('peer status: a peer this host cannot see is said to be unseeable, never reachable or unreachable (#918)', () => {
       const out = renderPeerStatus({ workspaceId: 'far-away-1234abcd', local: false });
       assert.match(out, /not a TangleClaw session on this host/);

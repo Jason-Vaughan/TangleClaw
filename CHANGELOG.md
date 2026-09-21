@@ -4,6 +4,18 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **The dashboard, the session prime and `tc whoami` now say what the live checkout is serving** (#993 — Car A1, Chunk 01). TangleClaw's install is a git checkout that the server runs and serves straight from its working tree, so the branch it is on is a production fact. Nothing reported it: a checkout left on a feature branch with unpushed commits and scratch files in the root was invisible to an operator who is almost never at the machine. A new banner on the dashboard names each thing that is wrong:
+  - the checkout is on a branch other than `main`, or detached at a commit that is not a release tag;
+  - commits on the branch are not pushed, or the branch has no upstream;
+  - tracked files have uncommitted changes, or untracked files are present;
+  - the checkout is behind, ahead of or diverged from `origin/main`, naming origin/main's SHA.
+  - **Unknown is said as unknown.** When the checkout cannot be read, or `origin/main` has not been observed, could not be reached, was observed long ago or against a HEAD that has since moved, the banner says so. It never shows "current" without a fresh observation behind it.
+  - **The same sentences everywhere.** A session of TangleClaw's own project gets them in its launch context and in `tc whoami`; no other project is told. `/api/server-info` carries them as a new `checkout` field.
+  - **It reports and does nothing else.** Nothing pulls, checks out, stashes, restarts or refuses to serve. The read uses `GIT_OPTIONAL_LOCKS=0`, so it never takes the index lock a working agent in the same checkout needs.
+  - **A detached checkout is now observed against origin.** The existing behind-origin check skips any detached HEAD. It now also takes one observation for a HEAD detached at a commit that is not a release tag, reusing its own fetch rather than making a second one. An install detached exactly on a release tag is still not fetched for, and the existing blue banner is unchanged.
+
 ## [5.29.0] - 2026-09-20
 
 ### Added

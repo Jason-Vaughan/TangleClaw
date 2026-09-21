@@ -310,6 +310,12 @@ describe('#542 — served plan docs over HTTP', () => {
       assert.match(cap.detail, new RegExp(`/plans/${project.id}/<file>\\.md`));
     });
 
+    it('carries no live-install checkout block for a project that is not the live install (#993)', async () => {
+      const r = await get(server, `/api/tc/whoami?projectId=${project.id}`);
+      assert.equal(r.data.liveInstall, undefined,
+        'the checkout the server runs is a production fact only for its own project');
+    });
+
     it('reports plan-docs as unavailable, not absent, when no project resolved', async () => {
       const r = await get(server, '/api/tc/whoami');
       const cap = r.data.capabilities.find((c) => c.id === 'plan-docs');

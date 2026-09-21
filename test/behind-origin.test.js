@@ -97,6 +97,134 @@ function stubGit(plan) {
   return { fetches: () => fetches, revLists: () => revLists };
 }
 
+describe('lib/behind-origin — the origin observation (#993/#1678)', () => {
+  const origInternal = { ...behindOrigin._internal };
+  let clock;
+
+  beforeEach(() => {
+    behindOrigin._reset();
+    clock = Date.parse('2026-09-21T00:00:00.000Z');
+    behindOrigin._internal.now = () => clock;
+  });
+  afterEach(() => {
+    Object.assign(behindOrigin._internal, origInternal);
+    behindOrigin._reset();
+  });
+
+  /**
+   * Stub every observation seam. Each value is stdout, or an Error to fail.
+   * @param {object} plan
+   * @returns {{calls: string[]}}
+   */
+  function stubObserve(plan) {
+    const calls = [];
+    const seam = (name, value) => (cb) => {
+      calls.push(name);
+      setImmediate(() => (value instanceof Error ? cb(value, '') : cb(null, value == null ? '' : value)));
+    };
+    behindOrigin._internal.gitDescribeExact = seam('describe', plan.describe);
+    behindOrigin._internal.gitFetch = seam('fetch', plan.fetch === undefined ? '' : plan.fetch);
+    behindOrigin._internal.gitRevParseOrigin = seam('origin', plan.origin === undefined ? `${'a'.repeat(40)}\n` : plan.origin);
+    behindOrigin._internal.gitRevParseHead = seam('head', plan.head === undefined ? `${'b'.repeat(40)}\n` : plan.head);
+    behindOrigin._internal.gitLeftRight = seam('leftright', plan.leftRight === undefined ? '0\t0\n' : plan.leftRight);
+    return { calls };
+  }
+
+  it('records origin/main, HEAD and the ahead/behind relation', async () => {
+    stubObserve({ leftRight: '1\t3\n' });
+    const o = await behindOrigin.observe(false);
+    assert.equal(o.ok, true);
+    assert.equal(o.originMainSha, 'a'.repeat(40));
+    assert.equal(o.headSha, 'b'.repeat(40));
+    assert.equal(o.ahead, 1);
+    assert.equal(o.behind, 3);
+    assert.equal(behindOrigin.relationOf(1, 3), 'diverged');
+    assert.equal(behindOrigin.relationOf(0, 3), 'behind');
+    assert.equal(behindOrigin.relationOf(2, 0), 'ahead');
+    assert.equal(behindOrigin.relationOf(0, 0), 'equal');
+  });
+
+  it('reuses the fetch the legacy count already made — one call to origin per refresh', async () => {
+    const { calls } = stubObserve({});
+    await behindOrigin.observe(false, { ok: true, reason: null });
+    assert.ok(!calls.includes('fetch'));
+    const failed = await behindOrigin.observe(false, { ok: false, reason: 'fetch failed: offline' });
+    assert.equal(failed.ok, false);
+    assert.equal(failed.reason, 'fetch failed: offline');
+  });
+
+  it('observes a detached HEAD that is off-tag — the state the legacy count skips', async () => {
+    const { calls } = stubObserve({ describe: new Error("fatal: no tag exactly matches 'abc'") });
+    const o = await behindOrigin.observe(true);
+    assert.equal(o.ok, true);
+    assert.deepEqual(calls, ['describe', 'fetch', 'origin', 'head', 'leftright']);
+  });
+
+  it('does not fetch for an install detached exactly at a release tag', async () => {
+    const { calls } = stubObserve({ describe: 'v5.29.0\n' });
+    const o = await behindOrigin.observe(true);
+    assert.equal(o.skipped, 'release-tag');
+    assert.deepEqual(calls, ['describe'], 'Update now is that install\'s path; no network call');
+  });
+
+  it('does not guess when it cannot tell whether a detached HEAD is a tag', async () => {
+    const { calls } = stubObserve({ describe: new Error('git spawn blocked: node test runner') });
+    const o = await behindOrigin.observe(true);
+    assert.equal(o.ok, false);
+    assert.match(o.reason, /describe failed/);
+    assert.deepEqual(calls, ['describe']);
+  });
+
+  it('says why when a step fails, and redacts a tokenised remote', async () => {
+    stubObserve({ fetch: new Error('fatal: unable to access https://x-access-token:ghs_SECRET@github.com/o/r.git/') });
+    const o = await behindOrigin.observe(false);
+    assert.equal(o.ok, false);
+    assert.doesNotMatch(o.reason, /ghs_SECRET/);
+    stubObserve({ origin: new Error("fatal: Needed a single revision") });
+    assert.match((await behindOrigin.observe(false)).reason, /rev-parse origin\/main failed/);
+    stubObserve({ leftRight: 'garbage' });
+    assert.match((await behindOrigin.observe(false)).reason, /unreadable form/);
+  });
+
+  it('observation(): pending, disabled, unavailable, fresh and stale — never a relation it did not measure', async () => {
+    assert.equal(behindOrigin.observation({}).evidence, 'pending');
+    assert.equal(behindOrigin.observation({ behindOriginCheckEnabled: false }).evidence, 'disabled');
+
+    stubObserve({ fetch: new Error('offline') });
+    await behindOrigin._startObservation(false);
+    const down = behindOrigin.observation({});
+    assert.equal(down.evidence, 'unavailable');
+    assert.equal(down.relation, null);
+
+    stubObserve({ leftRight: '0\t2\n' });
+    await behindOrigin._startObservation(false);
+    const fresh = behindOrigin.observation({});
+    assert.equal(fresh.evidence, 'fresh');
+    assert.equal(fresh.relation, 'behind');
+    assert.equal(fresh.behind, 2);
+
+    clock += behindOrigin.CACHE_TTL_MS + 60000;
+    const stale = behindOrigin.observation({});
+    assert.equal(stale.evidence, 'stale');
+    assert.match(stale.reason, /last observed 16 min ago/);
+  });
+
+  it('a refresh takes the legacy count and the observation with a single fetch', async () => {
+    let fetches = 0;
+    behindOrigin._internal.gitSymbolicRef = (cb) => cb(null, 'refs/heads/main\n');
+    behindOrigin._internal.gitFetch = (cb) => { fetches++; setImmediate(() => cb(null)); };
+    behindOrigin._internal.gitRevList = (cb) => setImmediate(() => cb(null, '2\n'));
+    behindOrigin._internal.gitRevParseOrigin = (cb) => setImmediate(() => cb(null, `${'a'.repeat(40)}\n`));
+    behindOrigin._internal.gitRevParseHead = (cb) => setImmediate(() => cb(null, `${'b'.repeat(40)}\n`));
+    behindOrigin._internal.gitLeftRight = (cb) => setImmediate(() => cb(null, '0\t2\n'));
+    const legacy = await behindOrigin.refresh();
+    assert.equal(legacy.commitsAhead, 2);
+    await behindOrigin._startObservation(false);
+    assert.equal(fetches, 1);
+    assert.equal(behindOrigin.observation({}).relation, 'behind');
+  });
+});
+
 describe('lib/behind-origin (#227)', () => {
   const origInternal = { ...behindOrigin._internal };
 
