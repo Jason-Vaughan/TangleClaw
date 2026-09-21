@@ -1,6 +1,6 @@
 ---
 title: "#1626 — Shared documents answer only to a caller bound to a project in the group"
-status: IN PROGRESS — PM verified traceability 2026-09-21 (msg fbae32e1); Chunks 01–04 done; closes with the Chunk 04 PR (Fixes #1626)
+status: COMPLETE — Chunks 01–04 shipped; the Chunk 04 PR closes #1626 (archived with it)
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-21 (message 2ecd5ef4) — Hotfix B.1, PRAWDUCT planning only; Train A HELD
 issue: 1626
 governed_by:
