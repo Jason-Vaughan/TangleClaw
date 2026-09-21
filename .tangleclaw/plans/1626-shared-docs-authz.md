@@ -76,6 +76,11 @@ Established by reading the code at `a3155b7c7`. None of this is taken from the i
      `x-tangleclaw-project-id`, `x-tangleclaw-launch-id` and `x-tangleclaw-role` from the pane's
      environment on every request, so `tc docs` binds with no change: a project's `tc docs` resolves
      as that project, and the Master's resolves as `master` once Chunk 02 exports its launch id.
+     Because `bin/tc` sends that id on **every** request, every other reader of
+     `x-tangleclaw-launch-id` also sees it. The only other reader is `server.js#_launchIdentity`, used
+     by the `tc start` routes, and Chunk 02 makes it treat a Master request as a pane with no launch
+     sequence. Otherwise the Master's id, which the store has never recorded, reads as a launch that is
+     still recording.
 
 ## Threat model this fix answers, and what it does not claim
 
@@ -270,6 +275,12 @@ Each chunk ships as **its own PR**, and main stays releasable after each one. Th
   '=tangleclaw-master:' TANGLECLAW_LAUNCH_ID` prints a value.
 - `tc docs` (bare `GET /api/shared-docs`, identity headers sent by `bin/tc`) gets the scoped view
   for a project and the full view for the bound Master. Add a test.
+- **Decide the cost of a Master claim before wiring the resolver into routes.** `resolveAccess` →
+  `master.liveMasterLaunchId` → `tmux.readSessionEnv` is a synchronous `execSync`, and it can take up
+  to the 5s tmux timeout. Once routes consult the resolver, every request that claims the Master role
+  with an id the store does not know runs one blocking subprocess on the event loop. Either accept that
+  and record it (the Master's read rate is low, and a timeout fails closed), or bound it with a short
+  read timeout and/or a brief cache keyed on the tmux session's creation time.
 
 - Wire `resolveAccess` into `GET /api/shared-docs`, `GET /api/shared-docs/:id`,
   `GET /api/shared-docs/:id/lock`, `GET /api/groups`, `GET /api/groups/:id` and

@@ -520,8 +520,11 @@ switch that does nothing.
 
 Independent of any config file or prime, every tmux session TangleClaw launches gets the `tc` CLI
 on its `PATH` plus `TANGLECLAW_API` / `TANGLECLAW_PROJECT_ID`, `TANGLECLAW_LAUNCH_ID` (which
-launch this pane is, for `tc start`), and `TANGLECLAW_WORKSPACE_ID` when the switchboard minted
-one, in the pane environment. The verbs come from a declared roster — read the list from
+launch this pane is: `tc start` finds its sequence by it, and shared-docs requests send it as the
+caller's binding), and `TANGLECLAW_WORKSPACE_ID` when the switchboard minted one, in the pane
+environment. The Project Master's pane carries `TANGLECLAW_ROLE=master` instead of a project id,
+and a launch id that serves only as its shared-docs binding: it has no launch sequence, so its
+`tc start` says so. The verbs come from a declared roster — read the list from
 `lib/tc-verbs.js#VERB_ROSTER`, or run `tc` with no arguments, rather than from a copy here that
 ages every time a verb is added. Each answers honestly (an empty inbox or idle fleet says so in
 words; a disabled capability states its reason), and the server records each invocation as a

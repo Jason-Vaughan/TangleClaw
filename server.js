@@ -4369,6 +4369,13 @@ route('POST', '/api/tc/rule-receipt', (req, res, _params, body) => {
  * TangleClaw exported into it, and the project id it already carries. Both are
  * claims, and the sequence lookup validates them against each other — neither
  * is a credential (see `lib/launch-sequence.js`).
+ *
+ * The Project Master's pane carries a launch id too, but only as its shared-docs
+ * binding (#1626): it is never phased-launched, so it has no sequence. A Master
+ * request (role header, no project claim) is answered as a pane without a
+ * sequence, the answer it got before it carried the id. Without this its
+ * unrecorded id reads as a launch still recording, and `tc start` retries and
+ * then reports a failed launch.
  * @param {object} req - The request
  * @returns {{launchId: string|null, projectId: number|null}}
  */
@@ -4376,6 +4383,9 @@ function _launchIdentity(req) {
   const raw = req.headers['x-tangleclaw-launch-id'];
   const projectRaw = req.headers['x-tangleclaw-project-id'];
   const projectId = Number(projectRaw);
+  if (req.headers['x-tangleclaw-role'] === 'master' && projectRaw === undefined) {
+    return { launchId: null, projectId: null };
+  }
   return {
     launchId: typeof raw === 'string' && raw ? raw : null,
     projectId: Number.isInteger(projectId) ? projectId : null
