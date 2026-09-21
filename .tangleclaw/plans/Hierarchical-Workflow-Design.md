@@ -22,3 +22,9 @@ A fully automated session must be bounded. We cannot let a loop run infinitely w
 * **Chunk Horizon:** Stop after completing N chunks.
 * **Car/Train Horizon:** Stop and require operator sign-off after completing a full Car or a full Train.
 * **Time/Budget Horizon:** Stop after a certain time limit or compute budget is reached.
+
+## 6. Required TangleClaw Upgrades (Action Items)
+To fully realize this automated hierarchical loop, we must unblock scenarios that currently require human intervention:
+
+* **Crash-Recovery API Endpoint:** We need to expose an API endpoint that allows the Project Manager to clear a `crash-recovery` state on a Builder's behalf. Currently, this is a hard operator-only UI button. If the PM is authorized to manage the session, the PM must be able to API-clear it to prevent the automation loop from stalling.
+* **Dashboard Session Page:** Move the `crash-recovery` clear button into the specific session page on the web dashboard (it is currently isolated on the Launch readiness panel), making it easier for human operators to find when manually intervening.
