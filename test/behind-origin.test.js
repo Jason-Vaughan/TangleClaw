@@ -209,6 +209,32 @@ describe('lib/behind-origin — the origin observation (#993/#1678)', () => {
     assert.match(stale.reason, /last observed 16 min ago/);
   });
 
+  it('remeasureRelation re-reads HEAD against the origin already fetched — no network, same checkedAt', async () => {
+    const { calls } = stubObserve({ leftRight: '0\t0\n' });
+    await behindOrigin._startObservation(false);
+    const first = behindOrigin.observation({});
+    calls.length = 0;
+    behindOrigin._internal.gitRevParseHead = (cb) => { calls.push('head'); setImmediate(() => cb(null, `${'c'.repeat(40)}\n`)); };
+    behindOrigin._internal.gitLeftRight = (cb) => { calls.push('leftright'); setImmediate(() => cb(null, '1\t0\n')); };
+    clock += 60000;
+    await behindOrigin.remeasureRelation();
+    const after = behindOrigin.observation({});
+    assert.deepEqual(calls, ['head', 'leftright'], 'no fetch');
+    assert.equal(after.headSha, 'c'.repeat(40));
+    assert.equal(after.relation, 'ahead');
+    assert.equal(after.checkedAt, first.checkedAt, 'checkedAt is when origin was observed, and that has not changed');
+  });
+
+  it('remeasureRelation does nothing without a successful observation, and keeps the record on a failed read', async () => {
+    assert.equal(await behindOrigin.remeasureRelation(), null);
+    stubObserve({});
+    await behindOrigin._startObservation(false);
+    behindOrigin._internal.gitLeftRight = (cb) => setImmediate(() => cb(new Error('boom'), ''));
+    behindOrigin._internal.gitRevParseHead = (cb) => setImmediate(() => cb(null, `${'c'.repeat(40)}\n`));
+    await behindOrigin.remeasureRelation();
+    assert.equal(behindOrigin.observation({}).headSha, 'b'.repeat(40), 'a partial read never half-updates the record');
+  });
+
   it('a refresh takes the legacy count and the observation with a single fetch', async () => {
     let fetches = 0;
     behindOrigin._internal.gitSymbolicRef = (cb) => cb(null, 'refs/heads/main\n');

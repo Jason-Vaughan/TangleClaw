@@ -89,7 +89,8 @@ describe('lib/checkout-freshness (#993)', () => {
   let tmp;
   const origGit = cf._internal.git;
 
-  before(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-checkout-freshness-')); });
+  // Resolved: on macOS the temp dir sits behind /var → /private/var.
+  before(() => { tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-checkout-freshness-'))); });
   after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   beforeEach(() => { cf._reset(); cf._internal.git = cf.runGit; });
   afterEach(() => { cf._internal.git = origGit; cf._reset(); });
@@ -319,15 +320,92 @@ describe('lib/checkout-freshness (#993)', () => {
   });
 
   describe('isLiveInstall', () => {
-    it('matches the same directory through a symlink and nothing else', () => {
+    it('matches the root as given or as resolved, and never touches the project path', () => {
       const real = path.join(tmp, 'live');
       fs.mkdirSync(real, { recursive: true });
       const link = path.join(tmp, 'live-link');
       fs.symlinkSync(real, link);
-      assert.equal(cf.isLiveInstall(link, real), true);
+      // The root may be given through a symlink; its resolved form still matches.
+      assert.equal(cf.isLiveInstall(real, link), true);
+      assert.equal(cf.isLiveInstall(link, link), true);
+      assert.equal(cf.isLiveInstall(`${real}/`, real), true, 'a trailing slash is the same directory');
       assert.equal(cf.isLiveInstall(tmp, real), false);
-      assert.equal(cf.isLiveInstall(path.join(tmp, 'missing'), real), false);
       assert.equal(cf.isLiveInstall(null, real), false);
+      // A project path is compared as a string only: a path that does not exist
+      // answers false without any filesystem call that could block.
+      assert.equal(cf.isLiveInstall(path.join(tmp, 'missing', 'deeper'), real), false);
+    });
+
+    it('does not resolve a project registered through a symlink — a missed line, never a hung server', () => {
+      const real = path.join(tmp, 'live2');
+      fs.mkdirSync(real, { recursive: true });
+      const link = path.join(tmp, 'live2-link');
+      fs.symlinkSync(real, link);
+      assert.equal(cf.isLiveInstall(link, real), false);
+    });
+  });
+
+  describe('assess — one fact, one sentence', () => {
+    const local = { repoRoot: '/r', ok: true, notGit: false, headSha: 'b'.repeat(40), branch: 'main', detached: false,
+      releaseTag: null, upstream: 'origin/main', ahead: 2, behind: 0, upstreamGone: false, trackedChanges: 0, untracked: 0 };
+
+    it('on main tracking origin/main, ahead is said once — by the observation', () => {
+      const a = cf.assess(local, observed({ headSha: local.headSha, ahead: 2, relation: 'ahead' }));
+      const codes = a.findings.map((f) => f.code);
+      assert.deepEqual(codes, ['ahead-of-origin']);
+    });
+
+    it('keeps the status-header count when the observation cannot speak for this HEAD', () => {
+      const down = cf.assess(local, observed({ evidence: 'unavailable', reason: 'offline', relation: null, originMainSha: null }));
+      assert.ok(down.findings.some((f) => f.code === 'unpushed'));
+      const moved = cf.assess(local, observed({ headSha: 'c'.repeat(40) }));
+      assert.ok(moved.findings.some((f) => f.code === 'unpushed'));
+    });
+  });
+
+  describe('liveInstallSnapshot and warmForLaunch keep their promises', () => {
+    const behindOrigin = require('../lib/behind-origin');
+    const saved = {};
+    beforeEach(() => {
+      for (const k of ['snapshot', 'observation', 'remeasureRelation']) saved[k] = behindOrigin[k];
+    });
+    afterEach(() => Object.assign(behindOrigin, saved));
+
+    it('starts the origin refresh on every read, and a re-measure when HEAD has moved', () => {
+      let refreshes = 0;
+      let remeasures = 0;
+      behindOrigin.snapshot = () => { refreshes++; return {}; };
+      behindOrigin.remeasureRelation = () => { remeasures++; return Promise.resolve(null); };
+      behindOrigin.observation = () => observed({ headSha: 'c'.repeat(40) });
+      cf._internal.git = async (args) => ({ exitCode: 0, stdout: args[0] === 'status' ? '## main...origin/main\n' : `${'d'.repeat(40)}\n`,
+        stderr: '', error: null, errorCode: null, signal: null, timedOut: false });
+      return cf.refresh(cf.LIVE_INSTALL_ROOT).then(() => {
+        const snap = cf.liveInstallSnapshot({});
+        assert.equal(refreshes, 1, 'the snapshot itself keeps the observation moving');
+        assert.equal(snap.findings[0].code, 'origin-outdated');
+        assert.equal(remeasures, 1, '"being re-measured" is only said when a re-measure was started');
+        behindOrigin.observation = () => observed({ headSha: 'd'.repeat(40) });
+        cf.liveInstallSnapshot({});
+        assert.equal(remeasures, 1, 'no re-measure when the observation matches HEAD');
+      });
+    });
+
+    it('warmForLaunch reads the live checkout for its own project only', async () => {
+      let reads = 0;
+      let starts = 0;
+      behindOrigin.snapshot = () => { starts++; return {}; };
+      cf._internal.git = async () => { reads++; return { exitCode: 0, stdout: '## main\n', stderr: '', error: null,
+        errorCode: null, signal: null, timedOut: false }; };
+      assert.equal(await cf.warmForLaunch(tmp, {}), false);
+      assert.equal(reads + starts, 0, 'another project costs nothing');
+      assert.equal(await cf.warmForLaunch(cf.LIVE_INSTALL_ROOT, {}), true);
+      assert.ok(reads > 0);
+      assert.equal(starts, 1);
+      assert.ok(cf.readCached(cf.LIVE_INSTALL_ROOT), 'the prime then reads a warm cache');
+    });
+
+    it('takes its root from behind-origin, so both halves name the same checkout', () => {
+      assert.equal(cf.LIVE_INSTALL_ROOT, behindOrigin.REPO_ROOT);
     });
   });
 });
@@ -416,5 +494,24 @@ describe('renderLiveCheckoutBanner (public/landing.js)', () => {
     const call = load.indexOf('renderLiveCheckoutBanner(data.checkout)');
     assert.ok(call > -1);
     assert.ok(call < load.indexOf('if (data.isStale === null)'));
+  });
+});
+
+describe('server wiring (#993)', () => {
+  const SERVER_SRC = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+
+  it('the launch route warms the live checkout before the prime is rendered', () => {
+    const start = SERVER_SRC.indexOf("route('POST', '/api/sessions/:project'");
+    assert.ok(start > -1);
+    const route = SERVER_SRC.slice(start, start + 4000);
+    const warm = route.search(/await checkoutFreshness\.warmForLaunch\(project\.path, /);
+    assert.ok(warm > -1, 'the launch route must await warmForLaunch with the launching project');
+    const ci = route.indexOf('await ciStatus.refresh(project.path)');
+    assert.ok(ci > -1 && warm > ci, 'warmed beside the CI verdict, before the synchronous prime');
+  });
+
+  it('server-info and whoami read the one live-install snapshot', () => {
+    assert.match(SERVER_SRC, /info\.checkout = checkoutFreshness\.liveInstallSnapshot\(cfg\)/);
+    assert.match(SERVER_SRC, /liveInstall: project && checkoutFreshness\.isLiveInstall\(project\.path, checkoutFreshness\.LIVE_INSTALL_ROOT\)/);
   });
 });

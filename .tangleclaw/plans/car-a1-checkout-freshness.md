@@ -27,7 +27,7 @@ governed_by:
       - "secure by default → inapplicable because this car adds read-only fields to already-gated routes and no new route surface; the origin URL is normalized and credentials are stripped before it is ever returned"
   - artifact: prime-delivery-direction
     dispositions:
-      - "one concern per channel; cost scales with relevance → conforms; the freshness fact rides the existing `state` launch step as ≤3 lines, beside the CI line, and is only emitted for a git checkout"
+      - "one concern per channel; cost scales with relevance → conforms; the freshness fact rides the existing `state` launch step beside the CI line — one line when current, otherwise a heading, the identity line, one line per finding and a no-action note — and only for a session of the live install's own project"
   - artifact: project-preferences
     dispositions:
       - "no npm dependencies → conforms (git CLI + node stdlib only)"
@@ -72,7 +72,12 @@ serving checkout underneath this work.
   serving install, only the argument changes. | MED impact | PM can reorder to put #1672 first]
 - [ASSUMPTION: one origin observation per repo, in memory, not persisted. It replaces
   `behind-origin`'s separate fetch rather than adding a third remote read beside it and
-  `update-checker`'s `ls-remote`. | MED impact | Architect can override]
+  `update-checker`'s `ls-remote`. | MED impact | Architect can override] **As built in Chunk 01,
+  this is narrower:** one observation per server process, for the live install only, held in
+  `lib/behind-origin.js` and fixed to `REPO_ROOT`. Nothing yet observes another checkout's origin
+  or shares an observation between clones. **Chunk 03 must build that generalization.** It needs
+  an observation keyed by normalized origin URL, taking the repo root as a parameter. It must not
+  assume one already exists.
 
 **What would raise confidence:** one PM/Architect reply on the two HIGH assumptions. Neither needs a
 spike.
@@ -211,7 +216,10 @@ Context: PM verified traceability and authorized Chunk 01 only (2026-09-21). Chu
   `checkedAt`. A feature worktree that is ahead of and behind main shows as `diverged`, not as
   wrong. For a TangleClaw session, the banner also shows the running server's SHA when it differs
   from that session's checkout. A project with no remote shows `no-remote`, never an origin
-  comparison.
+  comparison. **Prerequisite this chunk builds:** Chunk 01's observation is per-process and fixed
+  to the live install, so this chunk first generalizes it into an observation keyed by normalized
+  origin URL, with a repo-root parameter, a single-flight fetch per URL and the same evidence
+  states.
 - **Depends on:** Chunk 01 (Chunk 02 for the class label)
 - **Deliverables:**
   - A per-session `checkout` field on the session-status payload.

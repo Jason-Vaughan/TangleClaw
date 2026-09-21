@@ -5872,10 +5872,7 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
   // checkout is serving. The local read is warmed here (short, local git
   // calls); the origin observation is never awaited — `snapshot` only starts
   // one, and an unobserved origin is said as unknown in the prime.
-  if (checkoutFreshness.isLiveInstall(project.path, checkoutFreshness.LIVE_INSTALL_ROOT)) {
-    await checkoutFreshness.refresh(checkoutFreshness.LIVE_INSTALL_ROOT);
-    behindOrigin.snapshot(store.config.load());
-  }
+  await checkoutFreshness.warmForLaunch(project.path, store.config.load());
 
   // The operator's own request carries the host they actually reached this
   // server on — better evidence than probing this machine, which names the box

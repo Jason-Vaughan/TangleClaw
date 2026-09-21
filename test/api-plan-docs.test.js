@@ -310,6 +310,23 @@ describe('#542 — served plan docs over HTTP', () => {
       assert.match(cap.detail, new RegExp(`/plans/${project.id}/<file>\\.md`));
     });
 
+    it('carries the live checkout lines for the live install\'s own project (#993)', async () => {
+      const checkoutFreshness = require('../lib/checkout-freshness');
+      const realIs = checkoutFreshness.isLiveInstall;
+      const realSnap = checkoutFreshness.liveInstallSnapshot;
+      try {
+        checkoutFreshness.isLiveInstall = (p) => p === project.path;
+        checkoutFreshness.liveInstallSnapshot = () => ({ status: 'attention', identity: 'Checkout: /live — feat/x @ 1234567',
+          findings: [{ code: 'not-on-main', severity: 'warn', text: 'The checkout is on branch "feat/x", not main.' }] });
+        const r = await get(server, `/api/tc/whoami?projectId=${project.id}`);
+        assert.equal(r.data.liveInstall.status, 'attention');
+        assert.ok(r.data.liveInstall.lines.includes('- The checkout is on branch "feat/x", not main.'));
+      } finally {
+        checkoutFreshness.isLiveInstall = realIs;
+        checkoutFreshness.liveInstallSnapshot = realSnap;
+      }
+    });
+
     it('carries no live-install checkout block for a project that is not the live install (#993)', async () => {
       const r = await get(server, `/api/tc/whoami?projectId=${project.id}`);
       assert.equal(r.data.liveInstall, undefined,
