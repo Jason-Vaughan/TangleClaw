@@ -184,6 +184,30 @@ html[data-tc-keyboard] body {
   color: var(--text-muted);
   font-family: monospace;
 }
+/* The checkout chip (#1678). Its text can outgrow a phone's banner, so it
+   ellipsizes; the click detail carries the full line. Only three tones, and
+   none of them is green for a state nobody measured. */
+.banner-checkout {
+  position: relative;
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--text-muted);
+  cursor: pointer;
+  min-width: 0;
+  max-width: 34ch;
+}
+.banner-checkout[hidden] { display: none; }
+.banner-checkout-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.banner-checkout[data-tone="warn"] { color: var(--warning, #ffb300); }
+.banner-checkout[data-tone="unknown"] { color: var(--text-muted); font-style: italic; }
+@media (max-width: 600px) {
+  .banner-checkout { max-width: 16ch; }
+}
 
 /* ── Status Dot ── */
 .status-dot {

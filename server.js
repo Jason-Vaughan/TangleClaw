@@ -281,6 +281,7 @@ const updateApplier = require('./lib/update-applier');
 const serverInfo = require('./lib/server-info');
 const behindOrigin = require('./lib/behind-origin');
 const checkoutState = require('./lib/checkout-state');
+const checkoutFreshness = require('./lib/checkout-freshness');
 const bindPolicy = require('./lib/bind-policy');
 const wrapRunRegistry = require('./lib/wrap-run-registry');
 const wrapHandback = require('./lib/wrap-handback');
@@ -5651,7 +5652,14 @@ route('GET', '/api/projects/:name', async (req, res, params) => {
     return errorResponse(res, 404, `Project "${params.name}" not found`, 'NOT_FOUND');
   }
   // The same row the list carries, so the same shaping (#1739).
-  jsonResponse(res, 200, projectView.shapeProject(projectsReader(req), project));
+  const reader = projectsReader(req);
+  // #1678: the checkout compared against the upstream every related session
+  // shares. Workspace facts, so only a caller that sees the row whole gets
+  // them — and only then is the clone measured at all. Cached; never waits.
+  if (projectView.seesWhole(reader, project)) {
+    project.checkout = checkoutFreshness.projectCheckout(project, { config: store.config.load() });
+  }
+  jsonResponse(res, 200, projectView.shapeProject(reader, project));
 });
 
 /**
@@ -6103,7 +6111,12 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
   // #991: warm the base-branch CI verdict OFF the event loop before the
   // synchronous launch reads it for the prime. Never rejects; a failed probe
   // is an honest unknown in the prime, not a failed launch.
+  // #1678: the checkout line reads cached facts too; measure them now, bounded,
+  // so the prime says what the clone is on rather than "pending". Concurrent
+  // with the CI probe, so a hung network costs one wait, not two.
+  const checkoutWarm = checkoutFreshness.refreshForLaunch(project, store.config.load());
   await ciStatus.refresh(project.path);
+  await checkoutWarm;
 
   // The operator's own request carries the host they actually reached this
   // server on — better evidence than probing this machine, which names the box

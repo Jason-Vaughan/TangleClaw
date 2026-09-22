@@ -368,7 +368,7 @@ describe('api-projects', () => {
   describe('each caller sees only the projects it owns (#1739)', () => {
     // Fields that describe a project's workspace. None may reach a caller that
     // does not own the project.
-    const WORKSPACE_FIELDS = ['path', 'groups', 'git', 'ports', 'sessionHealth', 'stranded', 'evalAudit', 'actions'];
+    const WORKSPACE_FIELDS = ['path', 'groups', 'git', 'ports', 'sessionHealth', 'stranded', 'evalAudit', 'actions', 'checkout'];
     let own;
     let other;
     let binding;
@@ -441,6 +441,13 @@ describe('api-projects', () => {
 
       const mine = await request('GET', '/api/projects/view-own', null, binding.headers);
       assert.equal(mine.data.path, own.path);
+      // #1678: the checkout block rides the whole row only.
+      assert.equal(typeof mine.data.checkout, 'object');
+      assert.equal(mine.data.checkout.owner.project, 'view-own');
+      assert.ok('upstream' in mine.data.checkout && 'vsUpstream' in mine.data.checkout);
+
+      const operator = await request('GET', '/api/projects/view-other', null, asOperator());
+      assert.equal(operator.data.checkout.owner.project, 'view-other');
     });
   });
 

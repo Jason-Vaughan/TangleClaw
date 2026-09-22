@@ -33,6 +33,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   v4.5.0–v4.19.0).
 -->
 
+## 2026-09-22 — Every related session shows the same upstream target (#1678)
+
+<!-- prawduct: type=feature | scope=train-a-car-a1 -->
+
+Train A Car A1 Chunk 02. `lib/upstream-observer.js` observes `origin/main` once per repository identity (`ls-remote origin refs/heads/main`, 5-minute cache, single-flight, network-bound, never a fetch; off with behind-origin's switch, per D10). `checkout-state` gains `repository.identity`: the normalized origin URL, where a local remote becomes an opaque `file:<sha256(realpath)>` per D14 as modified. It also gains `compareSnapshot` against the observed SHA: `behind-unknown` when the clone lacks the commit, found by `rev-parse --verify --quiet`, because `cat-file -e` exits 128 on `^{commit}`, as the real-git test proved. `lib/checkout-freshness.js` composes the `checkout` block: `localRef`, `upstream`, `vsUpstream`, `owner`, the install-only `runtime`, and `summary`. `summary` comes from `lib/checkout-summary.js`, and the prime and the session chip both show it. `GET /api/projects/:name` carries the block on the whole row only. The session chip re-reads that row on the status poll's cadence (D12), and the launch route warms the checkout alongside the CI probe, bounded at 5s (D13). `lib/git-probe.js` is the shared async runner (R-11, D15); git failure reasons are scrubbed of paths and URLs. Architect rulings D12–D15: D14 modified, the rest approved. Critic: rev-20260922T211920Z (0 blocking; 6 warnings, 7 notes: R-9 fixed, R-10 accepted and filed as #1790, R-11/R-13 accepted, the rest fixed), verify rev-20260922T213404Z (0 findings; O-1..O-6 accepted, with O-1/O-3/O-4 carried to Chunk 3). The full suite is green by a TAP run.
+
 ## 2026-09-22 — The dashboard says what the live checkout is on and whether a restart matters (#993, #1678)
 
 <!-- prawduct: type=feature | scope=train-a-car-a1 -->

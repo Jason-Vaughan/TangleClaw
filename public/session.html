@@ -40,6 +40,12 @@
            dot sits inside a wrapper because the dot's breathing animation is
            an opacity animation and would fade its own tooltip and popover. -->
       <span class="banner-version" id="bannerVersion" data-tooltip="Project version"></span>
+      <!-- What this project's checkout is on, against the origin/main every
+           related session shares (#1678). Hidden until the project row carries
+           a checkout (only a caller that sees the row whole gets one); click
+           for the full line. No action lives here. -->
+      <span class="banner-checkout" id="bannerCheckout" data-tooltip="Checkout vs origin/main"
+            data-pill-detail="" role="button" tabindex="0" hidden><span class="banner-checkout-text" id="bannerCheckoutText"></span></span>
       <span class="status-pill" id="statusPill" data-tooltip="Session status"
             data-pill-detail="Connected" role="button" tabindex="0"
             aria-label="Session status: Connected">

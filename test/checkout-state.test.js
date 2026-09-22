@@ -530,4 +530,164 @@ describe('checkout-state: against real git', () => {
     const r = await cs.measure(dir, { execFile: realExec });
     assert.equal(r.state, 'no-git');
   });
+  it('two clones of one repository share an identity and read one observed upstream (#1678)', async () => {
+    const uo = require('../lib/upstream-observer');
+    const seed = makeRepo('seed');
+    const bare = path.join(root, 'origin.git');
+    git(root, 'clone', '-q', '--bare', seed, bare);
+    const a = path.join(root, 'clone-a');
+    const b = path.join(root, 'clone-b');
+    git(root, 'clone', '-q', bare, a);
+    git(root, 'clone', '-q', bare, b);
+    fs.writeFileSync(path.join(b, 'server.js'), 'moved upstream\n');
+    git(b, 'commit', '-q', '-am', 'upstream moves');
+    git(b, 'push', '-q', 'origin', 'main');
+
+    const ma = await cs.measure(a, { execFile: realExec });
+    const mb = await cs.measure(b, { execFile: realExec });
+    assert.match(ma.repository.identity, /^file:[0-9a-f]{64}$/, 'a local repository is an opaque identity');
+    assert.ok(!ma.repository.identity.includes(root), 'the identity never carries where the repository lives');
+    assert.equal(ma.repository.identity, mb.repository.identity, 'one repository, one identity, whichever clone');
+    // A clone naming the same repository through a symlink agrees, because the
+    // path is canonicalized before it is hashed.
+    const viaLink = path.join(root, 'origin-link.git');
+    fs.symlinkSync(bare, viaLink);
+    const c = path.join(root, 'clone-c');
+    git(root, 'clone', '-q', viaLink, c);
+    assert.equal((await cs.measure(c, { execFile: realExec })).repository.identity, ma.repository.identity);
+
+    const savedExec = uo._internal.execFile;
+    uo._reset();
+    uo._internal.execFile = realExec;
+    try {
+      const obs = await uo.refresh(ma.repository.identity, { dir: a, name: 'A' });
+      assert.equal(obs.state, 'measured', obs.reason);
+      assert.equal(obs.sha, git(b, 'rev-parse', 'HEAD'), 'ls-remote sees the push clone A has not fetched');
+      assert.equal(git(a, 'rev-parse', 'origin/main'), ma.headSha, 'observing wrote nothing into clone A');
+
+      const behind = await cs.compareToUpstream(a, ma.headSha, obs.sha, { execFile: realExec });
+      assert.deepEqual(behind, { ahead: null, behind: null, relation: 'behind-unknown', reason: 'upstream commit not fetched here' });
+      const level = await cs.compareToUpstream(b, mb.headSha, obs.sha, { execFile: realExec });
+      assert.equal(level.relation, 'equal');
+
+      git(a, 'fetch', '-q', 'origin');
+      const counted = await cs.compareToUpstream(a, ma.headSha, obs.sha, { execFile: realExec });
+      assert.deepEqual(counted, { ahead: 0, behind: 1, relation: 'behind', reason: null });
+    } finally {
+      uo._internal.execFile = savedExec;
+      uo._reset();
+    }
+  });
+
+  it('a clone with no remote reads "no origin remote", which leaves its own facts complete', async () => {
+    const r = await cs.measure(makeRepo('noremote'), { execFile: realExec });
+    assert.deepEqual(r.repository, { identity: null, reason: 'no origin remote' });
+    assert.deepEqual(r.incomplete, []);
+  });
+});
+
+describe('checkout-state: repository identity (#1678)', () => {
+  const savedRealpath = cs._internal.realpath;
+  it('scp, https-with-token, ssh with port 22 and an uppercase host are one repository', () => {
+    const forms = [
+      'git@github.com:Jason-Vaughan/TangleClaw.git',
+      'https://x-access-token:ghp_secret@GitHub.com/Jason-Vaughan/TangleClaw.git/',
+      'ssh://git@github.com:22/Jason-Vaughan/TangleClaw.git',
+      'https://github.com:443/Jason-Vaughan/TangleClaw',
+      'git://github.com/Jason-Vaughan/TangleClaw.git'
+    ];
+    for (const f of forms) assert.equal(cs.normalizeRemoteUrl(f), 'github.com/Jason-Vaughan/TangleClaw', f);
+  });
+
+  it('never keeps a credential, keeps a non-default port and the path case', () => {
+    const id = cs.normalizeRemoteUrl('https://user:pa55@git.example.com:8443/Team/Repo.git');
+    assert.equal(id, 'git.example.com:8443/Team/Repo');
+    assert.ok(!id.includes('pa55'));
+    assert.notEqual(cs.normalizeRemoteUrl('git@github.com:owner/repo'), cs.normalizeRemoteUrl('git@github.com:Owner/Repo'),
+      'path case is kept, so a case-only mismatch reads as two repositories, never as a false match');
+  });
+
+  it('a local path remote is an opaque identity that never carries the path; unreadable forms are null', () => {
+    const id = cs.normalizeRemoteUrl('/srv/git/repo.git');
+    assert.match(id, /^file:[0-9a-f]{64}$/);
+    assert.ok(!id.includes('srv'));
+    assert.equal(cs.normalizeRemoteUrl('file:///srv/git/repo.git'), id);
+    assert.equal(cs.normalizeRemoteUrl('/srv/git/repo'), id, '.git or not, one repository');
+    assert.equal(cs.normalizeRemoteUrl('../repo.git', '/srv/git/clone'), id, 'relative to the clone it was read from');
+    assert.equal(cs.localRemotePath('git@github.com:o/r.git'), null, 'a network remote is not local');
+    assert.equal(cs.normalizeRemoteUrl(''), null);
+    assert.equal(cs.normalizeRemoteUrl('not a url'), null);
+    assert.equal(cs.normalizeRemoteUrl(null), null);
+  });
+
+  it('measure reads the identity; no remote is a fact, a failed read is not "no remote"', async () => {
+    const answers = (remote) => fakeGit({
+      status: statusOut({}), 'rev-parse': `${SHA_A}\n`, 'rev-list': '0\t0\n', remote
+    }).execFile;
+    let r = await cs.measure('/x', { execFile: answers('git@github.com:o/r.git\n') });
+    assert.deepEqual(r.repository, { identity: 'github.com/o/r', reason: null });
+    r = await cs.measure('/x', { execFile: answers(Object.assign(new Error('x'), { code: 2, stderr: "error: No such remote 'origin'" })) });
+    assert.deepEqual(r.repository, { identity: null, reason: 'no origin remote' });
+    cs._internal.realpath = async (p) => p.replace('/link/', '/real/');
+    try {
+      r = await cs.measure('/x', { execFile: answers('/link/repo.git\n') });
+      assert.equal(r.repository.identity, cs.localIdentity('/real/repo.git'), 'the path is canonicalized before it is hashed');
+    } finally {
+      cs._internal.realpath = savedRealpath;
+    }
+    r = await cs.measure('/x', { execFile: answers(Object.assign(new Error('x'), { killed: true })) });
+    assert.equal(r.repository.identity, null);
+    assert.match(r.repository.reason, /timed out/);
+    assert.equal(r.state, 'measured', 'the identity is not one of the checkout\'s own facts');
+  });
+});
+
+describe('checkout-state: comparison against an observed upstream (#1678)', () => {
+  beforeEach(() => cs._reset());
+  afterEach(() => { cs._internal.execFile = savedCsExec; cs._reset(); });
+  const savedCsExec = cs._internal.execFile;
+
+  it('equal SHAs need no git', async () => {
+    const r = await cs.compareToUpstream('/x', SHA_A, SHA_A, { execFile: () => { throw new Error('no call expected'); } });
+    assert.deepEqual(r, { ahead: 0, behind: 0, relation: 'equal', reason: null });
+  });
+
+  it('a present upstream commit is counted from the clone\'s own objects', async () => {
+    const { execFile, calls } = fakeGit({ 'rev-parse': `${SHA_B}\n`, 'rev-list': '2\t3\n' });
+    const r = await cs.compareToUpstream('/x', SHA_A, SHA_B, { execFile });
+    assert.deepEqual(r, { ahead: 2, behind: 3, relation: 'diverged', reason: null });
+    assert.deepEqual(calls.find((c) => c[0] === 'rev-list'), ['rev-list', '--left-right', '--count', `${SHA_A}...${SHA_B}`]);
+    assert.ok(!calls.some((c) => c[0] === 'fetch'));
+  });
+
+  it('a missing upstream commit is behind by an unknown count; any other failure is unknown', async () => {
+    let r = await cs.compareToUpstream('/x', SHA_A, SHA_B, { execFile: fakeGit({ 'rev-parse': Object.assign(new Error('x'), { code: 1 }) }).execFile });
+    assert.equal(r.relation, 'behind-unknown');
+    assert.equal(r.behind, null);
+    r = await cs.compareToUpstream('/x', SHA_A, SHA_B, { execFile: fakeGit({ 'rev-parse': Object.assign(new Error('x'), { code: 128, stderr: 'fatal: bad object' }) }).execFile });
+    assert.equal(r.relation, 'unknown');
+    r = await cs.compareToUpstream('/x', SHA_A, SHA_B, { execFile: fakeGit({ 'rev-parse': `${SHA_B}\n`, 'rev-list': 'garbage' }).execFile });
+    assert.equal(r.relation, 'unknown');
+    r = await cs.compareToUpstream('/x', null, SHA_B, { execFile: fakeGit({}).execFile });
+    assert.equal(r.relation, 'unknown');
+  });
+
+  it('compareSnapshot is pending first, keeps a definite answer, and retries a behind-unknown one', async () => {
+    let fetched = false;
+    const { execFile, calls } = fakeGit({
+      'rev-parse': () => (fetched ? `${SHA_B}\n` : Object.assign(new Error('x'), { code: 1 })),
+      'rev-list': '0\t1\n'
+    });
+    cs._internal.execFile = execFile;
+    assert.equal(cs.compareSnapshot('/x', SHA_A, SHA_B).relation, 'pending');
+    await cs.compareRefresh('/x', SHA_A, SHA_B);
+    fetched = true; // the owning session fetches; the next read must notice
+    assert.equal(cs.compareSnapshot('/x', SHA_A, SHA_B).relation, 'behind-unknown', 'served while the retry runs');
+    await cs.compareRefresh('/x', SHA_A, SHA_B);
+    assert.equal(cs.compareSnapshot('/x', SHA_A, SHA_B).relation, 'behind');
+    const before = calls.length;
+    cs.compareSnapshot('/x', SHA_A, SHA_B);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(calls.length, before, 'a definite answer is not re-measured');
+  });
 });
