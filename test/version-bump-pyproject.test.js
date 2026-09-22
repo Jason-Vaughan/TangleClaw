@@ -203,10 +203,10 @@ describe('version-bump pyproject.toml support (#1444)', () => {
       assert.equal(s.currentVersion, '0.25.0');
     });
 
-    it('passes over a version.json with no version too', () => {
+    it('stops at a version.json with no version rather than falling to a lower file', () => {
       vb._internal.existsSync = (p) => p.endsWith('version.json') || p.endsWith('pyproject.toml');
       vb._internal.readFileSync = (p) => (p.endsWith('version.json') ? '{"name":"x"}' : PYPROJECT);
-      assert.equal(vb._resolveVersionSource('/p/version.json', '/p/package.json').kind, 'pyproject.toml');
+      assert.match(vb._resolveVersionSource('/p/version.json', '/p/package.json').skip, /version\.json has no "version" field/);
     });
 
     it('stops at a file that is broken rather than version-less', () => {
@@ -301,6 +301,35 @@ describe('version-bump pyproject.toml support (#1444)', () => {
         fs.rmSync(dir, { recursive: true, force: true });
       }
     });
+
+    // The dashboard must never show a version from a file the bump would not
+    // reach. Each shape runs the real writer probe and both real reader ladders
+    // on the same files on disk.
+    const PY = '[project]\nversion = "5.5.5"\n';
+    const shapes = [
+      ['a tooling-only package.json above pyproject.toml', { 'package.json': '{"private":true}', 'pyproject.toml': PY }, 'pyproject.toml'],
+      ['a version.json with no version above pyproject.toml', { 'version.json': '{"name":"x"}', 'pyproject.toml': PY }, null],
+      ['a malformed package.json above pyproject.toml', { 'package.json': '{not json', 'pyproject.toml': PY }, null],
+      ['a malformed version.json above package.json', { 'version.json': '{not json', 'package.json': '{"version":"4.4.4"}' }, null],
+      ['a versioned package.json above pyproject.toml', { 'package.json': '{"version":"4.4.4"}', 'pyproject.toml': PY }, 'package.json'],
+      ['a dynamic pyproject.toml alone', { 'pyproject.toml': '[project]\ndynamic = ["version"]\n' }, null]
+    ];
+    for (const [label, files, expected] of shapes) {
+      it(`writer and reader pick the same file: ${label}`, () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-vb-align-'));
+        try {
+          for (const [name, content] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), content);
+          const source = vb._resolveVersionSource(path.join(dir, 'version.json'), path.join(dir, 'package.json'));
+          const live = versionFiles.detectLiveVersion(dir);
+          const recorded = require('../lib/project-version').detectVersion(dir);
+          assert.equal(source.skip ? null : source.kind, expected, 'writer');
+          assert.equal(live ? live.source : null, expected, 'self-heal ladder');
+          assert.equal(['git tag', 'fallback'].includes(recorded.source) ? null : recorded.source, expected, 'launch/wrap ladder');
+        } finally {
+          fs.rmSync(dir, { recursive: true, force: true });
+        }
+      });
+    }
 
     it('honours releaseMode off on a pyproject.toml project', async () => {
       projectConfigModule.load = () => ({ releaseMode: 'off' });

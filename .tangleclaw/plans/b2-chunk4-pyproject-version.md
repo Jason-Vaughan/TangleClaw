@@ -131,11 +131,22 @@ Detection: `readPyprojectVersion` is added as a rung after `package.json` in bot
 
 ## Critic round 1 (chunk review of `c86f875f`): 0 blocking, 3 warnings, 2 notes, all fixed
 
-- **The probe now passes over a file that carries no version at all**, as the reader already did. A
+- **Only a version-less `package.json` is passed over; the reader and writer now share one probe.** A
   Python repo's tooling-only `package.json` (no `version`) stopped the writer short of
-  `pyproject.toml` while the dashboard read past it. This also applies to a version-less
-  `version.json`. A file that is broken (unreadable, not an object, non-semver, or an uneditable TOML
-  shape) still stops the probe. Reported to the Architect as a refinement of A5.
+  `pyproject.toml` while the dashboard read past it. Per the Architect's A5 refinement (below), the
+  writer passes over a valid `package.json` with no `version` field and nothing else. Both detection
+  ladders now go through one function (`readProbedVersion`) that stops where the writer stops, so a
+  `version.json` with no usable version, or a malformed `package.json`, no longer lets the dashboard
+  show a lower file's version. A real-filesystem test runs the writer and both ladders on each shape.
+
+### Architect ruling on the A5 refinement (2026-09-22, message 9577484c)
+
+- **MODIFY.** Pass over a valid probed `package.json` with no version field, so tooling-only Node
+  metadata does not mask `pyproject.toml`. Do not generalize it to `version.json`: its basename is an
+  affirmative version-source signal, so a missing version field is ambiguous and stops fail-closed.
+  A configured `versionFilePath` stays sole-source with no fallback. Detection and writer source
+  selection stay aligned, so the dashboard cannot claim `pyproject.toml` while the bump refuses on
+  `version.json`.
 - **Multi-line string tracking is TOML-aware.** Delimiters inside single-line strings and comments
   no longer count, so a stray `'''` in a comment cannot hide a table header (a test proves the old
   counter took `[tool.x]`'s version).
