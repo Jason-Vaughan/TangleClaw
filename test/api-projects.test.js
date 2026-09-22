@@ -655,6 +655,58 @@ describe('api-projects', () => {
         assert.equal(data.code, 'OPERATOR_ONLY');
         assert.equal(store.projects.getByName('gate-by-master'), null);
       });
+
+      // The access level governs the Master's FILE writes (its guard: read-only
+      // denies, suggest asks, write allows — test/master.test.js). It grants no
+      // API authority at any tier (ADR 0008, #966), and refusing an API call
+      // must not touch the stored level either.
+      for (const level of ['read-only', 'suggest', 'write']) {
+        it(`at access level ${level}, every project API mutation is refused and the stored level is unchanged`, async () => {
+          const config = store.config.load();
+          const previous = config.master;
+          config.master = { ...(previous || {}), accessLevel: level };
+          store.config.save(config);
+          try {
+            const own = [
+              ['PATCH', '/api/projects/gate-b', { tags: ['master'] }],
+              ['POST', '/api/projects/gate-b/actions/invoke-critic', {}],
+              ['POST', '/api/projects/gate-b/stranded-wraps/check', {}],
+              ['POST', '/api/projects/gate-b/stranded-wraps/ack', { branch: 'wrap/x', headSha: 'abc' }],
+              ['POST', '/api/projects/gate-b/stranded-wraps/open-pr', { branch: 'wrap/x', headSha: 'abc', confirm: true }]
+            ];
+            for (const [method, urlPath, body] of own) {
+              const { status, data } = await request(method, urlPath, body, MASTER);
+              assert.equal(status, 403, `${level} ${method} ${urlPath}`);
+              assert.equal(data.code, 'PROJECT_READ_ONLY', `${level} ${method} ${urlPath}`);
+            }
+            const operatorOnly = [
+              ['POST', '/api/projects', { name: `gate-master-${level}` }],
+              ['POST', '/api/projects/attach', { name: 'gate-attach-dir' }],
+              ['POST', '/api/projects/import', { names: ['gate-attach-dir'] }],
+              ['POST', '/api/projects/repair-orphan-hooks', {}],
+              ['POST', '/api/projects/gate-b/migrate-to-plugin', {}],
+              ['PATCH', '/api/projects/gate-b', { name: 'gate-b-renamed' }],
+              ['POST', '/api/projects/gate-b/archive', {}],
+              ['DELETE', '/api/projects/gate-b', {}]
+            ];
+            for (const [method, urlPath, body] of operatorOnly) {
+              const { status, data } = await request(method, urlPath, body, MASTER);
+              assert.equal(status, 403, `${level} ${method} ${urlPath}`);
+              assert.equal(data.code, 'OPERATOR_ONLY', `${level} ${method} ${urlPath}`);
+            }
+            const after = store.projects.getByName('gate-b');
+            assert.ok(after, 'the project still exists under its name');
+            assert.deepEqual(after.tags, ['orig']);
+            assert.equal(after.archived, false);
+            assert.equal(store.projects.getByName(`gate-master-${level}`), null);
+            assert.equal(store.config.load().master.accessLevel, level, 'the stored access level is unchanged');
+          } finally {
+            const restore = store.config.load();
+            restore.master = previous;
+            store.config.save(restore);
+          }
+        });
+      }
     });
 
     describe('a dashboard on plain http with the gate stood down (#1753)', () => {
