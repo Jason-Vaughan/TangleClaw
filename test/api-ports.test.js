@@ -8,6 +8,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
+const { operatorHeaders } = require('./_shared-docs-callers');
 const { createServer } = require('../server');
 const portScanner = require('../lib/port-scanner');
 
@@ -37,7 +38,7 @@ setLevel('error');
  * @param {object} [body]
  * @returns {Promise<{ status: number, data: object }>}
  */
-function request(server, method, urlPath, body) {
+function request(server, method, urlPath, body, headers = {}) {
   return new Promise((resolve, reject) => {
     const addr = server.address();
     const options = {
@@ -45,7 +46,7 @@ function request(server, method, urlPath, body) {
       port: addr.port,
       path: urlPath,
       method,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json', ...headers }
     };
 
     const req = http.request(options, (res) => {
@@ -435,7 +436,8 @@ describe('API /api/ports', () => {
       config.projectsDir = tmpDir;
       store.config.save(config);
       store.portLeases.lease({ port: 7480, project: 'Homebrew', service: 'postgresql@14', permanent: true });
-      const { status, data } = await request(server, 'POST', '/api/projects/import', { names: ['Homebrew'] });
+      const { status, data } = await request(server, 'POST', '/api/projects/import', { names: ['Homebrew'] },
+        operatorHeaders(server));
       assert.equal(status, 200);
       assert.deepEqual(data.imported, []);
       assert.ok(store.portLeases.get(7480), 'import must not delete a lease it cannot classify');

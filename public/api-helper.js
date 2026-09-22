@@ -112,6 +112,35 @@
     return out;
   }
 
+  /**
+   * `fetchOpts` with the header that says this request is the dashboard's.
+   *
+   * Browsers send `Sec-Fetch-Site` only to HTTPS and localhost origins, and no
+   * `Origin` on a same-origin GET, so over plain http on a tailnet or LAN
+   * address the server cannot otherwise tell the dashboard's reads from a
+   * local script's. It is read only while TangleClaw's gate stands down, where
+   * the whole dashboard is open anyway, so it is a label and not a credential
+   * (`lib/shared-docs-access.js#CLIENT_HEADER`). Every request carries it:
+   * every one of them is the dashboard's, and a same-origin custom header
+   * costs no CORS preflight.
+   *
+   * @param {object} [fetchOpts] - The caller's fetch options
+   * @returns {object} A copy with the header added; the caller's object is unchanged
+   */
+  function tcWithClient(fetchOpts) {
+    var out = {};
+    for (var k in fetchOpts) {
+      if (Object.prototype.hasOwnProperty.call(fetchOpts, k)) out[k] = fetchOpts[k];
+    }
+    out.headers = {};
+    var given = (fetchOpts && fetchOpts.headers) || {};
+    for (var h in given) {
+      if (Object.prototype.hasOwnProperty.call(given, h)) out.headers[h] = given[h];
+    }
+    out.headers['X-TangleClaw-Client'] = 'dashboard';
+    return out;
+  }
+
   // The refusal codes that mean THIS BROWSER'S SESSION is gone, as opposed to a
   // credential that was typed wrong. The gate answers `UNAUTHENTICATED` to a
   // request with no live session (signed out elsewhere, ended by a recovery
@@ -187,6 +216,7 @@
    * @returns {Promise<Response>} The response, unread; rejects as `fetch` does
    */
   async function tcFetch(url, fetchOpts) {
+    fetchOpts = tcWithClient(fetchOpts);
     var res = await fetch(url, tcWithCsrf(fetchOpts));
     if (res && res.status === 401) await tcLeaveIfSignedOut(res);
     return res;

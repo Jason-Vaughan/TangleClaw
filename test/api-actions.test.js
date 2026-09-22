@@ -102,7 +102,8 @@ describe('api-actions (#139 Chunk 11b)', () => {
       const { status, data } = await request(
         'POST',
         '/api/projects/api-prawduct-1/actions/invoke-critic',
-        {}
+        {},
+        operatorHeaders(server)
       );
       assert.equal(status, 200);
       assert.equal(data.ok, true);
@@ -114,7 +115,8 @@ describe('api-actions (#139 Chunk 11b)', () => {
       const { status, data } = await request(
         'POST',
         '/api/projects/no-such-project/actions/invoke-critic',
-        {}
+        {},
+        operatorHeaders(server)
       );
       assert.equal(status, 404);
       assert.equal(data.code, 'NOT_FOUND');
@@ -125,7 +127,8 @@ describe('api-actions (#139 Chunk 11b)', () => {
       const { status, data } = await request(
         'POST',
         '/api/projects/api-minimal-1/actions/invoke-critic',
-        {}
+        {},
+        operatorHeaders(server)
       );
       assert.equal(status, 404);
       assert.ok(data.error.includes('not available'));
@@ -136,7 +139,8 @@ describe('api-actions (#139 Chunk 11b)', () => {
       const { status } = await request(
         'POST',
         '/api/projects/api-prawduct-2/actions/no-such-command',
-        {}
+        {},
+        operatorHeaders(server)
       );
       assert.equal(status, 404);
     });
@@ -146,7 +150,8 @@ describe('api-actions (#139 Chunk 11b)', () => {
       const { status, data } = await request(
         'POST',
         '/api/projects/api-prawduct-3/actions/invoke-critic',
-        { branchName: 'opts/explicit' }
+        { branchName: 'opts/explicit' },
+        operatorHeaders(server)
       );
       assert.equal(status, 200);
       assert.equal(data.ok, true);
@@ -164,7 +169,8 @@ describe('api-actions (#139 Chunk 11b)', () => {
         // Express body-parser would coerce an array to options=undefined
         // here too — the endpoint's `options-or-undefined` guard pins
         // the contract.
-        ['not', 'an', 'object']
+        ['not', 'an', 'object'],
+        operatorHeaders(server)
       );
       assert.equal(status, 200);
       assert.equal(data.ok, true);
@@ -193,7 +199,8 @@ describe('api-actions (#139 Chunk 11b)', () => {
       const { status, data } = await request(
         'POST',
         '/api/projects/api-not-git/actions/invoke-critic',
-        {}
+        {},
+        operatorHeaders(server)
       );
       // Soft fail at the handler — endpoint returns 200 with ok:false so
       // the frontend can surface the error inline rather than a hard 5xx.

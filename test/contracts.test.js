@@ -239,6 +239,7 @@ describe('API Contract Validation', () => {
     it('POST /api/projects returns id, name, path, createdAt', async () => {
       const res = await request('/api/projects', {
         method: 'POST',
+        headers: operatorHeaders(server),
         body: { name: 'contract-test', engine: 'claude' }
       });
       assert.equal(res.status, 201);
@@ -284,6 +285,7 @@ describe('API Contract Validation', () => {
 
       const res = await request('/api/projects/attach', {
         method: 'POST',
+        headers: operatorHeaders(server),
         body: { name: 'contract-attach' }
       });
       assert.equal(res.status, 201);
@@ -360,6 +362,7 @@ describe('API Contract Validation', () => {
       // 400
       const res400 = await request('/api/projects', {
         method: 'POST',
+        headers: operatorHeaders(server),
         body: {}
       });
       assert.equal(res400.status, 400);

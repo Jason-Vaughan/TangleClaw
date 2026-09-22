@@ -75,9 +75,9 @@ write routes.
 - `refusalFor(access, need, surface)` gains an optional `surface`, `SURFACES.SHARED_DOCS` (the
   default, so every existing call keeps its codes and text) or `SURFACES.PROJECTS`. The projects
   surface refuses with `PROJECT_BINDING_REQUIRED` / `PROJECT_BINDING_INVALID` and project wording,
-  and with `OPERATOR_ONLY` for an operator-only need. The Master is refused for any project write
-  (`PROJECT_READ_ONLY` is not needed: the Master has no project, so an own-project need refuses it
-  with a message saying so).
+  and with `OPERATOR_ONLY` for an operator-only need. The Master is refused for any project write:
+  `OPERATOR_ONLY` on an operator-only route, `PROJECT_READ_ONLY` on an own-project route, because
+  it has no project.
 - A new `NEEDS.OWN_PROJECT`: the operator, or a bound project caller. The comparison with the
   target is `canChangeProject(access, projectId)`, run after the lookup, like `canWriteGroup`.
 - `server.js#projectOperatorCaller` is replaced by `projectWriteCaller(req, res, need, action)`
@@ -124,7 +124,7 @@ without this header; the header restores its reads.
 - A dashboard-shaped `GET /api/projects` with only `X-TangleClaw-Client: dashboard` on a stood-down
   gate gets the operator's rows (paths present).
 
-`test/frontend-*.test.js`: `tcFetch` sends the dashboard header on a `GET` and on a write.
+`test/frontend-csrf.test.js`: `tcFetch` sends the dashboard header on a `GET` and on a write, without mutating the caller's options; a `GET` still carries no CSRF token.
 
 Existing tests that call these routes without saying who they are (`api-actions`,
 `api-stranded-wraps`, `api-integration`, `orphan-hooks`, `contracts`, `api-ports`, `e2e-smoke`,
@@ -138,8 +138,10 @@ others the suite names) now send `operatorHeaders(server)`; their assertions do 
 - `.prawduct/artifacts/security-model.md`: the project write boundary.
 - `docs/adr/0016-tier-1-auth-build-decisions.md`: a dated note on how a stood-down gate recognises
   the dashboard over plain http (#1753), and why it is not a security control.
-- `docs/runbooks/stand-up-a-new-agent-fleet.md` steps 5–6 and `deploy/cleanroom/README.md` step 4:
-  attaching projects and setting another project's engine are the operator's.
+- `docs/runbooks/stand-up-a-new-agent-fleet.md` steps 5–6 and 10a, and `deploy/cleanroom/README.md`
+  step 4: attaching projects and setting another project's engine are the operator's. Step 10a's
+  verification was already unable to pass from a pane (#1739 hid `releaseMode` from the public
+  roster); filed as #1777 and noted in the runbook rather than fixed here.
 - `FEATURES.md` and `CHANGELOG.md` (`### Security`).
 
 ## Done when
