@@ -131,26 +131,26 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
    Expected: six clones, each ending `done.` The `|| break` stops the loop on the first failure
    rather than leaving a half-built fleet behind a wall of output.
 
-5. Attach each directory as a project — **attach, not create.** `POST /api/projects` makes and
-   scaffolds its own directory, so it cannot take one that already holds a clone:
+> **Steps 5 and 6 are the operator's, in the dashboard.** Attaching a directory as a project is
+> operator-only, and so is changing a project other than your own (#1752): from a pane, `curl`
+> gets `403 OPERATOR_ONLY` or `403 OTHER_PROJECT` whatever it sends. The checks below read only
+> the public roster, which any pane may.
+
+5. Attach each directory as a project — **attach, not create.** Creating a project makes and
+   scaffolds its own directory, so it cannot take one that already holds a clone. In the
+   dashboard, each clone from step 4 shows as an unregistered card; press its **Attach** button.
+   Then, from any pane:
 
    ```sh
-   for role in PM Architect Builder1 Builder2 Builder3 Reviewer; do
-     curl -fsS -X POST "$TANGLECLAW_API/api/projects/attach" \
-       -H 'Content-Type: application/json' -d "{\"name\":\"Acme-$role\"}" || break
-     echo
-   done
+   curl -fsS "$TANGLECLAW_API/api/projects" \
+     | python3 -c 'import json,sys;print(sorted(p["name"] for p in json.load(sys.stdin)["projects"] if p["name"].startswith("Acme-") and p["registered"]))'
    ```
-   Expected: six responses, each carrying an `"id"`.
-   If the loop stops early: the last line printed is the failure — a `"code":"CONFLICT"` means that
-   name is already registered, so pick another and re-run for the remaining roles.
-
-   > `|| break` before the `echo`, not after: a trailing `; echo` becomes the loop body's last
-   > command and returns 0, so the loop would sail past a failed attach. `-f` surfaces the failure;
-   > it does not stop the loop. The same applies to every loop below.
+   Expected: the six `Acme-<role>` names.
+   If one is missing: its card still shows **Attach**. A name that is already registered cannot be
+   attached twice — pick another name and re-clone for that role.
 
 6. Set each project's engine, because attach resolves the installed default rather than your
-   intent: `PATCH $TANGLECLAW_API/api/projects/Acme-<role>` with `{"engine":"claude"}`.
+   intent: open each project's **Settings** in the dashboard and choose the engine.
    Expected: `curl -fsS "$TANGLECLAW_API/api/projects" | grep Acme-` shows the engine you chose.
 
 ## Phase 3 — canon and guardrails
@@ -201,8 +201,10 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
     > one explicitly, or both are delivered and they will contradict each other.
 
 10a. Nominate exactly **one Integration/Release Owner** — normally the Reviewer, if the operator
-    assigns that duty. Set `releaseMode` on every project accordingly, via
-    `PATCH $TANGLECLAW_API/api/projects/Acme-<role>`:
+    assigns that duty. Set `releaseMode` on every project accordingly: the operator in each
+    project's dashboard **Settings**, or each project from its **own** pane with
+    `PATCH $TANGLECLAW_API/api/projects/Acme-<role>` and `"${BIND[@]}"` (a pane may change only its
+    own project, #1752):
 
     | project | `releaseMode` | why |
     |---|---|---|
@@ -210,7 +212,10 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
     | every other project, **including PM and Architect** | `off` | they contribute changelog entries, never version files |
 
     Verify against the group's **actual members**, not a name prefix, and read the mode from
-    `GET /api/projects` — the PATCH response omits `releaseMode`, so it cannot confirm this:
+    `GET /api/projects` — the PATCH response omits `releaseMode`, so it cannot confirm this.
+    **Known defect (#1777):** from a pane this check always prints `OWNER_CONFLICT`, because the
+    roster a pane reads has no `releaseMode`; until it is fixed, confirm each project's mode in its
+    dashboard **Settings**:
 
     ```sh
     curl -fsS "$TANGLECLAW_API/api/groups/$GID/members" "${BIND[@]}" -o /tmp/tc-members.json

@@ -5428,29 +5428,93 @@ route('POST', '/api/ports/heartbeat', (_req, res, _params, body) => {
 });
 
 /**
- * Refuse a projects-route caller that is not the operator, before any lookup,
- * so a refused caller never learns whether the project exists. Deleting,
- * archiving and unarchiving a project change what every session on the install
- * can reach, and the project rules make them the operator's (#1746).
+ * Log and send a project write route's refusal.
  * @param {http.IncomingMessage} req - The request
- * @param {http.ServerResponse} res - The response, written only on refusal
- * @returns {boolean} true when the caller is the operator
+ * @param {http.ServerResponse} res - The response
+ * @param {{status: number, code: string, message: string}} refusal - What to send
+ * @param {object} details - Extra log fields: who the caller is and why
+ * @returns {void}
  */
-function projectOperatorCaller(req, res) {
-  const access = sharedDocsAccess.resolveAccess(req);
-  if (access.kind === sharedDocsAccess.KINDS.OPERATOR) return true;
-  log.warn('Project operator-only route refused', {
+function _refuseProjectWrite(req, res, refusal, details) {
+  log.warn('Project write route refused', {
     method: req.method,
     path: reqUrl(req).pathname,
+    code: refusal.code,
+    ...details
+  });
+  errorResponse(res, refusal.status, refusal.message, refusal.code);
+}
+
+/**
+ * The log fields that say who a refused caller claimed to be.
+ * @param {http.IncomingMessage} req - The request
+ * @param {object} access - From `sharedDocsAccess.resolveAccess`
+ * @returns {object}
+ */
+function _callerLogFields(req, access) {
+  return {
     kind: access.kind,
     reason: access.reason,
-    claimedProjectId: req.headers[sharedDocsAccess.PROJECT_HEADER] || null
-  });
-  errorResponse(res, 403,
-    'Only the operator can delete, archive or unarchive a project. Ask the operator to do it '
-      + 'from the TangleClaw dashboard; no project or Project Master binding can.',
-    'OPERATOR_ONLY');
+    cause: access.cause || null,
+    claimedProjectId: req.headers[sharedDocsAccess.PROJECT_HEADER] || null,
+    claimedRole: req.headers[sharedDocsAccess.ROLE_HEADER] || null
+  };
+}
+
+/**
+ * Admit only the operator to an operator-only project route, before any
+ * lookup, so a refused caller learns nothing about the project it named.
+ * These routes change what every session on the install can reach (#1746,
+ * #1752).
+ * @param {http.IncomingMessage} req - The request
+ * @param {http.ServerResponse} res - The response, written only on refusal
+ * @param {string} action - What the route does, completing "Only the operator can …"
+ * @returns {boolean} true when the caller is the operator
+ */
+function operatorProjectCaller(req, res, action) {
+  const access = sharedDocsAccess.resolveAccess(req);
+  const refusal = sharedDocsAccess.projectRefusalFor(access, sharedDocsAccess.NEEDS.OPERATOR, action);
+  if (!refusal) return true;
+  _refuseProjectWrite(req, res, refusal, _callerLogFields(req, access));
   return false;
+}
+
+/**
+ * Admit the operator, or a session bound to the named project, to a route
+ * that changes one project (#1752). The whole check is one call so no route
+ * can do half of it: a binding refusal before any lookup; then the lookup,
+ * answering 404 for a project that does not exist (project names are public
+ * in the roster, so this discloses nothing); then `403 OTHER_PROJECT` for a
+ * session bound to a different project.
+ * @param {http.IncomingMessage} req - The request
+ * @param {http.ServerResponse} res - The response, written only on refusal
+ * @param {string} segment - The project named in the path
+ * @param {function(string): (object|null)} lookup - Finds the project row by that segment
+ * @returns {object|null} The project row, or null when the request was answered
+ */
+function ownProjectCaller(req, res, segment, lookup) {
+  const access = sharedDocsAccess.resolveAccess(req);
+  const refusal = sharedDocsAccess.projectRefusalFor(access, sharedDocsAccess.NEEDS.OWN_PROJECT);
+  if (refusal) {
+    _refuseProjectWrite(req, res, refusal, _callerLogFields(req, access));
+    return null;
+  }
+  const project = lookup(segment);
+  if (!project) {
+    errorResponse(res, 404, `Project "${segment}" not found`, 'NOT_FOUND');
+    return null;
+  }
+  if (!sharedDocsAccess.canChangeProject(access, project.id)) {
+    _refuseProjectWrite(req, res, {
+      status: 403,
+      code: 'OTHER_PROJECT',
+      message: `This session is bound to another project, so it cannot change "${project.name}". `
+        + 'A project\'s settings, actions and stranded wraps are changed by that project\'s own session, '
+        + 'or by the operator from the TangleClaw dashboard.'
+    }, { callerProjectId: access.projectId, targetProjectId: project.id });
+    return null;
+  }
+  return project;
 }
 
 /**
@@ -5501,7 +5565,9 @@ route('GET', '/api/projects', async (req, res) => {
 });
 
 // POST /api/projects/attach — Attach an existing filesystem directory as a project
-route('POST', '/api/projects/attach', async (_req, res, _params, body) => {
+route('POST', '/api/projects/attach', async (req, res, _params, body) => {
+  // Registering a directory as a project is the operator's (#1752).
+  if (!operatorProjectCaller(req, res, 'attach a directory as a project')) return;
   if (!body || !body.name) {
     return errorResponse(res, 400, 'name is required', 'BAD_REQUEST');
   }
@@ -5552,7 +5618,9 @@ route('GET', '/api/projects/stranded-configs-scan', (_req, res) => {
 // POST /api/projects/repair-orphan-hooks — Strip orphan hook entries from
 // affected projects. Body: `{ project?: string }` for single-target. Returns
 // `{ repaired, skipped, errors }` (#145, chunk 2).
-route('POST', '/api/projects/repair-orphan-hooks', (_req, res, _params, body) => {
+route('POST', '/api/projects/repair-orphan-hooks', (req, res, _params, body) => {
+  // It rewrites hook files in every project, or in one it names (#1752).
+  if (!operatorProjectCaller(req, res, 'repair orphan hooks')) return;
   if (body && body.project !== undefined && typeof body.project !== 'string') {
     return errorResponse(res, 400, 'project must be a string', 'BAD_REQUEST');
   }
@@ -5662,11 +5730,9 @@ route('GET', '/api/projects/:project/stranded-wraps', (_req, res, params) => {
 // (#1542) and answer with its result and the refreshed list. A request made
 // while a check is running joins it. A check that could not run is still a 200:
 // it was recorded, and `check.state` is `failed` with the reason.
-route('POST', '/api/projects/:project/stranded-wraps/check', async (_req, res, params) => {
-  const project = _projectByIdOrName(params.project);
-  if (!project) {
-    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
-  }
+route('POST', '/api/projects/:project/stranded-wraps/check', async (req, res, params) => {
+  const project = ownProjectCaller(req, res, params.project, _projectByIdOrName);
+  if (!project) return;
   const result = await strandedCheck.check(project);
   jsonResponse(res, 200, { check: result, ..._strandedBody(project) });
 });
@@ -5677,10 +5743,8 @@ route('POST', '/api/projects/:project/stranded-wraps/check', async (_req, res, p
 // The acknowledger is the signed-in user, or null when nobody is signed in —
 // never a name taken from the request body, which anyone can write.
 route('POST', '/api/projects/:project/stranded-wraps/ack', (req, res, params, body) => {
-  const project = _projectByIdOrName(params.project);
-  if (!project) {
-    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
-  }
+  const project = ownProjectCaller(req, res, params.project, _projectByIdOrName);
+  if (!project) return;
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
@@ -5713,10 +5777,8 @@ const OPEN_PR_STATUS = {
   WRITE_FAILED: 500
 };
 route('POST', '/api/projects/:project/stranded-wraps/open-pr', async (req, res, params, body) => {
-  const project = _projectByIdOrName(params.project);
-  if (!project) {
-    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
-  }
+  const project = ownProjectCaller(req, res, params.project, _projectByIdOrName);
+  if (!project) return;
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
@@ -5730,7 +5792,9 @@ route('POST', '/api/projects/:project/stranded-wraps/open-pr', async (req, res, 
 });
 
 // POST /api/projects
-route('POST', '/api/projects', (_req, res, _params, body) => {
+route('POST', '/api/projects', (req, res, _params, body) => {
+  // Creating a project scaffolds a directory and registers it: the operator's (#1752).
+  if (!operatorProjectCaller(req, res, 'create a project')) return;
   if (!body || !body.name) {
     return errorResponse(res, 400, 'name is required', 'BAD_REQUEST');
   }
@@ -5759,7 +5823,8 @@ route('POST', '/api/projects', (_req, res, _params, body) => {
 });
 
 // POST /api/projects/import — Register existing project directories
-route('POST', '/api/projects/import', (_req, res, _params, body) => {
+route('POST', '/api/projects/import', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'import projects')) return;
   if (!body || !Array.isArray(body.names) || body.names.length === 0) {
     return errorResponse(res, 400, 'names array is required', 'BAD_REQUEST');
   }
@@ -5841,7 +5906,7 @@ route('DELETE', '/api/projects/:name', async (req, res, params, body) => {
   // Operator identity first, whatever the password says: an install that never
   // set one used to answer every caller here, `rm -rf` included (#1746). A set
   // password stays a second key on top.
-  if (!projectOperatorCaller(req, res)) return;
+  if (!operatorProjectCaller(req, res, 'delete a project')) return;
   const passwordCheck = projects.checkDeletePassword(body ? body.password : undefined);
   if (!passwordCheck.allowed) {
     return errorResponse(res, 403, passwordCheck.error, 'FORBIDDEN');
@@ -5868,7 +5933,7 @@ route('DELETE', '/api/projects/:name', async (req, res, params, body) => {
 
 // POST /api/projects/:name/archive — Archive (deactivate) a project
 route('POST', '/api/projects/:name/archive', (req, res, params) => {
-  if (!projectOperatorCaller(req, res)) return;
+  if (!operatorProjectCaller(req, res, 'archive a project')) return;
   const result = projects.archiveProject(params.name);
   if (!result.success) {
     const firstError = result.errors[0];
@@ -5880,7 +5945,7 @@ route('POST', '/api/projects/:name/archive', (req, res, params) => {
 
 // POST /api/projects/:name/unarchive — Restore an archived project
 route('POST', '/api/projects/:name/unarchive', (req, res, params) => {
-  if (!projectOperatorCaller(req, res)) return;
+  if (!operatorProjectCaller(req, res, 'unarchive a project')) return;
   const result = projects.unarchiveProject(params.name);
   if (!result.success) {
     const firstError = result.errors[0];
@@ -5893,7 +5958,9 @@ route('POST', '/api/projects/:name/unarchive', (req, res, params) => {
 // POST /api/projects/:name/migrate-to-plugin — Migrate a project to V2-plugin
 // governance (#262, C1). Cohort-aware (non-Claude → not-applicable) + session-safe
 // (defers on a live session; never auto-closes). Idempotent.
-route('POST', '/api/projects/:name/migrate-to-plugin', async (_req, res, params) => {
+route('POST', '/api/projects/:name/migrate-to-plugin', async (req, res, params) => {
+  // It rewrites the project's governance files; nothing but the operator calls it (#1752).
+  if (!operatorProjectCaller(req, res, 'migrate a project to the plugin')) return;
   const result = await projects.migrateProjectToPlugin(params.name);
   if (result.error) {
     const notFound = result.error.includes('not found');
@@ -5911,7 +5978,16 @@ route('POST', '/api/projects/:name/migrate-to-plugin', async (_req, res, params)
 });
 
 // PATCH /api/projects/:name
-route('PATCH', '/api/projects/:name', async (_req, res, params, body) => {
+route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
+  // A project's own session may change its settings; only the operator may
+  // change another project's, or rename one (#1752). A rename moves the
+  // project's directory and changes the identity every live binding was
+  // issued against, so it is more than that project's configuration.
+  const renaming = body && typeof body === 'object' && body.name !== undefined && body.name !== params.name;
+  const admitted = renaming
+    ? operatorProjectCaller(req, res, 'rename a project')
+    : ownProjectCaller(req, res, params.name, projects.getProjectRow);
+  if (!admitted) return;
   if (!body || typeof body !== 'object') {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
@@ -5959,7 +6035,13 @@ route('PATCH', '/api/projects/:name', async (_req, res, params, body) => {
 // Status codes: 200 ok or handler-soft-fail; 400 bad request; 404 project /
 // unknown or unavailable action; 500 handler thrown. Routing keys on the
 // dispatcher's `code`, never on message text.
-route('POST', '/api/projects/:name/actions/:command', async (_req, res, params, body) => {
+route('POST', '/api/projects/:name/actions/:command', async (req, res, params, body) => {
+  // An action runs against the project's own checkout (the Critic, today), so
+  // the operator or the project's own session may start one (#1752). This gate
+  // admits project-scoped actions only: a fleet, identity, destructive-lifecycle
+  // or operator action needs its own operator-only classification
+  // (`lib/actions.js#ACTIONS`).
+  if (!ownProjectCaller(req, res, params.name, projects.getProjectRow)) return;
   const options = body && typeof body === 'object' && !Array.isArray(body) ? body : undefined;
   const result = await actions.runAction(params.name, params.command, options);
 

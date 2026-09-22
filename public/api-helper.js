@@ -99,6 +99,19 @@
     if (TC_UNSAFE_METHODS.indexOf(method) === -1) return fetchOpts;
     var token = tcCsrfToken();
     if (!token) return fetchOpts;
+    return tcWithHeader(fetchOpts, 'X-CSRF-Token', token);
+  }
+
+  /**
+   * A copy of `fetchOpts` with one more header. The caller's options and their
+   * `headers` object are left unchanged.
+   *
+   * @param {object} [fetchOpts] - The caller's fetch options
+   * @param {string} name - Header name
+   * @param {string} value - Header value
+   * @returns {object}
+   */
+  function tcWithHeader(fetchOpts, name, value) {
     var out = {};
     for (var k in fetchOpts) {
       if (Object.prototype.hasOwnProperty.call(fetchOpts, k)) out[k] = fetchOpts[k];
@@ -108,8 +121,27 @@
     for (var h in given) {
       if (Object.prototype.hasOwnProperty.call(given, h)) out.headers[h] = given[h];
     }
-    out.headers['X-CSRF-Token'] = token;
+    out.headers[name] = value;
     return out;
+  }
+
+  /**
+   * `fetchOpts` with the header that says this request is the dashboard's.
+   *
+   * Browsers send `Sec-Fetch-Site` only to HTTPS and localhost origins, and no
+   * `Origin` on a same-origin GET, so over plain http on a tailnet or LAN
+   * address the server cannot otherwise tell the dashboard's reads from a
+   * local script's. It is read only while TangleClaw's gate stands down, where
+   * the whole dashboard is open anyway, so it is a label and not a credential
+   * (`lib/shared-docs-access.js#CLIENT_HEADER`). Every request carries it:
+   * every one of them is the dashboard's, and a same-origin custom header
+   * costs no CORS preflight.
+   *
+   * @param {object} [fetchOpts] - The caller's fetch options
+   * @returns {object} A copy with the header added; the caller's object is unchanged
+   */
+  function tcWithClient(fetchOpts) {
+    return tcWithHeader(fetchOpts, 'X-TangleClaw-Client', 'dashboard');
   }
 
   // The refusal codes that mean THIS BROWSER'S SESSION is gone, as opposed to a
@@ -187,6 +219,7 @@
    * @returns {Promise<Response>} The response, unread; rejects as `fetch` does
    */
   async function tcFetch(url, fetchOpts) {
+    fetchOpts = tcWithClient(fetchOpts);
     var res = await fetch(url, tcWithCsrf(fetchOpts));
     if (res && res.status === 401) await tcLeaveIfSignedOut(res);
     return res;
