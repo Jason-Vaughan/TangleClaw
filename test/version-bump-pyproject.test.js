@@ -308,6 +308,8 @@ describe('version-bump pyproject.toml support (#1444)', () => {
     const PY = '[project]\nversion = "5.5.5"\n';
     const shapes = [
       ['a tooling-only package.json above pyproject.toml', { 'package.json': '{"private":true}', 'pyproject.toml': PY }, 'pyproject.toml'],
+      ['a BOM-prefixed tooling-only package.json above pyproject.toml', { 'package.json': '\uFEFF{"private":true}', 'pyproject.toml': PY }, 'pyproject.toml'],
+      ['a package.json holding null above pyproject.toml', { 'package.json': 'null', 'pyproject.toml': PY }, null],
       ['a version.json with no version above pyproject.toml', { 'version.json': '{"name":"x"}', 'pyproject.toml': PY }, null],
       ['a malformed package.json above pyproject.toml', { 'package.json': '{not json', 'pyproject.toml': PY }, null],
 
