@@ -5375,6 +5375,30 @@ function projectOperatorCaller(req, res) {
   return false;
 }
 
+/**
+ * Resolve who is reading the projects list or a project row. A read is never
+ * refused, so a binding that was presented and not honoured would otherwise
+ * pass unnoticed: the pane just sees public rows. Log it, as the shared-docs
+ * refusals do, so an operator can tell a stale binding from an unbound caller.
+ * A caller with no binding at all is the common roster read and is not logged.
+ * @param {http.IncomingMessage} req - The request
+ * @returns {{kind: string, projectId: (number|null), groupIds: string[], reason: (string|null)}}
+ */
+function projectsReader(req) {
+  const access = sharedDocsAccess.resolveAccess(req);
+  if (access.kind === sharedDocsAccess.KINDS.INVALID) {
+    log.warn('Projects read with a binding that was not honoured; answered with public rows', {
+      method: req.method,
+      path: reqUrl(req).pathname,
+      reason: access.reason,
+      cause: access.cause || null,
+      claimedProjectId: req.headers[sharedDocsAccess.PROJECT_HEADER] || null,
+      claimedRole: req.headers[sharedDocsAccess.ROLE_HEADER] || null
+    });
+  }
+  return access;
+}
+
 // GET /api/projects
 route('GET', '/api/projects', async (req, res) => {
   const urlObj = reqUrl(req);
@@ -5391,7 +5415,7 @@ route('GET', '/api/projects', async (req, res) => {
   // Not refused for an unbound caller: agent panes read this list as a roster
   // of names and engines. What they may not read is another project's
   // workspace, so each row is shaped for the caller (#1739).
-  const access = sharedDocsAccess.resolveAccess(req);
+  const access = projectsReader(req);
   jsonResponse(res, 200, {
     projects: list.map((project) => projectView.shapeProject(access, project)),
     scan: projectView.shapeScan(access, scan)
@@ -5469,7 +5493,7 @@ route('GET', '/api/projects/:name', async (req, res, params) => {
     return errorResponse(res, 404, `Project "${params.name}" not found`, 'NOT_FOUND');
   }
   // The same row the list carries, so the same shaping (#1739).
-  jsonResponse(res, 200, projectView.shapeProject(sharedDocsAccess.resolveAccess(req), project));
+  jsonResponse(res, 200, projectView.shapeProject(projectsReader(req), project));
 });
 
 /**
@@ -9484,8 +9508,10 @@ route('POST', '/api/audit/ingest', (_req, res, _params, body) => {
     return errorResponse(res, 400, validation.error, 'BAD_REQUEST');
   }
 
-  // Resolve project from connection (find projects using this connection as engine)
-  const projects = store.projects.list();
+  // Resolve project from connection (find projects using this connection as engine).
+  // Archived projects are included: archiving does not unbind a connection, and a
+  // refusal telling the operator to bind an already-bound project would mislead.
+  const projects = store.projects.list({ archived: true });
   const project = projects.find(p => p.engineId === `openclaw:${conn.id}`);
   // The exchange is attributed to the project bound to the authenticated
   // connection, never to a name the payload asserts: a connection with no

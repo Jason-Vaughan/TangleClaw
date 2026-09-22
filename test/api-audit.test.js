@@ -193,6 +193,27 @@ describe('API /api/audit', () => {
     assert.equal(rows.length, 0, 'a refused exchange must not be stored');
   });
 
+  it('POST /api/audit/ingest still attributes to a bound project after it is archived', async () => {
+    const conn = store.openclawConnections.create({
+      name: 'archived-openclaw', host: '192.0.2.22', sshUser: 'user', sshKeyPath: '/tmp/key',
+      auditSecret: 'test-audit-secret-archived'
+    });
+    const dir = path.join(tmpDir, 'audit-archived');
+    fs.mkdirSync(dir);
+    const project = store.projects.create({ name: 'audit-archived', path: dir, engine: `openclaw:${conn.id}` });
+    store.projects.archive(project.id);
+
+    const { status, data } = await request(server, 'POST', '/api/audit/ingest', {
+      session_id: 'sess-archived',
+      exchange: {
+        id: 'ex-archived-1', timestamp: '2026-03-24T10:00:00Z',
+        user_message: { content: 'hello' }, agent_response: { content: 'hi there' }
+      }
+    }, { Authorization: 'Bearer test-audit-secret-archived' });
+    assert.equal(status, 201);
+    assert.equal(store.evalExchanges.get(data.exchangeId).project, 'audit-archived');
+  });
+
   it('POST /api/audit/ingest flags structural issues', async () => {
     const { status, data } = await request(server, 'POST', '/api/audit/ingest', {
       session_id: 'sess-1',

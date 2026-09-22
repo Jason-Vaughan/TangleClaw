@@ -1,6 +1,6 @@
 ---
 title: "Train B.2 Chunk 1: the projects API answers each caller only what it owns"
-status: IN PROGRESS
+status: COMPLETE — Chunk 1 built and reviewed; the PR closes #1739, #1746, #1261
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (messages 6c164c5b, 4dff65c5), confirmed by the operator in-session
 issues: [1739, 1746, 1261]
 governed_by:
@@ -130,4 +130,4 @@ Done when:
 
 ## Status
 
-- [ ] Chunk 1: projects API authorization (#1739, #1746, #1261)
+- [x] Chunk 1: projects API authorization (#1739, #1746, #1261). Critic: 0 blocking (rev-20260922T003440Z-532fb0c1). Warnings R-3/R-4 and note R-1 fixed and verified (rev-20260922T003816Z-e34141a4). R-2/R-5/R-6 and O-1..O-4 accepted; the R-2 gate unification is noted on #1752.
