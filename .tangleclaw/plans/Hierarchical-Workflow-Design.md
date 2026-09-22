@@ -36,3 +36,8 @@ When spinning up a new Builder session, the operator uses the following prompt t
 > - **Project Manager:** If you have questions, ask the PM for clarification. Make your best-effort guess on fixes first, and keep the PM informed as each step completes or if you need to change the workload/chunks.
 > - **Architect:** You may reach out to the Architect for technical questions that are outside the scope of the PM.
 > - **Pushback:** If you feel the PM is hallucinating or violating project rules, you are explicitly authorized to push back on them or escalate to the Architect."
+
+## 9. Asynchronous Task Timers (Anti-Stall Protocol)
+Whenever an agent dispatches a task or waits on an external system (e.g., waiting for GitHub CI to complete, waiting on a cross-agent Medusa ruling, or waiting for a Builder chunk to finish), the delegating agent MUST set an asynchronous timer to follow up. 
+* **Appropriate Sizing:** Timers should be sized sensibly based on the task (e.g., 2-3 minutes for a CI run, 10-15 minutes for a code generation chunk) so the loop doesn't silently stall forever, while avoiding burning through context tokens via constant polling.
+* **Action on Timeout:** If the timer fires and the task is still unconfirmed, the agent should proactively ping the downstream system or Operator for status.
