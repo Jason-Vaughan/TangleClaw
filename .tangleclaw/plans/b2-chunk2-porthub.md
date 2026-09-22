@@ -62,6 +62,9 @@ own tunnel will bind). `POST /api/ports/lease` is used by every managed agent pe
   explicitly; `registerPort`'s own default is unchanged.
 - **A fresh probe, not the cache.** `portScanner.probePort(port)` runs `lsof -nP -iTCP:<port>
   -sTCP:LISTEN` for that one port. When lsof cannot run, it falls back to the cached scan and says so.
+  lsof as a normal user sees only that user's sockets, so when it finds nothing the probe also
+  reads the kernel socket table (`netstat -anv` on macOS, `ss -Hltn` on Linux), which lists
+  root-owned listeners such as `tailscale serve` (found by the cumulative review, confirmed live).
 - **Refusal rule.** On `localhost`, when the port has a listener and **no live lease for this project**
   exists on it, the lease is refused: `409 PORT_IN_USE` with `listener: {port, pid, command}`. A
   renewal (this project already holds the lease) never probes, which keeps the documented
