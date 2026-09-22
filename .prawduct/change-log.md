@@ -33,6 +33,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   v4.5.0–v4.19.0).
 -->
 
+## 2026-09-22 — The self-updater discards only changes proven to be TangleClaw's (#1537)
+
+<!-- prawduct: type=bugfix | scope=train-a-car-a2 -->
+
+Train A Car A2 Chunk 01. `_classifyDirty` counted every `.tangleclaw/` path as TangleClaw-written, so an update deleted an uncommitted plan while the dialog said nothing of the operator's was listed. Discard ownership is now a per-delta proof held in one `PROOFS` table: `CLAUDE.md` changed only inside its managed region, and `.claude/settings.json` changed only by TangleClaw retiring its own hooks (`judgeHookSettings`). Everything else is real work, including all of `.tangleclaw/`. `_discardTcFiles` restores from HEAD and no longer deletes files. Architect rulings D1/D2 accepted (message a358b1ba). Tests: a real-git regression suite (`test/update-applier-authored-content.test.js`), 3 of whose 4 cases fail against the old code, plus a pin of the settings path to `engines.SHARED_HOOK_SETTINGS_PATHS`. The fixtures that pinned `.tangleclaw/` as discardable moved to proven fixtures, keeping the same assertions.
+
 ## 2026-09-22 — The committed CLAUDE.md block names the freshness verb
 
 <!-- prawduct: type=chore | scope=claude-md-freshness-verb -->
