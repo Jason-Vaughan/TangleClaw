@@ -30,6 +30,10 @@ Train B.2's last remaining issue (PM dispatch 2026-09-22). One issue, one chunk.
 3. **Out of scope.** Poetry's `[tool.poetry] version`, `__version__` strings in package source,
    a general TOML parser or dependency, and issue item 3 (see A6).
 
+**Requirements confidence: High.** The issue names the project, the log line and the file shape, and
+TangleBrain's real `pyproject.toml` is on this machine to check against. The one open question
+(auto-probe vs opt-in) is A1, ruled below.
+
 ## What the investigation found (read at `2cc530263`)
 
 - **The issue's "versionFilePath would overwrite pyproject.toml with JSON" is false today.** The
@@ -124,6 +128,21 @@ final skip reason names all three files.
 
 Detection: `readPyprojectVersion` is added as a rung after `package.json` in both ladders, with
 `source: 'pyproject.toml'`.
+
+## Critic round 1 (chunk review of `c86f875f`): 0 blocking, 3 warnings, 2 notes, all fixed
+
+- **The probe now passes over a file that carries no version at all**, as the reader already did. A
+  Python repo's tooling-only `package.json` (no `version`) stopped the writer short of
+  `pyproject.toml` while the dashboard read past it. This also applies to a version-less
+  `version.json`. A file that is broken (unreadable, not an object, non-semver, or an uneditable TOML
+  shape) still stops the probe. Reported to the Architect as a refinement of A5.
+- **Multi-line string tracking is TOML-aware.** Delimiters inside single-line strings and comments
+  no longer count, so a stray `'''` in a comment cannot hide a table header (a test proves the old
+  counter took `[tool.x]`'s version).
+- **Checked on real files**: the parser on four real `pyproject.toml` files on this machine (one line
+  changes each), a scratch copy of TangleBrain's `pyproject.toml` + `CHANGELOG.md` through `run()`
+  (0.25.0 → 0.25.1, only line 43 changes, same byte count), and a real-filesystem test in the suite.
+- Requirements-confidence line added. #1444 confirmed OPEN before the PR.
 
 ## Tests (written with the code)
 
