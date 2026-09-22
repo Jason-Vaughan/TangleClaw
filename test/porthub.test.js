@@ -390,8 +390,14 @@ describe('porthub (store-backed)', () => {
       store.portLeases.lease({ port: 8443, project: selfName, service: 'caddy-https-ingress', permanent: true });
       store.portLeases.lease({ port: 8080, project: selfName, service: 'caddy-http-ingress', permanent: true });
       store.portLeases.lease({ port: 8444, project: 'WheresMy', service: 'caddy-https-ingress', permanent: true });
+      // The boot sweep runs in the same bootstrap and would take WheresMy's
+      // lease if its project directory were missing. Give it one inside this
+      // test's own projectsDir, so what survives depends on the rule under test
+      // and not on whether the developer's machine has a WheresMy checkout.
+      fs.mkdirSync(path.join(tmpDir, 'WheresMy'));
       const config = store.config.load();
       config.ingressMode = 'direct';
+      config.projectsDir = tmpDir;
       store.config.save(config);
       porthub.bootstrap({ ttydPort: 3100, serverPort: 3101 });
       assert.equal(store.portLeases.get(8443), null, 'Caddy is no longer running, so its port is free');
