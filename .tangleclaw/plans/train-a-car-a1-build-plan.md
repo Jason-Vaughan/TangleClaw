@@ -163,7 +163,7 @@ helper that runs inside the directory-scanner child, a different execution model
 
 **Comparison against the observed SHA: `checkout-state.compareSnapshot(dir, headSha, upstreamSha)`.**
 - It is cached per (dir, head, upstream) the way `impactSnapshot` is.
-- When `cat-file -e <sha>^{commit}` finds the object locally, it runs `rev-list --left-right --count HEAD...<sha>`,
+- When `rev-parse --verify --quiet <sha>^{commit}` finds the commit locally, it runs `rev-list --left-right --count HEAD...<sha>`,
   which gives `{ahead, behind, relation}`.
 - When the object is missing, it gives `{relation: 'behind-unknown', ahead: null, behind: null, reason:
   'upstream commit not fetched here'}`, and that answer is retried on the next read. Any failure is `unknown`.
@@ -185,6 +185,11 @@ checkout: { ...checkout-state snapshot (Chunk 1 fields, repository),
   exactly one identity. It carries that repository's upstream and `vsUpstream.relation: 'not-compared'` ("related
   repo, no checkout comparison"). With zero identities or several, `upstream` is null with a reason.
 - `owner` comes from `store.sessions.getActive(project.id)`.
+
+**As built (after the Chunk 2 review).** The block keeps the clone's own comparison with its LOCAL `origin/main` ref
+only as `localRef` (so `vsUpstream` is the one answer), and carries `summary`: the sentences `lib/checkout-summary.js#describe`
+renders, which the prime and the session chip both show. A no-remote project's launch warm-up reads its group members first,
+so the relation is decided for that launch. Git failure reasons are scrubbed of paths and URLs.
 
 **Surfaces.**
 - `GET /api/projects/:name` gains `checkout`. It is on the whole row only: the public projection is an allowlist,

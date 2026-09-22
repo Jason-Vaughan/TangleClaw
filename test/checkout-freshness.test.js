@@ -24,6 +24,7 @@ const store = require('../lib/store');
 const cs = require('../lib/checkout-state');
 const uo = require('../lib/upstream-observer');
 const cf = require('../lib/checkout-freshness');
+const summary = require('../lib/checkout-summary');
 
 const SHA_A = 'a'.repeat(40);
 const SHA_B = 'b'.repeat(40);
@@ -87,7 +88,7 @@ describe('checkout-freshness', () => {
     saved.installRoot = cf._internal.installRoot;
     saved.startupSha = cf._internal.startupSha;
     saved.activeSession = cf._internal.activeSession;
-    saved.now = cf._internal.now;
+    saved.now = summary._internal.now;
   });
 
   after(() => {
@@ -109,7 +110,7 @@ describe('checkout-freshness', () => {
     cf._internal.installRoot = saved.installRoot;
     cf._internal.startupSha = saved.startupSha;
     cf._internal.activeSession = saved.activeSession;
-    cf._internal.now = saved.now;
+    summary._internal.now = saved.now;
     cs._reset();
     uo._reset();
   });
@@ -157,6 +158,12 @@ describe('checkout-freshness', () => {
     assert.deepEqual(ca.vsUpstream, { ahead: 0, behind: 1, relation: 'behind', reason: null });
     assert.equal(cb.vsUpstream.relation, 'equal');
     assert.equal(ca.upstream.via, 'origin');
+    // One answer to "how does this clone stand against origin/main": the
+    // local-ref comparison is kept, labelled, and never at the top level.
+    for (const k of ['ahead', 'behind', 'relation']) assert.equal(k in ca, false, `no top-level ${k}`);
+    assert.deepEqual(Object.keys(ca.localRef).sort(), ['ahead', 'behind', 'ref', 'relation', 'sha']);
+    assert.deepEqual(ca.summary, cf.describe(ca), 'the chip and the prime read one wording');
+    assert.match(ca.summary[0], /1 behind origin\/main @bbbbbbb/);
   });
 
   it('a clone that has not fetched the observed commit is behind by an unknown count', async () => {
@@ -214,6 +221,25 @@ describe('checkout-freshness', () => {
       assert.equal(c.upstream.sha, SHA_A);
       assert.equal(c.vsUpstream.relation, 'not-compared');
       assert.match(cf.primeLines(c)[0], /not a git checkout; related repo github\.com\/O\/U \(via group g-\d+\)/);
+    });
+
+    it('a cold launch reads the group and decides the relation, rather than leaving it pending', async () => {
+      const advisor = project('cold-advisor');
+      const a = project('cold-a');
+      group([advisor, a]);
+      const fake = fakeRepos({
+        [advisor.path]: { status: Object.assign(new Error('x'), { stderr: 'fatal: not a git repository' }) },
+        [a.path]: { status: statusOut(SHA_A, 'main'), origin: 'git@github.com:O/Cold.git\n', lsRemote: `${SHA_A}\trefs/heads/main\n` }
+      });
+      const c = await warmAndRead(advisor, fake);
+      assert.equal(c.upstream.via, 'group');
+      assert.equal(c.upstream.sha, SHA_A);
+      assert.match(cf.primeLines(c)[0], /related repo github\.com\/O\/Cold/);
+    });
+
+    it('a no-git project whose relation is still undetermined says so in the prime', () => {
+      const [line] = cf.primeLines({ state: 'no-git', upstream: { via: null, state: 'pending' }, vsUpstream: {} });
+      assert.match(line, /not a git checkout; related repository not determined yet/);
     });
 
     it('is related to nothing when its group names two repositories', async () => {
@@ -305,7 +331,7 @@ describe('checkout-freshness', () => {
         ...over
       };
     }
-    beforeEach(() => { cf._internal.now = () => NOW; });
+    beforeEach(() => { summary._internal.now = () => NOW; });
 
     it('names branch, HEAD, the relation to the observed upstream with its age, and the tree', () => {
       const [line] = cf.primeLines(block({
@@ -317,7 +343,7 @@ describe('checkout-freshness', () => {
 
     it('never renders an unmeasured or failed state as clean or level', () => {
       assert.match(cf.primeLines(block({ state: 'pending' }))[0], /not measured yet — unknown, not clean/);
-      assert.match(cf.primeLines(block({ state: 'unknown', reason: 'git status: timed out' }))[0], /\*\*unknown\*\* — git status: timed out/);
+      assert.match(cf.primeLines(block({ state: 'unknown', reason: 'git status: timed out' }))[0], /Checkout: unknown — git status: timed out\. Not clean/);
       assert.match(cf.primeLines(block({ dirtyTracked: null, untracked: null }))[0], /working tree unknown/);
       const noUp = cf.primeLines(block({
         upstream: { identity: 'github.com/O/R', via: 'origin', state: 'unknown', sha: null, observedAt: null, reason: 'git ls-remote: timed out' },

@@ -53,6 +53,7 @@ function measured(over = {}) {
     upstream: { identity: 'github.com/O/R', via: 'origin', state: 'measured', sha: SHA_A, observedAt: '2026-09-22T12:00:00Z', observedFrom: 'P' },
     vsUpstream: { ahead: 0, behind: 0, relation: 'equal', reason: null },
     runtime: null,
+    summary: ['Checkout: main @aaaaaaa, level with origin/main @aaaaaaa; clean.'],
     ...over
   };
 }
@@ -86,17 +87,16 @@ describe('session checkout chip (#1678)', () => {
     assert.equal(model(measured({ vsUpstream: { ahead: 2, behind: 0, relation: 'ahead' } })).tone, 'warn');
     const behind = model(measured({ vsUpstream: { ahead: 0, behind: 3, relation: 'behind' }, upstream: { sha: SHA_B, observedAt: '2026-09-22T12:00:00Z' } }));
     assert.equal(behind.tone, 'warn');
-    assert.match(behind.detail, /3 behind origin\/main @bbbbbbb/);
     assert.equal(model(measured({ vsUpstream: { ahead: 1, behind: 1, relation: 'diverged' } })).tone, 'warn');
     const dirty = model(measured({ dirtyTracked: 1, untracked: 2 }));
     assert.equal(dirty.tone, 'warn');
-    assert.match(dirty.detail, /1 uncommitted, 2 untracked/);
+    assert.equal(dirty.text, 'main @aaaaaaa · level · 1± 2?');
     assert.equal(model(measured({ branch: 'feat/x', onDefaultBranch: false })).tone, 'warn');
     assert.equal(model(measured({ detached: true, tag: null, branch: null })).tone, 'warn');
     assert.equal(model(measured({ detached: true, tag: 'v5.24.0', branch: null })).tone, 'ok', 'a release tag is a healthy detached install');
     const notFetched = model(measured({ vsUpstream: { relation: 'behind-unknown', reason: 'upstream commit not fetched here' } }));
     assert.equal(notFetched.tone, 'warn');
-    assert.match(notFetched.detail, /count unknown: upstream commit not fetched here/);
+    assert.equal(notFetched.text, 'main @aaaaaaa · behind ?');
   });
 
   it('nothing unmeasured is ever the quiet tone', () => {
@@ -110,20 +110,18 @@ describe('session checkout chip (#1678)', () => {
     ]) {
       assert.equal(model(c).tone, 'unknown', JSON.stringify(c.vsUpstream) + c.state);
     }
-    assert.match(model(measured({ vsUpstream: { relation: 'unknown' }, upstream: { state: 'disabled', sha: null } })).detail, /turned off/);
+    const related = model(measured({ upstream: { via: 'group' }, vsUpstream: { relation: 'not-compared' } }));
+    assert.equal(related.text, 'main @aaaaaaa · related repo', 'a measured no-remote clone related through a group is not "upstream ?"');
+    assert.equal(related.tone, 'unknown');
   });
 
-  it('a no-git project related through a group says so, without a comparison', () => {
-    const r = model({ state: 'no-git', upstream: { via: 'group', identity: 'github.com/O/R', groupName: 'G', sha: SHA_A }, vsUpstream: { relation: 'not-compared' } });
+  it('the detail is the server\'s sentence, verbatim — the chip adds no wording of its own', () => {
+    const summary = ['Checkout: feat/x @aaaaaaa, 2 ahead of origin/main @bbbbbbb; clean.', 'Server: running aaaaaaa, disk bbbbbbb — records-only, no restart needed.'];
+    assert.equal(model(measured({ summary })).detail, summary.join(' '));
+    const r = model({ state: 'no-git', upstream: { via: 'group' }, vsUpstream: { relation: 'not-compared' }, summary: ['Checkout: not a git checkout; related repo x.'] });
     assert.equal(r.text, 'related repo');
-    assert.match(r.detail, /Related repo github\.com\/O\/R \(via group G\) at origin\/main @aaaaaaa; no checkout comparison/);
-  });
-
-  it('the install row adds running versus disk and the restart impact', () => {
-    const r = model(measured({ runtime: { startupSha: SHA_A, currentDiskSha: SHA_B, isStale: true, restartImpact: { impact: 'records-only' } } }));
-    assert.match(r.detail, /Server running aaaaaaa, disk bbbbbbb: records-only, no restart needed/);
-    assert.match(model(measured({ runtime: { startupSha: SHA_A, currentDiskSha: SHA_B, isStale: true, restartImpact: { impact: 'pending' } } })).detail,
-      /restart impact unknown/);
+    assert.equal(r.detail, 'Checkout: not a git checkout; related repo x.');
+    assert.equal(model(measured({ summary: undefined })).detail, 'No detail from this server.');
   });
 
   it('no checkout (a restricted row) hides the chip; a checkout shows it with its tone and detail', () => {
@@ -132,10 +130,10 @@ describe('session checkout chip (#1678)', () => {
     const text = { textContent: '' };
     const document = { getElementById: (id) => ({ bannerCheckout: chip, bannerCheckoutText: text }[id] || null) };
     const run = (c) => vm.runInContext(`${SRC}\nrenderCheckoutChip(c);`, vm.createContext({ document, c }));
-    run(measured({ dirtyTracked: 2 }));
+    run(measured({ dirtyTracked: 2, summary: ['Checkout: main @aaaaaaa, level; 2 uncommitted.'] }));
     assert.equal(chip.hidden, false);
     assert.equal(attrs['data-tone'], 'warn');
-    assert.match(attrs['data-pill-detail'], /2 uncommitted/);
+    assert.equal(attrs['data-pill-detail'], 'Checkout: main @aaaaaaa, level; 2 uncommitted.');
     assert.match(text.textContent, /main @aaaaaaa · level · 2±/);
     run(undefined);
     assert.equal(chip.hidden, true);

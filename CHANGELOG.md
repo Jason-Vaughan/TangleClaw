@@ -13,7 +13,7 @@ All notable changes to TangleClaw are documented in this file.
   - **Nothing is fetched into anyone's clone.** Each clone is compared using only its own objects. A clone that has not fetched the observed commit reads "behind, count unknown: upstream commit not fetched here", never a count and never level.
   - **Related by repository, never by name.** A repository is its normalized origin URL: host lowercased, scp/ssh/https forms equal, credentials, default ports and `.git` stripped. A local-path remote becomes an opaque hash of its canonical path, and no payload carries a local path or a raw remote URL; git's error text is scrubbed of paths and URLs before it is reported. A project with no remote (an advisory workspace) is related only through a project group whose other members share exactly one repository, and shows it as "related repo, no checkout comparison".
   - **Unknown stays unknown.** A failed observation is `unknown` with its reason, and the last success is kept only as `lastKnown`. `behindOriginCheckEnabled: false` and `TC_BEHIND_ORIGIN_DISABLED` also turn the observation off, and the chip and prime then say it was not observed. The checkout is workspace data: only a caller that sees the project row whole gets it (#1739).
-  - Modules: `lib/upstream-observer.js`, `lib/checkout-freshness.js`, and `lib/git-probe.js`, the one git runner `checkout-state` and `behind-origin` now share.
+  - Modules: `lib/upstream-observer.js`, `lib/checkout-freshness.js`, `lib/checkout-summary.js` (the one wording the prime and the chip share), and `lib/git-probe.js`, the git runner `checkout-state` and the observer share; `behind-origin` now takes its spawn guard, network environment and no-git classification from it too.
 
 ### Changed
 

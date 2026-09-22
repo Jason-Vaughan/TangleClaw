@@ -6111,10 +6111,12 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
   // #991: warm the base-branch CI verdict OFF the event loop before the
   // synchronous launch reads it for the prime. Never rejects; a failed probe
   // is an honest unknown in the prime, not a failed launch.
+  // #1678: the checkout line reads cached facts too; measure them now, bounded,
+  // so the prime says what the clone is on rather than "pending". Concurrent
+  // with the CI probe, so a hung network costs one wait, not two.
+  const checkoutWarm = checkoutFreshness.refreshForLaunch(project, store.config.load());
   await ciStatus.refresh(project.path);
-  // #1678: the checkout line in the prime reads cached facts; measure them now,
-  // bounded, so the prime says what the clone is on rather than "pending".
-  await checkoutFreshness.refreshForLaunch(project, store.config.load());
+  await checkoutWarm;
 
   // The operator's own request carries the host they actually reached this
   // server on — better evidence than probing this machine, which names the box
