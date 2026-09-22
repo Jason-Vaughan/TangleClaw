@@ -77,11 +77,11 @@ export default function Home() {
         
         {/* Hero Section */}
         <div className="flex flex-col items-center text-center space-y-12 mb-32 w-full">
-          <div className="relative w-96 h-96 md:w-[480px] md:h-[480px] flex flex-col items-center justify-center p-4 md:p-8">
-            <div className="relative w-full flex-1">
+          <div className="relative w-full flex flex-col items-center justify-center">
+            <div className="relative w-80 h-80 md:w-[400px] md:h-[400px]">
               <Image src="/tangleclaw-logo-real.png" alt="TangleClaw Logo" fill className="object-contain" priority />
             </div>
-            <div className="relative w-full h-20 md:h-28 mt-4 md:mt-8">
+            <div className="relative w-[320px] h-[60px] md:w-[500px] md:h-[90px] mt-4">
               {/* TODO: Replace logo-text.png with a proper SVG master. See docs/design-specs.md for details (likely Eurostile Bold Extended). */}
               <Image src="/logo-text.png" alt="TangleClaw Wordmark" fill className="object-contain" priority />
             </div>
