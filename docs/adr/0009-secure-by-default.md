@@ -147,8 +147,10 @@ one thing. Any surface that must distinguish "has not chosen" from "chose to clo
 **Grace needs evidence of use (2026-09-22, #1484).** A missing key identifies a legacy install, but a
 config file written by hand before the first boot is missing it too. Granting that file grace bound
 every interface before any login existed. So the key's absence now leads to grace only when the
-install shows it was used: a project (archived included), a session or a user row exists, and the
-file does not persist `setupComplete: false`. Without that evidence the install is recorded as closed
+install shows it was used: a project (archived included), a session or a user row exists or a
+project was ever deleted, and the file does not persist `setupComplete: false`. The evidence is read
+once at boot and reused by every later migration, because it is the one input that can change after
+boot, and a later answer would let a failed boot save turn into a wide bind at the next restart. Without that evidence the install is recorded as closed
 (`false`). This applies the rule above that an install which never had remote reach narrows
 immediately. A *missing* `setupComplete` was rejected as the fresh-install signal, because `load()`
 reads it as `true`: legacy installs predate that field, and keying on its absence would narrow the

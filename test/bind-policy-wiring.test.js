@@ -221,14 +221,15 @@ describe('store.config.isKeyPersisted — absent key vs defaulted key', () => {
 });
 
 describe('fresh-install evidence reaches every migration site (#1484)', () => {
-  it('passes store.hasPriorUse() at boot, in GET /api/config and in PATCH /api/config', () => {
-    // A site that omits the evidence keeps the legacy answer (grace, wide), so a
-    // hand-seeded fresh install would be classified differently by the socket
-    // and by the settings UI. Every call must carry it.
+  it('passes boot\'s fixed prior-use answer at boot, in GET and in PATCH /api/config', () => {
+    // A site that omits the evidence keeps the legacy answer (grace, wide), and a
+    // site that asks the store live can see a project created after boot. Either
+    // way the socket and the settings UI would disagree. The behaviour is pinned
+    // in api-config.test.js; this names the one helper all three must use.
     const calls = SERVER_SRC.match(/bindPolicy\.migrateLegacyBind\([\s\S]*?\);/g) || [];
     assert.equal(calls.length, 3, 'boot, GET and PATCH each migrate');
     for (const call of calls) {
-      assert.match(call, /store\.hasPriorUse\(\)/, `missing prior-use evidence: ${call}`);
+      assert.match(call, /_installPriorUse\(\)/, `missing boot's prior-use answer: ${call}`);
     }
   });
 });
@@ -267,6 +268,14 @@ describe('store.hasPriorUse — what counts as an install that was used (#1484)'
     store.projects.archive(p.id);
     assert.equal(store.projects.list().length, 0, 'the default list hides it');
     assert.equal(store.hasPriorUse(), true, 'an archived project is still evidence of use');
+  });
+
+  it('is true once a project has been deleted, although its sessions go with it', () => {
+    freshStore();
+    const p = store.projects.create({ name: 'gone', path: path.join(tmpDir, 'gone') });
+    store.projects.delete(p.id);
+    assert.equal(store.projects.list({ archived: true }).length, 0);
+    assert.equal(store.hasPriorUse(), true, 'an install whose projects were all removed was still used');
   });
 
   it('is true when only a user account exists', () => {

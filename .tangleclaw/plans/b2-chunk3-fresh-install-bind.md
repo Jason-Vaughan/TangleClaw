@@ -47,6 +47,8 @@ issues. Chunks 1 and 2 shipped as PR #1754 and PR #1769. This is Chunk 3, the la
   `store._setBasePath` + `store.init()` in a scratch directory). Boot writes port leases for its own
   ports before the migration runs, so leases are **not** usable as evidence of use.
 
+### Chunk 03: A fresh install with a hand-seeded config stays on loopback
+
 ## Design
 
 `migrateLegacyBind(config, keyPersisted, priorUse)` grants grace only on evidence the install was
@@ -57,23 +59,30 @@ used. When the key is absent in direct mode:
   fresh install that has never finished setup. There is no operator relying on a wide bind, and the
   wizard is what authorizes wider exposure.
 - **`priorUse === false`** → record `false`, reason `fresh-install`. No project, session or user
-  row has ever existed, so there is no dashboard in use to strand. ADR 0009 already says an install
+  row exists and no project was ever deleted, so there is no dashboard in use to strand. ADR 0009 already says an install
   with no prior remote reach narrows immediately.
 - **Otherwise** → record `null` (grace), reason `legacy-direct-install`, unchanged. That includes
   `priorUse` omitted: the evidence is optional, and a missing answer keeps today's behavior rather
   than stranding someone. All three `server.js` callers pass it, which a wiring test asserts.
 
 `store.hasPriorUse()` answers the evidence question with one query: does any `projects` (archived
-included), `sessions` or `users` row exist. It fails toward "used" (`true`) if the query throws,
+included), `sessions` or `users` row exist, or a `project.deleted` activity row. It fails toward "used" (`true`) if the query throws,
 because the cost of a wrong "unused" is stranding a remote operator.
 
 Boot logs the fresh-install case as its own line ("recorded as a fresh install; listening on
 loopback") instead of the legacy-grace line.
 
-**Known edge, accepted.** If boot's persist fails (read-only disk) on a fresh install, and a project
-is later added, `GET`/`PATCH` re-derive in memory and would now see prior use and choose grace. The
-socket stays on loopback until a restart. This needs a failed write followed by a successful one, and
-the same risk exists for the current design. Not closing it here.
+**The evidence is fixed at boot.** `server.js#_installPriorUse` asks the store once, at boot before
+the server listens, and `GET`/`PATCH /api/config` reuse that answer. Asking live was wrong: creating a
+project or a login changes the store's answer, so on a fresh install whose boot save of `false`
+failed, `GET` would report grace and `PATCH` would persist it, and the next restart would bind wide
+with nobody choosing it. The review of the first commit found this; the plan's earlier claim that the
+old design shared the risk was false, because its inputs were all fixed after boot.
+
+**Deleted projects count as use.** Deleting a project deletes its sessions, so an install whose
+operator removed every project would have looked unused and been narrowed on upgrade. The
+`project.deleted` activity row is written only by that delete, never at boot, and the activity log
+keeps the newest rows of each type, so it remains as evidence.
 
 ## Tests (written with the code)
 
@@ -87,10 +96,19 @@ the same risk exists for the current design. Not closing it here.
 - An already-recorded key and caddy mode are unchanged by either signal.
 - `describeNarrowing` issues no notice for the fresh-install result.
 
+`test/api-config.test.js`:
+- The legacy `bindState` case now builds a legacy install (a project, no `setupComplete`); its
+  assertions are unchanged. Its old fixture persisted `setupComplete: false` on an empty store, which
+  is the fresh install this chunk closes.
+- A keyless config with `setupComplete: false` reports closed.
+- Boot answered "fresh" and its save failed; a project created afterwards does not flip `GET` to
+  grace, and an unrelated `PATCH` persists `false`.
+
 `test/bind-policy-wiring.test.js`:
-- All three `migrateLegacyBind(` call sites in `server.js` pass `store.hasPriorUse()`.
+- All three `migrateLegacyBind(` call sites in `server.js` pass `_installPriorUse()`, boot's fixed answer.
 - `store.hasPriorUse()`: false on a fresh store; true after a project is created; true with only an
   archived project; true with only a user.
+- A deleted project still counts as use.
 - An end-to-end boot-shaped check: a hand-seeded config file (no key, no `setupComplete`) plus an
   empty store yields a persisted `false` and a loopback bind.
 
@@ -111,4 +129,4 @@ the same risk exists for the current design. Not closing it here.
 
 ## Status
 
-- [ ] Chunk 3 (#1484): fresh installs stay on loopback
+- [ ] Chunk 03 (#1484): fresh installs stay on loopback

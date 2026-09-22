@@ -10,7 +10,7 @@ const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const master = require('../lib/master');
 const portScanner = require('../lib/port-scanner');
-const { createServer } = require('../server');
+const { createServer, _setInstallPriorUse } = require('../server');
 
 setLevel('error');
 
@@ -179,6 +179,7 @@ describe('API endpoints', () => {
       // A legacy install is one that was USED (#1484): its file has no
       // setupComplete (which load() reads as true) and it has a project.
       const legacy = store.projects.create({ name: 'legacy-bind-probe', path: path.join(tmpDir, 'legacy-bind-probe') });
+      _setInstallPriorUse(undefined); // ask the store afresh, as boot would
       try {
         await withKeylessConfig({ setupComplete: undefined }, async () => {
           const { data } = await request(server, 'GET', '/api/config');
@@ -188,6 +189,29 @@ describe('API endpoints', () => {
         });
       } finally {
         store.projects.delete(legacy.id);
+        _setInstallPriorUse(undefined);
+      }
+    });
+
+    it('keeps boot\'s fresh-install answer when a project appears after a failed save (#1484)', async () => {
+      // Boot decided "fresh, loopback", but its save of `false` failed, so the
+      // file still lacks the key. A project created afterwards must not flip
+      // GET to grace, and PATCH must not persist grace for the next restart.
+      _setInstallPriorUse(false);
+      const later = store.projects.create({ name: 'after-boot-probe', path: path.join(tmpDir, 'after-boot-probe') });
+      try {
+        await withKeylessConfig({ setupComplete: undefined }, async () => {
+          const { data } = await request(server, 'GET', '/api/config');
+          assert.equal(data.bindState.choice, 'closed');
+          assert.equal(data.bindState.wide, false);
+          await request(server, 'PATCH', '/api/config', { chimeEnabled: true });
+          const onDisk = JSON.parse(fs.readFileSync(path.join(tmpDir, 'config.json'), 'utf8'));
+          assert.equal(onDisk.bindAllInterfaces, false,
+            'an unrelated save must record boot\'s closed answer, not grace');
+        });
+      } finally {
+        store.projects.delete(later.id);
+        _setInstallPriorUse(undefined);
       }
     });
 

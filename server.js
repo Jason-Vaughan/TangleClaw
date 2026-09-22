@@ -1605,6 +1605,36 @@ route('GET', '/api/config', (_req, res) => {
   jsonResponse(res, 200, _withBindState(config));
 });
 
+/** Boot's answer to `store.hasPriorUse()`, fixed once asked; `undefined` until then. */
+let _bindPriorUse;
+
+/**
+ * Whether this install had been used, as the store answered it the FIRST time
+ * anyone asked — at boot, before the server listens.
+ *
+ * The network-binding migration runs at boot, on `GET /api/config` and before
+ * `PATCH /api/config` saves, and all three must reach the same answer. Every
+ * other input to it is fixed after boot, but the store's answer is not: creating
+ * a project or a login changes it. If boot's save of a fresh install's `false`
+ * failed, a later live answer would flip the in-memory migration to the legacy
+ * grace state, PATCH would persist it, and the next restart would listen on every
+ * interface with nobody having chosen that. Fixing the answer at boot keeps the
+ * three in step.
+ * @returns {boolean} Whether the install showed prior use when first asked.
+ */
+function _installPriorUse() {
+  if (_bindPriorUse === undefined) _bindPriorUse = store.hasPriorUse();
+  return _bindPriorUse;
+}
+
+/**
+ * Test seam: set, or with `undefined` clear, the fixed prior-use answer.
+ * @param {boolean|undefined} value - The answer to hold.
+ */
+function _setInstallPriorUse(value) {
+  _bindPriorUse = value;
+}
+
 /**
  * Attach the server-resolved network-binding state to a config response.
  *
@@ -1622,7 +1652,7 @@ function _withBindState(config) {
   // tolerates as non-fatal — would otherwise be reported as "closed" while its
   // socket is wide, and the settings modal would draw a shut door over an open
   // one and hide the way out. In-memory only: a GET must not write.
-  bindPolicy.migrateLegacyBind(config, store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY), store.hasPriorUse());
+  bindPolicy.migrateLegacyBind(config, store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY), _installPriorUse());
   return {
     ...redactConfigSecrets(config),
     bindState: bindPolicy.describeBindState(config, authGate.resolveGateState(() => config, store.authSessions, _gateIngress)),
@@ -1768,7 +1798,7 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   // the key is still absent here — and since `load()` merges the default, saving
   // would silently persist `false` and narrow a remote operator's install on
   // their next restart, without them choosing. Idempotent: a no-op once recorded.
-  bindPolicy.migrateLegacyBind(config, store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY), store.hasPriorUse());
+  bindPolicy.migrateLegacyBind(config, store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY), _installPriorUse());
   // Snapshot of pre-mutation values for fields whose downstream effects
   // are conditional on whether the value actually changed (#247 hardening
   // — saveGlobalSettings POSTs the field on every Save click, so unrelated
@@ -10524,7 +10554,7 @@ if (require.main === module) {
   const legacyBind = bindPolicy.migrateLegacyBind(
     config,
     store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY),
-    store.hasPriorUse()
+    _installPriorUse()
   );
   if (legacyBind.migrated) {
     try {
@@ -10762,4 +10792,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, serverProtocol, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers };
+module.exports = { createServer, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers };
