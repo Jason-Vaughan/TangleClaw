@@ -1,6 +1,6 @@
 ---
 title: "Train A Car A1: live checkout and coordinated freshness truth"
-status: IN PROGRESS — Chunks 1–2 shipped (#1788, #1791); Chunk 3 authorized by the PM 2026-09-22 (message 608a9df0), D16–D20 sent to the Architect
+status: IN PROGRESS — Chunks 1–2 shipped (#1788, #1791); Chunk 3 authorized by the PM 2026-09-22 (message 608a9df0), Architect ruled D16–D20 (message e0655cb7; D16 modified)
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (message 7206bde4)
 issues: [993, 1678]
 governed_by:
@@ -314,7 +314,11 @@ answer, not a failure. `tc capabilities`: a `checkouts` entry in the project ros
 **Docs.** `api-contract.md` (`GET /api/checkouts`, the health condition's wording), the tc verb docs, CHANGELOG
 `### Added`, FEATURES.md.
 
-**Chunk 3 decisions (sent to the Architect at the plan-written boundary).**
+**Chunk 3 decisions.** The Architect ruled on 2026-09-22 (message e0655cb7): **D16 MODIFY**, D17, D18 and D19 APPROVE,
+D20 APPROVE as modified by D16. The modification is built: an unbound caller gets 200 `scope: 'none'` with the reason, but
+a binding that was presented and not honoured gets the resolver's refusal (`403 PROJECT_BINDING_INVALID`, via
+`projectRefusalFor`), and `tc freshness` renders it and exits nonzero; it exits 0 for every answered scope. The Architect
+confirmed the build matches (message a1ec562f).
 - **D16 (API contract).** `GET /api/checkouts` answers 200 `{scope: 'fleet'|'related'|'none', reason, observedAt, rows}`
   for every caller; unbound/invalid get `scope: 'none'` with the reason and no rows. *Rejected:* 403 for unbound
   callers, the shared-docs convention, because D11 ruled "no rows" and a refusal would make `tc freshness` report an

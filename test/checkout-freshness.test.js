@@ -161,9 +161,21 @@ describe('checkout-freshness', () => {
     // One answer to "how does this clone stand against origin/main": the
     // local-ref comparison is kept, labelled, and never at the top level.
     for (const k of ['ahead', 'behind', 'relation']) assert.equal(k in ca, false, `no top-level ${k}`);
-    assert.deepEqual(Object.keys(ca.localRef).sort(), ['ahead', 'behind', 'ref', 'relation', 'sha']);
+    assert.deepEqual(Object.keys(ca.localRef).sort(), ['ahead', 'behind', 'incomplete', 'ref', 'relation', 'sha']);
     assert.deepEqual(ca.summary, cf.describe(ca), 'the chip and the prime read one wording');
     assert.match(ca.summary[0], /1 behind origin\/main @bbbbbbb/);
+  });
+
+  it('reasons about the local origin/main ref ride localRef, not the checkout\'s own incomplete list', async () => {
+    const a = project('no-local-ref');
+    const fake = fakeRepos({
+      [a.path]: { status: statusOut(SHA_A, 'main'), origin: 'git@github.com:O/L.git\n', has: [SHA_A], lsRemote: `${SHA_A}\trefs/heads/main\n` }
+    });
+    const c = await warmAndRead(a, fake);
+    assert.ok(c.localRef.incomplete.some((r) => r.startsWith('upstream:')), 'the missing local ref is said on localRef');
+    assert.ok(!c.incomplete.some((r) => r.startsWith('upstream:') || r.startsWith('ahead/behind')), 'and not on the checkout');
+    assert.ok(c.incomplete.some((r) => r.startsWith('unpushed:')), 'the checkout\'s own gap stays where it was');
+    assert.equal(c.vsUpstream.relation, 'equal', 'the shared comparison is unaffected');
   });
 
   it('a clone that has not fetched the observed commit is behind by an unknown count', async () => {
@@ -240,6 +252,18 @@ describe('checkout-freshness', () => {
     it('a no-git project whose relation is still undetermined says so in the prime', () => {
       const [line] = cf.primeLines({ state: 'no-git', upstream: { via: null, state: 'pending' }, vsUpstream: {} });
       assert.match(line, /not a git checkout; related repository not determined yet/);
+    });
+
+    it('a no-git project whose group could not all be read says the relation is not determined', () => {
+      const [line] = cf.primeLines({ state: 'no-git', upstream: { via: null, state: 'unknown', reason: 'group members not all read yet' }, vsUpstream: {} });
+      assert.match(line, /not a git checkout; related repository not determined \(group members not all read yet\)/);
+    });
+
+    it('a group relation with no group name still reads as a group relation', () => {
+      const c = { state: 'no-git', upstream: { via: 'group', identity: 'github.com/O/N', groupName: null, sha: SHA_A, observedAt: null }, vsUpstream: { relation: 'not-compared' } };
+      const [line] = summary.describe(c);
+      assert.match(line, /related repo github\.com\/O\/N \(via a project group\)/);
+      assert.doesNotMatch(line, /null|undefined/);
     });
 
     it('is related to nothing when its group names two repositories', async () => {

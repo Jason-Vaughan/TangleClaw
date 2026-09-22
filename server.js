@@ -282,6 +282,7 @@ const serverInfo = require('./lib/server-info');
 const behindOrigin = require('./lib/behind-origin');
 const checkoutState = require('./lib/checkout-state');
 const checkoutFreshness = require('./lib/checkout-freshness');
+const checkoutFleet = require('./lib/checkout-fleet');
 const bindPolicy = require('./lib/bind-policy');
 const wrapRunRegistry = require('./lib/wrap-run-registry');
 const wrapHandback = require('./lib/wrap-handback');
@@ -1414,11 +1415,11 @@ route('GET', '/api/server-info', (_req, res) => {
   // The origin/main ref is only as fresh as behind-origin's last successful
   // fetch, and the payload says which.
   info.liveCheckout = checkoutState.withUpstreamObservation(
-    checkoutState.snapshot(serverInfo._internal.repoRoot), info.behindOrigin);
+    checkoutState.snapshot(serverInfo.getRepoRoot()), info.behindOrigin);
   // #1678: whether a restart would load anything, for the commits the running
   // process has not loaded. Only asked when disk is known or suspected ahead.
   info.restartImpact = info.isStale === true
-    ? checkoutState.impactSnapshot(serverInfo._internal.repoRoot, info.startupSha, info.currentDiskSha)
+    ? checkoutState.impactSnapshot(serverInfo.getRepoRoot(), info.startupSha, info.currentDiskSha)
     : null;
   jsonResponse(res, 200, info);
 });
@@ -4578,6 +4579,11 @@ route('GET', '/api/tc/whoami', (req, res) => {
         : 'unavailable: this call did not resolve to a registered project'
     },
     {
+      // #1678: the fleet's checkouts, shaped to what this project may see.
+      id: 'checkouts', enabled: true,
+      detail: `which commit each live session is on and how it stands against origin/main: \`tc freshness\`, or GET ${api}/api/checkouts (your own row and your project groups' rows; send x-tangleclaw-project-id and x-tangleclaw-launch-id)`
+    },
+    {
       id: 'switchboard', enabled: medusaEnabled && !!workspaceId,
       detail: medusaEnabled && workspaceId
         ? `message other sessions: POST ${api}/api/sessions/${encodeURIComponent(project.name)}/medusa/send — your workspace id is ${workspaceId}`
@@ -4615,6 +4621,10 @@ route('GET', '/api/tc/whoami', (req, res) => {
         {
           id: 'read-api', enabled: true,
           detail: `the fleet-wide Read API is yours: ${api}/api/awareness (you appear in its master entry), ${api}/api/tc/sessions, ${api}/api/ports, ${api}/api/shared-docs (send x-tangleclaw-role: master and x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID)`
+        },
+        {
+          id: 'checkouts', enabled: true,
+          detail: `every live session's checkout against origin/main: \`tc freshness\`, or GET ${api}/api/checkouts (send x-tangleclaw-role: master and x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID)`
         },
         {
           id: 'switchboard', enabled: masterMedusaEnabled && !!workspaceId,
@@ -4790,6 +4800,22 @@ route('GET', '/api/tc/sessions', (_req, res) => {
     };
   });
   jsonResponse(res, 200, { sessions });
+});
+
+// GET /api/checkouts — the fleet's checkouts in one answer (#1678, #993): one
+// row per project with a live session, from the same `projectCheckout` the
+// project route, the prime and the session chip read, so the PM, the Master, a
+// Builder and the operator cannot compute different answers. Shaped per caller
+// by `lib/checkout-fleet.js`. An unbound caller is answered with no rows and
+// the reason; a binding that was presented and not honoured is refused, so a
+// broken binding never reads as an empty fleet. Cached; never waits on git.
+route('GET', '/api/checkouts', (req, res) => {
+  const access = projectsReader(req);
+  if (access.kind === sharedDocsAccess.KINDS.INVALID) {
+    const refusal = sharedDocsAccess.projectRefusalFor(access, sharedDocsAccess.NEEDS.OWN_PROJECT);
+    return errorResponse(res, refusal.status, refusal.message, refusal.code);
+  }
+  jsonResponse(res, 200, checkoutFleet.fleetView(access, { config: store.config.load() }));
 });
 
 // GET /api/awareness — "sessions that never became aware" as a queryable
