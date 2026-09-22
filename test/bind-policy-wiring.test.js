@@ -220,6 +220,91 @@ describe('store.config.isKeyPersisted — absent key vs defaulted key', () => {
   });
 });
 
+describe('fresh-install evidence reaches every migration site (#1484)', () => {
+  it('passes store.hasPriorUse() at boot, in GET /api/config and in PATCH /api/config', () => {
+    // A site that omits the evidence keeps the legacy answer (grace, wide), so a
+    // hand-seeded fresh install would be classified differently by the socket
+    // and by the settings UI. Every call must carry it.
+    const calls = SERVER_SRC.match(/bindPolicy\.migrateLegacyBind\([\s\S]*?\);/g) || [];
+    assert.equal(calls.length, 3, 'boot, GET and PATCH each migrate');
+    for (const call of calls) {
+      assert.match(call, /store\.hasPriorUse\(\)/, `missing prior-use evidence: ${call}`);
+    }
+  });
+});
+
+describe('store.hasPriorUse — what counts as an install that was used (#1484)', () => {
+  let tmpDir;
+  let store;
+
+  before(() => {
+    store = require('../lib/store');
+  });
+
+  /** Point the store at an empty directory and initialize it. */
+  function freshStore() {
+    try { store.close(); } catch { /* not open yet */ }
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-prior-use-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  }
+
+  after(() => {
+    try { store.close(); } catch { /* already closed */ }
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('is false on a store that has just been created', () => {
+    freshStore();
+    assert.equal(store.hasPriorUse(), false);
+  });
+
+  it('is true once a project exists, and still true once it is archived', () => {
+    freshStore();
+    const p = store.projects.create({ name: 'used', path: path.join(tmpDir, 'used') });
+    assert.equal(store.hasPriorUse(), true);
+    store.projects.archive(p.id);
+    assert.equal(store.projects.list().length, 0, 'the default list hides it');
+    assert.equal(store.hasPriorUse(), true, 'an archived project is still evidence of use');
+  });
+
+  it('is true when only a user account exists', () => {
+    freshStore();
+    store.users.create('operator', 'a-long-enough-password-1');
+    assert.equal(store.hasPriorUse(), true);
+  });
+
+  it('treats a store it cannot read as used, so no remote operator is stranded', () => {
+    freshStore();
+    store.close();
+    assert.equal(store.hasPriorUse(), true);
+  });
+
+  it('a hand-seeded config on an empty store boots closed and records false', () => {
+    // The issue's exact shape: a config.json written before first boot, with no
+    // bindAllInterfaces and no setupComplete (which load() reads as true).
+    try { store.close(); } catch { /* not open */ }
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-prior-use-'));
+    fs.writeFileSync(path.join(tmpDir, 'config.json'),
+      JSON.stringify({ serverPort: 3101, ingressMode: 'direct' }));
+    store._setBasePath(tmpDir);
+    store.init();
+
+    const config = store.config.load();
+    assert.equal(config.setupComplete, true, 'the legacy reading of a missing field');
+    const r = bindPolicy.migrateLegacyBind(
+      config, store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY), store.hasPriorUse());
+    assert.equal(r.reason, 'fresh-install');
+    store.config.save(config);
+
+    const onDisk = JSON.parse(fs.readFileSync(path.join(tmpDir, 'config.json'), 'utf8'));
+    assert.equal(onDisk.bindAllInterfaces, false, 'the closed choice is persisted');
+    assert.equal(bindPolicy.resolveBind(store.config.load()).host, bindPolicy.LOOPBACK);
+  });
+});
+
 describe('the default ships as loopback', () => {
   it('DEFAULT_CONFIG.bindAllInterfaces is false', () => {
     assert.match(STORE_SRC, /bindAllInterfaces: false/,

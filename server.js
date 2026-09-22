@@ -1622,7 +1622,7 @@ function _withBindState(config) {
   // tolerates as non-fatal — would otherwise be reported as "closed" while its
   // socket is wide, and the settings modal would draw a shut door over an open
   // one and hide the way out. In-memory only: a GET must not write.
-  bindPolicy.migrateLegacyBind(config, store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY));
+  bindPolicy.migrateLegacyBind(config, store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY), store.hasPriorUse());
   return {
     ...redactConfigSecrets(config),
     bindState: bindPolicy.describeBindState(config, authGate.resolveGateState(() => config, store.authSessions, _gateIngress)),
@@ -1768,7 +1768,7 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   // the key is still absent here — and since `load()` merges the default, saving
   // would silently persist `false` and narrow a remote operator's install on
   // their next restart, without them choosing. Idempotent: a no-op once recorded.
-  bindPolicy.migrateLegacyBind(config, store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY));
+  bindPolicy.migrateLegacyBind(config, store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY), store.hasPriorUse());
   // Snapshot of pre-mutation values for fields whose downstream effects
   // are conditional on whether the value actually changed (#247 hardening
   // — saveGlobalSettings POSTs the field on every Save click, so unrelated
@@ -10517,16 +10517,21 @@ if (require.main === module) {
   // Record the legacy install's "never chosen" state as a real value before
   // anything reads it. Absence of the key identifies such an install exactly
   // once — the next config save of any kind would materialize the default and
-  // erase the distinction — so it is converted to an explicit null here and
-  // persisted. Everything downstream reads the value, never the file.
+  // erase the distinction — so it is converted to an explicit value here and
+  // persisted: null (grace) for an install the store shows was used, false for
+  // one written by hand before its first boot, which has no remote operator to
+  // strand. Everything downstream reads the value, never the file.
   const legacyBind = bindPolicy.migrateLegacyBind(
     config,
-    store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY)
+    store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY),
+    store.hasPriorUse()
   );
   if (legacyBind.migrated) {
     try {
       store.config.save(config);
-      log.info('Recorded this install as predating the network-binding setting', {
+      log.info(legacyBind.reason === 'fresh-install'
+        ? 'Recorded this install as fresh: its config has no network-binding setting and nothing shows it was used, so it listens on loopback'
+        : 'Recorded this install as predating the network-binding setting', {
         setting: bindPolicy.OPT_IN_KEY, reason: legacyBind.reason
       });
     } catch (err) {

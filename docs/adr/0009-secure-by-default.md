@@ -144,6 +144,17 @@ restart. It is therefore converted once, at boot, to an explicit `null` distinct
 one thing. Any surface that must distinguish "has not chosen" from "chose to close" reads that value
 — never the key's presence.
 
+**Grace needs evidence of use (2026-09-22, #1484).** A missing key identifies a legacy install, but a
+config file written by hand before the first boot is missing it too. Granting that file grace bound
+every interface before any login existed. So the key's absence now leads to grace only when the
+install shows it was used: a project (archived included), a session or a user row exists, and the
+file does not persist `setupComplete: false`. Without that evidence the install is recorded as closed
+(`false`). This applies the rule above that an install which never had remote reach narrows
+immediately. A *missing* `setupComplete` was rejected as the fresh-install signal, because `load()`
+reads it as `true`: legacy installs predate that field, and keying on its absence would narrow the
+very installs this amendment protects. If the store cannot be read, the install is treated as used,
+because a wrong "unused" strands a remote operator.
+
 **One derivation, server-side.** What the binding is, what the operator recorded, and whether the
 control should be locked are answered in one place and shipped to the frontend. Three separate
 defects in the first slice were two copies of these rules disagreeing, each surfacing as a control

@@ -153,23 +153,53 @@ describe('API endpoints', () => {
   });
 
   describe('bindState edge cases (#710)', () => {
+    /**
+     * Rewrite this suite's config as one whose file lacks the binding key, run
+     * `fn`, then restore the file exactly.
+     * @param {object} overrides - Fields to set on the rewritten file.
+     * @param {Function} fn - Async body run while the file is rewritten.
+     */
+    async function withKeylessConfig(overrides, fn) {
+      const file = path.join(tmpDir, 'config.json');
+      const original = fs.readFileSync(file, 'utf8');
+      const raw = JSON.parse(original);
+      delete raw.bindAllInterfaces;
+      Object.assign(raw, { ingressMode: 'direct' }, overrides);
+      fs.writeFileSync(file, JSON.stringify(raw));
+      try {
+        await fn();
+      } finally {
+        fs.writeFileSync(file, original);
+      }
+    }
+
     it('reports wide + unchosen for an install that predates the setting', async () => {
       // The population this whole mechanism exists for. If the API reports
       // `closed` here, the settings modal draws a shut door over an open one.
-      const raw = JSON.parse(fs.readFileSync(path.join(tmpDir, 'config.json'), 'utf8'));
-      const saved = raw.bindAllInterfaces;
-      delete raw.bindAllInterfaces;
-      raw.ingressMode = 'direct';
-      fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify(raw));
+      // A legacy install is one that was USED (#1484): its file has no
+      // setupComplete (which load() reads as true) and it has a project.
+      const legacy = store.projects.create({ name: 'legacy-bind-probe', path: path.join(tmpDir, 'legacy-bind-probe') });
       try {
-        const { data } = await request(server, 'GET', '/api/config');
-        assert.equal(data.bindState.choice, 'unchosen');
-        assert.equal(data.bindState.wide, true, 'a legacy install is still bound wide, deliberately');
-        assert.equal(data.bindState.grace, true);
+        await withKeylessConfig({ setupComplete: undefined }, async () => {
+          const { data } = await request(server, 'GET', '/api/config');
+          assert.equal(data.bindState.choice, 'unchosen');
+          assert.equal(data.bindState.wide, true, 'a legacy install is still bound wide, deliberately');
+          assert.equal(data.bindState.grace, true);
+        });
       } finally {
-        raw.bindAllInterfaces = saved;
-        fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify(raw));
+        store.projects.delete(legacy.id);
       }
+    });
+
+    it('reports closed for a keyless config whose file says setup never finished (#1484)', async () => {
+      // A config written by hand before the first boot. Reporting it wide would
+      // describe a socket boot never opens, and invite the operator to keep it.
+      await withKeylessConfig({ setupComplete: false }, async () => {
+        const { data } = await request(server, 'GET', '/api/config');
+        assert.equal(data.bindState.choice, 'closed');
+        assert.equal(data.bindState.wide, false);
+        assert.equal(data.bindState.grace, false);
+      });
     });
 
     it('reports closed once the operator has chosen', async () => {
