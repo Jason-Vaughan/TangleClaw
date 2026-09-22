@@ -1,6 +1,6 @@
 ---
 title: "Train B.2 Chunk 2: PortHub stops granting a port it can see is taken, and stops deleting leases it cannot classify"
-status: ACTIVE. Planned 2026-09-22, not yet built
+status: ACTIVE. Built and reviewed 2026-09-22 (Critic 0 blocking, verify-resolutions clean); the post-merge live check is still owed
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (message f260c147)
 issues: [814, 853, 1381]
 governed_by:
@@ -70,9 +70,10 @@ own tunnel will bind). `POST /api/ports/lease` is used by every managed agent pe
 - **`adoptListener: true`** says "the listener on this port is mine" (registered after binding). It
   is a separate flag from `force` on purpose: `force` takes over another project's lease, and an
   agent that set `force` to register its own server would silently steal a leased port too.
-- **Every in-process caller passes `adoptListener: true`** with the reason at the call site: each
-  registers a port TangleClaw itself binds (ttyd, the server, Caddy, its own SSH tunnels). Their
-  behaviour is unchanged.
+- **Callers whose TangleClaw listener is already up pass `adoptListener: true`** with the reason at
+  the call site: bootstrap (ttyd, the server, Caddy) and the tunnel once it is live. OpenClaw
+  connection create/update do not: their tunnel is not up yet, so a listener there is a stranger's,
+  and `checkPort`/`nextFreePort` ask the machine too (a Critic finding changed this during review).
 - **Where the check cannot run, the answer says so.** The 201 body carries `listenerCheck`:
   `clear`, `adopted`, `renewal`, `not-local` (a non-localhost host; this machine cannot see it) or
   `unavailable` (no lsof, empty cache). The grant is not refused for `unavailable`, and a warning
