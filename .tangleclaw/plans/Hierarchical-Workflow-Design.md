@@ -36,3 +36,8 @@ When spinning up a new Builder session, the operator uses the following prompt t
 > - **Project Manager:** If you have questions, ask the PM for clarification. Make your best-effort guess on fixes first, and keep the PM informed as each step completes or if you need to change the workload/chunks.
 > - **Architect:** You may reach out to the Architect for technical questions that are outside the scope of the PM.
 > - **Pushback:** If you feel the PM is hallucinating or violating project rules, you are explicitly authorized to push back on them or escalate to the Architect."
+
+## 7. Operational Realities & Fleet Maintenance
+As we expand the automation loop, the infrastructure requires strict adherence to these operational realities:
+* **The SHA Monitoring Rule:** The live TangleClaw Node.js server actively monitors its booted Git SHA against the on-disk `.git/HEAD`. **Any** `git pull` whatsoever—even if it only contains markdown plans or docs—will flag the live server as stale and trigger an operator-level restart banner. The PM agent must never assume a "code-free" pull can skip a server restart. If we want fully hands-free Train progression, we will need an API endpoint or authorized mechanism for the PM to autonomously trigger that restart.
+* **PTY Leaks (ttyd):** Continuous background agent usage occasionally leaks tmux PTY clients. The system throws a "Terminal (ttyd) PTY leak" health warning when the threshold is hit (e.g., 20 clients). The PM agent is authorized and expected to autonomously clear these leaks by executing `launchctl kickstart -k gui/$(id -u)/com.tangleclaw.ttyd` rather than blocking the operator.
