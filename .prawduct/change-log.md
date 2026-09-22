@@ -33,6 +33,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   v4.5.0–v4.19.0).
 -->
 
+## 2026-09-22 — Project write routes answer only their owners; a stood-down gate recognises the plain-http dashboard (#1752, #1753)
+
+<!-- prawduct: type=bugfix | scope=project-write-gates-1752 -->
+
+Every project write route asks `lib/shared-docs-access.js` who is calling. `projectRefusalFor(access, need, action)` accepts only `NEEDS.OPERATOR` and `NEEDS.OWN_PROJECT` (it throws for anything else); `refusalFor` stays shared-docs only. In `server.js`, `operatorProjectCaller` gates create, attach, import, repair-orphan-hooks, migrate-to-plugin, delete, archive, unarchive and a PATCH that renames. `ownProjectCaller(req, res, segment, lookup)` does the binding check, the lookup (404) and the `canChangeProject` comparison (`403 OTHER_PROJECT`) in one call, for non-rename PATCH, actions and stranded-wraps check/ack/open-pr. Architect rulings (2026-09-22): the Project Master is refused on every project API write at every `master.accessLevel`, because its toggle governs file writes (the guard, `lib/master.js`, untouched) and API authority is #966 (ADR 0008); `PROJECT_READ_ONLY` says so. #1753: `tcFetch` sends `X-TangleClaw-Client: dashboard`, honoured only when `tcGateActive === false`, never in `isMachineClient` (ADR 0016 note, ratified). The `actions` list is pinned by a test so a new action must be classified. The fleet runbook's steps 5-6 are now operator dashboard steps; step 10a's pre-existing break is #1777. Seven test files that drove these routes anonymously now send `operatorHeaders` with assertions unchanged. The route regression covers all three access levels. Critic: cumulative rev-20260922T082626Z (0 blocking; both warnings fixed, verified rev-20260922T084511Z), then rev-20260922T085212Z (0 findings). Plan archived at `.tangleclaw/plans/archive/project-write-gates-1752.md`.
+
 ## 2026-09-22 — A config.json hand-written before first boot stays on loopback; legacy grace needs evidence of use (#1484)
 
 <!-- prawduct: type=bugfix | scope=train-b2-chunk3 -->
