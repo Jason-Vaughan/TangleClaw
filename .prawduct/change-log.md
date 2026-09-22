@@ -33,6 +33,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   v4.5.0–v4.19.0).
 -->
 
+## 2026-09-22 — The wrap bumps a Python project's version in pyproject.toml (#1444)
+
+<!-- prawduct: type=bugfix | scope=train-b2-chunk4 -->
+
+Train B.2 Chunk 4. `lib/project-version-files.js#parsePyprojectVersion` is a line scanner for the static PEP 621 `[project] version`, returning offsets into the raw text so `version-bump.js#_resolvePyproject` swaps only the value; every uneditable shape (dynamic, inline table, multi-line or unquoted value, duplicates) is a named skip. `_multilineStateAfter` tracks `"""`/`'''` the way TOML does, ignoring them inside single-line strings and comments. `_resolveVersionSource` probes version.json → package.json → pyproject.toml, passing over only a valid version-less package.json (`isVersionlessPackageJson`, shared with the reader; both parse through `parsePackageJsonText`, which drops a BOM). Both detection ladders go through `readProbedVersion`, which reaches pyproject.toml only where the writer would; #58's read past an unusable version.json to package.json is kept. A configured `versionFilePath` named pyproject.toml gets the TOML reader; another non-JSON file now says what is supported. The issue's claim that the setting could overwrite TOML with JSON was false (JSON.parse refused it first). Architect rulings: A1–A5 approve, A6 modify (no auto follow-up), A5 refinement modify (version.json never passed over), #58 conflict approve with a scoped legacy exception. Critic: chunk rev-20260922T180344Z (0 blocking, 3 warnings, 2 notes, all fixed), verify rev-20260922T182340Z (1 observation, fixed), verify rev-20260922T182959Z (0 findings; 3 observations accepted). Checked on a scratch copy of TangleBrain's real pyproject.toml + CHANGELOG.md: 0.25.0 → 0.25.1, one line changed. Plan archived at `.tangleclaw/plans/archive/b2-chunk4-pyproject-version.md`.
+
 ## 2026-09-22 — Project write routes answer only their owners; a stood-down gate recognises the plain-http dashboard (#1752, #1753)
 
 <!-- prawduct: type=bugfix | scope=project-write-gates-1752 -->
