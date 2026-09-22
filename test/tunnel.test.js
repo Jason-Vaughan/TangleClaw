@@ -25,8 +25,9 @@ const boundByTest = new Set();
 /** Answer lsof for PortHub from `boundByTest`. */
 function probeAnswersFromTestServers() {
   portScanner._setExec((cmd) => {
-    const port = Number(/-iTCP:(\d+) /.exec(cmd)[1]);
-    if (boundByTest.has(port)) {
+    const m = /^lsof .*-iTCP:(\d+) /.exec(cmd);
+    const port = m ? Number(m[1]) : null;
+    if (port !== null && boundByTest.has(port)) {
       return `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nnode ${process.pid} me 7u IPv4 0x1 0t0 TCP 127.0.0.1:${port} (LISTEN)`;
     }
     const err = new Error('no listener');

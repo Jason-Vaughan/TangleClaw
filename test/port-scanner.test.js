@@ -92,15 +92,6 @@ describe('port-scanner', () => {
     });
   });
 
-  describe('isPortInUseBySystem', () => {
-    it('returns not in use when cache is empty', () => {
-      const result = portScanner.isPortInUseBySystem(3101);
-      assert.equal(result.inUse, false);
-      assert.equal(result.process, null);
-      assert.equal(result.pid, null);
-    });
-  });
-
   describe('startScanner / stopScanner', () => {
     it('starts and stops without error', () => {
       // Use a very long interval so it doesn't actually fire during the test
@@ -132,13 +123,8 @@ describe('port-scanner', () => {
       assert.ok(Array.isArray(cached));
     });
 
-    it('isPortInUseBySystem reflects scan results', () => {
-      portScanner.scan();
-      // We can't predict which ports are in use, but we can verify the function works
-      const result = portScanner.isPortInUseBySystem(99999); // unlikely to be in use
-      assert.equal(result.inUse, false);
-    });
   });
+
   describe('probePort (#814)', () => {
     const fail = (status, stderr, stdout = '') => () => {
       const err = new Error('lsof exited');
@@ -187,10 +173,58 @@ describe('port-scanner', () => {
       assert.equal(portScanner.probePort(5432).source, 'unavailable');
     });
 
+    it('accepts a numeric string and probes it as the number', () => {
+      let asked;
+      portScanner._setExec((cmd) => {
+        asked = cmd;
+        return 'COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\ncaddy 77 me 7u IPv6 0x1 0t0 TCP *:8443 (LISTEN)';
+      });
+      assert.equal(portScanner.probePort('8443').inUse, true);
+      assert.match(asked, /-iTCP:8443 /);
+    });
+
+    it("finds a root-owned listener lsof cannot see, through the socket table (macOS)", { skip: process.platform !== 'darwin' && 'the netstat fallback is the macOS path' }, () => {
+      // lsof as a normal user lists only that user's sockets; tailscale serve,
+      // sshd and other root listeners are invisible to it.
+      portScanner._setExec((cmd) => {
+        if (cmd.startsWith('lsof')) throw Object.assign(new Error('none'), { status: 1, stdout: '', stderr: '' });
+        if (cmd.startsWith('netstat')) {
+          return [
+            'Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)          rxbytes      txbytes  rhiwat  shiwat    pid   epid',
+            'tcp4       0      0  100.74.90.65.8444      *.*                    LISTEN                 0            0  131072  131072  59047      0',
+            'tcp4       0      0  127.0.0.1.3102         *.*                    ESTABLISHED            0            0  131072  131072   6930      0'
+          ].join('\n');
+        }
+        if (cmd.startsWith('ps -p 59047')) return '/Library/SystemExtensions/x/io.tailscale.ipn.macsys.network-extension\n';
+        throw new Error(`unexpected command: ${cmd}`);
+      });
+      assert.deepEqual(portScanner.probePort(8444),
+        { inUse: true, process: 'io.tailscale.ipn.macsys.network-extension', pid: 59047, source: 'probe' });
+    });
+
+    it('does not read a non-LISTEN socket-table row as a listener', { skip: process.platform !== 'darwin' && 'the netstat fallback is the macOS path' }, () => {
+      portScanner._setExec((cmd) => {
+        if (cmd.startsWith('lsof')) throw Object.assign(new Error('none'), { status: 1, stdout: '', stderr: '' });
+        if (cmd.startsWith('netstat')) {
+          return 'tcp4       0      0  127.0.0.1.3102         127.0.0.1.50000        ESTABLISHED            0            0  131072  131072   6930      0';
+        }
+        throw new Error(`unexpected command: ${cmd}`);
+      });
+      assert.equal(portScanner.probePort(3102).inUse, false);
+    });
+
+    it("keeps lsof's clear answer when the socket-table fallback cannot run", () => {
+      portScanner._setExec((cmd) => {
+        if (cmd.startsWith('lsof')) throw Object.assign(new Error('none'), { status: 1, stdout: '', stderr: '' });
+        throw Object.assign(new Error('not found'), { status: 127, stdout: '', stderr: 'not found' });
+      });
+      assert.deepEqual(portScanner.probePort(3999), { inUse: false, process: null, pid: null, source: 'probe' });
+    });
+
     it('never shells out for a port outside 1..65535', () => {
       let ran = false;
       portScanner._setExec(() => { ran = true; return ''; });
-      for (const bad of [0, 70000, -1, 3.5, NaN]) {
+      for (const bad of [0, 70000, -1, 3.5, NaN, 'abc']) {
         assert.equal(portScanner.probePort(bad).source, 'unavailable');
       }
       assert.equal(ran, false);

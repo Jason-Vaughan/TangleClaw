@@ -356,6 +356,8 @@ describe('porthub (store-backed)', () => {
     it('bootstrap still records its own infra ports while they are listening', () => {
       portScanner._setExec((cmd) => {
         const port = Number(/-iTCP:(\d+)/.exec(cmd)[1]);
+        // Every lsof call reports ttyd listening, so the socket-table fallback
+        // is never reached here.
         return `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nttyd 1 me 7u IPv4 0x1 0t0 TCP 127.0.0.1:${port} (LISTEN)`;
       });
       porthub.bootstrap({ ttydPort: 3100, serverPort: 3101 });

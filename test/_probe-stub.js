@@ -21,8 +21,11 @@ function probeAnswersFromFixture(command = 'postgres') {
   const portScanner = require('../lib/port-scanner');
   const busy = new Set();
   portScanner._setExec((cmd) => {
-    const port = Number(/-iTCP:(\d+) /.exec(cmd)[1]);
-    if (busy.has(port)) {
+    // Only lsof is answered as busy; the socket-table fallback (netstat, ss)
+    // and ps read as "nothing here", which is what an unheld port looks like.
+    const m = /^lsof .*-iTCP:(\d+) /.exec(cmd);
+    const port = m ? Number(m[1]) : null;
+    if (port !== null && busy.has(port)) {
       return `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n${command} 812 me 7u IPv4 0x1 0t0 TCP *:${port} (LISTEN)`;
     }
     const err = new Error('no listener');

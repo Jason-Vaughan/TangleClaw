@@ -7918,6 +7918,26 @@ route('GET', '/api/openclaw/connections', (_req, res) => {
   jsonResponse(res, 200, { connections });
 });
 
+/**
+ * Lease an OpenClaw connection's port at create/update, and say so when the
+ * lease is refused. The route has already asked the machine through
+ * `porthub.checkPort`, so a refusal here means the port was taken between that
+ * check and this lease; the connection is saved either way and its tunnel will
+ * fail to bind, and this warning is what names why.
+ * @param {number} port
+ * @param {string} leaseName - `oc-direct-<id>`
+ * @param {string} service
+ * @returns {void}
+ */
+function _leaseConnectionPort(port, leaseName, service) {
+  const result = porthub.registerPort(port, leaseName, service, { permanent: true });
+  if (!result.success) {
+    log.warn('OpenClaw connection saved without a port lease', {
+      port, lease: leaseName, service, code: result.code, error: result.error, listener: result.listener
+    });
+  }
+}
+
 // POST /api/openclaw/connections
 route('POST', '/api/openclaw/connections', (_req, res, _params, body) => {
   if (!body || !body.name || !body.host || !body.sshUser || !body.sshKeyPath) {
@@ -7963,9 +7983,9 @@ route('POST', '/api/openclaw/connections', (_req, res, _params, body) => {
     // would be a stranger's. `checkPort`/`nextFreePort` above already asked
     // the machine, so this lease normally finds the port clear.
     const leaseName = `oc-direct-${connection.id}`;
-    porthub.registerPort(connection.localPort, leaseName, 'openclaw-tunnel', { permanent: true });
+    _leaseConnectionPort(connection.localPort, leaseName, 'openclaw-tunnel');
     if (connection.bridgePort) {
-      porthub.registerPort(connection.bridgePort, leaseName, 'openclaw-bridge', { permanent: true });
+      _leaseConnectionPort(connection.bridgePort, leaseName, 'openclaw-bridge');
     }
     jsonResponse(res, 201, connection);
   } catch (err) {
@@ -8072,10 +8092,10 @@ route('PUT', '/api/openclaw/connections/:id', (_req, res, params, body) => {
       // Not adopted, as at create: the old tunnel was just killed and the new
       // one is not up, so a listener on the new port is a stranger's.
       if (connection.localPort) {
-        porthub.registerPort(connection.localPort, leaseName, 'openclaw-tunnel', { permanent: true });
+        _leaseConnectionPort(connection.localPort, leaseName, 'openclaw-tunnel');
       }
       if (connection.bridgePort) {
-        porthub.registerPort(connection.bridgePort, leaseName, 'openclaw-bridge', { permanent: true });
+        _leaseConnectionPort(connection.bridgePort, leaseName, 'openclaw-bridge');
       }
     }
     openclawVersion.invalidate(params.id); // #296: instanceDir may have changed → drop stale cache
