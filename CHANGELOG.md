@@ -52,6 +52,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- **Saved the PM-managed Builder's opening prompt as `.tangleclaw/priming/pm-managed-builder.md`.** The hand-pasted version sent "all questions" to the ProjectManager and made the Architect optional, so design decisions on #1752 were made without the Architect, and one overrode the Master's read/write toggle. The saved prompt makes the Architect required for architectural decisions, lists what counts as one, and holds the PR until every decision is ruled on.
+
 - **`.gitignore` now names the four prawduct session files the plugin expects to see ignored** (`.test-report.xml`, its `.scope.json`, `.critic-review-dispatch.json`, `.pr-review-dispatch.json`). The existing `.prawduct/*` rule already hid them; the explicit lines clear prawduct's gitignore-contract drift advisory. For those four files nothing changes. Separately, `.prawduct/change-log-archive/` is now tracked, and the prawduct change-log's shipped history (284 entries, 812 KB) moves there verbatim by month, leaving the live log at 19 KB.
 
 - **Feature Index: carry one graduated entry from the 2026-09-21 session wrap onto main.** The wrap step shortened a `FEATURES.md` entry on a detached checkout, and the commit never reached a branch. It lands here unchanged.
