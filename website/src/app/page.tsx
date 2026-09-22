@@ -78,26 +78,26 @@ export default function Home() {
         {/* Hero Section */}
         <div className="flex flex-col items-center text-center space-y-12 mb-32 w-full">
           <div className="relative w-full flex flex-col items-center justify-center">
-            <div className="relative w-80 h-80 md:w-[400px] md:h-[400px]">
+            <div className="relative w-64 h-64 md:w-[320px] md:h-[320px]">
               <Image src="/tangleclaw-logo-real.png" alt="TangleClaw Logo" fill className="object-contain" priority />
             </div>
-            <div className="relative w-[320px] h-[60px] md:w-[500px] md:h-[90px] mt-4">
+            <div className="relative w-64 h-12 md:w-[400px] md:h-[72px] mt-4">
               {/* TODO: Replace logo-text.png with a proper SVG master. See docs/design-specs.md for details (likely Eurostile Bold Extended). */}
               <Image src="/logo-text.png" alt="TangleClaw Wordmark" fill className="object-contain" priority />
             </div>
           </div>
 
           <div className="space-y-10 max-w-5xl flex flex-col items-center mx-auto">
-            <div className="flex flex-col items-center space-y-8 w-full">
-              <h1 className="text-3xl md:text-4xl lg:text-5xl font-semibold tracking-tight leading-tight text-transparent bg-clip-text bg-gradient-to-br from-white via-gray-200 to-zinc-500 pb-2 text-center whitespace-nowrap w-full">
+            <div className="flex flex-col items-center space-y-6 w-full">
+              <h1 className="text-2xl md:text-3xl lg:text-4xl font-semibold tracking-tight leading-tight text-transparent bg-clip-text bg-gradient-to-br from-white via-gray-200 to-zinc-500 pb-2 text-center whitespace-nowrap w-full">
                 Many Agents. One Claw.
               </h1>
               
-              <div className="space-y-8 flex flex-col items-center w-full pt-4">
-                <p className="text-2xl md:text-3xl lg:text-4xl text-zinc-100 font-bold tracking-wide max-w-4xl mx-auto text-center w-full leading-relaxed">
+              <div className="space-y-6 flex flex-col items-center w-full pt-2">
+                <p className="text-xl md:text-2xl lg:text-3xl text-zinc-100 font-bold tracking-wide max-w-4xl mx-auto text-center w-full leading-relaxed">
                   An open-source, local-first AI-native SDLC orchestration platform.
                 </p>
-                <p className="text-lg md:text-xl text-zinc-500 font-medium tracking-wide max-w-3xl mx-auto text-center w-full leading-relaxed">
+                <p className="text-base md:text-lg lg:text-xl text-zinc-500 font-medium tracking-wide max-w-3xl mx-auto text-center w-full leading-relaxed">
                   TangleClaw turns separate AI coding terminals into a persistent, supervised software-development team — coordinated from your own machine.
                 </p>
               </div>
