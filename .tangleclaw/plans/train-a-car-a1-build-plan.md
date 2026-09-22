@@ -1,6 +1,6 @@
 ---
 title: "Train A Car A1: live checkout and coordinated freshness truth"
-status: IN PROGRESS — Chunk 1 shipped (#1788); Chunk 2 authorized by the PM 2026-09-22 (message bb06efbb). The Architect ruled D1–D11 on 2026-09-22 (message 4b64f386): D6 and D11 modified, the rest approved. the Architect ruled D12–D15 on 2026-09-22 (message 1e80db37): D14 modified, the rest approved
+status: IN PROGRESS — Chunk 1 shipped (#1788); Chunk 2 built and reviewed; Chunk 2 authorized by the PM 2026-09-22 (message bb06efbb). The Architect ruled D1–D11 on 2026-09-22 (message 4b64f386): D6 and D11 modified, the rest approved. the Architect ruled D12–D15 on 2026-09-22 (message 1e80db37): D14 modified, the rest approved
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (message 7206bde4)
 issues: [993, 1678]
 governed_by:
@@ -337,5 +337,5 @@ Not authorized yet.
 ## Status
 
 - [x] Chunk 01: the live install reports its own checkout truthfully
-- [ ] Chunk 02: every related session shows the same upstream target
+- [x] Chunk 02: every related session shows the same upstream target
 - [ ] Chunk 03: one fleet view for the PM and the controller
