@@ -1,0 +1,241 @@
+'use strict';
+
+// #1444 — version-bump reads and writes a Python project's pyproject.toml
+// (`[project] version`). It used to probe only version.json and package.json,
+// so every Python project skipped as "not version-tracked" on every wrap.
+// The write must change only the version value; any shape the line scanner
+// cannot edit safely is a skip with a reason, never a guess.
+
+const { describe, it, beforeEach, afterEach } = require('node:test');
+const assert = require('node:assert/strict');
+const { setLevel } = require('../lib/logger');
+
+setLevel('error');
+
+const vb = require('../lib/wrap-steps/version-bump');
+const projectConfigModule = require('../lib/project-config');
+const { parsePyprojectVersion } = require('../lib/project-version-files');
+
+const PYPROJECT = `[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tanglebrain"
+version = "0.25.0"  # bumped by the wrap
+description = """
+A readme block that quotes
+version = "9.9.9"
+[not-a-table]
+"""
+dependencies = [
+  "httpx>=0.27",
+]
+
+[project.urls]
+version = "https://example.invalid/should-not-count"
+
+[tool.ruff]
+version = "0.1.0"
+`;
+
+const CHANGELOG = `# Changelog
+
+## [Unreleased]
+
+### Fixed
+- a bug
+
+## [0.25.0] - 2026-09-01
+
+### Fixed
+- something old
+`;
+
+/**
+ * Assert that `after` differs from `before` only by the version value.
+ *
+ * @param {string} before
+ * @param {string} after
+ * @param {string} from
+ * @param {string} to
+ */
+function assertOnlyVersionChanged(before, after, from, to) {
+  const b = before.split('\n');
+  const a = after.split('\n');
+  assert.equal(a.length, b.length, 'line count unchanged');
+  const changed = b.map((line, i) => (line === a[i] ? null : i)).filter((i) => i !== null);
+  assert.equal(changed.length, 1, 'exactly one line changed');
+  assert.equal(a[changed[0]], b[changed[0]].replace(from, to));
+}
+
+function ctx() {
+  return { project: { name: 'tanglebrain', path: '/proj' }, staged: {}, options: {} };
+}
+
+describe('version-bump pyproject.toml support (#1444)', () => {
+  let savedInternal;
+  let savedLoad;
+  beforeEach(() => {
+    savedInternal = { ...vb._internal };
+    savedLoad = projectConfigModule.load;
+    projectConfigModule.load = () => ({});
+    vb._internal.todayIso = () => '2026-09-22';
+  });
+  afterEach(() => {
+    Object.assign(vb._internal, savedInternal);
+    projectConfigModule.load = savedLoad;
+  });
+
+  describe('parsePyprojectVersion', () => {
+    it('finds [project] version and ignores multi-line strings, subtables and other tables', () => {
+      const r = parsePyprojectVersion(PYPROJECT);
+      assert.equal(r.ok, true);
+      assert.equal(r.version, '0.25.0');
+      assert.equal(PYPROJECT.slice(r.start, r.end), '0.25.0');
+    });
+
+    it('accepts single quotes, a header comment and indentation', () => {
+      const text = "[project]  # metadata\n  name = 'x'\n  version = '1.2.3'\n";
+      const r = parsePyprojectVersion(text);
+      assert.equal(r.version, '1.2.3');
+      assert.equal(text.slice(r.start, r.end), '1.2.3');
+    });
+
+    it('keeps offsets exact across CRLF endings and a BOM', () => {
+      const text = '﻿[project]\r\nname = "x"\r\nversion = "2.0.0"\r\n';
+      const r = parsePyprojectVersion(text);
+      assert.equal(r.ok, true);
+      assert.equal(text.slice(r.start, r.end), '2.0.0');
+    });
+
+    const refusals = [
+      ['no [project] table', '[tool.poetry]\nversion = "1.0.0"\n', /no \[project\] table/],
+      ['an inline project table', 'project = { name = "x", version = "1.0.0" }\n', /inline table/],
+      ['a dynamic version', '[project]\nname = "x"\ndynamic = ["version"]\n', /dynamic/],
+      ['a dynamic version in a multi-line array', '[project]\nname = "x"\ndynamic = [\n  "readme",\n  "version",\n]\n', /dynamic/],
+      ['a multi-line version value', '[project]\nversion = """1.0.0"""\n', /single-line quoted string/],
+      ['an unquoted version value', '[project]\nversion = 1\n', /single-line quoted string/],
+      ['two version lines', '[project]\nversion = "1.0.0"\nversion = "1.0.1"\n', /more than one version line/],
+      ['two [project] tables', '[project]\nversion = "1.0.0"\n[project]\nname = "x"\n', /more than one \[project\] table/],
+      ['[project] with no version', '[project]\nname = "x"\n', /has no version in \[project\]/]
+    ];
+    for (const [label, text, reason] of refusals) {
+      it(`refuses ${label}`, () => {
+        const r = parsePyprojectVersion(text);
+        assert.equal(r.ok, false);
+        assert.match(r.reason, reason);
+      });
+    }
+  });
+
+  describe('_resolveVersionSource probe', () => {
+    it('falls back to pyproject.toml when there is no version.json or package.json', () => {
+      vb._internal.existsSync = (p) => p.endsWith('pyproject.toml');
+      vb._internal.readFileSync = () => PYPROJECT;
+      const s = vb._resolveVersionSource('/p/version.json', '/p/package.json');
+      assert.equal(s.kind, 'pyproject.toml');
+      assert.equal(s.path, '/p/pyproject.toml');
+      assert.equal(s.currentVersion, '0.25.0');
+      assert.equal(s.stagedKey, 'version-bump:pyproject-toml');
+      assertOnlyVersionChanged(PYPROJECT, s.makeContent('0.25.1'), '0.25.0', '0.25.1');
+    });
+
+    it('preserves CRLF endings byte for byte', () => {
+      const crlf = PYPROJECT.replace(/\n/g, '\r\n');
+      vb._internal.existsSync = (p) => p.endsWith('pyproject.toml');
+      vb._internal.readFileSync = () => crlf;
+      const out = vb._resolveVersionSource('/p/version.json', '/p/package.json').makeContent('0.26.0');
+      assert.equal(out, crlf.replace('version = "0.25.0"', 'version = "0.26.0"'));
+    });
+
+    it('keeps version.json and package.json ahead of pyproject.toml', () => {
+      vb._internal.existsSync = (p) => p.endsWith('package.json') || p.endsWith('pyproject.toml');
+      vb._internal.readFileSync = (p) => (p.endsWith('package.json') ? '{"version":"3.0.0"}' : PYPROJECT);
+      assert.equal(vb._resolveVersionSource('/p/version.json', '/p/package.json').kind, 'package.json');
+      vb._internal.existsSync = (p) => p.endsWith('version.json') || p.endsWith('pyproject.toml');
+      vb._internal.readFileSync = (p) => (p.endsWith('version.json') ? '{"version":"3.0.0"}' : PYPROJECT);
+      assert.equal(vb._resolveVersionSource('/p/version.json', '/p/package.json').kind, 'version.json');
+    });
+
+    it('skips a shape it cannot edit, naming the file and the shape', () => {
+      vb._internal.existsSync = (p) => p.endsWith('pyproject.toml');
+      vb._internal.readFileSync = () => '[project]\nname = "x"\ndynamic = ["version"]\n';
+      const s = vb._resolveVersionSource('/p/version.json', '/p/package.json');
+      assert.match(s.skip, /^pyproject\.toml /);
+      assert.match(s.skip, /dynamic/);
+    });
+
+    it('skips a non-semver static version with the neutral wording', () => {
+      vb._internal.existsSync = (p) => p.endsWith('pyproject.toml');
+      vb._internal.readFileSync = () => '[project]\nversion = "2026.9"\n';
+      const s = vb._resolveVersionSource('/p/version.json', '/p/package.json');
+      assert.match(s.skip, /pyproject\.toml version "2026\.9" isn't MAJOR\.MINOR\.PATCH semver/);
+    });
+
+    it('names all three files when none exists', () => {
+      vb._internal.existsSync = () => false;
+      const s = vb._resolveVersionSource('/p/version.json', '/p/package.json');
+      assert.match(s.skip, /not version-tracked/);
+      assert.match(s.skip, /pyproject\.toml/);
+    });
+  });
+
+  describe('configured versionFilePath', () => {
+    it('routes a configured pyproject.toml to the TOML line swap', () => {
+      vb._internal.existsSync = () => true;
+      vb._internal.readFileSync = () => PYPROJECT;
+      const s = vb._resolveVersionSource('/p/version.json', '/p/package.json', '/p/sub/pyproject.toml');
+      assert.equal(s.path, '/p/sub/pyproject.toml');
+      assert.equal(s.stagedKey, 'version-bump:pyproject-toml');
+      assertOnlyVersionChanged(PYPROJECT, s.makeContent('0.26.0'), '0.25.0', '0.26.0');
+    });
+
+    it('says what it supports when a configured file is not JSON', () => {
+      vb._internal.existsSync = () => true;
+      vb._internal.readFileSync = () => 'version: 1.0.0\n';
+      const s = vb._resolveVersionSource('/p/version.json', '/p/package.json', '/p/VERSION.yaml');
+      assert.match(s.skip, /VERSION\.yaml unreadable as JSON/);
+      assert.match(s.skip, /a JSON file, package\.json or pyproject\.toml/);
+    });
+
+    it('still bumps a JSON file whose name does not end in .json', () => {
+      vb._internal.existsSync = () => true;
+      vb._internal.readFileSync = () => '{"version":"1.2.3"}';
+      const s = vb._resolveVersionSource('/p/version.json', '/p/package.json', '/p/VERSION.txt');
+      assert.equal(s.currentVersion, '1.2.3');
+      assert.equal(s.makeContent('1.2.4'), '{\n  "version": "1.2.4"\n}\n');
+    });
+  });
+
+  describe('run() end-to-end on a pyproject.toml project', () => {
+    it('bumps pyproject.toml and promotes the CHANGELOG', async () => {
+      vb._internal.existsSync = (p) => p.endsWith('pyproject.toml') || p.endsWith('CHANGELOG.md');
+      vb._internal.readFileSync = (p) => (p.endsWith('pyproject.toml') ? PYPROJECT : CHANGELOG);
+      const c = ctx();
+      const r = await vb.run(c);
+
+      assert.equal(r.status, 'done');
+      assert.equal(r.output.from, '0.25.0');
+      assert.equal(r.output.to, '0.25.1', 'patch bump driven by ### Fixed');
+      assert.equal(r.output.versionFile, 'pyproject.toml');
+
+      const staged = c.staged['version-bump:pyproject-toml'];
+      assert.equal(staged.primingPath, '/proj/pyproject.toml');
+      assertOnlyVersionChanged(PYPROJECT, staged.newContent, '0.25.0', '0.25.1');
+      assert.ok(!c.staged['version-bump:version-json'], 'no version.json entry');
+      assert.match(c.staged['version-bump:changelog'].newContent, /## \[0\.25\.1\] - 2026-09-22/);
+    });
+
+    it('honours releaseMode off on a pyproject.toml project', async () => {
+      projectConfigModule.load = () => ({ releaseMode: 'off' });
+      vb._internal.existsSync = (p) => p.endsWith('pyproject.toml') || p.endsWith('CHANGELOG.md');
+      vb._internal.readFileSync = (p) => (p.endsWith('pyproject.toml') ? PYPROJECT : CHANGELOG);
+      const c = ctx();
+      const r = await vb.run(c);
+      assert.equal(r.status, 'skipped');
+      assert.match(r.output.reason, /releaseMode is off/);
+      assert.deepEqual(c.staged, {});
+    });
+  });
+});

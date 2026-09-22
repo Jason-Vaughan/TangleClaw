@@ -1,6 +1,6 @@
 ---
 title: "Train B.2 Chunk 4: the wrap's version bump reads and writes pyproject.toml"
-status: PLANNED — Architect decisions A1–A6 pending
+status: BUILDING — Architect ruled A1–A6 2026-09-22 (message 93e48010)
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (message 72726091)
 issues: [1444]
 governed_by:
@@ -80,13 +80,33 @@ Train B.2's last remaining issue (PM dispatch 2026-09-22). One issue, one chunk.
   the same file.
 - **A6 — Issue item 3 ("make the skip visible in the wrap output") is out of scope.** Items 1 and 2
   remove the case the issue hit. A skip already renders in the live wrap drawer; making skips
-  outlive the drawer is a wider change to every step's reporting. I'll file it as a follow-up
-  issue. *Rejected:* doing it here.
+  outlive the drawer is a wider change to every step's reporting. *Rejected:* doing it here.
+  (Ruled MODIFY: no follow-up filed. See the rulings below.)
+
+### Architect rulings (2026-09-22, message 93e48010)
+
+- **A1 APPROVE.** pyproject.toml joins the automatic probe after package.json. It stays governed by
+  the operator-driven wrap, `releaseMode`, readiness and the Cut/Hold contract, and grants no tag or
+  publication authority.
+- **A2 APPROVE.** Only the PEP 621 static `[project].version`. Dynamic, absent and ambiguous forms fail
+  closed with a specific skip reason.
+- **A3 APPROVE.** Arbitrarily named JSON `versionFilePath` files keep working; basename
+  `pyproject.toml` dispatches to the TOML reader; unsupported configured content is reported honestly.
+- **A4 APPROVE.** A value-only replacement or a skip, with every other byte and line ending preserved.
+  No normalizing fallback.
+- **A5 APPROVE.** Reader and writer share one parser and the same configured/probe precedence, so the
+  displayed and bumped versions cannot diverge.
+- **A6 MODIFY.** Durable skip reporting stays out of this chunk, and **no follow-up is filed
+  automatically**: item 3 was an alternative in case Python support did not land, and the live drawer
+  already reports skips. File one only if a separate, reproduced post-drawer visibility requirement
+  remains, and then notify the PM.
 
 ## Design
 
-`lib/project-version-files.js` gains `readPyprojectVersion(filePath)`, which returns
-`{ok:true, version, line, lineIndex}` or `{ok:false, reason}`. It is a line scanner, not a TOML parser:
+`lib/project-version-files.js` gains `parsePyprojectVersion(text)`, which returns
+`{ok:true, version, start, end}` (offsets into the text exactly as given, BOM and CRLF included) or
+`{ok:false, reason}`, plus the detection reader `readPyprojectVersion(projectPath)`. It is a line
+scanner, not a TOML parser. Lines inside a `"""`/`'''` multi-line string are ignored:
 
 - It finds the `[project]` header (allowing whitespace and a trailing comment), and the section ends
   at the next `[` header.
