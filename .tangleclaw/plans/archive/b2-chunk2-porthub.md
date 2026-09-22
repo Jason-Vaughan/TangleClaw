@@ -1,6 +1,6 @@
 ---
 title: "Train B.2 Chunk 2: PortHub stops granting a port it can see is taken, and stops deleting leases it cannot classify"
-status: ACTIVE. Built and reviewed 2026-09-22 (Critic 0 blocking, verify-resolutions clean); the post-merge live check is still owed
+status: COMPLETE — Chunk 2 built and reviewed; archived with the PR that closes #814, #853, #1381. The post-merge live check is run and reported by the merging session
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (message f260c147)
 issues: [814, 853, 1381]
 governed_by:
@@ -193,4 +193,4 @@ Done when:
 
 ## Status
 
-- [ ] Chunk 2: PortHub guard, host key, non-project owners (#814, #853, #1381)
+- [x] Chunk 2: PortHub guard, host key, non-project owners (#814, #853, #1381). Critic chunk review 0 blocking (rev-20260922T040856Z-11b64dc3, 15 findings dispositioned); cumulative 0 blocking (rev-20260922T043803Z-7eaeebf7, 7 dispositioned, including the root-listener gap confirmed live and fixed); the Linux-fallback test gap from rev-20260922T045130Z-f17be273 fixed and re-verified. Follow-ups: #1766, #1768.

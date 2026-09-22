@@ -125,6 +125,40 @@ describe('port-scanner', () => {
 
   });
 
+  describe('_parseNetstatListener (macOS netstat -anv)', () => {
+    const HEADER = 'Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)          rxbytes      txbytes  rhiwat  shiwat    pid   epid';
+    const row = (local, state, pid) => `tcp4       0      0  ${local}  *.*  ${state}  0  0  131072  131072  ${pid}  0`;
+
+    it('finds a LISTEN row on the port, with its pid, across address shapes', () => {
+      for (const local of ['*.22', '127.0.0.1.22', 'fd7a:115c:a1e0::.22', '100.74.90.65.22']) {
+        assert.deepEqual(portScanner._parseNetstatListener([HEADER, row(local, 'LISTEN', 1)].join('\n'), 22), { pid: 1 }, local);
+      }
+    });
+
+    it('ignores other ports, a port that only shares a suffix, and non-LISTEN rows', () => {
+      const out = [HEADER, row('*.2222', 'LISTEN', 5), row('127.0.0.1.22', 'ESTABLISHED', 6), row('*.8022', 'LISTEN', 7)].join('\n');
+      assert.equal(portScanner._parseNetstatListener(out, 22), null);
+    });
+
+    it('reports a null pid when the column is not a number', () => {
+      assert.deepEqual(portScanner._parseNetstatListener(row('*.22', 'LISTEN', '-'), 22), { pid: null });
+    });
+  });
+
+  describe('_parseSsListener (Linux ss -Hltn)', () => {
+    it('finds IPv4, IPv6 and interface-scoped listeners on the port', () => {
+      for (const local of ['0.0.0.0:22', '[::]:22', '127.0.0.1%lo:22', '*:22']) {
+        assert.equal(portScanner._parseSsListener(`LISTEN 0 128 ${local} 0.0.0.0:*`, 22), true, local);
+      }
+    });
+
+    it('ignores a different port and a port that only shares a suffix', () => {
+      const out = 'LISTEN 0 128 0.0.0.0:2222 0.0.0.0:*\nLISTEN 0 128 [::]:8022 [::]:*';
+      assert.equal(portScanner._parseSsListener(out, 22), false);
+      assert.equal(portScanner._parseSsListener('', 22), false);
+    });
+  });
+
   describe('probePort (#814)', () => {
     const fail = (status, stderr, stdout = '') => () => {
       const err = new Error('lsof exited');
@@ -183,9 +217,10 @@ describe('port-scanner', () => {
       assert.match(asked, /-iTCP:8443 /);
     });
 
-    it("finds a root-owned listener lsof cannot see, through the socket table (macOS)", { skip: process.platform !== 'darwin' && 'the netstat fallback is the macOS path' }, () => {
+    it("finds a root-owned listener lsof cannot see, through the socket table (macOS)", () => {
       // lsof as a normal user lists only that user's sockets; tailscale serve,
       // sshd and other root listeners are invisible to it.
+      portScanner._setPlatform('darwin');
       portScanner._setExec((cmd) => {
         if (cmd.startsWith('lsof')) throw Object.assign(new Error('none'), { status: 1, stdout: '', stderr: '' });
         if (cmd.startsWith('netstat')) {
@@ -202,7 +237,8 @@ describe('port-scanner', () => {
         { inUse: true, process: 'io.tailscale.ipn.macsys.network-extension', pid: 59047, source: 'probe' });
     });
 
-    it('does not read a non-LISTEN socket-table row as a listener', { skip: process.platform !== 'darwin' && 'the netstat fallback is the macOS path' }, () => {
+    it('does not read a non-LISTEN socket-table row as a listener', () => {
+      portScanner._setPlatform('darwin');
       portScanner._setExec((cmd) => {
         if (cmd.startsWith('lsof')) throw Object.assign(new Error('none'), { status: 1, stdout: '', stderr: '' });
         if (cmd.startsWith('netstat')) {
@@ -211,6 +247,28 @@ describe('port-scanner', () => {
         throw new Error(`unexpected command: ${cmd}`);
       });
       assert.equal(portScanner.probePort(3102).inUse, false);
+    });
+
+    it('finds a listener lsof cannot see through ss on Linux, without a pid', () => {
+      portScanner._setPlatform('linux');
+      portScanner._setExec((cmd) => {
+        if (cmd.startsWith('lsof')) throw Object.assign(new Error('none'), { status: 1, stdout: '', stderr: '' });
+        if (cmd === 'ss -Hltn') return 'LISTEN 0      4096         [::]:8444          [::]:*\nLISTEN 0 128 0.0.0.0:22 0.0.0.0:*';
+        throw new Error(`unexpected command: ${cmd}`);
+      });
+      assert.deepEqual(portScanner.probePort(8444), { inUse: true, process: null, pid: null, source: 'probe' });
+      assert.equal(portScanner.probePort(8445).inUse, false);
+    });
+
+    it('asks no fallback on a platform that has none', () => {
+      portScanner._setPlatform('win32');
+      const asked = [];
+      portScanner._setExec((cmd) => {
+        asked.push(cmd);
+        throw Object.assign(new Error('none'), { status: 1, stdout: '', stderr: '' });
+      });
+      assert.equal(portScanner.probePort(3999).inUse, false);
+      assert.deepEqual(asked.map((c) => c.split(' ')[0]), ['lsof']);
     });
 
     it("keeps lsof's clear answer when the socket-table fallback cannot run", () => {
