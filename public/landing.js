@@ -801,7 +801,7 @@ function renderStaleServerBanner(info) {
 
   // A records-only range has nothing to load, so the banner does not offer a
   // restart for it. The global restart control in settings is unaffected.
-  toggleStaleRestartBtn(offerRestart ? info : { ...info, restartMechanism: null });
+  toggleStaleRestartBtn(info, offerRestart);
 }
 
 /**
@@ -883,7 +883,8 @@ function _liveCheckoutConditions(c) {
   const dirty = n(c.dirtyTracked);
   if (dirty > 0) out.push(`${plural(dirty, 'uncommitted change')} to tracked files`);
   const untracked = n(c.untracked);
-  if (untracked > 0) out.push(plural(untracked, 'untracked file'));
+  // `git status` lists a wholly untracked directory once, so this counts paths, not files.
+  if (untracked > 0) out.push(plural(untracked, 'untracked path'));
   return out;
 }
 
@@ -948,7 +949,7 @@ function renderLiveCheckoutBanner(checkout, behindOriginInfo) {
   if (typeof up.sha === 'string' && up.sha) {
     const when = up.observation === 'fetched' && typeof up.observedAt === 'string'
       ? `fetched ${esc(new Date(up.observedAt).toLocaleTimeString())}`
-      : 'local ref, not fetched by this server';
+      : 'local ref, not confirmed by a fetch since it was read';
     observed = ` origin/main is <code>${esc(up.sha.slice(0, 7))}</code> (${when}).`;
   }
   const lead = conditions.length > 0
@@ -968,15 +969,17 @@ function renderLiveCheckoutBanner(checkout, behindOriginInfo) {
  * stale and cannot-determine (#1118) banner renderers.
  *
  * @param {{restartMechanism?: string|null}} info
+ * @param {boolean} [offer=true] - False when the banner has nothing a restart
+ *   would load (a records-only range, #1678), so it offers no restart.
  * @returns {void}
  */
-function toggleStaleRestartBtn(info) {
+function toggleStaleRestartBtn(info, offer = true) {
   const restartBtn = document.getElementById('staleServerRestartBtn');
   if (!restartBtn) return;
   const mech = (typeof info.restartMechanism === 'string' && info.restartMechanism.length > 0)
     ? info.restartMechanism
     : null;
-  if (mech) {
+  if (mech && offer) {
     restartBtn.classList.remove('hidden');
   } else {
     restartBtn.classList.add('hidden');

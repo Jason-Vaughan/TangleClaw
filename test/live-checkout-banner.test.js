@@ -107,7 +107,7 @@ describe('live-checkout banner (#993) — executed against a DOM stub', () => {
     assert.match(text.innerHTML, /on branch <code>feat\/771-185-wrap-progress<\/code>, not <code>main<\/code>/);
     assert.match(text.innerHTML, /4 commits not pushed to <code>origin\/main<\/code>/);
     assert.match(text.innerHTML, /1 uncommitted change to tracked files/);
-    assert.match(text.innerHTML, /4 untracked files/);
+    assert.match(text.innerHTML, /4 untracked paths/);
   });
 
   it('warns on a detached HEAD that is not a release tag, and not on one that is', () => {
@@ -140,7 +140,7 @@ describe('live-checkout banner (#993) — executed against a DOM stub', () => {
     let r = renderLive(clean({ dirtyTracked: 2 }), BO_OK);
     assert.match(r.text.innerHTML, /origin\/main is <code>aaaaaaa<\/code> \(fetched /);
     r = renderLive(clean({ dirtyTracked: 2, upstream: { ref: 'origin/main', sha: 'a'.repeat(40), observation: 'local-ref', observedAt: null } }), BO_OK);
-    assert.match(r.text.innerHTML, /local ref, not fetched by this server/);
+    assert.match(r.text.innerHTML, /local ref, not confirmed by a fetch since it was read/);
   });
 
   it('stays hidden while pending, with no git by design, or from an older server', () => {

@@ -277,10 +277,20 @@ describe('checkout-state: snapshot cache', () => {
 describe('checkout-state: withUpstreamObservation', () => {
   const measured = { state: 'measured', upstream: { ref: 'origin/main', sha: SHA_A } };
 
-  it('a successful fetch makes the ref a fetched observation with its time', () => {
-    const r = cs.withUpstreamObservation(measured, { state: 'measured', checkedAt: '2026-09-22T10:00:00.000Z' });
+  it('a successful fetch before the checkout was read makes the ref a fetched observation with its time', () => {
+    const r = cs.withUpstreamObservation({ ...measured, measuredAt: '2026-09-22T10:00:05.000Z' },
+      { state: 'measured', checkedAt: '2026-09-22T10:00:00.000Z' });
     assert.equal(r.upstream.observation, 'fetched');
     assert.equal(r.upstream.observedAt, '2026-09-22T10:00:00.000Z');
+  });
+
+  it('a checkout read before the fetch shows the pre-fetch ref, so it is local-ref', () => {
+    const r = cs.withUpstreamObservation({ ...measured, measuredAt: '2026-09-22T09:59:50.000Z' },
+      { state: 'measured', checkedAt: '2026-09-22T10:00:00.000Z' });
+    assert.equal(r.upstream.observation, 'local-ref');
+    assert.equal(r.upstream.observedAt, null);
+    const noTime = cs.withUpstreamObservation(measured, { state: 'measured', checkedAt: '2026-09-22T10:00:00.000Z' });
+    assert.equal(noTime.upstream.observation, 'local-ref', 'an unknown read time cannot be ordered after the fetch');
   });
 
   it('without a successful fetch the ref is local-ref with no observation time', () => {
@@ -372,6 +382,22 @@ describe('checkout-state: restart-impact classification', () => {
       await new Promise((r) => setImmediate(r));
       assert.equal(cs.impactSnapshot('/x', SHA_A, SHA_B).impact, 'records-only');
       cs.impactSnapshot('/x', SHA_A, SHA_B);
+      assert.equal(diffs, 1);
+    });
+
+    it('keeps only the newest IMPACT_RESULTS_MAX ranges', async () => {
+      cs._internal.execFile = fakeGit({ diff: 'M\0docs/a.md\0' }).execFile;
+      const sha = (i) => i.toString(16).padStart(40, '0');
+      for (let i = 1; i <= cs.IMPACT_RESULTS_MAX + 3; i++) {
+        cs.impactSnapshot('/x', SHA_A, sha(i));
+        await new Promise((r) => setImmediate(r));
+        await new Promise((r) => setImmediate(r));
+      }
+      let diffs = 0;
+      cs._internal.execFile = fakeGit({ diff: () => { diffs++; return 'M\0docs/a.md\0'; } }).execFile;
+      assert.equal(cs.impactSnapshot('/x', SHA_A, sha(cs.IMPACT_RESULTS_MAX + 3)).impact, 'records-only', 'the newest is kept');
+      assert.equal(diffs, 0);
+      assert.equal(cs.impactSnapshot('/x', SHA_A, sha(1)).impact, 'pending', 'the oldest was dropped and is re-asked');
       assert.equal(diffs, 1);
     });
 

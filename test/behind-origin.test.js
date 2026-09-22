@@ -69,8 +69,8 @@ function makeDom(ids) {
  * Install stubbed git calls. `fetch` / `revList` are either an Error (the
  * call fails), a string (rev-list stdout), `null` (success with no output),
  * or the token 'throw' (the seam itself throws synchronously). `head` is
- * 'branch' (default) or 'detached'.
- * @param {{fetch?: Error|null|'throw', revList?: Error|string|'throw', head?: 'branch'|'detached'}} plan
+ * 'branch' (default), 'detached', or an Error for any other branch-check failure.
+ * @param {{fetch?: Error|null|'throw', revList?: Error|string|'throw', head?: 'branch'|'detached'|Error}} plan
  * @returns {{fetches: () => number, revLists: () => number}}
  */
 function stubGit(plan) {
@@ -79,7 +79,11 @@ function stubGit(plan) {
   // Synchronous on purpose: the snapshot tests assert "exactly one fetch was
   // started" right after the call, before yielding to the event loop.
   behindOrigin._internal.gitSymbolicRef = (cb) => {
-    cb(plan.head === 'detached' ? new Error('exit 1') : null, 'refs/heads/main\n');
+    // execFile's error for a non-zero exit carries the status as `code`; `symbolic-ref -q`
+    // exits 1 on a detached HEAD, and a caller-supplied error stands in for anything else.
+    if (plan.head === 'detached') return cb(Object.assign(new Error('Command failed: git symbolic-ref -q HEAD'), { code: 1 }), '');
+    if (plan.head instanceof Error) return cb(plan.head, '');
+    cb(null, 'refs/heads/main\n');
   };
   behindOrigin._internal.gitFetch = (cb) => {
     fetches++;
@@ -152,6 +156,22 @@ describe('lib/behind-origin (#227)', () => {
       assert.equal(await behindOrigin.getRemoteCommitsAhead(), 0);
       stubGit({ fetch: null, revList: 'throw' });
       assert.equal(await behindOrigin.getRemoteCommitsAhead(), 0);
+    });
+
+    it('only exit 1 from symbolic-ref is a detached HEAD; no git is no-git; a timeout or other failure is unknown', async () => {
+      let calls = stubGit({ head: Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }) });
+      let r = await behindOrigin.measure();
+      assert.deepEqual(r, { commitsAhead: 0, skipped: 'no-git', state: 'skipped', reason: 'not a git checkout' });
+      calls = stubGit({ head: Object.assign(new Error('x'), { code: 128, stderr: 'fatal: not a git repository' }) });
+      assert.equal((await behindOrigin.measure()).skipped, 'no-git');
+      calls = stubGit({ head: Object.assign(new Error('Command failed'), { killed: true, signal: 'SIGTERM', code: null }) });
+      r = await behindOrigin.measure();
+      assert.equal(r.state, 'unknown', 'a timed-out branch check is a check that did not run, not a tagged install');
+      assert.equal(r.skipped, null);
+      assert.match(r.reason, /branch check failed/);
+      assert.equal(calls.fetches(), 0, 'no fetch after a failed branch check');
+      calls = stubGit({ head: Object.assign(new Error('fatal: bad object HEAD'), { code: 128 }) });
+      assert.equal((await behindOrigin.measure()).state, 'unknown');
     });
 
     it('a failed step is state unknown with its reason, never measured — 0 is not "up to date" (#1678)', async () => {

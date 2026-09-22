@@ -286,10 +286,42 @@ describe('API — system, engines, tmux', () => {
         assert.equal(data.liveCheckout.branch, null);
         assert.equal(data.liveCheckout.upstream.observation, 'unknown');
         assert.equal(spawns, 1, 'one background measurement was started');
-        assert.ok('restartImpact' in data, 'restartImpact is always present');
-        if (data.isStale !== true) assert.equal(data.restartImpact, null, 'only asked when disk is ahead');
       } finally {
         Object.assign(checkoutState._internal, orig);
+        checkoutState._reset();
+      }
+    });
+
+    it('restartImpact classifies startupSha..currentDiskSha when stale, and is null when not', async () => {
+      const serverInfo = require('../lib/server-info');
+      const checkoutState = require('../lib/checkout-state');
+      const origGet = serverInfo.getServerInfo;
+      const origInternal = { ...checkoutState._internal };
+      const START = '1'.repeat(40);
+      const DISK = '2'.repeat(40);
+      const diffs = [];
+      checkoutState._internal.execFile = (file, args, _o, cb) => {
+        if (args[1] === 'diff') diffs.push(args.slice(1));
+        setImmediate(() => cb(null, args[1] === 'diff' ? 'M\0docs/a.md\0' : ''));
+      };
+      checkoutState._reset();
+      try {
+        let stale = true;
+        serverInfo.getServerInfo = (opts) => ({ ...origGet(opts), isStale: stale, startupSha: START, currentDiskSha: DISK });
+        let { data } = await request('GET', '/api/server-info');
+        assert.equal(data.restartImpact.impact, 'pending');
+        assert.equal(data.restartImpact.fromSha, START, 'the range starts at what the process loaded');
+        assert.equal(data.restartImpact.toSha, DISK, 'and ends at what is on disk');
+        await new Promise((r) => setTimeout(r, 20));
+        ({ data } = await request('GET', '/api/server-info'));
+        assert.equal(data.restartImpact.impact, 'records-only');
+        assert.deepEqual(diffs[0].slice(-3), [START, DISK, '--'], 'git diff is asked for exactly that range');
+        stale = false;
+        ({ data } = await request('GET', '/api/server-info'));
+        assert.equal(data.restartImpact, null, 'only asked when disk is ahead');
+      } finally {
+        serverInfo.getServerInfo = origGet;
+        Object.assign(checkoutState._internal, origInternal);
         checkoutState._reset();
       }
     });
