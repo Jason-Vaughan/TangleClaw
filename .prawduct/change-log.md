@@ -33,6 +33,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   v4.5.0–v4.19.0).
 -->
 
+## 2026-09-22 — The committed CLAUDE.md block names the freshness verb
+
+<!-- prawduct: type=chore | scope=claude-md-freshness-verb -->
+
+The generated TangleClaw operational block in root `CLAUDE.md` is rebuilt at every launch from `lib/tc-verbs.js#VERB_ROSTER` (via `lib/ecosystem-primer.js`). #1794 added `freshness` to the roster but not to the committed copy, so the live checkout read one uncommitted file after the restart onto it. The line is byte-identical to what the server regenerated.
+
 ## 2026-09-22 — One fleet view of every live checkout (#1678, #993)
 
 <!-- prawduct: type=feature | scope=train-a-car-a1 -->
