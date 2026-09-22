@@ -33,6 +33,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   v4.5.0–v4.19.0).
 -->
 
+## 2026-09-22 — One fleet view of every live checkout (#1678, #993)
+
+<!-- prawduct: type=feature | scope=train-a-car-a1 -->
+
+Train A Car A1 Chunk 03. `GET /api/checkouts` and `tc freshness` (`lib/checkout-fleet.js#fleetView`) give one row per project with a live session, from the same `checkout-freshness#projectCheckout` the project route, prime and chip read, shaped per caller as the Architect ruled (D11, D16 MODIFY, D17–D20): operator and Master every row, a bound project itself and its groups' members, an unbound caller `scope: 'none'` with the reason, and a presented-but-not-honoured binding `403 PROJECT_BINDING_INVALID` (tc exits 2). Rows are an allowlist with no path; names the caller cannot see are withheld and the summary re-rendered. `checkouts` joins both `tc capabilities` rosters, so the prime's verb list names `freshness` (prime-golden fixtures regenerated; only that line moved). R-12: `system-health#detectStaleServer` reads the banner's `impactSnapshot`, so records-only is clear and anything unclassified still fires. Carried O-1/O-3/O-4 from the Chunk 2 review. Cumulative Critic rev-20260922T225136Z-f3bb9f69: 0 blocking; R-1/R-2/R-3/R-4/R-8 fixed and verified (rev-20260922T225614Z-d430f3e3), the rest accepted on the record. Closes #993 and #1678.
+
 ## 2026-09-22 — Every related session shows the same upstream target (#1678)
 
 <!-- prawduct: type=feature | scope=train-a-car-a1 -->
