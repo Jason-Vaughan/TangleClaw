@@ -574,6 +574,7 @@ TangleClaw's HTTP API lives under `/api/`; the tables below are the reference. A
 | `/api/ports/lease` | POST | Create or renew a port lease |
 | `/api/ports/release` | POST | Release a port lease |
 | `/api/ports/heartbeat` | POST | Heartbeat a TTL lease |
+| `/api/ports/owner-kind` | POST | Mark an owner name's leases as a TangleClaw project or `external` (#1381) |
 | `/api/ports/sync` | POST | Sync port leases with system state |
 
 ### Rules & Config

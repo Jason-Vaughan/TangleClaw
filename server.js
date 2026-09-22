@@ -5239,14 +5239,19 @@ route('GET', '/api/ports', (req, res) => {
     grouped[key].push(lease);
   }
 
-  // Count system-detected ports not tracked in lease DB (localhost only)
-  const systemPorts = portScanner.getSystemPorts();
+  // System-detected listeners no lease accounts for (localhost only). Their
+  // identities, not just a count, so a caller can see WHICH ports are taken
+  // before picking one (#814). From the periodic scan's cache: the lease route
+  // asks the machine fresh, this listing does not need to.
   const leasedPortSet = new Set(leases.filter(l => l.host === 'localhost').map(l => l.port));
-  const systemPortCount = systemPorts.filter(sp => !leasedPortSet.has(sp.port)).length;
+  const systemPorts = portScanner.getSystemPorts()
+    .filter(sp => !leasedPortSet.has(sp.port))
+    .map(sp => ({ port: sp.port, pid: sp.pid, command: sp.command }));
 
   jsonResponse(res, 200, {
     totalLeases: leases.length,
-    systemPortCount,
+    systemPortCount: systemPorts.length,
+    systemPorts,
     leases,
     grouped
   });
@@ -5257,36 +5262,58 @@ route('POST', '/api/ports/lease', (_req, res, _params, body) => {
   if (!body || !body.port || !body.project || !body.service) {
     return errorResponse(res, 400, 'port, project, and service are required', 'BAD_REQUEST');
   }
+  // Through PortHub, not the store directly, so the machine is asked before
+  // the registry answers "free" (#814) — this is the path every managed
+  // project is told to use, and it was the one path without the check.
+  const result = porthub.registerPort(body.port, body.project, body.service, {
+    host: body.host || 'localhost',
+    // The HTTP default has always been a non-permanent lease; PortHub's own
+    // default is permanent, so the route states it.
+    permanent: body.permanent === true,
+    ttlMs: body.ttl || null,
+    description: body.description || null,
+    autoRenew: body.autoRenew === true,
+    force: body.force === true,
+    adoptListener: body.adoptListener === true,
+    // Passed through unvalidated on purpose: `store.portLeases.lease` owns
+    // these vocabularies and throws BAD_REQUEST naming the legal values, so a
+    // second check here could only drift from it.
+    reach: body.reach,
+    ownerKind: body.ownerKind
+  });
+  if (result.success) {
+    return jsonResponse(res, 201, { ...result.lease, listenerCheck: result.listenerCheck });
+  }
+  // A port already owned by another project, or held by a process no lease
+  // records, is a conflict, not a malformed request — 409 lets a caller retry
+  // against a different port, and the owner or listener in the body is what
+  // makes that decision possible without a second call.
+  if (result.code === 'PORT_CONFLICT') {
+    return jsonResponse(res, 409, { error: result.error, code: 'PORT_CONFLICT', owner: result.owner });
+  }
+  if (result.code === 'PORT_IN_USE') {
+    return jsonResponse(res, 409, { error: result.error, code: 'PORT_IN_USE', listener: result.listener });
+  }
+  return errorResponse(res, 400, result.error, 'BAD_REQUEST');
+});
+
+// POST /api/ports/owner-kind — Record whether an owner name is a TangleClaw project
+route('POST', '/api/ports/owner-kind', (_req, res, _params, body) => {
+  if (!body || !body.project || !body.ownerKind) {
+    return errorResponse(res, 400, 'project and ownerKind are required', 'BAD_REQUEST');
+  }
+  let updated;
   try {
-    const lease = store.portLeases.lease({
-      host: body.host || 'localhost',
-      port: body.port,
-      project: body.project,
-      service: body.service,
-      permanent: body.permanent || false,
-      ttlMs: body.ttl || null,
-      description: body.description || null,
-      autoRenew: body.autoRenew || false,
-      force: body.force === true,
-      // Passed through unvalidated on purpose: `store.portLeases.lease` owns
-      // the vocabulary and throws BAD_REQUEST naming the legal values, so a
-      // second check here could only drift from it.
-      reach: body.reach
-    });
-    jsonResponse(res, 201, lease);
+    // The dashboard's "Not a project" control (#1381). The store owns the
+    // vocabulary and names the legal values on a bad one.
+    updated = store.portLeases.setOwnerKind(body.project, body.ownerKind, { host: body.host || null });
   } catch (err) {
-    // A port already owned by another project is a conflict, not a malformed
-    // request — 409 lets a caller retry against a different port, and the owner
-    // in the body is what makes that decision possible without a second call.
-    if (err.code === 'PORT_CONFLICT') {
-      return jsonResponse(res, 409, {
-        error: err.message,
-        code: 'PORT_CONFLICT',
-        owner: err.owner || null
-      });
-    }
     return errorResponse(res, 400, err.message, 'BAD_REQUEST');
   }
+  if (updated === 0) {
+    return errorResponse(res, 404, `No lease is held under "${body.project}"${body.host ? ` on ${body.host}` : ''}`, 'NOT_FOUND');
+  }
+  jsonResponse(res, 200, { ok: true, project: body.project, ownerKind: body.ownerKind, updated });
 });
 
 // POST /api/ports/sync — Sync leases from old PortHub daemon
@@ -5299,6 +5326,21 @@ route('POST', '/api/ports/sync', (_req, res) => {
 route('POST', '/api/ports/release', (_req, res, _params, body) => {
   if (!body || !body.port) {
     return errorResponse(res, 400, 'port is required', 'BAD_REQUEST');
+  }
+  // Leases are keyed on (host, port), and the same port number can belong to
+  // different projects on different hosts. A release that omits `host` means
+  // localhost; when another host also holds this port, that default is a guess
+  // that can delete a stranger's lease, so it is refused instead (#853).
+  if (!body.host) {
+    const elsewhere = porthub.getLeases()
+      .filter(l => l.port === Number(body.port) && l.host !== 'localhost')
+      .map(l => l.host);
+    if (elsewhere.length > 0) {
+      return errorResponse(res, 400,
+        `Port ${body.port} is also leased on ${[...new Set(elsewhere)].join(', ')}, so a release without "host" is ambiguous. `
+        + 'Say which lease you mean with "host" ("localhost" for this machine).',
+        'HOST_REQUIRED');
+    }
   }
   try {
     // `project` is optional but verified when present (#656): a release names
@@ -5713,13 +5755,15 @@ route('POST', '/api/projects/import', (_req, res, _params, body) => {
 
     const projPath = path.join(projectsDir, name);
     if (!fs.existsSync(projPath) || !fs.statSync(projPath).isDirectory()) {
-      // Release orphan port leases — the project can never be imported
-      const released = store.portLeases.releaseByProject(name);
-      if (released > 0) {
-        warnings.push(`"${name}" directory not found — released ${released} orphan port lease${released > 1 ? 's' : ''}`);
-      } else {
-        warnings.push(`"${name}" directory not found in ${projectsDir}`);
-      }
+      // Import registers; it does not delete. A missing directory used to
+      // release every lease under the name, which destroyed correct leases for
+      // owners that were never projects, such as a `brew services` database
+      // (#1381). The leases stay; the warning says how to record what they are.
+      const held = store.portLeases.getByProject(name).length;
+      warnings.push(held > 0
+        ? `"${name}" directory not found in ${projectsDir} — its ${held} port lease${held > 1 ? 's were' : ' was'} left in place. `
+          + 'If it is not a TangleClaw project, mark it "Not a project".'
+        : `"${name}" directory not found in ${projectsDir}`);
       continue;
     }
 
@@ -7909,10 +7953,12 @@ route('POST', '/api/openclaw/connections', (_req, res, _params, body) => {
     // Lease-at-create: reserve the resolved port(s) under the connection's tunnel
     // identity so a subsequent add picks a different port even before the tunnel
     // comes up (closing the allocate→bind race). Released on DELETE.
+    // `adoptListener`: these are ports TangleClaw's own tunnel binds, so a
+    // listener already on them is ours, not a stranger's (#814).
     const leaseName = `oc-direct-${connection.id}`;
-    porthub.registerPort(connection.localPort, leaseName, 'openclaw-tunnel', { permanent: true });
+    porthub.registerPort(connection.localPort, leaseName, 'openclaw-tunnel', { permanent: true, adoptListener: true });
     if (connection.bridgePort) {
-      porthub.registerPort(connection.bridgePort, leaseName, 'openclaw-bridge', { permanent: true });
+      porthub.registerPort(connection.bridgePort, leaseName, 'openclaw-bridge', { permanent: true, adoptListener: true });
     }
     jsonResponse(res, 201, connection);
   } catch (err) {
@@ -8016,11 +8062,12 @@ route('PUT', '/api/openclaw/connections/:id', (_req, res, params, body) => {
       if (bridgeChanged && existing.bridgePort) {
         porthub.releasePort(existing.bridgePort);
       }
+      // Ports TangleClaw's own tunnel binds — adopted, as at create (#814).
       if (connection.localPort) {
-        porthub.registerPort(connection.localPort, leaseName, 'openclaw-tunnel', { permanent: true });
+        porthub.registerPort(connection.localPort, leaseName, 'openclaw-tunnel', { permanent: true, adoptListener: true });
       }
       if (connection.bridgePort) {
-        porthub.registerPort(connection.bridgePort, leaseName, 'openclaw-bridge', { permanent: true });
+        porthub.registerPort(connection.bridgePort, leaseName, 'openclaw-bridge', { permanent: true, adoptListener: true });
       }
     }
     openclawVersion.invalidate(params.id); // #296: instanceDir may have changed → drop stale cache

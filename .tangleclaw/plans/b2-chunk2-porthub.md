@@ -125,6 +125,16 @@ own tunnel will bind). `POST /api/ports/lease` is used by every managed agent pe
   TangleClaw's own ttyd/server/Caddy leases, which are project leases under TangleClaw's name.
 - **[DECISION] The import route stops releasing, even for a genuine orphan.** Import is a
   registration action; deleting registry rows from it was the defect. The boot sweep keeps that job.
+- **[DECISION] Depart from the fleet-surface "additive only" working rule** (`api-contract.md`,
+  descriptive, not ratified). `PORT_IN_USE` and `HOST_REQUIRED` can reach a session primed with the
+  older guide. Both refusals name their fix, so such a session recovers without a relaunch. Keeping
+  the old form working would keep the defect. The departure is recorded in the contract.
+- **[DECISION] `listenerCheck` also reports `takeover` and `refused`**, beyond the five values
+  planned: a forced takeover defers to the lease it displaces (the listener is that lease's), and
+  the refusal carries its own value.
+- **[DECISION] Import stops auto-ignoring names it could not import.** The auto-ignore hid the
+  warning that the owner may not be a project, and hid the row whose **Not a project** button
+  records that.
 - **[DECISION] `owner-kind` is not operator-gated**, matching the other `/api/ports` routes (behind
   the M2M token when it is on). Marking a lease external only hides it from the banner and the sweep.
 

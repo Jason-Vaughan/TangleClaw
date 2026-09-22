@@ -7,7 +7,11 @@ TangleClaw is the central port registry for every project on this machine — re
 - **Register before binding** to a port (dev server, database, API, etc.).
 - **Check for conflicts** before claiming a port — another project may already own it. The
   registry now enforces this: claiming a port another project holds returns **409**, it does
-  not silently take it.
+  not silently take it. On this machine it also asks the OS: a port with a listener that no
+  lease records returns **409 `PORT_IN_USE`** naming the process.
+- **Send `host`** when the service is not on this machine. Leases are keyed on `(host, port)`,
+  every field defaults to `localhost`, and the same port number can belong to different projects
+  on different hosts.
 - **Release** a port once it's no longer needed (service stopped, teardown, cleanup).
 - **Declare `reach`** when the service is meant to be reachable beyond loopback. A service that
   binds `127.0.0.1` is already stating its intent; `reach` is where another process can read it.
@@ -38,9 +42,13 @@ GET /api/ports
 # "reach" declares how far the service is MEANT to be reachable —
 # "loopback" (default) | "tailnet" | "lan". Omitting it means loopback on EVERY
 # write, renewals included, so restate a wider reach each time you re-register.
-# Returns 201 on success, or 409 if another project already holds the port.
+# Returns 201 on success, or 409 if another project already holds the port or an
+# unleased process is listening on it. Already started the service yourself? Add
+# "adoptListener": true to say the listener is yours.
+# "ownerKind": "external" records an owner that is not a TangleClaw project (a
+# brew services database); an omitted ownerKind keeps whatever the lease had.
 POST /api/ports/lease
-{ "port": 3200, "project": "my-project", "service": "dev-server", "permanent": true, "reach": "loopback" }
+{ "port": 3200, "host": "localhost", "project": "my-project", "service": "dev-server", "permanent": true, "reach": "loopback" }
 
 # Register a temporary port (expires after TTL unless heartbeated)
 POST /api/ports/lease
@@ -48,14 +56,16 @@ POST /api/ports/lease
 
 # Release a port when done. Always send your own "project": ownership is verified
 # when present — releasing a port a DIFFERENT project still holds returns 409
-# (add "force": true to override). Omitting "project" skips the check.
+# (add "force": true to override). Omitting "project" skips the check. Omitting
+# "host" means localhost, and is refused with 400 HOST_REQUIRED when another host
+# also leases that port.
 POST /api/ports/release
-{ "port": 3200, "project": "my-project" }
+{ "port": 3200, "host": "localhost", "project": "my-project" }
 
 # Heartbeat to keep a TTL lease alive. Send "project" too: renewing another
 # project's lease returns 409.
 POST /api/ports/heartbeat
-{ "port": 4000, "project": "my-project" }
+{ "port": 4000, "host": "localhost", "project": "my-project" }
 ```
 
 ### When to Register / Release
@@ -74,6 +84,15 @@ Claiming a port another project holds returns **409** with the current owner:
 
 **Pick a different port in the same range.** That is the answer in almost every case — the
 owner in the response tells you who has it without a second call.
+
+A port with a listener but no lease returns **409** `PORT_IN_USE` with the process instead of
+an owner (`"listener": { "port", "pid", "command" }`). The same rule applies: pick another
+port, unless that listener is your own service, in which case repeat with
+`"adoptListener": true`. That flag is separate from `force`, which takes over another project's
+lease. `GET /api/ports` lists these unleased listeners as `systemPorts`. A 201 carries
+`listenerCheck`, which says what the check found: `clear`, `adopted`, `renewal`, `takeover`,
+`not-local` (another host, which this machine cannot see), or `unavailable` (lsof could not run,
+so the port was granted unchecked).
 
 Re-leasing a port **your own project** already holds is a renewal, not a conflict: it
 succeeds normally, so idempotent re-registration on every boot needs no special handling.

@@ -257,8 +257,10 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
 11. Register any port a fleet service will bind, before binding it:
     `POST $TANGLECLAW_API/api/ports/lease` with
     `{"port":<n>,"project":"Acme-<role>","service":"<what>"}`
-    Expected: HTTP `201`. On `409` the response names the current owner — pick another port in the
-    same range.
+    Expected: HTTP `201`. On `409 PORT_CONFLICT` the response names the current owner, and on
+    `409 PORT_IN_USE` it names the process already listening. Either way, pick another port in the
+    same range, unless the listener is the fleet service you already started, in which case repeat
+    with `"adoptListener": true`.
 
 ## Done when
 

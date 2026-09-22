@@ -2053,6 +2053,9 @@ function checkPortImports() {
   // not a normalized form.
   const unregistered = {};
   for (const lease of state.ports) {
+    // A lease recorded as not belonging to a TangleClaw project is not an
+    // import candidate, however unregistered its owner name is (#1381).
+    if (lease.ownerKind === 'external') continue;
     const key = _canonicalProjectName(lease.project);
     if (!registeredNames.has(key) && !ignored.has(key) && !ocConnIds.has(lease.project)) {
       if (!unregistered[lease.project]) unregistered[lease.project] = [];
