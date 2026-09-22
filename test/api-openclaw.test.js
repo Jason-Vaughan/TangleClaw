@@ -9,25 +9,13 @@ const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const { createServer } = require('../server');
-const portScanner = require('../lib/port-scanner');
+const { probeAnswersFromFixture } = require('./_probe-stub');
 
 setLevel('error');
 
-// Ports the listener probe reports as busy. Everything else reads as free, so
-// these tests grade the routes and never what this host happens to run — the
-// fixture ports sit in ranges with live services on a developer machine.
-const busyPorts = new Set();
-portScanner._setExec((cmd) => {
-  const port = Number(/-iTCP:(\d+) /.exec(cmd)[1]);
-  if (busyPorts.has(port)) {
-    return `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\npostgres 812 me 7u IPv4 0x1 0t0 TCP *:${port} (LISTEN)`;
-  }
-  const err = new Error('no listener');
-  err.status = 1;
-  err.stdout = '';
-  err.stderr = '';
-  throw err;
-});
+// Ports the listener probe reports as busy; everything else reads as free, so
+// these tests grade the routes and never what this host happens to run.
+const busyPorts = probeAnswersFromFixture();
 
 /**
  * Make an HTTP request to the test server.
