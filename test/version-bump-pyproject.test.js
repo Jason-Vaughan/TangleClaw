@@ -310,7 +310,7 @@ describe('version-bump pyproject.toml support (#1444)', () => {
       ['a tooling-only package.json above pyproject.toml', { 'package.json': '{"private":true}', 'pyproject.toml': PY }, 'pyproject.toml'],
       ['a version.json with no version above pyproject.toml', { 'version.json': '{"name":"x"}', 'pyproject.toml': PY }, null],
       ['a malformed package.json above pyproject.toml', { 'package.json': '{not json', 'pyproject.toml': PY }, null],
-      ['a malformed version.json above package.json', { 'version.json': '{not json', 'package.json': '{"version":"4.4.4"}' }, null],
+
       ['a versioned package.json above pyproject.toml', { 'package.json': '{"version":"4.4.4"}', 'pyproject.toml': PY }, 'package.json'],
       ['a dynamic pyproject.toml alone', { 'pyproject.toml': '[project]\ndynamic = ["version"]\n' }, null]
     ];
@@ -330,6 +330,24 @@ describe('version-bump pyproject.toml support (#1444)', () => {
         }
       });
     }
+
+    it('keeps the reader\'s long-standing read past an unusable version.json to package.json (#58)', () => {
+      // A split that predates #1444 and is kept on purpose: the dashboard shows
+      // the package version while the bump refuses the version.json. What #1444
+      // guarantees is only that such a project never shows a pyproject version.
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-vb-align-'));
+      try {
+        fs.writeFileSync(path.join(dir, 'version.json'), '{not json');
+        fs.writeFileSync(path.join(dir, 'package.json'), '{"version":"4.4.4"}');
+        fs.writeFileSync(path.join(dir, 'pyproject.toml'), PY);
+        assert.match(vb._resolveVersionSource(path.join(dir, 'version.json'), path.join(dir, 'package.json')).skip, /version\.json unreadable/);
+        assert.deepEqual(versionFiles.detectLiveVersion(dir), { version: '4.4.4', source: 'package.json' });
+        fs.writeFileSync(path.join(dir, 'package.json'), '{"private":true}');
+        assert.equal(versionFiles.detectLiveVersion(dir), null, 'still never reaches pyproject.toml');
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
 
     it('honours releaseMode off on a pyproject.toml project', async () => {
       projectConfigModule.load = () => ({ releaseMode: 'off' });
