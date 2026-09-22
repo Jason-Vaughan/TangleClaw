@@ -9,18 +9,18 @@ export default function Home() {
 
   const detailedCards = [
     { title: "Management & Governance", desc: "Project Master orchestration, roadmap planning, an automated self-learning loop, Feature Index tracking, and comprehensive settings for fine-grained AI access governance." },
-    { title: "Specialized Agent Roles", desc: "Deploy a complete virtual team with distinct roles—from Architects and Project Managers to parallel Builders, plus built-in templates to create your own." },
-    { title: "LLM-Agnostic Communication", desc: "Real-time cross-talk across frontier, open-source, local, or API/OAuth models. The system auto-detects and coordinates any CLI-based or Aider-compatible LLM." },
+    { title: "Session Continuity", desc: "Persistent tmux-backed sessions that survive network drops. Structured wraps, full transcript search, and automatic memory updates ensure institutional knowledge is never lost." },
+    { title: "LLM-Agnostic Communication", desc: "Real-time cross-talk across models via the Medusa switchboard. Supports Claude Code, Codex, Antigravity, Aider and OpenClaw, with a JSON engine-profile system for adding more." },
     { title: "Quality & Auditing", desc: "Critic methodology, Eval Audit Mode, and strict protocols enforcing unit and regression testing (including Vite). Fully integrated with GitHub for robust triage, PRs, and CI." },
     { title: "Operations & Supervision", desc: "Fleet health monitoring, automatic DHCP-like port lease management to prevent port collisions, and built-in troubleshooting utilities to quickly clear and fix errors." },
-    { title: "Security Integration", desc: "Caddy-supported username and password authentication today, with TangleScan and SecurityClaw architecture on the roadmap." }
+    { title: "Security Integration", desc: "Native server-side authentication with hashed passwords, session management, and recovery codes. Caddy handles TLS and reverse-proxy ingress for secure access." }
   ];
 
   const highLevelBullets = [
-    "Tangle Code Review for automated PR evaluation",
-    "Managed-project release automation and semantic versioning",
-    "Cross-project dependency registry mapping",
-    "Specialized Higher-Reasoning Architecture Agents"
+    "Persistent AI sessions with structured continuity",
+    "Agent-to-agent coordination across multiple AI engines",
+    "Project-wide governance, memory and self-improving rules",
+    "Local-first fleet control from desktop or mobile"
   ];
 
   const galleryImages = [
@@ -93,6 +93,33 @@ export default function Home() {
           </div>
         </div>
 
+        {/* Roadmap Section */}
+        <div id="roadmap" className="w-full pt-16 mt-8 border-t border-white/10">
+          <h2 className="text-3xl font-semibold tracking-tight mb-12 text-center">On the Roadmap</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8 mb-16">
+            <div className="p-6 md:p-8 rounded-3xl bg-zinc-950/50 border border-white/5 border-dashed">
+              <h3 className="text-lg font-semibold mb-3 text-zinc-100">Tangle Code Review</h3>
+              <p className="text-zinc-500 text-sm leading-relaxed">Automated, intelligent PR evaluation by persistent AI reviewer agents.</p>
+            </div>
+            <div className="p-6 md:p-8 rounded-3xl bg-zinc-950/50 border border-white/5 border-dashed">
+              <h3 className="text-lg font-semibold mb-3 text-zinc-100">Release Automation</h3>
+              <p className="text-zinc-500 text-sm leading-relaxed">Managed-project release automation with strict semantic versioning and changelog generation.</p>
+            </div>
+            <div className="p-6 md:p-8 rounded-3xl bg-zinc-950/50 border border-white/5 border-dashed">
+              <h3 className="text-lg font-semibold mb-3 text-zinc-100">Dependency Registry</h3>
+              <p className="text-zinc-500 text-sm leading-relaxed">Cross-project dependency mapping and registry tracking for large organizations.</p>
+            </div>
+            <div className="p-6 md:p-8 rounded-3xl bg-zinc-950/50 border border-white/5 border-dashed">
+              <h3 className="text-lg font-semibold mb-3 text-zinc-100">Role Templates</h3>
+              <p className="text-zinc-500 text-sm leading-relaxed">A growing library of pre-configured, highly specialized Higher-Reasoning Architecture agent templates.</p>
+            </div>
+            <div className="p-6 md:p-8 rounded-3xl bg-zinc-950/50 border border-white/5 border-dashed md:col-span-2 lg:col-span-1">
+              <h3 className="text-lg font-semibold mb-3 text-zinc-100">Security Architecture</h3>
+              <p className="text-zinc-500 text-sm leading-relaxed">TangleScan and SecurityClaw architecture for deep, automated project security auditing.</p>
+            </div>
+          </div>
+        </div>
+
         {/* Screenshot Gallery */}
         <div id="gallery" className="w-full pt-16 mt-8 border-t border-white/10">
           <h2 className="text-3xl font-semibold tracking-tight mb-12 text-center">Interface Preview</h2>
@@ -122,7 +149,7 @@ export default function Home() {
         <div className="w-full pt-24 pb-12 flex flex-col items-center text-center">
           <h2 className="text-3xl md:text-4xl font-semibold tracking-tight mb-6">Ready to take control of your SDLC?</h2>
           <p className="text-zinc-400 text-lg mb-8 max-w-xl">
-            TangleClaw is open-source and runs entirely on your local machine. No cloud subscriptions, no vendor lock-in.
+            TangleClaw itself runs locally with no TangleClaw subscription. Bring your existing AI CLI/model accounts — or route projects to local models.
           </p>
           <a 
             href="https://github.com/Jason-Vaughan/TangleClaw" 
