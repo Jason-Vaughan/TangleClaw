@@ -33,6 +33,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   v4.5.0–v4.19.0).
 -->
 
+## 2026-09-22 — A config.json hand-written before first boot stays on loopback; legacy grace needs evidence of use (#1484)
+
+<!-- prawduct: type=bugfix | scope=train-b2-chunk3 -->
+
+Train B.2 Chunk 3. `lib/bind-policy.js#migrateLegacyBind(config, keyPersisted, priorUse)` records `false` (reason `fresh-install`) instead of `null` (grace) when the key is absent in direct mode and either `config.setupComplete === false` or `priorUse === false`; `priorUse` omitted keeps the legacy answer. The issue's "setupComplete missing" signal is rejected because `store.config.load()` reads a missing field as `true` for legacy installs (ADR 0009). New `lib/store.js#hasPriorUse` = any `projects` (archived included), `sessions` or `users` row, or a `project.deleted` activity row (deleting a project cascades its sessions); it fails toward `true`. `server.js#_installPriorUse` asks it once, at boot before listening, and boot, `GET /api/config` (`_withBindState`) and `PATCH /api/config` reuse that answer; `_setInstallPriorUse` is the test seam. Boot logs the fresh case on its own line. The `test/api-config.test.js` "predates the setting" fixture persisted `setupComplete: false` on an empty store, which is the case this closes; it now builds a legacy install (a project, no `setupComplete`) with its assertions unchanged. Critic round (rev-20260922T062547Z-402fff97, 0 blocking) fixes: evidence asked live at GET/PATCH could turn a failed fresh-install boot save into grace (fixed at boot; mutation-checked test), and an install with every project deleted looked unused (activity row). verify-resolutions (rev-20260922T063310Z-8defa396, 0 blocking): the restart edge — a fresh `false` that never reaches disk, then use, then a restart grants grace — is accepted and recorded in ADR 0009's #1484 note (needs `config.json` unwritable for a whole run). ADR 0009, `FEATURES.md` and the local `security-model.md` updated. Plan archived at `.tangleclaw/plans/archive/b2-chunk3-fresh-install-bind.md`.
+
 ## 2026-09-22 — PortHub refuses an unleased listener, refuses an ambiguous host-less release, and stops deleting non-project owners' leases (#814, #853, #1381)
 
 <!-- prawduct: type=bugfix | scope=train-b2-chunk2 -->
