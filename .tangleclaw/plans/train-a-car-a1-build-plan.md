@@ -1,13 +1,13 @@
 ---
 title: "Train A Car A1: live checkout and coordinated freshness truth"
-status: IN PROGRESS — Chunk 1 shipped (#1788); Chunk 2 built and reviewed (authorized by the PM 2026-09-22, message bb06efbb). The Architect ruled D1–D11 (message 4b64f386; D6 and D11 modified) and D12–D15 (message 1e80db37; D14 modified), the rest approved
+status: IN PROGRESS — Chunks 1–2 shipped (#1788, #1791); Chunk 3 authorized by the PM 2026-09-22 (message 608a9df0), D16–D20 sent to the Architect
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (message 7206bde4)
 issues: [993, 1678]
 governed_by:
   - Architect roadmap, "Car A1 — live checkout and coordinated freshness truth" (TangleClaw-Architect/.tangleclaw/plans/v5-v6-backlog-census-and-bridge-roadmap.md)
   - project rule: ENGINE-AGNOSTIC BY CONSTRUCTION (engaged in Chunk 2: the prime line is server-rendered text, no engine hook)
 scope: train-a-car-a1
-branch: feat/a1-chunk2-related-session-freshness
+branch: feat/a1-chunk3-fleet-view
 partition: serial. Chunk 1 is one probe module, one route payload and two dashboard banners; the parts share the new module
 critic_mode: chunk (Chunks 1–2), cumulative at Chunk 3
 ---
@@ -253,19 +253,84 @@ lowercased, and path case preserved.
 
 ### Chunk 03: One fleet view for the PM and the controller (#1678 close, #993 close)
 
-Not authorized yet.
-- `GET /api/checkouts` gives one row per live project session from the same cached facts,
-  so the PM, the controller, the Builder and the dashboard can't compute different answers
-  (D11).
-- `tc freshness` prints it, `tc capabilities` lists it, and docs cover it.
-- The cumulative Critic runs here.
-- Carried from the Chunk 2 review (accepted on rev-20260922T213404Z, to ride this chunk's commit):
-  - O-1: `lib/checkout-summary.js#describe` says "related repository not determined" for a no-git project whose group
-    relation is `unknown` (it already does for `pending`), with a test.
-  - O-3: move the local-ref reasons in `checkout.incomplete` into `localRef`.
-  - O-4: the `/api/server-info` route in server.js reads `serverInfo.getRepoRoot()`, not `_internal.repoRoot`.
-  - R-12 (from Chunk 1): `/api/system/health`'s `detectStaleServer` agrees with `restartImpact`. The health contract goes
-    to the Architect first.
+Authorized by the PM on 2026-09-22 (message 608a9df0). Built on `feat/a1-chunk3-fleet-view` in the worktree
+`.claude/worktrees/a1-chunk3`, because the live checkout stays on `main`.
+
+**Confidence check.**
+1. *Problem:* each surface reads one project's checkout (the project route, the prime, the chip), so the PM or the
+   Project Master comparing the fleet must make one call per project and each call can land on a different cache
+   moment. The health panel's stale-server condition still fires on a records-only range the banner calls "no
+   restart needed" (R-12), so two surfaces disagree about the same fact.
+2. *Success:* `GET /api/checkouts` and `tc freshness` give the PM, the Master, a Builder and the operator one row per
+   live project session, from `checkoutFreshness.projectCheckout` (the function the project route, the prime and the
+   chip already use), shaped per caller as D11 ruled. `tc capabilities` lists it. The health condition agrees with
+   `restartImpact`. #993 and #1678 close on merge.
+3. *Out of scope:* any action, gate, pull, restart or fetch (#1710); moving the runtime (#1672); a dashboard fleet
+   panel (the dashboard already renders the same `projectCheckout` per project; a fleet panel is not in either issue).
+
+**`lib/checkout-fleet.js` (new).**
+- `visibleProjectIds(access)`: operator and Master → `null` (every project); a bound project → itself plus every
+  member of the groups in `access.groupIds`; unbound or invalid → the empty set.
+- `fleetView(access, {config})` → `{scope, reason, observedAt, rows}`. Rows come from `store.sessions.listLiveAll()`,
+  one per project with a live session (D18), in project-name order, filtered by `visibleProjectIds`, each
+  `{project: {id, name}, sessionId, checkout: shapeCheckout(access, projectCheckout(row))}`.
+- `shapeCheckout(access, block)` is an allowlist (D17): a field added to the block later stays out until someone
+  decides it belongs. For a project caller, `upstream.observedFrom` and `upstream.groupName` are nulled unless they
+  name a project or group that caller already sees, and `summary` is re-rendered from the shaped block, so the words
+  never carry what the fields withhold. `runtime.restartImpact` is reduced to `{impact}`: the path list stays on
+  `/api/server-info`.
+
+**`GET /api/checkouts` (server.js).** Resolves the caller with `sharedDocsAccess.resolveAccess` (logging an invalid
+binding the way `projectsReader` does) and answers 200 with `fleetView` (D16). Read-only, cached, never waits on git.
+
+**`tc freshness` (lib/tc-verbs.js).** GETs `/api/checkouts` and prints the scope line, then one block per row:
+`<project> (session <id>)` and its `summary` sentences. `scope: 'none'` prints the reason and exits 0: an honest
+answer, not a failure. `tc capabilities`: a `checkouts` entry in the project roster and the Master roster (D20).
+
+**R-12: `lib/system-health.js#detectStaleServer` agrees with `restartImpact` (D19).** It reads the same
+`checkoutState.impactSnapshot(repoRoot, startupSha, currentDiskSha)` the banner reads. `records-only` → `clear`, detail
+"running X, disk Y: records-only commits, no restart needed". `executable`/`mixed` → `fired` as today. `pending` or
+`unknown` → `fired`, detail adds "restart impact unknown": never downgraded on missing evidence.
+
+**Carried from the Chunk 2 review.**
+- O-1: `checkout-summary.describe` says "related repository not determined" for a no-git project whose group
+  relation is `unknown`, as it already does for `pending`.
+- O-3: `projectCheckout` moves the `ahead/behind:` and `upstream:` reasons out of `incomplete` into `localRef.incomplete`,
+  since they describe the local ref comparison, not the checkout.
+- O-4: the `/api/server-info` route reads `serverInfo.getRepoRoot()`, not `serverInfo._internal.repoRoot`.
+
+**Tests (written with the code).**
+- `test/checkout-fleet.test.js`: operator and Master see every live row; a project sees itself and its group members
+  only; unbound and invalid get `scope: 'none'` with a reason and no rows; a project with no live session has no row;
+  the allowlist drops an unknown field; `observedFrom`/`groupName` are nulled for a project caller when they name an
+  unseen project or group, and the re-rendered `summary` does not contain them; `restartImpact` carries only `impact`;
+  no field holds an absolute path (a sweep of every string in the payload).
+- Route test for `GET /api/checkouts` with each caller kind, using `store._setBasePath`.
+- `test/tc-verbs.test.js`: `freshness` renders rows, the `none` scope and an empty fleet; it is in the roster and usage.
+- `test/system-health.test.js`: records-only is clear; executable and mixed fire; pending and unknown fire with
+  "restart impact unknown".
+- `test/checkout-summary` cases for O-1; `test/checkout-freshness.test.js` for O-3.
+
+**Docs.** `api-contract.md` (`GET /api/checkouts`, the health condition's wording), the tc verb docs, CHANGELOG
+`### Added`, FEATURES.md.
+
+**Chunk 3 decisions (sent to the Architect at the plan-written boundary).**
+- **D16 (API contract).** `GET /api/checkouts` answers 200 `{scope: 'fleet'|'related'|'none', reason, observedAt, rows}`
+  for every caller; unbound/invalid get `scope: 'none'` with the reason and no rows. *Rejected:* 403 for unbound
+  callers, the shared-docs convention, because D11 ruled "no rows" and a refusal would make `tc freshness` report an
+  API failure where the honest answer is "you are not bound, so you see nothing".
+- **D17 (field allowlist).** Rows carry an allowlisted subset of the `checkout` block; for a project caller
+  `observedFrom`/`groupName` are nulled unless they name something it already sees, and `summary` is re-rendered from
+  the shaped block; `restartImpact` is `{impact}` only. *Rejected:* the project route's whole block (it carries the
+  deciding path list and names projects the caller may not see).
+- **D18 (row set).** One row per project with a live session, not per session and not every registered project.
+  *Rejected:* every registered project, because it measures idle clones nobody asked about and widens what a
+  project caller learns.
+- **D19 (health contract, R-12).** `stale-server` becomes `clear` for a records-only range and stays `fired` for
+  executable, mixed, pending and unknown. *Rejected:* a new `info` state (changes every detector's contract), and
+  keeping `fired` for records-only (the disagreement R-12 exists to end).
+- **D20 (agent-facing procedure).** A `checkouts` capability in both the project and the Master `tc capabilities`
+  rosters, always enabled, naming `tc freshness` and the route; `tc freshness` exits 0 on every answered scope.
 
 ## Architectural decisions (sent to the Architect at the plan-written boundary)
 
@@ -331,6 +396,14 @@ Not authorized yet.
 - The PR references #993 and #1678 without closing them (Chunk 3 closes both). It merges,
   the live checkout is pulled and restarted, `startupSha` matches, and live
   `/api/server-info` shows `liveCheckout.state: 'measured'`, `branch: 'main'`, and zeros.
+
+## Done when (Chunk 3)
+
+- The Chunk 3 tests pass, and a full TAP run shows 0 fail.
+- The cumulative `/prawduct:critic` reports no unresolved blocking findings.
+- The Architect has ruled on D16–D20, and any modification is built before the PR opens.
+- The PR closes #993 and #1678. It merges, the live checkout is pulled and restarted, and live `tc freshness` from
+  this session lists this project's row with `upstream.state: 'measured'`.
 
 ## Done when (Chunk 2)
 
