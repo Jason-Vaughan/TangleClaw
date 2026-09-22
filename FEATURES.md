@@ -689,3 +689,8 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 
 - **TBD** — touched in this session: `docs/runbooks/stand-up-a-new-agent-fleet.md`. <!-- describe -->
 - **TBD** — touched in this session: `test/api-shareddocs-write-enforcement.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-09-21)
+
+- **TBD** — touched in this session: `lib/project-view.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/project-view.test.js`. <!-- describe -->
