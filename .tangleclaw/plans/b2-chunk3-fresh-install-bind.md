@@ -76,8 +76,12 @@ loopback") instead of the legacy-grace line.
 the server listens, and `GET`/`PATCH /api/config` reuse that answer. Asking live was wrong: creating a
 project or a login changes the store's answer, so on a fresh install whose boot save of `false`
 failed, `GET` would report grace and `PATCH` would persist it, and the next restart would bind wide
-with nobody choosing it. The review of the first commit found this; the plan's earlier claim that the
-old design shared the risk was false, because its inputs were all fixed after boot.
+with nobody choosing it. The old design had no such risk, because its inputs were all fixed after boot.
+
+**Accepted edge.** The fixed answer lasts one run. If the fresh `false` never reaches disk and the
+install is then used, the next boot re-reads the evidence and grants grace. That needs `config.json`
+unwritable for a whole run (every settings save fails too). Closing it would need the fresh decision
+recorded in a second store. Recorded in ADR 0009's #1484 note.
 
 **Deleted projects count as use.** Deleting a project deletes its sessions, so an install whose
 operator removed every project would have looked unused and been narrowed on upgrade. The

@@ -149,8 +149,12 @@ config file written by hand before the first boot is missing it too. Granting th
 every interface before any login existed. So the key's absence now leads to grace only when the
 install shows it was used: a project (archived included), a session or a user row exists or a
 project was ever deleted, and the file does not persist `setupComplete: false`. The evidence is read
-once at boot and reused by every later migration, because it is the one input that can change after
-boot, and a later answer would let a failed boot save turn into a wide bind at the next restart. Without that evidence the install is recorded as closed
+once at boot and reused by every later migration in that run, because it is the one input that can
+change after boot: asked live, a project created after a failed boot save would turn `GET` and
+`PATCH /api/config` to grace. One edge is accepted. If the fresh install's `false` never reaches
+disk and the install is then used, the next boot re-reads the evidence and grants grace. That needs
+`config.json` to stay unwritable for a whole run, which also fails every settings save, and a
+durable record of the fresh decision would need a second store for the same fact. Without that evidence the install is recorded as closed
 (`false`). This applies the rule above that an install which never had remote reach narrows
 immediately. A *missing* `setupComplete` was rejected as the fresh-install signal, because `load()`
 reads it as `true`: legacy installs predate that field, and keying on its absence would narrow the
