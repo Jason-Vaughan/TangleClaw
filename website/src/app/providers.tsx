@@ -18,6 +18,13 @@ export function PostHogPageview() {
 
   useEffect(() => {
     if (pathname && posthog) {
+      // Secret URL to permanently opt out of tracking on this device
+      if (searchParams && searchParams.get('ignore_me') === 'true') {
+        posthog.opt_out_capturing()
+        alert('PostHog tracking has been permanently disabled for this device.')
+        return
+      }
+
       let url = window.origin + pathname
       if (searchParams && searchParams.toString()) {
         url = url + `?${searchParams.toString()}`
