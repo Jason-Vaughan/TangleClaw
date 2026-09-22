@@ -82,6 +82,7 @@ export default function Home() {
               <Image src="/tangleclaw-logo-real.png" alt="TangleClaw Logo" fill className="object-contain" priority />
             </div>
             <div className="relative w-4/5 h-16 md:h-20 mt-6">
+              {/* TODO: Replace logo-text.png with a proper SVG master. See docs/design-specs.md for details (likely Eurostile Bold Extended). */}
               <Image src="/logo-text.png" alt="TangleClaw Wordmark" fill className="object-contain" priority />
             </div>
           </div>
