@@ -329,6 +329,24 @@ describe('API /api/ports', () => {
       assert.equal(data.project, 'Mine');
     });
 
+    it('probes a port sent as a string, rather than granting it unchecked', async () => {
+      probeFinds(7448, 'caddy');
+      const { status, data } = await request(server, 'POST', '/api/ports/lease', {
+        port: '7448', project: 'P', service: 'dev'
+      });
+      assert.equal(status, 409);
+      assert.equal(data.code, 'PORT_IN_USE');
+      assert.equal(store.portLeases.get(7448), null);
+    });
+
+    it('rejects a port that is not an integer in range', async () => {
+      for (const port of ['abc', 70000, 3.5]) {
+        const { status, data } = await request(server, 'POST', '/api/ports/lease', { port, project: 'P', service: 's' });
+        assert.equal(status, 400, `port ${JSON.stringify(port)}`);
+        assert.equal(data.code, 'BAD_REQUEST');
+      }
+    });
+
     it('keeps the HTTP default of a non-permanent lease', async () => {
       probeFindsNothing();
       const { status, data } = await request(server, 'POST', '/api/ports/lease', {

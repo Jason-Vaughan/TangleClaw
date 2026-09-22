@@ -383,6 +383,20 @@ describe('porthub (store-backed)', () => {
       }
     });
 
+    it('releases its own Caddy leases once the install is no longer in caddy mode', () => {
+      const selfName = path.basename(path.resolve(__dirname, '..'));
+      store.portLeases.lease({ port: 8443, project: selfName, service: 'caddy-https-ingress', permanent: true });
+      store.portLeases.lease({ port: 8080, project: selfName, service: 'caddy-http-ingress', permanent: true });
+      store.portLeases.lease({ port: 8444, project: 'WheresMy', service: 'caddy-https-ingress', permanent: true });
+      const config = store.config.load();
+      config.ingressMode = 'direct';
+      store.config.save(config);
+      porthub.bootstrap({ ttydPort: 3100, serverPort: 3101 });
+      assert.equal(store.portLeases.get(8443), null, 'Caddy is no longer running, so its port is free');
+      assert.equal(store.portLeases.get(8080), null);
+      assert.ok(store.portLeases.get(8444), "another project's lease is untouched, whatever its service name");
+    });
+
     it('enrols nothing for Caddy in direct mode', () => {
       const config = store.config.load();
       config.ingressMode = 'direct';
@@ -537,16 +551,38 @@ describe('porthub (store-backed)', () => {
     });
 
     it('skips an OS-bound port (system process) even when unleased', () => {
-      const original = portScanner.isPortInUseBySystem;
-      portScanner.isPortInUseBySystem = (port) =>
-        port === 18789
-          ? { inUse: true, process: 'someproc', pid: 1234 }
-          : { inUse: false, process: null, pid: null };
-      try {
-        assert.equal(porthub.nextFreePort({ range: [18789, 18999] }), 18790);
-      } finally {
-        portScanner.isPortInUseBySystem = original;
-      }
+      // The machine is asked per port now, not the scan cache, so the stub
+      // answers for lsof. afterEach's `_reset` restores the real runner.
+      portScanner._setExec((cmd) => {
+        if (cmd.includes('-iTCP:18789 ')) {
+          return 'COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nsomeproc 1234 me 7u IPv4 0x1 0t0 TCP *:18789 (LISTEN)';
+        }
+        const err = new Error('no listener');
+        err.status = 1;
+        err.stdout = '';
+        err.stderr = '';
+        throw err;
+      });
+      assert.equal(porthub.nextFreePort({ range: [18789, 18999] }), 18790);
+    });
+
+    it('asks the machine even when the scan cache is cold (#814)', () => {
+      // A cold cache used to read as "free" for a port the machine was using.
+      portScanner._setLastScan([]);
+      portScanner._setExec((cmd) => {
+        if (cmd.includes('-iTCP:18789 ')) {
+          return 'COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nsomeproc 1234 me 7u IPv4 0x1 0t0 TCP *:18789 (LISTEN)';
+        }
+        const err = new Error('no listener');
+        err.status = 1;
+        err.stdout = '';
+        err.stderr = '';
+        throw err;
+      });
+      const check = porthub.checkPort(18789);
+      assert.equal(check.available, false);
+      assert.equal(check.systemDetected, true);
+      assert.equal(check.process, 'someproc');
     });
 
     it('respects the host scope — a lease on another host does not block', () => {

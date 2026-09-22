@@ -149,6 +149,17 @@ own tunnel will bind). `POST /api/ports/lease` is used by every managed agent pe
 
 #1381 is `stage:design`. The field, its name and the renewal semantics are this plan's choice.
 
+- [ASSUMPTION: an owner name is the right unit for "Not a project".] The banner groups by
+  name, and a `brew services` owner holds every port under one name. Settled by: a real install
+  where one name mixes a project's ports with a daemon's. The per-host option on the route is
+  the escape hatch.
+- [ASSUMPTION: marking needs no dashboard undo in this chunk.] A mis-click is reversible with
+  `POST /api/ports/owner-kind {ownerKind: "project"}`. Settled by: operator feedback. The
+  visibility/undo gap is filed rather than built here.
+- [ASSUMPTION: lsof is present wherever PortHub decides for localhost.] It is on macOS. Where it
+  is not, the answer is `listenerCheck: unavailable` and the lease is granted, stated in the
+  response. Settled by: a Linux install report.
+
 ## Chunks
 
 ### Chunk 2: PortHub guard, host key, non-project owners (#814, #853, #1381)
@@ -172,6 +183,9 @@ Done when:
 - `data/porthub-guide.md`, `.prawduct/artifacts/api-contract.md` and `data-model.md` describe the
   behaviour. The CHANGELOG has entries in the right subsections.
 - `/prawduct:critic` has run clean of blocking findings.
+- After merge and restart, a live check (non-destructive): a lease request for a port with a real
+  listener and no lease is refused with `PORT_IN_USE` and stores nothing, and `GET /api/ports`
+  shows `systemPorts` and `ownerKind`.
 
 ## Status
 

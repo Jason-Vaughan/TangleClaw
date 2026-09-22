@@ -10,7 +10,7 @@ TangleClaw is the central port registry for every project on this machine — re
   not silently take it. On this machine it also asks the OS: a port with a listener that no
   lease records returns **409 `PORT_IN_USE`** naming the process.
 - **Send `host`** when the service is not on this machine. Leases are keyed on `(host, port)`,
-  every field defaults to `localhost`, and the same port number can belong to different projects
+  every route defaults `host` to `localhost`, and the same port number can belong to different projects
   on different hosts.
 - **Release** a port once it's no longer needed (service stopped, teardown, cleanup).
 - **Declare `reach`** when the service is meant to be reachable beyond loopback. A service that

@@ -5262,10 +5262,16 @@ route('POST', '/api/ports/lease', (_req, res, _params, body) => {
   if (!body || !body.port || !body.project || !body.service) {
     return errorResponse(res, 400, 'port, project, and service are required', 'BAD_REQUEST');
   }
+  // A port sent as a string ("8443") would skip the listener probe, which
+  // checks for an integer, and be granted unchecked. Normalize once here.
+  const leasePort = Number(body.port);
+  if (!Number.isInteger(leasePort) || leasePort < 1 || leasePort > 65535) {
+    return errorResponse(res, 400, `port must be an integer from 1 to 65535 (got ${JSON.stringify(body.port)})`, 'BAD_REQUEST');
+  }
   // Through PortHub, not the store directly, so the machine is asked before
   // the registry answers "free" (#814) — this is the path every managed
   // project is told to use, and it was the one path without the check.
-  const result = porthub.registerPort(body.port, body.project, body.service, {
+  const result = porthub.registerPort(leasePort, body.project, body.service, {
     host: body.host || 'localhost',
     // The HTTP default has always been a non-permanent lease; PortHub's own
     // default is permanent, so the route states it.
@@ -7953,12 +7959,13 @@ route('POST', '/api/openclaw/connections', (_req, res, _params, body) => {
     // Lease-at-create: reserve the resolved port(s) under the connection's tunnel
     // identity so a subsequent add picks a different port even before the tunnel
     // comes up (closing the allocate→bind race). Released on DELETE.
-    // `adoptListener`: these are ports TangleClaw's own tunnel binds, so a
-    // listener already on them is ours, not a stranger's (#814).
+    // No `adoptListener`: the tunnel does not exist yet, so a listener here
+    // would be a stranger's. `checkPort`/`nextFreePort` above already asked
+    // the machine, so this lease normally finds the port clear.
     const leaseName = `oc-direct-${connection.id}`;
-    porthub.registerPort(connection.localPort, leaseName, 'openclaw-tunnel', { permanent: true, adoptListener: true });
+    porthub.registerPort(connection.localPort, leaseName, 'openclaw-tunnel', { permanent: true });
     if (connection.bridgePort) {
-      porthub.registerPort(connection.bridgePort, leaseName, 'openclaw-bridge', { permanent: true, adoptListener: true });
+      porthub.registerPort(connection.bridgePort, leaseName, 'openclaw-bridge', { permanent: true });
     }
     jsonResponse(res, 201, connection);
   } catch (err) {
@@ -8062,12 +8069,13 @@ route('PUT', '/api/openclaw/connections/:id', (_req, res, params, body) => {
       if (bridgeChanged && existing.bridgePort) {
         porthub.releasePort(existing.bridgePort);
       }
-      // Ports TangleClaw's own tunnel binds — adopted, as at create (#814).
+      // Not adopted, as at create: the old tunnel was just killed and the new
+      // one is not up, so a listener on the new port is a stranger's.
       if (connection.localPort) {
-        porthub.registerPort(connection.localPort, leaseName, 'openclaw-tunnel', { permanent: true, adoptListener: true });
+        porthub.registerPort(connection.localPort, leaseName, 'openclaw-tunnel', { permanent: true });
       }
       if (connection.bridgePort) {
-        porthub.registerPort(connection.bridgePort, leaseName, 'openclaw-bridge', { permanent: true, adoptListener: true });
+        porthub.registerPort(connection.bridgePort, leaseName, 'openclaw-bridge', { permanent: true });
       }
     }
     openclawVersion.invalidate(params.id); // #296: instanceDir may have changed → drop stale cache

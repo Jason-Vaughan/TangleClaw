@@ -9,8 +9,25 @@ const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const { createServer } = require('../server');
+const portScanner = require('../lib/port-scanner');
 
 setLevel('error');
+
+// Ports the listener probe reports as busy. Everything else reads as free, so
+// these tests grade the routes and never what this host happens to run — the
+// fixture ports sit in ranges with live services on a developer machine.
+const busyPorts = new Set();
+portScanner._setExec((cmd) => {
+  const port = Number(/-iTCP:(\d+) /.exec(cmd)[1]);
+  if (busyPorts.has(port)) {
+    return `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\npostgres 812 me 7u IPv4 0x1 0t0 TCP *:${port} (LISTEN)`;
+  }
+  const err = new Error('no listener');
+  err.status = 1;
+  err.stdout = '';
+  err.stderr = '';
+  throw err;
+});
 
 /**
  * Make an HTTP request to the test server.
@@ -194,6 +211,35 @@ describe('API /api/openclaw/connections', () => {
     });
     assert.equal(second.status, 409);
     assert.ok(second.data.error.includes('13200'));
+  });
+
+  it('POST /api/openclaw/connections refuses a localPort something is listening on, even with a cold scan cache (#814)', async () => {
+    busyPorts.add(13290);
+    try {
+      const res = await request(server, 'POST', '/api/openclaw/connections', {
+        name: 'BusyPort', host: '10.0.0.60', sshUser: 'user', sshKeyPath: '/key', localPort: 13290
+      });
+      assert.equal(res.status, 409);
+      assert.match(res.data.error, /13290/);
+      assert.equal(store.portLeases.get(13290), null, 'no lease is recorded for a port a stranger holds');
+    } finally {
+      busyPorts.delete(13290);
+    }
+  });
+
+  it('POST /api/openclaw/connections auto-allocation skips a port something is listening on (#814)', async () => {
+    busyPorts.add(18789);
+    try {
+      const res = await request(server, 'POST', '/api/openclaw/connections', {
+        name: 'AutoAlloc', host: '10.0.0.61', sshUser: 'user', sshKeyPath: '/key'
+      });
+      assert.equal(res.status, 201);
+      assert.notEqual(res.data.localPort, 18789);
+      const lease = store.portLeases.get(res.data.localPort);
+      assert.ok(lease, 'the allocated port is leased at create');
+    } finally {
+      busyPorts.delete(18789);
+    }
   });
 
   it('DELETE /api/openclaw/connections/:id releases port from PortHub', async () => {
