@@ -1,6 +1,6 @@
 ---
 title: "Gate the project write routes by caller (#1752), and let a stood-down gate recognise the dashboard over plain http (#1753)"
-status: ACTIVE — plan written; build on fix/1752-project-write-gates
+status: ACTIVE — revised 2026-09-22 for the Master access level; PR on hold for Architect rulings
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (message 0f96e509)
 issues: [1752, 1753]
 governed_by:
@@ -65,6 +65,29 @@ changes the identity every live binding was issued against, and can leave Launch
 old path (the route already returns that as a warning for the operator). That is more than one
 project's configuration. Every other `PATCH` field only changes the project's own config, and
 `versionFilePath` is already confined to the project root by its validator.]
+
+## Requirement: the Project Master's access level governs its project writes (operator, 2026-09-22)
+
+The Master has an operator-set access level (`master.accessLevel`: `read-only`, the default,
+`suggest` or `write`; `lib/master.js`). Until now it was enforced only on the Master's file writes,
+by its PreToolUse guard. **This gate must not block a verified Master whose level permits
+writing.** The first build refused the Master on every project write at every level, copying the
+shared-docs rule. That overrode the operator's toggle, and it is being changed.
+
+- `write`: a verified Master is **not** refused on project writes.
+- `read-only` (default): refused, which matches the setting.
+- `suggest`, and whether a `write` Master also passes the operator-only routes (create, attach,
+  import, delete/archive, rename, migrate, repair hooks), are **pending the Architect's ruling**
+  (sent 2026-09-22, message 822a637a). Builder recommendation: `suggest` refuses (an API call
+  cannot pause to ask); operator-only routes stay operator-only at every level.
+- The level is read per request from the same source the guard reads, so a toggle change applies
+  to the Master's next call without a relaunch. If the level cannot be read, the Master is
+  treated as `read-only`, the same way the guard fails.
+- Tests: the Master resolves and is refused at `read-only`, and passes at `write`, through the real
+  routes, not only the resolver.
+
+**Architect rulings pending on every design decision in this plan** (operator: architectural
+decisions go to the Architect). The PR stays on hold until all five are ruled.
 
 ## Design
 
