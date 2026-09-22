@@ -210,6 +210,17 @@ describe('api-actions (#139 Chunk 11b)', () => {
     });
   });
 
+  describe('who may run an action (#1752)', () => {
+    it('every registered action is project-scoped, so the own-project gate may admit it', () => {
+      // The route admits the operator or the project's own session. That is
+      // right only for an action that acts on one project's own checkout. A new
+      // action fails here until someone decides whether it is project-scoped or
+      // must be operator-only, and extends this list or the route accordingly.
+      const { ACTIONS } = require('../lib/actions');
+      assert.deepEqual(ACTIONS.map((a) => a.command), ['invoke-critic']);
+    });
+  });
+
   describe('actions surfaced on GET /api/projects/:name', () => {
     // Read as the dashboard: a project's actions are part of the whole row,
     // which only its owner and the operator see (#1739).

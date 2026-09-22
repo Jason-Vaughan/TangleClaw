@@ -779,6 +779,8 @@ OQ3's sentence ships, and the three call sites #804 names ask one question. The 
 
 ### Recorded during #1753 (2026-09-22) — how a stood-down gate recognises the dashboard over plain http
 
+**Architect-ratified 2026-09-22**, within the boundary below: honoured only when `tcGateActive === false`, ignored when armed or locked, never added to `isMachineClient`.
+
 While the gate stands down (`open`/`fallback`), the caller resolver (`lib/shared-docs-access.js`)
 treats a browser-shaped request as the operator. Browsers send `Sec-Fetch-Site` only to HTTPS and
 localhost origins, and no `Origin` on a same-origin `GET`, so the direct-mode plain-http shape this

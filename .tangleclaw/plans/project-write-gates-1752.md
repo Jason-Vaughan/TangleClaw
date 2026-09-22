@@ -1,6 +1,6 @@
 ---
 title: "Gate the project write routes by caller (#1752), and let a stood-down gate recognise the dashboard over plain http (#1753)"
-status: ACTIVE — revised 2026-09-22 for the Master access level; PR on hold for Architect rulings
+status: ACTIVE — Architect rulings applied 2026-09-22; building to the rulings
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (message 0f96e509)
 issues: [1752, 1753]
 governed_by:
@@ -66,28 +66,32 @@ old path (the route already returns that as a warning for the operator). That is
 project's configuration. Every other `PATCH` field only changes the project's own config, and
 `versionFilePath` is already confined to the project root by its validator.]
 
-## Requirement: the Project Master's access level governs its project writes (operator, 2026-09-22)
+## Architect rulings (2026-09-22, message b6c94fef)
 
-The Master has an operator-set access level (`master.accessLevel`: `read-only`, the default,
-`suggest` or `write`; `lib/master.js`). Until now it was enforced only on the Master's file writes,
-by its PreToolUse guard. **This gate must not block a verified Master whose level permits
-writing.** The first build refused the Master on every project write at every level, copying the
-shared-docs rule. That overrode the operator's toggle, and it is being changed.
+Every design decision in this plan went to the Architect. Its rulings:
 
-- `write`: a verified Master is **not** refused on project writes.
-- `read-only` (default): refused, which matches the setting.
-- `suggest`, and whether a `write` Master also passes the operator-only routes (create, attach,
-  import, delete/archive, rename, migrate, repair hooks), are **pending the Architect's ruling**
-  (sent 2026-09-22, message 822a637a). Builder recommendation: `suggest` refuses (an API call
-  cannot pause to ask); operator-only routes stay operator-only at every level.
-- The level is read per request from the same source the guard reads, so a toggle change applies
-  to the Master's next call without a relaunch. If the level cannot be read, the Master is
-  treated as `read-only`, the same way the guard fails.
-- Tests: the Master resolves and is refused at `read-only`, and passes at `write`, through the real
-  routes, not only the resolver.
+1. **The Master is refused on every project write, at every access level.** `master.accessLevel`
+   (`read-only` by default, `suggest`, `write`) governs the Master's **file** writes through its
+   PreToolUse guard. The operator confirmed that toggle stays exactly as built and tested. It never
+   granted TangleClaw **API** authority: ADR 0008 keeps the API boundary separate, and #966 is the
+   planned scoped grant. Before this change the routes answered any caller, so a Master at any
+   level could use them. `PROJECT_READ_ONLY` now says the toggle grants no API authority and
+   points to #966. Shared docs stay read-only for the Master. (The Builder had first recommended
+   following the level; that recommendation was overruled.)
+2. **Ratified:** the `X-TangleClaw-Client: dashboard` label, honoured only when
+   `tcGateActive === false`, ignored when armed or locked, never added to `isMachineClient`. The
+   ADR 0016 note is marked ratified.
+3. **Accepted:** any effective rename is operator-only; sending the current name is not a rename.
+4. **Accepted:** `403 OTHER_PROJECT` for a valid bound caller naming another existing project;
+   `404` for a missing one; unbound and invalid callers are refused before the lookup.
+5. **Accepted:** the route matrix and the runbook rewrite. `actions/:command` admits
+   project-scoped actions only: a fleet, identity, destructive-lifecycle or operator action needs
+   its own operator-only classification. That is recorded at `lib/actions.js#ACTIONS`, the route,
+   and api-contract §2, and a test pins the action list.
 
-**Architect rulings pending on every design decision in this plan** (operator: architectural
-decisions go to the Architect). The PR stays on hold until all five are ruled.
+**The module keeps its name.** `lib/shared-docs-access.js` now also answers for project writes.
+Renaming it would touch every importer and every doc that cites it, for a name change only. Its
+header says what it covers. A rename can be its own chore if the module grows again.
 
 ## Design
 
@@ -95,17 +99,17 @@ decisions go to the Architect). The PR stays on hold until all five are ruled.
 "who is calling"; its header is rewritten to say it serves shared docs, groups and the project
 write routes.
 
-- `refusalFor(access, need, surface)` gains an optional `surface`, `SURFACES.SHARED_DOCS` (the
-  default, so every existing call keeps its codes and text) or `SURFACES.PROJECTS`. The projects
-  surface refuses with `PROJECT_BINDING_REQUIRED` / `PROJECT_BINDING_INVALID` and project wording,
-  and with `OPERATOR_ONLY` for an operator-only need. The Master is refused for any project write:
-  `OPERATOR_ONLY` on an operator-only route, `PROJECT_READ_ONLY` on an own-project route, because
-  it has no project.
+- `projectRefusalFor(access, need, action)` is the projects' own refusal function. `refusalFor`
+  stays shared-docs only, with its codes unchanged. `projectRefusalFor` accepts only
+  `NEEDS.OPERATOR` and `NEEDS.OWN_PROJECT` and throws for any other need. It refuses with
+  `PROJECT_BINDING_REQUIRED` / `PROJECT_BINDING_INVALID`, `OPERATOR_ONLY`, and `PROJECT_READ_ONLY`
+  for the Master (ruling 1).
 - A new `NEEDS.OWN_PROJECT`: the operator, or a bound project caller. The comparison with the
   target is `canChangeProject(access, projectId)`, run after the lookup, like `canWriteGroup`.
-- `server.js#projectOperatorCaller` is replaced by `projectWriteCaller(req, res, need, action)`
-  built on `refusalFor`, so the refusal text names what was refused ("create a project",
-  "rename a project"…). The existing delete/archive/unarchive message keeps its meaning.
+- `server.js#projectOperatorCaller` is replaced by two helpers on `projectRefusalFor`.
+  `operatorProjectCaller(req, res, action)` names what was refused ("create a project", "rename a
+  project"…). `ownProjectCaller(req, res, segment, lookup)` does the whole own-project check in one
+  call (binding, lookup, other project), so no route can do half of it.
 - Order in an own-project route: binding refusal before any lookup; then the lookup (404 when the
   project does not exist, as today; project names are already public in the roster, so this is not
   an existence oracle); then **403 `OTHER_PROJECT`** when a bound project names another project.
@@ -129,9 +133,9 @@ without this header; the header restores its reads.
 ## Tests (written with the code)
 
 `test/shared-docs-access.test.js` (resolver, no server):
-- `refusalFor` with the projects surface: unbound → `PROJECT_BINDING_REQUIRED`, invalid →
-  `PROJECT_BINDING_INVALID`, Master → refused for own-project and operator needs, project → passes
-  own-project and is `OPERATOR_ONLY` for operator; the shared-docs surface is unchanged.
+- `projectRefusalFor`: unbound → `PROJECT_BINDING_REQUIRED`, invalid → `PROJECT_BINDING_INVALID`,
+  Master → `PROJECT_READ_ONLY` (naming #966) or `OPERATOR_ONLY`, project → passes own-project and
+  is `OPERATOR_ONLY` for operator; throws for any other need; shared-docs refusals unchanged.
 - `canChangeProject`: operator any, project only its own, Master and unbound none.
 - `_isOperator` via `resolveAccess`: gate down + dashboard header → operator; gate up + header →
   not operator; gate unstated + header → not operator.
@@ -141,8 +145,14 @@ without this header; the header restores its reads.
   the operator succeeds.
 - `PATCH`: own project succeeds; another project → 403 `OTHER_PROJECT` and unchanged; unbound →
   `PROJECT_BINDING_REQUIRED`; a rename by the project's own agent → `OPERATOR_ONLY`; the operator can.
-- stranded-wraps `ack`, `check` and `open-pr`, and actions: own project passes the gate, another
-  project and unbound are refused before the handler runs.
+- stranded-wraps `ack`, `check` and `open-pr`, and actions: own project passes the gate (`check`
+  and `open-pr` reach their handler, which is stubbed off GitHub); another project and unbound
+  are refused before the handler runs.
+- The bound Master is refused on `PATCH` (`PROJECT_READ_ONLY`) and on create (`OPERATOR_ONLY`)
+  through the real routes.
+
+`test/api-actions.test.js`: the registered action list is pinned, so a new action forces the
+project-scoped vs operator-only decision (ruling 5).
 - The existing delete/archive/unarchive assertions stay as they are.
 - A dashboard-shaped `GET /api/projects` with only `X-TangleClaw-Client: dashboard` on a stood-down
   gate gets the operator's rows (paths present).
@@ -157,7 +167,8 @@ others the suite names) now send `operatorHeaders(server)`; their assertions do 
 
 - `lib/shared-docs-access.js` header: rewritten for its three route families.
 - `.prawduct/artifacts/api-contract.md`: each route's caller rule and refusal codes; the resolver
-  table gains the projects surface.
+  table gains the dashboard label.
+- `docs/user-guide.md` and `docs/configuration-reference.md`: the gated routes say who may call them.
 - `.prawduct/artifacts/security-model.md`: the project write boundary.
 - `docs/adr/0016-tier-1-auth-build-decisions.md`: a dated note on how a stood-down gate recognises
   the dashboard over plain http (#1753), and why it is not a security control.

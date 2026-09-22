@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, before, after } = require('node:test');
+const { describe, it, before, after, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const fs = require('node:fs');
@@ -10,6 +10,8 @@ const store = require('../lib/store');
 const projects = require('../lib/projects');
 const { createServer } = require('../server');
 const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
+const master = require('../lib/master');
+const strandedCheck = require('../lib/stranded-check');
 
 describe('api-projects', () => {
   let server;
@@ -598,6 +600,25 @@ describe('api-projects', () => {
         });
       }
 
+      it('lets a project run its own stranded-wrap check and open-pr: the handler is reached', async () => {
+        // The handlers talk to GitHub; stand them in, so what is under test is the gate.
+        const checked = mock.method(strandedCheck, 'check', async () => ({ state: 'ok' }));
+        const opened = mock.method(strandedCheck, 'openPr', async () => ({ ok: true, prUrl: 'https://example.invalid/pr/1', item: null }));
+        try {
+          const check = await request('POST', '/api/projects/gate-b/stranded-wraps/check', {}, b.headers);
+          assert.equal(check.status, 200);
+          assert.equal(checked.mock.calls.length, 1);
+          assert.equal(checked.mock.calls[0].arguments[0].name, 'gate-b');
+          const pr = await request('POST', '/api/projects/gate-b/stranded-wraps/open-pr',
+            { branch: 'wrap/x', headSha: 'abc', confirm: true }, b.headers);
+          assert.equal(pr.status, 201);
+          assert.equal(opened.mock.calls.length, 1);
+        } finally {
+          checked.mock.restore();
+          opened.mock.restore();
+        }
+      });
+
       it('lets a project reach its own actions and stranded wraps past the gate', async () => {
         // Past the gate the handlers answer for themselves: this project is not
         // plugin-governed, and it has no stranded wrap by that name.
@@ -606,6 +627,33 @@ describe('api-projects', () => {
         assert.equal(action.data.code, 'NOT_FOUND');
         const ack = await request('POST', '/api/projects/gate-b/stranded-wraps/ack', { branch: 'wrap/x', headSha: 'abc' }, b.headers);
         assert.notEqual(ack.status, 403);
+      });
+    });
+
+    describe('the Project Master changes no project through the API, whatever its access level', () => {
+      const MASTER_ID = 'api-projects-master-launch';
+      const MASTER = { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': MASTER_ID };
+      let live;
+
+      before(() => {
+        live = mock.method(master, 'liveMasterLaunchId', () => ({ launchId: MASTER_ID, answered: true, cause: null }));
+      });
+
+      after(() => live.mock.restore());
+
+      it('an own-project route refuses it with PROJECT_READ_ONLY and points at #966', async () => {
+        const { status, data } = await request('PATCH', '/api/projects/gate-b', { tags: ['master'] }, MASTER);
+        assert.equal(status, 403);
+        assert.equal(data.code, 'PROJECT_READ_ONLY');
+        assert.match(data.error, /#966/);
+        assert.deepEqual(store.projects.getByName('gate-b').tags, ['orig']);
+      });
+
+      it('an operator-only route refuses it with OPERATOR_ONLY', async () => {
+        const { status, data } = await request('POST', '/api/projects', { name: 'gate-by-master' }, MASTER);
+        assert.equal(status, 403);
+        assert.equal(data.code, 'OPERATOR_ONLY');
+        assert.equal(store.projects.getByName('gate-by-master'), null);
       });
     });
 

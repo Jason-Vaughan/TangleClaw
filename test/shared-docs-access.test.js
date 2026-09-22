@@ -335,20 +335,19 @@ describe('canChangeProject', () => {
   });
 });
 
-describe('refusalFor — the projects surface (#1752)', () => {
-  const PROJECTS = { surface: access.SURFACES.PROJECTS };
+describe('projectRefusalFor (#1752)', () => {
   const { OWN_PROJECT, OPERATOR } = access.NEEDS;
 
   it('own-project admits the operator and a bound project', () => {
-    assert.equal(access.refusalFor({ kind: KINDS.OPERATOR, reason: null }, OWN_PROJECT, PROJECTS), null);
-    assert.equal(access.refusalFor({ kind: KINDS.PROJECT, reason: null }, OWN_PROJECT, PROJECTS), null);
+    assert.equal(access.projectRefusalFor({ kind: KINDS.OPERATOR, reason: null }, OWN_PROJECT), null);
+    assert.equal(access.projectRefusalFor({ kind: KINDS.PROJECT, reason: null }, OWN_PROJECT), null);
   });
 
   it('own-project refuses unbound and invalid callers with project codes that name the binding', () => {
-    const unbound = access.refusalFor({ kind: KINDS.UNBOUND, reason: null }, OWN_PROJECT, PROJECTS);
+    const unbound = access.projectRefusalFor({ kind: KINDS.UNBOUND, reason: null }, OWN_PROJECT);
     assert.equal(unbound.status, 403);
     assert.equal(unbound.code, 'PROJECT_BINDING_REQUIRED');
-    const invalid = access.refusalFor({ kind: KINDS.INVALID, reason: INVALID_REASONS.SESSION_NOT_ACTIVE }, OWN_PROJECT, PROJECTS);
+    const invalid = access.projectRefusalFor({ kind: KINDS.INVALID, reason: INVALID_REASONS.SESSION_NOT_ACTIVE }, OWN_PROJECT);
     assert.equal(invalid.code, 'PROJECT_BINDING_INVALID');
     assert.match(invalid.message, /session-not-active/);
     for (const r of [unbound, invalid]) {
@@ -359,27 +358,29 @@ describe('refusalFor — the projects surface (#1752)', () => {
     }
   });
 
-  it('own-project refuses the Master, which has no project', () => {
-    const r = access.refusalFor({ kind: KINDS.MASTER, reason: null }, OWN_PROJECT, PROJECTS);
+  it('refuses the Master on an own-project route, and says its access level grants no API authority', () => {
+    const r = access.projectRefusalFor({ kind: KINDS.MASTER, reason: null }, OWN_PROJECT);
     assert.equal(r.status, 403);
     assert.equal(r.code, 'PROJECT_READ_ONLY');
+    assert.match(r.message, /access level/);
+    assert.match(r.message, /#966/);
   });
 
   it('a refused Master binding keeps the Master instructions and the project code', () => {
-    const r = access.refusalFor({ kind: KINDS.INVALID, reason: INVALID_REASONS.MASTER_LAUNCH_STALE }, OWN_PROJECT, PROJECTS);
+    const r = access.projectRefusalFor({ kind: KINDS.INVALID, reason: INVALID_REASONS.MASTER_LAUNCH_STALE }, OWN_PROJECT);
     assert.equal(r.code, 'PROJECT_BINDING_INVALID');
     assert.ok(r.message.includes('x-tangleclaw-role: master'));
   });
 
   it('operator-only admits the operator alone and names the refused action', () => {
-    assert.equal(access.refusalFor({ kind: KINDS.OPERATOR, reason: null }, OPERATOR, PROJECTS), null);
+    assert.equal(access.projectRefusalFor({ kind: KINDS.OPERATOR, reason: null }, OPERATOR, 'create a project'), null);
     for (const a of [
       { kind: KINDS.PROJECT, reason: null },
       { kind: KINDS.MASTER, reason: null },
       { kind: KINDS.UNBOUND, reason: null },
       { kind: KINDS.INVALID, reason: INVALID_REASONS.UNKNOWN_LAUNCH }
     ]) {
-      const r = access.refusalFor(a, OPERATOR, { ...PROJECTS, action: 'create a project' });
+      const r = access.projectRefusalFor(a, OPERATOR, 'create a project');
       assert.equal(r.status, 403, a.kind);
       assert.equal(r.code, 'OPERATOR_ONLY', a.kind);
       assert.match(r.message, /^Only the operator can create a project\./, a.kind);
@@ -387,10 +388,16 @@ describe('refusalFor — the projects surface (#1752)', () => {
     }
   });
 
-  it('leaves the shared-docs surface exactly as it was when no surface is given', () => {
+  it('throws for a need project routes do not have, so a read route cannot be gated through it', () => {
+    for (const need of [access.NEEDS.READ, access.NEEDS.WRITE, undefined, 'own_project']) {
+      assert.throws(() => access.projectRefusalFor({ kind: KINDS.OPERATOR, reason: null }, need), TypeError, String(need));
+    }
+  });
+
+  it('leaves the shared-docs refusals exactly as they were', () => {
     const a = { kind: KINDS.UNBOUND, reason: null };
     assert.equal(access.refusalFor(a, access.NEEDS.READ).code, 'SHARED_DOCS_BINDING_REQUIRED');
-    assert.deepEqual(access.refusalFor(a, access.NEEDS.READ, {}), access.refusalFor(a));
+    assert.equal(access.refusalFor({ kind: KINDS.MASTER, reason: null }, access.NEEDS.WRITE).code, 'SHARED_DOCS_READ_ONLY');
   });
 });
 
