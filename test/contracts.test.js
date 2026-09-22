@@ -9,6 +9,7 @@ const os = require('node:os');
 
 const store = require('../lib/store');
 const { createServer } = require('../server');
+const { operatorHeaders } = require('./_shared-docs-callers');
 
 let server;
 let baseUrl;
@@ -28,7 +29,7 @@ function request(urlPath, opts = {}) {
       port: url.port,
       path: url.pathname + url.search,
       method: opts.method || 'GET',
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) }
     };
 
     const bodyStr = opts.body ? JSON.stringify(opts.body) : null;
@@ -248,7 +249,8 @@ describe('API Contract Validation', () => {
     });
 
     it('GET /api/projects returns projects array with registered field', async () => {
-      const res = await request('/api/projects');
+      // The operator's view: every row whole (#1739).
+      const res = await request('/api/projects', { headers: operatorHeaders(server) });
       assert.equal(res.status, 200);
       assert.ok(Array.isArray(res.data.projects));
       assert.ok(res.data.projects.length > 0);
@@ -259,6 +261,17 @@ describe('API Contract Validation', () => {
       assert.equal(typeof proj.name, 'string');
       assert.ok(Array.isArray(proj.tags));
       assert.equal(typeof proj.createdAt, 'string');
+      assert.equal(proj.registered, true);
+    });
+
+    it('GET /api/projects gives a caller that owns nothing the public projection (#1739)', async () => {
+      const res = await request('/api/projects');
+      assert.equal(res.status, 200);
+      const proj = res.data.projects.find(p => p.name === 'contract-test');
+      assert.deepEqual(Object.keys(proj).sort(),
+        ['archived', 'engine', 'id', 'name', 'registered', 'restricted', 'session', 'tags']);
+      assert.equal(proj.restricted, true);
+      assert.equal(typeof proj.id, 'number');
       assert.equal(proj.registered, true);
     });
 
@@ -279,11 +292,13 @@ describe('API Contract Validation', () => {
       assert.equal(typeof res.data.id, 'number');
 
       // Cleanup
-      await request('/api/projects/contract-attach', { method: 'DELETE', body: { deleteFiles: true } });
+      await request('/api/projects/contract-attach', {
+        method: 'DELETE', body: { deleteFiles: true }, headers: operatorHeaders(server)
+      });
     });
 
     it('GET /api/projects/:name returns enriched project', async () => {
-      const res = await request('/api/projects/contract-test');
+      const res = await request('/api/projects/contract-test', { headers: operatorHeaders(server) });
       assert.equal(res.status, 200);
       assert.equal(res.data.name, 'contract-test');
       assert.equal(typeof res.data.id, 'number');
@@ -304,7 +319,8 @@ describe('API Contract Validation', () => {
     it('DELETE /api/projects/:name returns ok, name, filesDeleted', async () => {
       const res = await request('/api/projects/contract-test', {
         method: 'DELETE',
-        body: { deleteFiles: false }
+        body: { deleteFiles: false },
+        headers: operatorHeaders(server)
       });
       assert.equal(res.status, 200);
       assert.equal(res.data.ok, true);

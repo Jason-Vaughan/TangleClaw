@@ -294,7 +294,9 @@ describe('Landing Page API Integration', () => {
       }
 
       // Cleanup
-      await request('/api/projects/meth-warn-test', { method: 'DELETE', body: { deleteFiles: true } });
+      await request('/api/projects/meth-warn-test', {
+        method: 'DELETE', body: { deleteFiles: true }, headers: operatorHeaders(server)
+      });
     });
   });
 
@@ -312,9 +314,11 @@ describe('Landing Page API Integration', () => {
 
   describe('DELETE /api/projects/:name', () => {
     it('should delete a project', async () => {
+      // Deleting a project is the operator's (#1746).
       const res = await request('/api/projects/integration-test-proj', {
         method: 'DELETE',
-        body: { deleteFiles: false }
+        body: { deleteFiles: false },
+        headers: operatorHeaders(server)
       });
       assert.equal(res.status, 200);
       assert.ok(res.data.ok);
@@ -364,7 +368,9 @@ describe('Landing Page API Integration', () => {
       assert.equal(project.registered, true);
 
       // Cleanup
-      await request('/api/projects/reg-field-test', { method: 'DELETE', body: { deleteFiles: true } });
+      await request('/api/projects/reg-field-test', {
+        method: 'DELETE', body: { deleteFiles: true }, headers: operatorHeaders(server)
+      });
     });
 
     it('unregistered filesystem dirs appear with registered: false', async () => {
@@ -401,7 +407,9 @@ describe('Landing Page API Integration', () => {
       assert.equal(res.data.registered, true);
 
       // Cleanup
-      await request('/api/projects/attach-api-test', { method: 'DELETE', body: { deleteFiles: true } });
+      await request('/api/projects/attach-api-test', {
+        method: 'DELETE', body: { deleteFiles: true }, headers: operatorHeaders(server)
+      });
     });
 
     it('should return 409 for already registered project', async () => {
@@ -417,7 +425,9 @@ describe('Landing Page API Integration', () => {
       assert.equal(res.status, 409);
 
       // Cleanup
-      await request('/api/projects/already-reg', { method: 'DELETE', body: { deleteFiles: true } });
+      await request('/api/projects/already-reg', {
+        method: 'DELETE', body: { deleteFiles: true }, headers: operatorHeaders(server)
+      });
     });
 
     it('should return 400 for non-existent directory', async () => {
@@ -555,7 +565,8 @@ describe('Landing Page API Integration', () => {
     });
 
     it('project enrichment should include groups array', async () => {
-      const res = await request('/api/projects/group-member-test');
+      // Group membership is shown whole to the operator (#1739).
+      const res = await asOperator('/api/projects/group-member-test');
       assert.equal(res.status, 200);
       assert.ok(Array.isArray(res.data.groups));
       assert.ok(res.data.groups.length >= 1);
@@ -574,7 +585,9 @@ describe('Landing Page API Integration', () => {
       assert.equal(docRes.status, 404);
 
       // Cleanup project
-      await request('/api/projects/group-member-test', { method: 'DELETE', body: { deleteFiles: true } });
+      await request('/api/projects/group-member-test', {
+        method: 'DELETE', body: { deleteFiles: true }, headers: operatorHeaders(server)
+      });
     });
   });
 
