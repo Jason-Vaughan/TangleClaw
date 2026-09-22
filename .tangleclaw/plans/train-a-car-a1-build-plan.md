@@ -273,7 +273,7 @@ Authorized by the PM on 2026-09-22 (message 608a9df0). Built on `feat/a1-chunk3-
   member of the groups in `access.groupIds`; unbound or invalid → the empty set.
 - `fleetView(access, {config})` → `{scope, reason, observedAt, rows}`. Rows come from `store.sessions.listLiveAll()`,
   one per project with a live session (D18), in project-name order, filtered by `visibleProjectIds`, each
-  `{project: {id, name}, sessionId, checkout: shapeCheckout(access, projectCheckout(row))}`.
+  `{project: {id, name}, sessionId, checkout: shapeCheckout(projectCheckout(row), {seesProject, seesGroup})}`.
 - `shapeCheckout(block, {seesProject, seesGroup})` is an allowlist (D17): a field added to the block later stays out until someone
   decides it belongs. For a project caller, `upstream.observedFrom` and `upstream.groupName` are nulled unless they
   name a project or group that caller already sees, and `summary` is re-rendered from the shaped block, so the words
@@ -423,4 +423,4 @@ confirmed the build matches (message a1ec562f).
 
 - [x] Chunk 01: the live install reports its own checkout truthfully
 - [x] Chunk 02: every related session shows the same upstream target
-- [ ] Chunk 03: one fleet view for the PM and the controller
+- [x] Chunk 03: one fleet view for the PM and the controller
