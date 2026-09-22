@@ -1,6 +1,6 @@
 ---
 title: "Train B.2 Chunk 1: the projects API answers each caller only what it owns"
-status: COMPLETE — Chunk 1 built and reviewed; the PR closes #1739, #1746, #1261
+status: COMPLETE — Chunk 1 built and reviewed; archived with the PR that closes #1739, #1746, #1261
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (messages 6c164c5b, 4dff65c5), confirmed by the operator in-session
 issues: [1739, 1746, 1261]
 governed_by:
