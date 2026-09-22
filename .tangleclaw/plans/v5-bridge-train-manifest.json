@@ -13,7 +13,8 @@
             993,
             1678
           ],
-          "acceptance_gate": "Operator, controller, PM, and Builder must observe the same checkout identity and freshness facts before mutating workflows begin. Reports and gates only; does not auto-checkout."
+          "acceptance_gate": "Operator, controller, PM, and Builder must observe the same checkout identity and freshness facts before mutating workflows begin. Reports and gates only; does not auto-checkout.",
+          "status": "COMPLETED"
         },
         {
           "id": "A2",
@@ -22,7 +23,8 @@
             1537,
             1730
           ],
-          "acceptance_gate": "Classify product-owned, generated, and operator-authored paths explicitly; never delete/overwrite authored state; produce actionable blocked result when reconciliation is required."
+          "acceptance_gate": "Classify product-owned, generated, and operator-authored paths explicitly; never delete/overwrite authored state; produce actionable blocked result when reconciliation is required.",
+          "status": "ACTIVE"
         },
         {
           "id": "A3",
