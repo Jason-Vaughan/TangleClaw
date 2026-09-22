@@ -33,6 +33,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   v4.5.0–v4.19.0).
 -->
 
+## 2026-09-22 — The dashboard says what the live checkout is on and whether a restart matters (#993, #1678)
+
+<!-- prawduct: type=feature | scope=train-a-car-a1 -->
+
+Train A Car A1 Chunk 01. `lib/checkout-state.js` measures one checkout (lock-free `status --porcelain=v2 --branch -z`, `rev-parse origin/main`, `rev-list --left-right --count`) and fails closed: every unread fact is null, named in `incomplete`, and never zero. It is cached for 30s per directory with single-flight, and reads `pending` before the first measurement. `classifyRange` classifies `startupSha..currentDiskSha` for restart impact (records-only allowlist, both sides of a rename, `unknown` on any failure or on equal SHAs). `/api/server-info` gains `liveCheckout` and `restartImpact`. `behindOrigin` gains `state` and `reason`, and only symbolic-ref exit 1 counts as detached. The dashboard's live-checkout banner (no action, no dismiss) and the stale banner's impact wording: a records-only range hides that banner's restart button, per Architect ruling D6. Architect rulings D1–D11: D6 and D11 modified, the rest approved; D11 lands in Chunk 3. Critic: chunk rev-20260922T194448Z (1 blocking, a false absence of the gitignored api-contract; 2 warnings; 12 notes: fixed, with R-11/R-12/R-14/R-15 accepted and R-11/R-12 carried in the handoff), verify rev-20260922T195754Z (0 findings; O-1/O-2 accepted). The full suite is green by a TAP run.
+
 ## 2026-09-22 — The wrap bumps a Python project's version in pyproject.toml (#1444)
 
 <!-- prawduct: type=bugfix | scope=train-b2-chunk4 -->

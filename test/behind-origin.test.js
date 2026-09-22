@@ -69,8 +69,8 @@ function makeDom(ids) {
  * Install stubbed git calls. `fetch` / `revList` are either an Error (the
  * call fails), a string (rev-list stdout), `null` (success with no output),
  * or the token 'throw' (the seam itself throws synchronously). `head` is
- * 'branch' (default) or 'detached'.
- * @param {{fetch?: Error|null|'throw', revList?: Error|string|'throw', head?: 'branch'|'detached'}} plan
+ * 'branch' (default), 'detached', or an Error for any other branch-check failure.
+ * @param {{fetch?: Error|null|'throw', revList?: Error|string|'throw', head?: 'branch'|'detached'|Error}} plan
  * @returns {{fetches: () => number, revLists: () => number}}
  */
 function stubGit(plan) {
@@ -79,7 +79,11 @@ function stubGit(plan) {
   // Synchronous on purpose: the snapshot tests assert "exactly one fetch was
   // started" right after the call, before yielding to the event loop.
   behindOrigin._internal.gitSymbolicRef = (cb) => {
-    cb(plan.head === 'detached' ? new Error('exit 1') : null, 'refs/heads/main\n');
+    // execFile's error for a non-zero exit carries the status as `code`; `symbolic-ref -q`
+    // exits 1 on a detached HEAD, and a caller-supplied error stands in for anything else.
+    if (plan.head === 'detached') return cb(Object.assign(new Error('Command failed: git symbolic-ref -q HEAD'), { code: 1 }), '');
+    if (plan.head instanceof Error) return cb(plan.head, '');
+    cb(null, 'refs/heads/main\n');
   };
   behindOrigin._internal.gitFetch = (cb) => {
     fetches++;
@@ -154,12 +158,58 @@ describe('lib/behind-origin (#227)', () => {
       assert.equal(await behindOrigin.getRemoteCommitsAhead(), 0);
     });
 
+    it('only exit 1 from symbolic-ref is a detached HEAD; no git is no-git; a timeout or other failure is unknown', async () => {
+      let calls = stubGit({ head: Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }) });
+      let r = await behindOrigin.measure();
+      assert.deepEqual(r, { commitsAhead: 0, skipped: 'no-git', state: 'skipped', reason: 'not a git checkout' });
+      calls = stubGit({ head: Object.assign(new Error('x'), { code: 128, stderr: 'fatal: not a git repository' }) });
+      assert.equal((await behindOrigin.measure()).skipped, 'no-git');
+      calls = stubGit({ head: Object.assign(new Error('Command failed'), { killed: true, signal: 'SIGTERM', code: null }) });
+      r = await behindOrigin.measure();
+      assert.equal(r.state, 'unknown', 'a timed-out branch check is a check that did not run, not a tagged install');
+      assert.equal(r.skipped, null);
+      assert.match(r.reason, /branch check failed/);
+      assert.equal(calls.fetches(), 0, 'no fetch after a failed branch check');
+      calls = stubGit({ head: Object.assign(new Error('fatal: bad object HEAD'), { code: 128 }) });
+      assert.equal((await behindOrigin.measure()).state, 'unknown');
+    });
+
+    it('a failed step is state unknown with its reason, never measured — 0 is not "up to date" (#1678)', async () => {
+      stubGit({ fetch: new Error('fatal: unable to access origin') });
+      let r = await behindOrigin.measure();
+      assert.equal(r.commitsAhead, 0);
+      assert.equal(r.state, 'unknown');
+      assert.match(r.reason, /fetch failed/);
+      stubGit({ fetch: null, revList: new Error('fatal: bad revision') });
+      r = await behindOrigin.measure();
+      assert.equal(r.state, 'unknown');
+      assert.match(r.reason, /rev-list failed/);
+      stubGit({ fetch: null, revList: 'warning: something\n' });
+      r = await behindOrigin.measure();
+      assert.equal(r.state, 'unknown', 'garbage output is not a count of zero');
+      assert.match(r.reason, /unparseable/);
+      stubGit({ fetch: null, revList: '0\n' });
+      r = await behindOrigin.measure();
+      assert.deepEqual(r, { commitsAhead: 0, skipped: null, state: 'measured', reason: null },
+        'a real zero is measured');
+    });
+
+    it('snapshot() carries a failed refresh as unknown with its reason and checkedAt', async () => {
+      stubGit({ fetch: new Error('offline') });
+      await behindOrigin.refresh();
+      const snap = behindOrigin.snapshot({});
+      assert.equal(snap.state, 'unknown');
+      assert.equal(snap.commitsAhead, 0);
+      assert.match(snap.reason, /offline/);
+      assert.ok(snap.checkedAt, 'checkedAt stamps the attempt; only state measured makes it an observation');
+    });
+
     it('skips a detached HEAD without fetching — a tagged install is behind main by construction', async () => {
       // The self-updater leaves a healthy install detached at a release tag;
       // counting there would show the banner for the whole release interval.
       const calls = stubGit({ head: 'detached', fetch: null, revList: '40\n' });
       const r = await behindOrigin.measure();
-      assert.deepEqual(r, { commitsAhead: 0, skipped: 'detached-head' });
+      assert.deepEqual(r, { commitsAhead: 0, skipped: 'detached-head', state: 'skipped', reason: 'HEAD is not on a branch' });
       assert.equal(calls.fetches(), 0, 'no network call for an install that should use Update now');
       assert.equal(await behindOrigin.getRemoteCommitsAhead(), 0);
     });
@@ -235,7 +285,7 @@ describe('lib/behind-origin (#227)', () => {
       behindOrigin._internal.now = () => Date.parse('2026-01-01T00:00:00Z');
       stubGit({ fetch: null, revList: '2\n' });
       const result = await behindOrigin.refresh();
-      assert.deepEqual(result, { commitsAhead: 2, skipped: null, checkedAt: '2026-01-01T00:00:00.000Z' });
+      assert.deepEqual(result, { commitsAhead: 2, skipped: null, state: 'measured', reason: null, checkedAt: '2026-01-01T00:00:00.000Z' });
     });
 
     it('refreshIfStale serves the cache inside the TTL and re-measures past it', async () => {
@@ -272,7 +322,7 @@ describe('lib/behind-origin (#227)', () => {
 
       // First poll: nothing measured yet, honest about it, fetch started.
       const first = behindOrigin.snapshot({});
-      assert.deepEqual(first, { enabled: true, commitsAhead: 0, skipped: null, checkedAt: null });
+      assert.deepEqual(first, { enabled: true, commitsAhead: 0, skipped: null, checkedAt: null, state: 'pending', reason: 'not measured yet' });
       assert.equal(calls.fetches(), 1);
       // A second poll before it completes must not start a second fetch.
       behindOrigin.snapshot({});
@@ -280,7 +330,7 @@ describe('lib/behind-origin (#227)', () => {
 
       await behindOrigin.refresh(); // joins the in-flight measurement
       const second = behindOrigin.snapshot({});
-      assert.deepEqual(second, { enabled: true, commitsAhead: 5, skipped: null, checkedAt: '2026-01-01T00:00:00.000Z' });
+      assert.deepEqual(second, { enabled: true, commitsAhead: 5, skipped: null, checkedAt: '2026-01-01T00:00:00.000Z', state: 'measured', reason: null });
       assert.equal(calls.fetches(), 1, 'a fresh cache is served without touching the network');
 
       now += behindOrigin.CACHE_TTL_MS + 1;
@@ -303,7 +353,7 @@ describe('lib/behind-origin (#227)', () => {
     it('a disabled check reports enabled:false and never starts a fetch, even with an expired cache', async () => {
       const calls = stubGit({ fetch: null, revList: '7\n' });
       const snap = behindOrigin.snapshot({ behindOriginCheckEnabled: false });
-      assert.deepEqual(snap, { enabled: false, commitsAhead: 0, skipped: null, checkedAt: null });
+      assert.deepEqual(snap, { enabled: false, commitsAhead: 0, skipped: null, checkedAt: null, state: 'disabled', reason: 'check turned off' });
       assert.equal(calls.fetches(), 0);
     });
 
