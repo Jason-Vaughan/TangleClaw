@@ -3893,18 +3893,19 @@ function renderImportBanner(importable) {
     const conflictNote = p.conflicts.length > 0
       ? ` <span style="color:var(--error)">⚠ conflict on port${p.conflicts.length > 1 ? 's' : ''} ${p.conflicts.join(', ')}</span>`
       : '';
-    // #1383 — the two buttons below take DIFFERENT argument shapes, so they
+    // #1383 — the buttons below take DIFFERENT argument shapes, so they
     // cannot share one encoding. `importLeaseProjects` calls `JSON.parse` on
     // what it receives, so its argument must arrive as a JSON string and is
     // stringified twice. `ignoreLeaseProject` takes the RAW name and puts it
     // straight into the ignore set, so it is stringified ONCE — a second pass
     // handed it the name wrapped in literal quote characters, which never
     // matched the canonical name and left Ignore doing nothing at all, on
-    // every install.
+    // every install. `markLeaseOwnerExternal` takes the raw name too.
     const ignoreArg = esc(JSON.stringify(p.name));
     return `<div class="import-banner-item">
       <strong>${esc(p.name)}</strong> — ports: ${portList}${conflictNote}
       <button class="btn btn-primary btn-small" onclick="importLeaseProjects(${esc(JSON.stringify(JSON.stringify([p.name])))})">Import</button>
+      <button class="btn btn-small" onclick="markLeaseOwnerExternal(${ignoreArg})" title="Record that this owner is not a TangleClaw project, such as a brew services database. Its leases stay, and this banner stops listing it on every browser.">Not a project</button>
       <button class="btn btn-small" onclick="ignoreLeaseProject(${ignoreArg})">Ignore</button>
     </div>`;
   }).join('');
@@ -3941,31 +3942,37 @@ async function importLeaseProjects(namesJson) {
   const names = JSON.parse(namesJson);
   const result = await apiMutate('/api/projects/import', 'POST', { names });
   if (result && result.warnings && result.warnings.length) {
-    // Auto-ignore projects that couldn't be imported (no directory, etc.)
-    const failedNames = [];
-    for (const w of result.warnings) {
-      const match = w.match(/^"(.+?)" directory not found/);
-      if (match) failedNames.push(match[1]);
-    }
-    if (failedNames.length) {
-      for (const n of failedNames) ignoreLeaseProject(n);
-    }
-    // Show any other warnings
-    const otherWarnings = result.warnings.filter(w => !w.match(/directory not found/));
-    if (otherWarnings.length) {
-      // Was console-only, which meant a skipped import was invisible to anyone
-      // not holding devtools open. The toast is the surface the operator has.
-      const t = document.getElementById('toast');
-      if (t) {
-        t.textContent = `Import warning: ${otherWarnings.join('; ')}`;
-        t.className = 'toast toast-warn visible';
-        setTimeout(() => { t.classList.remove('visible'); }, 6000);
-      }
+    // Every warning is shown, including "directory not found". Those names
+    // used to be silently added to the ignore list, which hid the one warning
+    // that says the owner may not be a project at all — and hid the banner row
+    // whose "Not a project" button records that (#1381). Import no longer
+    // deletes their leases, so the row stays until the operator decides.
+    // Was console-only once, which meant a skipped import was invisible to
+    // anyone not holding devtools open. The toast is the surface the operator has.
+    const t = document.getElementById('toast');
+    if (t) {
+      t.textContent = `Import warning: ${result.warnings.join('; ')}`;
+      t.className = 'toast toast-warn visible';
+      setTimeout(() => { t.classList.remove('visible'); }, 6000);
     }
   }
   dismissImportBanner();
   await loadProjects();
   // Re-check in case some remain
+  checkPortImports();
+}
+
+/**
+ * Record that a lease owner is not a TangleClaw project (#1381), then refresh.
+ * The server keeps every lease under the name and marks it `external`, which
+ * the banner and the boot orphan sweep both honour.
+ * @param {string} name - Owner name as it appears on the leases
+ */
+async function markLeaseOwnerExternal(name) {
+  const result = await apiMutate('/api/ports/owner-kind', 'POST', { project: name, ownerKind: 'external' });
+  if (!result) return;
+  dismissImportBanner();
+  await loadPorts();
   checkPortImports();
 }
 

@@ -25,6 +25,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+// Every port reads as free to PortHub's listener probe, so connection creates
+// here do not depend on what this host is running (#814).
+require('./_probe-stub').probeAnswersFromFixture();
 
 const {
   approvePending, resolveDockerBin, findContainer, shellQuote, CODES, DOCKER_FALLBACK_PATHS
