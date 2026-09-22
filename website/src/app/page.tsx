@@ -14,7 +14,7 @@ export default function Home() {
     },
     {
       title: "Give every project a lead",
-      desc: "A persistent Project Master coordinates roadmaps, agents, governance and decision flow while specialized Builders do the implementation."
+      desc: "A persistent Project Master coordinates roadmaps, agents, governance and decision flow while specialized Builders handle implementation work."
     },
     {
       title: "Keep work alive",
@@ -34,7 +34,7 @@ export default function Home() {
     },
     {
       title: "Local by design",
-      desc: "TangleClaw runs on your hardware. Bring your existing AI accounts or local models. Built-in authentication, TLS integration, recovery controls and PortHub protect the operating environment."
+      desc: "TangleClaw runs on your hardware. Bring your existing AI accounts or local models. Built-in authentication, TLS integration, recovery controls, and PortHub help protect the operating environment."
     }
   ];
 
@@ -82,18 +82,24 @@ export default function Home() {
           </div>
 
           <div className="space-y-8 max-w-4xl flex flex-col items-center mx-auto">
-            <div className="flex flex-col items-center">
+            <div className="flex flex-col items-center space-y-6 w-full">
               <h1 className="text-5xl md:text-7xl font-semibold tracking-tight leading-tight text-transparent bg-clip-text bg-gradient-to-br from-white via-gray-200 to-zinc-500 pb-2 text-center w-full">
-                Run your AI development team.
+                Many Agents. One Claw.
               </h1>
-              <div className="mt-4"><VersionBadge /></div>
-            </div>
-            
-            <p className="text-xl md:text-2xl text-zinc-400 font-medium tracking-wide max-w-3xl mx-auto text-center w-full leading-relaxed">
-              An open-source, local-first AI-native SDLC orchestration platform.
-            </p>
+              
+              <div className="space-y-4 flex flex-col items-center w-full">
+                <p className="text-xl md:text-2xl text-zinc-300 font-medium tracking-wide max-w-3xl mx-auto text-center w-full leading-relaxed">
+                  TangleClaw turns separate AI coding terminals into a persistent, supervised software-development team — coordinated from your own machine.
+                </p>
+                <p className="text-lg md:text-xl text-zinc-500 font-medium tracking-wide max-w-2xl mx-auto text-center w-full leading-relaxed">
+                  An open-source, local-first AI-native SDLC orchestration platform.
+                </p>
+              </div>
 
-            <div className="flex flex-col sm:flex-row gap-4 pt-6">
+              <div className="pt-2"><VersionBadge /></div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-4 pt-4">
               <a href="https://github.com/Jason-Vaughan/TangleClaw" target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center px-8 py-4 text-base font-semibold text-black bg-white rounded-full hover:bg-gray-200 transition-colors shadow-lg hover:shadow-xl hover:scale-105 duration-200">
                 Install TangleClaw
               </a>
