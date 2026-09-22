@@ -1,6 +1,6 @@
 ---
 title: "Train B.2 Chunk 4: the wrap's version bump reads and writes pyproject.toml"
-status: BUILDING — Architect ruled A1–A6 2026-09-22 (message 93e48010)
+status: COMPLETE — built and reviewed; archive with the PR that closes #1444. The post-merge live check is run and reported by the merging session
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (message 72726091)
 issues: [1444]
 governed_by:
@@ -105,6 +105,8 @@ TangleBrain's real `pyproject.toml` is on this machine to check against. The one
   already reports skips. File one only if a separate, reproduced post-drawer visibility requirement
   remains, and then notify the PM.
 
+### Chunk 04: pyproject.toml as a version source
+
 ## Design
 
 `lib/project-version-files.js` gains `parsePyprojectVersion(text)`, which returns
@@ -199,4 +201,4 @@ ladders, in the same position, and the configured-file case.
 
 ## Status
 
-- [ ] Chunk 4 (#1444): pyproject.toml as a version source
+- [x] Chunk 4 (#1444): pyproject.toml as a version source
