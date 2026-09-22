@@ -520,13 +520,19 @@ describe('#931 the dirty-tree escape survived the move (#711 / #928 R-1)', () =>
     ok: false,
     code: 'dirty-tree',
     error: 'local changes present — all of them TangleClaw-written',
-    dirty: { discardable: ['.tangleclaw/', '.claude/settings.json'], realWork: [] }
+    dirty: { discardable: ['CLAUDE.md', '.claude/settings.json'], realWork: [] }
   };
   const DIRTY_MIXED = {
     ok: false,
     code: 'dirty-tree',
     error: 'local changes present — commit or stash before updating',
-    dirty: { discardable: ['.tangleclaw/'], realWork: ['lib/projects.js'] }
+    dirty: { discardable: ['.claude/settings.json'], realWork: ['lib/projects.js'] }
+  };
+  const DIRTY_PLAN = {
+    ok: false,
+    code: 'dirty-tree',
+    error: 'local changes present — commit or stash before updating',
+    dirty: { discardable: [], realWork: ['.tangleclaw/plans/x.md'] }
   };
 
   it('an all-TC 409 offers the discard confirm and re-applies with the opt-in', async () => {
@@ -538,7 +544,7 @@ describe('#931 the dirty-tree escape survived the move (#711 / #928 R-1)', () =>
     await ctx.beacon.apply(AVAILABLE);
 
     assert.equal(ctx.calls.confirms.length, 2, 'the update confirm, then the discard confirm');
-    assert.match(ctx.calls.confirms[1], /\.tangleclaw\//, 'the confirm NAMES the files');
+    assert.match(ctx.calls.confirms[1], /\.claude\/settings\.json/, 'the confirm NAMES the files');
     assert.deepEqual(ctx.calls.fetches[1].body, { discardDirty: true },
       'the re-apply carries the explicit opt-in and nothing else');
     // THE MUTATION THIS CATCHES: reading `applyResp.dirty` instead of
@@ -554,7 +560,18 @@ describe('#931 the dirty-tree escape survived the move (#711 / #928 R-1)', () =>
     assert.equal(ctx.calls.fetches.length, 1, 'and no second apply');
     const refusal = ctx.calls.alerts.join('\n');
     assert.match(refusal, /lib\/projects\.js/, 'the blocking file is named');
-    assert.match(refusal, /\.tangleclaw\//, 'and the TC files waiting behind it are shown');
+    assert.match(refusal, /\.claude\/settings\.json/, 'and the TC files waiting behind it are shown');
+    assert.doesNotMatch(refusal, /never discards them/, 'the authored-content note is for .tangleclaw/ only');
+  });
+
+  it('an authored plan in the way is named as authored, with no discard offer (#1537)', async () => {
+    const ctx = loadBeacon({ fetchImpl: () => jsonRes(409, DIRTY_PLAN) });
+    await ctx.beacon.apply(AVAILABLE);
+
+    assert.equal(ctx.calls.confirms.length, 1, 'no discard offer for authored content');
+    const refusal = ctx.calls.alerts.join('\n');
+    assert.match(refusal, /\.tangleclaw\/plans\/x\.md/);
+    assert.match(refusal, /TangleClaw never discards them/);
   });
 
   it('declining the discard applies nothing further and releases the latch', async () => {

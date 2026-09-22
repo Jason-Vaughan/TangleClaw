@@ -1,11 +1,11 @@
 ---
 title: "Train A Car A2: updater ownership and authored-data preservation"
-status: PLANNED — Architect decisions D1–D5 pending (held: Architect offline at plan-write, per the PM)
+status: IN PROGRESS — Architect ruled D1–D5 2026-09-22 (message a358b1ba): D1, D2 accepted; D3, D4, D5 modified. Chunk 01 built and Critic-clean
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (message 866e2043)
 issues: [1537, 1730]
 governed_by:
   - Architect roadmap, "Car A2 — updater ownership and authored-data preservation" (TangleClaw-Architect/.tangleclaw/plans/v5-v6-backlog-census-and-bridge-roadmap.md)
-  - project rule: ENGINE-AGNOSTIC BY CONSTRUCTION (not engaged: the updater moves TangleClaw's own checkout and reads no engine config beyond the existing CLAUDE.md carrier pin)
+  - project rule: ENGINE-AGNOSTIC BY CONSTRUCTION (engaged, narrowly: the updater moves only TangleClaw's own checkout, whose tracked engine files are Claude's `CLAUDE.md` and `.claude/settings.json`. Both are proof entries pinned to the engine layer's own declarations, so no engine is required: another engine's files are simply real work)
 scope: train-a-car-a2
 branch: feat/a2-chunk1-updater-ownership (Chunk 01); Chunk 02 gets its own branch and session
 partition: serial. Both chunks change the same guard in lib/update-applier.js and the same beacon dialog
@@ -60,7 +60,7 @@ overwrite authored state. When reconciliation is required, produce one actionabl
   `~/.tangleclaw/global-rules.md` is still detected and warned about, so no new file may use
   that name.
 
-## Architectural decisions (for the Architect; each has a recommendation)
+## Architectural decisions (as proposed; the rulings below bind)
 
 - **D1: Nothing under `.tangleclaw/` is discardable by the updater.** Drop the prefix from
   `_classifyDirty`. *Rejected:* an allow-list built from the wrap's `isStatePath` registry. That
@@ -70,9 +70,9 @@ overwrite authored state. When reconciliation is required, produce one actionabl
   unused code with the wrong meaning. Reusing it across that boundary is a bug.
 - **D2: `.claude/settings.json` becomes a per-delta proof, not a whole-path pass.** It is
   discardable only when `judgeHookSettings` says the sole change from HEAD is TangleClaw
-  removing its own hook entries. The proof is the one the wrap already uses, moved into or
-  shared with `managed-block.js`-style pure code so the update path doesn't load the wrap
-  pipeline. *Rejected:* leaving the file whole-path, which keeps the dialog's claim false for a
+  removing its own hook entries. The proof is the one the wrap already uses. The update path
+  loads it with a require at call time, as it already does for the engine layer, so a load
+  failure costs that one proof and never the self-update module. *Rejected:* leaving the file whole-path, which keeps the dialog's claim false for a
   hand edit. *Rejected:* making it real work outright, which would bring back the pre-#1022
   refusal on every project mid-migration.
 - **D3: Operator edits to `data/global-rules.md` are carried across an update by a three-way
@@ -107,6 +107,41 @@ overwrite authored state. When reconciliation is required, produce one actionabl
   `<TANGLECLAW_HOME>/backups/global-rules.<fromSha7>-<toTag>.md` and is written before the file
   is restored. If the backup cannot be written, the update refuses.
 
+### Architect rulings (2026-09-22, message a358b1ba) — binding
+
+- **D1: ACCEPTED.** Where a path lives does not prove who owns it for a discard. Every
+  `.tangleclaw/**` entry that porcelain shows is real work. Do not reuse the wrap's state
+  registry.
+- **D2: ACCEPTED.** `.claude/settings.json` is discardable only when its current delta passes
+  `judgeHookSettings`. Every load, parse or proof failure fails closed as real work.
+- **D3: MODIFIED.** The HEAD / working-copy / tag three-way carry is approved. The overlay,
+  managed-region and detect-only alternatives are rejected. Binding conditions:
+  (a) `data/global-rules.md` skips the generic dirty-tree refusal only to enter this carry path,
+  and it is never discardable.
+  (b) The merge is computed before anything changes, and a conflict changes neither the working
+  tree's bytes nor any index flag.
+  (c) The exact original bytes are preserved before anything changes.
+  (d) If any later restore, checkout, flag or write step fails, the updater compensates back to
+  the exact checkout and ref it started from, the original bytes and the original index flags
+  before it returns. If that compensation fails, it reports the failure and where the backup is
+  kept. It never claims a clean refusal or a success.
+- **D4: MODIFIED.** The code is `409 reconcile-required`, returned in the normal result
+  envelope: `{ok:false, code, error, fromSha, toRef:null, toSha:null, reconcile:[…]}`. Reasons
+  are `merge-conflict`, `skip-worktree`, `assume-unchanged`, `untracked-collision`, and
+  `checkout-collision` for a late overwrite that has been proven. Only a diagnosed overwrite or
+  collision maps to this code; unrelated git failures stay `500 git-error`. The code is returned
+  only after the starting state has been preserved or restored. There is no discard action and
+  no raw-git action text. The contract must reach both ADR 0010 consumers, the prompt, the UI,
+  the tests and every document that lists the codes.
+- **D5: MODIFIED.** One `OPERATOR_AUTHORED_TRACKED` constant is approved, and widening it needs
+  the Architect. The backup is local, private, atomic and immutable: mode `0600`, and never
+  written over an earlier backup with the same fromSha and tag name. An existing file is reused
+  only if its bytes are identical; otherwise the name gets a collision-safe digest or attempt
+  suffix. If the backup cannot be secured, the update refuses before anything changes.
+- Approving D1 and D2 settles the architecture only. Implementation and merge readiness still
+  belong to the Critic and the PR reviewer. Re-escalate only if an assumption changes or a
+  material conflict appears.
+
 Implementation details that fall outside these triggers are my own calls, recorded in each chunk.
 
 ## Chunks
@@ -118,9 +153,21 @@ Implementation details that fall outside these triggers are my own calls, record
   `.claude/settings.json` (hook-retirement proof, D2). **operator-authored** covers everything
   under `.tangleclaw/` and `OPERATOR_AUTHORED_TRACKED`. **Real work** is everything else. The
   JSDoc's "THE LINE" paragraph is rewritten to state the new line and why.
-- Move `judgeHookSettings` and its helpers to a shared pure module, or re-export them, so
-  `update-applier` requires no wrap pipeline. The `isTcHook` predicate comes from the same
-  place the wrap takes it.
+- One `PROOFS` table (path → proof) is the whole discardable set; the classifier and the proof
+  router both read it. [DECISION: Chunk 01 has two classes in code, proven and real work.
+  Operator-authored paths are real work by construction. The explicit
+  `OPERATOR_AUTHORED_TRACKED` constant arrives in Chunk 02, where it first changes behaviour.]
+  `HOOK_SETTINGS_FILE` is pinned to `engines.SHARED_HOOK_SETTINGS_PATHS` by a test.
+- Load `judgeHookSettings` from `lib/wrap-steps/_tc-owned-paths.js` and
+  `isTangleClawHookEntry` from `lib/engines.js` at call time, inside a fail-closed catch.
+  [DECISION: kept in place and not moved. That module requires nothing heavy at load time, and
+  a call-time require keeps the existing "update-applier loads without the engine layer" pin
+  green.]
+- The discard restores and never deletes. Because every proof covers a tracked file,
+  `_discardTcFiles` loses its `git clean` branch and throws if it is handed an untracked entry.
+- Existing tests that pinned the old line were moved to proven fixtures. Each assertion still
+  pins the same behaviour: the strict-boolean opt-in, the re-proven clean tree, and naming the
+  files. D1 retires `.tangleclaw/` as a discardable fixture.
 - Tests (`test/update-applier.test.js`): an untracked `.tangleclaw/plans/x.md` is `realWork`. A
   modified tracked plan is `realWork`. `.tangleclaw/priming/` and `.tangleclaw/memories/` are
   `realWork`. `settings.json` is discardable when only a TangleClaw hook was removed and is
@@ -141,7 +188,11 @@ this PR.
 ### Chunk 02: Operator-edited global rules survive an update, or block it cleanly (#1730)
 
 - A preflight after fetch and before checkout (D4), plus the three-way merge carry (D3) with
-  its backup (D5), in `lib/update-applier.js`. Git is always called in argv form, and every
+  its backup (D5), in `lib/update-applier.js`, built to the binding rulings above. The carry
+  compensates on any late failure (D3d), and the backup is written 0600, atomically and without
+  overwriting an earlier one (D5). Each binding condition gets a test: a conflict leaves the
+  bytes and flags untouched, and injected restore, checkout and write failures each compensate
+  back to the exact starting state. Git is always called in argv form, and every
   step fails closed.
 - `server.js`: `reconcile-required` → 409. The `api-contract.md` artifact documents the new code.
   Per ADR 0010, the code also has to reach `scripts/apply-update.js`, the injected update prompt
@@ -158,10 +209,14 @@ this PR.
 - Docs: remove or correct any published `skip-worktree` workaround, and add a CHANGELOG
   `### Fixed` entry with `Reported-by: GURULifeline` credit (#1730).
 
+- Carried in from the Chunk 01 review: the agent update prompt in `public/session.js` (~L1249) still
+  describes the discard set as whole files TangleClaw owns. Reword it in the same edit that adds the
+  new code.
+
 **Done when:** the suite is green, the cumulative Critic is clean, and the #1730 repro has been
 run against a scratch clone from the issue's steps.
 
 ## Status
 
-- [ ] Chunk 01 — updater discards only proven-TangleClaw deltas (#1537)
+- [x] Chunk 01 — updater discards only proven-TangleClaw deltas (#1537)
 - [ ] Chunk 02 — global-rules carry-or-block (#1730)

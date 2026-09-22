@@ -705,6 +705,28 @@ above should make the tree clean without deleting the generated file. If other
 files remain, inspect and commit or stash them rather than bypassing the
 updater's clean-tree guard.
 
+### Update Blocked by Local Changes
+
+**Update now** never moves a checkout that has uncommitted changes someone may
+have written. When the source checkout is dirty, the update stops and lists the
+files in the way.
+
+It offers to discard files for you in only one case: every file on the list is
+one TangleClaw can prove is its own change. Only two files can qualify, and
+each needs its proof:
+
+- `CLAUDE.md`, when your copy matches the committed one everywhere outside
+  TangleClaw's own marked section.
+- `.claude/settings.json`, when the whole change is TangleClaw removing hook
+  entries an older version left there.
+
+Discarding restores the committed copy. The updater never deletes a file.
+
+Everything else stays as real work, and you have to commit or stash it
+yourself. That includes everything under `.tangleclaw/`: plans, priming
+prompts and memories are content someone wrote. Commit them in the TangleClaw
+source checkout, then retry **Update now**.
+
 ### "Press to Reconnect" After an Interrupted Project Move
 
 Moving the TangleClaw source directory while the server is running can unload
