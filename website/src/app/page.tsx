@@ -77,8 +77,13 @@ export default function Home() {
         
         {/* Hero Section */}
         <div className="flex flex-col items-center text-center space-y-12 mb-32 w-full">
-          <div className="relative w-96 h-96 md:w-[480px] md:h-[480px] bg-zinc-900 rounded-[3rem] md:rounded-[4rem] border border-white/10 flex items-center justify-center overflow-hidden shadow-2xl">
-            <Image src="/tangleclaw-logo-real.png" alt="TangleClaw Logo" width={480} height={480} className="object-contain p-8" priority />
+          <div className="relative w-96 h-96 md:w-[480px] md:h-[480px] bg-zinc-900 rounded-[3rem] md:rounded-[4rem] border border-white/10 flex flex-col items-center justify-center overflow-hidden shadow-2xl p-10 md:p-14">
+            <div className="relative w-full flex-1">
+              <Image src="/tangleclaw-logo-real.png" alt="TangleClaw Logo" fill className="object-contain" priority />
+            </div>
+            <div className="relative w-4/5 h-16 md:h-20 mt-6">
+              <Image src="/logo-text.png" alt="TangleClaw Wordmark" fill className="object-contain" priority />
+            </div>
           </div>
 
           <div className="space-y-10 max-w-5xl flex flex-col items-center mx-auto">
