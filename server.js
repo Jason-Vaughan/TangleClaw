@@ -280,6 +280,7 @@ const updateChecker = require('./lib/update-checker');
 const updateApplier = require('./lib/update-applier');
 const serverInfo = require('./lib/server-info');
 const behindOrigin = require('./lib/behind-origin');
+const checkoutState = require('./lib/checkout-state');
 const bindPolicy = require('./lib/bind-policy');
 const wrapRunRegistry = require('./lib/wrap-run-registry');
 const wrapHandback = require('./lib/wrap-handback');
@@ -1407,6 +1408,17 @@ route('GET', '/api/server-info', (_req, res) => {
   // the network — a stale cache starts one background fetch for the next poll.
   // `enabled: false` when the operator turned the check off in config.
   info.behindOrigin = behindOrigin.snapshot(cfg);
+  // #993: what the served checkout is actually on — branch, unpushed commits,
+  // uncommitted and untracked files. Cached; the route never runs git itself.
+  // The origin/main ref is only as fresh as behind-origin's last successful
+  // fetch, and the payload says which.
+  info.liveCheckout = checkoutState.withUpstreamObservation(
+    checkoutState.snapshot(serverInfo._internal.repoRoot), info.behindOrigin);
+  // #1678: whether a restart would load anything, for the commits the running
+  // process has not loaded. Only asked when disk is known or suspected ahead.
+  info.restartImpact = info.isStale === true
+    ? checkoutState.impactSnapshot(serverInfo._internal.repoRoot, info.startupSha, info.currentDiskSha)
+    : null;
   jsonResponse(res, 200, info);
 });
 

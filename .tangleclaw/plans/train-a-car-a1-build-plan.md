@@ -1,6 +1,6 @@
 ---
 title: "Train A Car A1: live checkout and coordinated freshness truth"
-status: PLANNED — Chunk 1 authorized by the PM; architectural items D1–D11 await the Architect's ruling (no PR until every item is ruled)
+status: IN PROGRESS — Chunk 1 authorized by the PM; the Architect ruled D1–D11 on 2026-09-22 (message 4b64f386): D6 and D11 modified, the rest approved
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (message 7206bde4)
 issues: [993, 1678]
 governed_by:
@@ -84,8 +84,9 @@ including a SHA the local clone doesn't have, returns `unknown`. `unknown` is sh
   files. It names each condition with its count and gives the check time. It is
   state-driven: no timers and no dismiss control. Hiding uses `hidden` (display none).
 - The stale banner adds the impact: "N commits on disk the server hasn't loaded, records-only:
-  no restart needed". For executable or mixed ranges it shows the restart button exactly as
-  today. For unknown it says "restart impact unknown" and keeps the button.
+  no restart needed", and hides its restart button (D6 ruling). For executable or mixed
+  ranges it shows the button exactly as today. For unknown it says "restart impact unknown"
+  and keeps the button.
 - The behind-origin banner stays quiet when the count is 0. When `state: 'unknown'` it shows
   one muted line inside the live-checkout banner: "origin/main not checked: <reason>". That
   replaces the silent 0.
@@ -176,9 +177,10 @@ Not authorized yet.
   dirty tracked changes, or untracked files. Ignored files never trigger it. *Rejected:*
   a dismiss control, because a dismissed banner hides a production fact.
 - **D6 (restart-impact wording).** A records-only range keeps the stale banner but
-  replaces the call to restart with "no restart needed", and the button stays available.
-  *Rejected:* hiding the banner entirely, because the operator should still see that disk
-  moved.
+  replaces the call to restart with "no restart needed". **Ruling: MODIFY.** The banner's
+  restart button is hidden for records-only and kept for executable, mixed and unknown.
+  The global restart control elsewhere is unaffected. *Rejected:* hiding the banner
+  entirely, because the operator should still see that disk moved.
 - **D7 (repository identity, Chunk 2).** Use the normalized origin URL. A project with no
   remote, like the Architect, is related only through an explicit relation. I recommend
   project group membership: a no-remote member of a group whose other members share
@@ -195,16 +197,23 @@ Not authorized yet.
 - **D10 (setting scope, Chunk 2).** `behindOriginCheckEnabled: false` (and the environment
   kill switch) also disables the `ls-remote` observations, and `upstream` then reads
   `disabled`. *Rejected:* adding a second network setting.
-- **D11 (access, Chunk 3).** `GET /api/checkouts` is read-only with the same auth as the
-  full-view `/api/projects`. Callers limited to the public projection get no rows.
+- **D11 (access, Chunk 3).** `GET /api/checkouts` is read-only. **Ruling: MODIFY.** It
+  reuses the existing caller resolver (`lib/shared-docs-access.js`), but full-view access
+  to your own row does not grant fleet visibility:
+  - The operator and the Master see every live checkout row.
+  - A bound project sees checkout-only, allowlisted fields for itself and for the members
+    of its explicit project groups.
+  - Unbound or invalid callers get no rows.
+  - No workspace paths, and no unrelated projects, are exposed. That keeps #1739 closed.
   *Rejected:* operator-only, because the PM and Builders must read it (that is the
-  acceptance gate).
+  acceptance gate). Also rejected: the full-view `/api/projects` auth, because it is
+  broader than the fleet view needs.
 
 ## Done when (Chunk 1)
 
 - The Chunk 1 tests pass, and the full suite is green.
 - `/prawduct:critic` reports no unresolved blocking findings.
-- The Architect has ruled on D1–D11 and any rulings are folded in.
+- The Architect has ruled on D1–D11 (done 2026-09-22), and the D6 modification is built.
 - The PR references #993 and #1678 without closing them (Chunk 3 closes both). It merges,
   the live checkout is pulled and restarted, `startupSha` matches, and live
   `/api/server-info` shows `liveCheckout.state: 'measured'`, `branch: 'main'`, and zeros.

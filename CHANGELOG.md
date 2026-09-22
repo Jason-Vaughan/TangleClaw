@@ -4,6 +4,15 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **The dashboard says what the live install's checkout is actually on** (#993, Train A Car A1 Chunk 1). TangleClaw's own clone is the running install, so a feature branch, unpushed commits, or uncommitted and untracked files there are being served. Until now nothing said so. A new banner above the projects grid names each condition with its count: a branch other than `main`, a detached HEAD that is not a release tag, commits not pushed, uncommitted changes to tracked files, and untracked files. It also says which `origin/main` commit it compared against, and whether this server fetched it or it is only the local ref. The banner has no action and no dismiss. It states what is served and clears itself when the condition is gone. `GET /api/server-info` carries the facts as `liveCheckout` (`lib/checkout-state.js`). They come from a lock-free `git status` that is cached for 30 seconds and never runs on the request, so the first poll after boot reads `pending`. Anything that could not be read is reported as unknown with its reason, never as a clean checkout.
+
+### Changed
+
+- **The stale-server banner says whether a restart would load anything** (#1678). `GET /api/server-info` now carries `restartImpact`, which classifies the commits the running server has not loaded as `records-only`, `executable`, `mixed` or `unknown`. Records are `docs/`, `test/`, `.tangleclaw/plans/`, `.prawduct/`, `.github/` and top-level `*.md`. Every other path counts as code, including any new directory, so an error in the list costs a needless restart rather than a missed one. A records-only range keeps the banner but says "no restart needed", and the button stays. A code range names the changed files. When the classification fails, the banner says so and keeps the restart advice.
+- **A failed behind-origin check now reads as unknown instead of "0 behind"** (#1678). `behindOrigin` gains `state` (`measured`, `unknown`, `skipped`, `pending` or `disabled`) and `reason`. `commitsAhead` keeps its meaning for older readers. When a fetch fails, whether because the machine is offline, the remote refuses, or git errors, the live-checkout banner now says "origin/main not checked (<reason>) — this checkout may be behind". Before, it said nothing, which read as up to date.
+
 ### Security
 
 - **One project's session can no longer change another project, and creating, attaching or importing projects is the operator's** (#1752). Deleting, archiving and unarchiving were already operator-only (#1746); the other project write routes answered any caller on loopback. `PATCH /api/projects/:name` let one project change another's engine, wrap steps, version file or silent-prime hooks. Every project write route now asks who is calling before it acts, through the same resolver the shared-docs routes use (`lib/shared-docs-access.js`):

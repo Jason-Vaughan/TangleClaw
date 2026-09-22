@@ -230,6 +230,9 @@ async function loadServerInfo() {
   // branches below because those `return` — and a checkout that is both
   // behind upstream and ahead of the running process must show both.
   renderBehindOriginBanner(data.behindOrigin);
+  // #993: what the served checkout is on. Before the stale branches too, for
+  // the same reason — a feature branch checked out here is itself a deploy.
+  renderLiveCheckoutBanner(data.liveCheckout, data.behindOrigin);
 
   // A new `startedAt` means a different process is answering. The update beacon
   // is derived from the old one and can now be advertising an update that has
@@ -778,6 +781,8 @@ function renderStaleServerBanner(info) {
   // to infer it from a version number that appears not to have changed.
   const runningVer = typeof info.runningVersion === 'string' ? info.runningVersion : null;
   const diskVer = typeof info.diskVersion === 'string' ? info.diskVersion : null;
+  // A downloaded release always needs its restart, whatever the SHA range says.
+  let offerRestart = true;
 
   if (runningVer && diskVer && runningVer !== diskVer) {
     textEl.innerHTML =
@@ -785,14 +790,174 @@ function renderStaleServerBanner(info) {
       `This server is still running v${esc(runningVer)}.${uptimeStr} ` +
       'The update is already on disk; restarting is the last step.';
   } else {
+    const impact = _restartImpactWording(info.restartImpact);
+    offerRestart = impact.offerRestart;
     textEl.innerHTML =
-      '⚠ <strong>TC server is out of date.</strong> ' +
+      `${impact.icon} <strong>${impact.lead}</strong> ` +
       `Running <code>${shortStartup}</code>; <code>${shortDisk}</code> on disk ` +
-      `(${aheadStr}).${uptimeStr} Restart TC to load the latest code.`;
+      `(${aheadStr}).${uptimeStr} ${impact.tail}`;
   }
   banner.classList.remove('hidden');
 
-  toggleStaleRestartBtn(info);
+  // A records-only range has nothing to load, so the banner does not offer a
+  // restart for it. The global restart control in settings is unaffected.
+  toggleStaleRestartBtn(offerRestart ? info : { ...info, restartMechanism: null });
+}
+
+/**
+ * Wording for the stale banner from `restartImpact` (#1678): whether the
+ * commits the server has not loaded change anything it runs. A doc-only range
+ * that reads as "restart now" teaches the operator to ignore the banner, which
+ * is how a genuinely stale server later goes unnoticed.
+ *
+ * Only `records-only` softens the message. `unknown` says so and keeps the
+ * restart advice — a classification that could not be made is never read as
+ * "nothing to load". A missing or `pending` value (an older server, or the
+ * first poll) keeps today's wording. Every string is escaped or fixed here,
+ * because the result goes into `innerHTML`.
+ *
+ * @param {{impact?: string, reason?: string|null, executablePaths?: string[], truncated?: boolean}|null|undefined} ri
+ * `offerRestart` is false only for `records-only`: the banner's restart button
+ * is hidden there, because nothing a restart would load has changed. Every
+ * other answer keeps it.
+ *
+ * @returns {{icon: string, lead: string, tail: string, offerRestart: boolean}}
+ */
+function _restartImpactWording(ri) {
+  const impact = ri && typeof ri.impact === 'string' ? ri.impact : null;
+  if (impact === 'records-only') {
+    return {
+      icon: 'ℹ',
+      lead: 'Only records changed on disk — no restart needed.',
+      tail: 'Docs, tests or plans moved; nothing this server loads is different.',
+      offerRestart: false
+    };
+  }
+  if (impact === 'executable' || impact === 'mixed') {
+    const paths = Array.isArray(ri.executablePaths) ? ri.executablePaths.filter((p) => typeof p === 'string') : [];
+    const shown = paths.slice(0, 3).map((p) => `<code>${esc(p)}</code>`).join(', ');
+    const more = (paths.length > 3 || ri.truncated) ? ' and more' : '';
+    return {
+      icon: '⚠',
+      lead: 'TC server is out of date.',
+      tail: `Restart TC to load the latest code${shown ? ` (changed: ${shown}${more})` : ''}.`,
+      offerRestart: true
+    };
+  }
+  if (impact === 'unknown') {
+    const why = typeof ri.reason === 'string' && ri.reason ? ` (${esc(ri.reason)})` : '';
+    return {
+      icon: '⚠',
+      lead: 'TC server is out of date.',
+      tail: `Whether a restart loads new code is unknown${why}. Restart TC to load the latest code.`,
+      offerRestart: true
+    };
+  }
+  return { icon: '⚠', lead: 'TC server is out of date.', tail: 'Restart TC to load the latest code.', offerRestart: true };
+}
+
+/**
+ * The facts about the live checkout that an operator must be told (#993):
+ * each is a reason the served tree is not exactly `main` as pushed. Counts are
+ * clamped to integers before they reach `innerHTML`; branch and SHA strings
+ * are escaped.
+ *
+ * @param {object} c - `liveCheckout` from `/api/server-info`.
+ * @returns {string[]} HTML fragments, one per condition; empty when none holds.
+ */
+function _liveCheckoutConditions(c) {
+  const n = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0) ? Math.floor(v) : 0;
+  const plural = (k, word) => `${k} ${word}${k === 1 ? '' : 's'}`;
+  const out = [];
+  if (c.detached === true && !c.tag) {
+    const sha = typeof c.headSha === 'string' ? c.headSha.slice(0, 7) : '?';
+    out.push(`HEAD is detached at <code>${esc(sha)}</code>, not a release tag`);
+  } else if (c.detached === false && typeof c.branch === 'string' && c.onDefaultBranch === false) {
+    out.push(`on branch <code>${esc(c.branch)}</code>, not <code>main</code>`);
+  }
+  const unpushed = n(c.unpushed && c.unpushed.count);
+  if (unpushed > 0) {
+    const against = c.unpushed && typeof c.unpushed.against === 'string' ? c.unpushed.against : 'origin';
+    out.push(`${plural(unpushed, 'commit')} not pushed to <code>${esc(against)}</code>`);
+  }
+  const dirty = n(c.dirtyTracked);
+  if (dirty > 0) out.push(`${plural(dirty, 'uncommitted change')} to tracked files`);
+  const untracked = n(c.untracked);
+  if (untracked > 0) out.push(plural(untracked, 'untracked file'));
+  return out;
+}
+
+/**
+ * What could not be established about the live checkout, as escaped HTML
+ * fragments. Shown so a failed probe reads as "unknown", never as a clean
+ * checkout (#1678): the git status itself failing, a fact that could not be
+ * read, or the origin/main check failing.
+ *
+ * @param {object} c - `liveCheckout`.
+ * @param {object|null|undefined} bo - `behindOrigin`.
+ * @returns {string[]}
+ */
+function _liveCheckoutUnknowns(c, bo) {
+  const out = [];
+  if (c.state === 'unknown') {
+    out.push(`git state unreadable${c.reason ? ` (${esc(c.reason)})` : ''}`);
+  } else if (Array.isArray(c.incomplete)) {
+    for (const item of c.incomplete.slice(0, 3)) {
+      if (typeof item === 'string' && item) out.push(esc(item));
+    }
+  }
+  if (bo && bo.state === 'unknown') {
+    out.push(`origin/main not checked${bo.reason ? ` (${esc(bo.reason)})` : ''} — this checkout may be behind`);
+  }
+  return out;
+}
+
+/**
+ * Show or hide the live-checkout banner (#993). TangleClaw's own clone is the
+ * running install, so a feature branch, unpushed commits, or uncommitted and
+ * untracked files there are being served — a production fact the operator,
+ * rarely at this machine, cannot otherwise see.
+ *
+ * Informational only: no action button and no dismiss, because hiding a fact
+ * about what is being served is the failure this exists to end; the banner
+ * clears itself when the next poll finds the condition gone. Warning tone
+ * (the base amber) when a condition holds; info tone when only unknowns are
+ * left to report. Hidden when the server predates the field, the first
+ * measurement is still `pending`, or the install has no git by design.
+ *
+ * @param {object|null|undefined} checkout - `liveCheckout` from `/api/server-info`.
+ * @param {object|null|undefined} behindOriginInfo - `behindOrigin` from the same poll.
+ * @returns {void}
+ */
+function renderLiveCheckoutBanner(checkout, behindOriginInfo) {
+  const banner = document.getElementById('liveCheckoutBanner');
+  const textEl = document.getElementById('liveCheckoutBannerText');
+  if (!banner || !textEl) return;
+  if (!checkout || typeof checkout !== 'object' || checkout.state === 'pending' || checkout.state === 'no-git') {
+    banner.classList.add('hidden');
+    return;
+  }
+  const conditions = checkout.state === 'measured' ? _liveCheckoutConditions(checkout) : [];
+  const unknowns = _liveCheckoutUnknowns(checkout, behindOriginInfo);
+  if (conditions.length === 0 && unknowns.length === 0) {
+    banner.classList.add('hidden');
+    return;
+  }
+  const up = checkout.upstream || {};
+  let observed = '';
+  if (typeof up.sha === 'string' && up.sha) {
+    const when = up.observation === 'fetched' && typeof up.observedAt === 'string'
+      ? `fetched ${esc(new Date(up.observedAt).toLocaleTimeString())}`
+      : 'local ref, not fetched by this server';
+    observed = ` origin/main is <code>${esc(up.sha.slice(0, 7))}</code> (${when}).`;
+  }
+  const lead = conditions.length > 0
+    ? `⚠ <strong>The live install is serving a checkout that is not main as pushed:</strong> ${conditions.join('; ')}.`
+    : 'ℹ <strong>The live install\'s checkout state is partly unknown.</strong>';
+  const tail = unknowns.length > 0 ? ` Unknown: ${unknowns.join('; ')}.` : '';
+  textEl.innerHTML = `${lead}${tail}${observed}`;
+  banner.classList.toggle('live-checkout-banner-unknown', conditions.length === 0);
+  banner.classList.remove('hidden');
 }
 
 /**
