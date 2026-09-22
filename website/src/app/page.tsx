@@ -90,7 +90,7 @@ export default function Home() {
             </div>
             
             <p className="text-xl md:text-2xl text-zinc-400 font-medium tracking-wide max-w-3xl mx-auto text-center w-full leading-relaxed">
-              TangleClaw turns separate AI coding terminals into a persistent, supervised software-development team — coordinated from your own machine.
+              An open-source, local-first AI-native SDLC orchestration platform.
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4 pt-6">
