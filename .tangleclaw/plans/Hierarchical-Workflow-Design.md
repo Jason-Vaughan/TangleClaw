@@ -36,3 +36,8 @@ When spinning up a new Builder session, the operator uses the following prompt t
 > - **Project Manager:** If you have questions, ask the PM for clarification. Make your best-effort guess on fixes first, and keep the PM informed as each step completes or if you need to change the workload/chunks.
 > - **Architect:** You may reach out to the Architect for technical questions that are outside the scope of the PM.
 > - **Pushback:** If you feel the PM is hallucinating or violating project rules, you are explicitly authorized to push back on them or escalate to the Architect."
+
+## 8. Preflight Advisories & PM Delegation
+During the boot sequence, Builder agents perform preflight checks that often catch project drift (e.g., missing `.gitignore` entries, stale learning formats, or deprecated configs). 
+* Currently, Builders surface these advisories directly to the Operator UI as autocomplete suggestions (e.g., `_go ahead with the gitignore fix`). 
+* Under the fully automated hierarchical loop, the Builder must pipe these advisories directly to the Project Manager via the switchboard instead. The PM is responsible for assessing the advisories, authorizing the fix, and instructing the Builder to execute the maintenance steps before diving into the core Chunk payload. This prevents the Operator from being interrupted by trivial housekeeping tasks.
