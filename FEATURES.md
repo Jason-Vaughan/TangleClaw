@@ -319,6 +319,8 @@ fails any auto-stub section older than 14 days.
 - **Open-install page token** — `lib/open-install-token.js` (Train 21, #1587). An install whose login is explicitly disabled has no session and therefore no CSRF token, so a route that must not be reachable cross-site has nothing to check. Mints one anti-forgery token per dashboard page load and verifies it on the single route that needs it. It proves only that the caller fetched a token from THIS server in THIS process's lifetime — never a human, and never excluding a local process that minted its own — so a clear carrying one is recorded as `open-install-unverified` and never counted as an operator's. Held in memory on purpose: a token is worth one browser's page lifetime, and a restart costs a dashboard reload it performs anyway. Tests: `test/open-install-token.test.js`.
 
 - **Wrap prompt delivery receipt** (#1685) — `lib/wrap-delivery-receipt.js`. Asks the pane whether a wrap content prompt actually became a task, instead of trusting that `sendKeys` returned. `verifySubmission(tmuxName, engineId, nonce)` is **negative-only by design**: it answers `not-accepted` or `unknown` and has NO success verdict, because four review rounds each found a reachable path to a false `accepted` — a bounded capture of a rendered TUI cannot carry a positive claim. Success stays established where it always was, by the completion marker, capture file and settle watch. Engine-aware through `lib/medusa-wake.js#ENGINE_WAKE_PROFILES` (claude, codex, antigravity); an engine declaring no wake vocabulary answers `unknown` and says so, rather than guessing. A `not-accepted` blocks the step rather than re-sending, since re-pasting over a composer on a misread would submit the same task twice. `#logReceipt` writes one line per send, so a HEALTHY wrap logs `delivery unconfirmed: <reason>` — it reads like a warning and is not one. Called from `lib/wrap-steps/ai-content.js`. Tests: `test/wrap-delivery-receipt.test.js`, `test/wrap-consecutive-step-delivery.test.js`.
+- **Shared-docs access resolver** (#1626) — `lib/shared-docs-access.js`. Decides who is asking before any shared-docs or groups route looks anything up. It answers `operator`, `project` (a live launch id whose recorded project agrees with the claim), unbound or invalid, and each route states what it needs: read, write within a group, or operator. Tests: `test/shared-docs-access.test.js`.
+- **Per-caller project view** (#1739) — `lib/project-view.js`. Decides how much of a project row each caller of the projects API sees. The operator and the verified Project Master get every row whole, a bound project gets its own row whole, and everyone else gets an allowlisted public projection, so a field added later stays hidden by default. Tests: `test/project-view.test.js`.
 
 ## Governance / Engines
 
@@ -392,6 +394,7 @@ fails any auto-stub section older than 14 days.
 - **ADR: phased launch** — decision record for serving a session's context as steps it pulls, acknowledges and attests (`tc start next` / `tc start ready`), instead of one pushed prime nothing confirms. It records what Train 21 built and what it descoped (#1579–#1590). `docs/adr/0017-phased-launch.md`.
 - **TangleClaw project-file locations** — the repo-relative paths of TangleClaw's own machine-state files inside a managed project, shared by their writers and the wrap's ownership check. `lib/tangleclaw-project-files.js`.
 - **Wrap config root** — where a wrap step reads and writes project config and wrap state when the session works on a worktree. `lib/wrap-steps/_config-root.js`.
+- **Runbook: stand up a multi-agent development fleet** — the operator's tier-2 procedure for provisioning a fleet that develops TangleClaw itself, including the live cutover of `com.tangleclaw.server` (the only step with its own rollback). `docs/runbooks/stand-up-a-new-agent-fleet.md`.
 
 ## CLI / Tooling
 
@@ -673,24 +676,7 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 
 - `test/wrap-consecutive-step-delivery.test.js` — #1685's consecutive-step contract: a first content step that completes via its marker, followed by a second whose prompt was dropped, rejected or never submitted. The PAIR is the subject — the incident was invisible until the second send, so a single-step fixture could not have caught it, and the file exists to keep that hop covered.
 - `test/wrap-delivery-receipt.test.js` — the receipt's verdict table: which pane states yield `not-accepted`, which yield `unknown`, and the reason each carries. Covers the claude profile as well as codex, whose pane shape differs, so the engine-agnostic claim is tested rather than assumed.
-
-## TODO (auto-stubbed 2026-09-21)
-
-- **TBD** — touched in this session: `lib/shared-docs-access.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/shared-docs-access.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-09-21)
-
-- **TBD** — touched in this session: `test/_shared-docs-callers.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/api-service-token.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/api-shareddocs-read-enforcement.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-09-21)
-
-- **TBD** — touched in this session: `docs/runbooks/stand-up-a-new-agent-fleet.md`. <!-- describe -->
-- **TBD** — touched in this session: `test/api-shareddocs-write-enforcement.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-09-21)
-
-- **TBD** — touched in this session: `lib/project-view.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/project-view.test.js`. <!-- describe -->
+- `test/_shared-docs-callers.js` — not a test file (the underscore keeps it out of the suite glob): request headers for each caller the shared-docs and groups routes distinguish, so a test says which caller it is playing.
+- `test/api-service-token.test.js` — AUTH-4's M2M service-token gate over a real HTTP request: gating on the PortHub and shared-docs surfaces, redaction of the raw token, auto-generation on enable, and re-opening on disable.
+- `test/api-shareddocs-read-enforcement.test.js` — #1626 read enforcement: shared-docs and groups reads refuse an unbound caller and scope a bound one to its own groups, with another project's items answering 404.
+- `test/api-shareddocs-write-enforcement.test.js` — #1626 write enforcement: a bound project may register, lock, unlock, notify and sync within its own groups; a missing or invalid binding is refused before any lookup, and the operator-only writes answer `403 OPERATOR_ONLY`.
