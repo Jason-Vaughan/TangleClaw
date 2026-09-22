@@ -220,6 +220,6 @@ Not authorized yet.
 
 ## Status
 
-- [ ] Chunk 01: the live install reports its own checkout truthfully
+- [x] Chunk 01: the live install reports its own checkout truthfully
 - [ ] Chunk 02: every related session shows the same upstream target
 - [ ] Chunk 03: one fleet view for the PM and the controller
