@@ -9,6 +9,7 @@ const os = require('node:os');
 const store = require('../lib/store');
 const projects = require('../lib/projects');
 const { createServer } = require('../server');
+const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
 
 describe('api-projects', () => {
   let server;
@@ -21,16 +22,17 @@ describe('api-projects', () => {
    * @param {string} method
    * @param {string} urlPath
    * @param {object} [body]
+   * @param {Record<string, string>} [headers] - Which caller the request plays
    * @returns {Promise<{ status: number, data: object }>}
    */
-  function request(method, urlPath, body) {
+  function request(method, urlPath, body, headers = {}) {
     return new Promise((resolve, reject) => {
       const options = {
         hostname: '127.0.0.1',
         port,
         path: urlPath,
         method,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json', ...headers }
       };
 
       const bodyStr = body ? JSON.stringify(body) : null;
@@ -81,6 +83,9 @@ describe('api-projects', () => {
       });
     });
   });
+
+  /** @returns {Record<string, string>} Headers that make a request the operator's dashboard */
+  const asOperator = () => operatorHeaders(server);
 
   after(async () => {
     await new Promise((resolve) => server.close(resolve));
@@ -133,8 +138,8 @@ describe('api-projects', () => {
       assert.ok(data.projects.some((p) => p.name === 'api-test-project'));
     });
 
-    it('returns enriched project data', async () => {
-      const { data } = await request('GET', '/api/projects');
+    it('returns enriched project data to the operator', async () => {
+      const { data } = await request('GET', '/api/projects', null, asOperator());
       const project = data.projects.find((p) => p.name === 'api-test-project');
       assert.ok(project);
       assert.ok(project.hasOwnProperty('engine'));
@@ -149,7 +154,7 @@ describe('api-projects', () => {
       // read, and a 200 with a well-formed array looks identical either way —
       // which is the entire defect. The field has to cross the boundary, not
       // just exist inside `listAllProjects`.
-      const { status, data } = await request('GET', '/api/projects');
+      const { status, data } = await request('GET', '/api/projects', null, asOperator());
 
       assert.equal(status, 200);
       assert.ok(data.scan, 'the response must carry the scan state');
@@ -166,8 +171,8 @@ describe('api-projects', () => {
   });
 
   describe('GET /api/projects/:name', () => {
-    it('returns project detail', async () => {
-      const { status, data } = await request('GET', '/api/projects/api-test-project');
+    it('returns project detail to the operator', async () => {
+      const { status, data } = await request('GET', '/api/projects/api-test-project', null, asOperator());
       assert.equal(status, 200);
       assert.equal(data.name, 'api-test-project');
       assert.ok(data.engine);
@@ -271,7 +276,7 @@ describe('api-projects', () => {
       assert.equal(status, 200);
       assert.equal(data.silentPrime, true);
 
-      const { data: fetched } = await request('GET', '/api/projects/api-test-project');
+      const { data: fetched } = await request('GET', '/api/projects/api-test-project', null, asOperator());
       assert.equal(fetched.silentPrime, true);
     });
 
@@ -316,7 +321,7 @@ describe('api-projects', () => {
       config.deletePassword = projects.hashPassword('deleteme');
       store.config.save(config);
 
-      const { status, data } = await request('DELETE', '/api/projects/api-test-project', {});
+      const { status, data } = await request('DELETE', '/api/projects/api-test-project', {}, asOperator());
       assert.equal(status, 403);
       assert.equal(data.code, 'FORBIDDEN');
     });
@@ -324,7 +329,7 @@ describe('api-projects', () => {
     it('rejects incorrect password', async () => {
       const { status } = await request('DELETE', '/api/projects/api-test-project', {
         password: 'wrong'
-      });
+      }, asOperator());
       assert.equal(status, 403);
     });
 
@@ -334,7 +339,7 @@ describe('api-projects', () => {
 
       const { status, data } = await request('DELETE', '/api/projects/to-api-delete', {
         password: 'deleteme'
-      });
+      }, asOperator());
       assert.equal(status, 200);
       assert.ok(data.ok);
       assert.equal(data.name, 'to-api-delete');
@@ -346,15 +351,145 @@ describe('api-projects', () => {
       config.deletePassword = null;
       store.config.save(config);
 
-      const { status } = await request('DELETE', '/api/projects/nonexistent', {});
+      const { status } = await request('DELETE', '/api/projects/nonexistent', {}, asOperator());
       assert.equal(status, 404);
     });
 
-    it('deletes without password when not configured', async () => {
+    it('deletes without password for the operator when none is configured', async () => {
       await request('POST', '/api/projects', { name: 'no-pass-delete' });
-      const { status, data } = await request('DELETE', '/api/projects/no-pass-delete', {});
+      const { status, data } = await request('DELETE', '/api/projects/no-pass-delete', {}, asOperator());
       assert.equal(status, 200);
       assert.ok(data.ok);
+    });
+  });
+
+  describe('each caller sees only the projects it owns (#1739)', () => {
+    // Fields that describe a project's workspace. None may reach a caller that
+    // does not own the project.
+    const WORKSPACE_FIELDS = ['path', 'groups', 'git', 'ports', 'sessionHealth', 'stranded', 'evalAudit', 'actions'];
+    let own;
+    let other;
+    let binding;
+
+    before(async () => {
+      await request('POST', '/api/projects', { name: 'view-own' });
+      await request('POST', '/api/projects', { name: 'view-other' });
+      own = store.projects.getByName('view-own');
+      other = store.projects.getByName('view-other');
+      binding = bindProject(own);
+    });
+
+    /**
+     * Assert a row is the public projection and carries no workspace field.
+     * @param {object} row - A project row from the API
+     */
+    function assertRestricted(row) {
+      assert.equal(row.restricted, true, `${row.name} should be the public projection`);
+      for (const field of WORKSPACE_FIELDS) {
+        assert.equal(field in row, false, `${row.name} must not carry ${field}`);
+      }
+      assert.ok(row.engine === null || Object.keys(row.engine).every((k) => k === 'id' || k === 'name'),
+        'the engine is named, not profiled');
+    }
+
+    it('an unbound caller gets every row as the public projection, and no projects directory', async () => {
+      const { status, data } = await request('GET', '/api/projects');
+      assert.equal(status, 200);
+      assert.ok(data.projects.length >= 2);
+      for (const row of data.projects) assertRestricted(row);
+      const names = data.projects.map((p) => p.name);
+      assert.ok(names.includes('view-own') && names.includes('view-other'), 'the roster itself stays readable');
+      assert.equal(typeof data.scan.complete, 'boolean');
+      assert.equal('dir' in data.scan, false);
+      assert.equal('hint' in data.scan, false);
+    });
+
+    it('a bound project sees its own row whole and every other row restricted', async () => {
+      const { status, data } = await request('GET', '/api/projects', null, binding.headers);
+      assert.equal(status, 200);
+      const mine = data.projects.find((p) => p.name === 'view-own');
+      assert.equal(mine.path, own.path);
+      assert.ok(Array.isArray(mine.groups));
+      assert.equal('restricted' in mine, false);
+      for (const row of data.projects.filter((p) => p.name !== 'view-own')) assertRestricted(row);
+      assert.equal('dir' in data.scan, false, 'the projects directory is not one project\'s');
+    });
+
+    it('a binding whose project claim disagrees with its launch is treated as unbound', async () => {
+      const headers = { ...binding.headers, 'x-tangleclaw-project-id': String(other.id) };
+      const { data } = await request('GET', '/api/projects', null, headers);
+      for (const row of data.projects) assertRestricted(row);
+    });
+
+    it('the operator sees every row whole', async () => {
+      const { data } = await request('GET', '/api/projects', null, asOperator());
+      const theirs = data.projects.find((p) => p.name === 'view-other');
+      assert.equal(theirs.path, other.path);
+      assert.equal('restricted' in theirs, false);
+      assert.ok(data.scan.dir);
+    });
+
+    it('GET /api/projects/:name is shaped the same way', async () => {
+      const unbound = await request('GET', '/api/projects/view-other');
+      assert.equal(unbound.status, 200);
+      assertRestricted(unbound.data);
+
+      const foreign = await request('GET', '/api/projects/view-other', null, binding.headers);
+      assertRestricted(foreign.data);
+
+      const mine = await request('GET', '/api/projects/view-own', null, binding.headers);
+      assert.equal(mine.data.path, own.path);
+    });
+  });
+
+  describe('deleting, archiving and unarchiving are the operator\'s (#1746)', () => {
+    let binding;
+
+    before(async () => {
+      const config = store.config.load();
+      config.deletePassword = null;
+      store.config.save(config);
+      await request('POST', '/api/projects', { name: 'op-only' });
+      binding = bindProject(store.projects.getByName('op-only'));
+    });
+
+    for (const [label, headersFor] of [
+      ['an unbound caller', () => ({})],
+      ['the project itself', () => binding.headers]
+    ]) {
+      it(`refuses DELETE to ${label} when no password is set, and the project survives`, async () => {
+        const { status, data } = await request('DELETE', '/api/projects/op-only', { deleteFiles: true }, headersFor());
+        assert.equal(status, 403);
+        assert.equal(data.code, 'OPERATOR_ONLY');
+        assert.ok(store.projects.getByName('op-only'), 'the project must still exist');
+        assert.ok(fs.existsSync(path.join(projectsDir, 'op-only')), 'and so must its directory');
+      });
+
+      it(`refuses archive and unarchive to ${label}`, async () => {
+        for (const verb of ['archive', 'unarchive']) {
+          const { status, data } = await request('POST', `/api/projects/op-only/${verb}`, {}, headersFor());
+          assert.equal(status, 403, verb);
+          assert.equal(data.code, 'OPERATOR_ONLY', verb);
+        }
+        assert.equal(store.projects.getByName('op-only').archived, false);
+      });
+    }
+
+    it('refuses before any lookup, so a missing project reads the same as a present one', async () => {
+      const { status, data } = await request('DELETE', '/api/projects/no-such-project', {});
+      assert.equal(status, 403);
+      assert.equal(data.code, 'OPERATOR_ONLY');
+    });
+
+    it('lets the operator archive, unarchive and delete', async () => {
+      // A project with no live session: archiving refuses one that has a session.
+      await request('POST', '/api/projects', { name: 'op-lifecycle' });
+      assert.equal((await request('POST', '/api/projects/op-lifecycle/archive', {}, asOperator())).status, 200);
+      assert.equal(store.projects.list({ archived: true }).find((p) => p.name === 'op-lifecycle').archived, true);
+      assert.equal((await request('POST', '/api/projects/op-lifecycle/unarchive', {}, asOperator())).status, 200);
+      const { status } = await request('DELETE', '/api/projects/op-lifecycle', {}, asOperator());
+      assert.equal(status, 200);
+      assert.equal(store.projects.getByName('op-lifecycle'), null);
     });
   });
 

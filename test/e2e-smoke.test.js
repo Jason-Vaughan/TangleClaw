@@ -9,6 +9,7 @@ const os = require('node:os');
 
 const store = require('../lib/store');
 const { createServer } = require('../server');
+const { operatorHeaders } = require('./_shared-docs-callers');
 
 let server;
 let baseUrl;
@@ -28,7 +29,7 @@ function request(urlPath, opts = {}) {
       port: url.port,
       path: url.pathname + url.search,
       method: opts.method || 'GET',
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) }
     };
 
     const bodyStr = opts.body ? JSON.stringify(opts.body) : null;
@@ -103,13 +104,14 @@ describe('E2E Smoke Tests — Happy Path Lifecycle', () => {
     assert.equal(createRes.status, 201);
     assert.equal(createRes.data.name, 'e2e-lifecycle');
 
-    // Get
-    const getRes = await request('/api/projects/e2e-lifecycle');
+    // Get, list and delete as the dashboard: a project's whole row and its
+    // deletion are the operator's (#1739, #1746).
+    const getRes = await request('/api/projects/e2e-lifecycle', { headers: operatorHeaders(server) });
     assert.equal(getRes.status, 200);
     assert.equal(getRes.data.name, 'e2e-lifecycle');
 
     // List
-    const listRes = await request('/api/projects');
+    const listRes = await request('/api/projects', { headers: operatorHeaders(server) });
     assert.equal(listRes.status, 200);
     const found = listRes.data.projects.find(p => p.name === 'e2e-lifecycle');
     assert.ok(found, 'project should appear in list');
@@ -117,7 +119,8 @@ describe('E2E Smoke Tests — Happy Path Lifecycle', () => {
     // Delete
     const delRes = await request('/api/projects/e2e-lifecycle', {
       method: 'DELETE',
-      body: { deleteFiles: true }
+      body: { deleteFiles: true },
+      headers: operatorHeaders(server)
     });
     assert.equal(delRes.status, 200);
     assert.equal(delRes.data.ok, true);
@@ -158,6 +161,9 @@ describe('E2E Smoke Tests — Happy Path Lifecycle', () => {
     assert.equal(statusRes.data.project, 'e2e-status-test');
 
     // Cleanup
-    await request('/api/projects/e2e-status-test', { method: 'DELETE', body: { deleteFiles: true } });
+    const cleanup = await request('/api/projects/e2e-status-test', {
+      method: 'DELETE', body: { deleteFiles: true }, headers: operatorHeaders(server)
+    });
+    assert.equal(cleanup.status, 200);
   });
 });

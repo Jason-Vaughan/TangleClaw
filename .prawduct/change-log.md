@@ -33,6 +33,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   v4.5.0–v4.19.0).
 -->
 
+## 2026-09-22 — The projects API answers each caller only for what it owns; project delete/archive are operator-only; ingest refuses an unbound connection (#1739, #1746, #1261)
+
+<!-- prawduct: type=bugfix | scope=train-b2-chunk1 -->
+
+Train B.2 Chunk 1. New `lib/project-view.js` shapes each enriched project row using `sharedDocsAccess.resolveAccess`. The operator and the verified Master get the row itself, and a bound project gets its own row. Everyone else gets an allowlist projection (`id, name, registered, archived, tags, engine{id,name}, session{active,status,startedAt}, restricted`). The `scan` block drops `dir`/`hint` for those callers. `GET /api/projects` and `GET /api/projects/:name` both shape, and neither refuses. `server.js#projectOperatorCaller` gates `DELETE /api/projects/:name`, `archive` and `unarchive` with `403 OPERATOR_ONLY` before any lookup. A set delete password is still checked after it. `POST /api/audit/ingest` answers `409 CONNECTION_UNBOUND` and stores nothing when no project is bound to the authenticated connection. It no longer reads `body.project`, and archived projects stay bound. `server.js#projectsReader` logs a presented binding that is not honoured at `warn`, because the read is never refused. Existing tests that played an unbound caller now name the operator; their assertions are unchanged. The Master prime says to send its binding on `GET /api/projects`. Follow-ups filed: #1752 (the remaining project write routes), #1753 (a gate-down dashboard over plain http is not seen as the operator).
+
 
 ## 2026-09-21 — Shared-docs and groups writes are limited to the caller's own groups; registration and group management are operator-only (#1626)
 

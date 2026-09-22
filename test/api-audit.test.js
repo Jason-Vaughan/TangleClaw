@@ -60,6 +60,7 @@ describe('API /api/audit', () => {
   let tmpDir;
   let server;
   let auditSecret;
+  const unboundSecret = 'test-audit-secret-unbound';
 
   before(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-audit-'));
@@ -68,12 +69,26 @@ describe('API /api/audit', () => {
 
     // Create a connection with audit_secret
     auditSecret = 'test-audit-secret-12345';
-    store.openclawConnections.create({
+    const conn = store.openclawConnections.create({
       name: 'test-openclaw',
       host: '192.0.2.20',
       sshUser: 'user',
       sshKeyPath: '/tmp/key',
       auditSecret
+    });
+    // Ingest attributes an exchange only to the project bound to the
+    // authenticated connection, so the ingest tests run against a bound one.
+    const boundDir = path.join(tmpDir, 'audit-bound');
+    fs.mkdirSync(boundDir);
+    store.projects.create({ name: 'audit-bound', path: boundDir, engine: `openclaw:${conn.id}` });
+
+    // A second connection with a valid secret and no project bound to it.
+    store.openclawConnections.create({
+      name: 'unbound-openclaw',
+      host: '192.0.2.21',
+      sshUser: 'user',
+      sshKeyPath: '/tmp/key',
+      auditSecret: unboundSecret
     });
 
     server = createServer();
@@ -143,6 +158,60 @@ describe('API /api/audit', () => {
     assert.ok(data.tier1);
     assert.equal(data.tier1.score, 1.0);
     assert.deepEqual(data.tier1.flags, []);
+  });
+
+  it('POST /api/audit/ingest stores the exchange under the connection\'s bound project, not a payload name', async () => {
+    const { status, data } = await request(server, 'POST', '/api/audit/ingest', {
+      session_id: 'sess-attrib',
+      project: 'someone-else',
+      exchange: {
+        id: 'ex-attrib-1',
+        timestamp: '2026-03-24T10:00:00Z',
+        user_message: { content: 'hello' },
+        agent_response: { content: 'hi there' }
+      }
+    }, { Authorization: `Bearer ${auditSecret}` });
+    assert.equal(status, 201);
+    const stored = store.evalExchanges.get(data.exchangeId);
+    assert.equal(stored.project, 'audit-bound');
+  });
+
+  it('POST /api/audit/ingest refuses a connection with no bound project and stores nothing (#1261)', async () => {
+    const { status, data } = await request(server, 'POST', '/api/audit/ingest', {
+      session_id: 'sess-unbound',
+      project: 'audit-bound',
+      exchange: {
+        id: 'ex-unbound-1',
+        timestamp: '2026-03-24T10:00:00Z',
+        user_message: { content: 'hello' },
+        agent_response: { content: 'hi there' }
+      }
+    }, { Authorization: `Bearer ${unboundSecret}` });
+    assert.equal(status, 409);
+    assert.equal(data.code, 'CONNECTION_UNBOUND');
+    const rows = store.evalExchanges.list({ sessionId: 'sess-unbound' });
+    assert.equal(rows.length, 0, 'a refused exchange must not be stored');
+  });
+
+  it('POST /api/audit/ingest still attributes to a bound project after it is archived', async () => {
+    const conn = store.openclawConnections.create({
+      name: 'archived-openclaw', host: '192.0.2.22', sshUser: 'user', sshKeyPath: '/tmp/key',
+      auditSecret: 'test-audit-secret-archived'
+    });
+    const dir = path.join(tmpDir, 'audit-archived');
+    fs.mkdirSync(dir);
+    const project = store.projects.create({ name: 'audit-archived', path: dir, engine: `openclaw:${conn.id}` });
+    store.projects.archive(project.id);
+
+    const { status, data } = await request(server, 'POST', '/api/audit/ingest', {
+      session_id: 'sess-archived',
+      exchange: {
+        id: 'ex-archived-1', timestamp: '2026-03-24T10:00:00Z',
+        user_message: { content: 'hello' }, agent_response: { content: 'hi there' }
+      }
+    }, { Authorization: 'Bearer test-audit-secret-archived' });
+    assert.equal(status, 201);
+    assert.equal(store.evalExchanges.get(data.exchangeId).project, 'audit-archived');
   });
 
   it('POST /api/audit/ingest flags structural issues', async () => {

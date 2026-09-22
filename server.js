@@ -268,6 +268,7 @@ const launchSequence = require('./lib/launch-sequence');
 const ciStatus = require('./lib/ci-status');
 const master = require('./lib/master');
 const sharedDocsAccess = require('./lib/shared-docs-access');
+const projectView = require('./lib/project-view');
 const actions = require('./lib/actions');
 const porthub = require('./lib/porthub');
 const uploads = require('./lib/uploads');
@@ -5348,6 +5349,56 @@ route('POST', '/api/ports/heartbeat', (_req, res, _params, body) => {
   jsonResponse(res, 200, lease);
 });
 
+/**
+ * Refuse a projects-route caller that is not the operator, before any lookup,
+ * so a refused caller never learns whether the project exists. Deleting,
+ * archiving and unarchiving a project change what every session on the install
+ * can reach, and the project rules make them the operator's (#1746).
+ * @param {http.IncomingMessage} req - The request
+ * @param {http.ServerResponse} res - The response, written only on refusal
+ * @returns {boolean} true when the caller is the operator
+ */
+function projectOperatorCaller(req, res) {
+  const access = sharedDocsAccess.resolveAccess(req);
+  if (access.kind === sharedDocsAccess.KINDS.OPERATOR) return true;
+  log.warn('Project operator-only route refused', {
+    method: req.method,
+    path: reqUrl(req).pathname,
+    kind: access.kind,
+    reason: access.reason,
+    claimedProjectId: req.headers[sharedDocsAccess.PROJECT_HEADER] || null
+  });
+  errorResponse(res, 403,
+    'Only the operator can delete, archive or unarchive a project. Ask the operator to do it '
+      + 'from the TangleClaw dashboard; no project or Project Master binding can.',
+    'OPERATOR_ONLY');
+  return false;
+}
+
+/**
+ * Resolve who is reading the projects list or a project row. A read is never
+ * refused, so a binding that was presented and not honoured would otherwise
+ * pass unnoticed: the pane just sees public rows. Log it, as the shared-docs
+ * refusals do, so an operator can tell a stale binding from an unbound caller.
+ * A caller with no binding at all is the common roster read and is not logged.
+ * @param {http.IncomingMessage} req - The request
+ * @returns {{kind: string, projectId: (number|null), groupIds: string[], reason: (string|null)}}
+ */
+function projectsReader(req) {
+  const access = sharedDocsAccess.resolveAccess(req);
+  if (access.kind === sharedDocsAccess.KINDS.INVALID) {
+    log.warn('Projects read with a binding that was not honoured; answered with public rows', {
+      method: req.method,
+      path: reqUrl(req).pathname,
+      reason: access.reason,
+      cause: access.cause || null,
+      claimedProjectId: req.headers[sharedDocsAccess.PROJECT_HEADER] || null,
+      claimedRole: req.headers[sharedDocsAccess.ROLE_HEADER] || null
+    });
+  }
+  return access;
+}
+
 // GET /api/projects
 route('GET', '/api/projects', async (req, res) => {
   const urlObj = reqUrl(req);
@@ -5361,7 +5412,14 @@ route('GET', '/api/projects', async (req, res) => {
   // the whole list — a directory that would not answer degrades to the registered
   // projects, and that used to look identical to having no others (#885).
   const { projects: list, scan } = await projects.listAllProjects(options);
-  jsonResponse(res, 200, { projects: list, scan });
+  // Not refused for an unbound caller: agent panes read this list as a roster
+  // of names and engines. What they may not read is another project's
+  // workspace, so each row is shaped for the caller (#1739).
+  const access = projectsReader(req);
+  jsonResponse(res, 200, {
+    projects: list.map((project) => projectView.shapeProject(access, project)),
+    scan: projectView.shapeScan(access, scan)
+  });
 });
 
 // POST /api/projects/attach — Attach an existing filesystem directory as a project
@@ -5429,12 +5487,13 @@ route('POST', '/api/projects/repair-orphan-hooks', (_req, res, _params, body) =>
 });
 
 // GET /api/projects/:name
-route('GET', '/api/projects/:name', async (_req, res, params) => {
+route('GET', '/api/projects/:name', async (req, res, params) => {
   const project = await projects.getProject(params.name);
   if (!project) {
     return errorResponse(res, 404, `Project "${params.name}" not found`, 'NOT_FOUND');
   }
-  jsonResponse(res, 200, project);
+  // The same row the list carries, so the same shaping (#1739).
+  jsonResponse(res, 200, projectView.shapeProject(projectsReader(req), project));
 });
 
 /**
@@ -5698,7 +5757,11 @@ route('POST', '/api/projects/import', (_req, res, _params, body) => {
 });
 
 // DELETE /api/projects/:name
-route('DELETE', '/api/projects/:name', async (_req, res, params, body) => {
+route('DELETE', '/api/projects/:name', async (req, res, params, body) => {
+  // Operator identity first, whatever the password says: an install that never
+  // set one used to answer every caller here, `rm -rf` included (#1746). A set
+  // password stays a second key on top.
+  if (!projectOperatorCaller(req, res)) return;
   const passwordCheck = projects.checkDeletePassword(body ? body.password : undefined);
   if (!passwordCheck.allowed) {
     return errorResponse(res, 403, passwordCheck.error, 'FORBIDDEN');
@@ -5724,7 +5787,8 @@ route('DELETE', '/api/projects/:name', async (_req, res, params, body) => {
 });
 
 // POST /api/projects/:name/archive — Archive (deactivate) a project
-route('POST', '/api/projects/:name/archive', (_req, res, params) => {
+route('POST', '/api/projects/:name/archive', (req, res, params) => {
+  if (!projectOperatorCaller(req, res)) return;
   const result = projects.archiveProject(params.name);
   if (!result.success) {
     const firstError = result.errors[0];
@@ -5735,7 +5799,8 @@ route('POST', '/api/projects/:name/archive', (_req, res, params) => {
 });
 
 // POST /api/projects/:name/unarchive — Restore an archived project
-route('POST', '/api/projects/:name/unarchive', (_req, res, params) => {
+route('POST', '/api/projects/:name/unarchive', (req, res, params) => {
+  if (!projectOperatorCaller(req, res)) return;
   const result = projects.unarchiveProject(params.name);
   if (!result.success) {
     const firstError = result.errors[0];
@@ -9443,10 +9508,22 @@ route('POST', '/api/audit/ingest', (_req, res, _params, body) => {
     return errorResponse(res, 400, validation.error, 'BAD_REQUEST');
   }
 
-  // Resolve project from connection (find projects using this connection as engine)
-  const projects = store.projects.list();
+  // Resolve project from connection (find projects using this connection as engine).
+  // Archived projects are included: archiving does not unbind a connection, and a
+  // refusal telling the operator to bind an already-bound project would mislead.
+  const projects = store.projects.list({ archived: true });
   const project = projects.find(p => p.engineId === `openclaw:${conn.id}`);
-  const projectName = project ? project.name : (body.project || 'unknown');
+  // The exchange is attributed to the project bound to the authenticated
+  // connection, never to a name the payload asserts: a connection with no
+  // project could otherwise write audit rows under any project it chose (#1261).
+  if (!project) {
+    log.warn('Audit ingest refused: connection has no bound project', { connectionId: conn.id });
+    return errorResponse(res, 409,
+      `OpenClaw connection "${conn.name}" has no project bound to it, so its exchanges cannot be `
+        + 'attributed. Bind a project to this connection (set its engine to this connection) and retry.',
+      'CONNECTION_UNBOUND');
+  }
+  const projectName = project.name;
 
   // Transform and store the exchange
   const exchangeData = evalAudit.transformIngestPayload(body, projectName);
@@ -9458,9 +9535,7 @@ route('POST', '/api/audit/ingest', (_req, res, _params, body) => {
   const evalDims = evalAudit.getEvalDimensions();
 
   // Determine if this exchange should be scored (sampling)
-  const projectConfig = project
-    ? store.projectConfig.load(project.path)
-    : store.DEFAULT_PROJECT_CONFIG;
+  const projectConfig = store.projectConfig.load(project.path);
   const auditConfig = projectConfig.evalAuditMode || {};
   const samplingConfig = auditConfig.sampling || {};
 
