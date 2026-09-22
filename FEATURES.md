@@ -680,8 +680,5 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/api-service-token.test.js` — AUTH-4's M2M service-token gate over a real HTTP request: gating on the PortHub and shared-docs surfaces, redaction of the raw token, auto-generation on enable, and re-opening on disable.
 - `test/api-shareddocs-read-enforcement.test.js` — #1626 read enforcement: shared-docs and groups reads refuse an unbound caller and scope a bound one to its own groups, with another project's items answering 404.
 - `test/api-shareddocs-write-enforcement.test.js` — #1626 write enforcement: a bound project may register, lock, unlock, notify and sync within its own groups; a missing or invalid binding is refused before any lookup, and the operator-only writes answer `403 OPERATOR_ONLY`.
-
-## TODO (auto-stubbed 2026-09-21)
-
-- **TBD** — touched in this session: `test/_probe-stub.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/ui-openclaw.test.js`. <!-- describe -->
+- `test/_probe-stub.js` — not a test file (the underscore keeps it out of the suite glob): `probeAnswersFromFixture()` answers PortHub's single-port listener probe from a fixture set instead of this machine's `lsof`, so suites that create OpenClaw connections or lease fixture ports do not depend on what the host is running (#814).
+- `test/ui-openclaw.test.js` — the OpenClaw connection UI over a real HTTP server: connection create/list/update flows the dashboard drives, with PortHub's probe answered from fixtures (`test/_probe-stub.js`).
