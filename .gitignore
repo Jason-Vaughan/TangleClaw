@@ -213,3 +213,7 @@ test-results.xml
 
 # Prawduct session files
 .prawduct/.delegate-brief.md
+.prawduct/.test-report.xml
+.prawduct/.test-report.xml.scope.json
+.prawduct/.critic-review-dispatch.json
+.prawduct/.pr-review-dispatch.json

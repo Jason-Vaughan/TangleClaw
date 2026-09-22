@@ -33,6 +33,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   v4.5.0–v4.19.0).
 -->
 
+## 2026-09-22 — `.gitignore` names prawduct's session files explicitly (gitignore-contract advisory)
+
+<!-- prawduct: type=chore | scope=gitignore-contract-drift -->
+
+Ran `prawduct-hook update-gitignore`, then folded its duplicate `# Prawduct session files` header into the existing block. Adds `.prawduct/.test-report.xml`, `.prawduct/.test-report.xml.scope.json`, `.prawduct/.critic-review-dispatch.json` and `.prawduct/.pr-review-dispatch.json`, all already covered by `.prawduct/*`. `--dry-run` now reports no changes needed. The prawduct learnings migration named in the same advisory batch is not in this change: it requires committing the untracked `.prawduct/learnings*.md` to this public repo, which is held for a decision.
+
 ## 2026-09-22 — The projects API answers each caller only for what it owns; project delete/archive are operator-only; ingest refuses an unbound connection (#1739, #1746, #1261)
 
 <!-- prawduct: type=bugfix | scope=train-b2-chunk1 -->

@@ -35,6 +35,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- **`.gitignore` now names the four prawduct session files the plugin expects to see ignored** (`.test-report.xml`, its `.scope.json`, `.critic-review-dispatch.json`, `.pr-review-dispatch.json`). The existing `.prawduct/*` rule already hid them; the explicit lines clear prawduct's gitignore-contract drift advisory. Nothing that was tracked or ignored changes.
+
 - **Feature Index: carry one graduated entry from the 2026-09-21 session wrap onto main.** The wrap step shortened a `FEATURES.md` entry on a detached checkout, and the commit never reached a branch. It lands here unchanged.
 
 ## [5.29.0] - 2026-09-20
