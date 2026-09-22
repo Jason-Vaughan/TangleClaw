@@ -1,6 +1,6 @@
 ---
 title: "Train A Car A1: live checkout and coordinated freshness truth"
-status: IN PROGRESS — Chunk 1 shipped (#1788); Chunk 2 authorized by the PM 2026-09-22 (message bb06efbb). The Architect ruled D1–D11 on 2026-09-22 (message 4b64f386): D6 and D11 modified, the rest approved. D12–D15 (Chunk 2) sent for ruling
+status: IN PROGRESS — Chunk 1 shipped (#1788); Chunk 2 authorized by the PM 2026-09-22 (message bb06efbb). The Architect ruled D1–D11 on 2026-09-22 (message 4b64f386): D6 and D11 modified, the rest approved. the Architect ruled D12–D15 on 2026-09-22 (message 1e80db37): D14 modified, the rest approved
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (message 7206bde4)
 issues: [993, 1678]
 governed_by:
@@ -147,7 +147,7 @@ helper that runs inside the directory-scanner child, a different execution model
 - `normalizeRemoteUrl(url)` lowercases the host, makes scp, `ssh://` and `https://` forms equal, strips the
   userinfo (a token in the URL never reaches the identity or any payload), and strips `.git` and a trailing `/`.
   It drops a port only when it is the scheme's default. The path's case is kept, as D7 was ruled.
-- A local-path remote becomes `file:<resolved path>`. With no origin remote, `identity` is null and `reason` is
+- A local-path remote becomes `file:<sha256 of its canonical path>` (D14 as ruled). With no origin remote, `identity` is null and `reason` is
   `'no origin remote'`, which is a fact and not a failure.
 
 **One upstream observation per repository (D8, D10): `lib/upstream-observer.js` (new).**
@@ -225,7 +225,11 @@ checkout: { ...checkout-state snapshot (Chunk 1 fields, repository),
 **Docs.** `api-contract.md` (the `checkout` field on the project route), `docs/configuration-reference.md` (the
 behind-origin setting now also governs ls-remote), CHANGELOG `### Added`, and a FEATURES.md entry.
 
-**Chunk 2 decisions (sent to the Architect at the plan-written boundary; building proceeds on the recommendation).**
+**Chunk 2 decisions.** The Architect ruled on 2026-09-22 (message 1e80db37): D12, D13 and D15 APPROVE; **D14 MODIFY**, and
+the modification is built. A local remote's path is used only as private canonicalization input (resolved against the clone,
+then realpath, bounded) and becomes `file:<sha256>`, and no checkout, project or prime payload may expose a raw local path or remote URL.
+Failure reasons are scrubbed of paths and URLs (`git-probe.scrubLocations`). Userinfo stays stripped, default ports removed, host
+lowercased, and path case preserved.
 - **D12 (surface / access).** Feed the session chip by re-reading `GET /api/projects/:name` every 30s (the
   checkout cache TTL), not from `/api/sessions/:project/status`. The status route is unshaped, so adding checkout
   facts there would expose another project's branch and SHAs to any caller and reopen #1739. *Rejected:* adding

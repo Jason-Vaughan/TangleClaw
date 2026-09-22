@@ -334,6 +334,8 @@ async function loadProject() {
   const data = await api(`/api/projects/${encodeURIComponent(projectName)}`);
   if (!data) return;
   sessionState.project = data;
+  _lastCheckoutAt = Date.now();
+  renderCheckoutChip(data.checkout);
 
   document.getElementById('bannerName').textContent = data.name;
   document.getElementById('bannerName').title = data.name;
@@ -948,7 +950,7 @@ function togglePillDetail(pill) {
  * @param {Event} e - The document click.
  */
 function onBannerOutsideClick(e) {
-  if (!clickHitsSelector(e, '.group-pill, .status-pill, .banner-engine, .banner-user-wrap, .banner-more-wrap')) {
+  if (!clickHitsSelector(e, '.group-pill, .status-pill, .banner-engine, .banner-checkout, .banner-user-wrap, .banner-more-wrap')) {
     closeBannerPopovers();
   }
 }
@@ -959,7 +961,7 @@ function onBannerOutsideClick(e) {
  * stays a no-op; group pills bind their own popover inline.
  */
 function bindPillDetails() {
-  ['statusPill', 'bannerEngine'].forEach((id) => {
+  ['statusPill', 'bannerEngine', 'bannerCheckout'].forEach((id) => {
     const pill = document.getElementById(id);
     if (!pill) return;
     pill.addEventListener('click', () => togglePillDetail(pill));
@@ -982,6 +984,118 @@ function loadVersion() {
   } else {
     el.textContent = '';
   }
+}
+
+/** How often the checkout chip re-reads the project row: the server's checkout cache lifetime. */
+const CHECKOUT_REFRESH_MS = 30000;
+
+/** When the checkout was last read, so the status poll re-reads it on the cache's cadence. */
+let _lastCheckoutAt = 0;
+
+/**
+ * Words and tone for a project's checkout (#1678). Pure, so the rules that
+ * matter are testable: an unmeasured checkout, an unobserved upstream or an
+ * unread tree is `unknown` and never the quiet tone; anything off level-and-
+ * clean-on-main is `warn`.
+ *
+ * @param {object|null|undefined} c - `checkout` from `GET /api/projects/:name`.
+ * @returns {{text: string, tone: ('ok'|'warn'|'unknown'), detail: string}|null} null when there is nothing to show.
+ */
+function checkoutChipModel(c) {
+  if (!c || typeof c !== 'object') return null;
+  const short = (sha) => (sha ? String(sha).slice(0, 7) : '?');
+  const up = c.upstream || {};
+  const v = c.vsUpstream || {};
+  const target = `origin/main${up.sha ? ` @${short(up.sha)}` : ''}`;
+  if (c.state === 'no-git') {
+    if (up.via === 'group' && up.identity) {
+      return { text: 'related repo', tone: 'unknown',
+        detail: `Not a git checkout. Related repo ${up.identity} (via group ${up.groupName}) at ${target}; no checkout comparison.` };
+    }
+    return { text: 'no git', tone: 'unknown', detail: 'Not a git checkout.' };
+  }
+  if (c.state === 'pending') return { text: 'checkout: checking…', tone: 'unknown', detail: 'Not measured yet: unknown, not clean.' };
+  if (c.state !== 'measured') {
+    return { text: 'checkout unknown', tone: 'unknown', detail: `Unknown: ${c.reason || 'the probe could not answer'}. Not clean.` };
+  }
+  const where = c.detached ? `detached${c.tag ? ` ${c.tag}` : ''} @${short(c.headSha)}` : `${c.branch || '?'} @${short(c.headSha)}`;
+  let rel;
+  let relLong;
+  let tone = 'ok';
+  switch (v.relation) {
+    case 'equal': rel = 'level'; relLong = `level with ${target}`; break;
+    case 'ahead': rel = `${v.ahead} ahead`; relLong = `${v.ahead} ahead of ${target}`; tone = 'warn'; break;
+    case 'behind': rel = `${v.behind} behind`; relLong = `${v.behind} behind ${target}`; tone = 'warn'; break;
+    case 'diverged': rel = `${v.ahead}↑ ${v.behind}↓`; relLong = `${v.ahead} ahead / ${v.behind} behind ${target}`; tone = 'warn'; break;
+    case 'behind-unknown': rel = 'behind ?'; relLong = `behind ${target}, count unknown: ${v.reason}`; tone = 'warn'; break;
+    default:
+      rel = 'upstream ?';
+      relLong = up.state === 'disabled' ? 'upstream not observed: the behind-origin check is turned off'
+        : `vs ${target}: unknown (${v.reason || up.reason || 'not observed yet'})`;
+      tone = 'unknown';
+  }
+  let tree;
+  if (c.dirtyTracked === null || c.dirtyTracked === undefined || c.untracked === null || c.untracked === undefined) {
+    tree = 'working tree unknown';
+    tone = 'unknown';
+  } else if (c.dirtyTracked === 0 && c.untracked === 0) {
+    tree = 'clean';
+  } else {
+    tree = [c.dirtyTracked ? `${c.dirtyTracked} uncommitted` : null, c.untracked ? `${c.untracked} untracked` : null].filter(Boolean).join(', ');
+    if (tone === 'ok') tone = 'warn';
+  }
+  if (tone === 'ok' && (c.detached ? !c.tag : c.onDefaultBranch === false)) tone = 'warn';
+  const seen = up.sha && up.observedAt ? ` Observed ${new Date(up.observedAt).toLocaleTimeString()}${up.observedFrom ? ` via ${up.observedFrom}` : ''}.` : '';
+  let detail = `${where}, ${relLong}; ${tree}.${seen}`;
+  const rt = c.runtime;
+  if (rt) {
+    if (rt.isStale === true) {
+      const impact = rt.restartImpact && rt.restartImpact.impact;
+      const words = impact === 'records-only' ? 'records-only, no restart needed'
+        : impact === 'executable' || impact === 'mixed' ? 'code changed, a restart loads it' : 'restart impact unknown';
+      detail += ` Server running ${short(rt.startupSha)}, disk ${short(rt.currentDiskSha)}: ${words}.`;
+    } else if (rt.isStale === false) {
+      detail += ` Server running the on-disk commit.`;
+    } else {
+      detail += ' Server on-disk commit unknown: restart impact unknown.';
+    }
+  }
+  const dirty = tree === 'clean' ? '' : ` · ${c.dirtyTracked === null || c.dirtyTracked === undefined ? '?' : `${c.dirtyTracked}±`}${c.untracked ? ` ${c.untracked}?` : ''}`;
+  return { text: `${where} · ${rel}${dirty}`, tone, detail };
+}
+
+/**
+ * Show the checkout chip, or hide it when the row carries no checkout.
+ * @param {object|null|undefined} checkout
+ */
+function renderCheckoutChip(checkout) {
+  const chip = document.getElementById('bannerCheckout');
+  const text = document.getElementById('bannerCheckoutText');
+  if (!chip || !text) return;
+  const m = checkoutChipModel(checkout);
+  if (!m) {
+    chip.hidden = true;
+    return;
+  }
+  text.textContent = m.text;
+  chip.setAttribute('data-tone', m.tone);
+  chip.setAttribute('data-pill-detail', m.detail);
+  chip.setAttribute('aria-label', `Checkout: ${m.detail}`);
+  chip.hidden = false;
+}
+
+/**
+ * Re-read the project row for its checkout, on the cache's cadence. Called
+ * from the status poll, so it adds no timer of its own.
+ * @returns {Promise<void>}
+ */
+async function refreshCheckoutIfDue() {
+  if (Date.now() - _lastCheckoutAt < CHECKOUT_REFRESH_MS) return;
+  _lastCheckoutAt = Date.now();
+  const data = await api(`/api/projects/${encodeURIComponent(projectName)}`);
+  if (!data) return;
+  if (sessionState.project) sessionState.project.checkout = data.checkout;
+  renderCheckoutChip(data.checkout);
 }
 
 /**
@@ -2042,6 +2156,9 @@ async function pollStatus() {
   if (!data) return;
 
   sessionState.session = data;
+
+  // The checkout chip rides this poll's cadence rather than a timer of its own.
+  refreshCheckoutIfDue();
 
   // The engine's own last API error (#261) rides the same poll — null on the
   // healthy path, which is what hides the banner again.

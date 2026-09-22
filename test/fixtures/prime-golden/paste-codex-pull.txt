@@ -27,6 +27,8 @@ Your opening runs in this order:
 
 _Base branch CI: **unknown** — not probed before this launch. Not green: TangleClaw could not look, which is a different fact from "passing". Mention it to the operator in your opening — in the resume proposal where this launch has a sequence, otherwise your first message; they are the one who can fix the probe._
 
+_Checkout: not measured yet — unknown, not clean._
+
 Stranded wraps: none recorded for this project.
 
 ## Rules delivery
