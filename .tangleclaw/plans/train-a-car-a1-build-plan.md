@@ -1,13 +1,13 @@
 ---
 title: "Train A Car A1: live checkout and coordinated freshness truth"
-status: IN PROGRESS — Chunk 1 authorized by the PM; the Architect ruled D1–D11 on 2026-09-22 (message 4b64f386): D6 and D11 modified, the rest approved
+status: IN PROGRESS — Chunk 1 shipped (#1788); Chunk 2 authorized by the PM 2026-09-22 (message bb06efbb). The Architect ruled D1–D11 on 2026-09-22 (message 4b64f386): D6 and D11 modified, the rest approved. D12–D15 (Chunk 2) sent for ruling
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (message 7206bde4)
 issues: [993, 1678]
 governed_by:
   - Architect roadmap, "Car A1 — live checkout and coordinated freshness truth" (TangleClaw-Architect/.tangleclaw/plans/v5-v6-backlog-census-and-bridge-roadmap.md)
   - project rule: ENGINE-AGNOSTIC BY CONSTRUCTION (engaged in Chunk 2: the prime line is server-rendered text, no engine hook)
 scope: train-a-car-a1
-branch: feat/a1-chunk1-live-checkout-truth (Chunk 1)
+branch: feat/a1-chunk2-related-session-freshness
 partition: serial. Chunk 1 is one probe module, one route payload and two dashboard banners; the parts share the new module
 critic_mode: chunk (Chunks 1–2), cumulative at Chunk 3
 ---
@@ -122,27 +122,125 @@ and a FEATURES.md entry.
 
 ### Chunk 02: Every related session shows the same upstream target (#1678)
 
-Not authorized yet. The PM authorizes it after Chunk 1 merges. It is outlined here so the
-Architect can rule on its decisions now.
+Authorized by the PM on 2026-09-22 (message bb06efbb). Built on `feat/a1-chunk2-related-session-freshness`
+in the worktree `.claude/worktrees/a1-chunk2`, because the live checkout stays on `main`.
 
-- **Repository identity (D7).** A project's repository is its normalized `origin` URL
-  (lowercase host, scp and https forms made equal, `.git` and trailing `/` stripped). A
-  project with no remote relates to a repository only by an explicit relation (D7). It is
-  never grouped by name or directory.
-- **One upstream observation per repository (D8).** `git ls-remote origin refs/heads/main`
-  runs once per identity from one member clone, and its result is cached with
-  `observedAt`. Nothing is fetched into any session's clone. Ahead and behind counts
-  come from each clone's own objects when the observed SHA is present locally. Otherwise
-  the clone reads "behind, count unknown: upstream commit not fetched here".
-- **Surfaces.**
-  - `GET /api/projects/:name` gains `checkout` (the Chunk 1 payload plus
-    `repository: {identity, upstreamSha, observedAt}`).
-  - The session page gets a checkout chip beside `bannerVersion`, fed by the status poll.
-  - The prime's `state` step gets one line (D9) that uses the cached-read pattern from
-    `ci-status`.
-  - The TangleClaw project's own session also shows running versus disk and the restart impact.
-- The owner is the project and the session holding that checkout, taken from session
-  ownership.
+**Confidence check.**
+1. *Problem:* two sessions working one repository from different clones cannot see which commit each is on or
+   whether `origin/main` moved; only the live install reports its checkout (Chunk 1).
+2. *Success:* any project's session page and its prime name its branch, HEAD, dirty and untracked counts, and
+   ahead/behind against ONE upstream SHA observed once per repository, with the observation time. A no-remote
+   group member shows the group's repository as "related repo, no checkout comparison". The TangleClaw project's
+   session also shows running-versus-disk and the restart impact.
+3. *Out of scope:* the fleet view, `tc freshness` and the health-route agreement (Chunk 3), fetching into any clone,
+   any gate, auto-pull or restart.
+
+**R-11: one git runner (`lib/git-probe.js`, new).** It holds what `checkout-state.js` and `behind-origin.js` each
+kept a copy of: the test-runner spawn block, the resolve-never-reject `runGit(cwd, args, {timeoutMs, network})`
+(argv form, `--no-optional-locks` for local calls, `GIT_TERMINAL_PROMPT=0` and ssh batch mode for network calls),
+`isNoGit(err)` and a one-line failure reason with remote output redacted. Both modules keep their `_internal`
+seams and their exported shapes, so their tests stay as they are. `lib/git.js` stays separate: it is the synchronous
+helper that runs inside the directory-scanner child, a different execution model.
+
+**Repository identity (D7): `checkout-state.measure` gains `repository: {identity, reason}`.**
+- It comes from one extra local call, `git remote get-url origin`.
+- `normalizeRemoteUrl(url)` lowercases the host, makes scp, `ssh://` and `https://` forms equal, strips the
+  userinfo (a token in the URL never reaches the identity or any payload), and strips `.git` and a trailing `/`.
+  It drops a port only when it is the scheme's default. The path's case is kept, as D7 was ruled.
+- A local-path remote becomes `file:<resolved path>`. With no origin remote, `identity` is null and `reason` is
+  `'no origin remote'`, which is a fact and not a failure.
+
+**One upstream observation per repository (D8, D10): `lib/upstream-observer.js` (new).**
+- `observe(identity, memberDir)` runs `git ls-remote origin refs/heads/main` once for each identity, single-flight,
+  with a 20s timeout. Its result is cached for 5 minutes as `{state, sha, observedAt, reason, observedFrom}`.
+  `observedFrom` is the project name, never a path.
+- `snapshot(identity, memberDir, config)` answers from the cache at once and starts at most one background
+  observation. It reads `pending` before the first answer. It reads `disabled`, with no call made, when
+  `behindOrigin.isCheckEnabled(config)` is false (D10).
+- A failed call is `state: 'unknown'` with a reason. It never falls back to the last SHA as if it were fresh: the
+  last success stays in `lastKnown`, labeled with its own time.
+- Nothing is fetched and no ref is written in any clone.
+
+**Comparison against the observed SHA: `checkout-state.compareSnapshot(dir, headSha, upstreamSha)`.**
+- It is cached per (dir, head, upstream) the way `impactSnapshot` is.
+- When `cat-file -e <sha>^{commit}` finds the object locally, it runs `rev-list --left-right --count HEAD...<sha>`,
+  which gives `{ahead, behind, relation}`.
+- When the object is missing, it gives `{relation: 'behind-unknown', ahead: null, behind: null, reason:
+  'upstream commit not fetched here'}`, and that answer is retried on the next read. Any failure is `unknown`.
+
+**Composition: `lib/checkout-freshness.js` (new).** `projectCheckout(project, {config, now})` builds the payload
+synchronously from the three caches and starts their refreshes. `refreshForLaunch(project, config)` awaits them,
+bounded, for the launch route. The payload is:
+
+```
+checkout: { ...checkout-state snapshot (Chunk 1 fields, repository),
+  upstream: { identity, sha, observedAt, state, reason, via: 'origin'|'group'|null, groupName? },
+  vsUpstream: { ahead, behind, relation, reason },
+  owner: { project, sessionId|null },
+  runtime: { startupSha, currentDiskSha, isStale, restartImpact } | null }
+```
+
+- `runtime` is filled only for the project whose realpath is the running install's repository root.
+- `via: 'group'` is the D7 relation for a project with no remote: a member of a group whose other members share
+  exactly one identity. It carries that repository's upstream and `vsUpstream.relation: 'not-compared'` ("related
+  repo, no checkout comparison"). With zero identities or several, `upstream` is null with a reason.
+- `owner` comes from `store.sessions.getActive(project.id)`.
+
+**Surfaces.**
+- `GET /api/projects/:name` gains `checkout`. It is on the whole row only: the public projection is an allowlist,
+  so another project's caller never gets it (#1739 stays closed).
+- A session-page checkout chip sits beside `bannerVersion`: "main @abc1234 · equal", or the relation, counts and
+  dirty/untracked marks. Unknown is shown as unknown and never as a green state. There are no timers and no
+  actions. How it is fed is D12.
+- A prime state-step line (D9) follows the CI line. `checkoutFreshness.primeLines(readCached(...))` renders
+  "Checkout: <branch|detached @tag> @<sha7>, <relation vs origin/main @<sha7> (observed <age> ago)>; <N uncommitted,
+  M untracked>". For the TangleClaw project it adds "Server: running <sha7>, disk <sha7> — <impact wording>". It is
+  always one line, so an unknown or pending measurement is said, never omitted. The launch route awaits
+  `refreshForLaunch` beside `ciStatus.refresh`, bounded (D13).
+
+**Tests (written with the code).**
+- `test/git-probe.test.js`: argv, env and options for local versus network calls, the spawn block, and every error
+  resolving rather than rejecting.
+- `test/checkout-state.test.js` adds:
+  - identity from scp, https-with-token, `ssh://` with port 22, uppercase host and trailing `.git/`
+  - no remote gives null with a reason
+  - `compareSnapshot` in its present, missing-object and failure cases
+  - the missing-object case is retried and not cached
+- `test/upstream-observer.test.js`:
+  - one call per identity across N callers (single flight)
+  - TTL
+  - disabled by config and by the environment kill switch, with no call made
+  - a failure gives `unknown` while keeping `lastKnown`
+  - the ls-remote argv, and that the payload carries no path or URL
+- `test/checkout-freshness.test.js`:
+  - one project and two clones of one repository read the same `upstream.sha`
+  - the group relation with one identity, zero identities and two identities
+  - `runtime` only for the install's own repository
+  - owner from the active session
+  - prime-line wording for each relation, including unknown and pending
+- `projects` route test: `checkout` present for the owner and the operator, absent from a public projection.
+- A session-page render test for the chip's states.
+- A real-git temp-repo test: two clones and a bare origin, one clone behind, both reading the same observed SHA.
+
+**Docs.** `api-contract.md` (the `checkout` field on the project route), `docs/configuration-reference.md` (the
+behind-origin setting now also governs ls-remote), CHANGELOG `### Added`, and a FEATURES.md entry.
+
+**Chunk 2 decisions (sent to the Architect at the plan-written boundary; building proceeds on the recommendation).**
+- **D12 (surface / access).** Feed the session chip by re-reading `GET /api/projects/:name` every 30s (the
+  checkout cache TTL), not from `/api/sessions/:project/status`. The status route is unshaped, so adding checkout
+  facts there would expose another project's branch and SHAs to any caller and reopen #1739. *Rejected:* adding
+  `checkout` to the status payload, as the outline said, because it has no access shaping. Also rejected: a new
+  narrow `/checkout` route, because it adds a contract for one chip.
+- **D13 (launch path).** The launch route awaits the local checkout measurement and the upstream observation for
+  at most 5s together, the same bound `ci-status` uses. Past that, the prime says "upstream not observed yet"
+  rather than holding the launch. *Rejected:* an unbounded await, because `ls-remote` is a network call.
+- **D14 (identity canonicalization).** Strip the userinfo and default ports, keep the path's case, and map a
+  local-path remote to `file:<realpath>`. *Rejected:* lowercasing the path, because D7 as ruled lowercases only
+  the host. GitHub's case-insensitivity makes a case-only mismatch possible, and it would read as "different
+  repository", not as a false match.
+- **D15 (module ownership).** Consolidate the two git helpers into `lib/git-probe.js` (R-11), and leave
+  `lib/git.js` (synchronous, scanner-child) alone. *Rejected:* folding everything into `lib/git.js`, because that
+  mixes sync scanner code with async server probes.
 
 ### Chunk 03: One fleet view for the PM and the controller (#1678 close, #993 close)
 
@@ -217,6 +315,15 @@ Not authorized yet.
 - The PR references #993 and #1678 without closing them (Chunk 3 closes both). It merges,
   the live checkout is pulled and restarted, `startupSha` matches, and live
   `/api/server-info` shows `liveCheckout.state: 'measured'`, `branch: 'main'`, and zeros.
+
+## Done when (Chunk 2)
+
+- The Chunk 2 tests pass, and a full TAP run shows 0 fail.
+- `/prawduct:critic` reports no unresolved blocking findings.
+- The Architect has ruled on D12–D15, and any modification is built before the PR opens.
+- The PR references #1678 without closing it. It merges, the live checkout is pulled and restarted, and live
+  `GET /api/projects/TangleClaw-Builder1` shows `checkout.upstream.state: 'measured'` with the same `sha` another
+  clone of the repository reports.
 
 ## Status
 
