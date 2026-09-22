@@ -1,6 +1,6 @@
 ---
 title: "Gate the project write routes by caller (#1752), and let a stood-down gate recognise the dashboard over plain http (#1753)"
-status: ACTIVE — Architect rulings applied 2026-09-22; building to the rulings
+status: COMPLETE — built to the Architect rulings and reviewed; archive with the PR that closes #1752 and #1753
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (message 0f96e509)
 issues: [1752, 1753]
 governed_by:
@@ -188,4 +188,4 @@ others the suite names) now send `operatorHeaders(server)`; their assertions do 
 
 ## Status
 
-- [ ] Chunk 01 (#1752, #1753): project write routes answer only the callers they should
+- [x] Chunk 01 (#1752, #1753): project write routes answer only the callers they should
