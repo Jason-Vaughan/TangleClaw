@@ -43,6 +43,9 @@
 .prawduct/*
 !.prawduct/change-log.md
 !.prawduct/backlog.md
+# Shipped change-log history that `prawduct-hook archive-change-log` moves out of the
+# live log once it passes the size threshold. Tracked for the same reason as the log.
+!.prawduct/change-log-archive/
 
 # The migration audit trail — the decisions, the restructure plan, and the
 # before/after preview the owner approved. Scoped to these three files rather

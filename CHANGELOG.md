@@ -35,7 +35,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
-- **`.gitignore` now names the four prawduct session files the plugin expects to see ignored** (`.test-report.xml`, its `.scope.json`, `.critic-review-dispatch.json`, `.pr-review-dispatch.json`). The existing `.prawduct/*` rule already hid them; the explicit lines clear prawduct's gitignore-contract drift advisory. Nothing that was tracked or ignored changes.
+- **`.gitignore` now names the four prawduct session files the plugin expects to see ignored** (`.test-report.xml`, its `.scope.json`, `.critic-review-dispatch.json`, `.pr-review-dispatch.json`). The existing `.prawduct/*` rule already hid them; the explicit lines clear prawduct's gitignore-contract drift advisory. Nothing that was tracked or ignored changes. `.prawduct/change-log-archive/` is now tracked, and the prawduct change-log's shipped history (284 entries, 812 KB) moves there verbatim by month, leaving the live log at 19 KB. Six June–July entries still carrying the retired `status=merged` stamp moved with it, so the wrap's release-stamp safety net no longer flips them; the stamp is inert since prawduct 3.4.0.
 
 - **Feature Index: carry one graduated entry from the 2026-09-21 session wrap onto main.** The wrap step shortened a `FEATURES.md` entry on a detached checkout, and the commit never reached a branch. It lands here unchanged.
 
