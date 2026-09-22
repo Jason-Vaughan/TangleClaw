@@ -131,13 +131,20 @@ Detection: `readPyprojectVersion` is added as a rung after `package.json` in bot
 
 ## Critic round 1 (chunk review of `c86f875f`): 0 blocking, 3 warnings, 2 notes, all fixed
 
-- **Only a version-less `package.json` is passed over; the reader and writer now share one probe.** A
+- **Only a version-less `package.json` is passed over, and the reader and writer share one probe.** A
   Python repo's tooling-only `package.json` (no `version`) stopped the writer short of
-  `pyproject.toml` while the dashboard read past it. Per the Architect's A5 refinement (below), the
-  writer passes over a valid `package.json` with no `version` field and nothing else. Both detection
-  ladders now go through one function (`readProbedVersion`) that stops where the writer stops, so a
-  `version.json` with no usable version, or a malformed `package.json`, no longer lets the dashboard
-  show a lower file's version. A real-filesystem test runs the writer and both ladders on each shape.
+  `pyproject.toml` while the dashboard read past it. Per the A5 refinement below, the writer passes
+  over a valid `package.json` with no `version` field and nothing else. Both detection ladders now go
+  through one function (`readProbedVersion`), which reaches `pyproject.toml` only where the writer
+  would (bounded by the #58 ruling below). Real-filesystem tests run the writer and both ladders on
+  each shape.
+- **Multi-line string tracking is TOML-aware.** Delimiters inside single-line strings and comments
+  no longer count, so a stray `'''` in a comment cannot hide a table header (a test proves the old
+  counter took `[tool.x]`'s version).
+- **Checked on real files**: the parser on four real `pyproject.toml` files on this machine (one line
+  changes each), a scratch copy of TangleBrain's `pyproject.toml` + `CHANGELOG.md` through `run()`
+  (0.25.0 → 0.25.1, only line 43 changes, same byte count), and a real-filesystem test in the suite.
+- Requirements-confidence line added. #1444 confirmed OPEN before the PR.
 
 ### Architect ruling on the A5 refinement (2026-09-22, message 9577484c)
 
@@ -147,13 +154,18 @@ Detection: `readPyprojectVersion` is added as a rung after `package.json` in bot
   A configured `versionFilePath` stays sole-source with no fallback. Detection and writer source
   selection stay aligned, so the dashboard cannot claim `pyproject.toml` while the bump refuses on
   `version.json`.
-- **Multi-line string tracking is TOML-aware.** Delimiters inside single-line strings and comments
-  no longer count, so a stray `'''` in a comment cannot hide a table header (a test proves the old
-  counter took `[tool.x]`'s version).
-- **Checked on real files**: the parser on four real `pyproject.toml` files on this machine (one line
-  changes each), a scratch copy of TangleBrain's `pyproject.toml` + `CHANGELOG.md` through `run()`
-  (0.25.0 → 0.25.1, only line 43 changes, same byte count), and a real-filesystem test in the suite.
-- Requirements-confidence line added. #1444 confirmed OPEN before the PR.
+
+### Architect ruling on the #58 conflict (2026-09-22, message 56739b51)
+
+- **APPROVE, with a scoped legacy exception.** The full suite showed `test/projects.test.js` (#58)
+  pins the dashboard reading past an unusable `version.json` to `package.json`, while the writer
+  refuses that `version.json`. That split predates #1444, and #1444 does not reverse it.
+- Alignment is bounded to the new rung: detection reaches `pyproject.toml` only when the writer would
+  pass every higher probe, i.e. `version.json` absent, and `package.json` absent or
+  valid-and-versionless. An unusable higher probe keeps its legacy lower-rung display and never newly
+  exposes `pyproject.toml`.
+- Tests: #58's test is unchanged and passes. The new real-filesystem shape tests, plus a dedicated
+  test for the #58 shape, are in `test/version-bump-pyproject.test.js`.
 
 ## Tests (written with the code)
 
