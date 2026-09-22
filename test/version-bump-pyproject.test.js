@@ -112,6 +112,7 @@ describe('version-bump pyproject.toml support (#1444)', () => {
     const refusals = [
       ['no [project] table', '[tool.poetry]\nversion = "1.0.0"\n', /no \[project\] table/],
       ['an inline project table', 'project = { name = "x", version = "1.0.0" }\n', /inline table/],
+      ['a project key inside another table', '[tool.x]\nproject = { name = "x" }\n', /no \[project\] table/],
       ['a dynamic version', '[project]\nname = "x"\ndynamic = ["version"]\n', /dynamic/],
       ['a dynamic version in a multi-line array', '[project]\nname = "x"\ndynamic = [\n  "readme",\n  "version",\n]\n', /dynamic/],
       ['a multi-line version value', '[project]\nversion = """1.0.0"""\n', /single-line quoted string/],
