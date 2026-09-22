@@ -1,6 +1,6 @@
 ---
 title: "Train B.2 Chunk 3: a fresh install with a hand-seeded config stays on loopback"
-status: IN PROGRESS
+status: COMPLETE — built and reviewed; archive with the PR that closes #1484. The post-merge live check is run and reported by the merging session
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (message d95fcac1)
 issues: [1484]
 governed_by:
@@ -133,4 +133,4 @@ keeps the newest rows of each type, so it remains as evidence.
 
 ## Status
 
-- [ ] Chunk 03 (#1484): fresh installs stay on loopback
+- [x] Chunk 03 (#1484): fresh installs stay on loopback
