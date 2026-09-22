@@ -4810,8 +4810,14 @@ route('GET', '/api/tc/sessions', (_req, res) => {
 // the reason; a binding that was presented and not honoured is refused, so a
 // broken binding never reads as an empty fleet. Cached; never waits on git.
 route('GET', '/api/checkouts', (req, res) => {
-  const access = projectsReader(req);
+  const access = sharedDocsAccess.resolveAccess(req);
   if (access.kind === sharedDocsAccess.KINDS.INVALID) {
+    log.warn('Checkouts read with a binding that was not honoured; refused', {
+      reason: access.reason,
+      cause: access.cause || null,
+      claimedProjectId: req.headers[sharedDocsAccess.PROJECT_HEADER] || null,
+      claimedRole: req.headers[sharedDocsAccess.ROLE_HEADER] || null
+    });
     const refusal = sharedDocsAccess.projectRefusalFor(access, sharedDocsAccess.NEEDS.OWN_PROJECT);
     return errorResponse(res, refusal.status, refusal.message, refusal.code);
   }

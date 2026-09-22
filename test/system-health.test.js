@@ -51,10 +51,10 @@ function healthyLeak(overrides) {
   };
 }
 
-/** A clean server-info snapshot. */
 /** A restart-impact probe that classifies the range as code the server loads. */
 const EXECUTABLE = () => ({ impact: 'executable' });
 
+/** A clean server-info snapshot. */
 function syncedInfo(overrides) {
   return {
     startupSha: 'abcdef1234567',

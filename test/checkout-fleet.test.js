@@ -168,6 +168,14 @@ describe('checkout-fleet', () => {
     assert.match(view.reason, /no launch binding/);
   });
 
+  it('an invalid caller reaching the view directly sees no rows, with the binding reason', () => {
+    project('any-invalid');
+    const view = fleet.fleetView({ kind: KINDS.INVALID, projectId: null, groupIds: [], reason: 'unknown-launch' });
+    assert.equal(view.scope, 'none');
+    assert.deepEqual(view.rows, []);
+    assert.match(view.reason, /not honoured \(unknown-launch\)/);
+  });
+
   it('carries only allowlisted fields, and no path anywhere', () => {
     const a = project('allow');
     const [row] = fleet.fleetView(OPERATOR).rows;

@@ -274,18 +274,19 @@ Authorized by the PM on 2026-09-22 (message 608a9df0). Built on `feat/a1-chunk3-
 - `fleetView(access, {config})` → `{scope, reason, observedAt, rows}`. Rows come from `store.sessions.listLiveAll()`,
   one per project with a live session (D18), in project-name order, filtered by `visibleProjectIds`, each
   `{project: {id, name}, sessionId, checkout: shapeCheckout(access, projectCheckout(row))}`.
-- `shapeCheckout(access, block)` is an allowlist (D17): a field added to the block later stays out until someone
+- `shapeCheckout(block, {seesProject, seesGroup})` is an allowlist (D17): a field added to the block later stays out until someone
   decides it belongs. For a project caller, `upstream.observedFrom` and `upstream.groupName` are nulled unless they
   name a project or group that caller already sees, and `summary` is re-rendered from the shaped block, so the words
   never carry what the fields withhold. `runtime.restartImpact` is reduced to `{impact}`: the path list stays on
   `/api/server-info`.
 
-**`GET /api/checkouts` (server.js).** Resolves the caller with `sharedDocsAccess.resolveAccess` (logging an invalid
-binding the way `projectsReader` does) and answers 200 with `fleetView` (D16). Read-only, cached, never waits on git.
+**`GET /api/checkouts` (server.js).** Resolves the caller with `sharedDocsAccess.resolveAccess`. A binding that was
+presented and not honoured is logged and refused with `projectRefusalFor` (`403 PROJECT_BINDING_INVALID`, D16 as ruled);
+every other caller gets 200 with `fleetView`. Read-only, cached, never waits on git.
 
 **`tc freshness` (lib/tc-verbs.js).** GETs `/api/checkouts` and prints the scope line, then one block per row:
 `<project> (session <id>)` and its `summary` sentences. `scope: 'none'` prints the reason and exits 0: an honest
-answer, not a failure. `tc capabilities`: a `checkouts` entry in the project roster and the Master roster (D20).
+answer, not a failure. A refused binding is an API error, so `bin/tc` reports it and exits 2. `tc capabilities`: a `checkouts` entry in the project roster and the Master roster (D20).
 
 **R-12: `lib/system-health.js#detectStaleServer` agrees with `restartImpact` (D19).** It reads the same
 `checkoutState.impactSnapshot(repoRoot, startupSha, currentDiskSha)` the banner reads. `records-only` → `clear`, detail
@@ -319,7 +320,7 @@ D20 APPROVE as modified by D16. The modification is built: an unbound caller get
 a binding that was presented and not honoured gets the resolver's refusal (`403 PROJECT_BINDING_INVALID`, via
 `projectRefusalFor`), and `tc freshness` renders it and exits nonzero; it exits 0 for every answered scope. The Architect
 confirmed the build matches (message a1ec562f).
-- **D16 (API contract).** `GET /api/checkouts` answers 200 `{scope: 'fleet'|'related'|'none', reason, observedAt, rows}`
+- **D16 (API contract), as proposed (ruled MODIFY above).** `GET /api/checkouts` answers 200 `{scope: 'fleet'|'related'|'none', reason, observedAt, rows}`
   for every caller; unbound/invalid get `scope: 'none'` with the reason and no rows. *Rejected:* 403 for unbound
   callers, the shared-docs convention, because D11 ruled "no rows" and a refusal would make `tc freshness` report an
   API failure where the honest answer is "you are not bound, so you see nothing".
