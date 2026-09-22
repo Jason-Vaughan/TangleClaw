@@ -1,6 +1,6 @@
 ---
 title: "Train A Car A1: live checkout and coordinated freshness truth"
-status: IN PROGRESS — Chunk 1 shipped (#1788); Chunk 2 built and reviewed; Chunk 2 authorized by the PM 2026-09-22 (message bb06efbb). The Architect ruled D1–D11 on 2026-09-22 (message 4b64f386): D6 and D11 modified, the rest approved. the Architect ruled D12–D15 on 2026-09-22 (message 1e80db37): D14 modified, the rest approved
+status: IN PROGRESS — Chunk 1 shipped (#1788); Chunk 2 built and reviewed (authorized by the PM 2026-09-22, message bb06efbb). The Architect ruled D1–D11 (message 4b64f386; D6 and D11 modified) and D12–D15 (message 1e80db37; D14 modified), the rest approved
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (message 7206bde4)
 issues: [993, 1678]
 governed_by:
@@ -259,6 +259,13 @@ Not authorized yet.
   (D11).
 - `tc freshness` prints it, `tc capabilities` lists it, and docs cover it.
 - The cumulative Critic runs here.
+- Carried from the Chunk 2 review (accepted on rev-20260922T213404Z, to ride this chunk's commit):
+  - O-1: `lib/checkout-summary.js#describe` says "related repository not determined" for a no-git project whose group
+    relation is `unknown` (it already does for `pending`), with a test.
+  - O-3: move the local-ref reasons in `checkout.incomplete` into `localRef`.
+  - O-4: the `/api/server-info` route in server.js reads `serverInfo.getRepoRoot()`, not `_internal.repoRoot`.
+  - R-12 (from Chunk 1): `/api/system/health`'s `detectStaleServer` agrees with `restartImpact`. The health contract goes
+    to the Architect first.
 
 ## Architectural decisions (sent to the Architect at the plan-written boundary)
 
