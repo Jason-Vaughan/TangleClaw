@@ -1,6 +1,6 @@
 ---
 title: "Train A Car A3: wrap intent, artifact admission, and honest cancellation"
-status: IN PROGRESS — Chunks 01 (PR #1807), 02 (PR #1811) and 03 (PR #1813) shipped; Chunk 04 dispatched by the PM 2026-09-23 (message d378da6c), built on fix/a3-chunk4-publication-binding, H1–H6 sent to the Architect; P1 remains; Chunk 03's Architect rulings F1–F5 (message 5b0eaa0d) and G1–G2 (message cdce349b); Architect ruled C1–C2, D1–D5 (message 417454d7) and E1–E6 (message 9a774624); PM approved plan and order (message 8219ab12)
+status: IN PROGRESS — Chunks 01 (PR #1807), 02 (PR #1811) and 03 (PR #1813) shipped; Chunk 04 dispatched by the PM 2026-09-23 (message d378da6c), built on fix/a3-chunk4-publication-binding, Architect ruled H1–H6 (message ed93ebab), Chunk 04 Critic-clean; P1 remains; Chunk 03's Architect rulings F1–F5 (message 5b0eaa0d) and G1–G2 (message cdce349b); Architect ruled C1–C2, D1–D5 (message 417454d7) and E1–E6 (message 9a774624); PM approved plan and order (message 8219ab12)
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-23 (messages ecdbe884, 39998da1)
 issues: [1708, 1707, 1738, 1724, 1507, 1675]
 governed_by:
