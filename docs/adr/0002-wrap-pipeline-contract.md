@@ -597,6 +597,29 @@ or filename pattern — are not `untracked-new`. They keep the rules they had, a
 The reason's wording names no creator ("being new since this session launched does not show it
 belongs in the project"), because a co-resident session's file looks the same.
 
+## Amended 2026-09-23 — a finished wrap names its publication, and the handoff carries its resume (#1675)
+
+Architect ruling, message ed93ebab (H1, H2):
+
+- **H1 (MODIFY).** The finalization outcome is exposed on the stored result, `GET /wrap/status` and
+  `run-done`, and `ok` is unchanged. `handoffPublication` is `{state, publicationId, digest, kind,
+  reason, supersededId, supersededById}`, with `state` one of `published`, `not-published`,
+  `abandoned` or `not-staged`. `published` means current **at finalization**, not guaranteed current
+  at the next launch. Supersession is directional and structured: `supersededId` is only the
+  previously-current publication this attempt displaced, and `supersededById` is the newer
+  publication this attempt lost to. No client parses the winner's id out of `reason`. The field is
+  not on the 202, which is sent before anything is staged. The drawer warns when a finished wrap's
+  handoff did not publish. A failed or stranded wrap PR keeps its own banner and carries the
+  handoff in its detail.
+- **H2 (MODIFY).** `tc.handoff/1` gains an optional, additive `resume` block, `{currentState,
+  nextAction, freshness: {sha, branch, writtenAt, tier}}`, copied from `continuity-write`'s own
+  output. `null` records that the wrap wrote no resume, and absence means the producer predates the
+  block. When `resume.nextAction` and the legacy top-level `nextAction` coexist, they are derived
+  from one canonical value, and validation rejects disagreement: `buildHandoffDocument` refuses it,
+  and a reader treats foreign bytes that disagree as a malformed block. The compatibility duplicate
+  never carries two truths. A `continuity-write` that did not write the index adds `continuity-write:
+  index not written` to `missingEvidence`, so the handoff is `degraded`.
+
 ## Amendment (Train 21, #1585) — the wrap publishes a per-attempt handoff
 
 The pipeline gains a final step, `handoff-stage`, and the lifecycle gains one write.
