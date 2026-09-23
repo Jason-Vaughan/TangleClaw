@@ -1,6 +1,6 @@
 ---
 title: "Train A Car A3: wrap intent, artifact admission, and honest cancellation"
-status: IN PROGRESS — Chunk 01 built on branch fix/a3-chunk1-wrap-intent; Architect ruled C1–C2, D1–D5 (message 417454d7); PM approved plan and order (message 8219ab12)
+status: IN PROGRESS — Chunk 01 shipped (PR #1807); Chunk 02 planned on fix/a3-chunk2-engine-aware-gates, awaiting Architect rulings E1–E6; Architect ruled C1–C2, D1–D5 (message 417454d7); PM approved plan and order (message 8219ab12)
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-23 (messages ecdbe884, 39998da1)
 issues: [1708, 1707, 1738, 1724, 1507, 1675]
 governed_by:
@@ -9,7 +9,7 @@ governed_by:
   - project rule: ENGINE-AGNOSTIC BY CONSTRUCTION
   - project rule: Train chunks of at most 3–4 issues, one chunk per session
 scope: train-a-car-a3
-branch: fix/a3-chunk1-wrap-intent
+branch: fix/a3-chunk2-engine-aware-gates
 partition: serial. Chunks 01, 02 and 04 all change the wrap run's result shape and the drawer that renders it; running them in parallel would fight over lib/sessions.js, lib/wrap-pipeline.js and public/wrap-drawer.js
 critic_mode: chunk per chunk, cumulative at the last chunk
 ---
@@ -267,14 +267,156 @@ drawer said so before the first step. A live cancel before `commit` stops the ru
 untouched and the session running. A cancel after `commit` is refused with its reason. The suite is
 green, the Critic is clean, and the Architect has ruled D1–D5.
 
-## Chunks 02–04 (planned at their own session's start; decisions go to the Architect then)
+## Chunk 02: Wrap gates are engine-aware and never read as passed (#1738)
 
-- **02 (#1738).** Preflight consults the engine: `governanceState()` already says `not-applicable`
-  off Claude, but preflight never calls it. Add gate outcomes that are not "passed"
-  (NOT_APPLICABLE, CAPABILITY_UNAVAILABLE) with engine/capability evidence, and stop
-  `handoff-stage` counting an unmeasured skip as evidence produced. On an engine without the
-  methodology capability, no step writes Prawduct-owned state (the preflight hook and
-  `version-bump`'s `.prawduct/change-log.md` rewrite). A state-only checkpoint wrap still finishes.
+Dispatched by the PM 2026-09-23 (message 4bb03f64). Branch `fix/a3-chunk2-engine-aware-gates`,
+worktree `.claude/worktrees/a3-chunk2`.
+
+### Confidence check
+
+1. **Problem.** A wrap of a Prawduct-onboarded project from a Gemini/Codex/Aider session runs
+   `prawduct-hook stop` anyway. The hook's reflection and learnings gates are Claude-session
+   concepts, so they report "blocked" for reasons the session cannot act on. The probe also appends
+   to Prawduct's evidence store, and `version-bump` rewrites `.prawduct/change-log.md`, so a
+   non-Claude engine mutates Prawduct-owned state. Separately, a preflight that never measured
+   anything (hook missing, timeout, operator override) records `skipped`, and `handoff-stage`
+   counts `skipped` as evidence produced, so the handoff can say `complete` over gates nobody
+   checked. That is a false green.
+2. **Success.** On a non-Claude session of an onboarded project, preflight records
+   `capability-unavailable` naming the engine and the missing capability, and never spawns the hook.
+   No wrap step writes Prawduct-owned state. The wrap still finishes as a state-only checkpoint: it
+   commits, pushes, opens the PR and publishes a neutral handoff. It withholds merge and release
+   authority, and the drawer and the handoff say so. An ungoverned project's preflight reads
+   `not-applicable`, not `skipped`. An unmeasured preflight on a supported engine makes the handoff
+   `degraded`, never `complete`. The next Claude launch after a dormant attempt is told to run
+   `/prawduct:doctor`, never `/prawduct:onboard`, before any methodology work.
+3. **Out of scope.** Capability-matched admission of work to engines. Rotation (quiesce, lease
+   and epoch revoke, attested replacement). Moving canonical instructions into `AGENTS.md`. The
+   per-engine prompt-glyph work (Chunk 03). Resume rendering from the publication (Chunk 04). This
+   chunk records the disposition that Chunk 04's Resume will display. It does not re-plumb which
+   publication a launch selects. If no issue already covers admission and rotation, file one.
+
+### Facts established while planning (verified against code at 6d2e7d2)
+
+- The wrap has exactly one Prawduct-provider gate, `preflight`, the first step
+  (`lib/wrap-default-pipeline.js`). It runs `prawduct-hook stop` whenever `.prawduct/` exists,
+  whatever the engine. The step context carries `project`, `session`, `scope` and `options`, and no
+  engine field. The session row has `engineId` (the attempt's engine), and the handoff document
+  already records `engineId` (`lib/handoff-publication.js`).
+- `governanceState()` (`lib/governance-state.js`) returns `not-applicable` for **every**
+  non-Claude engine before it looks at the disk. It therefore cannot tell "onboarded, but this
+  engine cannot host Prawduct" from "never onboarded", and that is exactly the distinction the
+  ruling needs. It also reads the project row's engine, not the session's. A session launched with
+  an engine override would be misclassified.
+- Prawduct-owned writes during a wrap: the preflight probe (evidence-store transfer grant, and
+  possibly consolidation, per its docstring) and `version-bump`'s merged→shipped stamp on
+  `.prawduct/change-log.md` (staged into the commit). No other step writes under `.prawduct/`. A
+  model in the session could still edit `.prawduct/` files itself, and `commit` would stage them.
+- Merge and release authority in a wrap: `commit` arms `gh pr merge --auto` on the auto-branch
+  path; `pr-merge` (`apply-pr-resolutions`) enqueues auto-merge for resolved PRs; `version-bump`
+  cuts the version, and `release.yml` tags it once it reaches `main`.
+- `handoff-stage`'s `EVIDENCE_PRODUCED = ['done', 'skipped']` does not look at
+  `output.measured`, so a preflight that measured nothing counts as evidence produced.
+- Nothing at launch reads `missingEvidence` today. The launch reads the publication through
+  `lib/launch-preflight.js` for its verdict only.
+- No launch-time code runs Prawduct onboarding. The only Prawduct action (`invoke-critic`) requires
+  `governed-plugin`, which a non-Claude engine never reads as. So "unsupported engine interprets
+  missing hooks as de-onboarding" has no current trigger in TangleClaw. The chunk keeps it that way
+  and adds a test that pins it.
+
+### Architectural decisions (proposed; for the Architect at plan-written)
+
+- **E1: One capability resolver, keyed to the session's engine, resolved once per run.**
+  `lib/governance-state.js` gains `methodologyCapability(projectPath, { engineId })` →
+  `{ onboarded, available, disposition: 'available' | 'not-applicable' | 'capability-unavailable',
+  engineId, capability: 'prawduct-methodology', reason }`. `onboarded` is engine-independent: a
+  `.prawduct/` directory or the committed plugin reference. `available` is `engineId === 'claude'`.
+  The wrap resolves it once before the first step, from `session.engineId` (fallback: the project
+  row), and passes it in the step context. Every step reads that one value (project learning
+  2026-09-22). *Rejected:* reusing `governanceState()` as-is, because it cannot tell onboarded from
+  ungoverned off Claude. *Rejected:* a new engine-profile capability flag. Profiles are
+  operator-editable, so an operator could grant a capability the plugin does not have; the flag is
+  deferred until a second engine can actually host Prawduct.
+- **E2: Two new first-class step statuses, `not-applicable` and `capability-unavailable`.** Each
+  carries `output: { engineId, capability, reason }`. Neither halts the pipeline. The drawer
+  renders each in its own words, and the stream vocabulary and the wrap result carry them.
+  *Rejected:* `status: 'skipped'` plus a `disposition` field. Any consumer that does not know the
+  new field would read the row as passed, which is the defect itself. Unknown statuses fail
+  closed in every consumer.
+- **E3: Gate classification.** `preflight` is the only provider-specific *required* methodology
+  gate: onboarded and unavailable → `capability-unavailable` (the hook is never spawned);
+  not onboarded → `not-applicable`. Every other step is portable (safety and continuity) and runs
+  unchanged on every engine. `version-bump`'s `.prawduct/change-log.md` stamp is a
+  provider-specific *sub-action*, reported in the step output. A preflight that did not measure on
+  a supported engine (hook missing, timeout, contract breach, operator override) stays `skipped`
+  but counts as **missing evidence** in the handoff (`degraded`, named). An operator's "Wrap anyway"
+  override therefore now degrades the handoff. That is honest, but it is a visible change.
+- **E4: A dormant methodology withholds merge and release authority; the checkpoint still
+  completes.** When preflight is `capability-unavailable`:
+  - `version-bump` holds: no cut, no stamp. `[Unreleased]` carries to the next governed wrap.
+  - `commit` commits, pushes and opens the PR, but does not arm auto-merge.
+  - `apply-pr-resolutions` enqueues nothing and records `capability-unavailable`.
+  - `commit` leaves every `.prawduct/` path unstaged and names them in its output (fail visible).
+  - The run result carries `methodologyAuthority: { state: 'withheld', engineId, reason }`, and the
+    drawer shows it.
+  - The handoff is `degraded`, with `preflight: capability-unavailable` in `missingEvidence`.
+
+  *Rejected:* bump but withhold the merge. The bump would ride any later manual merge into a
+  tagged release that never had its methodology gates run. *Rejected:* refusing the wrap, which is
+  the forced-kill outcome #1738 exists to end.
+  **Rule conflict to rule on:** the project rule says "version math, changelog promotion, ledger
+  stamps and commits must produce identical results across engines". E4 makes version math and
+  ledger stamps differ by engine *for onboarded projects*. My reading is that the rule governs the
+  engine-neutral pipeline (ungoverned projects are identical across engines), and the 2026-09-21
+  ruling governs the Prawduct-required capability, which is newer and more specific. That reading
+  needs the Architect's ruling, not mine.
+- **E5: The handoff records the methodology disposition.** `tc.handoff/1` gains an optional,
+  additive `methodology: { disposition: 'measured' | 'unmeasured' | 'not-applicable' |
+  'capability-unavailable', engineId }`. It is omitted by producers that predate it, so absence
+  stays readable as "unknown". *Rejected:* making launch parse `missingEvidence` strings.
+- **E6: The return path is a launch directive, not an enforcement.** A launch on an engine where
+  the capability is available, whose selected publication records
+  `methodology.disposition: 'capability-unavailable'`, adds one block to the state step: Prawduct
+  state was dormant during a `<engine>` attempt; run `/prawduct:doctor` (never `/prawduct:onboard`)
+  before any methodology work; methodology authority is withheld until it passes. TangleClaw
+  cannot observe Doctor passing, so the block is instructional, and it says so. *Rejected:*
+  TangleClaw running Doctor itself. Doctor's repairs are previewed and owner-confirmed, so it is
+  interactive by design. *Rejected:* gating the launch until Doctor passes, which would block the
+  session that has to run it.
+
+### Implementation calls (not architectural)
+
+- The resolver is pure fs, like the rest of `governance-state.js` (the scanner child imports it).
+- `methodologyAuthority` is derived once from preflight's recorded row by the pipeline, not
+  re-derived per step.
+
+### Tests (written alongside)
+
+- Resolver: Claude + onboarded → available. Gemini + onboarded → capability-unavailable. Gemini +
+  ungoverned → not-applicable. The session engine wins over the project row.
+- Preflight: capability-unavailable never spawns the hook (the exec seam is not called), and the
+  evidence store is not touched.
+- A multi-hop pipeline run on a Gemini session of an onboarded repo (real temp git repo):
+  - `.prawduct/change-log.md` is byte-identical after the run;
+  - a `.prawduct/` edit made in the session is left unstaged and named;
+  - no version cut;
+  - no auto-merge arm call;
+  - the handoff is `degraded` with `methodology.disposition: 'capability-unavailable'`;
+  - the result is `methodologyAuthority.state: 'withheld'`.
+- Handoff: an unmeasured `skipped` preflight → degraded; `not-applicable` → still complete.
+- Launch: a Claude launch after a capability-unavailable publication renders the Doctor
+  directive, and a Claude launch after a measured one does not.
+- Drawer and stream vocabulary: the two new statuses and the withheld-authority banner.
+
+### Done when
+
+The #1738 repro (a wrap from a non-Claude session of an onboarded project) finishes as a
+state-only checkpoint. The drawer and handoff say the methodology was unavailable. Prawduct's
+files and evidence are untouched, and nothing merges or releases. A return to Claude is told to
+run Doctor. The suite is green, the Critic is clean, and the Architect has ruled E1–E6.
+
+## Chunks 03–04 (planned at their own session's start; decisions go to the Architect then)
+
 - **03 (#1724, #1507).** An untracked file first created this session becomes a foreign path
   (reason such as `untracked-new`) and uses the existing Include/Leave decision UI instead of
   being staged silently. The wrap PR body lists every non-routine file it proposes. Remove the
