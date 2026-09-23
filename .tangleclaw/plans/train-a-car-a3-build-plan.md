@@ -290,7 +290,7 @@ green, the Critic is clean, and the Architect has ruled D1–D5.
 
 ## Status
 
-- [ ] Chunk 01: Wrap intent is explicit and cancellation is honest (#1708, #1707)
+- [x] Chunk 01: Wrap intent is explicit and cancellation is honest (#1708, #1707): Critic rev-20260923T023239Z resolved by rev-20260923T025704Z, 0 blocking
 - [ ] Chunk 02: Wrap gates are engine-aware and never read as passed (#1738)
 - [ ] Chunk 03: Admission is a positive decision; drafts fail visibly (#1724, #1507)
 - [ ] Chunk 04: A successful wrap binds to the publication the next launch reads (#1675)
