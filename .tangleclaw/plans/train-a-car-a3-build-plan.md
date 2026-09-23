@@ -1,6 +1,6 @@
 ---
 title: "Train A Car A3: wrap intent, artifact admission, and honest cancellation"
-status: IN PROGRESS — Chunks 01 (PR #1807) and 02 (PR #1811) shipped; Chunk 03 dispatched by the PM 2026-09-23 (message 7845b64b), building on fix/a3-chunk3-admission-drafts, F1–F5 sent to the Architect; Chunk 04 and P1 remain; Architect ruled C1–C2, D1–D5 (message 417454d7) and E1–E6 (message 9a774624); PM approved plan and order (message 8219ab12)
+status: IN PROGRESS — Chunks 01 (PR #1807) and 02 (PR #1811) shipped; Chunk 03 dispatched by the PM 2026-09-23 (message 7845b64b), building on fix/a3-chunk3-admission-drafts, Architect ruled F1–F5 APPROVE (message 5b0eaa0d); Chunk 04 and P1 remain; Architect ruled C1–C2, D1–D5 (message 417454d7) and E1–E6 (message 9a774624); PM approved plan and order (message 8219ab12)
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-23 (messages ecdbe884, 39998da1)
 issues: [1708, 1707, 1738, 1724, 1507, 1675]
 governed_by:
@@ -585,9 +585,46 @@ worktree `.claude/worktrees/a3-chunk3`.
   `{ engineId, reason }`. Nothing reads the old key programmatically (verified by grep), but it is
   a log contract that operators search, so it is listed here.
 
+### Architect rulings (2026-09-23, message 5b0eaa0d) — binding
+
+The PM approved the plan (message 892e8d70). The architectural gate is cleared for the presented
+scope only; implementation, tests, Critic, review, CI and merge readiness are not certified.
+
+- **F1: APPROVE.** A file new to the repository is not admitted by recency or by `git add`.
+  It needs an explicit Include or Leave, including one with index status `A`.
+- **F2: APPROVE.** One staged source names the session files and the operator-included files, in
+  both the commit body and the PR body.
+- **F3: APPROVE.** Pass `engineId`, use one profile-based composer locator, and report an
+  unavailable or unreadable capture honestly. An engine without a profile may take the
+  not-captured path, but must never claim draft evidence.
+- **F4: APPROVE, superseding the roadmap's one-line summary for this chunk.** Clear the prompt
+  even when capture is unavailable, because preserving a draft cannot take precedence over
+  preventing concatenated operator and injected text from executing. Log the non-capture
+  explicitly. *Consequence:* on Aider and OpenClaw, and on any pane whose composer cannot be
+  located, a draft typed at the moment of an injection is destroyed with only a "not captured"
+  record.
+- **F5: APPROVE.** `draftBeforeClear` is used only for observed draft content. Non-capture is
+  recorded separately, with the engine and the reason.
+
 ### Implementation calls (not architectural)
 
 - Delete `tag_issues.sh` and `tag_issues_2.sh` and their two `FEATURES.md` entries.
+- A draft that wraps onto a second row leaves the cursor on a row without the prompt glyph,
+  which `_composerEmpty` cannot judge. It is captured only when the composer is boxed: the glyph
+  row sits directly under a divider, and no divider falls between it and the cursor. A dialog or
+  transcript row has no such box, so it is reported as not captured, never as a draft. An engine
+  whose composer has no divider directly above it records a wrapped draft as not captured.
+- `draftBeforeClear` is JSON-encoded, so a multi-row draft stays one log entry.
+- Fixed in passing: `test/update-applier-authored-content.test.js` rebuilt the path its file
+  seam read relative to the checkout, which escaped the temp repository whenever the checkout sat
+  fewer directory levels deep than the temp directory. It failed on this Mac on a clean `main`
+  and passed on CI. The seam now reads the path it is given and asserts that it lies inside the
+  test repository.
+- The wrap-ownership tests' fixture repository now tracks the files its sessions write
+  (`mine.js`, `feature.js`, `work.js`), so "the session's work" stays an edit the wrap commits
+  unasked. New files have their own tests. No assertion was removed. Two expectations changed
+  shape with the fixture: a rename-parse row gains `untracked`, and one commit lists `M mine.js`
+  where it listed `A mine.js`.
 - `parseStatus` adds an `untracked` flag to each entry (`??`, or `A` in the index column).
   `reclassify` needs nothing new, because the reason lives on the foreign entry.
 - The captured draft is the composer region's plain text. The cursor row keeps its SGR, but rows
@@ -630,6 +667,6 @@ the Architect has ruled F1–F5.
 
 - [x] Chunk 01: Wrap intent is explicit and cancellation is honest (#1708, #1707): Critic rev-20260923T023239Z resolved by rev-20260923T025704Z, 0 blocking
 - [x] Chunk 02: Wrap gates are engine-aware and never read as passed (#1738): Critic rev-20260923T042921Z resolved by rev-20260923T044924Z, 0 blocking; Architect E1–E6 ruled; rule #5 amendment Operator-approved
-- [ ] Chunk 03: Admission is a positive decision; drafts fail visibly (#1724, #1507): plan written; F1–F5 sent to the Architect
+- [ ] Chunk 03: Admission is a positive decision; drafts fail visibly (#1724, #1507): plan written; Architect ruled F1–F5 APPROVE; built, Critic pending
 - [ ] Chunk 04: A successful wrap binds to the publication the next launch reads (#1675)
 - [ ] P1: startupControl planning note (no build)

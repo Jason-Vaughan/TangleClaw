@@ -65,6 +65,11 @@ function makeRepo() {
   git(dir, 'config', 'user.name', 't');
   fs.writeFileSync(path.join(dir, 'README.md'), 'init\n');
   fs.writeFileSync(path.join(dir, 'shared.js'), 'v1\n');
+  // The files these tests' sessions write are already part of the project, so
+  // "the session's work" is an edit the wrap may commit unasked. A file new to
+  // the repository is an admission question instead (#1724), and has its own
+  // tests below.
+  for (const f of ['mine.js', 'feature.js', 'work.js']) fs.writeFileSync(path.join(dir, f), 'v0\n');
   git(dir, 'add', '-A');
   git(dir, 'commit', '-q', '-m', 'init');
   git(dir, 'checkout', '-q', '-b', 'feat/session');
@@ -247,6 +252,9 @@ describe('the #1406 repro: work already uncommitted at launch is not swept into 
 
   it('a path spelled like a glob is committed as that one file', async () => {
     const repo = makeRepo();
+    fs.writeFileSync(path.join(repo, 'a*.js'), 'v0\n');
+    git(repo, 'add', '--', ':(literal)a*.js');
+    git(repo, 'commit', '-q', '-m', 'track the glob-named file');
     fs.writeFileSync(path.join(repo, 'a1.js'), 'operator\n');
     const scope = await scopeFor(repo, launchBaseline.capture(repo));
     fs.writeFileSync(path.join(repo, 'a*.js'), 'session\n');
@@ -362,11 +370,20 @@ describe('classify', () => {
 
   it('parses renames as the new path plus the old path deleted', () => {
     assert.deepEqual(ownership.parseStatus('R  new.js\0old.js\0?? u.js\0 D d.js\0'), [
-      { path: 'new.js', deleted: false, indexRemoved: false, renamePair: 1 },
-      { path: 'old.js', deleted: true, indexRemoved: true, renamePair: 1 },
-      { path: 'u.js', deleted: false, indexRemoved: false, renamePair: null },
-      { path: 'd.js', deleted: true, indexRemoved: false, renamePair: null }
+      { path: 'new.js', deleted: false, indexRemoved: false, renamePair: 1, untracked: false },
+      { path: 'old.js', deleted: true, indexRemoved: true, renamePair: 1, untracked: false },
+      { path: 'u.js', deleted: false, indexRemoved: false, renamePair: null, untracked: true },
+      { path: 'd.js', deleted: true, indexRemoved: false, renamePair: null, untracked: false }
     ]);
+  });
+
+  it('marks a path HEAD has never held — untracked, or added but not committed — and nothing else (#1724)', () => {
+    const parsed = ownership.parseStatus('?? new.py\0A  staged.json\0AM staged-edited.js\0 M tracked.js\0M  tracked-staged.js\0C  copy.js\0src.js\0');
+    const untracked = Object.fromEntries(parsed.map((e) => [e.path, e.untracked]));
+    assert.deepEqual(untracked, {
+      'new.py': true, 'staged.json': true, 'staged-edited.js': true,
+      'tracked.js': false, 'tracked-staged.js': false, 'copy.js': false, 'src.js': false
+    });
   });
 
   it('tells an already-staged removal from an unstaged one, which git add treats differently', () => {
@@ -651,7 +668,7 @@ describe('#1512: the one-time offer to stop tracking TangleClaw state', () => {
     assert.equal(r.status, 'done', (r.blockers || []).join('; '));
     assert.deepEqual(r.output.untrackState, ['.tangleclaw/medusa/registry.json', '.tangleclaw/session-prime.md']);
     const changed = git(repo, 'show', '--name-status', '--format=', 'HEAD').split('\n').sort();
-    assert.deepEqual(changed, ['A\tmine.js', 'D\t.tangleclaw/medusa/registry.json', 'D\t.tangleclaw/session-prime.md']);
+    assert.deepEqual(changed, ['D\t.tangleclaw/medusa/registry.json', 'D\t.tangleclaw/session-prime.md', 'M\tmine.js']);
     assert.match(r.output.message, /^- Stopped tracking TangleClaw state \(the files stay on disk\): \.tangleclaw\/medusa\/registry\.json, \.tangleclaw\/session-prime\.md$/m);
     assert.equal(fs.readFileSync(path.join(repo, '.tangleclaw', 'session-prime.md'), 'utf8'), 'p2\n', 'the file stays on disk');
     assert.deepEqual(git(repo, 'ls-files', '--', '.tangleclaw').split('\n'), ['.tangleclaw/plans/a.md'], 'authored content stays tracked');
@@ -948,3 +965,139 @@ describe('session-files on an engine that cannot run Prawduct (#1738)', () => {
   });
 });
 
+
+describe('#1724: a file new to the repository is admitted by a decision, never by default', () => {
+  const scope = (over = {}) => ({
+    snapshotApplies: true,
+    baseline: { dirty: { paths: ['already-new.txt'], truncated: false } },
+    startedAtMs: 1000,
+    workToplevel: '/repo',
+    ...over
+  });
+  const entry = (p, untracked) => ({ path: p, deleted: false, indexRemoved: false, renamePair: null, untracked });
+
+  it('with a launch snapshot, a new file created this session is asked about as untracked-new', () => {
+    const c = ownership.classify(scope(), [entry('find_rows.py', true), entry('shared.js', false)]);
+    assert.deepEqual(c.owned, ['shared.js'], 'an edit to a tracked file is still the session\'s');
+    assert.deepEqual(c.undecided.map((f) => [f.path, f.reason]), [['find_rows.py', 'untracked-new']]);
+    assert.match(c.undecided[0].why, /never committed/);
+    assert.deepEqual(c.stageable, ['shared.js'], 'nothing new is stageable without an answer');
+  });
+
+  it('without a snapshot, a new file with this session\'s time is asked about too', () => {
+    const c = ownership.classify(scope({ snapshotApplies: false }), [entry('new_prs.json', true)], { mtimeMs: () => 2000 });
+    assert.deepEqual(c.undecided.map((f) => [f.path, f.reason]), [['new_prs.json', 'untracked-new']]);
+  });
+
+  it('a new file that also predates the launch keeps the more specific reason', () => {
+    const c = ownership.classify(scope({ snapshotApplies: false }), [entry('old-scratch.py', true)], { mtimeMs: () => 500 });
+    assert.equal(c.undecided[0].reason, 'predates-launch');
+    const atLaunch = ownership.classify(scope(), [entry('already-new.txt', true)]);
+    assert.equal(atLaunch.undecided[0].reason, 'dirty-at-launch');
+  });
+
+  it('a new file the wrap itself wrote is the wrap\'s artifact, not an admission question', () => {
+    for (const s of [scope(), scope({ snapshotApplies: false })]) {
+      const c = ownership.classify(s, [entry('.tangleclaw/handoff.md', true)], { wrapWritten: ['.tangleclaw/handoff.md'], mtimeMs: () => 2000 });
+      assert.deepEqual(c.owned, ['.tangleclaw/handoff.md']);
+      assert.deepEqual(c.undecided, []);
+    }
+  });
+
+  it('Include admits it and Leave keeps it out', () => {
+    const dirty = [entry('keep.js', true), entry('scratch.py', true)];
+    const c = ownership.classify(scope(), dirty, { decisions: { 'keep.js': 'include', 'scratch.py': 'leave' } });
+    assert.deepEqual(c.stageable, ['keep.js']);
+    assert.deepEqual(c.left, ['scratch.py']);
+    assert.deepEqual(c.undecided, []);
+  });
+
+  describe('the #1721 repro, end to end on a real repository', () => {
+    /**
+     * A session that edits a tracked file, writes a real new module, and leaves
+     * the kind of scratch the #1721 wrap merged: a helper script and a query dump.
+     * @returns {Promise<{repo:string, scope:object}>}
+     */
+    async function sessionWithScratch() {
+      const repo = makeRepo();
+      const scope = await scopeFor(repo, launchBaseline.capture(repo));
+      fs.writeFileSync(path.join(repo, 'shared.js'), 'session edit\n');
+      fs.writeFileSync(path.join(repo, 'find_rows.py'), 'import sys\nprint(sys.argv)\n');
+      fs.writeFileSync(path.join(repo, 'new_prs.json'), '[{"number":1}]\n');
+      fs.writeFileSync(path.join(repo, 'module.js'), 'module.exports = 1;\n');
+      git(repo, 'add', 'module.js');
+      return { repo, scope };
+    }
+
+    it('session-files stops and names every new file, including one the session staged', async () => {
+      const { repo, scope } = await sessionWithScratch();
+      const r = await runStep(sessionFiles, repo, scope);
+      assert.equal(r.status, 'blocked');
+      assert.deepEqual(r.output.foreignPaths.map((f) => [f.path, f.reason]).sort(),
+        [['find_rows.py', 'untracked-new'], ['module.js', 'untracked-new'], ['new_prs.json', 'untracked-new']]);
+    });
+
+    it('the commit refuses without answers and commits nothing', async () => {
+      const { repo, scope } = await sessionWithScratch();
+      const head = git(repo, 'rev-parse', 'HEAD');
+      const r = await runStep(commitStep, repo, scope);
+      assert.equal(r.status, 'blocked');
+      assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+    });
+
+    it('with answers, only the included file joins the session\'s edit, and both bodies name them', async () => {
+      const { repo, scope } = await sessionWithScratch();
+      const options = { pathDecisions: { 'module.js': 'include', 'find_rows.py': 'leave', 'new_prs.json': 'leave' } };
+      assert.equal((await runStep(sessionFiles, repo, scope, options)).status, 'done');
+      const r = await runStep(commitStep, repo, scope, options);
+      assert.equal(r.status, 'done', (r.blockers || []).join('; '));
+      assert.deepEqual(git(repo, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort(), ['module.js', 'shared.js']);
+      assert.match(porcelain(repo), /^\?\? find_rows\.py$/m, 'left on disk, uncommitted');
+      assert.match(porcelain(repo), /^\?\? new_prs\.json$/m, 'left on disk, uncommitted');
+      const body = git(repo, 'log', '-1', '--format=%B');
+      assert.match(body, /^- Session files \(changed since this session launched\): shared\.js$/m);
+      assert.match(body, /^- Included by the operator \([^)]*\): module\.js$/m);
+      assert.doesNotMatch(body, /find_rows|new_prs/);
+    });
+  });
+});
+
+describe('#1724: a new file the wrap wrote is recognised through a symlinked project path', () => {
+  it('commits the wrap\'s own new file without asking, though git reports the real path', async () => {
+    const repo = makeRepo();
+    const link = `${repo}-link`;
+    fs.symlinkSync(repo, link);
+    dirs.push(link);
+    const scope = await scopeFor(link, launchBaseline.capture(link), link);
+    assert.equal(scope.workToplevel, repo, 'fixture precondition: git reports the resolved path');
+    const r = await commitStep.run({
+      project: wrapScope.stepProject({ id: 1, name: 'own', path: link }, scope),
+      session: null,
+      step: { id: 'commit' },
+      previousResults: [],
+      // A whole-file write the wrap stages and flushes, addressed through the link.
+      staged: { 'next-session-prime': { primingPath: path.join(link, 'PRIMING.md'), newContent: 'pri\n', changed: true } },
+      options: {},
+      scope
+    });
+    assert.equal(r.status, 'done', JSON.stringify(r.output && r.output.foreignPaths));
+    assert.deepEqual(git(repo, 'show', '--name-only', '--format=', 'HEAD').split('\n'), ['PRIMING.md']);
+  });
+});
+
+describe('#1724: the wrap PR body names the files it proposes', () => {
+  it('renders the session and included files from the one staged entry the commit body reads', () => {
+    const staged = { 'commit:session-files': { sessionFiles: ['lib/a.js', 'test/a.test.js'], includedFiles: ['notes.md'] } };
+    const lines = commitStep._buildBodyLines(staged);
+    const pr = commitStep._buildAutoPrBody('wrap/x', 'main', lines);
+    for (const text of [lines.join('\n'), pr]) {
+      assert.match(text, /^- Session files \(changed since this session launched\): lib\/a\.js, test\/a\.test\.js$/m);
+      assert.match(text, /^- Included by the operator \([^)]*\): notes\.md$/m);
+    }
+  });
+
+  it('omits a line whose list is empty', () => {
+    const lines = commitStep._buildBodyLines({ 'commit:session-files': { sessionFiles: ['a.js'], includedFiles: [] } });
+    assert.deepEqual(lines, ['- Session files (changed since this session launched): a.js']);
+  });
+});
