@@ -1,7 +1,7 @@
 ---
 title: "Train A Car A4: exact release proof and workflow supply-chain floor"
-status: Chunk 01 REVIEWED 2026-09-23 — Critic clean, Architect ruled A1–A5 (message ecc27e3b); PR waits on the Operator's direct CI go
-authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-23 (message 9d88259b). Workflow (CI) changes also need the Operator's direct go (project rule: only the Operator authorizes CI changes)
+status: Chunk 01 REVIEWED 2026-09-23 — Critic clean, Architect ruled A1–A5 (message ecc27e3b); Operator approved the CI change in-pane; PR open, merge on the Operator's go
+authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-23 (message 9d88259b). Workflow (CI) changes: the Operator gave a direct in-pane go for Chunk 01 on 2026-09-23 (project rule: only the Operator authorizes CI changes). The merge also waits on the Operator
 issues: [1436, 1551]
 governed_by:
   - Architect roadmap, "Car A4 — exact release proof and workflow supply-chain floor" (TangleClaw-Architect/.tangleclaw/plans/v5-v6-backlog-census-and-bridge-roadmap.md)
