@@ -1,6 +1,6 @@
 ---
 title: "Train A Car A3: wrap intent, artifact admission, and honest cancellation"
-status: IN PROGRESS — Chunks 01 (PR #1807) and 02 (PR #1811) shipped; Chunk 03 dispatched by the PM 2026-09-23 (message 7845b64b), built on fix/a3-chunk3-admission-drafts, Architect ruled F1–F5 (message 5b0eaa0d) and G1–G2 (message cdce349b); Chunk 04 and P1 remain; Architect ruled C1–C2, D1–D5 (message 417454d7) and E1–E6 (message 9a774624); PM approved plan and order (message 8219ab12)
+status: COMPLETE 2026-09-23 — Chunks 01 (PR #1807), 02 (PR #1811), 03 (PR #1813) and 04 (PR #1817) shipped and live; P1 startupControl planning note written (no build). All six issues are closed. Architect rulings are recorded per chunk below.
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-23 (messages ecdbe884, 39998da1)
 issues: [1708, 1707, 1738, 1724, 1507, 1675]
 governed_by:
@@ -9,7 +9,7 @@ governed_by:
   - project rule: ENGINE-AGNOSTIC BY CONSTRUCTION
   - project rule: Train chunks of at most 3–4 issues, one chunk per session
 scope: train-a-car-a3
-branch: fix/a3-chunk3-admission-drafts
+branch: fix/a3-chunk4-publication-binding
 partition: serial. Chunks 01, 02 and 04 all change the wrap run's result shape and the drawer that renders it; running them in parallel would fight over lib/sessions.js, lib/wrap-pipeline.js and public/wrap-drawer.js
 critic_mode: chunk per chunk, cumulative at the last chunk
 ---
@@ -719,18 +719,289 @@ PR body names every session file. The two stray scripts are gone. An injection k
 privately or logs an honest "not captured", and never footer text. The suite is green, the Critic is clean, and
 the Architect has ruled F1–F5.
 
-## Chunk 04 (planned at its own session's start; decisions go to the Architect then)
+## Chunk 04: A successful wrap binds to the publication the next launch reads (#1675)
 
-- **04 (#1675).** The launch's Resume block reads the mutable continuity index, not the
-  publication, and the wrap result carries no publication id. Bind the wrap's success to the
-  published id and digest, surface a publish refusal in the result instead of only logging it,
-  render Resume from the selected publication, and label any fallback (older publication, or a
-  session summary) with its provenance before the proposal.
+Dispatched by the PM 2026-09-23 (message d378da6c). Branch `fix/a3-chunk4-publication-binding`,
+worktree `.claude/worktrees/a3-chunk4`. The car's last chunk, so it owes the cumulative Critic.
+
+### Confidence check
+
+1. **Problem.** Three gaps separate "the wrap succeeded" from "the next launch resumes from this
+   wrap". (a) The wrap's result never says whether its handoff was published. `_finalizeHandoff`
+   returns nothing, so a refused publish is only a log line, and the drawer shows success either way.
+   (b) The launch's Resume block reads the continuity index (`.tangleclaw/continuity/index.md`),
+   not the publication the preflight verdict certified. The index is a mutable, gitignored file that
+   `continuity-write` rewrites on every run that reaches it, including runs that later block, are
+   cancelled or have their publication refused. When its write fails, the step still reports
+   `done`, so the handoff reads `complete` over an index that describes an older wrap. (c) When the
+   verdict is not `ok` (a crash, a later session that published nothing), the Resume still says
+   "Last session recorded:" with no word that it is older than the latest session. That is how a
+   crashed session could launch its successor from an earlier session's next action unlabelled.
+2. **Success.** The wrap result, the status route and `run-done` name the publication: id, digest
+   and state (published, not published with a reason, abandoned, or never staged). The drawer warns
+   when a finished wrap did not publish. The Resume block is rendered from the publication the
+   preflight selected, and it opens with a provenance line naming the publication id, session, kind,
+   exact stage time and the verdict. On any non-`ok` verdict, or when the only source is the unbound
+   index or a legacy summary, the provenance line says which fallback it is and what is newer than
+   it, before any proposal. An index write that failed makes the handoff `degraded`. The launch
+   records the publication id and digest it consumed.
+3. **Out of scope.** (i) Making a wrap survive a server restart mid-run. The run registry is
+   process-local, and the 2026-09-20 Architect restarts at 05:03 and 05:06 are exactly this case.
+   Filed as #1816. (ii) Deciding whether a captured next action is *semantically*
+   stale (see H6). (iii) Retention of publications (#1602). (iv) The stale-slot takeover (#1805).
+   (v) Changing how the preflight selects a publication or any verdict rule.
+
+### Facts established while planning (verified against code at 509be27, and the live DB read-only)
+
+- One wrap path finalizes a handoff: `_runClaimedWrap` → `_finalizeHandoff` (`lib/sessions.js`).
+  It publishes, or abandons with a reason (`pipeline-failed`, `lifecycle-incomplete`,
+  `checkpoint-not-bound`, `eligibility-not-bound`), and returns nothing. `publishHandoff` returns
+  `{published, reason, supersededId}`, and that value is dropped. The result, the 202, the status
+  route and `run-done` carry no publication id. `server.js#_wrapResultPayload` has no publication
+  field. The drawer's banner (`summarizePipelineStatus`) never looks at one.
+- The step order is `commit` … `continuity-write` → `apply-pr-resolutions` → `handoff-stage`, so
+  the index is written before the handoff is staged. `handoff-stage` records
+  `continuityIndexHash` (sha256 of the index at staging) and `nextAction` (from the `ai-content`
+  capture). It does not record `currentState`, and nothing at launch reads `continuityIndexHash`.
+- `continuity-write` returns `status: 'done'` with `written: false` when the index write throws.
+  `handoff-stage` counts `done` as evidence produced, so that wrap's handoff is `complete`.
+- `continuity.readIndex(project.path)` is the only source of the Resume block
+  (`_collectPrimeSections`, the "Resume" section). The preflight's `evaluate` already reads
+  `current.json` and passes two things from it up to the launch (`handoffManifest`,
+  `handoffMethodology`). The Resume does not use it.
+- The launch snapshot's source manifest has a `handoffDigest` slot that is always `null`
+  (`lib/launch-sequence.js#buildSourceManifest`).
+- **The 2026-09-21 recurrence (PM session 1086), measured, not inferred.** The publication that
+  launch read is `v5pGXKgb…` (session 1084, `final`, `complete`, staged 00:13:21Z). The PM's
+  current index hashes to exactly the recorded `continuityIndexHash`, and the publication's
+  `nextAction` is the stale text the PM was handed ("coordinate the v5.29.0 release cut, triage
+  PR #1700, #1724 next"). The binding held. The next action was already stale when it was captured,
+  because the release published at 23:51Z, 22 minutes before the wrap staged. What the launch did
+  not show was the publication's identity or exact age: the Resume stamp carries a date, not a time.
+- **The 2026-09-20 case (Architect 1057).** 1057 crashed and never staged a handoff, so the launch
+  verdict was `crash-recovery`. The Resume rendered the index, which was 1051's, as "Last session
+  recorded" with nothing saying it was older than the crashed session.
+- Server logs do not reach back to 2026-09-20/21, so no wrap request from 1057 can be traced
+  further than the issue already did.
+
+### Architectural decisions (proposed; for the Architect at plan-written)
+
+- **H1: The wrap result names its publication.** `_finalizeHandoff` returns, and the run result
+  carries, `handoffPublication: { state, publicationId, digest, kind, reason, supersededId }`.
+  `state` is one of these:
+  - `published`: this run's attempt is now current;
+  - `not-published`: it completed but the publish was refused. It stays eligible for
+    reconciliation, as now, and `reason` is the refusal;
+  - `abandoned`: `reason` is the existing abandon reason;
+  - `not-staged`: `handoff-stage` skipped or blocked, and `reason` is its output reason.
+
+  The field goes on the stored result, `GET /wrap/status` and `run-done` (through
+  `_wrapResultPayload`). It does not go on the 202, which is sent before anything is staged. It is
+  additive, and `ok` is unchanged. The drawer adds one warning banner for a finished wrap whose
+  publication is not `published`: "Wrap finished, but its handoff was not published: <reason>. The
+  next launch will not resume from this wrap." A failed or stranded PR banner still outranks it.
+  *Rejected:* failing the wrap (`ok:false`). The commit, PR and session end have already happened,
+  and a Retry would redo them. *Rejected:* keeping it in the log only, which is the defect.
+- **H2: The handoff document carries the resume text it vouches for.** `tc.handoff/1` gains an
+  optional, additive `resume: { currentState, nextAction, freshness: { sha, branch, writtenAt,
+  tier } }`. It is copied from `continuity-write`'s own output, the same values it wrote into the
+  index. It is omitted when the producer did not supply it, so absence stays readable as a producer
+  that predates it, the same way `methodology` is handled. The top-level `nextAction` is unchanged. A
+  `continuity-write` that did not write the index (`written: false`), or that did not run, adds
+  `continuity-write: index not written` to `missingEvidence`, so the handoff is `degraded`.
+  *Rejected:* comparing hashes only. A mismatch says the index moved, but not what the publication
+  said. *Rejected:* a new schema tag. Every reader refuses an unknown tag, and an optional block is
+  the pattern the schema already uses.
+- **H3: The Resume renders from the publication the preflight selected.** `evaluate` returns
+  `handoffResume` from the same `current.json` the verdict read, alongside `handoffMethodology`, and
+  the launch threads it into both the pull steps and the pushed prime. Precedence:
+  1. The publication's `resume` block.
+  2. A publication without one (a producer from before this change): `nextAction` from the
+     document. `currentState` and the freshness stamp come from the index **only if** its sha256
+     equals the document's `continuityIndexHash`. Otherwise "Where we are" reads "not recorded by
+     this publication", with a note that the index changed after it.
+  3. No readable publication: the index, labelled "unbound" (next item).
+  4. The legacy wrap summary, labelled with its session id and status.
+
+  *Rejected:* keeping the index as the source, which is the defect. *Rejected:* rendering nothing
+  when the verdict is not `ok`. It hides the only continuity there is, and the issue asks for a
+  label, not suppression.
+- **H4: Provenance comes before the proposal, and a fallback says so.** The Resume opens with one
+  line: "Source: handoff publication `<id>` (`<kind>`) from session `<sid>`, staged `<ISO time>`;
+  launch verdict `<verdict>`." Three more cases each add a sentence:
+  - **The publication's session is not the newest session.** The verdict is then `crash-recovery`,
+    `handoff-behind`, `unclassified` or another like them. The sentence: "This is OLDER than the
+    latest session: session `<N>` (`<status>`) ran after it, and its work is not in this handoff."
+  - **Unbound index.** "This comes from the continuity index, which no published handoff vouches
+    for. It may describe a wrap that failed, was cancelled or was abandoned."
+  - **Legacy summary.** "A session summary from session `<N>` (`<status>`), not a handoff."
+
+  The proposal instruction (step 3 of the block) changes to require stating the source when it is
+  not `current`. The freshness stamp gains the exact stage time, not only the date.
+- **H5: The launch records which publication it consumed.** The source manifest's existing
+  `handoffDigest` is filled with `current.json`'s digest, and a new sibling `handoffPublicationId`
+  is added. Both are `null` when no document was read. `tc start status` prints them, so the wrap's
+  `handoffPublication.publicationId`/`digest` and the launch's can be compared by eye or by a
+  script. *Rejected:* a new DB column, because the manifest already has the slot.
+- **H6: Semantic staleness stays the agent's check.** The measured recurrence was a correctly bound
+  publication whose captured next action was already stale when written. TangleClaw cannot tell a
+  stale sentence from a current one without parsing prose and calling GitHub on the launch path.
+  This chunk makes the age and identity visible (H4). It keeps the existing freshness-check
+  instruction and adds a pointer that a publication staged before the most recent merge or release
+  on the base branch may predate it. *Rejected:* checking issue and PR states at launch (network
+  on the launch path, parsing free text). *Rejected:* refusing a publication older than N hours
+  (an arbitrary clock that would hide sound handoffs).
+
+### Architect rulings (2026-09-23, message ed93ebab) — binding
+
+The PM approved the plan (message 11e9951f). The architectural gate clears once H1 and H2 are
+incorporated. Implementation, the cumulative Critic, review, CI and merge readiness are not certified.
+
+- **H1: MODIFY.** Expose the finalization outcome on the stored result, the status route and
+  `run-done`, and keep `ok` unchanged. Supersession must be directional and structured:
+  - `published` means current at finalization, not guaranteed current at the next launch.
+  - `supersededId` names only the previously-current publication this attempt displaced.
+  - A new `supersededById` names the newer publication this attempt lost to.
+  - No client parses the winner's id out of `reason`.
+- **H2: MODIFY.** The additive `resume` block and the degraded index-write evidence are approved.
+  When `resume.nextAction` and the legacy top-level `nextAction` coexist, they must be derived from
+  one canonical value, and validation must reject disagreement. The compatibility duplicate may
+  never carry two truths.
+- **H3: APPROVE**, with the proposed fallback order.
+- **H4: APPROVE.**
+- **H5: APPROVE.** Filled from the same evaluated preflight object, with no second `current.json`
+  read and no DB column.
+- **H6: APPROVE.**
+- Record H1–H6 here, and amend ADR 0002 (H1, H2) and ADR 0017 (H3–H6) before the PR. Both are done.
+
+How H1 and H2 were built:
+
+- `publishHandoff` and `recordPromotedHandoff` return `supersededById` beside `supersededId`, and
+  the repair outcomes carry it.
+- A replayed finalize of an attempt that is already published used to return the row's
+  `supersededBy` (a winner) under `supersededId` (the displaced slot). That was the opposite
+  direction, and latent, because a published row has no `supersededBy`. It now answers
+  `supersededId: null` and puts any winner in `supersededById`.
+- `handoff-stage` takes the top-level `nextAction` from the resume whenever it writes one. Where
+  there is no resume, it uses the capture as before.
+- `buildHandoffDocument` refuses a disagreement, reading blank and absent as the same "not
+  captured".
+- `resumeState` reads foreign bytes whose two next actions disagree as `malformed`, so neither is
+  rendered.
+
+### Implementation calls (not architectural)
+
+- The publication outcome is computed once in `_finalizeHandoff`, from the values it already has.
+  Nothing re-reads the store to derive it.
+- The provenance line is built by one helper, used by both the pull task step and the pushed prime.
+- The drawer keeps one banner source (`summarizePipelineStatus`). The publication rides in
+  `runContext` beside `sessionOutcome`.
+- `continuity-write` adds `currentState` and `freshness` to its output. The index file format is
+  unchanged.
+
+### Tests (written alongside)
+
+- `_finalizeHandoff` returns each of the four states with the right reason, and a refused publish
+  (a newer publication is current) reports `not-published` with the supersede reason.
+- Multi-hop, on a real temp project: a wrap publishes, the next launch's task step names the same
+  publication id, and its Resume text equals the document's `resume` block, even after the index is
+  rewritten by a later blocked run.
+- `continuity-write` with a failing index write → the handoff is `degraded` and names it.
+- Resume precedence: a `resume` block; a legacy document with a matching index hash; a legacy
+  document with a mismatched hash; no publication (unbound label); a legacy summary label.
+- A `crash-recovery` launch labels the publication OLDER and names the crashed session (the 1057
+  shape).
+- The manifest records `handoffDigest`/`handoffPublicationId`, and `tc start status` prints them.
+- Drawer: the not-published banner, and its rank below a failed or stranded PR.
+- Schema: `resume` is optional, and a malformed one is refused at build time.
+
+### Done when
+
+A wrap's result names the publication it produced, or says why there is none, and the drawer warns
+when there is none. The next launch's Resume comes from that publication, opens with its identity and
+exact age, and labels any older or unbound source before proposing anything. The suite is green, the
+cumulative Critic is clean, and the Architect has ruled H1–H6.
+
+## P1: startupControl — planning note (no build)
+
+Admitted by the PM for planning only (Architect C2). Nothing below is built in A3. Building anything
+needs a canonical issue, an Architect ruling on the schema at its own plan-written boundary, and
+explicitly admitted scope. The command-contract direction belongs to #1774, and the related
+"gate task input until READY" item is #1633.
+
+### The problem it answers
+
+A launch pushes a prime and asks the model to run `tc start next` through `tc start ready`, but
+nothing lets TangleClaw know the engine *received and applied* its startup instruction. Every
+current fallback moves bytes: tmux paste, `send-keys` and a synthetic Enter. The Architect ruled
+that byte delivery is not engine acceptance (Architect wrap 1097): raw `send-keys`, `node-pty`,
+synthetic Enter presses and wider permission modes are rejected as a universal autonomous-boot
+mechanism.
+
+### Constraints already ruled (binding inputs, not proposals)
+
+- Autonomous interactive boot is an **engine capability**, not a generic PTY operation.
+- A lifecycle wrapper may not pre-run or acknowledge `tc start` before the model reads it. The four
+  steps and READY stay initialization evidence, never task authority.
+- A supported adapter uses an **engine-native persistent interactive channel**. It binds the exact
+  launch, session, role, assignment and priming-pact digest. It records an accepted/applied
+  **semantic receipt**, and it surfaces unsupported or trust-blocked launches.
+- An automatic bootstrap may ask the engine to read its context. It may not dispatch project work.
+- Engine-agnostic by construction (project rule #5): an engine without the capability says so
+  and falls back to today's path. Nothing is faked.
+
+### Where each engine stands today (from `data/engines/*.json` and the live contract audit)
+
+| Engine | Launch sequence | Startup channel today | Native interactive path (audit) |
+|---|---|---|---|
+| Claude | supported | silent prime via a SessionStart hook (10k cap) plus `tc start` pull | yes |
+| Codex | supported | pasted prime (readiness-gated on `· Ready ·`) | yes |
+| Antigravity | supported | pasted prime | yes |
+| Aider | supported, but not completed unassisted (#1645) | pasted prime | no: its message path is one-shot |
+| OpenClaw | not supported | none (remote engine) | no |
+
+### What the four acceptance cases require
+
+1. **Native channel.** A way for TangleClaw to hand the engine its startup instruction that the
+   engine itself treats as a user turn. The engine's own input API or session protocol qualifies.
+   Keystrokes into its terminal do not.
+2. **Readiness.** A positive signal that the engine can accept that turn now: not a quiet
+   pane, not a prompt glyph, but the channel's own ready state. A launch with no readiness signal
+   waits visibly (#1633), and does not time out into a send.
+3. **Semantic receipt.** The engine reports that it accepted *and applied* the instruction, bound to
+   the launch id and the priming digest. A receipt that cannot name both is not a receipt. The
+   existing `tc start` acknowledgements remain the evidence that the context was *read*. The
+   receipt is evidence that the turn was *delivered*. They are separate records.
+4. **Operator-blocked.** A launch the engine refuses: a trust prompt, a login, a permission dialog,
+   account verification. It is reported as blocked, names the blocker, and is never retried by
+   typing through it. The operator unblocks it, and the launch continues from where it stood.
+
+### Decisions this will need from the Architect (to rule at the build's plan-written boundary)
+
+- **S1: Where the capability is declared.** Recommendation: a `startupControl` block in the
+  engine profile, `{supported, channel, readiness, receipt, blockers}`, with an `evidence` entry
+  per field, like `wake`. An operator edit cannot grant it, because a profile field with no adapter
+  is refused at load. Alternative: code-only adapters with no profile field, which hides the
+  capability from `tc capabilities`.
+- **S2: What a receipt is bound to.** Recommendation: the launch id, the step-4 revision digest
+  and a priming-pact digest, stored beside the launch sequence row, not on the session row.
+- **S3: The fallback when unsupported.** Recommendation: today's path, unchanged, with the launch
+  record stating `startupControl: unsupported (<reason>)`. Nothing downgrades to keystrokes.
+- **S4: The first adapter.** Recommendation: whichever engine's native channel has a published,
+  stable contract. Pick it by a spike that captures a real receipt, not by the audit alone.
+- **S5: How it meets #1774.** Whether the bootstrap instruction is a `TC START …` command from the
+  #1774 manifest, or a fixed prime sentence. This depends on #1774's ruling.
+
+### Recommended next step (for the PM to admit or not)
+
+File a canonical issue ("startupControl: engine-native startup delivery with semantic receipt"),
+citing this note, #1633 and #1774. Its first chunk is a no-build spike that captures one engine's
+native channel, readiness and receipt live. S1–S5 go to the Architect with the spike's evidence.
 
 ## Status
 
 - [x] Chunk 01: Wrap intent is explicit and cancellation is honest (#1708, #1707): Critic rev-20260923T023239Z resolved by rev-20260923T025704Z, 0 blocking
 - [x] Chunk 02: Wrap gates are engine-aware and never read as passed (#1738): Critic rev-20260923T042921Z resolved by rev-20260923T044924Z, 0 blocking; Architect E1–E6 ruled; rule #5 amendment Operator-approved
 - [x] Chunk 03: Admission is a positive decision; drafts fail visibly (#1724, #1507): Critic rev-20260923T053934Z resolved by rev-20260923T060037Z and rev-20260923T092855Z, 0 blocking; Architect ruled F1–F5, G1 MODIFY, G2 APPROVE; Operator set draft retention to 7 days
-- [ ] Chunk 04: A successful wrap binds to the publication the next launch reads (#1675)
-- [ ] P1: startupControl planning note (no build)
+- [x] Chunk 04: A successful wrap binds to the publication the next launch reads (#1675): cumulative Critic rev-20260923T104558Z (0 blocking) resolved by rev-20260923T105559Z (0 findings); Architect ruled H1–H6 (H1/H2 MODIFY incorporated), ADR 0002/0017 amended
+- [x] P1: startupControl planning note (no build): written 2026-09-23. S1–S5 await an Architect ruling when a build is admitted, and the canonical issue is the PM's to admit

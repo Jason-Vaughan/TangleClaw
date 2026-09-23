@@ -307,6 +307,16 @@ describe('a finished wrap ends the session (#1558)', () => {
       assert.equal(status.result.sessionOutcome, 'ended');
     });
 
+    it('says what became of the handoff, even when the run staged none (#1675)', async () => {
+      startSession();
+      stubRuns(FINISHED_CLEAN);
+      const status = await wrapAndSettle({});
+      assert.equal(status.result.handoffPublication.state, 'not-staged',
+        'a finished run that staged no handoff says so rather than leaving the field out');
+      assert.equal(status.result.handoffPublication.publicationId, null);
+      assert.equal(typeof status.result.handoffPublication.reason, 'string');
+    });
+
     it('says the session was kept, and records the choice', async () => {
       startSession();
       stubRuns(FINISHED_CLEAN);
@@ -700,7 +710,8 @@ describe('session page wrap dialog: Keep the session running (#1558)', () => {
     ].join('\n'), sandbox);
     sandbox.openWrapDrawer(FINISHED_CLEAN, { sessionOutcome: 'ended' });
     assert.match(painted[0].detail, /The session has ended\.$/);
-    // The controller's settled case is what supplies the outcome.
-    assert.match(SESSION_SRC, /openWrapDrawer\(next\.result\.pipelineResult, \{ sessionOutcome: next\.result\.sessionOutcome \}\)/);
+    // The controller's settled case is what supplies the outcome — and, since
+    // #1675, the run's handoff publication beside it.
+    assert.match(SESSION_SRC, /openWrapDrawer\(next\.result\.pipelineResult, \{ sessionOutcome: next\.result\.sessionOutcome, handoffPublication: next\.result\.handoffPublication \|\| null \}\)/);
   });
 });
