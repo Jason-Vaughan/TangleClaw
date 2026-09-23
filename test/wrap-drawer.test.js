@@ -1789,6 +1789,16 @@ describe('#1675 — a finished wrap whose handoff did not publish says so', () =
     assert.equal(composed.label, 'Wrap finished — handoff NOT published', 'a merged release must not repaint the warning away');
   });
 
+  it('keeps the handoff sentence when a BLOCKED release takes the banner', () => {
+    const s = H.summarizePipelineStatus(pr(armed), { handoffPublication: refused });
+    const composed = plain(H.composeReleaseBanner(s, { outcome: 'blocked', state: 'CLOSED' }));
+    assert.equal(composed.tone, 'error');
+    assert.match(composed.label, /release BLOCKED/);
+    assert.match(composed.detail, /Its handoff was NOT published/);
+    const plainBlocked = plain(H.composeReleaseBanner(H.summarizePipelineStatus(pr(armed), {}), { outcome: 'blocked', state: 'CLOSED' }));
+    assert.doesNotMatch(plainBlocked.detail, /handoff/, 'a published handoff adds nothing to a blocked release');
+  });
+
   it('words an abandoned attempt in the operator\'s terms, keeping the store\'s code', () => {
     const s = plain(H.summarizePipelineStatus(pr({}), { handoffPublication: { state: 'abandoned', reason: 'lifecycle-incomplete' } }));
     assert.match(s.detail, /the session ended before the wrap could record it \(lifecycle-incomplete\)/);

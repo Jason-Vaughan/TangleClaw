@@ -432,7 +432,10 @@ describe('the resume the launch renders comes from the publication it read (#167
     publishHandoff(project, pid);
     continuity.writeIndex(project.path, { currentState: 'stale', nextAction: 'stale' });
     const got = evaluate(project).handoffResume;
-    assert.deepEqual(got.resume, { currentState: null, nextAction: 'the captured next step', freshness: {} });
+    assert.deepEqual(got.resume, {
+      currentState: null, nextAction: 'the captured next step',
+      freshness: { sha: null, branch: null, writtenAt: null, tier: null }
+    });
     assert.match(got.note, /no resume/);
   });
 

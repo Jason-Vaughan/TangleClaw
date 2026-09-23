@@ -499,7 +499,7 @@
     return withHandoffPublication(pipelineBanner(pipelineResult, runContext), pipelineResult, runContext);
   }
 
-  /** Why an attempt was abandoned, in the operator's words. Codes are the store's. */
+  /** Why an attempt was abandoned, in the operator's words. The codes are the ones `lib/sessions.js#_finalizeHandoff` records; an unknown one shows as the raw code. */
   const ABANDON_WORDS = {
     'pipeline-failed': 'the wrap did not finish',
     'lifecycle-incomplete': 'the session ended before the wrap could record it',
@@ -545,12 +545,15 @@
     const note = handoffPublicationNote(pub);
     if (!note || !pipelineResult || typeof pipelineResult !== 'object') return base;
     if (pipelineResult.error || pipelineResult.blockedAt || pipelineResult.cancelledAt) return base;
+    // `handoffNote` rides as a field as well as in the detail, for the same
+    // reason `warnings` does: `composeReleaseBanner` replaces the detail when a
+    // release comes back BLOCKED, and the handoff fact must survive that.
     const prProblem = base.pr && (base.pr.error || base.pr.stranded);
     if (prProblem) {
-      return { ...base, tone: 'warning', detail: [base.detail, note].filter(Boolean).join(' · ') };
+      return { ...base, tone: 'warning', detail: [base.detail, note].filter(Boolean).join(' · '), handoffNote: note };
     }
     const was = base.detail ? `${base.label}: ${base.detail}` : base.label;
-    return { ...base, label: 'Wrap finished — handoff NOT published', tone: 'warning', detail: `${note} · ${was}` };
+    return { ...base, label: 'Wrap finished — handoff NOT published', tone: 'warning', detail: `${note} · ${was}`, handoffNote: note };
   }
 
   /**
@@ -919,7 +922,13 @@
     // banner can say "lands on its own" instead of implying a manual step.
     const armed = !!(base.pr && base.pr.armed);
     const release = prOutcomeBanner(prStatus, armed);
-    if (release.tone === 'error') return release;
+    // #1675 — a blocked release is the more severe fact and takes the banner,
+    // but the next launch still will not resume from this wrap, so that stays.
+    if (release.tone === 'error') {
+      return base.handoffNote
+        ? { ...release, detail: [release.detail, base.handoffNote].filter(Boolean).join(' · ') }
+        : release;
+    }
     if (base.tone === 'warning' || base.tone === 'error') {
       const outcome = (prStatus && prStatus.outcome) || 'unknown';
       return {

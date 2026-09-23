@@ -927,5 +927,5 @@ cumulative Critic is clean, and the Architect has ruled H1–H6.
 - [x] Chunk 01: Wrap intent is explicit and cancellation is honest (#1708, #1707): Critic rev-20260923T023239Z resolved by rev-20260923T025704Z, 0 blocking
 - [x] Chunk 02: Wrap gates are engine-aware and never read as passed (#1738): Critic rev-20260923T042921Z resolved by rev-20260923T044924Z, 0 blocking; Architect E1–E6 ruled; rule #5 amendment Operator-approved
 - [x] Chunk 03: Admission is a positive decision; drafts fail visibly (#1724, #1507): Critic rev-20260923T053934Z resolved by rev-20260923T060037Z and rev-20260923T092855Z, 0 blocking; Architect ruled F1–F5, G1 MODIFY, G2 APPROVE; Operator set draft retention to 7 days
-- [ ] Chunk 04: A successful wrap binds to the publication the next launch reads (#1675)
+- [x] Chunk 04: A successful wrap binds to the publication the next launch reads (#1675): cumulative Critic rev-20260923T104558Z (0 blocking) resolved by rev-20260923T105559Z (0 findings); Architect ruled H1–H6 (H1/H2 MODIFY incorporated), ADR 0002/0017 amended
 - [ ] P1: startupControl planning note (no build)
