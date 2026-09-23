@@ -195,10 +195,10 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
     Expected: `tc rules` in a launched pane of each project prints it.
 
     > Repeating it per project is correct, not duplication. Global Rules bind *every* project on
-    > this install, which this does not; a shared doc is canon, not a Project Rule. Until
-    > group-scoped rule enforcement exists, a binding fleet directive has to be carried per project.
-    > **Approving a replacement rule does not retire the one it replaces (#1696)** — disable the old
-    > one explicitly, or both are delivered and they will contradict each other.
+    this install, which this does not; a shared doc is canon, not a Project Rule. Until
+    group-scoped rule enforcement exists, a binding fleet directive has to be carried per project.
+    **Approving a replacement rule does not retire the one it replaces (#1696)** — disable the old
+    one explicitly, or both are delivered and they will contradict each other.
 
 10a. Nominate exactly **one Integration/Release Owner** — normally the Reviewer, if the operator
     assigns that duty. Set `releaseMode` on every project accordingly: the operator in each
@@ -208,8 +208,21 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
 
     | project | `releaseMode` | why |
     |---|---|---|
-    | the release owner | `ask` | authors the version bump, with a prompt rather than silently |
+    | the release owner | `auto` **or** `ask` | either may author the bump — the difference is who is consulted, below |
     | every other project, **including PM and Architect** | `off` | they contribute changelog entries, never version files |
+
+    **The mode names describe who is *consulted*, not how much is automated** — read them carefully,
+    because `auto` does not mean unattended:
+
+    | mode | who decides |
+    |---|---|
+    | `auto` | the **AI**. The `release-recommendation` wrap step runs and its answer is weighed against the readiness verdict. If the two disagree, it escalates to the operator — neither overrules the other. It proceeds on its own only when readiness says `ready` and the AI does not say hold. |
+    | `ask` | the **operator**. The wrap cuts only on an explicit Cut; the AI's view is demoted to a hint in the reason. |
+    | `off` | nobody — the step stops before any of this. |
+
+    In both `auto` and `ask` a decision made in the wrap modal wins outright, so the operator sees a
+    confirmation either way. Pick `auto` when you want the agent's judgement in the loop, `ask` when
+    you want every cut to be your own call.
 
     Verify against the group's **actual members**, not a name prefix, and read the mode from
     `GET /api/projects` — the PATCH response omits `releaseMode`, so it cannot confirm this.
@@ -220,7 +233,7 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
     ```sh
     curl -fsS "$TANGLECLAW_API/api/groups/$GID/members" "${BIND[@]}" -o /tmp/tc-members.json
     curl -fsS "$TANGLECLAW_API/api/projects" -o /tmp/tc-projects.json
-    python3 - /tmp/tc-members.json /tmp/tc-projects.json <<'EOF'
+    python3 - /tmp/tc-members.json /tmp/tc-projects.json <<'EOF_SCRIPT'
     import json,sys
     members=json.load(open(sys.argv[1]))["members"]
     projects={p["id"]:p for p in json.load(open(sys.argv[2]))["projects"]}
@@ -232,14 +245,14 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
     if missing or len(owners)!=1 or bad:
         print("OWNER_CONFLICT", {"unresolved":missing,"owners":owners,"not_off":bad}); sys.exit(1)
     print("OWNERS_OK")
-    EOF
+    EOF_SCRIPT
     ```
     Expected: each member listed with its mode, then `OWNERS_OK`.
     If `OWNER_CONFLICT` prints, the payload says which of the three conditions failed — a member id
     that resolves to no project, more or fewer than one owner, or a non-owner whose mode is not
     `off` (a `null` or unrecognised mode counts). Fix it before any Builder wraps.
     Valid values are `off`, `auto`, `ask`; anything else is treated as `ask` with a warning, which
-    is itself how a second owner appears by accident.
+    is itself how a second owner appears by accident — an unrecognised mode is not `off`.
 
     Leave changelog updating **enabled everywhere**: each Builder still writes its own entry under
     `[Unreleased]`. Only the promotion of those entries and the `version.json` bump belong to the
