@@ -110,6 +110,46 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
     });
   });
 
+  describe('#1685 delivery outcome threading', () => {
+    it('carries a step\'s deliveryOutcome into results, and omits it where none was measured', async () => {
+      // The receipt is worthless if the pipeline drops it: the drawer has to
+      // tell "the prompt never became a task" from "the model is slow", and
+      // this boundary is where that answer would silently disappear. It did
+      // disappear when the receipt was first wired — `recorded` listed its
+      // fields explicitly, so a field nobody added here was simply gone.
+      const restoreHandlers = stubRealHandlers(wrapPipeline);
+      const kinds = Object.keys(wrapPipeline.STEP_DISPATCH);
+      const measuredKind = kinds[0];
+      wrapPipeline.STEP_DISPATCH[measuredKind] = {
+        run: async () => ({
+          ok: true, status: 'done', output: null, blockers: [],
+          deliveryOutcome: 'accepted', deliveryReason: 'the engine is working (turn-in-flight)'
+        })
+      };
+      try {
+        const result = await wrapPipeline.runWrapPipeline('pipeline-test');
+        const measured = result.results.filter((r) => r.kind === measuredKind);
+        assert.ok(measured.length > 0, 'the patched kind should have run at least once');
+        for (const row of measured) {
+          assert.equal(row.deliveryOutcome, 'accepted');
+          // The reason crosses the SAME explicit-field-list hop that dropped the
+          // outcome once. Unasserted, deleting either line leaves this green.
+          assert.equal(row.deliveryReason, 'the engine is working (turn-in-flight)');
+        }
+
+        // Absent, not null, on every step that never asked — so no existing
+        // consumer sees a new field appear on results it already reads.
+        const unmeasured = result.results.filter((r) => r.kind !== measuredKind);
+        for (const row of unmeasured) {
+          assert.equal(Object.prototype.hasOwnProperty.call(row, 'deliveryOutcome'), false,
+            `step ${row.stepId} should not carry deliveryOutcome`);
+          assert.equal(Object.prototype.hasOwnProperty.call(row, 'deliveryReason'), false,
+            `step ${row.stepId} should not carry deliveryReason`);
+        }
+      } finally { restoreHandlers(); }
+    });
+  });
+
   describe('runWrapPipeline — no-op stubs', () => {
     it('runs all stubs end-to-end and returns ok:true', async () => {
       // Chunks 4+ replaced no-op stubs with real handlers (lint, test,
@@ -2699,6 +2739,9 @@ describe('wrap-step commit — pure helpers (#139 Chunk 9)', () => {
   });
 });
 
+/** Paths the commit-handler cases write as "the session's work", tracked at init. */
+const SESSION_WORK_FILES = ['changed.txt', 'change.txt', 'something.txt', 'rev-parse-test.txt', 'add-test.txt', 'TODO.md', '.tangleclaw/memories/MEMORY.md'];
+
 describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', () => {
   const commitStep = require('../lib/wrap-steps/commit');
   const { execSync } = require('node:child_process');
@@ -2723,7 +2766,13 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
     execSync('git config user.email t@example.com && git config user.name Test',
       { cwd: projectPath, shell: '/bin/sh' });
     fs.writeFileSync(path.join(projectPath, 'README.md'), 'init\n');
-    execSync('git add README.md && git commit --quiet -m init',
+    // The files these cases' sessions write are already tracked, so each case's
+    // work is an edit the commit takes unasked. A file new to the repository
+    // waits for an Include/Leave decision (#1724), which is exercised in
+    // `test/wrap-file-ownership.test.js`, not here.
+    fs.mkdirSync(path.join(projectPath, '.tangleclaw', 'memories'), { recursive: true });
+    for (const f of SESSION_WORK_FILES) fs.writeFileSync(path.join(projectPath, f), 'v0\n');
+    execSync('git add -f README.md ' + SESSION_WORK_FILES.join(' ') + ' && git commit --quiet -m init',
       { cwd: projectPath, shell: '/bin/sh' });
   });
 
@@ -2795,7 +2844,7 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
       }
     });
     const result = await commitStep.run(ctx);
-    assert.equal(result.ok, true);
+    assert.equal(result.ok, true, JSON.stringify(result.output && result.output.foreignPaths));
     assert.equal(result.status, 'done');
     assert.ok(result.output.commitSha, 'must capture commit SHA');
     assert.match(result.output.commitSha, /^[0-9a-f]{7,40}$/, 'SHA must be hex');
@@ -2887,6 +2936,10 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
     // session's work, on `unreadable` it must not, because a boundary is probably
     // sitting on disk unread — so the outcome has to be reported, not inferred.
     fs.mkdirSync(path.join(projectPath, '.tangleclaw'), { recursive: true });
+    // Tracked, then damaged: an edit to a project file, not a new file the wrap
+    // would stop to ask about (#1724).
+    fs.writeFileSync(path.join(projectPath, '.tangleclaw', 'project.json'), '{}\n');
+    execSync('git add -f .tangleclaw/project.json && git commit -qm config', { cwd: projectPath, shell: '/bin/sh' });
     fs.writeFileSync(path.join(projectPath, '.tangleclaw', 'project.json'), '{ not json');
     fs.writeFileSync(path.join(projectPath, 'changed.txt'), 'hi\n');
     const result = await commitStep.run(buildContext({}));
@@ -2919,6 +2972,9 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
       { cwd: rootRepo, shell: '/bin/sh' });
     fs.writeFileSync(path.join(rootRepo, 'first.txt'), 'hi\n');
     const ctx = buildContext({}, { name: 'rootrepo', path: rootRepo, id: 2 });
+    // In a repository with no commits every file is new to it, so the one file
+    // is admitted by an explicit Include (#1724).
+    ctx.options = { pathDecisions: { 'first.txt': 'include' } };
     const result = await commitStep.run(ctx);
     assert.equal(result.ok, true);
     assert.ok(result.output.commitSha);

@@ -68,6 +68,7 @@ describe('project-version-files', () => {
       configureVersionFile('RELEASE.json', '2.2.2');
       fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '3.3.3' }));
       fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ version: '4.4.4' }));
+      fs.writeFileSync(path.join(dir, 'pyproject.toml'), '[project]\nname = "x"\nversion = "5.5.5"\n');
 
       assert.deepEqual(versionFiles.detectLiveVersion(dir),
         { version: '1.1.1', source: 'CHANGELOG.md' }, 'CHANGELOG.md outranks everything');
@@ -83,9 +84,13 @@ describe('project-version-files', () => {
 
       fs.rmSync(path.join(dir, 'version.json'));
       assert.deepEqual(versionFiles.detectLiveVersion(dir),
-        { version: '4.4.4', source: 'package.json' }, 'package.json is the last live rung');
+        { version: '4.4.4', source: 'package.json' }, 'package.json outranks pyproject.toml');
 
       fs.rmSync(path.join(dir, 'package.json'));
+      assert.deepEqual(versionFiles.detectLiveVersion(dir),
+        { version: '5.5.5', source: 'pyproject.toml' }, 'pyproject.toml is the last live rung');
+
+      fs.rmSync(path.join(dir, 'pyproject.toml'));
       assert.equal(versionFiles.detectLiveVersion(dir), null,
         'and there is deliberately no git-tag rung here — that one belongs to the writer');
     });
@@ -101,7 +106,8 @@ describe('project-version-files', () => {
           '# Changelog\n\n## [1.1.1] - 2026-01-01\n'),
         () => configureVersionFile('RELEASE.json', '2.2.2'),
         () => fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '3.3.3' })),
-        () => fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ version: '4.4.4' }))
+        () => fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ version: '4.4.4' })),
+        () => fs.writeFileSync(path.join(dir, 'pyproject.toml'), '[project]\nversion = "5.5.5"\n')
       ];
       // Build the stack from the BOTTOM up, asserting after each addition that
       // both ladders now report the newly-added, higher-priority source.
@@ -114,6 +120,22 @@ describe('project-version-files', () => {
           'the writing ladder and the self-healing ladder must pick the same source'
         );
       }
+    });
+
+    it('reads a configured pyproject.toml as TOML, the way the wrap step writes it', () => {
+      fs.mkdirSync(path.join(dir, '.tangleclaw'), { recursive: true });
+      fs.mkdirSync(path.join(dir, 'py'));
+      fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'),
+        JSON.stringify({ versionFilePath: 'py/pyproject.toml' }));
+      fs.writeFileSync(path.join(dir, 'py', 'pyproject.toml'), '[project]\nversion = "6.6.6"\n');
+      fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ version: '4.4.4' }));
+      assert.deepEqual(versionFiles.detectLiveVersion(dir),
+        { version: '6.6.6', source: 'pyproject.toml' });
+    });
+
+    it('skips a pyproject.toml whose version is dynamic', () => {
+      fs.writeFileSync(path.join(dir, 'pyproject.toml'), '[project]\ndynamic = ["version"]\n');
+      assert.equal(versionFiles.detectLiveVersion(dir), null);
     });
   });
 

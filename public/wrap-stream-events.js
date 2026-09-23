@@ -22,7 +22,7 @@
 
   /**
    * Event names keyed by role.
-   * @type {Readonly<{RUN_START: string, STEP_START: string, STEP_DONE: string, STEP_BLOCKED: string, RUN_DONE: string}>}
+   * @type {Readonly<{RUN_START: string, STEP_START: string, STEP_DONE: string, STEP_BLOCKED: string, CANCEL_REQUESTED: string, RUN_DONE: string}>}
    */
   const WRAP_STREAM_EVENTS = Object.freeze({
     // The run's shape: every step id and kind, before the first step moves.
@@ -33,6 +33,11 @@
     STEP_DONE: 'step-done',
     // One step settled with `ok: false`; `halted` says whether the run stopped there.
     STEP_BLOCKED: 'step-blocked',
+    // #1707 — an operator's cancel was accepted: `willStopBefore` (the first step
+    // not started) and `finishingStepId` (the step still running). Appended by the
+    // registry once per run, so every watcher (another tab, a reload's replay, the
+    // PM) sees the run is stopping, not only the page that asked.
+    CANCEL_REQUESTED: 'cancel-requested',
     // Terminal: carries the run's result. Appended by the registry, never the runner.
     RUN_DONE: 'run-done'
   });

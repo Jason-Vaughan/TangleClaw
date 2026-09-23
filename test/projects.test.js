@@ -1647,6 +1647,29 @@ describe('projects', () => {
       assert.equal(projectConfigModule.load(store.projects.getByName('new-project').path).medusaWake, true);
     });
 
+    // #1708: the keep-running default a wrap inherits when its request says nothing.
+    it('defaults wrapKeepSessionRunning to false on enrich', async () => {
+      const result = await projects.updateProject('new-project', { tags: ['x'] });
+      assert.equal(result.project.wrapKeepSessionRunning, false);
+    });
+
+    it('persists wrapKeepSessionRunning and round-trips it through enrich', async () => {
+      const on = await projects.updateProject('new-project', { wrapKeepSessionRunning: true });
+      assert.equal(on.project.wrapKeepSessionRunning, true);
+      assert.equal(projectConfigModule.load(on.project.path).wrapKeepSessionRunning, true);
+      const off = await projects.updateProject('new-project', { wrapKeepSessionRunning: false });
+      assert.equal(off.project.wrapKeepSessionRunning, false);
+      assert.equal(projectConfigModule.load(off.project.path).wrapKeepSessionRunning, false);
+    });
+
+    it('rejects a non-boolean wrapKeepSessionRunning without mutating state', async () => {
+      await projects.updateProject('new-project', { wrapKeepSessionRunning: true });
+      const bad = await projects.updateProject('new-project', { wrapKeepSessionRunning: 'yes' });
+      assert.equal(bad.project, null);
+      assert.ok(bad.errors[0].includes('wrapKeepSessionRunning'));
+      assert.equal(projectConfigModule.load(store.projects.getByName('new-project').path).wrapKeepSessionRunning, true);
+    });
+
     // #428: per-project active-plan pick (the drawer plan-picker → activePlan).
     describe('activePlan (#428)', () => {
       let planDir;

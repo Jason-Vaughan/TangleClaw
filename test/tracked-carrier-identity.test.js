@@ -446,13 +446,72 @@ describe('#1619 — the committed carrier may only point at routes that answer',
     assert.match(server, /['`"]\/api\/groups['"`]/, 'and the route we DO name is served');
   });
 
-  it('tells the reader to stop rather than issue the unfiltered request', () => {
+  it('tells the reader what the bare list holds, and to name the group it means', () => {
+    // The server scopes the bare list to the caller's own groups, so the
+    // carrier says so rather than warning the reader off an install-wide list.
     const section = engines._buildSharedDocsSection(
       [{ id: 'x', name: 'D', groupName: 'G', filePath: '/p/d.md', injectMode: 'reference' }],
       { committedCarrier: true }
     );
-    assert.match(section, /ALWAYS send `groupId`/);
-    assert.match(section, /say so and stop rather than issuing the bare request/);
+    assert.match(section, /Send `groupId` to name the group you mean/);
+    assert.match(section, /every group your project is in, never another project's/);
+    assert.doesNotMatch(section, /unfiltered one|every group's documents and their absolute paths/);
+  });
+});
+
+describe('#1626 — the carrier tells the reader to send its project binding', () => {
+  const section = engines._buildSharedDocsSection(
+    [{ id: 'x', name: 'D', groupName: 'G', filePath: '/p/d.md', injectMode: 'reference' }],
+    { committedCarrier: true }
+  );
+
+  it('names both binding headers with the env vars that carry them', () => {
+    // The server scopes shared-docs and groups answers to the project a launch
+    // id resolves to; a reader told only the routes would call them unbound.
+    assert.ok(section.includes('x-tangleclaw-project-id: $TANGLECLAW_PROJECT_ID'));
+    assert.ok(section.includes('x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID'));
+  });
+
+  it('carries only the variable names, never a launch-time value', () => {
+    // The carrier is tracked and shared by every checkout: a real launch id
+    // written here would bind every reader to one session.
+    assert.doesNotMatch(section, /x-tangleclaw-launch-id: (?!\$TANGLECLAW_LAUNCH_ID)/);
+    assert.doesNotMatch(section, /x-tangleclaw-project-id: (?!\$TANGLECLAW_PROJECT_ID)/);
+  });
+
+  it('the static guide names the same binding, for engine-private configs', () => {
+    const guide = fs.readFileSync(path.join(__dirname, '..', 'data', 'shared-docs-guide.md'), 'utf8');
+    assert.match(guide, /### Identify Your Project/);
+    assert.ok(guide.includes('x-tangleclaw-project-id: $TANGLECLAW_PROJECT_ID'));
+    assert.ok(guide.includes('x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID'));
+  });
+
+  it('both texts say the binding is required and scopes the answer, and the guide keeps the groupId rule', () => {
+    // The routes refuse an unbound caller, answer a bound one only within its
+    // own groups, and keep some writes for the operator; a reader must be told
+    // all three, or it will call them bare and read the 403 as an outage.
+    const guide = fs.readFileSync(path.join(__dirname, '..', 'data', 'shared-docs-guide.md'), 'utf8');
+    for (const text of [guide, section]) {
+      assert.match(text, /request without them is refused with `403`/);
+      assert.match(text, /read and change documents only in the groups your project belongs to/);
+      // Scoped to these routes: GET /api/projects still shows every project's
+      // groups, so "as if it did not exist" is not true install-wide.
+      assert.match(text, /on these routes, another project's group or document answers `404`, as if it did not exist/);
+      assert.match(text, /`403 OPERATOR_ONLY`/);
+      // Only the registration is the operator's; a reader told "editing is the
+      // operator's" would read the lock instructions as contradicting it.
+      assert.match(text, /Changing a document's registration/);
+      assert.match(text, /Editing a document's contents is not a registration change; lock it first/);
+      assert.doesNotMatch(text, /do not narrow what you are shown/);
+    }
+    assert.match(guide, /\*\*Send `groupId`\*\* when listing documents/);
+    assert.match(guide, /never another project's/);
+  });
+
+  it('the header names match what the resolver reads', () => {
+    const access = require('../lib/shared-docs-access');
+    assert.ok(section.includes(access.PROJECT_HEADER));
+    assert.ok(section.includes(access.LAUNCH_HEADER));
   });
 });
 

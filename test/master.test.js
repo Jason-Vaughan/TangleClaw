@@ -148,6 +148,15 @@ describe('buildMasterClaudeMd', () => {
     assert.match(md, /confirmed\/sent\/unverified\/no-rules\/unaware/);
   });
 
+  it('the shared-docs row tells the Master to send its binding, both headers (#1626)', () => {
+    const md = master.buildMasterClaudeMd({ serverPort: 3101 });
+    const row = md.split('\n').find((l) => l.includes('GET /api/shared-docs'));
+    assert.ok(row, 'the shared-docs row ships');
+    assert.match(row, /x-tangleclaw-role: master/);
+    assert.match(row, /x-tangleclaw-launch-id: \$TANGLECLAW_LAUNCH_ID/);
+    assert.doesNotMatch(row, /TANGLECLAW_PROJECT_ID/, 'the Master has no project id to send');
+  });
+
   it('tells the Master a project session\'s "port unreachable" is not proof of outage (#1150)', () => {
     // A sandboxed Codex session read its blocked loopback as "3102 is down" and
     // the Master would have relayed it. The identity names the host-context
@@ -244,6 +253,19 @@ describe('ensureMasterSession', () => {
       'the API origin ships like a project pane\'s');
     assert.match(opts.command, /^export PATH="[^"]+\/bin:\$PATH"; /,
       'the launch command is PATH-floor wrapped like a project pane\'s (#1140)');
+  });
+
+  it('each launch carries a fresh launch id, the Master\'s binding for per-caller surfaces (#1626)', () => {
+    const first = fakeTmux({ alive: false });
+    master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: first, enginesLib: availableEngines });
+    const second = fakeTmux({ alive: false });
+    master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: second, enginesLib: availableEngines });
+    const a = first.calls[0].opts.env.TANGLECLAW_LAUNCH_ID;
+    const b = second.calls[0].opts.env.TANGLECLAW_LAUNCH_ID;
+    // The same shape `lib/sessions.js` exports into project panes.
+    assert.match(a, /^[A-Za-z0-9_-]{22}$/);
+    assert.match(b, /^[A-Za-z0-9_-]{22}$/);
+    assert.notEqual(a, b, 'a relaunch must replace the binding, or a stale Master id stays honoured');
   });
 
   it('is idempotent — an alive session means no second launch, but CLAUDE.md still regenerates', () => {
@@ -372,6 +394,25 @@ describe('getMasterStatus', () => {
   // trap, and it has already cost this issue one CI failure. An absent home
   // reports no guard posture at all, which is the deterministic answer.
   const NO_HOME = path.join(os.tmpdir(), 'tc-master-status-no-home-does-not-exist');
+
+  it('#1589 — records WHY the Master pane gets no launch sequence, rather than leaving it absent', () => {
+    const status = master.getMasterStatus({ tmuxLib: fakeTmux({ alive: true }), home: NO_HOME });
+    const ls = status.settings.launchSequence;
+
+    // Stated, not absent. An absence reads the same whether the answer is "no"
+    // or whether nobody ever asked, and that confusion is what Train 21 removes.
+    assert.ok(ls, 'the Master pane must state its launch-sequence applicability');
+    assert.equal(ls.applicable, false);
+    assert.equal(typeof ls.reason, 'string');
+    assert.ok(ls.reason.length > 0, 'a not-applicable verdict owes a reason');
+
+    // The reason must be about the PANE, not the engine. Master usually resolves
+    // an engine that declares launchSequence.supported: true, so an
+    // engine-derived answer would say "applicable" for exactly the pane where it
+    // is least true. This is the mutation that matters: re-deriving this field
+    // from the resolved engine's capability flips it and this assertion catches it.
+    assert.match(ls.reason, /not a project session/);
+  });
 
   it('reports liveness straight from tmux', () => {
     assert.equal(master.getMasterStatus({ tmuxLib: fakeTmux({ alive: true }), home: NO_HOME }).exists, true);
@@ -2709,5 +2750,29 @@ describe('getMasterAwareness (#1141) — the Master joins the awareness system',
     store.awarenessReceipts.record({ verb: 'whoami', source: 'tc-cli' });
     const aw = master.getMasterAwareness({ home, tmuxLib: t });
     assert.equal(aw.state, 'sent', 'role NULL receipts belong to project panes, not the Master');
+  });
+});
+
+describe('liveMasterLaunchId (#1626)', () => {
+  it('reads the launch id from the Master session\'s own tmux environment', () => {
+    const asked = [];
+    const t = { readSessionEnv: (name, key) => { asked.push([name, key]); return { value: 'id-1', answered: true, cause: null }; } };
+    assert.deepEqual(master.liveMasterLaunchId({ tmuxLib: t }), { launchId: 'id-1', answered: true, cause: null });
+    assert.deepEqual(asked, [[master.MASTER_TMUX_SESSION, 'TANGLECLAW_LAUNCH_ID']]);
+  });
+
+  it('keeps "tmux did not answer" distinct from "no live Master"', () => {
+    const silent = { readSessionEnv: () => ({ value: null, answered: false, cause: 'read-timed-out' }) };
+    assert.deepEqual(master.liveMasterLaunchId({ tmuxLib: silent }), { launchId: null, answered: false, cause: 'read-timed-out' });
+    const absent = { readSessionEnv: () => ({ value: null, answered: true, cause: null }) };
+    assert.deepEqual(master.liveMasterLaunchId({ tmuxLib: absent }), { launchId: null, answered: true, cause: null });
+  });
+
+  it('passes a caller\'s read timeout to tmux, and none when the caller sets none', () => {
+    const opts = [];
+    const t = { readSessionEnv: (_name, _key, o) => { opts.push(o); return { value: 'id-1', answered: true, cause: null }; } };
+    master.liveMasterLaunchId({ tmuxLib: t, timeout: 250 });
+    master.liveMasterLaunchId({ tmuxLib: t });
+    assert.deepEqual(opts, [{ timeout: 250 }, {}]);
   });
 });
