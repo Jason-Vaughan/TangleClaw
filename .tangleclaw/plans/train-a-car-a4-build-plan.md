@@ -168,6 +168,9 @@ tests for both refusals. The mechanism for waiting on the test result is the mai
 to the Architect: `workflow_run`, polling check-runs for `GITHUB_SHA`, or making release a
 `needs: test` job.
 
+Bookkeeping when Chunk 02 starts: repoint the frontmatter `branch:` at Chunk 02's branch and
+rewrite `status:`, because both still describe Chunk 01's merged and deleted branch.
+
 ## Status
 
 - [x] Chunk 01: Every workflow dependency is pinned to an immutable commit, and a test enforces it (#1436): Critic rev-20260923T191930Z (1 blocking) resolved by rev-20260923T192644Z (0 findings); Architect ruled A1–A5 (A2/A4 MODIFY); follow-up #1827
