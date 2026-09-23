@@ -157,6 +157,58 @@ is written as its own section after Chunk 04 is planned, not inside any build ch
   replaced by the plain text "Past the point of cancelling: the wrap is committing." This is the
   operator-facing procedure part of #1707.
 
+### Architect rulings (2026-09-23, message 417454d7) — binding
+
+The PM approved the plan and the chunk order (message 8219ab12). Architectural approval does
+not certify implementation, tests, Critic or merge readiness.
+
+- **C1: ACCEPT** as the technical dependency order. The PM keeps scheduling authority.
+- **C2: ACCEPT**, planning only. A3 contains no startupControl schema, adapter or boot
+  execution unless there is a separate plan-written schema ruling and a canonical issue. #1774
+  owns the direction for the uppercase TC command contract. An adapter build still needs scope
+  that has been explicitly admitted.
+- **D1: MODIFY.** The precedence and the project setting stand. Three fail-closed rules are
+  added:
+  1. Only a boolean request field that is explicitly present overrides. Never coerce it, and never
+     trust a caller-supplied `keepSource` or `sessionOutcomePlanned`.
+  2. A config that is absent, or a key that is absent, means `false` with source `default`. A
+     config that is unreadable, malformed or invalid **refuses before the claim** rather than
+     silently choosing either outcome. This supersedes the plan's "invalid reads as keep".
+  3. A Retry keeps the original server-resolved value and source from the trusted run record,
+     unless the new request explicitly changes the boolean.
+
+  Resolve once, before `begin`, and use that immutable value everywhere.
+- **D2: MODIFY.** The additive fields stand, derived on the server for the 202, the status and
+  `run-start`. Operator copy is **conditional**: "If this wrap completes, it will end/keep the
+  session (source)". Blocked, failed and cancelled runs leave the session active, so the plan is
+  never phrased as a guaranteed terminal outcome.
+- **D3: MODIFY.** The route, the gate, the mandatory `runId`, no mid-step interrupt and the hard
+  cutoff before `commit` all stand. Changes:
+  - Cancel admission and the step-start transition are **one atomic registry decision**, so a
+    202 can never race `commit` starting.
+  - A repeated cancel is idempotent.
+  - `willStopBefore` is the first step that has not started, and the response shows that the
+    current step is still finishing.
+  - If an accepted cancel arrives during a step that then reports a blocker, **cancel wins** as
+    the terminal outcome and that step's result stays visible.
+  - **Corrected side-effect boundary:** the guarantee is no commit, branch, push, PR, auto-merge
+    or later durable Git action. It is *not* "repo untouched". Pre-commit ai-content steps can
+    edit the working tree, and preflight and other steps can write local methodology or DB state.
+    Report every completed step and warn that uncommitted or local side effects may remain. Never
+    roll them back or call the result a clean undo. Tests assert no durable Git or remote action,
+    not a byte-identical worktree.
+- **D4: ACCEPT**, with this shape: `ok:false`, `blockedAt:null`, `error:null`,
+  `cancelledAt:<first not-started step>`, later steps `pending`, and a terminal
+  `outcome:'cancelled'` in the stored result, the status and `run-done`. The session stays active
+  whatever `sessionOutcomePlanned` says. A cancelled run offers neither Retry nor Skip.
+- **D5: MODIFY.** Hide and Cancel are separate controls, and Hide keeps following the same run.
+  Past the cutoff the copy is "Past the point of cancellation; wrap continues" plus the actual
+  current step, not a permanent "committing". Once a cancel is accepted the control is disabled
+  and the copy says the current step is finishing.
+
+The "Facts" bullet above that says a pre-commit cancel "leaves the repository as it found it" is
+superseded by the corrected boundary in D3.
+
 ### Implementation calls (not architectural; noted per the priming)
 
 - Dismissing a `stalled` or `lost` run re-checks `GET /wrap/status` before returning the button to

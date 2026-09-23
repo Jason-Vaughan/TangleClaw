@@ -7024,6 +7024,12 @@ route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => 
     if (started.code === 'BAD_REQUEST') {
       return errorResponse(res, 400, started.error, 'BAD_REQUEST');
     }
+    // #1708: the project's keep-running setting is unreadable or not a boolean,
+    // and the request did not decide. Nothing was claimed; fixing the setting,
+    // or sending options.keepSessionRunning, starts the wrap.
+    if (started.code === 'WRAP_KEEP_SETTING_INVALID') {
+      return errorResponse(res, 409, started.error, 'WRAP_KEEP_SETTING_INVALID');
+    }
     return errorResponse(res, 404, started.error, 'NOT_FOUND');
   }
 
@@ -7039,9 +7045,55 @@ route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => 
     status: 'wrapping',
     // #1540: why the stranded-wrap check was skipped, or null when it ran.
     strandedUnchecked: started.strandedUnchecked || null,
+    // #1708 — whether this run will end the session, and why: the request, the
+    // project's `wrapKeepSessionRunning`, or the default. Stated before any step
+    // moves, so a caller that did not choose can see what was chosen for it.
+    sessionOutcomePlanned: started.sessionOutcomePlanned,
+    keepSource: started.keepSource,
+    ...(started.keepWarning ? { keepWarning: started.keepWarning } : {}),
     statusUrl: `/api/sessions/${project}/wrap/status`,
+    // #1707 — where to stop this run, while it is still before its commit step.
+    cancelUrl: `/api/sessions/${project}/wrap/cancel`,
     streamUrl: `/api/sessions/${project}/wrap/stream/${encodeURIComponent(started.runId)}`
   });
+});
+
+// POST /api/sessions/:project/wrap/cancel — stop a running wrap at its next
+// step boundary (#1707). Body `{ runId }`: required, so a cancel lands only on
+// the run the caller is watching. Honoured only before the run's commit step;
+// after that the run may already have branched, committed, pushed or opened a
+// PR, and it is refused rather than left half-done. The running step always
+// finishes. Gated exactly as starting a wrap is. Not behind `wrapDisabled`:
+// that switch exists to stop wraps, and must never stop someone stopping one.
+route('POST', '/api/sessions/:project/wrap/cancel', async (_req, res, params, body) => {
+  const passwordCheck = projects.checkDeletePassword(body ? body.password : undefined);
+  if (!passwordCheck.allowed) {
+    return errorResponse(res, 403, passwordCheck.error, 'FORBIDDEN');
+  }
+  const runId = body && typeof body.runId === 'string' ? body.runId : '';
+  if (!runId) return errorResponse(res, 400, 'runId is required: the run you mean to cancel', 'BAD_REQUEST');
+  const answer = sessions.cancelWrap(params.project, runId);
+  if (answer.ok) {
+    return jsonResponse(res, 202, {
+      ok: true,
+      project: params.project,
+      runId: answer.runId,
+      cancelRequested: true,
+      // The first step that has not started, or null when the running step is its last.
+      willStopBefore: answer.willStopBefore,
+      // The step still running: it finishes before the run stops.
+      finishingStepId: answer.finishingStepId,
+      // What stopping does NOT undo: the steps that ran may have left
+      // uncommitted edits or local state. The guarantee is no commit, branch,
+      // push, PR or auto-merge.
+      note: 'The wrap will make no commit, branch, push, PR or auto-merge. Steps that already ran are not undone: '
+        + 'uncommitted edits or local state they wrote may remain.'
+    });
+  }
+  if (answer.code === 'WRAP_NOT_CANCELLABLE') {
+    return errorResponse(res, 409, answer.error, 'WRAP_NOT_CANCELLABLE', { currentStepId: answer.currentStepId });
+  }
+  return errorResponse(res, 404, answer.error, answer.code === 'NOT_FOUND' ? 'NOT_FOUND' : 'WRAP_RUN_NOT_FOUND');
 });
 
 /**
@@ -7066,7 +7118,10 @@ function _wrapResultPayload(projectName, result) {
     // never read it. It reports the pipeline this call just started, which is
     // what `lib/wrap-run-registry.js` knows. A sweep that retires the persisted
     // session status must leave this alone (#1034).
-    status: result.ok ? 'wrapping' : 'blocked',
+    // #1707 — `cancelled` is its own word: an operator stopped the run and
+    // nothing failed, so it must not read as a block to Retry or Skip.
+    status: result.ok ? 'wrapping' : (_wasCancelled(result) ? 'cancelled' : 'blocked'),
+    ...(_wasCancelled(result) ? { outcome: 'cancelled' } : {}),
     wrapCommand: result.wrapCommand,
     wrapSteps: result.wrapSteps,
     captureFields: result.captureFields,
@@ -7080,6 +7135,16 @@ function _wrapResultPayload(projectName, result) {
   if (result.pipelineResult) payload.pipelineResult = result.pipelineResult;
   if (!result.ok && result.error) payload.error = result.error;
   return payload;
+}
+
+/**
+ * Whether a run's outcome is an operator's cancel (#1707).
+ *
+ * @param {object} result - The run's recorded outcome
+ * @returns {boolean}
+ */
+function _wasCancelled(result) {
+  return Boolean(result.pipelineResult && result.pipelineResult.cancelledAt);
 }
 
 /**
@@ -7138,6 +7203,15 @@ route('GET', '/api/sessions/:project/wrap/status', (_req, res, params) => {
     // #1492 — the choices this run was started with. A Retry replays them, and a
     // reloaded page has no other copy; a Hold it lost would read as Auto.
     options: status.options,
+    // #1708 — the resolved session outcome, from the options `startWrap`
+    // recorded; null for a run recorded without them.
+    sessionOutcomePlanned: status.options && typeof status.options.keepSessionRunning === 'boolean'
+      ? (status.options.keepSessionRunning ? 'keep' : 'end') : null,
+    keepSource: status.options ? (status.options.keepSource || null) : null,
+    // #1707 — whether POST /wrap/cancel would still be honoured, and whether
+    // one already was.
+    cancellable: status.cancellable === true,
+    cancelRequested: status.cancelRequested === true,
     // The fix handed back to the session for this run's blocked step, so a
     // reloaded page can show "Fixing…" or "Ready: Retry" without re-sending it.
     handback: wrapHandback.get(params.project, status.runId)
