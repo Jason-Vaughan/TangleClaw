@@ -1,6 +1,6 @@
 ---
 title: "Train A Car A2: updater ownership and authored-data preservation"
-status: IN PROGRESS — Architect ruled D1–D5 2026-09-22 (message a358b1ba): D1, D2 accepted; D3, D4, D5 modified. Chunk 01 shipped (PR #1800); Chunk 02 built; Architect ruled D6–D10 2026-09-23 (message 4b503584): D6, D8, D10 approved; D7, D9 modified
+status: COMPLETE — Chunk 01 shipped (#1800, #1537 closed); Chunk 02 in this PR (#1730, open until the operator closes it); Architect ruled D1–D10
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (message 866e2043)
 issues: [1537, 1730]
 governed_by:
