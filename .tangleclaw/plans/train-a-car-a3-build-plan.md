@@ -664,8 +664,10 @@ Two findings needed a design decision F1–F5 had not covered, so they went to t
   name. It needs a `0700` directory, `0600` files, safe creation that follows no symlink, and at
   most 20 entries. How long drafts are kept after an attempt is the Operator's risk decision, and
   the PR stays blocked until it is chosen. The Architect's recommendation, built as the default: delete on successful
-  recovery or 24 hours after the attempt ends, whichever comes first. (TangleClaw has no recovery
-  action yet, so only the 24-hour rule can fire.)
+  recovery or 24 hours after the attempt ends, whichever comes first.
+  **Operator ruling (relayed by the PM, message c30f56b6): 7 days.** A kept draft is deleted 7
+  days after its attempt ends (`RETAIN_MS`). TangleClaw has no recovery action yet, so there is
+  nothing to delete on.
   Built as: `draftRef` (`<attempt>:<id>`), `engineId`, `rows` and `chars` in the log. The attempt is
   `session-<id>` from each caller that has a session row, and `<tmux-name>@<created>` for the
   Project Master, which has none. Files are written through an `O_CREAT|O_EXCL|O_NOFOLLOW` temp file

@@ -10,7 +10,7 @@ TangleClaw uses a layered configuration system: global config for system-wide se
 | `~/.tangleclaw/engines/*.json` | Engine profiles |
 | `<tangleclaw-repo>/data/global-rules.md` | Global rules (applied to all projects; git-tracked, see below) |
 | `~/.tangleclaw/tangleclaw.db` | SQLite database (runtime state) |
-| `~/.tangleclaw/drafts/<attempt>.jsonl` | Drafts cleared from a session's prompt before TangleClaw pasted into it, one file per session attempt (`session-<id>`, or `<tmux-name>@<created>` for the Project Master): the last 20, one JSON object per line (`id`, `at`, `engineId`, `complete`, `text`). Private (directory `0700`, file `0600`, never written through a symlink). Deleted 24 hours after the attempt ends. The log carries only an opaque `draftRef` (`<attempt>:<id>`) with the row and character counts, never the text (#1507) |
+| `~/.tangleclaw/drafts/<attempt>.jsonl` | Drafts cleared from a session's prompt before TangleClaw pasted into it, one file per session attempt (`session-<id>`, or `<tmux-name>@<created>` for the Project Master): the last 20, one JSON object per line (`id`, `at`, `engineId`, `complete`, `text`). Private (directory `0700`, file `0600`, never written through a symlink). Deleted 7 days after the attempt ends. The log carries only an opaque `draftRef` (`<attempt>:<id>`) with the row and character counts, never the text (#1507) |
 | `<project>/.tangleclaw/project.json` | Per-project configuration |
 | `<project>/.tangleclaw/state.json` | Per-checkout wrap state: the last wrap boundary and a declined un-track offer. Untracked and never committed; `project.json` no longer holds `lastWrapSha` (#1510, #1512) |
 

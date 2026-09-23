@@ -325,6 +325,10 @@ describe('the draft store', () => {
     assert.equal(fs.readFileSync(target, 'utf8'), 'untouched\n');
   });
 
+  it('keeps a draft seven days past its attempt: the Operator\'s retention choice', () => {
+    assert.equal(draftStore.RETAIN_MS, 7 * 24 * 60 * 60 * 1000);
+  });
+
   it('deletes an attempt\'s file a retention period after it ended, and not before', () => {
     const live = draftStore.sessionAttemptKey(9201);
     const ended = draftStore.sessionAttemptKey(9202);
