@@ -95,6 +95,20 @@
       label: 'Needs you',
       tone: 'needs-operator',
       tooltip: 'Step stopped on something only you can do or decide (e.g. leave plan mode so content steps can edit files, or choose whether this wrap cuts a release). The row says what to do; then Retry.'
+    },
+    // #1738 — the step has no subject in this project (e.g. prawduct gates on a
+    // project that was never onboarded). Neutral, like a skip.
+    'not-applicable': {
+      label: 'N/A',
+      tone: 'not-applicable',
+      tooltip: 'Step does not apply to this project, on any engine. Nothing was withheld.'
+    },
+    // #1738 — the step applies, but this session's engine cannot do it, so its
+    // evidence does not exist. Never a pass: the handoff records it as missing.
+    'capability-unavailable': {
+      label: 'Unavailable',
+      tone: 'unavailable',
+      tooltip: 'Step applies to this project, but the engine running this session cannot perform it, so it did not run and its evidence was not produced. Not a pass. The row names the engine and what a capable session must do.'
     }
   };
 
@@ -305,6 +319,10 @@
     if (stepResult.status === 'skipped') {
       return (output && (output.detail || output.reason)) || 'Skipped';
     }
+    // #1738 — both carry their reason (the engine, and what it could not do).
+    if (stepResult.status === 'not-applicable' || stepResult.status === 'capability-unavailable') {
+      return (output && output.reason) || (stepResult.status === 'not-applicable' ? 'Does not apply' : 'Not available on this engine');
+    }
     if (!output) return null;
     switch (stepResult.kind) {
       case 'session-files':
@@ -380,9 +398,16 @@
           release = ` · releasePrepareCommand not run: ${rp.reason || 'no reason given'}`;
         }
         // #467 — auto-PR close-loop outcome for auto-branched commits.
+        // #1738 — Prawduct files held back on an engine that cannot run Prawduct.
+        const heldBack = Array.isArray(output.methodologyWithheld) && output.methodologyWithheld.length
+          ? ` · ${output.methodologyWithheld.length} Prawduct file${output.methodologyWithheld.length === 1 ? '' : 's'} not committed`
+          : '';
+        release += heldBack;
         const ap = output.autoPr;
         if (!ap) return sha + release;
         if (ap.autoMergeArmed) return `${sha} · wrap PR auto-merge armed` + release;
+        // A deliberate withhold, not a failure to arm: said as the reason.
+        if (ap.prUrl && ap.autoMergeWithheld) return `${sha} · wrap PR opened, auto-merge withheld: this engine cannot run the methodology` + release;
         if (ap.prUrl) return `${sha} · wrap PR opened (auto-merge NOT armed)` + release;
         if (ap.error) return `${sha} · wrap PR failed — branch dangling` + release;
         // #867 — a pushed branch with no PR is stranded, not skipped. It used
@@ -537,6 +562,22 @@
      * string is dropped — which is exactly what `composeReleaseBanner` does to
      * a `provisional` base once the release probe answers. */
     const warnIds = warningSteps.map((st) => st.stepId);
+    // #1738 — a run whose engine could not run the project's methodology is a
+    // checkpoint: it committed (and opened its PR), but nothing will merge or
+    // release until a capable session does it. That outranks every release-state
+    // banner below, because each of them would otherwise say the work is on its
+    // way to shipping.
+    const authority = pipelineResult.methodologyAuthority;
+    if (authority && authority.state === 'withheld') {
+      const sessionNote = pipelineResult.commitSha ? null : sessionOutcomePhrase(runContext);
+      return {
+        label: 'Wrap checkpointed — merge and release withheld',
+        tone: 'warning',
+        detail: withWarnings([authority.reason, sessionNote].filter(Boolean).join(' · ')),
+        pr: wrapPrInfo(pipelineResult),
+        warnings: warnIds
+      };
+    }
     if (pipelineResult.commitSha) {
       // #638 — a committed wrap is NOT a shipped release. When the commit step
       // auto-branched and opened a PR, the version bump / CHANGELOG promotion
@@ -853,7 +894,9 @@
       else if (status === 'blocked' || status === 'needs-operator') out.blocked += 1;
       else if (status === 'running') out.running += 1;
       else if (status === 'pending') out.pending += 1;
-      else if (status === 'skipped') {
+      // #1738 — neither ran. Bucketed with skips so the rollup reads "skipped N
+      // of M" rather than green, and each carries its own reason in `skips`.
+      else if (status === 'skipped' || status === 'not-applicable' || status === 'capability-unavailable') {
         out.skipped += 1;
         out.skips.push({ id: r.stepId, kind: r.kind, reason: deriveDetail(r) || 'Skipped' });
       }
@@ -1525,6 +1568,10 @@
       next.sessionOutcomePlanned = event.sessionOutcomePlanned === 'keep' || event.sessionOutcomePlanned === 'end'
         ? event.sessionOutcomePlanned : null;
       next.keepSource = typeof event.keepSource === 'string' ? event.keepSource : null;
+      // #1738 — whether this run may merge or release, stated before any step.
+      next.methodologyAuthority = event.methodologyAuthority && event.methodologyAuthority.state === 'withheld'
+        ? { state: 'withheld', engineId: typeof event.methodologyAuthority.engineId === 'string' ? event.methodologyAuthority.engineId : null }
+        : null;
       next.pastCancelBoundary = false;
     },
     'step-start': (next, event) => {
@@ -1575,10 +1622,19 @@
    */
   function plannedSessionLine(live) {
     const state = live && typeof live === 'object' ? live : {};
-    if (state.sessionOutcomePlanned !== 'keep' && state.sessionOutcomePlanned !== 'end') return null;
-    const verb = state.sessionOutcomePlanned === 'keep' ? 'keep the session running' : 'end the session';
-    const source = KEEP_SOURCE_LABELS[state.keepSource];
-    return `If this wrap completes, it will ${verb}${source ? ` (${source})` : ''}.`;
+    const parts = [];
+    if (state.sessionOutcomePlanned === 'keep' || state.sessionOutcomePlanned === 'end') {
+      const verb = state.sessionOutcomePlanned === 'keep' ? 'keep the session running' : 'end the session';
+      const source = KEEP_SOURCE_LABELS[state.keepSource];
+      parts.push(`If this wrap completes, it will ${verb}${source ? ` (${source})` : ''}.`);
+    }
+    // #1738 — said from the first frame, so an operator watching knows before
+    // the last row that this wrap is a checkpoint and not a release.
+    if (state.methodologyAuthority && state.methodologyAuthority.state === 'withheld') {
+      const engine = state.methodologyAuthority.engineId || 'this';
+      parts.push(`It will not merge or release: the ${engine} engine cannot run this project's methodology.`);
+    }
+    return parts.length > 0 ? parts.join(' ') : null;
   }
 
   /**

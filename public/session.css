@@ -2250,6 +2250,17 @@ html[data-tc-keyboard] body {
   background: #78350f33;
   color: #fbbf24;
 }
+/* #1738 — "N/A" is neutral like a skip; "Unavailable" is outlined amber, so a
+   step whose evidence was never produced cannot be mistaken for a quiet skip. */
+.wrap-step-status--not-applicable {
+  background: var(--elevated-bg);
+  color: var(--text-secondary);
+}
+.wrap-step-status--unavailable {
+  background: transparent;
+  color: #fbbf24;
+  box-shadow: inset 0 0 0 1px #78350f99;
+}
 /* #1515 — "Reused" / "Will reuse": outlined rather than filled, so it reads as
    carried over from the halted attempt rather than as work this Retry did. */
 .wrap-step-status--reused {

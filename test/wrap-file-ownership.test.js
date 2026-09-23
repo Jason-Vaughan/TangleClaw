@@ -282,6 +282,31 @@ describe('classify', () => {
     assert.deepEqual(c.left, []);
   });
 
+  it('a withheld prefix is never staged and never asked about, whatever the decision (#1738)', () => {
+    const c = ownership.classify(scope(), [
+      { path: 'new.js', deleted: false },
+      { path: '.prawduct/change-log.md', deleted: false },
+      { path: 'old.js', deleted: false }
+    ], {
+      withheldPrefixes: ['.prawduct/'],
+      wrapWritten: ['.prawduct/change-log.md'],
+      decisions: { '.prawduct/change-log.md': 'include', 'old.js': 'include' }
+    });
+    assert.deepEqual(c.methodologyWithheld, ['.prawduct/change-log.md']);
+    assert.deepEqual(c.stageable.sort(), ['new.js', 'old.js']);
+    assert.ok(!c.undecided.some((f) => f.path.startsWith('.prawduct/')), 'no decision can authorize it, so none is asked');
+    // A narrowed rebuild keeps the bucket: the secret check rebuilds this way.
+    const narrowed = ownership.reclassify(c, { owned: c.owned, included: c.included, tangleclawMaintenance: c.tangleclawMaintenance });
+    assert.deepEqual(narrowed.methodologyWithheld, ['.prawduct/change-log.md']);
+    assert.ok(!narrowed.stageable.includes('.prawduct/change-log.md'));
+  });
+
+  it('with no withheld prefixes, .prawduct/ paths classify as any other path', () => {
+    const c = ownership.classify(scope(), [{ path: '.prawduct/change-log.md', deleted: false }], { wrapWritten: ['.prawduct/change-log.md'] });
+    assert.deepEqual(c.methodologyWithheld, []);
+    assert.deepEqual(c.stageable, ['.prawduct/change-log.md']);
+  });
+
   it('a file dirty at launch stays the operator\'s call even after the wrap rewrites it, and Leave keeps it out', () => {
     const asked = ownership.classify(scope(), [{ path: 'old.js', deleted: false }], { wrapWritten: ['old.js'] });
     assert.deepEqual(asked.undecided.map((f) => f.path), ['old.js']);

@@ -387,8 +387,26 @@ worktree `.claude/worktrees/a3-chunk2`.
 ### Implementation calls (not architectural)
 
 - The resolver is pure fs, like the rest of `governance-state.js` (the scanner child imports it).
-- `methodologyAuthority` is derived once from preflight's recorded row by the pipeline, not
-  re-derived per step.
+- `methodologyAuthority` is derived once by the pipeline from the resolved capability
+  (`methodologyAuthorityOf`), not re-derived per step. Every step reads `context.methodology`.
+- The `.prawduct/` hold-back is a `withheldPrefixes` option on the file classifier, passed by
+  both `session-files` and `commit` from the same capability. That way the files row never asks
+  about a path the commit would refuse. The paths go to a new `methodologyWithheld` bucket, which
+  is never staged and never offered as a decision. `reclassify` carries it through.
+- A preflight disabled through `wrapStepOverrides` stays an ordinary `skipped` (it is an operator
+  configuration, not a failed measurement), so it does not degrade the handoff. The handoff's
+  `methodology.disposition` still says `unmeasured` for it.
+- An engine that cannot be identified reads as unable to run the plugin (fail closed). The
+  preflight test fixture now names its engine (`claude`) rather than relying on the old
+  engine-blind behaviour.
+- TangleClaw ships no `gemini` engine profile. The shipped non-Claude engines are Codex, Aider,
+  Antigravity and OpenClaw, and the tests use those or a bare `gemini` session id.
+- Fixed in passing (no "pre-existing" exception): `handoff-stage` read `project.engine`, a field
+  project rows do not carry (`engineId`), so the handoff's `engineId` fell to `unknown` whenever the
+  session had none.
+- **Owed after the Architect rules:** an ADR 0002 dated section recording E1–E6 in the
+  Architect's wording, as Chunk 01 did. It is not written before the ruling, because writing the
+  ADR is itself architectural.
 
 ### Tests (written alongside)
 

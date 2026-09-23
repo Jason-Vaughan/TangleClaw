@@ -176,6 +176,77 @@ describe('the handoff-stage wrap step', () => {
     assert.equal(lockfile.readHandoffFile(lockfile.stagedPath(project, pid)).outcome, 'ok');
   });
 
+  // #1738 — the handoff must say whether the methodology ran, and must never
+  // call a wrap complete over gates nobody measured.
+  describe('methodology evidence (#1738)', () => {
+    const dormant = { onboarded: true, available: false, disposition: 'capability-unavailable', engineId: 'gemini', capability: 'prawduct-methodology', reason: 'r' };
+    const available = { ...dormant, available: true, disposition: 'available', engineId: 'claude' };
+    const readStaged = (pid) => lockfile.readHandoffFile(lockfile.stagedPath(project, pid)).doc;
+
+    it('a capability-unavailable preflight degrades the handoff and records the disposition', async () => {
+      const res = await stageStep.run(ctx({
+        session: { id: 7, engineId: 'gemini' },
+        methodology: dormant,
+        previousResults: [{ stepId: 'preflight', kind: 'preflight', status: 'capability-unavailable', output: { measured: false } }]
+      }));
+      assert.equal(res.output.wrapOutcome, 'degraded');
+      assert.deepEqual(res.output.missingEvidence, ['preflight: capability-unavailable']);
+      assert.deepEqual(readStaged(res.output.publicationId).methodology, { disposition: 'capability-unavailable', engineId: 'gemini' });
+    });
+
+    it('an unmeasured skip degrades the handoff, named as not measured', async () => {
+      const res = await stageStep.run(ctx({
+        methodology: available,
+        previousResults: [{ stepId: 'preflight', kind: 'preflight', status: 'skipped', output: { measured: false, reason: 'hook not found' } }]
+      }));
+      assert.equal(res.output.wrapOutcome, 'degraded');
+      assert.deepEqual(res.output.missingEvidence, ['preflight: skipped (not measured)']);
+      assert.equal(readStaged(res.output.publicationId).methodology.disposition, 'unmeasured');
+    });
+
+    it('a not-applicable preflight and an ordinary skip leave the handoff complete', async () => {
+      const res = await stageStep.run(ctx({
+        methodology: { ...dormant, onboarded: false, disposition: 'not-applicable', engineId: 'claude' },
+        previousResults: [
+          { stepId: 'preflight', kind: 'preflight', status: 'not-applicable', output: { governed: false } },
+          { stepId: 'lint', kind: 'lint', status: 'skipped', output: { reason: 'no lint configured' } }
+        ]
+      }));
+      assert.equal(res.output.wrapOutcome, 'complete');
+      assert.equal(readStaged(res.output.publicationId).methodology.disposition, 'not-applicable');
+    });
+
+    it('a measured preflight records measured', async () => {
+      const res = await stageStep.run(ctx({
+        methodology: available,
+        previousResults: [{ stepId: 'preflight', kind: 'preflight', status: 'done', output: { measured: true } }]
+      }));
+      assert.equal(res.output.wrapOutcome, 'complete');
+      assert.equal(readStaged(res.output.publicationId).methodology.disposition, 'measured');
+    });
+
+    it('omits the block when the run resolved no capability, so absence reads as unknown', async () => {
+      const res = await stageStep.run(ctx());
+      assert.equal('methodology' in readStaged(res.output.publicationId), false);
+    });
+
+    it('falls back to the project row\'s engine, not a field projects do not have', async () => {
+      const gem = store.projects.create({ name: `g-${Math.random().toString(36).slice(2)}`, path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-handoff-root-')), engine: 'gemini' });
+      assert.equal(gem.engineId, 'gemini');
+      const res = await stageStep.run(ctx({ project: gem, session: { id: 8 } }));
+      const doc = lockfile.readHandoffFile(lockfile.stagedPath(gem, res.output.publicationId)).doc;
+      assert.equal(doc.engineId, 'gemini');
+    });
+
+    it('refuses to freeze a disposition outside the set', () => {
+      assert.throws(() => buildHandoffDocument({
+        publicationId: newPublicationId(), projectId: project.id, sessionId: 1, wrapRunId: 'r', engineId: 'claude',
+        kind: 'final', stagedAt: new Date().toISOString(), wrapOutcome: 'complete', missingEvidence: [],
+        methodology: { disposition: 'passed', engineId: 'claude' }
+      }), /methodology\.disposition must be one of/);
+    });
+  });
+
   it('records a kept session\'s attempt as a checkpoint', async () => {
     const res = await stageStep.run(ctx({ options: { keepSessionRunning: true } }));
     assert.equal(res.output.kind, 'checkpoint');
