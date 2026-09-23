@@ -21,10 +21,26 @@ was told it was up to date (#713).
 
 ## What is automatic
 
-`.github/workflows/release.yml` runs on any push to `main` that changes `version.json`. It reads the
-version from the commit that just landed, extracts the matching `CHANGELOG.md` section, creates and
-pushes an annotated `vX.Y.Z` tag, confirms the tag is visible on origin, and publishes a GitHub
-Release with those notes.
+`.github/workflows/release.yml` runs on any push to `main` that changes `version.json`. It first
+runs the full test suite on the commit that just landed, inside the same run (`test.yml`, called as a
+reusable workflow). Only if that passes does it read the version from that commit, extract the
+matching `CHANGELOG.md` section, create and push an annotated `vX.Y.Z` tag, confirm the tag on
+origin dereferences to that commit, and publish a GitHub Release with those notes.
+
+**A release publishes only the exact commit it tested (#1551).** The tested commit and the released
+commit are the same `GITHUB_SHA` by construction: the publishing job `needs:` the test job, so a red
+or cancelled suite publishes nothing. The tag must dereference to that commit too, and the run
+refuses red, naming both SHAs, when it does not:
+
+- **An existing tag on another commit refuses**, whether or not its Release exists. With no Release,
+  healing would publish code this run never tested. With a Release, the version was already released
+  from a different commit, and this commit reuses its number.
+- **After a push**, the tag on origin is checked again before publishing.
+
+The workflow never moves or deletes a tag. A refusal is for the Operator to resolve.
+
+Only the publishing job holds `contents: write`. The workflow's default token, which the suite runs
+with, is read-only.
 
 **Tag and Release are checked independently, never as one "already done" flag.** A run that pushed
 the tag and then failed before publishing would otherwise be unrecoverable — every re-run would see
@@ -107,17 +123,33 @@ Check in this order:
    `git show origin/main:version.json` against the version you expected.
 2. **Did the workflow fail?** `gh run list --workflow=release.yml`. The most likely failure is a
    version bump with no matching `CHANGELOG.md` section, which fails deliberately rather than
-   publishing an empty release.
+   publishing an empty release. A red `test` job, or a tag that names a different commit, also
+   stops it before anything is published (see "A release publishes only the exact commit it
+   tested" above).
 3. **Is the tag on origin?** `git ls-remote --tags origin | grep vX.Y.Z`. This is the exact thing
    installs poll.
 
-To re-run after fixing the cause, use the workflow's manual trigger (`workflow_dispatch`) **from
-`main`** — the job is guarded on `github.ref`, so a dispatch aimed at any other branch exits green
-without doing anything, which looks like success.
+To recover after fixing the cause, open the **original** failed Release run and choose **Re-run all
+jobs**. A re-run keeps that run's `GITHUB_SHA` and `GITHUB_REF`, so it tests the same commit again
+and releases exactly it. Re-run *all* jobs, not only the failed ones, so the commit is freshly
+tested.
 
 Re-running is the remedy, not a no-op: because tag and Release are checked independently, a re-run
 publishes the missing Release for a tag that already exists. It only does nothing when the version is
-genuinely tagged *and* released.
+genuinely tagged *and* released on that commit.
+
+**GitHub allows re-running a run for 30 days.** Past that, or if the original run cannot be re-run
+for any other reason, do not work around it. Stop and escalate to the Operator. There is
+deliberately no way to name the commit to release by hand.
+
+The manual trigger (`workflow_dispatch`) **from `main`** runs at main's *current* head. It releases
+correctly only while that head is still the version's commit. Once a later commit has landed, a
+dispatch refuses when a tag for the version already exists on the earlier commit, which is the
+intended outcome and not a fault. A dispatch aimed at any branch other than `main` exits green
+without doing anything, which looks like success.
+
+If a run refuses because a tag names a different commit, **do not move or re-create the tag by
+hand.** Escalate to the Operator.
 
 ## Versions 4.31.2 – 4.31.5 are deliberately untagged
 
@@ -138,3 +170,5 @@ old version.
 
 - `docs/adr/0002-wrap-pipeline-contract.md` — the wrap pipeline's step contract.
 - `lib/changelog-notes.js` — release-notes extraction, shared by the workflow and its tests.
+- `scripts/release-tag-gate.js` — decides whether a tag on origin dereferences to the released
+  commit; `test/release-workflow.test.js` pins how the workflow calls it and what publishing waits on.

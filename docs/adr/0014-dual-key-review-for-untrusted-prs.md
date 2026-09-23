@@ -236,9 +236,10 @@ None of the three replaces another.
 - **Negative, accepted:** an extra session to run, and a slower path to merge, since no
   reconstruction auto-merges.
 - **Honest limit:** rules 3, 5 and 7 are process today. Rule 7's mutable-reference half has its
-  mechanism: workflows pin every action to a full commit SHA, enforced by a test (#1436). The
-  remaining mechanisms (#1554, #1553, #1551) are open, and until they land, the protection is only
-  as strong as each session's adherence to them.
+  mechanism: workflows pin every action to a full commit SHA, enforced by a test (#1436). Its
+  release-tag half has one too: the release workflow publishes only a commit its own run tested,
+  under a tag that dereferences to it (#1551). The remaining mechanisms (#1554, #1553) are open,
+  and until they land, the protection is only as strong as each session's adherence to them.
 
 ## Consequences
 - **Positive:** Dramatically reduces the surface area for supply-chain attacks, obfuscation, or logic bombs making it into the codebase. Enforces the Swarm Protocol's division of concerns.

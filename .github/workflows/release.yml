@@ -20,6 +20,16 @@ name: Release
 # otherwise be unrecoverable: every re-run would see the tag, report success, and
 # publish nothing. A pre-existing tag from any other source — including the
 # local-only tags hooks/post-commit creates — is healed the same way.
+#
+# A release publishes only the exact commit that was tested (#1551). Two rules
+# bind the tag, the tests and the Release to GITHUB_SHA:
+#   - The `test` job runs the suite (test.yml, called as a reusable workflow)
+#     on GITHUB_SHA inside THIS run, and the publishing job needs it. Tested and
+#     released are the same commit by construction; nothing looks up another
+#     run's result, so there is nothing to wait on and nothing to spoof.
+#   - The tag must dereference to GITHUB_SHA: before an existing tag is healed,
+#     and on origin after a push. A tag naming any other commit refuses the run.
+#     This workflow never moves or deletes a tag; a mismatch is for a human.
 
 on:
   push:
@@ -27,8 +37,10 @@ on:
     paths: ['version.json']
   workflow_dispatch:
 
+# Read-only by default. Only the publishing job below is granted contents:
+# write, so the suite, which runs inside this workflow too, never holds it.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   # Serialize releases; two pushes in quick succession must not race on the same tag.
@@ -36,15 +48,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  test:
     # `push` is already main-only, but workflow_dispatch can be aimed at any ref.
     # Releasing from a feature branch would tag code that is not on main.
     if: github.ref == 'refs/heads/main'
+    # A called workflow's github context is this run's, so the suite checks out
+    # and tests GITHUB_SHA. Its token can only be narrowed from this grant.
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test.yml
+
+  release:
+    # No status function in `if:`, so this job is skipped unless `test`
+    # succeeded. Adding always() or !cancelled() here would publish untested code.
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+
+      # The tag is created from the checkout's HEAD, so HEAD has to be the commit
+      # the `test` job tested.
+      - name: Confirm the checkout is the tested commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [ "$HEAD_SHA" != "$GITHUB_SHA" ]; then
+            echo "::error::checkout is $HEAD_SHA, not $GITHUB_SHA, the commit this run tested."
+            exit 1
+          fi
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -90,7 +127,11 @@ jobs:
           # Capture ls-remote's exit status explicitly. Inside an `if` condition a
           # failing command substitution is exempt from set -e, so a transient
           # network error would otherwise read as "no tag" and push blindly.
-          if ! REMOTE_TAG="$(git ls-remote --tags origin "refs/tags/$TAG")"; then
+          #
+          # The second pattern is required: ls-remote filters by pattern, and
+          # without it an annotated tag's peeled `^{}` line (the commit) is left
+          # out, so only the tag object's SHA would reach the gate below.
+          if ! REMOTE_TAG="$(git ls-remote --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}")"; then
             echo "::error::could not reach origin to check for $TAG."
             exit 1
           fi
@@ -107,6 +148,17 @@ jobs:
               exit 1
             fi
             RELEASE_EXISTS=true
+          fi
+
+          # An existing tag must already name the tested commit, whether or not
+          # its Release exists. Healing a missing Release onto a tag that names
+          # another commit would publish code this run never tested. And a tag
+          # plus Release on a different commit means this commit carries a
+          # version that was already released from somewhere else, which
+          # "already done" would silently bless. Both refuse red.
+          if [ "$TAG_EXISTS" = true ]; then
+            printf '%s\n' "$REMOTE_TAG" \
+              | node scripts/release-tag-gate.js --tag "$TAG" --expect "$GITHUB_SHA"
           fi
 
           echo "tag_exists=$TAG_EXISTS" >> "$GITHUB_OUTPUT"
@@ -149,25 +201,25 @@ jobs:
           git push origin "$TAG"
 
       # The whole bug class here is "assumed a step happened". Confirm the tag is
-      # visible on origin — which is what update-checker actually polls — rather
-      # than trusting the push's exit code. Runs even when the tag pre-existed, so
-      # a local-only tag that was never pushed cannot masquerade as delivered.
-      - name: Verify the tag is visible on origin
+      # on origin — which is what update-checker actually polls — and that it
+      # dereferences to the tested commit, rather than trusting the push's exit
+      # code. Runs even when the tag pre-existed, so a local-only tag that was
+      # never pushed cannot masquerade as delivered.
+      - name: Verify the tag on origin names the tested commit
         if: steps.existing.outputs.release_exists == 'false'
         shell: bash
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          if ! REMOTE_TAG="$(git ls-remote --tags origin "refs/tags/$TAG")"; then
+          # Both patterns, for the same reason as the existence check above.
+          if ! REMOTE_TAG="$(git ls-remote --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}")"; then
             echo "::error::could not reach origin to verify $TAG."
             exit 1
           fi
-          if [ -z "$REMOTE_TAG" ]; then
-            echo "::error::$TAG is not visible on origin — installs would not see this release."
-            exit 1
-          fi
-          echo "$TAG confirmed on origin."
+          # Absent and mismatched both refuse here; no --allow-absent.
+          printf '%s\n' "$REMOTE_TAG" \
+            | node scripts/release-tag-gate.js --tag "$TAG" --expect "$GITHUB_SHA"
 
       - name: Publish the GitHub Release
         if: steps.existing.outputs.release_exists == 'false'

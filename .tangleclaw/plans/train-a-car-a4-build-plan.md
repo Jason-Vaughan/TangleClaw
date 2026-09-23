@@ -189,9 +189,13 @@ and the tag dereferences to it. Privileged dependencies are immutable and mechan
   caller's `GITHUB_SHA`. A called workflow's token can only be narrowed, never widened, from the
   caller job's grant. A job with `needs:` and no status function in its `if:` is skipped when a
   needed job fails.
-- `ls-remote` prints an annotated tag twice: `refs/tags/T` (the tag object) and `refs/tags/T^{}`
-  (the commit). A lightweight tag prints only `refs/tags/T`, which is the commit. So the commit is
-  the `^{}` line when it exists, else the plain line. `lib/update-checker.js#parseTagsOutput`
+- An unfiltered `ls-remote` prints an annotated tag twice: `refs/tags/T` (the tag object) and
+  `refs/tags/T^{}` (the commit). A lightweight tag prints only `refs/tags/T`, which is the commit.
+  So the commit is the `^{}` line when it exists, else the plain line. **Corrected while building
+  (live probe on v5.26.0):** with a pattern, `ls-remote` filters, and `refs/tags/T` alone omits the
+  `^{}` line. The workflow therefore passes both patterns, `refs/tags/T` and `refs/tags/T^{}`.
+  With one pattern, every annotated release would have refused as a mismatch, because it compared
+  the tag object's SHA to the commit. `lib/update-checker.js#parseTagsOutput`
   answers a different question (which versions exist) and deliberately skips `^{}` lines, so it
   cannot be reused for this check.
 - `docs/release-process.md` "If a release did not go out" tells the operator to heal by running
@@ -238,6 +242,32 @@ and the tag dereferences to it. Privileged dependencies are immutable and mechan
   `scripts/release-tag-gate.js`, which the workflow calls and the suite unit-tests. Recommended as
   an implementation call. Listed here because it adds a module to the release path.
 
+### Architect rulings (2026-09-23, message 00d3afe8): binding
+
+- **B1: APPROVE.** The local reusable test workflow resolves from the caller's running commit,
+  inherits the caller's context and cannot elevate its token. `needs` with no status override makes
+  the exact-SHA test a hard publishing dependency. The duplicate suite run is an accepted cost.
+- **B2: MODIFY.** Every existing tag must dereference to `GITHUB_SHA` before the run may stay green,
+  **including when the Release already exists**. A tag plus Release is a green no-op only when the
+  dereferenced tag equals `GITHUB_SHA`; otherwise fail red, naming both SHAs. This catches a
+  recycled or unchanged version on a different commit instead of blessing it as already released.
+  Keep the checkout-HEAD check and the post-push remote check, and never move or delete a tag.
+  → Built this way: there is no warn-only path, in either the workflow or the CLI.
+- **B3: APPROVE.** Top-level `contents: read`, the called test job read-only, and `contents: write`
+  only on the publishing job.
+- **B4: MODIFY.** Document the recovery exactly as **Re-run all jobs** on the original run, so the
+  same `GITHUB_SHA`/`GITHUB_REF` are reused and the commit is freshly tested. State GitHub's
+  30-day re-run limit; past it, refuse automation and escalate to the Operator. `workflow_dispatch`
+  stays valid only when main's head is the target, with no caller-selected SHA.
+- **B5: APPROVE**, as a compatible implementation choice, not a durable architectural mandate. Keep
+  the parser pure, fail closed on absent, malformed or ambiguous output, and unit-test the CLI
+  boundary.
+- Architecture approval is not CI authorization: the Operator's direct go is still required, and
+  the PR must not auto-merge.
+- **Addendum, reported with the ack:** a factual status edit to ADR 0014's "Honest limit" (rule 7's
+  release-tag half now has its mechanism, #1551), mirroring Chunk 01's approved A5 edit. No rule
+  changes.
+
 ### Implementation calls (not architectural)
 
 - The CLI reads `ls-remote` output on stdin, takes the tag and the expected SHA as arguments, and
@@ -265,6 +295,10 @@ and the tag dereferences to it. Privileged dependencies are immutable and mechan
     `contents: write`.
 - Mutation checks, watched red: drop `needs: test`; add `always()` to the publishing `if:`; remove
   `workflow_call`; swap the gate's expected SHA; hoist `contents: write` back to the top level.
+  **Result:** 14 mutations run, all red, files restored. They also covered `!cancelled()`, the test
+  job calling another file, `--allow-absent` on the post-push call, guarding the existing-tag check
+  on "Release missing", dropping the peeled pattern, a write grant on the test job, dropping the
+  HEAD check, comparing the tag object, and reading malformed output as absent.
 - Honest limit: source pins show what the file says, not what GitHub runs. The live proof is the
   first release run after merge (or a dispatch from `main` when the version is already fully
   released, which exercises the test job and the gate and publishes nothing). That run is for the

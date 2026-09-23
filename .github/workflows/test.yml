@@ -8,6 +8,11 @@ on:
     # into v5-baseline stays unrun until it reaches main — which is how this
     # branch accumulated 17 CI failures nobody saw: CI had never run it at all.
     branches: [main, v5-baseline]
+  # release.yml calls this workflow and publishes only if it passes, so the
+  # suite runs on the exact commit being released inside the release run
+  # itself. Removing this trigger breaks every release: the release workflow
+  # references this file and fails to load without it.
+  workflow_call:
 
 # Declared rather than inherited: without this block the token takes the
 # repository's default scope, which a settings change could widen with no diff
