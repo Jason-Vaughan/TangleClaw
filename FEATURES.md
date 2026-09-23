@@ -698,3 +698,7 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 ## TODO (auto-stubbed 2026-09-22)
 
 - **TBD** — touched in this session: `test/update-applier-global-rules-carry.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-09-22)
+
+- **TBD** — touched in this session: `test/wrap-intent-cancel.test.js`. <!-- describe -->
