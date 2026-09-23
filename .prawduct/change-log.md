@@ -35,6 +35,20 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-23 — Wrap gates are engine-aware: a non-Claude wrap of a Prawduct project is an honest checkpoint (#1738)
+
+<!-- prawduct: type=feature | scope=train-a-car-a3 -->
+
+Train A Car A3 Chunk 02. A wrap from a Codex/Aider/Antigravity session of an onboarded project ran `prawduct-hook stop` anyway. The probe wrote Prawduct's evidence store, `version-bump` stamped `.prawduct/change-log.md`, and a preflight that measured nothing counted as evidence produced, so the handoff could read `complete`.
+
+**One capability per run.** `governance.methodologyCapability` answers available / not-applicable / capability-unavailable. It is keyed on the session's engine (`governance.sessionEngineId`), and "onboarded" means `.prawduct/` or the plugin reference, whatever the engine. The runner resolves it once and hands it to every step as `context.methodology`. Two new first-class statuses, `not-applicable` and `capability-unavailable`, join `STEP_STATUSES`, and every consumer knows them (the vocabulary test enforces this).
+
+**Dormant means untouched and unauthorized.** Preflight never spawns the hook. `version-bump` holds the cut. `commit` withholds auto-merge and leaves `.prawduct/` paths out through the classifier's `withheldPrefixes` (shared with `session-files`). `pr-merge` enqueues nothing. The result and `run-start` carry `methodologyAuthority`, and the drawer says "will not merge or release" from the first frame. A failed or stranded wrap PR keeps its own banner.
+
+**Honest evidence.** `capability-unavailable`, and any skipped preflight on a capable engine (including one disabled by an override, per Architect E3), degrade the handoff. The handoff document gains an optional `methodology` block. The next capable launch renders an advisory `/prawduct:doctor` directive (never onboard, never "authority restored").
+
+Architect rulings E1–E6 (message 9a774624). The Operator approved the rule #5 amendment (engine-neutral wrap mechanics vs provider-owned methodology effects), relayed by the PM in message 8af0c8ec. ADR 0002 has a dated section. Fixed in passing: handoff-stage read `project.engine`, which does not exist. Follow-up: #1809 (capability-matched admission and attested rotation). Tests: `test/governance-methodology-capability.test.js`, `test/wrap-methodology-authority.test.js`, and the preflight, version-bump, pr-merge, commit, file-ownership, session-scope, handoff-publish, launch-preflight-context and launch-steps suites. The preflight fixture now names its engine, because an unknown engine fails closed.
+
 ## 2026-09-23 — A wrap's keep-running intent is explicit, and a live wrap can be cancelled before it commits (#1708, #1707)
 
 <!-- prawduct: type=feature | scope=train-a-car-a3 -->

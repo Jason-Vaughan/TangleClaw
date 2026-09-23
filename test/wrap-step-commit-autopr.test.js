@@ -214,6 +214,39 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
     assert.equal(currentBranch(), 'main');
   });
 
+  // #1738 — a session on an engine that cannot run the project's methodology
+  // checkpoints: it commits and opens the PR, but merge authority and
+  // Prawduct's own state are not its to touch.
+  it('methodology unavailable: opens the PR, arms no auto-merge, and commits no .prawduct/ path', async () => {
+    fs.mkdirSync(path.join(projectPath, '.prawduct'));
+    fs.writeFileSync(path.join(projectPath, '.prawduct', 'change-log.md'), 'ledger v1\n');
+    execSync('git add .prawduct && git commit --quiet -m ledger', { cwd: projectPath, shell: '/bin/sh' });
+    fs.writeFileSync(path.join(projectPath, '.prawduct', 'change-log.md'), 'ledger edited by the session\n');
+    fs.writeFileSync(path.join(projectPath, '.prawduct', 'new-note.md'), 'new\n');
+    interceptExec();
+    const ctx = buildContext();
+    ctx.methodology = { onboarded: true, available: false, disposition: 'capability-unavailable', engineId: 'gemini', capability: 'prawduct-methodology', reason: 'the gemini engine cannot run the Prawduct plugin' };
+    const result = await commitStep.run(ctx);
+    assert.equal(result.status, 'done', 'the checkpoint still commits');
+
+    const ap = result.output.autoPr;
+    assert.equal(ap.pushed, true);
+    assert.equal(ap.prUrl, PR_URL);
+    assert.equal(ap.autoMergeArmed, false);
+    assert.match(ap.autoMergeWithheld, /gemini engine cannot run/);
+    assert.equal(ap.error, null, 'a deliberate withhold is not a failure');
+    assert.match(ap.remediation, /auto-merge was deliberately not armed/);
+    assert.equal(calls.filter((c) => c.key === 'gh-merge').length, 0, 'gh pr merge must not run');
+    assert.match(currentBranch(), /^wrap\//, 'HEAD stays on the wrap branch when nothing guarantees the merge');
+
+    assert.deepEqual([...result.output.methodologyWithheld].sort(), ['.prawduct/change-log.md', '.prawduct/new-note.md']);
+    const committed = execSync(`git show --name-only --format= ${result.output.commitSha}`, { cwd: projectPath }).toString().trim().split('\n');
+    assert.ok(committed.includes('work.txt'), 'the session\'s own work is committed');
+    assert.ok(!committed.some((f) => f.startsWith('.prawduct/')), `no .prawduct path may be committed: ${committed}`);
+    const status = execSync('git status --porcelain', { cwd: projectPath }).toString();
+    assert.match(status, /\.prawduct\/change-log\.md/, 'the withheld edit stays in the working tree');
+  });
+
   it('PR body carries the wrap commit body lines and the What/Why sections', async () => {
     interceptExec();
     const ctx = buildContext();

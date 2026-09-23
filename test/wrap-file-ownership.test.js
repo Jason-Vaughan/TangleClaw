@@ -282,6 +282,31 @@ describe('classify', () => {
     assert.deepEqual(c.left, []);
   });
 
+  it('a withheld prefix is never staged and never asked about, whatever the decision (#1738)', () => {
+    const c = ownership.classify(scope(), [
+      { path: 'new.js', deleted: false },
+      { path: '.prawduct/change-log.md', deleted: false },
+      { path: 'old.js', deleted: false }
+    ], {
+      withheldPrefixes: ['.prawduct/'],
+      wrapWritten: ['.prawduct/change-log.md'],
+      decisions: { '.prawduct/change-log.md': 'include', 'old.js': 'include' }
+    });
+    assert.deepEqual(c.methodologyWithheld, ['.prawduct/change-log.md']);
+    assert.deepEqual(c.stageable.sort(), ['new.js', 'old.js']);
+    assert.ok(!c.undecided.some((f) => f.path.startsWith('.prawduct/')), 'no decision can authorize it, so none is asked');
+    // A narrowed rebuild keeps the bucket: the secret check rebuilds this way.
+    const narrowed = ownership.reclassify(c, { owned: c.owned, included: c.included, tangleclawMaintenance: c.tangleclawMaintenance });
+    assert.deepEqual(narrowed.methodologyWithheld, ['.prawduct/change-log.md']);
+    assert.ok(!narrowed.stageable.includes('.prawduct/change-log.md'));
+  });
+
+  it('with no withheld prefixes, .prawduct/ paths classify as any other path', () => {
+    const c = ownership.classify(scope(), [{ path: '.prawduct/change-log.md', deleted: false }], { wrapWritten: ['.prawduct/change-log.md'] });
+    assert.deepEqual(c.methodologyWithheld, []);
+    assert.deepEqual(c.stageable, ['.prawduct/change-log.md']);
+  });
+
   it('a file dirty at launch stays the operator\'s call even after the wrap rewrites it, and Leave keeps it out', () => {
     const asked = ownership.classify(scope(), [{ path: 'old.js', deleted: false }], { wrapWritten: ['old.js'] });
     assert.deepEqual(asked.undecided.map((f) => f.path), ['old.js']);
@@ -900,3 +925,26 @@ describe('#1619 — the refusal survives every route into a null verdict', () =>
       'and the operator is not asked about their own edit');
   });
 });
+
+describe('session-files on an engine that cannot run Prawduct (#1738)', () => {
+  const { cleanLaunchScope } = require('./_wrap-scope-fixture');
+  const dormant = { onboarded: true, available: false, disposition: 'capability-unavailable', engineId: 'codex', capability: 'prawduct-methodology', reason: 'r' };
+
+  it('never asks about a .prawduct/ path, and names it as held back', async () => {
+    const repo = makeRepo();
+    fs.mkdirSync(path.join(repo, '.prawduct'));
+    fs.writeFileSync(path.join(repo, '.prawduct', 'state.md'), 'dirty before launch\n');
+    fs.writeFileSync(path.join(repo, 'work.js'), 'session work\n');
+    // The .prawduct file was already dirty at launch, so without the hold-back
+    // the row would stop and ask whether to commit it.
+    const scope = cleanLaunchScope(repo, { baseline: { sha: null, toplevel: repo, dirty: { paths: ['.prawduct/state.md'], truncated: false } } });
+    const asked = await sessionFiles.run({ project: { name: 'p', path: repo }, scope, options: {} });
+    assert.notEqual(asked.status, 'done', 'control: with the capability available the row asks about it');
+
+    const r = await sessionFiles.run({ project: { name: 'p', path: repo }, scope, options: {}, methodology: dormant });
+    assert.equal(r.status, 'done', 'a path no answer could authorize is never asked about');
+    assert.deepEqual(r.output.methodologyWithheld, ['.prawduct/state.md']);
+    assert.match(r.output.detail, /1 Prawduct file not committed/);
+  });
+});
+
