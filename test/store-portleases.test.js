@@ -612,3 +612,175 @@ describe('#1394 — schema v34→v35 on a REAL old DB', () => {
     }
   });
 });
+
+describe('ownerKind — whether a lease owner is a TangleClaw project (#1381)', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ownerkind-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  });
+
+  afterEach(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('defaults to project, and list/get/getByProject all carry it', () => {
+    store.portLeases.lease({ port: 3400, project: 'P', service: 's' });
+    assert.equal(store.portLeases.get(3400).ownerKind, 'project');
+    assert.equal(store.portLeases.list({ project: 'P' })[0].ownerKind, 'project');
+    assert.equal(store.portLeases.getByProject('P')[0].ownerKind, 'project');
+  });
+
+  it('a renewal that omits ownerKind keeps external', () => {
+    store.portLeases.lease({ port: 5432, project: 'Homebrew', service: 'postgres', ownerKind: 'external' });
+    store.portLeases.lease({ port: 5432, project: 'Homebrew', service: 'postgres' });
+    assert.equal(store.portLeases.get(5432).ownerKind, 'external',
+      'forgetting the field must not re-arm the orphan sweep against this lease');
+  });
+
+  it('a renewal that states ownerKind replaces it', () => {
+    store.portLeases.lease({ port: 5432, project: 'Homebrew', service: 'postgres', ownerKind: 'external' });
+    store.portLeases.lease({ port: 5432, project: 'Homebrew', service: 'postgres', ownerKind: 'project' });
+    assert.equal(store.portLeases.get(5432).ownerKind, 'project');
+  });
+
+  it("a forced takeover does not inherit the displaced owner's kind", () => {
+    store.portLeases.lease({ port: 5432, project: 'Homebrew', service: 'postgres', ownerKind: 'external' });
+    store.portLeases.lease({ port: 5432, project: 'TiLT', service: 'db', force: true });
+    assert.equal(store.portLeases.get(5432).ownerKind, 'project');
+  });
+
+  it('rejects an unknown kind by name, and says which values exist', () => {
+    assert.throws(
+      () => store.portLeases.lease({ port: 3401, project: 'P', service: 's', ownerKind: 'daemon' }),
+      (err) => {
+        assert.equal(err.code, 'BAD_REQUEST');
+        for (const kind of store.LEASE_OWNER_KINDS) assert.ok(err.message.includes(kind));
+        return true;
+      }
+    );
+  });
+
+  it('the CHECK is on the column, not just in the validator', () => {
+    assert.throws(
+      () => store.getDb().prepare(
+        "INSERT INTO port_leases (host, port, project, service, owner_kind) VALUES ('localhost', 9, 'P', 's', 'daemon')"
+      ).run(),
+      /CHECK constraint failed/
+    );
+  });
+
+  it('setOwnerKind marks every lease of a name and changes nothing else', () => {
+    store.portLeases.lease({ port: 5432, project: 'Homebrew', service: 'postgres', permanent: true, reach: 'tailnet' });
+    store.portLeases.lease({ port: 6379, project: 'Homebrew', service: 'redis', host: 'habitat' });
+    store.portLeases.lease({ port: 3402, project: 'Other', service: 's' });
+    assert.equal(store.portLeases.setOwnerKind('Homebrew', 'external'), 2);
+    const pg = store.portLeases.get(5432);
+    assert.equal(pg.ownerKind, 'external');
+    assert.equal(pg.permanent, true);
+    assert.equal(pg.reach, 'tailnet');
+    assert.equal(store.portLeases.get(6379, 'habitat').ownerKind, 'external');
+    assert.equal(store.portLeases.get(3402).ownerKind, 'project', 'another owner is untouched');
+    assert.equal(store.activity.query({ eventType: 'port.owner_kind' }).length, 1);
+  });
+
+  it('setOwnerKind can be limited to one host', () => {
+    store.portLeases.lease({ port: 5432, project: 'Homebrew', service: 'postgres' });
+    store.portLeases.lease({ port: 6379, project: 'Homebrew', service: 'redis', host: 'habitat' });
+    assert.equal(store.portLeases.setOwnerKind('Homebrew', 'external', { host: 'habitat' }), 1);
+    assert.equal(store.portLeases.get(5432).ownerKind, 'project');
+    assert.equal(store.portLeases.get(6379, 'habitat').ownerKind, 'external');
+  });
+
+  it('setOwnerKind refuses an unknown kind and a missing name', () => {
+    assert.throws(() => store.portLeases.setOwnerKind('X', 'daemon'), { code: 'BAD_REQUEST' });
+    assert.throws(() => store.portLeases.setOwnerKind('', 'external'), { code: 'BAD_REQUEST' });
+  });
+
+  it('releaseByProject with ownerKind releases only that kind', () => {
+    store.portLeases.lease({ port: 3403, project: 'mixed', service: 'db', ownerKind: 'external' });
+    store.portLeases.lease({ port: 3404, project: 'mixed', service: 'dev' });
+    assert.equal(store.portLeases.releaseByProject('mixed', { ownerKind: 'project' }), 1);
+    assert.ok(store.portLeases.get(3403));
+    assert.equal(store.portLeases.get(3404), null);
+  });
+
+  it('isLive agrees with the conflict rule: an expired TTL lease is not live, a permanent one is', () => {
+    store.portLeases.lease({ port: 3405, project: 'P', service: 's', ttlMs: 1 });
+    store.getDb().prepare("UPDATE port_leases SET expires_at = datetime('now', '-1 hour') WHERE port = 3405").run();
+    assert.equal(store.portLeases.isLive(store.portLeases.get(3405)), false);
+    store.portLeases.lease({ port: 3406, project: 'P', service: 's', permanent: true });
+    assert.equal(store.portLeases.isLive(store.portLeases.get(3406)), true);
+  });
+});
+
+describe('#1381 — schema v43→v44 on a REAL old DB', () => {
+  it('backfills existing leases to project and enforces the CHECK afterwards', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-v44-mig-'));
+    const prevBase = store._getBasePath();
+    try {
+      const { DatabaseSync } = require('node:sqlite');
+      const dbPath = path.join(tmpDir, 'tangleclaw.db');
+      const seed = new DatabaseSync(dbPath);
+      seed.exec(`
+        CREATE TABLE schema_version (
+          version INTEGER PRIMARY KEY,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO schema_version (version) VALUES (43);
+        CREATE TABLE port_leases (
+          host        TEXT NOT NULL DEFAULT 'localhost',
+          port        INTEGER NOT NULL,
+          project     TEXT NOT NULL,
+          service     TEXT NOT NULL,
+          status      TEXT NOT NULL DEFAULT 'active'
+                      CHECK(status IN ('active','expired','permanent')),
+          permanent   INTEGER NOT NULL DEFAULT 0,
+          ttl_ms      INTEGER,
+          expires_at  TEXT,
+          last_heartbeat TEXT,
+          description TEXT,
+          auto_renew  INTEGER NOT NULL DEFAULT 0,
+          reach       TEXT NOT NULL DEFAULT 'loopback'
+                      CHECK(reach IN ('loopback','tailnet','lan')),
+          created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (host, port)
+        );
+        INSERT INTO port_leases (host, port, project, service, status, permanent)
+        VALUES ('localhost', 5432, 'Homebrew', 'postgresql@14', 'permanent', 1);
+      `);
+      seed.close();
+
+      const pre = new DatabaseSync(dbPath);
+      const preCols = pre.prepare('PRAGMA table_info(port_leases)').all().map((c) => c.name);
+      assert.ok(!preCols.includes('owner_kind'), 'fixture precondition: v43 has no owner_kind column');
+      pre.close();
+
+      store.close();
+      store._setBasePath(tmpDir);
+      store.init();
+
+      const lease = store.portLeases.get(5432);
+      assert.equal(lease.project, 'Homebrew', 'the pre-existing lease survives');
+      assert.equal(lease.ownerKind, 'project', 'every row written before the field meant a project');
+      assert.throws(
+        () => store.getDb().prepare(
+          "INSERT INTO port_leases (host, port, project, service, owner_kind) VALUES ('localhost', 9, 'P', 's', 'daemon')"
+        ).run(),
+        /CHECK constraint failed/,
+        'the migration added the constraint, not just the column'
+      );
+      const stamped = store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v;
+      assert.equal(stamped, 44);
+    } finally {
+      try { store.close(); } catch { /* already closed */ }
+      store._setBasePath(prevBase);
+      store.init();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});

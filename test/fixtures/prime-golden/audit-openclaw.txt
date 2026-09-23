@@ -17,6 +17,8 @@ Surface the mismatch — never refuse outright; the operator can always say "do 
 
 _Base branch CI: **unknown** — not probed before this launch. Not green: TangleClaw could not look, which is a different fact from "passing". Mention it to the operator in your opening — in the resume proposal where this launch has a sequence, otherwise your first message; they are the one who can fix the probe._
 
+_Checkout: not measured yet — unknown, not clean._
+
 Stranded wraps: none recorded for this project.
 
 ## Rule sources in force
@@ -27,7 +29,7 @@ Stranded wraps: none recorded for this project.
 ## TangleClaw Ecosystem
 Operating basics for any session in this ecosystem — standing context, not a task list:
 - **TangleClaw manages this session.** Its HTTP API for this instance is <API_ORIGIN>. This project's **numeric project id is 5** — project-scoped APIs like `/api/session-rules` key on that id, NOT the project name (only the `/api/sessions/:project` family addresses by name).
-- **Run `tc capabilities` BEFORE concluding a capability is missing — never improvise one.** `tc` is normally on PATH in a launched pane (verbs: `whoami`, `capabilities`, `sessions`, `message`, `start`, `ports`, `docs`, `rules`, `learnings`) and reports absence honestly; a capability assumed not checked is how sessions fabricate outcomes. If `tc` is missing, check `TANGLECLAW_API`; a renamed install can break PATH. Use the API with verified launch identity. If context is missing or inconsistent, report it and stop identity-dependent actions — absence of both is unavailable context, not proof of being unmanaged. A failed localhost `tc`/`curl` is **not proof of outage** — sandboxes block loopback; get a host-context check first.
+- **Run `tc capabilities` BEFORE concluding a capability is missing — never improvise one.** `tc` is normally on PATH in a launched pane (verbs: `whoami`, `capabilities`, `sessions`, `message`, `start`, `freshness`, `ports`, `docs`, `rules`, `learnings`) and reports absence honestly; a capability assumed not checked is how sessions fabricate outcomes. If `tc` is missing, check `TANGLECLAW_API`; a renamed install can break PATH. Use the API with verified launch identity. If context is missing or inconsistent, report it and stop identity-dependent actions — absence of both is unavailable context, not proof of being unmanaged. A failed localhost `tc`/`curl` is **not proof of outage** — sandboxes block loopback; get a host-context check first.
 - **Never hand the operator a `localhost` link** — they are almost never on this machine; use `http(s)://operator.example.test:<port>` for operator links. `localhost` is correct only for your own API calls from this host.
 - **Durable Project Rules govern your sessions** and live in TangleClaw (Settings modal → Project Rules), not in this repo. Read yours: `GET /api/session-rules?projectId=5`. Propose one (kind `startup` injects at launch, `wrap` into wrap prompts): `POST /api/session-rules {"content","projectId":5,"kind","createdBy":"ai"}`. AI-authored rules land as `status='proposed'` and inject nothing until the operator approves — that gate is by design; tell the operator a proposal is waiting rather than fighting it.
 - **Self-improvement loop:** at session wrap, record genuinely recurring project facts or self-corrections as dated `## YYYY-MM-DD — <title>` entries in `.tangleclaw/memories/learnings.md`. TangleClaw mirrors them into its learnings store; one seen on two different days is injected into future primes and auto-proposed as a rule for the operator to approve.

@@ -251,6 +251,21 @@ html[data-tc-keyboard] body {
   border-radius: 3px;
   font-size: 12px;
 }
+/* Live-checkout variant (#993). The base amber when the served tree is not
+   main as pushed - it reports, it does not alarm, so the stale-server banner
+   stays the urgent one. Info tone when all it has to say is "unknown". */
+.live-checkout-banner code {
+  background: rgba(0, 0, 0, 0.12);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.live-checkout-banner.live-checkout-banner-unknown {
+  background: var(--root-accent, #4a9eff);
+  color: #fff;
+}
+.live-checkout-banner.live-checkout-banner-unknown .orphan-banner-text { color: inherit; }
 /* Caddyfile divergence variant (#1394). Amber like the base banner - a
    hand-edit is usually deliberate, so this reports rather than alarms, and the
    stale-server banner stays the one that reads as urgent. The findings list is

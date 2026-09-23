@@ -374,17 +374,23 @@ describe('drawer helpers (#1558)', () => {
     assert.equal(s.detail, 'Warnings on: preflight · The session has ended.');
   });
 
-  it('sends keepSessionRunning only when it is true', () => {
+  // #1708 changed this contract: an explicit false now overrides a project set
+  // to keep, so the page sends the boolean it holds, either way. Anything that
+  // is not a boolean still sends nothing, so the server resolves it.
+  it('sends keepSessionRunning as the boolean the page holds, and nothing otherwise', () => {
     assert.deepEqual({ ...drawer.collectOptionsFromAccessors({ keepSessionRunning: () => true }) }, { keepSessionRunning: true });
-    for (const v of [false, 'true', 1, null, undefined]) {
+    assert.deepEqual({ ...drawer.collectOptionsFromAccessors({ keepSessionRunning: () => false }) }, { keepSessionRunning: false });
+    for (const v of ['true', 1, null, undefined]) {
       assert.deepEqual({ ...drawer.collectOptionsFromAccessors({ keepSessionRunning: () => v }) }, {}, `${String(v)} sends nothing`);
     }
   });
 
-  it('takes the choice back from a recorded run, and only as true', () => {
+  it('takes the choice back from a recorded run only as a boolean', () => {
     assert.equal(drawer.replayChoicesFromOptions({ keepSessionRunning: true }).keepSessionRunning, true);
-    assert.equal(drawer.replayChoicesFromOptions({ keepSessionRunning: 'true' }).keepSessionRunning, false);
-    assert.equal(drawer.replayChoicesFromOptions(null).keepSessionRunning, false);
+    assert.equal(drawer.replayChoicesFromOptions({ keepSessionRunning: false }).keepSessionRunning, false);
+    assert.equal(drawer.replayChoicesFromOptions({ keepSessionRunning: 'true' }).keepSessionRunning, null,
+      'not a boolean: the page holds no choice');
+    assert.equal(drawer.replayChoicesFromOptions(null).keepSessionRunning, null);
   });
 });
 
@@ -481,11 +487,24 @@ describe('dashboard wrap dialog: Keep the session running (#1558)', () => {
     return sandbox;
   }
 
-  it('sends nothing extra when the box is not ticked', async () => {
+  it('sends an untick as an explicit false (#1708)', async () => {
     const sb = sandboxFor();
     sb.openWrapModal('proj');
     await sb.confirmWrap();
-    assert.deepEqual(plain(sb.sent[0]), {});
+    assert.deepEqual(plain(sb.sent[0]), { options: { keepSessionRunning: false } });
+  });
+
+  it('starts from the project\'s setting, and can still be unticked (#1708)', async () => {
+    const sb = sandboxFor();
+    sb.state.projects = [{ name: 'proj', wrapKeepSessionRunning: true }, { name: 'other', wrapKeepSessionRunning: false }];
+    sb.openWrapModal('proj');
+    assert.equal(sb.els.wrapKeepRunning.checked, true, 'pre-ticked from the project');
+    sb.openWrapModal('other');
+    assert.equal(sb.els.wrapKeepRunning.checked, false, 'reset for a project that does not keep');
+    sb.openWrapModal('proj');
+    sb.els.wrapKeepRunning.checked = false;
+    await sb.confirmWrap();
+    assert.deepEqual(plain(sb.sent[0]), { options: { keepSessionRunning: false } }, 'the untick overrides the project');
   });
 
   it('sends keepSessionRunning when ticked', async () => {
@@ -545,7 +564,7 @@ describe('session page wrap dialog: Keep the session running (#1558)', () => {
     vm.runInContext([
       'let wrapReleaseChoice = ""; let wrapBumpLevel = ""; let wrapUntrackState = ""; let wrapSkipPreflight = false;',
       'let wrapPathDecisions = {}; let wrapSkippedAiSteps = {}; let wrapProceedPastStranded = [];',
-      'let wrapKeepRunning = false;',
+      'let wrapKeepRunning = null;',
       'let lastRefusedStrandedItems = null; let wrapDrawerStrandedItems = null; let wrapModalStrandedItems = null;',
       liftFunction(SESSION_SRC, 'function adoptWrapRunChoices('),
       liftFunction(SESSION_SRC, 'async function retryWrap('),
@@ -561,18 +580,28 @@ describe('session page wrap dialog: Keep the session running (#1558)', () => {
     assert.equal(sb.posted[0].options.keepSessionRunning, true);
   });
 
-  it('sends nothing on Retry when the box was not ticked', async () => {
+  it('sends nothing on Retry when this page never chose (#1708)', async () => {
     const sb = sandboxFor();
     await vm.runInContext('retryWrap()', sb);
-    assert.equal((sb.posted[0].options || {}).keepSessionRunning, undefined);
+    assert.equal((sb.posted[0].options || {}).keepSessionRunning, undefined,
+      'the server keeps what it resolved for the run being retried');
+  });
+
+  it('replays an unticked dialog on Retry as an explicit false', async () => {
+    const sb = sandboxFor();
+    sb.set('wrapKeepRunning', false);
+    await vm.runInContext('retryWrap()', sb);
+    assert.equal(sb.posted[0].options.keepSessionRunning, false);
   });
 
   it('takes the choice back from the run it follows after a reload', () => {
     const sb = sandboxFor();
     vm.runInContext('adoptWrapRunChoices({ keepSessionRunning: true })', sb);
     assert.equal(sb.get('wrapKeepRunning'), true);
-    vm.runInContext('adoptWrapRunChoices({})', sb);
+    vm.runInContext('adoptWrapRunChoices({ keepSessionRunning: false })', sb);
     assert.equal(sb.get('wrapKeepRunning'), false);
+    vm.runInContext('adoptWrapRunChoices({})', sb);
+    assert.equal(sb.get('wrapKeepRunning'), null, 'a run with no recorded boolean leaves no choice');
   });
 
   /**
@@ -621,16 +650,23 @@ describe('session page wrap dialog: Keep the session running (#1558)', () => {
     assert.equal(sb.get('wrapKeepRunning'), true, 'held for every Retry of this wrap');
   });
 
-  it('sends nothing when the box is not ticked, and a new wrap forgets an earlier tick', async () => {
+  it('sends an unticked box as false, and a new wrap forgets an earlier tick', async () => {
     const sb = modalSandbox();
     sb.openWrapModal();
     sb.els.wrapKeepRunning.checked = true;
     await sb.confirmWrap();
     sb.openWrapModal();
-    assert.equal(sb.els.wrapKeepRunning.checked, false, 'unticked on open');
+    assert.equal(sb.els.wrapKeepRunning.checked, false, 'reset on open to the project setting (off)');
     await sb.confirmWrap();
-    assert.equal((sb.posted[1].options || {}).keepSessionRunning, undefined);
+    assert.equal(sb.posted[1].options.keepSessionRunning, false);
     assert.equal(sb.get('wrapKeepRunning'), false);
+  });
+
+  it('opens pre-ticked when the project keeps sessions (#1708)', () => {
+    const sb = modalSandbox();
+    sb.sessionState.project.wrapKeepSessionRunning = true;
+    sb.openWrapModal();
+    assert.equal(sb.els.wrapKeepRunning.checked, true);
   });
 
   it('is in the page', () => {
@@ -648,6 +684,7 @@ describe('session page wrap dialog: Keep the session running (#1558)', () => {
       cancelEndedCountdown() {},
       expandWrapDrawer() {},
       paintWrapStatus(status) { painted.push(status); },
+      hideLiveSessionControls() {},
       renderSkipRoll() {},
       renderStepRow: () => makeElement('li'),
       syncRetryLabel() {}
