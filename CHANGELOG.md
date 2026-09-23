@@ -126,6 +126,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- **Car A3 is complete, and its plan is archived with a startupControl planning note** (Train A Car A3 P1). The note records the Architect's binding constraints, where each engine stands, what the four acceptance cases (native channel, readiness, semantic receipt, operator-blocked) require, and five decisions (S1–S5) for a future build. Nothing is built; a canonical issue is the PM's to admit.
 - **Removed `tag_issues.sh` and `tag_issues_2.sh`** (#1724). They were one-off label-triage scripts that a 2026-09-07 session wrap swept into the repository root, and their two `FEATURES.md` entries are removed with them.
 - **`test/update-applier-authored-content.test.js` passes on any checkout depth.** Its file-read seam rebuilt the path relative to the checkout, which escaped the temp repository when the checkout sat fewer directories deep than the temp directory. That failed on macOS on a clean `main` and passed on CI. The seam reads the path it is given and asserts that it is inside the test repository.
 - **Wrap test fixtures track the files their sessions write**, so each test's subject stays an edit the wrap commits unasked. Admission of new files has its own tests. No assertion was removed.
