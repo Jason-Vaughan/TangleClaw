@@ -40,6 +40,12 @@
            dot sits inside a wrapper because the dot's breathing animation is
            an opacity animation and would fade its own tooltip and popover. -->
       <span class="banner-version" id="bannerVersion" data-tooltip="Project version"></span>
+      <!-- What this project's checkout is on, against the origin/main every
+           related session shares (#1678). Hidden until the project row carries
+           a checkout (only a caller that sees the row whole gets one); click
+           for the full line. No action lives here. -->
+      <span class="banner-checkout" id="bannerCheckout" data-tooltip="Checkout vs origin/main"
+            data-pill-detail="" role="button" tabindex="0" hidden><span class="banner-checkout-text" id="bannerCheckoutText"></span></span>
       <span class="status-pill" id="statusPill" data-tooltip="Session status"
             data-pill-detail="Connected" role="button" tabindex="0"
             aria-label="Session status: Connected">
@@ -530,6 +536,8 @@
          long skip list can never push a decision or the buttons out of reach. -->
     <div class="wrap-drawer-body" id="wrapDrawerBody">
       <div class="wrap-drawer-status" id="wrapDrawerStatus" aria-live="polite"></div>
+      <div class="wrap-drawer-planned hidden" id="wrapDrawerPlanned"></div>
+      <div class="wrap-drawer-cancelnote hidden" id="wrapDrawerCancelNote" aria-live="polite"></div>
       <div class="wrap-drawer-skiproll hidden" id="wrapDrawerSkipRoll"></div>
       <ul class="wrap-step-list" id="wrapStepList" aria-label="Pipeline steps"></ul>
       <div class="wrap-drawer-decision hidden" id="wrapDrawerDecision"></div>
@@ -537,6 +545,7 @@
     <div class="wrap-drawer-actions">
       <button class="btn" id="wrapDrawerCopyBtn">Copy report</button>
       <button class="btn" id="wrapDrawerCancelBtn">Close</button>
+      <button class="btn btn-danger hidden" id="wrapDrawerAbortBtn">Cancel wrap</button>
       <button class="btn btn-primary hidden" id="wrapDrawerRetryBtn">Retry</button>
       <button class="btn btn-primary hidden" id="wrapDrawerDoneBtn">Done</button>
     </div>

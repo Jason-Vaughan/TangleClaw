@@ -11,6 +11,7 @@ const os = require('node:os');
 
 const store = require('../lib/store');
 const { createServer } = require('../server');
+const { operatorHeaders } = require('./_shared-docs-callers');
 
 let server;
 let baseUrl;
@@ -20,6 +21,7 @@ let testDir;
  * Make an HTTP request to the test server.
  * @param {string} urlPath
  * @param {object} [opts]
+ * @param {Record<string, string>} [opts.headers] - Extra request headers
  * @returns {Promise<{status: number, data: object}>}
  */
 function request(urlPath, opts = {}) {
@@ -30,7 +32,7 @@ function request(urlPath, opts = {}) {
       port: url.port,
       path: url.pathname + url.search,
       method: opts.method || 'GET',
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) }
     };
 
     const bodyStr = opts.body ? JSON.stringify(opts.body) : null;
@@ -219,6 +221,7 @@ describe('Landing Page API Integration', () => {
     it('should create a project and return expected fields', async () => {
       const res = await request('/api/projects', {
         method: 'POST',
+        headers: operatorHeaders(server),
         body: {
           name: 'integration-test-proj',
           engine: 'claude',
@@ -262,6 +265,7 @@ describe('Landing Page API Integration', () => {
     it('should return 409 for duplicate project name', async () => {
       const res = await request('/api/projects', {
         method: 'POST',
+        headers: operatorHeaders(server),
         body: { name: 'integration-test-proj', engine: 'claude' }
       });
       assert.equal(res.status, 409);
@@ -271,6 +275,7 @@ describe('Landing Page API Integration', () => {
     it('should return 400 for invalid project name', async () => {
       const res = await request('/api/projects', {
         method: 'POST',
+        headers: operatorHeaders(server),
         body: { name: 'has/slashes', engine: 'claude' }
       });
       assert.equal(res.status, 400);
@@ -282,6 +287,7 @@ describe('Landing Page API Integration', () => {
       // Create a project with valid methodology — should succeed
       const res = await request('/api/projects', {
         method: 'POST',
+        headers: operatorHeaders(server),
         body: { name: 'meth-warn-test', engine: 'claude' }
       });
       assert.equal(res.status, 201);
@@ -292,7 +298,9 @@ describe('Landing Page API Integration', () => {
       }
 
       // Cleanup
-      await request('/api/projects/meth-warn-test', { method: 'DELETE', body: { deleteFiles: true } });
+      await request('/api/projects/meth-warn-test', {
+        method: 'DELETE', body: { deleteFiles: true }, headers: operatorHeaders(server)
+      });
     });
   });
 
@@ -300,6 +308,7 @@ describe('Landing Page API Integration', () => {
     it('should update project tags', async () => {
       const res = await request('/api/projects/integration-test-proj', {
         method: 'PATCH',
+        headers: operatorHeaders(server),
         body: { tags: ['updated', 'test'] }
       });
       assert.equal(res.status, 200);
@@ -310,9 +319,11 @@ describe('Landing Page API Integration', () => {
 
   describe('DELETE /api/projects/:name', () => {
     it('should delete a project', async () => {
+      // Deleting a project is the operator's (#1746).
       const res = await request('/api/projects/integration-test-proj', {
         method: 'DELETE',
-        body: { deleteFiles: false }
+        body: { deleteFiles: false },
+        headers: operatorHeaders(server)
       });
       assert.equal(res.status, 200);
       assert.ok(res.data.ok);
@@ -352,6 +363,7 @@ describe('Landing Page API Integration', () => {
       // Create a project first
       await request('/api/projects', {
         method: 'POST',
+        headers: operatorHeaders(server),
         body: { name: 'reg-field-test', engine: 'claude' }
       });
 
@@ -362,7 +374,9 @@ describe('Landing Page API Integration', () => {
       assert.equal(project.registered, true);
 
       // Cleanup
-      await request('/api/projects/reg-field-test', { method: 'DELETE', body: { deleteFiles: true } });
+      await request('/api/projects/reg-field-test', {
+        method: 'DELETE', body: { deleteFiles: true }, headers: operatorHeaders(server)
+      });
     });
 
     it('unregistered filesystem dirs appear with registered: false', async () => {
@@ -392,6 +406,7 @@ describe('Landing Page API Integration', () => {
 
       const res = await request('/api/projects/attach', {
         method: 'POST',
+        headers: operatorHeaders(server),
         body: { name: 'attach-api-test' }
       });
       assert.equal(res.status, 201);
@@ -399,28 +414,35 @@ describe('Landing Page API Integration', () => {
       assert.equal(res.data.registered, true);
 
       // Cleanup
-      await request('/api/projects/attach-api-test', { method: 'DELETE', body: { deleteFiles: true } });
+      await request('/api/projects/attach-api-test', {
+        method: 'DELETE', body: { deleteFiles: true }, headers: operatorHeaders(server)
+      });
     });
 
     it('should return 409 for already registered project', async () => {
       await request('/api/projects', {
         method: 'POST',
+        headers: operatorHeaders(server),
         body: { name: 'already-reg', engine: 'claude' }
       });
 
       const res = await request('/api/projects/attach', {
         method: 'POST',
+        headers: operatorHeaders(server),
         body: { name: 'already-reg' }
       });
       assert.equal(res.status, 409);
 
       // Cleanup
-      await request('/api/projects/already-reg', { method: 'DELETE', body: { deleteFiles: true } });
+      await request('/api/projects/already-reg', {
+        method: 'DELETE', body: { deleteFiles: true }, headers: operatorHeaders(server)
+      });
     });
 
     it('should return 400 for non-existent directory', async () => {
       const res = await request('/api/projects/attach', {
         method: 'POST',
+        headers: operatorHeaders(server),
         body: { name: 'does-not-exist-xyz' }
       });
       assert.equal(res.status, 400);
@@ -448,14 +470,22 @@ describe('Landing Page API Integration', () => {
     let testDocId;
     let testProjectId;
 
+    /**
+     * The dashboard's request: these routes refuse a caller with no binding.
+     * @param {string} urlPath
+     * @param {object} [opts]
+     * @returns {Promise<{status: number, data: object}>}
+     */
+    const asOperator = (urlPath, opts = {}) => request(urlPath, { ...opts, headers: operatorHeaders(server) });
+
     it('GET /api/groups should return groups array', async () => {
-      const res = await request('/api/groups');
+      const res = await asOperator('/api/groups');
       assert.equal(res.status, 200);
       assert.ok(Array.isArray(res.data.groups));
     });
 
     it('POST /api/groups should create a group with expected shape', async () => {
-      const res = await request('/api/groups', {
+      const res = await asOperator('/api/groups', {
         method: 'POST',
         body: { name: 'integ-test-group', description: 'Integration test group' }
       });
@@ -468,7 +498,7 @@ describe('Landing Page API Integration', () => {
     });
 
     it('GET /api/groups/:id should return group with members and docs arrays', async () => {
-      const res = await request(`/api/groups/${testGroupId}`);
+      const res = await asOperator(`/api/groups/${testGroupId}`);
       assert.equal(res.status, 200);
       assert.equal(res.data.id, testGroupId);
       assert.equal(res.data.name, 'integ-test-group');
@@ -480,11 +510,12 @@ describe('Landing Page API Integration', () => {
       // Create a project to add as member
       const projRes = await request('/api/projects', {
         method: 'POST',
+        headers: operatorHeaders(server),
         body: { name: 'group-member-test', engine: 'claude' }
       });
       testProjectId = projRes.data.id;
 
-      const res = await request(`/api/groups/${testGroupId}/members`, {
+      const res = await asOperator(`/api/groups/${testGroupId}/members`, {
         method: 'POST',
         body: { projectId: testProjectId }
       });
@@ -493,7 +524,7 @@ describe('Landing Page API Integration', () => {
     });
 
     it('GET /api/groups/:id/members should return members with project names', async () => {
-      const res = await request(`/api/groups/${testGroupId}/members`);
+      const res = await asOperator(`/api/groups/${testGroupId}/members`);
       assert.equal(res.status, 200);
       assert.ok(Array.isArray(res.data.members));
       assert.ok(res.data.members.length >= 1);
@@ -503,7 +534,7 @@ describe('Landing Page API Integration', () => {
     });
 
     it('POST /api/shared-docs should create a doc with expected shape', async () => {
-      const res = await request('/api/shared-docs', {
+      const res = await asOperator('/api/shared-docs', {
         method: 'POST',
         body: {
           groupId: testGroupId,
@@ -524,7 +555,7 @@ describe('Landing Page API Integration', () => {
     });
 
     it('GET /api/shared-docs should list docs, filterable by groupId', async () => {
-      const res = await request(`/api/shared-docs?groupId=${testGroupId}`);
+      const res = await asOperator(`/api/shared-docs?groupId=${testGroupId}`);
       assert.equal(res.status, 200);
       assert.ok(Array.isArray(res.data.docs));
       assert.ok(res.data.docs.length >= 1);
@@ -537,7 +568,7 @@ describe('Landing Page API Integration', () => {
     });
 
     it('GET /api/shared-docs/:id should include lock status', async () => {
-      const res = await request(`/api/shared-docs/${testDocId}`);
+      const res = await asOperator(`/api/shared-docs/${testDocId}`);
       assert.equal(res.status, 200);
       assert.equal(res.data.id, testDocId);
       // lock should be null when no lock acquired
@@ -545,7 +576,8 @@ describe('Landing Page API Integration', () => {
     });
 
     it('project enrichment should include groups array', async () => {
-      const res = await request('/api/projects/group-member-test');
+      // Group membership is shown whole to the operator (#1739).
+      const res = await asOperator('/api/projects/group-member-test');
       assert.equal(res.status, 200);
       assert.ok(Array.isArray(res.data.groups));
       assert.ok(res.data.groups.length >= 1);
@@ -555,16 +587,18 @@ describe('Landing Page API Integration', () => {
     });
 
     it('DELETE /api/groups/:id should cascade delete', async () => {
-      const res = await request(`/api/groups/${testGroupId}`, { method: 'DELETE' });
+      const res = await asOperator(`/api/groups/${testGroupId}`, { method: 'DELETE' });
       assert.equal(res.status, 200);
       assert.ok(res.data.ok);
 
       // Docs should be gone
-      const docRes = await request(`/api/shared-docs/${testDocId}`);
+      const docRes = await asOperator(`/api/shared-docs/${testDocId}`);
       assert.equal(docRes.status, 404);
 
       // Cleanup project
-      await request('/api/projects/group-member-test', { method: 'DELETE', body: { deleteFiles: true } });
+      await request('/api/projects/group-member-test', {
+        method: 'DELETE', body: { deleteFiles: true }, headers: operatorHeaders(server)
+      });
     });
   });
 

@@ -8,6 +8,7 @@ const path = require('node:path');
 const os = require('node:os');
 const store = require('../lib/store');
 const projects = require('../lib/projects');
+const { operatorHeaders } = require('./_shared-docs-callers');
 const { createServer } = require('../server');
 
 // ── Helpers ──
@@ -485,11 +486,11 @@ describe('orphan-hooks API (#145, chunk 2)', () => {
   let tmpDir;
   let projectsDir;
 
-  function request(method, urlPath, body) {
+  function request(method, urlPath, body, headers = {}) {
     return new Promise((resolve, reject) => {
       const opts = {
         hostname: '127.0.0.1', port, path: urlPath, method,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json', ...headers }
       };
       const bodyStr = body ? JSON.stringify(body) : null;
       if (bodyStr) opts.headers['Content-Length'] = Buffer.byteLength(bodyStr);
@@ -566,7 +567,7 @@ describe('orphan-hooks API (#145, chunk 2)', () => {
   it('POST /api/projects/repair-orphan-hooks (no body) repairs all', async () => {
     const p = registerProject('api-repair-all');
     writeSettings(p, { Stop: [orphanStopEntry()] });
-    const { status, data } = await request('POST', '/api/projects/repair-orphan-hooks', {});
+    const { status, data } = await request('POST', '/api/projects/repair-orphan-hooks', {}, operatorHeaders(server));
     assert.equal(status, 200);
     assert.equal(data.repaired.length, 1);
     assert.equal(data.repaired[0].name, 'api-repair-all');
@@ -579,7 +580,7 @@ describe('orphan-hooks API (#145, chunk 2)', () => {
     const pb = registerProject('api-single-b');
     writeSettings(pa, { Stop: [orphanStopEntry()] });
     writeSettings(pb, { Stop: [orphanStopEntry()] });
-    const { status, data } = await request('POST', '/api/projects/repair-orphan-hooks', { project: 'api-single-a' });
+    const { status, data } = await request('POST', '/api/projects/repair-orphan-hooks', { project: 'api-single-a' }, operatorHeaders(server));
     assert.equal(status, 200);
     assert.equal(data.repaired.length, 1);
     assert.equal(data.repaired[0].name, 'api-single-a');
@@ -589,13 +590,13 @@ describe('orphan-hooks API (#145, chunk 2)', () => {
   });
 
   it('POST with non-string `project` returns 400 BAD_REQUEST', async () => {
-    const { status, data } = await request('POST', '/api/projects/repair-orphan-hooks', { project: 42 });
+    const { status, data } = await request('POST', '/api/projects/repair-orphan-hooks', { project: 42 }, operatorHeaders(server));
     assert.equal(status, 400);
     assert.equal(data.code, 'BAD_REQUEST');
   });
 
   it('POST with non-existent `project` returns 404 NOT_FOUND', async () => {
-    const { status, data } = await request('POST', '/api/projects/repair-orphan-hooks', { project: 'nope' });
+    const { status, data } = await request('POST', '/api/projects/repair-orphan-hooks', { project: 'nope' }, operatorHeaders(server));
     assert.equal(status, 404);
     assert.equal(data.code, 'NOT_FOUND');
   });

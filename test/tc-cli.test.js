@@ -160,6 +160,11 @@ describe('tc CLI vertical slice (ambient-awareness Chunk 02)', () => {
       const readApi = res.body.capabilities.find((c) => c.id === 'read-api');
       assert.ok(readApi && readApi.enabled, 'the Read API roster row ships');
       assert.match(readApi.detail, /\/api\/awareness/);
+      assert.match(readApi.detail, /\/api\/shared-docs \(send x-tangleclaw-role: master and x-tangleclaw-launch-id: \$TANGLECLAW_LAUNCH_ID\)/,
+        'the Master is told how its shared-docs reads bind (#1626)');
+      const checkouts = res.body.capabilities.find((c) => c.id === 'checkouts');
+      assert.ok(checkouts && checkouts.enabled, 'the Master is told about the fleet checkout view (#1678)');
+      assert.match(checkouts.detail, /tc freshness/);
       const sb = res.body.capabilities.find((c) => c.id === 'switchboard');
       assert.equal(sb.enabled, false, 'switchboard absence stays honest for a default master');
       const row = store.getDb().prepare(

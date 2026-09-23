@@ -4,9 +4,9 @@
 
 | Open issues | In a train | In the yard | Unmilestoned |
 |---|---|---|---|
-| **238** | **53** | **29** | **11** |
+| **278** | **52** | **29** | **11** |
 
-_Data as of 2026-09-19 02:18 UTC._ A snapshot, not a live feed — a published page cannot poll GitHub. Regenerate with `build-board.py`, then republish.
+_Data as of 2026-09-23 01:40 UTC._ A snapshot, not a live feed — a published page cannot poll GitHub. Regenerate with `build-board.py`, then republish.
 
 > **Release gate.** These are POST-v5 trains. Nothing couples until v5 releases. Shipping model (ratified 2026-07-30): each version ships ONE train with all its cars — v5.1 is one complete train, v5.2 the next. Nothing here couples while `versionBumpEnabled` is false.
 
@@ -169,7 +169,7 @@ _Data as of 2026-09-19 02:18 UTC._ A snapshot, not a live feed — a published p
 
 *Post-release: GitHub docs, images, and metadata match what actually shipped.*
 
-**7 open · 1 closed**
+**6 open · 1 closed**
 
 | Issue | Type | State | |
 |---|---|---|---|
@@ -179,7 +179,6 @@ _Data as of 2026-09-19 02:18 UTC._ A snapshot, not a live feed — a published p
 | [#533](https://github.com/Jason-Vaughan/TangleClaw/issues/533) | chore | open | Gate user-facing doc/screenshot parity the way CHANGELOG parity is gated |
 | [#794](https://github.com/Jason-Vaughan/TangleClaw/issues/794) | chore | open | GitHub sync on release — update docs, images, and metadata to match current state |
 | [#811](https://github.com/Jason-Vaughan/TangleClaw/issues/811) | enhancement | open | An indexable product manual that stays in parity with the code, readable by human and NHE alike |
-| [#853](https://github.com/Jason-Vaughan/TangleClaw/issues/853) | docs | open | PortHub guide omits the `host` field — a documented host-less release can drop another project's lease |
 | [#833](https://github.com/Jason-Vaughan/TangleClaw/issues/833) | question | ✅ closed | ~~Should a managed repo's prawduct install reference be a committed artifact, not untracked machine state?~~ |
 
 **Sequencing.** Runs after each release ships — #794 is the recurring sync pass; a script can flag drift, but a human verifies and commits.

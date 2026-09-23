@@ -18,6 +18,7 @@ setLevel('error');
 
 const store = require('../lib/store');
 const { createServer } = require('../server');
+const { bindProject } = require('./_shared-docs-callers');
 
 /** HTTP request; returns { status, data }. */
 function request(server, method, urlPath, body, extraHeaders = {}) {
@@ -50,11 +51,23 @@ const bearer = (t) => ({ Authorization: `Bearer ${t}` });
 describe('AUTH-4 — service-token gate over HTTP', () => {
   let tmpDir;
   let server;
+  let boundProject;
+  let ownDocId;
+  /** A fresh launch binding for the scratch project, as its pane would send it. */
+  const boundCaller = () => bindProject(boundProject);
 
   before(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-svc-token-'));
     store._setBasePath(tmpDir);
     store.init();
+    const projectDir = path.join(tmpDir, 'bound-project');
+    fs.mkdirSync(projectDir);
+    boundProject = store.projects.create({ name: 'bound-project', path: projectDir, engine: 'claude' });
+    const own = store.projectGroups.create({ name: 'own-group' });
+    store.projectGroups.addMember(own.id, boundProject.id);
+    ownDocId = store.sharedDocs.create({ groupId: own.id, name: 'OWN', filePath: path.join(tmpDir, 'own.md') }).id;
+    const other = store.projectGroups.create({ name: 'other-group' });
+    store.sharedDocs.create({ groupId: other.id, name: 'OTHER', filePath: path.join(tmpDir, 'other.md') });
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   });
@@ -105,15 +118,42 @@ describe('AUTH-4 — service-token gate over HTTP', () => {
   });
 
   it('gated shared-docs: 401 without a token, 200 with it', async () => {
-    const noTok = await request(server, 'GET', '/api/shared-docs');
+    // The shared-docs routes also require a project binding, so the caller is
+    // a bound project: the token gate runs first and still refuses it bare.
+    const { headers } = boundCaller();
+    const noTok = await request(server, 'GET', '/api/shared-docs', null, headers);
     assert.equal(noTok.status, 401);
     const token = store.config.load().serviceToken;
-    const withTok = await request(server, 'GET', '/api/shared-docs', null, bearer(token));
+    const withTok = await request(server, 'GET', '/api/shared-docs', null, { ...headers, ...bearer(token) });
     assert.equal(withTok.status, 200);
+    // The token admits the caller; the binding still scopes what it sees.
+    assert.deepEqual(withTok.data.docs.map((d) => d.id), [ownDocId]);
+  });
+
+  it('gated shared-docs writes: a bound project still needs the token, and with it writes its own group', async () => {
+    const { headers, sessionId } = boundCaller();
+    const lockBody = { sessionId, projectName: boundProject.name };
+    const noTok = await request(server, 'POST', `/api/shared-docs/${ownDocId}/lock`, lockBody, headers);
+    assert.equal(noTok.status, 401);
+    assert.equal(store.documentLocks.check(ownDocId), null, 'the refused lock was not taken');
+    const token = store.config.load().serviceToken;
+    const withTok = await request(server, 'POST', `/api/shared-docs/${ownDocId}/lock`, lockBody, { ...headers, ...bearer(token) });
+    assert.equal(withTok.status, 200);
+    const unlock = await request(server, 'DELETE', `/api/shared-docs/${ownDocId}/lock`, null, { ...headers, ...bearer(token) });
+    assert.equal(unlock.status, 200);
+  });
+
+  it('a valid token does not bind a project: shared-docs still needs the launch binding', async () => {
+    const token = store.config.load().serviceToken;
+    const { status, data } = await request(server, 'GET', '/api/shared-docs', null, bearer(token));
+    assert.equal(status, 403);
+    assert.equal(data.code, 'SHARED_DOCS_BINDING_REQUIRED');
   });
 
   it('scope: a non-gated route (/api/groups) stays open with the gate on', async () => {
-    const { status } = await request(server, 'GET', '/api/groups');
+    // Open to the token gate, that is: no bearer is asked for. The route still
+    // answers only a bound caller.
+    const { status } = await request(server, 'GET', '/api/groups', null, boundCaller().headers);
     assert.equal(status, 200);
   });
 

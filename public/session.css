@@ -184,6 +184,30 @@ html[data-tc-keyboard] body {
   color: var(--text-muted);
   font-family: monospace;
 }
+/* The checkout chip (#1678). Its text can outgrow a phone's banner, so it
+   ellipsizes; the click detail carries the full line. Only three tones, and
+   none of them is green for a state nobody measured. */
+.banner-checkout {
+  position: relative;
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--text-muted);
+  cursor: pointer;
+  min-width: 0;
+  max-width: 34ch;
+}
+.banner-checkout[hidden] { display: none; }
+.banner-checkout-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.banner-checkout[data-tone="warn"] { color: var(--warning, #ffb300); }
+.banner-checkout[data-tone="unknown"] { color: var(--text-muted); font-style: italic; }
+@media (max-width: 600px) {
+  .banner-checkout { max-width: 16ch; }
+}
 
 /* ── Status Dot ── */
 .status-dot {
@@ -2031,6 +2055,16 @@ html[data-tc-keyboard] body {
   color: var(--text-secondary);
   font-family: var(--font-mono, monospace);
 }
+/* #1708 — what the running wrap will do to the session if it completes, and
+   #1707 — where a cancel stands. Informational lines under the banner. */
+.wrap-drawer-planned,
+.wrap-drawer-cancelnote {
+  padding: 8px 16px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--elevated-bg);
+}
+.wrap-drawer-cancelnote { color: #f59e0b; }
 /* #571 item 4 — honest skip rollup shown under the status banner. */
 .wrap-drawer-skiproll {
   padding: 8px 16px 12px;

@@ -906,11 +906,31 @@ Chunks are sequential; each one merges before the next begins.
 
 ### Chunk 04 — Reconciliation, parity, the record (`Type: cumulative-final`)
 - **21.10** (#1588) per-rule drift diff in step 3 (added/removed/changed from the handoff manifest, including global/shared sources); a revision or drift makes `reconciliation` required
-- **21.11** (#1589) engine parity probes (codex, aider, antigravity) + honest `not-applicable` for openclaw and Master + follow-ups (Master phased launch; delegated clearing; retention setting)
+- **21.11** (#1589) engine parity probes (codex, aider, antigravity) + honest `not-applicable` for openclaw and Master + follow-ups (Master phased launch; delegated clearing; retention setting). **CLOSED 2026-09-20 by operator scope amendment: the certification subsystem was cancelled by scope, not blocked, and §4d is superseded — see `## Status`.**
 - **21.12** (#1590) docs: ADR 0017 "Phased launch", `api-contract.md`, `engine-guide.md`, `configuration-reference.md`, CHANGELOG. The R1 amendment is **not** here: it lands with 21.6.
 
 Governance checkpoints: after Chunk 01 (does the single renderer and frozen snapshot hold?) and after
 Chunk 03 (a whole-trajectory review before parity).
+
+### Launch reliability — what the built sequence got wrong in use (`Type: chunk`)
+
+Not part of the original twelve cars. These are defects the sequence surfaced once real sessions ran
+against it, dispatched by the ProjectManager on 2026-09-20 and listed on the shared MASTER_ROADMAP.
+
+- **#1680** the prime's opening order — two directives each claiming the session's first turn, beside
+  an unscoped wait-for-confirmation rule, so a session stopped to ask permission to initialize
+- **#1673** automate the crash-recovery clear, rather than sending the operator to the dashboard
+- **#1685** wrap reports a content prompt delivered that the engine never accepted as a task
+
+**This is a separate chunk from the `cumulative-final` one above, and does not consume it.** Its
+three defects are not cars of the Train; the plan's own Chunk 04 is 21.10/21.11/21.12, of which only
+21.10 (#1588) has closed. Ticking one for the other would disarm the train's final review while two
+cars are still open, so the two are recorded apart and the final review stays where it was.
+
+The roadmap briefly called this "Chunk 04" too, colliding with the plan's. Reported to the
+ProjectManager rather than renumbered here — the roadmap is theirs — and **they renamed it to
+Chunk 05 on 2026-09-20**, so the collision is resolved at the source. Kept as a note because the
+reason the two must not share a tick outlives the numbering that prompted it.
 
 ---
 
@@ -1090,8 +1110,9 @@ and the column set. The two open points are named as decisions below, not as gue
   reconciling, and offer no button.
   Tests: `test/launch-readiness-panel.test.js`. **Visual change: yes** → VRF entry.
 
-- [ ] **9. Record and wrap.** CHANGELOG `[Unreleased]`, the Status boxes below, `/prawduct:critic`,
-  handoff notes.
+- [x] **9. Record and wrap.** CHANGELOG `[Unreleased]`, the Status boxes below, `/prawduct:critic`,
+  handoff notes. All four discharged when the car shipped as PR #1624 (`8832e8bd`); the box was
+  simply never ticked back.
 
 ### Decisions this car records
 
@@ -1463,6 +1484,25 @@ closes #1588.
 
 ## 4d. Car 21.11 build plan (#1589) — engine parity CERTIFICATION
 
+> **SUPERSEDED 2026-09-20 BY OPERATOR SCOPE AMENDMENT. NOTHING BELOW IS BINDING.**
+>
+> #1589 is **CLOSED**. The certification subsystem this section specifies — acceptance cases 1–5 and
+> 8 — was **cancelled by scope, not blocked**: the operator judged that no current downstream
+> consumer needs durable certification. **Live parity evidence was never the obstacle.** The
+> operator accepted **six Codex and three Antigravity clean READY launches** for this car, and the
+> `launch_sequences` table carries attested launches on both engines. An earlier reading — that
+> required probes could not be obtained because an agent driving a pane is assisted activation — was
+> **retracted**; it is named here rather than deleted so the retraction outlives the draft that
+> carried it.
+>
+> **Every "Done when", acceptance case and final-parity clause in this section is superseded** and
+> demands nothing of any car, this train's final review included. Aider parity moved to epic #1645.
+> What actually shipped from this car, and what was removed, is recorded in `## Status` — read that,
+> not the specification below.
+>
+> The section is kept unedited because it holds the reasoning a future revival would otherwise
+> re-derive. Read it as an archived design, never as work owed.
+
 **Branch:** `feat/train-21-car-21-11`. **Schema:** no DB migration. **Critic mode:** `chunk` — the
 chunk is `cumulative-final`, so 21.12's review is the train final. **Type:** feature. **Size:**
 medium.
@@ -1595,7 +1635,17 @@ own branch and PR, not folded in here.
   delivery.
 - Historical pre-gate rows stay historical. No bulk rewrite of their outcomes.
 
-### Done when
+### Done when — SUPERSEDED, DEMANDS NOTHING
+
+> This clause is dead. The operator **did** explicitly amend scope on 2026-09-20 — the branch this
+> text names — and #1589 closed under it. Nothing below is owed by any car, and the **final parity
+> acceptance it holds is cancelled, not pending**: it cannot be un-held, because what it gated no
+> longer exists. The whole-trajectory prerequisite **expires with the deliverable it gated** — it
+> does not transfer to a later train, and nothing inherits it; §4e records that disposition.
+> Repeated at this heading because a reader who jumps straight to "Done when" never sees §4d's
+> banner.
+
+Superseded text, kept verbatim for the reasoning:
 
 **Probes RUN with any outcome does NOT close #1589** (Architect, binding). Required cases must PASS,
 or the operator explicitly amends scope. Beyond that: every box ticked, suite green,
@@ -1603,6 +1653,149 @@ or the operator explicitly amends scope. Beyond that: every box ticked, suite gr
 ruling and returned for Architect review, and **final parity acceptance still HELD** until the
 #1650 correction is integrated into the identified candidate and the whole-trajectory findings have
 an explicit disposition. Diagnostic runs are labelled diagnostic and are not final certification.
+
+## 4e. Car 21.12 build plan (#1590) — ADR 0017 and the doc set
+
+**Branch:** `feat/train-21-car-21-12`. **Schema:** no DB migration. **Critic mode:** `cumulative` —
+Chunk 04 is `Type: cumulative-final`, so this car's review IS the train final; no separate `final`
+is run. **Type:** feature (documentation). **Size:** medium.
+
+**Bound 4 is in force:** the ADR draft goes to the Architect BEFORE this merges. This car does not
+auto-merge.
+
+### Confidence check
+
+- **Problem.** Train 21 replaced a single pushed prime with a server-ordered acknowledged sequence,
+  a handoff lockfile, a preflight and a recovery gate — eleven cars of mechanism with no
+  architectural record and no operator-facing reference. A reader today can find the *behaviour* in
+  `FEATURES.md` and the *settings* in `configuration-reference.md`, but nothing states why the
+  design is shaped this way, which parts shipped, and which parts were descoped rather than built.
+- **Success.** ADR 0017 exists and is accepted; an engine implementer can read `engine-guide.md` and
+  learn what the attestation, recovery and handoff halves of the sequence require of their engine;
+  `configuration-reference.md` covers every launch-sequence setting the train shipped; the CHANGELOG
+  carries the train. A reader can tell **shipped** from **desired** without opening an issue.
+- **Out of scope.** The R1 amendment to `prime-delivery-direction.md` §3 (shipped with 21.6). Any
+  code change to the launch sequence. The certification machinery removed from 21.11 by the
+  operator's amendment — this car records that it was removed, and never as shipped. Aider parity
+  (#1645). The open defects below are *recorded*, not fixed.
+
+### `api-contract.md` does not exist, and this car does not create it
+
+§4's line for this car names `api-contract.md`. **There is no such file, and there never has been**
+— not at `docs/api-contract.md`, not anywhere in the repo (`git ls-files` finds no path matching
+`*api*contract*`). The name was written into the plan on 2026-09-17 from the shape a doc set
+usually takes, not from this repo's.
+
+This repo documents its HTTP surface in three places, none of them a contract doc: `FEATURES.md`
+per feature (which already carries `POST /api/tc/start/next` and `GET /api/tc/start/status`), the
+`data/*-guide.md` carriers that are injected into engine configs, and `docs/engine-guide.md` for
+what an engine must do. **Creating a whole API contract doc is a new documentation surface**, with
+its own freshness obligation on every route the product ships — that is a decision about this
+repo's doc architecture, not a step in a car about Train 21.
+
+`[DECISION: route the api-contract.md obligation to engine-guide.md and FEATURES.md rather than
+creating docs/api-contract.md | the named file does not exist, and standing up a repo-wide API
+contract doc inside a train car would create a surface nobody committed to maintaining | Builder1
+2026-09-20, reported to the ProjectManager; reversible by filing the doc as its own chore]`
+
+### The gap each file has to close, measured not assumed
+
+Measured at `cffe998a4`, by grepping each file for the train's own vocabulary:
+
+| File | Has | Missing |
+|---|---|---|
+| `FEATURES.md` | the sequence, the unready monitor, the ack rules, both routes | nothing this car must add |
+| `docs/configuration-reference.md` | the whole `launchSequence` object — `pasteRules`, `unreadyWindowMinutes`, `recoveryMode` | nothing this car must add |
+| `docs/engine-guide.md` | `toolOutput.maxChars`, `launchSequence.supported`, `TANGLECLAW_LAUNCH_ID` | **`tc start ready` and attestation; recovery and what a withheld task step looks like; the handoff preflight.** Zero occurrences of `ready`, `recovery`, `handoff` or `preflight` in the file |
+| `docs/adr/` | 0002–0016 | **ADR 0017** |
+| `CHANGELOG.md` | per-PR entries under `[Unreleased]` | the train's own entry |
+
+So the doc work is **one new ADR, one real gap in `engine-guide.md`, and the CHANGELOG**. The other
+two files were kept current by the cars that built them — recorded here because "update
+`configuration-reference.md`" reads like outstanding work, and it is not.
+
+### What ADR 0017 must carry, from the rulings that bind it
+
+1. **R1, R2, R3** (§0) with their dispositions and who ruled.
+2. **The #1650 ruling** — 21.11's Done-when requires ADR 0017 to carry it.
+3. **Shipped vs desired, stated separately.** The Architect's 2026-09-19 ruling on #1589 requires
+   this in as many words, with #1611 as the named case.
+4. **What was descoped and by whom** — the operator's 2026-09-20 amendment removed 21.11's
+   certification machinery (acceptance cases 1–5 and 8). The ADR records it as removed, never as
+   shipped.
+5. **The open defects the train leaves behind:** #1611 (identity check's workspace half unwired),
+   #1623 (a launch with no sequence is gated by nothing), #1595 (retention), #1712, #1713.
+
+### Steps
+
+1. Write `docs/adr/0017-phased-launch.md`.
+2. Add the attestation / recovery / handoff section to `docs/engine-guide.md`.
+3. CHANGELOG entry under `[Unreleased]`.
+4. `/prawduct:critic` at `cumulative` — and disposition the outcome (see the finding below).
+5. Architect review of the ADR (bound 4) BEFORE merge, against a committed immutable head.
+6. **Tick this car and Chunk 04 in `## Status` only once every Done-when gate above is satisfied,
+   this review included.** A tick is a claim every later reader believes, and a car cannot certify
+   its own bound 4 — ticking before the review inverts the gate it is supposed to record.
+
+### Acceptance cases
+
+These are documentation, so each case is a claim a reader can falsify against the code.
+
+- Every `tc start` subverb the product ships (`next`, `status`, `ready`) appears in `engine-guide.md`
+  with what the engine must do for it. Falsified by a subverb in `START_SUBVERBS` that the guide
+  never names.
+- The ADR's "shipped" column matches the code. Falsified by any row asserting behaviour that
+  `lib/launch-preflight.js`, `lib/launch-sequence.js` or `lib/handoff-publication.js` does not
+  implement — #1611's workspace half is the case that must land under **desired**, not shipped.
+- No document claims a required parity case passed. Falsified by any sentence reading 21.11 as
+  certified rather than descoped.
+- The ADR names R1/R2/R3 and the #1650 ruling with dates and rulers.
+- Every issue number cited resolves to an issue whose state matches how the text describes it.
+- No file path is cited that does not exist — the `api-contract.md` case is the one this car found,
+  and the pre-rename `TangleClaw-Builder` path is the other.
+
+### Done when
+
+Every box above ticked, the suite green (unchanged — this car adds no code), the cumulative-final
+review dispositioned per the finding below, the ADR reviewed by the Architect, and the PR merged by
+hand rather than by `--auto`.
+
+### The cumulative-final review has no subject, and that is a finding, not a formality
+
+`/prawduct:critic cumulative` was dispatched and **declined: exit 3, "no review needed — no
+judgeable file"**. All four files this car touches are records or prose, so the interval composes as
+a free edge and the coverage gate already passes it. Forcing a review would grade four documents,
+which is not a whole-trajectory review either.
+
+**This matters because two separate obligations were resting on this car's review, and they are not
+the same obligation.**
+
+1. **The plan's own `Type: cumulative-final`** — "21.12's review IS the train final; no separate one
+   is run." This one is genuinely satisfied by composition: each car's code was reviewed on its own
+   branch, those facts are in the evidence store, and the gate spans the interval. What is NOT
+   satisfied is the *expectation a future reader would form* from the phrase "the train final",
+   which implies a review round that never happened. Recorded here so nobody goes looking for a
+   review fact that was never written.
+
+2. **The Architect's whole-trajectory review** (ruling on #1589, 2026-09-19: *"Whole-trajectory
+   review remains a final-parity prerequisite"*), which §4d's Done-when also held. **This one cannot
+   be produced from this branch at any interval.** Every car merged into `main` before this branch
+   was cut, so this branch's merge-base is already downstream of the whole train — there is no git
+   range from here that spans the trajectory the Architect asked to have reviewed.
+
+**Disposition: MOOT, not discharged.** The whole-trajectory review was a prerequisite *of final
+parity acceptance*. The operator's 2026-09-20 scope amendment cancelled final parity acceptance —
+cases 1–5 and 8 were struck rather than built — and the Architect directed on 2026-09-20 that no
+Done-when or final-parity clause may still demand that cancelled subsystem, which is why §4d now
+carries a superseded banner. The prerequisite therefore gates nothing in Train 21 — and it gates
+nothing anywhere else either. **It expires with the deliverable it gated rather than transferring.**
+The Architect ruled this explicitly on 2026-09-20: certification was cancelled for want of a current
+consumer, so no future train inherits it by default, and a revival would need **a newly
+operator-authorized issue with freshly scoped gates** that this one does not pre-supply.
+
+**Nothing here should be read as the review having been performed.** That sentence is the whole
+point of recording this: a declined review and a passed one are indistinguishable in a session
+summary, and only the written distinction survives.
 
 ## 5. Open assumptions
 
@@ -1666,7 +1859,9 @@ an explicit disposition. Diagnostic runs are labelled diagnostic and are not fin
   21.9 (#1587) shipped (PR #1624, `8832e8bd`, v43). All three issues closed.
   - [x] Car 21.9 — recovery gate, clear route, UI control (#1587). Steps, as-built deltas and
     Done-when: §4b. Seven Critic rounds; #1623 filed for the one gap left open (a launch with no
-    sequence is gated by nothing). VRF-1587-recovery-clear is PENDING with the operator.
+    sequence is gated by nothing). VRF-1587-recovery-clear is **VERIFIED 2026-09-18**, on the live
+    install after the restart onto `8832e8bd`; the record with its outcomes is in
+    `.prawduct/operator-verification.md`. Read it there — this line is a pointer, not a copy.
   - 21.8's deltas from the blueprint:
   - The context-gathering half lives in its own module, `lib/launch-preflight-context.js`, rather
     than in `lib/sessions.js`. §2.7 says the preflight runs beside the stranded `launchGate`, and it
@@ -1771,8 +1966,80 @@ an explicit disposition. Diagnostic runs are labelled diagnostic and are not fin
     building a fixture — an earlier hand-built one passed `worktreeTarget: null`, a value no producer
     emits, which is how it hid the bug.
   - `git.getInfo` now takes `{ fresh: true }`, for anything recorded into a frozen document.
-- [ ] Chunk 04 — IN PROGRESS. `Type: cumulative-final`, so 21.12's review IS the train final; no
-  separate one is run.
+- [x] Launch reliability (#1680, #1673, #1685) — COMPLETE 2026-09-20. `Type: chunk`. Dispatched by the
+  ProjectManager 2026-09-20; branch `feat/train-21-chunk-04`. A separate chunk from the
+  `cumulative-final` one below, which it does not consume — see §4's entry for why the two share a
+  number on the roadmap and must not share a tick.
+  - [x] #1680 — the opening order. Built 2026-09-20. The order is stated once in the launch step
+    that arrives FIRST, initialization is declared authorized, and the confirmation gate is scoped
+    to the proposed work rather than to reading context. The Resume section stops claiming a turn
+    that, on a pull, it is served too late to take.
+    - **Four surfaces narrate this order and none owns it**, so they had drifted: the prime's
+      ordering block, the all-acked page (`ALL_ACKED_CONTENT`), the already-attested page (the
+      `readyAt` arm of `_serve`) and `kickoffLine`. Two disagreed on whether the freshness checks
+      precede `tc start ready` — attesting first vouches for an unchecked next action — and two
+      ended at the attestation rather than at the proposal. All four now end at the proposal with
+      the stop named, each with a test asserting the ORDER by index rather than the prose.
+      **Reviews found this in three rounds, each time on the sibling the last fix pointed at**: the
+      first round caught the prime, the second caught the all-acked page and `kickoffLine`, the
+      third caught the already-attested page. The family was never enumerated, only walked. A
+      single-owner construction for this text is the real fix and is NOT done — filed as **#1693**,
+      triggered by a fifth surface or by the next edit to any of the four.
+    - The fix is text the product generates, so its regression coverage is over generated text:
+      `test/launch-steps.test.js` pins the stated order, the explicit authorization, the preserved
+      gate, and the absence of any retroactive first-message command. Golden fixtures regenerated
+      for all six scenarios; the ordering block ships only where a launch has a sequence.
+    - **Generated-text evidence is not a live launch.** Acceptance criterion 3 asks for a real
+      launch reaching READY without a second operator prompt; that is a VRF owed, not something
+      these fixtures establish. Queued as **VRF-1680-launch-reaches-ready-unprompted** in
+      `.prawduct/operator-verification.md` — the box above is ticked for the BUILD, and the VRF is
+      what holds the acceptance, because `Fixes #1680` closes the issue on merge and prose in a
+      ticked box holds nothing.
+    - **A sequence-less launch is the population nothing watches.** It gets the reworded banner and
+      Resume with no ordering block, and the owed VRF cannot reach it from a project that has a
+      sequence. Named in the VRF entry as the second thing to look at.
+    - One test changed for a reason unrelated to the contract it guards: the Medusa-contract yield
+      test squeezed against a hardcoded budget sitting fifteen characters above the prime's
+      irreducible floor, so any directive edit failed it. It now derives that floor — including
+      stripping the overflow report the impossible-budget render appends, without which the fit
+      would have held by construction rather than by yielding. Original assertions unchanged; two
+      added.
+    - **The block is core text, so it displaces bulk.** On the richest sequence-bearing prime
+      against Claude's cap it is what tips the total over, and the Ecosystem primer yields to its
+      pointer where previously nothing yielded. No directive is displaced and nothing overflows —
+      that is the budget working — but it is a real change in what such a session receives. The
+      `full-silent-claude-pull` golden fixture is the record; read the yield out of the fixture
+      rather than from a number written here, because a number here would go stale the next time
+      this text is edited and nothing would catch it. No fixture covered this combination before:
+      every other sequence-bearing one is a paste engine whose prime is far smaller.
+  - [x] #1673 — CLOSED 2026-09-20 without code, and deliberately. The capability it asks for
+    already ships: in `advisory` mode a session clears its own recovery by attesting READY
+    (`lib/launch-sequence.js`, clearance `agent-reconciled`). What sends the operator to the
+    dashboard is `operator` mode, the shipped default **per ruling R3** — so the gap was a
+    governance decision, not a defect. Operator ruled 2026-09-20: report it, leave R3 standing.
+    Per-project opt-in remains `launchSequence.recoveryMode: advisory`.
+  - [x] #1685 — wrap prompt delivery receipt. Built and merged across PRs #1711/#1714/#1716;
+    VRF passed 2026-09-20 and the issue is CLOSED. `lib/wrap-steps/ai-content.js` no longer treats
+    `sendKeys` returning as evidence the engine accepted a task: it asks the pane, via a bounded
+    engine-aware probe over the wake vocabulary in `ENGINE_WAKE_PROFILES`.
+    - **The receipt is negative-only, and that is the design, not a gap.** It answers `not-accepted`
+      or `unknown` and has NO success verdict — four review rounds found four reachable paths to a
+      false `accepted`, all in the accept half, because a bounded capture of a rendered TUI cannot
+      carry a positive claim. Success is still established where it always was: the completion
+      marker, the capture file and the settle watch. A healthy wrap therefore logs
+      `delivery unconfirmed: <reason>` per content step, which reads like a warning and is not one.
+    - **A `not-accepted` blocks rather than re-sends.** Re-pasting over a composer on a misread
+      would submit the same task twice, which the issue's acceptance forbids outright.
+    - VRF evidence, with its limits, is in `.prawduct/operator-verification.md` under
+      `VRF-1685-consecutive-step-delivery`, and on the closed issue. Read it there rather than
+      trusting a summary here — this bullet is a pointer, and the neighbouring 21.10 entry records
+      what happens when an outcome is copied into the plan and goes stale.
+    - **What the live run did not reach, because it matters to whoever touches this next.** Only the
+      `turn-in-flight` branch of `unknown` fired; codex is already mid-turn 4s after a send, so the
+      at-rest-empty-composer branch is covered by unit tests alone. No send actually failed, so the
+      blocking `not-accepted` path remains unobserved outside tests. And the run was codex only.
+- [x] Chunk 04 — COMPLETE 2026-09-20. `Type: cumulative-final`, so 21.12's review IS the train
+  final; no separate one is run.
   - [x] Car 21.10 — per-rule drift reconciliation in step 3 (#1588). Built 2026-09-19 on
     `feat/train-21-car-21-10`. Build plan and as-built deltas: §4c. MERGED via PR #1646; #1588 is
     closed. The review history is the governance ledger's, not this
@@ -1789,9 +2056,47 @@ an explicit disposition. Diagnostic runs are labelled diagnostic and are not fin
       moving `h1` → `CHANGED` with `hasDrift` pinned false. Running the suite could never have
       caught it; only reading the assertion could. Treat a green suite over this module as evidence
       about what could have made it red, nothing more.
-  - [ ] Car 21.11 — engine parity probes (#1589)
-  - [ ] Car 21.12 — ADR 0017 and the doc set (#1590). Bound 4: the draft goes to the Architect
-    BEFORE this merges.
+  - [x] Car 21.11 — engine parity probes (#1589). **CLOSED 2026-09-20 under an operator scope
+    amendment, not by passing its required cases.** What shipped is narrow: the Master pane states
+    `{applicable: false, reason}` in the same shape a project launch uses, and the reason is about
+    the PANE rather than the engine — Master usually resolves an engine declaring
+    `launchSequence.supported: true`, so an engine-derived answer would report "applicable" for
+    exactly the pane where it is least true. openclaw needed nothing; its reason was already in its
+    engine profile. Acceptance cases 6 and 7 were already shipped by #1650 and were VERIFIED, not
+    rebuilt. **Cases 1–5 and 8 were removed from the car, and are neither shipped nor claimed.**
+    Aider parity moved to epic #1645. **The certification was CANCELLED BY SCOPE, not blocked** —
+    the operator's judgement was that no current downstream consumer needs durable certification.
+    Live parity evidence was never the obstacle: the operator accepted **six Codex and three
+    Antigravity clean READY launches** for this car. **Nothing is carried forward and nothing is
+    owed**: there is no desired state, task or gate for certification on this train or any later
+    one, and a revival would need a newly operator-authorized issue with freshly scoped gates. An
+    Architect ruling is ARCHIVED at `.tangleclaw/plans/wrap-sequence-architecture.md` §3 (#1720) as
+    history rather than as a design on hold; note only that it was **conditional** — existing
+    versioned JSON carried the binding solely while it preserved that binding in full — so it should
+    not be quoted as an unqualified no-migration answer. Follow-ups filed: #1712, #1713; retention
+    was already #1595.
+  - [x] Car 21.12 — ADR 0017 and the doc set (#1590). Built 2026-09-20 on
+    `feat/train-21-car-21-12`. Build plan, the measured per-file gap and acceptance cases: §4e.
+    `docs/adr/0017-phased-launch.md` states shipped vs desired as a table, per the Architect's
+    ruling on #1589, with #1611 and #1623 named there rather than left to inference; it carries R1,
+    R2, R3 and the #1650 ruling. `docs/engine-guide.md` gains the attestation / recovery / preflight
+    half it was missing entirely. **Bound 4 stands: the draft goes to the Architect BEFORE this
+    merges, and this PR does not auto-merge.**
+    - **The cumulative-final review declined for want of a subject** (`critic-begin` exit 3: no
+      judgeable file — all four paths are records or prose). The plan's own `cumulative-final` is
+      satisfied by composition; the **Architect's whole-trajectory review is not, and cannot be
+      produced from this branch at any interval**, because every car merged before it was cut. §4e
+      carries the proposed disposition — moot rather than discharged, since the operator's scope
+      amendment removed the final parity acceptance it was a prerequisite of. **The Architect rules
+      on it, not this car.**
+    - **`api-contract.md` was named by §4 and does not exist** — not at `docs/`, not anywhere in the
+      repo. This car did not create it: standing up a repo-wide API contract doc inside a train car
+      would add a documentation surface with a freshness obligation on every route the product
+      ships, and nobody committed to maintaining one. Routed to `engine-guide.md` and `FEATURES.md`
+      instead, and reported to the ProjectManager. §4e records the decision.
+    - **`configuration-reference.md` and `FEATURES.md` needed nothing** — measured, not assumed:
+      both were kept current by the cars that built them. Recorded because "update
+      `configuration-reference.md`" reads like outstanding work and is not.
   - The car's one class of defect, worth reading before touching the drift path: failure, absence
     and "nothing changed" started as ONE value at every boundary the car added, so every silence
     rendered as the reassuring one. Three distinct values now carry it — `unreadable` vs

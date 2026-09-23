@@ -114,6 +114,19 @@ function buildScenarios(store, baseDir) {
       engineId: 'claude',
       options: { medusaWorkspaceId: 'golden-full-cafe0123', operatorHost: 'operator.example.test', healReport: 'Launch heal: moved one leftover file.' }
     },
+    // The richest prime (silent Claude, Medusa contract, heal report) WITH a
+    // sequence — the combination that carries the most bytes against a real
+    // engine cap. Every other sequence-bearing scenario is a paste engine,
+    // whose prime is far smaller, so before this one the ordering block's cost
+    // was only ever measured where it could not matter. #1680 grew the
+    // bootstrap block from one line to a stated order, and this scenario is
+    // what makes the next such growth show up as a diff against a real budget.
+    {
+      name: 'full-silent-claude-pull',
+      project: full,
+      engineId: 'claude',
+      options: { medusaWorkspaceId: 'golden-full-cafe0123', operatorHost: 'operator.example.test', healReport: 'Launch heal: moved one leftover file.', launchSequence: true }
+    },
     { name: 'paste-codex', project: paste, engineId: 'codex', options: { operatorHost: 'operator.example.test' } },
     // The same paste engine WITH a launch sequence (#1584). Its rules are not
     // pasted: the sequence serves them in full and records that they were read,

@@ -327,6 +327,125 @@ rolled back either. The companions are then uncommitted session changes, and the
 **Engine-agnostic.** A shell command and git: the same inputs produce the same commit on every engine.
 
 
+## Extended 2026-09-20 — exactly one release authority per release-governed group (#1697)
+
+**Status: ACCEPTED** — ratified by the Architect 2026-09-20 at head `683ae8096`, after one
+revision round against the review on PR #1703. Drafted by Builder1; the Architect approves ADRs.
+Nothing is built yet: this records the decision so the build implements a ratified rule rather than
+inventing one. Implemented by #1697.
+
+`releaseMode` is per project, and nothing relates one project's mode to another's. A fleet whose
+members share a repository can hold several release-capable projects at once, and nothing says so.
+On 2026-09-20 three members of this install's own group — `TangleClaw-Builder1`,
+`TangleClaw-ProjectManager` and `TangleClaw-Builder2` — were simultaneously release-capable. The
+condition had existed for an unknown period and surfaced only because a check was written and run by
+hand.
+
+**The operator's requirement, stated 2026-09-20:** *"once a system is put together with multiple
+team members, there can only be one that has that ability. All the other ones must be set to off for
+the system to work … the system has to force this working condition."*
+
+### The invariant is binary, not graduated
+
+`off` is the only value under which the step does not run (`lib/wrap-steps/version-bump.js` returns
+`skip`). Every other value means it executes and may cut. `ask` reads as safe because a human must
+choose Cut, but that governs *when* a cut happens, not *whether* the project can make one. Two
+members on `ask` are two members that can each author a bump. So the condition is exact: **exactly
+one member release-capable, every other member `off`.**
+
+### Release governance is opt-in, never implied by a group
+
+`project_groups` today relates projects for shared documents and infrastructure, and may contain
+repositories with entirely independent release streams. Governance therefore attaches to a
+**release-governed group**, marked explicitly — a nullable owner field is a sufficient opt-in.
+
+- A group with no release governance has **no effect on releases**. It must never suppress one.
+- An **ungrouped project keeps today's per-project behaviour** unchanged. A solo project must not
+  have to form a group to cut a release.
+
+### At most one release-governed group per project, and ambiguity fails closed
+
+`project_group_members` is keyed `PRIMARY KEY (group_id, project_id)`, so only the pair is unique: a
+project may belong to several groups, and `test/engines.test.js` exercises that directly. A project
+may therefore belong to **at most one release-governed group**, enforced on mutation.
+
+Where legacy or corrupt state produces more than one, **runtime fails closed**, naming every
+conflicting group and owner. It must never select the first group the store returns — an arbitrary
+pick is the silent-wrong-answer class this ADR's 2026-09-14 entry exists to refuse.
+
+### The ownership lifecycle is defined, and every transition is atomic
+
+- The owner is a **current, non-archived member**, enforced by constraint and by transactional
+  validation — not by convention.
+- **Enabling** release governance assigns an owner atomically. **Transfer** is one atomic operation.
+- **Rejected until authority is atomically transferred, or governance explicitly dissolved:**
+  removing or archiving the owner, hard-deleting the owner, and deleting or dissolving a
+  release-governed group.
+- A normal group may have no owner. A group already marked release-governed **may not silently
+  drift to zero owners**.
+
+### Effective capability is the group's, and the owner's local mode is only a policy
+
+The group record is the source of truth for **who may release**.
+
+- A **non-owner's effective mode is forced to `off`**, whatever a stale or hand-edited local value
+  says, and write paths **reject** attempts to make a non-owner release-capable.
+- The **owner's local mode selects only the decision policy** — whether the agent or the operator
+  decides. (Stated semantically so the mode naming in #1701 remains a separate decision.)
+- If the owner's local mode is `off`, unreadable, or otherwise unusable, **runtime skips with an
+  explicit remediation** rather than choosing a policy on the operator's behalf.
+
+### One resolver, consumed at every surface
+
+A single shared release-capability resolver serves `release-recommendation`, `version-bump`, the
+settings/API projection, and write validation. `release-recommendation` must consume it too, so a
+non-owner is never prompted for a release decision it could not execute — displayed, writable,
+prompted and executable state cannot be allowed to disagree. **`version-bump` remains the
+load-bearing backstop**, because it is the last surface before the act itself.
+
+### A non-owner skips; it does not error
+
+The refusal takes the existing `skip` shape and names the owning project, so the wrap continues, the
+changelog entry is still written, and the only thing withheld is the promotion and the bump — which
+were never this member's to make. That is ADR 0013's contract applied here: a setting that does not
+take effect says why it does not. It also keeps the 2026-07-19 entry's distinction intact —
+never-blocks governs the pipeline, and a refusal to act on an input the step cannot honour is not a
+block.
+
+### Why write-time enforcement alone is insufficient
+
+`version-bump` resolves its mode from `store.projectConfig.load(...)` — the member's own
+`.tangleclaw/project.json`. **In this checkout that file is ignored (`.gitignore:66`) and untracked,
+so an ordinary branch switch does not restore it**, and an earlier draft of this amendment was wrong
+to say otherwise. The runtime check is still load-bearing, for the cases that do occur:
+
+- an agent or operator edits the file directly;
+- a newly attached project arrives on the installed default, which is how the three owners above
+  appeared;
+- a hand-typed invalid value resolves to `ask` (`lib/project-config.js`), not `off` — an
+  unrecognised mode is release-capable;
+- stash or restore paths that explicitly include ignored files;
+- legacy repositories where the file is **tracked**, where checkout does rewrite it.
+
+Guarding only the API guards the one path that was never the problem.
+
+### Acceptance shape
+
+The contract is ratifiable when these states are mechanical: an ordinary group has no effect on
+releases; a release-governed group has exactly one active-member owner; only that owner can be
+effectively non-`off`; ownership transitions are atomic; ambiguous or invalid runtime state skips
+safely with an actionable reason; and the recommendation prompt follows the same capability decision
+as the bump step.
+
+### Out of scope, deliberately
+
+The default for an absent `releaseMode` (#1702) and the naming of the modes (#1701) are separate
+decisions and are not settled here. Whether release authority is ultimately an attribute of an agent
+*role* rather than a field on a group is Train 22's to decide; this amendment asks only that the
+build not make that migration expensive. ADR 0002's overgrown amendment ledger deserves a
+current-contract index, which is its own issue and not this revision's business.
+
+
 ## Amended 2026-09-16 — a finished wrap ends the session, commit or not (#1558)
 
 Chunk 11a ended the session only on `pipelineResult.ok && pipelineResult.commitSha`, and treated a
@@ -344,6 +463,10 @@ those are the runs where the terminal is still needed.
 dialog before the run and replayed on Retry. It is validated before a run is claimed: anything but a
 boolean is refused, so a malformed value can't end a session the operator meant to keep.
 
+> **Superseded in part (2026-09-23, #1708):** the request option is no longer the only input to
+> keep/end, and a run can now end `cancelled`. See "Amended 2026-09-23: wrap intent and honest
+> cancellation" below. The rest of this amendment stands.
+
 **The result says what happened to the session.** `sessionOutcome` on the run's result payload is
 `ended`, `kept`, or `null`. It is not a boolean because a session killed during the wrap is neither
 ended by the wrap nor still running.
@@ -353,6 +476,53 @@ yes, and the question would have left the wrong server rule in place for every o
 
 **Engine-agnostic.** The rule reads only the pipeline's `ok` and the request's option, so every
 engine gets the same lifecycle.
+
+## Amended 2026-09-23 — wrap intent and honest cancellation (#1708, #1707)
+
+This amendment supersedes the 2026-09-16 statement that the request option alone selects keep/end.
+It records Architect rulings D1–D5 for Train A Car A3 Chunk 01. Provenance is #1707 and #1708.
+Switchboard message 417454d7 is review evidence only, not the authority. It adds no design
+decision beyond those rulings.
+
+1. **Keep intent is resolved server-side exactly once, before the run is claimed.** The value comes
+   from the first of these that applies:
+   - an explicitly present boolean request value;
+   - a valid boolean `wrapKeepSessionRunning` in the project config;
+   - `false`, when the key or the config is genuinely absent.
+
+   A persisted config that is unreadable, malformed or invalid refuses the wrap before the claim.
+   Caller-supplied `keepSource` and planned-outcome fields are ignored. The immutable resolved
+   value and its source feed the registry, the handoff kind, the lifecycle and Retry. A Retry keeps
+   the trusted provenance unless a new explicit boolean changes it.
+2. **The planned outcome is stated before any step moves.** The 202, the status payload and the
+   `run-start` event carry `sessionOutcomePlanned` (`end`|`keep`) and `keepSource`. Operator copy is
+   conditional ("If this wrap completes…"), because blocked, failed and cancelled runs remain active.
+3. **Cancel route.** `POST /api/sessions/:project/wrap/cancel` is bound to the exact `runId`, behind
+   the same authority boundary as starting a wrap.
+   - Cancel admission and step start are one atomic registry transition.
+   - Repeated requests against a live run are idempotent.
+   - A cancel is accepted only before `commit` starts.
+   - The running step finishes. There is no mid-step interrupt, no post-commit revert, and no
+     cancellation after the durable cutoff.
+4. **What an accepted cancellation guarantees.** No subsequent commit, branch, push, PR, auto-merge
+   or later durable Git action. It does not promise an untouched working tree. It does not undo
+   earlier local methodology, DB, prompt or uncommitted file effects. The completed steps and the
+   possible local side effects are reported.
+5. **Cancellation is a distinct outcome.**
+   - Shape: `ok: false`, `outcome: 'cancelled'`, `blockedAt: null`, `error: null`, and
+     `cancelledAt` naming the first step that had not started. Later rows are `pending`.
+   - The session stays active, and neither Retry nor Skip is offered.
+   - If the finishing step blocks after a cancel was accepted, its result stays visible, but the
+     cancellation is terminal.
+6. **Operator controls.**
+   - **Hide** only hides the panel and keeps following the same run.
+   - **Cancel** appears only while the run is cancellable. After acceptance it says the current
+     step is finishing.
+   - After the cutoff it states that cancellation is no longer possible and shows the actual
+     current step, rather than permanently saying "committing".
+
+**Engine-agnostic.** Resolution reads the request and the project config. Cancellation reads the
+run registry and the pipeline's step order. No engine capability is involved.
 
 
 ## Amendment (Train 21, #1585) — the wrap publishes a per-attempt handoff
@@ -426,3 +596,49 @@ a repair could not be applied.
 
 **Ordering on the launch path.** The repair runs before `launchBaseline.capture`, so the file it
 moves is not counted as the new session's own change and put in front of the operator at wrap.
+
+## Extended 2026-09-20 — a step may report that its prompt was NOT accepted (#1685)
+
+*Amended in place the same day, by Architect ruling, after the tri-state's positive value proved
+unsound. The original wording declared `'accepted' | 'not-accepted' | 'unknown'`; it is replaced
+rather than annotated, because a contract readers might still implement must not state a value no
+writer may emit.*
+
+A step handler's result may carry two fields beside `{ok, status, output, blockers}`:
+
+```
+deliveryOutcome?: 'not-accepted' | 'unknown'
+deliveryReason?:  string      // the sentence explaining that outcome
+```
+
+**There is no `accepted`, and no current writer may create one.** Four review rounds found four
+reachable paths to a false `accepted` — every one of them in the accept half — because the boundary
+between a composer and a transcript, read from a bounded capture of a rendered TUI, cannot support a
+positive claim: the composer wraps across rows, scrolls its own head out of the capture, and can be
+drawn without a prompt glyph. The accept inference also had no independent behavioral consumer; an
+`accepted` step fell through to the same wait it would have done anyway.
+
+**Positive evidence is downstream task completion** — the completion marker, the capture file, and
+the settle watch — which is where it always was. This receipt is negative-only: it may prove that a
+send was not accepted, and otherwise reports `unknown`.
+
+**`not-accepted` must be attributable to THIS send.** Only two things qualify: this send's nonce
+still inside a reliably located composer across the confirmation reads, and an engine's declared
+rejection marker observed as a post-send event. A marker merely present in bounded scrollback may be
+stale. A composer holding some *other* text is not proof our prompt was unsubmitted — it may be
+operator input or a selector row — so that is `unknown`, as are an unlocatable boundary, a generic
+busy state, an apparent transcript echo, an empty composer, an unreadable pane, and engines with no
+wake vocabulary.
+
+**Present only when measured.** A step that never asks omits both fields entirely — absent, never
+`null` and never `'unknown'`: a step that did not look must not be recorded as one that looked and
+could not tell. The pipeline builds each recorded row and each SSE `step-done`/`step-blocked` frame
+from an explicit field list, so a field the contract does not name is dropped at that boundary. That
+is exactly how `deliveryOutcome` was lost the first time it was wired.
+
+**Readers may tolerate historical `accepted` rows** if compatibility requires it. Reintroducing it
+as a writable value requires an engine-native acknowledgement or an authoritative transcript event
+tied to the send's nonce — not rendered-pane inference — and another explicit amendment here.
+
+`lib/wrap-delivery-receipt.js` is the only producer today, via the `ai-content` step.
+

@@ -34,9 +34,12 @@ setLevel('error');
 const store = require('../lib/store');
 const medusa = require('../lib/medusa');
 const { createServer } = require('../server');
+const { operatorHeaders } = require('./_shared-docs-callers');
 
 /**
- * POST to the test server and resolve its parsed response.
+ * POST to the test server as the operator's dashboard and resolve its parsed
+ * response. The notify route answers only a caller that may write the
+ * document's group; which caller asks does not change what is broadcast.
  * @param {http.Server} server - Listening server.
  * @param {string} urlPath - Path to request.
  * @returns {Promise<{status: number, body: object}>} The response.
@@ -45,7 +48,7 @@ function post(server, urlPath) {
   return new Promise((resolve, reject) => {
     const { port } = server.address();
     const req = http.request(
-      { hostname: '127.0.0.1', port, path: urlPath, method: 'POST', headers: { 'Content-Length': 0 } },
+      { hostname: '127.0.0.1', port, path: urlPath, method: 'POST', headers: { 'Content-Length': 0, ...operatorHeaders(server) } },
       (res) => {
         let body = '';
         res.setEncoding('utf8');
