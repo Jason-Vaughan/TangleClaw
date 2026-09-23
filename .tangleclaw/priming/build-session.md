@@ -2,5 +2,9 @@
 
 ## Current build chunk
 
-All chunks in `.tangleclaw/plans/train-21-phased-launch.md` are marked done. Open a new plan or wrap this one up.
+**Active:** Chunk 03 — Admission is a positive decision; drafts fail visibly (#1724, #1507)
+
+**On deck:** Chunk 04 — A successful wrap binds to the publication the next launch reads (#1675)
+
+Plan: `.tangleclaw/plans/train-a-car-a3-build-plan.md`
 <!-- TANGLECLAW:PRIMING-ROLL:END -->

@@ -295,6 +295,112 @@ describe('refusalFor', () => {
   });
 });
 
+describe('resolveAccess — the dashboard label on a stood-down gate (#1753)', () => {
+  const LABEL = { [access.CLIENT_HEADER]: access.DASHBOARD_CLIENT };
+
+  it('a request carrying only the dashboard label is the operator when the gate stands down', () => {
+    // A plain-http dashboard's same-origin GET sends neither Sec-Fetch-Site nor Origin.
+    const a = access.resolveAccess(req(LABEL, { tcGateActive: false }), fakeDeps());
+    assert.equal(a.kind, KINDS.OPERATOR);
+  });
+
+  it('the label counts for nothing while the gate is live', () => {
+    const a = access.resolveAccess(req(LABEL, { tcGateActive: true }), fakeDeps());
+    assert.equal(a.kind, KINDS.UNBOUND);
+  });
+
+  it('the label counts only when the gate state was stated as down', () => {
+    assert.equal(access.resolveAccess({ headers: LABEL }, fakeDeps()).kind, KINDS.UNBOUND);
+  });
+
+  it('only the exact value is the label', () => {
+    const a = access.resolveAccess(req({ [access.CLIENT_HEADER]: 'script' }, { tcGateActive: false }), fakeDeps());
+    assert.equal(a.kind, KINDS.UNBOUND);
+  });
+});
+
+describe('canChangeProject', () => {
+  it('lets the operator change any project and a bound project only its own', () => {
+    assert.equal(access.canChangeProject({ kind: KINDS.OPERATOR, projectId: null }, 9), true);
+    const bound = access.resolveAccess(req(BOUND_7), fakeDeps());
+    assert.equal(access.canChangeProject(bound, 7), true);
+    assert.equal(access.canChangeProject(bound, 8), false);
+  });
+
+  it('lets the Master, an unbound and an invalid caller change none', () => {
+    const m = access.resolveAccess(req(MASTER), fakeDeps());
+    assert.equal(access.canChangeProject(m, 7), false);
+    assert.equal(access.canChangeProject({ kind: KINDS.UNBOUND, projectId: null }, 7), false);
+    assert.equal(access.canChangeProject({ kind: KINDS.INVALID, projectId: 7 }, 7), false);
+  });
+});
+
+describe('projectRefusalFor (#1752)', () => {
+  const { OWN_PROJECT, OPERATOR } = access.NEEDS;
+
+  it('own-project admits the operator and a bound project', () => {
+    assert.equal(access.projectRefusalFor({ kind: KINDS.OPERATOR, reason: null }, OWN_PROJECT), null);
+    assert.equal(access.projectRefusalFor({ kind: KINDS.PROJECT, reason: null }, OWN_PROJECT), null);
+  });
+
+  it('own-project refuses unbound and invalid callers with project codes that name the binding', () => {
+    const unbound = access.projectRefusalFor({ kind: KINDS.UNBOUND, reason: null }, OWN_PROJECT);
+    assert.equal(unbound.status, 403);
+    assert.equal(unbound.code, 'PROJECT_BINDING_REQUIRED');
+    const invalid = access.projectRefusalFor({ kind: KINDS.INVALID, reason: INVALID_REASONS.SESSION_NOT_ACTIVE }, OWN_PROJECT);
+    assert.equal(invalid.code, 'PROJECT_BINDING_INVALID');
+    assert.match(invalid.message, /session-not-active/);
+    for (const r of [unbound, invalid]) {
+      assert.ok(!/shared doc/i.test(r.message), `${r.code} does not talk about shared documents`);
+      for (const needle of ['x-tangleclaw-project-id', 'x-tangleclaw-launch-id', '$TANGLECLAW_LAUNCH_ID']) {
+        assert.ok(r.message.includes(needle), `${r.code} names ${needle}`);
+      }
+    }
+  });
+
+  it('refuses the Master on an own-project route, and says its access level grants no API authority', () => {
+    const r = access.projectRefusalFor({ kind: KINDS.MASTER, reason: null }, OWN_PROJECT);
+    assert.equal(r.status, 403);
+    assert.equal(r.code, 'PROJECT_READ_ONLY');
+    assert.match(r.message, /access level/);
+    assert.match(r.message, /#966/);
+  });
+
+  it('a refused Master binding keeps the Master instructions and the project code', () => {
+    const r = access.projectRefusalFor({ kind: KINDS.INVALID, reason: INVALID_REASONS.MASTER_LAUNCH_STALE }, OWN_PROJECT);
+    assert.equal(r.code, 'PROJECT_BINDING_INVALID');
+    assert.ok(r.message.includes('x-tangleclaw-role: master'));
+  });
+
+  it('operator-only admits the operator alone and names the refused action', () => {
+    assert.equal(access.projectRefusalFor({ kind: KINDS.OPERATOR, reason: null }, OPERATOR, 'create a project'), null);
+    for (const a of [
+      { kind: KINDS.PROJECT, reason: null },
+      { kind: KINDS.MASTER, reason: null },
+      { kind: KINDS.UNBOUND, reason: null },
+      { kind: KINDS.INVALID, reason: INVALID_REASONS.UNKNOWN_LAUNCH }
+    ]) {
+      const r = access.projectRefusalFor(a, OPERATOR, 'create a project');
+      assert.equal(r.status, 403, a.kind);
+      assert.equal(r.code, 'OPERATOR_ONLY', a.kind);
+      assert.match(r.message, /^Only the operator can create a project\./, a.kind);
+      assert.match(r.message, /no project or Project Master binding/, a.kind);
+    }
+  });
+
+  it('throws for a need project routes do not have, so a read route cannot be gated through it', () => {
+    for (const need of [access.NEEDS.READ, access.NEEDS.WRITE, undefined, 'own_project']) {
+      assert.throws(() => access.projectRefusalFor({ kind: KINDS.OPERATOR, reason: null }, need), TypeError, String(need));
+    }
+  });
+
+  it('leaves the shared-docs refusals exactly as they were', () => {
+    const a = { kind: KINDS.UNBOUND, reason: null };
+    assert.equal(access.refusalFor(a, access.NEEDS.READ).code, 'SHARED_DOCS_BINDING_REQUIRED');
+    assert.equal(access.refusalFor({ kind: KINDS.MASTER, reason: null }, access.NEEDS.WRITE).code, 'SHARED_DOCS_READ_ONLY');
+  });
+});
+
 describe('resolveAccess against a real store', () => {
   let tmpDir;
   let project;

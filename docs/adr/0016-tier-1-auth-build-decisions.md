@@ -776,3 +776,27 @@ OQ3's sentence ships, and the three call sites #804 names ask one question. The 
   a terminal while the login was off — the state `reset-admin.js --store` used to answer with "turn it
   on in Settings", a control that did not exist. `POST /api/auth/credential` changes a Caddy credential
   and never turns a login on. The record is cleared by construction rather than per route: `store.config.save` never writes `loginOptOutAt` beside `authEnabled: true`. A hand-listed set of call sites missed `reset-admin.js --create-gate` and Caddyfile adoption, both of which turn a login on.
+
+### Recorded during #1753 (2026-09-22) — how a stood-down gate recognises the dashboard over plain http
+
+**Architect-ratified 2026-09-22**, within the boundary below: honoured only when `tcGateActive === false`, ignored when armed or locked, never added to `isMachineClient`.
+
+While the gate stands down (`open`/`fallback`), the caller resolver (`lib/shared-docs-access.js`)
+treats a browser-shaped request as the operator. Browsers send `Sec-Fetch-Site` only to HTTPS and
+localhost origins, and no `Origin` on a same-origin `GET`, so the direct-mode plain-http shape this
+ADR supports (line 57) left the dashboard's reads resolving as `unbound`: public project rows, and
+`403` on the groups and shared-docs reads. Its writes were never affected, because browsers send
+`Origin` on every non-`GET` request.
+
+- **The dashboard labels itself.** `tcFetch`, the one way the dashboard reaches the server, sends
+  `X-TangleClaw-Client: dashboard` on every request, and the resolver accepts it as the operator
+  **only while the gate stands down**. On `armed` or `locked` it is ignored; the session cookie is
+  the only operator there.
+- **It is a label, not a control.** Any local process can send it, exactly as it can send `Origin`,
+  and with the gate down the whole dashboard is already open to whoever can reach it. It restores
+  the operator's view; it adds no security and the code does not claim any. It is not added to
+  `isMachineClient`'s browser test, so the fleet carve-out is unchanged.
+- **Rejected: a `Referer`/`Accept` heuristic** (the issue's first option). It is no harder to forge,
+  a referrer policy can strip `Referer`, and it would guess at a fact the dashboard can simply state.
+- **Rejected: documenting the public view as expected.** The operator on a supported install shape
+  would lose paths, git state and groups with nothing on screen saying why.

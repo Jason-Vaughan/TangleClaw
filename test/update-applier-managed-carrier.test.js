@@ -159,12 +159,16 @@ describe('_classifyDirty routes carriers on containment, not on path (#1241)', (
     assert.equal(asked, false, 'an untracked carrier must not be probed');
   });
 
-  it('leaves every other path on THE LINE exactly where it was', () => {
+  it('consults the proof only for the two proven files; every other path is real work', () => {
+    // #1537 retired the `.tangleclaw/` prefix: a `true` from the caller cannot
+    // make a path discardable that no proof covers.
+    const asked = [];
     const d = applier._classifyDirty(
       ' M .tangleclaw/x\n M .claude/settings.json\n M .claude/settings.local.json\n M lib/a.js\n',
-      () => true);
-    assert.deepEqual(d.discardable.map((e) => e.path), ['.tangleclaw/x', '.claude/settings.json']);
-    assert.deepEqual(d.realWork, ['.claude/settings.local.json', 'lib/a.js']);
+      (p) => { asked.push(p); return true; });
+    assert.deepEqual(d.discardable.map((e) => e.path), ['.claude/settings.json']);
+    assert.deepEqual(d.realWork, ['.tangleclaw/x', '.claude/settings.local.json', 'lib/a.js']);
+    assert.deepEqual(asked, ['.claude/settings.json']);
   });
 });
 
@@ -210,6 +214,17 @@ describe('the carrier list tracks its source of truth', () => {
       `MANAGED_BLOCK_CARRIERS must include "${profile.configFormat.filename}"`);
   });
 
+  it('names the shared hook settings file the engine layer declares', () => {
+    // The updater writes this path out so it can load without the engine
+    // layer. A move in engines must fail here, not leave the updater refusing
+    // every project partway through retiring its old hooks.
+    assert.ok(engines.SHARED_HOOK_SETTINGS_PATHS.includes(applier.HOOK_SETTINGS_FILE),
+      `SHARED_HOOK_SETTINGS_PATHS must include "${applier.HOOK_SETTINGS_FILE}"`);
+    assert.deepEqual([...applier.PROOFS.keys()].sort(),
+      [...applier.MANAGED_BLOCK_CARRIERS, applier.HOOK_SETTINGS_FILE].sort(),
+      'the proof table holds exactly the carriers and the hook settings file');
+  });
+
   it('locates markers with the syntax that profile declares', () => {
     // The other half of the same coupling, and the quieter one: a syntax change
     // makes the markers unmatchable, so containment answers false forever and
@@ -238,7 +253,8 @@ describe('applyUpdate wires the containment test in (#1241)', () => {
     'rev-parse --abbrev-ref HEAD': 'main\n',
     'fetch --tags origin': '',
     'ls-remote --tags origin': 'sha1\trefs/tags/v9.9.9\n',
-    'checkout v9.9.9': '',
+    'checkout --no-overwrite-ignore v9.9.9': '',
+    'diff --name-status -z --no-renames HEAD v9.9.9': '',
     [`diff --name-only ${SHA} ${SHA}`]: ''
   };
 
@@ -291,7 +307,7 @@ describe('applyUpdate wires the containment test in (#1241)', () => {
     const { result } = run(CONTAINED_WORK, {});
     assert.equal(result.ok, false, 'the discard is still opt-in per request');
     assert.equal(result.code, 'dirty-tree');
-    assert.deepEqual(result.dirty, { discardable: ['CLAUDE.md'], realWork: [] });
+    assert.deepEqual(result.dirty, { discardable: ['CLAUDE.md'], realWork: [], carried: [] });
     assert.match(result.error, /discard option/,
       'an all-TC refusal must tell the operator the way out exists — this is the #1241 dead end');
   });
@@ -306,7 +322,7 @@ describe('applyUpdate wires the containment test in (#1241)', () => {
   it('still refuses hard when the operator edited outside the block', () => {
     const { result, calls } = run(EDITED_WORK, { discardDirty: true });
     assert.equal(result.ok, false);
-    assert.deepEqual(result.dirty, { discardable: [], realWork: ['CLAUDE.md'] });
+    assert.deepEqual(result.dirty, { discardable: [], realWork: ['CLAUDE.md'], carried: [] });
     assert.equal(calls.some((c) => c.startsWith('checkout -- ')), false,
       'a hand edit outside the markers must never be discarded');
   });

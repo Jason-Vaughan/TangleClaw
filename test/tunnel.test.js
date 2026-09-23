@@ -13,6 +13,30 @@ setLevel('error');
 const store = require('../lib/store');
 const porthub = require('../lib/porthub');
 const tunnel = require('../lib/tunnel');
+const portScanner = require('../lib/port-scanner');
+
+// Ports this suite's own servers bound. PortHub's listener probe is answered
+// from this set instead of the machine's lsof, so a lease decision here depends
+// on what the test set up and never on what else this host is running — while
+// a tunnel port the test really bound still reads as listening, which is what
+// makes `_registerTunnelPort`'s `adoptListener` load-bearing in these tests.
+const boundByTest = new Set();
+
+/** Answer lsof for PortHub from `boundByTest`. */
+function probeAnswersFromTestServers() {
+  portScanner._setExec((cmd) => {
+    const m = /^lsof .*-iTCP:(\d+) /.exec(cmd);
+    const port = m ? Number(m[1]) : null;
+    if (port !== null && boundByTest.has(port)) {
+      return `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nnode ${process.pid} me 7u IPv4 0x1 0t0 TCP 127.0.0.1:${port} (LISTEN)`;
+    }
+    const err = new Error('no listener');
+    err.status = 1;
+    err.stdout = '';
+    err.stderr = '';
+    throw err;
+  });
+}
 
 // #288/#291 test helpers. `httpServer` answers any request with an HTTP status
 // → `httpRoundTrip` reads it as alive. `zombieServer` accepts the TCP
@@ -30,7 +54,10 @@ function zombieServer() {
   return net.createServer(() => { /* accept, never respond */ });
 }
 function listen(server) {
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => {
+    boundByTest.add(server.address().port);
+    resolve(server.address().port);
+  }));
 }
 /** Bind a server to IPv6 loopback only (#295); resolves port, or null if IPv6 is unavailable. */
 function listenIPv6(server) {
@@ -47,9 +74,11 @@ describe('tunnel', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tunnel-'));
     store._setBasePath(tmpDir);
     store.init();
+    probeAnswersFromTestServers();
   });
 
   afterEach(() => {
+    portScanner._reset();
     // Clean up tracked tunnels between tests
     tunnel._tunnels.clear();
     mock.restoreAll();

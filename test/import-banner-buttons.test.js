@@ -16,7 +16,7 @@
  * different, which is the mistake that let this ship.
  */
 
-const { describe, it, before } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -180,5 +180,108 @@ describe('port-lease import banner buttons (#1383)', () => {
       .map(p => onclicks(name).find(o => o.startsWith(p)));
     assert.equal(argumentOf(ign), name);
     assert.deepEqual(JSON.parse(argumentOf(imp)), [name]);
+  });
+  it('Not a project receives the RAW name, like Ignore (#1381)', () => {
+    const mark = onclicks('Odd"Name').find(o => o.startsWith('markLeaseOwnerExternal('));
+    assert.ok(mark, 'the Not a project button must exist');
+    assert.equal(argumentOf(mark), 'Odd"Name');
+  });
+});
+
+describe('Not a project, traced widget → collector → POST → server (#1381)', () => {
+  const http = require('node:http');
+  const os = require('node:os');
+  const store = require('../lib/store');
+  const { setLevel } = require('../lib/logger');
+  setLevel('error');
+  let tmpDir;
+  let server;
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-notaproject-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    const { createServer } = require('../server');
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /** A JSON request against the real server, standing in for the page's `api`. */
+  function call(method, urlPath, body) {
+    return new Promise((resolve, reject) => {
+      const req = http.request({
+        hostname: '127.0.0.1', port: server.address().port, path: urlPath, method,
+        headers: { 'Content-Type': 'application/json' }
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          const data = JSON.parse(Buffer.concat(chunks).toString('utf8') || 'null');
+          resolve(res.statusCode < 400 ? data : null);
+        });
+      });
+      req.on('error', reject);
+      if (body) req.write(JSON.stringify(body));
+      req.end();
+    });
+  }
+
+  it('the button the banner renders marks the lease external on the server and drops it from the banner', async () => {
+    store.portLeases.lease({ port: 5432, project: 'Homebrew', service: 'postgresql@14', permanent: true });
+
+    const ui = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+    const landing = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
+    const src = [
+      liftFunction(landing, 'function _canonicalProjectName('),
+      liftFunction(landing, 'function getIgnoredLeaseProjects('),
+      liftFunction(landing, 'function checkPortImports('),
+      liftFunction(ui, 'async function markLeaseOwnerExternal(')
+    ].join('\n');
+
+    const state = { ports: [], projects: [{ name: 'SomeProject' }], openclawConnections: [] };
+    const rendered = [];
+    const loadPorts = async () => { state.ports = (await call('GET', '/api/ports')).leases; };
+    const page = new Function('localStorage', 'document', 'state', 'renderImportBanner', 'apiMutate',
+      'dismissImportBanner', 'loadPorts', `
+        ${src}
+        return { checkPortImports, markLeaseOwnerExternal };
+      `)(
+      { getItem: () => null, setItem: () => {} },
+      { getElementById: () => null },
+      state,
+      (importable) => rendered.push(importable),
+      (url, method, body) => call(method, url, body),
+      () => {},
+      loadPorts
+    );
+
+    await loadPorts();
+    page.checkPortImports();
+    assert.equal(rendered.length, 1, 'precondition: the unregistered owner is offered for import');
+    assert.equal(rendered[0][0].name, 'Homebrew');
+
+    // The argument comes off the rendered button, not typed here.
+    const html = (() => {
+      const start = ui.indexOf('const details = importable.map');
+      const end = ui.indexOf(".join('');", start);
+      const esc = (str) => typeof str !== 'string' ? '' : str
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      return new Function('importable', 'esc', ui.slice(start, end + ".join('')".length) + '; return details;')(rendered[0], esc);
+    })();
+    const onclick = [...html.matchAll(/onclick="([^"]*)"/g)].map(m => unescapeHtml(m[1]))
+      .find(o => o.startsWith('markLeaseOwnerExternal('));
+    rendered.length = 0;
+    await page.markLeaseOwnerExternal(argumentOf(onclick));
+
+    assert.equal(store.portLeases.get(5432).ownerKind, 'external', 'the server recorded it');
+    assert.ok(store.portLeases.get(5432), 'and kept the lease');
+    assert.equal(rendered.length, 0, 'the refreshed banner no longer lists it');
   });
 });

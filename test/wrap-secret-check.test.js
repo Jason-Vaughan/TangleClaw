@@ -91,6 +91,10 @@ function makeRepo() {
   git(dir, 'config', 'user.name', 't');
   fs.writeFileSync(path.join(dir, 'README.md'), 'init\n');
   fs.writeFileSync(path.join(dir, 'shared.js'), 'v1\n');
+  // Already part of the project, so what the sessions below write is an edit and
+  // the secret scan is the only question asked about it. A file new to the
+  // repository is also asked about as new (#1724), which is not these tests' subject.
+  for (const f of ['mine.js', 'config.js', 'notes.md', 'image.bin', 'huge.txt']) fs.writeFileSync(path.join(dir, f), 'v0\n');
   git(dir, 'add', '-A');
   git(dir, 'commit', '-q', '-m', 'init');
   git(dir, 'checkout', '-q', '-b', 'feat/session');
@@ -206,7 +210,7 @@ describe('a file holding a real-format token is flagged and not committed', () =
     assert.equal(r.status, 'done');
     assert.deepEqual(committedFiles(repo), ['mine.js']);
     assert.ok(fs.readFileSync(path.join(repo, 'config.js'), 'utf8').includes(TOKEN), 'the file is untouched');
-    assert.match(git(repo, 'status', '--porcelain', '--', 'config.js'), /^\?\? config\.js$/);
+    assert.match(git(repo, 'status', '--porcelain', '--', 'config.js'), /^M config\.js$/, 'still uncommitted (git trims the leading space)');
     assert.deepEqual(r.output.secretScan.flagged, [{ path: 'config.js', rules: ['github-token'], decision: 'leave' }]);
     assertNoToken(r, 'the commit result');
     assert.equal(activity.at(-1).detail.blocked, false);

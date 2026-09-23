@@ -200,6 +200,19 @@ describe('frontend CSRF plumbing (#1418)', () => {
         assert.equal(calls[0].opts.headers['X-CSRF-Token'], 'tok');
         assert.equal(calls[0].opts.headers['Content-Type'], 'application/json',
           'and does not displace the type apiMutate sets');
+        assert.equal(calls[0].opts.headers['X-TangleClaw-Client'], 'dashboard',
+          'a write carries the dashboard label too (#1753)');
+      });
+    });
+
+    it('labels a request without mutating the options the caller passed', () => {
+      const { sandbox, calls } = withRecordingFetch('tc_csrf=tok');
+      const api = sandbox.tcCreateApi();
+      const opts = { headers: { Accept: 'application/json' } };
+      return api('/api/projects', opts).then(() => {
+        assert.equal(calls[0].opts.headers['X-TangleClaw-Client'], 'dashboard');
+        assert.equal(calls[0].opts.headers.Accept, 'application/json');
+        assert.deepEqual(Object.keys(opts.headers), ['Accept'], 'the caller\'s object is unchanged');
       });
     });
 
@@ -207,8 +220,12 @@ describe('frontend CSRF plumbing (#1418)', () => {
       const { sandbox, calls } = withRecordingFetch('tc_csrf=tok');
       const api = sandbox.tcCreateApi();
       return api('/api/config').then(() => {
-        assert.ok(!calls[0].opts || !calls[0].opts.headers,
-          'a plain GET must reach fetch exactly as the caller wrote it');
+        // The token stays off a GET. The one header a GET does carry is the
+        // dashboard label (#1753), which is not a credential.
+        const headers = (calls[0].opts && calls[0].opts.headers) || {};
+        assert.equal(headers['X-CSRF-Token'], undefined, 'a GET must not carry the CSRF token');
+        assert.deepEqual(Object.keys(headers), ['X-TangleClaw-Client'],
+          'a plain GET carries nothing but the dashboard label');
       });
     });
   });
