@@ -7132,6 +7132,10 @@ function _wrapResultPayload(projectName, result) {
     // boolean would call a killed session "still running".
     sessionOutcome: result.lifecycleCompleted === true ? 'ended' : (result.sessionKept === true ? 'kept' : null)
   };
+  // #1675 — whether this run's handoff was published, and which one. Absent on
+  // the pre-pipeline failures that never reached the finalizer, so their shape
+  // is unchanged; a finished run always carries it.
+  if (result.handoffPublication) payload.handoffPublication = result.handoffPublication;
   if (result.pipelineResult) payload.pipelineResult = result.pipelineResult;
   if (!result.ok && result.error) payload.error = result.error;
   return payload;

@@ -4156,8 +4156,8 @@ let currentWrapDisplayedStatus = null;
  * primitive: the wrap-run controller decides when it runs.
  *
  * @param {object} pipelineResult - The run result's `pipelineResult`.
- * @param {{sessionOutcome?: (string|null)}} [runContext] - What the run did to
- *   the session (#1558), for the banner.
+ * @param {{sessionOutcome?: (string|null), handoffPublication?: (object|null)}} [runContext] - What
+ *   the run did to the session (#1558) and to its handoff (#1675), for the banner.
  */
 function openWrapDrawer(pipelineResult, runContext) {
   currentWrapPipelineResult = pipelineResult;
@@ -4430,8 +4430,8 @@ function renderSkipRoll(pipelineResult) {
  * all shape-to-view-model decisions live in `tcWrapDrawerHelpers`.
  *
  * @param {object} pipelineResult
- * @param {{sessionOutcome?: (string|null)}} [runContext] - What the run did to
- *   the session (#1558).
+ * @param {{sessionOutcome?: (string|null), handoffPublication?: (object|null)}} [runContext] - What
+ *   the run did to the session (#1558) and to its handoff (#1675).
  */
 function renderWrapDrawer(pipelineResult, runContext) {
   const H = window.tcWrapDrawerHelpers;
@@ -5986,7 +5986,7 @@ function paintWrapRun(prev, next) {
     case 'settled':
       if (!entered) return;
       if (next.result && next.result.pipelineResult) {
-        openWrapDrawer(next.result.pipelineResult, { sessionOutcome: next.result.sessionOutcome });
+        openWrapDrawer(next.result.pipelineResult, { sessionOutcome: next.result.sessionOutcome, handoffPublication: next.result.handoffPublication || null });
       } else {
         // A result WITHOUT a pipelineResult: the pipeline threw, or failed
         // before it ran. Show the run's real error — not the restart notice,

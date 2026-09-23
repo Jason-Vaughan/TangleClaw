@@ -178,9 +178,11 @@ describe('api wrap-run status + single-flight (#583)', () => {
       assert.equal(typeof after.body.finishedAt, 'number');
       // The retained result is the payload a reloaded page renders.
       assert.deepEqual(Object.keys(after.body.result).sort(),
-        ['captureFields', 'ok', 'pipelineResult', 'project', 'runId', 'sessionId', 'sessionOutcome', 'status', 'wrapCommand', 'wrapSteps'],
+        ['captureFields', 'handoffPublication', 'ok', 'pipelineResult', 'project', 'runId', 'sessionId', 'sessionOutcome', 'status', 'wrapCommand', 'wrapSteps'],
         'status result carries the full run payload');
       assert.equal(after.body.result.runId, post.body.runId);
+      // #1675 — a finished run always says what became of its handoff.
+      assert.equal(typeof after.body.result.handoffPublication.state, 'string');
     });
   });
 

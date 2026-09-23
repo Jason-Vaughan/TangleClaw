@@ -77,6 +77,14 @@ describe('continuity-write wrap step (CC-1)', () => {
     assert.equal(idx.freshness.sha, 'abc1234');
     assert.equal(idx.freshness.branch, 'feat/cc-1');
     assert.equal(idx.freshness.writtenAt, '2026-06-15');
+
+    // #1675 — the step reports exactly what it wrote, so the handoff freezes
+    // these words rather than re-reading a file a later run may rewrite.
+    assert.equal(res.output.currentState, idx.currentState);
+    assert.equal(res.output.nextAction, idx.nextAction);
+    assert.deepEqual(res.output.freshness, {
+      sha: idx.freshness.sha, branch: idx.freshness.branch, writtenAt: idx.freshness.writtenAt, tier: idx.freshness.tier
+    });
   });
 
   it('picks the most recent capture when several steps carry parsedFields', async () => {

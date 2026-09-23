@@ -1762,3 +1762,69 @@ describe('the commit row renders its rescan outcome, not just the helper (#1513)
     assert.equal(commit({ commitSha: 'abcdef1234567890' }), 'abcdef123456');
   });
 });
+
+describe('#1675 — a finished wrap whose handoff did not publish says so', () => {
+  const H = loadHelpers();
+  const armed = { commitSha: 'abcdef0123456789', autoPr: { pushed: true, prUrl: 'https://x/1', autoMergeArmed: true, error: null } };
+  const pr = (output) => ({
+    ok: true, blockedAt: null, commitSha: output.commitSha || null,
+    results: [{ stepId: 'commit', kind: 'commit', status: 'done', output, blockers: [] }]
+  });
+  const refused = { state: 'not-published', publicationId: 'p1', reason: 'a newer publication (p2) is already current' };
+
+  it('leaves a published handoff\'s banner exactly as it was', () => {
+    const base = plain(H.summarizePipelineStatus(pr(armed), {}));
+    const withPub = plain(H.summarizePipelineStatus(pr(armed), { handoffPublication: { state: 'published', publicationId: 'p1' } }));
+    assert.deepStrictEqual(withPub, base);
+  });
+
+  it('relabels an otherwise-successful wrap as a warning and keeps its PR so the release probe still runs', () => {
+    const s = plain(H.summarizePipelineStatus(pr(armed), { handoffPublication: refused }));
+    assert.equal(s.label, 'Wrap finished — handoff NOT published');
+    assert.equal(s.tone, 'warning');
+    assert.match(s.detail, /Its handoff was NOT published: a newer publication \(p2\) is already current\. The next launch will not resume from this wrap\./);
+    assert.match(s.detail, /Wrap committed — release pending PR merge/, 'what the wrap did still reads');
+    assert.equal(s.pr.prUrl, 'https://x/1');
+    const composed = plain(H.composeReleaseBanner(s, { outcome: 'merged' }));
+    assert.equal(composed.label, 'Wrap finished — handoff NOT published', 'a merged release must not repaint the warning away');
+  });
+
+  it('keeps the handoff sentence when a BLOCKED release takes the banner', () => {
+    const s = H.summarizePipelineStatus(pr(armed), { handoffPublication: refused });
+    const composed = plain(H.composeReleaseBanner(s, { outcome: 'blocked', state: 'CLOSED' }));
+    assert.equal(composed.tone, 'error');
+    assert.match(composed.label, /release BLOCKED/);
+    assert.match(composed.detail, /Its handoff was NOT published/);
+    const plainBlocked = plain(H.composeReleaseBanner(H.summarizePipelineStatus(pr(armed), {}), { outcome: 'blocked', state: 'CLOSED' }));
+    assert.doesNotMatch(plainBlocked.detail, /handoff/, 'a published handoff adds nothing to a blocked release');
+  });
+
+  it('words an abandoned attempt in the operator\'s terms, keeping the store\'s code', () => {
+    const s = plain(H.summarizePipelineStatus(pr({}), { handoffPublication: { state: 'abandoned', reason: 'lifecycle-incomplete' } }));
+    assert.match(s.detail, /the session ended before the wrap could record it \(lifecycle-incomplete\)/);
+  });
+
+  it('keeps a failed or stranded PR banner, which is worse, and carries the handoff in its detail', () => {
+    const failed = { commitSha: 'abcdef0123456789', autoPr: { pushed: true, prUrl: null, autoMergeArmed: false, error: 'push rejected' } };
+    const s = plain(H.summarizePipelineStatus(pr(failed), { handoffPublication: refused }));
+    assert.equal(s.label, 'Wrap committed — release NOT armed');
+    assert.match(s.detail, /handoff was NOT published/);
+  });
+
+  it('says nothing about the handoff on a blocked, failed or cancelled run, which publishes nothing by design', () => {
+    const notStaged = { handoffPublication: { state: 'not-staged', reason: 'the wrap stopped before it staged a handoff' } };
+    for (const result of [
+      { ok: false, blockedAt: 'commit', results: [{ stepId: 'commit', status: 'blocked', blockers: ['x'] }] },
+      { ok: false, error: 'boom', results: [] },
+      { ok: false, cancelledAt: 'commit', results: [] }
+    ]) {
+      const s = plain(H.summarizePipelineStatus(result, notStaged));
+      assert.equal(/handoff/i.test(`${s.label} ${s.detail}`), false, JSON.stringify(s));
+    }
+  });
+
+  it('has no note for a missing account, so an older server\'s result reads as before', () => {
+    assert.equal(H.handoffPublicationNote(undefined), null);
+    assert.equal(H.handoffPublicationNote({ state: 'published' }), null);
+  });
+});
