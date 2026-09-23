@@ -99,6 +99,8 @@ describe('operator-edited global rules across an update (#1730)', () => {
     fs.mkdirSync(path.join(work, 'data'));
     fs.writeFileSync(path.join(work, RULES), RULES_V1);
     fs.writeFileSync(path.join(work, 'server.js'), '// v1\n');
+    // A tracked file a later release may turn into a directory.
+    fs.writeFileSync(path.join(work, 'tools'), 'a tracked file\n');
     git(work, ['add', '-A']);
     git(work, ['commit', '-qm', 'v1']);
     git(work, ['tag', 'v1.0.0']);
@@ -325,6 +327,21 @@ describe('operator-edited global rules across an update (#1730)', () => {
       assert.deepEqual(r.reconcile.map((x) => [x.path, x.reason]), [['.tangleclaw/scratch', 'untracked-collision']]);
       assert.equal(fs.readFileSync(mine, 'utf8'), 'my scratch file\n');
       assert.equal(head(), v1Sha);
+    });
+
+    it('a release that turns a tracked file into a directory is not a collision', () => {
+      // Git replaces its own tracked file here; refusing would strand the
+      // install on a release it can take.
+      assert.equal(git(work, ['ls-files', 'tools']), 'tools\n', 'tracked since v1');
+      release('v9.9.10', (dir) => {
+        fs.rmSync(path.join(dir, 'tools'));
+        fs.mkdirSync(path.join(dir, 'tools'));
+        fs.writeFileSync(path.join(dir, 'tools', 'run.sh'), 'echo\n');
+      });
+      applier._internal.checkForUpdate = () => ({ updateAvailable: true, latestVersion: '9.9.10' });
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal(fs.readFileSync(path.join(work, 'tools', 'run.sh'), 'utf8'), 'echo\n');
     });
 
     it('the checkout itself refuses to overwrite an ignored file the preflight missed', () => {
