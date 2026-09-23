@@ -125,5 +125,5 @@ stays ≤ 16 KB.
 
 ## Status
 
-- [x] Chunk 01 — split (#1819), local-only. Built on the D1–D6 recommendations. Eleven files, the largest 15.7 KB, and the override removed. A check confirmed all 133 rules appear exactly once and unchanged. A live check confirmed the harness loaded only the matching area files.
+- [x] Chunk 01 — split (#1819), local-only. The files are built on the D1–D6 recommendations. The largest of the eleven is 15.7 KB, and the override is removed. The D4 merges are already applied: each absorbed rule is appended whole, lead included, to its family's first rule. A check against the backup confirmed that all 133 rule texts appear exactly once and unchanged. If D4 is rejected, rerun the split script without the merges from the backup in `.git/prawduct/learnings-backup/20260923-split-1819/`. A live check confirmed the harness loaded only the matching area files. **Still owed, after the Architect rules:** step 6 (comment on and close #1819) and the D5 follow-up issue.
 - [ ] Chunk 02 — reanchor PR (#1820)
