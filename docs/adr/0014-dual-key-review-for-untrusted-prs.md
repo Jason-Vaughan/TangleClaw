@@ -74,8 +74,8 @@ We establish a **Dual-Key (Two-Person) Review** mechanism for all untrusted exte
    Anything else — any other author, or any non-zero exit — is an ordinary untrusted PR, and a
    `.github/workflows/` touch is a security trip as written above. A passing PR proceeds to the
    micro filter and reconstruction in [`docs/dependency-bump-audit.md`](../dependency-bump-audit.md);
-   it is never merged, auto-merged or allow-listed. The exemption does not close a tag moved
-   upstream while workflows reference actions by tag; that is #1436.
+   it is never merged, auto-merged or allow-listed. A tag moved upstream does not reach CI at all:
+   workflows pin every action to a full commit SHA, and a test enforces it (#1436).
 
 2. **The PR Reviewer (Micro Filter):** If the PR clears the ProjectManager's macro audit, the ProjectManager passes the PR details to the PR Reviewer via Medusa. The PR Reviewer performs a secondary independent raw-text audit, focusing on logical soundness, regressions, and subtle implementation flaws. *(Until 2026-09-16 this role was the Builder's; the operator moved it to a dedicated PR Reviewer session, so external-PR diff intake and reconstruction happen away from the Builder's checkout, which serves the live install. The first-application account below keeps the name of the session that actually did the work.)*
 3. **Execution:** Only when both sessions have passed the PR does the PR Reviewer reconstruct, on a clean branch off `main`, in its own non-serving worktree (Amendment 2026-09-17, rule 5).
@@ -235,9 +235,10 @@ None of the three replaces another.
   named owner.
 - **Negative, accepted:** an extra session to run, and a slower path to merge, since no
   reconstruction auto-merges.
-- **Honest limit:** rules 3, 5 and 7 are process today. Their mechanisms (#1554, #1553, #1551,
-  #1436) are open, and until they land, the protection is only as strong as each session's
-  adherence to them.
+- **Honest limit:** rules 3, 5 and 7 are process today. Rule 7's mutable-reference half has its
+  mechanism: workflows pin every action to a full commit SHA, enforced by a test (#1436). The
+  remaining mechanisms (#1554, #1553, #1551) are open, and until they land, the protection is only
+  as strong as each session's adherence to them.
 
 ## Consequences
 - **Positive:** Dramatically reduces the surface area for supply-chain attacks, obfuscation, or logic bombs making it into the codebase. Enforces the Swarm Protocol's division of concerns.

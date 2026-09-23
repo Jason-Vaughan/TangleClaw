@@ -22,11 +22,29 @@ printed CI secrets into workflow logs (CVE-2025-30066). Every workflow that refe
 by tag ran the payload. A bump PR opened in that window would have looked exactly like a routine
 update.
 
-This audit does not close that exact attack on its own. Our workflows also reference actions by
-tag, so a tag moved upstream runs in CI with no PR at all, and Dependabot never sees it. What
-limits the exposure today is that every action we use comes from GitHub's own `actions/*`
-organization. Pinning every `uses:` ref to a full commit SHA closes it, and is tracked in #1436;
-once pinned, every change arrives as a bump PR and goes through this audit.
+A tag moved upstream would reach our CI with no PR at all if the workflows referenced actions by
+tag, and Dependabot would never see it. They do not: every `uses:` ref is pinned to a full commit
+SHA with a `# vX.Y.Z` comment naming the release it is (#1436), and
+`test/workflow-action-pins.test.js`, which runs inside the required `test` check, fails on any other
+form. So every change to an action arrives as a bump PR and goes through this audit. The same test
+requires every workflow to declare its token `permissions:` rather than inherit the repository
+default, and requires `release.yml` to pin an exact Node version, because `setup-node` otherwise
+resolves the newest patch at run time inside a job that can push tags. That Node pin is bumped by
+hand; Dependabot does not track it.
+
+What the test does and does not prove:
+
+- **It proves shape and agreement.** Every reference is a full commit SHA, a docker digest or a
+  local `./` path. No pinned SHA carries two different version comments, and no action carries
+  the same version comment on two different SHAs.
+- **It cannot prove a comment is true.** Whether `# v7.0.1` really names the release that SHA is
+  needs the network. The initial pins were checked with `git ls-remote` against each action's
+  repository; every later change is a bump PR and gets this audit.
+- **The exact Node version removes run-time selection, not artifact trust.** `setup-node` still
+  downloads that release with no digest pinned in the workflow, and the `ubuntu-latest` runner
+  image is itself mutable. Both are tracked in #1827.
+- **GitHub's repository setting that requires SHA-pinned actions is a second layer, not a
+  replacement.** It does not cover reusable-workflow references, which this test does.
 
 The stakes in this repository are concrete. `.github/workflows/release.yml` runs with `contents: write`
 whenever a push to `main` changes `version.json` (and on manual dispatch), and it runs the same `actions/checkout` and `actions/setup-node`
@@ -38,7 +56,7 @@ repository whose newest tag is the update path for every install (see
 
 | Ecosystem | Configured | Why |
 |---|---|---|
-| `github-actions` | Yes, weekly, at most 3 open PRs | The workflows reference third-party actions by tag, and those actions run in CI. |
+| `github-actions` | Yes, weekly, at most 3 open PRs | The workflows pin third-party actions by commit SHA, and those actions run in CI. A bump rewrites the SHA and its `# vX.Y.Z` comment. |
 | `npm` | **No** | TangleClaw has zero npm dependencies. No `package.json` or lockfile is tracked, and `CONTRIBUTING.md` rejects any PR that adds one. An npm entry with no manifest fails every scheduled run. |
 
 The npm row is enforced as a relation, not a promise. If a `package.json` is ever tracked,
