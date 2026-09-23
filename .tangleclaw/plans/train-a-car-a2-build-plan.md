@@ -1,13 +1,13 @@
 ---
 title: "Train A Car A2: updater ownership and authored-data preservation"
-status: IN PROGRESS — Architect ruled D1–D5 2026-09-22 (message a358b1ba): D1, D2 accepted; D3, D4, D5 modified. Chunk 01 built and Critic-clean
+status: IN PROGRESS — Architect ruled D1–D5 2026-09-22 (message a358b1ba): D1, D2 accepted; D3, D4, D5 modified. Chunk 01 shipped (PR #1800); Chunk 02 building, D6–D10 sent to the Architect 2026-09-23
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (message 866e2043)
 issues: [1537, 1730]
 governed_by:
   - Architect roadmap, "Car A2 — updater ownership and authored-data preservation" (TangleClaw-Architect/.tangleclaw/plans/v5-v6-backlog-census-and-bridge-roadmap.md)
   - project rule: ENGINE-AGNOSTIC BY CONSTRUCTION (engaged, narrowly: the updater moves only TangleClaw's own checkout, whose tracked engine files are Claude's `CLAUDE.md` and `.claude/settings.json`. Both are proof entries pinned to the engine layer's own declarations, so no engine is required: another engine's files are simply real work)
 scope: train-a-car-a2
-branch: feat/a2-chunk1-updater-ownership (Chunk 01); Chunk 02 gets its own branch and session
+branch: fix/a2-chunk2-global-rules-carry
 partition: serial. Both chunks change the same guard in lib/update-applier.js and the same beacon dialog
 critic_mode: chunk (Chunk 01), cumulative at Chunk 02
 ---
@@ -215,6 +215,97 @@ this PR.
 
 **Done when:** the suite is green, the cumulative Critic is clean, and the #1730 repro has been
 run against a scratch clone from the issue's steps.
+
+### Chunk 02 build detail (written 2026-09-23, before code)
+
+#### Git behaviour this design rests on (probed in a scratch repo, git 2.50.1)
+
+- A skip-worktree file that is **unmodified** checks out cleanly: the new content is written and
+  the flag stays. A modified one that the tag does **not** change is carried by git itself. So
+  the carry is needed only when the carried file differs from HEAD **and** the tag changes it.
+- A modified assume-unchanged file is hidden from porcelain, and checkout refuses it with "would
+  be overwritten".
+- `git checkout <tag>` **silently overwrites a gitignored file** at a path the tag starts to
+  track. It refuses only a non-ignored untracked one. See D8.
+- `git merge-file -p` exits 0 when the merge is clean and N > 0 for N conflicts. A negative exit
+  (signal, >127) is an error, never a conflict.
+- `git checkout -- <file>` skips skip-worktree entries, so the carry has to clear flags before
+  it restores the file.
+
+#### Flow after this chunk (every mutation comes after every check)
+
+1. The existing read-only guards: no-git, no-update, then the dirty classification. The carried
+   file is left out of classification only when its porcelain status is exactly ` M` (changed
+   in the worktree, not staged). Staged, deleted or unmerged states stay real work (D3a, D9).
+2. wrong-ref, fetch, resolve the latest tag. (Unchanged.)
+3. **Preflight (D4).** Read `git diff --name-only -z --no-renames HEAD <tag>` and
+   `git ls-files -v -z`. For each changed path: a flag on a non-carried path gives
+   `skip-worktree` or `assume-unchanged`; a path that exists on disk but is not in HEAD gives
+   `untracked-collision`, ignored or not (D8). For the carried file, when it differs from HEAD
+   and the tag changes it, compute the three-way merge in a private temp dir (mkdtemp, 0700,
+   always removed). A conflict gives `merge-conflict`, and so does a tag that deletes the file
+   while the operator has edited it. All findings are collected and returned together as one
+   `reconcile-required`, and nothing has been touched at that point.
+4. **Backup (D5)** of the exact original bytes, only when the carry will run. The path is
+   `<basePath>/backups/global-rules.<fromSha7>-<tag>.md`, the directory is 0700 and the file
+   0600. It is written to a temp name with `wx`, fsynced and published with `link()`, which
+   never replaces an existing file. An existing file with identical bytes is reused. Otherwise
+   the name gets a `.<sha256-8>` suffix, and after that `-2`, `-3` and so on. Any failure
+   refuses before anything changes. Which of the two codes that refusal uses is D10.
+5. Discard the proven TangleClaw files, if the operator opted in. This moved here from step 1 so
+   that a reconcile refusal never follows a discard.
+6. **Carry and checkout, with compensation (D3d).** Record the flags, clear them, restore the
+   file from HEAD, run `checkout <tag>`, write the merged bytes (temp file, then rename) and
+   restore the flags. If any step fails, compensate: go back to the starting ref (`checkout
+   main`, or `checkout --detach <fromSha>` from a tag), write the original bytes back from
+   memory, restore the flags, and then verify HEAD, the file's bytes and `ls-files -v`. If
+   verification passes, the result is either `reconcile-required` with `checkout-collision`
+   (a diagnosed "would be overwritten" or untracked-overwrite message), or the original
+   `git-error`. If it does not pass, the result is `recovery-failed` (D7).
+7. A plain checkout without a carry maps a diagnosed overwrite the same way (`checkout-collision`,
+   paths parsed from git's tab-indented list). Every other git failure stays `500 git-error`.
+8. Provisioning report, unchanged. Success adds `carried` (D6).
+
+#### New architectural decisions (sent to the Architect at plan-written)
+
+- **D6: A successful carry adds `carried: [{ path, backup }]` to the success result.** The
+  operator is told where the pre-update copy lives, and the beacon and the prompt both relay it.
+  *Rejected:* logging only, because the operator could not find the backup.
+- **D7: A failed compensation returns a new code, `recovery-failed` (500).** Its body carries
+  `recovery: { fromSha, fromRef, backup, failedStep }`, and it is added to every list of codes
+  (ADR 0010). *Rejected:* reusing `git-error`, because that code promises "nothing moved; one
+  `git checkout <fromSha>` recovers", which is false once the file's bytes or flags are lost.
+  `reconcile-required` is excluded too, since D4 allows it only after the starting state is
+  restored.
+- **D8: `untracked-collision` also covers gitignored paths**, because git overwrites those
+  silently (probed). *Cost:* a release that starts tracking a path installs generate as ignored
+  state would block each of those installs until the file is moved. *Rejected:* matching git,
+  which lets authored ignored content (`.tangleclaw/memories/…`) be lost with no signal.
+- **D9: A ` M` carried file appears in neither `dirty.discardable` nor `dirty.realWork`.** It is
+  neither of those things, and listing it under real work would tell the operator to commit or
+  stash rules they edited in the dashboard. Any other status for it stays real work.
+  *Rejected:* a third `dirty.carried` list, which adds to the contract without giving any
+  consumer something to do.
+- **D10: A failed backup (D5 "refuses") is `reconcile-required`, with a new reason
+  `backup-failed`.** It is returned before anything changes, and its action names the backup
+  directory. *Rejected:* `git-error`, because the failure is not in git and nothing moved.
+  *Rejected:* a separate code, which would mean one more code for a refusal already inside D4's
+  envelope.
+
+#### My implementation calls (none of the triggers apply)
+
+- The `action` texts use dashboard and editor wording only (ADR 0010 clause 3). For example,
+  merge-conflict reads: "Your edits to Global Rules change lines this release also changes. Open
+  Global Rules, copy your additions somewhere safe, remove them, update, then add them back."
+- The backup directory comes from `store._getBasePath()`, required when the backup step runs
+  and through an `_internal` seam, so a failure loading it becomes a refused backup and never a
+  broken module.
+- The merged bytes and the original bytes are held in memory, so compensation never depends on
+  the backup being readable.
+- Plan correction: `docs/user-guide.md` and `docs/configuration-reference.md` do **not** list
+  the codes (checked by grep). The documents that do are ADR 0010 clause 5, `FEATURES.md`, the
+  prompt in `public/session.js` and the gitignored `api-contract.md`. `FEATURES.md` still calls
+  `.tangleclaw/*` discardable, which went stale in Chunk 01, and it is fixed here.
 
 ## Status
 
