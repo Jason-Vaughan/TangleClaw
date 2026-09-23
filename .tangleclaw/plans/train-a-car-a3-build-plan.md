@@ -747,7 +747,7 @@ worktree `.claude/worktrees/a3-chunk4`. The car's last chunk, so it owes the cum
    records the publication id and digest it consumed.
 3. **Out of scope.** (i) Making a wrap survive a server restart mid-run. The run registry is
    process-local, and the 2026-09-20 Architect restarts at 05:03 and 05:06 are exactly this case.
-   To be filed as its own issue. (ii) Deciding whether a captured next action is *semantically*
+   Filed as #1816. (ii) Deciding whether a captured next action is *semantically*
    stale (see H6). (iii) Retention of publications (#1602). (iv) The stale-slot takeover (#1805).
    (v) Changing how the preflight selects a publication or any verdict rule.
 
@@ -851,6 +851,43 @@ worktree `.claude/worktrees/a3-chunk4`. The car's last chunk, so it owes the cum
   on the base branch may predate it. *Rejected:* checking issue and PR states at launch (network
   on the launch path, parsing free text). *Rejected:* refusing a publication older than N hours
   (an arbitrary clock that would hide sound handoffs).
+
+### Architect rulings (2026-09-23, message ed93ebab) — binding
+
+The PM approved the plan (message 11e9951f). The architectural gate clears once H1 and H2 are
+incorporated. Implementation, the cumulative Critic, review, CI and merge readiness are not certified.
+
+- **H1: MODIFY.** Expose the finalization outcome on the stored result, the status route and
+  `run-done`, and keep `ok` unchanged. Supersession must be directional and structured:
+  - `published` means current at finalization, not guaranteed current at the next launch.
+  - `supersededId` names only the previously-current publication this attempt displaced.
+  - A new `supersededById` names the newer publication this attempt lost to.
+  - No client parses the winner's id out of `reason`.
+- **H2: MODIFY.** The additive `resume` block and the degraded index-write evidence are approved.
+  When `resume.nextAction` and the legacy top-level `nextAction` coexist, they must be derived from
+  one canonical value, and validation must reject disagreement. The compatibility duplicate may
+  never carry two truths.
+- **H3: APPROVE**, with the proposed fallback order.
+- **H4: APPROVE.**
+- **H5: APPROVE.** Filled from the same evaluated preflight object, with no second `current.json`
+  read and no DB column.
+- **H6: APPROVE.**
+- Record H1–H6 here, and amend ADR 0002 (H1, H2) and ADR 0017 (H3–H6) before the PR. Both are done.
+
+How H1 and H2 were built:
+
+- `publishHandoff` and `recordPromotedHandoff` return `supersededById` beside `supersededId`, and
+  the repair outcomes carry it.
+- A replayed finalize of an attempt that is already published used to return the row's
+  `supersededBy` (a winner) under `supersededId` (the displaced slot). That was the opposite
+  direction, and latent, because a published row has no `supersededBy`. It now answers
+  `supersededId: null` and puts any winner in `supersededById`.
+- `handoff-stage` takes the top-level `nextAction` from the resume whenever it writes one. Where
+  there is no resume, it uses the capture as before.
+- `buildHandoffDocument` refuses a disagreement, reading blank and absent as the same "not
+  captured".
+- `resumeState` reads foreign bytes whose two next actions disagree as `malformed`, so neither is
+  rendered.
 
 ### Implementation calls (not architectural)
 

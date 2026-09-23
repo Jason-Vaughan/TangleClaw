@@ -62,17 +62,19 @@ function addSession(status = 'wrapped') {
 
 /**
  * Stage an attempt on disk and in the DB, binding eligibility by default.
- * @param {object} [opts] - `{sessionId, wrapRunId, kind, bind, worktree}`
+ * @param {object} [opts] - `{sessionId, wrapRunId, kind, bind, worktree, methodology, extra}`; `extra`
+ *   overrides document fields (a `resume` block, a next action, the index hash)
  * @returns {string} The publication id
  */
-function stageAttempt({ sessionId = 1, wrapRunId = 'run-1', kind = 'final', bind = true, worktree = null, methodology = null } = {}) {
+function stageAttempt({ sessionId = 1, wrapRunId = 'run-1', kind = 'final', bind = true, worktree = null, methodology = null, extra = {} } = {}) {
   const publicationId = newPublicationId();
   const doc = buildHandoffDocument({
     publicationId, projectId: project.id, workspaceId: null, sessionId,
     wrapRunId, engineId: 'claude', kind, stagedAt: new Date().toISOString(),
     worktree, rules: [], globalRulesHash: null, engineConfigHash: null,
     continuityIndexHash: null, wrapOutcome: 'complete', missingEvidence: [],
-    ...(methodology ? { methodology } : {})
+    ...(methodology ? { methodology } : {}),
+    ...extra
   });
   const written = lockfile.writeStaged(project, doc);
   store.handoffs.stage({
@@ -377,5 +379,83 @@ describe('what the launch path actually produces', () => {
     // available. Both owe recovery.
     assert.equal(result.evaluationFailed, true);
     assert.equal(result.evaluationMissing, false);
+  });
+});
+
+describe('the resume the launch renders comes from the publication it read (#1675)', () => {
+  const { publishHandoff } = require('../lib/handoff-publish.js');
+  const { digestOf } = require('../lib/handoff-publication.js');
+  const resume = {
+    currentState: 'Chunk 03 shipped.',
+    nextAction: 'Plan chunk 04.',
+    freshness: { sha: 'abc1234', branch: 'main', writtenAt: '2026-09-23', tier: 'full' }
+  };
+
+  it('hands up the publication\'s own resume with its identity, digest and verdict', () => {
+    assert.equal(evaluate(project).handoffResume, null, 'no publication, nothing selected');
+    const session = addSession('wrapped');
+    const pid = stageAttempt({ sessionId: session.id, extra: { resume, nextAction: resume.nextAction } });
+    publishHandoff(project, pid);
+    const got = evaluate(project).handoffResume;
+    assert.equal(got.publicationId, pid);
+    assert.equal(got.digest, store.handoffs.get(pid).fileDigest);
+    assert.equal(got.sessionId, session.id);
+    assert.equal(got.kind, 'final');
+    assert.equal(got.verdict, VERDICTS.OK);
+    assert.equal(got.newerSession, null);
+    assert.deepEqual(got.resume, resume);
+    assert.equal(got.note, null);
+  });
+
+  it('ignores whatever the continuity index says now — a later run may have rewritten it', () => {
+    const session = addSession('wrapped');
+    const pid = stageAttempt({ sessionId: session.id, extra: { resume, nextAction: resume.nextAction } });
+    publishHandoff(project, pid);
+    continuity.writeIndex(project.path, { currentState: 'a cancelled wrap wrote this', nextAction: 'do the wrong thing' });
+    assert.deepEqual(evaluate(project).handoffResume.resume, resume);
+  });
+
+  it('labels a publication OLDER than the latest session, naming the session that came after (the crash shape)', () => {
+    const first = addSession('wrapped');
+    const pid = stageAttempt({ sessionId: first.id, extra: { resume, nextAction: resume.nextAction } });
+    publishHandoff(project, pid);
+    const crashed = addSession('crashed');
+    const result = evaluate(project);
+    assert.equal(result.verdict, VERDICTS.CRASH_RECOVERY);
+    assert.deepEqual(result.handoffResume.newerSession, { id: crashed.id, status: 'crashed' });
+    assert.equal(result.handoffResume.publicationId, pid, 'the older handoff is still offered, labelled');
+  });
+
+  it('shows only the next action when the wrap recorded that it wrote no resume', () => {
+    const session = addSession('wrapped');
+    const pid = stageAttempt({ sessionId: session.id, extra: { resume: null, nextAction: 'the captured next step' } });
+    publishHandoff(project, pid);
+    continuity.writeIndex(project.path, { currentState: 'stale', nextAction: 'stale' });
+    const got = evaluate(project).handoffResume;
+    assert.deepEqual(got.resume, { currentState: null, nextAction: 'the captured next step', freshness: {} });
+    assert.match(got.note, /no resume/);
+  });
+
+  it('for a publication that predates the block, reads the index only while it hashes to what was recorded', () => {
+    const session = addSession('wrapped');
+    continuity.writeIndex(project.path, {
+      currentState: 'matching state', nextAction: 'index next',
+      freshness: { sha: 'feed123', branch: 'main', writtenAt: '2026-09-20', tier: 'full' }
+    });
+    const text = fs.readFileSync(continuity.indexPath(project.path), 'utf8');
+    const pid = stageAttempt({ sessionId: session.id, extra: { continuityIndexHash: digestOf(text), nextAction: 'doc next' } });
+    publishHandoff(project, pid);
+
+    const matched = evaluate(project).handoffResume;
+    assert.equal(matched.resume.currentState, 'matching state');
+    assert.equal(matched.resume.nextAction, 'doc next', 'the frozen next action wins over the index copy');
+    assert.equal(matched.resume.freshness.sha, 'feed123');
+    assert.equal(matched.note, null);
+
+    continuity.writeIndex(project.path, { currentState: 'rewritten by a later run', nextAction: 'x' });
+    const moved = evaluate(project).handoffResume;
+    assert.equal(moved.resume.currentState, null, 'a rewritten index describes some other attempt');
+    assert.equal(moved.resume.nextAction, 'doc next');
+    assert.match(moved.note, /changed since/);
   });
 });
