@@ -1,6 +1,6 @@
 ---
 title: "Train A Car A4: exact release proof and workflow supply-chain floor"
-status: Chunk 01 BUILT 2026-09-23 — Architect ruled A1–A5 (message ecc27e3b); PR waits on the Operator's direct CI go
+status: Chunk 01 REVIEWED 2026-09-23 — Critic clean, Architect ruled A1–A5 (message ecc27e3b); PR waits on the Operator's direct CI go
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-23 (message 9d88259b). Workflow (CI) changes also need the Operator's direct go (project rule: only the Operator authorizes CI changes)
 issues: [1436, 1551]
 governed_by:
@@ -170,5 +170,5 @@ to the Architect: `workflow_run`, polling check-runs for `GITHUB_SHA`, or making
 
 ## Status
 
-- [ ] Chunk 01: Every workflow dependency is pinned to an immutable commit, and a test enforces it (#1436)
+- [x] Chunk 01: Every workflow dependency is pinned to an immutable commit, and a test enforces it (#1436): Critic rev-20260923T191930Z (1 blocking) resolved by rev-20260923T192644Z (0 findings); Architect ruled A1–A5 (A2/A4 MODIFY); follow-up #1827
 - [ ] Chunk 02: A release publishes only the exact commit that was tested, and its tag dereferences to it (#1551)
