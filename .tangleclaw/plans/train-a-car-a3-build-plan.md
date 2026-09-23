@@ -603,8 +603,9 @@ scope only; implementation, tests, Critic, review, CI and merge readiness are no
   explicitly. *Consequence:* on Aider and OpenClaw, and on any pane whose composer cannot be
   located, a draft typed at the moment of an injection is destroyed with only a "not captured"
   record.
-- **F5: APPROVE.** `draftBeforeClear` is used only for observed draft content. Non-capture is
-  recorded separately, with the engine and the reason.
+- **F5: APPROVE, later revised by G1 (below).** `draftBeforeClear` is used only for observed draft
+  content. Non-capture is recorded separately, with the engine and the reason. G1 moved the draft's
+  text out of the log entirely.
 
 ### Implementation calls (not architectural)
 
@@ -614,7 +615,6 @@ scope only; implementation, tests, Critic, review, CI and merge readiness are no
   row sits directly under a divider, and no divider falls between it and the cursor. A dialog or
   transcript row has no such box, so it is reported as not captured, never as a draft. An engine
   whose composer has no divider directly above it records a wrapped draft as not captured.
-- `draftBeforeClear` is JSON-encoded, so a multi-row draft stays one log entry.
 - Fixed in passing: `test/update-applier-authored-content.test.js` rebuilt the path its file
   seam read relative to the checkout, which escaped the temp repository whenever the checkout sat
   fewer directory levels deep than the temp directory. It failed on this Mac on a clean `main`
@@ -632,6 +632,68 @@ scope only; implementation, tests, Critic, review, CI and merge readiness are no
   suggestion only renders on an empty composer, so it cannot appear beside a real draft.
 - Test fixtures reuse the real Claude, Codex and Antigravity pane captures in
   `test/_wake-fixtures.js`. No new live capture is taken from another session's pane.
+
+### Critic round 1 (rev-20260923T053934Z-1d336e69): 1 blocking, 3 warnings, 6 notes
+
+Two findings needed a design decision F1–F5 had not covered, so they went to the Architect
+(message 6f5742ec) as G1 and G2:
+
+- **G1 (the blocking finding): the draft's text leaves the log.** `draftBeforeClear` put session
+  content in `tangleclaw.log`, against the operator-ratified norm "Logs carry names, never
+  payloads" (`observability-strategy.md`, Direction). F5 assumed a log field. Recommended: the
+  text goes to a private store (`lib/draft-store.js`), written before `C-u`, and the log carries
+  metadata only. The ruling below revised the key and the log fields, and the built version follows
+  the ruling. *Rejected:* a norm exception (the log is pasted into issues). *Rejected:*
+  dropping the text, which would defeat #1507.
+- **G2 (warning 1): TangleClaw's own launch files are not `untracked-new`.** The launch snapshot
+  predates TangleClaw's launch writes, so on a new project an uncommitted `.tangleclaw/project.json`
+  or generated engine config read as "this session created it". Recommended and built:
+  `_tc-owned-paths.judge` reports the paths TangleClaw writes into a project (project config and
+  the known carriers) as `tangleclawWritten`, and those keep their existing rules. #1619's identity
+  refusal still applies to carriers. The reason text no longer names a creator. *Rejected:* moving
+  the snapshot after the launch writes (reorders launch, and the files would then be asked about on
+  every wrap). *Rejected:* leaving it (a false reason, and every new project's first wrap stops).
+
+**Architect rulings (2026-09-23, message cdce349b) — binding:**
+
+- **G1: MODIFY (blocking), revising F5.** The ratified no-payload log norm controls. `tangleclaw.log`
+  may carry only an opaque recovery reference plus `engineId`, rows and chars. Both the draft text
+  and the digest are removed: a short hash of a likely low-entropy draft allows a guess to be
+  confirmed, so it is still derived from the payload. The recoverable text lives only in a private
+  store scoped to one attempt and keyed by an immutable session or launch id, not the reusable tmux
+  name. It needs a `0700` directory, `0600` files, safe creation that follows no symlink, and at
+  most 20 entries. How long drafts are kept after an attempt is the Operator's risk decision, and
+  the PR stays blocked until it is chosen. The Architect's recommendation, built as the default: delete on successful
+  recovery or 24 hours after the attempt ends, whichever comes first. (TangleClaw has no recovery
+  action yet, so only the 24-hour rule can fire.)
+  Built as: `draftRef` (`<attempt>:<id>`), `engineId`, `rows` and `chars` in the log. The attempt is
+  `session-<id>` from each caller that has a session row, and `<tmux-name>@<created>` for the
+  Project Master, which has none. Files are written through an `O_CREAT|O_EXCL|O_NOFOLLOW` temp file
+  and a rename. `pruneDrafts` runs in the server's five-minute sweep.
+- **G2: APPROVE.** Applies only to the enumerated generated carriers and `.tangleclaw/project.json`,
+  checked before `untracked-new`, and never as a blanket `.tangleclaw/**` or filename pattern.
+  #1619's identity refusal is kept, and the neutral `why` is used.
+
+Implementation-only dispositions:
+
+- **Warning 3 (a second copy of the composer rules): fixed.** `medusa-wake.readComposerDraft` is
+  the one reader, beside `locateComposer` and `_composerEmpty`. It honours the engine's pad rule
+  (one cell where measured, the laxer reading where not), skips decorative cells (Codex's animated
+  glyph), and shares `_isDivider` with the transcript digest. `tmux._readDraft` only gathers the
+  pane, the cursor and the profile.
+- **Warning 2 (engine ids pinned only by source grep): fixed.** Behavioural tests show that
+  `injectCommand` hands tmux the session's engine rather than the project's, and that the Master
+  hands it `_masterRuntime`'s engine, the same resolution `masterWakeRecord` reports to the wake
+  monitor. The source-level test stays as the guard against a caller that is not wired at all.
+  *Accepted:* the Master's engine is the resolved configuration, not a record of what its pane is
+  running. None exists, and the wake monitor judges the Master's pane by the same answer.
+- **Note: a draft with the cursor moved up was cut at the cursor: fixed.** A draft runs to the
+  composer's lower border. With no border in view it stops at the cursor and is recorded with
+  `complete: false`.
+- **Note: `_splitAtComposer` alias: removed.** The receipt and its tests call `locateComposer`.
+- **Note: `untracked` meant "not in HEAD": renamed** `newToRepo`.
+- **Notes on the backlog:** #1507 closes through this PR, and #1724 is open (checked with
+  `gh issue view`). The note about `tag_issues.sh` misread the diff: the branch deletes those files.
 
 ### Tests (written alongside)
 
@@ -667,6 +729,6 @@ the Architect has ruled F1–F5.
 
 - [x] Chunk 01: Wrap intent is explicit and cancellation is honest (#1708, #1707): Critic rev-20260923T023239Z resolved by rev-20260923T025704Z, 0 blocking
 - [x] Chunk 02: Wrap gates are engine-aware and never read as passed (#1738): Critic rev-20260923T042921Z resolved by rev-20260923T044924Z, 0 blocking; Architect E1–E6 ruled; rule #5 amendment Operator-approved
-- [ ] Chunk 03: Admission is a positive decision; drafts fail visibly (#1724, #1507): plan written; Architect ruled F1–F5 APPROVE; built, Critic pending
+- [ ] Chunk 03: Admission is a positive decision; drafts fail visibly (#1724, #1507): plan written; Architect ruled F1–F5 APPROVE, G1 MODIFY, G2 APPROVE; Critic round 1 fixed; draft retention awaits the Operator
 - [ ] Chunk 04: A successful wrap binds to the publication the next launch reads (#1675)
 - [ ] P1: startupControl planning note (no build)

@@ -319,6 +319,23 @@ describe('masterWakeRecord / injectMasterCommand — what medusa-wake sees and t
     assert.equal(t.typed[0].options.enter, true);
   });
 
+  it('hands tmux the Master\'s resolved engine, the one its wake record reports (#1507)', () => {
+    const t = fakeTmux({ alive: true });
+    const config = { master: { engine: 'codex' } };
+    const enginesLib = { resolveDefaultEngine: (c) => c.defaultEngine };
+    assert.equal(master.injectMasterCommand('x', { tmuxLib: t, config, enginesLib }).ok, true);
+    assert.equal(t.typed[0].options.engineId, 'codex');
+    assert.equal(master.masterWakeRecord({ tmuxLib: t, config, enginesLib }).engineId, 'codex',
+      'the same resolution the wake monitor judges the pane by');
+  });
+
+  it('an unreadable engine resolution still delivers, with the engine unknown', () => {
+    const t = fakeTmux({ alive: true });
+    const enginesLib = { resolveDefaultEngine: () => { throw new Error('no engines'); } };
+    assert.equal(master.injectMasterCommand('x', { tmuxLib: t, config: {}, enginesLib }).ok, true);
+    assert.equal(t.typed[0].options.engineId, null);
+  });
+
   it('refuses when the Master is not running, when tmux is silent, and over the length cap', () => {
     const absent = fakeTmux({ alive: false });
     assert.equal(master.injectMasterCommand('x', { tmuxLib: absent }).ok, false);

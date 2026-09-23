@@ -370,17 +370,17 @@ describe('classify', () => {
 
   it('parses renames as the new path plus the old path deleted', () => {
     assert.deepEqual(ownership.parseStatus('R  new.js\0old.js\0?? u.js\0 D d.js\0'), [
-      { path: 'new.js', deleted: false, indexRemoved: false, renamePair: 1, untracked: false },
-      { path: 'old.js', deleted: true, indexRemoved: true, renamePair: 1, untracked: false },
-      { path: 'u.js', deleted: false, indexRemoved: false, renamePair: null, untracked: true },
-      { path: 'd.js', deleted: true, indexRemoved: false, renamePair: null, untracked: false }
+      { path: 'new.js', deleted: false, indexRemoved: false, renamePair: 1, newToRepo: false },
+      { path: 'old.js', deleted: true, indexRemoved: true, renamePair: 1, newToRepo: false },
+      { path: 'u.js', deleted: false, indexRemoved: false, renamePair: null, newToRepo: true },
+      { path: 'd.js', deleted: true, indexRemoved: false, renamePair: null, newToRepo: false }
     ]);
   });
 
   it('marks a path HEAD has never held — untracked, or added but not committed — and nothing else (#1724)', () => {
     const parsed = ownership.parseStatus('?? new.py\0A  staged.json\0AM staged-edited.js\0 M tracked.js\0M  tracked-staged.js\0C  copy.js\0src.js\0');
-    const untracked = Object.fromEntries(parsed.map((e) => [e.path, e.untracked]));
-    assert.deepEqual(untracked, {
+    const newToRepo = Object.fromEntries(parsed.map((e) => [e.path, e.newToRepo]));
+    assert.deepEqual(newToRepo, {
       'new.py': true, 'staged.json': true, 'staged-edited.js': true,
       'tracked.js': false, 'tracked-staged.js': false, 'copy.js': false, 'src.js': false
     });
@@ -974,7 +974,7 @@ describe('#1724: a file new to the repository is admitted by a decision, never b
     workToplevel: '/repo',
     ...over
   });
-  const entry = (p, untracked) => ({ path: p, deleted: false, indexRemoved: false, renamePair: null, untracked });
+  const entry = (p, newToRepo) => ({ path: p, deleted: false, indexRemoved: false, renamePair: null, newToRepo });
 
   it('with a launch snapshot, a new file created this session is asked about as untracked-new', () => {
     const c = ownership.classify(scope(), [entry('find_rows.py', true), entry('shared.js', false)]);
@@ -1010,6 +1010,19 @@ describe('#1724: a file new to the repository is admitted by a decision, never b
     assert.deepEqual(c.stageable, ['keep.js']);
     assert.deepEqual(c.left, ['scratch.py']);
     assert.deepEqual(c.undecided, []);
+  });
+
+  it('a new file TangleClaw writes into every project is not asked about as the session\'s', async () => {
+    const repo = makeRepo();
+    const scope = await scopeFor(repo, launchBaseline.capture(repo));
+    // What registering a project and syncing its engine config leave behind.
+    fs.mkdirSync(path.join(repo, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'project.json'), '{\n  "engine": "claude"\n}\n');
+    fs.writeFileSync(path.join(repo, 'AGENTS.md'), '# Agents\n');
+    fs.writeFileSync(path.join(repo, 'scratch.py'), 'print(1)\n');
+    const r = await runStep(sessionFiles, repo, scope);
+    assert.deepEqual(r.output.foreignPaths.map((f) => [f.path, f.reason]), [['scratch.py', 'untracked-new']],
+      'only the session\'s scratch is an admission question');
   });
 
   describe('the #1721 repro, end to end on a real repository', () => {

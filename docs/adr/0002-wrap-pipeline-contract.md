@@ -591,6 +591,12 @@ Consequence: a wrap, including an unattended one another session started, stops 
 recognised by its resolved path, so a project registered through a symlink is not asked about
 the wrap's own output.
 
+Architect ruling G2 (message cdce349b): the files TangleClaw itself writes into a project — the
+enumerated engine config carriers and `.tangleclaw/project.json`, never a blanket `.tangleclaw/**`
+or filename pattern — are not `untracked-new`. They keep the rules they had, and a carrier's #1619 identity refusal still applies.
+The reason's wording names no creator ("being new since this session launched does not show it
+belongs in the project"), because a co-resident session's file looks the same.
+
 ## Amendment (Train 21, #1585) — the wrap publishes a per-attempt handoff
 
 The pipeline gains a final step, `handoff-stage`, and the lifecycle gains one write.
