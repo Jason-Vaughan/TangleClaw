@@ -35,6 +35,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-23 — CLAUDE.md carries Prawduct's current anchor, and the local learnings are split by concern (#1820, #1819)
+
+<!-- prawduct: type=chore | scope=learnings-split-reanchor -->
+
+`prawduct-hook reanchor --apply` replaced the stale anchor block in `CLAUDE.md` and nothing else. The new block tells a session without the plugin that governance is off and how to install it, and it adds the stage-keyed review rule (#1820).
+
+#1819 has no tracked diff. This clone's learnings are gitignored and local-only (#1792), so the split was done in place. `active-rules.md` (115 KB) became twelve area files, grouped by concern. Following the Architect's rulings, the shell and git hazards load every session, and the claim, review and evidence rules load on code reads as well as doc reads. Every file is at most 16 KB, so the `learnings_budgets` override is gone. A check confirmed that all 133 rules appear exactly once and unchanged. Four sets of duplicates were merged by appending each later rule whole, including its lead sentence, to the first. A live read of a code file loaded only the files scoped to it. The plan, with the Architect's rulings on D1–D7, is archived at `.tangleclaw/plans/archive/learnings-split-reanchor.md`.
+
 ## 2026-09-23 — A finished wrap names the publication the next launch resumes from (#1675)
 
 <!-- prawduct: type=feature | scope=train-a-car-a3 -->
