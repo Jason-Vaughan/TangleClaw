@@ -15,8 +15,10 @@
 # Ecosystems:
 #
 # - github-actions: the only third-party code this repository pulls in through
-#   a manifest. The workflows reference actions by tag, and those actions run in
-#   CI on every push and pull request.
+#   a manifest. The workflows pin each action to a full commit SHA with a
+#   `# vX.Y.Z` comment (test/workflow-action-pins.test.js enforces it), so an
+#   upstream release reaches CI only as a bump PR this config opens. Those
+#   actions run in CI on every push and pull request.
 #
 # - npm: deliberately NOT configured. TangleClaw has zero npm dependencies. No
 #   package.json or lockfile is tracked, and CONTRIBUTING.md rejects any PR

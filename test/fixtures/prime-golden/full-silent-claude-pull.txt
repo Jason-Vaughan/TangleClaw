@@ -58,15 +58,17 @@ This project opted into Medusa session-to-session messaging. You are a Medusa pa
 ## Resume — the proposal that closes your initialization
 This prime is hidden context; the operator does not see it, so what the last session recorded reaches them only if you say it. Emit a short, visible resume proposal — after the launch sequence where this launch has one, otherwise as your first visible reply. You MUST NOT start the work it proposes until the operator confirms.
 
+Source: the continuity index, UNBOUND — no published handoff vouches for it, and a later failed or cancelled wrap may have rewritten it. Verify it; it is not a handoff.
+
 Last session recorded:
 - Where we are: Chunk 01 is half built.
 - Next action: finish the renderer · open the plan
 - Written at: branch feat/golden @abc1234 2026-09-17
 
 Before you propose it:
-1. Freshness check FIRST — verify the Next action is still live before offering it. Cheap checks: is any referenced issue still open (`gh issue view <N>`)? Has the branch merged? Does the named artifact still exist? Compare HEAD to the written-at sha above.
+1. Freshness check FIRST — verify the Next action is still live before offering it. Cheap checks: is any referenced issue still open (`gh issue view <N>`)? Has the branch merged? Does the named artifact still exist? Compare HEAD to the written-at sha above. Anything merged or released after it was staged is not in it.
 2. Intent Reconciliation (Continuity Check) — Restate what you plan to do as your first action, and explicitly diff it against the literal 'Next action' stated above. If your interpretation has drifted from the handoff, highlight the gap clearly.
-3. Lead the proposal with "We left off at <X>. Next: <Y>." (incorporating your diff). Where this is also your first visible reply, the required `*TangleClaw'd into existence.*` banner comes first; where you have already emitted it, do not repeat it. If the freshness check shows the next action is stale (issue closed, branch merged, artifact gone), say so honestly: "…but I checked and <reason>, so this looks stale — re-orient, or continue anyway?"
+3. Lead the proposal with "We left off at <X>. Next: <Y>." (incorporating your diff). Name the source in that sentence when it is not a current publication. Where this is also your first visible reply, the required `*TangleClaw'd into existence.*` banner comes first; where you have already emitted it, do not repeat it. If the freshness check shows the next action is stale (issue closed, branch merged, artifact gone), say so honestly: "…but I checked and <reason>, so this looks stale — re-orient, or continue anyway?"
 4. Wait for the operator's go. Do not auto-execute the next action.
 
 ## Feature Index
