@@ -34,7 +34,10 @@ Walkthrough spine (add anything the README's Quick Start promises):
 1. `./deploy/install.sh` — observe how it fails or succeeds; error text must be honest.
 2. `node server.js` — first boot: config/DB creation, the *effective* listen URL vs what the logs and README claim.
 3. Setup wizard flow via API: `GET /api/config` (`setupComplete`), `GET /api/setup/https-check`, `POST /api/setup/scan {"directory": …}`, `POST /api/setup/complete`.
-4. `POST /api/projects/attach {"name": …}` against a seeded git repo in the projects dir.
+4. `POST /api/projects/attach {"name": …}` against a seeded git repo in the projects dir. Attach is
+   operator-only (#1752): a bare `curl` gets `403 OPERATOR_ONLY`, which is correct. Send it as the
+   operator — with the gate stood down, add `-H 'X-TangleClaw-Client: dashboard'`; with an account,
+   sign in first and send the session cookie and `X-CSRF-Token`.
 5. `POST /api/sessions/<name>` with no engine binary installed — the failure must name the real problem.
 
 Every gap between what docs/logs claim and what actually happens becomes a

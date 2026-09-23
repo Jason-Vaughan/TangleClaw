@@ -51,6 +51,7 @@ describe('wrap stream event vocabulary (#1228)', () => {
       [WRAP_STREAM_EVENTS.STEP_START]: { stepId: 's', kind: 'k' },
       [WRAP_STREAM_EVENTS.STEP_DONE]: { stepId: 's', kind: 'k', status: 'done' },
       [WRAP_STREAM_EVENTS.STEP_BLOCKED]: { stepId: 's', kind: 'k', status: 'blocked', halted: true },
+      [WRAP_STREAM_EVENTS.CANCEL_REQUESTED]: { willStopBefore: 'other', finishingStepId: 's' },
       [WRAP_STREAM_EVENTS.RUN_DONE]: { result: { ok: true } }
     };
     for (const type of WRAP_STREAM_EVENT_TYPES) {

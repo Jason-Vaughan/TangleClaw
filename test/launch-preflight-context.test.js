@@ -65,13 +65,14 @@ function addSession(status = 'wrapped') {
  * @param {object} [opts] - `{sessionId, wrapRunId, kind, bind, worktree}`
  * @returns {string} The publication id
  */
-function stageAttempt({ sessionId = 1, wrapRunId = 'run-1', kind = 'final', bind = true, worktree = null } = {}) {
+function stageAttempt({ sessionId = 1, wrapRunId = 'run-1', kind = 'final', bind = true, worktree = null, methodology = null } = {}) {
   const publicationId = newPublicationId();
   const doc = buildHandoffDocument({
     publicationId, projectId: project.id, workspaceId: null, sessionId,
     wrapRunId, engineId: 'claude', kind, stagedAt: new Date().toISOString(),
     worktree, rules: [], globalRulesHash: null, engineConfigHash: null,
-    continuityIndexHash: null, wrapOutcome: 'complete', missingEvidence: []
+    continuityIndexHash: null, wrapOutcome: 'complete', missingEvidence: [],
+    ...(methodology ? { methodology } : {})
   });
   const written = lockfile.writeStaged(project, doc);
   store.handoffs.stage({
@@ -189,6 +190,24 @@ describe('probing the worktree a handoff recorded', () => {
     const exec = () => { throw new Error('git exploded'); };
     const probe = probeWorktree({ toplevel: project.path }, exec);
     assert.deepEqual(probe, { toplevelExists: true, headSha: null, branch: null });
+  });
+});
+
+describe('the previous handoff\'s methodology record (#1738)', () => {
+  const { publishHandoff } = require('../lib/handoff-publish.js');
+  it('is handed up from the current publication, and null without one', () => {
+    assert.equal(evaluate(project).handoffMethodology, null, 'no handoff, nothing to say');
+    const session = addSession('wrapped');
+    const pid = stageAttempt({ sessionId: session.id, methodology: { disposition: 'capability-unavailable', engineId: 'codex' } });
+    assert.equal(publishHandoff(project, pid).published, true);
+    assert.deepEqual(evaluate(project).handoffMethodology, { disposition: 'capability-unavailable', engineId: 'codex' });
+  });
+
+  it('is null for a publication that predates the block', () => {
+    const session = addSession('wrapped');
+    const pid = stageAttempt({ sessionId: session.id });
+    publishHandoff(project, pid);
+    assert.equal(evaluate(project).handoffMethodology, null);
   });
 });
 

@@ -244,7 +244,7 @@ describe('API — system, engines, tmux', () => {
       try {
         const { status, data } = await request('GET', '/api/server-info');
         assert.equal(status, 200);
-        assert.deepEqual(data.behindOrigin, { enabled: true, commitsAhead: 0, skipped: null, checkedAt: null },
+        assert.deepEqual(data.behindOrigin, { enabled: true, commitsAhead: 0, skipped: null, checkedAt: null, state: 'pending', reason: 'not measured yet' },
           'unmeasured yet: enabled, nothing to say, and honest about not having measured');
         assert.equal(fetches, 1, 'an expired cache starts exactly one background fetch');
       } finally {
@@ -263,12 +263,66 @@ describe('API — system, engines, tmux', () => {
         const patched = await request('PATCH', '/api/config', { behindOriginCheckEnabled: false });
         assert.equal(patched.status, 200);
         const { data } = await request('GET', '/api/server-info');
-        assert.deepEqual(data.behindOrigin, { enabled: false, commitsAhead: 0, skipped: null, checkedAt: null });
+        assert.deepEqual(data.behindOrigin, { enabled: false, commitsAhead: 0, skipped: null, checkedAt: null, state: 'disabled', reason: 'check turned off' });
         assert.equal(fetches, 0, 'the flag is the operator\'s word that this machine must not call out');
       } finally {
         await request('PATCH', '/api/config', { behindOriginCheckEnabled: true });
         Object.assign(behindOrigin._internal, orig);
         behindOrigin._reset();
+      }
+    });
+
+    it('carries liveCheckout and restartImpact (#993, #1678) without running git on the request', async () => {
+      const checkoutState = require('../lib/checkout-state');
+      const orig = { ...checkoutState._internal };
+      let spawns = 0;
+      checkoutState._internal.execFile = () => { spawns++; }; // never calls back: the route must not wait
+      checkoutState._reset();
+      try {
+        const { status, data } = await request('GET', '/api/server-info');
+        assert.equal(status, 200);
+        assert.ok(data.liveCheckout, 'liveCheckout is present');
+        assert.equal(data.liveCheckout.state, 'pending', 'the first poll reports the probe, never a clean checkout');
+        assert.equal(data.liveCheckout.branch, null);
+        assert.equal(data.liveCheckout.upstream.observation, 'unknown');
+        assert.equal(spawns, 1, 'one background measurement was started');
+      } finally {
+        Object.assign(checkoutState._internal, orig);
+        checkoutState._reset();
+      }
+    });
+
+    it('restartImpact classifies startupSha..currentDiskSha when stale, and is null when not', async () => {
+      const serverInfo = require('../lib/server-info');
+      const checkoutState = require('../lib/checkout-state');
+      const origGet = serverInfo.getServerInfo;
+      const origInternal = { ...checkoutState._internal };
+      const START = '1'.repeat(40);
+      const DISK = '2'.repeat(40);
+      const diffs = [];
+      checkoutState._internal.execFile = (file, args, _o, cb) => {
+        if (args[1] === 'diff') diffs.push(args.slice(1));
+        setImmediate(() => cb(null, args[1] === 'diff' ? 'M\0docs/a.md\0' : ''));
+      };
+      checkoutState._reset();
+      try {
+        let stale = true;
+        serverInfo.getServerInfo = (opts) => ({ ...origGet(opts), isStale: stale, startupSha: START, currentDiskSha: DISK });
+        let { data } = await request('GET', '/api/server-info');
+        assert.equal(data.restartImpact.impact, 'pending');
+        assert.equal(data.restartImpact.fromSha, START, 'the range starts at what the process loaded');
+        assert.equal(data.restartImpact.toSha, DISK, 'and ends at what is on disk');
+        await new Promise((r) => setTimeout(r, 20));
+        ({ data } = await request('GET', '/api/server-info'));
+        assert.equal(data.restartImpact.impact, 'records-only');
+        assert.deepEqual(diffs[0].slice(-3), [START, DISK, '--'], 'git diff is asked for exactly that range');
+        stale = false;
+        ({ data } = await request('GET', '/api/server-info'));
+        assert.equal(data.restartImpact, null, 'only asked when disk is ahead');
+      } finally {
+        serverInfo.getServerInfo = origGet;
+        Object.assign(checkoutState._internal, origInternal);
+        checkoutState._reset();
       }
     });
 
