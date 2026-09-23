@@ -9,6 +9,7 @@ if (typeof window !== 'undefined') {
     api_host: process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com',
     person_profiles: 'identified_only',
     capture_pageview: false, // Disable automatic pageview capture, as we capture manually
+    persistence: 'memory', // Cookieless tracking to avoid cookie banners
   })
 }
 
@@ -18,6 +19,13 @@ export function PostHogPageview() {
 
   useEffect(() => {
     if (pathname && posthog) {
+      // Secret URL to permanently opt out of tracking on this device
+      if (searchParams && searchParams.get('ignore_me') === 'true') {
+        posthog.opt_out_capturing()
+        alert('PostHog tracking has been permanently disabled for this device.')
+        return
+      }
+
       let url = window.origin + pathname
       if (searchParams && searchParams.toString()) {
         url = url + `?${searchParams.toString()}`

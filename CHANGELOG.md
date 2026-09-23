@@ -44,6 +44,7 @@ All notable changes to TangleClaw are documented in this file.
   - Informational only: nothing here pulls, checks out, restarts or gates anything. `lib/checkout-fleet.js`.
 
 ### Changed
+- **Website copy, SEO, and visual assets updated** (#1686, #1687, #1688, #1689, #1690, #1691, #1692). Updated the `website/` folder to reflect TangleClaw's evolution into an open-source, local-first SDLC orchestration platform. Added a dynamic GitHub release version badge, a true `.ico` favicon placed in the `public/` directory to explicitly fix 404s and cache issues, an "Install Now" CTA linking to the repo, and updated SEO metadata (keywords, robots, and OpenGraph linking to the primary `.com` domain).
 
 - **The system health panel's "Server running old code" agrees with the stale-server banner** (#1678). Commits that only touch records (docs, tests, plans) now leave the condition clear with "records-only commits, no restart needed", as the banner already said. Code or mixed commits still fire it; so does a range that is not classified yet or could not be, with "restart impact unknown", because missing evidence never clears a warning.
 - The checkout block's `incomplete` list now holds only the checkout's own gaps; reasons about the comparison with the clone's local `origin/main` ref moved to `localRef.incomplete`. A project with no git whose group relation could not be decided now says "related repository not determined" with the reason, as it already did while pending.
