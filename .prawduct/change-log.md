@@ -33,6 +33,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   v4.5.0–v4.19.0).
 -->
 
+## 2026-09-23 — A wrap's keep-running intent is explicit, and a live wrap can be cancelled before it commits (#1708, #1707)
+
+<!-- prawduct: type=feature | scope=train-a-car-a3 -->
+
+Train A Car A3 Chunk 01. Before this change, only the wrap modal could keep a session running, so every other caller's wrap ended the session (#1708). The drawer's control also read as a way to stop a live wrap, but no stop existed (#1707).
+
+**Keep-running intent.** The new project setting `wrapKeepSessionRunning` is resolved once, before the claim (`sessions._resolveWrapIntent`). The order is an explicit request boolean, then the project setting, then `false`. An unreadable config or a non-boolean setting refuses with 409 `WRAP_KEEP_SETTING_INVALID`. A Retry inherits the trusted run record. One value therefore feeds the registry, handoff-stage and the kill decision. `projectConfig.plannedSessionOutcome` is the single derivation for the 202, `run-start` and `/wrap/status`.
+
+**Cancel.** The new route is `POST /wrap/cancel {runId}`. `wrapRunRegistry.admitStep` makes each step boundary one atomic decision: an accepted cancel stops the run before the next step, the `commit` step included, and admitting `commit` closes cancellation for good. A cancel accepted during a step that then halts still ends the run as `cancelled`. The outcome is `outcome: 'cancelled'`, which offers no Retry or Skip. A `cancel-requested` stream event makes the cancel visible to every watcher. The drawer shows Hide and Cancel wrap, the conditional planned-outcome line, and "Past the point of cancellation" with the real step.
+
+ADR 0002 is amended per Architect rulings D1–D5, with a supersession pointer to this entry. The unreachable stalled/lost re-follow was removed at Critic review. Its real defect is filed as #1805, and #1806 covers #1708's stranded Medusa inbox. Tests: `test/wrap-intent-cancel.test.js`. Seven existing tests pinned "keep sent only when true" and the exact option and status key sets; they were updated to the new contract with equal-strength assertions.
+
 ## 2026-09-23 — Operator Global Rules edits survive an update, or it refuses before anything moves (#1730)
 
 <!-- prawduct: type=bugfix | scope=train-a-car-a2 -->
