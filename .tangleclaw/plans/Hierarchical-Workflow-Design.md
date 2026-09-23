@@ -70,6 +70,12 @@ When spinning up a new Builder session, the operator uses the following prompt t
 > 
 > ACTION REQUIRED: Report readiness to the PM and wait for its dispatch.
 
+## 6. Required TangleClaw Upgrades (Action Items)
+To fully realize this automated hierarchical loop, we must unblock scenarios that currently require human intervention:
+
+* **Crash-Recovery API Endpoint:** We need to expose an API endpoint that allows the Project Manager to clear a `crash-recovery` state on a Builder's behalf. Currently, this is a hard operator-only UI button. If the PM is authorized to manage the session, the PM must be able to API-clear it to prevent the automation loop from stalling.
+* **Dashboard Session Page:** Move the `crash-recovery` clear button into the specific session page on the web dashboard (it is currently isolated on the Launch readiness panel), making it easier for human operators to find when manually intervening.
+
 ## 7. Operational Realities & Fleet Maintenance
 As we expand the automation loop, the infrastructure requires strict adherence to these operational realities:
 * **The SHA Monitoring Rule:** The live TangleClaw Node.js server actively monitors its booted Git SHA against the on-disk `.git/HEAD`. **Any** `git pull` whatsoever—even if it only contains markdown plans or docs—will flag the live server as stale and trigger an operator-level restart banner. The PM agent must never assume a "code-free" pull can skip a server restart. If we want fully hands-free Train progression, we will need an API endpoint or authorized mechanism for the PM to autonomously trigger that restart.
