@@ -1,7 +1,7 @@
 ---
 title: startupControl — engine-native startup delivery with semantic receipt
 issue: 1825
-status: Spike COMPLETE (Architect S1–S5, message d94974c3). Build chunks admitted 2026-09-23. B1 PLAN WRITTEN, with D1–D8 sent to the Architect
+status: Spike COMPLETE (Architect S1–S5, message d94974c3). Build chunks admitted 2026-09-23. B1 REVIEWED (Architect D1–D8 ruled; Critic clean) and its PR is open. B2 (the Codex adapter) is next and owes the Architect evidenced sources for the priming-pact digest and the target role+assignment revision
 scope: startupcontrol-1825
 branch: feat/1825-startup-control-c1
 ---
@@ -194,7 +194,7 @@ and are not committed, because they contain account identifiers.
 | B2 | Codex adapter. A server-owned per-launch `codex app-server` on a unix socket; the pane's TUI launched with `--remote`; readiness that includes the subscription; fire via `turn/start` carrying the launch-start payload digest; receipts (accepted/applied/failed/interrupted); and blockers (auth, quota, approval). | It needs B1's registry and fire path. The routes, auth and store are fixed in B1, so B2 adds no new ones. |
 | B3 | The automatic bootstrap on launch: a supported engine fires through its adapter, and an unsupported one keeps the legacy path and records the reason (S3). The launch panel shows receipts and blockers, and has a Fire button. | It needs a working adapter, and it changes every launch, so it comes last. |
 
-## Build Chunk B1: the engine-neutral foundation
+## Chunk B1: the engine-neutral foundation
 
 ### Confidence check
 
@@ -404,6 +404,6 @@ and are not committed, because they contain account identifiers.
 ## Status
 
 - [x] Chunk 01: no-build spike: capture Codex app-server channel, readiness, receipt and blockers live; S1–S5 to the Architect with the evidence. Done 2026-09-23: all four cases captured; Architect ruled S1 APPROVE, S2–S5 MODIFY (message d94974c3)
-- [ ] Chunk B1: Engine-neutral foundation: startupControl profile block + registry + capability, revisioned startup prompt with read/update/fire API and operator editor (#1825)
+- [x] Chunk B1: Engine-neutral foundation: startupControl profile block + registry + capability, revisioned startup prompt with read/update/fire API and operator editor (#1825): Architect ruled D1–D8 (message 29790e23) plus a D4 correction; Critic rev-20260923T232701Z (0 blocking) → rev-20260923T234219Z (1 blocking, introduced by a fix) → rev-20260923T235204Z (0 findings); follow-ups carried into B3
 - [ ] Chunk B2: Codex adapter: per-launch app-server, readiness, fire with launch-bound receipts, blockers (#1825)
 - [ ] Chunk B3: Automatic bootstrap on launch with legacy fallback; launch panel receipts, blockers and Fire (#1825)
