@@ -1,6 +1,6 @@
 ---
 title: "Train A Car A3: wrap intent, artifact admission, and honest cancellation"
-status: IN PROGRESS — Chunks 01 (PR #1807), 02 (PR #1811) and 03 (PR #1813) shipped; Chunk 04 dispatched by the PM 2026-09-23 (message d378da6c), built on fix/a3-chunk4-publication-binding, Architect ruled H1–H6 (message ed93ebab), Chunk 04 Critic-clean; P1 remains; Chunk 03's Architect rulings F1–F5 (message 5b0eaa0d) and G1–G2 (message cdce349b); Architect ruled C1–C2, D1–D5 (message 417454d7) and E1–E6 (message 9a774624); PM approved plan and order (message 8219ab12)
+status: COMPLETE 2026-09-23 — Chunks 01 (PR #1807), 02 (PR #1811), 03 (PR #1813) and 04 (PR #1817) shipped and live; P1 startupControl planning note written (no build). All six issues are closed. Architect rulings are recorded per chunk below.
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-23 (messages ecdbe884, 39998da1)
 issues: [1708, 1707, 1738, 1724, 1507, 1675]
 governed_by:
@@ -922,10 +922,86 @@ when there is none. The next launch's Resume comes from that publication, opens 
 exact age, and labels any older or unbound source before proposing anything. The suite is green, the
 cumulative Critic is clean, and the Architect has ruled H1–H6.
 
+## P1: startupControl — planning note (no build)
+
+Admitted by the PM for planning only (Architect C2). Nothing below is built in A3. Building anything
+needs a canonical issue, an Architect ruling on the schema at its own plan-written boundary, and
+explicitly admitted scope. The command-contract direction belongs to #1774, and the related
+"gate task input until READY" item is #1633.
+
+### The problem it answers
+
+A launch pushes a prime and asks the model to run `tc start next` through `tc start ready`, but
+nothing lets TangleClaw know the engine *received and applied* its startup instruction. Every
+current fallback moves bytes: tmux paste, `send-keys` and a synthetic Enter. The Architect ruled
+that byte delivery is not engine acceptance (Architect wrap 1097): raw `send-keys`, `node-pty`,
+synthetic Enter presses and wider permission modes are rejected as a universal autonomous-boot
+mechanism.
+
+### Constraints already ruled (binding inputs, not proposals)
+
+- Autonomous interactive boot is an **engine capability**, not a generic PTY operation.
+- A lifecycle wrapper may not pre-run or acknowledge `tc start` before the model reads it. The four
+  steps and READY stay initialization evidence, never task authority.
+- A supported adapter uses an **engine-native persistent interactive channel**. It binds the exact
+  launch, session, role, assignment and priming-pact digest. It records an accepted/applied
+  **semantic receipt**, and it surfaces unsupported or trust-blocked launches.
+- An automatic bootstrap may ask the engine to read its context. It may not dispatch project work.
+- Engine-agnostic by construction (project rule #5): an engine without the capability says so
+  and falls back to today's path. Nothing is faked.
+
+### Where each engine stands today (from `data/engines/*.json` and the live contract audit)
+
+| Engine | Launch sequence | Startup channel today | Native interactive path (audit) |
+|---|---|---|---|
+| Claude | supported | silent prime via a SessionStart hook (10k cap) plus `tc start` pull | yes |
+| Codex | supported | pasted prime (readiness-gated on `· Ready ·`) | yes |
+| Antigravity | supported | pasted prime | yes |
+| Aider | supported, but not completed unassisted (#1645) | pasted prime | no: its message path is one-shot |
+| OpenClaw | not supported | none (remote engine) | no |
+
+### What the four acceptance cases require
+
+1. **Native channel.** A way for TangleClaw to hand the engine its startup instruction that the
+   engine itself treats as a user turn. The engine's own input API or session protocol qualifies.
+   Keystrokes into its terminal do not.
+2. **Readiness.** A positive signal that the engine can accept that turn now: not a quiet
+   pane, not a prompt glyph, but the channel's own ready state. A launch with no readiness signal
+   waits visibly (#1633), and does not time out into a send.
+3. **Semantic receipt.** The engine reports that it accepted *and applied* the instruction, bound to
+   the launch id and the priming digest. A receipt that cannot name both is not a receipt. The
+   existing `tc start` acknowledgements remain the evidence that the context was *read*. The
+   receipt is evidence that the turn was *delivered*. They are separate records.
+4. **Operator-blocked.** A launch the engine refuses: a trust prompt, a login, a permission dialog,
+   account verification. It is reported as blocked, names the blocker, and is never retried by
+   typing through it. The operator unblocks it, and the launch continues from where it stood.
+
+### Decisions this will need from the Architect (to rule at the build's plan-written boundary)
+
+- **S1: Where the capability is declared.** Recommendation: a `startupControl` block in the
+  engine profile, `{supported, channel, readiness, receipt, blockers}`, with an `evidence` entry
+  per field, like `wake`. An operator edit cannot grant it, because a profile field with no adapter
+  is refused at load. Alternative: code-only adapters with no profile field, which hides the
+  capability from `tc capabilities`.
+- **S2: What a receipt is bound to.** Recommendation: the launch id, the step-4 revision digest
+  and a priming-pact digest, stored beside the launch sequence row, not on the session row.
+- **S3: The fallback when unsupported.** Recommendation: today's path, unchanged, with the launch
+  record stating `startupControl: unsupported (<reason>)`. Nothing downgrades to keystrokes.
+- **S4: The first adapter.** Recommendation: whichever engine's native channel has a published,
+  stable contract. Pick it by a spike that captures a real receipt, not by the audit alone.
+- **S5: How it meets #1774.** Whether the bootstrap instruction is a `TC START …` command from the
+  #1774 manifest, or a fixed prime sentence. This depends on #1774's ruling.
+
+### Recommended next step (for the PM to admit or not)
+
+File a canonical issue ("startupControl: engine-native startup delivery with semantic receipt"),
+citing this note, #1633 and #1774. Its first chunk is a no-build spike that captures one engine's
+native channel, readiness and receipt live. S1–S5 go to the Architect with the spike's evidence.
+
 ## Status
 
 - [x] Chunk 01: Wrap intent is explicit and cancellation is honest (#1708, #1707): Critic rev-20260923T023239Z resolved by rev-20260923T025704Z, 0 blocking
 - [x] Chunk 02: Wrap gates are engine-aware and never read as passed (#1738): Critic rev-20260923T042921Z resolved by rev-20260923T044924Z, 0 blocking; Architect E1–E6 ruled; rule #5 amendment Operator-approved
 - [x] Chunk 03: Admission is a positive decision; drafts fail visibly (#1724, #1507): Critic rev-20260923T053934Z resolved by rev-20260923T060037Z and rev-20260923T092855Z, 0 blocking; Architect ruled F1–F5, G1 MODIFY, G2 APPROVE; Operator set draft retention to 7 days
 - [x] Chunk 04: A successful wrap binds to the publication the next launch reads (#1675): cumulative Critic rev-20260923T104558Z (0 blocking) resolved by rev-20260923T105559Z (0 findings); Architect ruled H1–H6 (H1/H2 MODIFY incorporated), ADR 0002/0017 amended
-- [ ] P1: startupControl planning note (no build)
+- [x] P1: startupControl planning note (no build): written 2026-09-23. S1–S5 await an Architect ruling when a build is admitted, and the canonical issue is the PM's to admit
