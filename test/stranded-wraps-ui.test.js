@@ -350,7 +350,8 @@ describe('dashboard: wrap anyway (#1540)', () => {
     vm.runInContext('syncWrapConfirmButton()', sb);
     assert.equal(sb.els.wrapConfirmBtn.disabled, false);
     await sb.confirmWrap();
-    assert.deepEqual(JSON.parse(JSON.stringify(sb.sent[1])), { options: { proceedPastStranded: [KEY] } });
+    // #1708: the dialog's keep-running answer rides every wrap, untick included.
+    assert.deepEqual(JSON.parse(JSON.stringify(sb.sent[1])), { options: { proceedPastStranded: [KEY], keepSessionRunning: false } });
   });
 
   it('starts unticked and empty every time the modal opens', async () => {
@@ -395,7 +396,8 @@ describe('session page: wrap anyway, and Retry (#1540)', () => {
     vm.runInContext([
       'let wrapReleaseChoice = ""; let wrapBumpLevel = ""; let wrapUntrackState = ""; let wrapSkipPreflight = false;',
       'let wrapPathDecisions = {}; let wrapSkippedAiSteps = {}; let wrapProceedPastStranded = [];',
-      'let wrapKeepRunning = false;',
+      // The page's own initial value (#1708): no keep-running choice made yet.
+      'let wrapKeepRunning = null;',
       'let lastRefusedStrandedItems = null; let wrapDrawerStrandedItems = null; let wrapModalStrandedItems = null;',
       liftFunction(SESSION_SRC, 'function wrapStartInFlight('),
       liftFunction(SESSION_SRC, 'function showWrapModalStranded('),
