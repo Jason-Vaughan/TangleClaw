@@ -48,7 +48,7 @@ describe('POST /api/update/apply (UB #228/#229)', () => {
       if (key === 'rev-parse --abbrev-ref HEAD') return 'main\n';
       if (key === 'fetch --tags origin') return '';
       if (key === 'ls-remote --tags origin') return 'sha\trefs/tags/v9.9.9\n';
-      if (key === 'checkout v9.9.9') return '';
+      if (key === 'checkout --no-overwrite-ignore v9.9.9') return '';
       if (key === 'diff --name-status -z --no-renames HEAD v9.9.9') return ''; // #1730: preflight
       if (key === 'diff --name-only old new') return ''; // #711: provisioning diff
       throw new Error(`unexpected git: ${key}`);

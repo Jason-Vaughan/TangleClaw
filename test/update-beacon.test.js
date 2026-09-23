@@ -640,6 +640,27 @@ describe('#1730 files to reconcile, a failed recovery, and carried edits', () =>
     assert.equal(ctx.calls.fetches.some((f) => f.url === '/api/server/restart'), false, 'no restart');
   });
 
+  it('a discard retry that is refused still shows every file, reason and action', async () => {
+    // THE MUTATION THIS CATCHES: handling the structured refusals only on the
+    // first attempt. The retry then falls to the one-line "Update not applied"
+    // alert, which drops every per-file action.
+    const ctx = loadBeacon({
+      fetchImpl: (n) => (n === 1
+        ? jsonRes(409, {
+          ok: false, code: 'dirty-tree', error: 'local changes present — each proven to be TangleClaw\'s own change',
+          dirty: { discardable: ['CLAUDE.md'], realWork: [], carried: ['data/global-rules.md'] }
+        })
+        : jsonRes(409, RECONCILE))
+    });
+    await ctx.beacon.apply(AVAILABLE);
+
+    assert.equal(ctx.calls.confirms.length, 2, 'the update confirm, then the discard confirm');
+    assert.deepEqual(ctx.calls.fetches[1].body, { discardDirty: true });
+    const shown = ctx.calls.alerts.join('\n');
+    for (const r of RECONCILE.reconcile) assert.ok(shown.includes(r.action), `the retry shows ${r.path}'s action`);
+    assert.equal(ctx.inFlight, false);
+  });
+
   it('a dirty-tree refusal says the edited rules were detected and will be kept', async () => {
     const ctx = loadBeacon({
       fetchImpl: () => jsonRes(409, {

@@ -487,42 +487,54 @@
       // channel — reading `applyResp.dirty` instead was dead code (#928 R-1).
       const refusal = applyResp || (STRUCTURED_REFUSALS.has(api.lastErrorCode) ? api.lastBody : null);
 
-      // Files the operator must reconcile first (#1730). The server has
-      // already checked that nothing moved, and every action is written for
-      // the operator, so the dialog shows them as they are. There is no
-      // discard here: nothing in this list is TangleClaw's to throw away.
-      if (refusal && !refusal.ok && refusal.code === 'reconcile-required' && Array.isArray(refusal.reconcile)) {
-        setInFlight(false);
-        setApplyLabel('Update now', false);
-        global.alert('Update not applied: these files need your attention first, and nothing was '
-          + 'changed.\n\n'
-          + refusal.reconcile.map((r) => `${r.path} (${r.reason})\n  ${r.action}`).join('\n\n')
-          + '\n\nUpdate again once they are sorted out.');
-        return;
-      }
+      /**
+       * Show a refusal whose body carries per-file detail, if it is one.
+       * Used for the first attempt and for the discard retry alike, so a
+       * retry that is refused is never reduced to a one-line error.
+       * @param {object|null} r - The result body.
+       * @returns {boolean} True when the refusal was shown.
+       */
+      const showStructured = (r) => {
+        // Files the operator must reconcile first (#1730). The server has
+        // already checked that nothing moved, and every action is written for
+        // the operator, so the dialog shows them as they are. There is no
+        // discard here: nothing in this list is TangleClaw's to throw away.
+        if (r && !r.ok && r.code === 'reconcile-required' && Array.isArray(r.reconcile)) {
+          setInFlight(false);
+          setApplyLabel('Update now', false);
+          global.alert('Update not applied: these files need your attention first, and nothing was '
+            + 'changed.\n\n'
+            + r.reconcile.map((item) => `${item.path} (${item.reason})\n  ${item.action}`).join('\n\n')
+            + '\n\nUpdate again once they are sorted out.');
+          return true;
+        }
 
-      // A step failed and the checkout could not be verified as put back.
-      // Manual recovery is required. The dialog reports only what the server
-      // re-observed, fact by fact, and says "unknown" where it could not read
-      // one; claiming a clean refusal, a success, or what survived beyond those
-      // observations would be false.
-      if (refusal && !refusal.ok && refusal.code === 'recovery-failed') {
-        setInFlight(false);
-        setApplyLabel('Update now', false);
-        const rec = refusal.recovery || {};
-        const obs = rec.observed || {};
-        const fact = (v) => (v === true ? 'yes' : v === false ? 'no' : 'unknown');
-        const backups = rec.backup || [];
-        global.alert('The update failed partway and TangleClaw could not verify that the install was '
-          + 'put back. Manual recovery is required. Do not update or restart until it is done.\n\n'
-          + `Failed step: ${rec.failedStep || 'unknown'}\n`
-          + `Started from: ${rec.fromRef || 'unknown'} at ${rec.fromSha || 'unknown'}\n`
-          + `Now observed: ${obs.ref || 'unknown'} at ${obs.headSha || 'unknown'}\n`
-          + `Edited file matches its original: ${fact(obs.fileMatchesOriginal)}\n`
-          + `Its git flags match their original: ${fact(obs.flagsMatchOriginal)}`
-          + (backups.length ? `\n\nCopies of your edited files from before the update:\n${backups.map((b) => `  ${b}`).join('\n')}` : ''));
-        return;
-      }
+        // A step failed and the checkout could not be verified as put back.
+        // Manual recovery is required. The dialog reports only what the server
+        // re-observed, fact by fact, and says "unknown" where it could not read
+        // one; claiming a clean refusal, a success, or what survived beyond those
+        // observations would be false.
+        if (r && !r.ok && r.code === 'recovery-failed') {
+          setInFlight(false);
+          setApplyLabel('Update now', false);
+          const rec = r.recovery || {};
+          const obs = rec.observed || {};
+          const fact = (v) => (v === true ? 'yes' : v === false ? 'no' : 'unknown');
+          const backups = rec.backup || [];
+          global.alert('The update failed partway and TangleClaw could not verify that the install was '
+            + 'put back. Manual recovery is required. Do not update or restart until it is done.\n\n'
+            + `Failed step: ${rec.failedStep || 'unknown'}\n`
+            + `Started from: ${rec.fromRef || 'unknown'} at ${rec.fromSha || 'unknown'}\n`
+            + `Now observed: ${obs.ref || 'unknown'} at ${obs.headSha || 'unknown'}\n`
+            + `Edited file matches its original: ${fact(obs.fileMatchesOriginal)}\n`
+            + `Its git flags match their original: ${fact(obs.flagsMatchOriginal)}`
+            + (backups.length ? `\n\nCopies of your edited files from before the update:\n${backups.map((b) => `  ${b}`).join('\n')}` : ''));
+          return true;
+        }
+        return false;
+      };
+
+      if (showStructured(refusal)) return;
 
       if (refusal && !refusal.ok && refusal.code === 'dirty-tree' && refusal.dirty) {
         const d = refusal.dirty;
@@ -531,8 +543,9 @@
             'The update is blocked only by files TangleClaw itself wrote:\n\n'
             + d.discardable.map((f) => `  ${f}`).join('\n')
             + ((d.carried && d.carried.length)
-              ? '\n\nYour edits to these files are not in the list, and will be kept and merged into '
-                + 'the new release:\n' + d.carried.map((f) => `  ${f}`).join('\n')
+              ? '\n\nYour edits to these files are not in the list and will be kept. The update merges '
+                + 'them into the new release, or stops without changing anything if it cannot:\n'
+                + d.carried.map((f) => `  ${f}`).join('\n')
               : '')
             + '\n\nDiscard these files and update? Nothing of yours is in this list — '
             + 'anything TangleClaw could not prove it wrote would have blocked instead. '
@@ -550,6 +563,7 @@
               global.alert(`Update failed: ${err && err.message ? err.message : 'request did not complete'}`);
               return;
             }
+            if (showStructured(applyResp || (STRUCTURED_REFUSALS.has(api.lastErrorCode) ? api.lastBody : null))) return;
           }
         } else if (d.realWork.length > 0) {
           setInFlight(false);
@@ -564,7 +578,8 @@
                 + d.discardable.map((f) => `  ${f}`).join('\n')
               : '')
             + ((d.carried && d.carried.length)
-              ? '\n\nDetected and kept (your edits here are merged into the release when you update):\n'
+              ? '\n\nDetected and kept (when you update, your edits here are merged into the release, '
+                + 'or the update stops without changing anything if they cannot be):\n'
                 + d.carried.map((f) => `  ${f}`).join('\n')
               : '')
             + (d.realWork.some((f) => f.startsWith('.tangleclaw/'))

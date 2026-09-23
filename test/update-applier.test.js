@@ -33,7 +33,7 @@ const HAPPY = {
   'rev-parse --abbrev-ref HEAD': 'main\n',
   'fetch --tags origin': '',
   'ls-remote --tags origin': 'sha1\trefs/tags/v9.9.9\nsha2\trefs/tags/v1.0.0\n',
-  'checkout v9.9.9': '',
+  'checkout --no-overwrite-ignore v9.9.9': '',
   // #1730: the preflight asks what the tag changes before anything moves. An
   // empty answer means nothing is in the checkout's way.
   'diff --name-status -z --no-renames HEAD v9.9.9': '',
@@ -142,7 +142,7 @@ describe('update-applier (UB #228/#229)', () => {
       assert.equal(r.toRef, 'v9.9.9');
       assert.equal(r.fromSha, 'aaaaaaa111');
       assert.equal(r.toSha, 'bbbbbbb222');
-      assert.ok(calls.includes('checkout v9.9.9'), 'should checkout the latest tag');
+      assert.ok(calls.includes('checkout --no-overwrite-ignore v9.9.9'), 'should checkout the latest tag');
       assert.ok(calls.includes('fetch --tags origin'), 'should fetch tags first');
     });
 

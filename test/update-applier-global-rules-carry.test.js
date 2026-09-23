@@ -308,6 +308,50 @@ describe('operator-edited global rules across an update (#1730)', () => {
       assert.equal(fs.readFileSync(mine, 'utf8'), 'my memory\n');
     });
 
+    it('an ignored FILE where the release needs a directory refuses, and is kept', () => {
+      // Git would delete `.tangleclaw/scratch` to make the directory the
+      // release's `.tangleclaw/scratch/notes.md` needs, without a word.
+      release('v9.9.10', (dir) => {
+        fs.mkdirSync(path.join(dir, '.tangleclaw', 'scratch'), { recursive: true });
+        fs.writeFileSync(path.join(dir, '.tangleclaw', 'scratch', 'notes.md'), 'shipped\n');
+        git(dir, ['add', '-f', '.tangleclaw/scratch/notes.md']);
+      });
+      applier._internal.checkForUpdate = () => ({ updateAvailable: true, latestVersion: '9.9.10' });
+      fs.mkdirSync(path.join(work, '.tangleclaw'), { recursive: true });
+      const mine = path.join(work, '.tangleclaw', 'scratch');
+      fs.writeFileSync(mine, 'my scratch file\n');
+      const r = applier.applyUpdate();
+      assert.equal(r.code, 'reconcile-required', JSON.stringify(r));
+      assert.deepEqual(r.reconcile.map((x) => [x.path, x.reason]), [['.tangleclaw/scratch', 'untracked-collision']]);
+      assert.equal(fs.readFileSync(mine, 'utf8'), 'my scratch file\n');
+      assert.equal(head(), v1Sha);
+    });
+
+    it('the checkout itself refuses to overwrite an ignored file the preflight missed', () => {
+      // The backstop, with the preflight bypassed: git's own refusal under
+      // --no-overwrite-ignore maps to checkout-collision, and the file stays.
+      release('v9.9.10', (dir) => {
+        fs.mkdirSync(path.join(dir, '.tangleclaw', 'scratch'), { recursive: true });
+        fs.writeFileSync(path.join(dir, '.tangleclaw', 'scratch', 'notes.md'), 'shipped\n');
+        git(dir, ['add', '-f', '.tangleclaw/scratch/notes.md']);
+      });
+      applier._internal.checkForUpdate = () => ({ updateAvailable: true, latestVersion: '9.9.10' });
+      fs.mkdirSync(path.join(work, '.tangleclaw'), { recursive: true });
+      const mine = path.join(work, '.tangleclaw', 'scratch');
+      fs.writeFileSync(mine, 'my scratch file\n');
+      const realGit = applier._internal.git;
+      applier._internal.git = (args) => {
+        // Hide the release's changes from the preflight only.
+        if (args[0] === 'diff' && args.includes('--name-status')) return '';
+        return realGit(args);
+      };
+      const r = applier.applyUpdate();
+      assert.equal(r.code, 'reconcile-required', JSON.stringify(r));
+      assert.deepEqual(r.reconcile.map((x) => [x.path, x.reason]), [['.tangleclaw/scratch', 'checkout-collision']]);
+      assert.equal(fs.readFileSync(mine, 'utf8'), 'my scratch file\n');
+      assert.equal(head(), v1Sha);
+    });
+
     it('every finding comes back in one refusal', () => {
       release('v9.9.10', (dir) => {
         fs.writeFileSync(path.join(dir, RULES), RULES_V9);
@@ -351,7 +395,7 @@ describe('operator-edited global rules across an update (#1730)', () => {
     it('a diagnosed overwrite maps to checkout-collision, not git-error, with the carry undone', () => {
       fs.writeFileSync(path.join(work, RULES), EDIT_TOP);
       git(work, ['update-index', '--skip-worktree', RULES]);
-      failGitOnce('checkout v9.9.9', overwriteError());
+      failGitOnce('checkout --no-overwrite-ignore v9.9.9', overwriteError());
       const r = applier.applyUpdate();
       assert.equal(r.code, 'reconcile-required', JSON.stringify(r));
       assert.deepEqual(r.reconcile.map((x) => [x.path, x.reason]), [['late.txt', 'checkout-collision']]);
@@ -360,7 +404,7 @@ describe('operator-edited global rules across an update (#1730)', () => {
 
     it('an unrelated checkout failure stays git-error, with the carry undone', () => {
       fs.writeFileSync(path.join(work, RULES), EDIT_TOP);
-      failGitOnce('checkout v9.9.9', new Error('fatal: unable to write new index file'));
+      failGitOnce('checkout --no-overwrite-ignore v9.9.9', new Error('fatal: unable to write new index file'));
       const r = applier.applyUpdate();
       assert.equal(r.code, 'git-error', JSON.stringify(r));
       assertUntouched(EDIT_TOP);
@@ -416,7 +460,7 @@ describe('operator-edited global rules across an update (#1730)', () => {
     it('from a detached release tag, compensation returns to that exact commit', () => {
       git(work, ['checkout', '-q', 'v1.0.0']);
       fs.writeFileSync(path.join(work, RULES), EDIT_TOP);
-      failGitOnce('checkout v9.9.9', new Error('fatal: something else'));
+      failGitOnce('checkout --no-overwrite-ignore v9.9.9', new Error('fatal: something else'));
       const r = applier.applyUpdate();
       assert.equal(r.code, 'git-error', JSON.stringify(r));
       assertUntouched(EDIT_TOP, 'H', 'HEAD');
@@ -446,7 +490,7 @@ describe('operator-edited global rules across an update (#1730)', () => {
 
     it('every injected failure reports a step from the stable list', () => {
       fs.writeFileSync(path.join(work, RULES), EDIT_TOP);
-      failGitOnce('checkout v9.9.9', new Error('boom'));
+      failGitOnce('checkout --no-overwrite-ignore v9.9.9', new Error('boom'));
       applier._internal.writeRepoFile = () => { throw new Error('read-only file system'); };
       const r = applier.applyUpdate();
       assert.equal(r.code, 'recovery-failed', JSON.stringify(r));

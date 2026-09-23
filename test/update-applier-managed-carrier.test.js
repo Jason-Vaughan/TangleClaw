@@ -253,7 +253,7 @@ describe('applyUpdate wires the containment test in (#1241)', () => {
     'rev-parse --abbrev-ref HEAD': 'main\n',
     'fetch --tags origin': '',
     'ls-remote --tags origin': 'sha1\trefs/tags/v9.9.9\n',
-    'checkout v9.9.9': '',
+    'checkout --no-overwrite-ignore v9.9.9': '',
     'diff --name-status -z --no-renames HEAD v9.9.9': '',
     [`diff --name-only ${SHA} ${SHA}`]: ''
   };
