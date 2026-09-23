@@ -129,7 +129,7 @@ Check in this order:
 3. **Is the tag on origin?** `git ls-remote --tags origin | grep vX.Y.Z`. This is the exact thing
    installs poll.
 
-How to recover depends on whether the failed run **pushed the tag**. Step 4 above tells you:
+How to recover depends on whether the failed run **pushed the tag**. Step 3 above tells you:
 the tag is on origin or it is not.
 
 **The tag is NOT on origin** (the run stopped before tagging: a red `test` job, a missing

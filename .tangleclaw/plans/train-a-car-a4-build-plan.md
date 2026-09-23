@@ -1,6 +1,6 @@
 ---
 title: "Train A Car A4: exact release proof and workflow supply-chain floor"
-status: Chunk 01 SHIPPED (PR #1828). Chunk 02 PLAN WRITTEN 2026-09-23. B1–B5 sent to the Architect, and the build proceeds on the recommendations meanwhile. The PR waits on the rulings and merges on the Operator's direct go
+status: Chunk 01 SHIPPED (PR #1828). Chunk 02 REVIEWED 2026-09-23, with the Critic clean and the Architect's B1–B5 rulings built; the PR is open and merges only on the Operator's direct CI go, with no auto-merge
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-23 (message 9d88259b). Workflow (CI) changes: the Operator gave a direct in-pane go for Chunk 01 on 2026-09-23 (project rule: only the Operator authorizes CI changes). The merge also waits on the Operator. Chunk 02: the PM dispatched it via Medusa, 2026-09-23 (message 63de80dc). Its CI change and merge still need the Operator's direct go
 issues: [1436, 1551]
 governed_by:
@@ -328,4 +328,4 @@ and the tag dereferences to it. Privileged dependencies are immutable and mechan
 ## Status
 
 - [x] Chunk 01: Every workflow dependency is pinned to an immutable commit, and a test enforces it (#1436): Critic rev-20260923T191930Z (1 blocking) resolved by rev-20260923T192644Z (0 findings); Architect ruled A1–A5 (A2/A4 MODIFY); follow-up #1827
-- [ ] Chunk 02: A release publishes only the exact commit that was tested, and its tag dereferences to it (#1551)
+- [x] Chunk 02: A release publishes only the exact commit that was tested, and its tag dereferences to it (#1551): Critic rev-20260923T212927Z (cumulative, 1 blocking) resolved by rev-20260923T213949Z (0 findings); Architect ruled B1–B5 (B2/B4 MODIFY) plus the B4 refinement and the ADR addendum; the merge waits on the Operator's direct CI go
