@@ -35,6 +35,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-23 — Every workflow action is pinned to a full commit SHA, and a test enforces it (#1436)
+
+<!-- prawduct: type=feature | scope=train-a-car-a4 -->
+
+Train A Car A4 Chunk 01. Every `uses:` referenced the movable `v7` tag, so an upstream that moved it would run new code in CI with no diff here, including in `release.yml`, which can push tags (audit H5, the CVE-2025-30066 mechanism). Each ref is now the commit its tag resolved to, verified with `git ls-remote`, with an exact `# vX.Y.Z` comment. CI therefore runs identical code.
+
+**The check lives in the required `test` check.** `test/workflow-action-pins.test.js` reads every `uses` form: step and job level, with the key and the value quoted or unquoted. A line it cannot parse fails rather than being skipped. It requires 40-hex SHAs, docker digests or local `./` paths, and it flags annotation conflicts in both directions (Architect A1/A2). It says it proves shape and agreement, not that a comment names the right release.
+
+**Token scope and runtime.** Every workflow declares top-level `permissions:`, so `test.yml` is `contents: read` instead of inheriting the repository default (A3). `release.yml` keeps its workflow-level write until Chunk 02. `release.yml` pins Node `22.23.3`, which removes run-time version selection but not artifact trust (A4). #1827 tracks the Node artifact and the mutable runner image. ADR 0014's two #1436 status sentences are updated (A5). Architect rulings A1–A5 are in message ecc27e3b, and the Operator gave the CI change a direct go in-pane.
+
 ## 2026-09-23 — CLAUDE.md carries Prawduct's current anchor, and the local learnings are split by concern (#1820, #1819)
 
 <!-- prawduct: type=chore | scope=learnings-split-reanchor -->
