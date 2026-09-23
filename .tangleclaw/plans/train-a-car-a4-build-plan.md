@@ -44,11 +44,11 @@ and the tag dereferences to it. Privileged dependencies are immutable and mechan
 
 ### Facts established while planning (verified 2026-09-23 at 7261f43)
 
-- Six `uses:` lines across three workflows, all tag refs: `actions/checkout@v7` and
-  `actions/setup-node@v7` in `release.yml`, `test.yml` and `upstream-drift.yml`. There are no
+- Six `uses:` lines across three workflows, all tag refs: actions/checkout@v7 and
+  actions/setup-node@v7 in `release.yml`, `test.yml` and `upstream-drift.yml`. There are no
   local (`./`) or `docker://` actions.
-- `git ls-remote` shows that `actions/checkout` `v7` and `v7.0.1` are both
-  `3d3c42e5aac5ba805825da76410c181273ba90b1`, and that `actions/setup-node` `v7` and `v7.0.0` are
+- `git ls-remote` shows that actions/checkout tags v7 and v7.0.1 are both
+  `3d3c42e5aac5ba805825da76410c181273ba90b1`, and that actions/setup-node tags v7 and v7.0.0 are
   both `820762786026740c76f36085b0efc47a31fe5020`. Both are lightweight tags on the same commit,
   so pinning changes no behavior.
 - Repo Actions settings (read-only API): `default_workflow_permissions: read`,
@@ -147,7 +147,7 @@ and the tag dereferences to it. Privileged dependencies are immutable and mechan
 ### Tests (written alongside)
 
 - Every `uses:` in every workflow is SHA-pinned with a version comment. A fixture with `@v7`,
-  `@main`, a short SHA, or a SHA with no comment fails. `./local` passes.
+  `@main`, a short SHA, or a SHA with no comment fails. A local ./ path passes.
   `docker://img@sha256:<64hex>` passes and `docker://img:tag` fails.
 - Every workflow declares a top-level `permissions:` block.
 - `release.yml`'s `setup-node` `node-version` is an exact `X.Y.Z`.

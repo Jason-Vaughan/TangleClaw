@@ -67,7 +67,7 @@ All notable changes to TangleClaw are documented in this file.
 
 - **Every GitHub Actions dependency is pinned to an immutable commit, and a test enforces it** (#1436, Train A Car A4 Chunk 01). The workflows referenced `actions/checkout` and `actions/setup-node` by the movable tag `v7`, so a tag moved upstream would have run new code in CI with no diff here, including in `release.yml`, which can push tags (the `tj-actions/changed-files` mechanism, CVE-2025-30066). Each `uses:` is now a full commit SHA with a `# vX.Y.Z` comment. Each SHA is the commit the `v7` tag pointed at, so CI runs exactly the same code. `test/workflow-action-pins.test.js` runs inside the required `test` check and fails on:
   - a tag, branch or short-SHA ref;
-  - a pin with no version comment, or two comments naming different versions for one SHA;
+  - a pin with no version comment, two comments naming different versions for one SHA, or one action's version comment on two different SHAs;
   - a workflow with no top-level `permissions:` block (`test.yml` now declares `contents: read` instead of inheriting the repository default, which a settings change could widen);
   - a `release.yml` Node version that is not exact. `setup-node` resolves a bare `22` to the newest patch when the job starts, so the Node version inside the job that can push tags was chosen at run time. It is now pinned to `22.23.3`, and that pin is bumped by hand. This removes run-time version selection only: `setup-node` still downloads that release with no digest pinned in the workflow.
 

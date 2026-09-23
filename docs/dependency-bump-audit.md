@@ -35,13 +35,14 @@ hand; Dependabot does not track it.
 What the test does and does not prove:
 
 - **It proves shape and agreement.** Every reference is a full commit SHA, a docker digest or a
-  local `./` path, and no two comments name different versions for the same pinned action.
+  local `./` path. No pinned SHA carries two different version comments, and no action carries
+  the same version comment on two different SHAs.
 - **It cannot prove a comment is true.** Whether `# v7.0.1` really names the release that SHA is
   needs the network. The initial pins were checked with `git ls-remote` against each action's
   repository; every later change is a bump PR and gets this audit.
 - **The exact Node version removes run-time selection, not artifact trust.** `setup-node` still
   downloads that release with no digest pinned in the workflow, and the `ubuntu-latest` runner
-  image is itself mutable. Both are tracked as follow-up work on the execution substrate.
+  image is itself mutable. Both are tracked in #1827.
 - **GitHub's repository setting that requires SHA-pinned actions is a second layer, not a
   replacement.** It does not cover reusable-workflow references, which this test does.
 

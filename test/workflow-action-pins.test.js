@@ -81,6 +81,43 @@ function collectUses(src) {
 }
 
 /**
+ * Find annotations that disagree with each other across workflows. Two
+ * directions, because a hand edit can go either way: one pin (action identity
+ * and path plus SHA) carrying two different `# vX.Y.Z` comments, or one action
+ * carrying the same comment on two different SHAs. Either way a reviewer
+ * reading one of the lines is misled about what runs.
+ * @param {{name: string, src: string}[]} files - workflows to compare
+ * @returns {string[]} one description per conflict
+ */
+function findAnnotationConflicts(files) {
+  const versionByPin = new Map();
+  const pinByVersion = new Map();
+  const conflicts = [];
+  for (const { name, src } of files) {
+    for (const u of collectUses(src)) {
+      if (!u.ref || !SHA_PIN_RE.test(u.ref) || !u.comment) continue;
+      const where = `${name}:${u.line}`;
+      const version = u.comment.replace(/^#\s*/, '').trim();
+      const action = u.ref.slice(0, u.ref.lastIndexOf('@'));
+      const priorVersion = versionByPin.get(u.ref);
+      if (priorVersion && priorVersion.version !== version) {
+        conflicts.push(`${u.ref}: ${priorVersion.where} says ${priorVersion.version}, ${where} says ${version}`);
+      } else if (!priorVersion) {
+        versionByPin.set(u.ref, { version, where });
+      }
+      const versionKey = `${action} ${version}`;
+      const priorPin = pinByVersion.get(versionKey);
+      if (priorPin && priorPin.ref !== u.ref) {
+        conflicts.push(`${action} ${version}: ${priorPin.where} pins ${priorPin.ref}, ${where} pins ${u.ref}`);
+      } else if (!priorPin) {
+        pinByVersion.set(versionKey, { ref: u.ref, where });
+      }
+    }
+  }
+  return conflicts;
+}
+
+/**
  * List the workflow files and read each one.
  * @returns {{name: string, src: string}[]}
  */
@@ -111,6 +148,22 @@ describe('workflow action pins: the rule itself', () => {
     }
     assert.notEqual(judgeUsesRef('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', undefined), null);
     assert.notEqual(judgeUsesRef('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', '# latest'), null);
+  });
+
+  it('finds annotation conflicts in both directions, and none when pins agree', () => {
+    const a = '3d3c42e5aac5ba805825da76410c181273ba90b1';
+    const b = '820762786026740c76f36085b0efc47a31fe5020';
+    const wf = (ref, comment) => ({ name: 'x.yml', src: `    steps:\n      - uses: actions/checkout@${ref} # ${comment}\n` });
+    assert.deepEqual(findAnnotationConflicts([wf(a, 'v7.0.1'), wf(a, 'v7.0.1')]), []);
+    assert.equal(findAnnotationConflicts([wf(a, 'v7.0.1'), wf(a, 'v7.0.2')]).length, 1,
+      'one SHA with two version comments');
+    assert.equal(findAnnotationConflicts([wf(a, 'v7.0.1'), wf(b, 'v7.0.1')]).length, 1,
+      'one version comment on two SHAs');
+    assert.deepEqual(findAnnotationConflicts([wf(a, 'v7.0.1'), wf(b, 'v7.0.2')]), [],
+      'two different releases of one action may coexist');
+    const other = { name: 'y.yml', src: `    steps:\n      - uses: actions/setup-node@${b} # v7.0.1\n` };
+    assert.deepEqual(findAnnotationConflicts([wf(a, 'v7.0.1'), other]), [],
+      'two different actions may share a version number');
   });
 
   it('refuses a docker image named by tag', () => {
@@ -175,24 +228,7 @@ describe('workflow action pins: this repository', () => {
   });
 
   it('names one version per pinned action and SHA across all workflows', () => {
-    // Keyed by the whole reference, which is the action's identity and path
-    // plus the SHA. Two comments disagreeing about the same pin means one of
-    // them was edited by hand, and a reviewer reading either would be misled.
-    const seen = new Map();
-    const conflicts = [];
-    for (const { name, src } of files) {
-      for (const u of collectUses(src)) {
-        if (!u.ref || !SHA_PIN_RE.test(u.ref) || !u.comment) continue;
-        const version = u.comment.replace(/^#\s*/, '').trim();
-        const prior = seen.get(u.ref);
-        if (prior && prior.version !== version) {
-          conflicts.push(`${u.ref}: ${prior.where} says ${prior.version}, ${name}:${u.line} says ${version}`);
-        } else if (!prior) {
-          seen.set(u.ref, { version, where: `${name}:${u.line}` });
-        }
-      }
-    }
-    assert.deepEqual(conflicts, []);
+    assert.deepEqual(findAnnotationConflicts(files), []);
   });
 
   it('declares a top-level permissions: block in every workflow', () => {
