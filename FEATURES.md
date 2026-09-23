@@ -333,6 +333,19 @@ fails any auto-stub section older than 14 days.
 
 ## Governance / Engines
 
+- **startupControl and the startup prompt** (#1825, Build Chunk B1). The operator's revisioned
+  startup prompt, with its firer list, lives in `startup_prompt_revisions` (append-only, and written
+  by compare-and-set). Every authorized fire is audited in `startup_prompt_fires` (idempotent per
+  launch and revision, with at most one in flight per launch). `lib/startup-prompt.js` is the one
+  service path for the dashboard and the API. The routes use the shared strict operator proof,
+  `server.js#_requireOperatorWrite`. `lib/startup-control.js` validates a profile's
+  `capabilities.startupControl` block and resolves it against a code-only adapter registry, which
+  ships empty, so every engine is unsupported and says so in `tc capabilities`. Docs:
+  `docs/user-guide.md` ("Startup Prompt") and `docs/engine-guide.md` (`startupControl`). Tests:
+  `test/startup-control.test.js`, `test/startup-prompt-store.test.js`,
+  `test/startup-prompt-service.test.js`, `test/startup-prompt-api.test.js` and
+  `test/startup-prompt-editor.test.js`.
+
 - **Per-project config reader** — `<project>/.tangleclaw/project.json` merged over documented
   defaults. `lib/project-config.js` — dependency-free (`node:fs`/`node:path` only) so the killable
   scanner child can read it; `lib/store.js` re-exports it and keeps the WRITER, because nothing on

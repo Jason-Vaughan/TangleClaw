@@ -189,6 +189,27 @@ Below the ports panel, there's a collapsible **Global Rules** panel. These are m
 
 Global rules live in one git-tracked file, `data/global-rules.md` in the TangleClaw repo (#240). Saving from the panel writes that file directly; there is no bundled default and no per-install copy under `~/.tangleclaw/`. A leftover `~/.tangleclaw/global-rules.md` from an older install is ignored — if its content differs, TangleClaw backs it up next to itself and logs a warning on startup so you can merge what you still want.
 
+### Startup Prompt
+
+The same panel holds the **startup prompt** (#1825): the instruction a launch sends to an engine that supports native startup delivery (see `startupControl` in the [Engine guide](engine-guide.md)). It starts as `read your launch context: run tc start next`, and it should only ever ask the engine to read its launch context, never dispatch project work.
+
+- **Edit**: change the text, tick the projects whose sessions may fire it, and tap **Save startup prompt**. Every save is a new **revision**. If someone else saved in the meantime, the save is refused and the editor reloads what is current, so a change is never silently overwritten.
+- **Who may change it**: the operator only, from the dashboard (a signed-in session, or on an install with no login, the dashboard's own page token). An agent session cannot edit the prompt or the firer list, because a session that could list itself could authorize itself.
+- **Who may fire it**: the operator, or a session whose project is ticked **and** that shares a project group with the target session.
+- **Today**: no engine has a native startup adapter yet, so every fire is refused as `STARTUP_CONTROL_UNSUPPORTED` and recorded. Nothing is ever typed into the pane as a fallback, and launches keep delivering their context as they do now.
+- **API**:
+  - `GET /api/startup-prompt` (the operator or a bound session).
+  - `PUT /api/startup-prompt` with `{text, firerProjectIds, expectedRevision}` (operator only).
+  - `POST /api/sessions/:project/startup-prompt/fire` with `{sessionId, sequenceId, expectedRevision}`.
+
+  A fire names the session and its launch-sequence row, never the launch id, which is a credential. Refusals use the usual `{error, code}` shape:
+  - `STARTUP_PROMPT_INVALID` (400);
+  - `STALE_STARTUP_PROMPT` (409, with `currentRevision`);
+  - `OPERATOR_REQUIRED` or `FIRE_SCOPE_DENIED` (403);
+  - `SESSION_NOT_FOUND` (404);
+  - `LAUNCH_NOT_CURRENT` (409);
+  - `STARTUP_CONTROL_UNSUPPORTED` (409, with the engine and the reason).
+
 ### Toolbar
 
 - **Session count**: Shows how many active sessions are running. If TangleClaw could not reach the

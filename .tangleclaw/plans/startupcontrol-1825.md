@@ -310,8 +310,9 @@ and are not committed, because they contain account identifiers.
   call alike: one service path, per S5).
 - The operator editor sits on the landing page beside the global rules editor, following the
   `#rulesEditor` pattern, and sends `expectedRevision`. A 409 re-reads and says so.
-- `docs/engine-guide.md` and `docs/configuration-reference.md` (`startupPromptFirers`) are updated
-  in the same commits, along with `CHANGELOG.md` `### Added`.
+- `docs/engine-guide.md` (`startupControl`) and `docs/user-guide.md` ("Startup Prompt") are
+  updated in the same commits, along with `CHANGELOG.md` `### Added`. (The configuration reference
+  is not touched, because the firer list is not configuration; see D4.)
 
 ### Tests (written alongside)
 

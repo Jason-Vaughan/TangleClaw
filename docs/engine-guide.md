@@ -609,8 +609,8 @@ as unsupported, never guessed at.
 **No adapter is registered yet.** Every engine currently resolves to unsupported, `tc capabilities`
 says so as `startup-control`, and firing the startup prompt returns a typed
 `STARTUP_CONTROL_UNSUPPORTED` refusal. There is no fallback, and nothing is typed into the pane. The
-prompt itself, and who may read, edit and fire it, are covered in
-[Configuration reference](configuration-reference.md) under `startupPromptFirers`.
+prompt itself, and who may read, edit and fire it, are covered in the
+[User guide](user-guide.md) under "Startup Prompt".
 
 ## Config File Generation
 
