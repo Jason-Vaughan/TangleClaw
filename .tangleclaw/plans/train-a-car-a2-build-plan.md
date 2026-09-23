@@ -324,6 +324,18 @@ run against a scratch clone from the issue's steps.
   the only failures that can follow it are late ones (checkout-collision, git-error,
   recovery-failed).
 
+#### Done-when: the #1730 repro, run 2026-09-23
+
+The issue's steps, run on a `git clone --shared --no-checkout` of this install: `checkout v5.28.0`,
+append the issue's `## Testing (Mandatory)` rule to `data/global-rules.md`, then `update-index
+--skip-worktree`. Porcelain came back empty, and a raw `git checkout v5.29.0` aborted with the
+issue's exact error. Then `applyUpdate()` ran on the same clone, with its `git`, `gitBytes`,
+`repoDir` and `backupDir` seams pointed at the clone and its real `origin`. Result: `ok: true`,
+`toRef: v5.29.0`, the flag is still `S`, and the file equals v5.29.0 plus the operator's four lines.
+The backup is 0600 and equals v5.28.0 plus those lines, byte for byte. The route and the CLI pass the
+applier's result through unchanged; `test/api-update-apply.test.js` pins the route's status and body
+for both new codes.
+
 #### My implementation calls (none of the triggers apply)
 
 - The `action` texts use dashboard and editor wording only (ADR 0010 clause 3). For example,
@@ -342,4 +354,4 @@ run against a scratch clone from the issue's steps.
 ## Status
 
 - [x] Chunk 01 — updater discards only proven-TangleClaw deltas (#1537)
-- [ ] Chunk 02 — global-rules carry-or-block (#1730)
+- [x] Chunk 02 — global-rules carry-or-block (#1730)

@@ -381,6 +381,29 @@ describe('operator-edited global rules across an update (#1730)', () => {
       assertUntouched(EDIT_TOP, 'S');
     });
 
+    it('a write that fails after its temp file exists leaves nothing behind in the install', () => {
+      fs.writeFileSync(path.join(work, RULES), EDIT_TOP);
+      const realRename = fs.renameSync;
+      let failed = false;
+      fs.renameSync = (from, to) => {
+        // Fail only the merged write's publish, once; the temp file is on disk
+        // by then, which is the leftover this pins.
+        if (!failed && String(to).endsWith(RULES)) { failed = true; throw new Error('EIO'); }
+        return realRename(from, to);
+      };
+      let r;
+      try {
+        r = applier.applyUpdate();
+      } finally {
+        fs.renameSync = realRename;
+      }
+      assert.equal(r.code, 'git-error', JSON.stringify(r));
+      assert.deepEqual(fs.readdirSync(path.join(work, 'data')).filter((f) => f.includes('.tc-update-')), [],
+        'no temp file is left in the checkout');
+      assert.equal(git(work, ['status', '--porcelain']), ' M data/global-rules.md\n', 'only the edit, as before');
+      assertUntouched(EDIT_TOP);
+    });
+
     it('a failed flag restore is compensated too', () => {
       fs.writeFileSync(path.join(work, RULES), EDIT_TOP);
       git(work, ['update-index', '--skip-worktree', RULES]);
@@ -428,6 +451,24 @@ describe('operator-edited global rules across an update (#1730)', () => {
       const r = applier.applyUpdate();
       assert.equal(r.code, 'recovery-failed', JSON.stringify(r));
       assert.equal(r.recovery.failedStep, 'checkout');
+    });
+  });
+
+  describe('operator-facing text', () => {
+    it('no reason\'s action names a git command (ADR 0010 clause 3, D4)', () => {
+      // Every reason, for a carried path and for any other path, so a new
+      // reason or a reworded one is swept too.
+      const reasons = ['merge-conflict', 'skip-worktree', 'assume-unchanged', 'untracked-collision',
+        'checkout-collision', 'backup-failed'];
+      const GIT_ADVICE = /\b(git|commit|stash|checkout|pull|reset|rebase|merge-file|update-index)\b/i;
+      for (const reason of reasons) {
+        for (const p of [RULES, 'server.js']) {
+          if (reason === 'merge-conflict' && p !== RULES) continue; // only a carried file is merged
+          const item = applier._reconcileItem(p, reason, '/home/x/.tangleclaw/backups');
+          assert.equal(typeof item.action, 'string', `${reason} has an action`);
+          assert.doesNotMatch(item.action, GIT_ADVICE, `${reason} for ${p}: ${item.action}`);
+        }
+      }
     });
   });
 
