@@ -506,8 +506,8 @@ worktree `.claude/worktrees/a3-chunk3`.
    about in the existing Include/Leave list, with its own reason, and is never committed without
    an Include. The wrap PR body and commit body name every session file they propose to merge, and
    mark the ones the operator included. The two stray scripts are gone. An injection into an
-   engine whose composer can be located logs the draft's actual text, and logs nothing when the
-   composer was empty. Where the composer cannot be located, the log says "draft not captured"
+   engine whose composer can be located keeps the draft's actual text (in the private draft store,
+   after G1), and records nothing when the composer was empty. Where the composer cannot be located, the log says "draft not captured"
    with the reason, never footer text.
 3. **Out of scope.** Restoring a cleared draft (#812's decision stands). Refusing or deferring a
    command-bar, wrap or Critic injection because a draft is present. New wake profiles for Aider
@@ -705,9 +705,9 @@ Implementation-only dispositions:
   `session-files` then `commit` on a real temp repo with scratch `find_rows.py` and
   `new_prs.json` and asserts neither is committed without an Include.
 - PR and commit body: session files and included files are both listed, and the two bodies agree.
-- Draft capture, per engine fixture: an empty composer logs nothing. A draft logs its exact text,
-  never footer text (Claude's `⏵⏵ bypass permissions…`, Codex's footer). A multi-row draft logs
-  every row. An engine with no profile logs "not captured" with a reason and still sends `C-u`.
+- Draft capture, per engine fixture: an empty composer records nothing. A draft is kept with its
+  exact text, never footer text (Claude's `⏵⏵ bypass permissions…`, Codex's footer), and the log
+  never carries the text (after G1). A multi-row draft keeps every row. An engine with no profile logs "not captured" with a reason and still sends `C-u`.
   An unreadable cursor does the same.
 - Every `sendKeys` caller passes an engine id (a source-level test pins the call sites).
 - Regression: the four footer strings from #1507's evidence table are never logged as a draft.
@@ -715,8 +715,8 @@ Implementation-only dispositions:
 ### Done when
 
 A wrap with a new scratch file stops for Include/Leave and commits nothing it was not told to. The
-PR body names every session file. The two stray scripts are gone. An injection logs a real draft
-or an honest "not captured", and never footer text. The suite is green, the Critic is clean, and
+PR body names every session file. The two stray scripts are gone. An injection keeps a real draft
+privately or logs an honest "not captured", and never footer text. The suite is green, the Critic is clean, and
 the Architect has ruled F1–F5.
 
 ## Chunk 04 (planned at its own session's start; decisions go to the Architect then)
