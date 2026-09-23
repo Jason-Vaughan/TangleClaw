@@ -86,3 +86,8 @@ As we expand the automation loop, the infrastructure requires strict adherence t
 During the boot sequence, Builder agents perform preflight checks that often catch project drift (e.g., missing `.gitignore` entries, stale learning formats, or deprecated configs). 
 * Currently, Builders surface these advisories directly to the Operator UI as autocomplete suggestions (e.g., `_go ahead with the gitignore fix`). 
 * Under the fully automated hierarchical loop, the Builder must pipe these advisories directly to the Project Manager via the switchboard instead. The PM is responsible for assessing the advisories, authorizing the fix, and instructing the Builder to execute the maintenance steps before diving into the core Chunk payload. This prevents the Operator from being interrupted by trivial housekeeping tasks.
+
+## 9. Asynchronous Task Timers (Anti-Stall Protocol)
+Whenever an agent dispatches a task or waits on an external system (e.g., waiting for GitHub CI to complete, waiting on a cross-agent Medusa ruling, or waiting for a Builder chunk to finish), the delegating agent MUST set an asynchronous timer to follow up. 
+* **Appropriate Sizing:** Timers should be sized sensibly based on the task (e.g., 2-3 minutes for a CI run, 10-15 minutes for a code generation chunk) so the loop doesn't silently stall forever, while avoiding burning through context tokens via constant polling.
+* **Action on Timeout:** If the timer fires and the task is still unconfirmed, the agent should proactively ping the downstream system or Operator for status.
