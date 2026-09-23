@@ -491,9 +491,78 @@
    * @param {{sessionOutcome?: ('ended'|'kept'|null)}} [runContext] - What the run
    *   did to the session (the run result's `sessionOutcome`, #1558). Worded only
    *   on the no-commit banners, where nothing else says the wrap did anything.
+   *   Its `handoffPublication` (#1675) turns a finished wrap whose handoff did not
+   *   publish into a warning.
    * @returns {{label: string, tone: 'success'|'blocked'|'needs-operator'|'warning'|'error', detail: string|null}}
    */
   function summarizePipelineStatus(pipelineResult, runContext) {
+    return withHandoffPublication(pipelineBanner(pipelineResult, runContext), pipelineResult, runContext);
+  }
+
+  /** Why an attempt was abandoned, in the operator's words. The codes are the ones `lib/sessions.js#_finalizeHandoff` records; an unknown one shows as the raw code. */
+  const ABANDON_WORDS = {
+    'pipeline-failed': 'the wrap did not finish',
+    'lifecycle-incomplete': 'the session ended before the wrap could record it',
+    'eligibility-not-bound': 'the handoff could not be bound to this wrap',
+    'checkpoint-not-bound': 'the checkpoint could not be bound to this wrap'
+  };
+
+  /**
+   * The sentence for a finished wrap whose handoff did not become current, or
+   * null when it did (or the run carries no account of it).
+   * @param {{state?: string, reason?: (string|null)}|null|undefined} pub - The run's `handoffPublication`
+   * @returns {string|null}
+   */
+  function handoffPublicationNote(pub) {
+    if (!pub || typeof pub !== 'object' || pub.state === 'published') return null;
+    let why;
+    if (pub.state === 'abandoned') {
+      why = ABANDON_WORDS[pub.reason] ? `${ABANDON_WORDS[pub.reason]} (${pub.reason})` : (pub.reason || 'it was abandoned');
+    } else {
+      why = pub.reason || 'no reason was recorded';
+    }
+    return `Its handoff was NOT published: ${why}. The next launch will not resume from this wrap.`;
+  }
+
+  /**
+   * #1675 — compose the handoff's fate with the pipeline's banner.
+   *
+   * Only a FINISHED wrap is judged: a blocked, failed or cancelled run already
+   * says it did not complete, and it publishes nothing by design. A wrap PR
+   * that failed or was stranded keeps its banner, because it says the work may
+   * not reach the remote, which is worse; the handoff rides in its detail. Any
+   * other finished wrap — success, release pending, withheld authority — is
+   * relabelled, since each of those reads as done while the next session would
+   * start from an older handoff. The `pr` and `warnings` fields are kept, so the
+   * release probe still runs and composes onto this warning.
+   * @param {object} base - From `pipelineBanner`
+   * @param {object} pipelineResult - Runner return
+   * @param {{handoffPublication?: object}} [runContext] - From the run result
+   * @returns {object}
+   */
+  function withHandoffPublication(base, pipelineResult, runContext) {
+    const pub = runContext && typeof runContext === 'object' ? runContext.handoffPublication : null;
+    const note = handoffPublicationNote(pub);
+    if (!note || !pipelineResult || typeof pipelineResult !== 'object') return base;
+    if (pipelineResult.error || pipelineResult.blockedAt || pipelineResult.cancelledAt) return base;
+    // `handoffNote` rides as a field as well as in the detail, for the same
+    // reason `warnings` does: `composeReleaseBanner` replaces the detail when a
+    // release comes back BLOCKED, and the handoff fact must survive that.
+    const prProblem = base.pr && (base.pr.error || base.pr.stranded);
+    if (prProblem) {
+      return { ...base, tone: 'warning', detail: [base.detail, note].filter(Boolean).join(' · '), handoffNote: note };
+    }
+    const was = base.detail ? `${base.label}: ${base.detail}` : base.label;
+    return { ...base, label: 'Wrap finished — handoff NOT published', tone: 'warning', detail: `${note} · ${was}`, handoffNote: note };
+  }
+
+  /**
+   * The pipeline's own banner, before the handoff is considered.
+   * @param {object} pipelineResult - Runner return.
+   * @param {{sessionOutcome?: ('ended'|'kept'|null)}} [runContext] - From the run result.
+   * @returns {{label: string, tone: string, detail: (string|null)}}
+   */
+  function pipelineBanner(pipelineResult, runContext) {
     if (!pipelineResult || typeof pipelineResult !== 'object') {
       return { label: 'Wrap result unavailable', tone: 'error', detail: null };
     }
@@ -853,7 +922,13 @@
     // banner can say "lands on its own" instead of implying a manual step.
     const armed = !!(base.pr && base.pr.armed);
     const release = prOutcomeBanner(prStatus, armed);
-    if (release.tone === 'error') return release;
+    // #1675 — a blocked release is the more severe fact and takes the banner,
+    // but the next launch still will not resume from this wrap, so that stays.
+    if (release.tone === 'error') {
+      return base.handoffNote
+        ? { ...release, detail: [release.detail, base.handoffNote].filter(Boolean).join(' · ') }
+        : release;
+    }
     if (base.tone === 'warning' || base.tone === 'error') {
       const outcome = (prStatus && prStatus.outcome) || 'unknown';
       return {
@@ -1979,6 +2054,7 @@
     wrapPrInfo,
     prOutcomeBanner,
     composeReleaseBanner,
+    handoffPublicationNote,
     summarizeSkips,
     decisionWidgetForBlockedStep,
     prCheckResolutionWidget,

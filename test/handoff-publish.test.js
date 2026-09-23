@@ -106,6 +106,20 @@ describe('publishing a handoff (#1585)', () => {
     const replay = publishHandoff(project, pid);
     assert.equal(replay.published, true);
     assert.equal(replay.reason, 'already published');
+    // #1675 — directional: a replay does not know what it displaced, and a row
+    // still current lost to nothing. Neither slot may name the other direction.
+    assert.equal(replay.supersededId, null);
+    assert.equal(replay.supersededById, null);
+  });
+
+  it('names the winner in supersededById when an older attempt loses (#1675)', () => {
+    const older = stageAttempt({ sessionId: 1, wrapRunId: 'run-o' });
+    const newer = stageAttempt({ sessionId: 2, wrapRunId: 'run-n' });
+    publishHandoff(project, newer);
+    const res = publishHandoff(project, older);
+    assert.equal(res.published, false);
+    assert.equal(res.supersededById, newer);
+    assert.equal(res.supersededId, null);
   });
 
   it('retires the previous publication and keeps its bytes', () => {

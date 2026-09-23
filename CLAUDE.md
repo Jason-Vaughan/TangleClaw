@@ -179,30 +179,36 @@ When a project is shown to contributors, clients, or hiring evaluators, help fli
 
 Treat the user's GitHub profile as their public portfolio: commit activity, public repos, GitHub Releases, stars, and contributions to others' repos all feed dev-for-hire credibility. Visibility is a feature, not a side-effect — when work crosses a showable milestone, suggest the visibility action.
 
-<!-- PRAWDUCT:ANCHOR — static governance pointer managed by the prawduct plugin. Keep it small and version-free: principles, methodology, and the active version live in the plugin and are injected at session start. -->
+<!-- PRAWDUCT:ANCHOR — governance pointer managed by the prawduct plugin; keep it small and version-free. -->
 
 ## Governance (Prawduct)
 
-This repo is governed by **Prawduct**, installed as a Claude Code plugin — not as
-committed framework files. The principles, methodology, Critic protocol, and PR
-review live in the plugin and are read on demand (run `/prawduct:methodology`);
-they are intentionally not copied into this repo.
+This repo is governed by **Prawduct**, a Claude Code plugin; its methodology and
+protocols are read on demand via `/prawduct:methodology`.
 
-**Before writing any code, STOP and read the build cycle: `/prawduct:methodology building`.**
-Skipping it is the #1 governance failure.
+**Check first: is the plugin loaded?** If `/prawduct:*` commands are unavailable it
+is not, and **governance is OFF** — no Stop gate, no Critic, nothing below enforced.
+A clone registers the marketplace but installs nothing. Tell the user to
+run `claude plugin install prawduct@prawduct`, then restart — don't proceed as if governed.
 
-The hardest rules (everything else is in the plugin):
+**With the plugin loaded — before writing any code, STOP and read the build cycle:
+`/prawduct:methodology building`.** Skipping it is the #1 governance failure.
+
+Hardest rules:
 
 - **Tests are contracts** — fix the code, never weaken a test.
 - **No "pre-existing" exception** — fix what you find, or flag why you can't.
+  The fix half is bounded to BLOCKING; below it, the flag is the whole answer.
 - **Never silently drop a requirement** — say so explicitly.
-- **Run `/prawduct:critic` after medium+ work** — never write Critic findings
-  yourself; the independence is the value.
+- **Run `/prawduct:critic` after medium+ work** — never write findings
+  yourself; the independence is the value. Rigor is stage-keyed: a mid-build
+  review blocks only on what would ship broken, the review at the merge
+  boundary runs everything and is never skipped, and unsure defaults to the
+  cheaper mid-build review.
 
-**Enforcement is structural:** the plugin's Stop hook runs at session end and
-**blocks** if code changed against an active build plan with no Critic findings.
-The session-start banner shows the active version and what changed — this anchor
-stays version-free.
+**Enforcement is structural — while the plugin is loaded:** its Stop hook runs at
+session end and **blocks** if code changed against an active build plan with no
+Critic findings.
 
 <!-- BEGIN:tangleclaw -->
 ## TangleClaw Operational Guide — generated; edits inside the markers are overwritten

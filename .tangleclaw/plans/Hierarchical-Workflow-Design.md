@@ -86,7 +86,18 @@ Similar to the Builder, the Architect receives a boot prompt to establish their 
 > 
 > ACTION REQUIRED: Report your readiness on the switchboard, review your handoff notes, and await any pending policy escalations from the PM or Operator."
 
+## 6. Required TangleClaw Upgrades (Action Items)
+To fully realize this automated hierarchical loop, we must unblock scenarios that currently require human intervention:
+
+* **Crash-Recovery API Endpoint:** We need to expose an API endpoint that allows the Project Manager to clear a `crash-recovery` state on a Builder's behalf. Currently, this is a hard operator-only UI button. If the PM is authorized to manage the session, the PM must be able to API-clear it to prevent the automation loop from stalling.
+* **Dashboard Session Page:** Move the `crash-recovery` clear button into the specific session page on the web dashboard (it is currently isolated on the Launch readiness panel), making it easier for human operators to find when manually intervening.
+
 ## 7. Operational Realities & Fleet Maintenance
 As we expand the automation loop, the infrastructure requires strict adherence to these operational realities:
 * **The SHA Monitoring Rule:** The live TangleClaw Node.js server actively monitors its booted Git SHA against the on-disk `.git/HEAD`. **Any** `git pull` whatsoever—even if it only contains markdown plans or docs—will flag the live server as stale and trigger an operator-level restart banner. The PM agent must never assume a "code-free" pull can skip a server restart. If we want fully hands-free Train progression, we will need an API endpoint or authorized mechanism for the PM to autonomously trigger that restart.
 * **PTY Leaks (ttyd):** Continuous background agent usage occasionally leaks tmux PTY clients. The system throws a "Terminal (ttyd) PTY leak" health warning when the threshold is hit (e.g., 20 clients). The PM agent is authorized and expected to autonomously clear these leaks by executing `launchctl kickstart -k gui/$(id -u)/com.tangleclaw.ttyd` rather than blocking the operator.
+
+## 8. Preflight Advisories & PM Delegation
+During the boot sequence, Builder agents perform preflight checks that often catch project drift (e.g., missing `.gitignore` entries, stale learning formats, or deprecated configs). 
+* Currently, Builders surface these advisories directly to the Operator UI as autocomplete suggestions (e.g., `_go ahead with the gitignore fix`). 
+* Under the fully automated hierarchical loop, the Builder must pipe these advisories directly to the Project Manager via the switchboard instead. The PM is responsible for assessing the advisories, authorizing the fix, and instructing the Builder to execute the maintenance steps before diving into the core Chunk payload. This prevents the Operator from being interrupted by trivial housekeeping tasks.

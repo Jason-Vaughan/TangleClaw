@@ -253,3 +253,72 @@ describe('the worktree block is validated, not trusted (#1649)', () => {
     assert.match(readDocument(bytesWith({ worktreeProblem: 'git timed out' })).reason, /records facts and worktreeProblem/);
   });
 });
+
+describe('the resume block a publication vouches for (#1675)', () => {
+  const { resumeState } = require('../lib/handoff-publication.js');
+  const resume = {
+    currentState: 'Chunk 03 shipped.',
+    nextAction: 'Plan chunk 04.',
+    freshness: { sha: 'abc1234', branch: 'main', writtenAt: '2026-09-23', tier: 'full' }
+  };
+
+  it('freezes the resume text it was given, so a launch can render exactly it', () => {
+    const doc = buildHandoffDocument(input({ resume, nextAction: resume.nextAction }));
+    assert.deepEqual(doc.resume, resume);
+    const read = readDocument(serializeDocument(doc));
+    assert.equal(read.outcome, 'ok');
+    assert.equal(resumeState(read.doc), 'valid');
+    assert.deepEqual(read.doc.resume, resume);
+  });
+
+  it('records null when the wrap wrote no resume, which reads differently from a producer that predates the field', () => {
+    const none = buildHandoffDocument(input({ resume: null }));
+    assert.equal(Object.prototype.hasOwnProperty.call(none, 'resume'), true);
+    assert.equal(none.resume, null);
+    assert.equal(resumeState(none), 'none');
+
+    const old = buildHandoffDocument(input());
+    assert.equal(Object.prototype.hasOwnProperty.call(old, 'resume'), false,
+      'an omitted resume must stay omitted, or every older reader loses the "predates it" answer');
+    assert.equal(resumeState(old), 'absent');
+  });
+
+  it('normalizes blank text to null and fills every freshness key', () => {
+    const doc = buildHandoffDocument(input({ nextAction: 'x', resume: { currentState: '  ', nextAction: 'x', freshness: { sha: 'a' } } }));
+    assert.deepEqual(doc.resume, {
+      currentState: null,
+      nextAction: 'x',
+      freshness: { sha: 'a', branch: null, writtenAt: null, tier: null }
+    });
+  });
+
+  it('refuses a malformed block rather than freezing it into bytes that cannot be repaired', () => {
+    assert.throws(() => buildHandoffDocument(input({ resume: 'text' })), /resume must be an object or null/);
+    assert.throws(() => buildHandoffDocument(input({ resume: { nextAction: 7 } })), /resume.nextAction must be a string/);
+    assert.throws(() => buildHandoffDocument(input({ resume: { freshness: [] } })), /resume.freshness must be an object/);
+  });
+
+  it('refuses two next actions that disagree — the compatibility copy may never carry a second truth', () => {
+    assert.throws(() => buildHandoffDocument(input({ nextAction: 'one thing', resume: { ...resume, nextAction: 'another' } })),
+      /nextAction and resume.nextAction must be the same value/);
+    // Blank and absent are the same "not captured", on both sides.
+    const blank = buildHandoffDocument(input({ nextAction: null, resume: { ...resume, nextAction: '  ' } }));
+    assert.equal(blank.nextAction, null);
+    assert.equal(blank.resume.nextAction, null);
+  });
+
+  it('reads foreign bytes whose two next actions disagree as malformed, so neither is rendered', () => {
+    const doc = buildHandoffDocument(input({ resume, nextAction: resume.nextAction }));
+    const read = readDocument(serializeDocument({ ...doc, nextAction: 'a different next action' }));
+    assert.equal(read.outcome, 'ok');
+    assert.equal(resumeState(read.doc), 'malformed');
+  });
+
+  it('reads a malformed block in foreign bytes as malformed, without calling the whole handoff corrupt', () => {
+    const doc = buildHandoffDocument(input());
+    const text = serializeDocument({ ...doc, resume: { nextAction: 42 } });
+    const read = readDocument(text);
+    assert.equal(read.outcome, 'ok', 'a bad resume costs the launch its resume text, not its recovery verdict');
+    assert.equal(resumeState(read.doc), 'malformed');
+  });
+});

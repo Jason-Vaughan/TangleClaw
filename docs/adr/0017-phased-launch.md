@@ -109,6 +109,30 @@ predicate: it requires a current, eligible publication from the newest session. 
 named — `crash-recovery`, `handoff-behind`, `legacy-unclean`, `workspace-unavailable`,
 `unclassified` and the rest — rather than falling through to a reassuring default.
 
+### 6. The Resume is the publication the verdict read (#1675, amended 2026-09-23)
+
+Architect ruling, message ed93ebab (H3–H6):
+
+- **H3 (APPROVE).** The task step's Resume is rendered from the exact publication the preflight
+  selected. The preflight returns it (`handoffResume`) from the same `current.json` its verdict read,
+  and never from a second read. The fallback order is:
+  1. the publication's `resume` block;
+  2. for a publication that predates the block, its `nextAction`, with the continuity index's text
+     and stamp used only while the index still hashes to the recorded `continuityIndexHash`;
+  3. the continuity index, labelled **unbound**;
+  4. the legacy session summary, labelled as not a handoff.
+
+  The mutable index is no longer the Resume's source.
+- **H4 (APPROVE).** Provenance comes before action. The Resume opens by naming the publication, its
+  session, kind, exact staging time and the launch verdict. It labels a publication that is older
+  than the latest session, naming the session that ran after it, and labels any unbound source,
+  before any proposal.
+- **H5 (APPROVE).** The launch source manifest's existing `handoffDigest` slot, and a sibling
+  `handoffPublicationId`, are filled from the same evaluated preflight object, with no second
+  `current.json` read and no DB column. `tc start status` reports both.
+- **H6 (APPROVE).** Semantic staleness remains the agent's required freshness check. The launch
+  exposes a handoff's identity and age, and adds neither network calls nor an arbitrary age cutoff.
+
 ## Two rulings this ADR is required to carry
 
 ### R3 — the recovery default is `operator` (operator, 2026-09-17)
