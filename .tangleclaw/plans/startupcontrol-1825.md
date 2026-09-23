@@ -259,10 +259,16 @@ and are not committed, because they contain account identifiers.
     will be sent).
   - **Update:** the operator only, through the strict operator write, which is extracted from
     recovery-clear into one shared helper so the two cannot drift.
-  - **Fire:** the operator (strict write), or an agent session whose project the operator has
-    listed in a new operator-only config key, `startupPromptFirers`. Its governed scope is a
-    target session in a project that shares a project group with the caller. Identity comes from
-    the existing launch binding (a `project` caller).
+  - **Fire:** the operator (strict write), or an agent session whose project is in the current
+    revision's **`firerProjectIds`**. Its governed scope is a target session in a project that
+    shares a project group with the caller. Identity comes from the existing launch binding (a
+    `project` caller).
+  - **Corrected while building (sent to the Architect as a D4 addendum, message 8ae21e40):** the
+    first draft put the firer list in config (`startupPromptFirers`). `PATCH /api/config`
+    authenticates nobody and is reachable by loopback agent sessions, so an agent could have added
+    its own project. The list therefore lives in the revisioned prompt record, and is written only
+    with the prompt, by the strict operator write, under the same compare-and-set. A firer change
+    is a new audited revision. It also gives B2's S2 payload a real "assignment revision" source.
   - Rejected: inferring the PM or Architect from project names, which any rename breaks; and
     operator-only fire, which departs from S5.
 - **D5: Concurrency and idempotency.**

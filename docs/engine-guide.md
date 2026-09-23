@@ -192,6 +192,7 @@ cache, so an engine you have just installed is never refused.
 | `launchSequence` | **read** | Whether a session on this engine is served its context as an acknowledged `tc start` sequence — see below |
 | `readOnlyModeMarker` | **read** | How this engine's TUI says the session is in a read-only mode, so a wrap refuses instead of timing out — see below |
 | `wake` | **read** | The live-probed pane signature that lets TangleClaw tell a busy pane from a resting one on this engine — see below |
+| `startupControl` | **read** | The native channel TangleClaw can fire the startup prompt through, with a receipt. Active only when it names a registered adapter — see below |
 | `awareness` | declared only | OpenClaw only. Its own `reason` text records why no context carrier can be placed on the remote side — a documented gap rather than an oversight |
 
 **"Declared only" means the flag describes the engine accurately and TangleClaw does nothing with
@@ -575,6 +576,41 @@ pastes a whole prime into a session that already has one.
 prime to *arrive* instead was tried and abandoned: a generated prime runs to hundreds of lines, so
 once it echoes it is not in a pane tail at all, and the check fires on every healthy launch.
 Omit the field and the engine is not watched, which is the honest default.
+
+#### `startupControl`
+
+Declares that TangleClaw can hand this engine its **startup prompt** through the engine's own
+native, persistent, interactive channel, and get back a receipt that the engine accepted and
+applied it (#1825). Pasting bytes into a terminal pane is not such a channel.
+
+```json
+"startupControl": {
+  "adapter": "<registered adapter name>",
+  "channel": "what the native channel is",
+  "readiness": "the channel's own ready signal",
+  "receipt": "what the engine reports on accept and on apply",
+  "blockers": "how auth, quota, approval and trust prompts are reported",
+  "verifiedVersions": ["<engine CLI version>"],
+  "evidence": {
+    "adapter": { "verifiedOn": "YYYY-MM-DD", "source": "where this was verified" }
+  }
+}
+```
+
+Every declared field needs an `evidence` entry, and `evidence` may name no other field, the same
+rule as `wake`. An unknown field, or a malformed block, resolves to **unsupported**.
+
+**A profile names an adapter, and never supplies one.** The adapter is code, registered in
+`ADAPTERS` in `lib/startup-control.js`. A profile whose `adapter` is not registered resolves to
+unsupported, so editing a profile can describe a channel but cannot grant one. The adapter also
+owns the version check: an installed engine version that is not in `verifiedVersions` is reported
+as unsupported, never guessed at.
+
+**No adapter is registered yet.** Every engine currently resolves to unsupported, `tc capabilities`
+says so as `startup-control`, and firing the startup prompt returns a typed
+`STARTUP_CONTROL_UNSUPPORTED` refusal. There is no fallback, and nothing is typed into the pane. The
+prompt itself, and who may read, edit and fire it, are covered in
+[Configuration reference](configuration-reference.md) under `startupPromptFirers`.
 
 ## Config File Generation
 

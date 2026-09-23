@@ -1,0 +1,141 @@
+'use strict';
+
+/*
+ * startupControl capability resolution (#1825). A profile can declare a native
+ * startup channel, but only a REGISTERED adapter makes it supported: editing a
+ * profile can describe a channel and can never grant one.
+ */
+
+const { describe, it } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const sc = require('../lib/startup-control');
+
+/**
+ * A well-formed startupControl block with evidence for every field.
+ * @param {object} [over] - Field overrides.
+ * @returns {object}
+ */
+function block(over = {}) {
+  const b = {
+    adapter: 'fake',
+    channel: 'a native channel',
+    readiness: 'its ready state',
+    receipt: 'accepted and applied events',
+    blockers: 'auth and approval events',
+    verifiedVersions: ['1.0.0'],
+    ...over
+  };
+  const evidence = {};
+  for (const k of Object.keys(b)) evidence[k] = { verifiedOn: '2026-09-23', source: 'a live probe' };
+  return { ...b, evidence };
+}
+
+/**
+ * A profile carrying the given startupControl value.
+ * @param {*} value - The block, or undefined for none.
+ * @returns {object}
+ */
+function profile(value) {
+  const capabilities = value === undefined ? {} : { startupControl: value };
+  return { id: 'eng', capabilities };
+}
+
+describe('startupControl blockErrors', () => {
+  it('accepts a complete block with evidence for every field', () => {
+    assert.deepEqual(sc.blockErrors(block()), []);
+  });
+
+  it('refuses a non-object', () => {
+    assert.ok(sc.blockErrors(null).length > 0);
+    assert.ok(sc.blockErrors([]).length > 0);
+    assert.ok(sc.blockErrors('codex').length > 0);
+  });
+
+  it('requires every field', () => {
+    for (const field of Object.keys(sc.FIELDS)) {
+      const b = block();
+      delete b[field];
+      delete b.evidence[field];
+      assert.ok(sc.blockErrors(b).some((e) => e.includes(`startupControl.${field} is required`)), field);
+    }
+  });
+
+  it('refuses an unknown field', () => {
+    const b = block();
+    b.socketPath = '/tmp/x';
+    b.evidence.socketPath = { verifiedOn: null, source: 'x' };
+    assert.ok(sc.blockErrors(b).some((e) => e.includes('socketPath is not a field')));
+  });
+
+  it('refuses an empty verifiedVersions list', () => {
+    assert.ok(sc.blockErrors(block({ verifiedVersions: [] })).some((e) => e.includes('verifiedVersions')));
+  });
+
+  it('requires evidence for every declared field, and for nothing else', () => {
+    const missing = block();
+    delete missing.evidence.channel;
+    assert.ok(sc.blockErrors(missing).some((e) => e.includes('evidence.channel is missing')));
+
+    const extra = block();
+    extra.evidence.ghost = { verifiedOn: null, source: 'x' };
+    assert.ok(sc.blockErrors(extra).some((e) => e.includes('evidence.ghost has no field')));
+
+    const noEvidence = block();
+    delete noEvidence.evidence;
+    assert.ok(sc.blockErrors(noEvidence).some((e) => e.includes('evidence is required')));
+  });
+
+  it('checks evidence dates and sources', () => {
+    const b = block();
+    b.evidence.adapter = { verifiedOn: 'yesterday', source: '' };
+    const errors = sc.blockErrors(b);
+    assert.ok(errors.some((e) => e.includes('verifiedOn must be an ISO date')));
+    assert.ok(errors.some((e) => e.includes('source must name')));
+  });
+});
+
+describe('startupControl resolve', () => {
+  const registry = { fake: { name: 'fake' } };
+
+  it('is unsupported when the profile declares nothing', () => {
+    const r = sc.resolve(profile(undefined), registry);
+    assert.equal(r.supported, false);
+    assert.match(r.reason, /declares no startupControl/);
+  });
+
+  it('is unsupported when the block is malformed, even if its adapter exists', () => {
+    const r = sc.resolve(profile({ adapter: 'fake' }), registry);
+    assert.equal(r.supported, false);
+    assert.match(r.reason, /malformed/);
+  });
+
+  it('is unsupported when the named adapter is not registered: a profile cannot grant one', () => {
+    const r = sc.resolve(profile(block({ adapter: 'nope' })), registry);
+    assert.equal(r.supported, false);
+    assert.match(r.reason, /"nope".*does not implement/);
+    assert.equal(r.adapter, null);
+  });
+
+  it('is supported only when a well-formed block names a registered adapter', () => {
+    const r = sc.resolve(profile(block()), registry);
+    assert.equal(r.supported, true);
+    assert.equal(r.adapter, registry.fake);
+  });
+
+  it('does not resolve an inherited property as an adapter', () => {
+    const r = sc.resolve(profile(block({ adapter: 'toString' })), {});
+    assert.equal(r.supported, false);
+  });
+
+  it('ships with no registered adapter, so every bundled engine is unsupported', () => {
+    assert.deepEqual(Object.keys(sc.ADAPTERS), []);
+    const dir = path.join(__dirname, '..', 'data', 'engines');
+    for (const f of fs.readdirSync(dir).filter((n) => n.endsWith('.json'))) {
+      const p = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+      assert.equal(sc.resolve(p).supported, false, f);
+    }
+  });
+});
