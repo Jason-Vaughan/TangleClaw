@@ -159,12 +159,16 @@ describe('_classifyDirty routes carriers on containment, not on path (#1241)', (
     assert.equal(asked, false, 'an untracked carrier must not be probed');
   });
 
-  it('leaves every other path on THE LINE exactly where it was', () => {
+  it('consults the proof only for the two proven files; every other path is real work', () => {
+    // #1537 retired the `.tangleclaw/` prefix: a `true` from the caller cannot
+    // make a path discardable that no proof covers.
+    const asked = [];
     const d = applier._classifyDirty(
       ' M .tangleclaw/x\n M .claude/settings.json\n M .claude/settings.local.json\n M lib/a.js\n',
-      () => true);
-    assert.deepEqual(d.discardable.map((e) => e.path), ['.tangleclaw/x', '.claude/settings.json']);
-    assert.deepEqual(d.realWork, ['.claude/settings.local.json', 'lib/a.js']);
+      (p) => { asked.push(p); return true; });
+    assert.deepEqual(d.discardable.map((e) => e.path), ['.claude/settings.json']);
+    assert.deepEqual(d.realWork, ['.tangleclaw/x', '.claude/settings.local.json', 'lib/a.js']);
+    assert.deepEqual(asked, ['.claude/settings.json']);
   });
 });
 
@@ -208,6 +212,17 @@ describe('the carrier list tracks its source of truth', () => {
     // pointing at a file that no longer exists.
     assert.ok(applier.MANAGED_BLOCK_CARRIERS.includes(profile.configFormat.filename),
       `MANAGED_BLOCK_CARRIERS must include "${profile.configFormat.filename}"`);
+  });
+
+  it('names the shared hook settings file the engine layer declares', () => {
+    // The updater writes this path out so it can load without the engine
+    // layer. A move in engines must fail here, not leave the updater refusing
+    // every project partway through retiring its old hooks.
+    assert.ok(engines.SHARED_HOOK_SETTINGS_PATHS.includes(applier.HOOK_SETTINGS_FILE),
+      `SHARED_HOOK_SETTINGS_PATHS must include "${applier.HOOK_SETTINGS_FILE}"`);
+    assert.deepEqual([...applier.PROOFS.keys()].sort(),
+      [...applier.MANAGED_BLOCK_CARRIERS, applier.HOOK_SETTINGS_FILE].sort(),
+      'the proof table holds exactly the carriers and the hook settings file');
   });
 
   it('locates markers with the syntax that profile declares', () => {

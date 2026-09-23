@@ -1,6 +1,6 @@
 ---
 title: "Train A Car A1: live checkout and coordinated freshness truth"
-status: IN PROGRESS — Chunks 1–2 shipped (#1788, #1791); Chunk 3 authorized by the PM 2026-09-22 (message 608a9df0), Architect ruled D16–D20 (message e0655cb7; D16 modified)
+status: COMPLETE — Chunks 1–3 shipped (#1788, #1791, #1794); #993 and #1678 closed
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (message 7206bde4)
 issues: [993, 1678]
 governed_by:

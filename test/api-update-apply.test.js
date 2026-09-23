@@ -67,15 +67,27 @@ describe('POST /api/update/apply (UB #228/#229)', () => {
       const key = args.join(' ');
       calls.push(key);
       if (key === 'rev-parse HEAD') return 'old\n';
-      if (key === 'status --porcelain') return '?? .tangleclaw/\n';
+      if (key === 'status --porcelain') return ' M .claude/settings.json\n';
+      // A committed settings file carrying a hook TangleClaw retires; the
+      // working copy below is that file after the retirement write.
+      if (key === 'show HEAD:.claude/settings.json') {
+        return JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'bash data/hooks/sessionstart-prime-claude.sh' }] }] } });
+      }
       throw new Error(`unexpected git: ${key}`);
     };
-    const { status, body } = callRoute({ discardDirty: 'yes' });
+    const origRead = applier._internal.readFile;
+    applier._internal.readFile = () => JSON.stringify({});
+    let status, body;
+    try {
+      ({ status, body } = callRoute({ discardDirty: 'yes' }));
+    } finally {
+      applier._internal.readFile = origRead;
+    }
     assert.equal(status, 409, 'a truthy string must refuse like no flag at all');
     assert.equal(body.code, 'dirty-tree');
-    assert.deepEqual(body.dirty, { discardable: ['.tangleclaw/'], realWork: [] },
+    assert.deepEqual(body.dirty, { discardable: ['.claude/settings.json'], realWork: [] },
       'the refusal payload must reach the wire');
-    assert.equal(calls.some((c) => c.startsWith('clean')), false, 'and nothing is discarded');
+    assert.equal(calls.some((c) => c.startsWith('checkout --')), false, 'and nothing is discarded');
   });
 
   it('returns 409 with a stable code on a refused guard (dirty tree)', () => {
