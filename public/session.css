@@ -2055,6 +2055,16 @@ html[data-tc-keyboard] body {
   color: var(--text-secondary);
   font-family: var(--font-mono, monospace);
 }
+/* #1708 — what the running wrap will do to the session if it completes, and
+   #1707 — where a cancel stands. Informational lines under the banner. */
+.wrap-drawer-planned,
+.wrap-drawer-cancelnote {
+  padding: 8px 16px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--elevated-bg);
+}
+.wrap-drawer-cancelnote { color: #f59e0b; }
 /* #571 item 4 — honest skip rollup shown under the status banner. */
 .wrap-drawer-skiproll {
   padding: 8px 16px 12px;

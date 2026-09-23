@@ -1,6 +1,6 @@
 ---
 title: "Train A Car A3: wrap intent, artifact admission, and honest cancellation"
-status: PLANNING — Chunk 01 plan written 2026-09-23; Architect rulings on C1–C2 and D1–D5 pending
+status: IN PROGRESS — Chunk 01 built on branch fix/a3-chunk1-wrap-intent; Architect ruled C1–C2, D1–D5 (message 417454d7); PM approved plan and order (message 8219ab12)
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-23 (messages ecdbe884, 39998da1)
 issues: [1708, 1707, 1738, 1724, 1507, 1675]
 governed_by:
@@ -214,6 +214,17 @@ superseded by the corrected boundary in D3.
 - Dismissing a `stalled` or `lost` run re-checks `GET /wrap/status` before returning the button to
   idle. If the server still reports the run, the controller re-follows it instead of offering a
   fresh "Wrap" that would take over a live slot.
+- `wrapKeepSessionRunning` defaults to `null` (never set), not `false`. The loader merges
+  defaults into every config, so a literal `false` would make "the project chose false"
+  indistinguishable from "never chose", and `keepSource` would report `project` for both.
+- The dialogs now send `keepSessionRunning` as an explicit boolean either way. Before, they sent
+  it only when true. An untick has to be able to override a project set to keep. The page holds
+  `null` when it never chose (it is following a run started elsewhere), so a Retry from it sends
+  nothing, and the server keeps the retried run's answer (D1 rule 3).
+- The run-start `sessionOutcomePlanned` is derived from the resolved `keepSessionRunning`. It is
+  never read from the options.
+- The stale test contracts that pinned "sent only when true" and the exact status/option key sets
+  were updated to the new contract with equal-strength assertions. None was removed.
 - The landing-page modal gets the same default pre-tick and planned-outcome line. It has no live
   drawer, so no Cancel there.
 - Docs: `docs/configuration-reference.md` (new setting), the API contract doc (new route and

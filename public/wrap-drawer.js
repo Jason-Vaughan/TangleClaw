@@ -475,6 +475,23 @@
     if (pipelineResult.error && !pipelineResult.blockedAt) {
       return { label: 'Wrap failed', tone: 'error', detail: pipelineResult.error };
     }
+    // #1707 — an operator's cancel. Not a block: nothing failed, so nothing is
+    // offered to Retry or Skip. What stopping guaranteed, and what it did not
+    // undo, are both said, because a clean-looking stop invites the reading that
+    // the steps which ran left nothing behind.
+    if (pipelineResult.cancelledAt) {
+      const ran = (pipelineResult.results || [])
+        .filter((r) => r.status !== 'pending')
+        .map((r) => r.stepId);
+      return {
+        label: `Wrap cancelled before "${pipelineResult.cancelledAt}"`,
+        tone: 'warning',
+        detail: 'Nothing was committed, branched, pushed or opened as a PR, and the session is still running. '
+          + (ran.length > 0
+            ? `These steps had already run and are not undone, so uncommitted edits or local state they wrote may remain: ${ran.join(', ')}.`
+            : 'No step had run.')
+      };
+    }
     if (pipelineResult.blockedAt) {
       const blocked = (pipelineResult.results || []).find((r) => r.stepId === pipelineResult.blockedAt);
       const reason = blocked && blocked.blockers && blocked.blockers[0] ? blocked.blockers[0] : 'See blocked step below';
@@ -1170,10 +1187,14 @@
       const v = accessors.untrackState();
       if (v === 'approve' || v === 'decline') options.untrackState = v;
     }
-    // #1558 — keep the session open after a finished run. Sent only as true:
-    // the server ends the session when it is absent.
-    if (accessors.keepSessionRunning && accessors.keepSessionRunning() === true) {
-      options.keepSessionRunning = true;
+    // #1558 / #1708 — keep the session open after a finished run. Sent as the
+    // boolean the page holds when it holds one (the dialog's tick, untick
+    // included, or the run's own recorded answer); null means the page never
+    // chose, and sends nothing, so the server resolves it (the project's
+    // setting, or the retried run's recorded answer).
+    if (accessors.keepSessionRunning) {
+      const keep = accessors.keepSessionRunning();
+      if (typeof keep === 'boolean') options.keepSessionRunning = keep;
     }
     // #1540 — the stranded wraps the operator chose to wrap past. Sent as the
     // server listed them; an empty choice sends nothing, so the wrap is gated.
@@ -1234,7 +1255,7 @@
    * chosen, which is what the page held before the reload taught it anything.
    *
    * @param {*} options - `status.options` for the run being followed.
-   * @returns {{release: string, bumpLevel: string, skipPreflight: boolean, pathDecisions: Object<string, string>, skipAiContent: Object<string, true>, untrackState: string, proceedPastStranded: Array<object>, keepSessionRunning: boolean}}
+   * @returns {{release: string, bumpLevel: string, skipPreflight: boolean, pathDecisions: Object<string, string>, skipAiContent: Object<string, true>, untrackState: string, proceedPastStranded: Array<object>, keepSessionRunning: (boolean|null)}}
    */
   function replayChoicesFromOptions(options) {
     const o = options && typeof options === 'object' ? options : {};
@@ -1256,7 +1277,9 @@
     return {
       release, bumpLevel, skipPreflight: o.skipPreflight === true, pathDecisions, skipAiContent, untrackState,
       proceedPastStranded: strandedKeysOf(o.proceedPastStranded),
-      keepSessionRunning: o.keepSessionRunning === true
+      // null when the run recorded no boolean: a Retry then sends nothing and
+      // the server keeps whatever it resolved for the run.
+      keepSessionRunning: typeof o.keepSessionRunning === 'boolean' ? o.keepSessionRunning : null
     };
   }
 
@@ -1360,7 +1383,13 @@
    * @returns {{results: object[], blockedAt: string|null, currentStepId: string|null, started: boolean, done: boolean, result: object|null}}
    */
   function emptyWrapLive() {
-    return { results: [], blockedAt: null, currentStepId: null, currentStepStartedAt: null, skewMs: null, started: false, done: false, result: null };
+    return {
+      results: [], blockedAt: null, currentStepId: null, currentStepStartedAt: null, skewMs: null, started: false, done: false, result: null,
+      // #1708 — what the run will do to the session if it completes, and why; from `run-start`.
+      sessionOutcomePlanned: null, keepSource: null,
+      // #1707 — whether the run has started its cancel-boundary step (`commit`).
+      pastCancelBoundary: false
+    };
   }
 
   /**
@@ -1491,6 +1520,10 @@
       next.blockedAt = null;
       next.currentStepId = null;
       next.currentStepStartedAt = null;
+      next.sessionOutcomePlanned = event.sessionOutcomePlanned === 'keep' || event.sessionOutcomePlanned === 'end'
+        ? event.sessionOutcomePlanned : null;
+      next.keepSource = typeof event.keepSource === 'string' ? event.keepSource : null;
+      next.pastCancelBoundary = false;
     },
     'step-start': (next, event) => {
       if (typeof event.stepId !== 'string') return;
@@ -1500,6 +1533,9 @@
       // Server time the step began; a legacy frame without it shows no clock.
       next.currentStepStartedAt = Number.isFinite(event.at) ? event.at : null;
       next.started = true;
+      // One-way, as on the server: once the boundary step starts, no later step
+      // makes the run cancellable again.
+      if (event.pastCancelBoundary === true) next.pastCancelBoundary = true;
     },
     'step-done': (next, event) => settleLiveRow(next, event, 'done'),
     'step-blocked': (next, event) => settleLiveRow(next, event, 'blocked'),
@@ -1510,6 +1546,75 @@
       next.currentStepStartedAt = null;
     }
   };
+
+  /**
+   * Words for where a keep-running answer came from (#1708).
+   * @type {Record<string, string>}
+   */
+  const KEEP_SOURCE_LABELS = {
+    request: 'chosen for this wrap',
+    project: 'project setting',
+    default: 'default'
+  };
+
+  /**
+   * #1708 — the drawer's line about the session, stated from the first frame.
+   *
+   * Conditional on purpose: the run has not finished, and a run that stops,
+   * fails or is cancelled leaves the session running whatever was planned, so
+   * the plan is never worded as what will happen.
+   *
+   * @param {object|null} live - Live state from `applyWrapStreamEvent`
+   * @returns {string|null} Null when the run said nothing about it
+   */
+  function plannedSessionLine(live) {
+    const state = live && typeof live === 'object' ? live : {};
+    if (state.sessionOutcomePlanned !== 'keep' && state.sessionOutcomePlanned !== 'end') return null;
+    const verb = state.sessionOutcomePlanned === 'keep' ? 'keep the session running' : 'end the session';
+    const source = KEEP_SOURCE_LABELS[state.keepSource];
+    return `If this wrap completes, it will ${verb}${source ? ` (${source})` : ''}.`;
+  }
+
+  /**
+   * #1707 — the live drawer's Cancel control, from the live view and whatever
+   * this page knows about a cancel it sent.
+   *
+   * Three states, never a control that promises more than the server does:
+   *   - before the cancel boundary: "Cancel wrap", enabled;
+   *   - a cancel accepted: disabled, saying which step is still finishing;
+   *   - past the boundary: no button, and a note that the wrap continues,
+   *     naming the step it is actually on (continuity and handoff run after
+   *     the commit, so "committing" would be false most of that time).
+   *
+   * @param {object|null} live - Live state from `applyWrapStreamEvent`
+   * @param {{requested?: boolean, finishingStepId?: (string|null)}} [cancel] - This page's cancel, if sent and accepted
+   * @returns {{show: boolean, disabled: boolean, label: string, note: string|null}}
+   */
+  function liveCancelControl(live, cancel) {
+    const state = live && typeof live === 'object' ? live : {};
+    const current = typeof state.currentStepId === 'string' ? state.currentStepId : null;
+    if (state.done === true) return { show: false, disabled: true, label: 'Cancel wrap', note: null };
+    if (state.pastCancelBoundary === true) {
+      return {
+        show: false,
+        disabled: true,
+        label: 'Cancel wrap',
+        note: `Past the point of cancellation; the wrap continues${current ? ` (now at "${current}")` : ''}.`
+      };
+    }
+    if (cancel && cancel.requested === true) {
+      const finishing = cancel.finishingStepId || current;
+      return {
+        show: true,
+        disabled: true,
+        label: 'Cancelling…',
+        note: finishing
+          ? `Cancel accepted. "${finishing}" is finishing; the wrap stops before the next step.`
+          : 'Cancel accepted. The wrap stops before its next step.'
+      };
+    }
+    return { show: true, disabled: false, label: 'Cancel wrap', note: null };
+  }
 
   /**
    * #185 — the live view as a `pipelineResult`, so the rows render through
@@ -1785,6 +1890,8 @@
   }
 
   const helpers = {
+    plannedSessionLine,
+    liveCancelControl,
     KIND_LABELS,
     KIND_DESCRIPTIONS,
     STATUS_META,

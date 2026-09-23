@@ -3733,9 +3733,10 @@ function openWrapModal() {
   const releaseEl = document.getElementById('wrapRelease');
   if (releaseEl) releaseEl.value = '';
   // #1558 — same reason: a keep-running tick from a cancelled wrap must not
-  // keep a later wrap's session open.
+  // keep a later wrap's session open. #1708: it starts from the project's
+  // setting, which is what a wrap started anywhere else inherits.
   const keepEl = document.getElementById('wrapKeepRunning');
-  if (keepEl) keepEl.checked = false;
+  if (keepEl) keepEl.checked = Boolean(sessionState.project && sessionState.project.wrapKeepSessionRunning === true);
   syncWrapReleaseControls();
   // The mode read at page load may be stale: another tab can change it while
   // this one stays open. Re-read it so the controls match what the server will
@@ -4087,13 +4088,14 @@ let wrapUntrackState = '';
 let wrapProceedPastStranded = [];
 
 /**
- * #1558 — "Keep the session running", chosen in the wrap modal. A finished run
- * ends the session unless this is true. Replayed on every retry so a stopped
- * run the operator answers still keeps the session, and reset by a new wrap
- * from the modal.
- * @type {boolean}
+ * #1558 — "Keep the session running", chosen in the wrap modal. Replayed on
+ * every retry so a stopped run the operator answers keeps its answer, and reset
+ * by a new wrap from the modal. #1708: null when this page never chose (it
+ * follows a run started elsewhere): nothing is sent, and the server keeps what
+ * it resolved for the run.
+ * @type {boolean|null}
  */
-let wrapKeepRunning = false;
+let wrapKeepRunning = null;
 
 /**
  * #1540 — the stranded wraps named by the last refused wrap POST, or null. The
@@ -4177,9 +4179,32 @@ function openWrapDrawer(pipelineResult, runContext) {
  */
 function closeWrapDrawer() {
   const before = wrapRunState();
+  // #1707 — a stalled or lost run may still be running on the server. Letting
+  // it go would put an idle "Wrap" button over a live pipeline, and a click
+  // there could start a second run over the stale slot. Ask first.
+  if (before.phase === 'stalled' || before.phase === 'lost') {
+    refollowIfStillRunning(before.runId);
+  }
   // A popover open with nothing followed (the controller saw no change) is still
   // closed; otherwise the controller's own effect closes it.
   if (dispatchWrapRun({ type: 'dismiss' }) === before) hideWrapDrawer();
+}
+
+/**
+ * #1707 — after a stalled or lost run is dismissed, follow it again (hidden)
+ * when the server says it is still that project's running wrap. A failed probe
+ * changes nothing: it is not evidence either way.
+ *
+ * @param {string|null} runId - The run the drawer was showing
+ * @returns {Promise<void>}
+ */
+async function refollowIfStillRunning(runId) {
+  if (!runId) return;
+  const status = await _probeWrapStatus(wrapStatusUrl());
+  if (!status || status.runId !== runId || status.running !== true) return;
+  if (wrapRunState().phase !== 'idle') return;
+  dispatchWrapRun({ type: 'follow', runId });
+  collapseWrapPopover();
 }
 
 /**
@@ -4432,6 +4457,7 @@ function renderSkipRoll(pipelineResult) {
  */
 function renderWrapDrawer(pipelineResult, runContext) {
   const H = window.tcWrapDrawerHelpers;
+  hideLiveSessionControls();
   const status = H.summarizePipelineStatus(pipelineResult, runContext);
   currentWrapBaseStatus = status;
 
@@ -6267,10 +6293,92 @@ function renderLiveWrapDrawer(live, opts) {
   decisionEl.classList.add('hidden');
   document.getElementById('wrapDrawerRetryBtn').classList.add('hidden');
   document.getElementById('wrapDrawerDoneBtn').classList.add('hidden');
-  document.getElementById('wrapDrawerCancelBtn').textContent = 'Close';
+  // #1707 — while a run is live this control only hides the drawer, so it says
+  // so; the run keeps going and the Wrap button reopens it. Stopping the run is
+  // the separate Cancel control below, offered only while it can be honoured.
+  const hideBtn = document.getElementById('wrapDrawerCancelBtn');
+  hideBtn.textContent = 'Hide';
+  hideBtn.title = 'Hide this panel. The wrap keeps running; the Wrap button reopens it.';
+  paintLiveSessionControls(live);
 
   paintLiveTiming();
   expandWrapDrawer();
+}
+
+/**
+ * #1707 — what this page knows about a cancel it sent: the run it was for,
+ * whether the server accepted it, and the step it said was still finishing.
+ * Reset whenever the page follows a different run.
+ * @type {{runId: (string|null), requested: boolean, finishingStepId: (string|null)}}
+ */
+let wrapCancelState = { runId: null, requested: false, finishingStepId: null };
+
+/**
+ * #1708 / #1707 — paint the live drawer's planned-session line and its Cancel
+ * control from the live view. Words and states come from the pure helpers, so
+ * the page cannot promise more than the server does.
+ *
+ * @param {object|null} live - From `tcWrapDrawerHelpers.applyWrapStreamEvent`
+ */
+function paintLiveSessionControls(live) {
+  const H = window.tcWrapDrawerHelpers;
+  const runId = wrapRunState().runId || null;
+  if (wrapCancelState.runId !== runId) wrapCancelState = { runId, requested: false, finishingStepId: null };
+
+  const plannedEl = document.getElementById('wrapDrawerPlanned');
+  const line = H.plannedSessionLine(live);
+  plannedEl.textContent = line || '';
+  plannedEl.classList.toggle('hidden', !line);
+
+  const control = H.liveCancelControl(live, wrapCancelState);
+  const abortBtn = document.getElementById('wrapDrawerAbortBtn');
+  abortBtn.textContent = control.label;
+  abortBtn.disabled = control.disabled || !runId;
+  abortBtn.classList.toggle('hidden', !control.show);
+  const noteEl = document.getElementById('wrapDrawerCancelNote');
+  noteEl.textContent = control.note || '';
+  noteEl.classList.toggle('hidden', !control.note);
+}
+
+/**
+ * Take the live-only controls off the drawer: a settled report, a notice and
+ * an error have no run left to plan for or cancel.
+ */
+function hideLiveSessionControls() {
+  document.getElementById('wrapDrawerPlanned').classList.add('hidden');
+  document.getElementById('wrapDrawerCancelNote').classList.add('hidden');
+  document.getElementById('wrapDrawerAbortBtn').classList.add('hidden');
+  const hideBtn = document.getElementById('wrapDrawerCancelBtn');
+  hideBtn.removeAttribute('title');
+}
+
+/**
+ * #1707 — ask the server to stop the followed run at its next step boundary.
+ * The server decides: a 202 disables the control and says which step is still
+ * finishing; a 409 (past the commit step) or any other refusal shows the
+ * server's own reason and leaves the drawer following the run, which is what
+ * it is actually doing.
+ */
+async function requestWrapCancel() {
+  const runId = wrapRunState().runId;
+  if (!runId) return;
+  const abortBtn = document.getElementById('wrapDrawerAbortBtn');
+  abortBtn.disabled = true;
+  const body = { runId };
+  if (currentWrapPassword) body.password = currentWrapPassword;
+  const result = await apiMutate(`/api/sessions/${encodeURIComponent(projectName)}/wrap/cancel`, 'POST', body);
+  if (wrapRunState().runId !== runId) return;
+  if (result && result.cancelRequested === true) {
+    wrapCancelState = { runId, requested: true, finishingStepId: result.finishingStepId || null };
+  } else {
+    const toast = document.getElementById('toast');
+    if (toast) {
+      toast.textContent = api.lastError || 'The wrap could not be cancelled.';
+      toast.className = 'toast toast-warn visible';
+      setTimeout(() => { toast.classList.remove('visible'); }, 5000);
+    }
+  }
+  paintLiveSessionControls(wrapRunState().live || null);
 }
 
 // ── Wrapping State ──
@@ -6346,6 +6454,7 @@ function cancelEndedCountdown() {
  */
 function openWrapDrawerNotice(label, detail) {
   sessionState.wrapDrawerOpen = true;
+  hideLiveSessionControls();
   cancelEndedCountdown();
   document.getElementById('wrapStepList').innerHTML = '';
   document.getElementById('wrapDrawerDecision').innerHTML = '';
@@ -6841,6 +6950,7 @@ function bindEvents() {
   $('wrapDrawerCloseBtn').addEventListener('click', collapseWrapPopover);
   $('wrapDrawerCopyBtn').addEventListener('click', copyWrapReport);
   $('wrapDrawerCancelBtn').addEventListener('click', closeWrapDrawer);
+  $('wrapDrawerAbortBtn').addEventListener('click', requestWrapCancel);
   $('wrapDrawerDoneBtn').addEventListener('click', closeWrapDrawer);
   $('wrapDrawerRetryBtn').addEventListener('click', retryWrap);
   paintWrapButton();

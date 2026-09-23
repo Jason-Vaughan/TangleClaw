@@ -749,3 +749,143 @@ describe('wrap intent and cancel through sessions and HTTP (#1708, #1707)', () =
     });
   });
 });
+
+describe('drawer: planned outcome, Hide and Cancel (#1708, #1707)', () => {
+  const drawer = require('../public/wrap-drawer');
+  const vm = require('node:vm');
+  const SESSION_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
+  const SESSION_HTML = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.html'), 'utf8');
+
+  /**
+   * Fold events into a live view, as the page does.
+   * @param {object[]} events
+   * @returns {object}
+   */
+  const fold = (events) => events.reduce((live, e) => drawer.applyWrapStreamEvent(live, e), null);
+  const START = { type: 'run-start', steps: [{ stepId: 'a', kind: 'ai-content' }, { stepId: 'commit', kind: 'commit' }, { stepId: 'handoff-stage', kind: 'handoff-stage' }] };
+
+  it('states the planned outcome conditionally, with its source', () => {
+    assert.equal(drawer.plannedSessionLine(fold([{ ...START, sessionOutcomePlanned: 'keep', keepSource: 'project' }])),
+      'If this wrap completes, it will keep the session running (project setting).');
+    assert.equal(drawer.plannedSessionLine(fold([{ ...START, sessionOutcomePlanned: 'end', keepSource: 'default' }])),
+      'If this wrap completes, it will end the session (default).');
+    assert.equal(drawer.plannedSessionLine(fold([START])), null, 'a run that said nothing gets no line');
+  });
+
+  it('offers Cancel before the boundary, then says the wrap continues and where', () => {
+    const before = fold([START, { type: 'step-start', stepId: 'a', pastCancelBoundary: false }]);
+    assert.deepEqual(drawer.liveCancelControl(before), { show: true, disabled: false, label: 'Cancel wrap', note: null });
+    const past = fold([START, { type: 'step-start', stepId: 'a', pastCancelBoundary: false },
+      { type: 'step-done', stepId: 'a', status: 'done' },
+      { type: 'step-start', stepId: 'commit', pastCancelBoundary: true },
+      { type: 'step-done', stepId: 'commit', status: 'done' },
+      { type: 'step-start', stepId: 'handoff-stage', pastCancelBoundary: true }]);
+    const control = drawer.liveCancelControl(past);
+    assert.equal(control.show, false);
+    assert.match(control.note, /Past the point of cancellation; the wrap continues/);
+    assert.match(control.note, /handoff-stage/, 'names the actual step, not "committing"');
+    assert.doesNotMatch(control.note, /committing/);
+  });
+
+  it('disables Cancel once accepted and says which step is finishing', () => {
+    const live = fold([START, { type: 'step-start', stepId: 'a', pastCancelBoundary: false }]);
+    const control = drawer.liveCancelControl(live, { requested: true, finishingStepId: 'a' });
+    assert.equal(control.show, true);
+    assert.equal(control.disabled, true);
+    assert.match(control.note, /"a" is finishing/);
+  });
+
+  it('reports a cancelled run as its own outcome, naming what ran and what was not undone', () => {
+    const s = drawer.summarizePipelineStatus({
+      ok: false, blockedAt: null, cancelledAt: 'commit', error: null,
+      results: [{ stepId: 'a', status: 'done' }, { stepId: 'commit', status: 'pending' }]
+    });
+    assert.equal(s.label, 'Wrap cancelled before "commit"');
+    assert.notEqual(s.tone, 'blocked');
+    assert.match(s.detail, /Nothing was committed, branched, pushed or opened as a PR/);
+    assert.match(s.detail, /not undone/);
+    assert.match(s.detail, /: a\./);
+  });
+
+  it('has the Cancel control and the live lines in the page', () => {
+    assert.match(SESSION_HTML, /id="wrapDrawerAbortBtn"/);
+    assert.match(SESSION_HTML, /id="wrapDrawerPlanned"/);
+    assert.match(SESSION_HTML, /id="wrapDrawerCancelNote"/);
+  });
+
+  /**
+   * Lift a top-level function out of the page source by brace matching.
+   * @param {string} decl
+   * @returns {string}
+   */
+  function lift(decl) {
+    const start = SESSION_SRC.indexOf(decl);
+    assert.notEqual(start, -1, `${decl} must exist`);
+    let depth = 0;
+    for (let i = SESSION_SRC.indexOf('{', start); i < SESSION_SRC.length; i++) {
+      if (SESSION_SRC[i] === '{') depth++;
+      else if (SESSION_SRC[i] === '}' && --depth === 0) return SESSION_SRC.slice(start, i + 1);
+    }
+    return assert.fail('unbalanced');
+  }
+
+  /**
+   * A sandbox running the page's real cancel wiring against a fake DOM and API.
+   * @param {object} answer - What the fake cancel POST answers
+   * @returns {object}
+   */
+  function pageSandbox(answer) {
+    const els = {};
+    const el = (id) => {
+      if (!els[id]) {
+        const classes = new Set(['hidden']);
+        els[id] = {
+          id, textContent: '', disabled: false, className: '', title: '',
+          removeAttribute() {}, classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c), contains: (c) => classes.has(c), toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)) }
+        };
+      }
+      return els[id];
+    };
+    const live = fold([START, { type: 'run-start', ...START, sessionOutcomePlanned: 'end', keepSource: 'default' }, { type: 'step-start', stepId: 'a', pastCancelBoundary: false }]);
+    const sandbox = {
+      els, posted: [],
+      document: { getElementById: el },
+      window: { tcWrapDrawerHelpers: drawer },
+      projectName: 'proj',
+      api: { lastError: 'refused by the server' },
+      currentWrapPassword: 'pw',
+      wrapRunState: () => ({ runId: 'run-1', live }),
+      async apiMutate(url, method, body) { sandbox.posted.push({ url, method, body }); return answer; },
+      setTimeout: () => {}
+    };
+    vm.createContext(sandbox);
+    vm.runInContext([
+      'let wrapCancelState = { runId: null, requested: false, finishingStepId: null };',
+      lift('function paintLiveSessionControls('),
+      lift('async function requestWrapCancel('),
+      'this.paint = () => paintLiveSessionControls(wrapRunState().live);',
+      'this.cancel = requestWrapCancel;'
+    ].join('\n'), sandbox);
+    return sandbox;
+  }
+
+  it('the page posts the run id and password, and disables Cancel on a 202', async () => {
+    const sb = pageSandbox({ ok: true, cancelRequested: true, finishingStepId: 'a', willStopBefore: 'commit' });
+    sb.paint();
+    assert.equal(sb.els.wrapDrawerAbortBtn.classList.contains('hidden'), false, 'Cancel is offered');
+    assert.equal(sb.els.wrapDrawerPlanned.textContent, 'If this wrap completes, it will end the session (default).');
+    await sb.cancel();
+    assert.deepEqual(JSON.parse(JSON.stringify(sb.posted[0])), { url: '/api/sessions/proj/wrap/cancel', method: 'POST', body: { runId: 'run-1', password: 'pw' } });
+    assert.equal(sb.els.wrapDrawerAbortBtn.disabled, true);
+    assert.match(sb.els.wrapDrawerCancelNote.textContent, /"a" is finishing/);
+  });
+
+  it('the page shows the server\'s refusal and keeps following the run', async () => {
+    const sb = pageSandbox(null);
+    sb.els.toast = null;
+    sb.paint();
+    await sb.cancel();
+    assert.equal(sb.els.wrapDrawerAbortBtn.disabled, false, 'still offered: nothing was accepted');
+    assert.equal(sb.els.toast.textContent, 'refused by the server');
+  });
+});
