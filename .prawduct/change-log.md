@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-23 — A finished wrap names the publication the next launch resumes from (#1675)
+
+<!-- prawduct: type=feature | scope=train-a-car-a3 -->
+
+Train A Car A3 Chunk 04, the car's last. A wrap could report success while its handoff went unpublished, because `_finalizeHandoff` dropped the publish result. The next launch's Resume was read from `.tangleclaw/continuity/index.md`, which every wrap attempt that reaches its continuity step rewrites. A session that crashed after an earlier wrap was handed that wrap's next action with nothing saying it was older.
+
+**The wrap names its publication.** The run result, `/wrap/status` and `run-done` carry `handoffPublication` (`published`, `not-published`, `abandoned` or `not-staged`), with the id, digest and reason. Supersession is directional: `supersededId` is the publication this one displaced, `supersededById` the one it lost to (Architect H1 MODIFY). The drawer warns "handoff NOT published", and the warning survives a blocked-release banner.
+
+**The handoff freezes its resume, and the launch renders that.** `tc.handoff/1` gains an optional `resume` block with one normalizer (`normalizeResume`). Its next action and the top-level `nextAction` are one canonical value, and a disagreement is refused (H2 MODIFY). A continuity step that did not write the index degrades the handoff. `evaluate` hands the launch the resume from the same `current.json` its verdict read. The Resume opens with the publication's id, digest, session, exact staging time and verdict. It is labelled OLDER when a later session ran after it, UNBOUND when it comes from the index, and "not a handoff" for a session summary. The launch manifest records the consumed id and digest, and `tc start status` prints them (H3–H5).
+
+Measured, not inferred: the 2026-09-21 PM recurrence was a correctly bound publication whose next action was already stale when captured, so deciding whether the text is current stays the session's freshness check (H6). Architect rulings H1–H6 are in message ed93ebab, and ADR 0002 and ADR 0017 are amended. Filed #1816 (a server restart mid-wrap loses the run).
+
 ## 2026-09-23 — A new file is admitted by a decision, and a cleared draft is kept privately rather than logged (#1724, #1507)
 
 <!-- prawduct: type=feature | scope=train-a-car-a3 -->
