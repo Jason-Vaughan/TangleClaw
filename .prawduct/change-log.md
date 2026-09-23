@@ -41,7 +41,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 `prawduct-hook reanchor --apply` replaced the stale anchor block in `CLAUDE.md` and nothing else. The new block tells a session without the plugin that governance is off and how to install it, and it adds the stage-keyed review rule (#1820).
 
-#1819 has no tracked diff. This clone's learnings are gitignored and local-only (#1792), so the split was done in place. `active-rules.md` (115 KB) became eleven area files, grouped by concern and each scoped by `paths:` to where its rules fire. Every file is at most 16 KB, so the `learnings_budgets` override is gone. A check confirmed that all 133 rules appear exactly once and unchanged. Reading `lib/wrap-scope.js` loaded exactly the four code-scoped files. The plan, with Architect items D1–D7, is `.tangleclaw/plans/learnings-split-reanchor.md`.
+#1819 has no tracked diff. This clone's learnings are gitignored and local-only (#1792), so the split was done in place. `active-rules.md` (115 KB) became twelve area files, grouped by concern. Following the Architect's rulings, the shell and git hazards load every session, and the claim, review and evidence rules load on code reads as well as doc reads. Every file is at most 16 KB, so the `learnings_budgets` override is gone. A check confirmed that all 133 rules appear exactly once and unchanged. A live read of a code file loaded only the files scoped to it. The plan, with Architect items D1–D7, is `.tangleclaw/plans/learnings-split-reanchor.md`.
 
 ## 2026-09-23 — A finished wrap names the publication the next launch resumes from (#1675)
 
