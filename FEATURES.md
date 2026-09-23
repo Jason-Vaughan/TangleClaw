@@ -699,7 +699,4 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - **Methodology capability per engine** (#1738) — `governance.methodologyCapability` tells an onboarded project on a non-Claude engine (dormant, left untouched) from one never onboarded, keyed on the session's engine. `test/governance-methodology-capability.test.js`.
 - **version-bump release gate** (#1492) — `releaseMode`, the readiness verdict and the operator's Cut/Hold decide whether a wrap cuts a release; a question only the operator can answer halts with `needs-operator`. `test/version-bump-release-gate.test.js`.
 - **Withheld methodology authority** (#1738) — a wrap from an engine that cannot run Prawduct is a state-only checkpoint across real steps: no probe, no release cut, no merge, `.prawduct/` untouched, and every step reads one resolved answer. `test/wrap-methodology-authority.test.js`.
-
-## TODO (auto-stubbed 2026-09-23)
-
-- **TBD** — touched in this session: `test/resume-publication-binding.test.js`. <!-- describe -->
+- **Resume publication binding, end to end** (#1675) — drives the real handoff-stage step, finalizer, launch preflight and prime renderer together, and asserts the next session's Resume comes from the publication the wrap produced, not an index no publication vouches for. `test/resume-publication-binding.test.js`.
