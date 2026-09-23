@@ -215,10 +215,12 @@ describe('startup prompt routes (#1825)', () => {
    * @param {{sequence: object}} l - A launch.
    * @returns {object}
    */
+  let keySeq = 0;
   const fireBody = (l) => ({
     sessionId: l.sequence.sessionId,
     sequenceId: l.sequence.id,
-    expectedRevision: store.startupPrompts.current().revision
+    expectedRevision: store.startupPrompts.current().revision,
+    idempotencyKey: `api-key-${String(++keySeq).padStart(6, '0')}`
   });
 
   describe('read', () => {
@@ -233,6 +235,8 @@ describe('startup prompt routes (#1825)', () => {
       const l = launched();
       const ok = await send('GET', '/api/startup-prompt', { browser: false, headers: binding(l) });
       assert.equal(ok.statusCode, 200, ok.body);
+      assert.equal(json(ok).firerProjectIds, undefined, 'a session does not see other projects\' authority');
+      assert.equal(typeof json(ok).callerListedAsFirer, 'boolean');
       const unbound = await send('GET', '/api/startup-prompt', { browser: false });
       assert.equal(unbound.statusCode, 403);
     });
@@ -244,19 +248,20 @@ describe('startup prompt routes (#1825)', () => {
       const res = await operatorPut({ text: 'read your launch context', firerProjectIds: [], expectedRevision: cur });
       assert.equal(res.statusCode, 200, res.body);
       assert.equal(json(res).revision, cur + 1);
+      assert.equal(json(res).updatedByKind, 'open-install-unverified', 'an open install proves nobody, and the revision says so');
     });
 
     it('a stale revision is refused with the current one', async () => {
       const cur = store.startupPrompts.current().revision;
-      await operatorPut({ text: 'one', expectedRevision: cur });
-      const res = await operatorPut({ text: 'two', expectedRevision: cur });
+      await operatorPut({ text: 'one', firerProjectIds: [], expectedRevision: cur });
+      const res = await operatorPut({ text: 'two', firerProjectIds: [], expectedRevision: cur });
       assert.equal(res.statusCode, 409);
       assert.equal(json(res).code, 'STALE_STARTUP_PROMPT');
       assert.equal(json(res).currentRevision, cur + 1);
     });
 
     it('invalid text is refused with 400', async () => {
-      const res = await operatorPut({ text: 'a\u001bb', expectedRevision: store.startupPrompts.current().revision });
+      const res = await operatorPut({ text: 'a\u001bb', firerProjectIds: [], expectedRevision: store.startupPrompts.current().revision });
       assert.equal(res.statusCode, 400);
       assert.equal(json(res).code, 'STARTUP_PROMPT_INVALID');
     });
@@ -315,11 +320,13 @@ describe('startup prompt routes (#1825)', () => {
       store.projectGroups.addMember(group.id, firer.project.id);
       await operatorPut({ text: 'read your launch context', firerProjectIds: [firer.project.id], expectedRevision: store.startupPrompts.current().revision });
 
-      const first = await send('POST', fireUrl(target.project), { browser: false, headers: binding(firer), body: fireBody(target) });
+      const body = fireBody(target);
+      const first = await send('POST', fireUrl(target.project), { browser: false, headers: binding(firer), body });
       assert.equal(first.statusCode, 409, first.body);
       assert.equal(json(first).fire.callerKind, 'project');
       assert.equal(json(first).fire.callerProjectId, firer.project.id);
-      const again = await send('POST', fireUrl(target.project), { browser: false, headers: binding(firer), body: fireBody(target) });
+      assert.equal(json(first).fire.callerClearance, 'project-binding');
+      const again = await send('POST', fireUrl(target.project), { browser: false, headers: binding(firer), body });
       assert.equal(json(again).duplicate, true);
       assert.equal(json(again).fire.id, json(first).fire.id);
     });
@@ -331,9 +338,12 @@ describe('startup prompt routes (#1825)', () => {
       store.projectGroups.addMember(group.id, target.project.id);
       store.projectGroups.addMember(group.id, other.project.id);
       const res = await send('POST', fireUrl(target.project), { browser: false, headers: binding(other), body: fireBody(target) });
-      assert.equal(res.statusCode, 403);
-      assert.equal(json(res).code, 'FIRE_SCOPE_DENIED');
-      assert.equal(store.startupPrompts.firesForSession(target.session.id).length, 0);
+      assert.equal(res.statusCode, 404, 'the same answer as a target that does not exist');
+      assert.equal(json(res).code, 'SESSION_NOT_FOUND');
+      const recorded = store.startupPrompts.firesForSession(target.session.id);
+      assert.equal(recorded.length, 1);
+      assert.equal(recorded[0].outcome, 'denied');
+      assert.equal(recorded[0].reasonCode, 'fire_scope_denied');
     });
 
     it('a listed firer with no shared group is refused', async () => {
@@ -341,7 +351,16 @@ describe('startup prompt routes (#1825)', () => {
       const firer = launched();
       await operatorPut({ text: 'read', firerProjectIds: [firer.project.id], expectedRevision: store.startupPrompts.current().revision });
       const res = await send('POST', fireUrl(target.project), { browser: false, headers: binding(firer), body: fireBody(target) });
-      assert.equal(json(res).code, 'FIRE_SCOPE_DENIED');
+      assert.equal(res.statusCode, 404);
+      assert.equal(json(res).code, 'SESSION_NOT_FOUND');
+    });
+
+    it('an operator fire on an open install without the page token is refused and records nothing', async () => {
+      const l = launched();
+      const res = await send('POST', fireUrl(l.project), { body: fireBody(l) });
+      assert.equal(res.statusCode, 403);
+      assert.equal(json(res).code, 'OPEN_INSTALL_TOKEN_INVALID');
+      assert.equal(store.startupPrompts.firesForSession(l.session.id).length, 0);
     });
 
     it('an unbound machine client is refused before anything is looked up', async () => {

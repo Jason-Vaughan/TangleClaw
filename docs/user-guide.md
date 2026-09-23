@@ -193,22 +193,24 @@ Global rules live in one git-tracked file, `data/global-rules.md` in the TangleC
 
 The same panel holds the **startup prompt** (#1825): the instruction a launch sends to an engine that supports native startup delivery (see `startupControl` in the [Engine guide](engine-guide.md)). It starts as `read your launch context: run tc start next`, and it should only ever ask the engine to read its launch context, never dispatch project work.
 
-- **Edit**: change the text, tick the projects whose sessions may fire it, and tap **Save startup prompt**. Every save is a new **revision**. If someone else saved in the meantime, the save is refused and the editor reloads what is current, so a change is never silently overwritten.
-- **Who may change it**: the operator only, from the dashboard (a signed-in session, or on an install with no login, the dashboard's own page token). An agent session cannot edit the prompt or the firer list, because a session that could list itself could authorize itself.
-- **Who may fire it**: the operator, or a session whose project is ticked **and** that shares a project group with the target session.
+- **Edit**: change the text (at most 4096 bytes; line breaks are the only control characters allowed), tick the projects whose sessions may fire it, and tap **Save startup prompt**. Every save is a new **revision**, recording how well its author was proven: `operator-verified` with the username on an install with a login, `open-install-unverified` on one without. If someone else saved in the meantime, the save is refused and the editor reloads what is current, so a change is never silently overwritten.
+- **Who may change it**: the operator only, from the dashboard (a signed-in session, or on an install with no login, the dashboard's own page token). An agent session cannot edit the prompt or the firer list, because a session that could list itself could authorize itself. The list starts empty.
+- **Who may fire it**: the operator, or a session whose project is ticked **and** that currently shares a project group with the target session. To anyone else, a target they may not fire at looks exactly like one that does not exist (404), and the refused attempt is recorded.
 - **Today**: no engine has a native startup adapter yet, so every fire is refused as `STARTUP_CONTROL_UNSUPPORTED` and recorded. Nothing is ever typed into the pane as a fallback, and launches keep delivering their context as they do now.
 - **API**:
-  - `GET /api/startup-prompt` (the operator or a bound session).
-  - `PUT /api/startup-prompt` with `{text, firerProjectIds, expectedRevision}` (operator only).
-  - `POST /api/sessions/:project/startup-prompt/fire` with `{sessionId, sequenceId, expectedRevision}`.
+  - `GET /api/startup-prompt`. The operator gets the whole firer list. A bound session gets the prompt, its `textDigest` and `policyDigest`, and `callerListedAsFirer` for itself only.
+  - `PUT /api/startup-prompt` with the full state, `{text, firerProjectIds, expectedRevision}` (operator only).
+  - `POST /api/sessions/:project/startup-prompt/fire` with `{sessionId, sequenceId, expectedRevision, idempotencyKey}`.
 
-  A fire names the session and its launch-sequence row, never the launch id, which is a credential. Refusals use the usual `{error, code}` shape:
+  A fire names the session and its launch-sequence row, never the launch id, which is a credential. Repeating an `idempotencyKey` returns the first result instead of firing again. A launch holds at most one fire in progress, and a revision it has applied is never sent to it twice.
+
+  Refusals use the usual `{error, code}` shape:
   - `STARTUP_PROMPT_INVALID` (400);
   - `STALE_STARTUP_PROMPT` (409, with `currentRevision`);
-  - `OPERATOR_REQUIRED` or `FIRE_SCOPE_DENIED` (403);
-  - `SESSION_NOT_FOUND` (404);
-  - `LAUNCH_NOT_CURRENT` (409);
-  - `STARTUP_CONTROL_UNSUPPORTED` (409, with the engine and the reason).
+  - the operator-proof codes (`UNAUTHENTICATED`, `CSRF_TOKEN_INVALID`, `OPERATOR_REQUIRED`, `OPEN_INSTALL_TOKEN_INVALID`, `GATE_STATE_UNSUPPORTED`);
+  - `SESSION_NOT_FOUND` (404, also for targets out of scope);
+  - `LAUNCH_NOT_CURRENT`, `IDEMPOTENCY_KEY_REUSED`, `STARTUP_FIRE_IN_FLIGHT` and `STARTUP_PROMPT_ALREADY_APPLIED` (409);
+  - `STARTUP_CONTROL_UNSUPPORTED` (409, with the engine and a typed `reasonCode`).
 
 ### Toolbar
 

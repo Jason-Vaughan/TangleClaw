@@ -335,8 +335,10 @@ fails any auto-stub section older than 14 days.
 
 - **startupControl and the startup prompt** (#1825, Build Chunk B1). The operator's revisioned
   startup prompt, with its firer list, lives in `startup_prompt_revisions` (append-only, and written
-  by compare-and-set). Every authorized fire is audited in `startup_prompt_fires` (idempotent per
-  launch and revision, with at most one in flight per launch). `lib/startup-prompt.js` is the one
+  by compare-and-set, with a text digest, a policy digest and author provenance). Every fire is
+  recorded in `startup_prompt_fires` as an intent before any external effect: idempotent by
+  caller key, one active fire per launch, an applied revision never re-sent, and out-of-scope
+  targets answered as 404 with the denial recorded. `lib/startup-prompt.js` is the one
   service path for the dashboard and the API. The routes use the shared strict operator proof,
   `server.js#_requireOperatorWrite`. `lib/startup-control.js` validates a profile's
   `capabilities.startupControl` block and resolves it against a code-only adapter registry, which

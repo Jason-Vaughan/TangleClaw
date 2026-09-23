@@ -1,9 +1,11 @@
 'use strict';
 
 /*
- * The startup prompt service (#1825): validation, compare-and-set update, the
- * fire scope rule, exact-launch targeting, and the typed `unsupported` answer
- * that is audited and never falls back to typing into a pane.
+ * The startup prompt service (#1825): validation, the redacted read, the
+ * compare-and-set update with provenance, the fire scope rule (with an
+ * external 404 for anything out of scope), idempotency by key, the single
+ * active slot, the applied-once rule, and the typed `unsupported` answer that
+ * is recorded and never falls back to typing into a pane.
  */
 
 const { describe, it, beforeEach } = require('node:test');
@@ -11,43 +13,54 @@ const assert = require('node:assert/strict');
 
 const svc = require('../lib/startup-prompt');
 
-const ACTIVE = 'active';
+const ACTIVE_STATES = ['pending', 'dispatching', 'indeterminate', 'accepted'];
 
 /**
- * Fake lookups: projects 1 (target) and 2 (a firer sharing group g1) and 3
- * (a firer in no shared group), session 10 in project 1 with launch 100.
+ * Fake lookups: projects 1 (target), 2 (a firer sharing group g1), 3 (a firer
+ * in no shared group) and 4 (unlisted, in g1); session 10 in project 1 with
+ * launch 100.
  * @param {object} [over] - Overrides.
  * @returns {object}
  */
 function deps(over = {}) {
-  const revisions = [{ revision: 1, text: 'read your launch context: run tc start next', digest: 'd1', firerProjectIds: [2, 3], createdAt: 't', createdByKind: 'seed' }];
+  const revisions = [{
+    revision: 1, text: 'read your launch context: run tc start next', textDigest: 't1', policyDigest: 'p1',
+    firerProjectIds: [2, 3], createdAt: 'now', createdByKind: 'seed', createdBy: null
+  }];
   const fires = [];
+  let inTx = 0;
   const d = {
     prompts: {
+      transaction: (fn) => { inTx += 1; try { return fn(); } finally { inTx -= 1; } },
       current: () => revisions[revisions.length - 1],
-      update: ({ text, firerProjectIds, expectedRevision, byKind }) => {
+      update: ({ text, firerProjectIds, expectedRevision, byKind, byName }) => {
         const cur = revisions[revisions.length - 1];
         if (cur.revision !== expectedRevision) return { ok: false, currentRevision: cur.revision };
-        const next = { revision: cur.revision + 1, text, digest: `d${cur.revision + 1}`, firerProjectIds, createdAt: 't', createdByKind: byKind };
-        revisions.push(next);
-        return { ok: true, prompt: next };
+        revisions.push({
+          revision: cur.revision + 1, text, textDigest: `t${cur.revision + 1}`, policyDigest: `p${cur.revision + 1}`,
+          firerProjectIds, createdAt: 'now', createdByKind: byKind, createdBy: byName
+        });
+        return { ok: true, prompt: revisions[revisions.length - 1] };
       },
-      recordFire: (f) => {
-        const existing = fires.find((x) => x.sequenceId === f.sequenceId && x.promptRevision === f.promptRevision);
-        if (existing) return { fire: existing, duplicate: true };
+      insertFire: (f) => {
+        assert.ok(inTx > 0, 'a fire row is written inside the transaction');
         const row = { id: fires.length + 1, ...f };
         fires.push(row);
-        return { fire: row, duplicate: false };
-      }
+        return row;
+      },
+      getFireByKey: (k) => fires.find((f) => f.idempotencyKey === k) || null,
+      activeFire: (seq) => fires.find((f) => f.sequenceId === seq && ACTIVE_STATES.includes(f.outcome)) || null,
+      appliedFire: (seq, rev) => fires.find((f) => f.sequenceId === seq && f.promptRevision === rev && f.outcome === 'applied') || null
     },
     getProjectByName: (name) => ({ target: { id: 1 }, other: { id: 4 } })[name] || null,
     getProject: (id) => ([1, 2, 3, 4].includes(id) ? { id } : null),
-    getSession: (id) => (id === 10 ? { id: 10, projectId: 1, engineId: 'codex', status: ACTIVE } : null),
+    getSession: (id) => (id === 10 ? { id: 10, projectId: 1, engineId: 'codex', status: 'active' } : null),
     getLaunchBySession: (sid) => (sid === 10 ? { id: 100, sessionId: 10 } : null),
     getEngine: (id) => ({ id, capabilities: {} }),
-    groupsForProject: (pid) => ({ 1: [{ id: 'g1' }], 2: [{ id: 'g1' }], 3: [{ id: 'g9' }] })[pid] || [],
+    groupsForProject: (pid) => ({ 1: [{ id: 'g1' }], 2: [{ id: 'g1' }], 3: [{ id: 'g9' }], 4: [{ id: 'g1' }] })[pid] || [],
     adapters: {},
     _fires: fires,
+    _revisions: revisions,
     ...over
   };
   return d;
@@ -58,6 +71,7 @@ const FIRER_IN_GROUP = { kind: 'project', projectId: 2, groupIds: ['g1'] };
 const FIRER_OUT_OF_GROUP = { kind: 'project', projectId: 3, groupIds: ['g9'] };
 const UNLISTED_IN_GROUP = { kind: 'project', projectId: 4, groupIds: ['g1'] };
 
+let keyN = 0;
 /**
  * A fire request at session 10 / launch 100.
  * @param {object} caller - Resolved caller.
@@ -65,22 +79,33 @@ const UNLISTED_IN_GROUP = { kind: 'project', projectId: 4, groupIds: ['g1'] };
  * @returns {object}
  */
 function req(caller, over = {}) {
-  return { projectName: 'target', sessionId: 10, sequenceId: 100, expectedRevision: 1, caller, ...over };
+  keyN += 1;
+  return {
+    projectName: 'target', sessionId: 10, sequenceId: 100, expectedRevision: 1,
+    idempotencyKey: `key-${String(keyN).padStart(8, '0')}`,
+    caller, clearance: caller.kind === 'operator' ? 'operator-verified' : 'project-binding',
+    ...over
+  };
 }
 
-describe('startup prompt service: text and firer validation', () => {
+describe('startup prompt service: validation', () => {
   it('accepts plain and multi-line text', () => {
     assert.equal(svc.textProblem('run tc start next'), null);
     assert.equal(svc.textProblem('line one\nline two'), null);
   });
 
-  it('refuses empty, oversized and control-character text', () => {
+  it('counts the limit in UTF-8 bytes, not characters', () => {
+    assert.equal(svc.textProblem('a'.repeat(svc.MAX_PROMPT_BYTES)), null);
+    assert.match(svc.textProblem('a'.repeat(svc.MAX_PROMPT_BYTES + 1)), /bytes/);
+    // 2048 two-byte characters fit; one more does not.
+    assert.equal(svc.textProblem('é'.repeat(svc.MAX_PROMPT_BYTES / 2)), null);
+    assert.match(svc.textProblem('é'.repeat(svc.MAX_PROMPT_BYTES / 2 + 1)), /bytes/);
+  });
+
+  it('refuses empty text and every control character except LF', () => {
     assert.match(svc.textProblem('   '), /empty/);
     assert.match(svc.textProblem(42), /string/);
-    assert.match(svc.textProblem('x'.repeat(svc.MAX_PROMPT_CHARS + 1)), /at most/);
-    assert.match(svc.textProblem('a\u001b[2Jb'), /control/);
-    assert.match(svc.textProblem('a\rb'), /control/);
-    assert.match(svc.textProblem('a\tb'), /control/);
+    for (const c of ['\u001b', '\r', '\t', '\u0000', '\u007f']) assert.match(svc.textProblem(`a${c}b`), /control/, JSON.stringify(c));
   });
 
   it('refuses a malformed, repeated or unknown firer list', () => {
@@ -94,27 +119,54 @@ describe('startup prompt service: text and firer validation', () => {
   });
 });
 
-describe('startup prompt service: read and update', () => {
-  it('reads the current revision without any launch identifier', () => {
-    const r = svc.read(deps());
+describe('startup prompt service: read', () => {
+  it('the operator sees the whole firer list and who wrote the revision', () => {
+    const r = svc.read(OPERATOR, deps());
     assert.equal(r.status, 200);
-    assert.equal(r.body.revision, 1);
     assert.deepEqual(r.body.firerProjectIds, [2, 3]);
-    assert.ok(!Object.keys(r.body).some((k) => /launch/i.test(k)), Object.keys(r.body).join(','));
+    assert.equal(r.body.updatedByKind, 'seed');
+    assert.equal(r.body.textDigest, 't1');
+    assert.equal(r.body.policyDigest, 'p1');
   });
 
-  it('writes a new revision under compare-and-set', () => {
+  it('a project session sees the prompt and digests, but only whether it is listed itself', () => {
+    const listed = svc.read(FIRER_IN_GROUP, deps()).body;
+    assert.equal(listed.callerListedAsFirer, true);
+    assert.equal(listed.firerProjectIds, undefined, 'other projects\' authority is not disclosed');
+    assert.equal(listed.text, 'read your launch context: run tc start next');
+    assert.equal(svc.read(UNLISTED_IN_GROUP, deps()).body.callerListedAsFirer, false);
+  });
+
+  it('carries no launch-shaped field', () => {
+    for (const caller of [OPERATOR, FIRER_IN_GROUP]) {
+      assert.ok(!Object.keys(svc.read(caller, deps()).body).some((k) => /launch/i.test(k)));
+    }
+  });
+});
+
+describe('startup prompt service: update', () => {
+  const PROOF = { clearance: 'operator-verified', actor: 'rosie' };
+
+  it('writes the full state as a new revision with the proof\'s provenance', () => {
     const d = deps();
-    const r = svc.update({ text: 'new', firerProjectIds: [2], expectedRevision: 1 }, d);
+    const r = svc.update({ text: 'new', firerProjectIds: [2], expectedRevision: 1 }, PROOF, d);
     assert.equal(r.status, 200);
     assert.equal(r.body.revision, 2);
-    assert.equal(r.body.updatedByKind, 'operator');
+    assert.equal(r.body.updatedByKind, 'operator-verified');
+    assert.equal(r.body.updatedBy, 'rosie');
+    assert.deepEqual(r.body.firerProjectIds, [2]);
+  });
+
+  it('requires the firer list: a save states the whole prompt', () => {
+    const r = svc.update({ text: 'new', expectedRevision: 1 }, PROOF, deps());
+    assert.equal(r.status, 400);
+    assert.match(r.body.error, /firerProjectIds is required/);
   });
 
   it('refuses a stale revision with 409 and the current revision', () => {
     const d = deps();
-    svc.update({ text: 'new', firerProjectIds: [], expectedRevision: 1 }, d);
-    const r = svc.update({ text: 'lost', firerProjectIds: [], expectedRevision: 1 }, d);
+    svc.update({ text: 'new', firerProjectIds: [], expectedRevision: 1 }, PROOF, d);
+    const r = svc.update({ text: 'lost', firerProjectIds: [], expectedRevision: 1 }, PROOF, d);
     assert.equal(r.status, 409);
     assert.equal(r.body.code, 'STALE_STARTUP_PROMPT');
     assert.equal(r.body.currentRevision, 2);
@@ -122,16 +174,11 @@ describe('startup prompt service: read and update', () => {
 
   it('refuses invalid input with 400 before writing', () => {
     const d = deps();
-    assert.equal(svc.update({ text: 'x' }, d).body.code, 'STARTUP_PROMPT_INVALID');
-    assert.equal(svc.update({ text: '', expectedRevision: 1 }, d).status, 400);
-    assert.equal(svc.update({ text: 'ok', firerProjectIds: [99], expectedRevision: 1 }, d).status, 400);
-    assert.equal(svc.update(null, d).status, 400);
+    assert.equal(svc.update({ text: 'x', firerProjectIds: [] }, PROOF, d).body.code, 'STARTUP_PROMPT_INVALID');
+    assert.equal(svc.update({ text: '', firerProjectIds: [], expectedRevision: 1 }, PROOF, d).status, 400);
+    assert.equal(svc.update({ text: 'ok', firerProjectIds: [99], expectedRevision: 1 }, PROOF, d).status, 400);
+    assert.equal(svc.update(null, PROOF, d).status, 400);
     assert.equal(d.prompts.current().revision, 1, 'nothing was written');
-  });
-
-  it('treats an omitted firer list as none', () => {
-    const r = svc.update({ text: 'new', expectedRevision: 1 }, deps());
-    assert.deepEqual(r.body.firerProjectIds, []);
   });
 });
 
@@ -163,38 +210,66 @@ describe('startup prompt service: fire', () => {
   let d;
   beforeEach(() => { d = deps(); });
 
-  it('an engine with no adapter gets a typed, audited unsupported refusal', () => {
+  it('an engine with no adapter gets a typed unsupported refusal, recorded with its evidence', () => {
     const r = svc.fire(req(OPERATOR), d);
     assert.equal(r.status, 409);
     assert.equal(r.body.code, 'STARTUP_CONTROL_UNSUPPORTED');
     assert.equal(r.body.engine, 'codex');
-    assert.match(r.body.reason, /declares no startupControl/);
+    assert.equal(r.body.reasonCode, 'engine_declares_none');
+    const f = d._fires[0];
     assert.equal(d._fires.length, 1);
-    assert.equal(d._fires[0].outcome, 'unsupported');
-    assert.equal(d._fires[0].callerKind, 'operator');
-    assert.equal(d._fires[0].promptRevision, 1);
-    assert.equal(d._fires[0].promptDigest, 'd1');
+    assert.equal(f.outcome, 'unsupported');
+    assert.equal(f.callerKind, 'operator');
+    assert.equal(f.callerClearance, 'operator-verified');
+    assert.equal(f.promptRevision, 1);
+    assert.equal(f.promptTextDigest, 't1');
+    assert.equal(f.policyDigest, 'p1');
+    assert.equal(f.projectId, 1);
   });
 
-  it('a repeat fire of the same revision at the same launch returns the first record', () => {
-    const first = svc.fire(req(OPERATOR), d);
-    const again = svc.fire(req(FIRER_IN_GROUP), d);
+  it('a repeat of the same key returns the first record and records nothing new', () => {
+    const request = req(OPERATOR);
+    const first = svc.fire(request, d);
+    const again = svc.fire({ ...request }, d);
     assert.equal(again.body.duplicate, true);
     assert.equal(again.body.fire.id, first.body.fire.id);
     assert.equal(d._fires.length, 1);
   });
 
-  it('records the agent caller and its project', () => {
+  it('a new key after an unsupported outcome is a new attempt: unsupported is not a permanent key', () => {
+    svc.fire(req(OPERATOR), d);
+    svc.fire(req(OPERATOR), d);
+    assert.equal(d._fires.length, 2);
+  });
+
+  it('a key reused for a different target is refused', () => {
+    const request = req(OPERATOR);
+    svc.fire(request, d);
+    d.getSession = (id) => ([10, 11].includes(id) ? { id, projectId: 1, engineId: 'codex', status: 'active' } : null);
+    d.getLaunchBySession = (sid) => ({ id: sid * 10, sessionId: sid });
+    const r = svc.fire({ ...request, sessionId: 11, sequenceId: 110 }, d);
+    assert.equal(r.status, 409);
+    assert.equal(r.body.code, 'IDEMPOTENCY_KEY_REUSED');
+  });
+
+  it('records the agent caller, its project and its binding clearance', () => {
     svc.fire(req(FIRER_IN_GROUP), d);
     assert.equal(d._fires[0].callerKind, 'project');
     assert.equal(d._fires[0].callerProjectId, 2);
+    assert.equal(d._fires[0].callerClearance, 'project-binding');
   });
 
-  it('refuses out-of-scope callers before looking at the session, and records nothing', () => {
-    const r = svc.fire(req(UNLISTED_IN_GROUP), d);
-    assert.equal(r.status, 403);
-    assert.equal(r.body.code, 'FIRE_SCOPE_DENIED');
-    assert.equal(d._fires.length, 0);
+  it('an out-of-scope target answers exactly like a missing one, and the denial is recorded', () => {
+    const denied = svc.fire(req(UNLISTED_IN_GROUP), d);
+    const missing = svc.fire(req(UNLISTED_IN_GROUP, { sessionId: 12 }), d);
+    assert.equal(denied.status, 404);
+    assert.equal(denied.body.code, 'SESSION_NOT_FOUND');
+    assert.equal(missing.status, 404);
+    assert.equal(missing.body.code, denied.body.code);
+    assert.equal(d._fires.length, 1, 'only the real target\'s denial is recorded');
+    assert.equal(d._fires[0].outcome, 'denied');
+    assert.equal(d._fires[0].reasonCode, 'fire_scope_denied');
+    assert.equal(svc.fire(req(FIRER_OUT_OF_GROUP), d).status, 404);
   });
 
   it('refuses an unknown project or a session that is not active in it', () => {
@@ -205,7 +280,7 @@ describe('startup prompt service: fire', () => {
     assert.equal(svc.fire(req(OPERATOR), ended).body.code, 'SESSION_NOT_FOUND');
   });
 
-  it('refuses a launch that is not the session\'s current one, naming no launch id', () => {
+  it('refuses a launch that is not the session\'s current one', () => {
     const r = svc.fire(req(OPERATOR, { sequenceId: 99 }), d);
     assert.equal(r.status, 409);
     assert.equal(r.body.code, 'LAUNCH_NOT_CURRENT');
@@ -214,12 +289,30 @@ describe('startup prompt service: fire', () => {
 
   it('refuses a stale prompt revision', () => {
     const r = svc.fire(req(OPERATOR, { expectedRevision: 2 }), d);
-    assert.equal(r.status, 409);
     assert.equal(r.body.code, 'STALE_STARTUP_PROMPT');
     assert.equal(r.body.currentRevision, 1);
   });
 
-  it('refuses non-integer targets', () => {
+  it('never injects an applied revision into the same launch again', () => {
+    d._fires.push({ id: 90, idempotencyKey: 'x', sequenceId: 100, promptRevision: 1, outcome: 'applied', sessionId: 10 });
+    const r = svc.fire(req(OPERATOR), d);
+    assert.equal(r.status, 409);
+    assert.equal(r.body.code, 'STARTUP_PROMPT_ALREADY_APPLIED');
+  });
+
+  it('refuses while another fire is active on the launch, for every active state', () => {
+    for (const outcome of ACTIVE_STATES) {
+      const dd = deps();
+      dd._fires.push({ id: 91, idempotencyKey: 'y', sequenceId: 100, promptRevision: 1, outcome, sessionId: 10 });
+      const r = svc.fire(req(OPERATOR), dd);
+      assert.equal(r.body.code, 'STARTUP_FIRE_IN_FLIGHT', outcome);
+    }
+  });
+
+  it('refuses a malformed idempotency key or non-integer targets', () => {
+    assert.equal(svc.fire(req(OPERATOR, { idempotencyKey: 'short' }), d).status, 400);
+    assert.equal(svc.fire(req(OPERATOR, { idempotencyKey: 'has space in it' }), d).status, 400);
+    assert.equal(svc.fire(req(OPERATOR, { idempotencyKey: undefined }), d).status, 400);
     assert.equal(svc.fire(req(OPERATOR, { sessionId: '10' }), d).status, 400);
   });
 

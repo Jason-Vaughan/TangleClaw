@@ -104,12 +104,14 @@ describe('startupControl resolve', () => {
     const r = sc.resolve(profile(undefined), registry);
     assert.equal(r.supported, false);
     assert.match(r.reason, /declares no startupControl/);
+    assert.equal(r.reasonCode, 'engine_declares_none');
   });
 
   it('is unsupported when the block is malformed, even if its adapter exists', () => {
     const r = sc.resolve(profile({ adapter: 'fake' }), registry);
     assert.equal(r.supported, false);
     assert.match(r.reason, /malformed/);
+    assert.equal(r.reasonCode, 'profile_block_malformed');
   });
 
   it('is unsupported when the named adapter is not registered: a profile cannot grant one', () => {
@@ -117,6 +119,7 @@ describe('startupControl resolve', () => {
     assert.equal(r.supported, false);
     assert.match(r.reason, /"nope".*does not implement/);
     assert.equal(r.adapter, null);
+    assert.equal(r.reasonCode, 'adapter_not_registered');
   });
 
   it('is supported only when a well-formed block names a registered adapter', () => {

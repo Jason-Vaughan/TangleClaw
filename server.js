@@ -7032,15 +7032,16 @@ function _startupPromptProofOptions(action, logContext) {
   };
 }
 
-// GET /api/startup-prompt — the current startup prompt (#1825). The operator,
-// or any bound project session: a session may see what it will be sent.
+// GET /api/startup-prompt — the current startup prompt (#1825). The operator
+// sees the full firer list; a bound project session sees the prompt, its
+// digests, and only whether its own project is listed.
 route('GET', '/api/startup-prompt', (req, res) => {
   const access = sharedDocsAccess.resolveAccess(req);
   if (access.kind !== 'operator') {
     const refusal = sharedDocsAccess.projectRefusalFor(access, sharedDocsAccess.NEEDS.OWN_PROJECT);
     if (refusal) return errorResponse(res, refusal.status, refusal.message, refusal.code);
   }
-  const result = startupPrompt.read();
+  const result = startupPrompt.read(access);
   jsonResponse(res, result.status, result.body);
 });
 
@@ -7051,7 +7052,7 @@ route('GET', '/api/startup-prompt', (req, res) => {
 route('PUT', '/api/startup-prompt', (req, res, _params, body) => {
   const proof = _requireOperatorWrite(req, res, _startupPromptProofOptions('change the startup prompt', {}));
   if (!proof) return;
-  const result = startupPrompt.update(body);
+  const result = startupPrompt.update(body, proof);
   if (result.status !== 200) {
     log.warn('Refused a startup prompt change', { code: result.body.code });
     return errorResponse(res, result.status, result.body.error, result.body.code, result.body);
@@ -7067,17 +7068,22 @@ route('PUT', '/api/startup-prompt', (req, res, _params, body) => {
 }, { maxBodySize: 64 * 1024 });
 
 // POST /api/sessions/:project/startup-prompt/fire — fire the current prompt at
-// one exact launch. Body: {sessionId, sequenceId, expectedRevision}. The
+// one exact launch. Body: {sessionId, sequenceId, expectedRevision,
+// idempotencyKey}; the path project, session and sequence must agree. The
 // operator (strict write), or an agent session whose project the current
 // revision lists as a firer and which shares a project group with the target.
-// Every authorized fire is audited in startup_prompt_fires; an engine with no
-// supported startupControl channel gets a typed 409, with no fallback.
+// An out-of-scope target answers the same 404 as a missing one, and the denial
+// is recorded internally. Every fire is recorded in startup_prompt_fires; an
+// engine with no supported startupControl channel gets a typed 409, with no
+// fallback.
 route('POST', '/api/sessions/:project/startup-prompt/fire', (req, res, params, body) => {
   const access = sharedDocsAccess.resolveAccess(req);
+  let clearance = 'project-binding';
   if (access.kind === 'operator') {
     const proof = _requireOperatorWrite(req, res,
       _startupPromptProofOptions('fire the startup prompt', { project: params.project }));
     if (!proof) return;
+    clearance = proof.clearance;
   } else {
     const refusal = sharedDocsAccess.projectRefusalFor(access, sharedDocsAccess.NEEDS.OWN_PROJECT);
     if (refusal) return errorResponse(res, refusal.status, refusal.message, refusal.code);
@@ -7088,7 +7094,9 @@ route('POST', '/api/sessions/:project/startup-prompt/fire', (req, res, params, b
     sessionId: b.sessionId,
     sequenceId: b.sequenceId,
     expectedRevision: b.expectedRevision,
-    caller: access
+    idempotencyKey: b.idempotencyKey,
+    caller: access,
+    clearance
   });
   if (result.status >= 400) {
     log.warn('Startup prompt fire refused', { project: params.project, code: result.body.code, caller: access.kind });
