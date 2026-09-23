@@ -264,6 +264,7 @@ const gitTemplate = require('./lib/git-template');
 const tmux = require('./lib/tmux');
 const projects = require('./lib/projects');
 const sessions = require('./lib/sessions');
+const projectConfig = require('./lib/project-config');
 const launchSequence = require('./lib/launch-sequence');
 const ciStatus = require('./lib/ci-status');
 const master = require('./lib/master');
@@ -280,6 +281,9 @@ const updateChecker = require('./lib/update-checker');
 const updateApplier = require('./lib/update-applier');
 const serverInfo = require('./lib/server-info');
 const behindOrigin = require('./lib/behind-origin');
+const checkoutState = require('./lib/checkout-state');
+const checkoutFreshness = require('./lib/checkout-freshness');
+const checkoutFleet = require('./lib/checkout-fleet');
 const bindPolicy = require('./lib/bind-policy');
 const wrapRunRegistry = require('./lib/wrap-run-registry');
 const wrapHandback = require('./lib/wrap-handback');
@@ -1407,6 +1411,17 @@ route('GET', '/api/server-info', (_req, res) => {
   // the network — a stale cache starts one background fetch for the next poll.
   // `enabled: false` when the operator turned the check off in config.
   info.behindOrigin = behindOrigin.snapshot(cfg);
+  // #993: what the served checkout is actually on — branch, unpushed commits,
+  // uncommitted and untracked files. Cached; the route never runs git itself.
+  // The origin/main ref is only as fresh as behind-origin's last successful
+  // fetch, and the payload says which.
+  info.liveCheckout = checkoutState.withUpstreamObservation(
+    checkoutState.snapshot(serverInfo.getRepoRoot()), info.behindOrigin);
+  // #1678: whether a restart would load anything, for the commits the running
+  // process has not loaded. Only asked when disk is known or suspected ahead.
+  info.restartImpact = info.isStale === true
+    ? checkoutState.impactSnapshot(serverInfo.getRepoRoot(), info.startupSha, info.currentDiskSha)
+    : null;
   jsonResponse(res, 200, info);
 });
 
@@ -1605,6 +1620,36 @@ route('GET', '/api/config', (_req, res) => {
   jsonResponse(res, 200, _withBindState(config));
 });
 
+/** Boot's answer to `store.hasPriorUse()`, fixed once asked; `undefined` until then. */
+let _bindPriorUse;
+
+/**
+ * Whether this install had been used, as the store answered it the FIRST time
+ * anyone asked — at boot, before the server listens.
+ *
+ * The network-binding migration runs at boot, on `GET /api/config` and before
+ * `PATCH /api/config` saves, and all three must reach the same answer. Every
+ * other input to it is fixed after boot, but the store's answer is not: creating
+ * a project or a login changes it. If boot's save of a fresh install's `false`
+ * failed, a later live answer would flip the in-memory migration to the legacy
+ * grace state, PATCH would persist it, and the next restart would listen on every
+ * interface with nobody having chosen that. Fixing the answer at boot keeps the
+ * three in step.
+ * @returns {boolean} Whether the install showed prior use when first asked.
+ */
+function _installPriorUse() {
+  if (_bindPriorUse === undefined) _bindPriorUse = store.hasPriorUse();
+  return _bindPriorUse;
+}
+
+/**
+ * Test seam: set, or with `undefined` clear, the fixed prior-use answer.
+ * @param {boolean|undefined} value - The answer to hold.
+ */
+function _setInstallPriorUse(value) {
+  _bindPriorUse = value;
+}
+
 /**
  * Attach the server-resolved network-binding state to a config response.
  *
@@ -1622,7 +1667,7 @@ function _withBindState(config) {
   // tolerates as non-fatal — would otherwise be reported as "closed" while its
   // socket is wide, and the settings modal would draw a shut door over an open
   // one and hide the way out. In-memory only: a GET must not write.
-  bindPolicy.migrateLegacyBind(config, store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY));
+  bindPolicy.migrateLegacyBind(config, store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY), _installPriorUse());
   return {
     ...redactConfigSecrets(config),
     bindState: bindPolicy.describeBindState(config, authGate.resolveGateState(() => config, store.authSessions, _gateIngress)),
@@ -1768,7 +1813,7 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   // the key is still absent here — and since `load()` merges the default, saving
   // would silently persist `false` and narrow a remote operator's install on
   // their next restart, without them choosing. Idempotent: a no-op once recorded.
-  bindPolicy.migrateLegacyBind(config, store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY));
+  bindPolicy.migrateLegacyBind(config, store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY), _installPriorUse());
   // Snapshot of pre-mutation values for fields whose downstream effects
   // are conditional on whether the value actually changed (#247 hardening
   // — saveGlobalSettings POSTs the field on every Save click, so unrelated
@@ -4535,6 +4580,11 @@ route('GET', '/api/tc/whoami', (req, res) => {
         : 'unavailable: this call did not resolve to a registered project'
     },
     {
+      // #1678: the fleet's checkouts, shaped to what this project may see.
+      id: 'checkouts', enabled: true,
+      detail: `which commit each live session is on and how it stands against origin/main: \`tc freshness\`, or GET ${api}/api/checkouts (your own row and your project groups' rows; send x-tangleclaw-project-id and x-tangleclaw-launch-id)`
+    },
+    {
       id: 'switchboard', enabled: medusaEnabled && !!workspaceId,
       detail: medusaEnabled && workspaceId
         ? `message other sessions: POST ${api}/api/sessions/${encodeURIComponent(project.name)}/medusa/send — your workspace id is ${workspaceId}`
@@ -4572,6 +4622,10 @@ route('GET', '/api/tc/whoami', (req, res) => {
         {
           id: 'read-api', enabled: true,
           detail: `the fleet-wide Read API is yours: ${api}/api/awareness (you appear in its master entry), ${api}/api/tc/sessions, ${api}/api/ports, ${api}/api/shared-docs (send x-tangleclaw-role: master and x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID)`
+        },
+        {
+          id: 'checkouts', enabled: true,
+          detail: `every live session's checkout against origin/main: \`tc freshness\`, or GET ${api}/api/checkouts (send x-tangleclaw-role: master and x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID)`
         },
         {
           id: 'switchboard', enabled: masterMedusaEnabled && !!workspaceId,
@@ -4747,6 +4801,28 @@ route('GET', '/api/tc/sessions', (_req, res) => {
     };
   });
   jsonResponse(res, 200, { sessions });
+});
+
+// GET /api/checkouts — the fleet's checkouts in one answer (#1678, #993): one
+// row per project with a live session, from the same `projectCheckout` the
+// project route, the prime and the session chip read, so the PM, the Master, a
+// Builder and the operator cannot compute different answers. Shaped per caller
+// by `lib/checkout-fleet.js`. An unbound caller is answered with no rows and
+// the reason; a binding that was presented and not honoured is refused, so a
+// broken binding never reads as an empty fleet. Cached; never waits on git.
+route('GET', '/api/checkouts', (req, res) => {
+  const access = sharedDocsAccess.resolveAccess(req);
+  if (access.kind === sharedDocsAccess.KINDS.INVALID) {
+    log.warn('Checkouts read with a binding that was not honoured; refused', {
+      reason: access.reason,
+      cause: access.cause || null,
+      claimedProjectId: req.headers[sharedDocsAccess.PROJECT_HEADER] || null,
+      claimedRole: req.headers[sharedDocsAccess.ROLE_HEADER] || null
+    });
+    const refusal = sharedDocsAccess.projectRefusalFor(access, sharedDocsAccess.NEEDS.OWN_PROJECT);
+    return errorResponse(res, refusal.status, refusal.message, refusal.code);
+  }
+  jsonResponse(res, 200, checkoutFleet.fleetView(access, { config: store.config.load() }));
 });
 
 // GET /api/awareness — "sessions that never became aware" as a queryable
@@ -5176,9 +5252,11 @@ route('POST', '/api/update/check', (_req, res, _params, body) => {
 // POST /api/update/apply — the self-update ACTION (#228/#229, UB). Fetches +
 // checks out the latest release tag; does NOT restart. The client chains
 // POST /api/server/restart on a 200. A refused safety guard (dirty tree, no
-// update, wrong ref, not a git checkout) returns 409 with a stable `code`; an
-// unexpected git failure mid-flow returns 500 with the pre-update `fromSha` so
-// recovery is a one-line manual `git checkout <fromSha>`.
+// update, wrong ref, not a git checkout, files to reconcile) returns 409 with a
+// stable `code`, and the checkout is as it was. The two 500s are the failures
+// where that cannot be promised: `git-error`, an unexpected git failure with the
+// pre-update `fromSha`, and `recovery-failed`, where putting the checkout back
+// after a failed step did not fully succeed and `recovery` says what is where.
 route('POST', '/api/update/apply', (_req, res, _params, body) => {
   // `discardDirty` opts into removing TangleClaw-written files that block the
   // update (#711 chunk 03). A strict-boolean gate like bindAllInterfaces': a
@@ -5190,7 +5268,7 @@ route('POST', '/api/update/apply', (_req, res, _params, body) => {
     jsonResponse(res, 200, result);
     return;
   }
-  jsonResponse(res, result.code === 'git-error' ? 500 : 409, result);
+  jsonResponse(res, result.code === 'git-error' || result.code === 'recovery-failed' ? 500 : 409, result);
 });
 
 // POST /api/tmux/mouse — set a session-level mouse value, or `unset: true`
@@ -5239,14 +5317,19 @@ route('GET', '/api/ports', (req, res) => {
     grouped[key].push(lease);
   }
 
-  // Count system-detected ports not tracked in lease DB (localhost only)
-  const systemPorts = portScanner.getSystemPorts();
+  // System-detected listeners no lease accounts for (localhost only). Their
+  // identities, not just a count, so a caller can see WHICH ports are taken
+  // before picking one (#814). From the periodic scan's cache: the lease route
+  // asks the machine fresh, this listing does not need to.
   const leasedPortSet = new Set(leases.filter(l => l.host === 'localhost').map(l => l.port));
-  const systemPortCount = systemPorts.filter(sp => !leasedPortSet.has(sp.port)).length;
+  const systemPorts = portScanner.getSystemPorts()
+    .filter(sp => !leasedPortSet.has(sp.port))
+    .map(sp => ({ port: sp.port, pid: sp.pid, command: sp.command }));
 
   jsonResponse(res, 200, {
     totalLeases: leases.length,
-    systemPortCount,
+    systemPortCount: systemPorts.length,
+    systemPorts,
     leases,
     grouped
   });
@@ -5257,36 +5340,64 @@ route('POST', '/api/ports/lease', (_req, res, _params, body) => {
   if (!body || !body.port || !body.project || !body.service) {
     return errorResponse(res, 400, 'port, project, and service are required', 'BAD_REQUEST');
   }
+  // A port sent as a string ("8443") would skip the listener probe, which
+  // checks for an integer, and be granted unchecked. Normalize once here.
+  const leasePort = Number(body.port);
+  if (!Number.isInteger(leasePort) || leasePort < 1 || leasePort > 65535) {
+    return errorResponse(res, 400, `port must be an integer from 1 to 65535 (got ${JSON.stringify(body.port)})`, 'BAD_REQUEST');
+  }
+  // Through PortHub, not the store directly, so the machine is asked before
+  // the registry answers "free" (#814) — this is the path every managed
+  // project is told to use, and it was the one path without the check.
+  const result = porthub.registerPort(leasePort, body.project, body.service, {
+    host: body.host || 'localhost',
+    // The HTTP default has always been a non-permanent lease; PortHub's own
+    // default is permanent, so the route states it.
+    permanent: body.permanent === true,
+    ttlMs: body.ttl || null,
+    description: body.description || null,
+    autoRenew: body.autoRenew === true,
+    force: body.force === true,
+    adoptListener: body.adoptListener === true,
+    // Passed through unvalidated on purpose: `store.portLeases.lease` owns
+    // these vocabularies and throws BAD_REQUEST naming the legal values, so a
+    // second check here could only drift from it.
+    reach: body.reach,
+    ownerKind: body.ownerKind
+  });
+  if (result.success) {
+    return jsonResponse(res, 201, { ...result.lease, listenerCheck: result.listenerCheck });
+  }
+  // A port already owned by another project, or held by a process no lease
+  // records, is a conflict, not a malformed request — 409 lets a caller retry
+  // against a different port, and the owner or listener in the body is what
+  // makes that decision possible without a second call.
+  if (result.code === 'PORT_CONFLICT') {
+    return jsonResponse(res, 409, { error: result.error, code: 'PORT_CONFLICT', owner: result.owner });
+  }
+  if (result.code === 'PORT_IN_USE') {
+    return jsonResponse(res, 409, { error: result.error, code: 'PORT_IN_USE', listener: result.listener });
+  }
+  return errorResponse(res, 400, result.error, 'BAD_REQUEST');
+});
+
+// POST /api/ports/owner-kind — Record whether an owner name is a TangleClaw project
+route('POST', '/api/ports/owner-kind', (_req, res, _params, body) => {
+  if (!body || !body.project || !body.ownerKind) {
+    return errorResponse(res, 400, 'project and ownerKind are required', 'BAD_REQUEST');
+  }
+  let updated;
   try {
-    const lease = store.portLeases.lease({
-      host: body.host || 'localhost',
-      port: body.port,
-      project: body.project,
-      service: body.service,
-      permanent: body.permanent || false,
-      ttlMs: body.ttl || null,
-      description: body.description || null,
-      autoRenew: body.autoRenew || false,
-      force: body.force === true,
-      // Passed through unvalidated on purpose: `store.portLeases.lease` owns
-      // the vocabulary and throws BAD_REQUEST naming the legal values, so a
-      // second check here could only drift from it.
-      reach: body.reach
-    });
-    jsonResponse(res, 201, lease);
+    // The dashboard's "Not a project" control (#1381). The store owns the
+    // vocabulary and names the legal values on a bad one.
+    updated = store.portLeases.setOwnerKind(body.project, body.ownerKind, { host: body.host || null });
   } catch (err) {
-    // A port already owned by another project is a conflict, not a malformed
-    // request — 409 lets a caller retry against a different port, and the owner
-    // in the body is what makes that decision possible without a second call.
-    if (err.code === 'PORT_CONFLICT') {
-      return jsonResponse(res, 409, {
-        error: err.message,
-        code: 'PORT_CONFLICT',
-        owner: err.owner || null
-      });
-    }
     return errorResponse(res, 400, err.message, 'BAD_REQUEST');
   }
+  if (updated === 0) {
+    return errorResponse(res, 404, `No lease is held under "${body.project}"${body.host ? ` on ${body.host}` : ''}`, 'NOT_FOUND');
+  }
+  jsonResponse(res, 200, { ok: true, project: body.project, ownerKind: body.ownerKind, updated });
 });
 
 // POST /api/ports/sync — Sync leases from old PortHub daemon
@@ -5299,6 +5410,21 @@ route('POST', '/api/ports/sync', (_req, res) => {
 route('POST', '/api/ports/release', (_req, res, _params, body) => {
   if (!body || !body.port) {
     return errorResponse(res, 400, 'port is required', 'BAD_REQUEST');
+  }
+  // Leases are keyed on (host, port), and the same port number can belong to
+  // different projects on different hosts. A release that omits `host` means
+  // localhost; when another host also holds this port, that default is a guess
+  // that can delete a stranger's lease, so it is refused instead (#853).
+  if (!body.host) {
+    const elsewhere = porthub.getLeases()
+      .filter(l => l.port === Number(body.port) && l.host !== 'localhost')
+      .map(l => l.host);
+    if (elsewhere.length > 0) {
+      return errorResponse(res, 400,
+        `Port ${body.port} is also leased on ${[...new Set(elsewhere)].join(', ')}, so a release without "host" is ambiguous. `
+        + 'Say which lease you mean with "host" ("localhost" for this machine).',
+        'HOST_REQUIRED');
+    }
   }
   try {
     // `project` is optional but verified when present (#656): a release names
@@ -5350,29 +5476,93 @@ route('POST', '/api/ports/heartbeat', (_req, res, _params, body) => {
 });
 
 /**
- * Refuse a projects-route caller that is not the operator, before any lookup,
- * so a refused caller never learns whether the project exists. Deleting,
- * archiving and unarchiving a project change what every session on the install
- * can reach, and the project rules make them the operator's (#1746).
+ * Log and send a project write route's refusal.
  * @param {http.IncomingMessage} req - The request
- * @param {http.ServerResponse} res - The response, written only on refusal
- * @returns {boolean} true when the caller is the operator
+ * @param {http.ServerResponse} res - The response
+ * @param {{status: number, code: string, message: string}} refusal - What to send
+ * @param {object} details - Extra log fields: who the caller is and why
+ * @returns {void}
  */
-function projectOperatorCaller(req, res) {
-  const access = sharedDocsAccess.resolveAccess(req);
-  if (access.kind === sharedDocsAccess.KINDS.OPERATOR) return true;
-  log.warn('Project operator-only route refused', {
+function _refuseProjectWrite(req, res, refusal, details) {
+  log.warn('Project write route refused', {
     method: req.method,
     path: reqUrl(req).pathname,
+    code: refusal.code,
+    ...details
+  });
+  errorResponse(res, refusal.status, refusal.message, refusal.code);
+}
+
+/**
+ * The log fields that say who a refused caller claimed to be.
+ * @param {http.IncomingMessage} req - The request
+ * @param {object} access - From `sharedDocsAccess.resolveAccess`
+ * @returns {object}
+ */
+function _callerLogFields(req, access) {
+  return {
     kind: access.kind,
     reason: access.reason,
-    claimedProjectId: req.headers[sharedDocsAccess.PROJECT_HEADER] || null
-  });
-  errorResponse(res, 403,
-    'Only the operator can delete, archive or unarchive a project. Ask the operator to do it '
-      + 'from the TangleClaw dashboard; no project or Project Master binding can.',
-    'OPERATOR_ONLY');
+    cause: access.cause || null,
+    claimedProjectId: req.headers[sharedDocsAccess.PROJECT_HEADER] || null,
+    claimedRole: req.headers[sharedDocsAccess.ROLE_HEADER] || null
+  };
+}
+
+/**
+ * Admit only the operator to an operator-only project route, before any
+ * lookup, so a refused caller learns nothing about the project it named.
+ * These routes change what every session on the install can reach (#1746,
+ * #1752).
+ * @param {http.IncomingMessage} req - The request
+ * @param {http.ServerResponse} res - The response, written only on refusal
+ * @param {string} action - What the route does, completing "Only the operator can …"
+ * @returns {boolean} true when the caller is the operator
+ */
+function operatorProjectCaller(req, res, action) {
+  const access = sharedDocsAccess.resolveAccess(req);
+  const refusal = sharedDocsAccess.projectRefusalFor(access, sharedDocsAccess.NEEDS.OPERATOR, action);
+  if (!refusal) return true;
+  _refuseProjectWrite(req, res, refusal, _callerLogFields(req, access));
   return false;
+}
+
+/**
+ * Admit the operator, or a session bound to the named project, to a route
+ * that changes one project (#1752). The whole check is one call so no route
+ * can do half of it: a binding refusal before any lookup; then the lookup,
+ * answering 404 for a project that does not exist (project names are public
+ * in the roster, so this discloses nothing); then `403 OTHER_PROJECT` for a
+ * session bound to a different project.
+ * @param {http.IncomingMessage} req - The request
+ * @param {http.ServerResponse} res - The response, written only on refusal
+ * @param {string} segment - The project named in the path
+ * @param {function(string): (object|null)} lookup - Finds the project row by that segment
+ * @returns {object|null} The project row, or null when the request was answered
+ */
+function ownProjectCaller(req, res, segment, lookup) {
+  const access = sharedDocsAccess.resolveAccess(req);
+  const refusal = sharedDocsAccess.projectRefusalFor(access, sharedDocsAccess.NEEDS.OWN_PROJECT);
+  if (refusal) {
+    _refuseProjectWrite(req, res, refusal, _callerLogFields(req, access));
+    return null;
+  }
+  const project = lookup(segment);
+  if (!project) {
+    errorResponse(res, 404, `Project "${segment}" not found`, 'NOT_FOUND');
+    return null;
+  }
+  if (!sharedDocsAccess.canChangeProject(access, project.id)) {
+    _refuseProjectWrite(req, res, {
+      status: 403,
+      code: 'OTHER_PROJECT',
+      message: `This session is bound to another project, so it cannot change "${project.name}". `
+        + 'A project\'s settings, actions and stranded wraps are changed by that project\'s own session, '
+        + 'or by the operator from the TangleClaw dashboard.'
+    }, { callerProjectId: access.projectId, targetProjectId: project.id });
+    return null;
+  }
+  return project;
 }
 
 /**
@@ -5423,7 +5613,9 @@ route('GET', '/api/projects', async (req, res) => {
 });
 
 // POST /api/projects/attach — Attach an existing filesystem directory as a project
-route('POST', '/api/projects/attach', async (_req, res, _params, body) => {
+route('POST', '/api/projects/attach', async (req, res, _params, body) => {
+  // Registering a directory as a project is the operator's (#1752).
+  if (!operatorProjectCaller(req, res, 'attach a directory as a project')) return;
   if (!body || !body.name) {
     return errorResponse(res, 400, 'name is required', 'BAD_REQUEST');
   }
@@ -5474,7 +5666,9 @@ route('GET', '/api/projects/stranded-configs-scan', (_req, res) => {
 // POST /api/projects/repair-orphan-hooks — Strip orphan hook entries from
 // affected projects. Body: `{ project?: string }` for single-target. Returns
 // `{ repaired, skipped, errors }` (#145, chunk 2).
-route('POST', '/api/projects/repair-orphan-hooks', (_req, res, _params, body) => {
+route('POST', '/api/projects/repair-orphan-hooks', (req, res, _params, body) => {
+  // It rewrites hook files in every project, or in one it names (#1752).
+  if (!operatorProjectCaller(req, res, 'repair orphan hooks')) return;
   if (body && body.project !== undefined && typeof body.project !== 'string') {
     return errorResponse(res, 400, 'project must be a string', 'BAD_REQUEST');
   }
@@ -5493,7 +5687,14 @@ route('GET', '/api/projects/:name', async (req, res, params) => {
     return errorResponse(res, 404, `Project "${params.name}" not found`, 'NOT_FOUND');
   }
   // The same row the list carries, so the same shaping (#1739).
-  jsonResponse(res, 200, projectView.shapeProject(projectsReader(req), project));
+  const reader = projectsReader(req);
+  // #1678: the checkout compared against the upstream every related session
+  // shares. Workspace facts, so only a caller that sees the row whole gets
+  // them — and only then is the clone measured at all. Cached; never waits.
+  if (projectView.seesWhole(reader, project)) {
+    project.checkout = checkoutFreshness.projectCheckout(project, { config: store.config.load() });
+  }
+  jsonResponse(res, 200, projectView.shapeProject(reader, project));
 });
 
 /**
@@ -5584,11 +5785,9 @@ route('GET', '/api/projects/:project/stranded-wraps', (_req, res, params) => {
 // (#1542) and answer with its result and the refreshed list. A request made
 // while a check is running joins it. A check that could not run is still a 200:
 // it was recorded, and `check.state` is `failed` with the reason.
-route('POST', '/api/projects/:project/stranded-wraps/check', async (_req, res, params) => {
-  const project = _projectByIdOrName(params.project);
-  if (!project) {
-    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
-  }
+route('POST', '/api/projects/:project/stranded-wraps/check', async (req, res, params) => {
+  const project = ownProjectCaller(req, res, params.project, _projectByIdOrName);
+  if (!project) return;
   const result = await strandedCheck.check(project);
   jsonResponse(res, 200, { check: result, ..._strandedBody(project) });
 });
@@ -5599,10 +5798,8 @@ route('POST', '/api/projects/:project/stranded-wraps/check', async (_req, res, p
 // The acknowledger is the signed-in user, or null when nobody is signed in —
 // never a name taken from the request body, which anyone can write.
 route('POST', '/api/projects/:project/stranded-wraps/ack', (req, res, params, body) => {
-  const project = _projectByIdOrName(params.project);
-  if (!project) {
-    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
-  }
+  const project = ownProjectCaller(req, res, params.project, _projectByIdOrName);
+  if (!project) return;
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
@@ -5635,10 +5832,8 @@ const OPEN_PR_STATUS = {
   WRITE_FAILED: 500
 };
 route('POST', '/api/projects/:project/stranded-wraps/open-pr', async (req, res, params, body) => {
-  const project = _projectByIdOrName(params.project);
-  if (!project) {
-    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
-  }
+  const project = ownProjectCaller(req, res, params.project, _projectByIdOrName);
+  if (!project) return;
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
@@ -5652,7 +5847,9 @@ route('POST', '/api/projects/:project/stranded-wraps/open-pr', async (req, res, 
 });
 
 // POST /api/projects
-route('POST', '/api/projects', (_req, res, _params, body) => {
+route('POST', '/api/projects', (req, res, _params, body) => {
+  // Creating a project scaffolds a directory and registers it: the operator's (#1752).
+  if (!operatorProjectCaller(req, res, 'create a project')) return;
   if (!body || !body.name) {
     return errorResponse(res, 400, 'name is required', 'BAD_REQUEST');
   }
@@ -5681,7 +5878,8 @@ route('POST', '/api/projects', (_req, res, _params, body) => {
 });
 
 // POST /api/projects/import — Register existing project directories
-route('POST', '/api/projects/import', (_req, res, _params, body) => {
+route('POST', '/api/projects/import', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'import projects')) return;
   if (!body || !Array.isArray(body.names) || body.names.length === 0) {
     return errorResponse(res, 400, 'names array is required', 'BAD_REQUEST');
   }
@@ -5713,13 +5911,15 @@ route('POST', '/api/projects/import', (_req, res, _params, body) => {
 
     const projPath = path.join(projectsDir, name);
     if (!fs.existsSync(projPath) || !fs.statSync(projPath).isDirectory()) {
-      // Release orphan port leases — the project can never be imported
-      const released = store.portLeases.releaseByProject(name);
-      if (released > 0) {
-        warnings.push(`"${name}" directory not found — released ${released} orphan port lease${released > 1 ? 's' : ''}`);
-      } else {
-        warnings.push(`"${name}" directory not found in ${projectsDir}`);
-      }
+      // Import registers; it does not delete. A missing directory used to
+      // release every lease under the name, which destroyed correct leases for
+      // owners that were never projects, such as a `brew services` database
+      // (#1381). The leases stay; the warning says how to record what they are.
+      const held = store.portLeases.getByProject(name).length;
+      warnings.push(held > 0
+        ? `"${name}" directory not found in ${projectsDir} — its ${held} port lease${held > 1 ? 's were' : ' was'} left in place. `
+          + 'If it is not a TangleClaw project, mark it "Not a project".'
+        : `"${name}" directory not found in ${projectsDir}`);
       continue;
     }
 
@@ -5761,7 +5961,7 @@ route('DELETE', '/api/projects/:name', async (req, res, params, body) => {
   // Operator identity first, whatever the password says: an install that never
   // set one used to answer every caller here, `rm -rf` included (#1746). A set
   // password stays a second key on top.
-  if (!projectOperatorCaller(req, res)) return;
+  if (!operatorProjectCaller(req, res, 'delete a project')) return;
   const passwordCheck = projects.checkDeletePassword(body ? body.password : undefined);
   if (!passwordCheck.allowed) {
     return errorResponse(res, 403, passwordCheck.error, 'FORBIDDEN');
@@ -5788,7 +5988,7 @@ route('DELETE', '/api/projects/:name', async (req, res, params, body) => {
 
 // POST /api/projects/:name/archive — Archive (deactivate) a project
 route('POST', '/api/projects/:name/archive', (req, res, params) => {
-  if (!projectOperatorCaller(req, res)) return;
+  if (!operatorProjectCaller(req, res, 'archive a project')) return;
   const result = projects.archiveProject(params.name);
   if (!result.success) {
     const firstError = result.errors[0];
@@ -5800,7 +6000,7 @@ route('POST', '/api/projects/:name/archive', (req, res, params) => {
 
 // POST /api/projects/:name/unarchive — Restore an archived project
 route('POST', '/api/projects/:name/unarchive', (req, res, params) => {
-  if (!projectOperatorCaller(req, res)) return;
+  if (!operatorProjectCaller(req, res, 'unarchive a project')) return;
   const result = projects.unarchiveProject(params.name);
   if (!result.success) {
     const firstError = result.errors[0];
@@ -5813,7 +6013,9 @@ route('POST', '/api/projects/:name/unarchive', (req, res, params) => {
 // POST /api/projects/:name/migrate-to-plugin — Migrate a project to V2-plugin
 // governance (#262, C1). Cohort-aware (non-Claude → not-applicable) + session-safe
 // (defers on a live session; never auto-closes). Idempotent.
-route('POST', '/api/projects/:name/migrate-to-plugin', async (_req, res, params) => {
+route('POST', '/api/projects/:name/migrate-to-plugin', async (req, res, params) => {
+  // It rewrites the project's governance files; nothing but the operator calls it (#1752).
+  if (!operatorProjectCaller(req, res, 'migrate a project to the plugin')) return;
   const result = await projects.migrateProjectToPlugin(params.name);
   if (result.error) {
     const notFound = result.error.includes('not found');
@@ -5831,7 +6033,16 @@ route('POST', '/api/projects/:name/migrate-to-plugin', async (_req, res, params)
 });
 
 // PATCH /api/projects/:name
-route('PATCH', '/api/projects/:name', async (_req, res, params, body) => {
+route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
+  // A project's own session may change its settings; only the operator may
+  // change another project's, or rename one (#1752). A rename moves the
+  // project's directory and changes the identity every live binding was
+  // issued against, so it is more than that project's configuration.
+  const renaming = body && typeof body === 'object' && body.name !== undefined && body.name !== params.name;
+  const admitted = renaming
+    ? operatorProjectCaller(req, res, 'rename a project')
+    : ownProjectCaller(req, res, params.name, projects.getProjectRow);
+  if (!admitted) return;
   if (!body || typeof body !== 'object') {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
@@ -5879,7 +6090,13 @@ route('PATCH', '/api/projects/:name', async (_req, res, params, body) => {
 // Status codes: 200 ok or handler-soft-fail; 400 bad request; 404 project /
 // unknown or unavailable action; 500 handler thrown. Routing keys on the
 // dispatcher's `code`, never on message text.
-route('POST', '/api/projects/:name/actions/:command', async (_req, res, params, body) => {
+route('POST', '/api/projects/:name/actions/:command', async (req, res, params, body) => {
+  // An action runs against the project's own checkout (the Critic, today), so
+  // the operator or the project's own session may start one (#1752). This gate
+  // admits project-scoped actions only: a fleet, identity, destructive-lifecycle
+  // or operator action needs its own operator-only classification
+  // (`lib/actions.js#ACTIONS`).
+  if (!ownProjectCaller(req, res, params.name, projects.getProjectRow)) return;
   const options = body && typeof body === 'object' && !Array.isArray(body) ? body : undefined;
   const result = await actions.runAction(params.name, params.command, options);
 
@@ -5929,7 +6146,12 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
   // #991: warm the base-branch CI verdict OFF the event loop before the
   // synchronous launch reads it for the prime. Never rejects; a failed probe
   // is an honest unknown in the prime, not a failed launch.
+  // #1678: the checkout line reads cached facts too; measure them now, bounded,
+  // so the prime says what the clone is on rather than "pending". Concurrent
+  // with the CI probe, so a hung network costs one wait, not two.
+  const checkoutWarm = checkoutFreshness.refreshForLaunch(project, store.config.load());
   await ciStatus.refresh(project.path);
+  await checkoutWarm;
 
   // The operator's own request carries the host they actually reached this
   // server on — better evidence than probing this machine, which names the box
@@ -6803,6 +7025,12 @@ route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => 
     if (started.code === 'BAD_REQUEST') {
       return errorResponse(res, 400, started.error, 'BAD_REQUEST');
     }
+    // #1708: the project's keep-running setting is unreadable or not a boolean,
+    // and the request did not decide. Nothing was claimed; fixing the setting,
+    // or sending options.keepSessionRunning, starts the wrap.
+    if (started.code === 'WRAP_KEEP_SETTING_INVALID') {
+      return errorResponse(res, 409, started.error, 'WRAP_KEEP_SETTING_INVALID');
+    }
     return errorResponse(res, 404, started.error, 'NOT_FOUND');
   }
 
@@ -6818,9 +7046,54 @@ route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => 
     status: 'wrapping',
     // #1540: why the stranded-wrap check was skipped, or null when it ran.
     strandedUnchecked: started.strandedUnchecked || null,
+    // #1708 — whether this run will end the session, and why: the request, the
+    // project's `wrapKeepSessionRunning`, or the default. Stated before any step
+    // moves, so a caller that did not choose can see what was chosen for it.
+    sessionOutcomePlanned: started.sessionOutcomePlanned,
+    keepSource: started.keepSource,
     statusUrl: `/api/sessions/${project}/wrap/status`,
+    // #1707 — where to stop this run, while it is still before its commit step.
+    cancelUrl: `/api/sessions/${project}/wrap/cancel`,
     streamUrl: `/api/sessions/${project}/wrap/stream/${encodeURIComponent(started.runId)}`
   });
+});
+
+// POST /api/sessions/:project/wrap/cancel — stop a running wrap at its next
+// step boundary (#1707). Body `{ runId }`: required, so a cancel lands only on
+// the run the caller is watching. Honoured only before the run's commit step;
+// after that the run may already have branched, committed, pushed or opened a
+// PR, and it is refused rather than left half-done. The running step always
+// finishes. Gated exactly as starting a wrap is. Not behind `wrapDisabled`:
+// that switch exists to stop wraps, and must never stop someone stopping one.
+route('POST', '/api/sessions/:project/wrap/cancel', async (_req, res, params, body) => {
+  const passwordCheck = projects.checkDeletePassword(body ? body.password : undefined);
+  if (!passwordCheck.allowed) {
+    return errorResponse(res, 403, passwordCheck.error, 'FORBIDDEN');
+  }
+  const runId = body && typeof body.runId === 'string' ? body.runId : '';
+  if (!runId) return errorResponse(res, 400, 'runId is required: the run you mean to cancel', 'BAD_REQUEST');
+  const answer = sessions.cancelWrap(params.project, runId);
+  if (answer.ok) {
+    return jsonResponse(res, 202, {
+      ok: true,
+      project: params.project,
+      runId: answer.runId,
+      cancelRequested: true,
+      // The first step that has not started, or null when the running step is its last.
+      willStopBefore: answer.willStopBefore,
+      // The step still running: it finishes before the run stops.
+      finishingStepId: answer.finishingStepId,
+      // What stopping does NOT undo: the steps that ran may have left
+      // uncommitted edits or local state. The guarantee is no commit, branch,
+      // push, PR or auto-merge.
+      note: 'The wrap will make no commit, branch, push, PR or auto-merge. Steps that already ran are not undone: '
+        + 'uncommitted edits or local state they wrote may remain.'
+    });
+  }
+  if (answer.code === 'WRAP_NOT_CANCELLABLE') {
+    return errorResponse(res, 409, answer.error, 'WRAP_NOT_CANCELLABLE', { currentStepId: answer.currentStepId });
+  }
+  return errorResponse(res, 404, answer.error, answer.code === 'NOT_FOUND' ? 'NOT_FOUND' : 'WRAP_RUN_NOT_FOUND');
 });
 
 /**
@@ -6845,7 +7118,10 @@ function _wrapResultPayload(projectName, result) {
     // never read it. It reports the pipeline this call just started, which is
     // what `lib/wrap-run-registry.js` knows. A sweep that retires the persisted
     // session status must leave this alone (#1034).
-    status: result.ok ? 'wrapping' : 'blocked',
+    // #1707 — `cancelled` is its own word: an operator stopped the run and
+    // nothing failed, so it must not read as a block to Retry or Skip.
+    status: result.ok ? 'wrapping' : (result.outcome === 'cancelled' ? 'cancelled' : 'blocked'),
+    ...(result.outcome === 'cancelled' ? { outcome: 'cancelled' } : {}),
     wrapCommand: result.wrapCommand,
     wrapSteps: result.wrapSteps,
     captureFields: result.captureFields,
@@ -6917,6 +7193,13 @@ route('GET', '/api/sessions/:project/wrap/status', (_req, res, params) => {
     // #1492 — the choices this run was started with. A Retry replays them, and a
     // reloaded page has no other copy; a Hold it lost would read as Auto.
     options: status.options,
+    // #1708 — the resolved session outcome, from the options `startWrap`
+    // recorded; null for a run recorded without them.
+    ...projectConfig.plannedSessionOutcome(status.options),
+    // #1707 — whether POST /wrap/cancel would still be honoured, and whether
+    // one already was.
+    cancellable: status.cancellable === true,
+    cancelRequested: status.cancelRequested === true,
     // The fix handed back to the session for this run's blocked step, so a
     // reloaded page can show "Fixing…" or "Ready: Retry" without re-sending it.
     handback: wrapHandback.get(params.project, status.runId)
@@ -7868,6 +8151,26 @@ route('GET', '/api/openclaw/connections', (_req, res) => {
   jsonResponse(res, 200, { connections });
 });
 
+/**
+ * Lease an OpenClaw connection's port at create/update, and say so when the
+ * lease is refused. The route has already asked the machine through
+ * `porthub.checkPort`, so a refusal here means the port was taken between that
+ * check and this lease; the connection is saved either way and its tunnel will
+ * fail to bind, and this warning is what names why.
+ * @param {number} port
+ * @param {string} leaseName - `oc-direct-<id>`
+ * @param {string} service
+ * @returns {void}
+ */
+function _leaseConnectionPort(port, leaseName, service) {
+  const result = porthub.registerPort(port, leaseName, service, { permanent: true });
+  if (!result.success) {
+    log.warn('OpenClaw connection saved without a port lease', {
+      port, lease: leaseName, service, code: result.code, error: result.error, listener: result.listener
+    });
+  }
+}
+
 // POST /api/openclaw/connections
 route('POST', '/api/openclaw/connections', (_req, res, _params, body) => {
   if (!body || !body.name || !body.host || !body.sshUser || !body.sshKeyPath) {
@@ -7909,10 +8212,13 @@ route('POST', '/api/openclaw/connections', (_req, res, _params, body) => {
     // Lease-at-create: reserve the resolved port(s) under the connection's tunnel
     // identity so a subsequent add picks a different port even before the tunnel
     // comes up (closing the allocate→bind race). Released on DELETE.
+    // No `adoptListener`: the tunnel does not exist yet, so a listener here
+    // would be a stranger's. `checkPort`/`nextFreePort` above already asked
+    // the machine, so this lease normally finds the port clear.
     const leaseName = `oc-direct-${connection.id}`;
-    porthub.registerPort(connection.localPort, leaseName, 'openclaw-tunnel', { permanent: true });
+    _leaseConnectionPort(connection.localPort, leaseName, 'openclaw-tunnel');
     if (connection.bridgePort) {
-      porthub.registerPort(connection.bridgePort, leaseName, 'openclaw-bridge', { permanent: true });
+      _leaseConnectionPort(connection.bridgePort, leaseName, 'openclaw-bridge');
     }
     jsonResponse(res, 201, connection);
   } catch (err) {
@@ -8016,11 +8322,13 @@ route('PUT', '/api/openclaw/connections/:id', (_req, res, params, body) => {
       if (bridgeChanged && existing.bridgePort) {
         porthub.releasePort(existing.bridgePort);
       }
+      // Not adopted, as at create: the old tunnel was just killed and the new
+      // one is not up, so a listener on the new port is a stranger's.
       if (connection.localPort) {
-        porthub.registerPort(connection.localPort, leaseName, 'openclaw-tunnel', { permanent: true });
+        _leaseConnectionPort(connection.localPort, leaseName, 'openclaw-tunnel');
       }
       if (connection.bridgePort) {
-        porthub.registerPort(connection.bridgePort, leaseName, 'openclaw-bridge', { permanent: true });
+        _leaseConnectionPort(connection.bridgePort, leaseName, 'openclaw-bridge');
       }
     }
     openclawVersion.invalidate(params.id); // #296: instanceDir may have changed → drop stale cache
@@ -10434,6 +10742,11 @@ if (require.main === module) {
     } catch (err) {
       log.warn('Lock expiry sweep failed', { error: err.message });
     }
+    // Drafts cleared before an injection are kept only a retention period past
+    // their attempt (#1507). A failed sweep leaves them in place.
+    const drafts = require('./lib/draft-store').pruneDrafts();
+    if (drafts.deleted.length > 0) log.info('Expired kept drafts', { attempts: drafts.deleted.length });
+    if (drafts.errors.length > 0) log.warn('Draft retention sweep could not finish', { errors: drafts.errors.length });
   }, 5 * 60 * 1000);
 
   // Describe the socket that exists, not the one the config asked for.
@@ -10442,16 +10755,21 @@ if (require.main === module) {
   // Record the legacy install's "never chosen" state as a real value before
   // anything reads it. Absence of the key identifies such an install exactly
   // once — the next config save of any kind would materialize the default and
-  // erase the distinction — so it is converted to an explicit null here and
-  // persisted. Everything downstream reads the value, never the file.
+  // erase the distinction — so it is converted to an explicit value here and
+  // persisted: null (grace) for an install the store shows was used, false for
+  // one written by hand before its first boot, which has no remote operator to
+  // strand. Everything downstream reads the value, never the file.
   const legacyBind = bindPolicy.migrateLegacyBind(
     config,
-    store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY)
+    store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY),
+    _installPriorUse()
   );
   if (legacyBind.migrated) {
     try {
       store.config.save(config);
-      log.info('Recorded this install as predating the network-binding setting', {
+      log.info(legacyBind.reason === 'fresh-install'
+        ? 'Recorded this install as fresh: its config has no network-binding setting and nothing shows it was used, so it listens on loopback'
+        : 'Recorded this install as predating the network-binding setting', {
         setting: bindPolicy.OPT_IN_KEY, reason: legacyBind.reason
       });
     } catch (err) {
@@ -10682,4 +11000,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, serverProtocol, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers };
+module.exports = { createServer, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers };

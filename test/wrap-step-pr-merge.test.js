@@ -66,6 +66,21 @@ describe('wrap-step pr-merge — handler', () => {
     };
   }
 
+  it('enqueues nothing and pushes nothing when the engine cannot run the methodology (#1738)', async () => {
+    const enqueued = [];
+    const execCalls = [];
+    prMerge._internal.enqueueAutoMerge = async (cwd, number) => { enqueued.push(number); return { ok: true, reason: null }; };
+    prMerge._internal.exec = async (file, args) => { execCalls.push(args); return { exitCode: 0, stdout: '', stderr: '' }; };
+    const c = { ...ctx({ 42: 'merge', 7: 'leave' }), methodology: { disposition: 'capability-unavailable', engineId: 'codex', capability: 'prawduct-methodology', reason: 'the codex engine cannot run the Prawduct plugin' } };
+    const result = await prMerge.run(c);
+    assert.equal(result.status, 'capability-unavailable');
+    assert.equal(result.ok, true, 'a withheld merge never strands the wrap');
+    assert.deepEqual(result.output.notEnqueued, ['42']);
+    assert.match(result.output.reason, /merge withheld for PR #42/);
+    assert.deepEqual(enqueued, []);
+    assert.deepEqual(execCalls, [], 'not even the pre-merge push runs');
+  });
+
   it('enqueues auto-merge for each merge resolution', async () => {
     const calls = [];
     prMerge._internal.enqueueAutoMerge = async (cwd, number) => {

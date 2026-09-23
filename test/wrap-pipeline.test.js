@@ -2739,6 +2739,9 @@ describe('wrap-step commit — pure helpers (#139 Chunk 9)', () => {
   });
 });
 
+/** Paths the commit-handler cases write as "the session's work", tracked at init. */
+const SESSION_WORK_FILES = ['changed.txt', 'change.txt', 'something.txt', 'rev-parse-test.txt', 'add-test.txt', 'TODO.md', '.tangleclaw/memories/MEMORY.md'];
+
 describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', () => {
   const commitStep = require('../lib/wrap-steps/commit');
   const { execSync } = require('node:child_process');
@@ -2763,7 +2766,13 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
     execSync('git config user.email t@example.com && git config user.name Test',
       { cwd: projectPath, shell: '/bin/sh' });
     fs.writeFileSync(path.join(projectPath, 'README.md'), 'init\n');
-    execSync('git add README.md && git commit --quiet -m init',
+    // The files these cases' sessions write are already tracked, so each case's
+    // work is an edit the commit takes unasked. A file new to the repository
+    // waits for an Include/Leave decision (#1724), which is exercised in
+    // `test/wrap-file-ownership.test.js`, not here.
+    fs.mkdirSync(path.join(projectPath, '.tangleclaw', 'memories'), { recursive: true });
+    for (const f of SESSION_WORK_FILES) fs.writeFileSync(path.join(projectPath, f), 'v0\n');
+    execSync('git add -f README.md ' + SESSION_WORK_FILES.join(' ') + ' && git commit --quiet -m init',
       { cwd: projectPath, shell: '/bin/sh' });
   });
 
@@ -2835,7 +2844,7 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
       }
     });
     const result = await commitStep.run(ctx);
-    assert.equal(result.ok, true);
+    assert.equal(result.ok, true, JSON.stringify(result.output && result.output.foreignPaths));
     assert.equal(result.status, 'done');
     assert.ok(result.output.commitSha, 'must capture commit SHA');
     assert.match(result.output.commitSha, /^[0-9a-f]{7,40}$/, 'SHA must be hex');
@@ -2927,6 +2936,10 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
     // session's work, on `unreadable` it must not, because a boundary is probably
     // sitting on disk unread — so the outcome has to be reported, not inferred.
     fs.mkdirSync(path.join(projectPath, '.tangleclaw'), { recursive: true });
+    // Tracked, then damaged: an edit to a project file, not a new file the wrap
+    // would stop to ask about (#1724).
+    fs.writeFileSync(path.join(projectPath, '.tangleclaw', 'project.json'), '{}\n');
+    execSync('git add -f .tangleclaw/project.json && git commit -qm config', { cwd: projectPath, shell: '/bin/sh' });
     fs.writeFileSync(path.join(projectPath, '.tangleclaw', 'project.json'), '{ not json');
     fs.writeFileSync(path.join(projectPath, 'changed.txt'), 'hi\n');
     const result = await commitStep.run(buildContext({}));
@@ -2959,6 +2972,9 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
       { cwd: rootRepo, shell: '/bin/sh' });
     fs.writeFileSync(path.join(rootRepo, 'first.txt'), 'hi\n');
     const ctx = buildContext({}, { name: 'rootrepo', path: rootRepo, id: 2 });
+    // In a repository with no commits every file is new to it, so the one file
+    // is admitted by an explicit Include (#1724).
+    ctx.options = { pathDecisions: { 'first.txt': 'include' } };
     const result = await commitStep.run(ctx);
     assert.equal(result.ok, true);
     assert.ok(result.output.commitSha);

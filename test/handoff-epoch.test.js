@@ -467,7 +467,7 @@ describe('case 4 — a retried or failed migration leaves no drift and no marker
     // that failure — it is the normal way this list grows.
     assert.deepEqual(stamped, [...new Set(stamped)].sort((a, b) => a - b),
       'no version is stamped more than once');
-    assert.ok(stamped.includes(43), 'the versions after 42 are stamped by the shared line');
+    assert.ok(stamped.includes(store.CURRENT_SCHEMA_VERSION), 'the version after 42 is stamped by the shared line');
   });
 });
 

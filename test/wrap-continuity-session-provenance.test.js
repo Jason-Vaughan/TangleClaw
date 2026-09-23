@@ -537,11 +537,15 @@ describe('commit → continuity-write — the two steps agree on the boundary (#
     /**
      * Run the commit step, then feed its real result to continuity-write.
      * @param {number} sid - Session id.
+     * @param {string} newFile - The file this session created.
      * @returns {Promise<object>} The commit step's result.
      */
-    async function wrap(sid) {
+    async function wrap(sid, newFile) {
       const commitRes = await commitStep.run({
-        project, session: { id: sid, engineId: 'claude' }, step: {}, staged: {}, options: {},
+        project, session: { id: sid, engineId: 'claude' }, step: {}, staged: {},
+        // Each session's file is new to the repository, so it is admitted by an
+        // explicit Include (#1724).
+        options: { pathDecisions: { [newFile]: 'include' } },
         // Each session launches on the tree the previous wrap left clean.
         scope: cleanLaunchScope(repo)
       });
@@ -564,14 +568,14 @@ describe('commit → continuity-write — the two steps agree on the boundary (#
     git('checkout', '-q', '-b', 'feat/two-sessions');
 
     fs.writeFileSync(path.join(repo, 'first.js'), 'one\n');
-    const first = await wrap(1);
+    const first = await wrap(1, 'first.js');
     assert.equal(first.ok, true);
     assert.ok(first.output.commitSha, 'session 1 committed');
     const stampedBySession1 = require('../lib/wrap-state').readLastWrapSha(repo).sha;
     assert.ok(stampedBySession1, 'session 1 left a boundary behind');
 
     fs.writeFileSync(path.join(repo, 'second.js'), 'two\n');
-    const second = await wrap(2);
+    const second = await wrap(2, 'second.js');
     assert.equal(second.ok, true);
     assert.equal(second.output.previousWrapSha, stampedBySession1,
       'the boundary session 2 reports is the one session 1 stamped — the handoff itself');

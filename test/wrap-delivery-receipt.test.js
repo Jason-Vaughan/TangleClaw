@@ -302,7 +302,7 @@ test('unknown — every silence names itself', async (t) => {
 
 test('splitting a capture at the composer', async (t) => {
   await t.test('splits at the glyph-led row, not the cursor row', () => {
-    const r = receipt._splitAtComposer(['old', '› typed', 'wrapped continuation'],
+    const r = require('../lib/medusa-wake').locateComposer(['old', '› typed', 'wrapped continuation'],
       { y: 0, line: 'wrapped continuation' }, PROFILE);
     assert.equal(r.located, true);
     assert.equal(r.composer, '› typed\nwrapped continuation');
@@ -311,20 +311,20 @@ test('splitting a capture at the composer', async (t) => {
   await t.test('ignores the row index — cursor.y does not index the capture', () => {
     // capturePane issues `-S -80`, so row 0 is 80 rows ABOVE the pane top while
     // cursor_y is pane-relative. They share no origin.
-    const r = receipt._splitAtComposer(['old', '› typed'], { y: 99, line: '› typed' }, PROFILE);
+    const r = require('../lib/medusa-wake').locateComposer(['old', '› typed'], { y: 99, line: '› typed' }, PROFILE);
     assert.equal(r.located, true);
     assert.equal(r.composer, '› typed');
   });
 
   await t.test('locates the composer through SGR, since the capture is styled', () => {
-    const r = receipt._splitAtComposer(['above', '\u001b[2m› typed\u001b[0m'], { y: 0, line: '› typed' }, PROFILE);
+    const r = require('../lib/medusa-wake').locateComposer(['above', '\u001b[2m› typed\u001b[0m'], { y: 0, line: '› typed' }, PROFILE);
     assert.equal(r.located, true);
   });
 
   await t.test('a glyph MID-LINE is transcript, not a prompt', () => {
     // `startsWith` after trimming, matching `_paneDigest`. `includes` would
     // treat any transcript line mentioning the glyph as the composer's head.
-    const r = receipt._splitAtComposer(['talking about › here', '› typed'], { y: 0, line: '› typed' }, PROFILE);
+    const r = require('../lib/medusa-wake').locateComposer(['talking about › here', '› typed'], { y: 0, line: '› typed' }, PROFILE);
     assert.equal(r.composer, '› typed');
   });
 
@@ -332,13 +332,13 @@ test('splitting a capture at the composer', async (t) => {
     // The tail is bounded, and a composer taller than the visible pane scrolls
     // its own head out of it. Falling back to the cursor's single row silently
     // restored the defect the region exclusion existed to fix.
-    const r = receipt._splitAtComposer(['body one', 'body two'], { y: 0, line: 'body two' }, PROFILE);
+    const r = require('../lib/medusa-wake').locateComposer(['body one', 'body two'], { y: 0, line: 'body two' }, PROFILE);
     assert.equal(r.located, false);
     assert.equal(r.composer, '');
   });
 
   await t.test('no cursor means not located', () => {
-    assert.equal(receipt._splitAtComposer(['a', 'b'], null, PROFILE).located, false);
+    assert.equal(require('../lib/medusa-wake').locateComposer(['a', 'b'], null, PROFILE).located, false);
   });
 });
 

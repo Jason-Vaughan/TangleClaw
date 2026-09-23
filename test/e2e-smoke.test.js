@@ -99,6 +99,7 @@ describe('E2E Smoke Tests — Happy Path Lifecycle', () => {
     // Create
     const createRes = await request('/api/projects', {
       method: 'POST',
+      headers: operatorHeaders(server),
       body: { name: 'e2e-lifecycle', engine: 'claude', methodology: 'minimal', tags: ['smoke'] }
     });
     assert.equal(createRes.status, 201);
@@ -151,6 +152,7 @@ describe('E2E Smoke Tests — Happy Path Lifecycle', () => {
     // Create a project
     await request('/api/projects', {
       method: 'POST',
+      headers: operatorHeaders(server),
       body: { name: 'e2e-status-test', engine: 'claude' }
     });
 

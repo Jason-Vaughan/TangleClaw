@@ -67,9 +67,11 @@ Concretely:
 4. A refused guard is a **stop, not an obstacle.** Instructions that drive an update must say so
    outright. An agent told merely to "report the error" will often try to *satisfy* the guard by
    stashing or switching branches, destroying exactly what the guard was protecting.
-5. Where a surface reports refusal codes, it enumerates all of them (`dirty-tree`, `wrong-ref`,
-   `no-update`, `no-tag`, `no-git`, `git-error`). A partial list is worse than none: it tells a
-   caller that an unlisted code cannot happen.
+5. Where a surface reports refusal codes, it enumerates all of them (`dirty-tree`,
+   `reconcile-required`, `wrong-ref`, `no-update`, `no-tag`, `no-git`, `git-error`,
+   `recovery-failed`). A partial list is worse than none: it tells a caller that an unlisted code
+   cannot happen. `reconcile-required` and `recovery-failed` were added by #1730, under the
+   Architect's ruling that a new code must reach both consumers and every list.
 
 ## Consequences
 

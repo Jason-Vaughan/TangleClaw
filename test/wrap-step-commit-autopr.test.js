@@ -37,6 +37,19 @@ const store = require('../lib/store');
 
 const PR_URL = 'https://github.com/example/sandbox/pull/12';
 
+
+/**
+ * Turn the auto-PR close-loop off for this project, committing the config so it
+ * is project history rather than a new file the wrap would ask about (#1724).
+ * @param {string} projectPath - The sandbox repo.
+ */
+function optOutOfAutoPr(projectPath) {
+  const cfg = store.projectConfig.load(projectPath);
+  cfg.wrapAutoPrEnabled = false;
+  store.projectConfig.save(projectPath, cfg);
+  execSync('git add -f .tangleclaw/project.json && git commit --quiet -m config', { cwd: projectPath, shell: '/bin/sh' });
+}
+
 describe('wrap-step commit — auto-PR close-loop (#467)', () => {
   let tmpDir;
   let storeDir;
@@ -111,7 +124,10 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
     execSync('git config user.email t@example.com && git config user.name Test',
       { cwd: projectPath, shell: '/bin/sh' });
     fs.writeFileSync(path.join(projectPath, 'README.md'), 'init\n');
-    execSync('git add README.md && git commit --quiet -m init',
+    // Tracked from the start, so the session's work below is an edit the wrap
+    // commits unasked; a file new to the repository would wait for a decision (#1724).
+    fs.writeFileSync(path.join(projectPath, 'work.txt'), 'v0\n');
+    execSync('git add README.md work.txt && git commit --quiet -m init',
       { cwd: projectPath, shell: '/bin/sh' });
     execSync('git branch -M main', { cwd: projectPath });
     // Dirty the tree so the commit step has something to commit.
@@ -214,6 +230,39 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
     assert.equal(currentBranch(), 'main');
   });
 
+  // #1738 — a session on an engine that cannot run the project's methodology
+  // checkpoints: it commits and opens the PR, but merge authority and
+  // Prawduct's own state are not its to touch.
+  it('methodology unavailable: opens the PR, arms no auto-merge, and commits no .prawduct/ path', async () => {
+    fs.mkdirSync(path.join(projectPath, '.prawduct'));
+    fs.writeFileSync(path.join(projectPath, '.prawduct', 'change-log.md'), 'ledger v1\n');
+    execSync('git add .prawduct && git commit --quiet -m ledger', { cwd: projectPath, shell: '/bin/sh' });
+    fs.writeFileSync(path.join(projectPath, '.prawduct', 'change-log.md'), 'ledger edited by the session\n');
+    fs.writeFileSync(path.join(projectPath, '.prawduct', 'new-note.md'), 'new\n');
+    interceptExec();
+    const ctx = buildContext();
+    ctx.methodology = { onboarded: true, available: false, disposition: 'capability-unavailable', engineId: 'gemini', capability: 'prawduct-methodology', reason: 'the gemini engine cannot run the Prawduct plugin' };
+    const result = await commitStep.run(ctx);
+    assert.equal(result.status, 'done', 'the checkpoint still commits');
+
+    const ap = result.output.autoPr;
+    assert.equal(ap.pushed, true);
+    assert.equal(ap.prUrl, PR_URL);
+    assert.equal(ap.autoMergeArmed, false);
+    assert.match(ap.autoMergeWithheld, /gemini engine cannot run/);
+    assert.equal(ap.error, null, 'a deliberate withhold is not a failure');
+    assert.match(ap.remediation, /auto-merge was deliberately not armed/);
+    assert.equal(calls.filter((c) => c.key === 'gh-merge').length, 0, 'gh pr merge must not run');
+    assert.match(currentBranch(), /^wrap\//, 'HEAD stays on the wrap branch when nothing guarantees the merge');
+
+    assert.deepEqual([...result.output.methodologyWithheld].sort(), ['.prawduct/change-log.md', '.prawduct/new-note.md']);
+    const committed = execSync(`git show --name-only --format= ${result.output.commitSha}`, { cwd: projectPath }).toString().trim().split('\n');
+    assert.ok(committed.includes('work.txt'), 'the session\'s own work is committed');
+    assert.ok(!committed.some((f) => f.startsWith('.prawduct/')), `no .prawduct path may be committed: ${committed}`);
+    const status = execSync('git status --porcelain', { cwd: projectPath }).toString();
+    assert.match(status, /\.prawduct\/change-log\.md/, 'the withheld edit stays in the working tree');
+  });
+
   it('PR body carries the wrap commit body lines and the What/Why sections', async () => {
     interceptExec();
     const ctx = buildContext();
@@ -232,9 +281,7 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
   });
 
   it('wrapAutoPrEnabled:false skips the close-loop entirely (no push attempted)', async () => {
-    const cfg = store.projectConfig.load(projectPath);
-    cfg.wrapAutoPrEnabled = false;
-    store.projectConfig.save(projectPath, cfg);
+    optOutOfAutoPr(projectPath);
 
     interceptExec();
     const result = await commitStep.run(buildContext());
@@ -652,9 +699,7 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
     });
 
     it('the opt-out logs at info: it pushes nothing, so nothing is stranded', async () => {
-      const cfg = store.projectConfig.load(projectPath);
-      cfg.wrapAutoPrEnabled = false;
-      store.projectConfig.save(projectPath, cfg);
+      optOutOfAutoPr(projectPath);
 
       const out = await captureLogs('info', async () => {
         interceptExec();
