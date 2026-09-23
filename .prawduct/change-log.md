@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-23 — A new file is admitted by a decision, and a cleared draft is kept privately rather than logged (#1724, #1507)
+
+<!-- prawduct: type=feature | scope=train-a-car-a3 -->
+
+Train A Car A3 Chunk 03. A wrap committed any file changed after launch, and a file a session creates is always changed after launch, which is how scratch scripts and query dumps reached `main` (#1721). Separately, the prompt clear before every injection logged the pane's last line, the engine's status footer, as the operator's draft, and a real draft was destroyed unrecorded.
+
+**Admission is a positive decision.** `_file-ownership.classify` gives a path HEAD has never held (`newToRepo`: `??` or index `A`), first seen after launch and not written by a wrap step, the foreign reason `untracked-new`. It waits for Include/Leave through the existing decision UI. The files TangleClaw writes into a project (project config, engine config carriers) are exempt (`_tc-owned-paths.judge` → `tangleclawWritten`), and #1619's identity refusal still applies. The commit and PR bodies list the session's files and the operator's inclusions from one staged entry. A wrap step's own write is matched by resolved path, which fixes a symlinked project path making the wrap ask about its own output.
+
+**Drafts are read by the engine's profile and kept out of the log.** Every injection passes the session's engine and attempt. `medusa-wake.readComposerDraft`, the single reader beside `locateComposer` and `_composerEmpty`, returns the draft. `lib/draft-store.js` keeps it per attempt (`0700`/`0600`, no symlink follow, last 20, deleted 7 days after the attempt ends), and the log carries only an opaque `draftRef` with row and character counts. Where the composer cannot be located, the prompt is still cleared, so a paste cannot submit operator text joined to the injected text, and the log says the draft was not captured.
+
+Architect rulings F1–F5 (message 5b0eaa0d) and G1 MODIFY / G2 APPROVE (message cdce349b). The Operator set retention to 7 days (relayed by the PM, message c30f56b6). ADR 0002 has a dated section. Fixed in passing: `update-applier-authored-content`'s file seam depended on how deep the checkout sat, and it failed on macOS on a clean `main`. `tag_issues.sh` and `tag_issues_2.sh` are removed.
+
 ## 2026-09-23 — Wrap gates are engine-aware: a non-Claude wrap of a Prawduct project is an honest checkpoint (#1738)
 
 <!-- prawduct: type=feature | scope=train-a-car-a3 -->

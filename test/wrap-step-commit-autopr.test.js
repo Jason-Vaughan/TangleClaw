@@ -37,6 +37,19 @@ const store = require('../lib/store');
 
 const PR_URL = 'https://github.com/example/sandbox/pull/12';
 
+
+/**
+ * Turn the auto-PR close-loop off for this project, committing the config so it
+ * is project history rather than a new file the wrap would ask about (#1724).
+ * @param {string} projectPath - The sandbox repo.
+ */
+function optOutOfAutoPr(projectPath) {
+  const cfg = store.projectConfig.load(projectPath);
+  cfg.wrapAutoPrEnabled = false;
+  store.projectConfig.save(projectPath, cfg);
+  execSync('git add -f .tangleclaw/project.json && git commit --quiet -m config', { cwd: projectPath, shell: '/bin/sh' });
+}
+
 describe('wrap-step commit — auto-PR close-loop (#467)', () => {
   let tmpDir;
   let storeDir;
@@ -111,7 +124,10 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
     execSync('git config user.email t@example.com && git config user.name Test',
       { cwd: projectPath, shell: '/bin/sh' });
     fs.writeFileSync(path.join(projectPath, 'README.md'), 'init\n');
-    execSync('git add README.md && git commit --quiet -m init',
+    // Tracked from the start, so the session's work below is an edit the wrap
+    // commits unasked; a file new to the repository would wait for a decision (#1724).
+    fs.writeFileSync(path.join(projectPath, 'work.txt'), 'v0\n');
+    execSync('git add README.md work.txt && git commit --quiet -m init',
       { cwd: projectPath, shell: '/bin/sh' });
     execSync('git branch -M main', { cwd: projectPath });
     // Dirty the tree so the commit step has something to commit.
@@ -265,9 +281,7 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
   });
 
   it('wrapAutoPrEnabled:false skips the close-loop entirely (no push attempted)', async () => {
-    const cfg = store.projectConfig.load(projectPath);
-    cfg.wrapAutoPrEnabled = false;
-    store.projectConfig.save(projectPath, cfg);
+    optOutOfAutoPr(projectPath);
 
     interceptExec();
     const result = await commitStep.run(buildContext());
@@ -685,9 +699,7 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
     });
 
     it('the opt-out logs at info: it pushes nothing, so nothing is stranded', async () => {
-      const cfg = store.projectConfig.load(projectPath);
-      cfg.wrapAutoPrEnabled = false;
-      store.projectConfig.save(projectPath, cfg);
+      optOutOfAutoPr(projectPath);
 
       const out = await captureLogs('info', async () => {
         interceptExec();

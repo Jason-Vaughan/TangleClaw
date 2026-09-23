@@ -10742,6 +10742,11 @@ if (require.main === module) {
     } catch (err) {
       log.warn('Lock expiry sweep failed', { error: err.message });
     }
+    // Drafts cleared before an injection are kept only a retention period past
+    // their attempt (#1507). A failed sweep leaves them in place.
+    const drafts = require('./lib/draft-store').pruneDrafts();
+    if (drafts.deleted.length > 0) log.info('Expired kept drafts', { attempts: drafts.deleted.length });
+    if (drafts.errors.length > 0) log.warn('Draft retention sweep could not finish', { errors: drafts.errors.length });
   }, 5 * 60 * 1000);
 
   // Describe the socket that exists, not the one the config asked for.

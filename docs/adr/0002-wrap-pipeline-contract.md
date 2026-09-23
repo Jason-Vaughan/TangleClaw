@@ -571,6 +571,32 @@ Out of scope, filed as #1809: capability-matched admission, attested engine rota
 engine-neutral canonical instructions.
 
 
+## Amended 2026-09-23 — a new file is admitted by a decision, and the wrap names what it carries (#1724)
+
+Architect ruling, message 5b0eaa0d (F1, F2):
+
+- **F1.** A file new to the repository is not admitted by recency or by `git add`. It needs an
+  explicit Include or Leave, including one with index status `A`. The #1406 classifier gives the
+  foreign reason `untracked-new` to a path HEAD has never held (porcelain `??`, or index status
+  `A`) that first appeared after the launch and that no wrap step wrote. It is asked about through
+  the same Include/Leave decision as every foreign path, and blocks `session-files` and `commit`
+  until answered. A new file that was already uncommitted at launch, or predates it, keeps that
+  more specific reason.
+- **F2.** One staged source names the session files and the operator-included files, in both the
+  commit body and the PR body. `commit` stages `{sessionFiles, includedFiles}`. The session files
+  are the owned paths minus those a wrap step wrote, whose own lines already describe them.
+
+Consequence: a wrap, including an unattended one another session started, stops at
+`session-files` when the session leaves any new file uncommitted. A wrap step's own write is
+recognised by its resolved path, so a project registered through a symlink is not asked about
+the wrap's own output.
+
+Architect ruling G2 (message cdce349b): the files TangleClaw itself writes into a project — the
+enumerated engine config carriers and `.tangleclaw/project.json`, never a blanket `.tangleclaw/**`
+or filename pattern — are not `untracked-new`. They keep the rules they had, and a carrier's #1619 identity refusal still applies.
+The reason's wording names no creator ("being new since this session launched does not show it
+belongs in the project"), because a co-resident session's file looks the same.
+
 ## Amendment (Train 21, #1585) — the wrap publishes a per-attempt handoff
 
 The pipeline gains a final step, `handoff-stage`, and the lifecycle gains one write.

@@ -24,7 +24,6 @@ setLevel('error');
 
 const applier = require('../lib/update-applier');
 
-const REPO_DIR = path.join(__dirname, '..');
 const GIT_ENV = {
   ...process.env,
   GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t',
@@ -82,7 +81,14 @@ describe('the self-updater preserves authored content in a real repository (#153
     };
     applier._internal.git = (args) => git(work, args);
     applier._internal.repoDir = work;
-    applier._internal.readFile = (abs) => fs.readFileSync(path.join(work, path.relative(REPO_DIR, abs)), 'utf8');
+    // `repoDir` is `work`, so every path the applier reads is already under it:
+    // read it as given, and refuse one that is not. Rebuilding it relative to
+    // the checkout would depend on how deep the checkout and the temp
+    // directory each sit, which differs between machines.
+    applier._internal.readFile = (abs) => {
+      assert.ok(!path.relative(work, abs).startsWith('..'), `read outside the test repo: ${abs}`);
+      return fs.readFileSync(abs, 'utf8');
+    };
     applier._internal.checkForUpdate = () => ({ updateAvailable: true, latestVersion: '9.9.9' });
   });
 

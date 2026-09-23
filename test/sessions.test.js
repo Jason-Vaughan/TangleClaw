@@ -2323,7 +2323,7 @@ describe('sessions', () => {
       originalHasSession = tmux.hasSession;
       originalSendKeys = tmux.sendKeys;
       tmux.hasSession = () => true;
-      tmux.sendKeys = (session, command) => { sent.push({ session, command }); };
+      tmux.sendKeys = (session, command, options) => { sent.push({ session, command, options }); };
     });
 
     // Kill every session these tests started, pass or fail — an assertion that
@@ -2344,6 +2344,17 @@ describe('sessions', () => {
       started.push(s);
       return s;
     }
+
+    // #1507 — the clear before the paste locates the composer through the
+    // session's engine, so the engine handed to tmux is the one that decides
+    // whether a draft is recorded at all.
+    it('hands tmux the session\'s own engine, not the project\'s', () => {
+      const own = store.sessions.start({ projectId, engineId: 'codex', tmuxSession: 'tc-engine-own' });
+      started.push(own);
+      assert.notEqual(store.projects.get(projectId).engineId, 'codex', 'fixture precondition: the two differ');
+      assert.equal(sessions.injectCommand('inject-multi', 'ls', { sessionId: own.id }).ok, true);
+      assert.equal(sent.at(-1).options.engineId, 'codex');
+    });
 
     it('sends to the addressed session, not to getActive\'s pick', () => {
       const a = startSession('tc-multi-a');
