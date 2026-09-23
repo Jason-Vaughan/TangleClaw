@@ -586,6 +586,93 @@ describe('#931 the dirty-tree escape survived the move (#711 / #928 R-1)', () =>
   });
 });
 
+describe('#1730 files to reconcile, a failed recovery, and carried edits', () => {
+  const RECONCILE = {
+    ok: false,
+    code: 'reconcile-required',
+    error: 'the update needs these files reconciled first — nothing was changed',
+    fromSha: 'abc', toRef: null, toSha: null,
+    reconcile: [
+      { path: 'data/global-rules.md', reason: 'merge-conflict', action: 'Open Global Rules on the dashboard, copy your additions somewhere safe.' },
+      { path: 'notes.txt', reason: 'untracked-collision', action: 'Move it out of the install directory.' }
+    ]
+  };
+
+  it('a reconcile refusal lists every path, reason and action, and offers no discard', async () => {
+    const ctx = loadBeacon({ fetchImpl: () => jsonRes(409, RECONCILE) });
+    await ctx.beacon.apply(AVAILABLE);
+
+    assert.equal(ctx.calls.confirms.length, 1, 'only the update confirm: nothing here may be discarded');
+    assert.equal(ctx.calls.fetches.length, 1, 'and no second apply');
+    const shown = ctx.calls.alerts.join('\n');
+    for (const r of RECONCILE.reconcile) {
+      assert.ok(shown.includes(r.path), `names ${r.path}`);
+      assert.ok(shown.includes(r.reason), `gives the reason for ${r.path}`);
+      assert.ok(shown.includes(r.action), `shows the action for ${r.path} as written`);
+    }
+    assert.match(shown, /nothing was changed/);
+    assert.equal(ctx.inFlight, false, 'the latch is released');
+    // THE MUTATION THIS CATCHES: falling through to the generic "Update not
+    // applied: <error>" alert, which drops every per-file action.
+  });
+
+  it('a failed recovery says the install was not put back, and names the copies', async () => {
+    const ctx = loadBeacon({
+      fetchImpl: () => jsonRes(500, {
+        ok: false, code: 'recovery-failed', error: 'the update failed at "write-merged"',
+        fromSha: 'abc', toRef: null, toSha: null,
+        recovery: {
+          fromSha: 'abc', fromRef: 'main', backup: ['/home/x/.tangleclaw/backups/global-rules.abc-v2.md'],
+          failedStep: 'write-merged',
+          observed: { headSha: 'abc', ref: 'main', fileMatchesOriginal: false, flagsMatchOriginal: null }
+        }
+      })
+    });
+    await ctx.beacon.apply(AVAILABLE);
+
+    const shown = ctx.calls.alerts.join('\n');
+    assert.match(shown, /could not verify that the install was put back/);
+    assert.match(shown, /Manual recovery is required/);
+    assert.match(shown, /Failed step: write-merged/);
+    assert.match(shown, /Edited file matches its original: no/);
+    assert.match(shown, /git flags match their original: unknown/, 'a null observation reads as unknown, never yes');
+    assert.match(shown, /global-rules\.abc-v2\.md/, 'the backup path is shown');
+    assert.equal(ctx.calls.fetches.some((f) => f.url === '/api/server/restart'), false, 'no restart');
+  });
+
+  it('a dirty-tree refusal says the edited rules were detected and will be kept', async () => {
+    const ctx = loadBeacon({
+      fetchImpl: () => jsonRes(409, {
+        ok: false, code: 'dirty-tree', error: 'local changes present — commit or stash before updating',
+        dirty: { discardable: [], realWork: ['lib/projects.js'], carried: ['data/global-rules.md'] }
+      })
+    });
+    await ctx.beacon.apply(AVAILABLE);
+
+    const shown = ctx.calls.alerts.join('\n');
+    assert.match(shown, /lib\/projects\.js/);
+    assert.match(shown, /Detected and kept[\s\S]*data\/global-rules\.md/);
+  });
+
+  it('carried edits are reported with their backup before the restart', async () => {
+    const ctx = loadBeacon({
+      fetchImpl: (n) => (n === 1
+        ? jsonRes(200, {
+          ok: true, code: null, error: null, fromSha: 'a', toRef: 'v5.2.0', toSha: 'b',
+          provisioning: { manifestChanged: false, assetsChanged: [], action: null },
+          carried: [{ path: 'data/global-rules.md', backup: '/b/global-rules.a-v5.2.0.md' }]
+        })
+        : jsonRes(200, { ok: true }))
+    });
+    await ctx.beacon.apply(AVAILABLE);
+
+    const noticeIdx = ctx.calls.alerts.findIndex((a) => a.includes('data/global-rules.md'));
+    assert.ok(noticeIdx !== -1, 'the carried file is named');
+    assert.match(ctx.calls.alerts[noticeIdx], /global-rules\.a-v5\.2\.0\.md/, 'with its backup');
+    assert.ok(ctx.calls.fetches.some((f) => f.url === '/api/server/restart'), 'and the restart still happens');
+  });
+});
+
 describe('#931 the secondary action belongs to the re-opened toast only', () => {
   it('is absent from the first pop and present after a re-open', () => {
     const ctx = loadBeacon({ secondary: { label: 'Ask the agent' } });

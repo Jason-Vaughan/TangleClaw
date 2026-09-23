@@ -9,6 +9,10 @@
   const POP_VISIBLE_MS = 3000;
   const FADE_MS = 450;
 
+  // Refusal codes whose body carries more than a sentence, read from the api
+  // helper's `lastBody` side channel because `api()` returns null on a 4xx/5xx.
+  const STRUCTURED_REFUSALS = new Set(['dirty-tree', 'reconcile-required', 'recovery-failed']);
+
   /**
    * Whether an `/api/update-status` payload is an ANSWER — something a surface
    * may act on — rather than the absence of one.
@@ -481,13 +485,55 @@
       // stash" stops being advice about invisible things. `api()` returns null
       // for a 409, so the refusal body arrives through the `api.lastBody` side
       // channel — reading `applyResp.dirty` instead was dead code (#928 R-1).
-      const refusal = applyResp || (api.lastErrorCode === 'dirty-tree' ? api.lastBody : null);
+      const refusal = applyResp || (STRUCTURED_REFUSALS.has(api.lastErrorCode) ? api.lastBody : null);
+
+      // Files the operator must reconcile first (#1730). The server has
+      // already checked that nothing moved, and every action is written for
+      // the operator, so the dialog shows them as they are. There is no
+      // discard here: nothing in this list is TangleClaw's to throw away.
+      if (refusal && !refusal.ok && refusal.code === 'reconcile-required' && Array.isArray(refusal.reconcile)) {
+        setInFlight(false);
+        setApplyLabel('Update now', false);
+        global.alert('Update not applied: these files need your attention first, and nothing was '
+          + 'changed.\n\n'
+          + refusal.reconcile.map((r) => `${r.path} (${r.reason})\n  ${r.action}`).join('\n\n')
+          + '\n\nUpdate again once they are sorted out.');
+        return;
+      }
+
+      // A step failed and the checkout could not be verified as put back.
+      // Manual recovery is required. The dialog reports only what the server
+      // re-observed, fact by fact, and says "unknown" where it could not read
+      // one; claiming a clean refusal, a success, or what survived beyond those
+      // observations would be false.
+      if (refusal && !refusal.ok && refusal.code === 'recovery-failed') {
+        setInFlight(false);
+        setApplyLabel('Update now', false);
+        const rec = refusal.recovery || {};
+        const obs = rec.observed || {};
+        const fact = (v) => (v === true ? 'yes' : v === false ? 'no' : 'unknown');
+        const backups = rec.backup || [];
+        global.alert('The update failed partway and TangleClaw could not verify that the install was '
+          + 'put back. Manual recovery is required. Do not update or restart until it is done.\n\n'
+          + `Failed step: ${rec.failedStep || 'unknown'}\n`
+          + `Started from: ${rec.fromRef || 'unknown'} at ${rec.fromSha || 'unknown'}\n`
+          + `Now observed: ${obs.ref || 'unknown'} at ${obs.headSha || 'unknown'}\n`
+          + `Edited file matches its original: ${fact(obs.fileMatchesOriginal)}\n`
+          + `Its git flags match their original: ${fact(obs.flagsMatchOriginal)}`
+          + (backups.length ? `\n\nCopies of your edited files from before the update:\n${backups.map((b) => `  ${b}`).join('\n')}` : ''));
+        return;
+      }
+
       if (refusal && !refusal.ok && refusal.code === 'dirty-tree' && refusal.dirty) {
         const d = refusal.dirty;
         if (d.realWork.length === 0 && d.discardable.length > 0) {
           const proceedDiscard = global.confirm(
             'The update is blocked only by files TangleClaw itself wrote:\n\n'
             + d.discardable.map((f) => `  ${f}`).join('\n')
+            + ((d.carried && d.carried.length)
+              ? '\n\nYour edits to these files are not in the list, and will be kept and merged into '
+                + 'the new release:\n' + d.carried.map((f) => `  ${f}`).join('\n')
+              : '')
             + '\n\nDiscard these files and update? Nothing of yours is in this list — '
             + 'anything TangleClaw could not prove it wrote would have blocked instead. '
             + 'A file TangleClaw shares with you is listed only when TangleClaw proved the '
@@ -517,6 +563,10 @@
                 + 'restorable once the above are resolved):\n'
                 + d.discardable.map((f) => `  ${f}`).join('\n')
               : '')
+            + ((d.carried && d.carried.length)
+              ? '\n\nDetected and kept (your edits here are merged into the release when you update):\n'
+                + d.carried.map((f) => `  ${f}`).join('\n')
+              : '')
             + (d.realWork.some((f) => f.startsWith('.tangleclaw/'))
               ? '\n\nFiles under .tangleclaw/ are plans, priming prompts and memories someone '
                 + 'wrote. TangleClaw never discards them.'
@@ -533,6 +583,15 @@
         const msg = (applyResp && applyResp.error) || api.lastError || 'unknown error';
         global.alert(`Update not applied: ${msg}`);
         return;
+      }
+
+      // Edits the operator made through the dashboard, merged into the new
+      // release (#1730). Said before the restart, with where the pre-update
+      // copy is kept, so a merge they did not expect can be undone by hand.
+      if (Array.isArray(applyResp.carried) && applyResp.carried.length > 0) {
+        global.alert('Your edits were kept and merged into the new release:\n\n'
+          + applyResp.carried.map((c) => `  ${c.path}\n  (copy from before the update: ${c.backup})`).join('\n')
+          + '\n\nOpen them after the restart to check the result.');
       }
 
       // Provisioning this update cannot do for you (#711): deploy assets are

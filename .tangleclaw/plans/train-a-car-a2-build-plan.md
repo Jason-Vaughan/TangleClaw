@@ -1,6 +1,6 @@
 ---
 title: "Train A Car A2: updater ownership and authored-data preservation"
-status: IN PROGRESS — Architect ruled D1–D5 2026-09-22 (message a358b1ba): D1, D2 accepted; D3, D4, D5 modified. Chunk 01 shipped (PR #1800); Chunk 02 building, D6–D10 sent to the Architect 2026-09-23
+status: IN PROGRESS — Architect ruled D1–D5 2026-09-22 (message a358b1ba): D1, D2 accepted; D3, D4, D5 modified. Chunk 01 shipped (PR #1800); Chunk 02 built; Architect ruled D6–D10 2026-09-23 (message 4b503584): D6, D8, D10 approved; D7, D9 modified
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-22 (message 866e2043)
 issues: [1537, 1730]
 governed_by:
@@ -291,6 +291,38 @@ run against a scratch clone from the issue's steps.
   directory. *Rejected:* `git-error`, because the failure is not in git and nothing moved.
   *Rejected:* a separate code, which would mean one more code for a refusal already inside D4's
   envelope.
+
+#### Architect rulings on D6–D10 (2026-09-23, message 4b503584) — binding
+
+- **D6: APPROVED.** `carried: [{path, backup}]` only on an actual carry; the backup is host-local
+  recovery evidence, and no wording may imply it was published or copied elsewhere.
+- **D7: MODIFIED.** `recovery-failed` (500) is approved, with a mandatory stop and no restart, and
+  it reaches every ADR 0010 consumer and list. `recovery` keeps `{fromSha, fromRef, backup,
+  failedStep}` and adds `observed: {headSha, ref, fileMatchesOriginal, flagsMatchOriginal}`, each
+  null when it cannot be read. `failedStep` is a stable enum (`MOVE_STEPS`), never exception prose.
+  The UI and prompt say manual recovery is required and claim nothing beyond `observed`.
+- **D8: APPROVED.** An ignored path the target begins tracking is an `untracked-collision`,
+  intersected with the target's changed paths. Never moved or deleted automatically.
+- **D9: MODIFIED.** Add `dirty.carried` (a path list). An exact ` M` carried file goes there; staged,
+  deleted, unmerged or ambiguous states stay `realWork`. When other work blocks, the operator
+  still sees that Global Rules was detected and will be kept.
+- **D10: APPROVED.** `backup-failed` stays in the reconcile envelope. It names the carried path and
+  the backup-directory condition, low-level errors are not shown, unpublished temp files are
+  removed, and no repository bytes or flags change.
+- **Required, not optional:** the opted-in TangleClaw discard runs only after the whole read-only
+  preflight, because D3/D4 forbid any reconcile refusal following a discard mutation.
+
+#### Found while building
+
+- `git update-index --no-skip-worktree --no-assume-unchanged` in one call leaves skip-worktree set
+  (git 2.50). `_setFlags` sets one flag per call, and the skip-worktree carry test covers it.
+- An untracked file that porcelain shows is refused by the dirty guard (`dirty-tree`, real work)
+  before the preflight runs. In practice `untracked-collision` is reached by ignored files, which
+  is exactly D8's case. Test (d) asserts both.
+- A discarded TangleClaw file is not reinstated by compensation. It is the operator-approved
+  restore of TangleClaw's own proven change, and since every refusal now comes before the discard,
+  the only failures that can follow it are late ones (checkout-collision, git-error,
+  recovery-failed).
 
 #### My implementation calls (none of the triggers apply)
 

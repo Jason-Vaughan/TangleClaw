@@ -49,6 +49,7 @@ describe('POST /api/update/apply (UB #228/#229)', () => {
       if (key === 'fetch --tags origin') return '';
       if (key === 'ls-remote --tags origin') return 'sha\trefs/tags/v9.9.9\n';
       if (key === 'checkout v9.9.9') return '';
+      if (key === 'diff --name-status -z --no-renames HEAD v9.9.9') return ''; // #1730: preflight
       if (key === 'diff --name-only old new') return ''; // #711: provisioning diff
       throw new Error(`unexpected git: ${key}`);
     };
@@ -85,7 +86,7 @@ describe('POST /api/update/apply (UB #228/#229)', () => {
     }
     assert.equal(status, 409, 'a truthy string must refuse like no flag at all');
     assert.equal(body.code, 'dirty-tree');
-    assert.deepEqual(body.dirty, { discardable: ['.claude/settings.json'], realWork: [] },
+    assert.deepEqual(body.dirty, { discardable: ['.claude/settings.json'], realWork: [], carried: [] },
       'the refusal payload must reach the wire');
     assert.equal(calls.some((c) => c.startsWith('checkout --')), false, 'and nothing is discarded');
   });

@@ -727,6 +727,40 @@ yourself. That includes everything under `.tangleclaw/`: plans, priming
 prompts and memories are content someone wrote. Commit them in the TangleClaw
 source checkout, then retry **Update now**.
 
+### Your Global Rules Edits Across an Update
+
+Edits you make in **Global Rules** on the dashboard are kept when you update,
+even when the new release changes the same file. The update merges your edits
+into the release's version, and it saves a copy of your file from before the
+update in `~/.tangleclaw/backups/`. It tells you where that copy is before the
+restart.
+
+When your edits and the release change the same lines, the update stops before
+it changes anything, and the dialog tells you what to do: open Global Rules,
+copy your additions somewhere safe, remove them, update, then add them back.
+
+The same dialog lists anything else a release would run into, each with what
+to do about it:
+
+- a file marked in git so its local changes are hidden (skip-worktree or
+  assume-unchanged) that the release changes;
+- a file that is not part of the install, even an ignored one, at a path the
+  release adds;
+- a backup that could not be saved.
+
+In each case nothing was changed. When some other file blocks an update, the
+dialog also lists your edited Global Rules as detected and kept; you do not need
+to commit them.
+
+If an update ever fails partway and TangleClaw cannot verify that it put the
+install back, the dialog says manual recovery is required. It names the step
+that failed and the backup copies, and it shows what it could check: the commit
+and branch the install is on now, and whether your file and its git flags match
+what they were. Do not update or restart until someone has looked at it.
+
+You no longer need to mark `data/global-rules.md` as skip-worktree to keep your
+rules through an update. An install that already has that mark keeps it.
+
 ### "Press to Reconnect" After an Interrupted Project Move
 
 Moving the TangleClaw source directory while the server is running can unload
