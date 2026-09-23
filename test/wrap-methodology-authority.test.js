@@ -180,4 +180,23 @@ describe('wrap methodology authority (#1738)', () => {
     assert.deepEqual(snapshot(), before, 'an engine that cannot run Prawduct must not rewrite or remove its onboarding');
     assert.equal(before.settings, settings);
   });
+
+  it('a failed or stranded wrap PR keeps its own banner, carrying the withheld authority', () => {
+    const authority = { state: 'withheld', engineId: 'codex', reason: 'the codex engine cannot run the Prawduct plugin. This wrap does not cut a release' };
+    const commitRow = (autoPr) => ({ stepId: 'commit', kind: 'commit', status: 'done', blockers: [], output: { commitSha: 'abc123abc123abc', autoPr } });
+    const failed = drawer.summarizePipelineStatus({ ok: true, commitSha: 'abc123abc123abc', methodologyAuthority: authority,
+      results: [commitRow({ pushed: true, prUrl: null, autoMergeArmed: false, error: 'gh pr create failed' })] }, {});
+    assert.equal(failed.label, 'Wrap committed — release NOT armed');
+    assert.match(failed.detail, /gh pr create failed/);
+    assert.match(failed.detail, /codex engine cannot run/);
+
+    const stranded = drawer.summarizePipelineStatus({ ok: true, commitSha: 'abc123abc123abc', methodologyAuthority: authority,
+      results: [commitRow({ pushed: true, prUrl: null, autoMergeArmed: false, error: null, skippedReason: null })] }, {});
+    assert.equal(stranded.label, 'Wrap committed — branch left on origin, no PR');
+    assert.match(stranded.detail, /codex engine cannot run/);
+
+    const quiet = drawer.summarizePipelineStatus({ ok: true, commitSha: null, methodologyAuthority: authority, results: [] }, {});
+    assert.equal(quiet.label, 'Wrap checkpointed — merge and release withheld');
+    assert.doesNotMatch(quiet.detail, /opens its PR/, 'a run that committed nothing opened no PR');
+  });
 });

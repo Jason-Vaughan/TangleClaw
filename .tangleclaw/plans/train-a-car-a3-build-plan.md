@@ -1,6 +1,6 @@
 ---
 title: "Train A Car A3: wrap intent, artifact admission, and honest cancellation"
-status: IN PROGRESS — Chunk 01 shipped (PR #1807); Chunk 02 planned on fix/a3-chunk2-engine-aware-gates, awaiting Architect rulings E1–E6; Architect ruled C1–C2, D1–D5 (message 417454d7); PM approved plan and order (message 8219ab12)
+status: IN PROGRESS — Chunk 01 shipped (PR #1807); Chunk 02 planned on fix/a3-chunk2-engine-aware-gates, Architect ruled E1–E6 (message 9a774624); rule #5 amendment Operator-approved and applied (message 8af0c8ec); ADR 0002 amended; Architect ruled C1–C2, D1–D5 (message 417454d7); PM approved plan and order (message 8219ab12)
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-23 (messages ecdbe884, 39998da1)
 issues: [1708, 1707, 1738, 1724, 1507, 1675]
 governed_by:
@@ -370,7 +370,7 @@ worktree `.claude/worktrees/a3-chunk2`.
   engine-neutral pipeline (ungoverned projects are identical across engines), and the 2026-09-21
   ruling governs the Prawduct-required capability, which is newer and more specific. That reading
   needs the Architect's ruling, not mine.
-- **E5: The handoff records the methodology disposition.** `tc.handoff/1` gains an optional,
+- **E5: The handoff records the methodology disposition.** The handoff document schema (version 1) gains an optional,
   additive `methodology: { disposition: 'measured' | 'unmeasured' | 'not-applicable' |
   'capability-unavailable', engineId }`. It is omitted by producers that predate it, so absence
   stays readable as "unknown". *Rejected:* making launch parse `missingEvidence` strings.
@@ -384,6 +384,49 @@ worktree `.claude/worktrees/a3-chunk2`.
   interactive by design. *Rejected:* gating the launch until Doctor passes, which would block the
   session that has to run it.
 
+### Architect rulings (2026-09-23, message 9a774624) — binding
+
+- **E1: ACCEPT.** One immutable per-run resolution keyed to the session engine; an unknown engine
+  fails to `capability-unavailable`. Any `.prawduct/` directory is a conservative dormant-state
+  signal, not proof of healthy onboarding.
+- **E2: ACCEPT.** Every consumer must fail closed on unknown statuses.
+- **E3: MODIFY.** Any REQUIRED supported-engine preflight that produced no measurement is
+  unmeasured and degrades the handoff: missing hook, timeout, contract breach, a "Wrap anyway"
+  after a failure, or a configured step override. An Operator override may permit the state-only
+  checkpoint, but it cannot turn absent evidence into complete. `not-applicable` is reserved for a
+  project with no onboarding signal.
+- **E4: MODIFY.** The technical behaviour is correct. Checkpoint and neutral publication may
+  finish. Bump and stamp, auto-merge, PR-resolution merge and all `.prawduct/` writes are
+  withheld, and the result and handoff are degraded. But active project rule 5 (engine-identical
+  version math, changelog promotion, ledger stamps and commits) cannot be narrowed silently. The
+  Builder authors a proposed amendment separating engine-neutral wrap mechanics from
+  provider-owned methodology effects, and the **Operator approves it before the PR opens**.
+- **E5: ACCEPT.** Omission means unknown, and invalid enum values fail validation. Launch never
+  parses `missingEvidence` prose.
+- **E6: MODIFY.** The directive is advisory. It must not claim Doctor passed or authority was
+  restored. The historical handoff disposition stays immutable. Prawduct restores its own
+  authority through the owner-confirmed Doctor flow, and a later measured preflight on a
+  compatible engine may establish a new publication result. Do not gate launch, and never onboard
+  again.
+- ADR 0002 is amended only after the E4 rule conflict is Operator-resolved. The repo-owning
+  Builder writes the Architect-owned decision.
+
+### Amendment to project rule #5 (E4): APPROVED by the Operator 2026-09-23, relayed by the PM (message 8af0c8ec), and applied verbatim to rule #5
+
+Current sentence: "Version math, changelog promotion, ledger stamps and commits must produce identical
+results across engines; narrative quality may vary."
+
+Proposed replacement (the rest of rule #5 is unchanged):
+
+> Engine-neutral wrap mechanics — commits, the handoff, and the version math and changelog
+> promotion a wrap computes — must produce identical results across engines for the same project
+> state; narrative quality may vary. Effects owned by a provider's methodology run only on an engine
+> that has that capability. For a Prawduct-onboarded project, those effects are its gates, writes to
+> `.prawduct/`, the ledger stamp, and the merge and release authority the methodology grants
+> (cutting a release, arming auto-merge, merging PRs). On an engine without the capability they are
+> withheld, never faked or bypassed: the wrap still checkpoints, the step reads
+> `capability-unavailable`, and the handoff is recorded as degraded (#1738).
+
 ### Implementation calls (not architectural)
 
 - The resolver is pure fs, like the rest of `governance-state.js` (the scanner child imports it).
@@ -393,9 +436,10 @@ worktree `.claude/worktrees/a3-chunk2`.
   both `session-files` and `commit` from the same capability. That way the files row never asks
   about a path the commit would refuse. The paths go to a new `methodologyWithheld` bucket, which
   is never staged and never offered as a decision. `reclassify` carries it through.
-- A preflight disabled through `wrapStepOverrides` stays an ordinary `skipped` (it is an operator
-  configuration, not a failed measurement), so it does not degrade the handoff. The handoff's
-  `methodology.disposition` still says `unmeasured` for it.
+- (Superseded by the Architect's E3 MODIFY below.) A preflight disabled through
+  `wrapStepOverrides` was first left as an ordinary `skipped` that did not degrade. Now, on an
+  engine that can run the methodology, any skipped preflight counts as unmeasured and degrades the
+  handoff (`handoff-stage` `_unmeasuredSkip`).
 - An engine that cannot be identified reads as unable to run the plugin (fail closed). The
   preflight test fixture now names its engine (`claude`) rather than relying on the old
   engine-blind behaviour.
@@ -404,9 +448,18 @@ worktree `.claude/worktrees/a3-chunk2`.
 - Fixed in passing (no "pre-existing" exception): `handoff-stage` read `project.engine`, a field
   project rows do not carry (`engineId`), so the handoff's `engineId` fell to `unknown` whenever the
   session had none.
-- **Owed after the Architect rules:** an ADR 0002 dated section recording E1–E6 in the
-  Architect's wording, as Chunk 01 did. It is not written before the ruling, because writing the
-  ADR is itself architectural.
+- Critic rev-20260923T042921Z corrections, in the tree before any ruling:
+  - "Onboarded" has ONE definition, the resolver's. Preflight no longer re-checks `.prawduct/`,
+    so a fresh clone carrying only the plugin reference is measured on Claude.
+  - The session-over-project engine rule is one helper (`governance.sessionEngineId`), used by
+    the pipeline, preflight and handoff-stage.
+  - The withheld-authority banner no longer outranks a failed or stranded wrap PR. Those keep
+    their banner and carry the authority in the detail. The authority reason no longer claims
+    the wrap "opens its PR", which is false for a feature-branch or no-commit wrap.
+  - Withheld auto-merge and withheld PR merges log a line.
+  - The follow-up for admission and rotation is filed as #1809.
+- ADR 0002 carries a dated 2026-09-23 section recording E1–E6 in the Architect's wording. It was
+  written after the rule #5 amendment was Operator-approved, as the Architect directed.
 
 ### Tests (written alongside)
 

@@ -612,4 +612,16 @@ describe('wrap step: preflight on an engine that cannot run the plugin (#1738)',
       assert.equal(exec.calls.length, 1);
     });
   });
+
+  it('measures a project onboarded only by the committed plugin reference (one definition of onboarded)', async () => {
+    const exec = execDouble({ exitCode: 0 });
+    await withTempDir(async (dir) => {
+      fs.mkdirSync(path.join(dir, '.claude'));
+      fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'prawduct@prawduct': true } }));
+      const result = await withInternal({ locateHook: () => ({ path: '/hook', via: 'PATH' }), execFileArgs: exec }, () =>
+        preflight.run({ project: { id: 1, name: 'fresh-clone', path: dir, engineId: 'claude' }, session: { engineId: 'claude' }, step: {} }));
+      assert.equal(result.status, 'done');
+      assert.equal(exec.calls.length, 1, 'a fresh clone without .prawduct/ is still governed, and is measured');
+    });
+  });
 });

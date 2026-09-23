@@ -97,4 +97,11 @@ describe('methodologyCapability (#1738)', () => {
       assert.deepEqual(fs.readdirSync(dir).sort(), ['.prawduct']);
     });
   });
+
+  it('sessionEngineId prefers the session, then the project row, and never invents one', () => {
+    assert.equal(governance.sessionEngineId({ engineId: 'codex' }, { engineId: 'claude' }), 'codex');
+    assert.equal(governance.sessionEngineId({}, { engineId: 'claude' }), 'claude');
+    assert.equal(governance.sessionEngineId(null, { engine: 'claude' }), null, 'project rows carry engineId, not engine');
+    assert.equal(governance.sessionEngineId(null, null), null);
+  });
 });

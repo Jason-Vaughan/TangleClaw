@@ -563,18 +563,32 @@
      * a `provisional` base once the release probe answers. */
     const warnIds = warningSteps.map((st) => st.stepId);
     // #1738 — a run whose engine could not run the project's methodology is a
-    // checkpoint: it committed (and opened its PR), but nothing will merge or
-    // release until a capable session does it. That outranks every release-state
-    // banner below, because each of them would otherwise say the work is on its
-    // way to shipping.
+    // checkpoint: nothing will merge or release until a capable session does it.
+    // That outranks the "release pending" banners below, which would say the work
+    // is on its way to shipping. It does NOT outrank a failed or stranded wrap
+    // PR: those say the commit may not even reach the remote, which is worse, so
+    // they keep their banner and carry the withheld authority in the detail.
     const authority = pipelineResult.methodologyAuthority;
     if (authority && authority.state === 'withheld') {
+      const pr = wrapPrInfo(pipelineResult);
+      if (pr && pr.error) {
+        return { label: 'Wrap committed — release NOT armed', tone: 'warning', detail: withWarnings(`${pr.error} · ${authority.reason}`), pr, warnings: warnIds };
+      }
+      if (pr && pr.stranded) {
+        return {
+          label: 'Wrap committed — branch left on origin, no PR',
+          tone: 'warning',
+          detail: withWarnings(`${pr.skippedReason || 'the wrap branch was pushed but no PR was opened'} · ${authority.reason}`),
+          pr,
+          warnings: warnIds
+        };
+      }
       const sessionNote = pipelineResult.commitSha ? null : sessionOutcomePhrase(runContext);
       return {
         label: 'Wrap checkpointed — merge and release withheld',
         tone: 'warning',
         detail: withWarnings([authority.reason, sessionNote].filter(Boolean).join(' · ')),
-        pr: wrapPrInfo(pipelineResult),
+        pr,
         warnings: warnIds
       };
     }

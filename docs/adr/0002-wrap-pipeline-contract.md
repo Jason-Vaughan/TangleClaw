@@ -524,6 +524,52 @@ decision beyond those rulings.
 **Engine-agnostic.** Resolution reads the request and the project config. Cancellation reads the
 run registry and the pipeline's step order. No engine capability is involved.
 
+## Amended 2026-09-23 — wrap gates are engine-aware and never read as passed (#1738)
+
+This amendment records the Architect's rulings E1–E6 for Train A Car A3 Chunk 02. They apply the
+Architect's 2026-09-21 ruling on #1738, and the provenance is #1738. The Operator approved the
+matching amendment to project rule #5 on 2026-09-23. Switchboard messages 9a774624 (rulings) and
+8af0c8ec (the approval, relayed by the Project Manager) are review evidence only, not the
+authority. This amendment adds no design decision beyond those rulings.
+
+1. **One capability resolution per run (E1).** The run resolves, once and immutably, whether the
+   **session's** engine can run the project's methodology. An unknown engine fails to
+   `capability-unavailable`. Any `.prawduct/` directory, or the committed plugin reference, is a
+   conservative dormant-state signal, not proof of healthy onboarding. Every step reads that one
+   value.
+2. **Two first-class statuses (E2).** `not-applicable` means the step has no subject: the project
+   carries no onboarding signal. `capability-unavailable` means it applies, but this engine cannot
+   perform it, so its evidence was not produced. Neither halts the run. Every consumer fails closed
+   on a status it does not know.
+3. **A required gate that produced no measurement is unmeasured (E3).** The one
+   provider-specific required gate is `preflight`. On an engine that can run the methodology, any
+   preflight that produced no measurement degrades the handoff. That covers a missing hook, a
+   timeout, a contract breach, a "Wrap anyway" after a failure, and a configured step override. An
+   Operator override may permit the state-only checkpoint. It cannot turn absent evidence into
+   complete.
+4. **A dormant methodology withholds its own effects; the checkpoint finishes (E4).** The
+   checkpoint and the neutral publication finish. The following are withheld:
+   - the release cut and the ledger stamp;
+   - arming auto-merge, and merging PRs through PR resolutions;
+   - every write to `.prawduct/`.
+
+   The result and the handoff are degraded. Project rule #5 now separates engine-neutral wrap
+   mechanics, which are identical across engines, from provider-owned methodology effects, which
+   are withheld on an engine without the capability and never faked.
+5. **The handoff records the disposition (E5).** The handoff document carries an optional,
+   additive `methodology: {disposition, engineId}`. Omission means unknown, an invalid enum value
+   fails validation, and a launch never parses the prose in `missingEvidence`.
+6. **The return path is advisory (E6).** A launch on a capable engine after a
+   `capability-unavailable` publication tells the session to run `/prawduct:doctor` before any
+   methodology work, and never to onboard again. It does not gate the launch, and it does not
+   claim that Doctor passed or that authority was restored, because TangleClaw cannot observe
+   either. The historical handoff disposition stays immutable. Prawduct restores its own authority
+   through the owner-confirmed Doctor flow. A later measured preflight on a compatible engine may
+   establish a new publication result.
+
+Out of scope, filed as #1809: capability-matched admission, attested engine rotation, and
+engine-neutral canonical instructions.
+
 
 ## Amendment (Train 21, #1585) — the wrap publishes a per-attempt handoff
 

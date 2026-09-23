@@ -216,6 +216,20 @@ describe('the handoff-stage wrap step', () => {
       assert.equal(readStaged(res.output.publicationId).methodology.disposition, 'not-applicable');
     });
 
+    it('a preflight disabled by a step override is unmeasured on a capable engine, and degrades (Architect E3)', async () => {
+      const disabled = { stepId: 'preflight', kind: 'preflight', status: 'skipped', output: { reason: 'disabled for this project in wrap step settings' } };
+      const res = await stageStep.run(ctx({ methodology: available, previousResults: [disabled] }));
+      assert.equal(res.output.wrapOutcome, 'degraded');
+      assert.deepEqual(res.output.missingEvidence, ['preflight: skipped (not measured)']);
+      assert.equal(readStaged(res.output.publicationId).methodology.disposition, 'unmeasured');
+    });
+
+    it('the same disabled preflight on a project with no onboarding is not missing evidence', async () => {
+      const disabled = { stepId: 'preflight', kind: 'preflight', status: 'skipped', output: { reason: 'disabled for this project in wrap step settings' } };
+      const res = await stageStep.run(ctx({ methodology: { ...dormant, onboarded: false, disposition: 'not-applicable', engineId: 'claude' }, previousResults: [disabled] }));
+      assert.equal(res.output.wrapOutcome, 'complete');
+    });
+
     it('a measured preflight records measured', async () => {
       const res = await stageStep.run(ctx({
         methodology: available,

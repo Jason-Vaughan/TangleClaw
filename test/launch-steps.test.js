@@ -236,6 +236,9 @@ describe('launch step contents (car 21.2)', () => {
         assert.match(state, /run `\/prawduct:doctor`/);
         assert.match(state, /Never run `\/prawduct:onboard`/);
         assert.match(state, /withheld until Doctor passes/);
+        // Architect E6: advisory, never a claim of restored authority.
+        assert.match(state, /nothing here means Doctor has passed or authority is restored/);
+        assert.match(state, /previous handoff keeps its record as written/);
       });
     });
 

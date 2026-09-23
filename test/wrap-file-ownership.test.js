@@ -925,3 +925,26 @@ describe('#1619 — the refusal survives every route into a null verdict', () =>
       'and the operator is not asked about their own edit');
   });
 });
+
+describe('session-files on an engine that cannot run Prawduct (#1738)', () => {
+  const { cleanLaunchScope } = require('./_wrap-scope-fixture');
+  const dormant = { onboarded: true, available: false, disposition: 'capability-unavailable', engineId: 'codex', capability: 'prawduct-methodology', reason: 'r' };
+
+  it('never asks about a .prawduct/ path, and names it as held back', async () => {
+    const repo = makeRepo();
+    fs.mkdirSync(path.join(repo, '.prawduct'));
+    fs.writeFileSync(path.join(repo, '.prawduct', 'state.md'), 'dirty before launch\n');
+    fs.writeFileSync(path.join(repo, 'work.js'), 'session work\n');
+    // The .prawduct file was already dirty at launch, so without the hold-back
+    // the row would stop and ask whether to commit it.
+    const scope = cleanLaunchScope(repo, { baseline: { sha: null, toplevel: repo, dirty: { paths: ['.prawduct/state.md'], truncated: false } } });
+    const asked = await sessionFiles.run({ project: { name: 'p', path: repo }, scope, options: {} });
+    assert.notEqual(asked.status, 'done', 'control: with the capability available the row asks about it');
+
+    const r = await sessionFiles.run({ project: { name: 'p', path: repo }, scope, options: {}, methodology: dormant });
+    assert.equal(r.status, 'done', 'a path no answer could authorize is never asked about');
+    assert.deepEqual(r.output.methodologyWithheld, ['.prawduct/state.md']);
+    assert.match(r.output.detail, /1 Prawduct file not committed/);
+  });
+});
+
