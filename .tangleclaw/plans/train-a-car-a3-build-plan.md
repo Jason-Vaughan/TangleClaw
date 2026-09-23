@@ -1,6 +1,6 @@
 ---
 title: "Train A Car A3: wrap intent, artifact admission, and honest cancellation"
-status: IN PROGRESS — Chunk 01 shipped (PR #1807); Chunk 02 planned on fix/a3-chunk2-engine-aware-gates, Architect ruled E1–E6 (message 9a774624); rule #5 amendment Operator-approved and applied (message 8af0c8ec); ADR 0002 amended; Architect ruled C1–C2, D1–D5 (message 417454d7); PM approved plan and order (message 8219ab12)
+status: IN PROGRESS — Chunks 01 and 02 shipped/built (Chunk 02 on fix/a3-chunk2-engine-aware-gates; Architect ruled E1–E6, message 9a774624; rule #5 amendment Operator-approved, message 8af0c8ec); Chunks 03–04 and P1 remain; Architect ruled C1–C2, D1–D5 (message 417454d7); PM approved plan and order (message 8219ab12)
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-23 (messages ecdbe884, 39998da1)
 issues: [1708, 1707, 1738, 1724, 1507, 1675]
 governed_by:
