@@ -291,8 +291,14 @@ describe('api-sessions', () => {
         // future hook land in the user-options assertion unnoticed.
         // #1404 adds a second server-owned key, `resumeFrom` — never the body's.
         // #1585 adds a third, `wrapRunId`: the identity a handoff publication binds to.
-        const { onStepEvent, resumeFrom, wrapRunId, ...userOptions } = receivedOptions;
+        // #1707 adds the registry's cancel hooks, and #1708 the server-resolved
+        // keep-running answer with its source (always set, whatever the body said).
+        const { onStepEvent, resumeFrom, wrapRunId, admitStep, isCancelRequested, keepSessionRunning, keepSource, ...userOptions } = receivedOptions;
         assert.deepEqual(userOptions, { skipTests: true, prHandling: { 42: 'defer' } });
+        assert.equal(typeof admitStep, 'function', '#1707 step admission threaded to the runner');
+        assert.equal(typeof isCancelRequested, 'function', '#1707 cancel read threaded to the runner');
+        assert.equal(keepSessionRunning, false, '#1708 resolved: the body did not say, the project never chose');
+        assert.equal(keepSource, 'default');
         assert.equal(typeof onStepEvent, 'function', '#583/#185 progress hook threaded to the runner');
         assert.equal(resumeFrom, null, '#1404 resume record is server-set; no blocked predecessor here');
         assert.match(wrapRunId, /^[0-9a-f]{32}$/, '#1585 run id is server-set, never from the body');
@@ -390,8 +396,9 @@ describe('api-sessions', () => {
         });
         await settledWrapResult(server, res);
         // #583: user options unchanged + the registry progress hook, and
-        // #1404's server-set resume record.
-        const { onStepEvent, resumeFrom, wrapRunId, ...userOptions } = receivedOptions;
+        // #1404's server-set resume record, #1707's cancel hooks and #1708's
+        // resolved keep-running answer.
+        const { onStepEvent, resumeFrom, wrapRunId, admitStep, isCancelRequested, keepSessionRunning, keepSource, ...userOptions } = receivedOptions;
         assert.deepEqual(userOptions, { prHandling: { '42': 'merge', '43': 'defer' } });
         assert.equal(typeof onStepEvent, 'function');
         assert.equal(resumeFrom, null);
@@ -431,7 +438,8 @@ describe('api-sessions', () => {
         // ONLY server-owned keys — the registry progress hook (onStepEvent)
         // and #1404's resume record — and no user keys invented from the
         // malformed body.
-        assert.deepEqual(Object.keys(received).sort(), ['onStepEvent', 'resumeFrom', 'wrapRunId'],
+        assert.deepEqual(Object.keys(received).sort(),
+          ['admitStep', 'isCancelRequested', 'keepSessionRunning', 'keepSource', 'onStepEvent', 'resumeFrom', 'wrapRunId'],
           'non-object options bodies must be discarded before reaching the runner (only server-owned keys remain)');
         assert.equal(received.resumeFrom, null);
       } finally {

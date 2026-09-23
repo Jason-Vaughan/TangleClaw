@@ -217,4 +217,50 @@ describe('launch step contents (car 21.2)', () => {
       require('../lib/plan-docs').listPlans = realList;
     }
   });
+
+  // #1738 — the return path: a launch that can run the methodology, after a
+  // session that could not, is told to revalidate with Doctor, never onboard.
+  describe('dormant methodology reattach (#1738)', () => {
+    const dormant = { disposition: 'capability-unavailable', engineId: 'gemini' };
+    const withOnboarded = (fn) => {
+      const marker = path.join(project.path, '.prawduct');
+      fs.mkdirSync(marker, { recursive: true });
+      try { fn(); } finally { fs.rmSync(marker, { recursive: true, force: true }); }
+    };
+
+    it('tells a Claude launch after a dormant session to run Doctor, never onboard', () => {
+      withOnboarded(() => {
+        const { state } = render({ mode: 'pull', handoffMethodology: dormant });
+        assert.match(state, /## Prawduct state was dormant/);
+        assert.match(state, /the gemini engine/);
+        assert.match(state, /run `\/prawduct:doctor`/);
+        assert.match(state, /Never run `\/prawduct:onboard`/);
+        assert.match(state, /withheld until Doctor passes/);
+        // Architect E6: advisory, never a claim of restored authority.
+        assert.match(state, /nothing here means Doctor has passed or authority is restored/);
+        assert.match(state, /previous handoff keeps its record as written/);
+      });
+    });
+
+    it('says nothing after a session that measured', () => {
+      withOnboarded(() => {
+        const { state } = render({ mode: 'pull', handoffMethodology: { disposition: 'measured', engineId: 'claude' } });
+        assert.doesNotMatch(state, /Prawduct state was dormant/);
+      });
+    });
+
+    it('says nothing when this launch cannot run the methodology either', () => {
+      withOnboarded(() => {
+        const codex = store.engines.get('codex');
+        assert.ok(codex, 'the codex engine profile ships with TangleClaw');
+        const { state } = sessions.renderLaunchSteps(project, codex, { operatorHost: 'operator.example.test', mode: 'pull', handoffMethodology: dormant });
+        assert.doesNotMatch(state, /Prawduct state was dormant/);
+      });
+    });
+
+    it('says nothing for a project that is not onboarded', () => {
+      const { state } = render({ mode: 'pull', handoffMethodology: dormant });
+      assert.doesNotMatch(state, /Prawduct state was dormant/);
+    });
+  });
 });
