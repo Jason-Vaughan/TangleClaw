@@ -1,7 +1,9 @@
 ---
 title: startupControl — engine-native startup delivery with semantic receipt
 issue: 1825
-status: Chunk 01 (no-build spike) COMPLETE 2026-09-23 — Architect ruled S1–S5 (message d94974c3); build chunks not yet admitted
+status: Spike COMPLETE (Architect S1–S5, message d94974c3). Build chunks admitted 2026-09-23. B1 PLAN WRITTEN, with D1–D8 sent to the Architect
+scope: startupcontrol-1825
+branch: feat/1825-startup-control-c1
 ---
 
 # startupControl (#1825)
@@ -184,7 +186,148 @@ and are not committed, because they contain account identifiers.
   the operator acts. That is acceptance case 4.
 - Torn down afterwards: both tmux sessions were killed, and the socket and scratch cwd are gone.
 
+## Build chunks (admitted by the PM 2026-09-23, message 94dbfbee; the Operator confirmed in-pane)
+
+| # | Chunk | Why this order |
+|---|---|---|
+| B1 | Engine-neutral foundation. The `startupControl` profile block, validator and adapter registry, resolved in `tc capabilities`. The persisted, revisioned startup prompt, with the service, the read/update/fire API and the operator editor. With no adapter yet, fire returns a typed `unsupported`. | S4 requires the generic UI, store and API to carry no Codex contract. Building them first, with an empty registry, proves that by construction. |
+| B2 | Codex adapter. A server-owned per-launch `codex app-server` on a unix socket; the pane's TUI launched with `--remote`; readiness that includes the subscription; fire via `turn/start` carrying the launch-start payload digest; receipts (accepted/applied/failed/interrupted); and blockers (auth, quota, approval). | It needs B1's registry and fire path. The routes, auth and store are fixed in B1, so B2 adds no new ones. |
+| B3 | The automatic bootstrap on launch: a supported engine fires through its adapter, and an unsupported one keeps the legacy path and records the reason (S3). The launch panel shows receipts and blockers, and has a Fire button. | It needs a working adapter, and it changes every launch, so it comes last. |
+
+## Build Chunk B1: the engine-neutral foundation
+
+### Confidence check
+
+1. **Problem:** nothing stores the startup instruction as a governed, revisioned artifact, nothing
+   can fire it through an engine's native channel, and no profile can declare that an engine is
+   able to.
+2. **Success:**
+   - The operator can read and edit the startup prompt in the dashboard, and each save makes a new
+     revision guarded by an expected revision.
+   - The authorized callers can read it and fire it at an exact session and launch.
+   - Every engine today answers the fire with a typed `unsupported`, carrying the reason and doing
+     no fallback, and that answer is audited.
+   - `tc capabilities` reports `startup-control` for the caller's engine.
+   - A profile can declare `startupControl`, but it is active only when a code adapter of that name
+     is registered, and the registry ships empty.
+3. **Out of scope:** any adapter or any Codex code (B2); a launch-start payload or receipts, beyond
+   the audit row (B2); changing how a launch primes (B3).
+
+### Facts established while planning (verified 2026-09-23 at 03ea93c)
+
+- **Profiles and capability pattern.** Profiles live in `data/engines/*.json` and are validated
+  per capability when read. The `wake` block (`lib/medusa-wake.js` `WAKE_FIELDS`,
+  `_wakeBlockErrors`, `wakeSignature`) is the pattern: unknown fields are refused, evidence is
+  required in both directions, and one validity function serves every reader. The "a profile names
+  an adapter, never supplies one" precedent is `lib/engine-errors.js` `PARSERS`. A new capability
+  key must be added to `READ_CAPABILITIES` (`lib/engines.js`), to
+  `test/engine-capability-reads.test.js` and to the `docs/engine-guide.md` table.
+- **Launch identity.** `launch_sequences` carries `id`, `launch_id` (UNIQUE) and `session_id`. **A
+  launch id is a bearer credential** (the `x-tangleclaw-launch-id` binding header), so no response
+  or audit row may carry it. Targets are named by session id and sequence id instead.
+- **Two inputs in the S2 payload do not exist in code yet:** no "priming-pact digest" and no
+  "role+assignment revision". They are B2's concern (the payload), and they are listed under D8.
+- **Caller resolution.** `lib/shared-docs-access.js` `resolveAccess` returns `operator`, `project`,
+  `master`, `unbound` or `invalid`. There is **no PM or Architect role in code**. Those sessions
+  resolve as `project` callers bound to their own project.
+- **The strict operator write is inline** in the recovery-clear route (`server.js` ~6782–6945):
+  an armed gate needs a signed-in session plus CSRF; an open gate refuses machine clients
+  (`OPERATOR_REQUIRED`) and requires same-origin plus `X-TC-Open-Token`.
+- **Store:** schema v44; `BEGIN IMMEDIATE` migrations with a DDL postcondition. Compare-and-set is
+  `UPDATE … WHERE revision=?` plus a `changes===0` check. `activity_log` is pruned, so a durable
+  audit trail needs its own table.
+- **Capabilities** are a hard-coded array in `GET /api/tc/whoami` (`server.js` ~4555). No engine
+  capability is exposed there yet.
+
+### Architectural decisions (for the Architect; recommendation first)
+
+- **D1: Chunking.** B1/B2/B3 as in the table above. Rejected: one chunk, which would put one issue
+  of this size in a single review (the project rule is one chunk per session).
+- **D2: Persistence scope.** Recommended: **install-global**, one current prompt, stored as an
+  append-only revision table `startup_prompt_revisions (revision PK, text, digest, created_at,
+  created_by_kind)` with revision 1 seeded to `read your launch context: run tc start next` by the
+  v45 migration. Rejected: per-project prompts now. The ruling names one prompt, and a later
+  per-project override can add a scope column without changing the contract.
+- **D3: Routes.**
+  - `GET /api/startup-prompt` → `{revision, text, digest, updatedAt, updatedByKind}`.
+  - `PUT /api/startup-prompt` with `{text, expectedRevision}` → `200` and the new revision.
+  - `POST /api/sessions/:name/startup-prompt/fire` with `{sessionId, sequenceId,
+    expectedRevision}` → the audited outcome.
+  - Rejected: nesting under `/api/config`, which is unrevisioned.
+- **D4: Authorization evidence.**
+  - **Read:** the operator, or any bound project session (a session should be able to see what it
+    will be sent).
+  - **Update:** the operator only, through the strict operator write, which is extracted from
+    recovery-clear into one shared helper so the two cannot drift.
+  - **Fire:** the operator (strict write), or an agent session whose project the operator has
+    listed in a new operator-only config key, `startupPromptFirers`. Its governed scope is a
+    target session in a project that shares a project group with the caller. Identity comes from
+    the existing launch binding (a `project` caller).
+  - Rejected: inferring the PM or Architect from project names, which any rename breaks; and
+    operator-only fire, which departs from S5.
+- **D5: Concurrency and idempotency.**
+  - An update is a compare-and-set on `expectedRevision`; a stale one gets 409.
+  - A fire requires `expectedRevision` to equal the current revision, and
+    `(sessionId, sequenceId)` to be that session's *current* launch.
+  - A fire is keyed by `(sequenceId, revision)`. A repeat returns the existing fire record
+    (`duplicate: true`) and never re-injects, and a partial unique index allows only one in-flight
+    fire per launch.
+- **D6: Error shapes.** The existing `{error, code, ...}` shape.
+  - `400 STARTUP_PROMPT_INVALID`: empty, over 4 KB, or containing control characters other than
+    newline.
+  - `409 STALE_STARTUP_PROMPT {currentRevision}`.
+  - `403 OPERATOR_REQUIRED`, `OPERATOR_ONLY` or `FIRE_SCOPE_DENIED`.
+  - `404 SESSION_NOT_FOUND`.
+  - `409 LAUNCH_NOT_CURRENT`, which echoes no launch identifier.
+  - `409 STARTUP_CONTROL_UNSUPPORTED {engine, reason}`.
+  - An `unsupported` fire is still audited.
+- **D7: Profile schema and capability.**
+  - The `startupControl` block has the fields `{adapter, channel, readiness, receipt, blockers,
+    verifiedVersions, evidence}`, validated like `wake`.
+  - It is active only when `adapter` names a registered adapter and the engine's installed version
+    is in `verifiedVersions`. Otherwise it resolves to `unsupported (<reason>)`.
+  - `whoami` gains a `startup-control` entry for the caller's engine.
+  - B1 registers no adapter and no profile declares the block, so every engine reports
+    `unsupported (no adapter)`.
+- **D8: Audit record.** A durable `startup_prompt_fires` table: id, session id, sequence id,
+  prompt revision and digest, caller kind and project, outcome
+  (`unsupported|accepted|applied|failed|interrupted|blocked`), reason, and timestamps. B1 writes
+  only `unsupported`. B2 adds the launch-start payload digest and the receipt transitions.
+  Flagged for B2: the S2 payload's priming-pact digest and role+assignment revision have no source
+  in code. B2 will propose defining them from the launch snapshot's `sourceManifest` and the
+  `startupPromptFirers` config revision.
+
+### Implementation calls (not architectural)
+
+- New modules: `lib/startup-control.js` (the validator, the empty adapter registry and the
+  capability resolution) and `lib/startup-prompt.js` (the service that the UI routes and the API
+  call alike: one service path, per S5).
+- The operator editor sits on the landing page beside the global rules editor, following the
+  `#rulesEditor` pattern, and sends `expectedRevision`. A 409 re-reads and says so.
+- `docs/engine-guide.md` and `docs/configuration-reference.md` (`startupPromptFirers`) are updated
+  in the same commits, along with `CHANGELOG.md` `### Added`.
+
+### Tests (written alongside)
+
+- Validator: unknown fields, evidence in both directions, an adapter not in the registry, and an
+  unverified version all resolve to unsupported.
+- Store: the v45 migration seeds revision 1; update is compare-and-set; the one-in-flight index
+  holds; and a migration postcondition refuses a half-built table.
+- API: read/update/fire authorization for every caller kind (operator armed and open, bound
+  project, listed firer inside and outside a shared group, master, unbound, invalid).
+- API errors: stale revisions; a launch that is not current; a duplicate fire; and `unsupported`
+  audited without any keystroke path touched (tmux is spied on and never called).
+- Recovery clear still passes its existing tests on the extracted helper.
+- `whoami` reports `startup-control`, and the UI collector sends `expectedRevision`.
+
+### Done when
+
+- Every test above is green, the full suite is green, and the docs are current.
+- The Architect has ruled on D1–D8, and the Critic is clean.
+
 ## Status
 
 - [x] Chunk 01: no-build spike: capture Codex app-server channel, readiness, receipt and blockers live; S1–S5 to the Architect with the evidence. Done 2026-09-23: all four cases captured; Architect ruled S1 APPROVE, S2–S5 MODIFY (message d94974c3)
-- [ ] Build chunks: not yet planned; the PM admits scope, and routes, auth, persistence, concurrency and error shapes return to the Architect at that plan's plan-written gate
+- [ ] Chunk B1: Engine-neutral foundation: startupControl profile block + registry + capability, revisioned startup prompt with read/update/fire API and operator editor (#1825)
+- [ ] Chunk B2: Codex adapter: per-launch app-server, readiness, fire with launch-bound receipts, blockers (#1825)
+- [ ] Chunk B3: Automatic bootstrap on launch with legacy fallback; launch panel receipts, blockers and Fire (#1825)
