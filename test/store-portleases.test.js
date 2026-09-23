@@ -775,7 +775,9 @@ describe('#1381 — schema v43→v44 on a REAL old DB', () => {
         'the migration added the constraint, not just the column'
       );
       const stamped = store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v;
-      assert.equal(stamped, 44);
+      // Migrated all the way to HEAD, whatever HEAD is: a literal would go red
+      // with every unrelated later migration.
+      assert.equal(stamped, store.CURRENT_SCHEMA_VERSION);
     } finally {
       try { store.close(); } catch { /* already closed */ }
       store._setBasePath(prevBase);
