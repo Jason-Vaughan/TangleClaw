@@ -2,9 +2,9 @@
 
 ## Current build chunk
 
-**Active:** Chunk 02 — Operator-edited global rules survive an update, or block it cleanly (#1730)
+**Active:** Chunk 02 — Wrap gates are engine-aware and never read as passed (#1738)
 
-_Last chunk in this plan._
+**On deck:** Chunk 03 — Admission is a positive decision; drafts fail visibly (#1724, #1507)
 
-Plan: `.tangleclaw/plans/train-a-car-a2-build-plan.md`
+Plan: `.tangleclaw/plans/train-a-car-a3-build-plan.md`
 <!-- TANGLECLAW:PRIMING-ROLL:END -->
