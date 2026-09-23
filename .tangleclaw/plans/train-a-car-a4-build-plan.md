@@ -1,7 +1,7 @@
 ---
 title: "Train A Car A4: exact release proof and workflow supply-chain floor"
-status: Chunk 01 REVIEWED 2026-09-23 — Critic clean, Architect ruled A1–A5 (message ecc27e3b); Operator approved the CI change in-pane; PR open, merge on the Operator's go
-authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-23 (message 9d88259b). Workflow (CI) changes: the Operator gave a direct in-pane go for Chunk 01 on 2026-09-23 (project rule: only the Operator authorizes CI changes). The merge also waits on the Operator
+status: Chunk 01 SHIPPED (PR #1828). Chunk 02 PLAN WRITTEN 2026-09-23. B1–B5 sent to the Architect, and the build proceeds on the recommendations meanwhile. The PR waits on the rulings and merges on the Operator's direct go
+authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-23 (message 9d88259b). Workflow (CI) changes: the Operator gave a direct in-pane go for Chunk 01 on 2026-09-23 (project rule: only the Operator authorizes CI changes). The merge also waits on the Operator. Chunk 02: the PM dispatched it via Medusa, 2026-09-23 (message 63de80dc). Its CI change and merge still need the Operator's direct go
 issues: [1436, 1551]
 governed_by:
   - Architect roadmap, "Car A4 — exact release proof and workflow supply-chain floor" (TangleClaw-Architect/.tangleclaw/plans/v5-v6-backlog-census-and-bridge-roadmap.md)
@@ -9,7 +9,7 @@ governed_by:
   - ADR 0014 and docs/dependency-bump-audit.md (Dependabot bumps are audited and rebuilt, never merged)
   - project rule: Train chunks of at most 3–4 issues, one chunk per session
 scope: train-a-car-a4
-branch: fix/a4-chunk1-action-pins
+branch: fix/1551-release-exact-sha
 partition: serial. Both chunks edit .github/workflows/release.yml
 critic_mode: chunk per chunk, cumulative at the last chunk
 ---
@@ -161,15 +161,121 @@ and the tag dereferences to it. Privileged dependencies are immutable and mechan
 
 ## Chunk 02: A release publishes only the exact commit that was tested (#1551)
 
-Outline only; planned in full at its own plan-written boundary. Refuse when the tag's dereferenced
-commit is not `GITHUB_SHA`, including a pre-existing tag being healed. Gate publishing on a
-successful `test` run for that exact SHA. Scope the write token to the publishing job (A3). Add
-tests for both refusals. The mechanism for waiting on the test result is the main decision to take
-to the Architect: `workflow_run`, polling check-runs for `GITHUB_SHA`, or making release a
-`needs: test` job.
+### Confidence check
 
-Bookkeeping when Chunk 02 starts: repoint the frontmatter `branch:` at Chunk 02's branch and
-rewrite `status:`, because both still describe Chunk 01's merged and deleted branch.
+1. **Problem:** `release.yml` asks only whether tag `vX.Y.Z` *exists*. It never checks which commit
+   the tag names, and it publishes without any test result for the commit it releases. The newest
+   tag is the update path for every install, so a tag that names a different commit, or a commit
+   no test ran on, delivers code no gate has seen (audit M6).
+2. **Success:** a run publishes only when (a) the suite passed on `GITHUB_SHA` inside that same run,
+   and (b) the tag dereferences to `GITHUB_SHA`, both before a pre-existing tag is healed and on
+   origin after a push. Either mismatch fails the run red before anything is published. The write
+   token exists only in the job that tags and publishes.
+3. **Out of scope:** repository settings (tag protection rulesets, `sha_pinning_required`, branch
+   protection), which are Operator-only. The mutable runner image and Node artifact (#1827).
+   Train A's exit-gate item "release and deployment are explicitly initiated after the integration
+   candidate is frozen" is a train-level question about whether releases stay automatic; this
+   chunk does not change the trigger.
+
+### Facts established while planning (verified 2026-09-23 at fbdf22c)
+
+- `release.yml` has one job holding workflow-level `contents: write`. It computes the version,
+  checks tag and Release existence independently, extracts notes, creates and pushes an annotated
+  tag if missing, checks the tag is *visible* on origin, then publishes. Nothing compares any SHA.
+- `test.yml` triggers on `pull_request` and on `push` to `main`/`v5-baseline`, with top-level
+  `contents: read`. Its job is named `test`, the only check branch protection requires.
+- GitHub semantics this design relies on (Actions docs, reusable workflows): a called workflow's
+  `github` context is the caller's, so `github.sha` and `actions/checkout`'s default ref are the
+  caller's `GITHUB_SHA`. A called workflow's token can only be narrowed, never widened, from the
+  caller job's grant. A job with `needs:` and no status function in its `if:` is skipped when a
+  needed job fails.
+- `ls-remote` prints an annotated tag twice: `refs/tags/T` (the tag object) and `refs/tags/T^{}`
+  (the commit). A lightweight tag prints only `refs/tags/T`, which is the commit. So the commit is
+  the `^{}` line when it exists, else the plain line. `lib/update-checker.js#parseTagsOutput`
+  answers a different question (which versions exist) and deliberately skips `^{}` lines, so it
+  cannot be reused for this check.
+- `docs/release-process.md` "If a release did not go out" tells the operator to heal by running
+  `workflow_dispatch` from `main`. That runs at main's *current* head. Once a later commit lands,
+  that head is no longer the tagged commit, so under this chunk's rule that dispatch must refuse.
+  This procedure changes.
+- Recent release runs are all `push` events; the last was 2026-09-20.
+
+### Architectural decisions (for the Architect; recommendation first)
+
+- **B1: How the release waits for tests on the exact SHA.** Recommended: **reusable workflow plus
+  `needs:`.** `test.yml` gains `on: workflow_call`. `release.yml` gets a `test` job that
+  calls `./.github/workflows/test.yml`, and the publishing job declares `needs: test`, with no
+  `always()`, `!cancelled()` or `failure()` in its `if:`. The suite then runs on `GITHUB_SHA`
+  inside the release run itself, so "tested" and "released" are the same SHA by construction,
+  with no lookup and no waiting. Cost: a version-bump push runs the suite twice (about 7 min),
+  and releases are rare. Rejected: (a) the `workflow_run` trigger. It runs the default branch's
+  copy of `release.yml` and not the tested commit's, it loses the `version.json` path filter, and
+  it attaches a write-token workflow to another workflow's completion, a known privileged-trigger
+  hazard. (b) Polling the check-runs API for `GITHUB_SHA`. A check named `test` can be posted by
+  any app with `checks: write` unless the poll pins the app and workflow identity, the poll needs a
+  timeout that is a guess, and the run holds a runner while it waits.
+- **B2: Tag-target rule, including heal and the already-released case.** Recommended: the tag's
+  dereferenced commit must equal `GITHUB_SHA` (1) before anything, when the tag already exists and
+  its Release does not (the heal path), and (2) after the push, replacing today's "is visible"
+  check with "is visible **and** dereferences to `GITHUB_SHA`". A mismatch fails red with both
+  SHAs named. When the tag **and** Release both already exist, the run publishes nothing. There it
+  emits a `::warning` naming a mismatch and stays green, rather than failing a run that changes
+  nothing (e.g. a later `version.json` edit that keeps the version). Also: the checkout's `HEAD`
+  must equal `GITHUB_SHA`. Rejected: failing the fully-released case red, which adds noise with no
+  protective effect; moving or deleting a mismatched tag automatically, which is data deletion and
+  Operator-only.
+- **B3: Token scope (completing A3).** Recommended: top-level `permissions: contents: read`, the
+  called `test` job read-only, and `contents: write` only on the publishing job. Rejected: an extra
+  read-only "plan" job ahead of it. The publishing job is the only one left, so splitting it again
+  adds output-plumbing for no narrower grant.
+- **B4: Operator procedure change (`docs/release-process.md`).** Recommended: heal a partial release
+  with **Re-run jobs** on the original run, which keeps its `GITHUB_SHA`. `workflow_dispatch` from
+  `main` remains valid only while main's head is still the tagged commit, and otherwise it now
+  refuses by design. Document that a refusal means "do not move the tag by hand; ask the Operator".
+  Rejected: a dispatch input naming the SHA to release, which reopens exactly the choice this chunk
+  removes.
+- **B5: New module.** The dereference rule becomes a pure function plus a small CLI,
+  `scripts/release-tag-gate.js`, which the workflow calls and the suite unit-tests. Recommended as
+  an implementation call. Listed here because it adds a module to the release path.
+
+### Implementation calls (not architectural)
+
+- The CLI reads `ls-remote` output on stdin, takes the tag and the expected SHA as arguments, and
+  exits non-zero with a `::error::` line on a mismatch or on output it cannot parse. It fails
+  closed: no line for the tag counts as "absent", and anything malformed is an error, never
+  "absent".
+- The existing "Verify the tag is visible on origin" step becomes the post-push dereference check.
+  It keeps its independent `ls-remote` and its explicit exit-status capture.
+- Comments in `release.yml` and `test.yml` say why `workflow_call` exists, so nobody removes it
+  as unused.
+
+### Tests (written alongside)
+
+- `test/release-tag-gate.test.js` (unit): an annotated tag resolves through `^{}`; a lightweight
+  tag resolves through its plain line; a mismatch refuses and names both SHAs; an absent tag reads
+  as absent; malformed or ambiguous output (two plain lines for one tag) is an error, not "absent";
+  `refs/tags/v1.2.30` does not satisfy a lookup for `v1.2.3`; CLI exit codes for each.
+- `test/release-workflow.test.js` (source pins, the `ci-workflow.test.js` pattern):
+  - the test-before-publish refusal: `release.yml` has a job that `uses: ./.github/workflows/test.yml`;
+    the publishing job `needs:` it and has no status function in its `if:`; `test.yml` declares
+    `workflow_call`.
+  - the tag-target refusal: the dereference check runs before the tag push and before the
+    publish step, and the post-push check calls the gate with `GITHUB_SHA`.
+  - token scope: top-level permissions are read-only, and only the publishing job holds
+    `contents: write`.
+- Mutation checks, watched red: drop `needs: test`; add `always()` to the publishing `if:`; remove
+  `workflow_call`; swap the gate's expected SHA; hoist `contents: write` back to the top level.
+- Honest limit: source pins show what the file says, not what GitHub runs. The live proof is the
+  first release run after merge (or a dispatch from `main` when the version is already fully
+  released, which exercises the test job and the gate and publishes nothing). That run is for the
+  Operator to start.
+
+### Done when
+
+- The gate module and the workflow changes land, both test files are green, the mutation checks
+  are watched red, `docs/release-process.md` and `CHANGELOG.md` are current, the Architect has ruled
+  on B1–B5, and the Critic (cumulative, last chunk of the car) is clean.
+- The PR is **not** `--auto` (it touches CI). It merges on the Operator's direct go.
 
 ## Status
 
