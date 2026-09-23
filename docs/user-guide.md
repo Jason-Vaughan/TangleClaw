@@ -154,7 +154,7 @@ and the one-line fix (with a Copy button, since copying out of a phone terminal 
 |---|---|---|
 | **Terminal (ttyd) PTY leak** | The macOS PTY pool is nearly full, or ttyd has accumulated leaked `tmux attach` clients — the cause of terminals that stop opening | `launchctl kickstart -k gui/$(id -u)/com.tangleclaw.ttyd` |
 | **Full Disk Access missing** | A read of `~/Documents` never answered — what a protected folder does when the `node` TangleClaw runs has no Full Disk Access | Grant Full Disk Access to that `node`, restart the server; or keep projects outside `~/Documents`, `~/Desktop`, `~/Downloads` |
-| **Server running old code** | The running process is older than the checkout on disk. On this page the stale-server banner already shows this with a Restart button, so the panel leaves it to the banner | Restart TangleClaw |
+| **Server running old code** | The running process is older than the checkout on disk and the commits in between change code it loads. Commits that only touch records (docs, tests, plans) leave it clear with "no restart needed"; when the change cannot be classified it stays fired and says "restart impact unknown". On this page the stale-server banner already shows this with a Restart button, so the panel leaves it to the banner | Restart TangleClaw |
 | **Medusa Bridge reachable** | One or more sessions have Medusa enabled but the Bridge is not usable — nothing on either port, only one of its two transports answering, or the Bridge itself reporting `degraded`. Silent when no session has Medusa on, since no Bridge is required then | `curl -sS http://localhost:3009/health`, then start or install the Bridge (see `docs/configuration-reference.md` for pointing TangleClaw at a non-default port) |
 
 A row that begins **Could not check** means the measurement itself failed (ttyd not running under
@@ -249,7 +249,7 @@ Tap **Attach** to register a directory as a TangleClaw project. This:
 - Registers the project in the database
 - Creates a `.tangleclaw/project.json` if one doesn't exist
 
-You can also attach projects in bulk during the first-run setup wizard, or via the API: `POST /api/projects/attach { "name": "project-dir-name" }`.
+You can also attach projects in bulk during the first-run setup wizard, or via the API: `POST /api/projects/attach { "name": "project-dir-name" }`. Attaching is the operator's: a call from a session's pane or a plain script gets `403 OPERATOR_ONLY`. Use the dashboard, or send it as the signed-in operator.
 
 ### Auto-Detection of Existing Projects
 
@@ -458,6 +458,16 @@ If a `deletePassword` is configured, you'll need to enter it to wrap.
 
 **Watching it run.** As soon as the pipeline starts, a panel opens under the **Wrap** button with every step listed and paints each one as it happens — *Running* while a step is in flight, then *Done*, *Skipped*, or *Blocked* with the step's own output — and its banner says which step of how many the wrap is on. The panel does not dim the page, so the terminal stays visible and usable beside it; on a phone it is a sheet over the bottom of the screen. Close it with **×**, Escape or the Wrap button whenever you want the whole terminal: the wrap keeps running, and the Wrap button itself shows the progress, for example **Wrapping 4/12 · 1:42** (the current step, the step count, and how long that step has run). A step still running after two minutes turns the button amber with a ⚠, and its row says *Taking long — check the terminal*. Click the Wrap button to open the panel again. Nothing is decidable until the run ends, so Retry and Done appear only with the final report. If the live feed drops for good, the banner says *live progress unavailable* and the report still arrives, exactly as it would without the feed.
 
+**Keeping the session running.** A wrap that completes ends the session unless it is told to keep it. The wrap dialog's **Keep the session running** box says so for one wrap. The project's **Keep the session running after a wrap** setting (settings modal) is what a wrap inherits when whoever started it did not say, such as another session, the Project Manager or a script. The dialog opens pre-ticked from that setting, and unticking it ends the session for that wrap. From its first moment the panel says what the run will do *if it completes*: "If this wrap completes, it will end the session (project setting)". A wrap that stops, fails or is cancelled always leaves the session running.
+
+**Hiding versus cancelling.** While a wrap runs, **Hide** only closes the panel. The wrap keeps going, and the **Wrap** button reopens it. **Cancel wrap** stops it at the next step boundary. The step already running finishes first, and the panel names it. You can cancel only until the commit step starts. From then on the wrap may already have branched, committed, pushed or opened a PR, so Cancel gives way to "Past the point of cancellation; the wrap continues", naming the step it is on. A cancelled wrap makes no commit, branch, push, PR or auto-merge, and the session stays running. It does **not** undo the steps that already ran, so uncommitted edits or local state they wrote may remain. The report lists those steps.
+
+**New files wait for your answer.** A wrap commits the session's edits to files the project already tracks without asking. A file new to the repository is different, because a scratch script, a query dump and a real new module look the same to a wrap. A new file the session created and never committed appears in the files row as "new to the repository and never committed", and goes into the wrap only if you choose **Include**. **Leave** keeps it on disk, uncommitted. A new file the session staged with `git add` is asked about too, because staging is not a decision to publish. Files a wrap step writes itself, such as the changelog promotion, are not asked about, and neither are the files TangleClaw writes into every project: `.tangleclaw/project.json` and the engine's config file. The wrap commit and its PR list every file they carry beyond the wrap's own: the session's files, and separately the ones you included.
+
+**A draft at the prompt is kept, not lost.** When TangleClaw types into a session (a switchboard nudge, a command-bar send, a wrap prompt), it first clears whatever is typed but not sent, because the paste would otherwise be submitted joined to it. For Claude Code, Codex and Antigravity, a draft it finds there is saved first to a private file under `~/.tangleclaw/drafts/`, one per session attempt, holding the last 20 and deleted 7 days after the session ends. The log records only a reference to the saved draft (`draftRef`) and its size, never the text. For an engine TangleClaw cannot read the prompt of, such as Aider or OpenClaw, the prompt is still cleared, and the log says the draft could not be captured.
+
+**Wrapping a Prawduct project from another engine.** Prawduct runs only inside Claude Code. When a project that is onboarded to Prawduct is wrapped from a Codex, Aider, Antigravity or other non-Claude session, the wrap is a checkpoint. It commits the session's work and writes the handoff. When the wrap runs on the base branch, it also pushes a wrap branch and opens its PR, as any wrap does. It does not do three things only Prawduct can authorize: it does not check Prawduct's gates (the preflight row reads **Unavailable** and names the engine), it does not cut a release, and it does not merge. Auto-merge is not armed, and PRs you chose to merge are listed rather than merged. It also leaves the project's `.prawduct/` files out of the commit, and the files row says how many. From its first moment the panel says "It will not merge or release", and the finished banner reads **Wrap checkpointed — merge and release withheld**. The handoff records that the gates were not run, so it is marked degraded. The next Claude session on the project is told to run `/prawduct:doctor` (never `/prawduct:onboard`) before any Prawduct work. Nothing merges the checkpoint's PR or cuts its release automatically afterwards. The PR stays open without auto-merge, and any PR merges you chose in that wrap are not carried forward, so merge them, and cut the release, from a Claude session.
+
 **Choosing the version bump.** The wrap dialog has a **Version bump** selector: *Auto*, *Patch*, *Minor*, or *Major*. Auto (the default) derives the bump from your `CHANGELOG.md` `[Unreleased]` content — `### Added`/`### Changed` mean minor, `### Fixed`-only means patch, a `BREAKING` marker means major. Pick an explicit level when the CHANGELOG can't imply what you want — for example a release train where the bump belongs at promote time rather than at session end. Your choice is reapplied if the wrap blocks and you retry, and resets to Auto the next time you open the dialog.
 
 **Did it actually ship?** A wrap that commits has not necessarily *released*. When the wrap opens a PR (see protected branches below), the version bump and CHANGELOG promotion only reach `main` once that PR merges — which happens after its checks pass, and never if a required check fails. The drawer says which of these is true:
@@ -483,7 +493,7 @@ When a preflight set to block does stop the wrap, its row offers three ways on: 
 
 **Wrap commits and protected branches.** When a wrap fires while the project is checked out on `main`/`master`, the commit step auto-branches to `wrap/<timestamp>-<project>` and commits there — and then closes the loop automatically: it pushes the wrap branch, opens a PR back to the original branch, and arms GitHub auto-merge (`--auto --squash --delete-branch`; branch protection still gates). The commit row in the wrap drawer shows the outcome (e.g. `wrap PR auto-merge armed`). If any part fails — no `origin` remote, `gh` missing, auto-merge disabled on the repo — the wrap still completes and the drawer shows what to do; the checkout stays on the wrap branch so the dangling commit is visible. Opt out per project with `wrapAutoPrEnabled: false` in `<project>/.tangleclaw/project.json` if a project must never have automated pushes or PRs.
 
-**Stranded wraps.** A wrap branch that reached the remote but never got a pull request is *stranded*: its version bump, CHANGELOG promotion and index files are on the remote and haven't reached your base branch. TangleClaw records each one, with the remote, the branch and the wrap commit, and every new session is told about them at start. When there are none, the session is told that in one line. The list for a project is at `GET /api/projects/<id or name>/stranded-wraps`. Once you've dealt with one, acknowledge it with `POST /api/projects/<id or name>/stranded-wraps/ack` and `{"branch": "…", "headSha": "…"}`, using the full commit SHA shown in the list. The acknowledgement records who you're signed in as and when, and it covers that commit only: if the same branch is stranded again at a new commit, it's listed again. Wraps stranded before this record existed are listed as older records with no commit SHA; acknowledge those with `"headSha": null`. Older records are shown but never counted as blocking (`counts.blocking`).
+**Stranded wraps.** A wrap branch that reached the remote but never got a pull request is *stranded*: its version bump, CHANGELOG promotion and index files are on the remote and haven't reached your base branch. TangleClaw records each one, with the remote, the branch and the wrap commit, and every new session is told about them at start. When there are none, the session is told that in one line. The list for a project is at `GET /api/projects/<id or name>/stranded-wraps`. Once you've dealt with one, acknowledge it with `POST /api/projects/<id or name>/stranded-wraps/ack` and `{"branch": "…", "headSha": "…"}`, using the full commit SHA shown in the list. That call, like the check and open-PR calls, is answered to the operator or to the project's own session, which sends its binding (`x-tangleclaw-project-id`, `x-tangleclaw-launch-id`); a session bound to another project gets `403 OTHER_PROJECT`. The acknowledgement records who you're signed in as and when, and it covers that commit only: if the same branch is stranded again at a new commit, it's listed again. Wraps stranded before this record existed are listed as older records with no commit SHA; acknowledge those with `"headSha": null`. Older records are shown but never counted as blocking (`counts.blocking`).
 
 **Checking against GitHub.** After each launch, TangleClaw asks GitHub about the project's stranded wraps and its `wrap/*` branches, without holding up the launch. A stranded wrap whose branch has since merged, been deleted, or has an open pull request with every check passed is cleared: it leaves the list and stops holding launches. The check also shows two things that never hold anything up: **✕ N red CI** for a wrap pull request with failing checks, and **N no PR** for a `wrap/*` branch on GitHub with no pull request that this machine never recorded (another machine's wrap, for example). The card's detail panel has a **GitHub** row saying when it last checked and what it found, with a **Check now** button. If the check can't run (`gh` isn't installed or signed in, or GitHub can't be reached), nothing is cleared, the card shows **GitHub ?** with the time and reason, and anything shown from an earlier check says when that check was. A project with no `origin`, or one not hosted on github.com, isn't checked and shows no GitHub badge; if it has stranded wraps, the GitHub row says why it can't be checked. The check runs `gh` on the server as the account signed in there.
 
@@ -704,6 +714,62 @@ Current `main` ignores TangleClaw-generated engine configs, so the fast-forward
 above should make the tree clean without deleting the generated file. If other
 files remain, inspect and commit or stash them rather than bypassing the
 updater's clean-tree guard.
+
+### Update Blocked by Local Changes
+
+**Update now** never moves a checkout that has uncommitted changes someone may
+have written. When the source checkout is dirty, the update stops and lists the
+files in the way.
+
+It offers to discard files for you in only one case: every file on the list is
+one TangleClaw can prove is its own change. Only two files can qualify, and
+each needs its proof:
+
+- `CLAUDE.md`, when your copy matches the committed one everywhere outside
+  TangleClaw's own marked section.
+- `.claude/settings.json`, when the whole change is TangleClaw removing hook
+  entries an older version left there.
+
+Discarding restores the committed copy. The updater never deletes a file.
+
+Everything else stays as real work, and you have to commit or stash it
+yourself. That includes everything under `.tangleclaw/`: plans, priming
+prompts and memories are content someone wrote. Commit them in the TangleClaw
+source checkout, then retry **Update now**.
+
+### Your Global Rules Edits Across an Update
+
+Edits you make in **Global Rules** on the dashboard are kept when you update,
+even when the new release changes the same file. The update merges your edits
+into the release's version, and it saves a copy of your file from before the
+update in `~/.tangleclaw/backups/`. It tells you where that copy is before the
+restart.
+
+When your edits and the release change the same lines, the update stops before
+it changes anything, and the dialog tells you what to do: open Global Rules,
+copy your additions somewhere safe, remove them, update, then add them back.
+
+The same dialog lists anything else a release would run into, each with what
+to do about it:
+
+- a file marked in git so its local changes are hidden (skip-worktree or
+  assume-unchanged) that the release changes;
+- a file that is not part of the install, even an ignored one, at a path the
+  release adds;
+- a backup that could not be saved.
+
+In each case nothing was changed. When some other file blocks an update, the
+dialog also lists your edited Global Rules as detected and kept; you do not need
+to commit them.
+
+If an update ever fails partway and TangleClaw cannot verify that it put the
+install back, the dialog says manual recovery is required. It names the step
+that failed and the backup copies, and it shows what it could check: the commit
+and branch the install is on now, and whether your file and its git flags match
+what they were. Do not update or restart until someone has looked at it.
+
+You no longer need to mark `data/global-rules.md` as skip-worktree to keep your
+rules through an update. An install that already has that mark keeps it.
 
 ### "Press to Reconnect" After an Interrupted Project Move
 

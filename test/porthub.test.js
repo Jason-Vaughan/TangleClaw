@@ -13,6 +13,22 @@ const store = require('../lib/store');
 const porthub = require('../lib/porthub');
 const portScanner = require('../lib/port-scanner');
 
+/**
+ * Answer every single-port probe as lsof does when nothing listens (exit 1, no
+ * output), so these tests grade the registry and never this machine's ports —
+ * a developer box running anything on a fixture port would otherwise turn a
+ * lease into PORT_IN_USE.
+ */
+function probeFindsNothing() {
+  portScanner._setExec(() => {
+    const err = new Error('no listener');
+    err.status = 1;
+    err.stdout = '';
+    err.stderr = '';
+    throw err;
+  });
+}
+
 describe('porthub (store-backed)', () => {
   let tmpDir;
 
@@ -20,6 +36,7 @@ describe('porthub (store-backed)', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-porthub-'));
     store._setBasePath(tmpDir);
     store.init();
+    probeFindsNothing();
   });
 
   afterEach(() => {
@@ -223,13 +240,178 @@ describe('porthub (store-backed)', () => {
     });
   });
 
-  describe('registerPort with port scanner warning', () => {
-    it('succeeds even when scanner shows port in use', () => {
-      portScanner.scan();
-      // Register should always succeed regardless of scanner state
-      const result = porthub.registerPort(7778, 'test-proj', 'api');
+  // #814 — the registry used to answer "free" for a port the machine was
+  // visibly using, and only logged a warning. The contract is now: an UNLEASED
+  // listener refuses the lease unless the caller adopts it as its own. This
+  // replaces the old "always succeeds regardless of scanner" case, whose
+  // requirement #814 reverses.
+  describe('registerPort listener check (#814)', () => {
+    /** Make lsof report `command` (pid 4242) listening on `port`. */
+    function probeFinds(port, command = 'caddy') {
+      portScanner._setExec(() => [
+        'COMMAND   PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME',
+        `${command}  4242 me    7u  IPv6 0x1      0t0  TCP *:${port} (LISTEN)`
+      ].join('\n'));
+    }
+
+    it('refuses an unleased listener, names it, and stores nothing', () => {
+      probeFinds(8443);
+      const result = porthub.registerPort(8443, 'WheresMy', 'preview', { permanent: false });
+      assert.equal(result.success, false);
+      assert.equal(result.code, 'PORT_IN_USE');
+      assert.deepEqual(result.listener, { port: 8443, pid: 4242, command: 'caddy' });
+      assert.equal(result.listenerCheck, 'refused');
+      assert.match(result.error, /adoptListener/);
+      assert.equal(store.portLeases.get(8443), null, 'a refused lease must not be written');
+    });
+
+    it('grants the same request when the caller adopts the listener', () => {
+      probeFinds(8443, 'node');
+      const result = porthub.registerPort(8443, 'my-proj', 'dev', { adoptListener: true });
       assert.equal(result.success, true);
-      assert.equal(result.error, null);
+      assert.equal(result.listenerCheck, 'adopted');
+      assert.equal(result.listener.pid, 4242);
+      assert.equal(store.portLeases.get(8443).project, 'my-proj');
+    });
+
+    it('a renewal by the holding project never probes', () => {
+      porthub.registerPort(3200, 'my-proj', 'dev');
+      let probed = false;
+      portScanner._setExec(() => { probed = true; return ''; });
+      const result = porthub.registerPort(3200, 'my-proj', 'dev');
+      assert.equal(result.success, true);
+      assert.equal(result.listenerCheck, 'renewal');
+      assert.equal(probed, false, 'the running service IS the listener; asking would refuse the happy path');
+    });
+
+    it("another project's live lease stays PORT_CONFLICT, not PORT_IN_USE", () => {
+      porthub.registerPort(3200, 'owner', 'dev');
+      probeFinds(3200);
+      const result = porthub.registerPort(3200, 'intruder', 'dev');
+      assert.equal(result.code, 'PORT_CONFLICT');
+      assert.equal(result.owner.project, 'owner');
+      assert.equal(result.listenerCheck, null);
+    });
+
+    it('a forced takeover of a leased port is not refused by its listener', () => {
+      porthub.registerPort(3200, 'gone', 'dev');
+      probeFinds(3200);
+      const result = porthub.registerPort(3200, 'successor', 'dev', { force: true });
+      assert.equal(result.success, true);
+      assert.equal(result.listenerCheck, 'takeover');
+    });
+
+    it('an expired lease does not hide a listener', () => {
+      store.portLeases.lease({ port: 3201, project: 'old', service: 'dev', ttlMs: 1 });
+      store.getDb().prepare("UPDATE port_leases SET expires_at = datetime('now', '-1 hour') WHERE port = 3201").run();
+      probeFinds(3201);
+      const result = porthub.registerPort(3201, 'new', 'dev');
+      assert.equal(result.code, 'PORT_IN_USE');
+    });
+
+    it('a non-localhost host is not probed and says so', () => {
+      let probed = false;
+      portScanner._setExec(() => { probed = true; return ''; });
+      const result = porthub.registerPort(3203, 'RentalClaw', 'tools', { host: 'habitat' });
+      assert.equal(result.success, true);
+      assert.equal(result.listenerCheck, 'not-local');
+      assert.equal(probed, false);
+    });
+
+    it('when lsof cannot run and no scan is cached, grants and says the check was unavailable', () => {
+      portScanner._setExec(() => {
+        const err = new Error('lsof: not found');
+        err.status = 127;
+        err.stdout = '';
+        err.stderr = 'sh: lsof: not found';
+        throw err;
+      });
+      const result = porthub.registerPort(3204, 'p', 'dev');
+      assert.equal(result.success, true);
+      assert.equal(result.listenerCheck, 'unavailable');
+    });
+
+    it('when lsof cannot run, a cached scan still refuses a listener it saw', () => {
+      portScanner._setLastScan([{ port: 3205, pid: 99, command: 'postgres' }]);
+      portScanner._setExec(() => {
+        const err = new Error('lsof failed');
+        err.status = 127;
+        err.stdout = '';
+        err.stderr = 'boom';
+        throw err;
+      });
+      const result = porthub.registerPort(3205, 'p', 'dev');
+      assert.equal(result.code, 'PORT_IN_USE');
+      assert.equal(result.listener.command, 'postgres');
+    });
+
+    it('returns the stored lease on success', () => {
+      const result = porthub.registerPort(3206, 'p', 'dev', { permanent: false, autoRenew: true, reach: 'tailnet' });
+      assert.equal(result.lease.port, 3206);
+      assert.equal(result.lease.autoRenew, true);
+      assert.equal(result.lease.reach, 'tailnet');
+      assert.equal(result.lease.permanent, false);
+    });
+
+    it('bootstrap still records its own infra ports while they are listening', () => {
+      portScanner._setExec((cmd) => {
+        const port = Number(/-iTCP:(\d+)/.exec(cmd)[1]);
+        // Every lsof call reports ttyd listening, so the socket-table fallback
+        // is never reached here.
+        return `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nttyd 1 me 7u IPv4 0x1 0t0 TCP 127.0.0.1:${port} (LISTEN)`;
+      });
+      porthub.bootstrap({ ttydPort: 3100, serverPort: 3101 });
+      assert.ok(store.portLeases.get(3100), 'ttyd lease recorded despite its listener');
+      assert.ok(store.portLeases.get(3101), 'server lease recorded despite its listener');
+    });
+  });
+
+  describe('bootstrap enrols Caddy in caddy mode only (#814)', () => {
+    it('enrols both Caddy listeners as tailnet leases under its own name in caddy mode', () => {
+      const config = store.config.load();
+      config.ingressMode = 'caddy';
+      config.caddyHttpsPort = 8443;
+      config.caddyHttpPort = 8080;
+      store.config.save(config);
+      porthub.bootstrap({ ttydPort: 3100, serverPort: 3101 });
+      const selfName = path.basename(path.resolve(__dirname, '..'));
+      for (const [port, service] of [[8443, 'caddy-https-ingress'], [8080, 'caddy-http-ingress']]) {
+        const lease = store.portLeases.get(port);
+        assert.ok(lease, `${port} enrolled`);
+        assert.equal(lease.project, selfName);
+        assert.equal(lease.service, service);
+        assert.equal(lease.permanent, true);
+        assert.equal(lease.reach, 'tailnet');
+      }
+    });
+
+    it('releases its own Caddy leases once the install is no longer in caddy mode', () => {
+      const selfName = path.basename(path.resolve(__dirname, '..'));
+      store.portLeases.lease({ port: 8443, project: selfName, service: 'caddy-https-ingress', permanent: true });
+      store.portLeases.lease({ port: 8080, project: selfName, service: 'caddy-http-ingress', permanent: true });
+      store.portLeases.lease({ port: 8444, project: 'WheresMy', service: 'caddy-https-ingress', permanent: true });
+      // The boot sweep runs in the same bootstrap and would take WheresMy's
+      // lease if its project directory were missing. Give it one inside this
+      // test's own projectsDir, so what survives depends on the rule under test
+      // and not on whether the developer's machine has a WheresMy checkout.
+      fs.mkdirSync(path.join(tmpDir, 'WheresMy'));
+      const config = store.config.load();
+      config.ingressMode = 'direct';
+      config.projectsDir = tmpDir;
+      store.config.save(config);
+      porthub.bootstrap({ ttydPort: 3100, serverPort: 3101 });
+      assert.equal(store.portLeases.get(8443), null, 'Caddy is no longer running, so its port is free');
+      assert.equal(store.portLeases.get(8080), null);
+      assert.ok(store.portLeases.get(8444), "another project's lease is untouched, whatever its service name");
+    });
+
+    it('enrols nothing for Caddy in direct mode', () => {
+      const config = store.config.load();
+      config.ingressMode = 'direct';
+      store.config.save(config);
+      porthub.bootstrap({ ttydPort: 3100, serverPort: 3101 });
+      assert.equal(store.portLeases.get(8443), null);
+      assert.equal(store.portLeases.get(8080), null);
     });
   });
 
@@ -331,6 +513,34 @@ describe('porthub (store-backed)', () => {
     });
   });
 
+  describe('the boot sweep and non-project owners (#1381)', () => {
+    it('leaves an external lease for a missing directory in place', () => {
+      porthub.registerPort(5432, 'Homebrew', 'postgresql@14', { ownerKind: 'external' });
+      porthub.registerPort(13501, 'deleted-project', 'dev-server');
+      const config = store.config.load();
+      config.projectsDir = tmpDir;
+      store.config.save(config);
+
+      porthub.bootstrap({ ttydPort: 3100, serverPort: 3101 });
+
+      assert.ok(store.portLeases.get(5432), 'an owner that was never a project has no directory to find');
+      assert.equal(store.portLeases.get(13501), null, 'a genuine orphan is still swept');
+    });
+
+    it('keeps the external leases of a name that also holds project leases', () => {
+      porthub.registerPort(13601, 'mixed', 'db', { ownerKind: 'external' });
+      porthub.registerPort(13602, 'mixed', 'dev');
+      const config = store.config.load();
+      config.projectsDir = tmpDir;
+      store.config.save(config);
+
+      porthub.bootstrap({ ttydPort: 3100, serverPort: 3101 });
+
+      assert.ok(store.portLeases.get(13601), 'the external lease survives');
+      assert.equal(store.portLeases.get(13602), null, 'the project lease of the missing project is swept');
+    });
+  });
+
   describe('nextFreePort (#352)', () => {
     it('returns the first port in the range when nothing is taken', () => {
       assert.equal(porthub.nextFreePort({ range: [18789, 18999] }), 18789);
@@ -349,16 +559,38 @@ describe('porthub (store-backed)', () => {
     });
 
     it('skips an OS-bound port (system process) even when unleased', () => {
-      const original = portScanner.isPortInUseBySystem;
-      portScanner.isPortInUseBySystem = (port) =>
-        port === 18789
-          ? { inUse: true, process: 'someproc', pid: 1234 }
-          : { inUse: false, process: null, pid: null };
-      try {
-        assert.equal(porthub.nextFreePort({ range: [18789, 18999] }), 18790);
-      } finally {
-        portScanner.isPortInUseBySystem = original;
-      }
+      // The machine is asked per port now, not the scan cache, so the stub
+      // answers for lsof. afterEach's `_reset` restores the real runner.
+      portScanner._setExec((cmd) => {
+        if (cmd.includes('-iTCP:18789 ')) {
+          return 'COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nsomeproc 1234 me 7u IPv4 0x1 0t0 TCP *:18789 (LISTEN)';
+        }
+        const err = new Error('no listener');
+        err.status = 1;
+        err.stdout = '';
+        err.stderr = '';
+        throw err;
+      });
+      assert.equal(porthub.nextFreePort({ range: [18789, 18999] }), 18790);
+    });
+
+    it('asks the machine even when the scan cache is cold (#814)', () => {
+      // A cold cache used to read as "free" for a port the machine was using.
+      portScanner._setLastScan([]);
+      portScanner._setExec((cmd) => {
+        if (cmd.includes('-iTCP:18789 ')) {
+          return 'COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nsomeproc 1234 me 7u IPv4 0x1 0t0 TCP *:18789 (LISTEN)';
+        }
+        const err = new Error('no listener');
+        err.status = 1;
+        err.stdout = '';
+        err.stderr = '';
+        throw err;
+      });
+      const check = porthub.checkPort(18789);
+      assert.equal(check.available, false);
+      assert.equal(check.systemDetected, true);
+      assert.equal(check.process, 'someproc');
     });
 
     it('respects the host scope — a lease on another host does not block', () => {

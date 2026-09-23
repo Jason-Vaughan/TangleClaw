@@ -378,4 +378,49 @@ describe('version-bump release gate', () => {
       assert.equal(cut.result.output.recommendation.value, 'hold', 'the overruled recommendation stays on the record');
     });
   });
+
+  // #1738 — a release is the methodology's to authorize, so a session whose
+  // engine cannot run it holds the cut outright, even over an operator Cut, and
+  // leaves Prawduct's own ledger untouched.
+  describe('methodology unavailable on this engine', () => {
+    const dormant = { onboarded: true, available: false, disposition: 'capability-unavailable', engineId: 'gemini', capability: 'prawduct-methodology', reason: 'the gemini engine cannot run the Prawduct plugin' };
+    const runOn = (project, options, methodology) => {
+      const context = { project, step: { id: 'version-bump', kind: 'version-bump' }, staged: {}, options, previousResults: [], methodology };
+      return versionBump.run(context).then((result) => ({ result, staged: context.staged }));
+    };
+
+    it('holds a ready auto cut, stages nothing, and leaves .prawduct/change-log.md byte-identical', async () => {
+      const project = makeProject({ config: { releaseMode: 'auto' }, plan: '- [x] done' });
+      const ledger = path.join(project.path, '.prawduct', 'change-log.md');
+      const ledgerText = '<!-- prawduct: id=X status=merged -->\n';
+      fs.writeFileSync(ledger, ledgerText);
+      const { result, staged } = await runOn(project, {}, dormant);
+      assert.equal(result.status, 'capability-unavailable');
+      assert.equal(result.ok, true, 'a held release never blocks the checkpoint');
+      assert.equal(result.output.engineId, 'gemini');
+      assert.match(result.output.reason, /release held/);
+      assert.deepEqual(staged, {});
+      assert.equal(fs.readFileSync(ledger, 'utf8'), ledgerText);
+      assert.match(fs.readFileSync(path.join(project.path, 'CHANGELOG.md'), 'utf8'), /## \[Unreleased\]\n\n### Added\n- a feature/);
+    });
+
+    it('holds even when the operator asked for a Cut', async () => {
+      const { result, staged } = await runOn(makeProject({ config: { releaseMode: 'ask' } }), { release: 'cut' }, dormant);
+      assert.equal(result.status, 'capability-unavailable');
+      assert.deepEqual(staged, {});
+    });
+
+    it('still reports releaseMode off as the project\'s own choice', async () => {
+      const { result } = await runOn(makeProject({ config: { releaseMode: 'off' } }), {}, dormant);
+      assert.equal(result.status, 'skipped');
+      assert.match(result.output.reason, /releaseMode is off/);
+    });
+
+    it('cuts as before when the engine can run the methodology', async () => {
+      const available = { ...dormant, available: true, disposition: 'available', engineId: 'claude' };
+      const { result } = await runOn(makeProject({ config: { releaseMode: 'auto' }, plan: '- [x] done' }), {}, available);
+      assert.equal(result.status, 'done');
+      assert.equal(result.output.to, '1.3.0');
+    });
+  });
 });

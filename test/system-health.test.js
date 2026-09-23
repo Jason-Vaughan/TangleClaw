@@ -51,6 +51,9 @@ function healthyLeak(overrides) {
   };
 }
 
+/** A restart-impact probe that classifies the range as code the server loads. */
+const EXECUTABLE = () => ({ impact: 'executable' });
+
 /** A clean server-info snapshot. */
 function syncedInfo(overrides) {
   return {
@@ -270,7 +273,7 @@ describe('lib/system-health (#345)', () => {
     });
 
     it('fires on a SHA delta with the launchctl restart as remediation', () => {
-      systemHealth._setProbes({ serverInfo: () => syncedInfo({ isStale: true, currentDiskSha: '9999999abcdef', commitsAhead: 3 }) });
+      systemHealth._setProbes({ serverInfo: () => syncedInfo({ isStale: true, currentDiskSha: '9999999abcdef', commitsAhead: 3 }) , restartImpact: EXECUTABLE });
       const c = systemHealth.detectStaleServer();
       assert.equal(c.state, 'fired');
       assert.match(c.detail, /abcdef1.*9999999.*3 commits ahead/);
@@ -278,17 +281,57 @@ describe('lib/system-health (#345)', () => {
     });
 
     it('leads with versions when a release is downloaded but not running', () => {
-      systemHealth._setProbes({ serverInfo: () => syncedInfo({ isStale: true, diskVersion: '5.19.0' }) });
+      systemHealth._setProbes({ serverInfo: () => syncedInfo({ isStale: true, diskVersion: '5.19.0' }) , restartImpact: EXECUTABLE });
       const c = systemHealth.detectStaleServer();
       assert.equal(c.state, 'fired');
       assert.match(c.detail, /running v5\.18\.0, v5\.19\.0 is on disk/);
     });
 
     it('names a manual restart when no restart mechanism exists', () => {
-      systemHealth._setProbes({ serverInfo: () => syncedInfo({ isStale: true, restartMechanism: null }) });
+      systemHealth._setProbes({ serverInfo: () => syncedInfo({ isStale: true, restartMechanism: null }) , restartImpact: EXECUTABLE });
       const c = systemHealth.detectStaleServer();
       assert.equal(c.state, 'fired');
       assert.match(c.remediation, /Restart the TangleClaw server process/);
+    });
+
+    it('is clear for a records-only range, saying no restart is needed (#1678)', () => {
+      const seen = [];
+      systemHealth._setProbes({
+        serverInfo: () => syncedInfo({ isStale: true, currentDiskSha: '9999999abcdef', commitsAhead: 2 }),
+        restartImpact: (info) => { seen.push([info.startupSha, info.currentDiskSha]); return { impact: 'records-only' }; }
+      });
+      const c = systemHealth.detectStaleServer();
+      assert.equal(c.state, 'clear');
+      assert.match(c.detail, /abcdef1.*9999999.*records-only commits, no restart needed/);
+      assert.deepEqual(seen, [['abcdef1234567', '9999999abcdef']], 'classifies the running-to-disk range');
+    });
+
+    it('fires for a mixed range', () => {
+      systemHealth._setProbes({ serverInfo: () => syncedInfo({ isStale: true }), restartImpact: () => ({ impact: 'mixed' }) });
+      const c = systemHealth.detectStaleServer();
+      assert.equal(c.state, 'fired');
+      assert.doesNotMatch(c.detail, /unknown|no restart/);
+    });
+
+    for (const [label, probe] of [
+      ['pending', () => ({ impact: 'pending' })],
+      ['unknown', () => ({ impact: 'unknown' })],
+      ['absent', () => null],
+      ['throwing', () => { throw new Error('boom'); }]
+    ]) {
+      it(`stays fired when the restart impact is ${label}: missing evidence never clears it`, () => {
+        systemHealth._setProbes({ serverInfo: () => syncedInfo({ isStale: true }), restartImpact: probe });
+        const c = systemHealth.detectStaleServer();
+        assert.equal(c.state, 'fired');
+        assert.match(c.detail, /restart impact unknown/);
+      });
+    }
+
+    it('does not classify anything when the server is not stale', () => {
+      let calls = 0;
+      systemHealth._setProbes({ serverInfo: () => syncedInfo(), restartImpact: () => { calls += 1; return { impact: 'records-only' }; } });
+      assert.equal(systemHealth.detectStaleServer().state, 'clear');
+      assert.equal(calls, 0);
     });
 
     it('is unknown with the server-info reason when isStale is null (#1118)', () => {
@@ -376,6 +419,7 @@ describe('lib/system-health (#345)', () => {
         ...DARWIN,
         measureLeak: async () => { throw new Error('ps gone'); },
         serverInfo: () => syncedInfo({ isStale: true, commitsAhead: 1, currentDiskSha: 'fffffff000000' }),
+        restartImpact: EXECUTABLE,
         probeDir: async () => ({ entries: 3 })
       });
       systemHealth.warm();

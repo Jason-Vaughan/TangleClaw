@@ -177,11 +177,15 @@ describe('v42→43 launch recovery columns (Train 21, #1587)', () => {
     );
   });
 
-  it('stamps 43 and nothing between', () => {
+  it('stamps the current version and nothing between', () => {
+    // The shared stamp line writes only CURRENT_SCHEMA_VERSION; a column-only
+    // migration such as this one leaves its own number to it. So the store that
+    // entered at 42 records 42 and wherever it landed, never a version it merely
+    // passed through — and never 43 twice once 43 stops being current.
     open(seedV42(IN_FLIGHT_ROW));
     const stamped = store.getDb().prepare('SELECT version FROM schema_version ORDER BY version').all()
       .map((r) => r.version);
-    assert.deepEqual(stamped, [42, 43]);
+    assert.deepEqual(stamped, [42, store.CURRENT_SCHEMA_VERSION]);
   });
 
   it('is a no-op on a store that already took it', () => {
@@ -195,8 +199,9 @@ describe('v42→43 launch recovery columns (Train 21, #1587)', () => {
     open(dir);
     assert.equal(ddl(), before);
     assert.equal(
-      store.getDb().prepare("SELECT COUNT(*) AS n FROM schema_version WHERE version = 43").get().n, 1,
-      'a re-run does not stamp 43 twice'
+      store.getDb().prepare('SELECT COUNT(*) AS n FROM schema_version WHERE version = ?')
+        .get(store.CURRENT_SCHEMA_VERSION).n, 1,
+      'a re-run does not stamp the current version twice'
     );
   });
 

@@ -463,6 +463,10 @@ those are the runs where the terminal is still needed.
 dialog before the run and replayed on Retry. It is validated before a run is claimed: anything but a
 boolean is refused, so a malformed value can't end a session the operator meant to keep.
 
+> **Superseded in part (2026-09-23, #1708):** the request option is no longer the only input to
+> keep/end, and a run can now end `cancelled`. See "Amended 2026-09-23: wrap intent and honest
+> cancellation" below. The rest of this amendment stands.
+
 **The result says what happened to the session.** `sessionOutcome` on the run's result payload is
 `ended`, `kept`, or `null`. It is not a boolean because a session killed during the wrap is neither
 ended by the wrap nor still running.
@@ -473,6 +477,125 @@ yes, and the question would have left the wrong server rule in place for every o
 **Engine-agnostic.** The rule reads only the pipeline's `ok` and the request's option, so every
 engine gets the same lifecycle.
 
+## Amended 2026-09-23 — wrap intent and honest cancellation (#1708, #1707)
+
+This amendment supersedes the 2026-09-16 statement that the request option alone selects keep/end.
+It records Architect rulings D1–D5 for Train A Car A3 Chunk 01. Provenance is #1707 and #1708.
+Switchboard message 417454d7 is review evidence only, not the authority. It adds no design
+decision beyond those rulings.
+
+1. **Keep intent is resolved server-side exactly once, before the run is claimed.** The value comes
+   from the first of these that applies:
+   - an explicitly present boolean request value;
+   - a valid boolean `wrapKeepSessionRunning` in the project config;
+   - `false`, when the key or the config is genuinely absent.
+
+   A persisted config that is unreadable, malformed or invalid refuses the wrap before the claim.
+   Caller-supplied `keepSource` and planned-outcome fields are ignored. The immutable resolved
+   value and its source feed the registry, the handoff kind, the lifecycle and Retry. A Retry keeps
+   the trusted provenance unless a new explicit boolean changes it.
+2. **The planned outcome is stated before any step moves.** The 202, the status payload and the
+   `run-start` event carry `sessionOutcomePlanned` (`end`|`keep`) and `keepSource`. Operator copy is
+   conditional ("If this wrap completes…"), because blocked, failed and cancelled runs remain active.
+3. **Cancel route.** `POST /api/sessions/:project/wrap/cancel` is bound to the exact `runId`, behind
+   the same authority boundary as starting a wrap.
+   - Cancel admission and step start are one atomic registry transition.
+   - Repeated requests against a live run are idempotent.
+   - A cancel is accepted only before `commit` starts.
+   - The running step finishes. There is no mid-step interrupt, no post-commit revert, and no
+     cancellation after the durable cutoff.
+4. **What an accepted cancellation guarantees.** No subsequent commit, branch, push, PR, auto-merge
+   or later durable Git action. It does not promise an untouched working tree. It does not undo
+   earlier local methodology, DB, prompt or uncommitted file effects. The completed steps and the
+   possible local side effects are reported.
+5. **Cancellation is a distinct outcome.**
+   - Shape: `ok: false`, `outcome: 'cancelled'`, `blockedAt: null`, `error: null`, and
+     `cancelledAt` naming the first step that had not started. Later rows are `pending`.
+   - The session stays active, and neither Retry nor Skip is offered.
+   - If the finishing step blocks after a cancel was accepted, its result stays visible, but the
+     cancellation is terminal.
+6. **Operator controls.**
+   - **Hide** only hides the panel and keeps following the same run.
+   - **Cancel** appears only while the run is cancellable. After acceptance it says the current
+     step is finishing.
+   - After the cutoff it states that cancellation is no longer possible and shows the actual
+     current step, rather than permanently saying "committing".
+
+**Engine-agnostic.** Resolution reads the request and the project config. Cancellation reads the
+run registry and the pipeline's step order. No engine capability is involved.
+
+## Amended 2026-09-23 — wrap gates are engine-aware and never read as passed (#1738)
+
+This amendment records the Architect's rulings E1–E6 for Train A Car A3 Chunk 02. They apply the
+Architect's 2026-09-21 ruling on #1738, and the provenance is #1738. The Operator approved the
+matching amendment to project rule #5 on 2026-09-23. Switchboard messages 9a774624 (rulings) and
+8af0c8ec (the approval, relayed by the Project Manager) are review evidence only, not the
+authority. This amendment adds no design decision beyond those rulings.
+
+1. **One capability resolution per run (E1).** The run resolves, once and immutably, whether the
+   **session's** engine can run the project's methodology. An unknown engine fails to
+   `capability-unavailable`. Any `.prawduct/` directory, or the committed plugin reference, is a
+   conservative dormant-state signal, not proof of healthy onboarding. Every step reads that one
+   value.
+2. **Two first-class statuses (E2).** `not-applicable` means the step has no subject: the project
+   carries no onboarding signal. `capability-unavailable` means it applies, but this engine cannot
+   perform it, so its evidence was not produced. Neither halts the run. Every consumer fails closed
+   on a status it does not know.
+3. **A required gate that produced no measurement is unmeasured (E3).** The one
+   provider-specific required gate is `preflight`. On an engine that can run the methodology, any
+   preflight that produced no measurement degrades the handoff. That covers a missing hook, a
+   timeout, a contract breach, a "Wrap anyway" after a failure, and a configured step override. An
+   Operator override may permit the state-only checkpoint. It cannot turn absent evidence into
+   complete.
+4. **A dormant methodology withholds its own effects; the checkpoint finishes (E4).** The
+   checkpoint and the neutral publication finish. The following are withheld:
+   - the release cut and the ledger stamp;
+   - arming auto-merge, and merging PRs through PR resolutions;
+   - every write to `.prawduct/`.
+
+   The result and the handoff are degraded. Project rule #5 now separates engine-neutral wrap
+   mechanics, which are identical across engines, from provider-owned methodology effects, which
+   are withheld on an engine without the capability and never faked.
+5. **The handoff records the disposition (E5).** The handoff document carries an optional,
+   additive `methodology: {disposition, engineId}`. Omission means unknown, an invalid enum value
+   fails validation, and a launch never parses the prose in `missingEvidence`.
+6. **The return path is advisory (E6).** A launch on a capable engine after a
+   `capability-unavailable` publication tells the session to run `/prawduct:doctor` before any
+   methodology work, and never to onboard again. It does not gate the launch, and it does not
+   claim that Doctor passed or that authority was restored, because TangleClaw cannot observe
+   either. The historical handoff disposition stays immutable. Prawduct restores its own authority
+   through the owner-confirmed Doctor flow. A later measured preflight on a compatible engine may
+   establish a new publication result.
+
+Out of scope, filed as #1809: capability-matched admission, attested engine rotation, and
+engine-neutral canonical instructions.
+
+
+## Amended 2026-09-23 — a new file is admitted by a decision, and the wrap names what it carries (#1724)
+
+Architect ruling, message 5b0eaa0d (F1, F2):
+
+- **F1.** A file new to the repository is not admitted by recency or by `git add`. It needs an
+  explicit Include or Leave, including one with index status `A`. The #1406 classifier gives the
+  foreign reason `untracked-new` to a path HEAD has never held (porcelain `??`, or index status
+  `A`) that first appeared after the launch and that no wrap step wrote. It is asked about through
+  the same Include/Leave decision as every foreign path, and blocks `session-files` and `commit`
+  until answered. A new file that was already uncommitted at launch, or predates it, keeps that
+  more specific reason.
+- **F2.** One staged source names the session files and the operator-included files, in both the
+  commit body and the PR body. `commit` stages `{sessionFiles, includedFiles}`. The session files
+  are the owned paths minus those a wrap step wrote, whose own lines already describe them.
+
+Consequence: a wrap, including an unattended one another session started, stops at
+`session-files` when the session leaves any new file uncommitted. A wrap step's own write is
+recognised by its resolved path, so a project registered through a symlink is not asked about
+the wrap's own output.
+
+Architect ruling G2 (message cdce349b): the files TangleClaw itself writes into a project — the
+enumerated engine config carriers and `.tangleclaw/project.json`, never a blanket `.tangleclaw/**`
+or filename pattern — are not `untracked-new`. They keep the rules they had, and a carrier's #1619 identity refusal still applies.
+The reason's wording names no creator ("being new since this session launched does not show it
+belongs in the project"), because a co-resident session's file looks the same.
 
 ## Amendment (Train 21, #1585) — the wrap publishes a per-attempt handoff
 

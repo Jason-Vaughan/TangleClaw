@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, before, after } = require('node:test');
+const { describe, it, before, after, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const fs = require('node:fs');
@@ -10,6 +10,8 @@ const store = require('../lib/store');
 const projects = require('../lib/projects');
 const { createServer } = require('../server');
 const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
+const master = require('../lib/master');
+const strandedCheck = require('../lib/stranded-check');
 
 describe('api-projects', () => {
   let server;
@@ -98,7 +100,7 @@ describe('api-projects', () => {
       const { status, data } = await request('POST', '/api/projects', {
         name: 'api-test-project',
         tags: ['test']
-      });
+      }, asOperator());
 
       assert.equal(status, 201);
       assert.equal(data.name, 'api-test-project');
@@ -109,7 +111,7 @@ describe('api-projects', () => {
     });
 
     it('returns 400 for missing name', async () => {
-      const { status, data } = await request('POST', '/api/projects', {});
+      const { status, data } = await request('POST', '/api/projects', {}, asOperator());
       assert.equal(status, 400);
       assert.equal(data.code, 'BAD_REQUEST');
     });
@@ -117,14 +119,14 @@ describe('api-projects', () => {
     it('returns 400 for invalid name', async () => {
       const { status, data } = await request('POST', '/api/projects', {
         name: 'bad name!'
-      });
+      }, asOperator());
       assert.equal(status, 400);
     });
 
     it('returns 409 for duplicate project', async () => {
       const { status, data } = await request('POST', '/api/projects', {
         name: 'api-test-project'
-      });
+      }, asOperator());
       assert.equal(status, 409);
       assert.equal(data.code, 'CONFLICT');
     });
@@ -190,7 +192,7 @@ describe('api-projects', () => {
     it('updates tags', async () => {
       const { status, data } = await request('PATCH', '/api/projects/api-test-project', {
         tags: ['updated', 'test']
-      });
+      }, asOperator());
       assert.equal(status, 200);
       assert.deepEqual(data.tags, ['updated', 'test']);
     });
@@ -198,7 +200,7 @@ describe('api-projects', () => {
     it('rejects core rule disabling', async () => {
       const { status, data } = await request('PATCH', '/api/projects/api-test-project', {
         rules: { core: { changelogPerChange: false } }
-      });
+      }, asOperator());
       assert.equal(status, 400);
       assert.ok(data.error.includes('Core rules'));
     });
@@ -206,14 +208,14 @@ describe('api-projects', () => {
     it('updates extension rules', async () => {
       const { status } = await request('PATCH', '/api/projects/api-test-project', {
         rules: { extensions: { identitySentry: true } }
-      });
+      }, asOperator());
       assert.equal(status, 200);
     });
 
     it('returns 404 for unknown project', async () => {
       const { status } = await request('PATCH', '/api/projects/nonexistent', {
         tags: []
-      });
+      }, asOperator());
       assert.equal(status, 404);
     });
 
@@ -228,7 +230,7 @@ describe('api-projects', () => {
     it('answers 400 for a field the validator refuses on shape', async () => {
       const { status, data } = await request('PATCH', '/api/projects/api-test-project', {
         featureIndexEnabled: 'not-a-boolean'
-      });
+      }, asOperator());
       assert.equal(status, 400);
       assert.ok(data.error.includes('featureIndexEnabled'));
     });
@@ -236,7 +238,7 @@ describe('api-projects', () => {
     it('answers 404 — not 400 — for an unknown engine, because the message says "not found"', async () => {
       const { status, data } = await request('PATCH', '/api/projects/api-test-project', {
         engine: 'no-such-engine'
-      });
+      }, asOperator());
       assert.equal(status, 404, 'today\'s behavior, tracked as wrong in #1288');
       assert.ok(data.error.includes('Engine "no-such-engine" not found'));
     });
@@ -256,7 +258,7 @@ describe('api-projects', () => {
           `<plist version="1.0"><dict><key>Label</key><string>com.example.sync</string>`
           + `<key>WorkingDirectory</key><string>${oldPath}</string></dict></plist>\n`);
 
-        const { status, data } = await request('PATCH', '/api/projects/api-la-src', { name: 'api-la-dst' });
+        const { status, data } = await request('PATCH', '/api/projects/api-la-src', { name: 'api-la-dst' }, asOperator());
         assert.equal(status, 200);
         assert.equal(data.name, 'api-la-dst');
         assert.equal(Array.isArray(data.warnings) && data.warnings.length, 1, 'exactly one warning on the wire');
@@ -272,7 +274,7 @@ describe('api-projects', () => {
     it('persists silentPrime=true and surfaces it on the enriched response', async () => {
       const { status, data } = await request('PATCH', '/api/projects/api-test-project', {
         silentPrime: true
-      });
+      }, asOperator());
       assert.equal(status, 200);
       assert.equal(data.silentPrime, true);
 
@@ -283,7 +285,7 @@ describe('api-projects', () => {
     it('rejects silentPrime with non-boolean value', async () => {
       const { status, data } = await request('PATCH', '/api/projects/api-test-project', {
         silentPrime: 'yes'
-      });
+      }, asOperator());
       assert.equal(status, 400);
       assert.ok(data.error.toLowerCase().includes('boolean'));
     });
@@ -294,9 +296,9 @@ describe('api-projects', () => {
     // shared, committable file (#1022).
     it('PATCH silentPrime=true writes SessionStart hook to .claude/settings.local.json on disk', async () => {
       // Use a dedicated project so we don't entangle with the existing api-test-project assertions
-      await request('POST', '/api/projects', { name: 'sp-api-sync' });
+      await request('POST', '/api/projects', { name: 'sp-api-sync' }, asOperator());
 
-      const { status } = await request('PATCH', '/api/projects/sp-api-sync', { silentPrime: true });
+      const { status } = await request('PATCH', '/api/projects/sp-api-sync', { silentPrime: true }, asOperator());
       assert.equal(status, 200);
 
       const claudeDir = path.join(projectsDir, 'sp-api-sync', '.claude');
@@ -335,7 +337,7 @@ describe('api-projects', () => {
 
     it('deletes with correct password', async () => {
       // Create a project for deletion
-      await request('POST', '/api/projects', { name: 'to-api-delete' });
+      await request('POST', '/api/projects', { name: 'to-api-delete' }, asOperator());
 
       const { status, data } = await request('DELETE', '/api/projects/to-api-delete', {
         password: 'deleteme'
@@ -356,7 +358,7 @@ describe('api-projects', () => {
     });
 
     it('deletes without password for the operator when none is configured', async () => {
-      await request('POST', '/api/projects', { name: 'no-pass-delete' });
+      await request('POST', '/api/projects', { name: 'no-pass-delete' }, asOperator());
       const { status, data } = await request('DELETE', '/api/projects/no-pass-delete', {}, asOperator());
       assert.equal(status, 200);
       assert.ok(data.ok);
@@ -366,14 +368,14 @@ describe('api-projects', () => {
   describe('each caller sees only the projects it owns (#1739)', () => {
     // Fields that describe a project's workspace. None may reach a caller that
     // does not own the project.
-    const WORKSPACE_FIELDS = ['path', 'groups', 'git', 'ports', 'sessionHealth', 'stranded', 'evalAudit', 'actions'];
+    const WORKSPACE_FIELDS = ['path', 'groups', 'git', 'ports', 'sessionHealth', 'stranded', 'evalAudit', 'actions', 'checkout'];
     let own;
     let other;
     let binding;
 
     before(async () => {
-      await request('POST', '/api/projects', { name: 'view-own' });
-      await request('POST', '/api/projects', { name: 'view-other' });
+      await request('POST', '/api/projects', { name: 'view-own' }, asOperator());
+      await request('POST', '/api/projects', { name: 'view-other' }, asOperator());
       own = store.projects.getByName('view-own');
       other = store.projects.getByName('view-other');
       binding = bindProject(own);
@@ -439,6 +441,13 @@ describe('api-projects', () => {
 
       const mine = await request('GET', '/api/projects/view-own', null, binding.headers);
       assert.equal(mine.data.path, own.path);
+      // #1678: the checkout block rides the whole row only.
+      assert.equal(typeof mine.data.checkout, 'object');
+      assert.equal(mine.data.checkout.owner.project, 'view-own');
+      assert.ok('upstream' in mine.data.checkout && 'vsUpstream' in mine.data.checkout);
+
+      const operator = await request('GET', '/api/projects/view-other', null, asOperator());
+      assert.equal(operator.data.checkout.owner.project, 'view-other');
     });
   });
 
@@ -449,7 +458,7 @@ describe('api-projects', () => {
       const config = store.config.load();
       config.deletePassword = null;
       store.config.save(config);
-      await request('POST', '/api/projects', { name: 'op-only' });
+      await request('POST', '/api/projects', { name: 'op-only' }, asOperator());
       binding = bindProject(store.projects.getByName('op-only'));
     });
 
@@ -483,13 +492,245 @@ describe('api-projects', () => {
 
     it('lets the operator archive, unarchive and delete', async () => {
       // A project with no live session: archiving refuses one that has a session.
-      await request('POST', '/api/projects', { name: 'op-lifecycle' });
+      await request('POST', '/api/projects', { name: 'op-lifecycle' }, asOperator());
       assert.equal((await request('POST', '/api/projects/op-lifecycle/archive', {}, asOperator())).status, 200);
       assert.equal(store.projects.list({ archived: true }).find((p) => p.name === 'op-lifecycle').archived, true);
       assert.equal((await request('POST', '/api/projects/op-lifecycle/unarchive', {}, asOperator())).status, 200);
       const { status } = await request('DELETE', '/api/projects/op-lifecycle', {}, asOperator());
       assert.equal(status, 200);
       assert.equal(store.projects.getByName('op-lifecycle'), null);
+    });
+  });
+
+  describe('the other project write routes answer only the callers they should (#1752)', () => {
+    let a;
+    let b;
+
+    before(async () => {
+      await request('POST', '/api/projects', { name: 'gate-a', tags: ['orig'] }, asOperator());
+      await request('POST', '/api/projects', { name: 'gate-b', tags: ['orig'] }, asOperator());
+      a = bindProject(store.projects.getByName('gate-a'));
+      b = bindProject(store.projects.getByName('gate-b'));
+    });
+
+    describe('operator-only routes', () => {
+      const OPERATOR_ONLY_ROUTES = [
+        ['create', 'POST', '/api/projects', { name: 'gate-created' }],
+        ['attach', 'POST', '/api/projects/attach', { name: 'gate-attach-dir' }],
+        ['import', 'POST', '/api/projects/import', { names: ['gate-attach-dir'] }],
+        ['repair-orphan-hooks', 'POST', '/api/projects/repair-orphan-hooks', { project: 'gate-a' }],
+        ['migrate-to-plugin', 'POST', '/api/projects/gate-a/migrate-to-plugin', {}]
+      ];
+
+      before(() => {
+        fs.mkdirSync(path.join(projectsDir, 'gate-attach-dir'), { recursive: true });
+      });
+
+      for (const [label, method, urlPath, body] of OPERATOR_ONLY_ROUTES) {
+        it(`${label} refuses an unbound caller and a bound project with OPERATOR_ONLY`, async () => {
+          for (const headers of [{}, a.headers]) {
+            const { status, data } = await request(method, urlPath, body, headers);
+            assert.equal(status, 403, label);
+            assert.equal(data.code, 'OPERATOR_ONLY', label);
+          }
+        });
+      }
+
+      it('a refused create and attach register nothing', () => {
+        assert.equal(store.projects.getByName('gate-created'), null);
+        assert.equal(store.projects.getByName('gate-attach-dir'), null);
+        assert.equal(fs.existsSync(path.join(projectsDir, 'gate-created')), false);
+      });
+
+      it('the operator can still attach', async () => {
+        const { status } = await request('POST', '/api/projects/attach', { name: 'gate-attach-dir' }, asOperator());
+        assert.equal(status, 201);
+      });
+    });
+
+    describe('PATCH /api/projects/:name', () => {
+      it('lets a project change its own settings', async () => {
+        const { status, data } = await request('PATCH', '/api/projects/gate-a', { tags: ['mine'] }, a.headers);
+        assert.equal(status, 200);
+        assert.deepEqual(data.tags, ['mine']);
+      });
+
+      it('refuses a project changing another project, and leaves it unchanged', async () => {
+        const { status, data } = await request('PATCH', '/api/projects/gate-b', { tags: ['theirs'] }, a.headers);
+        assert.equal(status, 403);
+        assert.equal(data.code, 'OTHER_PROJECT');
+        assert.deepEqual(store.projects.getByName('gate-b').tags, ['orig']);
+      });
+
+      it('refuses an unbound caller before any lookup', async () => {
+        for (const name of ['gate-b', 'no-such-project']) {
+          const { status, data } = await request('PATCH', `/api/projects/${name}`, { tags: ['x'] });
+          assert.equal(status, 403, name);
+          assert.equal(data.code, 'PROJECT_BINDING_REQUIRED', name);
+        }
+      });
+
+      it('answers 404 to a bound project naming a project that does not exist', async () => {
+        const { status } = await request('PATCH', '/api/projects/no-such-project', { tags: ['x'] }, a.headers);
+        assert.equal(status, 404);
+      });
+
+      it('refuses a project renaming itself: a rename is the operator\'s', async () => {
+        const { status, data } = await request('PATCH', '/api/projects/gate-a', { name: 'gate-a-renamed' }, a.headers);
+        assert.equal(status, 403);
+        assert.equal(data.code, 'OPERATOR_ONLY');
+        assert.ok(store.projects.getByName('gate-a'), 'the project keeps its name');
+      });
+
+      it('sending the project\'s own current name is not a rename', async () => {
+        const { status } = await request('PATCH', '/api/projects/gate-a', { name: 'gate-a', tags: ['same'] }, a.headers);
+        assert.equal(status, 200);
+      });
+    });
+
+    describe('actions and stranded wraps', () => {
+      const OWN_PROJECT_ROUTES = [
+        ['actions', (name) => `/api/projects/${name}/actions/invoke-critic`, {}],
+        ['stranded-wraps check', (name) => `/api/projects/${name}/stranded-wraps/check`, {}],
+        ['stranded-wraps ack', (name) => `/api/projects/${name}/stranded-wraps/ack`, { branch: 'wrap/x', headSha: 'abc' }],
+        ['stranded-wraps open-pr', (name) => `/api/projects/${name}/stranded-wraps/open-pr`, { branch: 'wrap/x', headSha: 'abc', confirm: true }]
+      ];
+
+      for (const [label, urlFor, body] of OWN_PROJECT_ROUTES) {
+        it(`${label} refuses another project with OTHER_PROJECT and an unbound caller with PROJECT_BINDING_REQUIRED`, async () => {
+          const other = await request('POST', urlFor('gate-b'), body, a.headers);
+          assert.equal(other.status, 403, label);
+          assert.equal(other.data.code, 'OTHER_PROJECT', label);
+          const unbound = await request('POST', urlFor('gate-b'), body);
+          assert.equal(unbound.status, 403, label);
+          assert.equal(unbound.data.code, 'PROJECT_BINDING_REQUIRED', label);
+        });
+      }
+
+      it('lets a project run its own stranded-wrap check and open-pr: the handler is reached', async () => {
+        // The handlers talk to GitHub; stand them in, so what is under test is the gate.
+        const checked = mock.method(strandedCheck, 'check', async () => ({ state: 'ok' }));
+        const opened = mock.method(strandedCheck, 'openPr', async () => ({ ok: true, prUrl: 'https://example.invalid/pr/1', item: null }));
+        try {
+          const check = await request('POST', '/api/projects/gate-b/stranded-wraps/check', {}, b.headers);
+          assert.equal(check.status, 200);
+          assert.equal(checked.mock.calls.length, 1);
+          assert.equal(checked.mock.calls[0].arguments[0].name, 'gate-b');
+          const pr = await request('POST', '/api/projects/gate-b/stranded-wraps/open-pr',
+            { branch: 'wrap/x', headSha: 'abc', confirm: true }, b.headers);
+          assert.equal(pr.status, 201);
+          assert.equal(opened.mock.calls.length, 1);
+        } finally {
+          checked.mock.restore();
+          opened.mock.restore();
+        }
+      });
+
+      it('lets a project reach its own actions and stranded wraps past the gate', async () => {
+        // Past the gate the handlers answer for themselves: this project is not
+        // plugin-governed, and it has no stranded wrap by that name.
+        const action = await request('POST', '/api/projects/gate-b/actions/invoke-critic', {}, b.headers);
+        assert.equal(action.status, 404);
+        assert.equal(action.data.code, 'NOT_FOUND');
+        const ack = await request('POST', '/api/projects/gate-b/stranded-wraps/ack', { branch: 'wrap/x', headSha: 'abc' }, b.headers);
+        assert.notEqual(ack.status, 403);
+      });
+    });
+
+    describe('the Project Master changes no project through the API, whatever its access level', () => {
+      const MASTER_ID = 'api-projects-master-launch';
+      const MASTER = { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': MASTER_ID };
+      let live;
+
+      before(() => {
+        live = mock.method(master, 'liveMasterLaunchId', () => ({ launchId: MASTER_ID, answered: true, cause: null }));
+      });
+
+      after(() => live.mock.restore());
+
+      it('an own-project route refuses it with PROJECT_READ_ONLY and points at #966', async () => {
+        const { status, data } = await request('PATCH', '/api/projects/gate-b', { tags: ['master'] }, MASTER);
+        assert.equal(status, 403);
+        assert.equal(data.code, 'PROJECT_READ_ONLY');
+        assert.match(data.error, /#966/);
+        assert.deepEqual(store.projects.getByName('gate-b').tags, ['orig']);
+      });
+
+      it('an operator-only route refuses it with OPERATOR_ONLY', async () => {
+        const { status, data } = await request('POST', '/api/projects', { name: 'gate-by-master' }, MASTER);
+        assert.equal(status, 403);
+        assert.equal(data.code, 'OPERATOR_ONLY');
+        assert.equal(store.projects.getByName('gate-by-master'), null);
+      });
+
+      // The access level governs the Master's FILE writes (its guard: read-only
+      // denies, suggest asks, write allows — test/master.test.js). It grants no
+      // API authority at any tier (ADR 0008, #966), and refusing an API call
+      // must not touch the stored level either.
+      for (const level of ['read-only', 'suggest', 'write']) {
+        it(`at access level ${level}, every project API mutation is refused and the stored level is unchanged`, async () => {
+          const config = store.config.load();
+          const previous = config.master;
+          config.master = { ...(previous || {}), accessLevel: level };
+          store.config.save(config);
+          try {
+            const own = [
+              ['PATCH', '/api/projects/gate-b', { tags: ['master'] }],
+              ['POST', '/api/projects/gate-b/actions/invoke-critic', {}],
+              ['POST', '/api/projects/gate-b/stranded-wraps/check', {}],
+              ['POST', '/api/projects/gate-b/stranded-wraps/ack', { branch: 'wrap/x', headSha: 'abc' }],
+              ['POST', '/api/projects/gate-b/stranded-wraps/open-pr', { branch: 'wrap/x', headSha: 'abc', confirm: true }]
+            ];
+            for (const [method, urlPath, body] of own) {
+              const { status, data } = await request(method, urlPath, body, MASTER);
+              assert.equal(status, 403, `${level} ${method} ${urlPath}`);
+              assert.equal(data.code, 'PROJECT_READ_ONLY', `${level} ${method} ${urlPath}`);
+            }
+            const operatorOnly = [
+              ['POST', '/api/projects', { name: `gate-master-${level}` }],
+              ['POST', '/api/projects/attach', { name: 'gate-attach-dir' }],
+              ['POST', '/api/projects/import', { names: ['gate-attach-dir'] }],
+              ['POST', '/api/projects/repair-orphan-hooks', {}],
+              ['POST', '/api/projects/gate-b/migrate-to-plugin', {}],
+              ['PATCH', '/api/projects/gate-b', { name: 'gate-b-renamed' }],
+              ['POST', '/api/projects/gate-b/archive', {}],
+              ['DELETE', '/api/projects/gate-b', {}]
+            ];
+            for (const [method, urlPath, body] of operatorOnly) {
+              const { status, data } = await request(method, urlPath, body, MASTER);
+              assert.equal(status, 403, `${level} ${method} ${urlPath}`);
+              assert.equal(data.code, 'OPERATOR_ONLY', `${level} ${method} ${urlPath}`);
+            }
+            const after = store.projects.getByName('gate-b');
+            assert.ok(after, 'the project still exists under its name');
+            assert.deepEqual(after.tags, ['orig']);
+            assert.equal(after.archived, false);
+            assert.equal(store.projects.getByName(`gate-master-${level}`), null);
+            assert.equal(store.config.load().master.accessLevel, level, 'the stored access level is unchanged');
+          } finally {
+            const restore = store.config.load();
+            restore.master = previous;
+            store.config.save(restore);
+          }
+        });
+      }
+    });
+
+    describe('a dashboard on plain http with the gate stood down (#1753)', () => {
+      const LABEL = { 'X-TangleClaw-Client': 'dashboard' };
+
+      it('its reads, which carry only the dashboard label, get the operator\'s rows', async () => {
+        const { status, data } = await request('GET', '/api/projects', null, LABEL);
+        assert.equal(status, 200);
+        const row = data.projects.find((p) => p.name === 'gate-b');
+        assert.equal(row.path, path.join(projectsDir, 'gate-b'));
+      });
+
+      it('without the label the same read is the public view', async () => {
+        const { data } = await request('GET', '/api/projects');
+        const row = data.projects.find((p) => p.name === 'gate-b');
+        assert.equal(row.path, undefined);
+      });
     });
   });
 
