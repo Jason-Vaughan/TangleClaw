@@ -24,7 +24,7 @@
             1730
           ],
           "acceptance_gate": "Classify product-owned, generated, and operator-authored paths explicitly; never delete/overwrite authored state; produce actionable blocked result when reconciliation is required.",
-          "status": "ACTIVE"
+          "status": "COMPLETED"
         },
         {
           "id": "A3",
@@ -37,7 +37,8 @@
             1675,
             1738
           ],
-          "acceptance_gate": "Intent is explicit, unsupported cancellation is honest, tracked-file admission is a positive decision, unavailable draft preservation fails visibly, and successful wrap binds to the exact final publication consumed by the next launch while exposing stale/fallback provenance before action. Engine portability is required: wrap gates must be classified as portable (always run) or provider-specific. Provider-specific required methodology gates return CAPABILITY_UNAVAILABLE and block completion/release authority, but MUST NOT block a state-only checkpoint, durable handoff, safe wrap, or engine replacement. Round-trip preservation is required: unsupported attempts treat PRAWDUCT state as dormant/read-only; on return to Claude, reattach and run /prawduct:doctor to restore methodology authority safely."
+          "acceptance_gate": "Intent is explicit, unsupported cancellation is honest, tracked-file admission is a positive decision, unavailable draft preservation fails visibly, and successful wrap binds to the exact final publication consumed by the next launch while exposing stale/fallback provenance before action. Engine portability is required: wrap gates must be classified as portable (always run) or provider-specific. Provider-specific required methodology gates return CAPABILITY_UNAVAILABLE and block completion/release authority, but MUST NOT block a state-only checkpoint, durable handoff, safe wrap, or engine replacement. Round-trip preservation is required: unsupported attempts treat PRAWDUCT state as dormant/read-only; on return to Claude, reattach and run /prawduct:doctor to restore methodology authority safely.",
+          "status": "ACTIVE"
         },
         {
           "id": "A4",
