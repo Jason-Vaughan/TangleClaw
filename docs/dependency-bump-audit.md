@@ -46,7 +46,7 @@ What the test does and does not prove:
 - **GitHub's repository setting that requires SHA-pinned actions is a second layer, not a
   replacement.** It does not cover reusable-workflow references, which this test does.
 
-The stakes in this repository are concrete. `.github/workflows/release.yml` runs with `contents: write`
+The stakes in this repository are concrete. `.github/workflows/release.yml`'s publishing job runs with `contents: write`
 whenever a push to `main` changes `version.json` (and on manual dispatch), and it runs the same `actions/checkout` and `actions/setup-node`
 that a bump PR changes. An action merged unaudited would run with permission to push tags to the
 repository whose newest tag is the update path for every install (see
