@@ -6,7 +6,7 @@
  * released (#1551).
  *
  *   git ls-remote --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}" \
- *     | node scripts/release-tag-gate.js --tag "$TAG" --expect "$GITHUB_SHA" [--allow-absent]
+ *     | node scripts/release-tag-gate.js --tag "$TAG" --expect "$GITHUB_SHA"
  *
  * Pass BOTH patterns. `ls-remote` filters by pattern, so with only the first
  * an annotated tag's peeled `^{}` line is omitted and the gate sees the tag
@@ -28,9 +28,10 @@
  * for other refs are ignored, because `ls-remote` matches its pattern against
  * the tail of a ref name and can legitimately print them.
  *
- * Exit: 0 the tag dereferences to --expect, or it is absent and --allow-absent
- * was given · 1 refused (mismatch, or absent without --allow-absent) · 2 usage
- * error or output this tool cannot parse. A mismatch has no warn-only mode: a
+ * Exit: 0 the tag dereferences to --expect · 1 refused (mismatch, or the tag is
+ * absent) · 2 usage error or output this tool cannot parse. The workflow calls
+ * this only for a tag it expects to exist, so absence is always a refusal;
+ * there is no flag to accept it. A mismatch has no warn-only mode either: a
  * tag that is already released from another commit is a refusal too, because
  * "already done" would otherwise bless a version reused on a different commit.
  */
@@ -78,17 +79,14 @@ function resolveTagCommit(output, tag) {
  * @param {string} opts.output - Raw `ls-remote` output.
  * @param {string} opts.tag - Tag name.
  * @param {string} opts.expected - The 40-hex commit this run tested and releases.
- * @param {boolean} [opts.allowAbsent=false] - Whether an absent tag passes.
  * @returns {{ ok: boolean, state: 'absent'|'match'|'mismatch', commit?: string, message: string }}
  * @throws {Error} When `expected` is not a full SHA or the output is malformed.
  */
-function checkTag({ output, tag, expected, allowAbsent = false }) {
+function checkTag({ output, tag, expected }) {
   if (!SHA_RE.test(expected || '')) throw new Error(`expected commit is not a 40-hex SHA: ${JSON.stringify(expected)}`);
   const resolved = resolveTagCommit(output, tag);
   if (resolved.state === 'absent') {
-    return allowAbsent
-      ? { ok: true, state: 'absent', message: `${tag} is not on origin` }
-      : { ok: false, state: 'absent', message: `${tag} is not on origin, so installs cannot see this release` };
+    return { ok: false, state: 'absent', message: `${tag} is not on origin, so installs cannot see this release` };
   }
   if (resolved.commit === expected) {
     return { ok: true, state: 'match', commit: resolved.commit, message: `${tag} dereferences to ${expected}` };
@@ -104,19 +102,18 @@ function checkTag({ output, tag, expected, allowAbsent = false }) {
 /**
  * Parse CLI arguments.
  * @param {string[]} argv - Arguments after the script name.
- * @returns {{ tag: string, expected: string, allowAbsent: boolean }}
+ * @returns {{ tag: string, expected: string }}
  * @throws {Error} On an unknown or incomplete argument.
  */
 function parseArgs(argv) {
-  const args = { tag: '', expected: '', allowAbsent: false };
+  const args = { tag: '', expected: '' };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--tag' || a === '--expect') {
       const v = argv[++i];
       if (v === undefined) throw new Error(`${a} needs a value`);
       if (a === '--tag') args.tag = v; else args.expected = v;
-    } else if (a === '--allow-absent') args.allowAbsent = true;
-    else throw new Error(`unknown argument: ${a}`);
+    } else throw new Error(`unknown argument: ${a}`);
   }
   if (!args.tag || !args.expected) throw new Error('--tag and --expect are required');
   return args;
@@ -133,7 +130,7 @@ function main(argv, input) {
   let verdict;
   try {
     args = parseArgs(argv);
-    verdict = checkTag({ output: input, tag: args.tag, expected: args.expected, allowAbsent: args.allowAbsent });
+    verdict = checkTag({ output: input, tag: args.tag, expected: args.expected });
   } catch (err) {
     return { code: 2, stdout: '', stderr: `::error::release tag gate: ${err.message}\n` };
   }

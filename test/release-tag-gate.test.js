@@ -104,9 +104,9 @@ describe('checkTag', () => {
     assert.equal(checkTag({ output: out, tag: 'v1.2.3', expected: TESTED }).ok, false);
   });
 
-  it('refuses an absent tag unless absence is allowed', () => {
+  it('refuses an absent tag, and no option makes absence pass', () => {
     assert.equal(checkTag({ output: '', tag: 'v1.2.3', expected: TESTED }).ok, false);
-    assert.equal(checkTag({ output: '', tag: 'v1.2.3', expected: TESTED, allowAbsent: true }).ok, true);
+    assert.equal(checkTag({ output: '', tag: 'v1.2.3', expected: TESTED, allowAbsent: true }).ok, false);
   });
 
   it('refuses an expected commit that is not a full SHA', () => {
@@ -129,15 +129,17 @@ describe('main (CLI contract the workflow calls)', () => {
     assert.match(r.stderr, /^::error::/);
   });
 
-  it('exits 1 on an absent tag, and 0 with --allow-absent', () => {
-    assert.equal(main(['--tag', 'v1.2.3', '--expect', TESTED], '').code, 1);
-    assert.equal(main(['--tag', 'v1.2.3', '--expect', TESTED, '--allow-absent'], '').code, 0);
+  it('exits 1 on an absent tag', () => {
+    const r = main(['--tag', 'v1.2.3', '--expect', TESTED], '');
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /not on origin/);
   });
 
-  it('has no flag that downgrades a mismatch', () => {
-    // An already-released tag on another commit refuses too; there is no warn mode.
+  it('has no flag that downgrades a mismatch or an absent tag', () => {
+    // An already-released tag on another commit refuses too; there is no warn mode,
+    // and absence is always a refusal. Unknown flags are usage errors.
     assert.equal(main(['--tag', 'v1.2.3', '--expect', TESTED, '--warn-only'], mismatch).code, 2);
-    assert.equal(main(['--tag', 'v1.2.3', '--expect', TESTED, '--allow-absent'], mismatch).code, 1);
+    assert.equal(main(['--tag', 'v1.2.3', '--expect', TESTED, '--allow-absent'], '').code, 2);
   });
 
   it('exits 2 on malformed output or bad arguments', () => {

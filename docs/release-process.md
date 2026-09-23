@@ -129,24 +129,40 @@ Check in this order:
 3. **Is the tag on origin?** `git ls-remote --tags origin | grep vX.Y.Z`. This is the exact thing
    installs poll.
 
-To recover after fixing the cause, open the **original** failed Release run and choose **Re-run all
-jobs**. A re-run keeps that run's `GITHUB_SHA` and `GITHUB_REF`, so it tests the same commit again
-and releases exactly it. Re-run *all* jobs, not only the failed ones, so the commit is freshly
-tested.
+How to recover depends on whether the failed run **pushed the tag**. Step 4 above tells you:
+the tag is on origin or it is not.
+
+**The tag is NOT on origin** (the run stopped before tagging: a red `test` job, a missing
+`CHANGELOG.md` section, a network error):
+
+- **The fix is a new commit** (the usual case: a promoted CHANGELOG section, a test fix). Land it
+  on `main`, then run the manual trigger (`workflow_dispatch`) **from `main`**. This is a **new
+  release candidate that replaces the failed one**, not a continuation of it: it tests main's
+  current head and creates the still-absent tag on that commit, which carries the same
+  `version.json`. Do not re-run the original run: it checks out the old commit, which still lacks
+  the fix, and fails again.
+- **Nothing needed fixing** (a flaky test, a network error): open the original run and choose
+  **Re-run all jobs**. That is the default. A dispatch from `main` is equivalent only while main's
+  head is still that run's commit. If `main` has moved on, a dispatch releases a *different*
+  candidate, so it needs an explicit Operator decision first.
+
+**The tag IS on origin** (the run failed after pushing the tag, so the Release is missing): open the
+**original** run and choose **Re-run all jobs**. A re-run keeps that run's `GITHUB_SHA` and
+`GITHUB_REF`, so it re-tests the tagged commit and publishes its Release. Re-run *all* jobs, not only
+the failed ones, so that commit is freshly tested. A dispatch from `main` heals it too, but only
+while main's head is still the tagged commit. Once a later commit has landed, a dispatch refuses,
+because the tag names an earlier commit. That refusal is intended, not a fault.
+
+**GitHub allows re-running a run for 30 days.** If a tag is on origin with no Release and the
+original run can no longer be re-run, do not work around it. Stop and escalate to the Operator.
+There is deliberately no way to name the commit to release by hand.
 
 Re-running is the remedy, not a no-op: because tag and Release are checked independently, a re-run
 publishes the missing Release for a tag that already exists. It only does nothing when the version is
 genuinely tagged *and* released on that commit.
 
-**GitHub allows re-running a run for 30 days.** Past that, or if the original run cannot be re-run
-for any other reason, do not work around it. Stop and escalate to the Operator. There is
-deliberately no way to name the commit to release by hand.
-
-The manual trigger (`workflow_dispatch`) **from `main`** runs at main's *current* head. It releases
-correctly only while that head is still the version's commit. Once a later commit has landed, a
-dispatch refuses when a tag for the version already exists on the earlier commit, which is the
-intended outcome and not a fault. A dispatch aimed at any branch other than `main` exits green
-without doing anything, which looks like success.
+A dispatch aimed at any branch other than `main` exits green without doing anything, which looks
+like success.
 
 If a run refuses because a tag names a different commit, **do not move or re-create the tag by
 hand.** Escalate to the Operator.

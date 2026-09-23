@@ -264,6 +264,19 @@ and the tag dereferences to it. Privileged dependencies are immutable and mechan
   boundary.
 - Architecture approval is not CI authorization: the Operator's direct go is still required, and
   the PR must not auto-merge.
+- **B4 refinement: MODIFY (2026-09-23, message 4f6c05ba), after Critic R-3 (blocking).** A
+  plain "re-run the original run" fails every time when a run stopped before tagging and the fix
+  landed as a new commit. The recovery is now split three ways, and the workflow contract is
+  unchanged:
+  1. **No tag on origin, and the fix is a commit:** dispatch from `main`. This is a new release
+     candidate that replaces the failed one, not a continuation of its record.
+  2. **No tag, transient failure:** Re-run all jobs on the original run is the default. A dispatch
+     is equivalent only while main's head equals that run's `GITHUB_SHA`. If `main` has moved on,
+     a dispatch picks a different candidate and needs an explicit Operator choice.
+  3. **Tag on origin, Release missing:** re-run the original run. A dispatch is admitted only when
+     main's head is the tagged commit, and otherwise refuses. Past the 30-day re-run limit,
+     escalate to the Operator.
+  There is no caller-selected SHA.
 - **Addendum, reported with the ack:** a factual status edit to ADR 0014's "Honest limit" (rule 7's
   release-tag half now has its mechanism, #1551), mirroring Chunk 01's approved A5 edit. No rule
   changes.
@@ -300,9 +313,10 @@ and the tag dereferences to it. Privileged dependencies are immutable and mechan
   on "Release missing", dropping the peeled pattern, a write grant on the test job, dropping the
   HEAD check, comparing the tag object, and reading malformed output as absent.
 - Honest limit: source pins show what the file says, not what GitHub runs. The live proof is the
-  first release run after merge (or a dispatch from `main` when the version is already fully
-  released, which exercises the test job and the gate and publishes nothing). That run is for the
-  Operator to start.
+  first release run after merge, which the Operator starts. **Corrected after review:** a dispatch
+  from `main` right after merge does NOT publish nothing. `version.json` is 5.29.0 and `v5.29.0`
+  already names an earlier commit, so the dispatch refuses red. That is the refusal path working,
+  and it is a usable live check of the test job and the gate, but it reads as a failed run.
 
 ### Done when
 
