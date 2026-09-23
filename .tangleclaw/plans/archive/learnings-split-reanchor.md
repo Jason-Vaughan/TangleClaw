@@ -1,6 +1,6 @@
 ---
 title: "Split the migrated learnings by concern (#1819) and refresh the Prawduct anchor (#1820)"
-status: RULED 2026-09-23 (Architect message 0ab96d5e) — Chunk 01 regenerated for D2/D6; Chunk 02 ready for PR
+status: COMPLETE 2026-09-23 — Chunk 01 done locally (#1819, comment posted; closes with this PR); Chunk 02 ships in this PR (#1820); D5 curation filed as #1822
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-23 (message 25514565)
 issues: [1819, 1820]
 scope: learnings-split-reanchor
@@ -137,5 +137,5 @@ Verified after regeneration: twelve area files, all rules present exactly once, 
 
 ## Status
 
-- [x] Chunk 01 — split (#1819), local-only, regenerated under the rulings. D4 merges applied; the undo is the backup in `.git/prawduct/learnings-backup/20260923-split-1819/`. Owed after the PR opens: comment on and close #1819, and the D5 issue.
-- [ ] Chunk 02 — reanchor PR (#1820)
+- [x] Chunk 01 — split (#1819), local-only, regenerated under the rulings. D4 merges applied; the undo is the backup in `.git/prawduct/learnings-backup/20260923-split-1819/`. #1819 has its comment (sizes and scopes only), and the D5 follow-up is #1822.
+- [x] Chunk 02 — reanchor PR (#1820). The cumulative Critic found 0 blocking. Owed next session: confirm that the always-loaded `shell-git.md` is in context at launch.
