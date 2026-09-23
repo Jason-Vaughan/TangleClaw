@@ -1,6 +1,6 @@
 ---
 title: "Train A Car A3: wrap intent, artifact admission, and honest cancellation"
-status: IN PROGRESS — Chunks 01 (PR #1807) and 02 (PR #1811) shipped; Chunk 03 dispatched by the PM 2026-09-23 (message 7845b64b), building on fix/a3-chunk3-admission-drafts, Architect ruled F1–F5 APPROVE (message 5b0eaa0d); Chunk 04 and P1 remain; Architect ruled C1–C2, D1–D5 (message 417454d7) and E1–E6 (message 9a774624); PM approved plan and order (message 8219ab12)
+status: IN PROGRESS — Chunks 01 (PR #1807) and 02 (PR #1811) shipped; Chunk 03 dispatched by the PM 2026-09-23 (message 7845b64b), built on fix/a3-chunk3-admission-drafts, Architect ruled F1–F5 (message 5b0eaa0d) and G1–G2 (message cdce349b); Chunk 04 and P1 remain; Architect ruled C1–C2, D1–D5 (message 417454d7) and E1–E6 (message 9a774624); PM approved plan and order (message 8219ab12)
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-23 (messages ecdbe884, 39998da1)
 issues: [1708, 1707, 1738, 1724, 1507, 1675]
 governed_by:
@@ -731,6 +731,6 @@ the Architect has ruled F1–F5.
 
 - [x] Chunk 01: Wrap intent is explicit and cancellation is honest (#1708, #1707): Critic rev-20260923T023239Z resolved by rev-20260923T025704Z, 0 blocking
 - [x] Chunk 02: Wrap gates are engine-aware and never read as passed (#1738): Critic rev-20260923T042921Z resolved by rev-20260923T044924Z, 0 blocking; Architect E1–E6 ruled; rule #5 amendment Operator-approved
-- [ ] Chunk 03: Admission is a positive decision; drafts fail visibly (#1724, #1507): plan written; Architect ruled F1–F5 APPROVE, G1 MODIFY, G2 APPROVE; Critic round 1 fixed; draft retention awaits the Operator
+- [x] Chunk 03: Admission is a positive decision; drafts fail visibly (#1724, #1507): Critic rev-20260923T053934Z resolved by rev-20260923T060037Z and rev-20260923T092855Z, 0 blocking; Architect ruled F1–F5, G1 MODIFY, G2 APPROVE; Operator set draft retention to 7 days
 - [ ] Chunk 04: A successful wrap binds to the publication the next launch reads (#1675)
 - [ ] P1: startupControl planning note (no build)
