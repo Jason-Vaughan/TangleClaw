@@ -1661,6 +1661,9 @@ function openSettings(name) {
   // Medusa session-comms auto-enable (MED-2K9P Chunk 02) — engine-agnostic;
   // default OFF (only an explicit true opts in).
   const initialMedusaChecked = !!project.medusaEnabled;
+  // #1708: what a wrap that does not say inherits for "keep the session
+  // running" — engine-agnostic; default off (a wrap ends its session).
+  const initialKeepRunningChecked = !!project.wrapKeepSessionRunning;
   // Medusa idle-gated wake nudge (MED-2K9P v2 T2) — engine-gated on the
   // engine's declared idle signature; default OFF (a wake spends a real turn).
   const initialMedusaWakeChecked = !!project.medusaWake;
@@ -1715,6 +1718,14 @@ function openSettings(name) {
         <div class="form-hint">Auto-start this project's sessions on the Medusa switchboard so inbound messages badge in the banner without a manual toggle. Off by default; the banner control is always available as a per-session override.</div>
       </div>
       <div id="settingsMedusaWakeContainer"></div>
+      <div class="form-group">
+        <label class="gs-toggle-label">
+          <span>Keep the session running after a wrap</span>
+          <input type="checkbox" id="settingsWrapKeepRunning" ${initialKeepRunningChecked ? 'checked' : ''}>
+          <span class="toggle-switch"></span>
+        </label>
+        <div class="form-hint">What a wrap does to this project's session when it completes, if whoever started it did not choose: another session, the Project Manager or a script. On, the session keeps running; off, the wrap ends it. The wrap dialog starts from this setting and can override it for one wrap. A wrap that stops, fails or is cancelled always leaves the session running.</div>
+      </div>
     </div>
     ${renderProjectRulesSection(project)}`;
 
@@ -2864,6 +2875,14 @@ async function doSaveSettings() {
   const medusaEl = document.getElementById('settingsMedusa');
   if (medusaEl) {
     body.medusaEnabled = medusaEl.checked;
+  }
+  // #1708 — sent only when the toggle changed, like the launch-mode picker
+  // below: a project that never chose keeps "never chose" (null) through saves
+  // of unrelated settings, and its wraps keep saying "default", not "project".
+  const keepRunningEl = document.getElementById('settingsWrapKeepRunning');
+  const keepProject = state.projects.find((p) => p.name === settingsTarget);
+  if (keepRunningEl && keepProject && keepRunningEl.checked !== (keepProject.wrapKeepSessionRunning === true)) {
+    body.wrapKeepSessionRunning = keepRunningEl.checked;
   }
   // Medusa idle-gated wake opt-in (MED-2K9P v2 T2). The inert branch renders no
   // `#settingsMedusaWake` element, so an engine with no measured idle signature

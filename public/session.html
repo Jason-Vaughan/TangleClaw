@@ -536,6 +536,8 @@
          long skip list can never push a decision or the buttons out of reach. -->
     <div class="wrap-drawer-body" id="wrapDrawerBody">
       <div class="wrap-drawer-status" id="wrapDrawerStatus" aria-live="polite"></div>
+      <div class="wrap-drawer-planned hidden" id="wrapDrawerPlanned"></div>
+      <div class="wrap-drawer-cancelnote hidden" id="wrapDrawerCancelNote" aria-live="polite"></div>
       <div class="wrap-drawer-skiproll hidden" id="wrapDrawerSkipRoll"></div>
       <ul class="wrap-step-list" id="wrapStepList" aria-label="Pipeline steps"></ul>
       <div class="wrap-drawer-decision hidden" id="wrapDrawerDecision"></div>
@@ -543,6 +545,7 @@
     <div class="wrap-drawer-actions">
       <button class="btn" id="wrapDrawerCopyBtn">Copy report</button>
       <button class="btn" id="wrapDrawerCancelBtn">Close</button>
+      <button class="btn btn-danger hidden" id="wrapDrawerAbortBtn">Cancel wrap</button>
       <button class="btn btn-primary hidden" id="wrapDrawerRetryBtn">Retry</button>
       <button class="btn btn-primary hidden" id="wrapDrawerDoneBtn">Done</button>
     </div>

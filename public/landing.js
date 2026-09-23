@@ -1940,9 +1940,11 @@ function openWrapModal(name) {
   document.getElementById('wrapError').classList.add('hidden');
   document.getElementById('wrapPassword').value = '';
   showWrapStranded(null);
-  // #1558 — unticked on every open, so an earlier tick can't keep a later
-  // wrap's session open.
-  document.getElementById('wrapKeepRunning').checked = false;
+  // #1558 — reset on every open, so an earlier tick can't keep a later wrap's
+  // session open. #1708: reset to the project's setting, which is what a wrap
+  // started anywhere else inherits.
+  const wrapProject = (state.projects || []).find((p) => p.name === name);
+  document.getElementById('wrapKeepRunning').checked = Boolean(wrapProject && wrapProject.wrapKeepSessionRunning === true);
   const pwGroup = document.getElementById('wrapPasswordGroup');
   if (state.config && state.config.deleteProtected) {
     pwGroup.classList.remove('hidden');
@@ -2032,10 +2034,9 @@ async function confirmWrap() {
   if (Array.isArray(wrapStrandedItems)) {
     options.proceedPastStranded = tcStrandedKeys(wrapStrandedItems);
   }
-  // #1558 — a finished wrap ends the session unless the operator keeps it.
-  if (document.getElementById('wrapKeepRunning').checked) {
-    options.keepSessionRunning = true;
-  }
+  // #1558 / #1708 — the dialog's answer, sent either way: the operator saw the
+  // box, pre-ticked from the project setting, so an untick is a choice too.
+  options.keepSessionRunning = document.getElementById('wrapKeepRunning').checked;
   if (Object.keys(options).length > 0) body.options = options;
 
   const confirmBtn = document.getElementById('wrapConfirmBtn');
