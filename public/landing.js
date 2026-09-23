@@ -1246,6 +1246,77 @@ async function saveGlobalRules() {
 }
 
 /**
+ * Load the startup prompt (#1825) and the projects its firer list can name,
+ * and render both into the rules panel. Loaded once with the page and again
+ * after every save attempt, never on the poll, so a poll cannot overwrite an
+ * edit in progress.
+ */
+async function loadStartupPrompt() {
+  const [prompt, projectsData] = await Promise.all([
+    api('/api/startup-prompt'),
+    api('/api/projects')
+  ]);
+  if (!prompt) return;
+  state.startupPrompt = prompt;
+  const editor = document.getElementById('startupPromptEditor');
+  const revision = document.getElementById('startupPromptRevision');
+  const firers = document.getElementById('startupPromptFirers');
+  if (editor) editor.value = prompt.text;
+  if (revision) revision.textContent = `(revision ${prompt.revision})`;
+  if (!firers) return;
+  const projects = ((projectsData && projectsData.projects) || [])
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  const listed = new Set(prompt.firerProjectIds);
+  firers.innerHTML = projects.length === 0
+    ? '<p class="startup-prompt-help">No projects yet.</p>'
+    : projects.map((p) => `<label class="startup-prompt-firer">`
+      + `<input type="checkbox" value="${Number(p.id)}"${listed.has(p.id) ? ' checked' : ''}> ${esc(p.name)}</label>`).join('');
+}
+
+/**
+ * Save the startup prompt and its firer list as a new revision. Sends the
+ * revision the editor was loaded at, so a change made elsewhere in between is
+ * refused rather than overwritten; either way the editor re-reads what is
+ * current afterwards.
+ */
+async function saveStartupPrompt() {
+  const editor = document.getElementById('startupPromptEditor');
+  const status = document.getElementById('startupPromptStatus');
+  const btn = document.getElementById('startupPromptSaveBtn');
+  if (!editor || !state.startupPrompt) return;
+  const firerProjectIds = Array.from(document.querySelectorAll('#startupPromptFirers input[type="checkbox"]:checked'))
+    .map((box) => Number(box.value));
+  btn.disabled = true;
+  // The route is a strict operator write. On an open install that means the
+  // page token, fetched per click for the same reason the recovery clear does;
+  // on an armed install `api()` sends the CSRF header itself. `Content-Type`
+  // is required, or the perimeter refuses the body with 415 (#860).
+  const me = await api('/api/auth/me');
+  const headers = { 'Content-Type': 'application/json' };
+  if (me && me.openInstallToken) headers['X-TC-Open-Token'] = me.openInstallToken;
+  const saved = await api('/api/startup-prompt', {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({
+      text: editor.value,
+      firerProjectIds,
+      expectedRevision: state.startupPrompt.revision
+    })
+  });
+  btn.disabled = false;
+  if (saved) {
+    status.textContent = `Saved as revision ${saved.revision}`;
+    status.className = 'rules-status rules-status-ok';
+  } else {
+    status.textContent = `${api.lastError || 'Save failed'} The editor now shows the current prompt.`;
+    status.className = 'rules-status rules-status-err';
+  }
+  status.classList.remove('hidden');
+  await loadStartupPrompt();
+}
+
+/**
  * Load project groups from the API.
  */
 async function loadGroups() {
@@ -2302,7 +2373,7 @@ async function init() {
   // until that timer next fired — a whole interval of a page that had been
   // asked, and answered from memory. Throttled server-side, so a reload loop
   // costs one check per window rather than one per load.
-  await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadModelStatus(), loadGroups(), loadOpenclawConnections(),
+  await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadStartupPrompt(), loadModelStatus(), loadGroups(), loadOpenclawConnections(),
     // `.catch` rather than bare: a rejection inside Promise.all would abandon
     // the rest of init — checkPortImports, maybeShowFilter,
     // updateUnregisteredToggle and startPolling all sit after this await, so a
