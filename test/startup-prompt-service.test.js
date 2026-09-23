@@ -105,7 +105,10 @@ describe('startup prompt service: validation', () => {
   it('refuses empty text and every control character except LF', () => {
     assert.match(svc.textProblem('   '), /empty/);
     assert.match(svc.textProblem(42), /string/);
-    for (const c of ['\u001b', '\r', '\t', '\u0000', '\u007f']) assert.match(svc.textProblem(`a${c}b`), /control/, JSON.stringify(c));
+    for (const c of ['\u001b', '\r', '\t', '\u0000', '\u007f', '\u0080', '\u009b', '\u009f']) {
+      assert.match(svc.textProblem(`a${c}b`), /control/, JSON.stringify(c));
+    }
+    assert.equal(svc.textProblem('a b'), null, 'NBSP is not a control character');
   });
 
   it('refuses a malformed, repeated or unknown firer list', () => {
@@ -227,6 +230,14 @@ describe('startup prompt service: fire', () => {
     assert.equal(f.projectId, 1);
   });
 
+  it('an unreadable engine profile is a recorded unsupported, not an error', () => {
+    const broken = deps({ getEngine: () => { throw new Error('bad json'); } });
+    const r = svc.fire(req(OPERATOR), broken);
+    assert.equal(r.status, 409);
+    assert.equal(r.body.reasonCode, 'engine_profile_unreadable');
+    assert.equal(broken._fires[0].outcome, 'unsupported');
+  });
+
   it('a repeat of the same key returns the first record and records nothing new', () => {
     const request = req(OPERATOR);
     const first = svc.fire(request, d);
@@ -316,13 +327,13 @@ describe('startup prompt service: fire', () => {
     assert.equal(svc.fire(req(OPERATOR, { sessionId: '10' }), d).status, 400);
   });
 
-  it('with a registered adapter, refuses honestly and records and types nothing (dispatch is B2)', () => {
+  it('with a registered adapter on a verified version, refuses honestly and records and types nothing (dispatch is not built)', () => {
     const block = { adapter: 'fake', channel: 'c', readiness: 'r', receipt: 'x', blockers: 'b', verifiedVersions: ['1'] };
     block.evidence = Object.fromEntries(Object.keys(block).map((k) => [k, { verifiedOn: null, source: 's' }]));
     let touched = false;
     const supported = deps({
       getEngine: (id) => ({ id, capabilities: { startupControl: block } }),
-      adapters: { fake: { fire: () => { touched = true; } } }
+      adapters: { fake: { installedVersion: () => '1', fire: () => { touched = true; } } }
     });
     const r = svc.fire(req(OPERATOR), supported);
     assert.equal(r.status, 501);

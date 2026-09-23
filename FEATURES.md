@@ -333,7 +333,7 @@ fails any auto-stub section older than 14 days.
 
 ## Governance / Engines
 
-- **startupControl and the startup prompt** (#1825, Build Chunk B1). The operator's revisioned
+- **startupControl and the startup prompt** (#1825, the engine-neutral foundation). The operator's revisioned
   startup prompt, with its firer list, lives in `startup_prompt_revisions` (append-only, and written
   by compare-and-set, with a text digest, a policy digest and author provenance). Every fire is
   recorded in `startup_prompt_fires` as an intent before any external effect: idempotent by

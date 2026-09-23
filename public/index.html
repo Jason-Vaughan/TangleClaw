@@ -357,7 +357,10 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
       </h3>
       <p class="startup-prompt-help">What a launch sends an engine that supports native startup delivery. It
         should only ask the engine to read its launch context, never dispatch work.</p>
-      <textarea class="rules-editor" id="startupPromptEditor" rows="3" maxlength="4096"
+      <!-- No maxlength: it counts characters, while the server's limit is 4096
+           UTF-8 bytes. The server refuses an oversized prompt and says so, and
+           the editor keeps the text. -->
+      <textarea class="rules-editor" id="startupPromptEditor" rows="3"
                 aria-label="Startup prompt text" spellcheck="false"></textarea>
       <fieldset class="startup-prompt-firers">
         <legend>Projects whose sessions may fire it (within their project groups)</legend>

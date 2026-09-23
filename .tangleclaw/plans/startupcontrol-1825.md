@@ -358,6 +358,20 @@ and are not committed, because they contain account identifiers.
     role+assignment revision. `sourceManifest` may qualify only after proof, and the firer-policy
     revision cannot substitute.
 
+### Critic follow-ups (review rev-20260923T232701Z, 0 blocking)
+
+- **D7, as ruled:** the exact-verified-version check is in `resolve()`. The adapter contract is a
+  synchronous, cached `installedVersion()`, so resolution never spawns a process. A missing or
+  unlisted version, or a probe that throws, resolves to `version_unverified`. (The first build
+  had left the check to the adapter; the Critic caught the drift from D7.)
+- An engine profile that cannot be read resolves to `engine_profile_unreadable`, and
+  `resolveProfile` is used so `openclaw:<id>` engines resolve.
+- **Carried into B3 (the Critic's R-13/R-14):**
+  - Surface `denied` fire attempts in the launch panel. Today they are visible only in
+    `startup_prompt_fires`.
+  - Bring a retention decision for `startup_prompt_fires` to the Architect with B3, when the
+    table gains its readers.
+
 ### Implementation calls (not architectural)
 
 - New modules: `lib/startup-control.js` (the validator, the empty adapter registry and the

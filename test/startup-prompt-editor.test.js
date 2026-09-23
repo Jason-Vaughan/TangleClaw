@@ -46,7 +46,7 @@ function liftFunction(src, decl) {
  * @param {string|null} [opts.openToken] - The open-install token /api/auth/me issues.
  * @returns {object} The sandbox.
  */
-function sandbox(prompt, projects, { putAnswer = null, openToken = 'tok' } = {}) {
+function sandbox(prompt, projects, { putAnswer = null, openToken = 'tok', putRefusal = 'The startup prompt changed since revision 3. Reload it and try again.' } = {}) {
   const els = {};
   for (const id of ['startupPromptEditor', 'startupPromptRevision', 'startupPromptFirers', 'startupPromptStatus', 'startupPromptSaveBtn']) {
     els[id] = {
@@ -55,15 +55,29 @@ function sandbox(prompt, projects, { putAnswer = null, openToken = 'tok' } = {})
     };
   }
   const calls = [];
-  const api = async (url, opts) => {
-    calls.push({ url, opts });
+  /**
+   * The route's answer for a request, as the server would give it.
+   * @param {string} url - Request URL.
+   * @param {object} [opts] - fetch options.
+   * @returns {*} The body, or null for a refusal.
+   */
+  const answer = (url, opts) => {
     if (url === '/api/startup-prompt' && (!opts || !opts.method)) return prompt;
     if (url === '/api/projects') return { projects };
     if (url === '/api/auth/me') return { openInstallToken: openToken };
     if (url === '/api/startup-prompt' && opts.method === 'PUT') return putAnswer;
     return null;
   };
-  api.lastError = 'The startup prompt changed since revision 1.';
+  // Mirrors public/api-helper.js: a refusal sets lastError, and EVERY success
+  // clears it. A fake that never cleared it could not see a caller reading
+  // lastError after a later, successful request.
+  const api = async (url, opts) => {
+    calls.push({ url, opts });
+    const body = answer(url, opts);
+    api.lastError = body === null ? putRefusal : null;
+    return body;
+  };
+  api.lastError = null;
   const document = {
     getElementById: (id) => els[id] || null,
     // Reads the checkboxes back out of the markup the widget rendered, so the
@@ -136,14 +150,54 @@ describe('startup prompt editor (#1825)', () => {
     assert.equal(put.opts.headers['X-TC-Open-Token'], undefined);
   });
 
-  it('on a refusal, says so and re-reads the current prompt', async () => {
+  it('on a refusal, keeps the typed text and ticks, and says so', async () => {
     const ctx = sandbox(PROMPT, PROJECTS, { putAnswer: null });
     await ctx.loadStartupPrompt();
-    const readsBefore = ctx.calls.filter((c) => c.url === '/api/startup-prompt' && !c.opts).length;
+    ctx.els.startupPromptEditor.value = 'my unsaved edit';
+    const ticks = ctx.els.startupPromptFirers.innerHTML.replace('value="1">', 'value="1" checked>');
+    ctx.els.startupPromptFirers.innerHTML = ticks;
     await ctx.saveStartupPrompt();
-    assert.match(ctx.els.startupPromptStatus.textContent, /changed since revision 1.*shows the current prompt/);
+    assert.equal(ctx.els.startupPromptEditor.value, 'my unsaved edit', 'the refusal does not overwrite the text');
+    assert.equal(ctx.els.startupPromptFirers.innerHTML, ticks, 'nor the ticks');
+    assert.match(ctx.els.startupPromptStatus.textContent, /Your edits are kept/);
+    assert.match(ctx.els.startupPromptStatus.textContent, /^The startup prompt changed since revision 3/,
+      'the server\'s own reason reaches the operator, even though a later request succeeded');
     assert.equal(ctx.els.startupPromptStatus.className, 'rules-status rules-status-err');
-    const readsAfter = ctx.calls.filter((c) => c.url === '/api/startup-prompt' && !c.opts).length;
-    assert.equal(readsAfter, readsBefore + 1, 're-read after the refusal');
+    assert.equal(ctx.state.startupPrompt.revision, 3, 'the revision did not move, so nothing claims it did');
+  });
+
+  it('shows the server\'s reason for an invalid prompt', async () => {
+    const ctx = sandbox(PROMPT, PROJECTS, { putAnswer: null, putRefusal: 'text must be at most 4096 bytes of UTF-8' });
+    await ctx.loadStartupPrompt();
+    await ctx.saveStartupPrompt();
+    assert.match(ctx.els.startupPromptStatus.textContent, /^text must be at most 4096 bytes of UTF-8\. Your edits are kept\./);
+  });
+
+  it('on a stale refusal, moves to the current revision and says a second save replaces it', async () => {
+    const ctx = sandbox(PROMPT, PROJECTS, { putAnswer: null });
+    await ctx.loadStartupPrompt();
+    ctx.els.startupPromptEditor.value = 'my unsaved edit';
+    // Someone else saved revision 4 in between. Same lastError contract.
+    const newer = { ...PROMPT, revision: 4, text: 'their text' };
+    const realApi = ctx.api;
+    ctx.api = async (url, opts) => {
+      if (url === '/api/startup-prompt' && !opts) { ctx.api.lastError = null; return newer; }
+      const body = await realApi(url, opts);
+      ctx.api.lastError = realApi.lastError;
+      return body;
+    };
+    ctx.api.lastError = null;
+    vm.runInContext('api = this.api', ctx);
+    await ctx.saveStartupPrompt();
+    assert.match(ctx.els.startupPromptStatus.textContent, /^The startup prompt changed since revision 3/);
+    assert.equal(ctx.els.startupPromptEditor.value, 'my unsaved edit');
+    assert.equal(ctx.state.startupPrompt.revision, 4);
+    assert.equal(ctx.els.startupPromptRevision.textContent, '(revision 4)');
+    assert.match(ctx.els.startupPromptStatus.textContent, /now at revision 4.*saving again replaces it/);
+  });
+
+  it('has no character maxlength that disagrees with the server\'s byte limit', () => {
+    const tag = INDEX.slice(INDEX.indexOf('id="startupPromptEditor"') - 80, INDEX.indexOf('id="startupPromptEditor"') + 120);
+    assert.doesNotMatch(tag, /maxlength/);
   });
 });

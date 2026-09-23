@@ -98,7 +98,8 @@ describe('startupControl blockErrors', () => {
 });
 
 describe('startupControl resolve', () => {
-  const registry = { fake: { name: 'fake' } };
+  // The block() fixture verifies version 1.0.0.
+  const registry = { fake: { name: 'fake', installedVersion: () => '1.0.0' } };
 
   it('is unsupported when the profile declares nothing', () => {
     const r = sc.resolve(profile(undefined), registry);
@@ -122,10 +123,40 @@ describe('startupControl resolve', () => {
     assert.equal(r.reasonCode, 'adapter_not_registered');
   });
 
-  it('is supported only when a well-formed block names a registered adapter', () => {
+  it('is supported only when a well-formed block names a registered adapter on a verified version', () => {
     const r = sc.resolve(profile(block()), registry);
     assert.equal(r.supported, true);
     assert.equal(r.adapter, registry.fake);
+    assert.equal(r.reasonCode, null);
+  });
+
+  it('is unsupported on an installed version the block did not verify', () => {
+    const r = sc.resolve(profile(block()), { fake: { installedVersion: () => '1.0.1' } });
+    assert.equal(r.supported, false);
+    assert.equal(r.reasonCode, 'version_unverified');
+    assert.match(r.reason, /version 1\.0\.1/);
+    assert.equal(r.adapter, null);
+  });
+
+  it('is unsupported when the adapter cannot say its version, or throws', () => {
+    for (const adapter of [{}, { installedVersion: () => null }, { installedVersion: () => { throw new Error('probe'); } }]) {
+      const r = sc.resolve(profile(block()), { fake: adapter });
+      assert.equal(r.supported, false);
+      assert.equal(r.reasonCode, 'version_unverified');
+    }
+  });
+
+  it('resolveEngine degrades an unreadable profile to unsupported instead of throwing', () => {
+    const r = sc.resolveEngine('codex', () => { throw new Error('bad json'); }, registry);
+    assert.equal(r.supported, false);
+    assert.equal(r.reasonCode, 'engine_profile_unreadable');
+    assert.match(r.reason, /codex/);
+  });
+
+  it('resolveEngine names the engine id when no profile exists', () => {
+    const r = sc.resolveEngine('openclaw:abc', () => null, registry);
+    assert.equal(r.reasonCode, 'engine_declares_none');
+    assert.match(r.reason, /openclaw:abc/);
   });
 
   it('does not resolve an inherited property as an adapter', () => {

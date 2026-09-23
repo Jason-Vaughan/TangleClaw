@@ -331,7 +331,7 @@ describe('startup prompt routes (#1825)', () => {
       assert.equal(json(again).fire.id, json(first).fire.id);
     });
 
-    it('an unlisted session in the same group is refused and nothing is recorded', async () => {
+    it('an unlisted session in the same group gets a 404, and the denial is recorded internally', async () => {
       const target = launched();
       const other = launched();
       const group = store.projectGroups.create({ name: `h-${counter}` });
@@ -384,6 +384,91 @@ describe('startup prompt routes (#1825)', () => {
         body: { ...fireBody(l), expectedRevision: 0 }, headers: { 'x-tc-open-token': await pageToken() }
       });
       assert.equal(json(res).code, 'STALE_STARTUP_PROMPT');
+    });
+  });
+
+  describe('armed install: a signed-in operator', () => {
+    /**
+     * Create an account, turn the login on and sign in.
+     * @returns {Promise<{cookie: string, csrf: string}>}
+     */
+    async function signedIn() {
+      store.users.create('rosie', PASSWORD);
+      patchConfig({ authEnabled: true });
+      const res = await send('POST', '/api/auth/login', { body: { username: 'rosie', password: PASSWORD } });
+      assert.equal(res.statusCode, 200, res.body);
+      const cookie = [].concat(res.headers['set-cookie'] || []).map((c) => String(c).split(';')[0]).join('; ');
+      return { cookie, csrf: json(res).csrfToken };
+    }
+
+    it('saves a revision recorded as operator-verified, with the username', async () => {
+      const { cookie, csrf } = await signedIn();
+      const res = await send('PUT', '/api/startup-prompt', {
+        body: { text: 'read your launch context', firerProjectIds: [], expectedRevision: store.startupPrompts.current().revision },
+        headers: { cookie, 'x-csrf-token': csrf }
+      });
+      assert.equal(res.statusCode, 200, res.body);
+      assert.equal(json(res).updatedByKind, 'operator-verified');
+      assert.equal(json(res).updatedBy, 'rosie');
+      assert.equal(store.startupPrompts.current().createdBy, 'rosie');
+    });
+
+    it('is refused without the CSRF token, and nothing is written', async () => {
+      const { cookie } = await signedIn();
+      const before = store.startupPrompts.current().revision;
+      const res = await send('PUT', '/api/startup-prompt', {
+        body: { text: 'x', firerProjectIds: [], expectedRevision: before }, headers: { cookie }
+      });
+      assert.equal(res.statusCode, 403);
+      assert.equal(store.startupPrompts.current().revision, before);
+    });
+
+    it('fires with the operator-verified clearance on the record', async () => {
+      const l = launched();
+      const { cookie, csrf } = await signedIn();
+      const res = await send('POST', fireUrl(l.project), { body: fireBody(l), headers: { cookie, 'x-csrf-token': csrf } });
+      assert.equal(res.statusCode, 409, res.body);
+      assert.equal(json(res).fire.callerClearance, 'operator-verified');
+    });
+  });
+
+  describe('a binding that does not check out', () => {
+    it('a session claiming another project is refused on every route, and nothing is written', async () => {
+      const l = launched();
+      const other = launched();
+      const lying = { 'x-tangleclaw-project-id': String(other.project.id), 'x-tangleclaw-launch-id': l.sequence.launchId };
+      const get = await send('GET', '/api/startup-prompt', { browser: false, headers: lying });
+      assert.equal(get.statusCode, 403);
+      const before = store.startupPrompts.current().revision;
+      const put = await send('PUT', '/api/startup-prompt', {
+        browser: false, headers: lying, body: { text: 'x', firerProjectIds: [], expectedRevision: before }
+      });
+      assert.equal(put.statusCode, 403);
+      const fire = await send('POST', fireUrl(l.project), { browser: false, headers: lying, body: fireBody(l) });
+      assert.equal(fire.statusCode, 403);
+      assert.equal(store.startupPrompts.current().revision, before);
+      assert.equal(store.startupPrompts.firesForSession(l.session.id).length, 0);
+    });
+
+    it('a launch id nobody holds is refused', async () => {
+      const l = launched();
+      const res = await send('POST', fireUrl(l.project), {
+        browser: false,
+        headers: { 'x-tangleclaw-project-id': String(l.project.id), 'x-tangleclaw-launch-id': 'A'.repeat(22) },
+        body: fireBody(l)
+      });
+      assert.equal(res.statusCode, 403);
+    });
+  });
+
+  describe('engine lookup', () => {
+    it('the fire service resolves an openclaw:<connection> engine to its profile', () => {
+      const startupPrompt = require('../lib/startup-prompt');
+      const conn = store.openclawConnections.create({ name: `oc-${counter}`, host: '10.0.0.5', sshUser: 'admin', sshKeyPath: '~/.ssh/id_rsa' });
+      const profile = startupPrompt.DEFAULT_DEPS.getEngine(`openclaw:${conn.id}`);
+      assert.ok(profile, 'a plain store.engines lookup returns null for this id');
+      assert.equal(profile.id, `openclaw:${conn.id}`);
+      assert.equal(profile.connectionId, conn.id);
     });
   });
 

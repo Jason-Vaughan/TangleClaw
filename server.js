@@ -4503,7 +4503,7 @@ function _startupControlCapability(activeSession) {
   if (!activeSession) {
     return { id: 'startup-control', enabled: false, detail: 'unavailable: this call did not resolve to an active session' };
   }
-  const resolved = startupControl.resolve(store.engines.get(activeSession.engineId));
+  const resolved = startupControl.resolveEngine(activeSession.engineId, engines.resolveProfile);
   return {
     id: 'startup-control',
     enabled: resolved.supported,
@@ -6795,15 +6795,6 @@ registerMedusaRoutes('/api/sessions/:project/medusa', resolveProjectMedusaTarget
 registerMedusaRoutes('/api/master/medusa', resolveMasterMedusaTarget);
 
 
-// POST /api/sessions/:project/launch/recovery-clear — an operator clears a launch's
-// required recovery (Train 21, #1587).
-// Body: {sessionId, sequenceId, recoveryRevision}
-//
-// The branches key on the GATE STATE first, never on "is there a session". An
-// `armed` install with a failed authentication has no `req.tcSession`, and the
-// order below is what keeps that request from falling through to the open-install
-// branch and being honoured as an anonymous browser: each state is answered by
-// its own branch, and anything unrecognised is refused rather than defaulted.
 /**
  * Prove that a state-changing request is the OPERATOR's, or refuse it.
  *
@@ -6908,6 +6899,13 @@ function _requireOperatorWrite(req, res, o) {
   return null;
 }
 
+// POST /api/sessions/:project/launch/recovery-clear — an operator clears a launch's
+// required recovery (Train 21, #1587).
+// Body: {sessionId, sequenceId, recoveryRevision}
+//
+// The operator proof is `_requireOperatorWrite`, whose branch order (gate state
+// first, never "is there a session") is what keeps an armed install's failed
+// authentication from being honoured as an anonymous open-install browser.
 route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params, body) => {
   const proof = _requireOperatorWrite(req, res, {
     logEvent: 'Refused a recovery clear',

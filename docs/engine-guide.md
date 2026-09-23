@@ -602,9 +602,15 @@ rule as `wake`. An unknown field, or a malformed block, resolves to **unsupporte
 
 **A profile names an adapter, and never supplies one.** The adapter is code, registered in
 `ADAPTERS` in `lib/startup-control.js`. A profile whose `adapter` is not registered resolves to
-unsupported, so editing a profile can describe a channel but cannot grant one. The adapter also
-owns the version check: an installed engine version that is not in `verifiedVersions` is reported
-as unsupported, never guessed at.
+unsupported, so editing a profile can describe a channel but cannot grant one.
+
+**Supported also needs a verified version.** The adapter reports the installed engine version
+through `installedVersion()`, which answers synchronously from a value it probed and cached
+earlier. Capability resolution never spawns a process. A version not listed in
+`verifiedVersions`, or no version at all, resolves to unsupported (`version_unverified`), never
+guessed at. `tc capabilities` and the fire path read this one decision, so they cannot disagree.
+An engine profile that cannot be read resolves to unsupported (`engine_profile_unreadable`),
+instead of failing the request that asked.
 
 **No adapter is registered yet.** Every engine currently resolves to unsupported, `tc capabilities`
 says so as `startup-control`, and firing the startup prompt returns a typed

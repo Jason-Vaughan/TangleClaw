@@ -1308,12 +1308,29 @@ async function saveStartupPrompt() {
   if (saved) {
     status.textContent = `Saved as revision ${saved.revision}`;
     status.className = 'rules-status rules-status-ok';
-  } else {
-    status.textContent = `${api.lastError || 'Save failed'} The editor now shows the current prompt.`;
-    status.className = 'rules-status rules-status-err';
+    status.classList.remove('hidden');
+    await loadStartupPrompt();
+    return;
   }
+  // Refused (invalid text, a stale revision, no proof, the network): keep what
+  // the operator typed and ticked. Only the revision the editor is based on is
+  // refreshed, and the message says when someone else changed the prompt, so
+  // a second click replaces their revision knowingly rather than blindly.
+  // The server's reason is captured FIRST: the re-read below succeeds, and a
+  // successful api() call clears api.lastError.
+  const reason = api.lastError || 'Save failed.';
+  const before = state.startupPrompt.revision;
+  const current = await api('/api/startup-prompt');
+  let note = ' Your edits are kept.';
+  if (current && current.revision !== before) {
+    state.startupPrompt = current;
+    const revision = document.getElementById('startupPromptRevision');
+    if (revision) revision.textContent = `(revision ${current.revision})`;
+    note += ` The prompt is now at revision ${current.revision}, saved by someone else; saving again replaces it.`;
+  }
+  status.textContent = `${reason}${/[.!?]$/.test(reason) ? '' : '.'}${note}`;
+  status.className = 'rules-status rules-status-err';
   status.classList.remove('hidden');
-  await loadStartupPrompt();
 }
 
 /**
