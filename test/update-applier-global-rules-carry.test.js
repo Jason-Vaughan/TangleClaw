@@ -337,11 +337,15 @@ describe('operator-edited global rules across an update (#1730)', () => {
         fs.rmSync(path.join(dir, 'tools'));
         fs.mkdirSync(path.join(dir, 'tools'));
         fs.writeFileSync(path.join(dir, 'tools', 'run.sh'), 'echo\n');
+        // Deeper than one level too: every path under the replaced file.
+        fs.mkdirSync(path.join(dir, 'tools', 'x'));
+        fs.writeFileSync(path.join(dir, 'tools', 'x', 'deep.sh'), 'echo deep\n');
       });
       applier._internal.checkForUpdate = () => ({ updateAvailable: true, latestVersion: '9.9.10' });
       const r = applier.applyUpdate();
       assert.equal(r.ok, true, JSON.stringify(r));
       assert.equal(fs.readFileSync(path.join(work, 'tools', 'run.sh'), 'utf8'), 'echo\n');
+      assert.equal(fs.readFileSync(path.join(work, 'tools', 'x', 'deep.sh'), 'utf8'), 'echo deep\n');
     });
 
     it('the checkout itself refuses to overwrite an ignored file the preflight missed', () => {
