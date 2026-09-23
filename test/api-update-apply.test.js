@@ -48,7 +48,8 @@ describe('POST /api/update/apply (UB #228/#229)', () => {
       if (key === 'rev-parse --abbrev-ref HEAD') return 'main\n';
       if (key === 'fetch --tags origin') return '';
       if (key === 'ls-remote --tags origin') return 'sha\trefs/tags/v9.9.9\n';
-      if (key === 'checkout v9.9.9') return '';
+      if (key === 'checkout --no-overwrite-ignore v9.9.9') return '';
+      if (key === 'diff --name-status -z --no-renames HEAD v9.9.9') return ''; // #1730: preflight
       if (key === 'diff --name-only old new') return ''; // #711: provisioning diff
       throw new Error(`unexpected git: ${key}`);
     };
@@ -85,7 +86,7 @@ describe('POST /api/update/apply (UB #228/#229)', () => {
     }
     assert.equal(status, 409, 'a truthy string must refuse like no flag at all');
     assert.equal(body.code, 'dirty-tree');
-    assert.deepEqual(body.dirty, { discardable: ['.claude/settings.json'], realWork: [] },
+    assert.deepEqual(body.dirty, { discardable: ['.claude/settings.json'], realWork: [], carried: [] },
       'the refusal payload must reach the wire');
     assert.equal(calls.some((c) => c.startsWith('checkout --')), false, 'and nothing is discarded');
   });
@@ -118,5 +119,41 @@ describe('POST /api/update/apply (UB #228/#229)', () => {
     assert.equal(status, 500);
     assert.equal(body.code, 'git-error');
     assert.equal(body.fromSha, 'old');
+  });
+
+  describe('the #1730 codes reach the wire with their status and body', () => {
+    let origApply;
+    beforeEach(() => { origApply = applier.applyUpdate; });
+    afterEach(() => { applier.applyUpdate = origApply; });
+
+    it('reconcile-required is a 409, with every reconcile entry intact', () => {
+      const result = {
+        ok: false, code: 'reconcile-required', error: 'the update needs these files reconciled first — nothing was changed',
+        fromSha: 'old', toRef: null, toSha: null,
+        reconcile: [{ path: 'data/global-rules.md', reason: 'merge-conflict', action: 'Open Global Rules…' }]
+      };
+      applier.applyUpdate = () => result;
+      const { status, body } = callRoute();
+      assert.equal(status, 409, 'a refusal that changed nothing is a 409');
+      assert.deepEqual(body, result);
+    });
+
+    it('recovery-failed is a 500, never a 409, with recovery intact', () => {
+      // THE MUTATION THIS CATCHES: dropping recovery-failed from the 500 set.
+      // A 409 tells every consumer that nothing moved, which is exactly what
+      // this code exists to say it cannot promise.
+      const result = {
+        ok: false, code: 'recovery-failed', error: 'the update failed at "write-merged" — manual recovery is required',
+        fromSha: 'old', toRef: null, toSha: null,
+        recovery: {
+          fromSha: 'old', fromRef: 'main', backup: ['/b/global-rules.old-v9.md'], failedStep: 'write-merged',
+          observed: { headSha: 'old', ref: 'main', fileMatchesOriginal: false, flagsMatchOriginal: null }
+        }
+      };
+      applier.applyUpdate = () => result;
+      const { status, body } = callRoute();
+      assert.equal(status, 500);
+      assert.deepEqual(body, result);
+    });
   });
 });

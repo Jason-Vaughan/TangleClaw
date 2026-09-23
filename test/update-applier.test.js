@@ -33,7 +33,10 @@ const HAPPY = {
   'rev-parse --abbrev-ref HEAD': 'main\n',
   'fetch --tags origin': '',
   'ls-remote --tags origin': 'sha1\trefs/tags/v9.9.9\nsha2\trefs/tags/v1.0.0\n',
-  'checkout v9.9.9': '',
+  'checkout --no-overwrite-ignore v9.9.9': '',
+  // #1730: the preflight asks what the tag changes before anything moves. An
+  // empty answer means nothing is in the checkout's way.
+  'diff --name-status -z --no-renames HEAD v9.9.9': '',
   // #711: the provisioning step diffs the two shas. The stub table returns
   // the same sha for both rev-parse calls, so this is the key it produces.
   'diff --name-only aaaaaaa0000000000000000000000000000000 aaaaaaa0000000000000000000000000000000': '',
@@ -139,7 +142,7 @@ describe('update-applier (UB #228/#229)', () => {
       assert.equal(r.toRef, 'v9.9.9');
       assert.equal(r.fromSha, 'aaaaaaa111');
       assert.equal(r.toSha, 'bbbbbbb222');
-      assert.ok(calls.includes('checkout v9.9.9'), 'should checkout the latest tag');
+      assert.ok(calls.includes('checkout --no-overwrite-ignore v9.9.9'), 'should checkout the latest tag');
       assert.ok(calls.includes('fetch --tags origin'), 'should fetch tags first');
     });
 
@@ -241,7 +244,7 @@ describe('update-applier (UB #228/#229)', () => {
       assert.equal(r.ok, false);
       assert.equal(r.code, 'dirty-tree');
       assert.deepEqual(r.dirty, {
-        discardable: ['.claude/settings.json'], realWork: ['lib/projects.js'] });
+        discardable: ['.claude/settings.json'], realWork: ['lib/projects.js'], carried: [] });
       assert.equal(calls.some((c) => c.startsWith('checkout --') || c.startsWith('clean')), false,
         'one real-work path anywhere means NOTHING is discarded, flag or no flag');
     });
@@ -253,7 +256,7 @@ describe('update-applier (UB #228/#229)', () => {
       const r = applier.applyUpdate();
       assert.equal(r.ok, false);
       assert.equal(r.code, 'dirty-tree');
-      assert.deepEqual(r.dirty, { discardable: ['.claude/settings.json'], realWork: [] });
+      assert.deepEqual(r.dirty, { discardable: ['.claude/settings.json'], realWork: [], carried: [] });
       assert.match(r.error, /discard option/,
         'an all-TC refusal must tell the operator the way out exists');
     });
@@ -329,7 +332,7 @@ describe('update-applier (UB #228/#229)', () => {
       const r = applier.applyUpdate({ discardDirty: true });
       assert.equal(r.ok, false);
       assert.equal(r.code, 'dirty-tree');
-      assert.deepEqual(r.dirty, { discardable: [], realWork: ['.tangleclaw/plans/x.md'] });
+      assert.deepEqual(r.dirty, { discardable: [], realWork: ['.tangleclaw/plans/x.md'], carried: [] });
       assert.match(r.error, /commit or stash/);
       assert.equal(calls.some((c) => c.startsWith('checkout') || c.startsWith('clean')), false);
     });
@@ -340,7 +343,7 @@ describe('update-applier (UB #228/#229)', () => {
       applier._internal.readFile = () => SETTINGS_HAND_EDITED;
       const r = applier.applyUpdate({ discardDirty: true });
       assert.equal(r.ok, false);
-      assert.deepEqual(r.dirty, { discardable: [], realWork: ['.claude/settings.json'] });
+      assert.deepEqual(r.dirty, { discardable: [], realWork: ['.claude/settings.json'], carried: [] });
       assert.equal(calls.some((c) => c.startsWith('checkout --')), false,
         'an operator permission must never be discarded under "nothing of yours"');
     });
@@ -350,7 +353,7 @@ describe('update-applier (UB #228/#229)', () => {
       applier._internal.git = fn;
       applier._internal.readFile = () => '{ not json';
       const r = applier.applyUpdate({ discardDirty: true });
-      assert.deepEqual(r.dirty, { discardable: [], realWork: ['.claude/settings.json'] });
+      assert.deepEqual(r.dirty, { discardable: [], realWork: ['.claude/settings.json'], carried: [] });
     });
 
     it('a settings file missing from HEAD is real work', () => {
@@ -359,7 +362,7 @@ describe('update-applier (UB #228/#229)', () => {
       applier._internal.git = fn;
       applier._internal.readFile = () => SETTINGS_RETIRED;
       const r = applier.applyUpdate({ discardDirty: true });
-      assert.deepEqual(r.dirty, { discardable: [], realWork: ['.claude/settings.json'] });
+      assert.deepEqual(r.dirty, { discardable: [], realWork: ['.claude/settings.json'], carried: [] });
     });
 
     it('an untracked .claude/settings.json is never probed and never discardable', () => {

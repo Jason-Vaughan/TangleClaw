@@ -253,7 +253,8 @@ describe('applyUpdate wires the containment test in (#1241)', () => {
     'rev-parse --abbrev-ref HEAD': 'main\n',
     'fetch --tags origin': '',
     'ls-remote --tags origin': 'sha1\trefs/tags/v9.9.9\n',
-    'checkout v9.9.9': '',
+    'checkout --no-overwrite-ignore v9.9.9': '',
+    'diff --name-status -z --no-renames HEAD v9.9.9': '',
     [`diff --name-only ${SHA} ${SHA}`]: ''
   };
 
@@ -306,7 +307,7 @@ describe('applyUpdate wires the containment test in (#1241)', () => {
     const { result } = run(CONTAINED_WORK, {});
     assert.equal(result.ok, false, 'the discard is still opt-in per request');
     assert.equal(result.code, 'dirty-tree');
-    assert.deepEqual(result.dirty, { discardable: ['CLAUDE.md'], realWork: [] });
+    assert.deepEqual(result.dirty, { discardable: ['CLAUDE.md'], realWork: [], carried: [] });
     assert.match(result.error, /discard option/,
       'an all-TC refusal must tell the operator the way out exists — this is the #1241 dead end');
   });
@@ -321,7 +322,7 @@ describe('applyUpdate wires the containment test in (#1241)', () => {
   it('still refuses hard when the operator edited outside the block', () => {
     const { result, calls } = run(EDITED_WORK, { discardDirty: true });
     assert.equal(result.ok, false);
-    assert.deepEqual(result.dirty, { discardable: [], realWork: ['CLAUDE.md'] });
+    assert.deepEqual(result.dirty, { discardable: [], realWork: ['CLAUDE.md'], carried: [] });
     assert.equal(calls.some((c) => c.startsWith('checkout -- ')), false,
       'a hand edit outside the markers must never be discarded');
   });

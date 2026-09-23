@@ -5251,9 +5251,11 @@ route('POST', '/api/update/check', (_req, res, _params, body) => {
 // POST /api/update/apply — the self-update ACTION (#228/#229, UB). Fetches +
 // checks out the latest release tag; does NOT restart. The client chains
 // POST /api/server/restart on a 200. A refused safety guard (dirty tree, no
-// update, wrong ref, not a git checkout) returns 409 with a stable `code`; an
-// unexpected git failure mid-flow returns 500 with the pre-update `fromSha` so
-// recovery is a one-line manual `git checkout <fromSha>`.
+// update, wrong ref, not a git checkout, files to reconcile) returns 409 with a
+// stable `code`, and the checkout is as it was. The two 500s are the failures
+// where that cannot be promised: `git-error`, an unexpected git failure with the
+// pre-update `fromSha`, and `recovery-failed`, where putting the checkout back
+// after a failed step did not fully succeed and `recovery` says what is where.
 route('POST', '/api/update/apply', (_req, res, _params, body) => {
   // `discardDirty` opts into removing TangleClaw-written files that block the
   // update (#711 chunk 03). A strict-boolean gate like bindAllInterfaces': a
@@ -5265,7 +5267,7 @@ route('POST', '/api/update/apply', (_req, res, _params, body) => {
     jsonResponse(res, 200, result);
     return;
   }
-  jsonResponse(res, result.code === 'git-error' ? 500 : 409, result);
+  jsonResponse(res, result.code === 'git-error' || result.code === 'recovery-failed' ? 500 : 409, result);
 });
 
 // POST /api/tmux/mouse — set a session-level mouse value, or `unset: true`

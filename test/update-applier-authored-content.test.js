@@ -76,8 +76,12 @@ describe('the self-updater preserves authored content in a real repository (#153
     git(cutter, ['tag', 'v9.9.9']);
     git(cutter, ['push', '-q', 'origin', 'main', '--tags']);
 
-    orig = { git: applier._internal.git, readFile: applier._internal.readFile, check: applier._internal.checkForUpdate };
+    orig = {
+      git: applier._internal.git, readFile: applier._internal.readFile,
+      check: applier._internal.checkForUpdate, repoDir: applier._internal.repoDir
+    };
     applier._internal.git = (args) => git(work, args);
+    applier._internal.repoDir = work;
     applier._internal.readFile = (abs) => fs.readFileSync(path.join(work, path.relative(REPO_DIR, abs)), 'utf8');
     applier._internal.checkForUpdate = () => ({ updateAvailable: true, latestVersion: '9.9.9' });
   });
@@ -86,6 +90,7 @@ describe('the self-updater preserves authored content in a real repository (#153
     applier._internal.git = orig.git;
     applier._internal.readFile = orig.readFile;
     applier._internal.checkForUpdate = orig.check;
+    applier._internal.repoDir = orig.repoDir;
     fs.rmSync(root, { recursive: true, force: true });
   });
 
@@ -106,7 +111,7 @@ describe('the self-updater preserves authored content in a real repository (#153
     fs.writeFileSync(plan, 'committed plan\nplus my edit\n');
     const r = applier.applyUpdate({ discardDirty: true });
     assert.equal(r.code, 'dirty-tree');
-    assert.deepEqual(r.dirty, { discardable: [], realWork: ['.tangleclaw/plans/tracked.md'] });
+    assert.deepEqual(r.dirty, { discardable: [], realWork: ['.tangleclaw/plans/tracked.md'], carried: [] });
     assert.equal(fs.readFileSync(plan, 'utf8'), 'committed plan\nplus my edit\n');
   });
 
@@ -124,7 +129,7 @@ describe('the self-updater preserves authored content in a real repository (#153
     fs.writeFileSync(path.join(work, '.claude', 'settings.json'), edited);
     const r = applier.applyUpdate({ discardDirty: true });
     assert.equal(r.code, 'dirty-tree');
-    assert.deepEqual(r.dirty, { discardable: [], realWork: ['.claude/settings.json'] });
+    assert.deepEqual(r.dirty, { discardable: [], realWork: ['.claude/settings.json'], carried: [] });
     assert.equal(fs.readFileSync(path.join(work, '.claude', 'settings.json'), 'utf8'), edited);
   });
 });

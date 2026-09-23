@@ -33,6 +33,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   v4.5.0–v4.19.0).
 -->
 
+## 2026-09-23 — Operator Global Rules edits survive an update, or it refuses before anything moves (#1730)
+
+<!-- prawduct: type=bugfix | scope=train-a-car-a2 -->
+
+Train A Car A2 Chunk 02. The problem: an install that had customised `data/global-rules.md` could not take a release that changed that file. Without `skip-worktree` the dirty guard refused with no way forward. With it, `git checkout <tag>` aborted with a raw error. `applyUpdate` now runs a read-only preflight after fetch (`_preflight`). It three-way merges the carried file (HEAD / working copy / tag), finds flagged, untracked and ignored paths in the tag's way, and returns one `409 reconcile-required`. Before anything moves, it writes the exact original bytes to a private backup that is never overwritten (`_secureBackup`). Only after that does the operator-approved discard run. The move (`_moveToTag`) clears flags, restores, checks out with `--no-overwrite-ignore`, writes the merged file and restores the flags. On any failure it compensates, then re-observes the result. `recovery-failed` (500) is returned, carrying `observed` facts, only when that re-observation fails. Built to the Architect's D1–D10 rulings (messages a358b1ba, 4b503584), which are recorded in the plan. Found while building: git ignores `--no-skip-worktree` when it is combined with `--no-assume-unchanged` in one call, so `_setFlags` sets one flag per call. Tests: `test/update-applier-global-rules-carry.test.js`, a real-repository suite covering (a)–(f), compensation, the backup rules and the dirty-guard interaction. Beacon and route tests cover the two new codes. The issue's 5.28.0→5.29.0 skip-worktree repro, run on a scratch clone, updates with the edit kept.
+
 ## 2026-09-22 — The self-updater discards only changes proven to be TangleClaw's (#1537)
 
 <!-- prawduct: type=bugfix | scope=train-a-car-a2 -->
