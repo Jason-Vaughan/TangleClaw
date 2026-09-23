@@ -309,6 +309,19 @@ describe('tc start (car 21.3)', () => {
     assert.ok(!printed.includes('measured 8000'), 'an assumed limit is never presented as measured');
   });
 
+  it('prints which handoff the launch consumed, and says so when it consumed none (#1675)', () => {
+    const base = {
+      sequence: 'present', sessionId: 7, sequenceId: 3, revision: 1, applicability: 'applicable',
+      preflight: { verdict: 'ok' }, pageBudget: 7800, toolOutput: null, pending: null,
+      status: { cursor: 4, ready: true, recovery: 'none', unready: false }, steps: []
+    };
+    const withOne = tcVerbs.renderStartStatus({ ...base, handoff: { publicationId: 'v5pGX', digest: 'f'.repeat(64) } });
+    assert.match(withOne, new RegExp(`Handoff consumed: publication v5pGX, digest ${'f'.repeat(64)}\\.`));
+    const withNone = tcVerbs.renderStartStatus({ ...base, handoff: { publicationId: null, digest: null } });
+    assert.match(withNone, /Handoff consumed: none/);
+    assert.doesNotMatch(tcVerbs.renderStartStatus(base), /Handoff consumed/, 'an older server that sends no field prints nothing');
+  });
+
   it('tells a session in recovery what is blocking it, and who can open it', () => {
     // A session in OPERATOR recovery has just been told by `tc start next` that
     // its task step is withheld, and `status` is where it looks to find out

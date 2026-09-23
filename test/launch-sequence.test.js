@@ -693,6 +693,40 @@ describe('launch sequence (Train 21, Chunk 01)', () => {
       assert.equal(manifest.engineConfig.file, 'CLAUDE.md');
     });
 
+    it('records the publication its Resume was drawn from, and status reports it (#1675)', () => {
+      const lockfile = require('../lib/handoff-lockfile');
+      const { publishHandoff } = require('../lib/handoff-publish');
+      const { buildHandoffDocument, newPublicationId } = require('../lib/handoff-publication');
+      const project = makeProject('consumed');
+      const prior = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'consumed-prior' });
+      const publicationId = newPublicationId();
+      const doc = buildHandoffDocument({
+        publicationId, projectId: project.id, workspaceId: null, sessionId: prior.id, wrapRunId: 'run-c',
+        engineId: 'claude', kind: 'final', stagedAt: '2026-09-23T00:13:21.640Z', worktree: null, rules: [],
+        globalRulesHash: null, engineConfigHash: null, continuityIndexHash: null, wrapOutcome: 'complete',
+        missingEvidence: [], nextAction: 'Plan chunk 04.',
+        resume: { currentState: 'Chunk 03 shipped.', nextAction: 'Plan chunk 04.', freshness: { sha: 'abc1234' } }
+      });
+      const written = lockfile.writeStaged(project, doc);
+      store.handoffs.stage({ publicationId, projectId: project.id, sessionId: prior.id, wrapRunId: 'run-c', kind: 'final', fileDigest: written.digest, stagedAt: doc.stagedAt });
+      const wrapped = store.sessions.wrap(prior.id, 'done', { publicationId, wrapRunId: 'run-c' });
+      assert.equal(wrapped.publicationBound, true);
+      assert.equal(publishHandoff(project, publicationId).published, true);
+
+      const result = launch('consumed');
+      const sequence = store.launchSequences.getBySession(result.session.id);
+      assert.equal(sequence.sourceManifest.handoffPublicationId, publicationId);
+      assert.equal(sequence.sourceManifest.handoffDigest, written.digest);
+
+      const task = store.launchSequences.listSteps(sequence.id, sequence.revision).find((st) => st.id === 'task');
+      assert.ok(task.content.includes(`Source: handoff publication \`${publicationId}\``), 'the served task step names it');
+      assert.ok(task.content.includes('- Next action: Plan chunk 04.'));
+      assert.ok(result.primePrompt.includes(`\`${publicationId}\``), 'the pushed prime names the same publication');
+
+      const status = launchSequence.status({ launchId: sequence.launchId, projectId: project.id });
+      assert.deepEqual(status.body.handoff, { publicationId, digest: written.digest });
+    });
+
     it('survives deleting the session and the project, like the delivery ledgers', () => {
       const project = makeProject('retained');
       const result = launch('retained');

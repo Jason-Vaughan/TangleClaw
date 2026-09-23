@@ -404,3 +404,157 @@ describe('a probe failure and a non-git root are different handoffs (#1649)', ()
     );
   });
 });
+
+describe('the wrap result names what became of its handoff (#1675)', () => {
+  it('reports PUBLISHED with the id and the digest the row attests to', async () => {
+    const { publicationId, sessionId } = await stageViaStep();
+    store.handoffs.bindLifecycleEligibility(publicationId, sessionId, 'run-1', new Date().toISOString());
+    const out = sessions._finalizeHandoff(project, { publicationId, wrapRunId: 'run-1', kind: 'final' }, {
+      lifecycleCompleted: true, publicationBound: true, keepRequested: false, pipelineOk: true
+    });
+    assert.equal(out.state, 'published');
+    assert.equal(out.publicationId, publicationId);
+    assert.equal(out.kind, 'final');
+    assert.equal(out.reason, null);
+    assert.equal(out.digest, store.handoffs.get(publicationId).fileDigest);
+    assert.equal(out.digest, lockfile.readHandoffFile(lockfile.currentPath(project)).digest,
+      'the digest the wrap reports is the digest of the bytes the next launch reads');
+  });
+
+  it('reports NOT-PUBLISHED, with the refusal, when a newer publication is already current', async () => {
+    const older = await stageViaStep({ runId: 'run-old', sessionId: 7 });
+    const newer = await stageViaStep({ runId: 'run-new', sessionId: 8 });
+    store.handoffs.bindLifecycleEligibility(older.publicationId, 7, 'run-old', new Date().toISOString());
+    store.handoffs.bindLifecycleEligibility(newer.publicationId, 8, 'run-new', new Date().toISOString());
+    const won = sessions._finalizeHandoff(project, { publicationId: newer.publicationId, wrapRunId: 'run-new', kind: 'final' }, {
+      lifecycleCompleted: true, publicationBound: true, keepRequested: false, pipelineOk: true
+    });
+    assert.equal(won.state, 'published');
+
+    const lost = sessions._finalizeHandoff(project, { publicationId: older.publicationId, wrapRunId: 'run-old', kind: 'final' }, {
+      lifecycleCompleted: true, publicationBound: true, keepRequested: false, pipelineOk: true
+    });
+    assert.equal(lost.state, 'not-published');
+    assert.match(lost.reason, /newer publication/);
+    assert.equal(lost.publicationId, older.publicationId);
+    // Directional and structured: the winner is named in its own slot, never
+    // left for a client to parse out of `reason`, and never in the slot that
+    // means "the one this attempt displaced".
+    assert.equal(lost.supersededById, newer.publicationId);
+    assert.equal(lost.supersededId, null);
+  });
+
+  it('names the publication a win DISPLACED in supersededId, and nothing in supersededById', async () => {
+    const first = await stageViaStep({ runId: 'run-1st', sessionId: 11 });
+    const second = await stageViaStep({ runId: 'run-2nd', sessionId: 12 });
+    for (const [pub, sid, run] of [[first.publicationId, 11, 'run-1st'], [second.publicationId, 12, 'run-2nd']]) {
+      store.handoffs.bindLifecycleEligibility(pub, sid, run, new Date().toISOString());
+    }
+    sessions._finalizeHandoff(project, { publicationId: first.publicationId, wrapRunId: 'run-1st', kind: 'final' }, {
+      lifecycleCompleted: true, publicationBound: true, keepRequested: false, pipelineOk: true
+    });
+    const won = sessions._finalizeHandoff(project, { publicationId: second.publicationId, wrapRunId: 'run-2nd', kind: 'final' }, {
+      lifecycleCompleted: true, publicationBound: true, keepRequested: false, pipelineOk: true
+    });
+    assert.equal(won.state, 'published');
+    assert.equal(won.supersededId, first.publicationId);
+    assert.equal(won.supersededById, null);
+  });
+
+  it('reports ABANDONED with the store\'s reason on every abandoning branch', async () => {
+    const cases = [
+      [{ lifecycleCompleted: false, publicationBound: false, keepRequested: false, pipelineOk: true }, 'lifecycle-incomplete'],
+      [{ lifecycleCompleted: false, publicationBound: null, keepRequested: false, pipelineOk: false }, 'pipeline-failed'],
+      [{ lifecycleCompleted: true, publicationBound: false, keepRequested: false, pipelineOk: true }, 'eligibility-not-bound'],
+      [{ lifecycleCompleted: false, publicationBound: null, keepRequested: true, pipelineOk: false }, 'pipeline-failed']
+    ];
+    for (const [i, [verdicts, reason]] of cases.entries()) {
+      const { publicationId } = await stageViaStep({ runId: `run-a${i}`, sessionId: 200 + i, keepSessionRunning: verdicts.keepRequested });
+      const out = sessions._finalizeHandoff(project, {
+        publicationId, wrapRunId: `run-a${i}`, kind: verdicts.keepRequested ? 'checkpoint' : 'final'
+      }, verdicts);
+      assert.equal(out.state, 'abandoned', `case ${i}`);
+      assert.equal(out.reason, reason, `case ${i}`);
+      assert.equal(store.handoffs.get(publicationId).abandonedReason, reason, `case ${i}: the result says what the store recorded`);
+    }
+  });
+
+  it('reports NOT-STAGED with the step\'s own reason, or that the run stopped before the step', () => {
+    const skipped = sessions._unstagedHandoff({ results: [{
+      stepId: 'handoff-stage', kind: 'handoff-stage', status: 'skipped',
+      output: { reason: 'no wrap run id: the handoff could not be bound to this attempt' }, blockers: []
+    }] });
+    assert.equal(skipped.state, 'not-staged');
+    assert.equal(skipped.publicationId, null);
+    assert.match(skipped.reason, /no wrap run id/);
+
+    const stopped = sessions._unstagedHandoff({ blockedAt: 'commit', results: [
+      { stepId: 'commit', kind: 'commit', status: 'blocked', output: null, blockers: ['x'] },
+      { stepId: 'handoff-stage', kind: 'handoff-stage', status: 'pending', output: null, blockers: [] }
+    ] });
+    assert.equal(stopped.reason, 'the wrap stopped before it staged a handoff');
+    assert.equal(sessions._unstagedHandoff({ results: [] }).reason, 'the wrap stopped before it staged a handoff');
+  });
+});
+
+describe('the handoff freezes the resume its wrap wrote (#1675)', () => {
+  /**
+   * A continuity-write row in the runner's shape.
+   * @param {object} [over] - Output overrides
+   * @param {string} [status] - Row status
+   * @returns {object}
+   */
+  const cwRow = (over = {}, status = 'done') => ({
+    stepId: 'continuity-write', kind: 'continuity-write', status, blockers: [],
+    output: {
+      written: true, currentState: 'Chunk 03 shipped.', nextAction: 'Plan chunk 04.',
+      freshness: { sha: 'abc1234', branch: 'main', writtenAt: '2026-09-23', tier: 'full' }, ...over
+    }
+  });
+
+  it('copies the continuity step\'s own words into the staged document', async () => {
+    const step = await stageStep.run({
+      project, session: { id: 9, engineId: 'claude' }, previousResults: [cwRow()], scope: {}, options: {}, wrapRunId: 'run-r'
+    });
+    const doc = lockfile.readHandoffFile(lockfile.stagedPath(project, step.output.publicationId)).doc;
+    assert.deepEqual(doc.resume, {
+      currentState: 'Chunk 03 shipped.', nextAction: 'Plan chunk 04.',
+      freshness: { sha: 'abc1234', branch: 'main', writtenAt: '2026-09-23', tier: 'full' }
+    });
+    assert.equal(doc.wrapOutcome, 'complete');
+  });
+
+  it('derives the top-level next action from the resume, so the two can never disagree', async () => {
+    const earlier = {
+      stepId: 'memory-update', kind: 'ai-content', status: 'done', blockers: [],
+      output: { parsedFields: { nextSteps: 'an earlier capture the index did not use' } }
+    };
+    const step = await stageStep.run({
+      project, session: { id: 12, engineId: 'claude' }, previousResults: [earlier, cwRow()], scope: {}, options: {}, wrapRunId: 'run-canon'
+    });
+    const doc = lockfile.readHandoffFile(lockfile.stagedPath(project, step.output.publicationId)).doc;
+    assert.equal(doc.nextAction, 'Plan chunk 04.');
+    assert.equal(doc.resume.nextAction, 'Plan chunk 04.');
+  });
+
+  it('a continuity step that did not write degrades the handoff and records no resume', async () => {
+    for (const [i, row] of [cwRow({ written: false, error: 'EACCES' }), cwRow({}, 'skipped')].entries()) {
+      const step = await stageStep.run({
+        project, session: { id: 30 + i, engineId: 'claude' }, previousResults: [row], scope: {}, options: {}, wrapRunId: `run-w${i}`
+      });
+      const doc = lockfile.readHandoffFile(lockfile.stagedPath(project, step.output.publicationId)).doc;
+      assert.equal(doc.resume, null, `case ${i}`);
+      assert.equal(doc.wrapOutcome, 'degraded', `case ${i}: an index nobody wrote is not a complete handoff`);
+      assert.ok(doc.missingEvidence.includes('continuity-write: index not written'), `case ${i}: ${doc.missingEvidence}`);
+    }
+  });
+
+  it('names the failure once, not twice, when the step also failed outright', async () => {
+    const step = await stageStep.run({
+      project, session: { id: 40, engineId: 'claude' }, previousResults: [cwRow({ written: false }, 'blocked')],
+      scope: {}, options: {}, wrapRunId: 'run-once'
+    });
+    const doc = lockfile.readHandoffFile(lockfile.stagedPath(project, step.output.publicationId)).doc;
+    assert.equal(doc.missingEvidence.filter((m) => m.startsWith('continuity-write:')).length, 1);
+  });
+});

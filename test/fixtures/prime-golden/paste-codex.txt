@@ -42,6 +42,7 @@ Operating basics for any session in this ecosystem — standing context, not a t
 - **Ports go through PortHub.** Never pick a listen port ad hoc — request or look up assignments via the TangleClaw API (<API_ORIGIN>) so projects cannot collide.
 
 ## Last Session Summary
+_A summary recorded on session 1 (wrapped), not a handoff: no publication vouches for it._
 Shipped the parser; the lexer is next.
 
 ## Wrapping this session

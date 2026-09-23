@@ -35,6 +35,48 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-23 — A release publishes only the exact commit it tested, under a tag that dereferences to it (#1551)
+
+<!-- prawduct: type=feature | scope=train-a-car-a4 -->
+
+Train A Car A4 Chunk 02, the car's last. `release.yml` checked only that tag `vX.Y.Z` existed. It never checked which commit the tag named, and it published without any test result for the commit it released.
+
+**Tested in the same run.** `test.yml` gains `workflow_call`. The release workflow's `test` job runs it on `GITHUB_SHA`, and the publishing job `needs:` it with no status override. Tested and released are one commit by construction (Architect B1).
+
+**The tag must name that commit.** `scripts/release-tag-gate.js` resolves the tag through its peeled `^{}` line and fails closed on output it cannot parse or an absent tag. Any existing tag that names another commit refuses red, even when its Release exists (B2 MODIFY). The tag is checked again on origin after a push, and the checkout is confirmed as `GITHUB_SHA` before tagging. A live probe found that `ls-remote` with one pattern drops the peeled line, so both patterns are requested. Otherwise every annotated release would have refused.
+
+**Token scope and recovery.** The top-level token is `contents: read`, and only the publishing job holds write (B3). `docs/release-process.md` splits recovery by whether the tag reached origin (B4, refined after Critic R-3 blocking). ADR 0014's honest-limit status is updated (addendum). Tests: `test/release-tag-gate.test.js` and `test/release-workflow.test.js`, with 14 mutations watched red, and actionlint is clean. The plan, with the rulings, is archived at `.tangleclaw/plans/archive/train-a-car-a4-build-plan.md`. The merge waits on the Operator's direct CI go.
+
+## 2026-09-23 — Every workflow action is pinned to a full commit SHA, and a test enforces it (#1436)
+
+<!-- prawduct: type=feature | scope=train-a-car-a4 -->
+
+Train A Car A4 Chunk 01. Every `uses:` referenced the movable `v7` tag, so an upstream that moved it would run new code in CI with no diff here, including in `release.yml`, which can push tags (audit H5, the CVE-2025-30066 mechanism). Each ref is now the commit its tag resolved to, verified with `git ls-remote`, with an exact `# vX.Y.Z` comment. CI therefore runs identical code.
+
+**The check lives in the required `test` check.** `test/workflow-action-pins.test.js` reads every `uses` form: step and job level, with the key and the value quoted or unquoted. A line it cannot parse fails rather than being skipped. It requires 40-hex SHAs, docker digests or local `./` paths, and it flags annotation conflicts in both directions (Architect A1/A2). It says it proves shape and agreement, not that a comment names the right release.
+
+**Token scope and runtime.** Every workflow declares top-level `permissions:`, so `test.yml` is `contents: read` instead of inheriting the repository default (A3). `release.yml` keeps its workflow-level write until Chunk 02. `release.yml` pins Node `22.23.3`, which removes run-time version selection but not artifact trust (A4). #1827 tracks the Node artifact and the mutable runner image. ADR 0014's two #1436 status sentences are updated (A5). Architect rulings A1–A5 are in message ecc27e3b, and the Operator gave the CI change a direct go in-pane.
+
+## 2026-09-23 — CLAUDE.md carries Prawduct's current anchor, and the local learnings are split by concern (#1820, #1819)
+
+<!-- prawduct: type=chore | scope=learnings-split-reanchor -->
+
+`prawduct-hook reanchor --apply` replaced the stale anchor block in `CLAUDE.md` and nothing else. The new block tells a session without the plugin that governance is off and how to install it, and it adds the stage-keyed review rule (#1820).
+
+#1819 has no tracked diff. This clone's learnings are gitignored and local-only (#1792), so the split was done in place. `active-rules.md` (115 KB) became twelve area files, grouped by concern. Following the Architect's rulings, the shell and git hazards load every session, and the claim, review and evidence rules load on code reads as well as doc reads. Every file is at most 16 KB, so the `learnings_budgets` override is gone. A check confirmed that all 133 rules appear exactly once and unchanged. Four sets of duplicates were merged by appending each later rule whole, including its lead sentence, to the first. A live read of a code file loaded only the files scoped to it. The plan, with the Architect's rulings on D1–D7, is archived at `.tangleclaw/plans/archive/learnings-split-reanchor.md`.
+
+## 2026-09-23 — A finished wrap names the publication the next launch resumes from (#1675)
+
+<!-- prawduct: type=feature | scope=train-a-car-a3 -->
+
+Train A Car A3 Chunk 04, the car's last. A wrap could report success while its handoff went unpublished, because `_finalizeHandoff` dropped the publish result. The next launch's Resume was read from `.tangleclaw/continuity/index.md`, which every wrap attempt that reaches its continuity step rewrites. A session that crashed after an earlier wrap was handed that wrap's next action with nothing saying it was older.
+
+**The wrap names its publication.** The run result, `/wrap/status` and `run-done` carry `handoffPublication` (`published`, `not-published`, `abandoned` or `not-staged`), with the id, digest and reason. Supersession is directional: `supersededId` is the publication this one displaced, `supersededById` the one it lost to (Architect H1 MODIFY). The drawer warns "handoff NOT published", and the warning survives a blocked-release banner.
+
+**The handoff freezes its resume, and the launch renders that.** `tc.handoff/1` gains an optional `resume` block with one normalizer (`normalizeResume`). Its next action and the top-level `nextAction` are one canonical value, and a disagreement is refused (H2 MODIFY). A continuity step that did not write the index degrades the handoff. `evaluate` hands the launch the resume from the same `current.json` its verdict read. The Resume opens with the publication's id, digest, session, exact staging time and verdict. It is labelled OLDER when a later session ran after it, UNBOUND when it comes from the index, and "not a handoff" for a session summary. The launch manifest records the consumed id and digest, and `tc start status` prints them (H3–H5).
+
+Measured, not inferred: the 2026-09-21 PM recurrence was a correctly bound publication whose next action was already stale when captured, so deciding whether the text is current stays the session's freshness check (H6). Architect rulings H1–H6 are in message ed93ebab, and ADR 0002 and ADR 0017 are amended. Filed #1816 (a server restart mid-wrap loses the run).
+
 ## 2026-09-23 — A new file is admitted by a decision, and a cleared draft is kept privately rather than logged (#1724, #1507)
 
 <!-- prawduct: type=feature | scope=train-a-car-a3 -->
