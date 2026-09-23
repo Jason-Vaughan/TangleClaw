@@ -163,7 +163,8 @@ describe('releasePrepareCommand on a release cut (#1502)', () => {
     const repo = makeRepo({ releasePrepareCommand: script(`require('fs').writeFileSync(${JSON.stringify(marker)}, 'x')`) });
     const baseline = launchBaseline.capture(repo);
     fs.writeFileSync(path.join(repo, 'mine.js'), 'session work\n');
-    const r = await runCommit(repo, {}, {}, baseline);
+    // A new file waits for an explicit answer (#1724); this case is about the command, so it is included.
+    const r = await runCommit(repo, {}, { pathDecisions: { 'mine.js': 'include' } }, baseline);
 
     assert.equal(r.status, 'done');
     assert.equal(fs.existsSync(marker), false, 'the command never ran');

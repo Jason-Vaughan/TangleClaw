@@ -22,6 +22,9 @@ const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const remote = require('../lib/openclaw-remote');
 const { handleRequest } = require('../server');
+// Every port reads as free to PortHub's listener probe, so connection creates
+// here do not depend on what this host is running (#814).
+require('./_probe-stub').probeAnswersFromFixture();
 
 setLevel('error');
 

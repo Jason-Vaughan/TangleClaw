@@ -33,6 +33,7 @@ const {
   receiptVerbLabel,
   renderCapabilities,
   renderSessions,
+  renderFreshness,
   renderPorts,
   renderDocs,
   renderRules,
@@ -40,6 +41,8 @@ const {
   renderInbox,
   renderPeerStatus
 } = require('../lib/tc-verbs');
+
+const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
 
 const TC_BIN = path.join(__dirname, '..', 'bin', 'tc');
 
@@ -96,7 +99,7 @@ function receiptCount(verb) {
 describe('tc verb roster (lib/tc-verbs)', () => {
   it('declares every planned verb, and usage renders from the roster alone', () => {
     const ids = VERB_ROSTER.map((v) => v.id);
-    for (const expected of ['whoami', 'capabilities', 'sessions', 'message', 'ports', 'docs', 'rules', 'learnings']) {
+    for (const expected of ['whoami', 'capabilities', 'sessions', 'message', 'freshness', 'ports', 'docs', 'rules', 'learnings']) {
       assert.ok(ids.includes(expected), `roster declares '${expected}'`);
     }
     const usage = renderUsage();
@@ -117,6 +120,20 @@ describe('tc verb roster (lib/tc-verbs)', () => {
   });
 
   describe('renderers report honest emptiness — never blank output, never invented success', () => {
+    it('freshness: the none scope is said with its reason, an empty fleet is said, rows print their summary', () => {
+      assert.match(renderFreshness({ scope: 'none', reason: 'no launch binding', rows: [] }), /No checkouts visible: no launch binding/);
+      assert.match(renderFreshness({ scope: 'related', reason: null, observedAt: 'T', rows: [] }), /no live session is visible to you/);
+      const out = renderFreshness({
+        scope: 'fleet', reason: null, observedAt: 'T',
+        rows: [{ project: { id: 1, name: 'alpha' }, sessionId: 7, checkout: { summary: ['Checkout: main @aaaaaaa, level with origin/main; clean.'] } }]
+      });
+      assert.match(out, /every live session/);
+      assert.match(out, /- alpha \(session 7\):\n {4}Checkout: main @aaaaaaa, level with origin\/main; clean\./);
+      assert.match(out, /authorizes nothing|nothing here authorizes/);
+      assert.match(renderFreshness({ scope: 'fleet', observedAt: 'T', rows: [{ project: { name: 'b' }, sessionId: 2, checkout: {} }] }),
+        /Checkout: unknown — not read\./, 'a row with no summary says unknown, not nothing');
+    });
+
     it('peer status: a peer this host cannot see is said to be unseeable, never reachable or unreachable (#918)', () => {
       const out = renderPeerStatus({ workspaceId: 'far-away-1234abcd', local: false });
       assert.match(out, /not a TangleClaw session on this host/);
@@ -452,6 +469,50 @@ describe('tc verb surface against a live server (ambient-awareness Chunk 03)', (
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  describe('GET /api/checkouts (#1678)', () => {
+    it('answers an unbound caller with no rows and the reason', async () => {
+      const r = await request(server, 'GET', '/api/checkouts');
+      assert.equal(r.status, 200);
+      assert.equal(r.body.scope, 'none');
+      assert.deepEqual(r.body.rows, []);
+      assert.match(r.body.reason, /no launch binding/);
+    });
+
+    it('answers a bound project with its own row, and the operator with the fleet; neither carries a path', async () => {
+      const binding = bindProject(project);
+      try {
+        const mine = await request(server, 'GET', '/api/checkouts', binding.headers);
+        assert.equal(mine.status, 200);
+        assert.equal(mine.body.scope, 'related');
+        assert.deepEqual(mine.body.rows.map((row) => row.project.name), ['tc-verbs-proj']);
+        assert.equal(mine.body.rows[0].sessionId, binding.sessionId);
+        assert.ok(!JSON.stringify(mine.body).includes(tmpDir), 'no workspace path');
+        const op = await request(server, 'GET', '/api/checkouts', operatorHeaders(server));
+        assert.equal(op.status, 200);
+        assert.equal(op.body.scope, 'fleet');
+        assert.ok(op.body.rows.some((row) => row.project.name === 'tc-verbs-proj'));
+      } finally {
+        store.sessions.kill(binding.sessionId, 'test teardown');
+      }
+    });
+
+    it('refuses a binding that was presented and not honoured, rather than answering an empty fleet', async () => {
+      const r = await request(server, 'GET', '/api/checkouts', {
+        'x-tangleclaw-project-id': String(project.id), 'x-tangleclaw-launch-id': 'no-such-launch'
+      });
+      assert.equal(r.status, 403);
+      assert.equal(r.body.code, 'PROJECT_BINDING_INVALID');
+    });
+
+    it('is listed in both capability rosters', async () => {
+      const proj = await request(server, 'GET', `/api/tc/whoami?projectId=${project.id}`);
+      const cap = proj.body.capabilities.find((c) => c.id === 'checkouts');
+      assert.ok(cap && cap.enabled, 'project roster lists checkouts');
+      assert.match(cap.detail, /tc freshness/);
+      assert.match(cap.detail, /\/api\/checkouts/);
+    });
+  });
+
   describe('GET /api/tc/sessions', () => {
     it('answers the idle fleet honestly, then lists live sessions with resolved project names', async () => {
       const idle = await request(server, 'GET', '/api/tc/sessions');
@@ -568,6 +629,16 @@ describe('tc verb surface against a live server (ambient-awareness Chunk 03)', (
       assert.ok(!/You are a TangleClaw-managed session/.test(res.stdout), 'identity prose stays with whoami');
       assert.equal(receiptCount('capabilities'), beforeCaps + 1,
         'the real binary declares its verb — the receipt is labeled by what was invoked, not which route answered');
+    });
+
+    it('tc freshness answers an unbound pane with the reason and exits 0; a broken binding exits nonzero', async () => {
+      const unbound = await runTc(['freshness'], paneEnv);
+      assert.equal(unbound.code, 0, unbound.stderr);
+      assert.match(unbound.stdout, /No checkouts visible: .*no launch binding/);
+      const broken = await runTc(['freshness'], { ...paneEnv, TANGLECLAW_LAUNCH_ID: 'no-such-launch' });
+      assert.equal(broken.code, 2);
+      assert.match(broken.stderr, /PROJECT_BINDING_INVALID/);
+      assert.match(broken.stderr, /not honoured/);
     });
 
     it('tc sessions answers the idle fleet in words', async () => {

@@ -502,7 +502,9 @@ describe('startWrap honours the stranded-wrap soft block (#1540)', () => {
     const keys = sessions.startWrap('swg-proceed').items.map(keyOf);
     const started = sessions.startWrap('swg-proceed', { proceedPastStranded: keys });
     assert.equal(started.ok, true);
-    assert.deepEqual(wrapRunRegistry.get('swg-proceed').options, { proceedPastStranded: keys },
+    // The run also records the keep-running answer the server resolved (#1708).
+    assert.deepEqual(wrapRunRegistry.get('swg-proceed').options,
+      { proceedPastStranded: keys, keepSessionRunning: false, keepSource: 'default' },
       'the run keeps the choice, so a Retry replays it');
     await started.done;
     assert.equal(store.activity.query({ projectId: project.id, eventType: stranded.EVENT_ACK }).length, 0);

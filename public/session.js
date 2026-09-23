@@ -334,6 +334,8 @@ async function loadProject() {
   const data = await api(`/api/projects/${encodeURIComponent(projectName)}`);
   if (!data) return;
   sessionState.project = data;
+  _lastCheckoutAt = Date.now();
+  renderCheckoutChip(data.checkout);
 
   document.getElementById('bannerName').textContent = data.name;
   document.getElementById('bannerName').title = data.name;
@@ -948,7 +950,7 @@ function togglePillDetail(pill) {
  * @param {Event} e - The document click.
  */
 function onBannerOutsideClick(e) {
-  if (!clickHitsSelector(e, '.group-pill, .status-pill, .banner-engine, .banner-user-wrap, .banner-more-wrap')) {
+  if (!clickHitsSelector(e, '.group-pill, .status-pill, .banner-engine, .banner-checkout, .banner-user-wrap, .banner-more-wrap')) {
     closeBannerPopovers();
   }
 }
@@ -959,7 +961,7 @@ function onBannerOutsideClick(e) {
  * stays a no-op; group pills bind their own popover inline.
  */
 function bindPillDetails() {
-  ['statusPill', 'bannerEngine'].forEach((id) => {
+  ['statusPill', 'bannerEngine', 'bannerCheckout'].forEach((id) => {
     const pill = document.getElementById(id);
     if (!pill) return;
     pill.addEventListener('click', () => togglePillDetail(pill));
@@ -982,6 +984,86 @@ function loadVersion() {
   } else {
     el.textContent = '';
   }
+}
+
+/** How often the checkout chip re-reads the project row: the server's checkout cache lifetime. */
+const CHECKOUT_REFRESH_MS = 30000;
+
+/** When the checkout was last read, so the status poll re-reads it on the cache's cadence. */
+let _lastCheckoutAt = 0;
+
+/**
+ * Short words and a tone for a project's checkout (#1678). The full sentence
+ * is the server's (`checkout.summary`, the same text the launch prime
+ * carries), so the chip and the prime cannot word one state two ways. Pure,
+ * so the rules that matter are testable: an unmeasured checkout, an
+ * unobserved upstream or an unread tree is `unknown` and never the quiet
+ * tone; anything off level-and-clean-on-main is `warn`.
+ *
+ * @param {object|null|undefined} c - `checkout` from `GET /api/projects/:name`.
+ * @returns {{text: string, tone: ('ok'|'warn'|'unknown'), detail: string}|null} null when there is nothing to show.
+ */
+function checkoutChipModel(c) {
+  if (!c || typeof c !== 'object') return null;
+  const detail = Array.isArray(c.summary) && c.summary.length ? c.summary.join(' ') : 'No detail from this server.';
+  const short = (sha) => (sha ? String(sha).slice(0, 7) : '?');
+  const v = c.vsUpstream || {};
+  if (c.state === 'no-git') return { text: (c.upstream && c.upstream.via === 'group') ? 'related repo' : 'no git', tone: 'unknown', detail };
+  if (c.state === 'pending') return { text: 'checkout: checking…', tone: 'unknown', detail };
+  if (c.state !== 'measured') return { text: 'checkout unknown', tone: 'unknown', detail };
+  const where = c.detached ? `detached${c.tag ? ` ${c.tag}` : ''} @${short(c.headSha)}` : `${c.branch || '?'} @${short(c.headSha)}`;
+  const rel = {
+    equal: ['level', 'ok'],
+    ahead: [`${v.ahead} ahead`, 'warn'],
+    behind: [`${v.behind} behind`, 'warn'],
+    diverged: [`${v.ahead}↑ ${v.behind}↓`, 'warn'],
+    'behind-unknown': ['behind ?', 'warn'],
+    'not-compared': ['related repo', 'unknown']
+  }[v.relation] || ['upstream ?', 'unknown'];
+  let tone = rel[1];
+  const unread = c.dirtyTracked === null || c.dirtyTracked === undefined || c.untracked === null || c.untracked === undefined;
+  const dirty = !unread && (c.dirtyTracked > 0 || c.untracked > 0);
+  if (unread) tone = 'unknown';
+  else if (tone === 'ok' && dirty) tone = 'warn';
+  if (tone === 'ok' && (c.detached ? !c.tag : c.onDefaultBranch === false)) tone = 'warn';
+  let tree = '';
+  if (unread) tree = ' · ?';
+  else if (dirty) tree = ` · ${c.dirtyTracked ? `${c.dirtyTracked}±` : ''}${c.dirtyTracked && c.untracked ? ' ' : ''}${c.untracked ? `${c.untracked}?` : ''}`;
+  return { text: `${where} · ${rel[0]}${tree}`, tone, detail };
+}
+
+/**
+ * Show the checkout chip, or hide it when the row carries no checkout.
+ * @param {object|null|undefined} checkout
+ */
+function renderCheckoutChip(checkout) {
+  const chip = document.getElementById('bannerCheckout');
+  const text = document.getElementById('bannerCheckoutText');
+  if (!chip || !text) return;
+  const m = checkoutChipModel(checkout);
+  if (!m) {
+    chip.hidden = true;
+    return;
+  }
+  text.textContent = m.text;
+  chip.setAttribute('data-tone', m.tone);
+  chip.setAttribute('data-pill-detail', m.detail);
+  chip.setAttribute('aria-label', `Checkout: ${m.detail}`);
+  chip.hidden = false;
+}
+
+/**
+ * Re-read the project row for its checkout, on the cache's cadence. Called
+ * from the status poll, so it adds no timer of its own.
+ * @returns {Promise<void>}
+ */
+async function refreshCheckoutIfDue() {
+  if (Date.now() - _lastCheckoutAt < CHECKOUT_REFRESH_MS) return;
+  _lastCheckoutAt = Date.now();
+  const data = await api(`/api/projects/${encodeURIComponent(projectName)}`);
+  if (!data) return;
+  if (sessionState.project) sessionState.project.checkout = data.checkout;
+  renderCheckoutChip(data.checkout);
 }
 
 /**
@@ -1157,20 +1239,32 @@ function buildUpdatePrompt(data) {
     '   Do NOT use git directly for this — no pull, no checkout, no stash, no branch',
     '   switch. The script fetches and checks out the release tag itself.',
     '3. If it exits non-zero it refused or failed; the JSON it printed carries a',
-    '   `code` (dirty-tree, wrong-ref, no-update, no-tag, no-git, git-error) and an',
-    '   `error`.',
+    '   `code` (dirty-tree, reconcile-required, wrong-ref, no-update, no-tag, no-git,',
+    '   git-error, recovery-failed) and an `error`.',
     '   Report that to the operator and STOP. Do not try to satisfy the guard by',
     '   changing the working tree — the guard is protecting uncommitted work or a',
     '   branch that is not meant to be updated.',
     '   A dirty-tree refusal also carries `dirty`: `realWork` paths block the update',
     '   and are the operator\'s to resolve — relay the list, touch nothing. If',
-    '   `realWork` is empty and `discardable` lists only TangleClaw-written content',
-    '   (whole files it owns, plus any shared carrier like CLAUDE.md that differs',
-    '   from the committed copy ONLY inside TangleClaw\'s delimited section),',
-    '   the operator MAY approve discarding them; only then re-run with',
+    '   `realWork` is empty, every `discardable` entry is a shared file whose whole',
+    '   change from the committed copy TangleClaw proved is its own (its delimited',
+    '   section of CLAUDE.md, or its retired hooks in .claude/settings.json).',
+    '   Then the operator MAY approve discarding them; only then re-run with',
     '   `node scripts/apply-update.js --discard-tc-files`. Never pass that flag',
     '   without their explicit approval.',
-    '   On success, the JSON also carries `provisioning`: if `assetsChanged` lists',
+    '   A reconcile-required refusal carries `reconcile`: for each file, a `reason`',
+    '   and an `action` written for the operator. Relay each action word for word',
+    '   and touch nothing; there is no flag that overrides it.',
+    '   A dirty-tree refusal may also list `carried`: operator-edited files that were',
+    '   detected and will be kept and merged. They are not in the way; say so.',
+    '   A recovery-failed result means a step failed and the checkout could not be',
+    '   verified as put back. Manual recovery is required: relay `error` and',
+    '   `recovery` (`failedStep`, `observed`, any `backup` copy) as they are, claim',
+    '   nothing about what survived beyond `observed`, and do not restart.',
+    '   On success, the JSON also carries `carried`: each operator-edited file',
+    '   whose edits were merged into the new release, with the `backup` path of',
+    '   the copy kept from before the update. Tell the operator both.',
+    '   It also carries `provisioning`: if `assetsChanged` lists',
     '   files under deploy/, tell the operator those need manual deploy steps after',
     '   the restart — the updater never rewrites launchd services itself. If',
     '   `manifestChanged` is true, this release introduced npm dependencies, which',
@@ -2042,6 +2136,9 @@ async function pollStatus() {
   if (!data) return;
 
   sessionState.session = data;
+
+  // The checkout chip rides this poll's cadence rather than a timer of its own.
+  refreshCheckoutIfDue();
 
   // The engine's own last API error (#261) rides the same poll — null on the
   // healthy path, which is what hides the banner again.
@@ -3636,9 +3733,10 @@ function openWrapModal() {
   const releaseEl = document.getElementById('wrapRelease');
   if (releaseEl) releaseEl.value = '';
   // #1558 — same reason: a keep-running tick from a cancelled wrap must not
-  // keep a later wrap's session open.
+  // keep a later wrap's session open. #1708: it starts from the project's
+  // setting, which is what a wrap started anywhere else inherits.
   const keepEl = document.getElementById('wrapKeepRunning');
-  if (keepEl) keepEl.checked = false;
+  if (keepEl) keepEl.checked = Boolean(sessionState.project && sessionState.project.wrapKeepSessionRunning === true);
   syncWrapReleaseControls();
   // The mode read at page load may be stale: another tab can change it while
   // this one stays open. Re-read it so the controls match what the server will
@@ -3990,13 +4088,14 @@ let wrapUntrackState = '';
 let wrapProceedPastStranded = [];
 
 /**
- * #1558 — "Keep the session running", chosen in the wrap modal. A finished run
- * ends the session unless this is true. Replayed on every retry so a stopped
- * run the operator answers still keeps the session, and reset by a new wrap
- * from the modal.
- * @type {boolean}
+ * #1558 — "Keep the session running", chosen in the wrap modal. Replayed on
+ * every retry so a stopped run the operator answers keeps its answer, and reset
+ * by a new wrap from the modal. #1708: null when this page never chose (it
+ * follows a run started elsewhere): nothing is sent, and the server keeps what
+ * it resolved for the run.
+ * @type {boolean|null}
  */
-let wrapKeepRunning = false;
+let wrapKeepRunning = null;
 
 /**
  * #1540 — the stranded wraps named by the last refused wrap POST, or null. The
@@ -4084,6 +4183,7 @@ function closeWrapDrawer() {
   // closed; otherwise the controller's own effect closes it.
   if (dispatchWrapRun({ type: 'dismiss' }) === before) hideWrapDrawer();
 }
+
 
 /**
  * The operator toggled the popover closed (×, Escape, the Wrap button) to see the
@@ -4335,6 +4435,7 @@ function renderSkipRoll(pipelineResult) {
  */
 function renderWrapDrawer(pipelineResult, runContext) {
   const H = window.tcWrapDrawerHelpers;
+  hideLiveSessionControls();
   const status = H.summarizePipelineStatus(pipelineResult, runContext);
   currentWrapBaseStatus = status;
 
@@ -6170,10 +6271,92 @@ function renderLiveWrapDrawer(live, opts) {
   decisionEl.classList.add('hidden');
   document.getElementById('wrapDrawerRetryBtn').classList.add('hidden');
   document.getElementById('wrapDrawerDoneBtn').classList.add('hidden');
-  document.getElementById('wrapDrawerCancelBtn').textContent = 'Close';
+  // #1707 — while a run is live this control only hides the drawer, so it says
+  // so; the run keeps going and the Wrap button reopens it. Stopping the run is
+  // the separate Cancel control below, offered only while it can be honoured.
+  const hideBtn = document.getElementById('wrapDrawerCancelBtn');
+  hideBtn.textContent = 'Hide';
+  hideBtn.title = 'Hide this panel. The wrap keeps running; the Wrap button reopens it.';
+  paintLiveSessionControls(live);
 
   paintLiveTiming();
   expandWrapDrawer();
+}
+
+/**
+ * #1707 — what this page knows about a cancel it sent: the run it was for,
+ * whether the server accepted it, and the step it said was still finishing.
+ * Reset whenever the page follows a different run.
+ * @type {{runId: (string|null), requested: boolean, finishingStepId: (string|null)}}
+ */
+let wrapCancelState = { runId: null, requested: false, finishingStepId: null };
+
+/**
+ * #1708 / #1707 — paint the live drawer's planned-session line and its Cancel
+ * control from the live view. Words and states come from the pure helpers, so
+ * the page cannot promise more than the server does.
+ *
+ * @param {object|null} live - From `tcWrapDrawerHelpers.applyWrapStreamEvent`
+ */
+function paintLiveSessionControls(live) {
+  const H = window.tcWrapDrawerHelpers;
+  const runId = wrapRunState().runId || null;
+  if (wrapCancelState.runId !== runId) wrapCancelState = { runId, requested: false, finishingStepId: null };
+
+  const plannedEl = document.getElementById('wrapDrawerPlanned');
+  const line = H.plannedSessionLine(live);
+  plannedEl.textContent = line || '';
+  plannedEl.classList.toggle('hidden', !line);
+
+  const control = H.liveCancelControl(live, wrapCancelState);
+  const abortBtn = document.getElementById('wrapDrawerAbortBtn');
+  abortBtn.textContent = control.label;
+  abortBtn.disabled = control.disabled || !runId;
+  abortBtn.classList.toggle('hidden', !control.show);
+  const noteEl = document.getElementById('wrapDrawerCancelNote');
+  noteEl.textContent = control.note || '';
+  noteEl.classList.toggle('hidden', !control.note);
+}
+
+/**
+ * Take the live-only controls off the drawer: a settled report, a notice and
+ * an error have no run left to plan for or cancel.
+ */
+function hideLiveSessionControls() {
+  document.getElementById('wrapDrawerPlanned').classList.add('hidden');
+  document.getElementById('wrapDrawerCancelNote').classList.add('hidden');
+  document.getElementById('wrapDrawerAbortBtn').classList.add('hidden');
+  const hideBtn = document.getElementById('wrapDrawerCancelBtn');
+  hideBtn.removeAttribute('title');
+}
+
+/**
+ * #1707 — ask the server to stop the followed run at its next step boundary.
+ * The server decides: a 202 disables the control and says which step is still
+ * finishing; a 409 (past the commit step) or any other refusal shows the
+ * server's own reason and leaves the drawer following the run, which is what
+ * it is actually doing.
+ */
+async function requestWrapCancel() {
+  const runId = wrapRunState().runId;
+  if (!runId) return;
+  const abortBtn = document.getElementById('wrapDrawerAbortBtn');
+  abortBtn.disabled = true;
+  const body = { runId };
+  if (currentWrapPassword) body.password = currentWrapPassword;
+  const result = await apiMutate(`/api/sessions/${encodeURIComponent(projectName)}/wrap/cancel`, 'POST', body);
+  if (wrapRunState().runId !== runId) return;
+  if (result && result.cancelRequested === true) {
+    wrapCancelState = { runId, requested: true, finishingStepId: result.finishingStepId || null };
+  } else {
+    const toast = document.getElementById('toast');
+    if (toast) {
+      toast.textContent = api.lastError || 'The wrap could not be cancelled.';
+      toast.className = 'toast toast-warn visible';
+      setTimeout(() => { toast.classList.remove('visible'); }, 5000);
+    }
+  }
+  paintLiveSessionControls(wrapRunState().live || null);
 }
 
 // ── Wrapping State ──
@@ -6249,6 +6432,7 @@ function cancelEndedCountdown() {
  */
 function openWrapDrawerNotice(label, detail) {
   sessionState.wrapDrawerOpen = true;
+  hideLiveSessionControls();
   cancelEndedCountdown();
   document.getElementById('wrapStepList').innerHTML = '';
   document.getElementById('wrapDrawerDecision').innerHTML = '';
@@ -6744,6 +6928,7 @@ function bindEvents() {
   $('wrapDrawerCloseBtn').addEventListener('click', collapseWrapPopover);
   $('wrapDrawerCopyBtn').addEventListener('click', copyWrapReport);
   $('wrapDrawerCancelBtn').addEventListener('click', closeWrapDrawer);
+  $('wrapDrawerAbortBtn').addEventListener('click', requestWrapCancel);
   $('wrapDrawerDoneBtn').addEventListener('click', closeWrapDrawer);
   $('wrapDrawerRetryBtn').addEventListener('click', retryWrap);
   paintWrapButton();

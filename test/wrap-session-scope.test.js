@@ -322,6 +322,13 @@ describe('wrap-scope picks the tree the session\'s pane is in (#1469)', () => {
     assert.doesNotMatch(sessionFiles._detail({ workTree: null, checkoutReason: null, ownedCount: 1, included: [], left: [] }), /Wrapping/);
   });
 
+  it('the session-files row names Prawduct files held back on an engine that cannot run Prawduct (#1738)', () => {
+    const sessionFiles = require('../lib/wrap-steps/session-files');
+    assert.match(sessionFiles._detail({ workTree: null, checkoutReason: null, ownedCount: 1, included: [], left: [], methodologyWithheld: ['.prawduct/a.md', '.prawduct/b.md'] }),
+      /2 Prawduct files not committed: this engine cannot run Prawduct/);
+    assert.doesNotMatch(sessionFiles._detail({ workTree: null, checkoutReason: null, ownedCount: 1, included: [], left: [], methodologyWithheld: [] }), /Prawduct/);
+  });
+
   it('reads the session start as UTC', () => {
     assert.equal(wrapScope._startedAtMs('2026-09-14 10:00:00'), Date.UTC(2026, 8, 14, 10, 0, 0));
     assert.equal(wrapScope._startedAtMs(null), null);

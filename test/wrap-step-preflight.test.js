@@ -73,11 +73,16 @@ function execDouble(result) {
   return fn;
 }
 
-/** A governed project context: a real directory carrying `.prawduct/`. */
+/**
+ * A governed project context: a real directory carrying `.prawduct/`, on the
+ * Claude engine. The engine is part of the fixture because preflight only runs
+ * the hook where the engine can host the plugin (#1738); an unnamed engine is
+ * answered as unable to, which is the fail-closed reading.
+ */
 async function withGovernedProject(fn) {
   return withTempDir(async (dir) => {
     fs.mkdirSync(path.join(dir, '.prawduct'));
-    return fn({ id: 1, name: 'demo', path: dir });
+    return fn({ id: 1, name: 'demo', path: dir, engineId: 'claude' });
   });
 }
 
@@ -94,13 +99,16 @@ describe('wrap step: preflight (#854)', () => {
       assert.equal(exec.calls.length, 0, 'nothing may be spawned without a project');
     });
 
-    it('skips a project with no .prawduct/ without spawning a probe', async () => {
+    it('answers not-applicable for a project with no .prawduct/, without spawning a probe', async () => {
       const exec = execDouble({});
       await withTempDir(async (dir) => {
         const result = await withInternal({ execFileArgs: exec }, () =>
-          preflight.run({ project: { id: 1, name: 'plain', path: dir }, step: {} }));
+          preflight.run({ project: { id: 1, name: 'plain', path: dir, engineId: 'claude' }, step: {} }));
 
-        assert.equal(result.status, 'skipped');
+        // #1738 — not a skip: there is no methodology here to measure, on any
+        // engine, and the row says so in its own status.
+        assert.equal(result.status, 'not-applicable');
+        assert.equal(result.ok, true);
         assert.equal(result.output.governed, false);
         assert.match(result.output.reason, /not a prawduct-governed project/);
         // The hook would exit 0 here; the point is that an ungoverned project
@@ -550,5 +558,70 @@ describe('lib/exec options the preflight probe needs (#854)', () => {
     });
 
     assert.equal(result.stdout, 'false', 'stdin is untouched without the flag');
+  });
+});
+
+describe('wrap step: preflight on an engine that cannot run the plugin (#1738)', () => {
+  it('answers capability-unavailable for an onboarded project on Gemini and never spawns the hook', async () => {
+    const exec = execDouble({});
+    const locate = () => { throw new Error('the hook must not even be located'); };
+    await withGovernedProject(async (project) => {
+      const result = await withInternal({ locateHook: locate, execFileArgs: exec }, () =>
+        preflight.run({ project: { ...project, engineId: 'gemini' }, session: { engineId: 'gemini' }, step: {} }));
+
+      assert.equal(result.status, 'capability-unavailable');
+      assert.equal(result.ok, true, 'the wrap continues as a checkpoint');
+      assert.equal(result.output.engineId, 'gemini');
+      assert.equal(result.output.capability, 'prawduct-methodology');
+      assert.equal(result.output.measured, false);
+      assert.match(result.output.reason, /gates not measured/);
+      assert.equal(exec.calls.length, 0, 'the probe writes Prawduct state; a dormant project must not be probed');
+    });
+  });
+
+  it('reads the session engine over the project row', async () => {
+    const exec = execDouble({ exitCode: 0 });
+    await withGovernedProject(async (project) => {
+      // The project row says Claude, but this session was launched on Codex.
+      const result = await withInternal({ locateHook: () => ({ path: '/hook', via: 'PATH' }), execFileArgs: exec }, () =>
+        preflight.run({ project, session: { engineId: 'codex' }, step: {} }));
+      assert.equal(result.status, 'capability-unavailable');
+      assert.equal(result.output.engineId, 'codex');
+      assert.equal(exec.calls.length, 0);
+    });
+  });
+
+  it('prefers the capability the run resolved once over re-deriving it', async () => {
+    const exec = execDouble({ exitCode: 0 });
+    await withGovernedProject(async (project) => {
+      const methodology = { onboarded: true, available: false, disposition: 'capability-unavailable', engineId: 'aider', capability: 'prawduct-methodology', reason: 'the aider engine cannot run the Prawduct plugin' };
+      const result = await withInternal({ locateHook: () => ({ path: '/hook', via: 'PATH' }), execFileArgs: exec }, () =>
+        preflight.run({ project, session: { engineId: 'claude' }, methodology, step: {} }));
+      assert.equal(result.status, 'capability-unavailable');
+      assert.equal(result.output.engineId, 'aider');
+      assert.equal(exec.calls.length, 0);
+    });
+  });
+
+  it('still runs the hook on Claude', async () => {
+    const exec = execDouble({ exitCode: 0 });
+    await withGovernedProject(async (project) => {
+      const result = await withInternal({ locateHook: () => ({ path: '/hook', via: 'PATH' }), execFileArgs: exec }, () =>
+        preflight.run({ project, session: { engineId: 'claude' }, step: {} }));
+      assert.equal(result.status, 'done');
+      assert.equal(exec.calls.length, 1);
+    });
+  });
+
+  it('measures a project onboarded only by the committed plugin reference (one definition of onboarded)', async () => {
+    const exec = execDouble({ exitCode: 0 });
+    await withTempDir(async (dir) => {
+      fs.mkdirSync(path.join(dir, '.claude'));
+      fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'prawduct@prawduct': true } }));
+      const result = await withInternal({ locateHook: () => ({ path: '/hook', via: 'PATH' }), execFileArgs: exec }, () =>
+        preflight.run({ project: { id: 1, name: 'fresh-clone', path: dir, engineId: 'claude' }, session: { engineId: 'claude' }, step: {} }));
+      assert.equal(result.status, 'done');
+      assert.equal(exec.calls.length, 1, 'a fresh clone without .prawduct/ is still governed, and is measured');
+    });
   });
 });

@@ -243,6 +243,68 @@ describe('bind-policy.migrateLegacyBind — the grace state must survive an unre
   });
 });
 
+describe('bind-policy.migrateLegacyBind — grace needs evidence the install was used (#1484)', () => {
+  // A config written by hand before the first boot lacks the key exactly as a
+  // legacy install's does. Granting it grace listened on every interface before
+  // any login existed. These pin the evidence that separates the two.
+
+  it('closes a hand-seeded direct config whose file says setup never finished', () => {
+    const cfg = { ingressMode: 'direct', setupComplete: false };
+    const r = migrateLegacyBind(cfg, false, true);
+    assert.equal(r.migrated, true, 'the caller must persist the recorded choice');
+    assert.equal(r.reason, 'fresh-install');
+    assert.equal(cfg[OPT_IN_KEY], false);
+    const bind = resolveBind(cfg);
+    assert.equal(bind.host, LOOPBACK, 'a fresh install must listen on loopback');
+    assert.equal(bind.grace, false);
+  });
+
+  it('closes a config with no setupComplete when nothing shows the install was used', () => {
+    // load() reads a missing setupComplete as true (legacy installs predate the
+    // field), so this is the hand-seeded file the issue describes.
+    const cfg = { ingressMode: 'direct', setupComplete: true };
+    const r = migrateLegacyBind(cfg, false, false);
+    assert.equal(r.reason, 'fresh-install');
+    assert.equal(cfg[OPT_IN_KEY], false);
+    assert.equal(resolveBind(cfg).host, LOOPBACK);
+    assert.equal(describeNarrowing(cfg), null, 'a closed install is not told it is exposed');
+  });
+
+  it('still holds a used legacy install in grace', () => {
+    const cfg = { ingressMode: 'direct', setupComplete: true };
+    const r = migrateLegacyBind(cfg, false, true);
+    assert.equal(r.reason, 'legacy-direct-install');
+    assert.equal(cfg[OPT_IN_KEY], null);
+    assert.equal(resolveBind(cfg).host, null, 'narrowing it would strand a remote operator');
+  });
+
+  it('keeps the legacy answer when the caller cannot say whether the install was used', () => {
+    const cfg = { ingressMode: 'direct', setupComplete: true };
+    assert.equal(migrateLegacyBind(cfg, false).reason, 'legacy-direct-install');
+    assert.equal(cfg[OPT_IN_KEY], null);
+  });
+
+  it('never overrides a recorded choice or a caddy install with either signal', () => {
+    const opted = { ingressMode: 'direct', setupComplete: false, [OPT_IN_KEY]: true };
+    assert.equal(migrateLegacyBind(opted, true, false).migrated, false);
+    assert.equal(opted[OPT_IN_KEY], true);
+    const caddy = { ingressMode: 'caddy', setupComplete: false };
+    assert.equal(migrateLegacyBind(caddy, false, false).migrated, false);
+    assert.equal(caddy[OPT_IN_KEY], undefined);
+  });
+
+  it('a recorded fresh-install false survives the PATCH round trip and stays closed', () => {
+    const DEFAULTS = { ingressMode: 'direct', theme: 'dark', setupComplete: false, [OPT_IN_KEY]: false };
+    const seeded = { ingressMode: 'direct', setupComplete: false };
+    const booted = { ...DEFAULTS, ...seeded };
+    migrateLegacyBind(booted, false, false);
+    const saved = JSON.parse(JSON.stringify(booted));
+    // The next PATCH sees the key persisted, so it records nothing new.
+    assert.equal(migrateLegacyBind({ ...DEFAULTS, ...saved }, true, true).migrated, false);
+    assert.equal(resolveBind({ ...DEFAULTS, ...saved }).host, LOOPBACK);
+  });
+});
+
 describe('bind-policy.describeNarrowing — who gets told', () => {
   it('warns a direct-mode install whose config predates the key', () => {
     const notice = describeNarrowing({ ingressMode: 'direct', [OPT_IN_KEY]: null });
