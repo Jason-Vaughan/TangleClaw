@@ -303,6 +303,61 @@ and are not committed, because they contain account identifiers.
   in code. B2 will propose defining them from the launch snapshot's `sourceManifest` and the
   `startupPromptFirers` config revision.
 
+### Architect rulings on D1–D8 (2026-09-23, message 29790e23): binding
+
+- **D1: APPROVE.** B1/B2/B3 is the right dependency split. B1 stays non-operative, with an empty
+  adapter registry.
+- **D2: MODIFY.** Install-global, append-only revisions that include `firerProjectIds`, with
+  revision 1 seeded to the default text and an **empty** firer list.
+  - Store the stable numeric project ids **sorted and unique**.
+  - Store an exact-text SHA-256 digest **and** a separate canonical policy digest.
+  - Record honest creator provenance: `operator-verified` plus the username when known, or
+    `open-install-unverified`, not merely `operator`.
+  - A later per-project scope is NOT promised contract-free; it returns to the Architect.
+- **D3: MODIFY.**
+  - `GET` gives a bound project the revision, the text and the digests, but **not** other
+    projects' firer ids, only whether it may fire itself. The strict operator view gets the full
+    list.
+  - `PUT` takes the full `{text, firerProjectIds, expectedRevision}` state.
+  - Fire takes `{sessionId, sequenceId, expectedRevision, idempotencyKey}`, and the path project,
+    the session and the sequence must agree.
+- **D4: MODIFY (the correction is adopted).**
+  - Never use `PATCH /api/config`. Unknown project ids refuse, and the default list is empty.
+  - Agent fire authority belongs only to a current project-bound launch whose project is in that
+    revision's list and currently shares a project group with the target. This is project
+    authority, not a human role. The Master stays denied.
+  - **An out-of-scope target answers the same external 404 as a nonexistent one**, and the internal
+    `FIRE_SCOPE_DENIED` reason is audited, with no cross-group oracle.
+  - The firer-policy revision/digest is authorization evidence, **not** the target's
+    role+assignment revision.
+- **D5: MODIFY.**
+  - The compare-and-set update stands.
+  - Validate the current prompt revision, the current target launch, the scope and the fire claim
+    **atomically**, before any adapter work.
+  - Separate transport idempotency from semantic dedup:
+    - a repeat of the same `idempotencyKey` returns the same record;
+    - there is one active fire per launch;
+    - an **applied** `(sequence, revision)` is never re-injected.
+  - `(sequence, revision)` is **not** an unconditional permanent key across unsupported/failed
+    outcomes. B2 defines explicit retryability, and an indeterminate send is never auto-retried.
+- **D6: MODIFY.**
+  - The limit is **4096 UTF-8 bytes**. The exact bytes are hashed with no Unicode normalization,
+    and LF is the only allowed control character.
+  - Keep the typed unsupported, stale and current-launch errors, and the strict operator helper's
+    real armed/open/fallback errors.
+  - An invisible target gets the external 404.
+- **D7: APPROVE.** A profile block, plus a registered adapter, plus an exact verified version.
+- **D8: MODIFY.**
+  - Insert a durable fire **intent** before any external effect, with `pending`, `dispatching` and
+    `indeterminate` states, so a crash between the send and the receipt can neither look unsent nor
+    be auto-retried.
+  - Keep `accepted`, `applied`, `blocked`, `failed`, `interrupted` and `unsupported`.
+  - Store bounded typed reasons, the caller's clearance and project, the prompt text digest, the
+    policy digest and timestamps, and never the launch bearer.
+  - **B2 obligation:** return with evidenced sources for the priming-pact digest and the target's
+    role+assignment revision. `sourceManifest` may qualify only after proof, and the firer-policy
+    revision cannot substitute.
+
 ### Implementation calls (not architectural)
 
 - New modules: `lib/startup-control.js` (the validator, the empty adapter registry and the
