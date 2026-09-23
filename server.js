@@ -269,6 +269,8 @@ const launchSequence = require('./lib/launch-sequence');
 const ciStatus = require('./lib/ci-status');
 const master = require('./lib/master');
 const sharedDocsAccess = require('./lib/shared-docs-access');
+const startupPrompt = require('./lib/startup-prompt');
+const startupControl = require('./lib/startup-control');
 const projectView = require('./lib/project-view');
 const actions = require('./lib/actions');
 const porthub = require('./lib/porthub');
@@ -2604,15 +2606,16 @@ function _recoveryClient(req) {
  * this button refuse.
  *
  * @param {http.IncomingMessage} req - The request
+ * @param {string} [what='A recovery clear'] - The write being attempted, for the refusal message.
  * @returns {{ok: true}|{ok: false, error: string, code: string}}
  */
-function _isSameOriginClear(req) {
+function _isSameOriginClear(req, what = 'A recovery clear') {
   const site = req.headers['sec-fetch-site'];
   if (site !== undefined && site !== 'same-origin') {
     return {
       ok: false,
       code: 'CROSS_SITE_FORBIDDEN',
-      error: `A recovery clear must come from this server's own dashboard; this request reported itself as "${site}".`
+      error: `${what} must come from this server's own dashboard; this request reported itself as "${site}".`
     };
   }
   const origin = req.headers.origin;
@@ -2620,14 +2623,14 @@ function _isSameOriginClear(req) {
     return {
       ok: false,
       code: 'CROSS_SITE_FORBIDDEN',
-      error: 'A recovery clear must come from this server\'s own dashboard, and this request carried no Origin.'
+      error: `${what} must come from this server's own dashboard, and this request carried no Origin.`
     };
   }
   if (!req.headers.host || !_isSameOriginUpgrade(origin, req.headers.host)) {
     return {
       ok: false,
       code: 'CROSS_SITE_FORBIDDEN',
-      error: `A recovery clear must come from this server's own dashboard; that Origin is not `
+      error: `${what} must come from this server's own dashboard; that Origin is not `
         + `"${req.headers.host || 'this host'}".`
     };
   }
@@ -4489,6 +4492,27 @@ route('GET', '/api/tc/start/status', (req, res) => {
   return jsonResponse(res, result.status, result.body);
 });
 
+/**
+ * The `startup-control` capability row for whoami (#1825): whether the
+ * startup prompt can be fired at this session through its engine's native
+ * channel. Reported disabled, with the reason, rather than omitted.
+ * @param {object|null} activeSession - The caller's active session, if resolved.
+ * @returns {{id: string, enabled: boolean, detail: string}}
+ */
+function _startupControlCapability(activeSession) {
+  if (!activeSession) {
+    return { id: 'startup-control', enabled: false, detail: 'unavailable: this call did not resolve to an active session' };
+  }
+  const resolved = startupControl.resolve(store.engines.get(activeSession.engineId));
+  return {
+    id: 'startup-control',
+    enabled: resolved.supported,
+    detail: resolved.supported
+      ? `the startup prompt can be fired at this session through its native channel (${resolved.reason})`
+      : `unsupported: ${resolved.reason}. The startup prompt cannot be fired at this session; its launch uses the legacy path`
+  };
+}
+
 // GET /api/tc/whoami — the `tc` CLI's one verb (ambient-awareness Chunk 02).
 // Answers "who am I, where is TangleClaw, and what can I do through it" for the
 // pane that asks, and the GET itself IS the awareness receipt: recording
@@ -4584,6 +4608,7 @@ route('GET', '/api/tc/whoami', (req, res) => {
       id: 'checkouts', enabled: true,
       detail: `which commit each live session is on and how it stands against origin/main: \`tc freshness\`, or GET ${api}/api/checkouts (your own row and your project groups' rows; send x-tangleclaw-project-id and x-tangleclaw-launch-id)`
     },
+    _startupControlCapability(activeSession),
     {
       id: 'switchboard', enabled: medusaEnabled && !!workspaceId,
       detail: medusaEnabled && workspaceId
@@ -6779,32 +6804,58 @@ registerMedusaRoutes('/api/master/medusa', resolveMasterMedusaTarget);
 // order below is what keeps that request from falling through to the open-install
 // branch and being honoured as an anonymous browser: each state is answered by
 // its own branch, and anything unrecognised is refused rather than defaulted.
-route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params, body) => {
+/**
+ * Prove that a state-changing request is the OPERATOR's, or refuse it.
+ *
+ * One implementation for every write that records a decision as an operator's
+ * (the launch recovery clear, the startup prompt), so the proof cannot drift
+ * between them. The branches key on the GATE STATE first, never on "is there a
+ * session". An `armed` install with a failed authentication has no
+ * `req.tcSession`, and the order below is what keeps that request from falling
+ * through to the open-install branch and being honoured as an anonymous
+ * browser: each state is answered by its own branch, and anything
+ * unrecognised is refused rather than defaulted.
+ *
+ * Every refusal is logged. On an install with no login these checks are the
+ * ONLY barrier on a state-changing write, so a rejected attempt that left no
+ * trace would make "did anything try this" answerable only for the attempts
+ * that worked.
+ *
+ * @param {http.IncomingMessage} req - The request.
+ * @param {http.ServerResponse} res - The response, written on refusal.
+ * @param {object} o - What is being attempted, for logs and messages.
+ * @param {string} o.logEvent - Log line for a refusal, e.g. 'Refused a recovery clear'.
+ * @param {object} o.logContext - Extra log fields (e.g. `{project}`).
+ * @param {string} o.fallbackAction - Phrase for `_refuseDuringFallback`.
+ * @param {string} o.sameOriginWhat - Subject of a cross-site refusal, e.g. 'A recovery clear'.
+ * @param {string} o.unauthenticated - 401 message on an armed gate with no session.
+ * @param {string} o.machineClient - 403 message for a local process on an open gate.
+ * @param {string} o.openToken - 403 message for a missing open-install token.
+ * @param {(gateState: string) => string} o.gateUnsupported - 409 message for any other gate state.
+ * @returns {{clearance: string, actor: (string|null)}|null} The proof, or null
+ *   when a refusal was already sent.
+ */
+function _requireOperatorWrite(req, res, o) {
   const gateState = req.tcGateState;
+  const logFields = (code, extra = {}) => ({ code, ...o.logContext, gateState, ...extra });
   // 1. Fallback — TangleClaw's own login is stood down behind Caddy's, so it
   //    cannot say who this is and must not record that anyone verified it.
   if (gateState === authGate.GATE_STATES.FALLBACK) {
-    return _refuseDuringFallback(res, 'clear a launch recovery');
+    _refuseDuringFallback(res, o.fallbackAction);
+    return null;
   }
 
-  let clearance = null;
-  let clearedBy = null;
   if (gateState === authGate.GATE_STATES.ARMED) {
     // 2. Armed — a login is in force, so an operator's session is the only
-    //    thing that clears. Machine clients and failed authentication end here
-    //    with a 401 and never reach step 3.
+    //    thing that proves it. Machine clients and failed authentication end
+    //    here with a 401 and never reach step 3.
     if (!req.tcSession) {
-      // Logged, like every other refusal on this route. On an install with no
-      // login these checks are the ONLY barrier on a state-changing write, so a
-      // rejected attempt that left no trace would make "did anything try to
-      // clear a recovery here" answerable only for the attempts that worked.
-      log.warn('Refused a recovery clear', { code: 'UNAUTHENTICATED', project: params.project, gateState });
-      return errorResponse(res, 401,
-        'Sign in to clear a launch recovery: this install requires a login, and a recovery clear is an '
-        + "operator's decision.", 'UNAUTHENTICATED');
+      log.warn(o.logEvent, logFields('UNAUTHENTICATED'));
+      errorResponse(res, 401, o.unauthenticated, 'UNAUTHENTICATED');
+      return null;
     }
     // The perimeter already refused this write without a valid CSRF token. It
-    // is asserted again here rather than inherited: this route records a
+    // is asserted again here rather than inherited: this write records a
     // decision as an operator's, and a guard it does not own is a guard that
     // can move out from under it without this file changing. Through the SAME
     // `csrfTokenMatches` the perimeter uses, though — a hand-rolled `!==` would
@@ -6812,14 +6863,14 @@ route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params,
     // a later hardening of that function would silently skip the one write that
     // records who an operator is.
     if (!authSession.csrfTokenMatches(authSession.csrfTokenFromRequest(req), req.tcSession.csrfToken)) {
-      log.warn('Refused a recovery clear', {
-        code: 'CSRF_TOKEN_INVALID', project: params.project, username: req.tcSession.username
-      });
-      return errorResponse(res, 403, 'This request is missing a valid CSRF token.', 'CSRF_TOKEN_INVALID');
+      log.warn(o.logEvent, logFields('CSRF_TOKEN_INVALID', { username: req.tcSession.username }));
+      errorResponse(res, 403, 'This request is missing a valid CSRF token.', 'CSRF_TOKEN_INVALID');
+      return null;
     }
-    clearance = 'operator-verified';
-    clearedBy = req.tcSession.username;
-  } else if (authGate.isOpen(gateState)) {
+    return { clearance: 'operator-verified', actor: req.tcSession.username };
+  }
+
+  if (authGate.isOpen(gateState)) {
     // 3. Open — the login is explicitly disabled, so nothing here can prove a
     //    person. The checks stop a CROSS-SITE browser and nothing more, and the
     //    clearance word records exactly that.
@@ -6829,38 +6880,53 @@ route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params,
     //    that is null for two different reasons.
     const identity = _gateIdentity(req, req.socket, reqUrl(req).pathname);
     if (identity.machineClient) {
-      log.warn('Refused a recovery clear', { code: 'OPERATOR_REQUIRED', project: params.project, gateState });
-      return errorResponse(res, 403,
-        'A recovery clear is an operator\'s decision, and a local process is not one. Clear it from the '
-        + 'dashboard, or put this launch\'s project in advisory recovery mode so the session can reconcile '
-        + 'its own.', 'OPERATOR_REQUIRED');
+      log.warn(o.logEvent, logFields('OPERATOR_REQUIRED'));
+      errorResponse(res, 403, o.machineClient, 'OPERATOR_REQUIRED');
+      return null;
     }
-    const sameOrigin = _isSameOriginClear(req);
+    const sameOrigin = _isSameOriginClear(req, o.sameOriginWhat);
     if (!sameOrigin.ok) {
-      log.warn('Refused a recovery clear', { code: sameOrigin.code, project: params.project, gateState });
-      return errorResponse(res, 403, sameOrigin.error, sameOrigin.code);
+      log.warn(o.logEvent, logFields(sameOrigin.code));
+      errorResponse(res, 403, sameOrigin.error, sameOrigin.code);
+      return null;
     }
     if (!openInstallToken.verify(req.headers['x-tc-open-token'])) {
-      log.warn('Refused a recovery clear', {
-        code: 'OPEN_INSTALL_TOKEN_INVALID', project: params.project, gateState
-      });
-      return errorResponse(res, 403,
-        'This install has no login, so a recovery clear must carry the anti-forgery token its dashboard was '
-        + 'issued. Reload the dashboard and try again.', 'OPEN_INSTALL_TOKEN_INVALID');
+      log.warn(o.logEvent, logFields('OPEN_INSTALL_TOKEN_INVALID'));
+      errorResponse(res, 403, o.openToken, 'OPEN_INSTALL_TOKEN_INVALID');
+      return null;
     }
     // Never `operator-verified`. Same-origin plus a page token proves the click
     // came from this server's own dashboard; it does not prove a human, and it
     // cannot exclude a local process that fetched a token of its own.
-    clearance = 'open-install-unverified';
-    clearedBy = null;
-  } else {
-    // 4. Anything else — `account-required`, `locked`, `unreadable`. There is
-    //    no fall-through to the open branch, by construction.
-    log.warn('Refused a recovery clear', { code: 'GATE_STATE_UNSUPPORTED', project: params.project, gateState });
-    return errorResponse(res, 409,
-      `A launch recovery cannot be cleared while the login gate is "${gateState}". Resolve the gate first.`,
-      'GATE_STATE_UNSUPPORTED');
+    return { clearance: 'open-install-unverified', actor: null };
   }
+
+  // 4. Anything else — `account-required`, `locked`, `unreadable`. There is no
+  //    fall-through to the open branch, by construction.
+  log.warn(o.logEvent, logFields('GATE_STATE_UNSUPPORTED'));
+  errorResponse(res, 409, o.gateUnsupported(gateState), 'GATE_STATE_UNSUPPORTED');
+  return null;
+}
+
+route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params, body) => {
+  const proof = _requireOperatorWrite(req, res, {
+    logEvent: 'Refused a recovery clear',
+    logContext: { project: params.project },
+    fallbackAction: 'clear a launch recovery',
+    sameOriginWhat: 'A recovery clear',
+    unauthenticated: 'Sign in to clear a launch recovery: this install requires a login, and a recovery clear is an '
+      + "operator's decision.",
+    machineClient: 'A recovery clear is an operator\'s decision, and a local process is not one. Clear it from the '
+      + 'dashboard, or put this launch\'s project in advisory recovery mode so the session can reconcile '
+      + 'its own.',
+    openToken: 'This install has no login, so a recovery clear must carry the anti-forgery token its dashboard was '
+      + 'issued. Reload the dashboard and try again.',
+    gateUnsupported: (gateState) =>
+      `A launch recovery cannot be cleared while the login gate is "${gateState}". Resolve the gate first.`
+  });
+  if (!proof) return;
+  const clearance = proof.clearance;
+  const clearedBy = proof.actor;
 
   const sessionId = Number(body && body.sessionId);
   const sequenceId = Number(body && body.sequenceId);
@@ -6942,6 +7008,93 @@ route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params,
     recoveryClearedAt: cleared.recoveryClearedAt,
     recoveryClearedBy: cleared.recoveryClearedBy
   });
+});
+
+/**
+ * The operator-proof options for a startup prompt write, worded for the action.
+ * @param {string} action - What is attempted, completing "... to <action>".
+ * @param {object} logContext - Extra log fields.
+ * @returns {object} Options for `_requireOperatorWrite`.
+ */
+function _startupPromptProofOptions(action, logContext) {
+  return {
+    logEvent: `Refused to ${action}`,
+    logContext,
+    fallbackAction: action,
+    sameOriginWhat: 'A startup prompt change',
+    unauthenticated: `Sign in to ${action}: this install requires a login, and the startup prompt is the `
+      + "operator's to change and fire.",
+    machineClient: `Only the operator may ${action} this way, and a local process is not the operator. `
+      + 'An agent session fires through its own launch binding, and only when the operator listed its project.',
+    openToken: `This install has no login, so a request to ${action} must carry the anti-forgery token its `
+      + 'dashboard was issued. Reload the dashboard and try again.',
+    gateUnsupported: (gateState) => `Cannot ${action} while the login gate is "${gateState}". Resolve the gate first.`
+  };
+}
+
+// GET /api/startup-prompt — the current startup prompt (#1825). The operator,
+// or any bound project session: a session may see what it will be sent.
+route('GET', '/api/startup-prompt', (req, res) => {
+  const access = sharedDocsAccess.resolveAccess(req);
+  if (access.kind !== 'operator') {
+    const refusal = sharedDocsAccess.projectRefusalFor(access, sharedDocsAccess.NEEDS.OWN_PROJECT);
+    if (refusal) return errorResponse(res, refusal.status, refusal.message, refusal.code);
+  }
+  const result = startupPrompt.read();
+  jsonResponse(res, result.status, result.body);
+});
+
+// PUT /api/startup-prompt — write a new revision of the prompt and its firer
+// list. Body: {text, firerProjectIds, expectedRevision}. The operator only,
+// through the strict operator write: an agent that could edit this list could
+// authorize itself to fire.
+route('PUT', '/api/startup-prompt', (req, res, _params, body) => {
+  const proof = _requireOperatorWrite(req, res, _startupPromptProofOptions('change the startup prompt', {}));
+  if (!proof) return;
+  const result = startupPrompt.update(body);
+  if (result.status !== 200) {
+    log.warn('Refused a startup prompt change', { code: result.body.code });
+    return errorResponse(res, result.status, result.body.error, result.body.code, result.body);
+  }
+  store.activity.log({
+    projectId: null,
+    sessionId: null,
+    eventType: 'startup_prompt.updated',
+    detail: { revision: result.body.revision, firerProjectIds: result.body.firerProjectIds, clearance: proof.clearance, actor: proof.actor }
+  });
+  log.info('Startup prompt updated', { revision: result.body.revision, clearance: proof.clearance, actor: proof.actor });
+  jsonResponse(res, 200, result.body);
+}, { maxBodySize: 64 * 1024 });
+
+// POST /api/sessions/:project/startup-prompt/fire — fire the current prompt at
+// one exact launch. Body: {sessionId, sequenceId, expectedRevision}. The
+// operator (strict write), or an agent session whose project the current
+// revision lists as a firer and which shares a project group with the target.
+// Every authorized fire is audited in startup_prompt_fires; an engine with no
+// supported startupControl channel gets a typed 409, with no fallback.
+route('POST', '/api/sessions/:project/startup-prompt/fire', (req, res, params, body) => {
+  const access = sharedDocsAccess.resolveAccess(req);
+  if (access.kind === 'operator') {
+    const proof = _requireOperatorWrite(req, res,
+      _startupPromptProofOptions('fire the startup prompt', { project: params.project }));
+    if (!proof) return;
+  } else {
+    const refusal = sharedDocsAccess.projectRefusalFor(access, sharedDocsAccess.NEEDS.OWN_PROJECT);
+    if (refusal) return errorResponse(res, refusal.status, refusal.message, refusal.code);
+  }
+  const b = body && typeof body === 'object' ? body : {};
+  const result = startupPrompt.fire({
+    projectName: params.project,
+    sessionId: b.sessionId,
+    sequenceId: b.sequenceId,
+    expectedRevision: b.expectedRevision,
+    caller: access
+  });
+  if (result.status >= 400) {
+    log.warn('Startup prompt fire refused', { project: params.project, code: result.body.code, caller: access.kind });
+    return errorResponse(res, result.status, result.body.error, result.body.code, result.body);
+  }
+  jsonResponse(res, result.status, result.body);
 });
 
 // POST /api/sessions/:project/wrap-sentinel/ack — Clear a pending typed-wrap
