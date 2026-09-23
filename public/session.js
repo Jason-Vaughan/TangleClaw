@@ -4179,33 +4179,11 @@ function openWrapDrawer(pipelineResult, runContext) {
  */
 function closeWrapDrawer() {
   const before = wrapRunState();
-  // #1707 — a stalled or lost run may still be running on the server. Letting
-  // it go would put an idle "Wrap" button over a live pipeline, and a click
-  // there could start a second run over the stale slot. Ask first.
-  if (before.phase === 'stalled' || before.phase === 'lost') {
-    refollowIfStillRunning(before.runId);
-  }
   // A popover open with nothing followed (the controller saw no change) is still
   // closed; otherwise the controller's own effect closes it.
   if (dispatchWrapRun({ type: 'dismiss' }) === before) hideWrapDrawer();
 }
 
-/**
- * #1707 — after a stalled or lost run is dismissed, follow it again (hidden)
- * when the server says it is still that project's running wrap. A failed probe
- * changes nothing: it is not evidence either way.
- *
- * @param {string|null} runId - The run the drawer was showing
- * @returns {Promise<void>}
- */
-async function refollowIfStillRunning(runId) {
-  if (!runId) return;
-  const status = await _probeWrapStatus(wrapStatusUrl());
-  if (!status || status.runId !== runId || status.running !== true) return;
-  if (wrapRunState().phase !== 'idle') return;
-  dispatchWrapRun({ type: 'follow', runId });
-  collapseWrapPopover();
-}
 
 /**
  * The operator toggled the popover closed (×, Escape, the Wrap button) to see the

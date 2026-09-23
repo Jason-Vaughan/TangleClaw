@@ -264,6 +264,7 @@ const gitTemplate = require('./lib/git-template');
 const tmux = require('./lib/tmux');
 const projects = require('./lib/projects');
 const sessions = require('./lib/sessions');
+const projectConfig = require('./lib/project-config');
 const launchSequence = require('./lib/launch-sequence');
 const ciStatus = require('./lib/ci-status');
 const master = require('./lib/master');
@@ -7050,7 +7051,6 @@ route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => 
     // moves, so a caller that did not choose can see what was chosen for it.
     sessionOutcomePlanned: started.sessionOutcomePlanned,
     keepSource: started.keepSource,
-    ...(started.keepWarning ? { keepWarning: started.keepWarning } : {}),
     statusUrl: `/api/sessions/${project}/wrap/status`,
     // #1707 — where to stop this run, while it is still before its commit step.
     cancelUrl: `/api/sessions/${project}/wrap/cancel`,
@@ -7120,8 +7120,8 @@ function _wrapResultPayload(projectName, result) {
     // session status must leave this alone (#1034).
     // #1707 — `cancelled` is its own word: an operator stopped the run and
     // nothing failed, so it must not read as a block to Retry or Skip.
-    status: result.ok ? 'wrapping' : (_wasCancelled(result) ? 'cancelled' : 'blocked'),
-    ...(_wasCancelled(result) ? { outcome: 'cancelled' } : {}),
+    status: result.ok ? 'wrapping' : (result.outcome === 'cancelled' ? 'cancelled' : 'blocked'),
+    ...(result.outcome === 'cancelled' ? { outcome: 'cancelled' } : {}),
     wrapCommand: result.wrapCommand,
     wrapSteps: result.wrapSteps,
     captureFields: result.captureFields,
@@ -7135,16 +7135,6 @@ function _wrapResultPayload(projectName, result) {
   if (result.pipelineResult) payload.pipelineResult = result.pipelineResult;
   if (!result.ok && result.error) payload.error = result.error;
   return payload;
-}
-
-/**
- * Whether a run's outcome is an operator's cancel (#1707).
- *
- * @param {object} result - The run's recorded outcome
- * @returns {boolean}
- */
-function _wasCancelled(result) {
-  return Boolean(result.pipelineResult && result.pipelineResult.cancelledAt);
 }
 
 /**
@@ -7205,9 +7195,7 @@ route('GET', '/api/sessions/:project/wrap/status', (_req, res, params) => {
     options: status.options,
     // #1708 — the resolved session outcome, from the options `startWrap`
     // recorded; null for a run recorded without them.
-    sessionOutcomePlanned: status.options && typeof status.options.keepSessionRunning === 'boolean'
-      ? (status.options.keepSessionRunning ? 'keep' : 'end') : null,
-    keepSource: status.options ? (status.options.keepSource || null) : null,
+    ...projectConfig.plannedSessionOutcome(status.options),
     // #1707 — whether POST /wrap/cancel would still be honoured, and whether
     // one already was.
     cancellable: status.cancellable === true,

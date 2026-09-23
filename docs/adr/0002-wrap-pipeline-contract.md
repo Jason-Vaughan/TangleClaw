@@ -463,6 +463,10 @@ those are the runs where the terminal is still needed.
 dialog before the run and replayed on Retry. It is validated before a run is claimed: anything but a
 boolean is refused, so a malformed value can't end a session the operator meant to keep.
 
+> **Superseded in part (2026-09-23, #1708):** the request option is no longer the only input to
+> keep/end, and a run can now end `cancelled`. See "Amended 2026-09-23: wrap intent and honest
+> cancellation" below. The rest of this amendment stands.
+
 **The result says what happened to the session.** `sessionOutcome` on the run's result payload is
 `ended`, `kept`, or `null`. It is not a boolean because a session killed during the wrap is neither
 ended by the wrap nor still running.
@@ -472,6 +476,53 @@ yes, and the question would have left the wrong server rule in place for every o
 
 **Engine-agnostic.** The rule reads only the pipeline's `ok` and the request's option, so every
 engine gets the same lifecycle.
+
+## Amended 2026-09-23 — wrap intent and honest cancellation (#1708, #1707)
+
+This amendment supersedes the 2026-09-16 statement that the request option alone selects keep/end.
+It records Architect rulings D1–D5 for Train A Car A3 Chunk 01. Provenance is #1707 and #1708.
+Switchboard message 417454d7 is review evidence only, not the authority. It adds no design
+decision beyond those rulings.
+
+1. **Keep intent is resolved server-side exactly once, before the run is claimed.** The value comes
+   from the first of these that applies:
+   - an explicitly present boolean request value;
+   - a valid boolean `wrapKeepSessionRunning` in the project config;
+   - `false`, when the key or the config is genuinely absent.
+
+   A persisted config that is unreadable, malformed or invalid refuses the wrap before the claim.
+   Caller-supplied `keepSource` and planned-outcome fields are ignored. The immutable resolved
+   value and its source feed the registry, the handoff kind, the lifecycle and Retry. A Retry keeps
+   the trusted provenance unless a new explicit boolean changes it.
+2. **The planned outcome is stated before any step moves.** The 202, the status payload and the
+   `run-start` event carry `sessionOutcomePlanned` (`end`|`keep`) and `keepSource`. Operator copy is
+   conditional ("If this wrap completes…"), because blocked, failed and cancelled runs remain active.
+3. **Cancel route.** `POST /api/sessions/:project/wrap/cancel` is bound to the exact `runId`, behind
+   the same authority boundary as starting a wrap.
+   - Cancel admission and step start are one atomic registry transition.
+   - Repeated requests against a live run are idempotent.
+   - A cancel is accepted only before `commit` starts.
+   - The running step finishes. There is no mid-step interrupt, no post-commit revert, and no
+     cancellation after the durable cutoff.
+4. **What an accepted cancellation guarantees.** No subsequent commit, branch, push, PR, auto-merge
+   or later durable Git action. It does not promise an untouched working tree. It does not undo
+   earlier local methodology, DB, prompt or uncommitted file effects. The completed steps and the
+   possible local side effects are reported.
+5. **Cancellation is a distinct outcome.**
+   - Shape: `ok: false`, `outcome: 'cancelled'`, `blockedAt: null`, `error: null`, and
+     `cancelledAt` naming the first step that had not started. Later rows are `pending`.
+   - The session stays active, and neither Retry nor Skip is offered.
+   - If the finishing step blocks after a cancel was accepted, its result stays visible, but the
+     cancellation is terminal.
+6. **Operator controls.**
+   - **Hide** only hides the panel and keeps following the same run.
+   - **Cancel** appears only while the run is cancellable. After acceptance it says the current
+     step is finishing.
+   - After the cutoff it states that cancellation is no longer possible and shows the actual
+     current step, rather than permanently saying "committing".
+
+**Engine-agnostic.** Resolution reads the request and the project config. Cancellation reads the
+run registry and the pipeline's step order. No engine capability is involved.
 
 
 ## Amendment (Train 21, #1585) — the wrap publishes a per-attempt handoff

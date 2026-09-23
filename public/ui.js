@@ -2876,14 +2876,18 @@ async function doSaveSettings() {
   if (medusaEl) {
     body.medusaEnabled = medusaEl.checked;
   }
+  // #1708 — sent only when the toggle changed, like the launch-mode picker
+  // below: a project that never chose keeps "never chose" (null) through saves
+  // of unrelated settings, and its wraps keep saying "default", not "project".
+  const keepRunningEl = document.getElementById('settingsWrapKeepRunning');
+  const keepProject = state.projects.find((p) => p.name === settingsTarget);
+  if (keepRunningEl && keepProject && keepRunningEl.checked !== (keepProject.wrapKeepSessionRunning === true)) {
+    body.wrapKeepSessionRunning = keepRunningEl.checked;
+  }
   // Medusa idle-gated wake opt-in (MED-2K9P v2 T2). The inert branch renders no
   // `#settingsMedusaWake` element, so an engine with no measured idle signature
   // attaches no value and cannot post a stale checkbox — the pattern
   // `renderSilentPrimeToggle` establishes (#1255).
-  const keepRunningEl = document.getElementById('settingsWrapKeepRunning');
-  if (keepRunningEl) {
-    body.wrapKeepSessionRunning = keepRunningEl.checked;
-  }
   const medusaWakeEl = document.getElementById('settingsMedusaWake');
   if (medusaWakeEl) {
     body.medusaWake = medusaWakeEl.checked;

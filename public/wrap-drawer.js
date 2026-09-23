@@ -1387,8 +1387,10 @@
       results: [], blockedAt: null, currentStepId: null, currentStepStartedAt: null, skewMs: null, started: false, done: false, result: null,
       // #1708 — what the run will do to the session if it completes, and why; from `run-start`.
       sessionOutcomePlanned: null, keepSource: null,
-      // #1707 — whether the run has started its cancel-boundary step (`commit`).
-      pastCancelBoundary: false
+      // #1707 — whether the run has started its cancel-boundary step (`commit`),
+      // and whether a cancel was accepted (from the run's own log, so every
+      // watcher sees it) with the step it left finishing.
+      pastCancelBoundary: false, cancelRequested: false, cancelFinishingStepId: null
     };
   }
 
@@ -1539,6 +1541,10 @@
     },
     'step-done': (next, event) => settleLiveRow(next, event, 'done'),
     'step-blocked': (next, event) => settleLiveRow(next, event, 'blocked'),
+    'cancel-requested': (next, event) => {
+      next.cancelRequested = true;
+      next.cancelFinishingStepId = typeof event.finishingStepId === 'string' ? event.finishingStepId : null;
+    },
     'run-done': (next, event) => {
       next.done = true;
       next.result = event.result && typeof event.result === 'object' ? event.result : null;
@@ -1587,7 +1593,8 @@
    *     the commit, so "committing" would be false most of that time).
    *
    * @param {object|null} live - Live state from `applyWrapStreamEvent`
-   * @param {{requested?: boolean, finishingStepId?: (string|null)}} [cancel] - This page's cancel, if sent and accepted
+   * @param {{requested?: boolean, finishingStepId?: (string|null)}} [cancel] - This page's own accepted cancel, shown
+   *   before the run's `cancel-requested` event reaches it; the event alone is enough for every other watcher
    * @returns {{show: boolean, disabled: boolean, label: string, note: string|null}}
    */
   function liveCancelControl(live, cancel) {
@@ -1602,8 +1609,8 @@
         note: `Past the point of cancellation; the wrap continues${current ? ` (now at "${current}")` : ''}.`
       };
     }
-    if (cancel && cancel.requested === true) {
-      const finishing = cancel.finishingStepId || current;
+    if ((cancel && cancel.requested === true) || state.cancelRequested === true) {
+      const finishing = (cancel && cancel.finishingStepId) || state.cancelFinishingStepId || current;
       return {
         show: true,
         disabled: true,

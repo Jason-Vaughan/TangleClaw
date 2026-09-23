@@ -211,9 +211,24 @@ superseded by the corrected boundary in D3.
 
 ### Implementation calls (not architectural; noted per the priming)
 
-- Dismissing a `stalled` or `lost` run re-checks `GET /wrap/status` before returning the button to
-  idle. If the server still reports the run, the controller re-follows it instead of offering a
-  fresh "Wrap" that would take over a live slot.
+- **Descoped at Critic review (R-1):** the planned "re-follow a stalled/lost run on dismiss" could
+  never fire, because the page only reaches `stalled`/`lost` after the server has said the run is
+  not running or is another run. The real defect, a stale-slot takeover that leaves the old
+  pipeline running, needs a server-side design and is filed as #1805.
+- **Descoped (R-4):** the landing-page modal gets the pre-tick from the project setting, but no
+  planned-outcome line. The dashboard dialog has no live drawer, and its pre-ticked checkbox
+  already states the same fact at the moment of choosing. The operator guide's wrap section is
+  updated (`docs/user-guide.md`, "Keeping the session running" and "Hiding versus cancelling").
+- An accepted cancel is appended to the run's own event log (`cancel-requested`, once per run),
+  so every watcher sees it, including a replay after a reload. The page's local cancel state only
+  covers the moment before that event arrives (Critic R-3/R-8/R-13).
+- The planned outcome has one derivation, `projectConfig.plannedSessionOutcome(options)`, shared
+  by the 202, `run-start` and `/wrap/status` (Critic R-9). The settings modal sends the keep
+  toggle only when it changed, so "never set" survives unrelated saves (Critic R-2/R-7).
+- #1806 is filed for the stranded Medusa inbox noted in #1708, which this chunk does not fix.
+- **ADR 0002 amended (Critic R-12; Architect ruling MODIFY, message e9731465):** a dated
+  2026-09-23 section records D1–D5 in the Architect's normative wording, and a supersession pointer
+  sits beside the 2026-09-16 keep-running paragraph. It records no new decision.
 - `wrapKeepSessionRunning` defaults to `null` (never set), not `false`. The loader merges
   defaults into every config, so a literal `false` would make "the project chose false"
   indistinguishable from "never chose", and `keepSource` would report `project` for both.

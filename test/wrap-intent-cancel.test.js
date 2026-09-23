@@ -141,6 +141,18 @@ describe('resolveKeepSessionRunning (#1708)', () => {
   });
 });
 
+describe('plannedSessionOutcome (#1708)', () => {
+  it('reads only a resolved boolean, and names its source', () => {
+    assert.deepEqual(projectConfig.plannedSessionOutcome({ keepSessionRunning: true, keepSource: 'project' }),
+      { sessionOutcomePlanned: 'keep', keepSource: 'project' });
+    assert.deepEqual(projectConfig.plannedSessionOutcome({ keepSessionRunning: false, keepSource: 'default' }),
+      { sessionOutcomePlanned: 'end', keepSource: 'default' });
+    for (const unresolved of [null, undefined, {}, { keepSessionRunning: 'true' }]) {
+      assert.deepEqual(projectConfig.plannedSessionOutcome(unresolved), { sessionOutcomePlanned: null, keepSource: null });
+    }
+  });
+});
+
 describe('wrap-run registry cancel (#1707)', () => {
   beforeEach(() => wrapRunRegistry._resetForTests());
   after(() => wrapRunRegistry._resetForTests());
@@ -167,6 +179,22 @@ describe('wrap-run registry cancel (#1707)', () => {
     assert.equal(wrapRunRegistry.isCancelRequested('p', runId), true);
     assert.equal(wrapRunRegistry.get('p').cancelRequested, true);
     assert.equal(startStep(runId, 'a', false), 'cancelled');
+  });
+
+  it('puts an accepted cancel on the run\'s own log once, for every watcher and every replay', () => {
+    const { runId } = wrapRunRegistry.begin('p', 1, {});
+    wrapRunRegistry.emit('p', runId, runStart(['a', 'b', 'commit']));
+    startStep(runId, 'a', false);
+    wrapRunRegistry.requestCancel('p', runId);
+    wrapRunRegistry.requestCancel('p', runId);
+    const replay = [];
+    const sub = wrapRunRegistry.subscribe('p', runId, { onEvent: () => {}, onEnd: () => {} });
+    for (const e of sub.replay) replay.push(e);
+    sub.unsubscribe();
+    const cancels = replay.filter((e) => e.type === EV.CANCEL_REQUESTED);
+    assert.equal(cancels.length, 1, 'a repeated cancel announces nothing new');
+    assert.equal(cancels[0].willStopBefore, 'b');
+    assert.equal(cancels[0].finishingStepId, 'a');
   });
 
   it('names the first not-started step and the step still finishing', () => {
@@ -326,7 +354,6 @@ describe('runWrapPipeline cancel boundary (#1707)', () => {
     assert.equal(result.results.length, all.length, 'every step still reports');
     assert.ok(result.results.slice(2).every((r) => r.status === 'pending'), 'the rest are pending');
     assert.ok(!events.some((e) => e.type === EV.STEP_START && e.stepId === all[2]), 'the stopped-before step never started');
-    assert.equal(events[0].cancelBoundaryStepId, boundaryId());
     wrapRunRegistry._resetForTests();
   });
 
@@ -419,8 +446,8 @@ describe('runWrapPipeline cancel boundary (#1707)', () => {
     assert.equal(events[0].keepSource, 'project');
     events.length = 0;
     await wrapPipeline.runWrapPipeline('cancel-pipe', { onStepEvent: (e) => events.push(e) });
-    assert.equal(events[0].sessionOutcomePlanned, 'end');
-    assert.equal(events[0].keepSource, null, 'a run started without startWrap names no source');
+    assert.equal(events[0].sessionOutcomePlanned, null, 'a run started without startWrap has no resolved answer to state');
+    assert.equal(events[0].keepSource, null);
   });
 });
 
@@ -577,6 +604,18 @@ describe('wrap intent and cancel through sessions and HTTP (#1708, #1707)', () =
       assert.equal(started.code, 'WRAP_KEEP_SETTING_INVALID');
       assert.match(started.error, /could not be read/);
       assert.deepEqual(seen, []);
+    });
+
+    it('answers a running wrap as in progress, not with the setting refusal', async () => {
+      let release;
+      wrapPipeline.runWrapPipeline = async () => { await new Promise((r) => { release = r; }); return FINISHED; };
+      const first = sessions.startWrap(project.name);
+      setProjectConfig({ wrapKeepSessionRunning: 'yes' });
+      const second = sessions.startWrap(project.name);
+      assert.equal(second.code, 'WRAP_IN_PROGRESS', 'the caller is told which run to follow');
+      await until(() => typeof release === 'function', 'the pipeline to start');
+      release();
+      await first.done;
     });
 
     it('lets an explicit boolean through a setting it cannot resolve', async () => {
@@ -787,6 +826,14 @@ describe('drawer: planned outcome, Hide and Cancel (#1708, #1707)', () => {
     assert.doesNotMatch(control.note, /committing/);
   });
 
+  it('shows an accepted cancel to a watcher that never sent it, from the run\'s event alone', () => {
+    const live = fold([START, { type: 'step-start', stepId: 'a', pastCancelBoundary: false },
+      { type: 'cancel-requested', willStopBefore: 'commit', finishingStepId: 'a' }]);
+    const control = drawer.liveCancelControl(live);
+    assert.equal(control.disabled, true);
+    assert.match(control.note, /"a" is finishing/);
+  });
+
   it('disables Cancel once accepted and says which step is finishing', () => {
     const live = fold([START, { type: 'step-start', stepId: 'a', pastCancelBoundary: false }]);
     const control = drawer.liveCancelControl(live, { requested: true, finishingStepId: 'a' });
@@ -887,5 +934,56 @@ describe('drawer: planned outcome, Hide and Cancel (#1708, #1707)', () => {
     await sb.cancel();
     assert.equal(sb.els.wrapDrawerAbortBtn.disabled, false, 'still offered: nothing was accepted');
     assert.equal(sb.els.toast.textContent, 'refused by the server');
+  });
+});
+
+describe('settings modal save: the keep toggle (#1708)', () => {
+  const vm = require('node:vm');
+  const UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+
+  /**
+   * Run the real doSaveSettings with a fake DOM and capture the PATCH body.
+   * @param {object} project - The project as the dashboard holds it
+   * @param {boolean} checked - The toggle as the operator left it
+   * @returns {Promise<object>} The PATCH body
+   */
+  async function save(project, checked) {
+    const start = UI_SRC.indexOf('async function doSaveSettings()');
+    let depth = 0;
+    let end = -1;
+    for (let i = UI_SRC.indexOf('{', start); i < UI_SRC.length; i++) {
+      if (UI_SRC[i] === '{') depth++;
+      else if (UI_SRC[i] === '}' && --depth === 0) { end = i + 1; break; }
+    }
+    const els = {
+      settingsName: { value: project.name },
+      settingsEngine: { value: 'claude' },
+      settingsTags: { value: '' },
+      settingsWrapKeepRunning: { checked }
+    };
+    const sent = [];
+    const sandbox = {
+      document: { getElementById: (id) => els[id] || null },
+      state: { projects: [project] },
+      settingsTarget: project.name,
+      async _submitSettings(body) { sent.push(body); },
+      tcSettingDisposition: () => ({ applies: true }),
+      collectWrapSectionsSelection: () => undefined,
+      openBypassHiddenModal() {}
+    };
+    vm.createContext(sandbox);
+    vm.runInContext(`${UI_SRC.slice(start, end)}; this.run = doSaveSettings;`, sandbox);
+    await sandbox.run();
+    return JSON.parse(JSON.stringify(sent[0]));
+  }
+
+  it('leaves a never-set value alone when the toggle was not touched', async () => {
+    const body = await save({ name: 'p', wrapKeepSessionRunning: false }, false);
+    assert.equal('wrapKeepSessionRunning' in body, false, 'an unrelated save must not turn null into false');
+  });
+
+  it('sends the toggle when it changed, either way', async () => {
+    assert.equal((await save({ name: 'p', wrapKeepSessionRunning: false }, true)).wrapKeepSessionRunning, true);
+    assert.equal((await save({ name: 'p', wrapKeepSessionRunning: true }, false)).wrapKeepSessionRunning, false);
   });
 });
