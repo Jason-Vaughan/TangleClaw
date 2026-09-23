@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-23 — A release publishes only the exact commit it tested, under a tag that dereferences to it (#1551)
+
+<!-- prawduct: type=feature | scope=train-a-car-a4 -->
+
+Train A Car A4 Chunk 02, the car's last. `release.yml` checked only that tag `vX.Y.Z` existed. It never checked which commit the tag named, and it published without any test result for the commit it released.
+
+**Tested in the same run.** `test.yml` gains `workflow_call`. The release workflow's `test` job runs it on `GITHUB_SHA`, and the publishing job `needs:` it with no status override. Tested and released are one commit by construction (Architect B1).
+
+**The tag must name that commit.** `scripts/release-tag-gate.js` resolves the tag through its peeled `^{}` line and fails closed on output it cannot parse or an absent tag. Any existing tag that names another commit refuses red, even when its Release exists (B2 MODIFY). The tag is checked again on origin after a push, and the checkout is confirmed as `GITHUB_SHA` before tagging. A live probe found that `ls-remote` with one pattern drops the peeled line, so both patterns are requested. Otherwise every annotated release would have refused.
+
+**Token scope and recovery.** The top-level token is `contents: read`, and only the publishing job holds write (B3). `docs/release-process.md` splits recovery by whether the tag reached origin (B4, refined after Critic R-3 blocking). ADR 0014's honest-limit status is updated (addendum). Tests: `test/release-tag-gate.test.js` and `test/release-workflow.test.js`, with 14 mutations watched red, and actionlint is clean. The plan, with the rulings, is archived at `.tangleclaw/plans/archive/train-a-car-a4-build-plan.md`. The merge waits on the Operator's direct CI go.
+
 ## 2026-09-23 — Every workflow action is pinned to a full commit SHA, and a test enforces it (#1436)
 
 <!-- prawduct: type=feature | scope=train-a-car-a4 -->
