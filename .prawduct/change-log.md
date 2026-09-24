@@ -35,6 +35,20 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-24 — The startup prompt fires at Codex through its app-server, with an engine-signed receipt (#1825)
+
+<!-- prawduct: type=feature | scope=startupcontrol-1825 -->
+
+#1825 Chunk B2, the Codex adapter (`lib/startup-control-codex.js`, over a hand-written RFC 6455 client on a unix socket, `lib/ws-unix-client.js`). Verified against codex-cli 0.156.1 with six spend-free probes and one operator-authorized live turn that went `dispatching → accepted → applied`.
+
+**The channel.** A Codex launch starts one `codex app-server` per launch, detached in its own process group, and attaches the pane's TUI with `--remote` ahead of the validated launch-mode arguments. `startup_control_channels` (schema v46) records it as a generic header plus adapter-owned state; the channel ends with the session (kill, a wrap that ends it, a detected crash, a relaunch), is revalidated and recovered at boot, and is reaped when its session has ended. A process is signalled only when its command line, socket and birth time match the record. A launch that cannot start its channel launches as before and records why as a closed row; a later fire cites it (`channel_unavailable`).
+
+**Readiness and blockers.** Read from the protocol only: server version against the installed and recorded one, trust from `config/read`, the account, an explicit usage allowance or usable credits, exactly one idle thread for the project directory. Unknown fails closed (`readiness_unknown`); a pre-send blocker answers `409 STARTUP_FIRE_BLOCKED`, sends nothing and releases the launch's slot.
+
+**The receipt.** `turn/start` carries a digest of the launch-start payload: session, launch and its revision, the priming pact (a versioned canonical object over the four frozen launch-step digests), a role-and-assignment revision derived only from the frozen snapshot (project binding, rule fingerprints, consumed handoff), and the prompt's revision and digests; the launch bearer is hashed in and never stored. Accepted needs the engine's echo of that digest WITH the prompt's exact bytes; applied needs that turn to complete after accepted evidence; approvals and questions keep it accepted under `approval_pending` / `user_input_pending` and are never answered by TangleClaw. A lost answer is `indeterminate` and never resent; it settles only from an exhaustive, paginated read of a stably idle thread. `thread/resume` was refused after the send on this version, so the watcher also re-reads the engine's record on an interval. A restart recovers every in-flight fire without resending, through the service's one transition writer.
+
+Architect rulings E1–E9 (message 2ad0567c). Critic: cumulative (2 blocking, 9 warning, 12 note) resolved across two verify rounds to 0 findings.
+
 ## 2026-09-23 — A revisioned, operator-owned startup prompt, and the startupControl capability it will fire through (#1825)
 
 <!-- prawduct: type=feature | scope=startupcontrol-1825 -->
