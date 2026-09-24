@@ -1582,6 +1582,30 @@ describe('engines', () => {
     });
   });
 
+  describe('the context re-entry pointer rides every carrier (#1761)', () => {
+    // The durable config is the one channel an engine reloads after `/clear`
+    // or a compaction; the prime and the pulled launch steps are gone by then,
+    // so the way back to them has to be written here. Run over the whole
+    // family the dispatcher emits, not a sampled member.
+    it('every generator with supportsConfigFile names tc start review and what it is not', () => {
+      const profiles = store.engines.list().filter(p => p.capabilities && p.capabilities.supportsConfigFile);
+      assert.ok(profiles.length >= 4, `Expected at least 4 config-supporting engines, got ${profiles.length}`);
+      for (const profile of profiles) {
+        const content = engines.generateConfig(profile.id, { rules: { core: { porthubRegistration: true } } });
+        assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
+        const unwrapped = content.replace(/\n#\s*/g, ' ').replace(/\s+/g, ' ');
+        assert.match(unwrapped, /cleared or compacted mid-session, run `tc start review`/,
+          `${profile.id}: carrier is missing the re-entry pointer`);
+        assert.match(unwrapped, /do not re-attest or re-propose/,
+          `${profile.id}: the pointer says the re-read is not a new launch`);
+        assert.match(unwrapped, /`tc rules` re-reads the project rules/,
+          `${profile.id}: and where a session with no launch sequence goes instead`);
+        assert.doesNotMatch(unwrapped, /every engine/,
+          `${profile.id}: the pointer promises no coverage it does not have`);
+      }
+    });
+  });
+
   describe('tc bootstrap line rides every carrier (ambient-awareness Chunk 04)', () => {
     // The 2026-09-01 live probe proved PATH presence alone creates zero
     // discovery intent, so the instruction must be in every channel each

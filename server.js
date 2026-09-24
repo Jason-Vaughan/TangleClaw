@@ -4554,6 +4554,22 @@ route('GET', '/api/tc/start/status', (req, res) => {
   return jsonResponse(res, result.status, result.body);
 });
 
+// GET /api/tc/start/review?step=&page= — re-read a page of an ATTESTED launch
+// (#1761), for a session whose context was cleared or compacted after READY.
+//
+// Read-only: nothing is marked served or acknowledged and the snapshot is never
+// revised, so it is safe at any point after READY. Same launch binding and the
+// same loopback machine-client trust as the other `start` routes.
+route('GET', '/api/tc/start/review', (req, res) => {
+  const { launchId, projectId } = _launchIdentity(req);
+  const query = parseQuery(reqUrl(req).search);
+  const step = /^\d+$/.test(query.step || '') ? Number(query.step) : (query.step || undefined);
+  const page = query.page === undefined || query.page === '' ? undefined
+    : (/^\d+$/.test(query.page) ? Number(query.page) : query.page);
+  const result = launchSequence.review({ launchId, projectId, step, page });
+  return jsonResponse(res, result.status, result.body);
+});
+
 /**
  * The `startup-control` capability row for whoami (#1825): whether the
  * startup prompt can be fired at this session through its engine's native

@@ -301,13 +301,14 @@ what the **session running in the pane** does, and it matters to an engine imple
 reason: if the model driving your engine cannot follow it, sessions on your engine will stall at a
 refusal rather than fail loudly. The full architectural rationale is ADR 0017.
 
-Three subverbs, and the product ships no others (`lib/tc-verbs.js#START_SUBVERBS`):
+Four subverbs, and the product ships no others (`lib/tc-verbs.js#START_SUBVERBS`):
 
 | Subverb | What it does | Notable refusals |
 |---|---|---|
 | `tc start next` | Serves the next unacknowledged step, or a named page of it (`--page <n>`). Acknowledge with `--ack <step>:<revision>:<digest>`, from the footer of the last page | `PAGES_UNSERVED` (a page of this step was never served), `ACK_OUT_OF_ORDER`, `ACK_DIGEST_MISMATCH`, `SNAPSHOT_REVISED` |
 | `tc start ready` | Attests that the whole sequence was read. Requires `--verdict` and `--first-action`; `--reconciliation` when the launch demands one | see the two stages below |
 | `tc start status` | Reports the launch's own state — steps acknowledged, recovery, page size and whether the size is measured or assumed, and which handoff publication (id and digest) the launch's Resume was drawn from, to set beside the one the previous wrap's result named (#1675). Read-only | **Launch resolution refuses `status` too** — `BAD_LAUNCH_ID`, `LAUNCH_NOT_BOUND`, `SEQUENCE_SESSION_MISMATCH`, `SESSION_ENDED`. What it does *not* refuse is a **missing** launch id: a pane predating this mechanism is answered as legacy rather than refused, which is the read-only exemption `next` and `ready` do not get |
+| `tc start review` | Re-reads a page of the launch this session already attested READY (#1761), for when `/clear` or a compaction dropped it mid-session. `--step <n\|id>` (a number from 1 or a step id; the first step when omitted) and `--page <n>` (from 0). It serves the **frozen** attested snapshot, never live rules, under a banner saying this is not a new launch, and each page's footer names the next one. Read-only: nothing is marked served or acknowledged, and the cursor, revision and READY are unchanged. It covers a session that has an applicable, bound launch sequence and can run `tc`, not every engine | `NOT_READY` (not attested yet: `tc start next` still serves it), `UNKNOWN_STEP`, `PAGE_OUT_OF_RANGE`, and a **missing** launch id is refused `LAUNCH_ID_REQUIRED`, as `next` refuses it |
 
 **"Notable refusals" is not the whole list.** Every row is reachable by the launch-resolution
 refusals in stage 1 below, so the column names what is characteristic of each subverb rather than
