@@ -383,6 +383,20 @@ describe('API /api/ports', () => {
       assert.equal(data.systemPortCount, 1);
       portScanner._setLastScan([]);
     });
+
+    it('GET /api/ports lists a listener only the socket table saw, with null pid and command (#1771)', async () => {
+      portScanner._setLastScan([
+        { port: 7451, pid: 11, command: 'postgres' },
+        { port: 7452, pid: null, command: null }
+      ]);
+      const { data } = await request(server, 'GET', '/api/ports');
+      assert.deepEqual(data.systemPorts, [
+        { port: 7451, pid: 11, command: 'postgres' },
+        { port: 7452, pid: null, command: null }
+      ], 'an unnamed listener is listed, not dropped');
+      assert.equal(data.systemPortCount, 2);
+      portScanner._setLastScan([]);
+    });
   });
 
   describe('a host-less release is refused when another host holds the port (#853)', () => {
