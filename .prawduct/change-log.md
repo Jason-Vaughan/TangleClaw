@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-24 — `/clear` and compaction no longer drop a session's rules and launch context (#1761)
+
+<!-- prawduct: type=bugfix | scope=reentry-1761 -->
+
+Dual-Builder Pilot 3 (TangleClaw-Pilot-B2). Architect rulings A1–A5 are in `.tangleclaw/plans/1761-clear-drops-context.md`, and ADR 0017 § 7 records them.
+
+**The change.** Chunk 01 adds `tc start review` (`GET /api/tc/start/review`, `lib/launch-sequence.js#review`). It re-reads any page of an attested launch's frozen snapshot, read-only, under a banner saying this is not a new launch. It refuses `NOT_READY` before READY and keeps `next`'s binding refusals. Every engine's generated config carries a "Lost your launch context?" pointer to it (`lib/ecosystem-primer.js#contextReentryLine`). Chunk 02 registers the prime and rules hooks on `startup|clear|compact`. On a re-fire, the prime hook puts `.tangleclaw/session-reentry.md` (`lib/session-reentry.js`, written and removed with the prime) ahead of the prime. The rules hook posts its delivery receipt on `startup` only. Both hooks read `source` from stdin with a 1-second bounded read, fall back to startup, and say so on stderr when a stdin they were sent cannot be read. The page budget now covers the review decoration by construction; its value is unchanged. The ADR amendment is § 7, plus a READY bullet, a Consequences paragraph and a shipped/desired row.
+
+**Tests.** New: `test/launch-review.test.js` (a full walk returns exactly the digested bytes and leaves pages served, cursor, revision and READY byte-identical; a rule added after READY does not reach the re-read; binding parity), `test/session-reentry.test.js` (the preamble stands on its own), and additions to the `tc start` CLI, prime-hook, receipt, merge, shell-safety, sessions and engines suites. Four assertions pinned the `startup` matcher. They now pin the widened one at the same strictness, because the requirement changed (A3); this is not a weakening. Mutation checks: removing the receipt's source guard fails both re-fire tests, and removing the rules hook's stderr line fails its test. Checked by hand in a throwaway Claude Code 2.1.282 pane: `source` arrives as startup, clear, compact and resume. The preamble and the rule marker came back after `/clear` and `/compact`, and the widened matcher did not fire on `resume`. A TangleClaw-launched pane calling `tc start review` against a live server was not run; spawned-`tc` tests against an in-process server cover that path.
+
+**Critic.** The cumulative review found 0 blocking, 0 warnings and 7 notes. Two were fixed: the misplaced JSDoc paragraph, and the silent startup fallback on an unreadable source. Five were accepted: 0-based `--page`, which matches `next`; the duplicated stdin block, since each hook must stay self-contained; and three informational notes. The first `verify-resolutions` found one blocking issue: the rules hook's stderr line was untested. It was fixed, and the second round found none. Flagged, not fixed here, as in Pilot 2: the `risk_surfaces:` flow list in `.prawduct/project-state.yaml` that `classify-diff-risk` cannot parse.
+
 ## 2026-09-24 — `GET /api/ports` lists the root-owned listeners the lease guard already refuses (#1771)
 
 <!-- prawduct: type=bugfix | scope=ports-1771 -->
