@@ -46,6 +46,17 @@ Dual-Builder Pilot, lane 2 (Builder B2). The Architect's rulings A1 and A2 are r
 **The test.** `test/card-session-contract.test.js` runs the real `openKill` against output from the real store and projection, for both a webui card and a tmux card. It also guards the defect class: every `session.<field>` read in `public/ui.js`, `public/api-helper.js` and `public/landing.js` must be a key that `_liveSession` emits. A self-check fails the guard if its scan finds nothing, so it cannot pass vacuously. The tests were red before the fix and are green after.
 
 **Critic.** The cumulative review found nothing blocking. One note was accepted: the guard matches any identifier named `session`, which is the known limit of A2.
+## 2026-09-24 — A failed origin lookup backs off instead of re-spawning on every check (#1059)
+
+<!-- prawduct: type=bugfix | scope=upd-1059 -->
+
+Dual-Builder Pilot, Lane 1 (TangleClaw-Pilot-B1). It ships backlog item UPD-3F7Q. Architect rulings A1–A3 are in `.tangleclaw/plans/1059-origin-lookup-backoff.md`.
+
+**The change.** `_getReleasesUrlBase` still memoizes a real answer (a URL base, or `null` for "not a GitHub remote") for the life of the process. A thrown `git remote get-url origin` used to be retried on every check that found a release. That retry is a synchronous spawn of up to 2s, and at the 10s manual refresh floor it could stall a degraded install over and over. A failure now starts a fixed 5-minute window (`ORIGIN_LOOKUP_BACKOFF_MS`, its own constant per A1) during which the lookup returns `null` without spawning. The first call after the window retries. The window is read from a new monotonic `_internal.now` seam (`performance.now()`), so stepping the wall clock backwards cannot stretch it. The sync pre-flight and the async completion path share one window (A2).
+
+**Tests.** The old "does NOT memoize a failure" test asserted two spawns back to back, which is the behavior this change removes. It now keeps its contract (a failure is not cached forever, and the link recovers) across the window. New tests cover: no spawn inside the window, a retry at the edge, re-arming after a second failure, `_reset` clearing the back-off, and one spawn across two `checkForUpdateAsync` measurements.
+
+**Critic.** The cumulative review found 0 blocking and 0 warnings. It left two notes on the plan's Status boxes and pilot-envelope wording, and both were fixed.
 
 ## 2026-09-24 — A Codex session's wake is judged by its app-server, not its status row (#1628)
 
