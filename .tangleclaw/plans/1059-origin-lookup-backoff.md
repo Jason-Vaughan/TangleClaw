@@ -6,13 +6,13 @@
 
 - [x] Plan written; architectural items sent to the Architect
 - [x] Architect has ruled on A1–A3 (all approved 2026-09-24; see Rulings)
-- [ ] Build: back-off + clock seam + tests + CHANGELOG (`### Fixed`)
-- [ ] Verify: focused tests + full suite
-- [ ] Critic
+- [x] Build: back-off + clock seam + tests + CHANGELOG (`### Fixed`)
+- [x] Verify: focused tests + full suite
+- [x] Critic (cumulative, 2026-09-24: 0 blocking, 0 warnings, 2 notes on this plan, both fixed)
 - [ ] Draft PR opened — **STOP here** (pilot boundary)
 - [ ] After #1311 merges and the PM says go: rebase, rerun focused + full suite + Critic on the combined target
 
-**Pilot envelope (revoked by the Architect):** no merging any PR, no pulling/updating the live checkout,
+**Pilot envelope (set by the Architect; these restrictions are IN FORCE):** no merging any PR, no pulling/updating the live checkout,
 no restarting the live service, no live check on the main instance, no tag/publish/release, no deploy.
 
 ## Problem
