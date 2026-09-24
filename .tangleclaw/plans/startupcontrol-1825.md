@@ -1,7 +1,7 @@
 ---
 title: startupControl — engine-native startup delivery with semantic receipt
 issue: 1825
-status: B1 SHIPPED (PR #1831). B2 SHIPPED (PR #1833, live at schema v46). B3 (automatic bootstrap + launch panel) IN PLANNING 2026-09-24 on the PM's dispatch (message cc1a12fb); decisions F1–F6 with the Architect
+status: B1 SHIPPED (PR #1831). B2 SHIPPED (PR #1833, live at schema v46). B3 (automatic bootstrap + launch panel) IN BUILD 2026-09-24 on the PM's dispatch (message cc1a12fb); Architect ruled F1–F6 (message b5445cbe)
 scope: startupcontrol-1825
 branch: feat/1825-startup-control-b3
 ---
@@ -855,6 +855,63 @@ trusted scratch directory `/private/tmp/tc731`:
   applied-once guarantees are untouched (an ended session's launch can never be fired again).
   Constants with a test seam. Alternatives: no trimming (session rows are never pruned either);
   age-based trimming from the reaper.
+
+### Architect rulings on F1–F6 (2026-09-24, message b5445cbe): binding
+
+- **F1: MODIFY.** For an applicable sequence with an OPEN channel, select the native bootstrap path
+  before waiting, bypass both prime paste and kickoff, wait on the 90 s pane gate, then make exactly
+  one automatic attempt through `startupPrompt.fire` using the deterministic launch idempotency key.
+  That selection must be durably visible to later monitors/recovery; an in-memory claim alone cannot
+  let a restart turn a native launch back into a keystroke path. A gate timeout records the typed
+  no-send reason. Same-key recovery/replay never reinjects.
+- **F2: MODIFY.** No paste fallback and no automatic retry are approved. `launch-unready` may still
+  stamp/alert that the sequence is unready, but it MUST NOT send its tmux nudge for a launch that
+  selected native startup control: that nudge is itself a keystroke fallback and can type into the
+  same trust/login surface F2 refuses to paste through. The nudge remains unchanged only on
+  legacy-path launches, including unsupported engines. A human may use Fire after inspecting the
+  panel.
+- **F3: APPROVE WITH CONDITIONS.** `launch` / `launch-automatic`, target-project attribution, and
+  `launch-<sequence>-r<revision>` are the right audit shape. The service must atomically prove exact
+  self-target session + current sequence + target project, and no HTTP-derived access object may
+  produce the launch identity. The v47 rebuild preserves every row, constraint and index.
+- **F4: MODIFY.** Record exactly one `unsupported` row for every sequence-applicable unsupported
+  automatic launch, including `engine_declares_none`, and then retain the legacy path with a bounded
+  stable reason. Create/audit that outcome through the same `startupPrompt.fire` service with the
+  internal launch caller; `launch-bootstrap` must not become a second direct store-writing fire path.
+- **F5: APPROVE.** Operator/master may read the generic channel header and all fire rows, including
+  denied; never expose `adapterState`. Project-bound and unbound callers receive no `startupControl`
+  block. D4 still denies Master permission to fire. The UI Fire action remains operator-gated and
+  appears only for the current active session with an open channel; it fetches the current expected
+  revision at click time and re-reads after the result.
+- **F6: MODIFY.** Write-time retention is approved, with the quotas defined over eligible
+  ENDED-session history: retain the newest 200 fire rows and newest 100 closed channel rows per
+  TARGET project, plus every row belonging to an active session as an additive exemption. Partition
+  by the target session's project, never `callerProjectId`; otherwise cross-project firers distort
+  retention. Delete only ended-session candidates, transactionally, with deterministic newest
+  ordering and referential correctness.
+- The pane-environment repair is an implementation call, accepted subject to the planned live proof
+  that `tc start next` resolves inside the fired Codex turn. The Architect returns at the review
+  gate, or sooner if evidence changes one of these contracts.
+
+### How the rulings land (implementation calls)
+
+- F1's durable selection is a column on the launch row: `launch_sequences.startup_delivery`
+  (`'legacy' | 'native'`, v47, additive, default `legacy`), decided in `launchSession` from "the
+  channel started AND the sequence is applicable" and written in the same transaction that binds the
+  sequence to the session. `_deferEngineInit`, `launch-unready` and the panel read it.
+- The gate timeout does not skip the attempt: after the pane gate answers (ready or timed out) the
+  one fire is made, and the adapter's own pre-send readiness records the typed reason
+  (`engine_not_ready`, `trust_required`, …) through the single service path — so a timed-out gate
+  never invents a reason the engine did not give.
+- F2: `launch-unready` returns a new outcome `native-startup` and types nothing when the sequence
+  row says `native`; it still stamps `unready_at`.
+- F3: `canFire` takes the target session; a `launch` caller passes only when
+  `caller.sessionId === session.id`, `caller.projectId === project.id` and the sequence is the
+  session's current launch, all inside the fire transaction. The caller object is built only by
+  `lib/launch-bootstrap.js`; `resolveAccess` KINDS has no such kind, pinned by a test.
+- F6: `startupPrompts.insertFire` and `startupControlChannels.close`/`recordUnavailable` trim inside
+  their own transaction; candidates are rows whose session's status is not `active`, partitioned by
+  the fire/channel row's `project_id`/session project, ordered by id descending.
 
 ### Implementation calls (not architectural)
 
