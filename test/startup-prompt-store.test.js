@@ -455,6 +455,43 @@ describe('startup prompt store: v47 (Chunk B3)', () => {
     });
   });
 
+  describe('retention runs inside the caller\'s transaction or its own (a savepoint, never a nested BEGIN)', () => {
+    beforeEach(() => openStore());
+
+    it('insertFire trims inside the fire service\'s open transaction, and a channel close trims with none open', () => {
+      store._setStartupControlRetention({ fires: 1, channels: 1 });
+      const pid = project().id;
+      const ended = store.sessions.start({ projectId: pid, engineId: 'codex', tmuxSession: 't1' });
+      store.sessions.kill(ended.id, 'ended');
+      const f = (seq) => ({ ...fire(seq, 1), projectId: pid, sessionId: ended.id });
+      const a = store.startupPrompts.transaction(() => store.startupPrompts.insertFire(f(701)));
+      const b = store.startupPrompts.transaction(() => store.startupPrompts.insertFire(f(702)));
+      assert.equal(store.startupPrompts.getFireById(a.id), null, 'trimmed inside the caller\'s BEGIN IMMEDIATE');
+      assert.ok(store.startupPrompts.getFireById(b.id));
+      const c = store.startupPrompts.insertFire(f(703));
+      assert.equal(store.startupPrompts.getFireById(b.id), null, 'and with no transaction open');
+      assert.ok(store.startupPrompts.getFireById(c.id));
+      const ch1 = store.startupControlChannels.open({ sessionId: ended.id, sequenceId: 1, engineId: 'codex', adapter: 'codex', adapterState: {} });
+      store.startupControlChannels.close(ch1.id, 'x', 'ok');
+      const ch2 = store.startupControlChannels.recordUnavailable({ sessionId: ended.id, sequenceId: 2, engineId: 'codex', adapter: 'codex', reason: 'y' });
+      assert.equal(store.startupControlChannels.get(ch1.id), null);
+      assert.ok(store.startupControlChannels.get(ch2.id));
+      assert.equal(store.getDb().isTransaction, false, 'no transaction is left open behind either path');
+    });
+
+    it('a failing trim inside a transaction leaves the caller\'s transaction usable', () => {
+      const pid = project().id;
+      const live = store.sessions.start({ projectId: pid, engineId: 'codex', tmuxSession: 't2' });
+      const row = store.startupPrompts.transaction(() => {
+        const r = store.startupPrompts.insertFire({ ...fire(801, 1), projectId: pid, sessionId: live.id });
+        // A second write in the same transaction after the savepoint released.
+        store.getDb().prepare("UPDATE startup_prompt_fires SET reason = 'still in the caller''s transaction' WHERE id = ?").run(r.id);
+        return store.startupPrompts.getFireById(r.id);
+      });
+      assert.equal(row.reason, 'still in the caller\'s transaction');
+    });
+  });
+
   describe('retention (F6)', () => {
     let realQuotas;
     beforeEach(() => {

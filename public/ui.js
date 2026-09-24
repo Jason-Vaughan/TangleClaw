@@ -2498,9 +2498,11 @@ function startupFireLabel(f) {
  * @returns {string} Markup, or an empty string when the row carries no block
  */
 function launchStartupControlHtml(s) {
+  // The SELECTION the launch froze, not the outcome: whether the prompt was
+  // fired, blocked or never recorded is what the fire rows beneath say.
   const path = s.startupDelivery === 'native'
-    ? 'native: the startup prompt was fired through the engine\'s own channel; nothing was typed into the pane'
-    : 'legacy: the prime was pasted or the session was asked to read its context by keystroke';
+    ? 'native: TangleClaw types nothing into this pane; the first turn is a fire through the engine\'s channel (see the fire rows)'
+    : 'legacy: the prime is pasted, or the session is asked by keystroke to read its context';
   let out = `<br><small class="session-rule-meta">Startup: ${path}</small>`;
   const sc = s.startupControl;
   if (!sc) return out;

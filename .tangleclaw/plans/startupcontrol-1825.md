@@ -1,7 +1,7 @@
 ---
 title: startupControl — engine-native startup delivery with semantic receipt
 issue: 1825
-status: B1 SHIPPED (PR #1831). B2 SHIPPED (PR #1833, live at schema v46). B3 (automatic bootstrap + launch panel) IN BUILD 2026-09-24 on the PM's dispatch (message cc1a12fb); Architect ruled F1–F6 (message b5445cbe)
+status: B1 SHIPPED (PR #1831). B2 SHIPPED (PR #1833, live at schema v46). B3 (automatic bootstrap + launch panel) IN BUILD 2026-09-23 on the PM's dispatch (message cc1a12fb); Architect ruled F1–F6 (message b5445cbe)
 scope: startupcontrol-1825
 branch: feat/1825-startup-control-b3
 ---
@@ -764,8 +764,8 @@ trusted scratch directory `/private/tmp/tc731`:
    marker, with a ledger row that says `delivered` for bytes nobody acknowledged. The fires,
    channels and blockers B1 and B2 record are visible only in SQL, and a `denied` fire attempt is
    visible nowhere (R-13).
-2. **Success:** a Codex launch on 0.156.1 is asked to read its launch context through
-   `turn/start`, the fire row reaches `applied`, nothing is typed into the pane, and `tc start
+2. **Success:** a Codex launch on 0.156.1 is asked to read its launch context through the
+   app-server's turn-start request, the fire row reaches `applied`, nothing is typed into the pane, and `tc start
    next` works from inside Codex. A Claude launch is unchanged and its launch record says why
    (S3). Settings → Project Rules → **Launch readiness** shows, per launch, the channel's state,
    every fire (automatic, explicit and denied) with its typed reason, and a **Fire** button the
@@ -774,7 +774,10 @@ trusted scratch directory `/private/tmp/tc731`:
    role/assignment record (E8); changing what the launch steps carry; #1774's manifest command; a
    per-launch app-server log file (R-18) unless the live check fails to open a socket.
 
-### Facts established while planning (verified 2026-09-24 at 7ecdd22d4)
+Requirements Confidence: **Medium** — one assumption, named below (shell tools run in the app-server,
+so the inherited environment reaches `tc`), resolved only by the post-merge live check.
+
+### Facts established while planning (verified 2026-09-23 at 7ecdd22d4)
 
 - **Today's first turn on Codex is a paste.** `data/engines/codex.json` declares
   `supportsSilentPrime: false`, `supportsPrimePrompt: true`, `launchSequence.supported: true`, so
@@ -856,7 +859,7 @@ trusted scratch directory `/private/tmp/tc731`:
   Constants with a test seam. Alternatives: no trimming (session rows are never pruned either);
   age-based trimming from the reaper.
 
-### Architect rulings on F1–F6 (2026-09-24, message b5445cbe): binding
+### Architect rulings on F1–F6 (2026-09-23, message b5445cbe): binding
 
 - **F1: MODIFY.** For an applicable sequence with an OPEN channel, select the native bootstrap path
   before waiting, bypass both prime paste and kickoff, wait on the 90 s pane gate, then make exactly
@@ -925,10 +928,11 @@ trusted scratch directory `/private/tmp/tc731`:
   `{...process.env, ...ambientEnv, ...profile.launch.env}` exactly as the pane's is. A test asserts
   the spawn's env carries `TANGLECLAW_LAUNCH_ID`, `TANGLECLAW_PROJECT_ID` and the PATH floor.
 - The bootstrap is `lib/launch-bootstrap.js` (a sibling of `launch-kickoff.js`): one entry
-  `bootstrap({sessionId, projectId, projectName, tmuxName, engineId, hasSequence})`, never throws,
-  returns a code from its own `OUTCOME_MEANINGS` (`fired`, `no-channel`, `no-sequence`,
-  `unsupported-recorded`, `already-begun`, `pane-not-ready` …), one shot per session claimed
-  before the send as the kickoff does. It records the unsupported row (F4) itself.
+  `bootstrap({sessionId, projectId, projectName, tmuxName, engineId, hasSequence, startupDelivery})`,
+  never throws, returns a code from its own `OUTCOME_MEANINGS` (`fired`, `not-sent`,
+  `legacy-recorded`, `no-sequence`, `already-fired`, `session-gone`, `service-refused`), one shot per
+  session claimed before the send as the kickoff does. It writes no row itself: every record,
+  the F4 `unsupported` one included, comes from `startupPrompt.fire`.
 - The Fire button posts `POST /api/sessions/:project/startup-prompt/fire` with the row's
   `sessionId`/`sequenceId`, `expectedRevision` read from `GET /api/startup-prompt` at click time,
   and a random idempotencyKey; the response's `fire.outcome`/`reasonCode` is shown and the panel
@@ -948,7 +952,8 @@ trusted scratch directory `/private/tmp/tc731`:
   pastes nothing (`tmux.sendKeys` never called); the ledger row for inline rules reads `skipped`;
   a blocked fire pastes nothing and records the blocker; an unsupported engine records the F4 row
   and pastes exactly as today; a launch without a sequence is untouched; a second call is
-  `already-fired`; a pane that never becomes ready records `engine_not_ready` and sends nothing.
+  `already-fired`; a pane that never becomes ready records `blocked (pane_not_ready)` through the
+  service and `adapter.fire` is never invoked; a native launch gets no preKeys either.
 - Service: `canFire` grants `launch` only to the internal self-targeting caller; the HTTP route
   cannot mint it; the v47 rebuild keeps rows and widens both CHECKs; a v46 row inserts unchanged.
 - Route: `startupControl` present for the operator, absent for a project-bound caller, `denied`

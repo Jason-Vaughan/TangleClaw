@@ -655,9 +655,14 @@ Every other launch keeps today's path (`legacy`) and records, through the same s
 not go native — `unsupported` with the capability's reason (`engine_declares_none` for an engine that
 declares no channel, `version_unverified`, …) or `blocked (channel_unavailable)` for a supported engine
 whose server did not start. The app-server also inherits the pane's ambient environment (`tc` on PATH,
-`TANGLECLAW_PROJECT_ID`, `TANGLECLAW_API`, `TANGLECLAW_WORKSPACE_ID`, `TANGLECLAW_LAUNCH_ID`): with
-`--remote` the agent loop and its shell tools run in the server, so the `tc start next` the fired
-prompt asks for resolves to the same identity the pane's would.
+`TANGLECLAW_PROJECT_ID`, `TANGLECLAW_API`, `TANGLECLAW_WORKSPACE_ID`, `TANGLECLAW_LAUNCH_ID`), on the
+understanding that with `--remote` the agent loop and its shell tools run in the server, so the
+`tc start next` the fired prompt asks for is expected to resolve to the same identity the pane's
+would. That is an assumption until the first live Codex launch after this shipped confirms it
+(`VRF-1825-b3-native-bootstrap`); if it proves false, the pane still has the identity and the fix
+belongs in how the server is started, not in the bootstrap. Codex's engine-level `preKeys` are
+withheld on a native launch too: a preKey is a keystroke, and two Enters on a fresh trust dialog
+would accept its default before readiness could refuse `trust_required`.
 
 **Readiness is read from the protocol, never from the pane.** Before a send the adapter needs all of:
 the app-server's `initialize` version equal to the installed and the recorded one; `config/read`

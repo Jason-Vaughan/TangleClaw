@@ -29,6 +29,7 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
   let bootstraps;
   let kickoffs;
   let pastes;
+  let rawKeys;
   let ledger;
   const real = {};
 
@@ -36,6 +37,8 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
   // fixed short delay away rather than gated on a pane these tests do not have.
   const ENGINE = 'fake-engine';
   const PROFILE = Object.freeze({ capabilities: { supportsPrimePrompt: true }, launch: { startupDelay: 5 } });
+  // Codex's real shape: engine-level preKeys that would dismiss a dialog.
+  const PROFILE_WITH_PREKEYS = Object.freeze({ capabilities: { supportsPrimePrompt: true }, launch: { startupDelay: 5, preKeys: ['Enter', 'Enter'], preKeyDelay: 5 } });
 
   before(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-bootstrap-wiring-'));
@@ -45,6 +48,8 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
     real.bootstrap = launchBootstrap.bootstrap;
     real.kickoff = launchKickoff.kickoff;
     real.sendKeys = tmux.sendKeys;
+    real.sendRawKey = tmux.sendRawKey;
+    real.hasSession = tmux.hasSession;
     real.probe = tmux.probeSession;
     real.record = store.sessionRuleDeliveries.record;
   });
@@ -53,6 +58,8 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
     Object.assign(launchBootstrap, { bootstrap: real.bootstrap });
     launchKickoff.kickoff = real.kickoff;
     tmux.sendKeys = real.sendKeys;
+    tmux.sendRawKey = real.sendRawKey;
+    tmux.hasSession = real.hasSession;
     tmux.probeSession = real.probe;
     store.sessionRuleDeliveries.record = real.record;
     store.close();
@@ -63,10 +70,13 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
     bootstraps = [];
     kickoffs = [];
     pastes = [];
+    rawKeys = [];
     ledger = [];
     launchBootstrap.bootstrap = (args) => { bootstraps.push(args); return Promise.resolve('fired'); };
     launchKickoff.kickoff = (args) => { kickoffs.push(args); return Promise.resolve('sent'); };
     tmux.sendKeys = (name, text) => { pastes.push({ name, text }); return true; };
+    tmux.sendRawKey = (name, key) => { rawKeys.push({ name, key }); return true; };
+    tmux.hasSession = () => true;
     tmux.probeSession = () => ({ answered: true, live: true });
     store.sessionRuleDeliveries.record = (entry) => { ledger.push(entry); return entry; };
   });
@@ -75,6 +85,8 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
     launchBootstrap.bootstrap = real.bootstrap;
     launchKickoff.kickoff = real.kickoff;
     tmux.sendKeys = real.sendKeys;
+    tmux.sendRawKey = real.sendRawKey;
+    tmux.hasSession = real.hasSession;
     tmux.probeSession = real.probe;
     store.sessionRuleDeliveries.record = real.record;
   });
@@ -120,6 +132,28 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
     assert.equal(pastes[0].text, 'the prime');
     assert.equal(ledger.length, 1);
     assert.equal(ledger[0].channel, 'prime-paste', 'the paste records its own delivery as before');
+  });
+
+  it('a native launch gets no preKeys either: a keystroke that would accept a trust dialog is exactly what F2 refuses', async () => {
+    sessions._deferEngineInit(
+      'tc-b1', 'TangleClaw-Builder1', ENGINE, PROFILE_WITH_PREKEYS,
+      'the prime', null, false, null,
+      { sessionId: 99, projectId: 3, hasSequence: true, startupDelivery: 'native' }
+    );
+    await settle();
+    assert.deepEqual(rawKeys, [], 'nothing is typed into a native pane, preKeys included');
+    assert.deepEqual(pastes, []);
+    assert.equal(bootstraps.length, 1);
+
+    rawKeys = [];
+    sessions._deferEngineInit(
+      'tc-b1', 'TangleClaw-Builder1', ENGINE, PROFILE_WITH_PREKEYS,
+      'the prime', null, false, null,
+      { sessionId: 98, projectId: 3, hasSequence: true, startupDelivery: 'legacy' }
+    );
+    // The second preKey is scheduled 500 ms after the first, as it always was.
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    assert.deepEqual(rawKeys.map((k) => k.key), ['Enter', 'Enter'], 'the legacy launch keeps its preKeys exactly as before');
   });
 
   it('a launch that never said which path it took is the keystroke path', async () => {

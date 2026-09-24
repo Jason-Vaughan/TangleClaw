@@ -204,6 +204,26 @@ describe('startupControl at launch and teardown (codex)', () => {
     assert.equal(store.startupControlChannels.getOpenBySession(unverified.session.id), null);
   });
 
+  it('a channel whose row could not be recorded is closed out as unavailable, so a native launch never shows no channel at all', () => {
+    healthySeams();
+    const realAttach = codex.attachLaunch;
+    codex.attachLaunch = (handle, launch) => { codex.abandonLaunch(handle, 'test: row not recorded'); return null; };
+    let l;
+    try {
+      l = launched({ primePrompt: true });
+    } finally {
+      codex.attachLaunch = realAttach;
+    }
+    assert.equal(l.sequence.startupDelivery, 'native', 'the selection was frozen before the attach and stands');
+    assert.equal(store.startupControlChannels.getOpenBySession(l.session.id), null);
+    const latest = store.startupControlChannels.getLatestBySession(l.session.id);
+    assert.ok(latest, 'a closed row names the cause');
+    assert.equal(latest.state, 'closed');
+    assert.equal(latest.adapter, 'codex');
+    assert.match(latest.closeReason, /^channel_unavailable: the channel row could not be recorded/);
+    assert.equal(calls.kills.length, 1, 'the server the row would have named was stopped');
+  });
+
   it('the app-server inherits the pane\'s environment: the PATH floor and the launch identity `tc` needs (B3)', () => {
     healthySeams();
     const l = launched();
