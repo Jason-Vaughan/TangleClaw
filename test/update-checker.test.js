@@ -283,12 +283,14 @@ describe('#716 measuring on demand', () => {
   let realLsRemoteSync;
   let realGitRemote;
   let realCurrentVersion;
+  let realNow;
 
   beforeEach(() => {
     realLsRemote = uc._internal.lsRemote;
     realLsRemoteSync = uc._internal.lsRemoteSync;
     realGitRemote = uc._internal.gitRemote;
     realCurrentVersion = uc._internal.currentVersion;
+    realNow = uc._internal.now;
     uc._reset();
   });
 
@@ -300,6 +302,7 @@ describe('#716 measuring on demand', () => {
     // for every later test in the file, which fails them for a reason that has
     // nothing to do with what they assert.
     uc._internal.currentVersion = realCurrentVersion;
+    uc._internal.now = realNow;
     uc._reset();
   });
 
@@ -496,6 +499,16 @@ describe('#716 measuring on demand', () => {
       return { count: () => calls };
     }
 
+    /**
+     * Install a controllable clock behind the module's `now` seam.
+     * @returns {{advance: (ms: number) => void}}
+     */
+    function stubClock() {
+      let t = 1_000_000;
+      uc._internal.now = () => t;
+      return { advance: (ms) => { t += ms; } };
+    }
+
     it('spawns once for a real answer, not on every request', () => {
       // This is a SYNCHRONOUS spawn now reached from every page load and tab
       // refocus. Without the memo it is a 2s-timeout blocking call on the hot
@@ -520,15 +533,71 @@ describe('#716 measuring on demand', () => {
       // (#324), and that is the case which throws. Caching it would trade a
       // repeated stall for permanently losing every release-notes link on an
       // install already in trouble.
+      const clock = stubClock();
       const failing = stubGitRemote(new Error('spawn timed out'));
       assert.equal(uc._getReleasesUrlBase(), null, 'degrades to no link for now');
-      assert.equal(uc._getReleasesUrlBase(), null);
-      assert.equal(failing.count(), 2, 'a failed read stays retryable');
+      assert.equal(failing.count(), 1);
 
+      clock.advance(uc.ORIGIN_LOOKUP_BACKOFF_MS);
       const recovered = stubGitRemote('https://github.com/o/r.git\n');
       assert.equal(uc._getReleasesUrlBase(), 'https://github.com/o/r/releases/tag/',
         'and the link comes back once git works again');
-      assert.equal(recovered.count(), 1);
+      assert.equal(uc._getReleasesUrlBase(), 'https://github.com/o/r/releases/tag/');
+      assert.equal(recovered.count(), 1, 'a recovered answer is memoized like any other');
+    });
+
+    describe('a failure backs off instead of re-spawning on every check', () => {
+      // Each attempt is a synchronous spawn of up to 2s on the event loop. With
+      // the manual refresh floor at 10s, retrying on every check lets a degraded
+      // install stall the whole server every few seconds.
+
+      it('does not spawn again inside the back-off window', () => {
+        const clock = stubClock();
+        const failing = stubGitRemote(new Error('spawn timed out'));
+        assert.equal(uc._getReleasesUrlBase(), null);
+        clock.advance(uc.ORIGIN_LOOKUP_BACKOFF_MS - 1);
+        assert.equal(uc._getReleasesUrlBase(), null, 'still no link while backing off');
+        assert.equal(failing.count(), 1, 'no second spawn inside the window');
+      });
+
+      it('retries once the window has passed, and re-arms if it fails again', () => {
+        const clock = stubClock();
+        const failing = stubGitRemote(new Error('spawn timed out'));
+        uc._getReleasesUrlBase();
+        clock.advance(uc.ORIGIN_LOOKUP_BACKOFF_MS);
+        assert.equal(uc._getReleasesUrlBase(), null);
+        assert.equal(failing.count(), 2, 'the window elapsed, so the lookup ran again');
+
+        clock.advance(uc.ORIGIN_LOOKUP_BACKOFF_MS - 1);
+        uc._getReleasesUrlBase();
+        assert.equal(failing.count(), 2, 'the second failure started a fresh window');
+        clock.advance(1);
+        uc._getReleasesUrlBase();
+        assert.equal(failing.count(), 3);
+      });
+
+      it('_reset clears the back-off', () => {
+        stubClock();
+        const failing = stubGitRemote(new Error('spawn timed out'));
+        uc._getReleasesUrlBase();
+        uc._reset();
+        uc._getReleasesUrlBase();
+        assert.equal(failing.count(), 2);
+      });
+
+      it('holds across measurements, which is where the stall was paid', async () => {
+        // `_buildStatus` reaches the lookup only when a tag was found, so the
+        // stub serves one. Both measurements run inside the window.
+        stubClock();
+        stubLsRemote(TAGS);
+        const failing = stubGitRemote(new Error('spawn timed out'));
+        const first = await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
+        const second = await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
+        assert.equal(first.releaseUrl, null);
+        assert.equal(second.releaseUrl, null);
+        assert.equal(second.checkOk, true, 'the lookup failing is not a failed measurement');
+        assert.equal(failing.count(), 1);
+      });
     });
   });
 
