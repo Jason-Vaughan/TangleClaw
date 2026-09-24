@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useState } from "react";
 import VersionBadge from "./components/VersionBadge";
+import MilestoneFeed from "./components/MilestoneFeed";
 
 export default function Home() {
   const [selectedImage, setSelectedImage] = useState<{src: string, alt: string} | null>(null);
@@ -124,6 +125,11 @@ export default function Home() {
               <span>Aider</span>
               <span>&middot;</span>
               <span>OpenClaw</span>
+            </div>
+            
+            {/* Dynamic Milestone Feed */}
+            <div className="w-full mt-16 pt-8 border-t border-white/5">
+              <MilestoneFeed />
             </div>
           </div>
         </div>
