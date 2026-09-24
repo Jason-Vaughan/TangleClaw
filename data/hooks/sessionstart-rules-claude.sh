@@ -21,7 +21,8 @@ set -u
 SHARD="${1:-1}"
 
 # Why SessionStart fired (#1761): the same stdin read as the prime hook, with
-# the same timeout and the same startup default. The shard is emitted whatever
+# the same timeout, the same startup default and the same stderr line when a
+# stdin that was sent cannot be read. The shard is emitted whatever
 # the source, since `/clear` and a compaction drop the rules too; only the
 # receipt below depends on it.
 HOOK_SOURCE=""
@@ -29,6 +30,11 @@ if [ ! -t 0 ]; then
   HOOK_INPUT=""
   IFS= read -r -d '' -t 1 HOOK_INPUT || true
   HOOK_SOURCE="$(printf '%s' "$HOOK_INPUT" | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([a-z]*\)".*/\1/p' | head -n 1)"
+  if [ -n "$HOOK_INPUT" ] && [ -z "$HOOK_SOURCE" ]; then
+    # Said, not swallowed: a stdin the engine sent but this could not read is
+    # treated as a startup, and on a /clear that is the wrong answer.
+    echo "tangleclaw: SessionStart source unreadable; treating this fire as a startup" >&2
+  fi
 fi
 RULES_FILE="${CLAUDE_PROJECT_DIR:-}/.tangleclaw/session-rules-${SHARD}.json"
 

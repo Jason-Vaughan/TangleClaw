@@ -150,6 +150,24 @@ describe('sessionstart-prime-claude.sh hook script (#103)', () => {
     });
   }
 
+  it('says on stderr when it could not read a source the engine sent, and stays quiet when none was sent', () => {
+    // An unreadable source falls back to startup, which on a /clear delivers
+    // the prime without its preamble; that fallback must be visible somewhere.
+    writePrimeFiles('RE-ENTRY\n');
+    const { spawnSync } = require('node:child_process');
+    const run = (input) => spawnSync(HOOK_SCRIPT, [], {
+      env: { ...process.env, CLAUDE_PROJECT_DIR: projectDir }, input, encoding: 'utf8'
+    });
+    const garbled = run('{"hook_event_name": "SessionStart", "source": 42}');
+    assert.equal(garbled.status, 0);
+    assert.equal(garbled.stdout, '# Session Prime\nLaunch instructions\n');
+    assert.match(garbled.stderr, /SessionStart source unreadable; treating this fire as a startup/);
+    const empty = run('');
+    assert.equal(empty.stderr, '');
+    const clean = run(JSON.stringify({ source: 'startup' }));
+    assert.equal(clean.stderr, '');
+  });
+
   it('emits the prime alone on clear when there is no preamble to put first', () => {
     writePrimeFiles(null);
     assert.equal(runHook(JSON.stringify({ source: 'clear' })), '# Session Prime\nLaunch instructions\n');
