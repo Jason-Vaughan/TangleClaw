@@ -36,6 +36,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Changed
 
+- **Website copy rewrite and hero redesign**. Aligned the homepage copy with shipped capabilities and the Architect review, restoring the SDLC orchestration platform tagline. Redesigned the hero section with a new wordmark logo, decoupled icon scaling, and a polished version badge.
+- **Cookieless analytics tracking**. Switched PostHog tracking to `persistence: 'memory'` to avoid cookie banners, and added a secret `?ignore_me=true` URL parameter to locally opt out of all tracking without requiring browser extensions.
 - **The system health panel's "Server running old code" agrees with the stale-server banner** (#1678). Commits that only touch records (docs, tests, plans) now leave the condition clear with "records-only commits, no restart needed", as the banner already said. Code or mixed commits still fire it; so does a range that is not classified yet or could not be, with "restart impact unknown", because missing evidence never clears a warning.
 - The checkout block's `incomplete` list now holds only the checkout's own gaps; reasons about the comparison with the clone's local `origin/main` ref moved to `localRef.incomplete`. A project with no git whose group relation could not be decided now says "related repository not determined" with the reason, as it already did while pending.
 
