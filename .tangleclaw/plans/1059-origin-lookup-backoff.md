@@ -8,9 +8,9 @@
 - [x] Architect has ruled on A1–A3 (all approved 2026-09-24; see Rulings)
 - [x] Build: back-off + clock seam + tests + CHANGELOG (`### Fixed`)
 - [x] Verify: focused tests + full suite
-- [x] Critic (cumulative, 2026-09-24: 0 blocking, 0 warnings, 2 notes on this plan, both fixed)
+- [x] Critic (cumulative, 2026-09-24: 0 blocking, 0 warnings, 2 notes on this plan, both fixed. Re-run after the rebase: 0 blocking, 0 warnings)
 - [x] Draft PR opened: #1843. **STOP here** (pilot boundary)
-- [ ] After #1311 merges and the PM says go: rebase, rerun focused + full suite + Critic on the combined target
+- [x] After #1311 merges (#1842) and the PM says go: rebase, rerun focused + full suite + Critic on the combined target
 
 **Pilot envelope (set by the Architect; these restrictions are IN FORCE):** no merging any PR, no pulling/updating the live checkout,
 no restarting the live service, no live check on the main instance, no tag/publish/release, no deploy.
@@ -41,7 +41,7 @@ are left open (A1, A3).
 
 ## Design
 
-- New module state `_releasesUrlBaseRetryAt` (ms epoch, or `0` = no back-off). When a read throws,
+- New module state `_releasesUrlBaseRetryAt` (on the `_internal.now` clock, which counts from process start; `0` = no back-off). When a read throws,
   `_getReleasesUrlBase` sets it to `now + ORIGIN_LOOKUP_BACKOFF_MS`. While `now < _releasesUrlBaseRetryAt`
   it returns `null` without spawning. When the lookup answers, it memoizes the answer as it does today
   (the retry timestamp stops mattering). `_reset()` clears the timestamp, following the module's rule
