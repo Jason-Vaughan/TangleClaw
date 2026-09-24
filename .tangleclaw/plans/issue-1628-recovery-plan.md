@@ -3,8 +3,8 @@
 Issue: https://github.com/Jason-Vaughan/TangleClaw/issues/1628 (OPEN, checked 2026-09-23).
 Dispatch: PM message `88fb8276`, "#1628 Recovery". This dispatch revokes merging, the live
 checkout, the service restart, live checks and releases. The Operator integrates.
-Status: **built to the Architect's final rulings D1–D8 on branch `fix/1628-appserver-wake-readiness`
-(Builder2 worktree `.claude/worktrees/1628-appserver`). Next: the full suite, the Critic, then the PR.**
+Status: **built to the Architect's final rulings D1–D10 on branch `fix/1628-appserver-wake-readiness`
+(Builder2 worktree `.claude/worktrees/1628-appserver`). The full suite is green and the Critic is clean (verify-resolutions: 0 blocking). Next: the PR, with no merge.**
 Authorization: the Architect's `two-builder-readiness-roadmap.md`, section "Builder2 recovery exception
 — 2026-09-24". It is a one-task exception, and the general hold still stands.
 
@@ -20,8 +20,8 @@ Authorization: the Architect's `two-builder-readiness-roadmap.md`, section "Buil
 | D6 | MODIFY | With a channel present, a missing, stale, failed or unknown answer **holds** as `engine-thread-unknown`. The cache and the in-flight read are keyed by session+channel+launch, late results are discarded, and nothing is injected from the callback. |
 | D7 | APPROVE scope, MODIFY rationale | The launch gate is unchanged, and nothing creates a thread or spends a turn. Corrected rationale: shipped evidence says a fresh thread cannot be **subscribed to or have its turns listed** before its first user message. That is not the same as loaded-thread discovery, which the observer does use. |
 | D8 | APPROVE option (b) with guards | An unrecorded channel thread is bound to the sole loaded project thread, compare-and-set (`updateAdapterStateIf`), and never replaces a recorded thread. After the bind, "only one" is re-established. Before `idle`, the row is re-read for the same generation. A lost race answers `unknown`. |
-
-| D9 | **PENDING** (asked after the Critic's blocking finding) | A Project Master running Codex never has a launch channel. Built to my recommendation (a): it holds as `master-engine-unobserved`, whose meaning says no relaunch will fix it. Rejected: (b) the Master keeps the pane gate, which carries the ledger-5030 false idle. With it, the wake consults channels only for engines that `declaresObserver`, so a channel-lookup failure cannot hold a Claude session. |
+| D9 | APPROVE option (a) | A Project Master running Codex never has a launch channel, so it holds as `master-engine-unobserved`: no pane fallback, and no relaunch remedy offered. Observing the Master is separate work for the PM to admit. |
+| D10 | APPROVE | Channels are consulted only for an engine whose profile's adapter resolves through the registry **and** implements `observeActivity` (`declaresObserver`); a declaration alone is not enough. A non-observer engine keeps its current wake behaviour even when a channel-store read fails. |
 
 **Consequences recorded before the PR:** a Codex session launched before startupControl channels, or
 whose app-server did not start, no longer gets wakes until it is relaunched. The ledger and the peer
