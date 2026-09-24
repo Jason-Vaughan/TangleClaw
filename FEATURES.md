@@ -715,7 +715,4 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - **version-bump release gate** (#1492) — `releaseMode`, the readiness verdict and the operator's Cut/Hold decide whether a wrap cuts a release; a question only the operator can answer halts with `needs-operator`. `test/version-bump-release-gate.test.js`.
 - **Withheld methodology authority** (#1738) — a wrap from an engine that cannot run Prawduct is a state-only checkpoint across real steps: no probe, no release cut, no merge, `.prawduct/` untouched, and every step reads one resolved answer. `test/wrap-methodology-authority.test.js`.
 - **Resume publication binding, end to end** (#1675) — drives the real handoff-stage step, finalizer, launch preflight and prime renderer together, and asserts the next session's Resume comes from the publication the wrap produced, not an index no publication vouches for. `test/resume-publication-binding.test.js`.
-
-## TODO (auto-stubbed 2026-09-23)
-
-- **TBD** — touched in this session: `test/workflow-action-pins.test.js`. <!-- describe -->
+- **Workflow action pins** (#1436) — every `uses:` in `.github/workflows/` must be a full commit SHA with an exact `# vX.Y.Z` comment (docker refs digest-pinned, local `./` paths allowed), every workflow must declare top-level `permissions:`, and `release.yml`'s `node-version` must be an exact `X.Y.Z`; runs inside the required `test` check so an unpinned ref cannot merge. `test/workflow-action-pins.test.js`.
