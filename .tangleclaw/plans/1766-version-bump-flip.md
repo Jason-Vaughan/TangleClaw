@@ -8,9 +8,9 @@
 - [x] Research + plan written (2026-09-24); parked here for the Continuity Test clear (PM, 2026-09-24)
 - [x] Architectural items A1–A3 sent to the Architect (2026-09-24) → **STOP here** (Plan Written boundary)
 - [x] Architect has ruled on A1–A3 (all approved 2026-09-24; see Rulings). Architectural gate cleared for this scope only
-- [ ] PM go to build
-- [ ] Build: remove the step + its staging key + commit-body line + tests; add the regression test; FEATURES.md + CHANGELOG
-- [ ] Verify: focused tests + full suite (this checkout only, never the main instance)
+- [x] PM go to build (Medusa msg 40bd7164, 2026-09-24)
+- [x] Build: remove the step + its staging key + commit-body line + tests; add the regression test; FEATURES.md + CHANGELOG (2026-09-24). Also dropped the now-stale "no stamp on `.prawduct/change-log.md`" clause from the #1738 hold comment in `run`
+- [x] Verify: focused tests + full suite (this checkout only, never the main instance). Baseline at HEAD green; changed tree green (2026-09-24)
 - [ ] Critic
 - [ ] Draft PR opened. **STOP** (pilot boundary: no merge)
 

@@ -392,6 +392,7 @@ describe('version-bump release gate', () => {
     it('holds a ready auto cut, stages nothing, and leaves .prawduct/change-log.md byte-identical', async () => {
       const project = makeProject({ config: { releaseMode: 'auto' }, plan: '- [x] done' });
       const ledger = path.join(project.path, '.prawduct', 'change-log.md');
+      // The ledger is not what proves the hold: no version-bump run writes it (ADR 0011). The version and CHANGELOG assertions do.
       const ledgerText = '<!-- prawduct: id=X status=merged -->\n';
       fs.writeFileSync(ledger, ledgerText);
       const { result, staged } = await runOn(project, {}, dormant);

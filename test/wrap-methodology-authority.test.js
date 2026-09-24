@@ -42,6 +42,7 @@ describe('wrap methodology authority (#1738)', () => {
     store.init();
     projectPath = path.join(tmpDir, 'onboarded');
     fs.mkdirSync(path.join(projectPath, '.prawduct'), { recursive: true });
+    // The ledger is not what proves the hold: no version-bump run writes it (ADR 0011). The version and CHANGELOG assertions do.
     fs.writeFileSync(path.join(projectPath, '.prawduct', 'change-log.md'), '<!-- prawduct: id=A status=merged -->\n');
     fs.writeFileSync(path.join(projectPath, 'version.json'), JSON.stringify({ version: '1.0.0' }));
     fs.writeFileSync(path.join(projectPath, 'CHANGELOG.md'), '# Changelog\n\n## [Unreleased]\n\n### Added\n- x\n');
