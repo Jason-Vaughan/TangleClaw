@@ -1,9 +1,9 @@
 ---
 title: startupControl — engine-native startup delivery with semantic receipt
 issue: 1825
-status: Spike COMPLETE (Architect S1–S5, message d94974c3). Build chunks admitted 2026-09-23. B1 REVIEWED (Architect D1–D8 ruled; Critic clean) and its PR is open. B2 (the Codex adapter) is next and owes the Architect evidenced sources for the priming-pact digest and the target role+assignment revision
+status: B1 SHIPPED (PR #1831). B2 (the Codex adapter) PLANNED 2026-09-24; E1–E9 sent to the Architect, with the D8 sources (E8). B3 follows in this session on the PM's dispatch
 scope: startupcontrol-1825
-branch: feat/1825-startup-control-c1
+branch: feat/1825-startup-control-b2
 ---
 
 # startupControl (#1825)
@@ -400,6 +400,252 @@ and are not committed, because they contain account identifiers.
 
 - Every test above is green, the full suite is green, and the docs are current.
 - The Architect has ruled on D1–D8, and the Critic is clean.
+
+## Chunk B2: the Codex adapter
+
+### Confidence check
+
+1. **Problem:** with B1, every fire is refused as unsupported. Codex has a native channel (the
+   spike), but TangleClaw neither owns a per-launch app-server nor launches the pane's TUI against
+   one, so no receipt can exist.
+2. **Success:**
+   - A Codex session launched by TangleClaw runs its TUI against a TangleClaw-owned app-server on a
+     local unix socket. `tc capabilities` reports `startup-control` enabled for codex-cli 0.156.1.
+   - A fire by the operator, or by a listed firer in scope, delivers the prompt as a user turn the
+     operator sees in the pane, and the fire row moves `pending → dispatching → accepted → applied`
+     with the engine-echoed payload digest as the binding.
+   - A fire that cannot proceed names its blocker (`trust_required`, `auth_required`,
+     `quota_exhausted`, `engine_not_ready`) and types nothing. A turn that fails or that the operator
+     interrupts is recorded as such. A turn waiting on an approval stays `accepted` and says so.
+   - A TangleClaw restart neither kills the pane's app-server nor loses the channel; ending the
+     session ends the app-server.
+   - A Codex launch whose app-server cannot be started launches exactly as today, and records why.
+3. **Out of scope:** the automatic bootstrap at launch and the legacy-fallback decision (B3); the
+   launch panel, its receipts and the Fire button (B3); any engine other than Codex; a read route
+   for fire records (B3's panel); creating the thread from TangleClaw's side (impossible before the
+   first user message on 0.156.1, see below).
+
+### Facts established while planning (measured live 2026-09-24 against codex-cli 0.156.1, six probes, no model turn spent)
+
+- **Transport.** The unix socket speaks WebSocket (RFC 6455) carrying JSON-RPC-shaped messages
+  WITHOUT a `jsonrpc` field: `{id, method, params}` → `{id, result}` or `{id, error}`;
+  notifications are `{method, params}`. A 100-line hand-rolled client (handshake, masking, ping/pong,
+  126/127-byte length forms, fragments) completed `initialize` and every call below. The project has
+  no dependencies (no `package.json`), and Node's global `WebSocket` cannot dial a unix socket, so
+  the client is ours.
+- **`initialize` reports the server's version** in `userAgent` (`<client>/0.156.1 (...)`), so a
+  channel can be checked against the adapter's cached installed version at readiness.
+- **Launch-mode flags survive `--remote`.** `codex --remote unix://<path> -a never -s
+  workspace-write` attached and the status line read `never`; `thread/start` from the protocol echoes
+  `approvalPolicy` and `sandbox` the same way.
+- **Trust lives in the TUI, not the server.** In an untrusted directory the TUI sits at the
+  "Trust this folder?" dialog and loads NO thread (30 s, `thread/loaded/list` empty), while
+  `thread/start` from the protocol in the same directory succeeds without complaint. `config/read`
+  returns `config.projects[<path>].trust_level`, so trust is readable on the protocol before a fire.
+  A `-c projects.<path>.trust_level=trusted` override on the TUI's command line does NOT bypass the
+  dialog.
+- **A fresh thread cannot be subscribed to, listed or resumed before its first user message.**
+  `thread/resume` answers `no rollout found`, `thread/turns/list` answers "thread ... is not
+  materialized yet; unavailable before first user message", and `thread/items/list` is "not
+  supported yet"; the rollout file is absent for 15+ s after the thread starts. Metadata writes
+  (`thread/name/set`) do not materialize it. `codex resume <id> --remote` fails for the same reason,
+  so TangleClaw cannot create the thread and have the TUI join it. **Therefore the fire's own
+  `turn/start` is what materializes the thread, and the subscription must follow the `turn/start`
+  response.** The spike already showed that the sender of `turn/start` is NOT subscribed by sending.
+- **Global notifications arrive without a subscription:** `thread/started` (with the thread's
+  `cwd`), `thread/status/changed`, `account/updated`, `account/rateLimits/updated`,
+  `thread/name/updated`. Per-turn `turn/*` and `item/*` events need the subscription.
+- **Blockers are readable before a send.** `account/read` → `{account: {type: chatgpt, email,
+  planType} | null, requiresOpenaiAuth}`. `account/rateLimits/read` →
+  `{ordinaryUsageAllowed, rateLimits: {primary: {usedPercent, resetsAt}, credits: {hasCredits,
+  balance}, rateLimitReachedType}}`. Measured now: weekly window 100 % used, resetting 2026-09-24
+  04:33 UTC, credits present. In-turn: `thread/status/changed {active, activeFlags:
+  [waitingOnApproval | waitingOnUserInput]}` and `serverRequest/resolved` (spike).
+- **Process lifecycle.** `codex app-server --listen unix://<long path>` binds a short path under
+  `/private/tmp/codex-daemon-<uid>/<hash>` and leaves a symlink at the requested path; the TUI needs
+  the resolved short path. SIGTERM exits 0 and removes both. A TUI exiting does not close its thread
+  (`thread/loaded/list` still names it).
+- **Wire shapes** come from `codex app-server generate-json-schema` (v2), read into the scratchpad,
+  not from memory: `TurnStartParams {threadId, input: [{type: 'text', text}], clientUserMessageId}`,
+  `Turn {id, status: completed|interrupted|failed|inProgress, error: TurnError{message,
+  codexErrorInfo}}`, `ThreadItem userMessage {id, clientId, content}`, `ThreadStatus`,
+  `ThreadTurnsListParams {threadId, itemsView}`.
+- **Code seams.** `lib/sessions.js#launchSession` builds the pane command (`_buildLaunchCommand`)
+  and creates the tmux session BEFORE the session row exists (`store.sessions.start` binds the launch
+  snapshot in the same transaction); `killSession` and the four other `_teardownMedusa` call sites
+  are where a session's server-owned resources end. `store.startupPrompts.transaction` is
+  synchronous (`BEGIN IMMEDIATE`), so nothing asynchronous can run inside it. The v44→v45 tables have
+  zero fire rows on the live install. SQLite cannot alter a CHECK constraint in place.
+
+### Architectural decisions (for the Architect; recommendation first)
+
+- **E1: Channel ownership and lifetime.** Recommended: TangleClaw spawns one `codex app-server
+  --listen unix://<TangleClaw base dir>/run/startup-control/<random>.sock` per launch, **detached**
+  (own process group, stdio ignored), before the pane exists; the pane runs `codex --remote
+  unix://<resolved short path> <launch-mode args>`. The channel is torn down (SIGTERM, socket
+  removed) when the session is killed, wrapped or found crashed, and by a reaper at boot and every
+  five minutes for channels whose session is no longer active. The reaper verifies the pid is still
+  a `codex app-server` naming that socket before signalling it. Rejected: (a) a child of the
+  TangleClaw process: every restart of the live server (frequent here) would sever every Codex pane;
+  (b) hosting the app-server inside the pane (`codex app-server & codex --remote`): TangleClaw could
+  not tell whether the socket it connects to is this launch's, and readiness would race the shell;
+  (c) the shared `codex app-server daemon`: one server across launches and users, against S4's
+  per-launch, server-owned socket.
+- **E2: Persisted channel record.** Recommended: a new table `startup_control_channels` (schema
+  v46): `id, session_id, sequence_id, engine_id, adapter, engine_version, socket_path,
+  resolved_socket_path, pid, thread_id (NULL until the TUI's thread is observed), state
+  (open|closed), opened_at, closed_at, close_reason`, one open row per session. No launch id.
+  Rejected: columns on `launch_sequences` (the generic launch row must carry no Codex contract, S4);
+  an in-memory map (a restart would orphan every app-server and lose every reconnection).
+- **E3: Launch-mode carry-over.** Recommended: the existing `launchModes` args are appended after
+  `--remote` unchanged, because the TUI applies them in remote mode (measured). The app-server is
+  started with no policy flags. Rejected: passing the policy to the app-server with `-c`, which makes
+  the pane's flags and the server's config two sources for one posture.
+- **E4: Readiness (acceptance case 2).** Recommended, all on the protocol: (1) the channel's
+  app-server answers `initialize`, and its `userAgent` version equals the adapter's installed
+  version; (2) `thread/loaded/list` names one thread whose `cwd` is the project path (recorded as the
+  channel's `thread_id` on first sight); (3) `thread/read` reports `idle`; (4) `account/read` names an
+  account; (5) `account/rateLimits/read` allows ordinary usage or reports credits; (6) `config/read`
+  shows the project path `trust_level: trusted`. **Subscription is not a readiness precondition on
+  0.156.1** (the server refuses it before the first user message); it is the first step of the
+  receipt path (E5). Rejected: pane reads (glyphs, quiet pane) as readiness, which case 2 forbids;
+  waiting for a subscription that this version cannot grant, which would make every fresh launch
+  never-ready.
+- **E5: Fire and receipt transitions (D8).** Recommended: B1's transaction writes the intent row as
+  `pending` and commits; the adapter then runs outside it. `dispatching` is written when the
+  `turn/start` frame (with `clientUserMessageId = payloadDigest`, E8) is handed to the socket. On the
+  `turn/start` response the turn id is stored; the adapter then calls `thread/resume {excludeTurns:
+  true}` (the thread is materialized now) and ONE `thread/turns/list {itemsView: full}` read-back to
+  reconcile whatever was emitted before the subscription. A userMessage item in that turn whose
+  `clientId` equals the payload digest, from either the read-back or an `item/completed`
+  notification, is **accepted**. Then `turn/completed {completed}` → **applied**; `{failed}` →
+  **failed** (`turn_failed`, with `codexErrorInfo` in the bounded reason); `{interrupted}` →
+  **interrupted**. `thread/status/changed active [waitingOnApproval | waitingOnUserInput]` during the
+  turn keeps `accepted` and sets `reasonCode: approval_pending`; `serverRequest/resolved` clears it.
+  The operator answers approvals in the TUI; TangleClaw never answers one. A socket lost before the
+  `turn/start` response → **indeterminate** (`send_unconfirmed`); an error response → **failed**
+  (`turn_rejected`); a socket lost after `accepted` → reconnect (bounded) and settle from the
+  turn's status in `thread/turns/list`; a channel that is gone → **indeterminate** (`channel_lost`).
+  The fire route waits up to 10 s for `accepted` or a terminal state and returns the row as it then
+  stands (200); the watch continues in the background to settle `applied`, and every transition is
+  written to the activity log. Rejected: returning before the intent is durable; treating the
+  `turn/start` response alone as accepted (it carries no echo of our id); a new fires read route in
+  this chunk (B3's panel owns reading; B1 fixed the routes).
+- **E6: Blockers (acceptance case 4).** Recommended reason codes, added to the bounded list:
+  `trust_required`, `auth_required`, `quota_exhausted`, `engine_not_ready` (no channel, no thread,
+  thread not idle, or unreachable app-server), `version_mismatch`, `approval_pending`, `turn_failed`,
+  `turn_rejected`, `turn_interrupted`, `send_unconfirmed`, `channel_lost`, `channel_unavailable`
+  (the app-server could not be started at launch). A pre-send blocker is outcome **blocked** with
+  nothing sent; it leaves the launch's active slot, so a new fire may follow once cleared. The trust
+  dialog cannot be pre-answered from the protocol and is never typed through: the TUI shows it and
+  the fire says `trust_required`. Rejected: retrying through the dialog; treating an in-turn approval
+  as a terminal `blocked` (the turn is still live and the operator may approve it).
+- **E7: Retryability (D5's B2 obligation) and the v46 migration.** Recommended:
+  - `applied`: never re-injected for that `(sequence, revision)` (existing index).
+  - `pending`, `dispatching`, `accepted`: active; a second fire is `STARTUP_FIRE_IN_FLIGHT`.
+  - `indeterminate`: active and **never auto-retried**. A fire attempt that finds one first runs a
+    reconcile: `thread/turns/list` for a turn carrying the payload digest settles it to the turn's
+    true state; no such turn on an idle thread settles it to `failed` (`send_unconfirmed`), after
+    which a new fire is allowed; a channel that cannot be reached leaves it indeterminate
+    (`channel_lost`) until the session is relaunched.
+  - `blocked`, `failed`, `interrupted`, `unsupported`, `denied`: not active; a new fire with a new
+    `idempotencyKey` may be made; the same key replays the record.
+  - Transitions are enforced in the store (`updateFire` refuses a move out of a terminal outcome).
+  - v46 rebuilds `startup_prompt_fires` to widen the `reason_code` CHECK (SQLite cannot alter it),
+    copying every row, and adds `payload` (JSON, no bearer), `payload_digest`, `engine_thread_id`,
+    `engine_turn_id`, `dispatched_at`, `accepted_at`, `settled_at`; the postcondition refuses a
+    half-built table, as v45 does. Rejected: dropping the CHECK and validating only in code.
+- **E8: The launch-start payload and the D8 sources (the obligation).** The payload is canonical
+  JSON: `{launchId, sessionId, projectId, sequenceId, launchRevision, stepDigests: {identity,
+  governance, state, task}, primingPactDigest, roleAssignmentRevision, promptRevision,
+  promptTextDigest, policyDigest}`; `payloadDigest = sha256(payload)` is the `clientUserMessageId`
+  the engine echoes. The row stores the payload **without `launchId`** (the bearer is hashed in,
+  never stored) plus the digest. The step-4 revision digest of S2 is `stepDigests.task` at
+  `launchRevision`. Evidenced sources for the two inputs that have none in code:
+  - **Priming-pact digest.** Recommended **P-a**: `sha256` over the four step digests at the
+    launch's current revision, in step order. Evidence: `launch_sequence_steps.digest` is
+    `stepDigest(content)` over the exact bytes served (`lib/launch-sequence.js#buildSnapshot`), frozen
+    per revision, re-rendered only by `_reviseIfRulesChanged` (which bumps `launch_sequences.revision`)
+    and never after READY. It is the bytes the session was primed with, so it is the pact by
+    construction. Alternative **P-b**, `sourceManifest`: what the steps were built FROM (rules
+    fingerprints with `session_rules` version numbers, the global-rules hash, the engine config hash,
+    shared-doc hashes, the continuity index hash, the consumed handoff's publication id and digest,
+    the render context). Proof status: it is frozen with the snapshot and canonical for a launch,
+    but it is NOT a closure of every prime input (`project.json` settings, the engine profile and
+    the preflight verdict are not hashed), so it proves "the recorded sources were unchanged", not
+    "the prime was unchanged". Rejected: hashing `sessions.prime_prompt` (unrevisioned, and null on
+    silent-prime launches).
+  - **Role+assignment revision.** There is no session role in code: `resolveAccess` yields
+    `operator | project | master | unbound | invalid`, and the only role env is the Master pane's
+    `TANGLECLAW_ROLE`. Recommended **R-a**: role = the target project's session-rules revision set
+    (`[{ruleId, versionNo}]` from `store.sessionRules.listVersions`, the same values
+    `ruleFingerprints` records), because the operator-authored session rules are what define a
+    session's role here (this project's "PM-managed Builder" rules are session rules); assignment =
+    the handoff publication the launch consumed (`sourceManifest.handoffPublicationId` and
+    `handoffDigest`, #1675), which carries the next action the session was launched to resume.
+    `roleAssignmentRevision = sha256(canonical {rules, handoffPublicationId, handoffDigest})`, with
+    the components stored in the payload and `roleAssignmentSource: 'session-rules+handoff'`
+    recorded beside it. Alternative **R-b**: the digest of a `.tangleclaw/priming/<role>.md` file:
+    git-tracked role prompts exist (`build-session`, `pm-managed-builder`, `roadmap-triage`,
+    `swarm-sprint`) but nothing binds a session to one, so it needs a project setting, which is a new
+    requirement for a later chunk. Alternative **R-c**: the PM's dispatch message: not a TangleClaw
+    record (Medusa messages are not persisted as assignments). The firer-policy revision is used for
+    neither (D4).
+- **E9: Version source.** Recommended: `codex --version` is probed asynchronously (execFile, 5 s
+  timeout) at boot and at each Codex launch, and cached; `installedVersion()` answers from the cache
+  and never spawns. The channel's `initialize.userAgent` version must equal it at readiness, else
+  `version_mismatch`. Rejected: reading the version only from the app-server (it does not exist until
+  a launch, and resolution runs on request paths).
+
+### Live verification and its one gap
+
+Probes 1–6 (above) were spent-free. The receipt path from `turn/start` onwards is built against the
+spike's recorded wire sequence through a fake app-server in tests. The one step no probe could run
+without a model turn is the read-back: `thread/turns/list` after materialization, and the
+`clientId` echo inside it. One benign turn (credits are present; the weekly window is exhausted
+until 2026-09-24 04:33 UTC) would close it; the operator approved spike turns on 2026-09-23, and
+this chunk asks the PM for the same approval for one turn. Without it, B3's live verification
+covers it, and the plan says so.
+
+### Implementation calls (not architectural)
+
+- New modules: `lib/ws-unix-client.js` (the RFC 6455 client over a unix socket),
+  `lib/startup-control-codex.js` (the adapter: version probe, channel spawn/attach/teardown/reaper,
+  readiness, fire, watch, reconcile), registered as `codex` in `lib/startup-control.js#ADAPTERS`.
+- `data/engines/codex.json` declares `startupControl` with `adapter: codex`, `verifiedVersions:
+  ['0.156.1']` and an `evidence` entry per field naming the spike and these probes.
+- `launchSession` asks the adapter to prepare the channel only when `startupControl.resolveEngine`
+  says supported; a spawn failure logs, records `channel_unavailable` and launches today's command.
+  The channel row is written after `store.sessions.start` returns (it needs the session id); a
+  failed session insert tears the channel down.
+- `startupPrompt.fire` becomes async; B1's tests `await` it (no assertion changes).
+- Docs in the same commits: `docs/engine-guide.md` (`startupControl`: Codex, the channel, the
+  receipt, the blockers), `docs/user-guide.md` ("Startup Prompt": what a fire on Codex does and the
+  outcomes), `CHANGELOG.md` `### Added`.
+
+### Tests (written alongside)
+
+- ws client: handshake accept/refuse, masking, the 7/16/64-bit length forms, ping→pong,
+  fragmented text, close.
+- Adapter against a fake app-server that replays the spike's recorded sequence: readiness green and
+  each blocker; accepted via notification and via read-back alone; applied; failed; interrupted;
+  approval pending then applied; socket lost before the response → indeterminate; socket lost after
+  accepted → reconnect settles; reconcile of an indeterminate row (turn found, turn absent, channel
+  gone); version mismatch; TangleClaw never answers a server request.
+- Store: v46 rebuild keeps rows and widens the CHECK, refuses a half-built table; `updateFire`
+  refuses illegal transitions; the channels table's one-open-per-session rule.
+- Launch: a supported Codex launch spawns the app-server (spied), prepends `--remote <resolved>`,
+  keeps the mode args, records the channel; an unsupported version or a failed spawn launches the
+  unchanged command; kill/wrap/crash tear the channel down; the reaper closes channels of ended
+  sessions and never signals a pid that is not a `codex app-server` on that socket.
+- API: fire on a supported session returns the accepted row (fake adapter); the B1 authorization,
+  idempotency and unsupported cases still pass unchanged.
+- Capability: `tc capabilities` reports `startup-control` enabled for codex on a stubbed 0.156.1.
+
+### Done when
+
+- Every test above is green, the full suite is green, and the docs are current.
+- The Architect has ruled on E1–E9 (E8's P/R choice in particular), and the Critic is clean.
 
 ## Status
 
