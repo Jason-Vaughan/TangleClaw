@@ -9,7 +9,7 @@
 - [x] Build: whole-table socket scan + merge + tests + docs + CHANGELOG (`### Fixed`)
 - [x] Verify: focused tests + full suite (this checkout, not the main instance): green. Live `scan()` on this host lists 22/88/443/445/5900/8444, named, matching `probePort`
 - [x] Critic (2026-09-24: first review 0 findings / 11 observations, acted on or recorded; second review 0 blocking / 0 warnings, two fixed and the rest accepted; verify-resolutions on `26867bec`: 0 findings, 2 observations accepted)
-- [ ] Draft PR opened. STOP (pilot boundary)
+- [x] Draft PR opened: #1844. **STOP here** (pilot boundary)
 
 **Pilot envelope (IN FORCE):** no merging any PR, no pulling/updating the live checkout, no restarting the
 live service, no tests on the main instance, no tag/publish/release, no deploy.
