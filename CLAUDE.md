@@ -326,7 +326,10 @@ A port with a listener but no lease returns **409** `PORT_IN_USE` with the proce
 an owner (`"listener": { "port", "pid", "command" }`). The same rule applies: pick another
 port, unless that listener is your own service, in which case repeat with
 `"adoptListener": true`. That flag is separate from `force`, which takes over another project's
-lease. `GET /api/ports` lists these unleased listeners as `systemPorts`. A 201 carries
+lease. `GET /api/ports` lists these unleased listeners as `systemPorts`, including ones owned by
+root or other users. `command` is `null` for a listener the machine cannot name, and `pid` is
+`null` too where it is unknown, which is always the case on Linux for a listener this user does not
+own. A 201 carries
 `listenerCheck`, which says what the check found: `clear`, `adopted`, `renewal`, `takeover`,
 `not-local` (another host, which this machine cannot see), or `unavailable` (lsof could not run,
 so the port was granted unchecked).

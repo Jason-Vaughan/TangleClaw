@@ -2,9 +2,9 @@
 
 ## Current build chunk
 
-**Active:** Chunk 02 — A release publishes only the exact commit that was tested, and its tag dereferences to it (#1551)
+**Active:** Chunk 01 — `tc start review` (read-only re-read). Type: feature
 
-_Last chunk in this plan._
+**On deck:** Chunk 02 — Re-entry through SessionStart `clear` / `compact`. Type: fix
 
-Plan: `.tangleclaw/plans/train-a-car-a4-build-plan.md`
+Plan: `.tangleclaw/plans/1761-clear-drops-context.md`
 <!-- TANGLECLAW:PRIMING-ROLL:END -->
