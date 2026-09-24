@@ -4301,6 +4301,15 @@ route('GET', '/api/launch-sequences', (req, res) => {
   if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
     return errorResponse(res, 400, 'limit must be a whole number between 1 and 50', 'BAD_REQUEST');
   }
+  // The startupControl block (#1825 B3, Architect F5) is the operator's and the
+  // Master's to read: it carries every fire row, `denied` ones included, and a
+  // denied row names the project that tried. Served to a project-bound or
+  // unbound caller it would be the cross-group oracle D4 forbids, so those get
+  // the rows without it. Only the operator may FIRE (the route proves that
+  // itself); `fireable` is computed here so the panel renders the button for
+  // exactly the row it can act on.
+  const access = sharedDocsAccess.resolveAccess(req);
+  const readsStartupControl = access.kind === sharedDocsAccess.KINDS.OPERATOR || access.kind === sharedDocsAccess.KINDS.MASTER;
   const sequences = store.launchSequences.listForProject(projectId, limit).map((sequence) => {
     const steps = store.launchSequences.listSteps(sequence.id, sequence.revision);
     // The rule-delivery row for this same session, so the panel can put the two
@@ -4349,6 +4358,11 @@ route('GET', '/api/launch-sequences', (req, res) => {
       rulesDelivery: rulesRow
         ? { outcome: rulesRow.outcome, channel: rulesRow.channel, skipReason: rulesRow.skipReason || null }
         : null,
+      // Which path put this launch's context in front of the engine (#1825 B3):
+      // `native` means the startup prompt was fired through the engine's own
+      // channel and nothing was typed into the pane; `legacy` is the paste or
+      // the kickoff. Every caller may read it — it names no other project.
+      startupDelivery: sequence.startupDelivery,
       steps: steps.map((st) => ({
         index: st.index,
         id: st.id,
@@ -4357,11 +4371,59 @@ route('GET', '/api/launch-sequences', (req, res) => {
         servedAt: st.servedAt,
         ackedAt: st.ackedAt,
         carriedFromRevision: st.carriedFromRevision
-      }))
+      })),
+      ...(readsStartupControl ? { startupControl: _startupControlForLaunch(sequence, access) } : {})
     };
   });
   return jsonResponse(res, 200, { sequences });
 });
+
+/**
+ * The startupControl evidence of one launch, for the launch panel (#1825 B3).
+ *
+ * The channel's generic header only — never `adapterState`, which is the
+ * adapter's and may name a socket or a pid (E2/S4) — and every fire row the
+ * launch's session has, newest first, `denied` included (R-13), with the
+ * bounded fields the panel reads. `fireable` is true only when the caller is
+ * the operator, the session is active and the channel is open: the exact row
+ * the Fire button can act on. The Master reads and never fires (D4).
+ * @param {object} sequence - A launch-sequence row.
+ * @param {{kind: string}} access - The resolved caller.
+ * @returns {{channel: (object|null), fires: object[], fireable: boolean}}
+ */
+function _startupControlForLaunch(sequence, access) {
+  const channelRow = store.startupControlChannels.getLatestBySession(sequence.sessionId);
+  const channel = channelRow
+    ? {
+      state: channelRow.state,
+      adapter: channelRow.adapter,
+      engineId: channelRow.engineId,
+      openedAt: channelRow.openedAt,
+      closedAt: channelRow.closedAt,
+      closeReason: channelRow.closeReason,
+      teardown: channelRow.teardown
+    }
+    : null;
+  const fires = store.startupPrompts.firesForSession(sequence.sessionId).map((f) => ({
+    id: f.id,
+    sequenceId: f.sequenceId,
+    outcome: f.outcome,
+    reasonCode: f.reasonCode,
+    reason: f.reason,
+    callerKind: f.callerKind,
+    callerClearance: f.callerClearance,
+    callerProjectId: f.callerProjectId,
+    promptRevision: f.promptRevision,
+    createdAt: f.createdAt,
+    acceptedAt: f.acceptedAt,
+    settledAt: f.settledAt
+  }));
+  const session = store.sessions.get(sequence.sessionId);
+  const fireable = access.kind === sharedDocsAccess.KINDS.OPERATOR
+    && !!session && session.status === store.SESSION_STATUS.ACTIVE
+    && !!channel && channel.state === 'open';
+  return { channel, fires, fireable };
+}
 
 // POST /api/tc/rule-receipt — the startup-rules hook vouching that it RAN
 // (#1063).
@@ -11158,6 +11220,15 @@ if (require.main === module) {
     wrapSentinel.stop();
     medusaWake.stop();
     launchUnready.stop();
+    // Each startupControl adapter's reaper timer (#1825): the timers are unref'd,
+    // so this is bookkeeping symmetry with `start`, not what lets the process exit.
+    for (const [name, adapter] of Object.entries(startupControl.ADAPTERS)) {
+      try {
+        if (typeof adapter.stop === 'function') adapter.stop();
+      } catch (err) {
+        log.warn('startupControl adapter failed to stop', { adapter: name, error: err.message });
+      }
+    }
     clearInterval(_lockExpiryInterval);
     server.close();
     store.close();

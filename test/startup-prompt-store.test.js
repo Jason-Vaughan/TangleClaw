@@ -39,6 +39,18 @@ function openStore(seedSql) {
 
 const sha = (s) => crypto.createHash('sha256').update(s, 'utf8').digest('hex');
 
+let projectN = 0;
+/**
+ * A project row the sessions FK can point at.
+ * @returns {object} The project.
+ */
+function project() {
+  projectN += 1;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `tc-sp-proj-${projectN}-`));
+  tmpDirs.push(dir);
+  return store.projects.create({ name: `sp-${projectN}-${Date.now()}`, path: dir, engine: 'codex' });
+}
+
 let keyCounter = 0;
 
 /**
@@ -262,7 +274,7 @@ describe('startup prompt store: v46 (Chunk B2)', () => {
     it('rebuilds a v45 fires table: rows survive, the CHECK widens, the receipt columns and indexes exist', () => {
       openStore(V45_FIRES);
       const db = store.getDb();
-      assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 46);
+      assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
       const kept = store.startupPrompts.getFireByKey('old-key-000001');
       assert.ok(kept, 'the v45 row was copied');
       assert.equal(kept.outcome, 'unsupported');
@@ -397,6 +409,117 @@ describe('startup prompt store: v46 (Chunk B2)', () => {
       const c = store.startupPrompts.insertFire(fire(303, 1, 'accepted'));
       store.startupPrompts.insertFire(fire(304, 1, 'blocked'));
       assert.deepEqual(store.startupPrompts.listActiveFires().map((f) => f.id), [a.id, c.id]);
+    });
+  });
+});
+
+describe('startup prompt store: v47 (Chunk B3)', () => {
+  describe('migration', () => {
+    it('rebuilds a pre-v47 fires table so the launch caller is recordable, keeps every row, and adds startup_delivery to launch_sequences', () => {
+      openStore(V45_FIRES);
+      const db = store.getDb();
+      assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 47);
+      const kept = store.startupPrompts.getFireByKey('old-key-000001');
+      assert.ok(kept, 'the old row survived two rebuilds');
+      assert.equal(kept.callerKind, 'operator');
+      const row = store.startupPrompts.insertFire({
+        ...fire(401, 1, 'unsupported'), callerKind: 'launch', callerClearance: 'launch-automatic', callerProjectId: 1
+      });
+      assert.equal(row.callerKind, 'launch');
+      assert.equal(row.callerClearance, 'launch-automatic');
+      assert.throws(() => store.startupPrompts.insertFire({ ...fire(402, 1), callerKind: 'robot' }), /CHECK/, 'the CHECK still binds');
+      const names = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'startup_prompt_fires'").all().map((r) => r.name);
+      for (const idx of ['idx_startup_prompt_fires_session', 'idx_startup_prompt_fires_active', 'idx_startup_prompt_fires_applied']) {
+        assert.ok(names.includes(idx), idx);
+      }
+      assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE name = 'startup_prompt_fires_v47'").get(), undefined, 'no leftover table');
+      const ls = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'launch_sequences'").get().sql;
+      assert.match(ls, /startup_delivery[^,]*CHECK/);
+    });
+
+    it('a launch records which path it selected, and every launch that never said reads legacy', () => {
+      openStore();
+      const snapshot = (over) => ({
+        launchId: `L-${Math.random().toString(16).slice(2)}`, pageBudget: 1000, applicability: 'not-applicable',
+        notApplicableReason: 'test', preflight: { verdict: 'ok', requiresRecovery: false }, sourceManifest: {}, steps: [], ...over
+      });
+      const pid = project().id;
+      const native = store.sessions.start({ projectId: pid, engineId: 'codex', launchSequence: snapshot({ startupDelivery: 'native' }) });
+      store.sessions.kill(native.id, 'next');
+      const legacy = store.sessions.start({ projectId: pid, engineId: 'codex', launchSequence: snapshot({}) });
+      store.sessions.kill(legacy.id, 'next');
+      const odd = store.sessions.start({ projectId: pid, engineId: 'codex', launchSequence: snapshot({ startupDelivery: 'keystrokes' }) });
+      assert.equal(store.launchSequences.getBySession(native.id).startupDelivery, 'native');
+      assert.equal(store.launchSequences.getBySession(legacy.id).startupDelivery, 'legacy');
+      assert.equal(store.launchSequences.getBySession(odd.id).startupDelivery, 'legacy', 'anything but an explicit native is the keystroke path');
+    });
+  });
+
+  describe('retention (F6)', () => {
+    let realQuotas;
+    beforeEach(() => {
+      openStore();
+      realQuotas = { ...store.STARTUP_CONTROL_RETENTION };
+    });
+    after(() => store._setStartupControlRetention(realQuotas));
+
+    /**
+     * A session of `projectId`, ended unless `active`.
+     * @param {number} projectId - Project.
+     * @param {boolean} [active=false] - Leave it running.
+     * @returns {object} The session row.
+     */
+    function session(projectId, active = false) {
+      const s = store.sessions.start({ projectId, engineId: 'codex', tmuxSession: `t-${Math.random()}` });
+      if (!active) store.sessions.kill(s.id, 'ended');
+      return s;
+    }
+
+    it('keeps the newest fire rows of ended sessions per target project, and never touches an active session\'s rows', () => {
+      store._setStartupControlRetention({ fires: 2 });
+      const p1 = project().id;
+      const p2 = project().id;
+      const ended1 = session(p1);
+      const ended2 = session(p1);
+      const live = session(p1, true);
+      const elsewhere = session(p2);
+      const f = (sess, seq, over = {}) => store.startupPrompts.insertFire({ ...fire(seq, 1), projectId: sess.projectId, sessionId: sess.id, ...over });
+      const liveOld = f(live, 900, { outcome: 'applied', reasonCode: null });
+      const a = f(ended1, 901);
+      const b = f(ended1, 902);
+      const other = f(elsewhere, 950);
+      const c = f(ended2, 903);
+      const d = f(ended2, 904);
+      // Fired BY project 2 at project 1: partitioned by the target, so it competes in project 1's quota.
+      const crossFirer = f(ended2, 905, { callerKind: 'project', callerClearance: 'project-binding', callerProjectId: p2 });
+      const ids = store.getDb().prepare('SELECT id FROM startup_prompt_fires ORDER BY id').all().map((r) => r.id);
+      assert.deepEqual(ids, [liveOld.id, other.id, d.id, crossFirer.id].sort((x, y) => x - y));
+      assert.equal(store.startupPrompts.getFireById(a.id), null);
+      assert.equal(store.startupPrompts.getFireById(b.id), null);
+      assert.equal(store.startupPrompts.getFireById(c.id), null);
+      assert.ok(store.startupPrompts.getFireById(liveOld.id), 'the active session\'s older row is exempt');
+      assert.ok(store.startupPrompts.getFireById(other.id), 'another project\'s history is its own');
+    });
+
+    it('keeps the newest closed channel rows of ended sessions per project, leaves open and active ones, and trims on close and on recordUnavailable', () => {
+      store._setStartupControlRetention({ channels: 1 });
+      const p1 = project().id;
+      const ended1 = session(p1);
+      const ended2 = session(p1);
+      const live = session(p1, true);
+      const ch = (sess) => store.startupControlChannels.open({ sessionId: sess.id, sequenceId: sess.id * 10, engineId: 'codex', adapter: 'codex', adapterState: {} });
+      const liveOpen = ch(live);
+      const first = ch(ended1);
+      store.startupControlChannels.close(first.id, 'ended', 'ok');
+      assert.ok(store.startupControlChannels.get(first.id), 'within quota');
+      const second = store.startupControlChannels.recordUnavailable({ sessionId: ended2.id, sequenceId: 20, engineId: 'codex', adapter: 'codex', reason: 'version_unverified' });
+      assert.equal(store.startupControlChannels.get(first.id), null, 'the older closed row of an ended session went');
+      assert.ok(store.startupControlChannels.get(second.id));
+      assert.ok(store.startupControlChannels.get(liveOpen.id), 'an open channel is never a candidate');
+      const liveClosedEarlier = store.startupControlChannels.recordUnavailable({ sessionId: live.id, sequenceId: 30, engineId: 'codex', adapter: 'codex', reason: 'x' });
+      store.startupControlChannels.close(liveOpen.id, 'k', 'ok');
+      assert.ok(store.startupControlChannels.get(liveClosedEarlier.id), 'an active session\'s closed rows are exempt too');
+      assert.ok(store.startupControlChannels.get(liveOpen.id));
     });
   });
 });

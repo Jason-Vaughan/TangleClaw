@@ -2458,7 +2458,123 @@ async function refreshProjectLaunchSequences(projectId) {
   // renderer that also attached listeners could not be rendered anywhere that
   // is not a live document.
   wireLaunchRecoveryClears(list);
+  wireStartupFires(list);
   return true;
+}
+
+/**
+ * How one fire row is named to the operator: its outcome, who asked, and the
+ * typed reason when there is one (#1825 B3).
+ *
+ * `denied` is shown, and shown as a denial: the whole reason the row exists is
+ * that a project tried to fire here and may not, and hiding it would make the
+ * refusal invisible everywhere but the table. The actor is named by kind — the
+ * operator, this launch's own bootstrap, or a project by id — never by a
+ * credential.
+ * @param {object} f - A fire from `GET /api/launch-sequences` `startupControl.fires`
+ * @returns {string} A phrase, already escaped
+ */
+function startupFireLabel(f) {
+  const who = f.callerKind === 'launch'
+    ? 'automatic at launch'
+    : (f.callerKind === 'operator' ? 'the operator' : `project ${esc(f.callerProjectId == null ? '?' : f.callerProjectId)}`);
+  const when = esc(f.settledAt || f.acceptedAt || f.createdAt || '');
+  const reason = f.reasonCode ? ` — <code>${esc(f.reasonCode)}</code>${f.reason ? `: ${esc(f.reason)}` : ''}` : '';
+  return `<code>${esc(f.outcome)}</code> (${who}, revision ${esc(f.promptRevision)}${when ? `, ${when}` : ''})${reason}`;
+}
+
+/**
+ * The startupControl lines for one launch: which path put its context in front
+ * of the engine, the channel's state, every fire, and the Fire button when the
+ * server says this row can be fired at (#1825 B3).
+ *
+ * Rendered only when the row carries a `startupControl` block, which the server
+ * sends to the operator alone — a bound session never sees who was denied. The
+ * button appears for exactly one state, `fireable`, which the server computes
+ * (the operator, an active session, an open channel); the route re-checks all
+ * of it on the click, so this is not the guard, it is what lets the guard be
+ * asked about the row the operator was looking at.
+ * @param {object} s - A sequence row from `GET /api/launch-sequences`
+ * @returns {string} Markup, or an empty string when the row carries no block
+ */
+function launchStartupControlHtml(s) {
+  const path = s.startupDelivery === 'native'
+    ? 'native: the startup prompt was fired through the engine\'s own channel; nothing was typed into the pane'
+    : 'legacy: the prime was pasted or the session was asked to read its context by keystroke';
+  let out = `<br><small class="session-rule-meta">Startup: ${path}</small>`;
+  const sc = s.startupControl;
+  if (!sc) return out;
+  const ch = sc.channel;
+  const channel = ch
+    ? `${esc(ch.state)} (${esc(ch.adapter)})${ch.closeReason ? `: ${esc(ch.closeReason)}` : ''}${ch.teardown && ch.state === 'closed' ? ` — teardown ${esc(ch.teardown)}` : ''}`
+    : 'none — the launch opened no native channel';
+  out += `<br><small class="session-rule-meta">Channel: ${channel}</small>`;
+  const fires = Array.isArray(sc.fires) ? sc.fires : [];
+  if (fires.length === 0) {
+    out += '<br><small class="session-rule-meta">Fires: none recorded for this launch</small>';
+  } else {
+    out += fires.map((f) => `<br><small class="session-rule-meta${f.outcome === 'denied' ? ' rules-status-err' : ''}">Fire: ${startupFireLabel(f)}</small>`).join('');
+  }
+  if (sc.fireable === true) {
+    out += `<br><button type="button" class="btn btn-sm" data-startup-fire="${esc(s.sequenceId)}" data-session-id="${esc(s.sessionId)}">`
+      + 'Fire startup prompt</button>';
+  }
+  return out;
+}
+
+/**
+ * Wire every Fire button the panel just rendered (#1825 B3).
+ *
+ * Re-wired per refresh for the reason `wireLaunchRecoveryClears` states. The
+ * click reads the CURRENT prompt revision first and sends it as
+ * `expectedRevision`, so a prompt saved since the panel rendered is refused
+ * (`STALE_STARTUP_PROMPT`) rather than fired unread; the key is fresh per
+ * click, because each click is a new attempt. The answer — the fire row's
+ * outcome and typed reason, or the refusal — is shown, and the panel re-reads
+ * either way so the row shows what is true now.
+ * @param {HTMLElement} list - The panel's container element
+ * @returns {void}
+ */
+function wireStartupFires(list) {
+  for (const btn of list.querySelectorAll('[data-startup-fire]')) {
+    btn.addEventListener('click', async () => {
+      const projectId = projectRulesTargetId;
+      const projectName = projectRulesTargetName;
+      if (!projectName) return;
+      btn.disabled = true;
+      const prompt = await api('/api/startup-prompt');
+      if (!prompt || !Number.isInteger(prompt.revision)) {
+        btn.disabled = false;
+        _setProjectRulesStatus(api.lastError || 'The startup prompt could not be read, so nothing was fired', false);
+        return;
+      }
+      const me = await api('/api/auth/me');
+      const headers = { 'Content-Type': 'application/json' };
+      if (me && me.openInstallToken) headers['X-TC-Open-Token'] = me.openInstallToken;
+      const key = `panel-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      const answer = await api(
+        `/api/sessions/${encodeURIComponent(projectName)}/startup-prompt/fire`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            sessionId: Number(btn.dataset.sessionId),
+            sequenceId: Number(btn.dataset.startupFire),
+            expectedRevision: prompt.revision,
+            idempotencyKey: key
+          })
+        }
+      );
+      if (answer && answer.fire) {
+        const f = answer.fire;
+        _setProjectRulesStatus(`Startup prompt fire: ${f.outcome}${f.reasonCode ? ` (${f.reasonCode})` : ''}`, f.outcome === 'accepted' || f.outcome === 'applied');
+      } else {
+        btn.disabled = false;
+        _setProjectRulesStatus(api.lastError || 'The startup prompt could not be fired', false);
+      }
+      if (projectRulesTargetId === projectId) await refreshProjectLaunchSequences(projectId);
+    });
+  }
 }
 
 /**
@@ -2570,6 +2686,7 @@ function renderProjectLaunchSequences(sequences) {
         <br><small class="session-rule-meta">Served: ${esc(served)}/${esc(s.of)} step(s) | Acknowledged: ${esc(acked)}/${esc(s.of)} | ${nudges}</small>
         <br><small class="session-rule-meta">Launched ${esc(s.createdAt)} | revision ${esc(s.revision)}</small>
         ${launchRecoveryHtml(s)}
+        ${launchStartupControlHtml(s)}
       </div>
     </div>`;
   }).join('');

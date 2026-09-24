@@ -67,6 +67,8 @@ function render(sequences) {
   // install, where the panel renders the moment the file is saved.
   vm.runInContext(liftFunction(UI_SRC, 'function launchClearanceLabel'), ctx);
   vm.runInContext(liftFunction(UI_SRC, 'function launchRecoveryHtml'), ctx);
+  vm.runInContext(liftFunction(UI_SRC, 'function startupFireLabel'), ctx);
+  vm.runInContext(liftFunction(UI_SRC, 'function launchStartupControlHtml'), ctx);
   vm.runInContext(liftFunction(UI_SRC, 'function renderProjectLaunchSequences'), ctx);
   ctx.renderProjectLaunchSequences(sequences);
   return doc.getElementById('projLaunchSequencesList').innerHTML;
@@ -168,6 +170,60 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
     const html = render([row({ rulesDelivery: { outcome: '<img>', channel: 'none', skipReason: null } })]);
     assert.doesNotMatch(html, /<img>/);
     assert.match(html, /&lt;img&gt;/);
+  });
+
+  describe('startupControl (#1825 B3)', () => {
+    const fire = (over = {}) => ({
+      id: 1, sequenceId: 9, outcome: 'applied', reasonCode: null, reason: null, callerKind: 'launch', callerClearance: 'launch-automatic',
+      callerProjectId: 3, promptRevision: 2, createdAt: '2026-09-24 03:00:00', acceptedAt: '2026-09-24 03:00:01', settledAt: '2026-09-24 03:00:02', ...over
+    });
+    const native = (over = {}) => row({
+      startupDelivery: 'native',
+      startupControl: { channel: { state: 'open', adapter: 'codex', engineId: 'codex', openedAt: '2026-09-24 02:59:00', closedAt: null, closeReason: null, teardown: null }, fires: [fire()], fireable: true },
+      ...over
+    });
+
+    it('names the path every launch took, with or without the operator\'s block', () => {
+      assert.match(render([row({ startupDelivery: 'legacy' })]), /Startup: legacy/);
+      assert.match(render([row({ startupDelivery: 'native' })]), /Startup: native/);
+      const bare = render([row({ startupDelivery: 'legacy' })]);
+      assert.doesNotMatch(bare, /Channel:/, 'no block, no channel line: a bound reader is not shown what it was not sent');
+      assert.doesNotMatch(bare, /data-startup-fire/);
+    });
+
+    it('shows the channel, each fire with its actor and receipt, and the Fire button only where the server says it applies', () => {
+      const html = render([native()]);
+      assert.match(html, /Channel: open \(codex\)/);
+      assert.match(html, /Fire: <code>applied<\/code> \(automatic at launch, revision 2, 2026-09-24 03:00:02\)/);
+      assert.match(html, /data-startup-fire="9"[^>]*data-session-id="42"/);
+      assert.match(html, /Fire startup prompt/);
+      const notFireable = render([native({ startupControl: { channel: { state: 'open', adapter: 'codex' }, fires: [], fireable: false } })]);
+      assert.doesNotMatch(notFireable, /data-startup-fire/);
+      assert.match(notFireable, /Fires: none recorded for this launch/);
+    });
+
+    it('a blocked automatic attempt names its typed reason, and a denied attempt is shown as a refusal with who tried', () => {
+      const blocked = fire({ id: 2, outcome: 'blocked', reasonCode: 'pane_not_ready', reason: 'the pane did not become ready within the launch window, so nothing was sent: the at-rest marker never appeared', settledAt: '2026-09-24 03:01:30' });
+      const denied = fire({ id: 3, outcome: 'denied', reasonCode: 'fire_scope_denied', reason: 'caller is not a listed firer sharing a project group with the target', callerKind: 'project', callerClearance: 'project-binding', callerProjectId: 11 });
+      const html = render([native({ startupControl: { channel: { state: 'closed', adapter: 'codex', closeReason: 'session killed', teardown: 'ok' }, fires: [blocked, denied], fireable: false } })]);
+      assert.match(html, /Channel: closed \(codex\): session killed — teardown ok/);
+      assert.match(html, /<code>blocked<\/code>.*<code>pane_not_ready<\/code>: the pane did not become ready/);
+      assert.match(html, /rules-status-err">Fire: <code>denied<\/code> \(project 11, revision 2/);
+      assert.match(html, /<code>fire_scope_denied<\/code>/);
+    });
+
+    it('a launch that opened no channel says so, and an operator\'s fire is named as the operator\'s', () => {
+      const html = render([row({ startupDelivery: 'legacy', startupControl: { channel: null, fires: [fire({ callerKind: 'operator', callerClearance: 'operator-verified', callerProjectId: null, outcome: 'unsupported', reasonCode: 'engine_declares_none', reason: 'engine claude declares no startupControl channel' })], fireable: false } })]);
+      assert.match(html, /Channel: none — the launch opened no native channel/);
+      assert.match(html, /<code>unsupported<\/code> \(the operator, revision 2/);
+    });
+
+    it('escapes what the engine and the store said', () => {
+      const html = render([native({ startupControl: { channel: { state: 'closed', adapter: 'codex', closeReason: '<b>x</b>' }, fires: [fire({ reasonCode: 'trust_required', reason: '<script>alert(1)</script>' })], fireable: false } })]);
+      assert.doesNotMatch(html, /<script>/);
+      assert.doesNotMatch(html, /<b>x<\/b>/);
+      assert.match(html, /&lt;script&gt;/);
+    });
   });
 
   describe('tcLaunchReadinessClass', () => {
@@ -402,11 +458,12 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
       ctx.projectRulesTargetId = 7;
       ctx.renderProjectLaunchSequences = () => order.push('render');
       ctx.wireLaunchRecoveryClears = () => order.push('wire');
+      ctx.wireStartupFires = () => order.push('wire-fires');
       vm.runInContext(liftFunction(UI_SRC, 'async function refreshProjectLaunchSequences'), ctx);
       return ctx.refreshProjectLaunchSequences(7).then((answer) => {
         assert.equal(answer, true);
-        assert.deepEqual(order, ['render', 'wire'],
-          'wiring runs after the render that produced the buttons, and runs at all');
+        assert.deepEqual(order, ['render', 'wire', 'wire-fires'],
+          'wiring runs after the render that produced the buttons, and runs at all — both button kinds');
       });
     });
 
@@ -420,6 +477,7 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
       ctx.projectRulesTargetId = 7;
       ctx.renderProjectLaunchSequences = () => order.push('render');
       ctx.wireLaunchRecoveryClears = () => order.push('wire');
+      ctx.wireStartupFires = () => order.push('wire-fires');
       vm.runInContext(liftFunction(UI_SRC, 'async function refreshProjectLaunchSequences'), ctx);
       return ctx.refreshProjectLaunchSequences(7).then((answer) => {
         assert.equal(answer, false);

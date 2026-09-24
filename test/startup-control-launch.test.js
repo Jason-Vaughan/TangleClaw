@@ -23,6 +23,10 @@ const store = require('../lib/store');
 const tmux = require('../lib/tmux');
 const enginesModule = require('../lib/engines');
 const codex = require('../lib/startup-control-codex');
+const wrapPipeline = require('../lib/wrap-pipeline');
+const launchBootstrap = require('../lib/launch-bootstrap');
+const launchKickoff = require('../lib/launch-kickoff');
+const wrapRunRegistry = require('../lib/wrap-run-registry');
 
 describe('startupControl at launch and teardown (codex)', () => {
   let tempDir;
@@ -55,10 +59,20 @@ describe('startupControl at launch and teardown (codex)', () => {
     real.sendKeys = tmux.sendKeys;
     tmux.sendKeys = () => true;
     realSeams = { ...codex._seams };
+    // The deferred bootstrap and kickoff are stubbed for the whole file: the
+    // real bootstrap of a native launch would wait on a pane that does not
+    // exist for its 90 s window and keep this process alive. Their hops are
+    // proven in test/launch-bootstrap-wiring.test.js.
+    real.bootstrap = launchBootstrap.bootstrap;
+    real.kickoff = launchKickoff.kickoff;
+    launchBootstrap.bootstrap = () => Promise.resolve('fired');
+    launchKickoff.kickoff = () => Promise.resolve('not-silent');
   });
 
   after(() => {
     Object.assign(codex._seams, realSeams);
+    launchBootstrap.bootstrap = real.bootstrap;
+    launchKickoff.kickoff = real.kickoff;
     tmux.sendKeys = real.sendKeys;
     store.close();
     store._setBasePath(prevBase);
@@ -170,6 +184,40 @@ describe('startupControl at launch and teardown (codex)', () => {
     assert.ok(!JSON.stringify(channel).includes(l.sequence.launchId), 'the launch bearer is not in the channel row');
   });
 
+  it('a launch that started its channel and has a sequence selects the native path, frozen on the sequence row; every other launch is legacy (B3 F1)', async () => {
+    healthySeams();
+    // The question here is the durable selection the launch wrote; the hop to
+    // the bootstrap is proven in test/launch-bootstrap-wiring.test.js.
+    const native = launched({ primePrompt: true });
+    assert.equal(native.sequence.applicability, 'applicable');
+    assert.equal(native.sequence.startupDelivery, 'native');
+    assert.ok(store.startupControlChannels.getOpenBySession(native.session.id), 'the channel the selection rests on is open');
+
+    const noSequence = launched();
+    assert.equal(noSequence.sequence.applicability, 'not-applicable');
+    assert.equal(noSequence.sequence.startupDelivery, 'legacy', 'a channel with nothing to read through it is not a native launch');
+    assert.ok(store.startupControlChannels.getOpenBySession(noSequence.session.id), 'the channel still opened; only the first turn stays legacy');
+
+    healthySeams({ execFileSync: () => 'codex-cli 0.150.0\n' });
+    const unverified = launched();
+    assert.equal(unverified.sequence.startupDelivery, 'legacy');
+    assert.equal(store.startupControlChannels.getOpenBySession(unverified.session.id), null);
+  });
+
+  it('the app-server inherits the pane\'s environment: the PATH floor and the launch identity `tc` needs (B3)', () => {
+    healthySeams();
+    const l = launched();
+    const env = calls.spawn[0].opts.env;
+    // With --remote the agent loop and its shell tools run in the app-server,
+    // not in the pane; a `tc start next` the fired prompt asks for runs here.
+    assert.equal(env.TANGLECLAW_LAUNCH_ID, l.sequence.launchId, 'the launch id the server resolves to this session');
+    assert.equal(env.TANGLECLAW_PROJECT_ID, String(l.project.id));
+    assert.ok(env.PATH.startsWith(`${path.join(__dirname, '..', 'bin')}:`), `bin/tc leads PATH: ${env.PATH.slice(0, 80)}`);
+    assert.equal(env.HOME, process.env.HOME, 'TangleClaw\'s own environment is still underneath');
+    const created = calls.created[calls.created.length - 1];
+    assert.equal(created.opts.env.TANGLECLAW_LAUNCH_ID, env.TANGLECLAW_LAUNCH_ID, 'pane and server carry the same identity');
+  });
+
   it('an unverified version launches today\'s command with no channel, and so does a failed start', () => {
     healthySeams({ execFileSync: () => 'codex-cli 0.150.0\n' });
     let l = launched();
@@ -245,6 +293,61 @@ describe('startupControl at launch and teardown (codex)', () => {
     const channel = store.getDb().prepare('SELECT * FROM startup_control_channels WHERE session_id = ?').get(l.session.id);
     assert.equal(channel.state, 'closed');
     assert.equal(channel.close_reason, 'session wrapped');
+  });
+
+  it('a keep-running wrap retains the channel, and the wrap that ends the session ends it (E1)', async () => {
+    healthySeams();
+    const l = launched();
+    const pid = calls.spawn[0].pid;
+    const realRun = wrapPipeline.runWrapPipeline;
+    const realKillSession = tmux.killSession;
+    wrapPipeline.runWrapPipeline = async () => ({ ok: true, blockedAt: null, results: [], commitSha: null, summary: null, error: null });
+    tmux.hasSession = () => false;
+    tmux.killSession = () => true;
+    try {
+      wrapRunRegistry._resetForTests();
+      const kept = await sessions.triggerWrap(l.project.name, { keepSessionRunning: true });
+      assert.equal(kept.ok, true, kept.error);
+      assert.equal(kept.sessionKept, true);
+      assert.deepEqual(calls.kills, [], 'the app-server is left running with the session');
+      const open = store.startupControlChannels.getOpenBySession(l.session.id);
+      assert.ok(open, 'the channel row is still open after a keep-running wrap');
+
+      wrapRunRegistry._resetForTests();
+      const ended = await sessions.triggerWrap(l.project.name, { keepSessionRunning: false });
+      assert.equal(ended.ok, true, ended.error);
+      assert.equal(ended.lifecycleCompleted, true);
+    } finally {
+      wrapPipeline.runWrapPipeline = realRun;
+      tmux.hasSession = real.has;
+      tmux.killSession = realKillSession;
+    }
+    assert.deepEqual(calls.kills, [[-pid, 'SIGTERM']], 'the wrap that ended the session ended the channel');
+    const channel = store.getDb().prepare('SELECT * FROM startup_control_channels WHERE session_id = ?').get(l.session.id);
+    assert.equal(channel.state, 'closed');
+    assert.equal(channel.close_reason, 'session wrapped');
+  });
+
+  it('the boot-time Medusa re-sync that finds a dead pane ends its channel (E1)', () => {
+    healthySeams();
+    const l = launched();
+    const pid = calls.spawn[0].pid;
+    store.projectConfig.save(l.project.path, { medusaEnabled: true });
+    const tmuxName = tmux.toSessionName(l.project.name);
+    // Only THIS pane is dead; every other fixture in the store is left alone.
+    tmux.probeSession = (name) => (name === tmuxName
+      ? { answered: true, live: false, cause: null }
+      : { answered: true, live: true, cause: null });
+    try {
+      sessions.resyncMedusaListeners();
+    } finally {
+      tmux.probeSession = real.probe;
+    }
+    assert.equal(store.sessions.get(l.session.id).status, 'crashed');
+    assert.deepEqual(calls.kills, [[-pid, 'SIGTERM']]);
+    const channel = store.getDb().prepare('SELECT * FROM startup_control_channels WHERE session_id = ?').get(l.session.id);
+    assert.equal(channel.state, 'closed');
+    assert.equal(channel.close_reason, 'tmux session died');
   });
 
   it('a pane found dead by the status read ends the channel', () => {
