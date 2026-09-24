@@ -1,7 +1,7 @@
 ---
 title: startupControl — engine-native startup delivery with semantic receipt
 issue: 1825
-status: B1 SHIPPED (PR #1831). B2 (the Codex adapter) PLANNED 2026-09-24; E1–E9 sent to the Architect, with the D8 sources (E8). B3 follows in this session on the PM's dispatch
+status: B1 SHIPPED (PR #1831). B2 (the Codex adapter) REVIEWED 2026-09-24 (Architect E1–E9 ruled, Critic clean); its PR is open. B3 is the next session's chunk (the Operator cancelled it for this session)
 scope: startupcontrol-1825
 branch: feat/1825-startup-control-b2
 ---
@@ -759,5 +759,5 @@ trusted scratch directory `/private/tmp/tc731`:
 
 - [x] Chunk 01: no-build spike: capture Codex app-server channel, readiness, receipt and blockers live; S1–S5 to the Architect with the evidence. Done 2026-09-23: all four cases captured; Architect ruled S1 APPROVE, S2–S5 MODIFY (message d94974c3)
 - [x] Chunk B1: Engine-neutral foundation: startupControl profile block + registry + capability, revisioned startup prompt with read/update/fire API and operator editor (#1825): Architect ruled D1–D8 (message 29790e23) plus a D4 correction; Critic rev-20260923T232701Z (0 blocking) → rev-20260923T234219Z (1 blocking, introduced by a fix) → rev-20260923T235204Z (0 findings); follow-ups carried into B3
-- [ ] Chunk B2: Codex adapter: per-launch app-server, readiness, fire with launch-bound receipts, blockers (#1825)
+- [x] Chunk B2: Codex adapter: per-launch app-server, readiness, fire with launch-bound receipts, blockers (#1825): Architect ruled E1–E9 (message 2ad0567c); one operator-authorized live turn went dispatching → accepted → applied; Critic cumulative rev-20260924T013228Z (2 blocking, 9 warning, 12 note) → verify rev-20260924T015225Z (1 blocking) → verify rev-20260924T020349Z (0 findings)
 - [ ] Chunk B3: Automatic bootstrap on launch with legacy fallback; launch panel receipts, blockers and Fire (#1825). Carries from B2's review: surface `denied` fires in the panel; take retention of `startup_prompt_fires` AND of closed `startup_control_channels` rows to the Architect (R-14/R-19); consider a per-launch app-server log file if a live launch ever fails to open its socket (R-18); pin the pipeline-wrap keep-running retention and the medusa-resync crash release with tests, and wire adapter `stop()` at shutdown (verify-resolutions observations 1–2)
