@@ -3172,7 +3172,18 @@ describe('engines', () => {
       const result = engines._buildBaselineHooks({ silentPrime: true }, supportingProfile);
       assert.ok(result.SessionStart, 'SessionStart should be present');
       assert.equal(result.SessionStart.length, 1);
-      assert.equal(result.SessionStart[0].matcher, 'startup');
+      // #1761: `/clear` and a compaction drop what this hook delivered, so it
+      // re-fires on both; `resume` and `fork` keep the transcript and do not.
+      assert.equal(result.SessionStart[0].matcher, 'startup|clear|compact');
+    });
+
+    it('registers the prime and every rules shard on startup, clear and compact, never resume (#1761)', () => {
+      const result = engines._buildBaselineHooks({ silentPrime: true }, supportingProfile, 2);
+      assert.equal(result.SessionStart.length, 3);
+      for (const entry of result.SessionStart) {
+        assert.equal(entry.matcher, engines.SESSION_START_REENTRY_MATCHER, entry.hooks[0].command);
+        assert.deepEqual(entry.matcher.split('|').sort(), ['clear', 'compact', 'startup']);
+      }
     });
 
     it('registers one rules hook per shard, beside the prime hook (#749)', () => {
@@ -3266,7 +3277,7 @@ describe('engines', () => {
 
       const settings = readSettings();
       assert.equal(settings.hooks.SessionStart.length, 1);
-      assert.equal(settings.hooks.SessionStart[0].matcher, 'startup');
+      assert.equal(settings.hooks.SessionStart[0].matcher, 'startup|clear|compact');
       // Quoting is no longer asserted by shape here: a `/^"/` match is true of
       // `"$HOME/x"`, which still expands. `test/engines-hook-shell-safety.test.js`
       // proves the real property by running each emitted command through `/bin/sh`.

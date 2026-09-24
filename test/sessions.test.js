@@ -4315,6 +4315,33 @@ describe('sessions', () => {
       }
     });
 
+    it('launchSession writes the re-entry preamble beside the prime, and removes both when silent prime goes off (#1761)', () => {
+      tmux.hasSession = (name) => name === 'silent-prime-test';
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+      const project = store.projects.getByName('silent-prime-test');
+      const reentryFile = path.join(project.path, '.tangleclaw', 'session-reentry.md');
+
+      store.projectConfig.save(project.path, { engine: 'claude', silentPrime: true });
+      assert.equal(sessions.launchSession('silent-prime-test').error, null);
+      assert.equal(fs.existsSync(reentryFile), true, 'the preamble is written with the prime');
+      const written = fs.readFileSync(reentryFile, 'utf8');
+      assert.match(written, /not a new launch/);
+      assert.ok(written.includes('silent-prime-test'), 'it names the project the session owns');
+
+      store.projectConfig.save(project.path, { engine: 'claude', silentPrime: false });
+      assert.equal(sessions.launchSession('silent-prime-test').error, null);
+      assert.equal(fs.existsSync(reentryFile), false,
+        'a preamble left behind would introduce a prime that no longer exists');
+    });
+
+    it('_removePrimeFile removes the re-entry preamble even when the prime is already gone (#1761)', () => {
+      const project = store.projects.getByName('silent-prime-test');
+      const reentryFile = sessions._writeReentryFile(project.path, project);
+      assert.ok(reentryFile && fs.existsSync(reentryFile), 'precondition: preamble written');
+      sessions._removePrimeFile(project.path);
+      assert.equal(fs.existsSync(reentryFile), false);
+    });
+
     it('DEFAULT_PROJECT_CONFIG.silentPrime is true (#129 — soak satisfied)', () => {
       // Pre-#129 this was false (opt-in until proven stable). After ~2 weeks of
       // soak with no regressions, the default flipped to true. Projects that

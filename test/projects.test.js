@@ -3490,7 +3490,7 @@ describe('projects', () => {
       assert.ok(settings.hooks, 'hooks block should exist');
       assert.ok(settings.hooks.SessionStart, 'SessionStart entry should exist');
       assert.equal(settings.hooks.SessionStart.length, 1);
-      assert.equal(settings.hooks.SessionStart[0].matcher, 'startup');
+      assert.equal(settings.hooks.SessionStart[0].matcher, 'startup|clear|compact');
       const cmd = settings.hooks.SessionStart[0].hooks[0].command;
       // Quoting is no longer asserted by shape here: a `/^"/` match is true of
       // `"$HOME/x"`, which still expands. `test/engines-hook-shell-safety.test.js`
@@ -3606,7 +3606,7 @@ describe('projects', () => {
       assert.equal(fs.existsSync(settingsFile), true, '.claude/settings.local.json should be written by syncEngineHooks');
       const after = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
       assert.ok(after.hooks && after.hooks.SessionStart, 'SessionStart hook should be materialized on flip onto claude');
-      assert.equal(after.hooks.SessionStart[0].matcher, 'startup');
+      assert.equal(after.hooks.SessionStart[0].matcher, 'startup|clear|compact');
     });
 
     it('updateProject silentPrime=false is a no-op for prime cleanup when file is absent (#137)', async () => {

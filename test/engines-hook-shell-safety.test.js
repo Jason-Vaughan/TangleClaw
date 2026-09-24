@@ -105,6 +105,20 @@ describe('generated hook commands survive a hostile install path (#1062)', () =>
     }
   });
 
+  it('every resolved entry keeps the re-entry matcher through placeholder resolution (#1761)', () => {
+    // Resolution rewrites the command of each entry; the matcher must ride
+    // through untouched, or a hostile install path would quietly narrow the
+    // hooks back to startup-only.
+    const resolved = engines._resolveHooksObject(
+      engines._buildBaselineHooks({ silentPrime: true }, supportingProfile, 2),
+      path.join(root, HOSTILE)
+    );
+    assert.equal(resolved.SessionStart.length, 3);
+    for (const entry of resolved.SessionStart) {
+      assert.equal(entry.matcher, 'startup|clear|compact', entry.hooks[0].command);
+    }
+  });
+
   it('the rules hook still receives its shard number as a separate argument', () => {
     // The quoting must make the PATH one word without swallowing the argument
     // after it — a fix that quoted the whole command line would pass every

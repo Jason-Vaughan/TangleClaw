@@ -244,6 +244,15 @@ fallback**, so declaring it for one engine never changes another's behavior.
 The limit applies to the startup-hook channel only. When a project runs with `silentPrime` off the
 prime is pasted into the terminal instead, and the fallback is used.
 
+**The startup hooks re-fire after `/clear` and compaction (#1761).** On Claude, TangleClaw registers
+the prime and rules hooks on `startup|clear|compact`, never `resume` or `fork`, which keep the
+transcript. On `clear` or `compact` the prime hook puts a short re-entry preamble ahead of the prime
+(`.tangleclaw/session-reentry.md`, written and removed with the prime), so the session reads that
+this is not a new launch before the prime's launch instructions. Matching hooks run in parallel, so
+the preamble never refers to the rules by position. The rules hook re-emits its shards but posts its
+delivery receipt on `startup` only. An engine with no SessionStart source gets the pull path instead:
+its generated config tells it to run `tc start review`, provided it can run `tc`.
+
 **Verify the number against the engine's own documentation before declaring it, and record where
 and when in a sibling `evidence` block** — `"startupInjection": { "maxChars": 10000, "evidence":
 { "verifiedOn": "YYYY-MM-DD", "source": "…" } }`. The profile guard suite fails any declared
