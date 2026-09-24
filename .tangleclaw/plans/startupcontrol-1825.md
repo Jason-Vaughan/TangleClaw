@@ -1,9 +1,9 @@
 ---
 title: startupControl — engine-native startup delivery with semantic receipt
 issue: 1825
-status: B1 SHIPPED (PR #1831). B2 (the Codex adapter) REVIEWED 2026-09-24 (Architect E1–E9 ruled, Critic clean); its PR is open. B3 is the next session's chunk (the Operator cancelled it for this session)
+status: B1 SHIPPED (PR #1831). B2 SHIPPED (PR #1833, live at schema v46). B3 (automatic bootstrap + launch panel) IN PLANNING 2026-09-24 on the PM's dispatch (message cc1a12fb); decisions F1–F6 with the Architect
 scope: startupcontrol-1825
-branch: feat/1825-startup-control-b2
+branch: feat/1825-startup-control-b3
 ---
 
 # startupControl (#1825)
@@ -754,6 +754,159 @@ trusted scratch directory `/private/tmp/tc731`:
 
 - Every test above is green, the full suite is green, and the docs are current.
 - The Architect has ruled on E1–E9 (E8's P/R choice in particular), and the Critic is clean.
+
+## Chunk B3: the automatic bootstrap and the launch panel
+
+### Confidence check
+
+1. **Problem:** a Codex launch on a verified version already gets a native channel (B2), but its
+   first turn is still the tmux paste of the prime, readiness-gated on the pane's `· Ready ·`
+   marker, with a ledger row that says `delivered` for bytes nobody acknowledged. The fires,
+   channels and blockers B1 and B2 record are visible only in SQL, and a `denied` fire attempt is
+   visible nowhere (R-13).
+2. **Success:** a Codex launch on 0.156.1 is asked to read its launch context through
+   `turn/start`, the fire row reaches `applied`, nothing is typed into the pane, and `tc start
+   next` works from inside Codex. A Claude launch is unchanged and its launch record says why
+   (S3). Settings → Project Rules → **Launch readiness** shows, per launch, the channel's state,
+   every fire (automatic, explicit and denied) with its typed reason, and a **Fire** button the
+   operator can use on an active session with an open channel; a blocked fire names its blocker.
+3. **Out of scope:** any second adapter; a per-project firer scope (D2); a first-class
+   role/assignment record (E8); changing what the launch steps carry; #1774's manifest command; a
+   per-launch app-server log file (R-18) unless the live check fails to open a socket.
+
+### Facts established while planning (verified 2026-09-24 at 7ecdd22d4)
+
+- **Today's first turn on Codex is a paste.** `data/engines/codex.json` declares
+  `supportsSilentPrime: false`, `supportsPrimePrompt: true`, `launchSequence.supported: true`, so
+  `_deferEngineInit` phase 2 pastes the prime through `_awaitPaneReady` (idle marker plus a
+  settled transcript, 90 s). The kickoff (#1635) runs only for silent-prime launches and is not
+  reached on Codex.
+- **The steps carry everything the paste carries.** Step 1 (identity) is the prime text; the
+  governance step renders the rules with carrier `launch-step` whatever the project's paste-rules
+  mode (`resolveRulesCarrier` with `pull: true`). Skipping the paste on a launch with an applicable
+  sequence loses no content. The rules-ledger row for inline rules must then record `skipped`
+  (channel `none`), the way the pull-pointer launch already does, never `delivered`.
+- **The app-server does not get the pane's environment.** `prepareLaunch` spawns it with
+  `env: process.env` (`lib/startup-control-codex.js:334`) and `_prepareStartupChannel` runs at
+  `lib/sessions.js:532`, before `ambientEnv` is built at 551–563: the PATH floor with `bin/tc`,
+  `TANGLECLAW_PROJECT_ID`, `TANGLECLAW_API`, `TANGLECLAW_WORKSPACE_ID` and `TANGLECLAW_LAUNCH_ID`
+  (minted at 501, so it exists in time). With `--remote` the TUI is a client of the app-server,
+  which runs the agent loop and its shell tools, so a `tc start next` the fired prompt asks for
+  would run with no `tc` on PATH and no launch identity. The pane already carries all of these.
+  `[ASSUMPTION: shell tools run in the app-server, not the remote TUI — inferred from the
+  architecture, to be confirmed by this chunk's live check]`.
+- **The fires table cannot record an automatic actor yet.** `caller_kind` is CHECKed to
+  `('operator','project')` and `caller_clearance` to
+  `('operator-verified','open-install-unverified','project-binding')`. Widening either is a
+  rebuild; `_startupPromptFiresDdl` + `_startupPromptFiresIndexesSql` + the v46 pattern make it a
+  copy of a known shape.
+- **The panel exists.** Settings → Project Rules → "Launch readiness" (`projLaunchSequencesList`)
+  reads `GET /api/launch-sequences?projectId=` and renders with `renderProjectLaunchSequences`;
+  `wireLaunchRecoveryClears` is the precedent for an operator action on a row (re-wired per
+  refresh, open-install page token). The route has no caller check beyond the dashboard gate.
+- **Readers exist for the data, routes do not.** `startupPrompts.firesForSession`,
+  `startupControlChannels.getLatestBySession`. `recordUnavailable` writes a closed channel row
+  with the reason for a launch on an engine that declares a block; a launch on an engine declaring
+  none records nothing.
+- **Retention precedents:** `SESSION_RULE_DELIVERY_RETENTION = 100` per project,
+  `MEDUSA_DELIVERY_RETENTION = 100` per session, `SESSION_RULE_VERSION_RETENTION = 200` per rule,
+  all trimmed at write time oldest-first with a test seam; session rows are never pruned.
+- **E1 sites:** `_releaseStartupChannel` runs after `store.sessions.wrap` at both wrap-end sites
+  (`lib/sessions.js` 3972 and 4277), at kill (4359) and on tmux death (191, 2885, 5276).
+  `codexAdapter.stop()` is not called from `server.js#shutdown` (11156–11160).
+
+### Architectural decisions (for the Architect; recommendation first)
+
+- **F1: Where the bootstrap runs and what it replaces.** Recommend: in `_deferEngineInit`, a
+  launch with an OPEN channel and an applicable sequence is bootstrapped — wait for the pane's
+  readiness gate (`_awaitPaneReady`, 90 s), then ONE fire of the current prompt revision through
+  `startupPrompt.fire` (S5's single service path); no tmux paste and no kickoff for that launch.
+  Every other launch keeps today's path unchanged. Rejected: paste AND fire (two first turns);
+  fire without the pane gate (the adapter's readiness blocks `engine_not_ready` on a booting TUI
+  and spends the attempt on a row that says so).
+- **F2: A blocked or failed automatic fire.** Recommend: no further action — no keystroke
+  fallback (S3), the row names the blocker, the panel shows it beside a Fire button, and the
+  `launch-unready` nudge remains the backstop. Rejected: falling back to the paste, which types
+  through the very dialog the blocker names (trust, login); an in-process retry loop, which
+  multiplies rows for one launch.
+- **F3: Recording the automatic actor.** Recommend: `callerKind: 'launch'`,
+  `callerClearance: 'launch-automatic'`, `callerProjectId` = the target project, idempotencyKey
+  `launch-<sequenceId>-r<revision>`; `canFire` grants `launch` only to an internal caller naming
+  the target session itself (the HTTP route's `resolveAccess` can never yield it). Schema v47
+  widens the two CHECKs with the transactional rebuild, every row and index preserved. Rejected:
+  reuse `project` (the audit would name a project that asked nothing); a column on the sequence
+  row (one fact in two shapes).
+- **F4: Recording the unsupported automatic launch (S3 "records the reason").** Recommend: one
+  `unsupported` fire row per sequence-applicable launch on an engine without a supported channel,
+  INCLUDING `engine_declares_none`, so the panel says "legacy path: <reason>" for a Claude launch
+  rather than nothing. Alternative: mirror the channel table and record nothing for
+  `engine_declares_none`. Cost of the recommendation: one row per launch (see F6).
+- **F5: Panel data and who reads it.** Recommend: extend each `GET /api/launch-sequences` row with
+  `startupControl: { channel: {state, adapter, engineId, openedAt, closedAt, closeReason, teardown}
+  | null, fires: [{id, outcome, reasonCode, reason, callerKind, callerClearance, callerProjectId,
+  promptRevision, createdAt, acceptedAt, settledAt}] }` — the generic header only, never
+  `adapterState` (E2/S4). Fires include `denied` (R-13). The block is served only to an
+  `operator` (or `master`) caller; a project-bound or unbound caller gets the rows without it, so
+  denied rows cannot become the cross-group oracle D4 forbids. Rejected: a second route (two
+  readers of one panel).
+- **F6: Retention (R-14 and R-19).** Recommend: write-time trimming like the deliveries ledger —
+  per project, keep the newest 200 fire rows and the newest 100 closed channel rows whose SESSION
+  HAS ENDED; a row of an active session is never trimmed, so the one-active-fire and
+  applied-once guarantees are untouched (an ended session's launch can never be fired again).
+  Constants with a test seam. Alternatives: no trimming (session rows are never pruned either);
+  age-based trimming from the reaper.
+
+### Implementation calls (not architectural)
+
+- The app-server inherits the pane's ambient env: `ambientEnv` is built before
+  `_prepareStartupChannel` and handed to `prepareLaunch({env})`, merged as
+  `{...process.env, ...ambientEnv, ...profile.launch.env}` exactly as the pane's is. A test asserts
+  the spawn's env carries `TANGLECLAW_LAUNCH_ID`, `TANGLECLAW_PROJECT_ID` and the PATH floor.
+- The bootstrap is `lib/launch-bootstrap.js` (a sibling of `launch-kickoff.js`): one entry
+  `bootstrap({sessionId, projectId, projectName, tmuxName, engineId, hasSequence})`, never throws,
+  returns a code from its own `OUTCOME_MEANINGS` (`fired`, `no-channel`, `no-sequence`,
+  `unsupported-recorded`, `already-begun`, `pane-not-ready` …), one shot per session claimed
+  before the send as the kickoff does. It records the unsupported row (F4) itself.
+- The Fire button posts `POST /api/sessions/:project/startup-prompt/fire` with the row's
+  `sessionId`/`sequenceId`, `expectedRevision` read from `GET /api/startup-prompt` at click time,
+  and a random idempotencyKey; the response's `fire.outcome`/`reasonCode` is shown and the panel
+  re-reads. Rendered only for an active session with an open channel; otherwise the row states why
+  there is nothing to fire.
+- `codexAdapter.stop()` joins `server.js#shutdown` (B2 observation 2).
+- Tests pin: a keep-running pipeline wrap retains the channel; the medusa-resync tmux-death path
+  releases it (B2 observations 1–2).
+- Docs in the same commits: `docs/user-guide.md` ("Startup Prompt": the automatic bootstrap and
+  the panel; "Launch readiness" rows), `docs/engine-guide.md` (`startupControl`: what a supported
+  launch does at boot, the env the app-server inherits), `FEATURES.md`, `CHANGELOG.md` `### Added`
+  and the schema line.
+
+### Tests (written alongside)
+
+- Bootstrap: a launch with an open channel and a sequence fires once through a fake adapter and
+  pastes nothing (`tmux.sendKeys` never called); the ledger row for inline rules reads `skipped`;
+  a blocked fire pastes nothing and records the blocker; an unsupported engine records the F4 row
+  and pastes exactly as today; a launch without a sequence is untouched; a second call is
+  `already-fired`; a pane that never becomes ready records `engine_not_ready` and sends nothing.
+- Service: `canFire` grants `launch` only to the internal self-targeting caller; the HTTP route
+  cannot mint it; the v47 rebuild keeps rows and widens both CHECKs; a v46 row inserts unchanged.
+- Route: `startupControl` present for the operator, absent for a project-bound caller, `denied`
+  fires included, no `adapterState` field anywhere in the body.
+- Panel: rows render channel state, each fire with outcome and reason, denied fires, the Fire
+  button only for an active open-channel session; the button's POST carries the right ids and
+  the fetched revision; escaping.
+- Retention: trims only rows of ended sessions, per project, newest kept; an active session's
+  rows survive a trim.
+- Env: the spawn env assertion above.
+
+### Done when
+
+- Every test above is green, the full suite is green, the docs are current, the plan's Status is
+  ticked and the F-rulings are recorded here verbatim.
+- Live check on the live server (the first Codex launch since B2 merged): the pane command carries
+  `codex --remote …`, one open channel row, the fire goes `dispatching → accepted → applied`, the
+  pane shows the prompt as a user turn and no paste, and `tc start next` answers inside Codex
+  (the env assumption above is then a fact). Recorded here with timestamps.
+- The Critic is clean at the merge boundary.
 
 ## Status
 
