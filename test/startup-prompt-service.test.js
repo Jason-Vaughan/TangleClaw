@@ -49,13 +49,25 @@ function deps(over = {}) {
         return row;
       },
       getFireByKey: (k) => fires.find((f) => f.idempotencyKey === k) || null,
+      getFireById: (id) => fires.find((f) => f.id === id) || null,
+      updateFire: (id, patch) => {
+        const f = fires.find((x) => x.id === id);
+        if (!f) return { ok: false, reason: 'no such fire', fire: null };
+        Object.assign(f, { outcome: patch.outcome, reasonCode: patch.reasonCode === undefined ? null : patch.reasonCode, reason: patch.reason || null });
+        if (patch.engineThreadId) f.engineThreadId = patch.engineThreadId;
+        if (patch.engineTurnId) f.engineTurnId = patch.engineTurnId;
+        return { ok: true, fire: f };
+      },
       activeFire: (seq) => fires.find((f) => f.sequenceId === seq && ACTIVE_STATES.includes(f.outcome)) || null,
       appliedFire: (seq, rev) => fires.find((f) => f.sequenceId === seq && f.promptRevision === rev && f.outcome === 'applied') || null
     },
     getProjectByName: (name) => ({ target: { id: 1 }, other: { id: 4 } })[name] || null,
     getProject: (id) => ([1, 2, 3, 4].includes(id) ? { id } : null),
     getSession: (id) => (id === 10 ? { id: 10, projectId: 1, engineId: 'codex', status: 'active' } : null),
-    getLaunchBySession: (sid) => (sid === 10 ? { id: 100, sessionId: 10 } : null),
+    getLaunchBySession: (sid) => (sid === 10 ? { id: 100, sessionId: 10, launchId: 'bearer-L1', revision: 2, sourceManifest: { rules: [{ id: 7, source: 'project', revision: 3, contentHash: 'h7' }], handoffPublicationId: 'pub-1', handoffDigest: 'hd-1', renderContext: { projectName: 'target' } } } : null),
+    listSteps: () => [{ id: 'identity', digest: 'd-i' }, { id: 'governance', digest: 'd-g' }, { id: 'state', digest: 'd-s' }, { id: 'task', digest: 'd-t' }],
+    logActivity: () => {},
+    acceptWaitMs: 50,
     getEngine: (id) => ({ id, capabilities: {} }),
     groupsForProject: (pid) => ({ 1: [{ id: 'g1' }], 2: [{ id: 'g1' }], 3: [{ id: 'g9' }], 4: [{ id: 'g1' }] })[pid] || [],
     adapters: {},
@@ -327,18 +339,132 @@ describe('startup prompt service: fire', () => {
     assert.equal((await svc.fire(req(OPERATOR, { sessionId: '10' }), d)).status, 400);
   });
 
-  it('with a registered adapter on a verified version, refuses honestly and records and types nothing (dispatch is not built)', async () => {
+  it('a registered adapter that cannot dispatch is refused with 501, and nothing is recorded or touched', async () => {
     const block = { adapter: 'fake', channel: 'c', readiness: 'r', receipt: 'x', blockers: 'b', verifiedVersions: ['1'] };
     block.evidence = Object.fromEntries(Object.keys(block).map((k) => [k, { verifiedOn: null, source: 's' }]));
-    let touched = false;
     const supported = deps({
       getEngine: (id) => ({ id, capabilities: { startupControl: block } }),
-      adapters: { fake: { installedVersion: () => '1', fire: () => { touched = true; } } }
+      adapters: { fake: { installedVersion: () => '1' } }
     });
     const r = await svc.fire(req(OPERATOR), supported);
     assert.equal(r.status, 501);
     assert.equal(r.body.code, 'STARTUP_CONTROL_DISPATCH_UNAVAILABLE');
     assert.equal(supported._fires.length, 0);
-    assert.equal(touched, false);
+  });
+
+  /**
+   * A supported engine whose adapter is a scripted fake.
+   * @param {(input: object) => {accepted: Promise, settled: Promise}} fireImpl - The fake fire.
+   * @returns {object} deps
+   */
+  function supportedDeps(fireImpl) {
+    const block = { adapter: 'fake', channel: 'c', readiness: 'r', receipt: 'x', blockers: 'b', verifiedVersions: ['1'] };
+    block.evidence = Object.fromEntries(Object.keys(block).map((k) => [k, { verifiedOn: null, source: 's' }]));
+    return deps({
+      getEngine: (id) => ({ id, capabilities: { startupControl: block } }),
+      adapters: { fake: { installedVersion: () => '1', fire: fireImpl } }
+    });
+  }
+
+  it('a dispatching adapter gets a durable pending intent first, the launch-bound payload, and the route answers the row as the adapter left it', async () => {
+    let seen = null;
+    const d = supportedDeps((input) => {
+      seen = input;
+      assert.equal(d._fires[0].outcome, 'pending', 'the intent row exists before the adapter runs');
+      const row = input.onUpdate({ outcome: 'dispatching', engineThreadId: 'T' });
+      assert.equal(row.outcome, 'dispatching');
+      const accepted = Promise.resolve(input.onUpdate({ outcome: 'accepted', engineTurnId: 'U' }));
+      return { accepted, settled: accepted.then(() => new Promise((resolve) => setTimeout(() => resolve(input.onUpdate({ outcome: 'applied' })), 20))) };
+    });
+    const r = await svc.fire(req(OPERATOR), d);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.fire.outcome, 'accepted', 'answered at acceptance, before the watch settles');
+    assert.equal(seen.sequenceId, 100);
+    assert.equal(seen.promptText, 'read your launch context: run tc start next');
+    assert.equal(seen.promptTextDigest, 't1');
+    assert.match(seen.payloadDigest, /^[0-9a-f]{64}$/);
+    const row = d._fires[0];
+    assert.equal(row.payloadDigest, seen.payloadDigest);
+    assert.ok(!JSON.stringify(row.payload).includes('bearer-L1'), 'the launch bearer is hashed in, never stored');
+    assert.equal(row.payload.roleAssignmentSource, 'project-binding+session-rules+handoff');
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(d._fires[0].outcome, 'applied', 'the watch settled in the background');
+  });
+
+  it('a pre-send blocker answers 409 STARTUP_FIRE_BLOCKED and frees the launch for another fire', async () => {
+    const d = supportedDeps((input) => {
+      const row = input.onUpdate({ outcome: 'blocked', reasonCode: 'trust_required', reason: 'not trusted' });
+      return { accepted: Promise.resolve(row), settled: Promise.resolve(row) };
+    });
+    const first = await svc.fire(req(OPERATOR), d);
+    assert.equal(first.status, 409);
+    assert.equal(first.body.code, 'STARTUP_FIRE_BLOCKED');
+    assert.equal(first.body.reasonCode, 'trust_required');
+    const second = await svc.fire(req(OPERATOR), d);
+    assert.equal(second.status, 409, 'a new fire is decided afresh');
+    assert.equal(second.body.code, 'STARTUP_FIRE_BLOCKED');
+    assert.equal(d._fires.length, 2, 'blocked released the slot, so the second attempt was recorded');
+  });
+
+  it('an adapter that throws before sending fails the fire as channel_lost, with the intent recorded', async () => {
+    const d = supportedDeps(() => { throw new Error('boom'); });
+    const r = await svc.fire(req(OPERATOR), d);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.fire.outcome, 'failed');
+    assert.equal(r.body.fire.reasonCode, 'channel_lost');
+  });
+
+  it('an indeterminate fire is reconciled before a new fire is decided, and stays in the way until it settles', async () => {
+    let reconciled = 0;
+    const d = supportedDeps(() => { throw new Error('should not fire'); });
+    d.adapters.fake.reconcile = ({ fire, onUpdate }) => { reconciled += 1; return Promise.resolve(onUpdate({ outcome: 'failed', reasonCode: 'send_unconfirmed', reason: 'absent' })); };
+    d._fires.push({ id: 1, idempotencyKey: 'old-key-00000001', projectId: 1, sessionId: 10, sequenceId: 100, promptRevision: 1, outcome: 'indeterminate', reasonCode: 'send_unconfirmed', engineThreadId: 'T', payloadDigest: 'x'.repeat(64) });
+    d.adapters.fake.fire = (input) => { const row = input.onUpdate({ outcome: 'blocked', reasonCode: 'engine_not_ready', reason: 'r' }); return { accepted: Promise.resolve(row), settled: Promise.resolve(row) }; };
+    const r = await svc.fire(req(OPERATOR), d);
+    assert.equal(reconciled, 1);
+    assert.equal(d._fires[0].outcome, 'failed', 'the old fire was settled from the record');
+    assert.equal(r.body.code, 'STARTUP_FIRE_BLOCKED', 'and the new fire was then decided');
+  });
+});
+
+describe('startup prompt service: the launch-start payload (E8)', () => {
+  const crypto = require('node:crypto');
+  const sha = (t) => crypto.createHash('sha256').update(t, 'utf8').digest('hex');
+  const launch = { id: 100, launchId: 'bearer-L1', revision: 2, sourceManifest: { rules: [{ id: 9, source: 'project', revision: 1, contentHash: 'h9' }, { id: 7, source: 'project', revision: 3, contentHash: 'h7' }], handoffPublicationId: 'pub-1', handoffDigest: 'hd-1', renderContext: { projectName: 'target' } } };
+  const prompt = { revision: 4, textDigest: 'td', policyDigest: 'pd' };
+  const d = { listSteps: () => [{ id: 'identity', digest: 'd-i' }, { id: 'governance', digest: 'd-g' }, { id: 'state', digest: 'd-s' }, { id: 'task', digest: 'd-t' }] };
+
+  it('hashes domain-separated, versioned canonical objects from the frozen snapshot, and never stores the bearer', () => {
+    const { stored, digest } = svc.buildLaunchPayload({ launch, session: { id: 10 }, project: { id: 1 }, prompt }, d);
+    assert.equal(stored.primingPactDigest, sha(svc.canonicalJson({ kind: 'startup-priming-pact', version: 1, launchRevision: 2, steps: { identity: 'd-i', governance: 'd-g', state: 'd-s', task: 'd-t' } })));
+    assert.deepEqual(stored.roleAssignment, {
+      kind: 'startup-role-assignment', version: 1, projectId: 1, projectName: 'target', roleKind: 'project-bound',
+      ruleFingerprints: [{ id: 7, source: 'project', revision: 3, contentHash: 'h7' }, { id: 9, source: 'project', revision: 1, contentHash: 'h9' }],
+      handoffPublicationId: 'pub-1', handoffDigest: 'hd-1'
+    });
+    assert.equal(stored.roleAssignmentRevision, sha(svc.canonicalJson(stored.roleAssignment)));
+    assert.equal(stored.roleAssignmentSource, 'project-binding+session-rules+handoff');
+    assert.equal(stored.canonVersion, svc.PAYLOAD_CANON_VERSION);
+    assert.equal(stored.launchId, undefined);
+    assert.ok(!JSON.stringify(stored).includes('bearer-L1'));
+    const full = { ...stored, launchId: 'bearer-L1' };
+    delete full.roleAssignment;
+    assert.equal(digest, sha(svc.canonicalJson(full)), 'the digest covers the payload WITH the bearer');
+    const again = svc.buildLaunchPayload({ launch, session: { id: 10 }, project: { id: 1 }, prompt }, d);
+    assert.equal(again.digest, digest, 'deterministic');
+    const other = svc.buildLaunchPayload({ launch: { ...launch, launchId: 'bearer-L2' }, session: { id: 10 }, project: { id: 1 }, prompt }, d);
+    assert.notEqual(other.digest, digest, 'a different launch is a different digest');
+  });
+
+  it('reads nothing live: missing steps and an absent manifest hash as explicit nulls', () => {
+    const { stored } = svc.buildLaunchPayload({ launch: { id: 1, launchId: 'x', revision: 1, sourceManifest: null }, session: { id: 10 }, project: { id: 1 }, prompt }, { listSteps: () => { throw new Error('unreadable'); } });
+    assert.deepEqual(stored.stepDigests, { identity: null, governance: null, state: null, task: null });
+    assert.deepEqual(stored.roleAssignment.ruleFingerprints, []);
+    assert.equal(stored.roleAssignment.handoffPublicationId, null);
+    assert.equal(stored.roleAssignment.projectName, null);
+  });
+
+  it('canonical JSON sorts keys at every depth', () => {
+    assert.equal(svc.canonicalJson({ b: 1, a: { d: [3, { z: 1, y: 2 }], c: null } }), '{"a":{"c":null,"d":[3,{"y":2,"z":1}]},"b":1}');
   });
 });
