@@ -9,7 +9,7 @@
 - [x] Build: back-off + clock seam + tests + CHANGELOG (`### Fixed`)
 - [x] Verify: focused tests + full suite
 - [x] Critic (cumulative, 2026-09-24: 0 blocking, 0 warnings, 2 notes on this plan, both fixed)
-- [ ] Draft PR opened — **STOP here** (pilot boundary)
+- [x] Draft PR opened: #1843. **STOP here** (pilot boundary)
 - [ ] After #1311 merges and the PM says go: rebase, rerun focused + full suite + Critic on the combined target
 
 **Pilot envelope (set by the Architect; these restrictions are IN FORCE):** no merging any PR, no pulling/updating the live checkout,
