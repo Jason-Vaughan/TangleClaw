@@ -435,6 +435,8 @@ fails any auto-stub section older than 14 days.
 - **TangleClaw project-file locations** — the repo-relative paths of TangleClaw's own machine-state files inside a managed project, shared by their writers and the wrap's ownership check. `lib/tangleclaw-project-files.js`.
 - **Wrap config root** — where a wrap step reads and writes project config and wrap state when the session works on a worktree. `lib/wrap-steps/_config-root.js`.
 - **Runbook: stand up a multi-agent development fleet** — the operator's tier-2 procedure for provisioning a fleet that develops TangleClaw itself, including the live cutover of `com.tangleclaw.server` (the only step with its own rollback). `docs/runbooks/stand-up-a-new-agent-fleet.md`.
+- **Codex startupControl adapter** (#1825 B2/B3) — the one registered native-channel adapter: probes the exact Codex executable, starts one detached `codex app-server` per launch on a local unix socket (inheriting the pane's ambient env), rewrites the pane command with `--remote`, records the channel, reads readiness from the protocol, fires `turn/start` with the launch-payload digest, watches the turn to `accepted`/`applied` with a periodic read-back, reconciles indeterminate fires, recovers at boot and reaps ended channels — every process effect behind `_seams`. `lib/startup-control-codex.js`.
+- **WebSocket client over a unix socket** (#1825 B2) — a dependency-free RFC 6455 client for Codex's app-server: handshake with the accept-key check, masked frames out, all length forms and fragmentation in, ping answered with pong, clean close. `lib/ws-unix-client.js`.
 
 ## CLI / Tooling
 
@@ -732,12 +734,7 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - **Withheld methodology authority** (#1738) — a wrap from an engine that cannot run Prawduct is a state-only checkpoint across real steps: no probe, no release cut, no merge, `.prawduct/` untouched, and every step reads one resolved answer. `test/wrap-methodology-authority.test.js`.
 - **Resume publication binding, end to end** (#1675) — drives the real handoff-stage step, finalizer, launch preflight and prime renderer together, and asserts the next session's Resume comes from the publication the wrap produced, not an index no publication vouches for. `test/resume-publication-binding.test.js`.
 - **Workflow action pins** (#1436) — every `uses:` in `.github/workflows/` must be a full commit SHA with an exact `# vX.Y.Z` comment (docker refs digest-pinned, local `./` paths allowed), every workflow must declare top-level `permissions:`, and `release.yml`'s `node-version` must be an exact `X.Y.Z`; runs inside the required `test` check so an unpinned ref cannot merge. `test/workflow-action-pins.test.js`.
-
-## TODO (auto-stubbed 2026-09-23)
-
-- **TBD** — touched in this session: `lib/startup-control-codex.js`. <!-- describe -->
-- **TBD** — touched in this session: `lib/ws-unix-client.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/helpers/ws-test-server.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/startup-control-codex.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/startup-control-launch.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/ws-unix-client.test.js`. <!-- describe -->
+- `test/helpers/ws-test-server.js` — not a test file: a small RFC 6455 server on a unix socket plus `FakeAppServer`, which replays Codex's JSON-RPC shape (handled requests, pushed notifications and server requests) and records every inbound message so a test can assert what TangleClaw sent and never sent.
+- `test/startup-control-codex.test.js` — the Codex adapter against the fake app-server: readiness green and each blocker, accepted via notification and via read-back alone, applied, failed, interrupted, approval pending, sockets lost before and after acceptance, reconcile of an indeterminate fire, version mismatch, and that TangleClaw never answers a server request.
+- `test/startup-control-launch.test.js` — the launch and teardown halves: a supported Codex launch spawns the app-server through the seams with the pane's env, attaches `--remote` ahead of the mode args, freezes the native/legacy selection, records the channel; unverified versions and failed starts launch unchanged; kill, wrap, keep-running wrap, boot re-sync and the reaper end or retain the channel correctly.
+- `test/ws-unix-client.test.js` — the unix-socket WebSocket client: handshake accept and refusal, masking, the 7/16/64-bit length forms, ping→pong, fragmented text, close.
