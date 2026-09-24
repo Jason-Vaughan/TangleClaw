@@ -89,12 +89,12 @@ function req(caller, over = {}) {
 }
 
 describe('startup prompt service: validation', () => {
-  it('accepts plain and multi-line text', () => {
+  it('accepts plain and multi-line text', async () => {
     assert.equal(svc.textProblem('run tc start next'), null);
     assert.equal(svc.textProblem('line one\nline two'), null);
   });
 
-  it('counts the limit in UTF-8 bytes, not characters', () => {
+  it('counts the limit in UTF-8 bytes, not characters', async () => {
     assert.equal(svc.textProblem('a'.repeat(svc.MAX_PROMPT_BYTES)), null);
     assert.match(svc.textProblem('a'.repeat(svc.MAX_PROMPT_BYTES + 1)), /bytes/);
     // 2048 two-byte characters fit; one more does not.
@@ -102,7 +102,7 @@ describe('startup prompt service: validation', () => {
     assert.match(svc.textProblem('é'.repeat(svc.MAX_PROMPT_BYTES / 2 + 1)), /bytes/);
   });
 
-  it('refuses empty text and every control character except LF', () => {
+  it('refuses empty text and every control character except LF', async () => {
     assert.match(svc.textProblem('   '), /empty/);
     assert.match(svc.textProblem(42), /string/);
     for (const c of ['\u001b', '\r', '\t', '\u0000', '\u007f', '\u0080', '\u009b', '\u009f']) {
@@ -111,7 +111,7 @@ describe('startup prompt service: validation', () => {
     assert.equal(svc.textProblem('a b'), null, 'NBSP is not a control character');
   });
 
-  it('refuses a malformed, repeated or unknown firer list', () => {
+  it('refuses a malformed, repeated or unknown firer list', async () => {
     const d = deps();
     assert.equal(svc.firersProblem([2, 3], d), null);
     assert.match(svc.firersProblem('2', d), /array/);
@@ -123,7 +123,7 @@ describe('startup prompt service: validation', () => {
 });
 
 describe('startup prompt service: read', () => {
-  it('the operator sees the whole firer list and who wrote the revision', () => {
+  it('the operator sees the whole firer list and who wrote the revision', async () => {
     const r = svc.read(OPERATOR, deps());
     assert.equal(r.status, 200);
     assert.deepEqual(r.body.firerProjectIds, [2, 3]);
@@ -132,7 +132,7 @@ describe('startup prompt service: read', () => {
     assert.equal(r.body.policyDigest, 'p1');
   });
 
-  it('a project session sees the prompt and digests, but only whether it is listed itself', () => {
+  it('a project session sees the prompt and digests, but only whether it is listed itself', async () => {
     const listed = svc.read(FIRER_IN_GROUP, deps()).body;
     assert.equal(listed.callerListedAsFirer, true);
     assert.equal(listed.firerProjectIds, undefined, 'other projects\' authority is not disclosed');
@@ -140,7 +140,7 @@ describe('startup prompt service: read', () => {
     assert.equal(svc.read(UNLISTED_IN_GROUP, deps()).body.callerListedAsFirer, false);
   });
 
-  it('carries no launch-shaped field', () => {
+  it('carries no launch-shaped field', async () => {
     for (const caller of [OPERATOR, FIRER_IN_GROUP]) {
       assert.ok(!Object.keys(svc.read(caller, deps()).body).some((k) => /launch/i.test(k)));
     }
@@ -150,7 +150,7 @@ describe('startup prompt service: read', () => {
 describe('startup prompt service: update', () => {
   const PROOF = { clearance: 'operator-verified', actor: 'rosie' };
 
-  it('writes the full state as a new revision with the proof\'s provenance', () => {
+  it('writes the full state as a new revision with the proof\'s provenance', async () => {
     const d = deps();
     const r = svc.update({ text: 'new', firerProjectIds: [2], expectedRevision: 1 }, PROOF, d);
     assert.equal(r.status, 200);
@@ -160,13 +160,13 @@ describe('startup prompt service: update', () => {
     assert.deepEqual(r.body.firerProjectIds, [2]);
   });
 
-  it('requires the firer list: a save states the whole prompt', () => {
+  it('requires the firer list: a save states the whole prompt', async () => {
     const r = svc.update({ text: 'new', expectedRevision: 1 }, PROOF, deps());
     assert.equal(r.status, 400);
     assert.match(r.body.error, /firerProjectIds is required/);
   });
 
-  it('refuses a stale revision with 409 and the current revision', () => {
+  it('refuses a stale revision with 409 and the current revision', async () => {
     const d = deps();
     svc.update({ text: 'new', firerProjectIds: [], expectedRevision: 1 }, PROOF, d);
     const r = svc.update({ text: 'lost', firerProjectIds: [], expectedRevision: 1 }, PROOF, d);
@@ -175,7 +175,7 @@ describe('startup prompt service: update', () => {
     assert.equal(r.body.currentRevision, 2);
   });
 
-  it('refuses invalid input with 400 before writing', () => {
+  it('refuses invalid input with 400 before writing', async () => {
     const d = deps();
     assert.equal(svc.update({ text: 'x', firerProjectIds: [] }, PROOF, d).body.code, 'STARTUP_PROMPT_INVALID');
     assert.equal(svc.update({ text: '', firerProjectIds: [], expectedRevision: 1 }, PROOF, d).status, 400);
@@ -188,20 +188,20 @@ describe('startup prompt service: update', () => {
 describe('startup prompt service: who may fire', () => {
   const prompt = { firerProjectIds: [2, 3] };
 
-  it('the operator may fire anywhere', () => {
+  it('the operator may fire anywhere', async () => {
     assert.equal(svc.canFire(OPERATOR, 1, prompt, deps()), true);
   });
 
-  it('a listed firer may fire only into a project it shares a group with', () => {
+  it('a listed firer may fire only into a project it shares a group with', async () => {
     assert.equal(svc.canFire(FIRER_IN_GROUP, 1, prompt, deps()), true);
     assert.equal(svc.canFire(FIRER_OUT_OF_GROUP, 1, prompt, deps()), false);
   });
 
-  it('sharing a group is not enough without being listed', () => {
+  it('sharing a group is not enough without being listed', async () => {
     assert.equal(svc.canFire(UNLISTED_IN_GROUP, 1, prompt, deps()), false);
   });
 
-  it('master, unbound, invalid and missing callers may not fire', () => {
+  it('master, unbound, invalid and missing callers may not fire', async () => {
     for (const kind of ['master', 'unbound', 'invalid']) {
       assert.equal(svc.canFire({ kind, projectId: 2, groupIds: ['g1'] }, 1, prompt, deps()), false, kind);
     }
@@ -213,8 +213,8 @@ describe('startup prompt service: fire', () => {
   let d;
   beforeEach(() => { d = deps(); });
 
-  it('an engine with no adapter gets a typed unsupported refusal, recorded with its evidence', () => {
-    const r = svc.fire(req(OPERATOR), d);
+  it('an engine with no adapter gets a typed unsupported refusal, recorded with its evidence', async () => {
+    const r = await svc.fire(req(OPERATOR), d);
     assert.equal(r.status, 409);
     assert.equal(r.body.code, 'STARTUP_CONTROL_UNSUPPORTED');
     assert.equal(r.body.engine, 'codex');
@@ -230,49 +230,49 @@ describe('startup prompt service: fire', () => {
     assert.equal(f.projectId, 1);
   });
 
-  it('an unreadable engine profile is a recorded unsupported, not an error', () => {
+  it('an unreadable engine profile is a recorded unsupported, not an error', async () => {
     const broken = deps({ getEngine: () => { throw new Error('bad json'); } });
-    const r = svc.fire(req(OPERATOR), broken);
+    const r = await svc.fire(req(OPERATOR), broken);
     assert.equal(r.status, 409);
     assert.equal(r.body.reasonCode, 'engine_profile_unreadable');
     assert.equal(broken._fires[0].outcome, 'unsupported');
   });
 
-  it('a repeat of the same key returns the first record and records nothing new', () => {
+  it('a repeat of the same key returns the first record and records nothing new', async () => {
     const request = req(OPERATOR);
-    const first = svc.fire(request, d);
-    const again = svc.fire({ ...request }, d);
+    const first = await svc.fire(request, d);
+    const again = await svc.fire({ ...request }, d);
     assert.equal(again.body.duplicate, true);
     assert.equal(again.body.fire.id, first.body.fire.id);
     assert.equal(d._fires.length, 1);
   });
 
-  it('a new key after an unsupported outcome is a new attempt: unsupported is not a permanent key', () => {
-    svc.fire(req(OPERATOR), d);
-    svc.fire(req(OPERATOR), d);
+  it('a new key after an unsupported outcome is a new attempt: unsupported is not a permanent key', async () => {
+    await svc.fire(req(OPERATOR), d);
+    await svc.fire(req(OPERATOR), d);
     assert.equal(d._fires.length, 2);
   });
 
-  it('a key reused for a different target is refused', () => {
+  it('a key reused for a different target is refused', async () => {
     const request = req(OPERATOR);
-    svc.fire(request, d);
+    await svc.fire(request, d);
     d.getSession = (id) => ([10, 11].includes(id) ? { id, projectId: 1, engineId: 'codex', status: 'active' } : null);
     d.getLaunchBySession = (sid) => ({ id: sid * 10, sessionId: sid });
-    const r = svc.fire({ ...request, sessionId: 11, sequenceId: 110 }, d);
+    const r = await svc.fire({ ...request, sessionId: 11, sequenceId: 110 }, d);
     assert.equal(r.status, 409);
     assert.equal(r.body.code, 'IDEMPOTENCY_KEY_REUSED');
   });
 
-  it('records the agent caller, its project and its binding clearance', () => {
-    svc.fire(req(FIRER_IN_GROUP), d);
+  it('records the agent caller, its project and its binding clearance', async () => {
+    await svc.fire(req(FIRER_IN_GROUP), d);
     assert.equal(d._fires[0].callerKind, 'project');
     assert.equal(d._fires[0].callerProjectId, 2);
     assert.equal(d._fires[0].callerClearance, 'project-binding');
   });
 
-  it('an out-of-scope target answers exactly like a missing one, and the denial is recorded', () => {
-    const denied = svc.fire(req(UNLISTED_IN_GROUP), d);
-    const missing = svc.fire(req(UNLISTED_IN_GROUP, { sessionId: 12 }), d);
+  it('an out-of-scope target answers exactly like a missing one, and the denial is recorded', async () => {
+    const denied = await svc.fire(req(UNLISTED_IN_GROUP), d);
+    const missing = await svc.fire(req(UNLISTED_IN_GROUP, { sessionId: 12 }), d);
     assert.equal(denied.status, 404);
     assert.equal(denied.body.code, 'SESSION_NOT_FOUND');
     assert.equal(missing.status, 404);
@@ -280,54 +280,54 @@ describe('startup prompt service: fire', () => {
     assert.equal(d._fires.length, 1, 'only the real target\'s denial is recorded');
     assert.equal(d._fires[0].outcome, 'denied');
     assert.equal(d._fires[0].reasonCode, 'fire_scope_denied');
-    assert.equal(svc.fire(req(FIRER_OUT_OF_GROUP), d).status, 404);
+    assert.equal((await svc.fire(req(FIRER_OUT_OF_GROUP), d)).status, 404);
   });
 
-  it('refuses an unknown project or a session that is not active in it', () => {
-    assert.equal(svc.fire(req(OPERATOR, { projectName: 'nope' }), d).body.code, 'SESSION_NOT_FOUND');
-    assert.equal(svc.fire(req(OPERATOR, { sessionId: 11 }), d).body.code, 'SESSION_NOT_FOUND');
-    assert.equal(svc.fire(req(OPERATOR, { projectName: 'other' }), d).body.code, 'SESSION_NOT_FOUND');
+  it('refuses an unknown project or a session that is not active in it', async () => {
+    assert.equal((await svc.fire(req(OPERATOR, { projectName: 'nope' }), d)).body.code, 'SESSION_NOT_FOUND');
+    assert.equal((await svc.fire(req(OPERATOR, { sessionId: 11 }), d)).body.code, 'SESSION_NOT_FOUND');
+    assert.equal((await svc.fire(req(OPERATOR, { projectName: 'other' }), d)).body.code, 'SESSION_NOT_FOUND');
     const ended = deps({ getSession: () => ({ id: 10, projectId: 1, engineId: 'codex', status: 'ended' }) });
-    assert.equal(svc.fire(req(OPERATOR), ended).body.code, 'SESSION_NOT_FOUND');
+    assert.equal((await svc.fire(req(OPERATOR), ended)).body.code, 'SESSION_NOT_FOUND');
   });
 
-  it('refuses a launch that is not the session\'s current one', () => {
-    const r = svc.fire(req(OPERATOR, { sequenceId: 99 }), d);
+  it('refuses a launch that is not the session\'s current one', async () => {
+    const r = await svc.fire(req(OPERATOR, { sequenceId: 99 }), d);
     assert.equal(r.status, 409);
     assert.equal(r.body.code, 'LAUNCH_NOT_CURRENT');
     assert.equal(d._fires.length, 0);
   });
 
-  it('refuses a stale prompt revision', () => {
-    const r = svc.fire(req(OPERATOR, { expectedRevision: 2 }), d);
+  it('refuses a stale prompt revision', async () => {
+    const r = await svc.fire(req(OPERATOR, { expectedRevision: 2 }), d);
     assert.equal(r.body.code, 'STALE_STARTUP_PROMPT');
     assert.equal(r.body.currentRevision, 1);
   });
 
-  it('never injects an applied revision into the same launch again', () => {
+  it('never injects an applied revision into the same launch again', async () => {
     d._fires.push({ id: 90, idempotencyKey: 'x', sequenceId: 100, promptRevision: 1, outcome: 'applied', sessionId: 10 });
-    const r = svc.fire(req(OPERATOR), d);
+    const r = await svc.fire(req(OPERATOR), d);
     assert.equal(r.status, 409);
     assert.equal(r.body.code, 'STARTUP_PROMPT_ALREADY_APPLIED');
   });
 
-  it('refuses while another fire is active on the launch, for every active state', () => {
+  it('refuses while another fire is active on the launch, for every active state', async () => {
     for (const outcome of ACTIVE_STATES) {
       const dd = deps();
       dd._fires.push({ id: 91, idempotencyKey: 'y', sequenceId: 100, promptRevision: 1, outcome, sessionId: 10 });
-      const r = svc.fire(req(OPERATOR), dd);
+      const r = await svc.fire(req(OPERATOR), dd);
       assert.equal(r.body.code, 'STARTUP_FIRE_IN_FLIGHT', outcome);
     }
   });
 
-  it('refuses a malformed idempotency key or non-integer targets', () => {
-    assert.equal(svc.fire(req(OPERATOR, { idempotencyKey: 'short' }), d).status, 400);
-    assert.equal(svc.fire(req(OPERATOR, { idempotencyKey: 'has space in it' }), d).status, 400);
-    assert.equal(svc.fire(req(OPERATOR, { idempotencyKey: undefined }), d).status, 400);
-    assert.equal(svc.fire(req(OPERATOR, { sessionId: '10' }), d).status, 400);
+  it('refuses a malformed idempotency key or non-integer targets', async () => {
+    assert.equal((await svc.fire(req(OPERATOR, { idempotencyKey: 'short' }), d)).status, 400);
+    assert.equal((await svc.fire(req(OPERATOR, { idempotencyKey: 'has space in it' }), d)).status, 400);
+    assert.equal((await svc.fire(req(OPERATOR, { idempotencyKey: undefined }), d)).status, 400);
+    assert.equal((await svc.fire(req(OPERATOR, { sessionId: '10' }), d)).status, 400);
   });
 
-  it('with a registered adapter on a verified version, refuses honestly and records and types nothing (dispatch is not built)', () => {
+  it('with a registered adapter on a verified version, refuses honestly and records and types nothing (dispatch is not built)', async () => {
     const block = { adapter: 'fake', channel: 'c', readiness: 'r', receipt: 'x', blockers: 'b', verifiedVersions: ['1'] };
     block.evidence = Object.fromEntries(Object.keys(block).map((k) => [k, { verifiedOn: null, source: 's' }]));
     let touched = false;
@@ -335,7 +335,7 @@ describe('startup prompt service: fire', () => {
       getEngine: (id) => ({ id, capabilities: { startupControl: block } }),
       adapters: { fake: { installedVersion: () => '1', fire: () => { touched = true; } } }
     });
-    const r = svc.fire(req(OPERATOR), supported);
+    const r = await svc.fire(req(OPERATOR), supported);
     assert.equal(r.status, 501);
     assert.equal(r.body.code, 'STARTUP_CONTROL_DISPATCH_UNAVAILABLE');
     assert.equal(supported._fires.length, 0);

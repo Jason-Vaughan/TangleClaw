@@ -58,7 +58,9 @@
   "defaultLaunchMode": "default",
   "persistent": null,
   "capabilities": {
-    "launchSequence": { "supported": true },
+    "launchSequence": {
+      "supported": true
+    },
     "supportsSlashCommands": false,
     "supportsPrimePrompt": true,
     "supportsConfigFile": true,
@@ -102,6 +104,42 @@
         "decorativePattern": {
           "verifiedOn": "2026-09-16",
           "source": "Measured, not predicted. codex paints an animated braille shimmer (U+2800-U+28FF) across the composer line AND the lines above it, continuously, in any session that has conversation history. It broke both idle gates. Movement: `_paneDigest` hashes the transcript region above the composer, where part of the shimmer is drawn — 8 distinct digests over 8 samples of a completely idle pane, so the monitor reported `pane-writing` forever and the nudge could never fire. Composer: a shimmer cell lands between glyph and cursor about a third of the time (8 empty / 4 blocked, reproduced in two independent 12-sample runs), and it OVERWRITES the pad cell, which made the separator unrecognisable. Declaring the range makes both gates discount cells the ENGINE drew rather than the operator; the digest blanks them to spaces rather than deleting them, so a moving shimmer cannot shorten a line and reintroduce the instability. After the fix, on the same live pane: 1 distinct digest over 8 idle samples, composer 12/12 empty, and the wake nudge fired end to end. Scoped to the engine that draws them — claude and antigravity declare nothing, so braille typed into those engines is still input. Accepted cost, stated rather than hidden: braille an operator genuinely types into codex is discounted as decoration. NOT caused by tui.animations, the model, or reasoning effort — a fresh gpt-6-astra high session with animations ON showed zero shimmer over 12 samples, so it tracks session history rather than configuration."
+        }
+      }
+    },
+    "startupControl": {
+      "adapter": "codex",
+      "channel": "A per-launch `codex app-server` on a local unix socket, owned by TangleClaw; the pane's TUI attaches with `--remote`. Fire is `turn/start` on the pane's thread.",
+      "readiness": "Read from the protocol only: the server's version, `config/read` trust for the project directory, `account/read`, `account/rateLimits/read`, one loaded thread whose cwd is the project, and its `idle` status.",
+      "receipt": "`clientUserMessageId` is echoed as the user item's `clientId` (accepted, from `item/completed` or a `thread/turns/list` read-back); `turn/completed {completed}` is applied; `failed` and `interrupted` are named.",
+      "blockers": "Untrusted directory (`trust_required`), no account (`auth_required`), exhausted usage with no credits (`quota_exhausted`), no idle thread (`engine_not_ready`), and an in-turn `waitingOnApproval` that the operator answers in the pane.",
+      "verifiedVersions": [
+        "0.156.1"
+      ],
+      "evidence": {
+        "adapter": {
+          "verifiedOn": "2026-09-24",
+          "source": "The startupControl spike (2026-09-23, codex-cli 0.156.1) and the six Chunk B2 probes (2026-09-24), recorded in the #1825 plan. The protocol is WebSocket JSON-RPC (no `jsonrpc` field) on the unix socket; every call named here completed live."
+        },
+        "channel": {
+          "verifiedOn": "2026-09-24",
+          "source": "Probes 1-6: `--listen unix://<long path>` binds a short path under /private/tmp/codex-daemon-<uid>/ and leaves a symlink; the TUI needs the short path (SUN_LEN). `-a never -s workspace-write` after `--remote` reached the thread (status line `never`; `thread/start` echoes the policy). SIGTERM exits 0 and removes the socket."
+        },
+        "readiness": {
+          "verifiedOn": "2026-09-24",
+          "source": "Probes 1-6: `initialize.userAgent` carries the server version; `config/read` returns `config.projects[path].trust_level`; an untrusted cwd leaves the TUI at its trust dialog with NO loaded thread; `thread/read` reports `status.type` idle; `account/read` and `account/rateLimits/read` answered as recorded in the plan. A fresh thread cannot be resumed or listed before its first user message, so subscription is not a readiness precondition."
+        },
+        "receipt": {
+          "verifiedOn": "2026-09-24",
+          "source": "Spike case 3 (2026-09-23, three benign turns): `turn/start` with `clientUserMessageId` produced `item/completed {type: userMessage, clientId: <ours>}` then `turn/completed {status: completed}`. B2 live check (2026-09-24, one operator-authorized turn, the real adapter): `thread/resume` on the freshly materialized thread was refused (`list_turns is not supported yet`), the `thread/turns/list` read-back carried the echoed clientId with the prompt's exact text (accepted 0.25 s after the send), and `turn/completed {completed}` followed (applied); the pane rendered the prompt as a user turn. The watcher therefore also re-reads the record on an interval rather than relying on a subscription."
+        },
+        "blockers": {
+          "verifiedOn": "2026-09-24",
+          "source": "Spike case 4 and probes 1, 5: `account/rateLimits/read` names an exhausted window and credits; an untrusted cwd shows the TUI's trust dialog while `thread/start` from the protocol succeeds, so trust is checked through `config/read` before a send; `thread/status/changed {active, activeFlags: [waitingOnApproval]}` plus a server request name an in-turn approval, and the operator's decline ends the turn `interrupted`."
+        },
+        "verifiedVersions": {
+          "verifiedOn": "2026-09-24",
+          "source": "codex-cli 0.156.1 is the only version the spike and the probes ran against; the protocol is marked [experimental] by the CLI, so no other version is assumed."
         }
       }
     }

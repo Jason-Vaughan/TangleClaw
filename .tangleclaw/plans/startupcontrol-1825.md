@@ -597,15 +597,123 @@ and are not committed, because they contain account identifiers.
   `version_mismatch`. Rejected: reading the version only from the app-server (it does not exist until
   a launch, and resolution runs on request paths).
 
-### Live verification and its one gap
+### Architect rulings on E1–E9 (2026-09-24, message 2ad0567c): binding
 
-Probes 1–6 (above) were spent-free. The receipt path from `turn/start` onwards is built against the
-spike's recorded wire sequence through a fake app-server in tests. The one step no probe could run
-without a model turn is the read-back: `thread/turns/list` after materialization, and the
-`clientId` echo inside it. One benign turn (credits are present; the weekly window is exhausted
-until 2026-09-24 04:33 UTC) would close it; the operator approved spike turns on 2026-09-23, and
-this chunk asks the PM for the same approval for one turn. Without it, B3's live verification
-covers it, and the plan says so.
+Proceed with B2 subject to these modifications. They authorize no B3 and no second Builder.
+
+- **E1: MODIFY.** One detached, server-owned app-server per launch and the boot/periodic reaper are
+  approved. Teardown follows the actual session/launch lifetime: kill, a terminal wrap that ends the
+  session, crash, or replacement by a new launch. A keep-running wrap MUST retain the channel. On a
+  TangleClaw restart, recover active channel records and reconnect before reaping. Before signalling,
+  verify the current session+sequence, the exact socket, the command identity and a recorded
+  process-birth identity so pid reuse cannot kill an unrelated process; terminate the owned process
+  group and record teardown failure honestly.
+- **E2: MODIFY.** Persistence and omission of the raw launch bearer are approved. Bind every row to
+  session_id + sequence_id and enforce one open channel for the current launch generation. S4 still
+  forbids a Codex-specific contract in the generic store: keep a generic channel header and put
+  pid/socket/resolved-socket/thread data in bounded, non-secret adapter-owned state only the Codex
+  adapter interprets. The generic UI/API may expose lifecycle state and typed reasons, not Codex
+  process fields.
+- **E3: APPROVE.** Preserve the already-validated launch-mode argv after `--remote`; give the
+  app-server no competing policy flags; reuse the validated argv path rather than interpolating raw
+  mode text.
+- **E4: MODIFY.** The six protocol checks and deferring subscription until after materialization are
+  approved. Compare canonical cwd identities and require exactly the recorded launch thread; zero,
+  multiple or mismatched candidates are not ready. Quota passes only on an explicit
+  `ordinaryUsageAllowed = true` or an explicitly usable positive-credit predicate pinned to the
+  verified protocol version; a credits object alone is insufficient. Unknown account, rate-limit or
+  trust state fails closed with a typed reason. Trust is read for the canonical target path and never
+  injected or answered by TangleClaw.
+- **E5: MODIFY.** pending → dispatching → accepted → applied and the subscribe-then-read-back gap
+  closure are approved. Accepted requires the same thread/turn, `clientId == payloadDigest` AND echoed
+  user-message content whose exact bytes hash to `promptTextDigest`. Applied requires `completed` on
+  that tracked turn after accepted evidence exists; an early completion is buffered/reconciled, never
+  used to skip the accepted proof. `waitingOnApproval` and `waitingOnUserInput` are distinct
+  non-terminal accepted states (`approval_pending`, `user_input_pending`). After a restart, recover and
+  reconcile every non-terminal fire without resending: a proven never-dispatched pending row may fail
+  cleanly, dispatching without a response becomes indeterminate, accepted resumes its watch. The 10 s
+  route wait and the continuing watcher are approved.
+- **E6: MODIFY.** Bounded typed codes and pre-send blocked semantics are approved. Add
+  `user_input_pending`. `channel_unavailable` is failure to create or obtain a channel;
+  `channel_lost` is an established one that disappeared. `approval_pending` / `user_input_pending`
+  remain accepted and keep the slot; pre-send blocked releases it. Unknown readiness, account or
+  quota evidence must never become a false ready or a false `quota_exhausted`; use an honest bounded
+  code.
+- **E7: MODIFY.** The retry classes, same-key replay, applied dedup, store-enforced transitions and
+  the transactional v46 rebuild are approved. An indeterminate send may settle to
+  `failed/send_unconfirmed` only after an authoritative, exhaustive read of the exact materialized
+  thread (all pages), on the exact reachable channel, shows the payload absent while the thread is
+  stably idle. One page or one instantaneous absence is not enough; otherwise it stays indeterminate
+  and is never resent automatically. Preserve all rows, constraints and indexes through the rebuild.
+- **E8: MODIFY; choices: P-a and R-a in these exact forms.**
+  - Priming pact: P-a, hashed as a domain-separated, versioned canonical object
+    `{kind: startup-priming-pact, version: 1, launchRevision, steps: {identity, governance, state,
+    task}}`, not a concatenation. The step digests are the exact frozen bytes served, so this is the
+    pact; `sourceManifest` is provenance, not the pact.
+  - Role+assignment: R-a as the honest current proxy, derived ONLY from the frozen launch snapshot,
+    never from live `listVersions`. A domain-separated, versioned object containing the target
+    project binding (projectId; the launch-time name if frozen), `roleKind: project-bound`, the
+    snapshot rule fingerprints, and the consumed handoff publicationId + digest (explicit nulls when
+    absent), with source recorded as `project-binding+session-rules+handoff`. Session rules alone are
+    governance, not proof of a first-class role, and the handoff is continuity, not a persisted PM
+    dispatch; that limitation is documented. A future first-class role/assignment record returns for a
+    new decision rather than silently changing this digest. Store the non-bearer components and the
+    canonicalization version for audit; the raw launchId is hashed into the full payload digest and
+    never stored.
+- **E9: APPROVE with one condition.** Probe the exact resolved Codex executable used for the launch,
+  refresh before each launch, and invalidate rather than reuse a stale cache on probe failure.
+  `initialize.userAgent` must match both the channel row's recorded version and an exact verified
+  version. Recovered channels are revalidated against their recorded server version.
+  `installedVersion` stays synchronous and spawn-free on request paths.
+
+The Architect confirmed the Builder's restatement (message a445580e) and closed the exchange; it
+returns only at the review gate or if implementation evidence changes a contract.
+
+### How the rulings landed (implementation calls)
+
+- E2: `startup_control_channels` is `{id, session_id, sequence_id, engine_id, adapter, state,
+  adapter_state (JSON ≤ 8 KiB), opened_at, closed_at, close_reason, teardown}`. The Codex adapter's
+  state is `{pid, birth, socketPath, resolvedSocketPath, engineVersion, enginePath, threadId,
+  serverVersion}`.
+- E4/E6: `_usageAllowed` answers `allowed | exhausted | unknown`; every unknown is `readiness_unknown`.
+- E5: `_echoedItem` requires both the clientId and `sha256(text) === promptTextDigest`; an early
+  `turn/completed` triggers a read-back before judgement; `recover()` runs at boot.
+- E7: `reconcile` pages `thread/turns/list` to the end, reads the status twice across
+  `STABLE_IDLE_MS` (1.5 s), and lists again before recording `failed`.
+- E8: `buildLaunchPayload` in `lib/startup-prompt.js`, with `PAYLOAD_CANON_VERSION = 1`.
+- E9: `probeVersionSync({enginePath})` runs with `detectEngine`'s resolved path at each launch.
+- Reason codes added to the bounded list: `readiness_unknown`, `user_input_pending`,
+  `restart_before_dispatch`, plus the E6 set.
+- The fire route answers `409 STARTUP_FIRE_BLOCKED` for a pre-send blocker (nothing sent), and `200`
+  with the row for every other outcome.
+
+### Live verification (the gap is closed)
+
+Probes 1–6 (above) were spend-free. With the operator's pre-authorization (relayed by the PM,
+message f3951ca5), one benign turn was spent on 2026-09-24 01:14 UTC running the REAL adapter
+(`lib/startup-control-codex.js`, real seams) against a real `codex app-server` and TUI in the
+trusted scratch directory `/private/tmp/tc731`:
+
+- `prepareLaunch` probed the exact executable (`~/.npm-global/bin/codex`, 0.156.1), started the
+  server detached (pid recorded with its `ps` birth time), resolved the short socket path and built
+  `codex --remote unix://<short path> -a never -s workspace-write`; the TUI attached and showed the
+  `never` posture.
+- Readiness passed on the protocol: server version 0.156.1 recorded on the channel, trust read from
+  `config/read`, account present, usage window exhausted but credits usable, exactly one idle thread
+  for the directory (`01a0d0fa-9013…`, recorded on the channel).
+- `turn/start` with the payload digest as `clientUserMessageId` answered with turn `01a0d0fa-a078…`;
+  **`thread/resume {excludeTurns: true}` on the freshly materialized thread FAILED with
+  `-32601 list_turns is not supported yet`** (the trap the spike hit, now on the post-send path
+  too), so the subscription is not guaranteed on this version. The `thread/turns/list` read-back
+  answered, carried the user message with the echoed `clientId` and the prompt's exact text, and the
+  fire went `dispatching → accepted` 0.25 s after the send; `turn/completed {completed}` arrived and
+  the fire went `applied` 1.3 s later. The pane showed the prompt as an ordinary user turn (`› …`)
+  and Codex's reply (`• ACK`). No command ran.
+- `releaseSession` verified command, socket and birth, signalled the process group, recorded
+  `teardown: ok`, and no app-server survived.
+- Consequence built in: the watcher re-reads the turn record every 5 s while a fire is accepted
+  (`WATCH_POLL_MS`), so a turn whose end no notification reports is still settled from the engine's
+  record; a test replays the refused subscription.
 
 ### Implementation calls (not architectural)
 

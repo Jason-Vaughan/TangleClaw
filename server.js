@@ -271,6 +271,7 @@ const master = require('./lib/master');
 const sharedDocsAccess = require('./lib/shared-docs-access');
 const startupPrompt = require('./lib/startup-prompt');
 const startupControl = require('./lib/startup-control');
+const startupControlCodex = require('./lib/startup-control-codex');
 const projectView = require('./lib/project-view');
 const actions = require('./lib/actions');
 const porthub = require('./lib/porthub');
@@ -7074,7 +7075,7 @@ route('PUT', '/api/startup-prompt', (req, res, _params, body) => {
 // is recorded internally. Every fire is recorded in startup_prompt_fires; an
 // engine with no supported startupControl channel gets a typed 409, with no
 // fallback.
-route('POST', '/api/sessions/:project/startup-prompt/fire', (req, res, params, body) => {
+route('POST', '/api/sessions/:project/startup-prompt/fire', async (req, res, params, body) => {
   const access = sharedDocsAccess.resolveAccess(req);
   let clearance = 'project-binding';
   if (access.kind === 'operator') {
@@ -7087,7 +7088,7 @@ route('POST', '/api/sessions/:project/startup-prompt/fire', (req, res, params, b
     if (refusal) return errorResponse(res, refusal.status, refusal.message, refusal.code);
   }
   const b = body && typeof body === 'object' ? body : {};
-  const result = startupPrompt.fire({
+  const result = await startupPrompt.fire({
     projectName: params.project,
     sessionId: b.sessionId,
     sequenceId: b.sequenceId,
@@ -11097,6 +11098,11 @@ if (require.main === module) {
     // watcher that types a fixed nudge into an opted-in (`medusaWake`) session
     // when fresh inbound mail is waiting and the pane is at a bare prompt.
     medusaWake.start();
+    // Start the Codex startupControl adapter (#1825 B2): probe the installed
+    // codex-cli version once, so capability resolution never spawns on a
+    // request path, and reap app-servers whose sessions ended while
+    // TangleClaw was down.
+    startupControlCodex.start().catch((err) => log.warn('startupControl adapter failed to start', { error: err.message }));
     // Start the unready-launch monitor (Train 21, #1583) — records the launches
     // that have not attested READY inside their window and nudges each one once,
     // behind the same idle gate the wake monitor uses. It records and reminds;
