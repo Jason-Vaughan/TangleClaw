@@ -899,10 +899,15 @@ trusted scratch directory `/private/tmp/tc731`:
   (`'legacy' | 'native'`, v47, additive, default `legacy`), decided in `launchSession` from "the
   channel started AND the sequence is applicable" and written in the same transaction that binds the
   sequence to the session. `_deferEngineInit`, `launch-unready` and the panel read it.
-- The gate timeout does not skip the attempt: after the pane gate answers (ready or timed out) the
-  one fire is made, and the adapter's own pre-send readiness records the typed reason
-  (`engine_not_ready`, `trust_required`, …) through the single service path — so a timed-out gate
-  never invents a reason the engine did not give.
+- **F1 correction (Architect, message d00c06b7): only `_awaitPaneReady(...).ready === true` may reach
+  the adapter's send.** A gate timeout still goes through `startupPrompt.fire` and creates the
+  durable audited attempt (the `pending` intent row), but carries a launch-only pre-send gate result
+  that settles the row `blocked` with the bounded reason `pane_not_ready` WITHOUT invoking
+  `adapter.fire`: no protocol fact is claimed, no direct store write, no paste, kickoff or nudge, no
+  automatic retry. The panel then shows exactly why the native path did not send. (The first
+  restatement — "the timeout does not skip the attempt" — was withdrawn: entering the ordinary
+  adapter fire after a timeout would let protocol readiness send a turn the pane gate never
+  licensed, turning the gate into a delay.)
 - F2: `launch-unready` returns a new outcome `native-startup` and types nothing when the sequence
   row says `native`; it still stamps `unready_at`.
 - F3: `canFire` takes the target session; a `launch` caller passes only when
