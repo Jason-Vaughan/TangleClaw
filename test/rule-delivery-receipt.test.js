@@ -405,16 +405,22 @@ describe('#1761 — the rules hook re-fires on /clear and compaction, but only s
    * Run the real hook with the SessionStart event JSON on stdin, as Claude Code
    * sends it. Async so the in-process receipt server can accept the post.
    * @param {string} stdin - What the engine writes to the hook's stdin
+   * @param {{stderr?: string}} [captured] - Receives the hook's stderr, when given
    * @returns {Promise<string>} The hook's stdout
    */
-  function runHookWithStdin(stdin) {
+  function runHookWithStdin(stdin, captured) {
     const { spawn } = require('node:child_process');
     return new Promise((resolve, reject) => {
       const child = spawn('/bin/bash', [HOOK, '1'], { env: { ...process.env, CLAUDE_PROJECT_DIR: projectPath } });
       let out = '';
+      let err = '';
       child.stdout.on('data', (c) => { out += c; });
+      child.stderr.on('data', (c) => { err += c; });
       child.on('error', reject);
-      child.on('close', (code) => (code === 0 ? resolve(out) : reject(new Error(`hook exited ${code}`))));
+      child.on('close', (code) => {
+        if (captured) captured.stderr = err;
+        return code === 0 ? resolve(out) : reject(new Error(`hook exited ${code}`));
+      });
       child.stdin.end(stdin);
     });
   }
@@ -442,6 +448,23 @@ describe('#1761 — the rules hook re-fires on /clear and compaction, but only s
     };
   }
 
+  it('an unreadable source is reported on stderr and treated as a startup, receipt included', async () => {
+    // The fallback is deliberate: a missing source is how every fire looked
+    // before the engine sent one. What it must not be is silent, because on a
+    // /clear it is the wrong answer.
+    const receipts = await receiptServer();
+    try {
+      rulesChannel.writeReceiptToken(projectPath, { deliveryId: 90, api: receipts.api });
+      const captured = {};
+      const out = await runHookWithStdin('{"hook_event_name": "SessionStart", "source": 42}', captured);
+      assert.match(out, /RULE ONE/, 'the rules are still delivered');
+      assert.match(captured.stderr, /SessionStart source unreadable; treating this fire as a startup/);
+      assert.deepEqual(receipts.seen, ['/api/tc/rule-receipt'], 'a startup fallback posts as a startup does');
+    } finally {
+      await receipts.close();
+    }
+  });
+
   for (const source of ['clear', 'compact']) {
     it(`a ${source} re-fire emits the shard and posts no receipt`, async () => {
       const receipts = await receiptServer();
@@ -464,13 +487,15 @@ describe('#1761 — the rules hook re-fires on /clear and compaction, but only s
   }
 
   for (const [label, stdin] of [['a startup fire', JSON.stringify({ source: 'startup' })], ['empty stdin', '']]) {
-    it(`${label} posts the receipt exactly as before`, async () => {
+    it(`${label} posts the receipt exactly as before, and says nothing on stderr`, async () => {
       const receipts = await receiptServer();
       try {
         rulesChannel.writeReceiptToken(projectPath, { deliveryId: 89, api: receipts.api });
-        const out = await runHookWithStdin(stdin);
+        const captured = {};
+        const out = await runHookWithStdin(stdin, captured);
         assert.match(out, /RULE ONE/);
         assert.deepEqual(receipts.seen, ['/api/tc/rule-receipt']);
+        assert.equal(captured.stderr, '');
       } finally {
         await receipts.close();
       }
