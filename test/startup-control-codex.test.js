@@ -323,6 +323,157 @@ describe('Codex startupControl adapter', () => {
     });
   });
 
+  describe('observeActivity: a read-only view of the launch thread (#1628)', () => {
+    /** Process-identity seams under which pid 4242 IS the recorded app-server. */
+    const ours = {
+      psCommand: (pid) => (pid === 4242 ? 'codex app-server --listen unix:///x/requested.sock' : ''),
+      psBirth: (pid) => (pid === 4242 ? 'Wed Sep 23 18:00:04 2026' : '')
+    };
+    /** Observe the open channel for the session. */
+    const observe = (deps = ours) => codex.observeActivity(store.startupControlChannels.getOpenBySession(session.id), project, deps);
+
+    it('a process that is not the recorded app-server is unknown, and its socket is not trusted', async () => {
+      await serve();
+      channel({ threadId: THREAD });
+      assert.deepEqual(await observe({ ...ours, psBirth: () => 'Thu Sep 24 01:00:00 2026' }), { state: 'unknown', reasonCode: 'process-mismatch' });
+      assert.deepEqual(await observe({ ...ours, psCommand: () => 'python3 something' }), { state: 'unknown', reasonCode: 'process-mismatch' });
+      assert.equal(server.calls('initialize').length, 0);
+    });
+
+    it('idle and active map to idle and busy, and nothing is spent, trusted or checked for quota', async () => {
+      await serve();
+      channel({ threadId: THREAD });
+      assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle' });
+      server.state.threadStatus = { type: 'active', activeFlags: ['waitingOnApproval'] };
+      assert.deepEqual(await observe(), { state: 'busy', reasonCode: 'thread-active' });
+      for (const m of ['turn/start', 'config/read', 'account/read', 'account/rateLimits/read', 'thread/resume']) {
+        assert.equal(server.calls(m).length, 0, `${m} is never called by an observation`);
+      }
+    });
+
+    it('any other status is unknown', async () => {
+      await serve();
+      server.state.threadStatus = { type: 'systemError' };
+      channel({ threadId: THREAD });
+      assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-status-unknown' });
+    });
+
+    describe('binding a channel whose thread was never recorded (D8)', () => {
+      const threadOf = () => store.startupControlChannels.getOpenBySession(session.id).adapterState.threadId;
+
+      it('binds the SOLE loaded project thread, then answers for it', async () => {
+        await serve();
+        channel();
+        assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle' });
+        assert.equal(threadOf(), THREAD);
+        assert.equal(server.calls('turn/start').length, 0, 'binding is TangleClaw metadata only — no engine turn');
+      });
+
+      it('with no loaded project thread, or with two, binds nothing and is unknown', async () => {
+        await serve({ 'thread/loaded/list': () => ({ data: [] }) });
+        channel();
+        assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-unbound' });
+        assert.equal(threadOf(), null);
+        server.close();
+        await serve({ 'thread/loaded/list': () => ({ data: [THREAD, 'other-thread'] }) });
+        store.getDb().prepare('DELETE FROM startup_control_channels').run();
+        channel();
+        assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-ambiguous' });
+        assert.equal(threadOf(), null);
+      });
+
+      it('never replaces a recorded thread — a recorded one that is gone is unknown, and stays recorded', async () => {
+        await serve({ 'thread/loaded/list': () => ({ data: ['other-thread'] }) });
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-not-loaded' });
+        assert.equal(threadOf(), THREAD);
+      });
+
+      it('a binding that lands first from elsewhere (the fire) wins, and this answer is unknown', async () => {
+        await serve({
+          'thread/loaded/list': () => {
+            // The fire records its own thread between this read and the bind.
+            const row = store.startupControlChannels.getOpenBySession(session.id);
+            if (!row.adapterState.threadId) store.startupControlChannels.setAdapterState(row.id, { threadId: 'fire-bound' });
+            return { data: [THREAD] };
+          }
+        });
+        channel();
+        assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-bind-contended' });
+        assert.equal(threadOf(), 'fire-bound');
+      });
+
+      it('a second thread appearing after the bind makes it unknown, with the binding kept', async () => {
+        let lists = 0;
+        await serve({ 'thread/loaded/list': () => ({ data: ++lists === 1 ? [THREAD] : [THREAD, 'other-thread'] }) });
+        channel();
+        assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-ambiguous' });
+        assert.equal(threadOf(), THREAD);
+      });
+    });
+
+    it('an idle answer is withheld when the channel changed under the read', async () => {
+      await serve({
+        'thread/read': (p) => {
+          // The launch's channel is closed while the observation reads.
+          store.getDb().prepare("UPDATE startup_control_channels SET state = 'closed'").run();
+          return { thread: { id: p.threadId, cwd: PROJECT_PATH, status: { type: 'idle' } } };
+        }
+      });
+      channel({ threadId: THREAD });
+      assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'channel-changed' });
+    });
+
+    it('a second thread for the project directory makes it unknown — the operator may be working in the other one', async () => {
+      await serve({ 'thread/loaded/list': () => ({ data: [THREAD, 'other-thread'] }) });
+      channel({ threadId: THREAD });
+      assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-ambiguous' });
+    });
+
+    it('a second thread in ANOTHER directory does not', async () => {
+      await serve({
+        'thread/loaded/list': () => ({ data: [THREAD, 'other-thread'] }),
+        'thread/read': (p) => ({ thread: { id: p.threadId, cwd: p.threadId === THREAD ? PROJECT_PATH : '/elsewhere', status: server.state.threadStatus } })
+      });
+      channel({ threadId: THREAD });
+      assert.equal((await observe()).state, 'idle');
+    });
+
+    it('a recorded thread that is no longer loaded is unknown', async () => {
+      await serve({ 'thread/loaded/list': () => ({ data: ['other-thread'] }) });
+      channel({ threadId: THREAD });
+      assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-not-loaded' });
+    });
+
+    it('a loaded thread that cannot be read makes it unknown rather than skipped', async () => {
+      await serve({
+        'thread/loaded/list': () => ({ data: [THREAD, 'unreadable'] }),
+        'thread/read': (p) => {
+          if (p.threadId === 'unreadable') throw Object.assign(new Error('nope'), { code: -32600 });
+          return { thread: { id: p.threadId, cwd: PROJECT_PATH, status: { type: 'idle' } } };
+        }
+      });
+      channel({ threadId: THREAD });
+      assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'threads-unreadable' });
+    });
+
+    it('a version other than the recorded or installed one is unknown', async () => {
+      await serve({ initialize: () => ({ userAgent: 'tangleclaw/0.157.0 (x)' }) });
+      channel({ threadId: THREAD });
+      assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'version-mismatch' });
+      server.close();
+      await serve();
+      store.getDb().prepare('DELETE FROM startup_control_channels').run();
+      channel({ threadId: THREAD, engineVersion: '0.155.0' });
+      assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'version-mismatch' });
+    });
+
+    it('an unreachable app-server is unknown', async () => {
+      channel({ threadId: THREAD, resolvedSocketPath: path.join(os.tmpdir(), 'tcb2-absent.sock') });
+      assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'channel-unreachable' });
+    });
+  });
+
   describe('the receipt (acceptance case 3)', () => {
     it('accepted on the echoed clientId + bytes notification, applied on turn/completed, with the thread and server version recorded on the channel', async () => {
       await serve({

@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-24 — A Codex session's wake is judged by its app-server, not its status row (#1628)
+
+<!-- prawduct: type=bugfix | scope=wake-1628 -->
+
+This is Builder2's #1628 recovery, rebuilt from main on the #1825 app-server channel. It replaces the held status-row parser, which the Architect rejected on 2026-09-19 and which stays untouched on `fix/1628-status-row-provenance` as evidence. Architect rulings D1–D10 are in `.tangleclaw/plans/issue-1628-recovery-plan.md`.
+
+**The observation.** Adapters gain an optional `observeActivity(channel, project)`. Callers reach it only through `startupControl.observeActivity({session, project, channel, sequence})`, which answers `channel: absent|present`. Before any adapter is asked, it validates that the channel belongs to this active session and to its launch, engine and project. `declaresObserver` says which engines are meant to be judged this way: the adapter must resolve through the registry and implement the method. The Codex adapter reads it read-only. It checks the process identity and the version, and requires exactly one loaded project thread, the recorded one. An unrecorded thread is bound compare-and-set through a new `store.startupControlChannels.updateAdapterStateIf`, so a recorded thread is never replaced. The row is re-read before an `idle` answer is returned.
+
+**The wake gate.** Only for observed engines: a fresh `idle` for the current session, channel and launch reaches the pane gate, where it excuses the at-rest marker alone. `busy` holds as `engine-thread-busy`, anything unproven as `engine-thread-unknown`, no channel as `engine-channel-absent`, and a Codex Project Master as `master-engine-unobserved`. The pane's whole-tail marker match false-idled on quoted prose (ledger 5030). The read is asynchronous behind a synchronous tick: one read in flight per session, channel and launch; late results are discarded; nothing is injected from the callback. Other engines are untouched and never have a channel looked up.
+
+**Critic.** The cumulative review found one blocking issue: a Codex Master would have held forever under a code that advised a relaunch. It was fixed, and verify-resolutions came back clean. One observation was accepted: the reason-change log line has no test, and it only writes diagnostics.
+
 ## 2026-09-23 — A native launch is bootstrapped through its startupControl channel, and the launch panel shows every startup fire (#1825)
 
 <!-- prawduct: type=feature | scope=startupcontrol-1825 -->
@@ -88,116 +100,6 @@ Train A Car A4 Chunk 02, the car's last. `release.yml` checked only that tag `vX
 **The tag must name that commit.** `scripts/release-tag-gate.js` resolves the tag through its peeled `^{}` line and fails closed on output it cannot parse or an absent tag. Any existing tag that names another commit refuses red, even when its Release exists (B2 MODIFY). The tag is checked again on origin after a push, and the checkout is confirmed as `GITHUB_SHA` before tagging. A live probe found that `ls-remote` with one pattern drops the peeled line, so both patterns are requested. Otherwise every annotated release would have refused.
 
 **Token scope and recovery.** The top-level token is `contents: read`, and only the publishing job holds write (B3). `docs/release-process.md` splits recovery by whether the tag reached origin (B4, refined after Critic R-3 blocking). ADR 0014's honest-limit status is updated (addendum). Tests: `test/release-tag-gate.test.js` and `test/release-workflow.test.js`, with 14 mutations watched red, and actionlint is clean. The plan, with the rulings, is archived at `.tangleclaw/plans/archive/train-a-car-a4-build-plan.md`. The merge waits on the Operator's direct CI go.
-
-## 2026-09-23 — Every workflow action is pinned to a full commit SHA, and a test enforces it (#1436)
-
-<!-- prawduct: type=feature | scope=train-a-car-a4 -->
-
-Train A Car A4 Chunk 01. Every `uses:` referenced the movable `v7` tag, so an upstream that moved it would run new code in CI with no diff here, including in `release.yml`, which can push tags (audit H5, the CVE-2025-30066 mechanism). Each ref is now the commit its tag resolved to, verified with `git ls-remote`, with an exact `# vX.Y.Z` comment. CI therefore runs identical code.
-
-**The check lives in the required `test` check.** `test/workflow-action-pins.test.js` reads every `uses` form: step and job level, with the key and the value quoted or unquoted. A line it cannot parse fails rather than being skipped. It requires 40-hex SHAs, docker digests or local `./` paths, and it flags annotation conflicts in both directions (Architect A1/A2). It says it proves shape and agreement, not that a comment names the right release.
-
-**Token scope and runtime.** Every workflow declares top-level `permissions:`, so `test.yml` is `contents: read` instead of inheriting the repository default (A3). `release.yml` keeps its workflow-level write until Chunk 02. `release.yml` pins Node `22.23.3`, which removes run-time version selection but not artifact trust (A4). #1827 tracks the Node artifact and the mutable runner image. ADR 0014's two #1436 status sentences are updated (A5). Architect rulings A1–A5 are in message ecc27e3b, and the Operator gave the CI change a direct go in-pane.
-
-## 2026-09-23 — CLAUDE.md carries Prawduct's current anchor, and the local learnings are split by concern (#1820, #1819)
-
-<!-- prawduct: type=chore | scope=learnings-split-reanchor -->
-
-`prawduct-hook reanchor --apply` replaced the stale anchor block in `CLAUDE.md` and nothing else. The new block tells a session without the plugin that governance is off and how to install it, and it adds the stage-keyed review rule (#1820).
-
-#1819 has no tracked diff. This clone's learnings are gitignored and local-only (#1792), so the split was done in place. `active-rules.md` (115 KB) became twelve area files, grouped by concern. Following the Architect's rulings, the shell and git hazards load every session, and the claim, review and evidence rules load on code reads as well as doc reads. Every file is at most 16 KB, so the `learnings_budgets` override is gone. A check confirmed that all 133 rules appear exactly once and unchanged. Four sets of duplicates were merged by appending each later rule whole, including its lead sentence, to the first. A live read of a code file loaded only the files scoped to it. The plan, with the Architect's rulings on D1–D7, is archived at `.tangleclaw/plans/archive/learnings-split-reanchor.md`.
-
-## 2026-09-23 — A finished wrap names the publication the next launch resumes from (#1675)
-
-<!-- prawduct: type=feature | scope=train-a-car-a3 -->
-
-Train A Car A3 Chunk 04, the car's last. A wrap could report success while its handoff went unpublished, because `_finalizeHandoff` dropped the publish result. The next launch's Resume was read from `.tangleclaw/continuity/index.md`, which every wrap attempt that reaches its continuity step rewrites. A session that crashed after an earlier wrap was handed that wrap's next action with nothing saying it was older.
-
-**The wrap names its publication.** The run result, `/wrap/status` and `run-done` carry `handoffPublication` (`published`, `not-published`, `abandoned` or `not-staged`), with the id, digest and reason. Supersession is directional: `supersededId` is the publication this one displaced, `supersededById` the one it lost to (Architect H1 MODIFY). The drawer warns "handoff NOT published", and the warning survives a blocked-release banner.
-
-**The handoff freezes its resume, and the launch renders that.** `tc.handoff/1` gains an optional `resume` block with one normalizer (`normalizeResume`). Its next action and the top-level `nextAction` are one canonical value, and a disagreement is refused (H2 MODIFY). A continuity step that did not write the index degrades the handoff. `evaluate` hands the launch the resume from the same `current.json` its verdict read. The Resume opens with the publication's id, digest, session, exact staging time and verdict. It is labelled OLDER when a later session ran after it, UNBOUND when it comes from the index, and "not a handoff" for a session summary. The launch manifest records the consumed id and digest, and `tc start status` prints them (H3–H5).
-
-Measured, not inferred: the 2026-09-21 PM recurrence was a correctly bound publication whose next action was already stale when captured, so deciding whether the text is current stays the session's freshness check (H6). Architect rulings H1–H6 are in message ed93ebab, and ADR 0002 and ADR 0017 are amended. Filed #1816 (a server restart mid-wrap loses the run).
-
-## 2026-09-23 — A new file is admitted by a decision, and a cleared draft is kept privately rather than logged (#1724, #1507)
-
-<!-- prawduct: type=feature | scope=train-a-car-a3 -->
-
-Train A Car A3 Chunk 03. A wrap committed any file changed after launch, and a file a session creates is always changed after launch, which is how scratch scripts and query dumps reached `main` (#1721). Separately, the prompt clear before every injection logged the pane's last line, the engine's status footer, as the operator's draft, and a real draft was destroyed unrecorded.
-
-**Admission is a positive decision.** `_file-ownership.classify` gives a path HEAD has never held (`newToRepo`: `??` or index `A`), first seen after launch and not written by a wrap step, the foreign reason `untracked-new`. It waits for Include/Leave through the existing decision UI. The files TangleClaw writes into a project (project config, engine config carriers) are exempt (`_tc-owned-paths.judge` → `tangleclawWritten`), and #1619's identity refusal still applies. The commit and PR bodies list the session's files and the operator's inclusions from one staged entry. A wrap step's own write is matched by resolved path, which fixes a symlinked project path making the wrap ask about its own output.
-
-**Drafts are read by the engine's profile and kept out of the log.** Every injection passes the session's engine and attempt. `medusa-wake.readComposerDraft`, the single reader beside `locateComposer` and `_composerEmpty`, returns the draft. `lib/draft-store.js` keeps it per attempt (`0700`/`0600`, no symlink follow, last 20, deleted 7 days after the attempt ends), and the log carries only an opaque `draftRef` with row and character counts. Where the composer cannot be located, the prompt is still cleared, so a paste cannot submit operator text joined to the injected text, and the log says the draft was not captured.
-
-Architect rulings F1–F5 (message 5b0eaa0d) and G1 MODIFY / G2 APPROVE (message cdce349b). The Operator set retention to 7 days (relayed by the PM, message c30f56b6). ADR 0002 has a dated section. Fixed in passing: `update-applier-authored-content`'s file seam depended on how deep the checkout sat, and it failed on macOS on a clean `main`. `tag_issues.sh` and `tag_issues_2.sh` are removed.
-
-## 2026-09-23 — Wrap gates are engine-aware: a non-Claude wrap of a Prawduct project is an honest checkpoint (#1738)
-
-<!-- prawduct: type=feature | scope=train-a-car-a3 -->
-
-Train A Car A3 Chunk 02. A wrap from a Codex/Aider/Antigravity session of an onboarded project ran `prawduct-hook stop` anyway. The probe wrote Prawduct's evidence store, `version-bump` stamped `.prawduct/change-log.md`, and a preflight that measured nothing counted as evidence produced, so the handoff could read `complete`.
-
-**One capability per run.** `governance.methodologyCapability` answers available / not-applicable / capability-unavailable. It is keyed on the session's engine (`governance.sessionEngineId`), and "onboarded" means `.prawduct/` or the plugin reference, whatever the engine. The runner resolves it once and hands it to every step as `context.methodology`. Two new first-class statuses, `not-applicable` and `capability-unavailable`, join `STEP_STATUSES`, and every consumer knows them (the vocabulary test enforces this).
-
-**Dormant means untouched and unauthorized.** Preflight never spawns the hook. `version-bump` holds the cut. `commit` withholds auto-merge and leaves `.prawduct/` paths out through the classifier's `withheldPrefixes` (shared with `session-files`). `pr-merge` enqueues nothing. The result and `run-start` carry `methodologyAuthority`, and the drawer says "will not merge or release" from the first frame. A failed or stranded wrap PR keeps its own banner.
-
-**Honest evidence.** `capability-unavailable`, and any skipped preflight on a capable engine (including one disabled by an override, per Architect E3), degrade the handoff. The handoff document gains an optional `methodology` block. The next capable launch renders an advisory `/prawduct:doctor` directive (never onboard, never "authority restored").
-
-Architect rulings E1–E6 (message 9a774624). The Operator approved the rule #5 amendment (engine-neutral wrap mechanics vs provider-owned methodology effects), relayed by the PM in message 8af0c8ec. ADR 0002 has a dated section. Fixed in passing: handoff-stage read `project.engine`, which does not exist. Follow-up: #1809 (capability-matched admission and attested rotation). Tests: `test/governance-methodology-capability.test.js`, `test/wrap-methodology-authority.test.js`, and the preflight, version-bump, pr-merge, commit, file-ownership, session-scope, handoff-publish, launch-preflight-context and launch-steps suites. The preflight fixture now names its engine, because an unknown engine fails closed.
-
-## 2026-09-23 — A wrap's keep-running intent is explicit, and a live wrap can be cancelled before it commits (#1708, #1707)
-
-<!-- prawduct: type=feature | scope=train-a-car-a3 -->
-
-Train A Car A3 Chunk 01. Before this change, only the wrap modal could keep a session running, so every other caller's wrap ended the session (#1708). The drawer's control also read as a way to stop a live wrap, but no stop existed (#1707).
-
-**Keep-running intent.** The new project setting `wrapKeepSessionRunning` is resolved once, before the claim (`sessions._resolveWrapIntent`). The order is an explicit request boolean, then the project setting, then `false`. An unreadable config or a non-boolean setting refuses with 409 `WRAP_KEEP_SETTING_INVALID`. A Retry inherits the trusted run record. One value therefore feeds the registry, handoff-stage and the kill decision. `projectConfig.plannedSessionOutcome` is the single derivation for the 202, `run-start` and `/wrap/status`.
-
-**Cancel.** The new route is `POST /wrap/cancel {runId}`. `wrapRunRegistry.admitStep` makes each step boundary one atomic decision: an accepted cancel stops the run before the next step, the `commit` step included, and admitting `commit` closes cancellation for good. A cancel accepted during a step that then halts still ends the run as `cancelled`. The outcome is `outcome: 'cancelled'`, which offers no Retry or Skip. A `cancel-requested` stream event makes the cancel visible to every watcher. The drawer shows Hide and Cancel wrap, the conditional planned-outcome line, and "Past the point of cancellation" with the real step.
-
-ADR 0002 is amended per Architect rulings D1–D5, with a supersession pointer to this entry. The unreachable stalled/lost re-follow was removed at Critic review. Its real defect is filed as #1805, and #1806 covers #1708's stranded Medusa inbox. Tests: `test/wrap-intent-cancel.test.js`. Seven existing tests pinned "keep sent only when true" and the exact option and status key sets; they were updated to the new contract with equal-strength assertions.
-
-## 2026-09-23 — Operator Global Rules edits survive an update, or it refuses before anything moves (#1730)
-
-<!-- prawduct: type=bugfix | scope=train-a-car-a2 -->
-
-Train A Car A2 Chunk 02. The problem: an install that had customised `data/global-rules.md` could not take a release that changed that file. Without `skip-worktree` the dirty guard refused with no way forward. With it, `git checkout <tag>` aborted with a raw error. `applyUpdate` now runs a read-only preflight after fetch (`_preflight`). It three-way merges the carried file (HEAD / working copy / tag), finds flagged, untracked and ignored paths in the tag's way, and returns one `409 reconcile-required`. Before anything moves, it writes the exact original bytes to a private backup that is never overwritten (`_secureBackup`). Only after that does the operator-approved discard run. The move (`_moveToTag`) clears flags, restores, checks out with `--no-overwrite-ignore`, writes the merged file and restores the flags. On any failure it compensates, then re-observes the result. `recovery-failed` (500) is returned, carrying `observed` facts, only when that re-observation fails. Built to the Architect's D1–D10 rulings (messages a358b1ba, 4b503584), which are recorded in the plan. Found while building: git ignores `--no-skip-worktree` when it is combined with `--no-assume-unchanged` in one call, so `_setFlags` sets one flag per call. Tests: `test/update-applier-global-rules-carry.test.js`, a real-repository suite covering (a)–(f), compensation, the backup rules and the dirty-guard interaction. Beacon and route tests cover the two new codes. The issue's 5.28.0→5.29.0 skip-worktree repro, run on a scratch clone, updates with the edit kept.
-
-## 2026-09-22 — The self-updater discards only changes proven to be TangleClaw's (#1537)
-
-<!-- prawduct: type=bugfix | scope=train-a-car-a2 -->
-
-Train A Car A2 Chunk 01. `_classifyDirty` counted every `.tangleclaw/` path as TangleClaw-written, so an update deleted an uncommitted plan while the dialog said nothing of the operator's was listed. Discard ownership is now a per-delta proof held in one `PROOFS` table: `CLAUDE.md` changed only inside its managed region, and `.claude/settings.json` changed only by TangleClaw retiring its own hooks (`judgeHookSettings`). Everything else is real work, including all of `.tangleclaw/`. `_discardTcFiles` restores from HEAD and no longer deletes files. Architect rulings D1/D2 accepted (message a358b1ba). Tests: a real-git regression suite (`test/update-applier-authored-content.test.js`), 3 of whose 4 cases fail against the old code, plus a pin of the settings path to `engines.SHARED_HOOK_SETTINGS_PATHS`. The fixtures that pinned `.tangleclaw/` as discardable moved to proven fixtures, keeping the same assertions.
-
-## 2026-09-22 — The committed CLAUDE.md block names the freshness verb
-
-<!-- prawduct: type=chore | scope=claude-md-freshness-verb -->
-
-The generated TangleClaw operational block in root `CLAUDE.md` is rebuilt at every launch from `lib/tc-verbs.js#VERB_ROSTER` (via `lib/ecosystem-primer.js`). #1794 added `freshness` to the roster but not to the committed copy, so the live checkout read one uncommitted file after the restart onto it. The line is byte-identical to what the server regenerated.
-
-## 2026-09-22 — One fleet view of every live checkout (#1678, #993)
-
-<!-- prawduct: type=feature | scope=train-a-car-a1 -->
-
-Train A Car A1 Chunk 03. `GET /api/checkouts` and `tc freshness` (`lib/checkout-fleet.js#fleetView`) give one row per project with a live session, from the same `checkout-freshness#projectCheckout` the project route, prime and chip read, shaped per caller as the Architect ruled (D11, D16 MODIFY, D17–D20): operator and Master every row, a bound project itself and its groups' members, an unbound caller `scope: 'none'` with the reason, and a presented-but-not-honoured binding `403 PROJECT_BINDING_INVALID` (tc exits 2). Rows are an allowlist with no path; names the caller cannot see are withheld and the summary re-rendered. `checkouts` joins both `tc capabilities` rosters, so the prime's verb list names `freshness` (prime-golden fixtures regenerated; only that line moved). R-12: `system-health#detectStaleServer` reads the banner's `impactSnapshot`, so records-only is clear and anything unclassified still fires. Carried O-1/O-3/O-4 from the Chunk 2 review. Cumulative Critic rev-20260922T225136Z-f3bb9f69: 0 blocking; R-1/R-2/R-3/R-4/R-8 fixed and verified (rev-20260922T225614Z-d430f3e3), the rest accepted on the record. Closes #993 and #1678.
-
-## 2026-09-22 — Every related session shows the same upstream target (#1678)
-
-<!-- prawduct: type=feature | scope=train-a-car-a1 -->
-
-Train A Car A1 Chunk 02. `lib/upstream-observer.js` observes `origin/main` once per repository identity (`ls-remote origin refs/heads/main`, 5-minute cache, single-flight, network-bound, never a fetch; off with behind-origin's switch, per D10). `checkout-state` gains `repository.identity`: the normalized origin URL, where a local remote becomes an opaque `file:<sha256(realpath)>` per D14 as modified. It also gains `compareSnapshot` against the observed SHA: `behind-unknown` when the clone lacks the commit, found by `rev-parse --verify --quiet`, because `cat-file -e` exits 128 on `^{commit}`, as the real-git test proved. `lib/checkout-freshness.js` composes the `checkout` block: `localRef`, `upstream`, `vsUpstream`, `owner`, the install-only `runtime`, and `summary`. `summary` comes from `lib/checkout-summary.js`, and the prime and the session chip both show it. `GET /api/projects/:name` carries the block on the whole row only. The session chip re-reads that row on the status poll's cadence (D12), and the launch route warms the checkout alongside the CI probe, bounded at 5s (D13). `lib/git-probe.js` is the shared async runner (R-11, D15); git failure reasons are scrubbed of paths and URLs. Architect rulings D12–D15: D14 modified, the rest approved. Critic: rev-20260922T211920Z (0 blocking; 6 warnings, 7 notes: R-9 fixed, R-10 accepted and filed as #1790, R-11/R-13 accepted, the rest fixed), verify rev-20260922T213404Z (0 findings; O-1..O-6 accepted, with O-1/O-3/O-4 carried to Chunk 3). The full suite is green by a TAP run.
-
-## 2026-09-22 — The dashboard says what the live checkout is on and whether a restart matters (#993, #1678)
-
-<!-- prawduct: type=feature | scope=train-a-car-a1 -->
-
-Train A Car A1 Chunk 01. `lib/checkout-state.js` measures one checkout (lock-free `status --porcelain=v2 --branch -z`, `rev-parse origin/main`, `rev-list --left-right --count`) and fails closed: every unread fact is null, named in `incomplete`, and never zero. It is cached for 30s per directory with single-flight, and reads `pending` before the first measurement. `classifyRange` classifies `startupSha..currentDiskSha` for restart impact (records-only allowlist, both sides of a rename, `unknown` on any failure or on equal SHAs). `/api/server-info` gains `liveCheckout` and `restartImpact`. `behindOrigin` gains `state` and `reason`, and only symbolic-ref exit 1 counts as detached. The dashboard's live-checkout banner (no action, no dismiss) and the stale banner's impact wording: a records-only range hides that banner's restart button, per Architect ruling D6. Architect rulings D1–D11: D6 and D11 modified, the rest approved; D11 lands in Chunk 3. Critic: chunk rev-20260922T194448Z (1 blocking, a false absence of the gitignored api-contract; 2 warnings; 12 notes: fixed, with R-11/R-12/R-14/R-15 accepted and R-11/R-12 carried in the handoff), verify rev-20260922T195754Z (0 findings; O-1/O-2 accepted). The full suite is green by a TAP run.
-
-## 2026-09-22 — The wrap bumps a Python project's version in pyproject.toml (#1444)
-
-<!-- prawduct: type=bugfix | scope=train-b2-chunk4 -->
-
-Train B.2 Chunk 4. `lib/project-version-files.js#parsePyprojectVersion` is a line scanner for the static PEP 621 `[project] version`, returning offsets into the raw text so `version-bump.js#_resolvePyproject` swaps only the value; every uneditable shape (dynamic, inline table, multi-line or unquoted value, duplicates) is a named skip. `_multilineStateAfter` tracks `"""`/`'''` the way TOML does, ignoring them inside single-line strings and comments. `_resolveVersionSource` probes version.json → package.json → pyproject.toml, passing over only a valid version-less package.json (`isVersionlessPackageJson`, shared with the reader; both parse through `parsePackageJsonText`, which drops a BOM). Both detection ladders go through `readProbedVersion`, which reaches pyproject.toml only where the writer would; #58's read past an unusable version.json to package.json is kept. A configured `versionFilePath` named pyproject.toml gets the TOML reader; another non-JSON file now says what is supported. The issue's claim that the setting could overwrite TOML with JSON was false (JSON.parse refused it first). Architect rulings: A1–A5 approve, A6 modify (no auto follow-up), A5 refinement modify (version.json never passed over), #58 conflict approve with a scoped legacy exception. Critic: chunk rev-20260922T180344Z (0 blocking, 3 warnings, 2 notes, all fixed), verify rev-20260922T182340Z (1 observation, fixed), verify rev-20260922T182959Z (0 findings; 3 observations accepted). Checked on a scratch copy of TangleBrain's real pyproject.toml + CHANGELOG.md: 0.25.0 → 0.25.1, one line changed. Plan archived at `.tangleclaw/plans/archive/b2-chunk4-pyproject-version.md`.
 
 ## 2026-08-20 — #990: forensic review of the ungoverned Antigravity window fixes 8 confirmed bugs
 

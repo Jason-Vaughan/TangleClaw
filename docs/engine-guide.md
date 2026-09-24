@@ -517,6 +517,36 @@ The settings modal's **Auto-wake on inbound messages** control is gated on this 
 an engine that declares none renders the control inert with the reason, rather than offering a
 switch that does nothing.
 
+#### The wake nudge and the engine's own channel
+
+For Codex, the wake nudge asks the engine, not the pane (#1628). The pane's at-rest marker is a
+rendering. Codex draws `Ready` in a status row whose segments, order and width are the operator's own
+configuration, so a layout that clipped or omitted it held mail for hours. And because the pane gate
+matches the whole tail, a transcript that merely *quotes* `· Ready ·` read as at rest. The wake
+therefore asks the engine's own protocol, through the startupControl facade, for every engine whose
+profile names an adapter that can observe it (`declaresObserver`; today, Codex):
+
+- It asks only for a live, opted-in session with unread mail, with at most one read in flight per
+  session, channel and launch. The answer used is one an earlier tick fetched. It is keyed to that exact
+  session, channel and launch, and used only while it is younger than two monitor intervals. A late
+  answer after the channel was replaced or the session left the scan is discarded, and nothing is
+  ever typed from the read's callback.
+- `idle` goes on to the pane gate, where it excuses the at-rest marker and nothing else. The busy
+  marker, the fleet block, a dialog, a draft in the composer and a transcript that is still moving all
+  still hold, because the protocol cannot see the TUI's composer.
+- `busy` holds as `engine-thread-busy`, whatever the pane shows.
+- With a channel present, anything unproven (not asked yet, stale, failed, `unknown`) holds as
+  `engine-thread-unknown`. It never falls back to the pane.
+- With **no** channel (a session launched before channels existed, or whose server did not start or
+  has closed), the nudge holds as `engine-channel-absent`. Relaunching restores wakes.
+- A Project Master on such an engine holds as `master-engine-unobserved`. The Master has no project
+  launch and never gets a channel, so a relaunch does not change it.
+- The adapter's own reason (`version-mismatch`, `thread-ambiguous`, …) is logged whenever it changes.
+  The ledger and the peer route carry only the bounded wake code.
+
+Every other engine skips all of this and never has a channel looked up, so its pane gate is exactly as before. The launch-time readiness gate is unchanged.
+It must not create a thread or spend a turn to obtain wake evidence.
+
 #### The ambient-awareness floor (`tc` on PATH)
 
 Independent of any config file or prime, every tmux session TangleClaw launches gets the `tc` CLI
@@ -700,6 +730,30 @@ reason}` (`env` is the pane's environment, which the server must inherit); `atta
 returning `{accepted, settled}` promises; and `reconcile({session, fire, onUpdate})`. Every
 transition an adapter reports goes through the store's transition map, so no adapter can move a fire
 backwards or out of a terminal outcome.
+
+**Optionally, `observeActivity(channel, project)`** (#1628): a read-only answer to "is this session's
+engine working right now?", returning `{state: 'idle'|'busy'|'unknown', reasonCode}`. Callers never
+reach an adapter directly. They go through `startupControl.observeActivity({session, project, channel,
+sequence})`, which answers `{channel: 'absent'|'present', state, reasonCode}`. **Absent** means the
+session has no open channel. **Present** covers everything else, and there `unknown` is returned for
+any of these: a channel that is not this active session's, or not of its current launch, engine or
+project; an unregistered adapter or one without the method; a throw; an out-of-vocabulary answer. In
+all of those cases the adapter is either never asked or not believed. `startupControl.declaresObserver(engineId,
+getProfile)` says whether an engine's profile names an adapter that can observe it, independent of the
+version probe. It is an observation, never permission: it checks no trust, account or quota, and `idle`
+does not authorize a fire.
+
+The Codex adapter reads it from the protocol alone and opens no turn. It speaks only for the launch's
+own app-server process (command, socket and birth time) on the installed and recorded version, and only
+for exactly one thread. Any second loaded thread whose canonical cwd is the project directory makes it
+`unknown`, because a thread started from the TUI would leave the recorded one idle while the other
+works. A channel whose thread was never recorded (its startup fire was blocked or never ran) has it
+bound here, to the **sole** loaded project thread. The bind is TangleClaw's own metadata, written
+compare-and-set (`startupControlChannels.updateAdapterStateIf`), so it never replaces a recorded
+thread. The bind that lands first wins, and a lost race answers `unknown`. After a bind, "the only
+one" is established again from a fresh read. Given all that, the thread's `active` status is busy (an
+approval wait included) and `idle` is idle. Before an `idle` is returned, the channel row is read
+again: it must still be open, on the same launch, with the same thread.
 
 ## Config File Generation
 
