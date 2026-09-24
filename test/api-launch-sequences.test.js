@@ -30,10 +30,10 @@ const { createServer } = require('../server');
  * @param {string} urlPath - Path with query
  * @returns {Promise<{status: number, body: object|null}>}
  */
-function get(server, urlPath) {
+function get(server, urlPath, headers = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request({
-      hostname: '127.0.0.1', port: server.address().port, path: urlPath, method: 'GET'
+      hostname: '127.0.0.1', port: server.address().port, path: urlPath, method: 'GET', headers
     }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
@@ -55,6 +55,7 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
   let other;
   let pulled;
   let hooked;
+  let bind;
 
   before(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-launch-seq-'));
@@ -73,7 +74,7 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
      * @param {object} applicability - `{applicable, reason}`
      * @returns {object} The sequence row
      */
-    const bind = (proj, applicability = { applicable: true, reason: null }) => {
+    bind = (proj, applicability = { applicable: true, reason: null }) => {
       const engine = store.engines.get('claude');
       const launchId = launchSequence.mintLaunchId();
       const rendered = applicability.applicable ? sessions.renderLaunchSteps(proj, engine, {}) : null;
@@ -106,6 +107,24 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
       outcome: 'written'
     });
     bind(other, { applicable: false, reason: 'the engine declares no launch-sequence support' });
+
+    // #1825 B3: the startupControl evidence of `hooked` — a channel that never
+    // started, an automatic attempt that recorded why, and a denied fire by a
+    // project that may not fire here.
+    store.startupControlChannels.recordUnavailable({
+      sessionId: hooked.session.id, sequenceId: hooked.sequence.id, engineId: 'claude', adapter: 'none',
+      reason: 'engine_declares_none: engine claude declares no startupControl channel'
+    });
+    store.startupPrompts.insertFire({
+      idempotencyKey: `launch-${hooked.sequence.id}-r1`, projectId: project.id, sessionId: hooked.session.id, sequenceId: hooked.sequence.id,
+      promptRevision: 1, promptTextDigest: 'd', policyDigest: 'p', callerKind: 'launch', callerClearance: 'launch-automatic',
+      callerProjectId: project.id, outcome: 'unsupported', reasonCode: 'engine_declares_none', reason: 'engine claude declares no startupControl channel'
+    });
+    store.startupPrompts.insertFire({
+      idempotencyKey: 'denied-attempt-0001', projectId: project.id, sessionId: hooked.session.id, sequenceId: hooked.sequence.id,
+      promptRevision: 1, promptTextDigest: 'd', policyDigest: 'p', callerKind: 'project', callerClearance: 'project-binding',
+      callerProjectId: other.id, outcome: 'denied', reasonCode: 'fire_scope_denied', reason: 'caller is not a listed firer sharing a project group with the target'
+    });
 
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -179,6 +198,60 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
     assert.equal(seq.notApplicableReason, 'the engine declares no launch-sequence support');
     assert.deepEqual(seq.steps, [], 'a launch with no sequence has nothing served');
     assert.equal(seq.of, 0);
+  });
+
+  it('every caller reads which path put the launch\'s context in front of the engine (#1825 B3)', async () => {
+    const res = await get(server, `/api/launch-sequences?projectId=${project.id}`);
+    for (const s of res.body.sequences) assert.equal(s.startupDelivery, 'legacy', 'these fixtures started no channel');
+  });
+
+  it('the operator reads the startupControl block: the channel header, every fire including denied, and whether Fire applies (F5)', async () => {
+    const res = await get(server, `/api/launch-sequences?projectId=${project.id}`, { 'x-tangleclaw-client': 'dashboard' });
+    assert.equal(res.status, 200);
+    const seq = res.body.sequences.find((s) => s.sequenceId === hooked.sequence.id);
+    assert.ok(seq.startupControl, 'the block is served to the operator');
+    assert.equal(seq.startupControl.channel.state, 'closed');
+    assert.equal(seq.startupControl.channel.adapter, 'none');
+    assert.match(seq.startupControl.channel.closeReason, /engine_declares_none/);
+    assert.equal('adapterState' in seq.startupControl.channel, false, 'the adapter\'s state never leaves the store');
+    assert.equal(seq.startupControl.fires.length, 2);
+    const outcomes = seq.startupControl.fires.map((f) => f.outcome).sort();
+    assert.deepEqual(outcomes, ['denied', 'unsupported']);
+    const denied = seq.startupControl.fires.find((f) => f.outcome === 'denied');
+    assert.equal(denied.callerProjectId, other.id, 'the operator sees who tried');
+    assert.equal(denied.reasonCode, 'fire_scope_denied');
+    const automatic = seq.startupControl.fires.find((f) => f.outcome === 'unsupported');
+    assert.equal(automatic.callerKind, 'launch');
+    assert.equal(automatic.callerClearance, 'launch-automatic');
+    assert.equal(seq.startupControl.fireable, false, 'no open channel: nothing to fire at');
+    assert.ok(!JSON.stringify(res.body).includes('socketPath'), 'no adapter field anywhere in the body');
+    const bare = res.body.sequences.find((s) => s.sequenceId === pulled.sequence.id);
+    assert.deepEqual(bare.startupControl, { channel: null, fires: [], fireable: false }, 'a launch with no record says so, as nulls and empties');
+  });
+
+  it('Fire applies exactly to an active session with an open channel, for the operator only', async () => {
+    const live = bind(project);
+    store.startupControlChannels.open({ sessionId: live.session.id, sequenceId: live.sequence.id, engineId: 'claude', adapter: 'codex', adapterState: { pid: 1, socketPath: '/tmp/x.sock' } });
+    const res = await get(server, `/api/launch-sequences?projectId=${project.id}`, { 'x-tangleclaw-client': 'dashboard' });
+    const seq = res.body.sequences.find((s) => s.sequenceId === live.sequence.id);
+    assert.equal(seq.startupControl.fireable, true);
+    assert.equal(seq.startupControl.channel.state, 'open');
+    assert.ok(!JSON.stringify(seq).includes('/tmp/x.sock'), 'the socket path is adapter state and stays home');
+    store.sessions.kill(live.session.id, 'test');
+    const after = await get(server, `/api/launch-sequences?projectId=${project.id}`, { 'x-tangleclaw-client': 'dashboard' });
+    assert.equal(after.body.sequences.find((s) => s.sequenceId === live.sequence.id).startupControl.fireable, false, 'an ended session cannot be fired at');
+  });
+
+  it('a project-bound or unbound caller gets the rows without the startupControl block (D4: no cross-group oracle)', async () => {
+    const unbound = await get(server, `/api/launch-sequences?projectId=${project.id}`);
+    assert.equal(unbound.status, 200);
+    for (const s of unbound.body.sequences) assert.equal('startupControl' in s, false);
+    const bound = await get(server, `/api/launch-sequences?projectId=${project.id}`, {
+      'x-tangleclaw-launch-id': pulled.sequence.launchId, 'x-tangleclaw-project-id': String(project.id)
+    });
+    assert.equal(bound.status, 200);
+    for (const s of bound.body.sequences) assert.equal('startupControl' in s, false);
+    assert.ok(!JSON.stringify(bound.body).includes('fire_scope_denied'), 'a bound session cannot learn who was denied');
   });
 
   it('refuses a missing or unusable argument rather than guessing a scope', async () => {

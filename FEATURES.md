@@ -347,6 +347,22 @@ fails any auto-stub section older than 14 days.
   `test/startup-control.test.js`, `test/startup-prompt-store.test.js`,
   `test/startup-prompt-service.test.js`, `test/startup-prompt-api.test.js` and
   `test/startup-prompt-editor.test.js`.
+- **The automatic bootstrap and the launch panel** (#1825, Build Chunk B3) — `lib/launch-bootstrap.js`.
+  A launch that started its native channel and has a sequence to read selects the `native` startup path,
+  recorded on `launch_sequences.startup_delivery` in the transaction that binds the sequence; on that
+  path `lib/sessions.js#_deferEngineInit` withholds the prime paste and the kickoff, `lib/launch-unready.js`
+  withholds its nudge (`native-startup`), and the bootstrap fires the startup prompt once through
+  `lib/startup-prompt.js#fire` under the internal `launch` caller (`launchCaller`, clearance
+  `launch-automatic`, key `launch-<sequence>-r<revision>`) after `_awaitPaneReady`. A gate that never
+  passes is carried into the service as a launch-only `paneGate` and settles the intent row
+  `blocked (pane_not_ready)` without reaching the adapter. Legacy launches keep their path and are
+  recorded through the same service. The Codex app-server inherits the pane's ambient env (`_paneEnvironment`).
+  `GET /api/launch-sequences` carries `startupDelivery` and, for the operator/master, a `startupControl`
+  block (channel header, every fire incl. denied, `fireable`); the panel (`launchStartupControlHtml`,
+  `wireStartupFires` in `public/ui.js`) renders it with a Fire button. Retention (`STARTUP_CONTROL_RETENTION`)
+  trims ended-session history per target project at write time. Schema v47. Tests:
+  `test/launch-bootstrap.test.js`, `test/launch-bootstrap-wiring.test.js`, `test/launch-panel-fire.test.js`,
+  plus the B3 cases in the store, service, launch, unready, route and panel suites.
 
 - **Per-project config reader** — `<project>/.tangleclaw/project.json` merged over documented
   defaults. `lib/project-config.js` — dependency-free (`node:fs`/`node:path` only) so the killable

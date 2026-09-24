@@ -219,6 +219,21 @@ describe('startup prompt service: who may fire', () => {
     }
     assert.equal(svc.canFire(null, 1, prompt, deps()), false);
   });
+
+  it('the launch caller may fire only at itself: the exact session, in its own project, whatever the firer list says (F3)', () => {
+    const self = svc.launchCaller({ sessionId: 10, projectId: 1 });
+    assert.equal(self.kind, svc.LAUNCH_CALLER_KIND);
+    assert.equal(svc.canFire(self, 1, { firerProjectIds: [] }, deps(), { sessionId: 10 }), true, 'no place on the list is needed');
+    assert.equal(svc.canFire(self, 1, prompt, deps(), { sessionId: 11 }), false, 'another session');
+    assert.equal(svc.canFire(self, 2, prompt, deps(), { sessionId: 10 }), false, 'another project');
+    assert.equal(svc.canFire(self, 1, prompt, deps()), false, 'no target to prove against');
+    assert.equal(svc.canFire({ kind: 'launch', projectId: 1, groupIds: [] }, 1, prompt, deps(), { sessionId: 10 }), false, 'a claim with no session');
+  });
+
+  it('no HTTP-derived access object can be the launch caller', () => {
+    const { KINDS } = require('../lib/shared-docs-access');
+    assert.ok(!Object.values(KINDS).includes(svc.LAUNCH_CALLER_KIND), `resolveAccess kinds: ${Object.values(KINDS).join(', ')}`);
+  });
 });
 
 describe('startup prompt service: fire', () => {
@@ -280,6 +295,70 @@ describe('startup prompt service: fire', () => {
     assert.equal(d._fires[0].callerKind, 'project');
     assert.equal(d._fires[0].callerProjectId, 2);
     assert.equal(d._fires[0].callerClearance, 'project-binding');
+  });
+
+  it('the launch caller\'s attempt is recorded as launch / launch-automatic, attributed to the target project (F3)', async () => {
+    const self = svc.launchCaller({ sessionId: 10, projectId: 1 });
+    const r = await svc.fire(req(self, { clearance: 'whatever-the-caller-said' }), d);
+    assert.equal(r.status, 409);
+    assert.equal(r.body.code, 'STARTUP_CONTROL_UNSUPPORTED', 'no adapter in this fixture: the unsupported row is the F4 record');
+    assert.equal(d._fires.length, 1);
+    assert.equal(d._fires[0].callerKind, 'launch');
+    assert.equal(d._fires[0].callerClearance, 'launch-automatic', 'the clearance is the service\'s, never the caller\'s word');
+    assert.equal(d._fires[0].callerProjectId, 1);
+    assert.equal(d._fires[0].outcome, 'unsupported');
+  });
+
+  it('a launch caller naming another session or project is denied exactly like an unlisted firer', async () => {
+    const other = svc.launchCaller({ sessionId: 11, projectId: 1 });
+    const r = await svc.fire(req(other), d);
+    assert.equal(r.status, 404);
+    assert.equal(d._fires[0].outcome, 'denied');
+    assert.equal(d._fires[0].callerKind, 'launch');
+    const wrongProject = svc.launchCaller({ sessionId: 10, projectId: 4 });
+    assert.equal((await svc.fire(req(wrongProject), d)).status, 404);
+  });
+
+  it('a pane gate that did not pass settles the durable intent blocked as pane_not_ready and never reaches the adapter (F1)', async () => {
+    let adapterCalls = 0;
+    const adapter = { installedVersion: () => '1.0.0', fire: () => { adapterCalls += 1; throw new Error('must not be reached'); } };
+    d = deps({ adapters: { fake: adapter }, getEngine: (id) => ({ id, capabilities: { startupControl: { adapter: 'fake', channel: 'c', readiness: 'r', receipt: 'x', blockers: 'b', verifiedVersions: ['1.0.0'], evidence: { adapter: { verifiedOn: null, source: 's' }, channel: { verifiedOn: null, source: 's' }, readiness: { verifiedOn: null, source: 's' }, receipt: { verifiedOn: null, source: 's' }, blockers: { verifiedOn: null, source: 's' }, verifiedVersions: { verifiedOn: null, source: 's' } } } } }) });
+    const self = svc.launchCaller({ sessionId: 10, projectId: 1 });
+    const r = await svc.fire(req(self, { paneGate: { ready: false, reason: 'the at-rest marker never appeared' } }), d);
+    assert.equal(r.status, 409);
+    assert.equal(r.body.code, 'STARTUP_FIRE_BLOCKED');
+    assert.equal(r.body.reasonCode, 'pane_not_ready');
+    assert.equal(adapterCalls, 0, 'adapter.fire is unreachable without a positive gate');
+    assert.equal(d._fires.length, 1, 'the intent row is the audited attempt');
+    assert.equal(d._fires[0].outcome, 'blocked');
+    assert.equal(d._fires[0].reasonCode, 'pane_not_ready');
+    assert.match(d._fires[0].reason, /the at-rest marker never appeared/);
+    assert.ok(d._fires[0].payloadDigest, 'the intent was bound to the launch payload before it was settled');
+    // The slot is free again: a human may Fire once the pane is up.
+    assert.equal(d.prompts.activeFire(100), null);
+  });
+
+  it('a positive pane gate reaches the adapter, and a gate result from anyone but the launch caller is ignored', async () => {
+    let adapterCalls = 0;
+    const adapter = {
+      installedVersion: () => '1.0.0',
+      fire: (input) => {
+        adapterCalls += 1;
+        input.onUpdate({ outcome: 'dispatching', reason: null, engineThreadId: 't' });
+        const row = input.onUpdate({ outcome: 'accepted', reasonCode: null, reason: null });
+        return { accepted: Promise.resolve(row), settled: Promise.resolve(row) };
+      }
+    };
+    const block = { adapter: 'fake', channel: 'c', readiness: 'r', receipt: 'x', blockers: 'b', verifiedVersions: ['1.0.0'], evidence: Object.fromEntries(['adapter', 'channel', 'readiness', 'receipt', 'blockers', 'verifiedVersions'].map((k) => [k, { verifiedOn: null, source: 's' }])) };
+    d = deps({ adapters: { fake: adapter }, getEngine: (id) => ({ id, capabilities: { startupControl: block } }) });
+    const self = svc.launchCaller({ sessionId: 10, projectId: 1 });
+    const ok = await svc.fire(req(self, { paneGate: { ready: true, reason: 'ready' } }), d);
+    assert.equal(ok.status, 200);
+    assert.equal(adapterCalls, 1);
+    d = deps({ adapters: { fake: adapter }, getEngine: (id) => ({ id, capabilities: { startupControl: block } }) });
+    const op = await svc.fire(req(OPERATOR, { paneGate: { ready: false, reason: 'spoofed' } }), d);
+    assert.equal(op.status, 200, 'the operator\'s fire has no pane gate; the field is the launch caller\'s alone');
+    assert.equal(adapterCalls, 2);
   });
 
   it('an out-of-scope target answers exactly like a missing one, and the denial is recorded', async () => {

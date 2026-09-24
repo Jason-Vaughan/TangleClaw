@@ -636,6 +636,34 @@ closes channels whose session has ended. Before signalling a process it checks t
 the socket and the recorded birth time, so a reused pid is never killed; the teardown's result is
 recorded on the row.
 
+**What a supported launch does at boot (#1825 B3).** When the channel started AND the launch has a
+`tc start` sequence to read, the launch selects the **native** startup path and records it on its
+sequence row (`launch_sequences.startup_delivery = 'native'`, frozen in the transaction that binds the
+sequence, so a restart cannot turn it back into a keystroke path). On that path TangleClaw types
+nothing into the pane, ever: the prime paste and the kickoff line are withheld, and the unready
+monitor stamps the window but sends no nudge. Instead, once the pane's own readiness gate has seen the
+engine's at-rest marker over a settled transcript, the operator's **startup prompt** is fired once
+through the channel by the same service the dashboard and the API use, under the internal `launch`
+caller (`launch-automatic` clearance, attributed to the launch's own project) and the deterministic
+key `launch-<sequence>-r<revision>`. The engine's receipt on that fire row is what says the prompt
+arrived. If the pane never renders ready within the launch window, the attempt is still recorded and
+settled `blocked (pane_not_ready)` without the adapter ever being asked — a fact about the pane as
+TangleClaw observed it, not a claim about the engine. If the adapter's own pre-send check blocks
+(`trust_required`, `auth_required`, …), that is recorded the same way. There is no paste fallback and
+no automatic retry: the launch panel names the reason and the operator may **Fire** once it clears.
+Every other launch keeps today's path (`legacy`) and records, through the same service, why it could
+not go native — `unsupported` with the capability's reason (`engine_declares_none` for an engine that
+declares no channel, `version_unverified`, …) or `blocked (channel_unavailable)` for a supported engine
+whose server did not start. The app-server also inherits the pane's ambient environment (`tc` on PATH,
+`TANGLECLAW_PROJECT_ID`, `TANGLECLAW_API`, `TANGLECLAW_WORKSPACE_ID`, `TANGLECLAW_LAUNCH_ID`), on the
+understanding that with `--remote` the agent loop and its shell tools run in the server, so the
+`tc start next` the fired prompt asks for is expected to resolve to the same identity the pane's
+would. That is an assumption until the first live Codex launch after this shipped confirms it
+(`VRF-1825-b3-native-bootstrap`); if it proves false, the pane still has the identity and the fix
+belongs in how the server is started, not in the bootstrap. Codex's engine-level `preKeys` are
+withheld on a native launch too: a preKey is a keystroke, and two Enters on a fresh trust dialog
+would accept its default before readiness could refuse `trust_required`.
+
 **Readiness is read from the protocol, never from the pane.** Before a send the adapter needs all of:
 the app-server's `initialize` version equal to the installed and the recorded one; `config/read`
 naming the project directory as trusted (Codex shows its folder-trust dialog otherwise, and it is
@@ -665,8 +693,8 @@ anything less leaves it indeterminate.
 
 **The adapter contract** (what `ADAPTERS` entries implement): `installedVersion()` (synchronous,
 cached, never spawns); `probeVersionSync({enginePath})` (the launch path only); `prepareLaunch({project,
-engineProfile, launchCmd, enginePath})` returning `{ok, handle, command}` or `{ok: false, reasonCode,
-reason}`; `attachLaunch(handle, {sessionId, sequenceId, engineId})`; `abandonLaunch(handle, reason)`;
+engineProfile, launchCmd, enginePath, env})` returning `{ok, handle, command}` or `{ok: false, reasonCode,
+reason}` (`env` is the pane's environment, which the server must inherit); `attachLaunch(handle, {sessionId, sequenceId, engineId})`; `abandonLaunch(handle, reason)`;
 `releaseSession(sessionId, reason)`; `reap()`; `recover()`; `start()`/`stop()`;
 `fire({session, project, sequenceId, promptText, promptTextDigest, payloadDigest, onUpdate})`
 returning `{accepted, settled}` promises; and `reconcile({session, fire, onUpdate})`. Every

@@ -120,6 +120,8 @@ describe('unready-launch monitor (Train 21, car 21.5)', () => {
       // stated, never inherited from a default.
       preflight: opts.preflight || HEALTHY_PREFLIGHT
     });
+    // #1825 B3: a launch that selected its native startup channel.
+    if (opts.startupDelivery) snapshot.startupDelivery = opts.startupDelivery;
     const session = store.sessions.start({
       projectId: project.id,
       engineId: opts.engine || 'claude',
@@ -179,6 +181,18 @@ describe('unready-launch monitor (Train 21, car 21.5)', () => {
     assert.equal(verdictFor(sequence, 30 * MINUTE), 'already-nudged');
     assert.deepEqual(injectedFor(session.id), []);
     assert.equal(store.launchSequences.getByLaunchId(sequence.launchId).nudgeCount, 1);
+  });
+
+  it('stamps the window but never types into a launch that selected native startup control (#1825 F2)', () => {
+    const { session, sequence } = bindSequence('unready-native', { startupDelivery: 'native' });
+    assert.equal(verdictFor(sequence, 11 * MINUTE), 'native-startup');
+    const row = store.launchSequences.getByLaunchId(sequence.launchId);
+    assert.ok(row.unreadyAt, 'the observation is still recorded');
+    assert.equal(row.nudgeCount, 0);
+    assert.deepEqual(injectedFor(session.id), [], 'the nudge is a keystroke fallback and the native pane gets none');
+    // And not on the next tick either: the answer is the launch's, not the tick's.
+    assert.equal(verdictFor(sequence, 30 * MINUTE), 'native-startup');
+    assert.deepEqual(injectedFor(session.id), []);
   });
 
   it('stamps the window even when the pane can never be nudged', () => {

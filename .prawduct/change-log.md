@@ -35,6 +35,20 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-23 — A native launch is bootstrapped through its startupControl channel, and the launch panel shows every startup fire (#1825)
+
+<!-- prawduct: type=feature | scope=startupcontrol-1825 -->
+
+#1825 Chunk B3, the automatic bootstrap and the launch panel (`lib/launch-bootstrap.js`; Architect rulings F1–F6, F1 corrected once).
+
+**The selection is durable.** A launch decides its startup path when the channel starts — `native` when the channel opened AND there is a sequence to read through it, else `legacy` — and freezes it on `launch_sequences.startup_delivery` (schema v47) in the transaction that binds the sequence. Every later reader (the deferred init, the unready monitor, the panel, a restart) reads one answer.
+
+**The native path types nothing.** `_deferEngineInit` withholds the engine's preKeys, the prime paste and the kickoff; `launch-unready` stamps the window and answers `native-startup` instead of nudging; the inline-rules ledger row reads `skipped` with the served-by-sequence reason. After `_awaitPaneReady`, the bootstrap fires the startup prompt once through `startupPrompt.fire` — the one service path — as the internal `launch` caller (`launchCaller`, clearance `launch-automatic`, attributed to the launch's own project, proven inside the fire transaction against the exact session, project and current sequence) under `launch-<sequence>-r<revision>`. A gate that never passes still produces the audited intent row and is settled `blocked (pane_not_ready)` by the service without reaching `adapter.fire`. No paste fallback, no retry. Legacy launches keep their path and are recorded through the same service (`unsupported`, including `engine_declares_none`; or `blocked (channel_unavailable)`).
+
+**The app-server inherits the pane's environment** (`_paneEnvironment`: PATH floor, `TANGLECLAW_PROJECT_ID`, `TANGLECLAW_API`, `TANGLECLAW_WORKSPACE_ID`, `TANGLECLAW_LAUNCH_ID`). On the understanding that with `--remote` the agent loop runs in the server, a `tc start next` the fired prompt asks for is expected to resolve to the launch, where before it had no identity. An assumption until the post-merge live check confirms it (`VRF-1825-b3-native-bootstrap`).
+
+**The panel.** `GET /api/launch-sequences` carries `startupDelivery` for every caller and, for the operator and Master only, `startupControl: {channel header, fires incl. denied, fireable}` — never `adapterState`; bound callers get no block (D4). The Launch readiness panel renders it and wires a Fire button on active open-channel rows that reads the current revision at click time. Retention (F6): newest 200 fire rows and 100 closed channel rows per target project among ended sessions, active-session rows exempt, trimmed inside the writing transaction. Adapters stop at shutdown; the keep-running wrap and the boot re-sync channel release are pinned by tests.
+
 ## 2026-09-24 — The startup prompt fires at Codex through its app-server, with an engine-signed receipt (#1825)
 
 <!-- prawduct: type=feature | scope=startupcontrol-1825 -->
