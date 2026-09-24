@@ -164,12 +164,35 @@ describe('startupControl resolve', () => {
     assert.equal(r.supported, false);
   });
 
-  it('ships with no registered adapter, so every bundled engine is unsupported', () => {
-    assert.deepEqual(Object.keys(sc.ADAPTERS), []);
+  it('registers exactly the codex adapter; every other bundled engine declares nothing and is unsupported', () => {
+    assert.deepEqual(Object.keys(sc.ADAPTERS), ['codex']);
     const dir = path.join(__dirname, '..', 'data', 'engines');
     for (const f of fs.readdirSync(dir).filter((n) => n.endsWith('.json'))) {
       const p = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
-      assert.equal(sc.resolve(p).supported, false, f);
+      if (p.id === 'codex') continue;
+      const r = sc.resolve(p);
+      assert.equal(r.supported, false, f);
+      assert.equal(r.reasonCode, 'engine_declares_none', f);
+    }
+  });
+
+  it('the codex profile is supported only on the exact version the adapter reports', () => {
+    const codex = require('../lib/startup-control-codex');
+    const p = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));
+    assert.deepEqual(sc.blockErrors(p.capabilities.startupControl), []);
+    assert.deepEqual(p.capabilities.startupControl.verifiedVersions, ['0.156.1']);
+    const saved = codex._internal._version.version;
+    try {
+      codex._internal._version.version = null;
+      assert.equal(sc.resolve(p).reasonCode, 'version_unverified', 'no probe yet: unsupported, never assumed');
+      codex._internal._version.version = '0.157.0';
+      assert.equal(sc.resolve(p).reasonCode, 'version_unverified', 'an unlisted version is unsupported');
+      codex._internal._version.version = '0.156.1';
+      const r = sc.resolve(p);
+      assert.equal(r.supported, true);
+      assert.equal(r.adapter, codex);
+    } finally {
+      codex._internal._version.version = saved;
     }
   });
 });

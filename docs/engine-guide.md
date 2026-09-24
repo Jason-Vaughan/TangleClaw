@@ -604,7 +604,10 @@ rule as `wake`. An unknown field, or a malformed block, resolves to **unsupporte
 `ADAPTERS` in `lib/startup-control.js`. A profile whose `adapter` is not registered resolves to
 unsupported, so editing a profile can describe a channel but cannot grant one.
 
-**Supported also needs a verified version.** The adapter reports the installed engine version
+**Supported also needs a verified version.** Right after a TangleClaw boot, until the adapter's
+asynchronous version probe answers, a fire resolves `unsupported (version_unverified)` and spends its
+idempotency key on that answer; a launch refreshes the probe synchronously first, so a session
+launched after the boot never sees this. The adapter reports the installed engine version
 through `installedVersion()`, which answers synchronously from a value it probed and cached
 earlier. Capability resolution never spawns a process. A version not listed in
 `verifiedVersions`, or no version at all, resolves to unsupported (`version_unverified`), never
@@ -612,11 +615,63 @@ guessed at. `tc capabilities` and the fire path read this one decision, so they 
 An engine profile that cannot be read resolves to unsupported (`engine_profile_unreadable`),
 instead of failing the request that asked.
 
-**No adapter is registered yet.** Every engine currently resolves to unsupported, `tc capabilities`
-says so as `startup-control`, and firing the startup prompt returns a typed
-`STARTUP_CONTROL_UNSUPPORTED` refusal. There is no fallback, and nothing is typed into the pane. The
-prompt itself, and who may read, edit and fire it, are covered in the
-[User guide](user-guide.md) under "Startup Prompt".
+**The Codex adapter** (`lib/startup-control-codex.js`, verified on codex-cli 0.156.1) is the one
+registered adapter. Every other engine resolves to unsupported, `tc capabilities` says so as
+`startup-control`, and firing the startup prompt at one returns a typed `STARTUP_CONTROL_UNSUPPORTED`
+refusal. There is no fallback, and nothing is typed into a pane. The prompt itself, and who may read,
+edit and fire it, are covered in the [User guide](user-guide.md) under "Startup Prompt".
+
+**What a Codex launch does differently.** When the Codex profile resolves as supported for the exact
+executable the launch will run, TangleClaw starts one `codex app-server` per launch on a local unix
+socket under its own state directory, detached in its own process group so a TangleClaw restart does
+not sever it, and launches the pane's TUI with `--remote unix://<socket>` ahead of the already
+validated launch-mode arguments (the TUI applies `--ask-for-approval` and `--sandbox` in remote mode).
+The channel is recorded in `startup_control_channels`: a generic header (session, launch, engine,
+adapter, lifecycle) plus a bounded `adapterState` only the Codex adapter reads. A launch whose
+app-server cannot be started or probed launches today's command unchanged and records
+`channel_unavailable`. The channel ends with the session: kill, a wrap that ends the session, a
+detected crash, or a relaunch over a dead pane; a keep-running wrap keeps it. At boot TangleClaw
+revalidates every open channel of a live session, recovers in-flight fires without resending, and
+closes channels whose session has ended. Before signalling a process it checks the command line,
+the socket and the recorded birth time, so a reused pid is never killed; the teardown's result is
+recorded on the row.
+
+**Readiness is read from the protocol, never from the pane.** Before a send the adapter needs all of:
+the app-server's `initialize` version equal to the installed and the recorded one; `config/read`
+naming the project directory as trusted (Codex shows its folder-trust dialog otherwise, and it is
+never typed through); `account/read` naming an account; `account/rateLimits/read` explicitly allowing
+usage or reporting a usable credit balance; exactly one loaded thread whose canonical cwd is the
+project directory (the recorded one once seen); and that thread `idle`. An unknown answer fails
+closed as `readiness_unknown`; a blocker is `trust_required`, `auth_required`, `quota_exhausted`,
+`version_mismatch` or `engine_not_ready`, with nothing sent and the launch's fire slot released.
+
+**The receipt.** The fire is `turn/start` carrying the launch-start payload digest as
+`clientUserMessageId`. On codex-cli 0.156.1 a fresh thread cannot be subscribed to or listed before
+its first user message, so the send materializes the thread and TangleClaw then subscribes
+(`thread/resume`, which that version can still refuse) and reads the turn back (`thread/turns/list`),
+re-reading the record every few seconds while the turn runs so its end is never missed. The fire is
+**accepted** when the
+engine's record of that turn carries a user message whose `clientId` is the digest AND whose text
+hashes to the prompt's text digest (from the notification or the read-back). It is **applied** on
+`turn/completed {completed}` for that turn, only after accepted evidence; `failed` and
+`interrupted` follow the turn. `waitingOnApproval` and `waitingOnUserInput` keep the fire accepted
+under `approval_pending` and `user_input_pending`; TangleClaw never answers either. A socket lost
+before the answer is `indeterminate (send_unconfirmed)` and is never resent; one lost after
+acceptance is reconnected and settled from the engine's record, or left `indeterminate
+(channel_lost)`. An indeterminate fire is settled by a reconcile that reads every page of the exact
+thread on the reachable channel: a turn carrying the digest settles it to that turn's state; the
+payload absent on every page while the thread stays idle across a pause settles it to `failed`;
+anything less leaves it indeterminate.
+
+**The adapter contract** (what `ADAPTERS` entries implement): `installedVersion()` (synchronous,
+cached, never spawns); `probeVersionSync({enginePath})` (the launch path only); `prepareLaunch({project,
+engineProfile, launchCmd, enginePath})` returning `{ok, handle, command}` or `{ok: false, reasonCode,
+reason}`; `attachLaunch(handle, {sessionId, sequenceId, engineId})`; `abandonLaunch(handle, reason)`;
+`releaseSession(sessionId, reason)`; `reap()`; `recover()`; `start()`/`stop()`;
+`fire({session, project, sequenceId, promptText, promptTextDigest, payloadDigest, onUpdate})`
+returning `{accepted, settled}` promises; and `reconcile({session, fire, onUpdate})`. Every
+transition an adapter reports goes through the store's transition map, so no adapter can move a fire
+backwards or out of a terminal outcome.
 
 ## Config File Generation
 

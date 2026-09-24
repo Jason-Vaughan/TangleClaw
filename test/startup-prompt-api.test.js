@@ -26,6 +26,7 @@ const gateFallback = require('../lib/gate-fallback');
 const openInstallToken = require('../lib/open-install-token');
 const tmux = require('../lib/tmux');
 const enginesModule = require('../lib/engines');
+const codexAdapter = require('../lib/startup-control-codex');
 const { handleRequest } = require('../server');
 
 const PASSWORD = 'correct-horse-battery';
@@ -39,6 +40,7 @@ describe('startup prompt routes (#1825)', () => {
   let counter = 0;
   let sendKeysCalls = 0;
   let realSendKeys;
+  let realSeams;
 
   before(() => {
     prevBase = store._getBasePath();
@@ -56,9 +58,20 @@ describe('startup prompt routes (#1825)', () => {
     sessions = require('../lib/sessions');
     realSendKeys = tmux.sendKeys;
     tmux.sendKeys = () => { sendKeysCalls += 1; return true; };
+    // The Codex adapter is real now (B2). These routes are about who may fire,
+    // not about Codex: the version probe reports no engine, so every codex
+    // launch resolves unsupported (`version_unverified`), and any attempt to
+    // start a real app-server is a loud failure rather than a leaked process.
+    realSeams = { ...codexAdapter._seams };
+    codexAdapter._seams.execFileSync = () => { throw new Error('codex is not installed in this test'); };
+    codexAdapter._seams.execFile = (cmd, args, opts, cb) => cb(new Error('codex is not installed in this test'), '');
+    codexAdapter._seams.spawn = () => { throw new Error('booby trap: a test tried to start a real app-server'); };
+    codexAdapter._seams.kill = () => { throw new Error('booby trap: a test tried to signal a real process'); };
+    codexAdapter._internal._version.version = null;
   });
 
   after(() => {
+    Object.assign(codexAdapter._seams, realSeams);
     tmux.sendKeys = realSendKeys;
     store.close();
     store._setBasePath(prevBase);
@@ -480,7 +493,7 @@ describe('startup prompt routes (#1825)', () => {
       const cap = json(res).capabilities.find((c) => c.id === 'startup-control');
       assert.ok(cap, 'startup-control is reported, not omitted');
       assert.equal(cap.enabled, false);
-      assert.match(cap.detail, /unsupported: engine codex declares no startupControl/);
+      assert.match(cap.detail, /unsupported: engine codex's installed version is unknown/);
     });
   });
 });

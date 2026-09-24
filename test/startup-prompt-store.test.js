@@ -224,3 +224,179 @@ describe('startup prompt store (#1825)', () => {
     });
   });
 });
+
+/*
+ * Chunk B2: the v45→v46 rebuild keeps every fire row and widens the reason
+ * CHECK; a fire moves only forward through the transition map; the channels
+ * table holds one open channel per session.
+ */
+const V45_FIRES = `CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at TEXT NOT NULL DEFAULT (datetime('now')));
+  INSERT INTO schema_version (version) VALUES (45);
+  CREATE TABLE startup_prompt_revisions (
+    revision INTEGER PRIMARY KEY CHECK (revision >= 1), text TEXT NOT NULL, text_digest TEXT NOT NULL,
+    firer_project_ids TEXT NOT NULL DEFAULT '[]', policy_digest TEXT NOT NULL,
+    created_by_kind TEXT NOT NULL CHECK (created_by_kind IN ('seed','operator-verified','open-install-unverified')),
+    created_by TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+  INSERT INTO startup_prompt_revisions (revision, text, text_digest, firer_project_ids, policy_digest, created_by_kind)
+    VALUES (1, 'seed', 'd', '[]', 'p', 'seed');
+  CREATE TABLE startup_prompt_fires (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, idempotency_key TEXT NOT NULL UNIQUE, project_id INTEGER NOT NULL,
+    session_id INTEGER NOT NULL, sequence_id INTEGER NOT NULL, prompt_revision INTEGER NOT NULL,
+    prompt_text_digest TEXT NOT NULL, policy_digest TEXT NOT NULL,
+    caller_kind TEXT NOT NULL CHECK (caller_kind IN ('operator','project')),
+    caller_clearance TEXT NOT NULL CHECK (caller_clearance IN ('operator-verified','open-install-unverified','project-binding')),
+    caller_project_id INTEGER,
+    outcome TEXT NOT NULL CHECK (outcome IN ('pending','dispatching','indeterminate','accepted','applied','blocked','failed','interrupted','unsupported','denied')),
+    reason_code TEXT CHECK (reason_code IS NULL OR reason_code IN ('engine_declares_none','fire_scope_denied')),
+    reason TEXT CHECK (reason IS NULL OR length(reason) <= 500),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')));
+  CREATE INDEX idx_startup_prompt_fires_session ON startup_prompt_fires(session_id);
+  CREATE UNIQUE INDEX idx_startup_prompt_fires_active ON startup_prompt_fires(sequence_id) WHERE outcome IN ('pending','dispatching','indeterminate','accepted');
+  CREATE UNIQUE INDEX idx_startup_prompt_fires_applied ON startup_prompt_fires(sequence_id, prompt_revision) WHERE outcome = 'applied';
+  INSERT INTO startup_prompt_fires (idempotency_key, project_id, session_id, sequence_id, prompt_revision, prompt_text_digest,
+    policy_digest, caller_kind, caller_clearance, caller_project_id, outcome, reason_code, reason)
+    VALUES ('old-key-000001', 1, 10, 100, 1, 'd', 'p', 'operator', 'operator-verified', NULL, 'unsupported', 'engine_declares_none', 'no adapter');`;
+
+describe('startup prompt store: v46 (Chunk B2)', () => {
+  describe('migration', () => {
+    it('rebuilds a v45 fires table: rows survive, the CHECK widens, the receipt columns and indexes exist', () => {
+      openStore(V45_FIRES);
+      const db = store.getDb();
+      assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 46);
+      const kept = store.startupPrompts.getFireByKey('old-key-000001');
+      assert.ok(kept, 'the v45 row was copied');
+      assert.equal(kept.outcome, 'unsupported');
+      assert.equal(kept.payloadDigest, null);
+      // The widened CHECK accepts a B2 reason code, which v45 refused.
+      const row = store.startupPrompts.insertFire({ ...fire(101, 1, 'blocked'), reasonCode: 'trust_required', reason: 'untrusted' });
+      assert.equal(row.reasonCode, 'trust_required');
+      const names = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'startup_prompt_fires'").all().map((r) => r.name);
+      for (const idx of ['idx_startup_prompt_fires_session', 'idx_startup_prompt_fires_active', 'idx_startup_prompt_fires_applied']) {
+        assert.ok(names.includes(idx), idx);
+      }
+      assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE name = 'startup_prompt_fires_v46'").get(), undefined, 'no leftover table');
+      assert.ok(db.prepare("SELECT sql FROM sqlite_master WHERE name = 'startup_control_channels'").get(), 'the channels table exists');
+    });
+
+    it('a v46-shaped install is not rebuilt again', () => {
+      const dir = openStore();
+      const before = store.startupPrompts.insertFire(fire(102, 1, 'unsupported'));
+      store.close();
+      store._setBasePath(dir);
+      store.init();
+      assert.deepEqual(store.startupPrompts.getFireById(before.id), before);
+    });
+
+    it('refuses to advance when the channels table lacks its state CHECK', () => {
+      const bad = `${V45_FIRES}
+        CREATE TABLE startup_control_channels (id INTEGER PRIMARY KEY, session_id INTEGER, sequence_id INTEGER,
+          engine_id TEXT, adapter TEXT, engine_version TEXT, socket_path TEXT, resolved_socket_path TEXT, pid INTEGER,
+          thread_id TEXT, state TEXT, opened_at TEXT, closed_at TEXT, close_reason TEXT);`;
+      assert.throws(() => openStore(bad), /state CHECK/);
+      store.close();
+    });
+  });
+
+  describe('fire transitions', () => {
+    beforeEach(() => openStore());
+
+    it('moves forward through pending, dispatching, accepted and applied, stamping each step once', () => {
+      const row = store.startupPrompts.insertFire({ ...fire(200, 1, 'pending'), reasonCode: null, payload: { sessionId: 10 }, payloadDigest: 'pd' });
+      assert.deepEqual(row.payload, { sessionId: 10 });
+      assert.equal(row.payloadDigest, 'pd');
+      let r = store.startupPrompts.updateFire(row.id, { outcome: 'dispatching', engineThreadId: 'T1' });
+      assert.equal(r.ok, true);
+      assert.equal(r.fire.engineThreadId, 'T1');
+      assert.ok(r.fire.dispatchedAt);
+      r = store.startupPrompts.updateFire(row.id, { outcome: 'accepted', engineTurnId: 'U1' });
+      assert.ok(r.fire.acceptedAt);
+      assert.equal(r.fire.engineTurnId, 'U1');
+      assert.equal(r.fire.settledAt, null);
+      r = store.startupPrompts.updateFire(row.id, { outcome: 'accepted', reasonCode: 'approval_pending', reason: 'waiting' });
+      assert.equal(r.ok, true, 'a same-outcome reason refresh is allowed while active');
+      assert.equal(r.fire.reasonCode, 'approval_pending');
+      r = store.startupPrompts.updateFire(row.id, { outcome: 'applied' });
+      assert.ok(r.fire.settledAt);
+      assert.equal(r.fire.reasonCode, null, 'a terminal outcome clears the in-flight reason');
+    });
+
+    it('never moves a fire backwards or out of a terminal outcome', () => {
+      const applied = store.startupPrompts.insertFire(fire(201, 1, 'applied'));
+      assert.match(store.startupPrompts.updateFire(applied.id, { outcome: 'accepted' }).reason, /applied fire cannot become accepted/);
+      assert.equal(store.startupPrompts.updateFire(applied.id, { outcome: 'applied', reason: 'again' }).ok, false, 'terminal same-outcome edits are refused too');
+      const blocked = store.startupPrompts.insertFire({ ...fire(202, 1, 'blocked'), reasonCode: 'trust_required' });
+      assert.equal(store.startupPrompts.updateFire(blocked.id, { outcome: 'dispatching' }).ok, false);
+      const accepted = store.startupPrompts.insertFire(fire(203, 1, 'accepted'));
+      assert.equal(store.startupPrompts.updateFire(accepted.id, { outcome: 'pending' }).ok, false);
+      assert.equal(store.startupPrompts.updateFire(accepted.id, { outcome: 'dispatching' }).ok, false);
+      assert.equal(store.startupPrompts.updateFire(accepted.id, { outcome: 'nonsense' }).ok, false);
+      assert.equal(store.startupPrompts.getFireById(accepted.id).outcome, 'accepted');
+      assert.equal(store.startupPrompts.updateFire(9999, { outcome: 'applied' }).ok, false);
+    });
+
+    it('an indeterminate fire is settled only forward, by a reconcile', () => {
+      const row = store.startupPrompts.insertFire({ ...fire(204, 1, 'indeterminate'), reasonCode: 'send_unconfirmed' });
+      assert.equal(store.startupPrompts.activeFire(204).id, row.id, 'indeterminate holds the active slot');
+      assert.equal(store.startupPrompts.updateFire(row.id, { outcome: 'dispatching' }).ok, false);
+      const r = store.startupPrompts.updateFire(row.id, { outcome: 'failed', reasonCode: 'send_unconfirmed', reason: 'no such turn' });
+      assert.equal(r.ok, true);
+      assert.equal(store.startupPrompts.activeFire(204), null);
+    });
+
+    it('a dispatching fire may settle straight from a read-back that found the turn over', () => {
+      const row = store.startupPrompts.insertFire(fire(205, 1, 'dispatching'));
+      assert.equal(store.startupPrompts.updateFire(row.id, { outcome: 'interrupted', reasonCode: 'turn_interrupted' }).ok, true);
+    });
+  });
+
+  describe('channels', () => {
+    beforeEach(() => openStore());
+
+    const channel = (sessionId, over = {}) => ({
+      sessionId, sequenceId: sessionId * 10, engineId: 'codex', adapter: 'codex',
+      adapterState: { pid: 4000 + sessionId, socketPath: `/tmp/sc-${sessionId}.sock` }, ...over
+    });
+
+    it('opens one channel per session with a generic header, merges adapter state, and closes it once with a reason and a teardown result', () => {
+      const c = store.startupControlChannels.open(channel(10));
+      assert.equal(c.state, 'open');
+      assert.deepEqual(c.adapterState, { pid: 4010, socketPath: '/tmp/sc-10.sock' });
+      assert.deepEqual(store.startupControlChannels.getOpenBySession(10), c);
+      assert.throws(() => store.startupControlChannels.open(channel(10)), /UNIQUE/, 'a second open channel for the session is refused');
+      const merged = store.startupControlChannels.setAdapterState(c.id, { threadId: 'thread-1' });
+      assert.deepEqual(merged.adapterState, { pid: 4010, socketPath: '/tmp/sc-10.sock', threadId: 'thread-1' });
+      const closed = store.startupControlChannels.close(c.id, 'session killed', 'ok');
+      assert.equal(closed.state, 'closed');
+      assert.equal(closed.closeReason, 'session killed');
+      assert.equal(closed.teardown, 'ok');
+      assert.ok(closed.closedAt);
+      const again = store.startupControlChannels.close(c.id, 'again', 'signal failed: x');
+      assert.equal(again.closeReason, 'session killed', 'the first reason stands');
+      assert.equal(again.teardown, 'ok');
+      assert.equal(store.startupControlChannels.getOpenBySession(10), null);
+      const reopened = store.startupControlChannels.open(channel(10));
+      assert.notEqual(reopened.id, c.id, 'a closed channel frees the slot for a relaunch');
+      assert.equal(store.startupControlChannels.setAdapterState(9999, { x: 1 }), null);
+    });
+
+    it('bounds the adapter state and lists open channels oldest first', () => {
+      assert.throws(() => store.startupControlChannels.open(channel(13, { adapterState: { blob: 'x'.repeat(9000) } })), /CHECK/);
+      const a = store.startupControlChannels.open(channel(11));
+      const b = store.startupControlChannels.open(channel(12));
+      store.startupControlChannels.close(a.id, 'ended', 'skipped');
+      assert.deepEqual(store.startupControlChannels.listOpen().map((c) => c.id), [b.id]);
+    });
+  });
+
+  describe('active fires', () => {
+    beforeEach(() => openStore());
+
+    it('lists every in-flight fire oldest first, and none that ended', () => {
+      const a = store.startupPrompts.insertFire(fire(301, 1, 'pending'));
+      store.startupPrompts.insertFire(fire(302, 1, 'applied'));
+      const c = store.startupPrompts.insertFire(fire(303, 1, 'accepted'));
+      store.startupPrompts.insertFire(fire(304, 1, 'blocked'));
+      assert.deepEqual(store.startupPrompts.listActiveFires().map((f) => f.id), [a.id, c.id]);
+    });
+  });
+});
