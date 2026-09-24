@@ -716,3 +716,12 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - **Withheld methodology authority** (#1738) — a wrap from an engine that cannot run Prawduct is a state-only checkpoint across real steps: no probe, no release cut, no merge, `.prawduct/` untouched, and every step reads one resolved answer. `test/wrap-methodology-authority.test.js`.
 - **Resume publication binding, end to end** (#1675) — drives the real handoff-stage step, finalizer, launch preflight and prime renderer together, and asserts the next session's Resume comes from the publication the wrap produced, not an index no publication vouches for. `test/resume-publication-binding.test.js`.
 - **Workflow action pins** (#1436) — every `uses:` in `.github/workflows/` must be a full commit SHA with an exact `# vX.Y.Z` comment (docker refs digest-pinned, local `./` paths allowed), every workflow must declare top-level `permissions:`, and `release.yml`'s `node-version` must be an exact `X.Y.Z`; runs inside the required `test` check so an unpinned ref cannot merge. `test/workflow-action-pins.test.js`.
+
+## TODO (auto-stubbed 2026-09-23)
+
+- **TBD** — touched in this session: `lib/startup-control-codex.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/ws-unix-client.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/helpers/ws-test-server.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/startup-control-codex.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/startup-control-launch.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/ws-unix-client.test.js`. <!-- describe -->
