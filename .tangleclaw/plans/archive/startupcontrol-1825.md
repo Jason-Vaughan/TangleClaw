@@ -1,7 +1,7 @@
 ---
 title: startupControl — engine-native startup delivery with semantic receipt
 issue: 1825
-status: B1 SHIPPED (PR #1831). B2 SHIPPED (PR #1833, live at schema v46). B3 (automatic bootstrap + launch panel) REVIEWED 2026-09-23 (Architect F1–F6 ruled, Critic clean); PR pending; live check runs post-merge
+status: B1 SHIPPED (PR #1831). B2 SHIPPED (PR #1833, live at schema v46). COMPLETE 2026-09-23 — B1 (PR #1831), B2 (PR #1833), B3 (PR #1835, live at 265c89f68); live check passed (session 1127); #1836 filed for the Codex fullAuto sandbox
 scope: startupcontrol-1825
 branch: feat/1825-startup-control-b3
 ---
@@ -975,9 +975,36 @@ so the inherited environment reaches `tc`), resolved only by the post-merge live
   (the env assumption above is then a fact). Recorded here with timestamps.
 - The Critic is clean at the merge boundary.
 
+### Live check (2026-09-23 local, live install at `265c89f68`, codex-cli 0.156.1, project ClawCode-x)
+
+Two operator-authorized launches, one Codex turn each (the operator asked for a harmless prompt; the
+one that fired is revision 1, `read your launch context: run tc start next`, which reads and attests
+and authorizes nothing).
+
+- **Session 1126, `fullAuto`, 04:18:04Z.** Sequence 110 frozen `startup_delivery=native`; channel 2
+  open at 04:18:05 (pane command `codex --remote unix://…`, app-server pid recorded); fire
+  `launch-110-r1` (caller `launch` / `launch-automatic`) dispatched 04:18:07 → accepted 04:18:12 →
+  applied 04:18:17; activity `launch.bootstrap {outcome: fired}`. The pane showed the prompt once,
+  as a user turn, and nothing else was typed (no preKeys, no paste, no kickoff). Codex ran
+  `tc start next`: `tc` was on PATH and knew `TANGLECLAW_API` — the env assumption held — but the
+  loopback connect was refused by Codex's `workspace-write` sandbox, so the sequence stayed at 0/4.
+  Killed 04:28Z; channel closed `session killed`, teardown `ok`.
+- **Session 1127, `bypassPermissions`, 04:29:00Z.** Sequence 111 native; channel 3 open 04:29:01;
+  fire `launch-111-r1` dispatched 04:29:04 → accepted 04:29:09 → applied 04:29:34. Codex ran
+  `tc start next` and acked identity, governance and state (cursor 3/4, six `tc-cli` awareness
+  receipts from 04:29:07); the task step was withheld by the `crash-recovery` gate raised by 1126's
+  kill, which is that gate working as designed. **`tc start next` resolves inside a fired Codex turn:
+  the assumption is now a fact.**
+- The `fullAuto` failure is the mode's sandbox, not the startup path (every earlier ClawCode-x
+  session that attested ran `bypassPermissions`): filed as #1836.
+- Not exercised: the operator's own Fire press on the panel (the route is operator-only and the gate
+  is armed; the button's request is pinned by `test/launch-panel-fire.test.js`), and a Claude launch
+  on the live install after the restart (its `unsupported (engine_declares_none)` row is pinned by
+  the service and bootstrap tests).
+
 ## Status
 
 - [x] Chunk 01: no-build spike: capture Codex app-server channel, readiness, receipt and blockers live; S1–S5 to the Architect with the evidence. Done 2026-09-23: all four cases captured; Architect ruled S1 APPROVE, S2–S5 MODIFY (message d94974c3)
 - [x] Chunk B1: Engine-neutral foundation: startupControl profile block + registry + capability, revisioned startup prompt with read/update/fire API and operator editor (#1825): Architect ruled D1–D8 (message 29790e23) plus a D4 correction; Critic rev-20260923T232701Z (0 blocking) → rev-20260923T234219Z (1 blocking, introduced by a fix) → rev-20260923T235204Z (0 findings); follow-ups carried into B3
 - [x] Chunk B2: Codex adapter: per-launch app-server, readiness, fire with launch-bound receipts, blockers (#1825): Architect ruled E1–E9 (message 2ad0567c); one operator-authorized live turn went dispatching → accepted → applied; Critic cumulative rev-20260924T013228Z (2 blocking, 9 warning, 12 note) → verify rev-20260924T015225Z (1 blocking) → verify rev-20260924T020349Z (0 findings)
-- [x] Chunk B3: Automatic bootstrap on launch with legacy fallback; launch panel receipts, blockers and Fire (#1825). Done 2026-09-23: Architect ruled F1–F6 (message b5445cbe; F1 corrected, message d00c06b7); Critic cumulative rev-20260924T033250Z (1 blocking, 6 warning, 12 note) → verify rev-20260924T035435Z (0 findings); the live check (`VRF-1825-b3-native-bootstrap`, one Codex turn, operator go required) runs after the merge and restart. Carries from B2's review: surface `denied` fires in the panel; take retention of `startup_prompt_fires` AND of closed `startup_control_channels` rows to the Architect (R-14/R-19); consider a per-launch app-server log file if a live launch ever fails to open its socket (R-18); pin the pipeline-wrap keep-running retention and the medusa-resync crash release with tests, and wire adapter `stop()` at shutdown (verify-resolutions observations 1–2)
+- [x] Chunk B3: Automatic bootstrap on launch with legacy fallback; launch panel receipts, blockers and Fire (#1825). Done 2026-09-23: Architect ruled F1–F6 (message b5445cbe; F1 corrected, message d00c06b7); Critic cumulative rev-20260924T033250Z (1 blocking, 6 warning, 12 note) → verify rev-20260924T035435Z (0 findings); live check PASSED 2026-09-23 on session 1127 (recorded under Chunk B3); #1836 filed for the Codex fullAuto sandbox. Carries from B2's review: surface `denied` fires in the panel; take retention of `startup_prompt_fires` AND of closed `startup_control_channels` rows to the Architect (R-14/R-19); consider a per-launch app-server log file if a live launch ever fails to open its socket (R-18); pin the pipeline-wrap keep-running retention and the medusa-resync crash release with tests, and wire adapter `stop()` at shutdown (verify-resolutions observations 1–2)
