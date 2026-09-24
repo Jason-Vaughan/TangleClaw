@@ -5407,7 +5407,10 @@ route('GET', '/api/ports', (req, res) => {
   // System-detected listeners no lease accounts for (localhost only). Their
   // identities, not just a count, so a caller can see WHICH ports are taken
   // before picking one (#814). From the periodic scan's cache: the lease route
-  // asks the machine fresh, this listing does not need to.
+  // asks the machine fresh, this listing does not need to. The scan reads the
+  // same sources as the lease probe (lsof plus the kernel socket table), so
+  // root's listeners are listed too; the list is as old as the last scan, and
+  // empty when scanning is off.
   const leasedPortSet = new Set(leases.filter(l => l.host === 'localhost').map(l => l.port));
   const systemPorts = portScanner.getSystemPorts()
     .filter(sp => !leasedPortSet.has(sp.port))

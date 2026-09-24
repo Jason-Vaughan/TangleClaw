@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-24 — `GET /api/ports` lists the root-owned listeners the lease guard already refuses (#1771)
+
+<!-- prawduct: type=bugfix | scope=ports-1771 -->
+
+Dual-Builder Pilot 2, Lane 1 (TangleClaw-Pilot-B1, Control lane). Architect rulings A1–A4 are in `.tangleclaw/plans/1771-root-listeners.md`.
+
+**The change.** `port-scanner.scan()`, which feeds the `systemPorts` list, used to read only lsof. As a normal user, lsof misses listeners owned by root and other users, which the lease probe already caught through the kernel socket table (#814). Now one reader, `_readSocketTable()` (`netstat -anv -p tcp` on darwin, `ss -Hltn` on linux), feeds both the scan and the probe. The scan names every pid with one batched `ps` (`_commandsOf`). The probe still names only the pid it found. On a port both sources see, lsof's entry wins. A listener only the socket table sees is listed with `command: null` when it cannot be named, and `pid: null` when unknown (always, on linux). `scan()` now goes through the `_exec` seam, and it reads lsof's silent exit 1 as "none of this user's" rather than warning on every scan.
+
+**Tests.** The single-port parsers `_parseNetstatListener`/`_parseSsListener` are removed, because the shared reader made them production-dead. Their tests are consolidated onto the whole-table parsers with the same inputs and the same invariants (address shapes, suffix-only ports, non-LISTEN rows, a `-` pid), plus a scoped IPv6 address. New tests cover the merge, lsof precedence, Linux null identity, one batched `ps`, `ps` failing outright, the source-failure matrix, and scan/probe parity on darwin and linux fixtures. The engines test that picked a real-host scan entry is now fixture-driven (A4). It asserts that a named and an unnamed listener are both unavailable, and checks the process only for the named one. A mutation check (merge disabled) fails four scan tests.
+
+**Critic.** The first review found 0 findings and 11 observations. Acted on: the scan and the probe now share one socket-table reader (the plan had said so and the code had not), the missing `ps`-failure and scoped-IPv6 tests are added, and the route comment no longer claims more than a cached scan can deliver. Accepted: the CHANGELOG's ruling citation, which matches how other entries cite their rulings. The second review (0 blocking, 0 warnings) found two things to fix: `scan()` warned on lsof's silent exit 1, and the docs said `pid` is always null alongside `command`. Both are fixed. Accepted: the `_commandOf`/`_commandsOf` pair (folding them together would mean rewriting the probe test's `ps` output for no change in behavior), the overlapping parser test blocks, and debug-level socket-table failures (a deliberate plan choice). Flagged, not fixed here (the PM scoped this PR strictly to #1771): the `risk_surfaces:` line in `.prawduct/project-state.yaml` uses an inline-list form that `classify-diff-risk` cannot parse.
+
 ## 2026-09-24 — version-bump no longer writes inside `.prawduct/` (#1766)
 
 <!-- prawduct: type=chore | scope=vb-flip-1766 -->

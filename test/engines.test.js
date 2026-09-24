@@ -2683,27 +2683,41 @@ describe('engines', () => {
     });
 
     it('port scanner conflict detection works with checkPort', () => {
-      // Run a scan to populate cache
-      portScanner.scan();
+      // A fixture host rather than this machine, so the test grades the same
+      // thing on every host: one listener lsof names, and one only the kernel
+      // socket table sees (root's, on Linux with no pid to name it by).
+      const named = 7801;
+      const unnamed = 7802;
+      portScanner._setPlatform('linux');
+      portScanner._setExec((cmd) => {
+        const lsofRow = `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\npostgres 812 me 7u IPv4 0x1 0t0 TCP *:${named} (LISTEN)`;
+        if (cmd.startsWith('lsof -iTCP -sTCP:LISTEN') || cmd.startsWith(`lsof -nP -iTCP:${named} `)) return lsofRow;
+        if (cmd.startsWith('lsof')) throw Object.assign(new Error('none'), { status: 1, stdout: '', stderr: '' });
+        if (cmd === 'ss -Hltn') return `LISTEN 0 128 0.0.0.0:${named} 0.0.0.0:*\nLISTEN 0 128 0.0.0.0:${unnamed} 0.0.0.0:*`;
+        throw new Error(`unexpected command: ${cmd}`);
+      });
+      try {
+        assert.deepEqual(portScanner.scan(), [
+          { port: named, pid: 812, command: 'postgres' },
+          { port: unnamed, pid: null, command: null }
+        ]);
+        assert.equal(store.portLeases.checkConflict(named), null, 'fixture ports are unleased');
+        assert.equal(store.portLeases.checkConflict(unnamed), null, 'fixture ports are unleased');
 
-      // A port that's unlikely to be in use should be available
-      const freeResult = porthub.checkPort(59999);
-      assert.equal(freeResult.systemDetected, false, 'Port 59999 should not be system-detected');
+        const namedResult = porthub.checkPort(named);
+        assert.equal(namedResult.available, false, `Port ${named} should be unavailable`);
+        assert.equal(namedResult.systemDetected, true, `Port ${named} should be flagged as system-detected`);
+        assert.equal(namedResult.process, 'postgres', 'a named listener reports its process');
 
-      // If any ports were detected by the scanner, verify checkPort reflects it
-      const systemPorts = portScanner.getSystemPorts();
-      if (systemPorts.length > 0) {
-        // Find a system port that is NOT in our lease DB
-        const unleased = systemPorts.find(sp => {
-          const leaseCheck = store.portLeases.checkConflict(sp.port);
-          return !leaseCheck;
-        });
-        if (unleased) {
-          const result = porthub.checkPort(unleased.port);
-          assert.equal(result.available, false, `Port ${unleased.port} should be unavailable (in use by ${unleased.command})`);
-          assert.equal(result.systemDetected, true, `Port ${unleased.port} should be flagged as system-detected`);
-          assert.ok(result.process, 'Should include process name');
-        }
+        const unnamedResult = porthub.checkPort(unnamed);
+        assert.equal(unnamedResult.available, false, `Port ${unnamed} should be unavailable`);
+        assert.equal(unnamedResult.systemDetected, true, `Port ${unnamed} should be flagged as system-detected`);
+
+        const freeResult = porthub.checkPort(59999);
+        assert.equal(freeResult.available, true, 'Port 59999 should be available');
+        assert.equal(freeResult.systemDetected, false, 'Port 59999 should not be system-detected');
+      } finally {
+        portScanner._reset();
       }
     });
 
