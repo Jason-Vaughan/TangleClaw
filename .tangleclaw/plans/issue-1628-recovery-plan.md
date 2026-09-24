@@ -21,6 +21,8 @@ Authorization: the Architect's `two-builder-readiness-roadmap.md`, section "Buil
 | D7 | APPROVE scope, MODIFY rationale | The launch gate is unchanged, and nothing creates a thread or spends a turn. Corrected rationale: shipped evidence says a fresh thread cannot be **subscribed to or have its turns listed** before its first user message. That is not the same as loaded-thread discovery, which the observer does use. |
 | D8 | APPROVE option (b) with guards | An unrecorded channel thread is bound to the sole loaded project thread, compare-and-set (`updateAdapterStateIf`), and never replaces a recorded thread. After the bind, "only one" is re-established. Before `idle`, the row is re-read for the same generation. A lost race answers `unknown`. |
 
+| D9 | **PENDING** (asked after the Critic's blocking finding) | A Project Master running Codex never has a launch channel. Built to my recommendation (a): it holds as `master-engine-unobserved`, whose meaning says no relaunch will fix it. Rejected: (b) the Master keeps the pane gate, which carries the ledger-5030 false idle. With it, the wake consults channels only for engines that `declaresObserver`, so a channel-lookup failure cannot hold a Claude session. |
+
 **Consequences recorded before the PR:** a Codex session launched before startupControl channels, or
 whose app-server did not start, no longer gets wakes until it is relaunched. The ledger and the peer
 route name this as `engine-channel-absent`. The first tick for a channelled session always holds

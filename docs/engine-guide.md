@@ -428,6 +428,25 @@ Medusa wake nudge, the session chime, the prime-paste readiness gate, and the la
 asks a silently primed session to read its own context (#1635). An engine that has been captured
 live declares its signature:
 
+```json
+"wake": {
+  "busyMarker": "esc to interrupt",
+  "promptPattern": "^\\s*❯[\\u00a0 ]?$",
+  "promptGlyph": "❯",
+  "promptPad": "\u00a0",
+  "placeholderSgr": [2],
+  "idleMarker": null,
+  "evidence": {
+    "busyMarker": { "verifiedOn": "YYYY-MM-DD", "source": "…" },
+    "promptPattern": { "verifiedOn": "YYYY-MM-DD", "source": "…" },
+    "promptGlyph": { "verifiedOn": "YYYY-MM-DD", "source": "…" },
+    "promptPad": { "verifiedOn": "YYYY-MM-DD", "source": "…" },
+    "placeholderSgr": { "verifiedOn": "YYYY-MM-DD", "source": "…" },
+    "idleMarker": { "verifiedOn": "YYYY-MM-DD", "source": "…" }
+  }
+}
+```
+
 **For Codex, the wake nudge asks the engine, not the pane** (#1628). The pane's at-rest marker is a
 rendering. Codex draws `Ready` in a status row whose segments, order and width are the operator's own
 configuration, so a layout that clipped or omitted it held mail for hours. And because the pane gate
@@ -448,28 +467,13 @@ profile names an adapter that can observe it (`declaresObserver`; today, Codex):
   `engine-thread-unknown`. It never falls back to the pane.
 - With **no** channel (a session launched before channels existed, or whose server did not start or
   has closed), the nudge holds as `engine-channel-absent`. Relaunching restores wakes.
+- A Project Master on such an engine holds as `master-engine-unobserved`. The Master has no project
+  launch and never gets a channel, so a relaunch does not change it.
+- The adapter's own reason (`version-mismatch`, `thread-ambiguous`, …) is logged whenever it changes.
+  The ledger and the peer route carry only the bounded wake code.
 
-Every other engine keeps the pane gate exactly as before. The launch-time readiness gate is unchanged.
+Every other engine skips all of this and never has a channel looked up, so its pane gate is exactly as before. The launch-time readiness gate is unchanged.
 It must not create a thread or spend a turn to obtain wake evidence.
-
-```json
-"wake": {
-  "busyMarker": "esc to interrupt",
-  "promptPattern": "^\\s*❯[\\u00a0 ]?$",
-  "promptGlyph": "❯",
-  "promptPad": "\u00a0",
-  "placeholderSgr": [2],
-  "idleMarker": null,
-  "evidence": {
-    "busyMarker": { "verifiedOn": "YYYY-MM-DD", "source": "…" },
-    "promptPattern": { "verifiedOn": "YYYY-MM-DD", "source": "…" },
-    "promptGlyph": { "verifiedOn": "YYYY-MM-DD", "source": "…" },
-    "promptPad": { "verifiedOn": "YYYY-MM-DD", "source": "…" },
-    "placeholderSgr": { "verifiedOn": "YYYY-MM-DD", "source": "…" },
-    "idleMarker": { "verifiedOn": "YYYY-MM-DD", "source": "…" }
-  }
-}
-```
 
 Copy that block as it stands: its `evidence` map covers exactly the fields it declares, which is
 what the read guard requires, and `promptPad` is the JSON escape for the NBSP a real profile

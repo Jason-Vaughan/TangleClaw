@@ -324,6 +324,43 @@ describe('medusa-wake — engine activity from the native channel (#1628)', () =
     });
   });
 
+  describe('the Project Master', () => {
+    /** A live Codex Master record, as `lib/master.js#masterWakeRecord` shapes it. */
+    const codexMaster = () => ({
+      id: 'master', isMaster: true, name: 'Project Master', tmuxSession: 'tangleclaw-master',
+      engineId: 'codex', sessionMode: 'tmux', status: 'active', medusaWake: true, apiBase: '/api/master/medusa'
+    });
+
+    it('a Codex Master — which never has a launch channel — holds under a code that does not advise a relaunch', async () => {
+      const world = installWorld({ pane: CX_TRANSCRIPT_PROSE_PANE });
+      const injected = [];
+      wake._internal.listLiveAll = () => [];
+      wake._internal.masterWakeRecord = () => codexMaster();
+      wake._internal.injectMaster = (command) => { injected.push(command); return { ok: true, error: null }; };
+      await ticks(1 + wake.IDLE_TICKS_REQUIRED + 2);
+      assert.equal(injected.length, 0);
+      assert.equal(lastSkip(world), 'master-engine-unobserved');
+      assert.equal(world.observeCalls, 0);
+      assert.match(wake.peerReasonMeaning('master-engine-unobserved'), /relaunch does not/);
+      assert.doesNotMatch(wake.peerReasonMeaning('master-engine-unobserved'), /restores/);
+    });
+  });
+
+  describe('engines not judged by a channel never consult one', () => {
+    it('a channel lookup that throws cannot hold a Claude session', async () => {
+      const { IDLE_PANE } = require('./_wake-fixtures');
+      const world = installWorld({
+        session: { id: 1, projectId: 10, sessionMode: 'tmux', tmuxSession: 'tc-1', engineId: 'claude' },
+        pane: IDLE_PANE
+      });
+      let lookups = 0;
+      wake._internal.openChannel = () => { lookups += 1; throw new Error('db locked'); };
+      await ticks(wake.IDLE_TICKS_REQUIRED);
+      assert.equal(world.injected.length, 1);
+      assert.equal(lookups, 0);
+    });
+  });
+
   describe('when the protocol is asked', () => {
     it('never while a read for the same channel is still out', async () => {
       const world = installWorld({ activity: () => new Promise(() => {}) });
