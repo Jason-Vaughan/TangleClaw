@@ -348,6 +348,29 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
       <button class="btn btn-small btn-primary" id="rulesSaveBtn">Save</button>
     </div>
     <div id="rulesStatus" class="rules-status hidden" role="status"></div>
+
+    <!-- Startup prompt (#1825): the revisioned instruction a launch fires
+         through an engine's native channel, and the projects allowed to fire it. -->
+    <section class="startup-prompt" aria-labelledby="startupPromptHeading">
+      <h3 class="startup-prompt-heading" id="startupPromptHeading">
+        Startup prompt <span class="startup-prompt-revision" id="startupPromptRevision"></span>
+      </h3>
+      <p class="startup-prompt-help">What a launch sends an engine that supports native startup delivery. It
+        should only ask the engine to read its launch context, never dispatch work.</p>
+      <!-- No maxlength: it counts characters, while the server's limit is 4096
+           UTF-8 bytes. The server refuses an oversized prompt and says so, and
+           the editor keeps the text. -->
+      <textarea class="rules-editor" id="startupPromptEditor" rows="3"
+                aria-label="Startup prompt text" spellcheck="false"></textarea>
+      <fieldset class="startup-prompt-firers">
+        <legend>Projects whose sessions may fire it (within their project groups)</legend>
+        <div id="startupPromptFirers"></div>
+      </fieldset>
+      <div class="rules-actions">
+        <button class="btn btn-small btn-primary" id="startupPromptSaveBtn">Save startup prompt</button>
+      </div>
+      <div id="startupPromptStatus" class="rules-status hidden" role="status"></div>
+    </section>
   </div>
 
   <!-- Toolbar -->

@@ -5315,6 +5315,7 @@ $('openclawDeleteModal').addEventListener('click', (e) => { if (e.target === e.c
 $('groupsToggle').addEventListener('click', toggleGroups);
 $('rulesToggle').addEventListener('click', toggleRules);
 $('rulesSaveBtn').addEventListener('click', saveGlobalRules);
+$('startupPromptSaveBtn').addEventListener('click', saveStartupPrompt);
 // filterBtn removed — filter input is always visible inline
 $('newBtn').addEventListener('click', openCreateModal);
 $('createClose').addEventListener('click', closeCreateModal);

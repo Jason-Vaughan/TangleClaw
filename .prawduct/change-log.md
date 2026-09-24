@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-23 — A revisioned, operator-owned startup prompt, and the startupControl capability it will fire through (#1825)
+
+<!-- prawduct: type=feature | scope=startupcontrol-1825 -->
+
+#1825 Chunk B1, the engine-neutral foundation. No engine can receive it natively yet: the adapter registry ships empty, so every fire is a typed, recorded `STARTUP_CONTROL_UNSUPPORTED`, with no keystroke fallback.
+
+**The prompt.** `startup_prompt_revisions` (schema v45) is append-only and written by compare-and-set. Each revision stores the exact text and its digest, the firer project ids (sorted, unique, with a canonical policy digest) and honest provenance (`operator-verified` with a username, or `open-install-unverified`). The firer list lives with the prompt, not in `config.json`, because `PATCH /api/config` is reachable by agent sessions (the D4 correction). The dashboard editor keeps the operator's edits on a refusal and shows the server's reason.
+
+**Firing.** `POST /api/sessions/:project/startup-prompt/fire` accepts the operator (through the strict operator proof, now shared with the recovery clear as `_requireOperatorWrite`) or a listed project sharing a group with the target. Out of scope answers the same 404 as missing, and the denial is recorded. A fire's checks and its intent row are one transaction. It is idempotent by caller key, holds one active fire per launch, never re-applies an applied revision, and never carries the launch id.
+
+**Capability.** `lib/startup-control.js` validates a profile's `startupControl` block like `wake`, and resolves it against a code-only adapter registry and an exact verified version. `tc capabilities` reports `startup-control`. Architect rulings D1–D8, message 29790e23. Critic: three rounds, clean.
+
 ## 2026-09-23 — A release publishes only the exact commit it tested, under a tag that dereferences to it (#1551)
 
 <!-- prawduct: type=feature | scope=train-a-car-a4 -->

@@ -1173,9 +1173,43 @@ html[data-tc-keyboard] body {
   padding: 0 16px;
 }
 .rules-panel.open {
-  max-height: 500px;
+  /* Room for the global rules and the startup prompt section; scrolls beyond. */
+  max-height: 80vh;
+  overflow-y: auto;
   padding-top: 4px;
   padding-bottom: 12px;
+}
+/* ── Startup prompt (#1825), inside the rules panel ── */
+.startup-prompt {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--elevated-bg);
+}
+.startup-prompt-heading {
+  font-size: 14px;
+  margin: 0 0 4px;
+}
+.startup-prompt-revision,
+.startup-prompt-help {
+  color: var(--text-muted, var(--text));
+  font-size: 12px;
+  font-weight: normal;
+}
+.startup-prompt-help { margin: 0 0 8px; }
+.startup-prompt .rules-editor { min-height: 64px; }
+.startup-prompt-firers {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  border: 1px solid var(--elevated-bg);
+  border-radius: var(--radius-btn);
+  font-size: 12px;
+}
+.startup-prompt-firers legend { padding: 0 4px; }
+.startup-prompt-firer {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 12px 2px 0;
 }
 .rules-editor {
   width: 100%;
