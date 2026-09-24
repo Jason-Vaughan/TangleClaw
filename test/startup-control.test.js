@@ -196,3 +196,83 @@ describe('startupControl resolve', () => {
     }
   });
 });
+
+describe('observeActivity: the generic facade over the optional adapter method (#1628)', () => {
+  const session = { id: 1, projectId: 10, engineId: 'codex', status: 'active' };
+  const project = { id: 10, path: '/p' };
+  const channel = { id: 7, sessionId: 1, sequenceId: 70, engineId: 'codex', adapter: 'fake', state: 'open', adapterState: {} };
+  const sequence = { id: 70, sessionId: 1 };
+  const target = (over = {}) => ({ session, project, channel, sequence, ...over });
+  const answering = (answer) => {
+    const seen = [];
+    return { seen, adapters: { fake: { observeActivity: async (c, p) => { seen.push([c, p]); return answer; } } } };
+  };
+
+  it('passes a registered adapter\'s answer through, marked present', async () => {
+    const { seen, adapters } = answering({ state: 'busy', reasonCode: 'thread-active' });
+    assert.deepEqual(await sc.observeActivity(target(), adapters), { channel: 'present', state: 'busy', reasonCode: 'thread-active' });
+    assert.deepEqual(seen, [[channel, project]]);
+  });
+
+  it('no channel, or one that is not open, is ABSENT — the one case a caller may treat as "no channel"', async () => {
+    const { adapters } = answering({ state: 'idle', reasonCode: 'x' });
+    for (const ch of [null, { ...channel, state: 'closed' }]) {
+      assert.deepEqual(await sc.observeActivity(target({ channel: ch }), adapters), { channel: 'absent', state: 'unknown', reasonCode: 'no-channel' });
+    }
+  });
+
+  it('a channel not bound to this active session, its launch, its engine and its project is present-but-unknown, and the adapter is never asked', async () => {
+    const cases = [
+      [{ channel: { ...channel, sessionId: 2 } }, 'channel-not-this-session'],
+      [{ session: { ...session, status: 'wrapped' } }, 'session-not-active'],
+      [{ sequence: null }, 'channel-other-launch'],
+      [{ sequence: { ...sequence, id: 71 } }, 'channel-other-launch'],
+      [{ sequence: { ...sequence, sessionId: 2 } }, 'channel-other-launch'],
+      [{ channel: { ...channel, engineId: 'claude' } }, 'channel-other-engine'],
+      [{ project: { ...project, id: 11 } }, 'project-mismatch']
+    ];
+    for (const [over, code] of cases) {
+      const { seen, adapters } = answering({ state: 'idle', reasonCode: 'thread-idle' });
+      assert.deepEqual(await sc.observeActivity(target(over), adapters), { channel: 'present', state: 'unknown', reasonCode: code }, code);
+      assert.equal(seen.length, 0, `${code}: the adapter is not asked`);
+    }
+  });
+
+  it('an adapter that is not registered, or does not implement it, is present-but-unknown — never idle, never absent', async () => {
+    assert.deepEqual(await sc.observeActivity(target(), {}), { channel: 'present', state: 'unknown', reasonCode: 'adapter-cannot-observe' });
+    assert.equal((await sc.observeActivity(target(), { fake: {} })).reasonCode, 'adapter-cannot-observe');
+    assert.equal((await sc.observeActivity(target({ channel: { ...channel, adapter: 'toString' } }), {})).state, 'unknown', 'no prototype key reads as registered');
+  });
+
+  it('an adapter that throws or answers out of vocabulary is present-but-unknown', async () => {
+    const throws = { fake: { observeActivity: async () => { throw new Error('boom'); } } };
+    assert.deepEqual(await sc.observeActivity(target(), throws), { channel: 'present', state: 'unknown', reasonCode: 'adapter-failed' });
+    const { adapters } = answering({ state: 'probably-idle' });
+    assert.deepEqual(await sc.observeActivity(target(), adapters), { channel: 'present', state: 'unknown', reasonCode: 'adapter-answer-malformed' });
+  });
+
+  it('the Codex adapter implements it', () => {
+    assert.equal(typeof sc.ADAPTERS.codex.observeActivity, 'function');
+  });
+});
+
+describe('declaresObserver: which engines are meant to be judged by their channel (#1628, D2)', () => {
+  const profile = (sc0) => () => ({ capabilities: { startupControl: sc0 } });
+  const observing = { fake: { observeActivity: async () => ({ state: 'idle' }) } };
+
+  it('true only when the profile names a registered adapter that implements observeActivity', () => {
+    assert.equal(sc.declaresObserver('x', profile({ adapter: 'fake' }), observing), true);
+    assert.equal(sc.declaresObserver('x', profile({ adapter: 'fake' }), { fake: {} }), false, 'an adapter that cannot observe');
+    assert.equal(sc.declaresObserver('x', profile({ adapter: 'other' }), observing), false, 'an unregistered adapter');
+    assert.equal(sc.declaresObserver('x', profile(undefined), observing), false, 'no block declared');
+    assert.equal(sc.declaresObserver('x', () => null, observing), false, 'no profile');
+  });
+
+  it('an unreadable profile is false, never a throw', () => {
+    assert.equal(sc.declaresObserver('x', () => { throw new Error('bad json'); }, observing), false);
+  });
+
+  it('does not depend on the version probe having answered', () => {
+    assert.equal(sc.declaresObserver('x', profile({ adapter: 'fake', verifiedVersions: ['9.9.9'] }), observing), true);
+  });
+});
