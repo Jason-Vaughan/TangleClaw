@@ -58,6 +58,7 @@ Dual-Builder Pilot 2, Lane 2 (TangleClaw-Pilot-B2, the Continuity Test subject).
 **Tests.** The WRP-9F2K block pinned the removed behaviour and is deleted. That does not weaken a contract, because the behaviour was removed on purpose. It is replaced by one regression test pinning ADR 0011: a promote over a ledger that still has `status=merged` lines stages and flushes only version + CHANGELOG, and the ledger stays byte-identical. The test fails against the pre-change code. Two release-gate tests keep their `status=merged` seeds, with a comment saying the version and CHANGELOG assertions carry the proof.
 
 **Critic.** The cumulative review found 0 blocking and 0 warnings. Its three code notes (a test title, a comment reflow, a history-narrating comment) were fixed and confirmed by `verify-resolutions`. Two environmental notes and one observation were accepted.
+
 ## 2026-09-24 — A failed origin lookup backs off instead of re-spawning on every check (#1059)
 
 <!-- prawduct: type=bugfix | scope=upd-1059 -->
