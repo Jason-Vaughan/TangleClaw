@@ -17,7 +17,7 @@ partition: serial — chunks 01 and 02 both edit lib/tc-verbs.js' start family a
 - [x] ADR 0017 amended: post-READY read-only review, and the semantics of re-entry on clear and compact
 - [x] Verify: focused tests plus the full suite on this checkout (**not** the main instance). Manual `/clear` in a pilot pane
 - [x] Critic
-- [ ] Draft PR opened. **STOP here** (pilot boundary)
+- [x] Draft PR opened: #1849 (2026-09-24). **STOP here** (pilot boundary)
 
 **Pilot envelope (IN FORCE):** no merging any PR, no pulling or updating the live checkout, no restarting the
 live service, no tests on the main instance, no tag, publish or release, no deploy.
