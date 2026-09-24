@@ -11,7 +11,7 @@
 - [x] PM go to build (Medusa msg 40bd7164, 2026-09-24)
 - [x] Build: remove the step + its staging key + commit-body line + tests; add the regression test; FEATURES.md + CHANGELOG (2026-09-24). Also dropped the now-stale "no stamp on `.prawduct/change-log.md`" clause from the #1738 hold comment in `run`
 - [x] Verify: focused tests + full suite (this checkout only, never the main instance). Baseline at HEAD green; changed tree green (2026-09-24)
-- [ ] Critic
+- [x] Critic: cumulative 0 blocking / 0 warning / 5 notes; R-1..R-3 fixed (verify-resolutions clean), R-4, R-5, O-1 accepted (2026-09-24)
 - [ ] Draft PR opened. **STOP** (pilot boundary: no merge)
 
 **Pilot envelope (IN FORCE):** no merging any PR, no pulling/updating the live checkout, no restarting the live

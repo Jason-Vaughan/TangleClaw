@@ -3998,9 +3998,8 @@ describe('wrap-step version-bump — integration with commit._flushStagedWrites 
 
 // ADR 0011 (docs/adr/0011-prawduct-boundary.md): `.prawduct/` is plugin-owned
 // state TangleClaw reads at agreed paths and never authors. A release promote
-// once also rewrote `status=merged` tag lines in `.prawduct/change-log.md`; that
-// write was a boundary violation and is gone. This block pins the boundary, so a
-// "helpful" reintroduction of any `.prawduct/` write from this step fails here.
+// must therefore stage and flush nothing under `.prawduct/`, even when the
+// prawduct ledger holds lines a release might seem to want updated.
 describe('wrap-step version-bump — never writes inside .prawduct/ (ADR 0011)', () => {
   const versionBump = require('../lib/wrap-steps/version-bump');
   const commitStep = require('../lib/wrap-steps/commit');
