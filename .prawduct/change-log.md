@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-24 — The Kill modal names the right mechanism for a webui session (#1311)
+
+<!-- prawduct: type=bugfix | scope=kill-modal-1311 -->
+
+Dual-Builder Pilot, lane 2 (Builder B2). The Architect's rulings A1 and A2 are recorded in `.tangleclaw/plans/1311-kill-modal-sessionmode.md`.
+
+**The fix.** `public/ui.js#openKill` picks between "tears down the SSH tunnel" and "terminates the tmux session" by reading `proj.session.sessionMode`. Neither card projection emitted that field. `lib/projects.js#_liveSession` and `#_unknownSession` now pass `row.sessionMode` through. `_rowToSession` in the store stays the only owner of the `'tmux'` default. `lib/project-view.js#publicProjection` is deliberately unchanged: the dashboard always resolves as the operator and receives whole rows.
+
+**The test.** `test/card-session-contract.test.js` runs the real `openKill` against output from the real store and projection, for both a webui card and a tmux card. It also guards the defect class: every `session.<field>` read in `public/ui.js`, `public/api-helper.js` and `public/landing.js` must be a key that `_liveSession` emits. A self-check fails the guard if its scan finds nothing, so it cannot pass vacuously. The tests were red before the fix and are green after.
+
+**Critic.** The cumulative review found nothing blocking. One note was accepted: the guard matches any identifier named `session`, which is the known limit of A2.
+
 ## 2026-09-24 — A Codex session's wake is judged by its app-server, not its status row (#1628)
 
 <!-- prawduct: type=bugfix | scope=wake-1628 -->
