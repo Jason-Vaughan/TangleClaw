@@ -229,6 +229,103 @@ describe('startupControl at launch and teardown (codex)', () => {
     assert.deepEqual(codex.reap(), { examined: 0, closed: 0 }, 'idempotent');
   });
 
+  it('a wrap that ends the session ends the channel too', () => {
+    healthySeams();
+    const l = launched();
+    const pid = calls.spawn[0].pid;
+    let r;
+    tmux.hasSession = () => false;
+    try {
+      r = sessions.completeWrap(l.project.name, 'wrapped in a test');
+    } finally {
+      tmux.hasSession = real.has;
+    }
+    assert.equal(r.error, null, r.error);
+    assert.deepEqual(calls.kills, [[-pid, 'SIGTERM']]);
+    const channel = store.getDb().prepare('SELECT * FROM startup_control_channels WHERE session_id = ?').get(l.session.id);
+    assert.equal(channel.state, 'closed');
+    assert.equal(channel.close_reason, 'session wrapped');
+  });
+
+  it('a pane found dead by the status read ends the channel', () => {
+    healthySeams();
+    const l = launched();
+    const pid = calls.spawn[0].pid;
+    tmux.probeSession = () => ({ answered: true, live: false });
+    try {
+      sessions.getSessionStatus(l.project.name);
+    } finally {
+      tmux.probeSession = real.probe;
+    }
+    assert.equal(store.sessions.get(l.session.id).status, 'crashed');
+    assert.deepEqual(calls.kills, [[-pid, 'SIGTERM']]);
+    const channel = store.getDb().prepare('SELECT * FROM startup_control_channels WHERE session_id = ?').get(l.session.id);
+    assert.equal(channel.state, 'closed');
+    assert.equal(channel.close_reason, 'tmux session died');
+  });
+
+  it('a launch that could not start its channel records why, and a later fire cites it', async () => {
+    healthySeams({ spawn: () => { throw new Error('ENOENT: no codex'); } });
+    const l = launched();
+    const last = store.startupControlChannels.getLatestBySession(l.session.id);
+    assert.ok(last, 'a closed row records the reason');
+    assert.equal(last.state, 'closed');
+    assert.equal(last.adapter, 'codex');
+    assert.match(last.closeReason, /^channel_unavailable: could not start the app-server: ENOENT/);
+    assert.deepEqual(last.adapterState, {});
+    const row = store.startupPrompts.insertFire({
+      idempotencyKey: 'unavail-000001', projectId: l.project.id, sessionId: l.session.id, sequenceId: l.sequence.id, promptRevision: 1,
+      promptTextDigest: 'd'.repeat(64), policyDigest: 'p'.repeat(64), callerKind: 'operator', callerClearance: 'operator-verified',
+      callerProjectId: null, outcome: 'pending', payload: {}, payloadDigest: 'a'.repeat(64)
+    });
+    const handles = codex.fire({
+      session: store.sessions.get(l.session.id), project: l.project, sequenceId: l.sequence.id, promptText: 'x', promptTextDigest: 'd'.repeat(64), payloadDigest: 'a'.repeat(64),
+      onUpdate: (patch) => store.startupPrompts.updateFire(row.id, patch).fire
+    });
+    const settled = await handles.settled;
+    assert.equal(settled.outcome, 'blocked');
+    assert.equal(settled.reasonCode, 'channel_unavailable');
+    assert.match(settled.reason, /could not start the app-server: ENOENT/);
+  });
+
+  it('an engine that declares no channel records nothing', () => {
+    healthySeams({ execFileSync: () => 'codex-cli 0.150.0\n' });
+    const l = launched();
+    const last = store.startupControlChannels.getLatestBySession(l.session.id);
+    assert.ok(last, 'an unverified version is a reason worth recording');
+    assert.match(last.closeReason, /^version_unverified/);
+  });
+
+  it('a session row the reaper cannot read is left alone, never treated as ended', () => {
+    healthySeams();
+    const l = launched();
+    const realGet = store.sessions.get;
+    store.sessions.get = (id) => { if (id === l.session.id) throw new Error('database locked'); return realGet.call(store.sessions, id); };
+    let out;
+    try {
+      out = codex.reap();
+    } finally {
+      store.sessions.get = realGet;
+    }
+    assert.deepEqual(out, { examined: 1, closed: 0 });
+    assert.deepEqual(calls.kills, [], 'an unreadable session is not a dead one');
+    assert.ok(store.startupControlChannels.getOpenBySession(l.session.id), 'the channel stays open');
+  });
+
+  it('a channel whose adapter is not registered is closed on release without a signal, and says so', () => {
+    healthySeams({ execFileSync: () => 'codex-cli 0.150.0\n' });
+    const l = launched();
+    store.getDb().prepare('DELETE FROM startup_control_channels WHERE session_id = ?').run(l.session.id);
+    store.startupControlChannels.open({ sessionId: l.session.id, sequenceId: l.sequence.id, engineId: 'codex', adapter: 'not-registered', adapterState: { pid: 1 } });
+    const r = sessions.killSession(l.project.name, 'test');
+    assert.equal(r.error, null);
+    assert.deepEqual(calls.kills, []);
+    const channel = store.getDb().prepare('SELECT * FROM startup_control_channels WHERE session_id = ? AND adapter = ?').get(l.session.id, 'not-registered');
+    assert.equal(channel.state, 'closed');
+    assert.equal(channel.close_reason, 'session killed');
+    assert.equal(channel.teardown, 'skipped: adapter not registered');
+  });
+
   it('a live session\'s channel is left alone by the reaper', () => {
     healthySeams();
     const l = launched();

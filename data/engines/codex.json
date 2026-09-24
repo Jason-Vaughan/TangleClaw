@@ -109,10 +109,10 @@
     },
     "startupControl": {
       "adapter": "codex",
-      "channel": "A per-launch `codex app-server` on a local unix socket, owned by TangleClaw; the pane's TUI attaches with `--remote`. Fire is `turn/start` on the pane's thread.",
-      "readiness": "Read from the protocol only: the server's version, `config/read` trust for the project directory, `account/read`, `account/rateLimits/read`, one loaded thread whose cwd is the project, and its `idle` status.",
-      "receipt": "`clientUserMessageId` is echoed as the user item's `clientId` (accepted, from `item/completed` or a `thread/turns/list` read-back); `turn/completed {completed}` is applied; `failed` and `interrupted` are named.",
-      "blockers": "Untrusted directory (`trust_required`), no account (`auth_required`), exhausted usage with no credits (`quota_exhausted`), no idle thread (`engine_not_ready`), and an in-turn `waitingOnApproval` that the operator answers in the pane.",
+      "channel": "One `codex app-server` per launch on a local unix socket, started detached and owned by TangleClaw; the pane's TUI attaches with `--remote` ahead of its launch-mode flags. Fire is `turn/start` on the pane's thread.",
+      "readiness": "Read from the protocol only: the server's version equals the installed and the recorded one; `config/read` trusts the project directory; `account/read` names an account; `account/rateLimits/read` explicitly allows usage or reports usable credits; exactly one loaded thread (the recorded one once seen) whose canonical cwd is the project; and it is `idle`. Any unknown answer fails closed.",
+      "receipt": "`clientUserMessageId` echoed as the user item's `clientId` WITH content whose bytes hash to the prompt's text digest is accepted (from `item/completed` or a `thread/turns/list` read-back, re-read on an interval); `turn/completed {completed}` on that turn, after acceptance, is applied; `failed` and `interrupted` are named.",
+      "blockers": "Pre-send: untrusted directory (`trust_required`), no account (`auth_required`), exhausted usage with no usable credits (`quota_exhausted`), version disagreement (`version_mismatch`), no single idle thread (`engine_not_ready`), an unreadable answer (`readiness_unknown`). In-turn: `waitingOnApproval` and `waitingOnUserInput` keep the fire accepted under `approval_pending` / `user_input_pending`; the operator answers in the pane.",
       "verifiedVersions": [
         "0.156.1"
       ],

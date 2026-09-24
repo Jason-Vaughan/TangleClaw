@@ -189,7 +189,8 @@ describe('Codex startupControl adapter', () => {
       await serve();
       let r = await fireAndSettle(pendingFire());
       assert.equal(r.settled.outcome, 'blocked');
-      assert.equal(r.settled.reasonCode, 'engine_not_ready');
+      assert.equal(r.settled.reasonCode, 'channel_unavailable');
+      assert.match(r.settled.reason, /launched without one/);
       channel({}, { sequenceId: 101 });
       r = await fireAndSettle(pendingFire());
       assert.equal(r.settled.reasonCode, 'engine_not_ready');
@@ -558,6 +559,56 @@ describe('Codex startupControl adapter', () => {
     });
   });
 
+  describe('faults on the channel', () => {
+    it('a protocol fault after acceptance is logged and turned into a reconnect, never an unhandled error', async () => {
+      const { frame } = require('./helpers/ws-test-server');
+      let faults = 0;
+      await serve({
+        'turn/start': (p, ctx) => {
+          server.state.turnStarted = true;
+          server.state.userItem = { type: 'userMessage', id: 'item-1', clientId: p.clientUserMessageId, content: p.input };
+          server.state.turn = { id: TURN, status: 'inProgress', items: [server.state.userItem] };
+          setTimeout(() => {
+            faults += 1;
+            // Garbage the client cannot parse as JSON, then a frame with a reserved opcode: a fault, not a close.
+            ctx.conn.send('{not json');
+            ctx.conn.raw(frame(0x3, Buffer.from('x')));
+            server.state.turn = finishedTurn('completed');
+          }, 50);
+          return { turn: { id: TURN, status: 'inProgress', items: [] } };
+        }
+      });
+      channel();
+      const { settled } = await fireAndSettle(pendingFire(), { reconnectPauseMs: 10, pollMs: 25 });
+      assert.equal(settled.outcome, 'applied');
+      assert.equal(faults, 1);
+    });
+
+    it('an unreadable turn list during the watch settles nothing; the next read does', async () => {
+      let listCalls = 0;
+      await serve({
+        'turn/start': (p) => {
+          server.state.turnStarted = true;
+          server.state.userItem = { type: 'userMessage', id: 'item-1', clientId: p.clientUserMessageId, content: p.input };
+          server.state.turn = { id: TURN, status: 'completed', items: [server.state.userItem] };
+          setTimeout(() => server.notify('turn/completed', { threadId: THREAD, turn: { id: TURN, status: 'completed', items: [] } }), 1);
+          return { turn: { id: TURN, status: 'inProgress', items: [] } };
+        },
+        'thread/turns/list': () => {
+          listCalls += 1;
+          if (listCalls <= 2) throw Object.assign(new Error('storage busy'), { code: -32603 });
+          return { data: [server.state.turn], nextCursor: null };
+        }
+      });
+      channel();
+      const f = pendingFire();
+      const { settled } = await fireAndSettle(f, { reconnectPauseMs: 10, pollMs: 25 });
+      assert.equal(settled.outcome, 'applied');
+      assert.ok(!f.patches.some((p) => p.outcome === 'failed'), 'an unreadable list was never read as absence');
+      assert.ok(listCalls >= 3);
+    });
+  });
+
   describe('reconcile (E7)', () => {
     const indeterminate = () => pendingFire('indeterminate', { reasonCode: 'send_unconfirmed', engineThreadId: THREAD });
 
@@ -574,6 +625,8 @@ describe('Codex startupControl adapter', () => {
       const row = await codex.reconcile({ session, fire: f.current(), onUpdate: f.onUpdate }, { stableIdleMs: 5 });
       assert.equal(row.outcome, 'applied');
       assert.equal(row.engineTurnId, TURN);
+      assert.ok(row.acceptedAt, 'the echo was stamped as accepted before applied');
+      assert.deepEqual(f.patches.map((p) => p.outcome), ['accepted', 'applied']);
       assert.equal(server.calls('thread/turns/list').length, 2, 'both pages were read');
       assert.equal(server.calls('turn/start').length, 0, 'a reconcile never sends');
     });
@@ -643,14 +696,27 @@ describe('Codex startupControl adapter', () => {
       const liveChannel = store.startupControlChannels.open({ sessionId: live.id, sequenceId: 1, engineId: 'codex', adapter: 'codex', adapterState: { pid: 1, socketPath: '/x/a.sock', resolvedSocketPath: server.sockPath, engineVersion: '0.156.1', serverVersion: '0.156.1' } });
       const deadChannel = store.startupControlChannels.open({ sessionId: dead.id, sequenceId: 2, engineId: 'codex', adapter: 'codex', adapterState: { pid: 2, socketPath: '/x/b.sock', resolvedSocketPath: path.join(os.tmpdir(), 'tcb2-dead.sock'), engineVersion: '0.156.1' } });
       const mk = (sessionId, outcome, extra = {}) => store.startupPrompts.insertFire({
-        idempotencyKey: `rec-${sessionId}-${outcome}-${++keyN}`, projectId: 1, sessionId, sequenceId: sessionId === live.id ? 1 : 2, promptRevision: 1,
+        idempotencyKey: `rec-${sessionId}-${outcome}-${++keyN}`, projectId: 1, sessionId, sequenceId: sessionId, promptRevision: 1,
         promptTextDigest: PROMPT_DIGEST, policyDigest: 'p'.repeat(64), callerKind: 'operator', callerClearance: 'operator-verified',
         callerProjectId: null, outcome, reasonCode: null, reason: null, payload: {}, payloadDigest: DIGEST, ...extra
       });
       const neverSent = mk(live.id, 'pending');
       const midSend = store.startupPrompts.updateFire(mk(dead.id, 'pending').id, { outcome: 'dispatching' }).fire;
       const kills = [];
-      const out = await codex.recover({ psCommand: () => '', kill: (pid, sig) => kills.push([pid, sig]) });
+      const written = [];
+      const applyTransition = (id, patch) => { written.push([id, patch.outcome]); const r = store.startupPrompts.updateFire(id, patch); return r.fire; };
+      // A fire that begins while recovery is revalidating channels belongs to
+      // the running server: the fake initialize inserts one mid-recovery.
+      let lateFire = null;
+      const third = activeSession();
+      server.handlers.initialize = () => {
+        if (!lateFire) lateFire = mk(third.id, 'pending');
+        return { userAgent: 'tangleclaw/0.156.1 (x)' };
+      };
+      const out = await codex.recover({ psCommand: () => '', kill: (pid, sig) => kills.push([pid, sig]), applyTransition });
+      assert.equal(store.startupPrompts.getFireById(lateFire.id).outcome, 'pending', 'a fire begun after recovery started is not judged by it');
+      assert.ok(written.every(([id]) => id !== lateFire.id));
+      assert.ok(written.length >= 2, 'every recovered transition went through the supplied writer');
       assert.equal(out.channels, 2);
       assert.equal(out.lost, 1);
       assert.equal(store.startupControlChannels.get(liveChannel.id).state, 'open');

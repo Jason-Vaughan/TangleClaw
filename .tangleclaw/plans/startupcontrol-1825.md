@@ -436,35 +436,35 @@ and are not committed, because they contain account identifiers.
 - **`initialize` reports the server's version** in `userAgent` (`<client>/0.156.1 (...)`), so a
   channel can be checked against the adapter's cached installed version at readiness.
 - **Launch-mode flags survive `--remote`.** `codex --remote unix://<path> -a never -s
-  workspace-write` attached and the status line read `never`; `thread/start` from the protocol echoes
+  workspace-write` attached and the status line read `never`; thread/start from the protocol echoes
   `approvalPolicy` and `sandbox` the same way.
 - **Trust lives in the TUI, not the server.** In an untrusted directory the TUI sits at the
-  "Trust this folder?" dialog and loads NO thread (30 s, `thread/loaded/list` empty), while
-  `thread/start` from the protocol in the same directory succeeds without complaint. `config/read`
+  "Trust this folder?" dialog and loads NO thread (30 s, thread/loaded/list empty), while
+  thread/start from the protocol in the same directory succeeds without complaint. config/read
   returns `config.projects[<path>].trust_level`, so trust is readable on the protocol before a fire.
   A `-c projects.<path>.trust_level=trusted` override on the TUI's command line does NOT bypass the
   dialog.
 - **A fresh thread cannot be subscribed to, listed or resumed before its first user message.**
-  `thread/resume` answers `no rollout found`, `thread/turns/list` answers "thread ... is not
-  materialized yet; unavailable before first user message", and `thread/items/list` is "not
+  thread/resume answers `no rollout found`, thread/turns/list answers "thread ... is not
+  materialized yet; unavailable before first user message", and thread/items/list is "not
   supported yet"; the rollout file is absent for 15+ s after the thread starts. Metadata writes
-  (`thread/name/set`) do not materialize it. `codex resume <id> --remote` fails for the same reason,
+  (thread/name/set) do not materialize it. `codex resume <id> --remote` fails for the same reason,
   so TangleClaw cannot create the thread and have the TUI join it. **Therefore the fire's own
-  `turn/start` is what materializes the thread, and the subscription must follow the `turn/start`
-  response.** The spike already showed that the sender of `turn/start` is NOT subscribed by sending.
-- **Global notifications arrive without a subscription:** `thread/started` (with the thread's
-  `cwd`), `thread/status/changed`, `account/updated`, `account/rateLimits/updated`,
-  `thread/name/updated`. Per-turn `turn/*` and `item/*` events need the subscription.
-- **Blockers are readable before a send.** `account/read` → `{account: {type: chatgpt, email,
-  planType} | null, requiresOpenaiAuth}`. `account/rateLimits/read` →
+  turn/start is what materializes the thread, and the subscription must follow the turn/start
+  response.** The spike already showed that the sender of turn/start is NOT subscribed by sending.
+- **Global notifications arrive without a subscription:** thread/started (with the thread's
+  `cwd`), thread/status/changed, account/updated, account/rateLimits/updated,
+  thread/name/updated. Per-turn `turn/*` and `item/*` events need the subscription.
+- **Blockers are readable before a send.** account/read → `{account: {type: chatgpt, email,
+  planType} | null, requiresOpenaiAuth}`. account/rateLimits/read →
   `{ordinaryUsageAllowed, rateLimits: {primary: {usedPercent, resetsAt}, credits: {hasCredits,
   balance}, rateLimitReachedType}}`. Measured now: weekly window 100 % used, resetting 2026-09-24
   04:33 UTC, credits present. In-turn: `thread/status/changed {active, activeFlags:
-  [waitingOnApproval | waitingOnUserInput]}` and `serverRequest/resolved` (spike).
+  [waitingOnApproval | waitingOnUserInput]}` and serverRequest/resolved (spike).
 - **Process lifecycle.** `codex app-server --listen unix://<long path>` binds a short path under
   `/private/tmp/codex-daemon-<uid>/<hash>` and leaves a symlink at the requested path; the TUI needs
   the resolved short path. SIGTERM exits 0 and removes both. A TUI exiting does not close its thread
-  (`thread/loaded/list` still names it).
+  (thread/loaded/list still names it).
 - **Wire shapes** come from `codex app-server generate-json-schema` (v2), read into the scratchpad,
   not from memory: `TurnStartParams {threadId, input: [{type: 'text', text}], clientUserMessageId}`,
   `Turn {id, status: completed|interrupted|failed|inProgress, error: TurnError{message,
@@ -503,9 +503,9 @@ and are not committed, because they contain account identifiers.
   the pane's flags and the server's config two sources for one posture.
 - **E4: Readiness (acceptance case 2).** Recommended, all on the protocol: (1) the channel's
   app-server answers `initialize`, and its `userAgent` version equals the adapter's installed
-  version; (2) `thread/loaded/list` names one thread whose `cwd` is the project path (recorded as the
-  channel's `thread_id` on first sight); (3) `thread/read` reports `idle`; (4) `account/read` names an
-  account; (5) `account/rateLimits/read` allows ordinary usage or reports credits; (6) `config/read`
+  version; (2) thread/loaded/list names one thread whose `cwd` is the project path (recorded as the
+  channel's `thread_id` on first sight); (3) thread/read reports `idle`; (4) account/read names an
+  account; (5) account/rateLimits/read allows ordinary usage or reports credits; (6) config/read
   shows the project path `trust_level: trusted`. **Subscription is not a readiness precondition on
   0.156.1** (the server refuses it before the first user message); it is the first step of the
   receipt path (E5). Rejected: pane reads (glyphs, quiet pane) as readiness, which case 2 forbids;
@@ -513,23 +513,23 @@ and are not committed, because they contain account identifiers.
   never-ready.
 - **E5: Fire and receipt transitions (D8).** Recommended: B1's transaction writes the intent row as
   `pending` and commits; the adapter then runs outside it. `dispatching` is written when the
-  `turn/start` frame (with `clientUserMessageId = payloadDigest`, E8) is handed to the socket. On the
-  `turn/start` response the turn id is stored; the adapter then calls `thread/resume {excludeTurns:
+  turn/start frame (with `clientUserMessageId = payloadDigest`, E8) is handed to the socket. On the
+  turn/start response the turn id is stored; the adapter then calls `thread/resume {excludeTurns:
   true}` (the thread is materialized now) and ONE `thread/turns/list {itemsView: full}` read-back to
   reconcile whatever was emitted before the subscription. A userMessage item in that turn whose
-  `clientId` equals the payload digest, from either the read-back or an `item/completed`
+  `clientId` equals the payload digest, from either the read-back or an item/completed
   notification, is **accepted**. Then `turn/completed {completed}` → **applied**; `{failed}` →
   **failed** (`turn_failed`, with `codexErrorInfo` in the bounded reason); `{interrupted}` →
   **interrupted**. `thread/status/changed active [waitingOnApproval | waitingOnUserInput]` during the
-  turn keeps `accepted` and sets `reasonCode: approval_pending`; `serverRequest/resolved` clears it.
+  turn keeps `accepted` and sets `reasonCode: approval_pending`; serverRequest/resolved clears it.
   The operator answers approvals in the TUI; TangleClaw never answers one. A socket lost before the
-  `turn/start` response → **indeterminate** (`send_unconfirmed`); an error response → **failed**
+  turn/start response → **indeterminate** (`send_unconfirmed`); an error response → **failed**
   (`turn_rejected`); a socket lost after `accepted` → reconnect (bounded) and settle from the
-  turn's status in `thread/turns/list`; a channel that is gone → **indeterminate** (`channel_lost`).
+  turn's status in thread/turns/list; a channel that is gone → **indeterminate** (`channel_lost`).
   The fire route waits up to 10 s for `accepted` or a terminal state and returns the row as it then
   stands (200); the watch continues in the background to settle `applied`, and every transition is
   written to the activity log. Rejected: returning before the intent is durable; treating the
-  `turn/start` response alone as accepted (it carries no echo of our id); a new fires read route in
+  turn/start response alone as accepted (it carries no echo of our id); a new fires read route in
   this chunk (B3's panel owns reading; B1 fixed the routes).
 - **E6: Blockers (acceptance case 4).** Recommended reason codes, added to the bounded list:
   `trust_required`, `auth_required`, `quota_exhausted`, `engine_not_ready` (no channel, no thread,
@@ -544,7 +544,7 @@ and are not committed, because they contain account identifiers.
   - `applied`: never re-injected for that `(sequence, revision)` (existing index).
   - `pending`, `dispatching`, `accepted`: active; a second fire is `STARTUP_FIRE_IN_FLIGHT`.
   - `indeterminate`: active and **never auto-retried**. A fire attempt that finds one first runs a
-    reconcile: `thread/turns/list` for a turn carrying the payload digest settles it to the turn's
+    reconcile: thread/turns/list for a turn carrying the payload digest settles it to the turn's
     true state; no such turn on an idle thread settles it to `failed` (`send_unconfirmed`), after
     which a new fire is allowed; a channel that cannot be reached leaves it indeterminate
     (`channel_lost`) until the session is relaunched.
@@ -641,7 +641,7 @@ Proceed with B2 subject to these modifications. They authorize no B3 and no seco
   code.
 - **E7: MODIFY.** The retry classes, same-key replay, applied dedup, store-enforced transitions and
   the transactional v46 rebuild are approved. An indeterminate send may settle to
-  `failed/send_unconfirmed` only after an authoritative, exhaustive read of the exact materialized
+  failed/send_unconfirmed only after an authoritative, exhaustive read of the exact materialized
   thread (all pages), on the exact reachable channel, shows the payload absent while the thread is
   stably idle. One page or one instantaneous absence is not enough; otherwise it stays indeterminate
   and is never resent automatically. Preserve all rows, constraints and indexes through the rebuild.
@@ -677,8 +677,8 @@ returns only at the review gate or if implementation evidence changes a contract
   serverVersion}`.
 - E4/E6: `_usageAllowed` answers `allowed | exhausted | unknown`; every unknown is `readiness_unknown`.
 - E5: `_echoedItem` requires both the clientId and `sha256(text) === promptTextDigest`; an early
-  `turn/completed` triggers a read-back before judgement; `recover()` runs at boot.
-- E7: `reconcile` pages `thread/turns/list` to the end, reads the status twice across
+  turn/completed triggers a read-back before judgement; `recover()` runs at boot.
+- E7: `reconcile` pages thread/turns/list to the end, reads the status twice across
   `STABLE_IDLE_MS` (1.5 s), and lists again before recording `failed`.
 - E8: `buildLaunchPayload` in `lib/startup-prompt.js`, with `PAYLOAD_CANON_VERSION = 1`.
 - E9: `probeVersionSync({enginePath})` runs with `detectEngine`'s resolved path at each launch.
@@ -694,17 +694,17 @@ message f3951ca5), one benign turn was spent on 2026-09-24 01:14 UTC running the
 (`lib/startup-control-codex.js`, real seams) against a real `codex app-server` and TUI in the
 trusted scratch directory `/private/tmp/tc731`:
 
-- `prepareLaunch` probed the exact executable (`~/.npm-global/bin/codex`, 0.156.1), started the
+- `prepareLaunch` probed the exact executable (the npm-global codex binary, 0.156.1), started the
   server detached (pid recorded with its `ps` birth time), resolved the short socket path and built
   `codex --remote unix://<short path> -a never -s workspace-write`; the TUI attached and showed the
   `never` posture.
 - Readiness passed on the protocol: server version 0.156.1 recorded on the channel, trust read from
-  `config/read`, account present, usage window exhausted but credits usable, exactly one idle thread
+  config/read, account present, usage window exhausted but credits usable, exactly one idle thread
   for the directory (`01a0d0fa-9013…`, recorded on the channel).
-- `turn/start` with the payload digest as `clientUserMessageId` answered with turn `01a0d0fa-a078…`;
+- turn/start with the payload digest as `clientUserMessageId` answered with turn `01a0d0fa-a078…`;
   **`thread/resume {excludeTurns: true}` on the freshly materialized thread FAILED with
   `-32601 list_turns is not supported yet`** (the trap the spike hit, now on the post-send path
-  too), so the subscription is not guaranteed on this version. The `thread/turns/list` read-back
+  too), so the subscription is not guaranteed on this version. The thread/turns/list read-back
   answered, carried the user message with the echoed `clientId` and the prompt's exact text, and the
   fire went `dispatching → accepted` 0.25 s after the send; `turn/completed {completed}` arrived and
   the fire went `applied` 1.3 s later. The pane showed the prompt as an ordinary user turn (`› …`)
@@ -760,4 +760,4 @@ trusted scratch directory `/private/tmp/tc731`:
 - [x] Chunk 01: no-build spike: capture Codex app-server channel, readiness, receipt and blockers live; S1–S5 to the Architect with the evidence. Done 2026-09-23: all four cases captured; Architect ruled S1 APPROVE, S2–S5 MODIFY (message d94974c3)
 - [x] Chunk B1: Engine-neutral foundation: startupControl profile block + registry + capability, revisioned startup prompt with read/update/fire API and operator editor (#1825): Architect ruled D1–D8 (message 29790e23) plus a D4 correction; Critic rev-20260923T232701Z (0 blocking) → rev-20260923T234219Z (1 blocking, introduced by a fix) → rev-20260923T235204Z (0 findings); follow-ups carried into B3
 - [ ] Chunk B2: Codex adapter: per-launch app-server, readiness, fire with launch-bound receipts, blockers (#1825)
-- [ ] Chunk B3: Automatic bootstrap on launch with legacy fallback; launch panel receipts, blockers and Fire (#1825)
+- [ ] Chunk B3: Automatic bootstrap on launch with legacy fallback; launch panel receipts, blockers and Fire (#1825). Carries from B2's review: surface `denied` fires in the panel; take retention of `startup_prompt_fires` AND of closed `startup_control_channels` rows to the Architect (R-14/R-19); consider a per-launch app-server log file if a live launch ever fails to open its socket (R-18); pin the pipeline-wrap keep-running retention and the medusa-resync crash release with tests, and wire adapter `stop()` at shutdown (verify-resolutions observations 1–2)

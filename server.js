@@ -271,7 +271,6 @@ const master = require('./lib/master');
 const sharedDocsAccess = require('./lib/shared-docs-access');
 const startupPrompt = require('./lib/startup-prompt');
 const startupControl = require('./lib/startup-control');
-const startupControlCodex = require('./lib/startup-control-codex');
 const projectView = require('./lib/project-view');
 const actions = require('./lib/actions');
 const porthub = require('./lib/porthub');
@@ -11098,11 +11097,17 @@ if (require.main === module) {
     // watcher that types a fixed nudge into an opted-in (`medusaWake`) session
     // when fresh inbound mail is waiting and the pane is at a bare prompt.
     medusaWake.start();
-    // Start the Codex startupControl adapter (#1825 B2): probe the installed
-    // codex-cli version once, so capability resolution never spawns on a
-    // request path, and reap app-servers whose sessions ended while
-    // TangleClaw was down.
-    startupControlCodex.start().catch((err) => log.warn('startupControl adapter failed to start', { error: err.message }));
+    // Start every registered startupControl adapter (#1825): each probes its
+    // engine's version once, so capability resolution never spawns on a
+    // request path, recovers the channels and in-flight fires a restart
+    // interrupted, and reaps servers whose sessions ended while TangleClaw was
+    // down. Fire transitions go through the service's one writer, so recovery
+    // is logged like a live fire.
+    for (const [name, adapter] of Object.entries(startupControl.ADAPTERS)) {
+      if (typeof adapter.start !== 'function') continue;
+      Promise.resolve(adapter.start({ applyTransition: (fireId, patch) => startupPrompt.applyFireTransition(fireId, patch) }))
+        .catch((err) => log.warn('startupControl adapter failed to start', { adapter: name, error: err.message }));
+    }
     // Start the unready-launch monitor (Train 21, #1583) — records the launches
     // that have not attested READY inside their window and nudges each one once,
     // behind the same idle gate the wake monitor uses. It records and reminds;

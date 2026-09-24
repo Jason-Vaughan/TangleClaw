@@ -604,7 +604,10 @@ rule as `wake`. An unknown field, or a malformed block, resolves to **unsupporte
 `ADAPTERS` in `lib/startup-control.js`. A profile whose `adapter` is not registered resolves to
 unsupported, so editing a profile can describe a channel but cannot grant one.
 
-**Supported also needs a verified version.** The adapter reports the installed engine version
+**Supported also needs a verified version.** Right after a TangleClaw boot, until the adapter's
+asynchronous version probe answers, a fire resolves `unsupported (version_unverified)` and spends its
+idempotency key on that answer; a launch refreshes the probe synchronously first, so a session
+launched after the boot never sees this. The adapter reports the installed engine version
 through `installedVersion()`, which answers synchronously from a value it probed and cached
 earlier. Capability resolution never spawns a process. A version not listed in
 `verifiedVersions`, or no version at all, resolves to unsupported (`version_unverified`), never
