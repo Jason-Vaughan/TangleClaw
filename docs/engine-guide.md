@@ -447,34 +447,6 @@ live declares its signature:
 }
 ```
 
-**For Codex, the wake nudge asks the engine, not the pane** (#1628). The pane's at-rest marker is a
-rendering. Codex draws `Ready` in a status row whose segments, order and width are the operator's own
-configuration, so a layout that clipped or omitted it held mail for hours. And because the pane gate
-matches the whole tail, a transcript that merely *quotes* `· Ready ·` read as at rest. The wake
-therefore asks the engine's own protocol, through the startupControl facade, for every engine whose
-profile names an adapter that can observe it (`declaresObserver`; today, Codex):
-
-- It asks only for a live, opted-in session with unread mail, with at most one read in flight per
-  session, channel and launch. The answer used is one an earlier tick fetched. It is keyed to that exact
-  session, channel and launch, and used only while it is younger than two monitor intervals. A late
-  answer after the channel was replaced or the session left the scan is discarded, and nothing is
-  ever typed from the read's callback.
-- `idle` goes on to the pane gate, where it excuses the at-rest marker and nothing else. The busy
-  marker, the fleet block, a dialog, a draft in the composer and a transcript that is still moving all
-  still hold, because the protocol cannot see the TUI's composer.
-- `busy` holds as `engine-thread-busy`, whatever the pane shows.
-- With a channel present, anything unproven (not asked yet, stale, failed, `unknown`) holds as
-  `engine-thread-unknown`. It never falls back to the pane.
-- With **no** channel (a session launched before channels existed, or whose server did not start or
-  has closed), the nudge holds as `engine-channel-absent`. Relaunching restores wakes.
-- A Project Master on such an engine holds as `master-engine-unobserved`. The Master has no project
-  launch and never gets a channel, so a relaunch does not change it.
-- The adapter's own reason (`version-mismatch`, `thread-ambiguous`, …) is logged whenever it changes.
-  The ledger and the peer route carry only the bounded wake code.
-
-Every other engine skips all of this and never has a channel looked up, so its pane gate is exactly as before. The launch-time readiness gate is unchanged.
-It must not create a thread or spend a turn to obtain wake evidence.
-
 Copy that block as it stands: its `evidence` map covers exactly the fields it declares, which is
 what the read guard requires, and `promptPad` is the JSON escape for the NBSP a real profile
 carries — one character, not the six characters a pasted `\u00a0` would give you. Add
@@ -544,6 +516,36 @@ table.
 The settings modal's **Auto-wake on inbound messages** control is gated on this block (ADR 0013):
 an engine that declares none renders the control inert with the reason, rather than offering a
 switch that does nothing.
+
+#### The wake nudge and the engine's own channel
+
+For Codex, the wake nudge asks the engine, not the pane (#1628). The pane's at-rest marker is a
+rendering. Codex draws `Ready` in a status row whose segments, order and width are the operator's own
+configuration, so a layout that clipped or omitted it held mail for hours. And because the pane gate
+matches the whole tail, a transcript that merely *quotes* `· Ready ·` read as at rest. The wake
+therefore asks the engine's own protocol, through the startupControl facade, for every engine whose
+profile names an adapter that can observe it (`declaresObserver`; today, Codex):
+
+- It asks only for a live, opted-in session with unread mail, with at most one read in flight per
+  session, channel and launch. The answer used is one an earlier tick fetched. It is keyed to that exact
+  session, channel and launch, and used only while it is younger than two monitor intervals. A late
+  answer after the channel was replaced or the session left the scan is discarded, and nothing is
+  ever typed from the read's callback.
+- `idle` goes on to the pane gate, where it excuses the at-rest marker and nothing else. The busy
+  marker, the fleet block, a dialog, a draft in the composer and a transcript that is still moving all
+  still hold, because the protocol cannot see the TUI's composer.
+- `busy` holds as `engine-thread-busy`, whatever the pane shows.
+- With a channel present, anything unproven (not asked yet, stale, failed, `unknown`) holds as
+  `engine-thread-unknown`. It never falls back to the pane.
+- With **no** channel (a session launched before channels existed, or whose server did not start or
+  has closed), the nudge holds as `engine-channel-absent`. Relaunching restores wakes.
+- A Project Master on such an engine holds as `master-engine-unobserved`. The Master has no project
+  launch and never gets a channel, so a relaunch does not change it.
+- The adapter's own reason (`version-mismatch`, `thread-ambiguous`, …) is logged whenever it changes.
+  The ledger and the peer route carry only the bounded wake code.
+
+Every other engine skips all of this and never has a channel looked up, so its pane gate is exactly as before. The launch-time readiness gate is unchanged.
+It must not create a thread or spend a turn to obtain wake evidence.
 
 #### The ambient-awareness floor (`tc` on PATH)
 

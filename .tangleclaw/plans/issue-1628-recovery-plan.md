@@ -106,19 +106,20 @@ completed on the structured signal instead.
   and record the launch gate as a known limit. *Rejected:* forcing a thread into existence at
   launch, which would spend a turn.
 
-## Build (after the rulings; I may start on the recommendations meanwhile)
+## Build (as shipped)
 
-1. Add `observeThreadState` with JSDoc, plus unit tests on a fake connection covering idle,
-   active, unknown, version mismatch, thread not bound and channel absent.
-2. Wire it into the Codex path of the wake gate with a distinct reason code
-   (`engine-thread-busy` / `engine-thread-unknown`). A channel-less session keeps today's code path.
-3. Regression tests: the adversarial pane fixtures never produce a wake. `idle` with a composer
-   draft still holds. `busy` wins over any pane text.
-4. Update docs (`docs/engine-guide.md` wake section, the configuration reference if a reason code
-   is surfaced) and CHANGELOG `### Fixed`.
-5. Run the full suite, then the Critic, then open the PR with combined-baseline evidence
-   (`npm test` on the rebuilt branch at `6ddb2fc`+). **No merge, restart or live check**: the
-   Operator integrates.
+1. `observeActivity` in the Codex adapter and the generic `startupControl.observeActivity` /
+   `declaresObserver` facade (D3, D8, D10), plus `store.startupControlChannels.updateAdapterStateIf`
+   for the compare-and-set thread bind. Tests use a fake app-server.
+2. The wake gate for observed engines (D1, D2, D6, D9): `engine-thread-busy`, `engine-thread-unknown`,
+   `engine-channel-absent` and `master-engine-unobserved`, and an `idle` answer that excuses only the
+   at-rest marker. Other engines are untouched.
+3. Regression tests over the live Codex captures ported from the held branch, including the
+   quoted-marker prose pane (ledger 5030) and the #1628 clipped status row.
+4. Docs (`docs/engine-guide.md`: the adapter contract and the wake section), `CHANGELOG.md`
+   (Added / Changed / Fixed) and the `.prawduct` change log.
+5. Full suite green, Critic cumulative plus verify-resolutions clean, PR review clean. The PR carries
+   `Fixes #1628`. **No merge, restart or live check**: the Operator integrates.
 
 ## Found during the build
 
