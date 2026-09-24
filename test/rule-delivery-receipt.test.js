@@ -389,6 +389,120 @@ describe('#1063 — the hook posts the receipt, and never fails the session', ()
   });
 });
 
+describe('#1761 — the rules hook re-fires on /clear and compaction, but only startup posts a receipt', () => {
+  let projectPath;
+  beforeEach(() => {
+    projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-1761-hook-'));
+    fs.mkdirSync(path.join(projectPath, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(
+      path.join(projectPath, '.tangleclaw', 'session-rules-1.json'),
+      JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: 'RULE ONE' } }) + '\n'
+    );
+  });
+  afterEach(() => { fs.rmSync(projectPath, { recursive: true, force: true }); });
+
+  /**
+   * Run the real hook with the SessionStart event JSON on stdin, as Claude Code
+   * sends it. Async so the in-process receipt server can accept the post.
+   * @param {string} stdin - What the engine writes to the hook's stdin
+   * @param {{stderr?: string}} [captured] - Receives the hook's stderr, when given
+   * @returns {Promise<string>} The hook's stdout
+   */
+  function runHookWithStdin(stdin, captured) {
+    const { spawn } = require('node:child_process');
+    return new Promise((resolve, reject) => {
+      const child = spawn('/bin/bash', [HOOK, '1'], { env: { ...process.env, CLAUDE_PROJECT_DIR: projectPath } });
+      let out = '';
+      let err = '';
+      child.stdout.on('data', (c) => { out += c; });
+      child.stderr.on('data', (c) => { err += c; });
+      child.on('error', reject);
+      child.on('close', (code) => {
+        if (captured) captured.stderr = err;
+        return code === 0 ? resolve(out) : reject(new Error(`hook exited ${code}`));
+      });
+      child.stdin.end(stdin);
+    });
+  }
+
+  /**
+   * A receipt endpoint that records every post it gets.
+   * @returns {Promise<{api: string, seen: object[], close: () => Promise<void>}>}
+   */
+  async function receiptServer() {
+    const http = require('node:http');
+    const seen = [];
+    const server = http.createServer((req, res) => {
+      req.resume();
+      req.on('end', () => {
+        seen.push(req.url);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('{"upgraded":true}');
+      });
+    });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    return {
+      api: `http://127.0.0.1:${server.address().port}`,
+      seen,
+      close: () => new Promise((r) => server.close(r))
+    };
+  }
+
+  it('an unreadable source is reported on stderr and treated as a startup, receipt included', async () => {
+    // The fallback is deliberate: a missing source is how every fire looked
+    // before the engine sent one. What it must not be is silent, because on a
+    // /clear it is the wrong answer.
+    const receipts = await receiptServer();
+    try {
+      rulesChannel.writeReceiptToken(projectPath, { deliveryId: 90, api: receipts.api });
+      const captured = {};
+      const out = await runHookWithStdin('{"hook_event_name": "SessionStart", "source": 42}', captured);
+      assert.match(out, /RULE ONE/, 'the rules are still delivered');
+      assert.match(captured.stderr, /SessionStart source unreadable; treating this fire as a startup/);
+      assert.deepEqual(receipts.seen, ['/api/tc/rule-receipt'], 'a startup fallback posts as a startup does');
+    } finally {
+      await receipts.close();
+    }
+  });
+
+  for (const source of ['clear', 'compact']) {
+    it(`a ${source} re-fire emits the shard and posts no receipt`, async () => {
+      const receipts = await receiptServer();
+      try {
+        rulesChannel.writeReceiptToken(projectPath, { deliveryId: 88, api: receipts.api });
+        const tokenBefore = fs.readFileSync(path.join(projectPath, '.tangleclaw', 'session-rules-receipt.json'), 'utf8');
+        const out = await runHookWithStdin(JSON.stringify({ hook_event_name: 'SessionStart', source }));
+        assert.match(out, /RULE ONE/, 'the rules are re-delivered, since the re-entry dropped them');
+        // The ledger moves only through this post, so no post means the
+        // delivery row is untouched: a re-entry never stands for the delivery.
+        assert.equal(receipts.seen.length, 0, `a ${source} re-fire must not post the startup receipt`);
+        assert.equal(
+          fs.readFileSync(path.join(projectPath, '.tangleclaw', 'session-rules-receipt.json'), 'utf8'),
+          tokenBefore, 'and the token is left for the startup hook it belongs to'
+        );
+      } finally {
+        await receipts.close();
+      }
+    });
+  }
+
+  for (const [label, stdin] of [['a startup fire', JSON.stringify({ source: 'startup' })], ['empty stdin', '']]) {
+    it(`${label} posts the receipt exactly as before, and says nothing on stderr`, async () => {
+      const receipts = await receiptServer();
+      try {
+        rulesChannel.writeReceiptToken(projectPath, { deliveryId: 89, api: receipts.api });
+        const captured = {};
+        const out = await runHookWithStdin(stdin, captured);
+        assert.match(out, /RULE ONE/);
+        assert.deepEqual(receipts.seen, ['/api/tc/rule-receipt']);
+        assert.equal(captured.stderr, '');
+      } finally {
+        await receipts.close();
+      }
+    });
+  }
+});
+
 describe('#1063 — a launch whose hook never runs cannot produce a delivered row', () => {
   it('the #759 replay: shards written, hook never fires, ledger stays honest', () => {
     // The acceptance criterion, driven end to end at the ledger level. Before

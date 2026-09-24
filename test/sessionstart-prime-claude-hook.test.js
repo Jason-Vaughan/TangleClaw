@@ -110,6 +110,88 @@ describe('sessionstart-prime-claude.sh hook script (#103)', () => {
     assert.match(src, /cat "\$PRIME_FILE"\s*\|\|\s*true/);
   });
 
+  // ── #1761: re-entry after /clear or compaction ──
+
+  /**
+   * Write the prime and, optionally, the re-entry preamble beside it.
+   * @param {string|null} reentry - Preamble text, or null to leave it absent
+   * @returns {void}
+   */
+  function writePrimeFiles(reentry) {
+    const dir = path.join(projectDir, '.tangleclaw');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'session-prime.md'), '# Session Prime\nLaunch instructions\n');
+    if (reentry !== null) fs.writeFileSync(path.join(dir, 'session-reentry.md'), reentry);
+  }
+
+  for (const source of ['clear', 'compact']) {
+    it(`puts the re-entry preamble ahead of the prime on ${source}`, () => {
+      writePrimeFiles('# Context re-entry\nnot a new launch\n');
+      const out = runHook(JSON.stringify({ session_id: 's', hook_event_name: 'SessionStart', source }));
+      assert.equal(out, '# Context re-entry\nnot a new launch\n\n---\n\n# Session Prime\nLaunch instructions\n');
+    });
+  }
+
+  it('reads a pretty-printed event, since the engine does not promise one line', () => {
+    writePrimeFiles('RE-ENTRY\n');
+    const out = runHook('{\n  "hook_event_name": "SessionStart",\n  "source": "clear"\n}\n');
+    assert.ok(out.startsWith('RE-ENTRY\n'), out);
+  });
+
+  for (const [label, stdin] of [
+    ['startup', JSON.stringify({ source: 'startup' })],
+    ['resume', JSON.stringify({ source: 'resume' })],
+    ['empty stdin', ''],
+    ['unparseable stdin', 'not json at all {"source": clear}']
+  ]) {
+    it(`emits the prime alone, byte for byte, on ${label}`, () => {
+      writePrimeFiles('RE-ENTRY\n');
+      assert.equal(runHook(stdin), '# Session Prime\nLaunch instructions\n');
+    });
+  }
+
+  it('says on stderr when it could not read a source the engine sent, and stays quiet when none was sent', () => {
+    // An unreadable source falls back to startup, which on a /clear delivers
+    // the prime without its preamble; that fallback must be visible somewhere.
+    writePrimeFiles('RE-ENTRY\n');
+    const { spawnSync } = require('node:child_process');
+    const run = (input) => spawnSync(HOOK_SCRIPT, [], {
+      env: { ...process.env, CLAUDE_PROJECT_DIR: projectDir }, input, encoding: 'utf8'
+    });
+    const garbled = run('{"hook_event_name": "SessionStart", "source": 42}');
+    assert.equal(garbled.status, 0);
+    assert.equal(garbled.stdout, '# Session Prime\nLaunch instructions\n');
+    assert.match(garbled.stderr, /SessionStart source unreadable; treating this fire as a startup/);
+    const empty = run('');
+    assert.equal(empty.stderr, '');
+    const clean = run(JSON.stringify({ source: 'startup' }));
+    assert.equal(clean.stderr, '');
+  });
+
+  it('emits the prime alone on clear when there is no preamble to put first', () => {
+    writePrimeFiles(null);
+    assert.equal(runHook(JSON.stringify({ source: 'clear' })), '# Session Prime\nLaunch instructions\n');
+  });
+
+  it('emits nothing on clear when there is no prime: a preamble with nothing after it would mislead', () => {
+    const dir = path.join(projectDir, '.tangleclaw');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'session-reentry.md'), 'RE-ENTRY\n');
+    assert.equal(runHook(JSON.stringify({ source: 'clear' })), '');
+  });
+
+  it('does not hang when the caller never closes stdin', async () => {
+    writePrimeFiles('RE-ENTRY\n');
+    const { execFile } = require('node:child_process');
+    const started = Date.now();
+    const out = await new Promise((resolve, reject) => {
+      execFile(HOOK_SCRIPT, [], { env: { ...process.env, CLAUDE_PROJECT_DIR: projectDir }, timeout: 10000 },
+        (err, stdout) => (err ? reject(err) : resolve(stdout)));
+    });
+    assert.equal(out, '# Session Prime\nLaunch instructions\n');
+    assert.ok(Date.now() - started < 5000, 'the stdin read is bounded');
+  });
+
   it('survives an empty CLAUDE_PROJECT_DIR (set, but blank)', () => {
     // Distinct from the unset case: an explicitly-blank env var would set
     // PRIME_FILE='/.tangleclaw/session-prime.md' (root-level path) under naive

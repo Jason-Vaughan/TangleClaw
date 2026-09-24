@@ -452,6 +452,125 @@ describe('tc start (car 21.3)', () => {
       (err) => err.code === 'SEQUENCE_SESSION_MISMATCH');
     assert.equal(calls, 1);
   });
+  describe('tc start review (#1761)', () => {
+    /**
+     * A second project whose launch is driven all the way to READY, so the
+     * shared sequence above stays unattested for the tests that need it so.
+     * @returns {Promise<{env: object, headers: object, launchId: string}>}
+     */
+    async function attestedPane() {
+      const sessions = require('../lib/sessions');
+      const engine = store.engines.get('claude');
+      const dir = path.join(store.config.load().projectsDir, `review-${Math.random().toString(36).slice(2, 8)}`);
+      fs.mkdirSync(dir, { recursive: true });
+      const p = store.projects.create({ name: path.basename(dir), path: dir, engine: 'claude' });
+      const launchId = launchSequence.mintLaunchId();
+      const snapshot = launchSequence.buildSnapshot({
+        launchId,
+        project: p,
+        engineProfile: engine,
+        applicability: { applicable: true, reason: null },
+        rendered: sessions.renderLaunchSteps(p, engine, { operatorHost: 'operator.example.test' }),
+        rules: store.sessionRules.listActiveForProject(p.id),
+        preflight: {
+          verdict: 'ok', reason: 'nothing was left behind', requiresRecovery: false, requiresReconciliation: false,
+          worktreeDirty: false, evaluationFailed: false, evaluationMissing: false
+        }
+      });
+      store.sessions.start({ projectId: p.id, engineId: 'claude', launchSequence: snapshot });
+      const id = { launchId, projectId: p.id };
+      for (let i = 0; i < store.LAUNCH_STEP_IDS.length; i++) {
+        let body = launchSequence.next(id).body;
+        while (!body.ack) body = launchSequence.next({ ...id, page: body.page.index + 1 }).body;
+        launchSequence.next({ ...id, ack: { step: body.step.id, revision: body.revision, digest: body.ack.digest } });
+      }
+      const attested = launchSequence.ready({
+        ...id,
+        artifact: { schema: 'tc.ready/1', preflightVerdict: 'ok', proposedFirstAction: 'ask the operator' }
+      });
+      assert.equal(attested.status, 200, JSON.stringify(attested.body));
+      return {
+        launchId,
+        env: { ...paneEnv, TANGLECLAW_PROJECT_ID: String(p.id), TANGLECLAW_LAUNCH_ID: launchId },
+        headers: {
+          'x-tangleclaw-cli': 'tc', 'x-tangleclaw-verb': 'start.review',
+          'x-tangleclaw-project-id': String(p.id), 'x-tangleclaw-launch-id': launchId
+        }
+      };
+    }
+
+    it('GET /api/tc/start/review refuses an unattested launch and a pane with no launch id', async () => {
+      const early = await request(server, 'GET', '/api/tc/start/review', paneHeaders());
+      assert.equal(early.status, 409);
+      assert.equal(early.body.code, 'NOT_READY');
+
+      const legacy = await request(server, 'GET', '/api/tc/start/review', { 'x-tangleclaw-project-id': String(project.id) });
+      assert.equal(legacy.status, 409);
+      assert.equal(legacy.body.code, 'LAUNCH_ID_REQUIRED');
+    });
+
+    it('GET /api/tc/start/review parses the step and page it is asked for', async () => {
+      const pane = await attestedPane();
+      const byNumber = await request(server, 'GET', '/api/tc/start/review?step=2', pane.headers);
+      assert.equal(byNumber.status, 200, JSON.stringify(byNumber.body));
+      assert.equal(byNumber.body.step.id, 'governance');
+      const byId = await request(server, 'GET', '/api/tc/start/review?step=task&page=0', pane.headers);
+      assert.equal(byId.body.step.id, 'task');
+      const badPage = await request(server, 'GET', '/api/tc/start/review?step=task&page=x', pane.headers);
+      assert.equal(badPage.status, 400);
+      assert.equal(badPage.body.code, 'PAGE_OUT_OF_RANGE');
+    });
+
+    it('a spawned tc re-reads the attested context and leaves the sequence where it was', async () => {
+      const pane = await attestedPane();
+      const statusBefore = await runTc(['start', 'status'], pane.env);
+      const first = await runTc(['start', 'review'], pane.env);
+      assert.equal(first.code, 0, first.stderr);
+      assert.match(first.stdout, /^\[read-only re-read of the launch context this session attested READY at /);
+      assert.match(first.stdout, /# Session Start — review-/);
+      assert.match(first.stdout, /Next page: tc start review --step governance/);
+      assert.doesNotMatch(first.stdout, /--ack/);
+
+      const task = await runTc(['start', 'review', '--step', 'task'], pane.env);
+      assert.equal(task.code, 0, task.stderr);
+      assert.match(task.stdout, /step 4\/4 task/);
+
+      const statusAfter = await runTc(['start', 'status'], pane.env);
+      assert.equal(statusAfter.stdout, statusBefore.stdout, 'tc start status reads the same before and after');
+    });
+
+    it('a spawned tc relays NOT_READY, and refuses bad arguments locally', async () => {
+      const early = await runTc(['start', 'review'], paneEnv);
+      assert.equal(early.code, 2);
+      assert.match(early.stderr, /NOT_READY/);
+      for (const args of [['start', 'review', '--step'], ['start', 'review', '--step', 'Bad Id'],
+        ['start', 'review', '--page', '-1'], ['start', 'review', '--ack', 'x']]) {
+        const bad = await runTc(args, paneEnv);
+        assert.equal(bad.code, 1, `${args.join(' ')} is a usage error`);
+        assert.match(bad.stderr, /usage: tc start/);
+      }
+    });
+
+    it('builds the query from its flags and labels its receipt by subverb', async () => {
+      let asked;
+      const out = await tcVerbs.VERB_ROSTER.find((v) => v.id === 'start').run({
+        argv: ['review', '--step', '3', '--page', '1'],
+        env: {},
+        getJson: (url) => {
+          asked = url;
+          return Promise.resolve({
+            step: { index: 2, id: 'state', of: 4 }, page: { index: 1, of: 2, continued: false }, revision: 1,
+            content: 'state page two', review: { readyAt: '2026-09-24 21:58:21' }, nextRef: null
+          });
+        }
+      });
+      assert.equal(asked, '/api/tc/start/review?step=3&page=1');
+      assert.equal(out.code, 0);
+      assert.match(out.stdout, /End of the attested launch context\. Nothing was acknowledged or changed\./);
+      assert.equal(tcVerbs.receiptVerbLabel('start', ['review']), 'start.review');
+    });
+  });
+
   describe('tc start ready (car 21.4)', () => {
     /**
      * Drive the `start` verb in-process with a stub transport.

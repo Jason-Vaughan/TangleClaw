@@ -6,6 +6,8 @@ Cars 21.1–21.10 shipped (v40–v43); car 21.11's
 certification half was **cancelled by an operator scope amendment** rather than built — cancelled,
 not blocked, and not carried forward — and this ADR says so in § "What was descoped".
 **Source issues:** #1579–#1590, tracking #1591. Rulings on #1589 and #1650.
+**Amended:** 2026-09-24 for #1761, § 7 (after READY: read-only review and re-entry on clear or
+compact), under the Architect's A1–A5 rulings of that date.
 **Builds on:** ADR 0002 (wrap pipeline contract — the handoff publication extends it), ADR 0008
 (project/master session model), ADR 0013 (settings take effect or say why not).
 **Governing norms:** `.prawduct/artifacts/prime-delivery-direction.md` (ratified 2026-08-31, amended
@@ -133,6 +135,43 @@ Architect ruling, message ed93ebab (H3–H6):
 - **H6 (APPROVE).** Semantic staleness remains the agent's required freshness check. The launch
   exposes a handoff's identity and age, and adds neither network calls nor an arbitrary age cutoff.
 
+### 7. After READY: read-only review, and re-entry on clear or compact (#1761, amended 2026-09-24)
+
+A session's context can be lost after it attested: `/clear` wipes it, and a compaction summarises it,
+which is lossy in exactly the places rules live. Before this amendment none of the three channels
+could give it back. The prime and rules hooks fired on `startup` only, and `next` closes once READY is
+recorded. Architect rulings A1–A5 of 2026-09-24:
+
+- **READY is not revoked (A2).** It is the historical attestation that initialization happened, and a
+  clear or a compaction does not undo that. Neither the review nor re-entry reopens the serve, ack,
+  cursor, revision or READY state machine. Revoking it would need a detector most engines do not have,
+  and it would ask the session to acknowledge again a snapshot it already acknowledged.
+- **`tc start review` serves the frozen snapshot (A5).** `GET /api/tc/start/review` re-reads any
+  page of any step of the attested revision. It marks nothing served, takes no ack, never revises
+  against live rules, and leaves the cursor and READY alone. It refuses `NOT_READY` before READY,
+  because a page shown by a review and then acknowledged through `next` would look served when `next`
+  never served it. The state and task steps are point-in-time. The work in flight comes from the forward
+  notes and the operator's latest instruction, not from the launch's handoff.
+- **Its contract is bounded (A1).** Review is a read-only contract for an applicable, bound launch
+  sequence on an engine or session that can run `tc` and take in its output. It keeps exact launch and
+  project binding and auth parity with `next`. It is **not** coverage for every engine. Every engine's
+  generated config points to it, because that config is the one carrier an engine reloads after a
+  clear. An engine that cannot run `tc` gains nothing from the pointer.
+- **Claude re-fires its hooks on `clear` and `compact`, not `resume` or `fork` (A3).** Those two keep
+  the transcript, so nothing was lost. The prime hook reads the event's `source` and, on a re-fire,
+  puts a re-entry preamble ahead of the prime: this is not a new launch, do not re-emit the banner or
+  re-propose, re-read with `tc start status` and `tc start review`, and every rule and gate still
+  binds. Matching hooks run in parallel, so the preamble **stands on its own** and never refers to
+  the rules shards by position. A missing or unparseable `source` reads as `startup`, which is the
+  behavior before this amendment.
+- **Rule-delivery receipts stay a startup fact.** The rules hook re-emits its shards on every source,
+  but posts its delivery receipt only for `startup`. The receipt vouches for a launch's delivery, and
+  a re-entry is a different event. Repurposing the receipt or its ledger to stand for one would let a
+  re-entry claim a delivery that never happened.
+- **No re-entry ledger (A4).** Re-entries are not recorded. A future consumer of such a record needs
+  its own admitted issue and a new ruling on the persisted format, because a persisted format is
+  lock-in. Nothing is owed here.
+
 ## Two rulings this ADR is required to carry
 
 ### R3 — the recovery default is `operator` (operator, 2026-09-17)
@@ -185,6 +224,7 @@ stated as a table so no row can be read as the other.
 | Engine parity **certification** — a pass bound to engine id and version, config fingerprint, runtime identity, launch/session/revision, and assistance attribution | **NO — cancelled by scope**, operator amendment 2026-09-20, because no current downstream consumer needs durable certification. Not blocked, not owed | **None. There is no desired state for this row.** It is not deferred, unscheduled or unowned — it was cancelled. An Architect-ruled design is archived at #1720, and it is history, not a plan. See below |
 | Retention for the launch-sequence tables | **NO** — unbounded for Train 21 | **#1595**, open |
 | A phased launch for the Master pane | **NO** — Master now declares an honest `{applicable: false, reason}` instead of silence | **#1712**, open question |
+| Re-reading the launch context after `/clear` or a compaction | yes (#1761): `tc start review` for a session with an attested sequence that can run `tc`, and on Claude the prime and rules hooks re-fire on `clear` and `compact` behind a re-entry preamble | — for those sessions. An engine with no SessionStart source and no way to run `tc` is not covered, and no issue promises it |
 | Delegated recovery clearance (a peer clears a stalled session) | **NO** — needs an authenticated non-operator identity path | **#1713**, open question |
 
 ## What was descoped, and by whom
@@ -245,6 +285,8 @@ local pane, so:
   session that has attested still waits for its go.
 - **It carries no authentication meaning.** Nothing verifies who typed it.
 - **It is not continuous compliance.** It is a fact about initialization at one moment.
+- **It is not revoked by `/clear` or a compaction (§ 7).** Losing the context later does not undo the
+  fact that it arrived. The session re-reads it with `tc start review`, which changes nothing.
 
 This is stated in the code, in the prime, and here, because an attestation that reads like
 authorization is precisely the failure this train exists to prevent.
@@ -285,6 +327,13 @@ measured capability to consume. Automatic Aider parity is **#1645**.
 a handoff directory are new storage, with **no retention policy yet** (#1595). The Claude duplication
 cost of honest per-channel evidence (plan §2.5) is paid deliberately, and is worth revisiting only if
 session-bound per-shard hook receipts ever exist.
+
+**Mid-session loss is recoverable, within a bound (§ 7).** A Claude session gets its prime and rules
+pushed back after `/clear` or a compaction, headed by a preamble that stops it treating the re-entry as
+a launch. Any session with an attested sequence that can run `tc` can pull the whole context back with
+`tc start review`. The cost is re-sending the prime and the rules shards once per clear or compaction.
+An engine with no SessionStart source and no way to run `tc` is still blind after a clear. That
+limit is stated rather than papered over.
 
 **Left open:** #1611, #1623, #1595, #1712, #1713. They are listed in the shipped/desired table rather
 than in prose so that none of them can be mistaken for delivered.

@@ -445,6 +445,11 @@ Manage with /prawduct:backlog (pick, add, find, list, update, dedup, import, mig
 
   Train 5 (#982) shipped `codex.json`'s `capabilities.supportsSilentPrime: true` plus `data/hooks/sessionstart-prime-codex.sh`/`sessionstart-rules-codex.sh`, but `syncEngineHooks()` early-returns (clearing hooks) for any engine that isn't `'claude'` before ever reaching `_buildBaselineHooks()` — so the feature was never actually reachable for a real Codex project, and worse, `public/ui.js`/`lib/projects.js` read `supportsSilentPrime` generically to enable a UI toggle, so an operator could enable "Silent Prime" for Codex and it would silently do nothing. Found and fixed (capability turned off, dead scripts removed, doc/test updated) during a 2026-08-20 forensic review of the Antigravity commit window (issue #990). If real Codex hook support is still wanted: `syncEngineHooks()` needs a real non-claude code path (not just the current clear-and-return), and the mechanism should be redesigned against Codex's actual config format — this repo's `codex.json` declares `.codex.yaml` as the config format, not TOML, which the original Train 5 work assumed incorrectly. Out of scope for the #990 review fix; this is new feature work.
 
+- **[PRW-5F6W]** Rewrite `risk_surfaces` in project-state.yaml as a block sequence so classify-diff-risk can parse it
+  `effort: S · impact: S · area: prawduct-config · source: builder · added: 2026-09-24 · status: open · stage: ready · refs: .prawduct/project-state.yaml#risk_surfaces`
+
+  `.prawduct/project-state.yaml` line 6 declares `risk_surfaces: ["server.js", "lib/auth-gate.js", "lib/auth-identity.js", "lib/store.js"]` — a YAML flow list, which `prawduct-hook classify-diff-risk` cannot parse. It needs a block sequence (one `- item` per line). Until this is fixed, every Critic review runs untiered with the full three-reviewer roster, so small changes cost a full review. Flagged in Pilot 2 (#1771) and Pilot 3 (#1761), and deferred both times. Priority is low. Fix: convert the list to block form and confirm that `classify-diff-risk` picks up the surfaces. Whether the parser should also accept flow lists is an upstream prawduct question. File it with `/prawduct:report-bug` if wanted.
+
 ## Promoted
 
 - **[MED-2K9P]** Medusa session-comms control in the TC session banner (switchboard realization)

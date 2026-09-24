@@ -110,6 +110,26 @@ describe('_mergeBaselineHooks', () => {
     assert.equal(hooks.SessionStart.length, 1);
   });
 
+  it('replaces our startup-only entries from before #1761 in place, adding none', () => {
+    // A project synced before the matcher widened holds `startup` entries on
+    // disk. Ownership is by script path, so the next launch's sync must swap
+    // them for the widened ones rather than leave both registered, which would
+    // run the prime twice on every startup.
+    const widened = (script, arg) => ({ ...tcEntry(script, arg), matcher: engines.SESSION_START_REENTRY_MATCHER });
+    const existing = {
+      SessionStart: [operatorEntry('echo hi'), tcEntry(), tcEntry('sessionstart-rules-claude.sh', ' 1')]
+    };
+    const { hooks, replacedOwn } = engines._mergeBaselineHooks(existing, {
+      SessionStart: [widened(), widened('sessionstart-rules-claude.sh', ' 1')]
+    });
+    assert.equal(replacedOwn, 2);
+    assert.equal(hooks.SessionStart.length, 3, 'the operator entry plus our two, no duplicates');
+    assert.deepEqual(hooks.SessionStart[0], operatorEntry('echo hi'));
+    for (const entry of hooks.SessionStart.slice(1)) {
+      assert.equal(entry.matcher, 'startup|clear|compact');
+    }
+  });
+
   it('drops an event that held only our entries once we stop emitting it', () => {
     const { hooks } = engines._mergeBaselineHooks({ SessionStart: [tcEntry()] }, {});
     assert.equal('SessionStart' in hooks, false);

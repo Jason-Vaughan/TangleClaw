@@ -5,19 +5,19 @@ partition: serial — chunks 01 and 02 both edit lib/tc-verbs.js' start family a
 
 # #1761 — Terminal `/clear` drops launch context while the session stays READY
 
-*Dual-Builder Pilot 3. Dispatched by the PM on 2026-09-24. Planned on `main` @c1c4b5c1. The branch
-`fix/1761-clear-reentry` is created when the build starts, not before.*
+*Dual-Builder Pilot 3. Dispatched by the PM on 2026-09-24. Planned on `main` @c1c4b5c1. Built on
+`fix/1761-clear-reentry` from `main` @8d546432 after the PM released the build on 2026-09-24.*
 
 ## Status
 
 - [x] Plan written
 - [x] Architect has ruled on A1–A5 (2026-09-24: A2 and A5 approved; A1, A3 and A4 modified; ADR 0017 amendment required; see "Architect ruling"). The architectural gate is clear. **STOP here** (dispatch boundary: "Plan Written"). The PM releases the build boundary
-- [ ] Chunk 01: `tc start review`, a read-only re-read of an attested launch, plus the operational-guide pointer
-- [ ] Chunk 02: re-entry on `/clear` and `compact`, through the engine's own SessionStart sources
-- [ ] ADR 0017 amended: post-READY read-only review, and the semantics of re-entry on clear and compact
-- [ ] Verify: focused tests plus the full suite on this checkout (**not** the main instance). Manual `/clear` in a pilot pane
-- [ ] Critic
-- [ ] Draft PR opened. **STOP here** (pilot boundary)
+- [x] Chunk 01: `tc start review`, a read-only re-read of an attested launch, plus the operational-guide pointer
+- [x] Chunk 02: re-entry on `/clear` and `compact`, through the engine's own SessionStart sources
+- [x] ADR 0017 amended: post-READY read-only review, and the semantics of re-entry on clear and compact
+- [x] Verify: focused tests plus the full suite on this checkout (**not** the main instance). Manual `/clear` in a pilot pane
+- [x] Critic
+- [x] Draft PR opened: #1849 (2026-09-24). **STOP here** (pilot boundary)
 
 **Pilot envelope (IN FORCE):** no merging any PR, no pulling or updating the live checkout, no restarting the
 live service, no tests on the main instance, no tag, publish or release, no deploy.
@@ -194,6 +194,18 @@ On this checkout's test server (never the main instance), launch a pilot Claude 
 present; no new rules-delivery receipt recorded for the launch; `tc start review` walks all four steps with the cursor unchanged (`tc start status` before and
 after). Repeat with `/compact`. Repeat with silentPrime off: no push, but the `CLAUDE.md` bullet leads the
 agent to `tc start review`. Also check `/resume`: no preamble, and nothing re-injected.
+
+**What was actually run (2026-09-24).** The check ran in a throwaway Claude Code 2.1.282 pane, not a
+TangleClaw-launched one: a scratch project carrying the hooks this branch generates, marker prime and
+rules files, the rendered preamble, and a probe hook logging each `source`. The log showed
+`startup`, then `clear`, `compact` and `resume`. After `/clear` and `/compact` the model reported the
+preamble heading and the rule marker in its context. On `resume` a probe on the widened matcher did
+not fire, and a control `/clear` showed that the probe works. **Not run:** a TangleClaw-launched pane
+calling `tc start review` / `tc start status` against a live server, and the silentPrime-off pass.
+The first path is covered by spawned-`tc` tests against an in-process server
+(`test/tc-start-cli.test.js`), and the second by the every-carrier config test
+(`test/engines.test.js`). Neither is a live check, and that remains open for the operator to run
+after merge if wanted.
 
 ## Architect ruling (2026-09-24, formal, on main @c1c4b5c1)
 
