@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-24 — version-bump no longer writes inside `.prawduct/` (#1766)
+
+<!-- prawduct: type=chore | scope=vb-flip-1766 -->
+
+Dual-Builder Pilot 2, Lane 2 (TangleClaw-Pilot-B2, the Continuity Test subject). Architect rulings A1–A3 are in `.tangleclaw/plans/1766-version-bump-flip.md`, and ADR 0011 is the controlling rationale.
+
+**The change.** On a release promote, the `version-bump` wrap step rewrote `status=merged` tag lines in the project's `.prawduct/change-log.md` to `status=shipped`, and counted statusless tag lines. ADR 0011 says no TangleClaw code writes inside `.prawduct/`, so the flip was a boundary violation. It was also dead: prawduct stopped writing `status=merged` in v2.3.2 and retired its only reader in v3.3.0. The flip helpers, the `version-bump:prawduct-change-log` staging key, the step's `changeLog` / `changeLogWarning` output and the commit body's "Stamped N" line are removed. No fallback is kept for older prawduct (A1). The shipped #1311 and #1059 plans move to `.tangleclaw/plans/archive/`.
+
+**Tests.** The WRP-9F2K block pinned the removed behaviour and is deleted. That does not weaken a contract, because the behaviour was removed on purpose. It is replaced by one regression test pinning ADR 0011: a promote over a ledger that still has `status=merged` lines stages and flushes only version + CHANGELOG, and the ledger stays byte-identical. The test fails against the pre-change code. Two release-gate tests keep their `status=merged` seeds, with a comment saying the version and CHANGELOG assertions carry the proof.
+
+**Critic.** The cumulative review found 0 blocking and 0 warnings. Its three code notes (a test title, a comment reflow, a history-narrating comment) were fixed and confirmed by `verify-resolutions`. Two environmental notes and one observation were accepted.
+
 ## 2026-09-24 — A failed origin lookup backs off instead of re-spawning on every check (#1059)
 
 <!-- prawduct: type=bugfix | scope=upd-1059 -->
