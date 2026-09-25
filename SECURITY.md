@@ -75,7 +75,7 @@ The `deletePassword` is hashed with scrypt before storage. Plaintext passwords f
 
 ### Gateway and Bridge Tokens
 
-OpenClaw gateway tokens and ClawBridge tokens are stored in the SQLite database as plaintext. These tokens authenticate TangleClaw to remote services, not users to TangleClaw. Treat the database file (`~/.tangleclaw/tangleclaw.db`) as sensitive.
+OpenClaw gateway tokens and ClawBridge tokens are stored in the SQLite database as plaintext. These tokens authenticate TangleClaw to remote services, not users to TangleClaw. Treat the database file (`~/.tangleclaw/tangleclaw.db`) as sensitive. A session wrap never commits a SQLite database, recognized by its header, extension or sidecar name, whatever the operator answers (#1858). A copy inside a project checkout therefore cannot reach a wrap commit or its auto-PR.
 
 ### SSH Key References
 

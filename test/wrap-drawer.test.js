@@ -822,7 +822,13 @@ describe('wrap-drawer helpers — Include / Leave for uncommitted files (#1406)'
         optionsKey: 'pathDecisions',
         // `secret` joined the view model in #1513: the heading has to tell a
         // credential match apart from a file the session did not change.
-        paths: [{ path: 'shared.js', why: 'already uncommitted when this session launched', deleted: false, secret: false }]
+        // `recommendation` and the manifest fields joined in #1858; a step that
+        // sends none of them gets empty values, never a guessed answer.
+        paths: [{ path: 'shared.js', why: 'already uncommitted when this session launched', deleted: false, secret: false, recommendation: null, recommendationWhy: '' }],
+        manifest: null,
+        protectedPaths: [],
+        refusedIncludes: [],
+        ignoreSuggestions: []
       });
     }
     assert.equal(H.pathDecisionWidget(blockedRow('test'), output), null);
@@ -1826,5 +1832,81 @@ describe('#1675 — a finished wrap whose handoff did not publish says so', () =
   it('has no note for a missing account, so an older server\'s result reads as before', () => {
     assert.equal(H.handoffPublicationNote(undefined), null);
     assert.equal(H.handoffPublicationNote({ state: 'published' }), null);
+  });
+});
+
+describe('wrap-drawer helpers — safe recommendations for wrap files (#1858)', () => {
+  const H = loadHelpers();
+  const output = {
+    foreignPaths: [
+      { path: '.tangleclaw/plans/one.md', why: 'w', recommendation: 'include', recommendationWhy: 'a TangleClaw plan' },
+      { path: 'scratch/x.json', why: 'w', recommendation: 'leave', recommendationWhy: 'scratch output' },
+      { path: 'lib/new.js', why: 'w', recommendation: null },
+      { path: 'odd.txt', why: 'w', recommendation: 'commit-anyway' }
+    ],
+    safetyWithheld: ['data/tangleclaw.sqlite'],
+    refusedIncludes: ['data/tangleclaw.sqlite'],
+    ignoreSuggestions: ['/data/tangleclaw.sqlite', '/scratch/'],
+    manifest: { commit: ['mine.js'], keepLocal: [], protected: ['data/tangleclaw.sqlite'], unresolved: ['x'], refusedIncludes: [] }
+  };
+  const widget = H.pathDecisionWidget({ kind: 'session-files' }, output);
+
+  it('carries the advisory recommendation, and drops one the server does not send', () => {
+    assert.deepEqual(plain(widget.paths.map((p) => p.recommendation)), ['include', 'leave', null, null]);
+    assert.deepEqual(plain(widget.protectedPaths), ['data/tangleclaw.sqlite']);
+    assert.deepEqual(plain(widget.ignoreSuggestions), ['/data/tangleclaw.sqlite', '/scratch/']);
+  });
+
+  it('never recommends Include for a secret match, even if the server did, so Apply leaves it for the operator', () => {
+    const w = H.pathDecisionWidget({ kind: 'session-files' }, { foreignPaths: [
+      { path: '.tangleclaw/plans/leaky.md', why: 'w', recommendation: 'include', secretRules: ['github-token'] },
+      { path: 'scratch/leaky.log', why: 'w', recommendation: 'leave', secretRules: ['github-token'] }
+    ] });
+    assert.deepEqual(plain(w.paths.map((p) => p.recommendation)), [null, 'leave']);
+    const plan = plain(H.recommendationsToApply(w.paths, {}));
+    assert.deepEqual(plan.fill, { 'scratch/leaky.log': 'leave' });
+    assert.deepEqual(plan.unresolved, ['.tangleclaw/plans/leaky.md']);
+  });
+
+  it('never offers a database as a choice', () => {
+    assert.ok(!widget.paths.some((p) => p.path === 'data/tangleclaw.sqlite'));
+  });
+
+  it('labels the recommendation in words, and says nothing for none', () => {
+    assert.equal(H.recommendationLabel('include'), 'Include (recommended)');
+    assert.equal(H.recommendationLabel('leave'), 'Keep local (recommended)');
+    assert.equal(H.recommendationLabel(null), '');
+  });
+
+  it('projects the manifest before Apply: chosen answers win, recommendations fill, the rest need a choice', () => {
+    const m = plain(H.projectManifest(widget, { 'scratch/x.json': 'include' }));
+    assert.deepEqual(m.commit, ['mine.js', '.tangleclaw/plans/one.md', 'scratch/x.json']);
+    assert.deepEqual(m.keepLocal, []);
+    assert.deepEqual(m.protected, ['data/tangleclaw.sqlite']);
+    assert.deepEqual(m.unresolved, ['lib/new.js', 'odd.txt']);
+  });
+
+  it('Apply fills only undecided files that have a recommendation, and never overwrites a choice', () => {
+    const plan = plain(H.recommendationsToApply(widget.paths, { '.tangleclaw/plans/one.md': 'leave' }));
+    assert.deepEqual(plan.fill, { 'scratch/x.json': 'leave' });
+    assert.deepEqual(plan.unresolved, ['lib/new.js', 'odd.txt']);
+  });
+
+  it('prunes a remembered answer for a withheld database, and nothing else', () => {
+    const acc = { 'data/tangleclaw.sqlite': 'include', 'mine.js': 'include' };
+    const removed = H.pruneProtectedDecisions(acc, { results: [{ output: { safetyWithheld: ['data/tangleclaw.sqlite'] } }, { output: null }] });
+    assert.deepEqual(plain(removed), ['data/tangleclaw.sqlite']);
+    assert.deepEqual(plain(acc), { 'mine.js': 'include' });
+    assert.deepEqual(plain(H.pruneProtectedDecisions(acc, null)), []);
+  });
+
+  it('repeats the manifest on a settled session-files or commit row only', () => {
+    const manifest = { commit: ['a'], keepLocal: ['b'], protected: ['c.db'], unresolved: [] };
+    const settled = H.buildStepRow({ stepId: 'commit', kind: 'commit', status: 'done', output: { manifest } }, { blockedAt: null });
+    assert.deepEqual(plain(settled.manifest), { ...manifest, refusedIncludes: [] });
+    const blocked = H.buildStepRow({ stepId: 'commit', kind: 'commit', status: 'blocked', output: { manifest } }, { blockedAt: 'commit' });
+    assert.equal(blocked.manifest, null, 'a blocked row shows the projected manifest in the decision instead');
+    const other = H.buildStepRow({ stepId: 'test', kind: 'test', status: 'done', output: { manifest } }, { blockedAt: null });
+    assert.equal(other.manifest, null);
   });
 });
