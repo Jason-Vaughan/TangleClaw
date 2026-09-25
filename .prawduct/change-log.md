@@ -55,6 +55,7 @@ Dual Builder Pilot, Car A2 (TangleClaw-Pilot-B1). The plan is `.tangleclaw/plans
   - Unverified evidence never recommends Include.
 - **Commit rechecks** against the captured commit, and against the current ref if it moved, with no network. It only tightens. An Include whose echoed `pathDecisionBasis` is weaker than the current verdict is asked again (`provenanceChanged`), and the drawer prunes it.
 - **The drawer** shows the provenance headline, the "Already upstream" manifest group and the per-path copy.
+- **R15 local drawer smoke** (scratch instance, headless Chrome) found raw fetch stderr duplicated in the row copy, and that it was unredacted. The refresh reason is now redacted with `redactRemoteOutput` and shortened, it is shown once in the headline, and stale rows get a short sentence. The redaction test was seen to fail with redaction disabled.
 - **changelog-coverage** reuses session-files' verdicts, which was accepted in the Critic disposition.
 
 **Tests.** New `test/wrap-upstream-provenance.test.js`, which runs real bare-origin fleets. It covers:

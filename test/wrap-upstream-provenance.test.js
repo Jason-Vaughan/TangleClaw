@@ -411,7 +411,7 @@ describe('upstream that cannot be read, or was not refreshed', () => {
     assert.equal(res.output.provenance.refresh, 'failed');
     const f = res.output.foreignPaths.find((x) => x.path === plan);
     assert.equal(f.recommendation, 'leave', 'an unverified plan is never recommended for Include');
-    assert.match(f.recommendationWhy, /couldn't confirm what upstream holds/);
+    assert.match(f.recommendationWhy, /^couldn't confirm what upstream holds for this file, so it isn't recommended for the commit$/);
     write(repo, 'odd.txt', 'x\n');
     const withOdd = await runStep(sessionFiles, repo, scope);
     assert.equal(withOdd.output.foreignPaths.find((x) => x.path === 'odd.txt').recommendation, 'leave',
@@ -439,6 +439,10 @@ describe('upstream that cannot be read, or was not refreshed', () => {
     assert.deepEqual(res.output.alreadyUpstream, ['lib.js']);
     const q = res.output.foreignPaths.find((x) => x.path === '.tangleclaw/plans/q.md');
     assert.equal(q.recommendation, 'leave');
+    assert.equal(q.recommendationWhy, 'origin/main was not refreshed this wrap, so it may already have this file. It isn\'t recommended for the commit',
+      'the row says what staleness means for this file; the reason is said once, in the headline');
+    assert.doesNotMatch(res.output.provenance.refreshProblem, /^fatal:/i);
+    assert.ok(res.output.provenance.refreshProblem.length <= 161);
     assert.match(res.output.provenanceHeadline, /as of the last fetch .* It was not refreshed this wrap/);
   });
 
@@ -611,6 +615,30 @@ describe('precedence: withholds outrank upstream, and upstream outranks file kin
   it('the drawer\'s basis echo is sanitized: unknown verdicts are dropped', () => {
     assert.deepEqual(ownership.sanitizeDecisionBasis({ a: 'upstream-owns', b: 'bogus', c: 3 }), { a: 'upstream-owns' });
     assert.deepEqual(ownership.sanitizeDecisionBasis(['x']), {});
+  });
+});
+
+describe('the refresh failure reason shown to the operator', () => {
+  it('redacts a credential in remote error text and shortens it, whatever git chose to print', () => {
+    const f = provenance._internal._refreshProblemOf;
+    const withUrl = f(`fatal: unable to access 'https://user:hunter2@example.com/r.git/': Could not resolve host`);
+    assert.doesNotMatch(withUrl, /hunter2|user:/, 'userinfo in a URL is masked');
+    assert.doesNotMatch(withUrl, /^fatal:/i);
+    const withToken = f(`fatal: remote said ghp_${'B'.repeat(36)} is invalid`);
+    assert.doesNotMatch(withToken, /ghp_B{10}/, 'a bare token in the text is withheld');
+    assert.ok(f('x'.repeat(500)).length <= 161);
+    assert.equal(f(''), 'the fetch failed');
+  });
+
+  it('end to end, a failing https remote with a credential never puts it in the drawer (git also strips it itself)', async () => {
+    const fleet = makeFleet();
+    git(fleet.session, 'fetch', '-q', 'origin');
+    git(fleet.session, 'remote', 'set-url', 'origin', 'https://user:ghp_' + 'A'.repeat(36) + '@127.0.0.1:1/nope.git');
+    const p = await provenance.capture(fleet.session, []);
+    assert.equal(p.refresh, 'failed');
+    assert.doesNotMatch(p.refreshProblem, /ghp_A{10}/, 'the token never reaches the drawer');
+    assert.doesNotMatch(p.refreshProblem, /user:/);
+    assert.ok(p.refreshProblem.length <= 161);
   });
 });
 
