@@ -920,10 +920,10 @@ condition fired or could not be measured. Each row carries its own fix; the back
   Closing a terminal tab makes its `tmux attach` child exit, and for a moment it is in the exiting
   state like a leaked one. A restart makes every open terminal reconnect at once, so it leaves a
   burst of those. The leaked-child count therefore includes only children that are **confirmed**
-  stuck: still exiting on a later check of the same ttyd, at least 30 seconds after one first saw it
-  exiting. How long a process has existed says nothing about how long it has been exiting, so a
-  tab open for hours is not counted the moment it closes.
-  Younger ones are shown separately ("N more exiting but not yet confirmed wedged"), never counted, and
+  stuck: seen exiting, without a break, by checks of the same ttyd at least 30 seconds apart. How
+  long a process has existed says nothing about how long it has been exiting, so a tab open for
+  hours is not counted the moment it closes.
+  The others are shown separately ("N more exiting but not yet confirmed wedged"), never counted, and
   never acted on, so a reconnect burst no longer blanks your terminals a second time. The pool gate
   is not affected: a full pool means no terminal can attach at all, which is worth an immediate
   restart whenever it happens.
@@ -934,8 +934,9 @@ condition fired or could not be measured. Each row carries its own fix; the back
   — yours, a server restart, launchd respawning a crash — is logged as `ttyd restarted outside the
   watcher`, without guessing who did it. To turn the watcher off, or move the leaked-child
   threshold, see `TANGLECLAW_TTYD_WATCHER` and `TANGLECLAW_TTYD_ORPHAN_THRESHOLD` in
-  `docs/configuration-reference.md`. With the watcher off, this row reads **Could not check**, never
-  healthy, because nothing is then restarting a leaking ttyd.
+  `docs/configuration-reference.md`. With the watcher off, a healthy reading shows as **Could not
+  check**, never healthy, because nothing is then restarting a leaking ttyd; a full pool or leaked
+  children still show as fired, with a note to restart ttyd by hand.
 - **Full Disk Access missing** — the server process cannot read protected folders. A background
   (launchd-spawned) `node` gets no permission prompt; reads under `~/Documents`, `~/Desktop` and
   `~/Downloads` simply never return. Grant Full Disk Access to the exact `node` binary the

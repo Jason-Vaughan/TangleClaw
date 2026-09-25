@@ -76,6 +76,24 @@ a ttyd runs an *isolated* one: its own unix socket, its own `tmux -L` server, a 
   branch. They do **not** deploy separately (section F is revised to match).
 - **Hold:** the plan is approved, but implementation stays held while B2 is the sole #1839 writer (see Status).
 
+## Architect ruling R22 Q3 amendment (2026-09-25 21:05Z, controlling; supersedes the Q3 bullet above)
+
+- **The `ps etime ≥ T_age` route is dropped entirely.** Process lifetime is not exit-state age, and using it is unsafe for
+  old tabs caught during an ordinary exit. `etime` may stay on a reading as a diagnostic, and must never trigger
+  recycling.
+- **Confirmed wedge:** the same child PID observed in E/Z in two qualifying, successful readings of the same ttyd
+  PID/generation, with at least 30 s between the first and the confirming observation.
+- **History:** keyed by ttyd generation plus child PID.
+  - A child's history resets when a successful reading shows it absent or outside E/Z.
+  - All history is discarded on a generation change.
+  - A failed or unknown reading may neither advance nor confirm the predicate.
+- **Where it is implemented:** `advanceExiting` / `classifyReading` in `lib/ttyd-watcher.js`, with tests for each guard
+  and for the long-lived-tab mutant.
+- **Evidence:** the corrected control and baseline evidence, and the 30 s observed-exit persistence, are accepted,
+  subject to verify-resolutions.
+- **A1:** it failed candidate acceptance (3 of 50 children unreaped, not E/Z). The close mode must be isolated, and A1
+  either fixed so every child exits and resources return to baseline, or rejected in favour of build-only A3.
+
 ## What the operator required (the 2026-09-25 escalation) and where each is answered
 
 | Requirement | Section |

@@ -342,7 +342,10 @@ async function main(o) {
     if (interrupted) return;
     interrupted = true;
     if (sampler) clearInterval(sampler);
-    cleanup(s).finally(() => process.exit(130));
+    cleanup(s).then(
+      (c) => { if (!c.ok) console.error(`interrupted; cleanup left: ${c.leftovers.join('; ')}`); },
+      (err) => console.error(`interrupted; cleanup failed: ${err.message}`)
+    ).finally(() => process.exit(130));
   };
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
@@ -450,6 +453,7 @@ async function main(o) {
     report.verdict = churn.verdict({
       mode: o.mode, stop: r.stop, cycles: r.cycles, soakMs: r.soakMs, confirmedWedges: r.confirmedWedges,
       restarts: r.restarts, clientErrors: r.clientErrors, withOutput: r.withOutput, lingering: r.lingering,
+      outputExpected: o.modes.some((m) => m !== 'noread'),
       poolReturned, fdsReturned, cleanupOk: report.cleanup.ok
     });
   }

@@ -319,9 +319,10 @@ describe('ttyd-watcher', () => {
     });
   });
 
-  describe('classifyReading — a wedge is confirmed, a burst is not (R22 Q3)', () => {
+  describe('classifyReading — a wedge is confirmed, a burst is not (R22 Q3 as amended)', () => {
     const OPTS = { orphanThreshold: 20, wedgeAgeMs: ttydWatcher.DEFAULT_WEDGE_AGE_MS };
     const GEN = `${TTYD_PID}@${LSTART}`;
+    const EMPTY = { generation: null, since: new Map() };
 
     /**
      * A reading of the current ttyd.
@@ -341,18 +342,29 @@ describe('ttyd-watcher', () => {
       };
     }
 
+    /**
+     * Fold readings through the exiting record and classify the last one, the
+     * way the watcher does.
+     * @param {...object} readings - In order.
+     * @returns {object} The last reading's classification.
+     */
+    function classifyAfter(...readings) {
+      let exiting = EMPTY;
+      for (const r of readings) exiting = ttydWatcher.advanceExiting(exiting, r);
+      return ttydWatcher.classifyReading(readings[readings.length - 1], exiting, OPTS);
+    }
+
+    const later = (ms) => ({ sampledAt: 1_000_000 + ms });
+
     it('counts only exiting (E) or zombied (Z) children, never live S/R ones (#380 shape)', () => {
       const kids = [['?Es', '02:00:00'], ['?Es', '02:00:00'], ['?Z', '02:00:00'], ['Z+', '02:00:00'], ['?S', '02:00:00'], ['?R', '02:00:00']];
-      const earlier = reading(kids, { sampledAt: 1_000_000 - OPTS.wedgeAgeMs });
-      const r = reading(kids);
-      const c = ttydWatcher.classifyReading(r, [earlier, r], OPTS);
+      const c = classifyAfter(reading(kids), reading(kids, later(OPTS.wedgeAgeMs)));
       assert.equal(c.wedged.length, 4);
       assert.equal(c.transient.length, 0);
     });
 
-    it('a young E/Z burst is transient, not wedged — a reconnect burst does not trip the gate', () => {
-      const r = reading(many(25, '?Es', '00:03'));
-      const c = ttydWatcher.classifyReading(r, [], OPTS);
+    it('a burst seen exiting once is transient, not wedged — a reconnect burst does not trip the gate', () => {
+      const c = classifyAfter(reading(many(25, '?Es', '00:03')));
       assert.equal(c.wedged.length, 0);
       assert.equal(c.transient.length, 25);
       assert.equal(c.orphanGate, false);
@@ -363,52 +375,85 @@ describe('ttyd-watcher', () => {
     // they begin to exit; judging by etime would restart ttyd on their ordinary
     // exit, the very thrash this predicate replaces.
     it('a long-lived child seen exiting once is transient, however old the process is', () => {
-      const r = reading(many(25, '?Es', '3-02:00:00'));
-      const c = ttydWatcher.classifyReading(r, [r], OPTS);
+      const c = classifyAfter(reading(many(25, '?Es', '3-02:00:00')));
       assert.equal(c.wedged.length, 0);
-      assert.equal(c.transient.length, 25);
       assert.equal(c.orphanGate, false);
     });
 
-    it('is confirmed by being seen twice in the same generation, however young its reported age', () => {
-      const first = reading(many(25, '?Es', '00:03'), { sampledAt: 1_000_000 });
-      const second = reading(many(25, '?Es', '00:03'), { sampledAt: 1_000_000 + OPTS.wedgeAgeMs });
-      const c = ttydWatcher.classifyReading(second, [first, second], OPTS);
+    it('is confirmed when the same child is still exiting a full wedge age after it was first seen exiting', () => {
+      const c = classifyAfter(reading(many(25, '?Es', '00:03')), reading(many(25, '?Es', '00:03'), later(OPTS.wedgeAgeMs)));
       assert.equal(c.wedged.length, 25);
       assert.equal(c.orphanGate, true);
     });
 
-    it('two readings closer together than the wedge age do not confirm each other', () => {
-      // The panel and the watcher share one store; two readings a second apart
-      // must not turn a one-second-old child into a wedge.
-      const first = reading(many(25, '?Es', '00:01'), { sampledAt: 1_000_000 });
-      const second = reading(many(25, '?Es', '00:02'), { sampledAt: 1_001_000 });
-      assert.equal(ttydWatcher.classifyReading(second, [first, second], OPTS).wedged.length, 0);
+    it('is not confirmed a moment short of the wedge age, even across several readings', () => {
+      const kids = many(25, '?Es', '00:01');
+      const c = classifyAfter(reading(kids), reading(kids, later(1000)), reading(kids, later(OPTS.wedgeAgeMs - 1)));
+      assert.equal(c.wedged.length, 0);
+    });
+
+    it('restarts a child\'s clock when a successful reading shows it no longer exiting', () => {
+      const exitingKid = [['?Es', '01:00']];
+      const c = classifyAfter(
+        reading(exitingKid),
+        reading([['S', '01:00']], later(10_000)),
+        reading(exitingKid, later(OPTS.wedgeAgeMs + 1000))
+      );
+      assert.equal(c.wedged.length, 0, 'its exiting time counts from the latest sighting only');
+    });
+
+    it('restarts a child\'s clock when a successful reading shows it absent', () => {
+      const c = classifyAfter(
+        reading([['?Es', '01:00']]),
+        reading([], later(10_000)),
+        reading([['?Es', '01:00']], later(OPTS.wedgeAgeMs + 1000))
+      );
+      assert.equal(c.wedged.length, 0);
+    });
+
+    it('a failed reading neither advances nor resets the record, and confirms nothing itself', () => {
+      const kids = many(25, '?Es', '00:03');
+      const failed = reading([], { ...later(10_000), children: null });
+      let exiting = ttydWatcher.advanceExiting(EMPTY, reading(kids));
+      const before = exiting;
+      exiting = ttydWatcher.advanceExiting(exiting, failed);
+      assert.equal(exiting, before, 'the record is untouched by a failed reading');
+      assert.equal(ttydWatcher.classifyReading(failed, exiting, OPTS).orphanGate, null);
+      const confirming = reading(kids, later(OPTS.wedgeAgeMs));
+      exiting = ttydWatcher.advanceExiting(exiting, confirming);
+      assert.equal(ttydWatcher.classifyReading(confirming, exiting, OPTS).wedged.length, 25,
+        'the successful sightings either side still confirm');
+    });
+
+    it('a reading with no generation cannot be keyed: nothing is confirmed and the orphan gate is unknown', () => {
+      const kids = many(25, '?Es', '00:03');
+      let exiting = ttydWatcher.advanceExiting(EMPTY, reading(kids));
+      const blind = reading(kids, { ...later(OPTS.wedgeAgeMs), generation: null });
+      exiting = ttydWatcher.advanceExiting(exiting, blind);
+      const c = ttydWatcher.classifyReading(blind, exiting, OPTS);
+      assert.equal(c.wedged.length, 0);
+      assert.equal(c.orphanGate, null);
     });
 
     it('a sighting under a DIFFERENT ttyd generation confirms nothing', () => {
-      const old = reading(many(25, '?Es', '00:03'), { generation: '999@Thu Sep 24 01:00:00 2026', sampledAt: 900_000 });
-      const now = reading(many(25, '?Es', '00:03'));
-      assert.equal(ttydWatcher.classifyReading(now, [old, now], OPTS).wedged.length, 0);
+      const old = reading(many(25, '?Es', '00:03'), { generation: '999@Thu Sep 24 01:00:00 2026' });
+      const now = reading(many(25, '?Es', '00:03'), later(OPTS.wedgeAgeMs));
+      assert.equal(classifyAfter(old, now).wedged.length, 0);
     });
 
     it('never reads a child\'s process age: an unparseable etime is confirmed exactly like any other', () => {
-      // The #1245 contract "an unreadable age does not suppress", in the form it
-      // takes now that age is not an input at all.
-      const first = reading([['?Es', 'weird']], { sampledAt: 1_000_000 });
-      assert.equal(ttydWatcher.classifyReading(first, [first], { ...OPTS, orphanThreshold: 1 }).orphanGate, false);
-      const second = reading([['?Es', 'weird']], { sampledAt: 1_000_000 + OPTS.wedgeAgeMs });
-      assert.equal(ttydWatcher.classifyReading(second, [first, second], { ...OPTS, orphanThreshold: 1 }).orphanGate, true);
+      const c = classifyAfter(reading([['?Es', 'weird']]), reading([['?Es', 'weird']], later(OPTS.wedgeAgeMs)));
+      assert.equal(c.wedged.length, 1);
     });
 
     it('reports the orphan gate as null — unknown — when the children could not be read', () => {
-      const c = ttydWatcher.classifyReading(reading([], { children: null }), [], OPTS);
+      const c = ttydWatcher.classifyReading(reading([], { children: null }), EMPTY, OPTS);
       assert.equal(c.orphanGate, null);
       assert.equal(c.wedged, null);
     });
 
     it('reports the pool gate as null — unknown — when the pool could not be read', () => {
-      assert.equal(ttydWatcher.classifyReading(reading([], { pool: null }), [], OPTS).poolGate, null);
+      assert.equal(classifyAfter(reading([], { pool: null })).poolGate, null);
     });
   });
 

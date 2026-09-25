@@ -215,6 +215,8 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
         assert.equal(churn.verdict(passingCandidate({ mode, clientErrors: 1 })).verdict, 'inconclusive', mode);
         assert.equal(churn.verdict(passingCandidate({ mode, withOutput: 0 })).verdict, 'inconclusive', mode);
       }
+      // A run of only never-reading clients cannot see output, by design.
+      assert.equal(churn.verdict(passingCandidate({ withOutput: 0, outputExpected: false })).verdict, 'pass');
       // The control's child writes nothing by design, so no output is expected there.
       assert.equal(churn.verdict(passingCandidate({ mode: 'control', withOutput: 0 })).verdict, 'pass');
       assert.equal(churn.verdict(passingCandidate({ mode: 'control', clientErrors: 2 })).verdict, 'inconclusive');

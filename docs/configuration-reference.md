@@ -121,7 +121,7 @@ are the rollback levers for it:
 
 | Variable | Values | Effect |
 |---|---|---|
-| `TANGLECLAW_TTYD_WATCHER` | `off` / `0` / `false` to disable; `on` / `1` / `true` (or unset) to enable | Disabled, the watcher never restarts ttyd and logs `ttyd watcher DISABLED` at warn on every start. The system health panel reports the ttyd row as **Could not check**, never clear. Any other value is logged at warn, and the watcher stays enabled. |
+| `TANGLECLAW_TTYD_WATCHER` | `off` / `0` / `false` to disable; `on` / `1` / `true` (or unset) to enable | Disabled, the watcher never restarts ttyd and logs `ttyd watcher DISABLED` at warn on every start. The system health panel then shows a healthy reading as **Could not check**, never clear; a full pool or leaked children still show as fired, with a note to restart ttyd by hand. Any other value is logged at warn, and the watcher stays enabled. |
 | `TANGLECLAW_TTYD_ORPHAN_THRESHOLD` | An integer from 5 to 200 (default 20) | How many confirmed leaked children trip a restart. The value in force is logged at warn when it is not the default. Anything outside the range, or not an integer, is logged at warn and the default is used. |
 
 For a launchd install, set them in the server's plist (`EnvironmentVariables`) and restart the

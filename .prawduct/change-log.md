@@ -35,6 +35,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-25 — ttyd wedge predicate per the Architect's R22 Q3 amendment (#1245)
+
+<!-- prawduct: type=bugfix | scope=ttyd-1245 -->
+
+The Architect amended R22 Q3 (21:05Z) after review R-1/R-5.
+- **The etime route is gone.** A confirmed wedge is the same child PID seen E/Z in successful readings of one ttyd generation at least 30 s apart.
+- **The record:** `advanceExiting` keeps it per generation and child PID, and is pure. A child a successful reading shows absent or not exiting is reset. A failed reading, or one without a generation, neither advances nor confirms; its orphan gate is `null`, not `false`.
+- **Why the earlier cut was wrong:** it confirmed against *any* earlier qualifying reading. So a child that exited, went back to running and exited again was counted from its first exit.
+- **Tests:** added for each guard (a reset on "not exiting", a reset on "absent", a failed reading, no generation, a moment short of the age).
+
 ## 2026-09-25 — ttyd churn harness and the baseline reproduction (#1245, chunk 01)
 
 <!-- prawduct: type=feature | scope=ttyd-1245 -->
