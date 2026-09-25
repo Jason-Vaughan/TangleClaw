@@ -23,7 +23,8 @@ Read this before relying on it.
   - the auto-PR push, PR create and auto-merge arming;
   - the `pr-merge` step's push and arming;
   - the stranded-wrap "open PR";
-  - command injection into a pane, project actions, and the startup prompt;
+  - command injection into a pane, project actions, and the startup prompt. The one exemption is
+    the switchboard wake nudge, because it is how a HOLD notice reaches the pane;
   - `POST /api/server/restart` and `POST /api/update/apply`;
   - launching a new session into a stopped lane.
 - **Defense in depth only (managed git hooks):** `git commit` and `git push` run from a shell in
@@ -226,6 +227,37 @@ There is no override or bypass endpoint. The audited recovery paths are:
   A project is known to be governed from the store at boot, and from every control command and
   rebind since. A project known to be ungoverned is unaffected. Until the boot-time read has
   succeeded, every governed-shaped check is refused. Fix the store, then Retry the wrap.
+
+## Rolling back
+
+The managed hooks fail closed when their check does not answer. A server rolled back to a version
+without control state answers `GET /api/control/check` with 404, so **every governed checkout would
+refuse `git commit` and `git push`** until its hooks and markers are removed. Remove them first.
+
+**Before rolling back** (from a checkout of this version), for each governed project checkout:
+
+```sh
+node -e "require('./lib/control-hooks').uninstall(process.argv[1])" /path/to/project/checkout
+rm -f "$(git -C /path/to/project/checkout rev-parse --git-dir)/tangleclaw-control.json" \
+      "$(git -C /path/to/project/checkout rev-parse --git-common-dir)/tangleclaw-control.json"
+```
+
+`uninstall` puts any chained hook back byte-for-byte. It refuses, and prints the exact commands,
+when a chained hook changed after TangleClaw moved it.
+
+**If the server was already rolled back,** do it by hand in each governed checkout. In the directory
+`git rev-parse --git-path hooks` names:
+1. Delete `pre-commit` and `pre-push` if their second line is `# TC-OWNED-HOOK: control-state`.
+2. Rename `pre-commit.tc-chained` and `pre-push.tc-chained`, where present, back to
+   `pre-commit` and `pre-push`.
+3. Delete `tangleclaw-control-hooks.json`.
+4. Delete `tangleclaw-control.json` from `git rev-parse --git-dir` and from
+   `git rev-parse --git-common-dir`.
+
+A checkout with no marker is never refused, so removing the markers alone is enough to unblock
+commits. Removing the hooks restores the checkout exactly.
+
+`git commit --no-verify` and `git push --no-verify` also get past the hooks in an emergency.
 
 ## Code
 
