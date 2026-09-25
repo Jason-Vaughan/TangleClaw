@@ -35,6 +35,11 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-25 — `launch-rule-drift` tests import `node:assert/strict` (Pilot 4)
+
+<!-- prawduct: type=chore | scope=strict-assert-launch-rule-drift -->
+`test/launch-rule-drift.test.js` switched from `node:assert` to `node:assert/strict`, as the testing-conventions norm requires. Every assertion already called a strict method, so no test's accepted behaviour changes. Substituted for TST-5N8W, whose conversion shipped in #1378. Three suites still import non-strict `node:assert` (remote-output, wrap-consecutive-step-delivery, wrap-delivery-receipt) — tracked against #1377.
+
 ## 2026-09-24 — `/clear` and compaction no longer drop a session's rules and launch context (#1761)
 
 <!-- prawduct: type=bugfix | scope=reentry-1761 -->
