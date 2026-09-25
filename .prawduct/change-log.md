@@ -52,6 +52,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 **Evidence.**
 - Revision 2: every close mode clean. A 100-cycle all-mode run had 0 wedges and 0 lingering, and the pool and fds returned to baseline.
 - A traced 50-cycle run showed `hup > drain-enter > children-reaped > flushed-exit` for all 50, with hang-up to exit at a p50 of 24 ms and a maximum of 54 ms. ttyd reaped 50 of 50.
+- **Race closed after review (observation O-3 of `rev-20260925T211252Z-51f4f2b6`).** A hang-up could land after `tmux attach … &` forked and before `client=$!`, so the trap would miss the client. The drain now kills `$(jobs -pr)`, meaning running jobs only, so a finished job's recycled PID is never signalled. It then waits for everything. Re-traced over 50 cycles: every close in order, hang-up to exit at a p50 of 28 ms and a max of 64 ms, and 50 of 50 reaped. The first acceptance run was stopped to test this revision instead; its interrupt cleanup left no scratch process.
 - The full R22 Q7 acceptance run (2000 cycles plus a 2 h soak) is recorded separately.
 
 **Test contracts changed (R22 Q1 required the old exec rationale to be covered):**

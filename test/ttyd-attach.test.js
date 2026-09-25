@@ -61,7 +61,7 @@ describe('deploy/ttyd-attach.sh', () => {
   });
 
   // The `=` alone is not enough, and getting this wrong is SILENT here: the
-  // capture-pane line ends in `2>/dev/null || true`, so a target tmux rejects
+  // capture-pane line discards its stderr, so a target tmux rejects
   // just skips the scrollback replay (#322) with no error anyone sees. tmux
   // accepts a bare `=name` only for target-SESSION verbs (has-session,
   // attach-session); pane-scoped verbs need the `:` suffix or they fail with
@@ -103,12 +103,11 @@ describe('deploy/ttyd-attach.sh', () => {
     );
   });
 
-  // #1245 — ttyd does not reliably reap the child it spawns per websocket, and
-  // wedged children hold a /dev/ttys* slot until ttyd itself dies. Every path
-  // that ends this script must therefore leave ttyd exactly ONE process to
-  // reap, not a shell still holding one: of 18 wedged processes observed on
-  // 2026-09-07, one was a bash with its own tmux child.
-  it('every terminal branch execs, so no branch leaves a shell for ttyd to lose', () => {
+  // #1245 — the no-session branch has nothing to drain, so it execs: ttyd gets
+  // exactly one process to reap, and `sleep` writes nothing, so as session
+  // leader it has no queued output to wait on. (The attach branch deliberately
+  // does NOT exec; see the drain contract below.)
+  it('the no-session branch execs its sleep, so it leaves no extra shell for ttyd to reap', () => {
     // The no-session branch sits here for 30s per failed attach. As a plain
     // `sleep` it was a live bash for all of it.
     assert.match(script, /^\s*exec\s+sleep\s+30\s*$/m,
@@ -161,12 +160,22 @@ describe('deploy/ttyd-attach.sh', () => {
       const steps = [
         fn.search(/trap '' HUP TERM INT/),
         fn.search(/kill -KILL/),
-        fn.search(/\bwait "\$p"/),
+        fn.search(/\n\s*wait\b/),
         fn.search(/POSIX::tcflush\(1, POSIX::TCOFLUSH\)/),
         fn.search(/exit 0/)
       ];
       assert.ok(steps.every((i) => i > -1), `every step present: ${steps}`);
       assert.deepEqual([...steps].sort((a, b) => a - b), steps, 'the flush must come after the children are gone and before exit');
+    });
+
+    // A hang-up can land after `tmux attach … &` forks and before `client=$!`
+    // records the PID. Killing from the variables would miss that client, and it
+    // could still be writing after the flush.
+    it('kills every RUNNING background job, not just the PIDs it managed to record', () => {
+      const fn = script.slice(script.indexOf('drain_and_exit() {'), script.indexOf('\n  }', script.indexOf('drain_and_exit() {')));
+      // `-r`: running jobs only, so a finished job's recycled PID is never signalled.
+      assert.match(fn, /for p in \$\(jobs -pr\); do kill -KILL "\$p"/);
+      assert.doesNotMatch(fn, /for p in \$replay \$client/, 'the recorded PIDs can be empty when the signal lands early');
     });
 
     it('calls perl by absolute path, since launchd gives ttyd a minimal PATH', () => {

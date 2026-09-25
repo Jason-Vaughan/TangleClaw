@@ -21,8 +21,8 @@ session=$(echo "$raw" | tr ' ' '-' | sed 's/[^a-zA-Z0-9_-]//g')
 # `capture-pane` takes a target-PANE and rejects `=name` outright ("can't find
 # pane"); it needs the trailing `:`, which resolves the session exactly and then
 # takes its current pane. Getting that wrong is silent here — the capture-pane
-# line ends in `2>/dev/null || true`, so a rejected target would just skip the
-# scrollback replay below with nothing to see. Measured against tmux 3.6a.
+# line discards its stderr, so a rejected target would just skip the scrollback
+# replay below with nothing to see. Measured against tmux 3.6a.
 if tmux has-session -t "=$session" 2>/dev/null; then
   # Replay scrolled-off history into the fresh xterm.js buffer before attaching
   # (#322). ttyd pipes this script's stdout straight into the browser terminal,
@@ -53,13 +53,17 @@ if tmux has-session -t "=$session" 2>/dev/null; then
   # only after a FOREGROUND command returns, and a replay blocked writing to a
   # pty nobody reads never returns. `wait` is interrupted by the trapped signal
   # at once. The children are SIGKILLed: either may be blocked in that same
-  # write, and the only thing that matters now is that they are gone.
+  # write, and the only thing that matters now is that they are gone. They are
+  # found with `jobs -pr`, not from the variables below, because a hang-up can
+  # land after a child is forked and before its PID is recorded; a child
+  # missed there could still be writing after the flush. `-r` lists RUNNING
+  # jobs only: a finished job's PID may already belong to someone else.
   replay=
   client=
   drain_and_exit() {
     trap '' HUP TERM INT
-    for p in $replay $client; do kill -KILL "$p" 2>/dev/null; done
-    for p in $replay $client; do wait "$p" 2>/dev/null; done
+    for p in $(jobs -pr); do kill -KILL "$p" 2>/dev/null; done
+    wait 2>/dev/null
     # Absolute path: ttyd runs under launchd with a minimal PATH.
     /usr/bin/perl -MPOSIX -e 'POSIX::tcflush(1, POSIX::TCOFLUSH)' 2>/dev/null
     exit 0
