@@ -13,6 +13,7 @@ questions A1–A4) and two read-only scout reports (server classification seams;
 
 - [x] Plan written (rev 2: brief incorporated, scouts collected)
 - [x] Architect has ruled on A1–A4 (R11, 2026-09-25): all four approved, with the R11-E final-boundary amendment and the R11-F subagent ruling. Implementation was released on incorporation, with no second architecture pause. See "Architect ruling R11"
+- [x] R13 received (controlling), recorded above
 - [ ] Chunk 01: `_upstream-provenance.js`, which resolves the default-branch ref, refreshes it with a time limit,
       records when it was observed, gives the checkout's position, and gives a fact for each path. Unit tests run
       against real temporary repos with a bare origin
@@ -28,7 +29,32 @@ questions A1–A4) and two read-only scout reports (server classification seams;
 **Pilot envelope (IN FORCE):** no merging any PR, no pulling or updating the live checkout, no restarting the
 live service, no tests on the main instance, no tag, publish or release, no deploy.
 
-## Architect ruling R11 (2026-09-25), binding
+## Architect ruling R13 (2026-09-25), controlling; supersedes R11 where they differ
+
+- **A1 approved (b)**, within the bounded contract: single ref, non-interactive, no tags, no checkout, reset,
+  merge or rebase, and no index or work-tree mutation. On failure, fall back safely to the stale ref. The existing
+  behind-origin opt-outs are reused, and no new key is added (approved).
+- **A2 approved, with one clarification.** On a stale ref, `observedAt` is when the local ref last changed. It is
+  not proof that `refSha` was then the remote tip. Only an established (refreshed) answer may say "checked just
+  now".
+- **A3, as corrected.**
+  - session-files freezes the ref name and the immutable `refSha`.
+  - commit makes no network call. It rehashes the current local files against the captured commit, and it also
+    re-resolves the current local remote-tracking ref OID.
+  - If the ref moved, the current OID is used only to tighten. A prior Include that is now equal, upstream-owned,
+    different or otherwise unsafe is refused, or blocked and re-presented, and the drawer prunes the stale answer.
+    A ref move never broadens scope.
+  - If the ref did not move, local-content tightening against `refSha` is handled the same way.
+  - The test moves the actual remote-tracking ref while `previousResults` keeps the original `refSha`.
+    Implementation: `unverified` ranks above `none`, so an Include does not carry onto evidence that can no
+    longer be read.
+- **A4 approved, with two corrections.** Copy shows the actual local line count. On stale or unavailable
+  evidence, no Include recommendation is manufactured: every path that needs a decision defaults to Keep local,
+  whatever its kind, while files the wrap already commits automatically keep their current behavior, so offline
+  wraps still work.
+- Implementation is released with no further Plan Written stop. Stop at the Draft PR / Critic boundary.
+
+## Architect ruling R11 (2026-09-25), superseded by R13 where they differ
 
 - **A1 approved (b)**, with these constraints:
   - The one fetch happens in session-files only. It fetches only the resolved default branch into its ordinary
@@ -219,6 +245,21 @@ What the provenance rule does:
   ownership. Any `include` recommendation is downgraded to `leave` with the unavailable copy. Owned files still
   commit, so offline wrapping is not blocked (contract 4).
 - **`absent`** leaves the current rules unchanged. A genuinely new plan keeps Include advice (the control test).
+
+**Decisions made during the build** (within the R13 contract):
+
+- `[DECISION: a path this branch's own commits changed since the fork (HEAD blob ≠ merge-base blob) is judged as
+  the branch's own line of work.]`
+  - Matching upstream there is the branch undoing its own change, so the verdict is `none`, not
+    `already-upstream`.
+  - When both sides changed it, the verdict is also `none`, not `upstream-owns`, because the branch's merge is
+    where they meet.
+  - Why: without this, a feature branch that reverts its own edit would have the revert silently left out, and
+    every wrap on a long-running branch would ask about files main also touched.
+  - `upstream-owns` stays for untracked paths and for paths the branch never touched.
+- `[DECISION: a repository with no remote is state no-remote, with no per-path facts.]`
+  - Nothing upstream can be duplicated there, so the existing advice stands.
+  - It is distinct from `unavailable` (a remote that can't be read).
 
 ## Drawer (chunk 03)
 

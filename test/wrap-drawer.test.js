@@ -823,12 +823,19 @@ describe('wrap-drawer helpers — Include / Leave for uncommitted files (#1406)'
         // `secret` joined the view model in #1513: the heading has to tell a
         // credential match apart from a file the session did not change.
         // `recommendation` and the manifest fields joined in #1858; a step that
-        // sends none of them gets empty values, never a guessed answer.
-        paths: [{ path: 'shared.js', why: 'already uncommitted when this session launched', deleted: false, secret: false, recommendation: null, recommendationWhy: '' }],
+        // sends none of them gets empty values, never a guessed answer. The
+        // upstream fields joined in #1868: no verdict reads as `none`, the
+        // weakest, so an echoed answer can never claim more than it saw.
+        paths: [{
+          path: 'shared.js', why: 'already uncommitted when this session launched', deleted: false, secret: false,
+          recommendation: null, recommendationWhy: '', upstreamVerdict: 'none', provenanceChanged: false
+        }],
         manifest: null,
         protectedPaths: [],
         refusedIncludes: [],
-        ignoreSuggestions: []
+        ignoreSuggestions: [],
+        provenanceHeadline: '',
+        alreadyUpstream: []
       });
     }
     assert.equal(H.pathDecisionWidget(blockedRow('test'), output), null);
@@ -1903,10 +1910,83 @@ describe('wrap-drawer helpers — safe recommendations for wrap files (#1858)', 
   it('repeats the manifest on a settled session-files or commit row only', () => {
     const manifest = { commit: ['a'], keepLocal: ['b'], protected: ['c.db'], unresolved: [] };
     const settled = H.buildStepRow({ stepId: 'commit', kind: 'commit', status: 'done', output: { manifest } }, { blockedAt: null });
-    assert.deepEqual(plain(settled.manifest), { ...manifest, refusedIncludes: [] });
+    assert.deepEqual(plain(settled.manifest), { ...manifest, alreadyUpstream: [], refusedIncludes: [] });
     const blocked = H.buildStepRow({ stepId: 'commit', kind: 'commit', status: 'blocked', output: { manifest } }, { blockedAt: 'commit' });
     assert.equal(blocked.manifest, null, 'a blocked row shows the projected manifest in the decision instead');
     const other = H.buildStepRow({ stepId: 'test', kind: 'test', status: 'done', output: { manifest } }, { blockedAt: null });
     assert.equal(other.manifest, null);
+  });
+});
+
+describe('wrap-drawer helpers — upstream provenance (#1868)', () => {
+  const H = loadHelpers();
+  const blockedRow = (kind) => ({ id: kind, kind, isBlocker: true, status: 'blocked' });
+  const output = {
+    provenanceHeadline: 'This checkout is 4 behind and 0 ahead of origin/main (checked just now).',
+    alreadyUpstream: ['CLAUDE.md', 7],
+    manifest: { commit: [], keepLocal: [], protected: [], alreadyUpstream: ['CLAUDE.md'], unresolved: ['plan.md', 'new.md'], refusedIncludes: [] },
+    foreignPaths: [
+      { path: 'plan.md', why: 'upstream already has its own version of this file', recommendation: 'leave',
+        recommendationWhy: 'origin/main already tracks this path', upstreamVerdict: 'upstream-owns', provenanceChanged: true },
+      { path: 'new.md', why: 'new', recommendation: 'include', recommendationWhy: 'project content', upstreamVerdict: 'made-up' }
+    ]
+  };
+
+  it('carries the headline, the verdicts and the already-upstream files, and reads an unknown verdict as none', () => {
+    const w = plain(H.pathDecisionWidget(blockedRow('session-files'), output));
+    assert.equal(w.provenanceHeadline, output.provenanceHeadline);
+    assert.deepEqual(w.alreadyUpstream, ['CLAUDE.md']);
+    assert.equal(w.paths[0].upstreamVerdict, 'upstream-owns');
+    assert.equal(w.paths[0].provenanceChanged, true);
+    assert.equal(w.paths[1].upstreamVerdict, 'none');
+    assert.equal(w.paths[1].provenanceChanged, false);
+  });
+
+  it('the Apply preview matches the advice shown, lists what upstream holds, and preselects nothing', () => {
+    const w = H.pathDecisionWidget(blockedRow('session-files'), output);
+    const m = plain(H.projectManifest(w, {}));
+    assert.deepEqual(m.commit, ['new.md']);
+    assert.deepEqual(m.keepLocal, ['plan.md']);
+    assert.deepEqual(m.alreadyUpstream, ['CLAUDE.md']);
+    assert.deepEqual(m.unresolved, []);
+    const plan = plain(H.recommendationsToApply(w.paths, {}));
+    assert.deepEqual(plan.fill, { 'plan.md': 'leave', 'new.md': 'include' }, 'Apply fills from the advice only on a click');
+    assert.deepEqual(plain(H.normalizeManifest(output.manifest)).alreadyUpstream, ['CLAUDE.md']);
+  });
+
+  it('sends a verdict only beside an answer that is sent, and only a verdict the server knows', () => {
+    const opts = plain(H.collectOptionsFromAccessors({
+      pathDecisions: () => ({ 'a.md': 'include', 'b.md': 'leave' }),
+      pathDecisionBasis: () => ({ 'a.md': 'upstream-owns', 'b.md': 'forged', 'c.md': 'none' })
+    }));
+    assert.deepEqual(opts, { pathDecisions: { 'a.md': 'include', 'b.md': 'leave' }, pathDecisionBasis: { 'a.md': 'upstream-owns' } });
+    assert.deepEqual(plain(H.collectOptionsFromAccessors({ pathDecisionBasis: () => ({ 'a.md': 'none' }) })), {});
+  });
+
+  it('accumulates verdicts beside answers, and a pruned answer takes its verdict with it', () => {
+    const answers = {};
+    const basis = {};
+    const first = { pathDecisions: { 'a.md': 'include' }, pathDecisionBasis: { 'a.md': 'none' } };
+    H.accumulatePathDecisions(answers, first);
+    H.accumulatePathDecisionBasis(basis, first);
+    assert.deepEqual(plain(first.pathDecisionBasis), { 'a.md': 'none' });
+    const removed = plain(H.pruneUpstreamDecisions(answers, basis, {
+      results: [{ output: { provenanceChanged: ['a.md'], alreadyUpstream: ['gone.md'] } }]
+    }));
+    assert.deepEqual(removed, ['a.md']);
+    assert.deepEqual(plain(answers), {});
+    assert.deepEqual(plain(basis), {});
+    const retry = { pathDecisions: { 'b.md': 'leave' } };
+    H.accumulatePathDecisions(answers, retry);
+    H.accumulatePathDecisionBasis(basis, retry);
+    assert.equal(retry.pathDecisionBasis, undefined, 'no verdict is invented for an answer sent without one');
+  });
+
+  it('replays verdicts only for replayed answers', () => {
+    const c = plain(H.replayChoicesFromOptions({
+      pathDecisions: { 'a.md': 'include' },
+      pathDecisionBasis: { 'a.md': 'upstream-owns', 'b.md': 'none', 'a2.md': 'x' }
+    }));
+    assert.deepEqual(c.pathDecisionBasis, { 'a.md': 'upstream-owns' });
   });
 });

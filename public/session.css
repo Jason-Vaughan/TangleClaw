@@ -2364,6 +2364,18 @@ html[data-tc-keyboard] body {
   font-size: 0.8rem;
   color: var(--text-secondary);
 }
+/* #1868 where the checkout stands against upstream, and an answer upstream overrode */
+.wrap-decision-provenance {
+  margin: 4px 0 8px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+.wrap-decision-pathchanged {
+  flex: 1 1 100%;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--warning);
+}
 .wrap-decision-manifest {
   margin: 8px 0 0;
   padding: 8px;

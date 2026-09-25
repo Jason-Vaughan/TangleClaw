@@ -737,3 +737,28 @@ tied to the send's nonce — not rendered-pane inference — and another explici
 
 `lib/wrap-delivery-receipt.js` is the only producer today, via the `ai-content` step.
 
+## Amended 2026-09-25 — what upstream already holds outranks what kind of file it is (#1868)
+
+Architect ruling R11 (A1–A4, R11-E, R11-F). A stale session checkout after its worktree PR merged was
+offered its own merged plan, and a carrier byte-identical to upstream, as work to commit, because the
+advice read only the path.
+
+- **Precedence.** Methodology withholding, TangleClaw state, protected databases and the credential
+  scan stay strongest. Upstream provenance comes next and outranks TangleClaw maintenance, ownership
+  and file kind. A durable path is a weak hint when provenance does not contradict it.
+- **Freshness (A1).** `session-files` makes at most one bounded refresh of the default branch's
+  remote-tracking ref, with no tags, no prune, and no index, work-tree or HEAD change. It honours the
+  behind-origin opt-outs and records the ref, the commit, the time, whether it refreshed, and any
+  failure. A failed refresh falls back to the local ref as `stale`. No other step reaches the network.
+- **Stale evidence (A2).** An exact match is proof even on a stale ref. Nothing else is proof: a
+  file upstream may not have is never recommended for Include. The advice becomes Keep local, and it
+  stays advice, never a preselected answer.
+- **Git content is the contract (A3).** No GitHub or wrap-ledger dependency in the wrap path.
+- **Already upstream (A4).** It is a visible, non-interactive bucket. It is never staged or asked,
+  it is named with its ref and reason, and the file is untouched.
+- **Final boundary (R11-E).** `commit` re-reads the tree and re-judges each path against the commit
+  `session-files` recorded, and against the newer one if the local ref moved. Newer evidence can only
+  tighten. An Include given against a weaker verdict (echoed as `pathDecisionBasis`) is not carried
+  forward: the path is asked about again, and the drawer drops the stale answer.
+- **No remote.** A repository with no remote has nothing upstream to duplicate, so its advice is
+  unchanged.
