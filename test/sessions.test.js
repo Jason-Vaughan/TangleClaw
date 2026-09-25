@@ -3292,13 +3292,14 @@ describe('sessions', () => {
         // registry's progress hook, (#1404) the server's own record of what a
         // Retry may reuse, (#1707) the registry's cancel hooks, and (#1708) the
         // source of the resolved keep-running answer. Nothing else.
-        const { onStepEvent, resumeFrom, wrapRunId, admitStep, isCancelRequested, keepSource, ...userOptions } = receivedOptions;
+        const { onStepEvent, resumeFrom, wrapRunId, admitStep, isCancelRequested, controlGate, keepSource, ...userOptions } = receivedOptions;
         assert.deepEqual(userOptions, opts,
           'user options must reach runWrapPipeline unchanged');
         assert.equal(typeof onStepEvent, 'function', 'has onStepEvent');
         assert.equal(resumeFrom, null, 'no blocked predecessor for this session, so nothing to reuse');
         assert.equal(typeof admitStep, 'function', 'has the cancel admission hook');
         assert.equal(typeof isCancelRequested, 'function', 'has the cancel read');
+        assert.equal(typeof controlGate, 'function', 'has the #1861 control gate');
         assert.equal(keepSource, 'request', 'the request decided keep-running');
 
         // Omitted options still reach the runner carrying ONLY the server's
@@ -3306,7 +3307,7 @@ describe('sessions', () => {
         receivedOptions = 'sentinel-not-set';
         await sessions.triggerWrap('prime-test');
         assert.deepEqual(Object.keys(receivedOptions).sort(),
-          ['admitStep', 'isCancelRequested', 'keepSessionRunning', 'keepSource', 'onStepEvent', 'resumeFrom', 'wrapRunId'],
+          ['admitStep', 'controlGate', 'isCancelRequested', 'keepSessionRunning', 'keepSource', 'onStepEvent', 'resumeFrom', 'wrapRunId'],
           'omitted options add only the #583/#185 progress hook, the #1404 resume record, the #1585 run id, '
             + 'the #1707 cancel hooks and the #1708 resolved keep-running answer');
         assert.equal(receivedOptions.keepSessionRunning, false, 'resolved to the default: end the session');

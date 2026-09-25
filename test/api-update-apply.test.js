@@ -1,13 +1,31 @@
 'use strict';
 
-const { describe, it, beforeEach, afterEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
 
 const server = require('../server');
 const applier = require('../lib/update-applier');
+const store = require('../lib/store');
+
+// The route asks the control gate before applying (#1861), and a gate that
+// cannot read control state fails closed. A running server always has its
+// store; so does this harness, a scratch one with no lane held.
+let storeDir;
+before(() => {
+  storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-update-apply-'));
+  store._setBasePath(storeDir);
+  store.init();
+});
+after(() => {
+  store.close();
+  fs.rmSync(storeDir, { recursive: true, force: true });
+});
 
 /**
  * Invoke the matched route handler with a mock res that captures the status +

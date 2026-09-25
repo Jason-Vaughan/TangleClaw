@@ -581,7 +581,8 @@ describe('medusa-wake — nudge addresses the judged session (MED-7Q4C)', () => 
     const world = installWorld();
     tickThroughDebounce();
     assert.equal(world.injected.length, 1);
-    assert.deepEqual(world.injected[0].options, { sessionId: world.sessions[0].id });
+    // The nudge carries the one HOLD exemption (#1861): it is how a control notice reaches a held pane.
+    assert.deepEqual(world.injected[0].options, { sessionId: world.sessions[0].id, controlExempt: 'medusa-wake' });
   });
 
   it('addresses each session by its OWN id when one project holds two live sessions', () => {

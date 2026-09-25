@@ -418,7 +418,7 @@ describe('startup prompt store: v47 (Chunk B3)', () => {
     it('rebuilds a pre-v47 fires table so the launch caller is recordable, keeps every row, and adds startup_delivery to launch_sequences', () => {
       openStore(V45_FIRES);
       const db = store.getDb();
-      assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 47);
+      assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
       const kept = store.startupPrompts.getFireByKey('old-key-000001');
       assert.ok(kept, 'the old row survived two rebuilds');
       assert.equal(kept.callerKind, 'operator');

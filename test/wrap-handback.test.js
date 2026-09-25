@@ -269,6 +269,18 @@ describe('wrap handback watch (#1312)', () => {
     assert.equal(current(), null);
   });
 
+  it('a held lane refuses the handback with the control gate\'s own answer and leaves no handback (#1861)', () => {
+    settleBlockedRun('changelog-update');
+    handback._internal.inject = () => ({
+      ok: false, error: 'CONTROL_HELD: held',
+      controlRefusal: { status: 423, code: 'CONTROL_HELD', message: 'this lane is on HOLD', details: { assignmentId: 'asg_x' } }
+    });
+    const res = handback.start(PROJECT, { stepId: 'changelog-update', prompt: 'p' });
+    assert.equal(res.status, 423);
+    assert.equal(res.code, 'CONTROL_HELD');
+    assert.equal(current(), null);
+  });
+
   it('the prompt plus its completion instruction fits injectCommand\'s limit', () => {
     settleBlockedRun('changelog-update');
     handback._internal.newNonce = () => 'ffffffff';

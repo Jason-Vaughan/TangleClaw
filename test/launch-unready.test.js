@@ -226,6 +226,15 @@ describe('unready-launch monitor (Train 21, car 21.5)', () => {
       'a failed paste told the session nothing, so nothing is counted');
   });
 
+  it('a held lane is reported as control-held, never as an inject failure, and nothing is counted (#1861)', () => {
+    const { sequence } = bindSequence('unready-control-held');
+    launchUnready._internal.inject = () => ({
+      ok: false, error: 'CONTROL_HELD: held', controlRefusal: { status: 423, code: 'CONTROL_HELD', message: 'held', details: {} }
+    });
+    assert.equal(verdictFor(sequence, 11 * MINUTE), 'control-held');
+    assert.equal(store.launchSequences.getByLaunchId(sequence.launchId).nudgeCount, 0);
+  });
+
   it('refuses to type into an engine with no probed pane signature', () => {
     const { session, sequence } = bindSequence('unready-unprofiled');
     launchUnready._internal.wakeProfiles = () => ({});
