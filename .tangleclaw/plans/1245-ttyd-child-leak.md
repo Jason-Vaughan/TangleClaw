@@ -27,8 +27,10 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
       cumulative review `rev-20260925T204343Z-b1361aa6` found 0 blocking. R-1 (a receipt on a reading with no
       generation) is fixed with tests. R-2 (this Status) and the design notes are fixed. The slow-restart note is accepted
 - [ ] Chunk 03: candidate matrix (A1+A2 and A3) against the same acceptance contract; the winner is chosen by evidence.
-      A1 is committed (8c483c60, 2e714fbc). The ordering is traced in order on every close, and all modes are clean. The R22 Q7
-      acceptance on 2e714fbc is running, and the box is ticked when it passes. A3 is not needed unless it fails
+      A1 (8c483c60, 2e714fbc) FAILED the R22 Q7 acceptance on 2e714fbc: 6 confirmed ?Es wedges in 1500 cycles (~0.4%,
+      against 100% at baseline). Report: `.tangleclaw/plans/1245-evidence/a1-acceptance-2e714fbc-FAIL.json`. The Architect's
+      R22 Q1 fallback ruling (21:24Z) REJECTS A1 as the shipping fix: keep its evidence, and plan to revert or exclude the
+      wrapper from the final tree. A3 is APPROVED: a build-only patched ttyd in scratch (see "A3 build" below)
 - [ ] Chunk 04: rollout and rollback docs (sections F and G, and the user guide), CHANGELOG. Re-tuning the watcher to a safety net waits
       for live certification (F.5)
 - [ ] Verify, Critic, one draft PR (pilot boundary: no merge). #1245 stays open until post-merge live certification
@@ -78,6 +80,26 @@ a ttyd runs an *isolated* one: its own unix socket, its own `tmux -L` server, a 
 - **Staging: one PR** unless new evidence forces a split. Chunks 01–02 are completed and validated first on the
   branch. They do **not** deploy separately (section F is revised to match).
 - **Hold:** the plan is approved, but implementation stays held while B2 is the sole #1839 writer (see Status).
+
+## Architect R22 Q1 fallback ruling (2026-09-25 21:24Z, controlling)
+
+- **A1 is rejected** as the shipping root fix. 6 wedges in 1500 cycles fail the zero-defect contract; spend no more runs
+  on shell timing. Keep its evidence, and plan to revert or exclude the A1 wrapper from the final tree unless a later
+  ruling keeps a narrowly proven mitigation.
+- **A3 is approved, with isolation rules:**
+  - **Toolchain:** CMake from a disposable Python venv inside the harness scratch directory, pinned, with its version
+    and artifact digest recorded. No `pip --user`, no `brew install`, no Homebrew changes. Homebrew's existing headers
+    and libraries may be read.
+  - **Provenance to pin and record:** the ttyd 1.7.7 source, the #1573 revision, the Darwin flush patch, the compiler,
+    the link inputs and the `otool -L` output.
+- **Candidate matrix,** both run with the ORIGINAL pre-A1 attach script:
+  - (1) 1.7.7 + #1573 with NO flush. This is the mutation/control and must reproduce.
+  - (2) the same build plus a Darwin master-side `TIOCFLUSH(FWRITE)` at the close boundary, before child teardown can
+    enter the drain deadlock. This is A3.
+- **Order:** a guarded preliminary reproduction first. Only the patched candidate goes on to 2000 cycles and the 2 h soak.
+- **Boundary:** no live install, stable-path copy, plist/TCC edit, service test, sync or restart. If A3 passes, STOP at the
+  packaging and rollout boundary and report: the patch, source and build provenance, the mutation result, the acceptance
+  evidence, and the delivery options, all before changing the PR's shape.
 
 ## Architect ruling R22 Q3 amendment (2026-09-25 21:05Z, controlling; supersedes the Q3 bullet above)
 
