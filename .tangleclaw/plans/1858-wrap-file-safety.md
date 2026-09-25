@@ -27,7 +27,7 @@ it had acted on the PM's go-ahead of 04:22:05Z.** In that window, Chunks 01–03
 (1b4b7e56, 2ae024a9, 0ab0703c, review fix ad78b50c, merge of `main` 26f58769), pushed, and opened as
 **draft** PR #1860. Nothing was merged. That work predates this corrected plan. One part of it conflicts with
 the plan: deletions are exempt from the protected rule across the board, where the ruling below withholds a
-name-matched deletion. That code change waits for release. Per instruction, nothing was reverted or discarded.
+name-matched deletion. That was corrected in 250203e0 under the PM's bounded release (see Status). Per instruction, nothing was reverted or discarded.
 
 ## Problem
 
