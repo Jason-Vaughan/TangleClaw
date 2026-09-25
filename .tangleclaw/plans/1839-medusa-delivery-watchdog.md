@@ -13,10 +13,10 @@ partition: serial. Every chunk touches lib/store.js, server.js or lib/medusa*.js
 - [x] Chunk 01: schema v49 and `lib/medusa-exchanges.js` (facts, projection, replay). `f00594e3`
 - [x] Chunk 02 (`d7675966`, Critic fixes `009725d7`). Reviewed by cumulative `rev-20260925T185705Z-3b387950` and verify-resolutions `rev-20260925T190528Z-912dd4dd` (0 blocking). Suite on `009725d7`: all green except the known load flake #1658 (dir-scanner, untouched; passes in isolation). Scope: send-side metadata, validation, arrival, read and ack facts, and the #1435 close-out. **Governance checkpoint: STOP for the Architect** after the cumulative Critic over chunks 01–02
 - [x] Chunk 03, corrected per the Architect's A3 ruling (`a06a43ac`). Built `2c65777d` with fixes `cd7424a8`; A3 amendment `91911985` with fixes `0c5af5d2`. Reviewed by cumulative `rev-20260925T193452Z-beee9db9` (1 blocking, fixed) and verify-resolutions `rev-20260925T194346Z-88299e6b` (0 blocking). Full suite on `0c5af5d2` green. A3 approved as corrected (Architect message `1b6f3ca4`). Scope: wake transport seam, wake facts, and the watchdog timer (fake clock)
-- [ ] Chunk 04 (**GO** with chunk 05, message `1b6f3ca4`; no stop between them unless a new architectural question arises). Built and committed; covered by the boundary cumulative Critic with chunk 05. Scope: escalation routing and surfaces (PM notice, sender and recipient views, operator dashboard, undeliverable recipients)
-- [ ] Chunk 05: docs, CHANGELOG, FEATURES, and the isolated-instance E2E
-- [ ] Verify: focused tests plus the full suite on the feature worktree (**not** the main instance)
-- [ ] Cumulative Critic
+- [x] Chunk 04 (`dc325241`; GO with chunk 05, message `1b6f3ca4`). Reviewed by boundary cumulative `rev-20260925T200338Z-c0c2eeb5` and verify-resolutions `rev-20260925T201139Z-53c36989`. Scope: escalation routing and surfaces (PM notice, sender and recipient views, operator dashboard, undeliverable recipients)
+- [x] Chunk 05 (`7a6af992`; the isolated E2E passes): docs, CHANGELOG, FEATURES, and the isolated-instance E2E
+- [x] Verify: focused tests plus the full suite on the feature worktree (**not** the main instance). Full suite on `e8707883`: 13113 passed, 0 failed, 1 skipped
+- [x] Cumulative Critic: `rev-20260925T200338Z-c0c2eeb5` (0 blocking), with warnings fixed in `e8707883` and verified by `rev-20260925T201139Z-53c36989`
 - [ ] Draft PR opened. **STOP there**: the PM owns readiness and merge sequencing
 
 **Recorded decisions made during the build** (each reported to the Architect at the checkpoint):
@@ -233,7 +233,7 @@ undeliverable   recipient_retired        terminal failure states, each reported 
 
 **`retracted` (Architect R19; implementation of the operation is #1873).**
 - **Terminal and never escalated.** It is reachable only from `stored`, `delivered_to_listener`, `wake_pending`, `wake_blocked`, `wake_attempted` or `wake_not_accepted`, and only while no `read` or `acknowledged` fact exists.
-- **Atomic.** *(As built:)* the transition is decided inside one `BEGIN IMMEDIATE` transaction that re-reads the exchange and its facts before appending, so a read and a retract that race resolve to exactly one winner. The loser records nothing, and the caller learns the winning state. A duplicate retract returns the original result (idempotent on `request_id`).
+- **Atomic.** *(As built:)* the transition is decided inside one `BEGIN IMMEDIATE` transaction that re-reads the exchange and its facts before appending, so a read and a retract that race resolve to exactly one winner. The loser records nothing, and the caller learns the winning state. A duplicate retract returns the exchange unchanged: once it has ended as `retracted`, repeating the retraction is a no-op (`_terminal`). There is no request id; #1873's route may add one.
 - **Auditable, never deleted.** A fact `retracted` carries the actor principal, a bounded reason code and an optional `replacement_hub_id`. It is a tombstone: the row and every earlier fact stay.
 - **Late facts.** A read, ack or reply arriving after `retracted` is appended as an audit fact but does not change the state or reopen escalation.
 - **Ordinary correspondence only.** Exchange rows are created for ordinary peer mail only. TangleClaw's control notices (`control_changed`) and B1's own escalation notices get no exchange row: they stay in `control_receipts` or as facts on the parent exchange. So `retract` has nothing to act on for control, and HOLD/STOP/RELEASE can be superseded only by a newer control generation (#1861). `retract` on a non-ordinary kind is refused with `CONTROL_NOT_RETRACTABLE`.
