@@ -402,14 +402,14 @@ Manage with /prawduct:backlog (pick, add, find, list, update, dedup, import, mig
   Comment-only change, no behavior. The norm was deliberately kept broad ("not only exported ones") rather than narrowed to match the code — narrowing would have been amending a norm to fit nine missing comment blocks. Closing these sites is what makes the broad rule true. Line numbers are as of 2026-08-01; re-locate by symbol name, not by line.
 
 - **[TST-3M6R]** Switch `test/wrap-step-pr-merge.test.js` to `node:assert/strict`
-  `effort: S · impact: S · area: tests · source: user · added: 2026-08-01 · status: open · stage: ready · refs: .prawduct/artifacts/project-preferences.md § Direction (tests are node:test + node:assert/strict) · related: NRM-5K8T`
+  `effort: S · impact: S · area: tests · source: user · added: 2026-08-01 · status: shipped · stage: ready · refs: .prawduct/artifacts/project-preferences.md § Direction (tests are node:test + node:assert/strict) · related: NRM-5K8T`
 
   **Retroactivity recorded at norm birth** (testing-conventions norm, ratified 2026-08-01, `Retroactivity: migrate`). `test/wrap-step-pr-merge.test.js:9` is the only 1 of 201 test files still requiring `node:assert` rather than `node:assert/strict`.
 
   **Deliberately NOT a silent sweep.** Moving the file to strict changes what its `assert.equal` calls accept (loose `==` → `===`, including type coercion the current assertions may be relying on). Read the file's assertions, convert intentionally, and take the whole suite green afterward — a mechanical find-and-replace is the wrong shape here, which is why this was sized as backlog work instead of folded into the ratification sweep.
 
 - **[TST-5N8W]** Switch `test/condition-log.test.js` to `node:assert/strict`
-  `effort: S · impact: S · area: tests · source: janitor · added: 2026-08-20 · status: open · stage: ready · refs: .prawduct/artifacts/project-preferences.md § Direction (tests are node:test + node:assert/strict) · related: TST-3M6R, NRM-5K8T`
+  `effort: S · impact: S · area: tests · source: janitor · added: 2026-08-20 · status: shipped · stage: ready · refs: .prawduct/artifacts/project-preferences.md § Direction (tests are node:test + node:assert/strict) · related: TST-3M6R, NRM-5K8T`
 
   `test/condition-log.test.js` uses non-strict `node:assert` — same defect class as TST-3M6R (`test/wrap-step-pr-merge.test.js`), found during the 2026-08-20 Norm Health sweep but not previously tracked. Same caution as TST-3M6R: moving to strict changes what `assert.equal` accepts (`==` → `===`, possible type-coercion reliance) — read the assertions, convert intentionally, take the whole suite green afterward. Not a mechanical find-and-replace.
 
