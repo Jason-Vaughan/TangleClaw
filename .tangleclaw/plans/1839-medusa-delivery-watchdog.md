@@ -10,8 +10,8 @@ partition: serial. Every chunk touches lib/store.js, server.js or lib/medusa*.js
 - [x] Plan written (rev 1, 2026-09-25); rev 2 adds Architect R19 (`retracted` terminal state, #1873)
 - [x] Architect rulings incorporated: R20 (message `6f9218fb`), rev 3, §0
 - [x] Implementation released: R20 released it on incorporation, with B2 as the sole writer. Stops: the governance checkpoint after chunk 02, and the Critic/draft-PR boundary
-- [ ] Chunk 01: schema v49 and `lib/medusa-exchanges.js` (facts, projection, replay). Built and committed `f00594e3`; review pending (checkpoint cumulative)
-- [ ] Chunk 02: built and committed; review pending (checkpoint cumulative). Scope: send-side metadata, validation, arrival, read and ack facts, and the #1435 close-out. **Governance checkpoint: STOP for the Architect** after the cumulative Critic over chunks 01–02
+- [x] Chunk 01: schema v49 and `lib/medusa-exchanges.js` (facts, projection, replay). `f00594e3`
+- [x] Chunk 02 (`d7675966`, Critic fixes `009725d7`). Reviewed by cumulative `rev-20260925T185705Z-3b387950` and verify-resolutions `rev-20260925T190528Z-912dd4dd` (0 blocking). Suite on `009725d7`: all green except the known load flake #1658 (dir-scanner, untouched; passes in isolation). Scope: send-side metadata, validation, arrival, read and ack facts, and the #1435 close-out. **Governance checkpoint: STOP for the Architect** after the cumulative Critic over chunks 01–02
 - [ ] Chunk 03: wake transport seam, wake facts, and the watchdog timer (fake clock)
 - [ ] Chunk 04: escalation routing and surfaces (PM notice, sender and recipient views, operator dashboard, undeliverable recipients)
 - [ ] Chunk 05: docs, CHANGELOG, FEATURES, and the isolated-instance E2E
