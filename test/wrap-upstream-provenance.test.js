@@ -626,7 +626,10 @@ describe('the refresh failure reason shown to the operator', () => {
     assert.doesNotMatch(withUrl, /^fatal:/i);
     const withToken = f(`fatal: remote said ghp_${'B'.repeat(36)} is invalid`);
     assert.doesNotMatch(withToken, /ghp_B{10}/, 'a bare token in the text is withheld');
-    assert.ok(f('x'.repeat(500)).length <= 161);
+    assert.ok(f('x'.repeat(500)).length <= 160);
+    const long = f(`'${'/very/long/path'.repeat(20)}/gone.git' does not appear to be a git repository`);
+    assert.match(long, /does not appear to be a git repository$/, 'the cause at the end survives shortening');
+    assert.ok(long.length <= 160);
     assert.equal(f(''), 'the fetch failed');
   });
 
