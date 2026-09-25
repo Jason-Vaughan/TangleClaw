@@ -1857,6 +1857,17 @@ describe('wrap-drawer helpers — safe recommendations for wrap files (#1858)', 
     assert.deepEqual(plain(widget.ignoreSuggestions), ['/data/tangleclaw.sqlite', '/scratch/']);
   });
 
+  it('never recommends Include for a secret match, even if the server did, so Apply leaves it for the operator', () => {
+    const w = H.pathDecisionWidget({ kind: 'session-files' }, { foreignPaths: [
+      { path: '.tangleclaw/plans/leaky.md', why: 'w', recommendation: 'include', secretRules: ['github-token'] },
+      { path: 'scratch/leaky.log', why: 'w', recommendation: 'leave', secretRules: ['github-token'] }
+    ] });
+    assert.deepEqual(plain(w.paths.map((p) => p.recommendation)), [null, 'leave']);
+    const plan = plain(H.recommendationsToApply(w.paths, {}));
+    assert.deepEqual(plan.fill, { 'scratch/leaky.log': 'leave' });
+    assert.deepEqual(plan.unresolved, ['.tangleclaw/plans/leaky.md']);
+  });
+
   it('never offers a database as a choice', () => {
     assert.ok(!widget.paths.some((p) => p.path === 'data/tangleclaw.sqlite'));
   });

@@ -1106,7 +1106,12 @@
         why: typeof f.why === 'string' ? f.why : '',
         deleted: f.deleted === true,
         secret: Array.isArray(f.secretRules) && f.secretRules.length > 0,
-        recommendation: f.recommendation === 'include' || f.recommendation === 'leave' ? f.recommendation : null,
+        // A secret match is never recommended for Include, whatever the server
+        // sent: Apply fills recommendations, and one click must not commit a
+        // credential (#1858).
+        recommendation: f.recommendation === 'leave'
+          || (f.recommendation === 'include' && !(Array.isArray(f.secretRules) && f.secretRules.length > 0))
+          ? f.recommendation : null,
         recommendationWhy: typeof f.recommendationWhy === 'string' ? f.recommendationWhy : ''
       }));
     if (paths.length === 0) return null;

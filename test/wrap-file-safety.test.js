@@ -306,6 +306,21 @@ describe('the #1858 incident, end to end', () => {
     assert.ok(excluded.has(DB), 'included or not, the database is not work the changelog must cover');
   });
 
+  it('a plan that matches a secret rule is not recommended for Include, so Apply cannot commit it', async () => {
+    const repo = makeRepo();
+    const scope = await scopeFor(repo, launchBaseline.capture(repo));
+    // Assembled so this file does not itself hold a token-shaped literal.
+    const token = ['gh', 'p_'].join('') + 'Ab12Cd34Ef'.repeat(3) + 'Gh56Ij';
+    put(repo, '.tangleclaw/plans/leaky.md', `token: ${token}\n`);
+    put(repo, '.tangleclaw/plans/clean.md', '# clean\n');
+    const r = await runStep(sessionFiles, repo, scope);
+    assert.equal(r.status, 'blocked');
+    const byPath = Object.fromEntries(r.output.foreignPaths.map((f) => [f.path, f]));
+    assert.ok(byPath['.tangleclaw/plans/leaky.md'].secretRules.length > 0);
+    assert.equal(byPath['.tangleclaw/plans/leaky.md'].recommendation, null);
+    assert.equal(byPath['.tangleclaw/plans/clean.md'].recommendation, 'include');
+  });
+
   it('a new source file stays an ordinary question with no recommendation', async () => {
     const repo = makeRepo();
     const scope = await scopeFor(repo, launchBaseline.capture(repo));

@@ -5186,7 +5186,8 @@ function refreshPathManifest(wrap, widget) {
   const slot = wrap.querySelector('.wrap-decision-manifest-slot');
   if (slot) {
     slot.innerHTML = '';
-    const el = renderManifest(H.projectManifest(widget, chosen), 'If you apply the recommendations');
+    const title = widget.paths.some((f) => f.recommendation) ? 'If you apply the recommendations' : 'What this wrap will do with the uncommitted files';
+    const el = renderManifest(H.projectManifest(widget, chosen), title);
     if (el) slot.appendChild(el);
   }
   const pending = wrap.querySelector('.wrap-decision-apply-pending');

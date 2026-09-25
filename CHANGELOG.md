@@ -164,7 +164,7 @@ All notable changes to TangleClaw are documented in this file.
       - `node_modules/` and `.cache/` at any depth
       - `*.log`, `*.tmp`, `*.swp` and `*~` files
       - `.DS_Store` and `Thumbs.db`
-    - Anything else, including new source, has no recommendation. `lib/cache/` is source, not cache.
+    - Anything else, including new source, has no recommendation. `lib/cache/` is source, not cache. A file that matches a secret rule is never recommended for Include, so the Apply button cannot commit a credential.
 
     No radio is ever preselected.
   - **The drawer** shows each recommendation beside its choice and names the withheld databases, which have no choice. Above a new **Apply recommendations and retry** button, it shows a manifest of what applying would commit, keep local, withhold and still leave undecided. The button fills only unanswered files that have a recommendation and never overwrites a choice. Remembered answers for withheld databases are dropped, so they stop riding every Retry. Settled `session-files` and `commit` rows repeat the manifest for audit. Exact, anchored ignore lines are offered as text only. A directory line is offered only when nothing tracked or undecided sits under it, so `data/` is never suggested.
