@@ -135,9 +135,16 @@ A scripted live sync must therefore send its own `x-tangleclaw-project-id` and
 All routes are JSON. Control commands take `requestId` (1–128 characters of `[A-Za-z0-9._:-]`) as an
 idempotency key: replaying one returns the original result.
 
+`authority.escalation` (optional, #1839) names who is told when a blocking or
+critical Medusa message to this project goes unanswered. It is a visibility
+route for the delivery watchdog and grants no control authority: nothing
+checks it before a mutation, and the target project cannot be its own route.
+See `docs/medusa-delivery.md`.
+
 ```
 POST /api/control/assignments                    {projectId, requestId, issueRef?, authority?}   operator only
-     authority: {hold: [principals], stop: [...], lifecycle: [...], releaseDelegations: {"project:70": ["project:74"]}}
+     authority: {hold: [principals], stop: [...], lifecycle: [...], releaseDelegations: {"project:70": ["project:74"]},
+                 escalation?: {blocking: [principals], critical: [principals]}}
 GET  /api/control/assignments                    every open assignment (operator only)
 GET  /api/control/assignments/:id                full status: assignment, holds, events with receipts
 POST /api/control/assignments/:id/hold           {requestId, reasonCode, expectedGeneration?}

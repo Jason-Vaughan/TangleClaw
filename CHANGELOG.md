@@ -6,7 +6,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
-- **Medusa messages get a durable delivery record, the base for the delivery watchdog** (#1839, in progress). Until now TangleClaw recorded only wake nudges, so a message stored on the Hub but never read looked the same as one handled.
+- **Unanswered Medusa messages no longer wait silently: a delivery watchdog tracks each one and escalates it** (#1839, experimental). Until now TangleClaw recorded only wake nudges, so a message stored on the Hub but never read looked the same as one handled, and a blocked sender waited until the operator noticed a badge. The operator guide is `docs/medusa-delivery.md`.
   - **Each ordinary message to a recipient is now an exchange.** Its facts (sent, arrived, wake, read, acknowledged, replied, closed) are append-only, and the exchange's state is recomputed from them, so facts that race or arrive out of order still give the same answer.
   - **A send is recorded before the Hub is called.** A send whose Hub outcome is lost stays `send_unknown` rather than being retried or assumed delivered.
   - **Priority is `normal`, `blocking` or `critical`, and changes only timing and visibility.** A blocking message needs a verified session launch; critical is reserved to the operator and TangleClaw. A priority that cannot be proven is refused, never quietly downgraded.
