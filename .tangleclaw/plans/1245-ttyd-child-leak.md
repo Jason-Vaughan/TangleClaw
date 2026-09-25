@@ -13,17 +13,64 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
 
 - [x] Investigation: 2 read-only scouts collected and spot-checked (2026-09-25)
 - [x] Plan written (rev 1)
-- [ ] Architect rulings on Q1–Q7 (below). **STOP here** (dispatch boundary: no source edits before rulings)
-- [ ] Chunk 01: churn/soak harness plus isolated baseline run against the installed 1.7.7_6
-- [ ] Chunk 02: shared PID+generation-bound reading, action receipt, immediate boot check
-- [ ] Chunk 03: root fix (the option ruled on in Q1), proven by the harness
+- [x] Architect ruled on Q1–Q7 (R22, 2026-09-25): all approved, Q1/Q5/Q6/Q7 with modifications. See "Architect ruling R22"
+- [x] Plan revised with R22 (rev 2)
+- [ ] **HELD: implementation is not released.** B2 is the sole #1839 writer and both touch server/monitor lifecycle
+      surfaces. The PM may release #1245 only after #1839 merges, live-syncs and wraps, or is explicitly parked and a
+      fresh collision revalidation says there is one writer. Until then: no harness execution, source edits, push or live action
+- [ ] Chunk 01: mutation-sensitive churn harness under the R22 host guards; fail-fast baseline reproduction against
+      the installed 1.7.7_6 plus mutation proof; T_age derived from the baseline data
+- [ ] Chunk 02: bounded async single-flight `takeReading()`, PID/generation binding, confirmed-wedge predicate,
+      action receipt, immediate boot check, env kill switch and bounded threshold
+- [ ] Chunk 03: candidate matrix (A1+A2 and A3) against the same acceptance contract; the winner is chosen by evidence
 - [ ] Chunk 04: rollout and rollback docs, CHANGELOG, watcher re-tuned to a safety net
-- [ ] Verify, Critic, draft PR (pilot boundary: no merge)
+- [ ] Verify, Critic, one draft PR (pilot boundary: no merge). #1245 stays open until post-merge live certification
 
 **Pilot envelope (IN FORCE):** no merging any PR, no pulling or updating the live checkout, no restarting the
 live service, no tests on the main instance, no tag, publish or release, no deploy. Everything below that runs
 a ttyd runs an *isolated* one: its own unix socket, its own `tmux -L` server, a scratch directory outside
 `~/Documents`.
+
+## Architect ruling R22 (2026-09-25 18:48Z, controlling; where it differs from the sections below, R22 wins)
+
+- **Q1: an evidence-gated candidate matrix, not a preselected fix.** First reproduce the installed-build failure with
+  a mutation-sensitive harness. Test A1+A2 and A3 (the Darwin master-side flush) against the same acceptance contract.
+  A1 may win only if the harness proves its HUP/trap/wait ordering flushes *before* the session leader enters
+  `ttywait`. The added wrapper process and the earlier `exec` rationale must be covered. Reducing replay (A2) alone is
+  mitigation, never completion. If A1 is flaky or cannot guarantee ordering, **A3 is the preferred root fix** (it acts at
+  the PTY master close boundary, matching the upterm evidence). A3 may be *built* only after implementation release.
+  Installing it, changing the plist or TCC, or touching live stays with the Operator/PM.
+- **Q2: approved.** One bounded async single-flight `takeReading()` owns measurement. The watcher evaluates the
+  exact returned reading, and health serves that reading's PID, generation and sample timestamp. There is no
+  synchronous fail-safe zero: a measurement failure is null/unknown and never triggers action. Overlapping ticks are
+  prevented, and old-generation cache entries are discarded.
+- **Q3: approved.** Confirmed wedge = E/Z AND (age ≥ T_age OR K = 2 observations of the same child in the same ttyd
+  generation). T_age is derived from baseline data. Transient E/Z is recorded separately from confirmed wedges. The
+  15-minute orphan hold is retired only once this predicate is in place. The pool gate stays immediate and independent.
+- **Q4: approved.** A bounded post-kickstart re-read must prove a new PID/generation and persist `ok` /
+  `no-new-generation` / `failed`. A generation change with no action receipt is `external-restart`. Never attribute
+  an actor that cannot be proven.
+- **Q5: approved with safety.** Env kill switch plus a bounded threshold override. Disabled or invalid configuration
+  is logged loudly, and health says disabled/unknown, never clear. The threshold is bounded to a documented safe range,
+  and invalid input falls back to the safe default.
+- **Q6: approved with host guards.**
+  - Isolation: an isolated unix socket, a unique `tmux -L` name, a scratch directory, exact-PID cleanup traps, and no
+    live ttyd, tmux or service mutation.
+  - Preflight: live health clear and ample PTY headroom.
+  - While running: concurrency capped at **10**; sample the global pool and scratch descendants between batches.
+  - Fail fast at **5 confirmed scratch wedges or 25 % global PTY use**. On stop, kill only the scratch ttyd and verify
+    PTY and fd counts return to baseline. If cleanup cannot restore them, stop and report.
+  - No 2 000-cycle failing baseline once reproduction is established.
+- **Q7: approved as modified.**
+  - **Baseline:** fail-fast reproduction plus mutation proof.
+  - **Each shippable candidate:** 2 000 guarded cycles and a 2-hour isolated soak, with zero confirmed wedges, zero
+    restarts, and resources back to baseline.
+  - **Post-merge live certification:** at least 72 h **and** a recorded, meaningful attach/detach sample, with zero
+    orphan kickstarts, zero persistent E/Z and no upward PTY trend. Extend the period if it is too quiet.
+  - #1245 stays open until certification.
+- **Staging: one PR** unless new evidence forces a split. Chunks 01–02 are completed and validated first on the
+  branch. They do **not** deploy separately (section F is revised to match).
+- **Hold:** the plan is approved, but implementation stays held while B2 is the sole #1839 writer (see Status).
 
 ## What the operator required (the 2026-09-25 escalation) and where each is answered
 
@@ -95,8 +142,8 @@ that clears them. The same deadlock was just fixed in upterm by flushing from th
 - **The escalation's "22/20, then clear with no restart" most likely had a restart after all.** ttyd was
   restarted at 18:28:54Z with no `[ttyd-watcher]` line. The panel had fired at 18:25:07 from a `warm()`
   reading of the pre-restart ttyd, and cleared at 18:30:00. The "five expected children" were the
-  post-restart attaches (their elapsed time equals ttyd's). **Who restarted ttyd is unknown**
-  (manual, another session, or launchd). That the watcher cannot see or record restarts it did not make is
+  post-restart attaches (their elapsed time equals ttyd's). It was the PM's authorized `POST /api/server/restart` during the Car A2 live
+  deployment (R23; see the end of this plan). That the watcher cannot see or record restarts it did not make is
   itself a finding (see C).
 
 ## A. Root fix options
@@ -162,11 +209,14 @@ from the same reading.
 
 ## F. Rollout
 
-1. Chunks 01–02 ship first (harness, shared reading, receipt, boot check). They are safe under the current ttyd
-   and make the rollout observable.
-2. Chunk 03 (the root fix) ships behind its own revert. For A1/A2 that is a script change that takes effect on
-   the next attach, so no ttyd restart is required, but live effect needs the operator to deploy.
-3. Soak on the live install with the receipts and logs as evidence. Only then relax the orphan threshold to a safety net.
+*(Revised per R22.)* One PR, unless new evidence forces a split.
+1. Chunks 01–02 (harness, shared reading, receipt, boot check) are completed and validated first **on the branch**.
+   They do not deploy separately.
+2. Chunk 03 adds the evidence-selected root fix to the same PR. An A1 winner is a script change that takes effect on
+   the next attach. An A3 winner is built on the branch, but installing it, repointing the plist and any TCC grant are the
+   Operator's/PM's actions, not the builder's.
+3. After merge and deploy (Operator/PM), live certification per R22 Q7: ≥ 72 h plus a recorded, meaningful attach/detach
+   sample, with the receipts and logs as evidence. Only then is the orphan threshold relaxed to a safety net and #1245 closed.
 
 ## G. Rollback
 
@@ -193,9 +243,9 @@ from the same reading.
 ## Proposed partition (for the build, after rulings)
 
 Chunk 01 (harness) and chunk 02 (reading/receipt) are disjoint, so they could be delegated in isolated worktrees.
-Chunk 03 depends on 01's baseline. Proposed: 01 ∥ 02 delegated, 03 and 04 serial.
+Chunk 03 depends on 01's baseline. Proposed: 01 ∥ 02 delegated, 03 and 04 serial, all on one branch and one PR (R22).
 
-## Questions for the Architect (rulings needed at Plan Written)
+## Questions for the Architect (answered by R22 above; kept for the record)
 
 1. **Root fix path**: approve A1 (+A2) script-side drain as the first candidate, with A3 (patched ttyd at
    `~/.tangleclaw/bin/ttyd`, one TCC re-grant, a `cmake` install) as the fallback if A1 fails the harness?
@@ -211,5 +261,6 @@ Chunk 03 depends on 01's baseline. Proposed: 01 ∥ 02 delegated, 03 and 04 seri
 7. **Acceptance**: 2 000 cycles + 2 h isolated soak per candidate, then 72 h live with zero orphan
    kickstarts — confirm or amend the numbers.
 
-Unresolved separately: who restarted ttyd at 18:28:54Z on 2026-09-25. Suggest the PM asks the fleet. If it was a
-session, that is a Pilot-envelope question, not a #1245 one.
+Resolved (Architect R23): the PM has proven it issued `POST /api/server/restart` at 18:28:54Z on 2026-09-25 during the
+Car A2 live deployment. The restart was **authorized, not unexplained**. The receipt gap remains valid: the watcher could not
+see or record the restart, which is what the `external-restart` receipt (R22 Q4) closes.
