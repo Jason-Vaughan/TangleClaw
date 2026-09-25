@@ -6,8 +6,8 @@ Dispatched by the PM on 2026-09-25.*
 ## Status
 
 - [x] Plan written; design items A1–A8 sent to the Architect. **STOP here** (dispatch boundary: "Stop at PLAN WRITTEN")
-- [ ] Architect has ruled on A1–A8
-- [ ] Chunk 01 — classifier + server enforcement (session-files, commit, changelog-coverage, handback)
+- [x] Architect has ruled on A1–A8 (2026-09-25: A1, A3, A5, A6 approved; A2 and A4 approved with constraints; A7 modified; A8 rejected. See Rulings). Waiting for the PM's go-ahead
+- [ ] Chunk 01 — classifier + server enforcement (session-files, commit, changelog-coverage)
 - [ ] Chunk 02 — drawer: recommendations, Apply-and-retry, manifest, ignore remediation
 - [ ] Chunk 03 — docs + CHANGELOG, cumulative Critic (`Type: cumulative-final`)
 
@@ -113,6 +113,43 @@ before the owner rules, the same place `withheldPrefixes` sits today:
   exact-path suggestion (`/data/tangleclaw.sqlite`, `/scratch/`). The suggestion names the path's own
   directory only when that directory holds nothing but local artifacts; it never names a directory that
   also holds tracked files (`git ls-files <dir>` non-empty → exact path only). So `data/` is never suggested.
+
+## Rulings (Architect, 2026-09-25) — these override the Design section wherever they differ
+
+- **A1 approved:** keep the separate `_file-safety.js`.
+- **A2 approved with constraints.** Protected applies across owned, foreign, tracked and untracked files,
+  after the existing TC state/maintenance handling.
+  - `Thumbs.db` is a specific `local` exception, checked before the generic `.db` rule.
+  - Suffix checks are case-insensitive.
+  - A sidecar (`-wal`/`-shm`/`-journal`) is protected only when it is tied to a recognized DB basename.
+  - `lstat` comes before any header read, and symlinks are never followed.
+  - **Required test:** a protected file that is already staged in the real index is excluded from the wrap's
+    pathspec commit, and it stays staged and uncommitted.
+- **A3 approved:** no in-wrap override. The remediation must say that the escape is a *separate ordinary
+  commit outside the wrap*, not `git add` followed by a wrap.
+- **A4 approved with a modification.** Recommendations stay advisory, and no radio is preselected.
+  - `scratch`, `tmp`, `temp`, `cache`, `logs` and `coverage` count as `local` only as **root-level**
+    directories.
+  - `node_modules` and `.cache` count as `local` as any path segment.
+  - **Required negative tests:** `lib/cache/adapter.js` and `src/tmp/parser.js` stay `ambiguous`.
+  - New source stays ambiguous. `durable` stays limited to `.tangleclaw/{plans,priming,memories}` Markdown.
+- **A5 approved:** Apply-and-retry is client-side, over the existing route. It never overwrites an explicit
+  operator choice and fills only undecided entries that have a recommendation. Protected paths get no
+  radio.
+- **A6 approved:** suggestion text only, exact and anchored. A directory suggestion is allowed only when it
+  cannot hide tracked **or ambiguous** contents; otherwise the suggestion is the exact file. Nothing writes to
+  `.gitignore` or `.git/info/exclude`.
+- **A7 modified.** The concise manifest must be visible in the decision surface **before** the operator
+  presses Apply-and-retry, and the click is the confirmation. The manifest is repeated on the commit row for
+  audit. It shows exact paths under four groups: commit, keep local, protected, and unresolved ambiguous.
+- **A8 rejected.** `lib/wrap-handback.js` is out of scope. Refused Includes are recorded in the output and
+  audit, and the output says visibly that they were ignored. The client prunes protected paths from its
+  accumulated `pathDecisions` map when results return. Forged API options may recur but must never stage a
+  file and must never create a handback gate.
+- **Assumptions:** all three were approved (the known runtime paths, new source stays ambiguous, and the
+  `durable` scope).
+- **Standing instruction:** send any newly discovered architectural choice to the Architect before
+  implementing it. The stop point is the draft-PR pilot boundary.
 
 ## Decisions for the Architect
 
