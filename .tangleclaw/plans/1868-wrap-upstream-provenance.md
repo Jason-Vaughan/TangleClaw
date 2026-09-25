@@ -191,8 +191,11 @@ provenance = {
 - **`established`** means the refresh succeeded. **`stale`** means a ref exists but was not refreshed this wrap.
   **`unavailable`** means no ref could be resolved.
 - `session-files` computes the object, including the refresh, and returns it in `output.provenance`.
-- `commit` and `changelog-coverage` **do not refetch**. They take `refSha` from the session-files result in
-  `previousResults` and recompute only the local-side blobs against that same commit. All three therefore
+- `commit` and `changelog-coverage` **do not refetch**. `commit` takes `refSha` from the session-files result in
+  `previousResults` and recomputes the local-side blobs against that same commit. `changelog-coverage` is
+  synchronous and only counts work, so it reuses session-files' verdicts (`provenanceVerdicts`) instead of
+  rechecking. A file a later wrap step rewrites is still decided by `commit`; at worst the changelog check
+  under-counts it. This was accepted in the Critic disposition. All three therefore
   classify against one upstream commit. When no session-files result exists, as in a commit-only replay, the
   commit step resolves the ref locally with no refresh and marks it `stale`.
 - Every git call is read-only plumbing: `rev-parse`, `hash-object`, `cat-file`, `merge-base`,

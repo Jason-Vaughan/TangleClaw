@@ -23,6 +23,8 @@ const provenance = require('../lib/wrap-steps/_upstream-provenance');
 const ownership = require('../lib/wrap-steps/_file-ownership');
 const sessionFiles = require('../lib/wrap-steps/session-files');
 const commitStep = require('../lib/wrap-steps/commit');
+const coverage = require('../lib/wrap-steps/changelog-coverage');
+const aiContent = require('../lib/wrap-steps/ai-content');
 const secretCheck = require('../lib/wrap-steps/_secret-check');
 const launchBaseline = require('../lib/launch-baseline');
 const wrapScope = require('../lib/wrap-scope');
@@ -641,5 +643,44 @@ describe('verdicts and tightening', () => {
     assert.equal(provenance._internal._countLines(''), 0);
     assert.equal(provenance._internal._countLines('a\nb\n'), 2);
     assert.equal(provenance._internal._countLines('a\nb'), 2);
+  });
+});
+
+describe('the changelog check judges only what the wrap will commit, upstream included', () => {
+  it('a file upstream already holds is not unlogged work, and without session-files\' answer it would be', async () => {
+    const fleet = makeFleet();
+    landUpstream(fleet, { 'lib.js': 'v2\n' });
+    const baseline = launchBaseline.capture(fleet.session);
+    write(fleet.session, 'lib.js', 'v2\n');
+    const scope = await scopeFor(fleet.session, baseline);
+    const sf = await runStep(sessionFiles, fleet.session, scope);
+    assert.deepEqual(sf.output.alreadyUpstream, ['lib.js']);
+    const previousResults = [{ stepId: 'session-files', status: 'done', output: sf.output }];
+    const withFacts = coverage.evaluate(fleet.session, ['CHANGELOG.md'], [], scope, { previousResults });
+    assert.deepEqual(withFacts.uncommittedWork, [], 'content already on origin/main needs no changelog entry');
+    const withoutFacts = coverage.evaluate(fleet.session, ['CHANGELOG.md'], [], scope, {});
+    assert.deepEqual(withoutFacts.uncommittedWork, ['lib.js'], 'control: with no upstream answer it would be judged');
+  });
+
+  it('the ai-content gate hands the run\'s earlier results to the changelog predicate', () => {
+    const saved = { cov: aiContent._internal.changelogCoverage, read: aiContent._internal.readForVerify };
+    let seen = null;
+    aiContent._internal.readForVerify = () => 'same';
+    aiContent._internal.changelogCoverage = (_p, _paths, _cov, _scope, opts) => {
+      seen = opts;
+      return { verdict: 'covered', uncovered: [], uncommittedWork: [], checkedCount: 1, range: null, reason: null };
+    };
+    try {
+      const previousResults = [{ stepId: 'session-files', output: { provenance: { state: 'established' } } }];
+      const out = aiContent._verifyChangedGate('/p', { id: 'changelog-update', verifySatisfiedBy: 'changelog-coverage' },
+        { 'CHANGELOG.md': 'same' }, { workToplevel: '/p' }, { pathDecisions: { a: 'leave' }, pathDecisionBasis: { a: 'none' } }, previousResults);
+      assert.equal(out, null, 'a covered verdict satisfies the step');
+      assert.equal(seen.previousResults, previousResults);
+      assert.deepEqual(seen.pathDecisions, { a: 'leave' });
+      assert.deepEqual(seen.pathDecisionBasis, { a: 'none' });
+    } finally {
+      aiContent._internal.changelogCoverage = saved.cov;
+      aiContent._internal.readForVerify = saved.read;
+    }
   });
 });
