@@ -113,6 +113,20 @@ otherwise be retried on a reconnect loop forever. The cost is that the default i
 a normal-looking value for a read that did not succeed, so the log line is the
 operator's only signal that an override was ignored.
 
+### Turning off or tuning the ttyd watcher (macOS)
+
+The ttyd watcher (`lib/ttyd-watcher.js`) restarts the terminal service when its PTY pool fills or
+it collects leaked `tmux attach` children. Two environment variables, read when the server starts,
+are the rollback levers for it:
+
+| Variable | Values | Effect |
+|---|---|---|
+| `TANGLECLAW_TTYD_WATCHER` | `off` / `0` / `false` to disable; `on` / `1` / `true` (or unset) to enable | Disabled, the watcher never restarts ttyd and logs `ttyd watcher DISABLED` at warn on every start. The system health panel reports the ttyd row as **Could not check**, never clear. Any other value is logged at warn, and the watcher stays enabled. |
+| `TANGLECLAW_TTYD_ORPHAN_THRESHOLD` | An integer from 5 to 200 (default 20) | How many confirmed leaked children trip a restart. The value in force is logged at warn when it is not the default. Anything outside the range, or not an integer, is logged at warn and the default is used. |
+
+For a launchd install, set them in the server's plist (`EnvironmentVariables`) and restart the
+server; they are not read from `config.json`.
+
 ## Global Configuration (`config.json`)
 
 Auto-created on first run with defaults. Editable directly or via `PATCH /api/config`.

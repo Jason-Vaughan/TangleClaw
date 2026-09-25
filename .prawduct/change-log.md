@@ -35,6 +35,39 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-25 — ttyd watcher: one shared reading, confirmed wedges, kickstart receipts (#1245, chunk 02)
+
+<!-- prawduct: type=bugfix | scope=ttyd-1245 -->
+
+Pilot B1, #1245 chunk 02. The plan is `.tangleclaw/plans/1245-ttyd-child-leak.md`. Architect ruling R22 (Q2–Q5) governs it.
+
+**Root cause (of the disagreement, not of the leak).** The watcher, the health sampler and the UI cache each measured ttyd on their own. None of their readings was bound to a ttyd process. The watcher judged a single snapshot, in which a child that was merely exiting counted as leaked, and its synchronous probes turned a failed measurement into zero. So the panel could read 22/20 while a process read showed the five expected clients, and a restart the watcher did not make was invisible to it.
+
+**The change.**
+- **One reading:** a single async, single-flight `takeReading()` owns measurement. It records the pid, a generation (`<pid>@<lstart>`), the sample time, each child's state and age from one `ps` call, and the pool. A failed probe is `null`.
+- **Sharing it:** the watcher tick classifies that exact reading, and `measureLeak` serves it to `lib/system-health.js`. History is per generation; a new generation drops the old readings.
+- **Confirmed wedges:** a child counts when it is E/Z AND (older than `wedgeAgeMs`, OR seen E/Z in an earlier reading of the same generation at least 30 s before). The 30 s gap exists because the panel and the tick share the store. Transients are reported apart from wedges. `wedgeAgeMs` = 120 s is provisional until chunk 01 measures it.
+- **Receipts:** after a kickstart the watcher re-reads, bounded at 10 s, until a new generation appears, and records `ok` / `no-new-generation` / `failed`. A generation change it did not cause is `external-restart`, and no actor is named.
+- **Ticks:** they never overlap, and one runs at boot.
+- **Switches:** `TANGLECLAW_TTYD_WATCHER` and `TANGLECLAW_TTYD_ORPHAN_THRESHOLD` (5–200). Invalid values warn and use the safe default. When the watcher is disabled, health reports `unknown`.
+- **Health:** the ttyd condition carries `reading {pid, generation, sampledAt}` and `lastReceipt`. A cached reading of a replaced ttyd is dropped and re-measured.
+
+**Test contracts changed (approved by R22; none weakened silently):**
+- **Synchronous probes and `_check`:** the sync probes (`_getTtydPid`, `_isPtyPoolExhausted`, `_countTtydOrphans`, `_countTtydZombies`, `_ttydUptimeMs`) and the sync `_check` were removed (R22 Q2: no sync fail-safe zero). Their tests were ported to `_parsePid`, `_poolFromCounts`, `_parseChildren`, `classifyReading`, `takeReading` and `_tick`.
+- **The pool's failure value:** the pool "fail-safe `{cap: 0}`" contract became "`null`, never an empty pool".
+- **The 15-minute uptime hold:** retired (R22 Q3), together with its five watcher tests and four health tests. Its purpose, not tripping on a restart's reconnect burst, is now pinned by the burst tests (a young burst does not kickstart; the same children on a later tick do; an earlier sighting under a different generation confirms nothing). Its sub-contracts carried forward: the pool gate never held, a refused kickstart staying armed, and an unreadable age not suppressing (it now confirms on the second sighting).
+- **The zombie-count diagnostic:** dropped. The child list now carries every state.
+- **Real-host smoke tests:** these now run the parsers against real `ps` and `sysctl` output.
+
+**Verification.** Mutation checks (each break was caught, then reverted):
+- removing the observation gap;
+- counting every E/Z child as wedged;
+- acting on an unknown gate;
+- letting a disabled watcher read as clear;
+- serving a replaced ttyd's cached reading.
+
+The declared suite result is recorded by `prawduct-hook test-evidence`.
+
 ## 2026-09-25 — Medusa delivery watchdog: tracked exchanges, durable re-arms, escalation (#1839)
 
 <!-- prawduct: type=feature | scope=medusa-1839 -->
