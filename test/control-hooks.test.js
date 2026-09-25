@@ -220,7 +220,8 @@ describe('control-hooks (#1861)', () => {
     it('pre-push arguments and stdin reach the chained hook byte-exact', () => {
       const dir = repo('push');
       const bare = fs.mkdtempSync(path.join(tmpDir, 'bare-'));
-      execSync(`git init -q --bare ${bare} && git remote add origin ${bare}`, { cwd: dir, shell: '/bin/sh' });
+      initRepo(bare, ['--bare']);
+      execSync(`git remote add origin ${bare}`, { cwd: dir, shell: '/bin/sh' });
       const hooksDir = hooks.locate(dir).hooksDir;
       const out = path.join(tmpDir, `push-seen-${path.basename(dir)}`);
       script(path.join(hooksDir, 'pre-push'), `#!/bin/sh\nprintf '%s|' "$@" > ${out}\ncat >> ${out}\nexit 0\n`);
