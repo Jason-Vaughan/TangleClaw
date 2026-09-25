@@ -435,6 +435,8 @@ describe('medusa-exchanges (#1839)', () => {
       assert.equal(row.rearm_count, 1);
       assert.equal(row.next_eligible_at, '2026-09-25T12:05:00.000Z');
       mx.recordEscalationFact(x.exchange_id, 'escalation_queued', { code: 'blocking-unread' });
+      assert.equal(store.medusaExchanges.get(x.exchange_id).esc_level, 'none', 'a notice fact does not move the ladder');
+      mx.recordEscalationFact(x.exchange_id, 'escalated', { code: 'blocking-unread' });
       assert.equal(store.medusaExchanges.get(x.exchange_id).esc_level, 'escalated');
       assertReplayMatches(x.exchange_id);
     });

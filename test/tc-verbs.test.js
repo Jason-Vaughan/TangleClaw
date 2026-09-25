@@ -357,6 +357,26 @@ describe('tc verb roster (lib/tc-verbs)', () => {
       assert.match(bad.stderr, /number of minutes/);
     });
 
+    it('sent lists open exchanges with where each stands, and says so honestly when there are none', async () => {
+      const calls = [];
+      const none = await message.run({
+        env: {}, argv: ['sent'],
+        getJson: async (p) => { calls.push(p); return p.startsWith('/api/tc/whoami') ? { project: { id: 1, name: 'p' } } : { exchanges: [] }; },
+        postJson: async () => { throw new Error('sent must not POST'); }
+      });
+      assert.equal(none.code, 0);
+      assert.equal(calls[1], '/api/sessions/p/medusa/exchanges?direction=sent&open=1');
+      assert.match(none.stdout, /no open exchanges/);
+      const some = await message.run({
+        env: {}, argv: ['sent'],
+        getJson: async (p) => (p.startsWith('/api/tc/whoami') ? { project: { id: 1, name: 'p' } } : {
+          exchanges: [{ exchangeId: 'mx_1', priority: 'blocking', label: 'wake blocked', wakeCode: 'pane-composer-has-input', escalation: 'escalated', recipient: { workspaceId: 'ws-b' } }]
+        }),
+        postJson: async () => { throw new Error('sent must not POST'); }
+      });
+      assert.match(some.stdout, /mx_1 {2}blocking {2}to ws-b: wake blocked, waiting on pane-composer-has-input, escalation: escalated/);
+    });
+
     it('close posts to the exchange route, id URL-encoded, and needs an id', async () => {
       const bare = await message.run({ ...noopCtx, argv: ['close'] });
       assert.equal(bare.code, 1);

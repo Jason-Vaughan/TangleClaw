@@ -1455,6 +1455,13 @@ route('GET', '/api/server-info', (_req, res) => {
   info.restartImpact = info.isStale === true
     ? checkoutState.impactSnapshot(serverInfo.getRepoRoot(), info.startupSha, info.currentDiskSha)
     : null;
+  // #1839: Medusa exchanges waiting on the operator, for the dashboard banner.
+  try {
+    info.medusaEscalations = medusaWatchdog.escalationSummary();
+  } catch (err) { // prawduct:allow prawduct/broad-except -- a store error must not cost the dashboard its whole status poll
+    log.warn('Could not summarize Medusa escalations', { error: err.message });
+    info.medusaEscalations = null;
+  }
   jsonResponse(res, 200, info);
 });
 
@@ -5023,6 +5030,14 @@ route('GET', '/api/medusa/deliveries', (req, res) => {
   });
 });
 
+// GET /api/medusa/escalations — every open Medusa exchange the delivery
+// watchdog has escalated (#1839), oldest first: priority, age, sender and
+// recipient names, and what the recipient's side is blocked on. Never a
+// message body. Read-only, like the deliveries view above.
+route('GET', '/api/medusa/escalations', (_req, res) => {
+  jsonResponse(res, 200, { escalations: medusaWatchdog.listEscalations() });
+});
+
 /**
  * Whether a session the wake ledger lists as un-nudged may still have mail
  * nobody has handled (#1435). The ledger only writes while there is unread
@@ -6933,7 +6948,10 @@ function registerMedusaRoutes(prefix, resolve) {
     const senderProjectId = targetProjectId(r.target);
     let meta;
     try {
-      meta = medusaExchanges.validateSendMeta(body, exchangeCaller(req, senderProjectId), senderProjectId);
+      const { settings } = medusaWatchdog.resolveSettings();
+      meta = medusaExchanges.validateSendMeta(body, exchangeCaller(req, senderProjectId), senderProjectId, {
+        normal: settings.agedNormalMs, blocking: settings.escalateBlockingMs, critical: 0
+      });
     } catch (err) {
       return exchangeRefusal(res, err);
     }

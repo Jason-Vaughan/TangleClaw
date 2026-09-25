@@ -230,6 +230,8 @@ async function loadServerInfo() {
   // branches below because those `return` — and a checkout that is both
   // behind upstream and ahead of the running process must show both.
   renderBehindOriginBanner(data.behindOrigin);
+  // #1839: Medusa messages the delivery watchdog escalated to the operator.
+  renderMedusaEscalationBanner(data.medusaEscalations);
   // #993: what the served checkout is on. Before the stale branches too, for
   // the same reason — a feature branch checked out here is itself a deploy.
   renderLiveCheckoutBanner(data.liveCheckout, data.behindOrigin);
@@ -512,6 +514,36 @@ function renderBehindOriginBanner(info) {
     `ℹ <strong>${commitsAhead} new commit${commitsAhead === 1 ? '' : 's'} upstream on origin/main.</strong> ` +
     'This checkout is behind — pull them when convenient. ' +
     '(An install pinned to a release tag updates through <em>Update now</em> instead.)';
+  banner.classList.remove('hidden');
+}
+
+/**
+ * Show or hide the Medusa escalation banner (#1839) from the
+ * `medusaEscalations` field of `/api/server-info`: how many messages the
+ * delivery watchdog escalated to the operator, and the oldest one's priority,
+ * age, recipient and blocker. Built with text nodes only, since the recipient
+ * is a project name. Self-clears when nothing is escalated.
+ * @param {{count: number, oldest: {priority: string, ageMinutes: number, recipient: string, blocker: string, blockerMeaning: (string|null)}}|null|undefined} summary
+ * @returns {void}
+ */
+function renderMedusaEscalationBanner(summary) {
+  const banner = document.getElementById('medusaEscalationBanner');
+  const textEl = document.getElementById('medusaEscalationBannerText');
+  if (!banner || !textEl) return;
+  const count = summary ? Math.max(0, Number(summary.count) | 0) : 0;
+  if (count === 0 || !summary.oldest) {
+    banner.classList.add('hidden');
+    return;
+  }
+  const o = summary.oldest;
+  const strong = document.createElement('strong');
+  strong.textContent = `Medusa: ${count} message${count === 1 ? ' needs' : 's need'} attention.`;
+  const age = Math.max(0, Number(o.ageMinutes) | 0);
+  const detail = document.createTextNode(
+    ` Oldest: ${String(o.priority)}, ${age} min, to ${String(o.recipient)}, blocked by ${String(o.blocker)}`
+    + (o.blockerMeaning ? ` (${String(o.blockerMeaning)})` : '') + '.'
+  );
+  textEl.replaceChildren(strong, detail);
   banner.classList.remove('hidden');
 }
 

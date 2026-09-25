@@ -193,8 +193,7 @@ describe('medusa-watchdog (#1839)', () => {
       assert.equal(row.rearm_count, 0);
       assert.ok(store.medusaExchanges.listOpen().some((r) => r.exchange_id === x.exchange_id), 'still in the working set');
       assert.equal(Date.parse(row.created_at), T0, 'its age is measured from when it was sent');
-      assert.equal(mx.recordEscalationFact(x.exchange_id, 'escalation_queued', { code: 'blocking-unread' }).esc_level, 'escalated',
-        'an age escalation can still be recorded on it');
+      assert.equal(row.esc_level, 'operator', 'with no trigger it escalated by age alone, to the operator since no route is set');
     });
 
     it('walks the backoff and stops at the cap, each re-arm on its own trigger', () => {

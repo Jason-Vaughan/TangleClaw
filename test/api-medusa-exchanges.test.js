@@ -376,6 +376,29 @@ describe('API — Medusa exchanges (#1839)', () => {
     assert.deepEqual(store.config.load().medusaWatchdog, { maxRearms: 2, rearmAfterMs: 120000 }, 'patches merge');
   });
 
+  it('lists escalated exchanges for the operator and summarizes them on the server-info poll', async () => {
+    const watchdog = require('../lib/medusa-watchdog');
+    const sent = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'secret body', priority: 'blocking' }, bPM.headers);
+    assert.equal(sent.status, 200, JSON.stringify(sent.data));
+    const origSend = watchdog._internal.sendSystemMessage;
+    watchdog._internal.sendSystemMessage = async () => ({ status: 'received' });
+    try {
+      const x = store.medusaExchanges.get(sent.data.exchange.exchangeId);
+      await watchdog.tick(Date.parse(x.created_at) + 61 * 60 * 1000).notices;
+    } finally {
+      watchdog._internal.sendSystemMessage = origSend;
+    }
+    const list = await call(server, 'GET', '/api/medusa/escalations', null, op);
+    assert.equal(list.status, 200);
+    const mine = list.data.escalations.find((e) => e.exchangeId === sent.data.exchange.exchangeId);
+    assert.ok(mine, 'the escalated exchange is listed');
+    assert.equal(mine.escalation, 'operator');
+    assert.equal(mine.recipientName, builder.name);
+    assert.ok(!JSON.stringify(list.data).includes('secret body'), 'no message text');
+    const info = await call(server, 'GET', '/api/server-info', null, op);
+    assert.ok(info.data.medusaEscalations && info.data.medusaEscalations.count >= 1);
+  });
+
   it('drops a session from the undelivered list once its mail is handled by hand (#1435)', async () => {
     const sent = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'x', priority: 'blocking' }, bPM.headers);
     const hubId = sent.data.id;
