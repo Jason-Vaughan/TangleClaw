@@ -2,9 +2,9 @@
 
 ## Current build chunk
 
-**Active:** Chunk 01 — `tc start review` (read-only re-read). Type: feature
+**Active:** Chunk 01 — classifier and server enforcement
 
-**On deck:** Chunk 02 — Re-entry through SessionStart `clear` / `compact`. Type: fix
+**On deck:** Chunk 02 — drawer
 
-Plan: `.tangleclaw/plans/1761-clear-drops-context.md`
+Plan: `.tangleclaw/plans/1858-wrap-file-safety.md`
 <!-- TANGLECLAW:PRIMING-ROLL:END -->
