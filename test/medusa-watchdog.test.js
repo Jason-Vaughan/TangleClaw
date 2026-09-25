@@ -100,88 +100,150 @@ describe('medusa-watchdog (#1839)', () => {
     });
   });
 
-  describe('re-arm budget', () => {
-    it('re-arms an unconfirmed attempt only after its wait, once per tick however many ticks run', () => {
+  describe('re-arm triggers and budget (R20 A3)', () => {
+    /**
+     * Persist the post-attempt readiness change a re-arm needs: an ineligible
+     * verdict after the attempt, then the monitor finding it eligible again.
+     * @param {string} [from] - The ineligible verdict
+     * @returns {void}
+     */
+    const readinessChange = (from = 'pane-turn-in-flight') => {
+      mx.recordWakeForRecipient('builder-ws', 'wake_blocked', { code: from });
+      assert.ok(mx.noteReadiness('builder-ws') >= 1, 'the readiness change is recorded');
+    };
+
+    it('(1) does not re-arm on elapsed time alone, and spends no budget', () => {
       const x = deliveredBlocking();
       attempt();
-      assert.equal(watchdog.tick(T0 + 2 * MIN).rearmed, 0, 'not before rearmAfterMs');
+      for (const t of [3, 10, 60, 180]) assert.equal(watchdog.tick(T0 + t * MIN).rearmed, 0, `nothing at +${t} min`);
+      const row = store.medusaExchanges.get(x.exchange_id);
+      assert.equal(row.rearm_count, 0);
+      assert.equal(row.state, 'wake_attempted');
+      assert.equal(mx.rearmDue('builder-ws'), false);
+    });
+
+    it('does not count eligibility without a prior ineligible verdict as a readiness change', () => {
+      const x = deliveredBlocking();
+      attempt();
+      assert.equal(mx.noteReadiness('builder-ws'), 0, 'eligible all along is no change');
+      assert.equal(watchdog.tick(T0 + 30 * MIN).rearmed, 0);
+      assert.equal(store.medusaExchanges.get(x.exchange_id).rearm_count, 0);
+    });
+
+    it('(2) re-arms once a persisted readiness change is newer than the attempt, not before rearmAfterMs', () => {
+      const x = deliveredBlocking();
+      attempt();
+      at(T0 + MIN);
+      readinessChange();
+      assert.equal(watchdog.tick(T0 + 2 * MIN).rearmed, 0, 'inside rearmAfterMs');
       at(T0 + 3 * MIN);
       assert.equal(watchdog.tick(clock).rearmed, 1);
       assert.equal(watchdog.tick(clock).rearmed, 0, 'a duplicate tick re-arms nothing');
-      const row = store.medusaExchanges.get(x.exchange_id);
-      assert.equal(row.state, 'wake_pending');
-      assert.equal(row.wake_code, 'rearmed');
-      assert.equal(row.rearm_count, 1);
-      assert.equal(row.next_eligible_at, new Date(T0 + 5 * MIN).toISOString());
+      const facts = store.medusaExchanges.facts(x.exchange_id);
+      assert.equal(facts.find((f) => f.fact === 'rearmed').code, 'readiness-changed');
+      const change = facts.find((f) => f.fact === 'readiness_changed');
+      assert.equal(JSON.parse(change.detail_json).nonce, `n${T0}`, 'tied to the attempt it follows');
       assert.equal(mx.rearmDue('builder-ws'), true);
     });
 
-    it('re-arms a not-accepted attempt at once', () => {
+    it('does not reuse a readiness change from before the newest attempt', () => {
       const x = deliveredBlocking();
       attempt();
-      mx.recordWakeForRecipient('builder-ws', 'wake_not_accepted', { code: 'nonce-in-composer' });
+      readinessChange();
+      at(T0 + 3 * MIN);
+      watchdog.tick(clock);
+      attempt();
+      assert.equal(watchdog.tick(T0 + 30 * MIN).rearmed, 0, 'the second attempt needs its own trigger');
+      assert.equal(store.medusaExchanges.get(x.exchange_id).rearm_count, 1);
+    });
+
+    it('re-arms a negative receipt at once', () => {
+      const x = deliveredBlocking();
+      mx.recordWakeForRecipient('builder-ws', 'wake_attempted', { code: 'tmux', detail: { nonce: 'n1' } });
+      mx.recordWakeForRecipient('builder-ws', 'wake_not_accepted', { code: 'nonce-in-composer', attemptNonce: 'n1' });
       assert.equal(watchdog.tick(T0).rearmed, 1);
       assert.equal(store.medusaExchanges.facts(x.exchange_id).find((f) => f.fact === 'rearmed').code, 'not-accepted');
     });
 
-    it('walks the backoff and stops at the cap, from the durable record alone', () => {
-      watchdog._internal.loadConfig = () => ({ medusaWatchdog: { rearmAfterMs: 30 * 1000 } });
+    it('(3) a restart between the ineligible verdict and eligibility, or before the tick, keeps the decision', () => {
       const x = deliveredBlocking();
       attempt();
-      at(T0 + MIN);
-      assert.equal(watchdog.tick(clock).rearmed, 1, 're-arm 1');
+      mx.recordWakeForRecipient('builder-ws', 'wake_blocked', { code: 'listener-connecting' });
+      // "Restart": the store is reopened and nothing survives but the record.
+      store.close();
+      store._setBasePath(tmpDir);
+      store.init();
+      assert.equal(mx.noteReadiness('builder-ws'), 1, 'the ineligible half survived the restart');
+      store.close();
+      store._setBasePath(tmpDir);
+      store.init();
+      assert.equal(watchdog.tick(T0 + 3 * MIN).rearmed, 1, 'the watchdog decides from the durable record');
+      store.close();
+      store._setBasePath(tmpDir);
+      store.init();
+      assert.equal(watchdog.tick(T0 + 3 * MIN).rearmed, 0, 'and a restarted duplicate tick re-arms nothing');
+      assert.equal(store.medusaExchanges.get(x.exchange_id).rearm_count, 1);
+    });
 
-      // The monitor retries at once; the next re-arm waits out the 2-minute step.
+    it('(4) leaves an attempt with no trigger open, unread and escalatable by age', () => {
+      const x = deliveredBlocking();
       attempt();
-      assert.equal(watchdog.tick(T0 + 2 * MIN).rearmed, 0, 'inside the first backoff step');
-      at(T0 + 3 * MIN);
-      assert.equal(watchdog.tick(clock).rearmed, 1, 're-arm 2 once the step has passed');
-
-      attempt();
-      assert.equal(watchdog.tick(T0 + 6 * MIN).rearmed, 0, 'inside the 4-minute step');
-      at(T0 + 7 * MIN);
-      assert.equal(watchdog.tick(clock).rearmed, 1, 're-arm 3');
-
-      attempt();
-      assert.equal(watchdog.tick(T0 + 60 * MIN).rearmed, 0, 'the budget is spent');
+      watchdog.tick(T0 + 90 * MIN);
       const row = store.medusaExchanges.get(x.exchange_id);
-      assert.equal(row.rearm_count, 3);
-      assert.equal(row.state, 'wake_attempted');
+      assert.equal(row.rearm_count, 0);
+      assert.ok(store.medusaExchanges.listOpen().some((r) => r.exchange_id === x.exchange_id), 'still in the working set');
+      assert.equal(Date.parse(row.created_at), T0, 'its age is measured from when it was sent');
+      assert.equal(mx.recordEscalationFact(x.exchange_id, 'escalation_queued', { code: 'blocking-unread' }).esc_level, 'escalated',
+        'an age escalation can still be recorded on it');
+    });
+
+    it('walks the backoff and stops at the cap, each re-arm on its own trigger', () => {
+      watchdog._internal.loadConfig = () => ({ medusaWatchdog: { rearmAfterMs: 30 * 1000 } });
+      const x = deliveredBlocking();
+      const cycle = (t) => { at(t); attempt(); at(t + 10 * 1000); readinessChange(); };
+      cycle(T0);
+      assert.equal(watchdog.tick(T0 + MIN).rearmed, 1, 're-arm 1');
+      cycle(T0 + MIN);
+      assert.equal(watchdog.tick(T0 + 2 * MIN).rearmed, 0, 'inside the 2-minute step');
+      assert.equal(watchdog.tick(T0 + 3 * MIN).rearmed, 1, 're-arm 2');
+      cycle(T0 + 3 * MIN);
+      assert.equal(watchdog.tick(T0 + 6 * MIN).rearmed, 0, 'inside the 4-minute step');
+      assert.equal(watchdog.tick(T0 + 7 * MIN).rearmed, 1, 're-arm 3');
+      cycle(T0 + 7 * MIN);
+      assert.equal(watchdog.tick(T0 + 60 * MIN).rearmed, 0, 'the budget is spent');
+      assert.equal(store.medusaExchanges.get(x.exchange_id).rearm_count, 3);
     });
 
     it('never re-arms mail that has been read, or when the watchdog is disabled', () => {
       deliveredBlocking();
       attempt();
+      readinessChange();
       mx.recordRead(['hub-1'], 'builder-ws', { kind: 'project', projectId: 20 });
       assert.equal(watchdog.tick(T0 + 30 * MIN).rearmed, 0);
 
       deliveredBlocking('hub-2');
       mx.recordWakeForRecipient('builder-ws', 'wake_attempted', { code: 'tmux' });
+      readinessChange();
       watchdog._internal.loadConfig = () => ({ medusaWatchdog: { enabled: false } });
       assert.equal(watchdog.tick(T0 + 30 * MIN).rearmed, 0);
     });
 
     it('shows a blocked verdict after a re-arm without cancelling the re-arm', () => {
       const x = deliveredBlocking();
-      attempt();
-      watchdog.tick(T0 + 3 * MIN);
+      mx.recordWakeForRecipient('builder-ws', 'wake_attempted', { code: 'tmux', detail: { nonce: 'n1' } });
+      mx.recordWakeForRecipient('builder-ws', 'wake_not_accepted', { code: 'nonce-in-composer', attemptNonce: 'n1' });
+      watchdog.tick(T0);
       mx.recordWakeForRecipient('builder-ws', 'wake_blocked', { code: 'pane-composer-has-input' });
       assert.equal(store.medusaExchanges.get(x.exchange_id).wake_code, 'pane-composer-has-input', 'the real blocker is visible');
       assert.equal(mx.rearmDue('builder-ws'), true, 'and the re-arm still stands');
-    });
-
-    it('still re-arms an attempted wake that a later reconnect or busy pane marked blocked', () => {
-      const x = deliveredBlocking();
-      attempt();
-      mx.recordWakeForRecipient('builder-ws', 'wake_blocked', { code: 'listener-connecting' });
-      assert.equal(store.medusaExchanges.get(x.exchange_id).state, 'wake_blocked');
-      assert.equal(watchdog.tick(T0 + 3 * MIN).rearmed, 1);
     });
 
     it('never re-arms a wake an engine-native receipt says was accepted', () => {
       deliveredBlocking();
       mx.recordWakeForRecipient('builder-ws', 'wake_attempted', { code: 'native', detail: { nonce: 'n1' } });
       mx.recordWakeForRecipient('builder-ws', 'wake_accepted', { code: 'native', attemptNonce: 'n1' });
+      mx.recordWakeForRecipient('builder-ws', 'wake_blocked', { code: 'pane-turn-in-flight' });
+      assert.equal(mx.noteReadiness('builder-ws'), 0, 'an accepted attempt is settled; nothing to watch for');
       assert.equal(watchdog.tick(T0 + 30 * MIN).rearmed, 0);
     });
 
@@ -233,26 +295,51 @@ describe('medusa-watchdog (#1839)', () => {
     /** Tick the monitor through its idle debounce. */
     const tickIdle = () => { for (let i = 0; i < wake.IDLE_TICKS_REQUIRED; i++) wake._internal.tick(); };
 
-    it('nudges once with a per-attempt nonce, and a re-arm brings one more nudge only when the pane is ready', async () => {
+    it('nudges once with its nonce; watches the owned edge without injecting; re-nudges only after a recorded readiness change', async () => {
       const x = deliveredBlocking();
       tickIdle();
       assert.equal(world.injected.length, 1);
       assert.match(world.injected[0], /\(wake ref [0-9a-f]{12}\)$/, 'the nudge carries its nonce');
       assert.equal(store.medusaExchanges.get(x.exchange_id).state, 'wake_attempted');
-      tickIdle();
-      assert.equal(world.injected.length, 1, 'an owned edge is not nudged again');
 
-      watchdog.tick(T0 + 3 * MIN);
+      tickIdle();
+      assert.equal(watchdog.tick(T0 + 30 * MIN).rearmed, 0, 'idle all along after the nudge is no readiness change');
+      assert.equal(world.injected.length, 1);
+
+      world.pane = BUSY_PANE;
+      tickIdle();
+      assert.equal(store.medusaExchanges.get(x.exchange_id).wake_code, 'pane-turn-in-flight', 'the ineligible verdict is recorded');
+      assert.equal(world.injected.length, 1, 'observing never injects');
+
+      world.pane = IDLE_PANE;
+      tickIdle();
+      tickIdle();
+      assert.ok(store.medusaExchanges.facts(x.exchange_id).some((f) => f.fact === 'readiness_changed'), 'eligible again is recorded');
+      assert.equal(world.injected.length, 1, 'recording readiness is not a nudge');
+
+      assert.equal(watchdog.tick(T0 + 31 * MIN).rearmed, 1);
       world.pane = BUSY_PANE;
       tickIdle();
       assert.equal(world.injected.length, 1, 'a re-armed wake still waits for a ready pane');
-
       world.pane = IDLE_PANE;
       tickIdle();
       tickIdle();
       assert.equal(world.injected.length, 2, 'the re-armed wake goes out once the pane is ready');
       assert.notEqual(world.injected[0], world.injected[1], 'each attempt has its own nonce');
-      assert.equal(store.medusaExchanges.get(x.exchange_id).state, 'wake_attempted');
+    });
+
+    it('records a listener reconnect after the nudge as the ineligible half of a readiness change', () => {
+      const x = deliveredBlocking();
+      tickIdle();
+      world.status = { ...world.status, state: 'connecting' };
+      wake._internal.tick();
+      world.status = { ...world.status, state: 'listening' };
+      tickIdle();
+      tickIdle();
+      const facts = store.medusaExchanges.facts(x.exchange_id);
+      const change = facts.find((f) => f.fact === 'readiness_changed');
+      assert.ok(change, 'the reconnect, then an eligible pane, is a readiness change');
+      assert.equal(JSON.parse(change.detail_json).from, 'listener-connecting');
     });
 
     it('records a not-accepted receipt when the nonce is still in the composer', async () => {
@@ -264,9 +351,12 @@ describe('medusa-watchdog (#1839)', () => {
       assert.equal(watchdog.tick(T0).rearmed, 1, 'a proven miss re-arms at once');
     });
 
-    it('a reconnect after a nudge leaves the exchange awaiting read, not stuck on the old reason', () => {
+    it('a reconnect after a settled nudge leaves the exchange awaiting read, not stuck on the old reason', () => {
       const x = deliveredBlocking();
       tickIdle();
+      // Settle the attempt: a readiness change has already been recorded for it.
+      mx.recordWakeForRecipient('builder-ws', 'wake_blocked', { code: 'pane-turn-in-flight' });
+      mx.noteReadiness('builder-ws');
       world.status = { ...world.status, state: 'connecting' };
       wake._internal.tick();
       assert.equal(store.medusaExchanges.get(x.exchange_id).wake_code, 'listener-connecting');
