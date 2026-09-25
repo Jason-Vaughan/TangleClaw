@@ -15,16 +15,16 @@ questions A1–A4) and two read-only scout reports (server classification seams;
 - [x] Architect has ruled on A1–A4 (R11, 2026-09-25): all four approved, with the R11-E final-boundary amendment and the R11-F subagent ruling. Implementation was released on incorporation, with no second architecture pause. See "Architect ruling R11"
 - [x] R13 received (controlling), recorded above
 - [x] R14 received (branch-own refinement with guards), recorded above
-- [ ] Chunk 01: `_upstream-provenance.js`, which resolves the default-branch ref, refreshes it with a time limit,
+- [x] Chunk 01: `_upstream-provenance.js`, which resolves the default-branch ref, refreshes it with a time limit,
       records when it was observed, gives the checkout's position, and gives a fact for each path. Unit tests run
       against real temporary repos with a bare origin
-- [ ] Chunk 02: `classify` consumes provenance. Adds the `alreadyUpstream` bucket, the `upstream-owns` reason,
+- [x] Chunk 02: `classify` consumes provenance. Adds the `alreadyUpstream` bucket, the `upstream-owns` reason,
       the Include downgrade and the commit-boundary revalidation. Wired into session-files, commit and
       changelog-coverage
-- [ ] Chunk 03: the drawer keeps and renders the provenance fields. The provenance header, the per-path
+- [x] Chunk 03: the drawer keeps and renders the provenance fields. The provenance header, the per-path
       upstream line, the manifest group, and pruning of stale answers. Docs and CHANGELOG
-- [ ] Verify: focused tests, then the full suite on this checkout (**not** the main instance)
-- [ ] Critic
+- [x] Verify: focused tests, then the full suite on this checkout (**not** the main instance). Green at 88eb4086: 13,001 pass, 0 fail, 1 skip. An earlier run's `dir-scanner` deadline test flaked under load; it passed 3/3 when run alone, and this change doesn't touch it
+- [x] Critic: cumulative `rev-20260925T161734Z-32402ac3`, then verify-resolutions `rev-20260925T163015Z-deaaed5c` and `rev-20260925T163746Z-f610b722`. 0 blocking; dispositions recorded
 - [ ] Draft PR opened. **STOP here** (pilot boundary)
 
 **Pilot envelope (IN FORCE):** no merging any PR, no pulling or updating the live checkout, no restarting the
