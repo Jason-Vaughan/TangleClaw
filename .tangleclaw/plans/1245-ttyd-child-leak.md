@@ -26,7 +26,8 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
       action receipt, immediate boot check, env kill switch and bounded threshold. Committed at fd22adf9. The Critic
       cumulative review `rev-20260925T204343Z-b1361aa6` found 0 blocking. R-1 (a receipt on a reading with no
       generation) is fixed with tests. R-2 (this Status) and the design notes are fixed. The slow-restart note is accepted
-- [ ] Chunk 03: candidate matrix (A1+A2 and A3) against the same acceptance contract; the winner is chosen by evidence.
+- [x] Chunk 03: candidate matrix (A1+A2 and A3) against the same acceptance contract; the winner is chosen by evidence.
+      **A3c PASSED** the full R22 Q7 acceptance (see "A3 build and matrix"). STOPPED at the packaging boundary.
       A1 (8c483c60, 2e714fbc) FAILED the R22 Q7 acceptance on 2e714fbc: 6 confirmed ?Es wedges in 1500 cycles (~0.4%,
       against 100% at baseline). Report: `.tangleclaw/plans/1245-evidence/a1-acceptance-2e714fbc-FAIL.json`. The Architect's
       R22 Q1 fallback ruling (21:24Z) REJECTS A1 as the shipping fix: keep its evidence, and plan to revert or exclude the
@@ -119,8 +120,23 @@ A3c keeps reading after the close and discards until end of file:
 It is gated to `__APPLE__`, which leaves other platforms byte-for-byte unchanged. The Darwin binary is identical to the
 preliminary A3c (`fe6c1813…`). Generic upstreaming can be proposed separately.
 
-**Full acceptance (R22 Q7)** on the release build `fe6c1813…`: 2000 cycles plus a 2 h soak, started 21:38Z. The result
-is recorded here when it finishes.
+**Full acceptance (R22 Q7): PASS** on the release build `fe6c1813…`, with the original attach script. It ran from 21:40Z
+to 23:47Z (`a3c-acceptance-PASS.json`, and the scratch ttyd's own log in `a3c-acceptance-ttyd.log`).
+- **Churn:** 2000 of 2000 cycles across all five close modes, 1600 of them with output and 0 client errors. The full
+  120-minute soak was completed.
+- **Children:** 0 confirmed wedges and 0 lingering. The scratch ttyd started 2000 processes and reaped 2000. At most 10
+  children existed at once, and in the whole run the sampler saw only one child in the exiting state, gone by the next sample.
+- **Resources:** the scratch ttyd's fds went 32 → 33 and there were 0 restarts. Cleanup was verified with no leftovers.
+- **Pool caveat, stated honestly:** the global PTY pool went 45 → peak 50 → 27 at the end. The drop is NOT this run's
+  doing. At 23:39:47Z the LIVE watcher, still running main's code, kickstarted the live ttyd (pid 28870 → 10597) on
+  `orphans=23` after 5.2 h of real use: the unfixed production leak recurring on its own. That freed live PTYs, so
+  "pool returned to baseline" is confounded for this run. The run-specific evidence (2000/2000 reaped, 0 lingering, fds
+  back to baseline) does not depend on the pool.
+- **Live processes:** the live tmux server 1335 was unchanged. The harness only ever addresses its own scratch socket
+  and PIDs.
+
+**STOP: the packaging/rollout boundary (R22 Q1).** The delivery options, and the revert of the rejected A1 wrapper,
+wait for the Architect and the PM.
 
 ## Architect R22 Q1 fallback ruling (2026-09-25 21:24Z, controlling)
 
