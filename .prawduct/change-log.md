@@ -35,6 +35,56 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-25 — Medusa delivery watchdog: tracked exchanges, durable re-arms, escalation (#1839)
+
+<!-- prawduct: type=feature | scope=medusa-1839 -->
+
+Dual Builder Normalization Train, Chunk B, Car B1 (TangleClaw-Pilot-B2). The plan is `.tangleclaw/plans/1839-medusa-delivery-watchdog.md`. Architect rulings R19, R20, `e2956328` (unverified readers), A3 (`a06a43ac`, approved as corrected `1b6f3ca4`) are recorded there. The work was built in five chunks.
+
+**Root cause.** "Sent" meant "the Hub stored it". Nothing owned whether a message reached its reader. The wake ledger recorded nudges only, so #1435's hand-read mail stayed listed forever and #1621's lost Enter was silent. A blocked sender waited until someone noticed a badge.
+
+**The change.**
+- **Schema v49 (additive):**
+  - `medusa_exchanges` is a projection;
+  - `medusa_exchange_facts` is append-only, enforced by triggers;
+  - both are keyed by the Hub message id, and no body is stored.
+- **Sending:**
+  - the intent is recorded before the Hub is called, then the Hub id is bound;
+  - a lost answer is `send_unknown`, never re-sent;
+  - a reused `requestId` is refused;
+  - an arrival that beats the answer is adopted, by Hub id only (verified against the Hub source).
+- **Priority and proof:**
+  - blocking needs a verified launch and critical needs the operator;
+  - reply, close and retract need verified callers;
+  - protected priorities off-host are refused.
+- **Recipient facts:**
+  - reads and acks are scoped to the reader's workspace and name their actor (`recipient`, `operator-ui`, `unverified-reader`);
+  - a reply-required exchange is satisfied only by a reply;
+  - `retracted` is a guarded terminal state (route: #1873).
+- **Wakes (`lib/wake-transports.js`):**
+  - each nudge carries a nonce;
+  - tmux gives negative receipts only;
+  - owned edges are watched observe-only;
+  - after a restart the monitor consults the durable attempts before nudging.
+- **The watchdog (`lib/medusa-watchdog.js`):**
+  - re-arms only on a negative receipt or a persisted post-attempt readiness change, never on time, with a persisted budget;
+  - climbs a one-way ladder: aged (sender), escalated (the `authority.escalation` route on the control assignment), operator (dashboard banner and activity row);
+  - records every notice as queued, then accepted or failed.
+- **Teardown** retires the workspace, so waiting exchanges end as `recipient_retired` and their initiators are told.
+- **Surfaces:**
+  - routes: `…/medusa/exchanges`, `…/exchanges/:id/close`, `/api/medusa/escalations`, `/api/server-info` `medusaEscalations`;
+  - `tc message send --priority …`, `tc message sent`, `tc message close`;
+  - the `medusaWatchdog` config;
+  - docs: `docs/medusa-delivery.md`, plus one guide line.
+
+**Tests.**
+- New: `test/medusa-exchanges.test.js`, `test/api-medusa-exchanges.test.js`, `test/medusa-watchdog.test.js`, `test/medusa-escalation.test.js`, `test/store-medusa-exchange-migration.test.js`, and the isolated exit test `test/medusa-watchdog-e2e.test.js`.
+- The existing wake tests pass unmodified. The full suite is green on the final tree.
+
+**Reviews.** Every chunk boundary had a Critic round. All blocking findings were fixed and verified, among them a restart duplicate wake, a forged-ack path and a reconnect-stranded re-arm.
+
+Fixes #1839, #1435. Refs #1873, #1806, #1621, #1879.
+
 ## 2026-09-25 — Wrap advice knows what upstream already holds (#1868)
 
 <!-- prawduct: type=bugfix | scope=wrap-1868 -->
