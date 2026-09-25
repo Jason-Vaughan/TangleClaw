@@ -356,17 +356,72 @@ describe('#1858: a protected file is withheld from every bucket', () => {
     assert.ok(!c.stageable.includes('fixtures/seed.db'));
   });
 
-  it('a database the session deleted is committed as a deletion', async () => {
+  /**
+   * A repo whose `tracked` files are committed, with the session then deleting
+   * `gone` and editing `mine.js`, so the wrap has something of its own to commit.
+   * @param {Object<string, string|Buffer>} tracked - Path → content.
+   * @param {string[]} gone - Paths the session deletes.
+   * @returns {Promise<{repo:string, scope:object}>}
+   */
+  async function sessionDeletes(tracked, gone) {
     const repo = makeRepo();
-    put(repo, 'old.db', 'not really sqlite\n');
-    git(repo, 'add', 'old.db');
-    git(repo, 'commit', '-q', '-m', 'add db');
+    for (const [p, content] of Object.entries(tracked)) put(repo, p, content);
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'track');
     const scope = await scopeFor(repo, launchBaseline.capture(repo));
-    fs.rmSync(path.join(repo, 'old.db'));
+    for (const p of gone) fs.rmSync(path.join(repo, p));
+    put(repo, 'mine.js', 'session edit\n');
+    return { repo, scope };
+  }
+
+  /**
+   * Assert a deletion stayed out of the wrap: still in HEAD, still an unstaged
+   * deletion in the work tree, and never in the commit.
+   * @param {string} repo - Checkout.
+   * @param {string} p - Deleted path.
+   */
+  function withheldDeletion(repo, p) {
+    assert.ok(!committed(repo).includes(p), `${p} is not in the wrap commit`);
+    git(repo, 'cat-file', '-e', `HEAD:${p}`);
+    const escaped = p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Untrimmed: the status code's leading space is part of the answer.
+    const status = execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' });
+    assert.match(status, new RegExp(`^ D ${escaped}$`, 'm'), `${p} is still an uncommitted deletion`);
+  }
+
+  it('a tracked .db the session deleted is withheld, and stays deleted in the work tree only', async () => {
+    const { repo, scope } = await sessionDeletes({ 'fixtures/seed.db': 'not read\n' }, ['fixtures/seed.db']);
+    const r = await runStep(commitStep, repo, scope, { pathDecisions: { 'fixtures/seed.db': 'include' } });
+    assert.equal(r.status, 'done', (r.blockers || []).join('; '));
+    assert.deepEqual(committed(repo), ['mine.js']);
+    assert.deepEqual(r.output.safetyWithheld, ['fixtures/seed.db']);
+    assert.deepEqual(r.output.refusedIncludes, ['fixtures/seed.db']);
+    withheldDeletion(repo, 'fixtures/seed.db');
+  });
+
+  it('a deleted data/tangleclaw.sqlite is withheld', async () => {
+    const { repo, scope } = await sessionDeletes({ 'data/tangleclaw.sqlite': SQLITE_BYTES }, ['data/tangleclaw.sqlite']);
     const r = await runStep(commitStep, repo, scope);
     assert.equal(r.status, 'done', (r.blockers || []).join('; '));
-    assert.deepEqual(committed(repo), ['old.db']);
-    assert.throws(() => git(repo, 'cat-file', '-e', 'HEAD:old.db'), 'gone from the project');
+    assert.deepEqual(committed(repo), ['mine.js']);
+    withheldDeletion(repo, 'data/tangleclaw.sqlite');
+  });
+
+  it('a deleted database sidecar is withheld by its name', async () => {
+    const { repo, scope } = await sessionDeletes({ 'app.db-wal': 'wal\n' }, ['app.db-wal']);
+    const r = await runStep(commitStep, repo, scope);
+    assert.equal(r.status, 'done', (r.blockers || []).join('; '));
+    assert.deepEqual(committed(repo), ['mine.js']);
+    withheldDeletion(repo, 'app.db-wal');
+  });
+
+  it('a deleted file that only its former SQLite header marked follows ownership and commits as a deletion', async () => {
+    const { repo, scope } = await sessionDeletes({ 'dump.bin': SQLITE_BYTES }, ['dump.bin']);
+    const r = await runStep(commitStep, repo, scope);
+    assert.equal(r.status, 'done', (r.blockers || []).join('; '));
+    assert.deepEqual(committed(repo), ['dump.bin', 'mine.js']);
+    assert.deepEqual(r.output.safetyWithheld, []);
+    assert.throws(() => git(repo, 'cat-file', '-e', 'HEAD:dump.bin'), 'gone from the project');
   });
 
   it('only a database left means a skip that says so', async () => {

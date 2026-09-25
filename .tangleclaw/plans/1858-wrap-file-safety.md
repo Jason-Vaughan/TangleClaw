@@ -9,10 +9,12 @@ Dispatched by the PM on 2026-09-25.*
 - [x] Architect ruled on A1–A8 (2026-09-25): A1, A3, A5 and A6 approved; A2 and A4 approved with
   constraints; A7 modified; A8 rejected
 - [x] Architect ruled on deleted protected paths (2026-09-25; see Design → Deletions)
-- [ ] **HOLD: plan correction.** This reconciled plan is waiting for the Architect's acknowledgement and an explicit
-  PM release. No code work until both arrive.
-- [ ] Deletion ruling implemented and tested (it is **not** in the code yet; see the Deviation record)
-- [ ] Draft PR #1860 brought in line with this plan, then **STOP** (pilot boundary)
+- [x] Plan correction 2bc8fe4e acknowledged by the Architect. The audit approved salvage with one bounded
+  remediation (deletions by name), and the PM released only that remediation (2026-09-25)
+- [x] Deletion ruling implemented and tested: the blanket exemption is removed, deletions are judged by name, and
+  the four deletion tests replace the old one
+- [ ] Draft PR #1860 brought in line with this plan and pushed, with evidence returned to the PM for the Architect's
+  audit, then **STOP** (a fresh independent PR review follows the audit)
 
 **Pilot envelope (IN FORCE):** no merging any PR, no pulling/updating the live checkout, no restarting the
 live service, no tests on the main instance, no tag/publish/release, no deploy.
