@@ -219,6 +219,17 @@ describe('ignoreSuggestions', () => {
     assert.deepEqual(mixed, ['/tmp/a']);
   });
 
+  it('escapes every trailing space, so gitignore does not drop it and ignore a different file', () => {
+    assert.deepEqual(safety.ignoreSuggestions(['notes.db  ', 'a b.db '], { dirty: [], hasTracked: () => true, classOf }),
+      ['/a b.db\\ ', '/notes.db\\ \\ ']);
+  });
+
+  it('offers no line at all for a path with a line break, rather than a line that splits into rules', () => {
+    const lines = safety.ignoreSuggestions(['evil.db\n!important.js', 'cr.db\r', 'ok.db'], { dirty: [], hasTracked: () => true, classOf });
+    assert.deepEqual(lines, ['/ok.db']);
+    assert.ok(lines.every((l) => !/[\r\n]/.test(l)));
+  });
+
   it('escapes gitignore syntax so a line names exactly one file', () => {
     assert.deepEqual(safety.ignoreSuggestions(['we*rd[1].db', '#x.db', '!y.db'], { dirty: [], hasTracked: () => true, classOf }),
       ['/\\!y.db', '/\\#x.db', '/we\\*rd\\[1\\].db']);
