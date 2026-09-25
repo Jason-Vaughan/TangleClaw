@@ -13,7 +13,7 @@ partition: serial for chunks 01–03 and 05–06 (they share lib/store.js, serve
 - [x] Chunk 02: `/api/control/*`, operator proof tier, authority, ack/status, `tc control`, capabilities line
 - [x] Chunk 03: `lib/control-gate.js`, admission capture, wiring at every §4 boundary, per-surface tests
 - [x] Chunk 04: `lib/control-hooks.js` and the governed marker (STOP at the A5 escalation clause if a constraint cannot be met)
-- [ ] Chunk 05: `docs/control-state.md`, FEATURES, CHANGELOG, operational-guide line
+- [x] Chunk 05: `docs/control-state.md`, FEATURES, CHANGELOG, operational-guide line
 - [ ] Chunk 06: E2E exit test on an isolated instance
 - [ ] Verify: focused tests plus the full suite on this worktree (**not** the main instance)
 - [ ] Cumulative Critic
