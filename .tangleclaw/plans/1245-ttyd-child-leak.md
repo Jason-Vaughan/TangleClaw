@@ -146,6 +146,85 @@ that clears them. The same deadlock was just fixed in upterm by flushing from th
   deployment (R23; see the end of this plan). That the watcher cannot see or record restarts it did not make is
   itself a finding (see C).
 
+## Chunk 02 design (the shared reading, wedge predicate, receipt, boot check, knobs)
+
+Everything lives in `lib/ttyd-watcher.js`: it already owns the probes, and a separate module would split one
+single-flight across two files. `lib/system-health.js` becomes a consumer.
+
+**Reading** (`takeReading()`, async, single-flight, bounded by `READING_DEADLINE_MS`):
+`{ pid, generation, sampledAt, children: [{pid, stat, ageMs}], pool: {used, cap, ratio, exhausted}|null, error }`.
+- `pid` comes from `launchctl list <label>`. `null` means ttyd isn't running, and nothing else is measured.
+- `generation` is `<pid>@<lstart>` (`ps -o lstart= -p <pid>`). It's an identity, not a number, so nothing is
+  parsed. If it can't be read it is `null`, and a reading with no generation can confirm nothing through the K rule.
+- `children` come from one `ps -A -o pid=,ppid=,stat=,etime=` call, keeping the rows whose ppid is ttyd's pid.
+  `ageMs` is `null` when `etime` doesn't parse.
+- A probe that fails leaves its field `null`. It is never set to zero.
+
+**History**: the module keeps a small ring of readings. A reading from a different generation clears the ring, so
+old-generation entries are dropped (R22 Q2).
+
+**Classification** (`classifyReading(reading, previous, opts)`, pure):
+- `transient`: children in E/Z that are not confirmed.
+- `wedged`: children in E/Z where `ageMs ≥ wedgeAgeMs`, OR the same child pid was in E/Z in an earlier reading of
+  the same generation taken at least `MIN_OBSERVATION_GAP_MS` (30 s) before (K = 2). The gap is needed because the
+  health panel and the watcher tick share the reading store: without it, two readings a second apart would confirm a
+  one-second-old child.
+- `wedgeAgeMs` is **provisional (120 s)** until chunk 01's baseline measures how long a transient E/Z child actually
+  lasts (R22 Q3). [ASSUMPTION: 120 s sits well above a normal exit (milliseconds) and well below the observed
+  wedge lifetimes (hours). Chunk 01 replaces it with a measured value.]
+- `orphanGate = wedged.length ≥ orphanThreshold`. `poolGate = pool.exhausted`. Both are independent, and the pool gate
+  is never held.
+- If `children` is `null` (ps failed), the orphan gate is `null`/unknown and never acts (R22 Q2: no fail-safe zero).
+- The 15-minute uptime hold is retired. A restart burst's children are young and unconfirmed, and they're confirmed
+  on the next tick only if they're still there.
+
+**Tick** (`_tick()`, async; `_tickInFlight` prevents overlapping ticks):
+1. `takeReading()`. If `pid` is `null`, the action is `skipped`.
+2. If the generation changed and there's no pending receipt for that change, record a receipt with outcome
+   `external-restart`. The receipt names no actor.
+3. Classify. Pool gate or orphan gate → kickstart → `_awaitNewGeneration()` re-reads with a bounded poll → receipt
+   `{at, reason, from:{pid,generation}, to:{pid,generation}|null, outcome: ok|no-new-generation|failed}`,
+   logged at warn. A refused kickstart (`failed`) leaves the gate armed for the next tick.
+4. Return `{action, reading, classification, receipt}`. This is still a test seam, but the health module now
+   consumes the reading, so it has a real consumer.
+
+**Boot**: `start()` runs one tick right away, off the event loop and unref'd, and it can't block boot because
+the tick is async. Every probe is bounded. Then the normal interval runs.
+
+**Knobs**:
+- `TANGLECLAW_TTYD_WATCHER=off` → the watcher does not act, and logs a warn once at `start()`. Health reports the
+  condition `unknown` with "watcher disabled".
+- `TANGLECLAW_TTYD_ORPHAN_THRESHOLD`: an integer in [5, 200]. Anything else falls back to 20, with a loud warn at
+  start. Health quotes the threshold in force.
+- `start()` options still override for tests.
+
+**Health** (revised: `system-health.js` keeps its non-awaiting 60 s cache and its `measureLeak` probe seam, and
+`measureLeak` becomes the adapter over the shared reading): `detectTtydLeak` serves `ttydWatcher.latestReading()` together with its classification. When the reading
+is older than the TTL, it starts `takeReading()` (the same single-flight) and never awaits it. The payload carries the
+reading's `sampledAt`, `pid` and `generation`, the last receipt, and whether the watcher is disabled. `measureLeak` is
+retired in favour of the shared reading.
+
+**Tests** (each existing behaviour is ported to the new API, not dropped):
+- pool boundary cases → `_poolFromCounts` / reading
+- E/Z counting → classification
+- kickstart argv, the uid guard and refusal → unchanged
+- the pool gate is never held on a young ttyd → tick
+- a refused kickstart stays armed → tick
+- unreadable age: not confirmed by age, but confirmed by K = 2 on the next tick
+- non-darwin makes no calls → unchanged
+- `measureLeak`'s "null, not zero" contract → the reading's null fields
+
+New tests:
+- a young E/Z burst is transient, not wedged
+- an old E/Z child is wedged
+- K = 2 with the same generation confirms; a generation change resets it
+- receipt outcomes: ok, no-new-generation, failed, external-restart
+- overlapping ticks are refused
+- the boot tick runs immediately
+- the env kill switch and threshold bounds, including invalid input
+- health serves the reading's own sampledAt, pid and generation
+- health reports disabled and ps-failure as unknown, never clear
+
 ## A. Root fix options
 
 | # | Option | Changes | TCC impact | Rollback | Planner view |
