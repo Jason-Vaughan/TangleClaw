@@ -1,19 +1,26 @@
 ---
 branch: fix/1868-wrap-upstream-provenance
-partition: serial. One new module plus its two callers (session-files, commit) and the drawer, all on one classification contract
+partition: serial. One new module, one classification contract shared by three callers, and the drawer helpers that read it. Every chunk edits `_file-ownership.js` or its output shape
 ---
 
 # #1868: Wrap recommends duplicate commits for artifacts already merged upstream
 
-*Pilot Car A2. The PM dispatched this on 2026-09-25. Planned on `main` @c859e894.*
+*Pilot Car A2. The PM dispatched this on 2026-09-25. Planned on `main` @c859e894. The plan is revised against the
+Architect's brief (TangleClaw-Architect `.tangleclaw/plans/1868-wrap-provenance-dispatch.md`, contracts 1–8,
+questions A1–A4) and two read-only scout reports (server classification seams; drawer copy/state/retry).*
 
 ## Status
 
-- [x] Plan written
-- [ ] Architect has ruled on A1 to A4. **STOP here** (dispatch boundary: Plan Written, because A1 to A4 need rulings)
-- [ ] Chunk 01: `_upstream-provenance.js` (resolve the upstream ref, the ahead/behind counts and a per-path upstream fact) plus unit tests against real temporary git repos
-- [ ] Chunk 02: wire provenance into `classify` (session-files and commit use the same facts), override recommendations, add the `alreadyUpstream` bucket, write the explanation text
-- [ ] Chunk 03: drawer rendering of the provenance header and per-path upstream line. Docs and CHANGELOG
+- [x] Plan written (rev 2: brief incorporated, scouts collected)
+- [ ] Architect has ruled on A1–A4 below. **STOP here** (dispatch boundary: Plan Written)
+- [ ] Chunk 01: `_upstream-provenance.js`, which resolves the default-branch ref, refreshes it with a time limit,
+      records when it was observed, gives the checkout's position, and gives a fact for each path. Unit tests run
+      against real temporary repos with a bare origin
+- [ ] Chunk 02: `classify` consumes provenance. Adds the `alreadyUpstream` bucket, the `upstream-owns` reason,
+      the Include downgrade and the commit-boundary revalidation. Wired into session-files, commit and
+      changelog-coverage
+- [ ] Chunk 03: the drawer keeps and renders the provenance fields. The provenance header, the per-path
+      upstream line, the manifest group, and pruning of stale answers. Docs and CHANGELOG
 - [ ] Verify: focused tests, then the full suite on this checkout (**not** the main instance)
 - [ ] Critic
 - [ ] Draft PR opened. **STOP here** (pilot boundary)
@@ -21,144 +28,205 @@ partition: serial. One new module plus its two callers (session-files, commit) a
 **Pilot envelope (IN FORCE):** no merging any PR, no pulling or updating the live checkout, no restarting the
 live service, no tests on the main instance, no tag, publish or release, no deploy.
 
-## Problem
+## Problem (verified in code)
 
-The wrap decides what to recommend for each uncommitted path from **what kind of file it is**, and never
-from **where it came from**:
+Wrap advice comes from **file kind**, not **provenance**:
 
-- `lib/wrap-steps/_file-safety.js` `safetyOf()` classes `.tangleclaw/plans/**.md`, `priming/*.md` and
-  `memories/*.md` as `durable` and returns `recommendation: 'include'`. The input is the path alone.
-- `lib/wrap-steps/_file-ownership.js` `classify()` puts a path in `owned` (committed **without asking**)
-  when its mtime is at or after launch. TangleClaw regenerates `CLAUDE.md` at every launch, so the carrier
-  lands in `owned`, or in `tangleclawMaintenance` through `_tc-owned-paths.judge`, and gets staged.
-- No code in `lib/wrap-steps/` reads `origin/*`. The ahead/behind counts that `lib/checkout-state.js`
-  measures are never passed to the wrap.
+- `_file-safety.js` `safetyOf()` gives `.tangleclaw/{plans,priming,memories}` markdown files the class
+  `durable`, and that class recommends Include. The path is the only input.
+- `_file-ownership.js` `classify()` stages `owned` paths (by mtime or launch snapshot) and
+  `tangleclawMaintenance` paths **without asking**. `_tc-owned-paths.judge` compares carriers such as
+  `CLAUDE.md` only against `HEAD`. So a carrier that TangleClaw regenerates to match upstream is committed onto
+  a stale branch.
+- An Include or Leave decision is read only for paths classed foreign (`_file-ownership.js:288`). A decision for a
+  path classed owned is silently ignored, and the path is staged.
+- Nothing in `lib/wrap-steps/` reads a remote ref. `wrap-scope.trunk` is a fixed-name check
+  (`_git-range.js:114`). The only real default-branch lookup lives outside the wrap, in `ci-status.js:154`
+  (`symbolic-ref refs/remotes/origin/HEAD`).
+- The drawer builds each path again from a fixed list of fields (`wrap-drawer.js:1104-1116`, `:1119-1127`,
+  `normalizeManifest :1150-1160`). The client accumulates answers and resends them on every Retry
+  (`accumulatePathDecisions :1342`). A changed server recommendation therefore never replaces an earlier answer.
 
-In the incident, the session-root checkout was 18 behind after its worktree PR (#1866) merged. The wrap
-offered Include on two paths:
-- the plan, which was untracked locally but tracked upstream with more content
-- `CLAUDE.md`, which was byte-identical to `origin/main`
+**The incident fixture:** Pilot-B2's session root was at `4dff1bde`, 18 behind `c859e894`.
 
-Accepting would have committed stale duplicates. The operator could only work out that Leave was correct by
-inspecting git manually.
+- `CLAUDE.md` differed from HEAD and was byte-identical to upstream.
+- The untracked `.tangleclaw/plans/1861-durable-control-state.md` was tracked upstream with a 32-line
+  status header.
+- The drawer recommended Include. The correct answer was Leave.
 
 ## Confidence check
 
-- **Problem:** the wrap recommends committing, or silently commits, paths whose content already landed
-  upstream, or whose upstream copy is newer.
-- **Success:** in the four scenarios of requirement 7, the drawer shows the checkout's behind/ahead state,
-  says what upstream holds for each path, and never recommends Include (or auto-stages) a path that is
-  already upstream, owned by a newer upstream copy, or unverifiable. Leave keeps the files, and the wrap
-  continues.
-- **Out of scope:** deleting, resetting, overwriting or cleaning any file. Pulling, rebasing or fast-forwarding
-  the checkout. Changing the `durable`/`local`/`protected` taxonomy for paths that upstream does not have.
+- **Problem:** the wrap proposes, or silently makes, commits of content that upstream already has or owns in a
+  newer form. It also presents path-based guesses with confidence.
+- **Success:** in the incident fixture, both paths get Leave (or no commit at all). The drawer shows the
+  checkout's behind/ahead state and a plain-language upstream fact for each path. No Include can reach the commit
+  step on stale provenance. Offline wraps still finish.
+- **Out of scope:** the brief's non-goals: no reset, pull, clean, stash, delete or sync; no PR lifecycle
+  redesign; no change to the secret, protected-DB or methodology classes; #1839 is excluded.
 
-## Design
+## Architecture questions A1–A4 (the brief's framing; recommendation first)
 
-### New module `lib/wrap-steps/_upstream-provenance.js`
+### A1: Freshness
 
-`resolve(toplevel, dirty, { exec, fetch })`, async. It returns:
+- **(a)** Use the already-fetched ref only, with its observation time.
+- **(b)** Refresh the ref once, with a time limit, then fall back to (a).
+- **(c)** Run a read-only `ls-remote` check of the tip SHA.
+
+**Recommend (b).** `session-files` runs once
+`git fetch --quiet --no-tags <remote> +refs/heads/<default>:refs/remotes/<remote>/<default>`:
+
+- The fetch goes through `execFileArgs` with `gitProbe.callEnv(true)` (no prompts, batch ssh) and
+  `gitProbe.NETWORK_TIMEOUT_MS`.
+- It updates exactly one remote-tracking ref and never touches the work tree, index or HEAD.
+- A new config key, `wrapUpstreamRefresh` (default `true`), and the env var `TC_WRAP_UPSTREAM_REFRESH=0` skip it.
+  That is for metered, offline or CI setups.
+
+When the refresh is skipped or fails, the ref's observation time comes from `git reflog -1 --format=%ct <ref>`,
+with the mtime of `FETCH_HEAD` as a fallback. When neither is readable, the time is `unknown`. The reason (a)
+alone is not enough: the incident class is "merged minutes ago", and a stale ref cannot see that. (c) only adds a
+round-trip, because it tells us the tip moved without giving us the blobs.
+
+A failed refresh never blocks. It sets `refresh: 'failed'` with a reason, and the rules below make that safe
+(brief contract 4).
+
+**Default branch resolution:**
+
+1. `symbolic-ref refs/remotes/<remote>/HEAD`, with `<remote>` = the branch's configured remote, else `origin`,
+   else the only remote.
+2. Else the first of `<remote>/main` and `<remote>/master` that exists.
+3. Else `unavailable`.
+
+It is never hardcoded to `origin/main`.
+
+### A2: Result model (one object, computed once)
 
 ```
-{ state: 'established' | 'stale-ref' | 'unavailable',
-  ref: 'origin/main' | null,          // origin/HEAD's target, else @{upstream}, else origin/main if it exists
-  refreshed: boolean, refreshProblem: string|null,
-  ahead: number|null, behind: number|null,
-  problem: string|null,               // why state isn't 'established', in operator language
-  paths: Map<path, { upstream: 'identical' | 'differs' | 'absent' | 'unknown',
-                     upstreamMoved: boolean,   // blob at merge-base(HEAD, ref) != blob at ref
-                     localLines, upstreamLines }> }
+provenance = {
+  state: 'established' | 'stale' | 'unavailable',
+  remote, ref: 'origin/main' | null, refSha: string | null,
+  refresh: 'refreshed' | 'skipped' | 'failed', refreshProblem: string | null,
+  observedAt: ISO | null,               // when refSha is known to have been upstream's tip
+  ahead: number | null, behind: number | null,
+  problem: string | null,               // operator words, when state !== 'established'
+  paths: { [path]: { upstream: 'equal' | 'different' | 'absent' | 'unknown',
+                     upstreamChanged: boolean | null,   // blob at merge-base != blob at refSha
+                     localLines, upstreamLines } }
+}
 ```
 
-Per path, using only read-only plumbing (`rev-parse <ref>:<path>`, `hash-object <path>`,
-`merge-base`, `rev-list --left-right --count`), batched where git allows:
-- `identical`: the local file's blob equals the upstream blob.
-- `differs`: upstream tracks the path with other content. `upstreamMoved` says whether upstream changed
-  it after this checkout's merge-base.
-- `absent`: upstream does not track the path.
-- `unknown`: any git failure. It is never read as `absent`.
+- **`established`** means the refresh succeeded. **`stale`** means a ref exists but was not refreshed this wrap.
+  **`unavailable`** means no ref could be resolved.
+- `session-files` computes the object, including the refresh, and returns it in `output.provenance`.
+- `commit` and `changelog-coverage` **do not refetch**. They take `refSha` from the session-files result in
+  `previousResults` and recompute only the local-side blobs against that same commit. All three therefore
+  classify against one upstream commit. When no session-files result exists, as in a commit-only replay, the
+  commit step resolves the ref locally with no refresh and marks it `stale`.
+- Every git call is read-only plumbing: `rev-parse`, `hash-object`, `cat-file`, `merge-base`,
+  `rev-list --left-right --count` and `ls-tree`. One `ls-tree -r <refSha>` produces the whole upstream blob map,
+  and one `hash-object --stdin-paths` hashes all local files, so the cost does not grow per path.
+- `classify(scope, dirty, { provenance, … })` applies the rules below. Callers never re-derive facts.
 
-Deleted paths: `identical` when upstream also lacks the path, otherwise `differs`.
+### A3: Changed provenance at the final boundary
 
-### Recommendation rules (in `classify`, after the safety class, before advice reaches the drawer)
+**Recommend block and re-ask, with the client pruning the stale answer.** Refuse only where there is nothing to
+ask.
 
-| Upstream fact | Path state | Result |
+- `commit` compares each path's recomputed fact with the fact `session-files` reported. When a path with an
+  Include has tightened, the commit step **blocks**, lists the path with the new fact and "changed since you
+  answered", and returns `provenanceChanged: [paths]`. Tightened means `absent`→`different`, or anything→`equal`.
+- The drawer prunes answers for `provenanceChanged` paths, the way `pruneProtectedDecisions` already does for
+  protected files, so the next Retry asks again rather than resending the old Include. Without that prune, the
+  accumulated map would loop the block forever.
+- An Include for a path that is `equal` upstream is **refused**, never staged. It goes to
+  `provenanceRefusedIncludes` and is reported, like `refusedIncludes` for a DB. Committing it could only replay
+  upstream's change.
+- Nothing ever broadens. A path that loosens, such as `different`→`absent`, keeps its answer.
+
+### A4: Operator-facing states and copy
+
+- **Header**, above the path list and in the settled-row detail: "This checkout is **18 behind** and 0 ahead of
+  origin/main (checked just now)."
+- **Header variants:**
+  - "…(as of the last fetch, 2 h ago; refreshing failed: <reason>)"
+  - "Couldn't compare with upstream: <problem>. Files are kept local unless you choose Include."
+- **Per path**, in the row's recommendation line:
+
+| Fact | Recommendation | Copy |
 |---|---|---|
-| `identical` | any tracked or untracked non-protected path, including owned and TC maintenance | new bucket **`alreadyUpstream`**: never staged, never asked, named in the manifest and the row ("already on origin/main; no commit needed") |
-| `differs` with `upstreamMoved`, or untracked locally while upstream tracks it | asked (foreign, reason `upstream-owns`) | **Leave** recommended; why = "origin/main already has this path (N lines there, M here) and changed it after your checkout; you are B behind, so committing would duplicate or revert merged work" |
-| `absent` | unchanged | existing `_file-safety` recommendation |
-| `unknown`, or provenance `unavailable` | unchanged bucket | an `include` recommendation is **downgraded to Leave**. Why = "couldn't confirm what upstream has: <problem>" |
+| `equal` | none (not asked; see bucket) | Manifest group **Already upstream (not committed)**: "origin/main already has exactly this content; committing would only repeat a merged change." |
+| `different`, untracked here | Keep local | "origin/main already tracks this path with different content (32 lines there, 0 here…). Committing would duplicate or overwrite merged work. Your file is kept as-is." |
+| `different`, `upstreamChanged` | Keep local | "origin/main changed this file after your checkout (you're 18 behind). Committing from here risks reverting that change. Your file is kept as-is." |
+| `absent` | the existing kind-based advice | the existing why, with "not on origin/main yet" added |
+| `unknown` or unavailable | never Include; durable → Keep local | "Couldn't check upstream for this file (<reason>), so it isn't recommended for the commit." |
 
-Protected (DB) and TangleClaw state paths keep their current handling. Provenance never overrides a
-withhold. A `leave` recommendation never becomes an automatic decision: the operator still answers, or
-uses the existing "Apply recommendations".
+None of the copy names blobs, refs or worktrees beyond the branch name.
 
-### Callers
+## Classification rules (brief contract 1 precedence)
 
-`session-files` and `commit` both call `resolve()` and pass `options.provenance` to `classify`, so the
-commit step can't stage a path that session-files sorted out. `changelog-coverage`'s call gets it as well,
-so its owned set agrees. The summary gains `provenance: { ref, state, ahead, behind, refreshed, problem }`,
-and `_detail` states it ("checkout 18 behind origin/main · 2 already upstream, not committed").
+These run in `classify` in this order:
 
-### Drawer
+1. methodology withheld
+2. TC state
+3. protected DB
+4. secret (in `_secret-check`, unchanged)
+5. **provenance**
+6. TC maintenance / carriers
+7. ownership (launch snapshot / mtime)
+8. file kind advice
 
-`public/session.js` path-decision widget: a provenance header line above the list, and `recommendationWhy`
-carries the per-path upstream sentence. `alreadyUpstream` gets its own line in the manifest.
-`public/wrap-drawer.js` passes the new fields through.
+What the provenance rule does:
 
-### Tests (requirement 7)
+- **`equal`** for any path that survives 1–3, whether owned, maintenance or foreign, goes to the new bucket
+  `alreadyUpstream`. It is never staged and never asked. It appears in `manifestOf` as `alreadyUpstream` and in
+  `_detail`. This fixes `CLAUDE.md`.
+- **`different`**, where the path is untracked locally or `upstreamChanged` is true, becomes foreign with the new
+  reason `upstream-owns` **even if it would otherwise be owned**. It is asked with Keep local recommended. This
+  fixes the plan file.
+- **`unknown`**, or `state` of `stale`/`unavailable` together with an `absent` fact, changes nothing about
+  ownership. Any `include` recommendation is downgraded to `leave` with the unavailable copy. Owned files still
+  commit, so offline wrapping is not blocked (contract 4).
+- **`absent`** leaves the current rules unchanged. A genuinely new plan keeps Include advice (the control test).
 
-Real temporary repos with a bare `origin`, extending `test/wrap-file-ownership.test.js` plus a new
-`test/wrap-upstream-provenance.test.js`:
-1. Stale session root after a merged worktree PR: the plan is untracked locally and tracked upstream with
-   more lines, and the checkout is behind. Result: Leave recommended, never Include, and `upstreamMoved` true.
-2. Exact match: `CLAUDE.md` is modified locally and byte-identical upstream. Result: `alreadyUpstream`, not
-   staged, not asked, whether mtime-owned or maintenance-judged.
-3. An untracked file that upstream tracks with richer content. Result: Leave, and the why names both line counts.
-4. Upstream unavailable (no remote / ref missing / git error). Result: `state: 'unavailable'`, no Include
-   recommendation anywhere, and the problem is shown.
-5. Leave applied: the files are untouched on disk, the step returns `done`, and the commit step stages nothing
-   already upstream (multi-hop: session-files → decisions → commit).
-6. Control: a path upstream lacks keeps its existing `durable` → Include recommendation.
+## Drawer (chunk 03)
 
-## Architecture questions for the Architect (need rulings before build)
+- `pathDecisionWidget` passes through `provenance` (a header summary) and each path's `upstream` and
+  `upstreamWhy`.
+- `normalizeManifest` / `projectManifest` / `renderManifest` gain the `alreadyUpstream` group.
+- A `pruneProvenanceChangedDecisions` helper sits beside `pruneProtectedDecisions`.
+- The header line lives inside the widget's `role="group"`, referenced from the group's `aria-describedby`.
+- Radios are still never preselected. Apply fills only unanswered paths, as it does today.
+- `test/wrap-drawer.test.js:813-836` pins the widget shape. It is extended, not relaxed.
 
-**A1. May the wrap fetch?** Nothing in `lib/wrap-steps/` touches the network today. `lib/checkout-state.js`
-is documented read-only, and only `lib/behind-origin.js` fetches (TangleClaw's own clone, opt-out
-`behindOriginCheckEnabled` / `TC_BEHIND_ORIGIN_DISABLED`). Without a fetch, a PR merged minutes ago is
-invisible to a stale remote-tracking ref.
-- (a) No fetch. Use the local remote-tracking ref and state its age ("origin/main as of last fetch").
-- (b) A bounded `git fetch --quiet origin <default-branch>` in session-files only. It updates remote-tracking
-  refs only, with `GIT_TERMINAL_PROMPT=0` and batch ssh, the `NETWORK_TIMEOUT_MS` from `git-probe`, and honors
-  the same opt-outs. On failure it falls back to the local ref with `state: 'stale-ref'`.
-- (c) (b), but only when the ref's last fetch is older than N minutes.
-- **Recommend (b).** It is non-destructive, and the incident class is exactly "just merged". The commit step
-  reuses session-files' result and doesn't fetch again.
+## Tests (brief "Required tests")
 
-**A2. What does a stale ref prove?** With `stale-ref`, `identical` is still proof: upstream had this
-content at least as recently as the ref. `differs` / `absent` are not proof.
-- **Recommend:** `identical` → `alreadyUpstream` as normal. `absent` under `stale-ref` → the Include
-  recommendation downgrades to Leave with an "upstream not refreshed" note (requirement 4).
-- Alternative: treat `stale-ref` wholly as `unavailable`. That is stricter, but it would ask about every plan
-  whenever the machine is offline.
+These use real temporary repos: `test/_temp-repo.js` `initRepo(--bare)` + `cloneRepo`, and `wrapScope.resolve`
+through the existing `scopeFor` pattern. The new `test/wrap-upstream-provenance.test.js` plus extensions to
+`wrap-file-ownership`, `wrap-secret-check`, `wrap-step-commit-autopr` and `wrap-drawer`:
 
-**A3. Requirement 3 ("merged PR from a linked worktree") via git content, not GitHub/ledger lookup.**
-- **Recommend:** detect it with blob comparison against upstream (`identical`, or `upstreamMoved`), with no
-  `gh` API or wrap-ledger dependency. This catches the merged-PR case regardless of which worktree or PR
-  landed it, and adds no network/auth failure mode.
-- Alternative: also read the session's wrap ledger / `gh pr view` to name the PR in the explanation. It costs
-  a GitHub dependency in the wrap path for a nicer sentence. It could be a follow-up.
+1. **Exact B2 incident:** clone at an old commit, upstream advances with a plan file and a `CLAUDE.md` change,
+   and locally the plan is untracked with less content while `CLAUDE.md` equals upstream. Plan → `upstream-owns`
+   with Keep local. `CLAUDE.md` → `alreadyUpstream`. Nothing staged.
+2. A tracked local change equal to upstream: covers the owned, maintenance-judged and foreign paths. None is
+   staged.
+3. An untracked local file that upstream tracks with richer content: no Include advice, and the file is
+   byte-unchanged afterwards.
+4. Upstream absent, genuinely new durable document: Include advice is kept.
+5. Unavailable (no remote / no ref / fetch fails / `ls-tree` fails): no Include advice anywhere. Leave → the
+   step is `done` and the files are preserved.
+6. Default branch `trunk` through `origin/HEAD`, a remote not named `origin`, a detached HEAD, and the
+   worktree-scoped wrap.
+7. Provenance tightening between session-files and commit, done by moving the recorded `refSha` fixture: the
+   Include is blocked with `provenanceChanged`, and after the prune plus the re-answer it proceeds. An Include on
+   `equal` is refused. Multi-hop: session-files → commit → retry.
+8. Precedence: secret-flagged, protected-DB and methodology-withheld paths keep their current handling when
+   upstream is `equal` or `different`.
+9. Drawer: Apply produces a manifest matching the displayed advice (including `alreadyUpstream`), with no
+   implicit radio.
+10. No mutation: across all of the above, `git status --porcelain`, the index, HEAD and file bytes are the same
+    before and after. The only permitted change is one remote-tracking ref from the refresh.
 
-**A4. Byte-identical paths: silent bucket or asked?**
-- **Recommend:** a new `alreadyUpstream` bucket. It is never staged, never asked, and is listed by name with
-  the reason. Committing it can only replay upstream's change onto a stale branch, and asking adds a click
-  with one right answer.
-- Alternative: ask with Leave recommended (reason `already-upstream`). That keeps operator agency, at the
-  cost of the question the issue is trying to remove.
-- Either way the file on disk is untouched.
+## Docs
 
-## Out-of-band note
-
-`.tangleclaw/plans/1861-durable-control-state.md` is still at the plans root, but #1861 is CLOSED (#1866
-merged). Per the archive rule it belongs in `archive/`. It is not in this car's scope, so this is flagged to
-the PM rather than done here.
+- `docs/configuration-reference.md`: `wrapUpstreamRefresh` and `TC_WRAP_UPSTREAM_REFRESH`.
+- The wrap docs section on file decisions.
+- CHANGELOG `### Fixed`.
