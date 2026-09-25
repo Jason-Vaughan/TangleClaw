@@ -409,7 +409,7 @@ Manage with /prawduct:backlog (pick, add, find, list, update, dedup, import, mig
   **Deliberately NOT a silent sweep.** Moving the file to strict changes what its `assert.equal` calls accept (loose `==` → `===`, including type coercion the current assertions may be relying on). Read the file's assertions, convert intentionally, and take the whole suite green afterward — a mechanical find-and-replace is the wrong shape here, which is why this was sized as backlog work instead of folded into the ratification sweep.
 
 - **[TST-5N8W]** Switch `test/condition-log.test.js` to `node:assert/strict`
-  `effort: S · impact: S · area: tests · source: janitor · added: 2026-08-20 · status: open · stage: ready · refs: .prawduct/artifacts/project-preferences.md § Direction (tests are node:test + node:assert/strict) · related: TST-3M6R, NRM-5K8T`
+  `effort: S · impact: S · area: tests · source: janitor · added: 2026-08-20 · status: shipped · stage: ready · refs: .prawduct/artifacts/project-preferences.md § Direction (tests are node:test + node:assert/strict) · related: TST-3M6R, NRM-5K8T · closed-by: PR #1067`
 
   `test/condition-log.test.js` uses non-strict `node:assert` — same defect class as TST-3M6R (`test/wrap-step-pr-merge.test.js`), found during the 2026-08-20 Norm Health sweep but not previously tracked. Same caution as TST-3M6R: moving to strict changes what `assert.equal` accepts (`==` → `===`, possible type-coercion reliance) — read the assertions, convert intentionally, take the whole suite green afterward. Not a mechanical find-and-replace.
 
