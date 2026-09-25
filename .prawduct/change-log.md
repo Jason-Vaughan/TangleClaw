@@ -52,6 +52,11 @@ Pilot B1, #1245 chunk 02. The plan is `.tangleclaw/plans/1245-ttyd-child-leak.md
 - **Switches:** `TANGLECLAW_TTYD_WATCHER` and `TANGLECLAW_TTYD_ORPHAN_THRESHOLD` (5–200). Invalid values warn and use the safe default. When the watcher is disabled, health reports `unknown`.
 - **Health:** the ttyd condition carries `reading {pid, generation, sampledAt}` and `lastReceipt`. A cached reading of a replaced ttyd is dropped and re-measured.
 
+**Review.** The Critic cumulative review `rev-20260925T204343Z-b1361aa6` found 0 blocking.
+- **R-1, fixed:** a kickstart triggered on a reading with no readable start time could call the SAME ttyd a new one, and log its own restart as external. The proof of a restart now needs a different pid when the start time was missing, and the external suppression is keyed by pid.
+- **R-2 and R-3, fixed:** plan Status and design notes.
+- **R-4, accepted:** a slow respawn logs both lines.
+
 **Test contracts changed (approved by R22; none weakened silently):**
 - **Synchronous probes and `_check`:** the sync probes (`_getTtydPid`, `_isPtyPoolExhausted`, `_countTtydOrphans`, `_countTtydZombies`, `_ttydUptimeMs`) and the sync `_check` were removed (R22 Q2: no sync fail-safe zero). Their tests were ported to `_parsePid`, `_poolFromCounts`, `_parseChildren`, `classifyReading`, `takeReading` and `_tick`.
 - **The pool's failure value:** the pool "fail-safe `{cap: 0}`" contract became "`null`, never an empty pool".

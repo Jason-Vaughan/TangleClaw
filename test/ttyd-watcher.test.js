@@ -606,10 +606,54 @@ describe('ttyd-watcher', () => {
       assert.equal(kicks(runner), 2);
     });
 
+    // The reading that trips a gate may have a pid but no readable start time.
+    // Re-reading the SAME ttyd with its start time now readable is not a new
+    // process, and the real new ttyd is still this module's own restart.
+    it('when the triggering reading had no start time, only a different pid proves the restart', async () => {
+      let lstartReads = 0;
+      const runner = ttydRunner({
+        'sh:-c': '527\n',
+        'ps:-o': () => (++lstartReads === 1 ? new Error('ps: lstart unreadable') : `${LSTART}\n`)
+      });
+      ttydWatcher._setRunner(runner);
+      const r = await ttydWatcher._tick();
+      assert.equal(r.reading.generation, null, 'the fixture tripped the gate on a generation-less reading');
+      assert.equal(r.receipt.outcome, 'no-new-generation', 'the same pid, newly readable, is not a restart');
+      assert.equal(r.receipt.to, null);
+    });
+
+    it('when the triggering reading had no start time, the new ttyd is recorded as ok and not as external', async () => {
+      let kicked = false;
+      let lstartReads = 0;
+      const runner = ttydRunner({
+        'sh:-c': () => (kicked ? '54\n' : '527\n'),
+        'launchctl:list': () => launchctlRunning(kicked ? 54321 : TTYD_PID),
+        'ps:-o': () => {
+          lstartReads++;
+          if (kicked) return 'Fri Sep 25 12:00:00 2026\n';
+          return lstartReads === 1 ? `${LSTART}\n` : new Error('ps: lstart unreadable');
+        },
+        'launchctl:kickstart': () => { kicked = true; return ''; }
+      });
+      ttydWatcher._setRunner(runner);
+      // An earlier reading of the old ttyd WITH a generation is in the history.
+      await ttydWatcher.takeReading();
+      let r;
+      const log = await captureLog(async () => { r = await ttydWatcher._tick(); });
+      assert.equal(r.reading.generation, null);
+      assert.equal(r.receipt.outcome, 'ok');
+      assert.equal(r.receipt.to.pid, 54321);
+      // The final receipt overwrites anything recorded while waiting, so the
+      // log is the only place a misattributed restart would show.
+      assert.ok(!/restarted outside the watcher/.test(log), `its own restart was logged as external: ${log}`);
+    });
+
     it('does not record its own restart as an external one', async () => {
       const runner = restartingRunner({ 'sh:-c': '527\n' });
       ttydWatcher._setRunner(runner);
-      await ttydWatcher._tick();
+      await ttydWatcher.takeReading();
+      const log = await captureLog(() => ttydWatcher._tick());
+      assert.ok(!/restarted outside the watcher/.test(log), `its own restart was logged as external: ${log}`);
       assert.equal(ttydWatcher.lastReceipt().outcome, 'ok');
       // The next reading of the new ttyd must not re-classify that restart.
       await ttydWatcher.takeReading();

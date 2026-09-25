@@ -15,13 +15,16 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
 - [x] Plan written (rev 1)
 - [x] Architect ruled on Q1–Q7 (R22, 2026-09-25): all approved, Q1/Q5/Q6/Q7 with modifications. See "Architect ruling R22"
 - [x] Plan revised with R22 (rev 2)
-- [ ] **HELD: implementation is not released.** B2 is the sole #1839 writer and both touch server/monitor lifecycle
-      surfaces. The PM may release #1245 only after #1839 merges, live-syncs and wraps, or is explicitly parked and a
-      fresh collision revalidation says there is one writer. Until then: no harness execution, source edits, push or live action
+- [x] ~~HELD while B2 was the sole #1839 writer.~~ **Released by the PM on 2026-09-25 at 20:30Z**: #1839 was merged,
+      live-synced and wrapped, and B1 is the sole writer. B1's collision revalidation passed. #1839 touched none of the
+      #1245 surfaces; its `server.js` boot-block lines only sit beside `ttydWatcher.start()`. The PM confirmed it at
+      20:31Z. The branch was rebased onto origin/main 310dfbc3
 - [ ] Chunk 01: mutation-sensitive churn harness under the R22 host guards; fail-fast baseline reproduction against
       the installed 1.7.7_6 plus mutation proof; T_age derived from the baseline data
-- [ ] Chunk 02: bounded async single-flight `takeReading()`, PID/generation binding, confirmed-wedge predicate,
-      action receipt, immediate boot check, env kill switch and bounded threshold
+- [x] Chunk 02: bounded async single-flight `takeReading()`, PID/generation binding, confirmed-wedge predicate,
+      action receipt, immediate boot check, env kill switch and bounded threshold. Committed at fd22adf9. The Critic
+      cumulative review `rev-20260925T204343Z-b1361aa6` found 0 blocking. W1 (a receipt on a reading with no
+      generation) is fixed with tests. W2 (this Status) and the design notes are fixed. The slow-restart note is accepted
 - [ ] Chunk 03: candidate matrix (A1+A2 and A3) against the same acceptance contract; the winner is chosen by evidence
 - [ ] Chunk 04: rollout and rollback docs, CHANGELOG, watcher re-tuned to a safety net
 - [ ] Verify, Critic, one draft PR (pilot boundary: no merge). #1245 stays open until post-merge live certification
@@ -151,7 +154,7 @@ that clears them. The same deadlock was just fixed in upterm by flushing from th
 Everything lives in `lib/ttyd-watcher.js`: it already owns the probes, and a separate module would split one
 single-flight across two files. `lib/system-health.js` becomes a consumer.
 
-**Reading** (`takeReading()`, async, single-flight, bounded by `READING_DEADLINE_MS`):
+**Reading** (`takeReading()`, async, single-flight, bounded per spawn; see Bound below):
 `{ pid, generation, sampledAt, children: [{pid, stat, ageMs}], pool: {used, cap, ratio, exhausted}|null, error }`.
 - `pid` comes from `launchctl list <label>`. `null` means ttyd isn't running, and nothing else is measured.
 - `generation` is `<pid>@<lstart>` (`ps -o lstart= -p <pid>`). It's an identity, not a number, so nothing is
@@ -178,6 +181,9 @@ old-generation entries are dropped (R22 Q2).
 - The 15-minute uptime hold is retired. A restart burst's children are young and unconfirmed, and they're confirmed
   on the next tick only if they're still there.
 
+**Bound**: each spawn is limited to `SHELL_TIMEOUT_MS` (5 s). `launchctl` runs first and the rest run in parallel, so one
+reading is bounded by about three spawns (~15 s). There is no separate overall deadline.
+
 **Tick** (`_tick()`, async; `_tickInFlight` prevents overlapping ticks):
 1. `takeReading()`. If `pid` is `null`, the action is `skipped`.
 2. If the generation changed and there's no pending receipt for that change, record a receipt with outcome
@@ -201,8 +207,8 @@ the tick is async. Every probe is bounded. Then the normal interval runs.
 **Health** (revised: `system-health.js` keeps its non-awaiting 60 s cache and its `measureLeak` probe seam, and
 `measureLeak` becomes the adapter over the shared reading): `detectTtydLeak` serves `ttydWatcher.latestReading()` together with its classification. When the reading
 is older than the TTL, it starts `takeReading()` (the same single-flight) and never awaits it. The payload carries the
-reading's `sampledAt`, `pid` and `generation`, the last receipt, and whether the watcher is disabled. `measureLeak` is
-retired in favour of the shared reading.
+reading's `sampledAt`, `pid` and `generation`, the last receipt, and whether the watcher is disabled. `measureLeak`
+stays, as the adapter that classifies the shared reading for health.
 
 **Tests** (each existing behaviour is ported to the new API, not dropped):
 - pool boundary cases → `_poolFromCounts` / reading
