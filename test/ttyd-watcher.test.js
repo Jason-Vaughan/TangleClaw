@@ -377,6 +377,7 @@ describe('ttyd-watcher', () => {
     it('a long-lived child seen exiting once is transient, however old the process is', () => {
       const c = classifyAfter(reading(many(25, '?Es', '3-02:00:00')));
       assert.equal(c.wedged.length, 0);
+      assert.equal(c.transient.length, 25);
       assert.equal(c.orphanGate, false);
     });
 

@@ -35,6 +35,37 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-25 — ttyd attach script drains on hang-up: the #1245 root fix candidate A1 (chunk 03)
+
+<!-- prawduct: type=bugfix | scope=ttyd-1245 -->
+
+**Root cause.** On close, ttyd pauses its pty reads and sends SIGHUP to the child's process group. The exec'd `tmux attach` was the session leader. On macOS a session leader's exit waits, with no timeout, for its terminal's output queue to drain, and ttyd never reads it again. The child stuck in `E` holding a PTY. The churn harness reproduced it: 60 of 60 stuck, while the no-output control stuck none.
+
+**The change (`deploy/ttyd-attach.sh`).**
+- The script stays the leader. The replay and the client run in the background under `wait`.
+- A HUP/TERM/INT trap, set before the replay, SIGKILLs and reaps both, runs `tcflush(TCOFLUSH)` via `/usr/bin/perl` POSIX, and exits.
+
+**Iteration history (scratch only).**
+- Revision 1 put the replay in the foreground. In the `replay` close mode, 8 of 20 scripts stayed in `Ss+`, because bash defers a trap until a foreground command returns, and a replay blocked writing to an unread pty never does.
+- Revision 2 backgrounds the replay.
+
+**Evidence.**
+- Revision 2: every close mode clean. A 100-cycle all-mode run had 0 wedges and 0 lingering, and the pool and fds returned to baseline.
+- A traced 50-cycle run showed `hup > drain-enter > children-reaped > flushed-exit` for all 50, with hang-up to exit at a p50 of 24 ms and a maximum of 54 ms. ttyd reaped 50 of 50.
+- The full R22 Q7 acceptance run (2000 cycles plus a 2 h soak) is recorded separately.
+
+**Test contracts changed (R22 Q1 required the old exec rationale to be covered):**
+- "should exec the tmux attach command" was replaced by the drain contract:
+  - no exec, the attach runs in the background under wait, and `0<&0`;
+  - the replay runs in the background;
+  - the trap is set before the replay;
+  - the drain order is ignore signals, kill, reap, flush, exit;
+  - perl is called by absolute path;
+  - the drain also runs on the normal path.
+- The "replay before attach" ordering test now anchors on `tmux attach-session`, not `exec tmux attach-session`.
+- The "every terminal branch execs" contract still holds for the no-session `exec sleep 30`.
+- Mutation checks: exec'ing the attach again, a foreground replay, and flushing before reaping are each caught.
+
 ## 2026-09-25 — ttyd wedge predicate per the Architect's R22 Q3 amendment (#1245)
 
 <!-- prawduct: type=bugfix | scope=ttyd-1245 -->
