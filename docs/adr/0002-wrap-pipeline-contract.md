@@ -739,7 +739,7 @@ tied to the send's nonce — not rendered-pane inference — and another explici
 
 ## Amended 2026-09-25 — what upstream already holds outranks what kind of file it is (#1868)
 
-Architect ruling R11 (A1–A4, R11-E, R11-F). A stale session checkout after its worktree PR merged was
+Architect ruling R13 (controlling; it supersedes R11 on A1–A4 and the final-boundary rule), refined by R14. A stale session checkout after its worktree PR merged was
 offered its own merged plan, and a carrier byte-identical to upstream, as work to commit, because the
 advice read only the path.
 
