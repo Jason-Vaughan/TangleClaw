@@ -244,7 +244,7 @@ describe('/api/control (#1861)', () => {
     const { assignmentId } = await assigned();
     const r = await send(server, 'GET', `/api/control/check?assignmentId=${assignmentId}`, null, {});
     assert.equal(r.status, 200);
-    assert.deepEqual(r.data, { assignmentId, state: 'active', stateGeneration: 1 });
+    assert.deepEqual(r.data, { assignmentId, state: 'active', stateGeneration: 1, blocked: false, code: null });
     assert.equal((await send(server, 'GET', '/api/control/check?assignmentId=asg_nope', null, {})).status, 404);
   });
 
