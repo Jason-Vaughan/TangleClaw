@@ -297,6 +297,10 @@ describe('control-state (#1861)', () => {
       assert.equal(old.state, 'closed');
       assert.equal(old.supersededBy, b.assignment.assignmentId);
       assert.ok(old.stoppedAt, 'the record keeps that it was stopped');
+      // No notice goes out for the superseded assignment; its close says so
+      // rather than showing a notice pending forever.
+      const closeReceipts = control.status(a.assignmentId).events.at(-1).receipts.map((r) => [r.fact, r.outcomeCode]);
+      assert.deepEqual(closeReceipts, [['notify_pending', null], ['notify_attempted', 'skipped']]);
     });
 
     it('close: held ⇒ ACTIVE_HOLDS; active ⇒ closed by the operator or a lifecycle authority; others 403', () => {

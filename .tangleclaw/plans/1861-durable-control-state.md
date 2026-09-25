@@ -25,6 +25,8 @@ partition: serial for chunks 01–03 and 05–06 (they share lib/store.js, serve
 - **[DECISION] Project Master at the caller gate (Architect R3-B).** A verified Master launch is not operator-equivalent. While any assignment is held or stopped, its restart or update-apply is `423 CONTROL_CALLER_UNATTRIBUTABLE`.
 - **[DECISION] Linked worktrees (A5 constraint).** A governed main checkout also marks its common git dir, so worktrees the Builder creates under it share the lane. Governing it writes explicit `{ungoverned: true}` markers into every *registered* project that is a linked worktree of the same clone, whichever launched first. The hook sidecar lives in the hooks directory, not beside each worktree's marker, because the hooks are shared by every worktree of the clone.
 
+- **[DECISION] Injection callers beyond §4's list (Critic R-13).** The target gate sits inside `sessions#injectCommand`, so it also reaches callers §4 did not name. Each handles the refusal explicitly: `/command` answers the gate's status; launch-kickoff and launch-unready report `control-held` (not `inject-failed`); wrap-handback answers the gate's 423. The switchboard wake nudge is the one exemption (`controlExempt: 'medusa-wake'`).
+
 **Scope (Architect release):** no merge, auto-merge, live checkout/database/process mutation, live sync, restart, deploy, tag, release, destructive-data action, policy change, or work on #1865.
 
 # #1861 — Durable HOLD/STOP control state (Car A1): plan and design
