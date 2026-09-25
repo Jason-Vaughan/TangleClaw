@@ -329,6 +329,8 @@ const serviceToken = require('./lib/service-token');
 const medusa = require('./lib/medusa');
 const controlState = require('./lib/control-state');
 const controlApi = require('./lib/control-api');
+const controlGate = require('./lib/control-gate');
+const { resolveControlCaller } = require('./lib/control-auth');
 
 const log = createLogger('server');
 
@@ -953,6 +955,31 @@ function errorResponse(res, status, message, code, extra) {
   jsonResponse(res, status, { ...(extra || {}), error: message, code });
 }
 
+/**
+ * Ask the durable HOLD/STOP gate (#1861) immediately before a governed
+ * mutation, and answer its refusal if there is one.
+ * @param {http.ServerResponse} res
+ * @param {{surface: string, subject: object}} args - For `control-gate#checkMutation`
+ * @returns {boolean} True when the request was refused and answered
+ */
+function controlRefused(res, args) {
+  const refusal = controlGate.checkMutation(args);
+  if (!refusal) return false;
+  errorResponse(res, refusal.status, refusal.message, refusal.code, refusal.details);
+  return true;
+}
+
+/**
+ * The job subject for a project named in a route, with no admitted assignment
+ * yet: the project's current assignment decides.
+ * @param {string} projectName - Project name from the path
+ * @returns {object|null} The subject, or null when the project does not exist
+ */
+function controlJobSubject(projectName) {
+  const project = store.projects.getByName(projectName);
+  return project ? { kind: 'job', projectId: project.id, assignmentId: null } : null;
+}
+
 // ── Body Parser ──
 
 /**
@@ -1521,7 +1548,10 @@ route('POST', '/api/master/rules/restore-defaults', (_req, res) => {
 // bare-node, or Linux without a qualifying user unit) so the frontend can
 // hide the button cleanly, and 409 when a systemd unit that qualified at
 // boot no longer does.
-route('POST', '/api/server/restart', async (_req, res, _params, body) => {
+route('POST', '/api/server/restart', async (req, res, _params, body) => {
+  // #1861 — first, and never bypassed by `force`: a held caller, or one that
+  // cannot be attributed while any lane is held, does not restart the server.
+  if (controlRefused(res, { surface: 'server-restart', subject: { kind: 'caller', caller: resolveControlCaller(req) } })) return;
   // #583 — a restart kills any in-flight wrap pipeline (the 2026-07-16
   // incident's first domino: a restart POSTed mid-wrap 502'd the wrap and
   // orphaned its content steps). Refuse while a wrap runs unless the
@@ -5369,7 +5399,10 @@ route('POST', '/api/update/check', (_req, res, _params, body) => {
 // where that cannot be promised: `git-error`, an unexpected git failure with the
 // pre-update `fromSha`, and `recovery-failed`, where putting the checkout back
 // after a failed step did not fully succeed and `recovery` says what is where.
-route('POST', '/api/update/apply', (_req, res, _params, body) => {
+route('POST', '/api/update/apply', (req, res, _params, body) => {
+  // #1861 — the same caller gate as restart. Checking for an update is not a
+  // governed mutation and stays open; applying one is.
+  if (controlRefused(res, { surface: 'update-apply', subject: { kind: 'caller', caller: resolveControlCaller(req) } })) return;
   // `discardDirty` opts into removing TangleClaw-written files that block the
   // update (#711 chunk 03). A strict-boolean gate like bindAllInterfaces': a
   // truthy string from a sloppy client must not authorize a discard.
@@ -5944,7 +5977,11 @@ const OPEN_PR_STATUS = {
   NOT_GITHUB: 422,
   READ_FAILED: 502,
   CREATE_FAILED: 502,
-  WRITE_FAILED: 500
+  WRITE_FAILED: 500,
+  // #1861 — the control gate's own answers.
+  CONTROL_HELD: 423,
+  CONTROL_STOPPED: 423,
+  CONTROL_STATE_UNAVAILABLE: 503
 };
 route('POST', '/api/projects/:project/stranded-wraps/open-pr', async (req, res, params, body) => {
   const project = ownProjectCaller(req, res, params.project, _projectByIdOrName);
@@ -6212,6 +6249,10 @@ route('POST', '/api/projects/:name/actions/:command', async (req, res, params, b
   // or operator action needs its own operator-only classification
   // (`lib/actions.js#ACTIONS`).
   if (!ownProjectCaller(req, res, params.name, projects.getProjectRow)) return;
+  // #1861 — an action types into the project's own pane; a held lane takes no
+  // injected work.
+  const actionProject = store.projects.getByName(params.name);
+  if (actionProject && controlRefused(res, { surface: `action:${params.command}`, subject: { kind: 'target', projectId: actionProject.id } })) return;
   const options = body && typeof body === 'object' && !Array.isArray(body) ? body : undefined;
   const result = await actions.runAction(params.name, params.command, options);
 
@@ -6339,6 +6380,12 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
     // predates codes here and stays for the callers that still return only a
     // sentence, but nothing new should join them: a status code that depends on
     // the wording of a message changes when the message is improved.
+    // #1861: a STOPPED lane (or an unreadable control store for a governed
+    // one) refuses the launch with the gate's own status and bounded details.
+    if (result.controlRefusal) {
+      const r = result.controlRefusal;
+      return errorResponse(res, r.status, r.message, r.code, r.details);
+    }
     if (result.code === 'LIVENESS_UNKNOWN') {
       // 503, not 500: nothing internal failed. tmux — a dependency — did not
       // answer, this call changed nothing, and trying again once the server is
@@ -7219,6 +7266,9 @@ route('POST', '/api/sessions/:project/startup-prompt/fire', async (req, res, par
     if (refusal) return errorResponse(res, refusal.status, refusal.message, refusal.code);
   }
   const b = body && typeof body === 'object' ? body : {};
+  // #1861 — the startup prompt is opaque injected work: a held lane takes none.
+  const fireProject = store.projects.getByName(params.project);
+  if (fireProject && controlRefused(res, { surface: 'startup-prompt-fire', subject: { kind: 'target', projectId: fireProject.id } })) return;
   const result = await startupPrompt.fire({
     projectName: params.project,
     sessionId: b.sessionId,
@@ -7256,6 +7306,10 @@ route('POST', '/api/sessions/:project/command', (_req, res, params, body) => {
     enter: body.enter !== false
   });
 
+  if (!result.ok && result.controlRefusal) {
+    const r = result.controlRefusal;
+    return errorResponse(res, r.status, r.message, r.code, r.details);
+  }
   if (!result.ok) {
     if (result.error.includes('not found') || result.error.includes('No active')) {
       return errorResponse(res, 404, result.error, 'NOT_FOUND');
@@ -7297,6 +7351,10 @@ route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => 
   if (!passwordCheck.allowed) {
     return errorResponse(res, 403, passwordCheck.error, 'FORBIDDEN');
   }
+  // #1861 — a held or stopped lane does not start a wrap. The run itself asks
+  // again at every step boundary, against the assignment it was admitted under.
+  const wrapSubject = controlJobSubject(params.project);
+  if (wrapSubject && controlRefused(res, { surface: 'wrap-start', subject: wrapSubject })) return;
 
   const options = body && typeof body.options === 'object' && body.options !== null ? body.options : undefined;
   const started = sessions.startWrap(params.project, options);
@@ -10751,6 +10809,9 @@ if (require.main === module) {
 
   // Initialize store (needed for config before PID check)
   store.init();
+  // #1861 — remember which projects are governed before any request arrives,
+  // so a control store that fails later still fails closed for them.
+  controlGate.prime();
   const config = store.config.load();
 
   // Clear out sessions nobody is coming back for (#1418). At boot rather than
