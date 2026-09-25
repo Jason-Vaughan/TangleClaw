@@ -35,6 +35,46 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-25 — Wrap advice knows what upstream already holds (#1868)
+
+<!-- prawduct: type=bugfix | scope=wrap-1868 -->
+
+Dual Builder Pilot, Car A2 (TangleClaw-Pilot-B1). The plan is `.tangleclaw/plans/1868-wrap-upstream-provenance.md`. Architect rulings R11, R13 (controlling) and R14 are recorded there.
+
+**Root cause.** Wrap advice was a function of file kind (`_file-safety.js` `durable` → Include), and no wrap step read a remote ref. So a session checkout left behind after its worktree PR merged was offered its own merged plan, and a carrier byte-identical to upstream, as work to commit.
+
+**The change.**
+- **`lib/wrap-steps/_upstream-provenance.js`:**
+  - resolves the default branch (`<remote>/HEAD`, else `main`/`master`);
+  - makes one bounded refresh in `session-files`, which honors the behind-origin opt-outs;
+  - records the commit the ref names;
+  - judges each dirty path from git content: `already-upstream`, `upstream-owns`, `unverified` or `none`. The exception for the branch's own work is proven from HEAD vs the merge-base, and never applies to an untracked path.
+- **`classify` precedence:** methodology > TC state > protected DB > provenance > TC maintenance > ownership > file kind (the secret scan still runs after classify).
+  - Exact matches go to a non-interactive `alreadyUpstream` bucket.
+  - `upstream-owns` is asked, with Keep local recommended.
+  - Unverified evidence never recommends Include.
+- **Commit rechecks** against the captured commit, and against the current ref if it moved, with no network. It only tightens. An Include whose echoed `pathDecisionBasis` is weaker than the current verdict is asked again (`provenanceChanged`), and the drawer prunes it.
+- **The drawer** shows the provenance headline, the "Already upstream" manifest group and the per-path copy.
+- **changelog-coverage** reuses session-files' verdicts, which was accepted in the Critic disposition.
+
+**Tests.** New `test/wrap-upstream-provenance.test.js`, which runs real bare-origin fleets. It covers:
+- the exact B2 incident;
+- an exact match, whether owned, maintenance or foreign;
+- an untracked path with richer upstream content;
+- a genuinely new plan;
+- unavailable, stale and no-remote upstream;
+- `trunk` on a remote named `upstream`, a detached HEAD, and a linked worktree;
+- an R11-E ref move before commit;
+- the R14 revert and both-sides cases, with negative controls;
+- deletions;
+- precedence;
+- the changelog predicate path;
+- no mutation.
+
+The drawer and wiring tests are extended. Pinned shapes gained the new fields, and nothing was relaxed. The full suite is green at the reviewed head.
+
+**Critic.** Cumulative `rev-20260925T161734Z-32402ac3` found 1 blocking issue: the changelog predicate path was untested. It is fixed and verified. The table break is fixed, and diverged paths are surfaced. Two items were accepted: the secret scan does not run on already-upstream files, and changelog-coverage replays verdicts. Verify-resolutions `rev-20260925T163746Z-f610b722` returned 0 findings.
+
 ## 2026-09-25 — HOLD and STOP are durable and refuse TangleClaw's own mutations before anyone reads them (#1861)
 
 <!-- prawduct: type=feature | scope=control-state-1861 -->
