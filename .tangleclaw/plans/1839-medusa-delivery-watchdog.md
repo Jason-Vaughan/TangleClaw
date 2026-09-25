@@ -17,7 +17,7 @@ partition: serial. Every chunk touches lib/store.js, server.js or lib/medusa*.js
 - [x] Chunk 05 (`7a6af992`; the isolated E2E passes): docs, CHANGELOG, FEATURES, and the isolated-instance E2E
 - [x] Verify: focused tests plus the full suite on the feature worktree (**not** the main instance). Full suite on `e8707883`: 13113 passed, 0 failed, 1 skipped
 - [x] Cumulative Critic: `rev-20260925T200338Z-c0c2eeb5` (0 blocking), with warnings fixed in `e8707883` and verified by `rev-20260925T201139Z-53c36989`
-- [ ] Draft PR opened. **STOP there**: the PM owns readiness and merge sequencing
+- [x] Draft PR opened: **#1880** (2026-09-25). Independent PR review: 0 blocking, 0 warnings, 3 notes. **STOPPED**: the PM owns readiness and merge sequencing
 
 **Recorded decisions made during the build** (each reported to the Architect at the checkpoint):
 
@@ -85,6 +85,7 @@ partition: serial. Every chunk touches lib/store.js, server.js or lib/medusa*.js
   - Escalation notices carry `controlGeneration`.
   - The send-time deadline bound comes from `medusa-watchdog#sendThresholds`.
   - This plan's stale prose is corrected (marked "as built").
+- **Carried (PR review note 2):** drop the build-history parentheticals `Escalation (chunk 04):` (`lib/medusa-watchdog.js`) and `(Architect ruling on R20 A3)` (`lib/medusa-exchanges.js`) in the next commit that touches those files (#1873's work).
 - **[DECISION] Review cadence.** Prawduct does not resolve plans under `.tangleclaw/plans/`, so it infers `cumulative` rather than per-chunk review. One cumulative Critic over chunks 01–02 serves as the governance-checkpoint review. The boundary cumulative runs again before the draft PR.
 
 # #1839 — Priority-aware Medusa delivery watchdog and escalation (Car B1): plan and design
