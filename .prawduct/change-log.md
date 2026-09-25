@@ -39,7 +39,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- prawduct: type=feature | scope=control-state-1861 -->
 
-Dual Builder Normalization Train, Chunk A, Car A1 (TangleClaw-Pilot-B2). Chunks 01–06 of `.tangleclaw/plans/1861-durable-control-state.md`. Architect rulings R1 (A1–A9), R2 (N1–N5) and R3 (B/C) are recorded in the plan, and the incident ruling I1 is recorded below.
+Dual Builder Normalization Train, Chunk A, Car A1 (TangleClaw-Pilot-B2). Chunks 01–06 of `.tangleclaw/plans/1861-durable-control-state.md`. Architect rulings R1 (A1–A9), R2 (N1–N5), R3 (B/C) and R4-B are recorded in the plan, and the incident ruling I1 is recorded below.
 
 **The change.** Schema v48 adds four tables. `control_assignments` and `control_holds` are caches. `control_events` and `control_receipts` are append-only, enforced by triggers. `lib/control-state.js` holds the rules:
 - server-assigned generations, separate from receipt order;
@@ -72,6 +72,8 @@ Mutation checks: removing each new guard or branch fails its test. One R-4 test 
 The first verify-resolutions ran before the fixes were committed and saw none of them. The second confirmed all 10, and raised one blocking finding: three new branches were untested. That was fixed in `01ac724d`, and the third pass found nothing. Four observations were accepted.
 
 **Incident I1.** An early run of `control-e2e` wrote a hook marker naming `localhost:3102`, because the pane exports `TANGLECLAW_PORT=3102` and that outranks the config. A scratch-repo commit then sent the live server one read-only `GET /api/control/check`, which answered 404. Nothing was written and nothing was restarted. The test now removes `TANGLECLAW_PORT` and asserts that the marker names its own instance, and every boundary suite ran with all `TANGLECLAW_*` variables unset.
+
+**R4-B, applied after the draft PR opened.** When control state cannot be established, restart and update-apply refuse every caller, the operator included, with `503 CONTROL_STATE_UNAVAILABLE`. That covers an unprimed governed memory and an unreadable store. A verified operator passes a readable HOLD, never an unreadable store. The ruling reached the inbox during the Critic runs and was seen only after #1866 opened. It was fixed in `b7a163f8`, which has a verify-resolutions pass with no findings and a PR re-review with 0 blocking.
 
 **Honest limit.** Shell `git`/`gh` is not server-enforceable. The managed hooks narrow the gap, and the docs list every bypass.
 
