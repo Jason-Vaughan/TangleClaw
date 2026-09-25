@@ -10,7 +10,7 @@ Dispatched by the PM on 2026-09-25.*
 - [x] Chunk 01 — classifier + server enforcement (session-files, commit, changelog-coverage) — 1b4b7e56
 - [x] Chunk 02 — drawer: recommendations, Apply-and-retry, manifest, ignore remediation — 2ae024a9
 - [x] Chunk 03 — docs + CHANGELOG, cumulative Critic (`Type: cumulative-final`) — 0ab0703c. Cumulative 2026-09-25: 1 blocking (Apply could fill Include for a secret-flagged plan), 1 warning (API reference), 1 note (caption). All fixed in ad78b50c; verify-resolutions reported 0 findings
-- [ ] Draft PR opened. **STOP here** (pilot boundary)
+- [x] Draft PR opened: #1860. **STOP here** (pilot boundary)
 
 **Pilot envelope (IN FORCE):** no merging any PR, no pulling/updating the live checkout, no restarting the
 live service, no tests on the main instance, no tag/publish/release, no deploy.
