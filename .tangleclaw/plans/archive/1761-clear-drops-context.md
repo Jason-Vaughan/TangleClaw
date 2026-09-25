@@ -254,3 +254,10 @@ The smallest fix that closes the issue is **chunk 02 on its own** (change the ma
 which is about 40 lines and handles the reported case. I'm still proposing chunk 01 alongside it, because
 without it any non-Claude or pushed-prime session keeps the same hole, and the task and state steps can't
 be recovered even on Claude. I proposed cutting chunk 03, and the Architect has cut it (A4).
+
+## Live Verification (VRF) Evidence
+Pilot 3 passed its final validation gate on 2026-09-24 19:50 PDT in Pilot-B1 (session 1148).
+- **tc start status**: Remained `READY` after re-entry.
+- **tc start review**: Successfully served the frozen read-only snapshot without re-attesting.
+- **/clear and /compact**: Both successfully re-injected the re-entry preamble and project rules directly into the engine context (verified via Operator pane capture).
+- **Receipts**: Verified in `tangleclaw.sqlite` (`session_rule_deliveries`). Only the single initial startup receipt (`id 509`, created at `2026-09-24 23:43:59Z`) was recorded. No duplicate deliveries were logged during re-entry.
