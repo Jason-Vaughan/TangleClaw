@@ -743,9 +743,12 @@ Architect ruling R13 (controlling; it supersedes R11 on A1–A4 and the final-bo
 offered its own merged plan, and a carrier byte-identical to upstream, as work to commit, because the
 advice read only the path.
 
-- **Precedence.** Methodology withholding, TangleClaw state, protected databases and the credential
-  scan stay strongest. Upstream provenance comes next and outranks TangleClaw maintenance, ownership
-  and file kind. A durable path is a weak hint when provenance does not contradict it.
+- **Precedence.** Methodology withholding, TangleClaw state and protected databases stay strongest.
+  Upstream provenance comes next and outranks TangleClaw maintenance, ownership and file kind. A
+  durable path is a weak hint when provenance does not contradict it. The credential scan still covers
+  every file the wrap could commit or asks about. A file already upstream is neither, so it is never
+  scanned. That is safe only because it can never be staged, which is recorded as an accepted Critic
+  disposition.
 - **Freshness (A1).** `session-files` makes at most one bounded refresh of the default branch's
   remote-tracking ref, with no tags, no prune, and no index, work-tree or HEAD change. It honours the
   behind-origin opt-outs and records the ref, the commit, the time, whether it refreshed, and any

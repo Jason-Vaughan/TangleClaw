@@ -23,10 +23,11 @@ questions A1–A4) and two read-only scout reports (server classification seams;
       changelog-coverage
 - [x] Chunk 03: the drawer keeps and renders the provenance fields. The provenance header, the per-path
       upstream line, the manifest group, and pruning of stale answers. Docs and CHANGELOG
-- [x] Verify: focused tests, then the full suite on this checkout (**not** the main instance). Green at 88eb4086: 13,001 pass, 0 fail, 1 skip. An earlier run's `dir-scanner` deadline test flaked under load; it passed 3/3 when run alone, and this change doesn't touch it
-- [x] Critic: cumulative `rev-20260925T161734Z-32402ac3`, then verify-resolutions `rev-20260925T163015Z-deaaed5c` and `rev-20260925T163746Z-f610b722`. 0 blocking; dispositions recorded
-- [x] R15 local drawer smoke (see "R15 local drawer smoke" below). It drove two copy fixes, now committed; impacted tests, the full suite, the cumulative Critic and the exact-head review are re-run for the final head
-- [x] Draft PR opened: #1871 (2026-09-25). Independent PR review: 0 blocking, 0 warning, 2 notes. **STOP here** (pilot boundary)
+- [x] Verify: focused tests, then the full suite on this checkout (**not** the main instance), green and recorded as tree-valid evidence. `prawduct-hook test-status` is the live record. An earlier run's `dir-scanner` deadline test flaked under load; it passed 3/3 when run alone, and this change doesn't touch it
+- [x] Critic: cumulative `rev-20260925T161734Z-32402ac3`, then verify-resolutions `rev-20260925T163015Z-deaaed5c`, `rev-20260925T163746Z-f610b722`, `rev-20260925T170138Z-4b6e6c4e` and `rev-20260925T170357Z-ac2fbea4`. 0 blocking; dispositions recorded
+- [x] R15 local drawer smoke (see "R15 local drawer smoke" below). It drove two copy fixes, now committed; the impacted tests, the full suite and the Critic were re-run after them
+- [x] Draft PR opened: #1871 (2026-09-25). **STOP here** (pilot boundary)
+- [x] Exact-head independent PR review, bound to the branch's final head (R15). The SHA and findings are reported in the PR and the Medusa report, not here, because recording them in this file would change the head they describe
 
 **Pilot envelope (IN FORCE):** no merging any PR, no pulling or updating the live checkout, no restarting the
 live service, no tests on the main instance, no tag, publish or release, no deploy.
