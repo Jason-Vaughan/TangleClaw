@@ -14,6 +14,7 @@ questions A1–A4) and two read-only scout reports (server classification seams;
 - [x] Plan written (rev 2: brief incorporated, scouts collected)
 - [x] Architect has ruled on A1–A4 (R11, 2026-09-25): all four approved, with the R11-E final-boundary amendment and the R11-F subagent ruling. Implementation was released on incorporation, with no second architecture pause. See "Architect ruling R11"
 - [x] R13 received (controlling), recorded above
+- [x] R14 received (branch-own refinement with guards), recorded above
 - [ ] Chunk 01: `_upstream-provenance.js`, which resolves the default-branch ref, refreshes it with a time limit,
       records when it was observed, gives the checkout's position, and gives a fact for each path. Unit tests run
       against real temporary repos with a bare origin
@@ -28,6 +29,20 @@ questions A1–A4) and two read-only scout reports (server classification seams;
 
 **Pilot envelope (IN FORCE):** no merging any PR, no pulling or updating the live checkout, no restarting the
 live service, no tests on the main instance, no tag, publish or release, no deploy.
+
+## Architect ruling R14 (2026-09-25): the branch-own refinement, approved with guards
+
+- A local path equal to upstream is not `alreadyUpstream` when commits unique to this branch changed that path;
+  staging may be needed to reverse the branch's own change.
+- When both the branch and upstream changed the path since the merge-base, it is not `upstream-owns`. Ordinary
+  feature-branch handling applies, and the divergence is exposed (`branchChanged` per path,
+  `output.provenanceDiverged`, explanatory copy).
+- The exception is proven from git history only (the blob at HEAD differs from the blob at the merge-base). It is
+  never proven from mtime, launch ownership, file kind, TC-maintenance status, or an untracked local path (a path
+  HEAD does not hold never qualifies). The B2 incident behavior is unchanged.
+- Tests: (a) a revert of this branch's committed change, (b) a true both-sides change, and negative controls for
+  an untracked path (recreated after the branch deleted it) and for a carrier judged owned on a branch whose
+  commits touch other files.
 
 ## Architect ruling R13 (2026-09-25), controlling; supersedes R11 where they differ
 

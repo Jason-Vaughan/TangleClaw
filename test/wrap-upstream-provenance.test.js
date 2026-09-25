@@ -327,6 +327,33 @@ describe('what upstream holds decides before what kind of file it is', () => {
     const res = await runStep(sessionFiles, fleet.session, scope);
     assert.equal(res.status, 'done');
     assert.deepEqual(res.output.manifest.commit, ['lib.js']);
+    assert.deepEqual(res.output.provenanceDiverged, ['lib.js'], 'the divergence is reported');
+  });
+
+  it('negative control: an untracked file never qualifies as the branch\'s own, even after the branch deleted it', async () => {
+    const fleet = makeFleet();
+    git(fleet.session, 'checkout', '-q', '-b', 'feat/own');
+    git(fleet.session, 'rm', '-q', 'lib.js');
+    git(fleet.session, 'commit', '-q', '-m', 'branch removes lib.js');
+    const baseline = launchBaseline.capture(fleet.session);
+    write(fleet.session, 'lib.js', 'v1\n');
+    const scope = await scopeFor(fleet.session, baseline);
+    const res = await runStep(sessionFiles, fleet.session, scope);
+    assert.deepEqual(res.output.alreadyUpstream, ['lib.js'], 'an untracked copy of upstream\'s content is already upstream');
+  });
+
+  it('negative control: a carrier this session regenerated stays already upstream on a branch whose commits touch other files', async () => {
+    const fleet = makeFleet();
+    landUpstream(fleet, { 'CLAUDE.md': 'rules v2\n' });
+    git(fleet.session, 'checkout', '-q', '-b', 'feat/own');
+    write(fleet.session, 'lib.js', 'branch edit\n');
+    git(fleet.session, 'commit', '-q', '-am', 'branch changes lib.js only');
+    const baseline = launchBaseline.capture(fleet.session);
+    write(fleet.session, 'CLAUDE.md', 'rules v2\n');
+    const scope = await scopeFor(fleet.session, baseline);
+    const res = await runStep(sessionFiles, fleet.session, scope);
+    assert.deepEqual(res.output.alreadyUpstream, ['CLAUDE.md']);
+    assert.equal(res.output.manifest.commit.includes('CLAUDE.md'), false);
   });
 
   it('a deletion upstream already made is not committed again, but deleting a file only this branch added is', async () => {

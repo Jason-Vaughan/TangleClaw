@@ -106,6 +106,7 @@ function harness() {
     sessionState: { wrapDrawerOpen: false },
     wrapSkippedAiSteps: {},
     wrapPathDecisions: {},
+    wrapPathDecisionBasis: {},
     wrapSkipPreflight: false,
     wrapBumpLevel: '',
     wrapReleaseChoice: '',

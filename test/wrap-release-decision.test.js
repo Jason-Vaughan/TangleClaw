@@ -113,12 +113,14 @@ describe('replayChoicesFromOptions', () => {
     const stranded = [{ remote: 'https://github.com/example/r.git', branch: 'wrap/1-x', headSha: 'e'.repeat(40) }];
     const c = H.replayChoicesFromOptions({
       release: 'cut', bumpLevel: 'major', skipPreflight: true,
-      pathDecisions: { 'a.js': 'include', 'b.js': 'leave' }, skipAiContent: { 'memory-update': true }, untrackState: 'decline',
+      pathDecisions: { 'a.js': 'include', 'b.js': 'leave' }, pathDecisionBasis: { 'a.js': 'upstream-owns' },
+      skipAiContent: { 'memory-update': true }, untrackState: 'decline',
       proceedPastStranded: stranded, keepSessionRunning: true
     });
     assert.deepEqual(JSON.parse(JSON.stringify(c)), {
       release: 'cut', bumpLevel: 'major', skipPreflight: true,
-      pathDecisions: { 'a.js': 'include', 'b.js': 'leave' }, skipAiContent: { 'memory-update': true }, untrackState: 'decline',
+      pathDecisions: { 'a.js': 'include', 'b.js': 'leave' }, pathDecisionBasis: { 'a.js': 'upstream-owns' },
+      skipAiContent: { 'memory-update': true }, untrackState: 'decline',
       proceedPastStranded: stranded, keepSessionRunning: true
     });
   });

@@ -573,7 +573,7 @@ describe('session page wrap dialog: Keep the session running (#1558)', () => {
     vm.createContext(sandbox);
     vm.runInContext([
       'let wrapReleaseChoice = ""; let wrapBumpLevel = ""; let wrapUntrackState = ""; let wrapSkipPreflight = false;',
-      'let wrapPathDecisions = {}; let wrapSkippedAiSteps = {}; let wrapProceedPastStranded = [];',
+      'let wrapPathDecisions = {}; let wrapPathDecisionBasis = {}; let wrapSkippedAiSteps = {}; let wrapProceedPastStranded = [];',
       'let wrapKeepRunning = null;',
       'let lastRefusedStrandedItems = null; let wrapDrawerStrandedItems = null; let wrapModalStrandedItems = null;',
       liftFunction(SESSION_SRC, 'function adoptWrapRunChoices('),
@@ -640,7 +640,7 @@ describe('session page wrap dialog: Keep the session running (#1558)', () => {
     vm.createContext(sandbox);
     vm.runInContext([
       'let wrapReleaseChoice = ""; let wrapBumpLevel = ""; let wrapUntrackState = ""; let wrapSkipPreflight = false;',
-      'let wrapPathDecisions = {}; let wrapSkippedAiSteps = {}; let wrapProceedPastStranded = [];',
+      'let wrapPathDecisions = {}; let wrapPathDecisionBasis = {}; let wrapSkippedAiSteps = {}; let wrapProceedPastStranded = [];',
       'let wrapKeepRunning = false; let wrapModalStrandedItems = null; let lastRefusedStrandedItems = null;',
       'let currentWrapPassword = "";',
       liftFunction(SESSION_SRC, 'function openWrapModal('),

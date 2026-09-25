@@ -762,3 +762,7 @@ advice read only the path.
   forward: the path is asked about again, and the drawer drops the stale answer.
 - **No remote.** A repository with no remote has nothing upstream to duplicate, so its advice is
   unchanged.
+- **The branch's own work (R14).** When commits unique to this branch changed a path since the
+  merge-base (the blob at HEAD differs from the blob at the merge-base; never an untracked path), a
+  local copy equal to upstream is the branch undoing its own change and is committed. A path both
+  sides changed stays ordinary feature-branch work, reported in `provenanceDiverged`.
