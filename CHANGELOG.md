@@ -6,6 +6,13 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **Medusa messages get a durable delivery record, the base for the delivery watchdog** (#1839, in progress). Until now TangleClaw recorded only wake nudges, so a message stored on the Hub but never read looked the same as one handled.
+  - **Each ordinary message to a recipient is now an exchange.** Its facts (sent, arrived, wake, read, acknowledged, replied, closed) are append-only, and the exchange's state is recomputed from them, so facts that race or arrive out of order still give the same answer.
+  - **A send is recorded before the Hub is called.** A send whose Hub outcome is lost stays `send_unknown` rather than being retried or assumed delivered.
+  - **Priority is `normal`, `blocking` or `critical`, and changes only timing and visibility.** A blocking message needs a verified session launch; critical is reserved to the operator and TangleClaw. A priority that cannot be proven is refused, never quietly downgraded.
+  - **A retracted message is a permanent end state that is never escalated.** Retraction applies to ordinary mail only and can never touch HOLD, STOP or RELEASE. Its route and UI are #1873.
+  - Schema v49, purely additive: a v48 server ignores the new tables, and their rows survive a rollback and re-upgrade. Nothing prunes them.
+
 - **HOLD and STOP are durable and refuse TangleClaw's own mutations before anyone reads them** (#1861, experimental). On 2026-09-25 three HOLD/STOP messages sat unread while a Builder acted on an earlier go-ahead; delivery timing cannot enforce a boundary. Now:
   - **A HOLD or STOP is stored before it is reported accepted.** An operator creates a control assignment for a project (`POST /api/control/assignments`, with an authority matrix). Listed authorities HOLD, RELEASE and STOP it, and the target acknowledges (`/api/control/assignments/:id/*`, `tc control`).
   - **The newest state wins.** Generations are server-assigned, and HOLDs are cumulative and named. A RELEASE must name its holds and the generation it saw, so a stale go-ahead is refused. STOP is terminal; only an operator successor assignment resumes the work, and an ordinary launch into a stopped lane is refused.
