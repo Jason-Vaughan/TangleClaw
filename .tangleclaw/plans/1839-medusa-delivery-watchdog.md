@@ -29,6 +29,14 @@ partition: serial. Every chunk touches lib/store.js, server.js or lib/medusa*.js
 - **[DECISION] What "this host can supervise" means.** A recipient is tracked when a live session on this host (or the Master) holds its workspace id, via the same match `peerReachability` uses. A retired local id is no longer held, so blocking or critical mail to it is refused with `WATCHDOG_UNAVAILABLE_REMOTE`, and normal mail is untracked.
 - **[DECISION] A Hub success with no id** is recorded as `send_unknown` (`hub-no-id`), since nothing can bind it.
 - **[ASSUMPTION] The recipient's `message.id` equals the Hub id `/send` returns.** Every fixture in `test/api-medusa.test.js` has envelope `messageId` equal to `message.id`, as does the live inbox shape. Arrivals are keyed on `message.id`. A live mismatch would show up as untracked arrivals with open sends never reaching `delivered`, which the chunk 05 isolated E2E will exercise.
+- **Checkpoint Critic `rev-20260925T185705Z-3b387950`** (0 blocking). Warnings and notes fixed in one commit:
+  - Recipient-side facts (read, ack, wake) are recorded only on exchanges addressed to the reporting participant's own workspace, so a sender can no longer ack its own message as the recipient.
+  - One shared close rule, so a no-reply send closes when it adopts an early arrival that was already acknowledged.
+  - Untracked exchanges still show `send_unknown` and terminal outcomes.
+  - An unstorable Hub id gives `send_unknown`.
+  - A non-initiator close is `403 NOT_INITIATOR` (R20's test list); a missing exchange is `404`.
+  - `--request-id` is in the `tc message` usage.
+  - A dead projection line was removed.
 - **[DECISION] Review cadence.** Prawduct does not resolve plans under `.tangleclaw/plans/`, so it infers `cumulative` rather than per-chunk review. One cumulative Critic over chunks 01–02 serves as the governance-checkpoint review. The boundary cumulative runs again before the draft PR.
 
 # #1839 — Priority-aware Medusa delivery watchdog and escalation (Car B1): plan and design

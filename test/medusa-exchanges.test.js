@@ -186,9 +186,9 @@ describe('medusa-exchanges (#1839)', () => {
     it('walks a normal message from arrival to an automatic close on acknowledgement', () => {
       const x = sendPmToBuilder();
       assert.equal(mx.recordArrival({ hubId: 'hub-1', recipientWorkspaceId: 'builder-ws' }).state, 'delivered');
-      assert.equal(mx.recordRead(['hub-1']), 1);
+      assert.equal(mx.recordRead(['hub-1'], 'builder-ws'), 1);
       assert.equal(store.medusaExchanges.get(x.exchange_id).state, 'read');
-      assert.equal(mx.recordAcknowledged(['hub-1'], BUILDER), 1);
+      assert.equal(mx.recordAcknowledged(['hub-1'], 'builder-ws', BUILDER), 1);
       const done = store.medusaExchanges.get(x.exchange_id);
       assert.equal(done.state, 'closed');
       assert.equal(done.terminal_code, 'acknowledged');
@@ -199,8 +199,8 @@ describe('medusa-exchanges (#1839)', () => {
       const x = sendPmToBuilder({ priority: 'blocking' });
       mx.recordArrival({ hubId: 'hub-1', recipientWorkspaceId: 'builder-ws' });
       mx.recordArrival({ hubId: 'hub-1', recipientWorkspaceId: 'builder-ws' });
-      mx.recordRead(['hub-1']);
-      assert.equal(mx.recordRead(['hub-1']), 0);
+      mx.recordRead(['hub-1'], 'builder-ws');
+      assert.equal(mx.recordRead(['hub-1'], 'builder-ws'), 0);
       const kinds = store.medusaExchanges.facts(x.exchange_id).map((f) => f.fact);
       assert.equal(kinds.filter((k) => k === 'arrived').length, 1);
       assert.equal(kinds.filter((k) => k === 'read').length, 1);
@@ -213,9 +213,9 @@ describe('medusa-exchanges (#1839)', () => {
         sender: { projectId: 20 }, recipient: { workspaceId: 'pm-ws', projectId: 10 }
       });
       mx.bindHubId(reply.exchange_id, 'hub-reply');
-      mx.recordRead(['hub-1']);
+      mx.recordRead(['hub-1'], 'builder-ws');
       mx.recordArrival({ hubId: 'hub-1', recipientWorkspaceId: 'builder-ws' });
-      mx.recordAcknowledged(['hub-1'], BUILDER);
+      mx.recordAcknowledged(['hub-1'], 'builder-ws', BUILDER);
       const row = store.medusaExchanges.get(x.exchange_id);
       assert.equal(row.state, 'replied');
       assert.equal(mx.view(row).label, 'satisfied, awaiting initiator close');
@@ -225,7 +225,7 @@ describe('medusa-exchanges (#1839)', () => {
 
     it('records the dashboard auto-ack as operator-ui and leaves a reply-required exchange unsatisfied', () => {
       const x = sendPmToBuilder({ priority: 'blocking' });
-      mx.recordAcknowledged(['hub-1'], { kind: 'operator-ui' });
+      mx.recordAcknowledged(['hub-1'], 'builder-ws', { kind: 'operator-ui' });
       const row = store.medusaExchanges.get(x.exchange_id);
       assert.equal(row.state, 'acknowledged');
       assert.equal(row.terminal_at, null);
@@ -235,16 +235,16 @@ describe('medusa-exchanges (#1839)', () => {
 
     it('still records the agent acknowledging after the dashboard did', () => {
       const x = sendPmToBuilder({ priority: 'blocking' });
-      mx.recordAcknowledged(['hub-1'], { kind: 'operator-ui' });
-      assert.equal(mx.recordAcknowledged(['hub-1'], BUILDER), 1);
-      assert.equal(mx.recordAcknowledged(['hub-1'], BUILDER), 0, 'the same actor twice adds nothing');
+      mx.recordAcknowledged(['hub-1'], 'builder-ws', { kind: 'operator-ui' });
+      assert.equal(mx.recordAcknowledged(['hub-1'], 'builder-ws', BUILDER), 1);
+      assert.equal(mx.recordAcknowledged(['hub-1'], 'builder-ws', BUILDER), 0, 'the same actor twice adds nothing');
       const actors = store.medusaExchanges.facts(x.exchange_id).filter((f) => f.fact === 'acknowledged').map((f) => f.actor);
       assert.deepEqual(actors, ['operator-ui', 'recipient']);
     });
 
     it('records an unproven reader as unverified, never as the recipient', () => {
       const x = sendPmToBuilder();
-      mx.recordRead(['hub-1'], UNBOUND);
+      mx.recordRead(['hub-1'], 'builder-ws', UNBOUND);
       assert.equal(store.medusaExchanges.facts(x.exchange_id).find((f) => f.fact === 'read').actor, 'unverified-reader');
     });
 
@@ -257,7 +257,7 @@ describe('medusa-exchanges (#1839)', () => {
 
     it('marks a no-reply message acknowledged in the dashboard as closed by the dashboard, not by the agent', () => {
       const x = sendPmToBuilder();
-      mx.recordAcknowledged(['hub-1'], { kind: 'operator-ui' });
+      mx.recordAcknowledged(['hub-1'], 'builder-ws', { kind: 'operator-ui' });
       assert.equal(store.medusaExchanges.get(x.exchange_id).terminal_code, 'acknowledged-in-dashboard');
     });
 
@@ -268,6 +268,36 @@ describe('medusa-exchanges (#1839)', () => {
         meta: mx.validateSendMeta({ inReplyTo: 'hub-1' }, other, 30),
         sender: { projectId: 30 }, recipient: { workspaceId: 'pm-ws' }
       }), { code: 'REPLY_TARGET_UNKNOWN', status: 404 });
+    });
+  });
+
+  describe('recipient facts are scoped to the recipient', () => {
+    it('records nothing when a participant reports mail addressed to someone else', () => {
+      const x = sendPmToBuilder();
+      assert.equal(mx.recordRead(['hub-1'], 'pm-ws', PM), 0);
+      assert.equal(mx.recordAcknowledged(['hub-1'], 'pm-ws', PM), 0);
+      assert.equal(mx.recordAcknowledged(['hub-1'], null, UNBOUND), 0);
+      assert.equal(mx.recordWakeFact('hub-1', 'pm-ws', 'wake_attempted'), null);
+      assert.deepEqual(store.medusaExchanges.facts(x.exchange_id).map((f) => f.fact), ['send_pending', 'hub_accepted']);
+    });
+  });
+
+  describe('untracked exchanges still show what is known', () => {
+    const remote = () => mx.createSendIntent({
+      meta: mx.validateSendMeta({}, PM, 10), sender: { projectId: 10 }, recipient: { workspaceId: 'remote-ws' }, tracking: 'untracked'
+    });
+
+    it('shows a lost Hub answer as send_unknown, and a refusal as undeliverable, idempotently', () => {
+      assert.equal(mx.markSendUnknown(remote().exchange_id, 'bridge-unreachable').state, 'send_unknown');
+      const r = remote();
+      assert.equal(mx.markSendRefused(r.exchange_id, 'hub-refused').state, 'undeliverable');
+      assert.equal(mx.markSendRefused(r.exchange_id, 'hub-refused').state, 'undeliverable');
+      assertReplayMatches(r.exchange_id);
+    });
+
+    it('reads as untracked once the Hub has it', () => {
+      const r = remote();
+      assert.equal(mx.bindHubId(r.exchange_id, 'hub-r').state, 'untracked');
     });
   });
 
@@ -282,15 +312,31 @@ describe('medusa-exchanges (#1839)', () => {
     it('lets a send adopt an arrival that beat the Hub answer back', () => {
       const intent = sendPmToBuilder({ priority: 'blocking' }, null);
       const arrival = mx.recordArrival({ hubId: 'hub-1', recipientWorkspaceId: 'builder-ws', senderWorkspaceId: 'pm-ws' });
-      mx.recordRead(['hub-1']);
+      mx.recordRead(['hub-1'], 'builder-ws');
       const bound = mx.bindHubId(intent.exchange_id, 'hub-1');
       assert.equal(bound.state, 'read');
       const adopted = store.medusaExchanges.get(arrival.exchange_id);
       assert.equal(adopted.terminal_code, 'adopted-by-send');
       assertReplayMatches(intent.exchange_id);
       // Later recipient facts land on the send.
-      mx.recordAcknowledged(['hub-1'], BUILDER);
+      mx.recordAcknowledged(['hub-1'], 'builder-ws', BUILDER);
       assert.equal(store.medusaExchanges.get(intent.exchange_id).state, 'acknowledged');
+    });
+
+    it('closes a no-reply send whose early arrival was already acknowledged when it adopts it', () => {
+      const intent = sendPmToBuilder({ priority: 'blocking', replyRequired: false }, null);
+      mx.recordArrival({ hubId: 'hub-1', recipientWorkspaceId: 'builder-ws', senderWorkspaceId: 'pm-ws' });
+      mx.recordAcknowledged(['hub-1'], 'builder-ws', BUILDER);
+      const bound = mx.bindHubId(intent.exchange_id, 'hub-1');
+      assert.equal(bound.state, 'closed');
+      assert.equal(bound.terminal_code, 'acknowledged');
+      assert.equal(store.medusaExchanges.countOpenBlockingForSender(10), 0, 'it no longer counts toward the blocking limit');
+      assertReplayMatches(intent.exchange_id);
+    });
+
+    it('marks a send send_unknown when the Hub id cannot be stored', () => {
+      const intent = sendPmToBuilder({}, null);
+      assert.equal(mx.bindHubId(intent.exchange_id, 'not a valid id!').state, 'send_unknown');
     });
 
     it('never gives a control notice or a system message a row', () => {
@@ -329,18 +375,18 @@ describe('medusa-exchanges (#1839)', () => {
 
     it('refuses once the message has been read, acknowledged or closed', () => {
       sendPmToBuilder();
-      mx.recordRead(['hub-1']);
+      mx.recordRead(['hub-1'], 'builder-ws');
       assert.throws(() => mx.retract('hub-1', PM, { reason: 'superseded' }), { code: 'NOT_RETRACTABLE', status: 409 });
       sendPmToBuilder({}, 'hub-2');
-      mx.recordAcknowledged(['hub-2'], BUILDER);
+      mx.recordAcknowledged(['hub-2'], 'builder-ws', BUILDER);
       assert.throws(() => mx.retract('hub-2', PM, { reason: 'superseded' }), { code: 'NOT_RETRACTABLE' });
     });
 
     it('lets exactly one of a racing read and retract win, and keeps a late read as audit only', () => {
       const x = sendPmToBuilder({ priority: 'blocking' });
       mx.retract('hub-1', PM, { reason: 'sent-in-error' });
-      mx.recordRead(['hub-1']);
-      mx.recordAcknowledged(['hub-1'], BUILDER);
+      mx.recordRead(['hub-1'], 'builder-ws');
+      mx.recordAcknowledged(['hub-1'], 'builder-ws', BUILDER);
       const row = store.medusaExchanges.get(x.exchange_id);
       assert.equal(row.state, 'retracted');
       const kinds = store.medusaExchanges.facts(x.exchange_id).map((f) => f.fact);
@@ -361,7 +407,7 @@ describe('medusa-exchanges (#1839)', () => {
     it('ends every open exchange to a retired workspace and leaves ended ones alone', () => {
       const open = sendPmToBuilder({ priority: 'blocking' });
       const done = sendPmToBuilder({}, 'hub-2');
-      mx.recordAcknowledged(['hub-2'], BUILDER);
+      mx.recordAcknowledged(['hub-2'], 'builder-ws', BUILDER);
       const ended = mx.markRecipientRetired('builder-ws');
       assert.deepEqual(ended.map((r) => r.exchange_id), [open.exchange_id]);
       assert.equal(store.medusaExchanges.get(open.exchange_id).state, 'recipient_retired');
@@ -373,10 +419,10 @@ describe('medusa-exchanges (#1839)', () => {
     it('takes the wake state from the newest wake fact and carries the persisted next-eligible time', () => {
       const x = sendPmToBuilder({ priority: 'blocking' });
       mx.recordArrival({ hubId: 'hub-1', recipientWorkspaceId: 'builder-ws' });
-      mx.recordWakeFact('hub-1', 'wake_blocked', { code: 'pane-composer-has-input' });
+      mx.recordWakeFact('hub-1', 'builder-ws', 'wake_blocked', { code: 'pane-composer-has-input' });
       advance(1000);
-      mx.recordWakeFact('hub-1', 'wake_attempted', { detail: { nonce: 'n1', nextEligibleAt: '2026-09-25T12:03:00.000Z' } });
-      mx.recordWakeFact('hub-1', 'rearmed', { detail: { nextEligibleAt: '2026-09-25T12:05:00.000Z' } });
+      mx.recordWakeFact('hub-1', 'builder-ws', 'wake_attempted', { detail: { nonce: 'n1', nextEligibleAt: '2026-09-25T12:03:00.000Z' } });
+      mx.recordWakeFact('hub-1', 'builder-ws', 'rearmed', { detail: { nextEligibleAt: '2026-09-25T12:05:00.000Z' } });
       const row = store.medusaExchanges.get(x.exchange_id);
       assert.equal(row.state, 'wake_attempted');
       assert.equal(row.rearm_count, 1);

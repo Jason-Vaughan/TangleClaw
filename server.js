@@ -6798,7 +6798,7 @@ function registerMedusaRoutes(prefix, resolve) {
     if (r.target && messages.length > 0) {
       try {
         medusaExchanges.recordRead(messages.map((m) => m && m.id).filter(Boolean),
-          exchangeCaller(req, targetProjectId(r.target), true));
+          medusa.getStatus(sessionId).workspaceId, exchangeCaller(req, targetProjectId(r.target), true));
       } catch (err) { // prawduct:allow prawduct/broad-except -- a failed read record must not withhold the inbox from its reader
         log.warn('Could not record Medusa reads', { sessionId: String(sessionId), error: err.message });
       }
@@ -6826,7 +6826,7 @@ function registerMedusaRoutes(prefix, resolve) {
       if (ids) {
         try {
           medusaExchanges.recordAcknowledged(ids.filter((id) => typeof id === 'string'),
-            exchangeCaller(req, targetProjectId(r.target), true));
+            medusa.getStatus(sessionId).workspaceId, exchangeCaller(req, targetProjectId(r.target), true));
         } catch (err) { // prawduct:allow prawduct/broad-except -- the Hub ACK already happened; a failed record is logged, never turned into a failed read
           log.warn('Could not record Medusa acknowledgements', { sessionId: String(sessionId), error: err.message });
         }
@@ -6994,12 +6994,9 @@ function registerMedusaRoutes(prefix, resolve) {
   route('POST', `${prefix}/exchanges/:exchangeId/close`, (req, res, params) => {
     const r = resolve(params);
     if (refused(res, r, 'close an exchange for')) return;
-    const projectId = targetProjectId(r.target);
     const row = store.medusaExchanges.get(params.exchangeId);
-    const caller = exchangeCaller(req, projectId);
-    if (!row || (caller.kind !== 'operator' && row.sender_project_id !== projectId)) {
-      return errorResponse(res, 404, 'No exchange this session sent has that id', 'EXCHANGE_NOT_FOUND');
-    }
+    if (!row) return errorResponse(res, 404, 'No exchange has that id', 'EXCHANGE_NOT_FOUND');
+    const caller = exchangeCaller(req, targetProjectId(r.target));
     try {
       jsonResponse(res, 200, { exchange: medusaExchanges.view(medusaExchanges.close(row.exchange_id, caller)) });
     } catch (err) {

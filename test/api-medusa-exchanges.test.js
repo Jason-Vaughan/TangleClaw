@@ -256,7 +256,10 @@ describe('API — Medusa exchanges (#1839)', () => {
     assert.equal(target.terminal_at, null);
 
     const byBuilder = await call(server, 'POST', `${builderBase()}/exchanges/${target.exchange_id}/close`, null, bBuilder.headers);
-    assert.equal(byBuilder.status, 404, 'the Builder did not send it');
+    assert.equal(byBuilder.status, 403, 'the Builder did not send it');
+    assert.equal(byBuilder.data.code, 'NOT_INITIATOR');
+    const missing = await call(server, 'POST', `${pmBase()}/exchanges/mx_nope/close`, null, bPM.headers);
+    assert.equal(missing.status, 404);
     const unboundClose = await call(server, 'POST', `${pmBase()}/exchanges/${target.exchange_id}/close`, null);
     assert.equal(unboundClose.status, 403);
     assert.equal(unboundClose.data.code, 'EXCHANGE_BINDING_REQUIRED');
@@ -325,6 +328,16 @@ describe('API — Medusa exchanges (#1839)', () => {
     assert.equal(facts.find((f) => f.fact === 'acknowledged').actor, 'operator-ui');
     assert.equal(x.state, 'acknowledged');
     assert.equal(x.terminal_at, null);
+  });
+
+  it('records nothing when a sender reports its own message to someone else as handled', async () => {
+    const sent = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'x' }, bPM.headers);
+    const hubId = sent.data.id;
+    await call(server, 'POST', `${pmBase()}/read`, { ids: [hubId] }, bPM.headers);
+    await call(server, 'POST', `${pmBase()}/read`, { ids: [hubId] });
+    const x = store.medusaExchanges.getByHubId(hubId, 'send');
+    assert.equal(x.state, 'stored');
+    assert.ok(!store.medusaExchanges.facts(x.exchange_id).some((f) => f.fact === 'acknowledged'));
   });
 
   it('lists a session\'s sent and received exchanges without bodies', async () => {
