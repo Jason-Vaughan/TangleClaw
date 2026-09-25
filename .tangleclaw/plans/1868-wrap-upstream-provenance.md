@@ -12,7 +12,7 @@ questions A1–A4) and two read-only scout reports (server classification seams;
 ## Status
 
 - [x] Plan written (rev 2: brief incorporated, scouts collected)
-- [ ] Architect has ruled on A1–A4 below. **STOP here** (dispatch boundary: Plan Written)
+- [x] Architect has ruled on A1–A4 (R11, 2026-09-25): all four approved, with the R11-E final-boundary amendment and the R11-F subagent ruling. Implementation was released on incorporation, with no second architecture pause. See "Architect ruling R11"
 - [ ] Chunk 01: `_upstream-provenance.js`, which resolves the default-branch ref, refreshes it with a time limit,
       records when it was observed, gives the checkout's position, and gives a fact for each path. Unit tests run
       against real temporary repos with a bare origin
@@ -27,6 +27,39 @@ questions A1–A4) and two read-only scout reports (server classification seams;
 
 **Pilot envelope (IN FORCE):** no merging any PR, no pulling or updating the live checkout, no restarting the
 live service, no tests on the main instance, no tag, publish or release, no deploy.
+
+## Architect ruling R11 (2026-09-25), binding
+
+- **A1 approved (b)**, with these constraints:
+  - The one fetch happens in session-files only. It fetches only the resolved default branch into its ordinary
+    remote-tracking ref.
+  - No tags, prune, checkout, reset, merge or rebase, and no index or work-tree mutation. Credentials are
+    non-interactive, and the git-probe network timeout applies.
+  - **It honors the existing behind-origin opt-outs** (`behindOriginCheckEnabled: false`,
+    `TC_BEHIND_ORIGIN_DISABLED=1`). **No new config key.** This supersedes `wrapUpstreamRefresh` in A1 below.
+  - Record the exact ref, the commit OID, the time, whether it refreshed, and any failure. A failed fetch falls
+    back to local evidence as `stale`.
+  - The commit step never fetches.
+- **A2 approved.**
+  - Under `stale`, an `equal` fact is still proof and goes to `alreadyUpstream`.
+  - `absent`, `different` and `unknown` cannot support Include. The advice is downgraded to Keep local, with a
+    note that upstream was not refreshed.
+  - This is advice only, never a preselected radio.
+- **A3 approved.** Git content is the contract. No `gh`, GitHub auth or wrap-ledger dependency in this Car.
+- **A4 approved.** `alreadyUpstream` is a visible, non-interactive bucket: never staged or asked, shown with the
+  ref and the reason, and the file is untouched.
+- **R11-E, final boundary.**
+  - session-files captures an immutable upstream OID after its fetch, and every later comparison names that OID.
+  - At commit, re-read status and recompute every path fact against the captured OID. A local-blob conclusion is
+    never reused, because wrap steps may have rewritten the file.
+  - Also compare the current local remote-tracking ref OID with the captured one. If it moved and the newer local
+    evidence tightens an earlier Include, block and re-present the updated facts.
+  - Never broaden. No network call at commit.
+- **R11-F.** Read-only scouts with disjoint contracts; the parent Builder is the sole writer. This was already
+  done: one server scout and one drawer scout, both reaped before rev 2.
+- Deliverables to report to the PM and the Architect: plan hash, branch and head, scout outputs, tests, a
+  cumulative Critic, an independent exact-head review, and a draft PR. No merge, live sync, restart or release,
+  and no work on #1839.
 
 ## Problem (verified in code)
 
