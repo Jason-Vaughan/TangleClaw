@@ -11475,7 +11475,8 @@ if (require.main === module) {
     medusaWake.start();
     // Start the Medusa delivery watchdog (#1839): a deterministic pass over
     // durable exchange state that re-arms a wake through the monitor's gates
-    // when a nudge provably did not land or went unanswered.
+    // on a durable trigger: a nudge provably not accepted, or the session
+    // recorded as ready again after it.
     medusaWatchdog.start();
     // Start every registered startupControl adapter (#1825): each probes its
     // engine's version once, so capability resolution never spawns on a

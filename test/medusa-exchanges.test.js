@@ -277,7 +277,7 @@ describe('medusa-exchanges (#1839)', () => {
       assert.equal(mx.recordRead(['hub-1'], 'pm-ws', PM), 0);
       assert.equal(mx.recordAcknowledged(['hub-1'], 'pm-ws', PM), 0);
       assert.equal(mx.recordAcknowledged(['hub-1'], null, UNBOUND), 0);
-      assert.equal(mx.recordWakeFact('hub-1', 'pm-ws', 'wake_attempted'), null);
+      assert.equal(mx.recordWakeForRecipient('pm-ws', 'wake_attempted', { code: 'tmux' }), 0);
       assert.deepEqual(store.medusaExchanges.facts(x.exchange_id).map((f) => f.fact), ['send_pending', 'hub_accepted']);
     });
   });
@@ -419,12 +419,15 @@ describe('medusa-exchanges (#1839)', () => {
     it('takes the wake state from the newest wake fact and carries the persisted next-eligible time', () => {
       const x = sendPmToBuilder({ priority: 'blocking' });
       mx.recordArrival({ hubId: 'hub-1', recipientWorkspaceId: 'builder-ws' });
-      mx.recordWakeFact('hub-1', 'builder-ws', 'wake_blocked', { code: 'pane-composer-has-input' });
+      mx.recordWakeForRecipient('builder-ws', 'wake_blocked', { code: 'pane-composer-has-input' });
       advance(1000);
-      mx.recordWakeFact('hub-1', 'builder-ws', 'wake_attempted', { detail: { nonce: 'n1', nextEligibleAt: '2026-09-25T12:03:00.000Z' } });
-      assert.throws(() => mx.recordWakeFact('hub-1', 'builder-ws', 'rearmed'), /not a wake fact/, 're-arms go only through rearm()');
-      assert.ok(mx.rearm(x.exchange_id, { expectRearmCount: 0, nextEligibleAt: '2026-09-25T12:05:00.000Z', code: 'unconfirmed' }));
-      assert.equal(mx.rearm(x.exchange_id, { expectRearmCount: 0, nextEligibleAt: '2026-09-25T12:05:00.000Z', code: 'unconfirmed' }), null,
+      mx.recordWakeForRecipient('builder-ws', 'wake_attempted', { detail: { nonce: 'n1', nextEligibleAt: '2026-09-25T12:03:00.000Z' } });
+      assert.throws(() => mx.recordWakeForRecipient('builder-ws', 'rearmed'), /not a wake fact/, 're-arms go only through rearm()');
+      assert.equal(mx.rearm(x.exchange_id, { expectRearmCount: 0, nextEligibleAt: '2026-09-25T12:05:00.000Z' }), null,
+        'no trigger, no re-arm: elapsed time is never one');
+      mx.recordWakeForRecipient('builder-ws', 'wake_not_accepted', { code: 'nonce-in-composer', attemptNonce: 'n1' });
+      assert.ok(mx.rearm(x.exchange_id, { expectRearmCount: 0, nextEligibleAt: '2026-09-25T12:05:00.000Z' }));
+      assert.equal(mx.rearm(x.exchange_id, { expectRearmCount: 0, nextEligibleAt: '2026-09-25T12:05:00.000Z' }), null,
         'a second re-arm before the next attempt is refused');
       const row = store.medusaExchanges.get(x.exchange_id);
       assert.equal(row.state, 'wake_pending', 'a re-arm leaves the message waiting on the next wake');

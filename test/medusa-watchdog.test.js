@@ -328,6 +328,37 @@ describe('medusa-watchdog (#1839)', () => {
       assert.notEqual(world.injected[0], world.injected[1], 'each attempt has its own nonce');
     });
 
+    it('a restarted monitor does not nudge again for mail the durable record shows already attempted', () => {
+      const x = deliveredBlocking();
+      tickIdle();
+      assert.equal(world.injected.length, 1);
+      wake.stop(); // a restart: the in-memory watermark is gone
+      tickIdle();
+      tickIdle();
+      assert.equal(world.injected.length, 1, 'no wake outside the re-arm budget');
+      assert.equal(store.medusaExchanges.get(x.exchange_id).rearm_count, 0);
+
+      // Mail the record does not account for (an untracked arrival) is still a fresh edge.
+      world.inbox = [...world.inbox, { id: 'hub-remote', from: 'remote-ws', message: 'hi' }];
+      world.status = { ...world.status, unread: 2 };
+      tickIdle();
+      assert.equal(world.injected.length, 2, 'unaccounted mail is still nudged');
+    });
+
+    it('records a pane capture failure on an owned edge as ineligible, without a ledger row or an injection', () => {
+      const x = deliveredBlocking();
+      tickIdle();
+      const origCapture = wake._internal.capturePane;
+      wake._internal.capturePane = () => { throw new Error('no pane'); };
+      try {
+        wake._internal.tick();
+      } finally {
+        wake._internal.capturePane = origCapture;
+      }
+      assert.equal(store.medusaExchanges.get(x.exchange_id).wake_code, 'pane-capture-failed');
+      assert.equal(world.injected.length, 1);
+    });
+
     it('records a listener reconnect after the nudge as the ineligible half of a readiness change', () => {
       const x = deliveredBlocking();
       tickIdle();
@@ -407,6 +438,85 @@ describe('medusa-watchdog (#1839)', () => {
       assert.equal(transports.forSession({ isMaster: true }).id, 'master');
       assert.equal(transports.forSession({}).receipts, 'negative');
       assert.equal(transports.tmuxTransport.receipts === 'positive', false, 'tmux can never claim accepted');
+    });
+  });
+
+  describe('observe-only on the engine gate (Codex)', () => {
+    const { CX_CLIPPED_PANE } = require('./_wake-fixtures');
+    const saved = {};
+    let world;
+
+    beforeEach(() => {
+      Object.assign(saved, wake._internal);
+      wake.stop();
+      world = {
+        injected: [],
+        clock: 1000000,
+        activity: { channel: 'present', state: 'idle', reasonCode: 'thread-idle' }
+      };
+      const session = { id: 2, projectId: 20, sessionMode: 'tmux', tmuxSession: 'tc-2', engineId: 'codex' };
+      wake._internal.listLiveAll = () => [session];
+      wake._internal.getProject = () => ({ id: 20, name: 'builder', path: '/tmp/builder' });
+      wake._internal.loadProjectConfig = () => ({ medusaWake: true });
+      wake._internal.wrapRunning = () => false;
+      wake._internal.getStatus = () => ({ state: 'listening', workspaceId: 'builder-ws', unread: 1, lastError: null });
+      wake._internal.getMessages = () => [{ id: 'hub-1', from: 'pm-ws', message: 'x' }];
+      wake._internal.capturePane = () => ({ lines: CX_CLIPPED_PANE });
+      wake._internal.cursorInfo = () => null;
+      wake._internal.masterWakeRecord = () => null;
+      wake._internal.recordDelivery = () => {};
+      wake._internal.injectCommand = (name, command) => { world.injected.push(command); return { ok: true, error: null }; };
+      wake._internal.verifySubmission = async () => ({ outcome: 'unknown', reason: 'test' });
+      wake._internal.openChannel = () => ({ id: 7, sessionId: 2, sequenceId: 70, engineId: 'codex', adapter: 'codex', state: 'open', adapterState: { threadId: 't-1' } });
+      wake._internal.launchSequence = () => ({ id: 70, sessionId: 2 });
+      wake._internal.declaresObserver = (engineId) => engineId === 'codex';
+      wake._internal.observeActivity = () => Promise.resolve(world.activity);
+      wake._internal.now = () => world.clock;
+    });
+
+    afterEach(() => {
+      wake.stop();
+      Object.assign(wake._internal, saved);
+    });
+
+    /**
+     * Tick, letting each observation land before the next.
+     * @param {number} n - Tick count
+     * @returns {Promise<void>}
+     */
+    const ticks = async (n) => {
+      for (let i = 0; i < n; i++) {
+        wake._internal.tick();
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    };
+
+    /**
+     * Change what the engine answers, and age the cached answer out so the
+     * next tick asks again.
+     * @param {string} state - `idle` or `busy`
+     * @returns {void}
+     */
+    const engineTurns = (state) => {
+      world.activity = { channel: 'present', state, reasonCode: `thread-${state}` };
+      world.clock += wake.ENGINE_ACTIVITY_MAX_AGE_MS + 1;
+    };
+
+    it('records the engine turning busy after the nudge, then idle, as a readiness change, typing nothing more', async () => {
+      const x = deliveredBlocking();
+      await ticks(1 + wake.IDLE_TICKS_REQUIRED);
+      assert.equal(world.injected.length, 1, 'the first nudge');
+      engineTurns('busy');
+      await ticks(3);
+      assert.equal(store.medusaExchanges.get(x.exchange_id).wake_code, 'engine-thread-busy', 'the engine gate verdict is recorded');
+      engineTurns('idle');
+      await ticks(2 + wake.IDLE_TICKS_REQUIRED);
+      const change = store.medusaExchanges.facts(x.exchange_id).find((f) => f.fact === 'readiness_changed');
+      assert.ok(change, 'engine busy then idle is a readiness change');
+      // `from` is the newest ineligible verdict: while the engine is asked again
+      // that is `engine-thread-unknown`, and the busy verdict is on record before it.
+      assert.match(JSON.parse(change.detail_json).from, /^engine-thread-(busy|unknown)$/);
+      assert.equal(world.injected.length, 1, 'observing never injects');
     });
   });
 });

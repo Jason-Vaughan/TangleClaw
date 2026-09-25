@@ -344,6 +344,7 @@ describe('tc verb roster (lib/tc-verbs)', () => {
       });
       assert.match(res.stdout, /Exchange mx_1 \(blocking, stored\)/);
       assert.match(res.stdout, /tc message close mx_1/);
+      assert.doesNotMatch(res.stdout, /ack the reply/, 'acking a reply does not close a reply-required exchange, so it is not suggested');
     });
 
     it('send refuses an unknown or incomplete flag before any network call', async () => {
