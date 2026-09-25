@@ -156,9 +156,16 @@ server time, before its notices go out:
 | **Operator**: dashboard and activity log | — | 60 min | 5 min |
 
 - **Timing.** Unread is measured from the send. Acknowledged but unanswered
-  (reply required) is measured from the ack: blocking escalates 30 minutes
-  after it, critical alerts the operator 15 minutes after it. A spent re-arm
-  budget escalates at once.
+  (reply required) is measured from the ack. For blocking mail nothing
+  happens for 30 minutes after the ack; then the sender and the route are
+  told together, and the operator is alerted 60 minutes after that. For
+  critical mail, already escalated when sent, the operator is alerted 15
+  minutes after the ack. The ladder runs once per exchange: steps reached
+  while it was unread are not repeated once it is acknowledged. A spent
+  re-arm budget escalates at once.
+- **Retirement leaves answered mail alone.** An exchange that has been
+  replied to is waiting on its sender, so its recipient's session ending does
+  not end it.
 - **The route** is an optional list on the recipient's control assignment,
   `authority.escalation: {blocking: [...], critical: [...]}` (see
   `docs/control-state.md`). It is set by the operator when the assignment is
@@ -167,7 +174,8 @@ server time, before its notices go out:
   alerted at the escalation step.
 - **Notices** are Medusa system messages, `{"event": "medusa_escalation", …}`,
   carrying the exchange and Hub ids, priority, age, the blocker's code and
-  meaning, names, and the recipient's control state. Each is recorded as
+  meaning, names, and the recipient's control state and generation (so a
+  notice about a held Builder says it is held, and which hold). Each is recorded as
   `escalation_queued`, then `escalation_accepted` (the Hub stored it, which
   is not "delivered") or `escalation_failed`. A target with no live session
   is `escalation_undeliverable`, and the operator alert still stands.

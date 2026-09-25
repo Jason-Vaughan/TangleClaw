@@ -333,6 +333,7 @@ const controlGate = require('./lib/control-gate');
 const { resolveControlCaller, isOperatorShaped } = require('./lib/control-auth');
 const medusaExchanges = require('./lib/medusa-exchanges');
 const medusaWatchdog = require('./lib/medusa-watchdog');
+const medusaSend = require('./lib/medusa-send');
 
 const log = createLogger('server');
 
@@ -6946,51 +6947,10 @@ function registerMedusaRoutes(prefix, resolve) {
     if (refused(res, r, 'send from')) return;
     if (outboundRefused(res, r.target)) return;
     const senderProjectId = targetProjectId(r.target);
-    let meta;
-    try {
-      const { settings } = medusaWatchdog.resolveSettings();
-      meta = medusaExchanges.validateSendMeta(body, exchangeCaller(req, senderProjectId), senderProjectId, {
-        normal: settings.agedNormalMs, blocking: settings.escalateBlockingMs, critical: 0
-      });
-    } catch (err) {
-      return exchangeRefusal(res, err);
-    }
-    const to = body && body.to;
-    let intent = null;
-    let result;
-    try {
-      result = await medusa.sendMessage({
-        sessionId: r.target.sessionId,
-        to,
-        message: body && body.message,
-        beforeHub: ({ from }) => {
-          const local = medusaWake.localParticipant(to);
-          intent = medusaExchanges.createSendIntent({
-            meta,
-            sender: { projectId: senderProjectId, sessionId: r.target.sessionId, workspaceId: from },
-            recipient: { workspaceId: to, projectId: local ? local.projectId : null, sessionId: local ? local.sessionId : null },
-            tracking: local ? 'tracked' : 'untracked'
-          });
-        }
-      });
-    } catch (err) {
-      if (err instanceof medusaExchanges.ExchangeError) return exchangeRefusal(res, err);
-      let row = null;
-      if (intent && err.hubOutcome === 'unknown') row = medusaExchanges.markSendUnknown(intent.exchange_id, 'bridge-unreachable');
-      else if (intent && err.hubOutcome === 'refused') row = medusaExchanges.markSendRefused(intent.exchange_id, 'hub-refused');
-      return errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_SEND_FAILED',
-        row ? { exchange: medusaExchanges.view(row) } : undefined);
-    }
-    let row = intent;
-    try {
-      row = result.id
-        ? medusaExchanges.bindHubId(intent.exchange_id, result.id, { hubStatus: result.status, deliveredTo: result.to })
-        : medusaExchanges.markSendUnknown(intent.exchange_id, 'hub-no-id');
-    } catch (err) { // prawduct:allow prawduct/broad-except -- the message is already on the Hub; failing the response would invite a duplicate resend
-      log.warn('Could not bind a sent Medusa message to its exchange', { exchangeId: intent.exchange_id, error: err.message });
-      return jsonResponse(res, 200, { ...result, exchange: medusaExchanges.view(store.medusaExchanges.get(intent.exchange_id)), exchangeError: 'binding-failed' });
-    }
-    jsonResponse(res, 200, { ...result, exchange: medusaExchanges.view(row) });
+    const out = await medusaSend.sendTracked({
+      sessionId: r.target.sessionId, senderProjectId, caller: exchangeCaller(req, senderProjectId), body
+    });
+    jsonResponse(res, out.status, out.body);
   }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
 
   // GET <prefix>/exchanges — this participant's Medusa exchanges (#1839):

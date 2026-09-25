@@ -357,6 +357,16 @@ describe('tc verb roster (lib/tc-verbs)', () => {
       assert.match(bad.stderr, /number of minutes/);
     });
 
+    it('tells the sender a no-reply exchange closes itself on the recipient\'s ack', async () => {
+      const res = await message.run({
+        env: {}, argv: ['send', 'ws-2', 'fyi'],
+        getJson: async () => ({ project: { id: 1, name: 'p' } }),
+        postJson: async () => ({ status: 'received', id: 'h1', exchange: { exchangeId: 'mx_2', priority: 'normal', label: 'stored', replyRequired: false } })
+      });
+      assert.match(res.stdout, /closes when the recipient acknowledges it/);
+      assert.doesNotMatch(res.stdout, /ack the reply/);
+    });
+
     it('sent lists open exchanges with where each stands, and says so honestly when there are none', async () => {
       const calls = [];
       const none = await message.run({

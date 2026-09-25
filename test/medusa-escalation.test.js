@@ -133,9 +133,10 @@ describe('medusa watchdog escalation (#1839 chunk 04)', () => {
     });
 
     it('resolves the route from the recipient project, and an ungoverned project has none', () => {
-      assert.deepEqual(control.escalationRouteFor(builder.id, 'blocking'), { controlState: 'ungoverned', principals: [] });
+      assert.deepEqual(control.escalationRouteFor(builder.id, 'blocking'), { controlState: 'ungoverned', stateGeneration: null, principals: [] });
       routeToPm();
-      assert.deepEqual(control.escalationRouteFor(builder.id, 'blocking'), { controlState: 'active', principals: [`project:${pm.id}`] });
+      assert.deepEqual(control.escalationRouteFor(builder.id, 'blocking'),
+        { controlState: 'active', stateGeneration: 1, principals: [`project:${pm.id}`] });
     });
   });
 
@@ -241,9 +242,11 @@ describe('medusa watchdog escalation (#1839 chunk 04)', () => {
       mx._internal.now = () => new Date(T0 + 2 * MIN);
       mx.recordAcknowledged(['hub-1'], 'builder-ws', { kind: 'project', projectId: builder.id });
       await tickAt(T0 + 31 * MIN);
-      assert.equal(store.medusaExchanges.get(x.exchange_id).esc_level, 'aged', 'reply phase: aged at once, escalation waits for 30 min from the ack');
+      assert.equal(store.medusaExchanges.get(x.exchange_id).esc_level, 'none', 'nothing for 30 minutes after the ack, not even the sender');
+      assert.equal(sent.length, 0);
       await tickAt(T0 + 32 * MIN);
       assert.equal(store.medusaExchanges.get(x.exchange_id).esc_level, 'escalated');
+      assert.deepEqual(sent.map((s) => s.body.level).sort(), ['aged', 'escalated', 'escalated'], 'sender and route are told together');
 
       const y = pmToBuilder({ priority: 'blocking' }, 'hub-2');
       mx.recordAcknowledged(['hub-2'], 'builder-ws', { kind: 'project', projectId: builder.id });
@@ -289,12 +292,38 @@ describe('medusa watchdog escalation (#1839 chunk 04)', () => {
     });
   });
 
+  describe('held recipients', () => {
+    it('names the recipient\'s control state and generation in the escalation notice', async () => {
+      routeToPm();
+      const asg = store.control.getOpenForProject(builder.id);
+      control.hold({ assignmentId: asg.assignment_id, requestId: 'hold-1', reasonCode: 'awaiting-ruling' },
+        { principal: `project:${pm.id}` });
+      pmToBuilder();
+      await tickAt(T0 + 15 * MIN);
+      const notice = sent.find((s) => s.body.to === 'escalation');
+      assert.equal(notice.body.controlState, 'held');
+      assert.equal(notice.body.controlGeneration, store.control.getOpenForProject(builder.id).state_generation);
+    });
+  });
+
   describe('retired recipients (C11)', () => {
     it('ends open exchanges to a retired workspace and tells each initiator', async () => {
       const x = pmToBuilder();
       await watchdog.retireRecipient('builder-ws');
       assert.equal(store.medusaExchanges.get(x.exchange_id).state, 'recipient_retired');
       assert.deepEqual(sent.map((s) => [s.to, s.body.level]), [['pm-ws-live', 'recipient_retired']]);
+    });
+
+    it('leaves an answered exchange for its initiator when the recipient retires', async () => {
+      const x = pmToBuilder();
+      const reply = mx.createSendIntent({
+        meta: mx.validateSendMeta({ inReplyTo: 'hub-1' }, { kind: 'project', projectId: builder.id }, builder.id),
+        sender: { projectId: builder.id }, recipient: { workspaceId: 'pm-ws', projectId: pm.id }
+      });
+      mx.bindHubId(reply.exchange_id, 'hub-r');
+      await watchdog.retireRecipient('builder-ws');
+      assert.equal(store.medusaExchanges.get(x.exchange_id).state, 'replied', 'still awaiting its initiator\'s close');
+      assert.equal(sent.length, 0, 'nobody is told the recipient left');
     });
 
     it('session teardown retires its workspace, so no exchange waits on a session that will not return', async () => {

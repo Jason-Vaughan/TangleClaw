@@ -23,7 +23,7 @@ All notable changes to TangleClaw are documented in this file.
     - Notices go over Medusa as `medusa_escalation` system messages carrying ids, ages, the blocker's code and meaning, and names, never the message text. Each is recorded as queued, then accepted (the Hub stored it) or failed. A target with no live session is recorded undeliverable, and the operator alert still stands.
     - The dashboard shows a banner for messages at the operator step or any critical one. `GET /api/medusa/escalations` lists every escalated exchange, and `tc message sent` shows a sender's open exchanges and what each waits on.
     - All thresholds are under `medusaWatchdog` in `PATCH /api/config`. A sender's `escalateAfterMinutes` can only shorten them.
-  - **A session ending retires its workspace, and the exchanges waiting on it end as `recipient_retired`**, with each initiator told, rather than waiting on a session that will not return. Carrying mail to a successor is #1806.
+  - **A session ending retires its workspace, and the exchanges waiting on it end as `recipient_retired`**, with each initiator told, rather than waiting on a session that will not return. An exchange already answered is left for its sender to close. Carrying mail to a successor is #1806.
   - **A retracted message is a permanent end state that is never escalated.** Retraction applies to ordinary mail only and can never touch HOLD, STOP or RELEASE. Its route and UI are #1873.
   - Schema v49, purely additive: a v48 server ignores the new tables, and their rows survive a rollback and re-upgrade. Nothing prunes them.
 
