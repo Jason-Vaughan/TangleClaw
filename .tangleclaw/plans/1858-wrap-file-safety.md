@@ -13,8 +13,11 @@ Dispatched by the PM on 2026-09-25.*
   remediation (deletions by name), and the PM released only that remediation (2026-09-25)
 - [x] Deletion ruling implemented and tested: the blanket exemption is removed, deletions are judged by name, and
   the four deletion tests replace the old one
-- [ ] Draft PR #1860 brought in line with this plan and pushed, with evidence returned to the PM for the Architect's
-  audit, then **STOP** (a fresh independent PR review follows the audit)
+- [x] Draft PR #1860 brought in line with this plan and pushed (9a416b08). The evidence went to the PM, and the Architect's
+  audit PASSED the deletion remediation (2026-09-25)
+- [x] Final acceptance correction (PM release, 2026-09-25): ignore suggestions escape every trailing space, and a
+  path containing CR/LF gets no suggestion. Two focused tests. 683b9f3a, verify-resolutions 0 findings. **STOP**,
+  PR still a draft. The independent PR review is dispatched by the PM next
 
 **Pilot envelope (IN FORCE):** no merging any PR, no pulling/updating the live checkout, no restarting the
 live service, no tests on the main instance, no tag/publish/release, no deploy.
