@@ -25,10 +25,43 @@ questions A1–A4) and two read-only scout reports (server classification seams;
       upstream line, the manifest group, and pruning of stale answers. Docs and CHANGELOG
 - [x] Verify: focused tests, then the full suite on this checkout (**not** the main instance). Green at 88eb4086: 13,001 pass, 0 fail, 1 skip. An earlier run's `dir-scanner` deadline test flaked under load; it passed 3/3 when run alone, and this change doesn't touch it
 - [x] Critic: cumulative `rev-20260925T161734Z-32402ac3`, then verify-resolutions `rev-20260925T163015Z-deaaed5c` and `rev-20260925T163746Z-f610b722`. 0 blocking; dispositions recorded
+- [x] R15 local drawer smoke (see "R15 local drawer smoke" below). It drove two copy fixes, now committed; impacted tests, the full suite, the cumulative Critic and the exact-head review are re-run for the final head
 - [x] Draft PR opened: #1871 (2026-09-25). Independent PR review: 0 blocking, 0 warning, 2 notes. **STOP here** (pilot boundary)
 
 **Pilot envelope (IN FORCE):** no merging any PR, no pulling or updating the live checkout, no restarting the
 live service, no tests on the main instance, no tag, publish or release, no deploy.
+
+## R15 local drawer smoke (2026-09-25)
+
+**Setup** (local only; never 3102, the live checkout, or live tmux):
+- `createServer()` from `server.js` in its own Node process, with a scratch `TANGLECLAW_HOME` (fresh database, own `projectsDir`, `ttydPort` 4231), on PortHub-leased port 4230 (TTL, loopback).
+- Session rows are inserted with `tmuxSession: null`, so no engine starts and no tmux command runs.
+- The page is the real `session.html` and `session.js`, driven in an isolated headless Chrome (its own profile, CDP on leased loopback port 4232). The connected extension browser could not reach this machine's loopback.
+- Both leases were released and every process stopped afterwards.
+
+**Fixture:** a bare origin plus a writer clone.
+- **Stale root** (`tc-smoke-stale-root`): cloned at `init`, before upstream landed a 72-line plan (a 32-line status header plus 40 plan lines), `CLAUDE.md` v2 and 3 later commits. Locally it has an untracked 40-line copy of the plan, a `CLAUDE.md` regenerated to v2, and a genuinely new plan.
+- **Offline** (`tc-smoke-offline`): fetched once, then its remote pointed at a missing repository.
+
+**Captured at the final head** (drawer text, verbatim excerpts):
+- **Established case:** "This checkout is 4 behind and 0 ahead of origin/main (checked just now)."
+  - The merged plan reads "upstream already has its own version of this file", with **Keep local (recommended)**: "origin/main already tracks this path with different content (72 lines there, 40 lines here)…"
+  - The new plan reads **Include (recommended)**: "…project content; not on origin/main yet".
+  - The manifest groups are Commit (1), Keep local (1), and **Already upstream (not committed) (1): CLAUDE.md**.
+  - No radio is preselected. Each radio carries `data-basis` (`upstream-owns` / `none`), and the list is `aria-describedby` the headline.
+- **Apply and retry:** the retry sent `pathDecisions` plus the matching `pathDecisionBasis`. `session-files` finished with the detail "…4 behind origin/main · 1 already on origin/main, not committed" and the same manifest.
+  - The pipeline then stopped at the first AI step, "requires an active tmux session", which is expected with no pane.
+  - The fixture's HEAD and files were unchanged; only the remote-tracking ref moved.
+- **Stale case:** "This checkout is 4 behind and 0 ahead of origin/main, as of the last fetch of 2026-09-25 16:48 UTC. It was not refreshed this wrap: '…/fleet/gone.git' does not appear to be a git repository, so only exact matches count as already upstream."
+  - The row reads **Keep local (recommended)**: "origin/main was not refreshed this wrap, so it may already have this file. It isn't recommended for the commit".
+  - `CLAUDE.md` is still listed as Already upstream.
+
+**What the smoke changed:**
+- The first stale capture repeated raw git stderr, with a long local path, inside the row copy in nested parentheses. Remote error text is also a credential channel.
+- The fix redacts the reason exactly as behind-origin does, judged on the whole text, shortens it by eliding the middle so the cause survives, shows it once in the headline, and gives stale rows a short sentence.
+- Both redaction tests were seen to fail with redaction disabled.
+
+**Screenshots** (local, not committed): `…/scratchpad/smoke/shots/` `01-established-drawer-final.png`, `02-manifest.png`, `04-stale-drawer-final.png`, `05-after-apply-final.png`.
 
 ## Architect ruling R14 (2026-09-25): the branch-own refinement, approved with guards
 
