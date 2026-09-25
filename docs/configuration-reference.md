@@ -136,6 +136,7 @@ Auto-created on first run with defaults. Editable directly or via `PATCH /api/co
 | `httpsCertPath` | string\|null | `null` | Path to TLS certificate file (PEM) |
 | `httpsKeyPath` | string\|null | `null` | Path to TLS private key file (PEM) |
 | `master` | object | see below | Project Master settings — see **The Project Master** below. Contains the switch that grants a persistent fleet-wide agent write access. |
+| `medusaWatchdog` | object | absent (defaults) | The Medusa delivery watchdog's switch and thresholds (#1839): `enabled`, `tickMs`, `rearmAfterMs`, `backoffMs`, `maxRearms`, and the escalation thresholds (`agedNormalMs`, `agedBlockingMs`, `escalateBlockingMs`, `operatorBlockingMs`, `operatorCriticalMs`, `replyBlockingMs`, `replyCriticalMs`). Every key is optional and bounded. A `PATCH /api/config` value merges over what is stored and refuses unknown keys and out-of-range numbers. A bad value already on disk is ignored, with a logged warning. `enabled: false` stops re-arms and escalation but not recording. `tickMs` applies at the next start. Defaults and meanings: [docs/medusa-delivery.md](medusa-delivery.md#settings). |
 
 ### The Project Master (`master`)
 

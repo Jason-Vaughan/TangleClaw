@@ -327,6 +327,81 @@ describe('tc verb roster (lib/tc-verbs)', () => {
       assert.deepEqual(calls[0].body, { to: 'ws-2', message: 'hello there' });
     });
 
+    // #1839 — delivery metadata rides leading flags; text after them is verbatim.
+    it('send passes leading flags as delivery metadata and reports the exchange', async () => {
+      const calls = [];
+      const res = await message.run({
+        env: {}, argv: ['send', '--priority', 'blocking', '--reason', 'awaiting-ruling', '--escalate-after', '10', 'ws-2', 'rule', '--on', 'X'],
+        getJson: async () => ({ project: { id: 1, name: 'p' } }),
+        postJson: async (p, body) => {
+          calls.push({ p, body });
+          return { status: 'received', id: 'h1', exchange: { exchangeId: 'mx_1', priority: 'blocking', label: 'stored', replyRequired: true } };
+        }
+      });
+      assert.equal(res.code, 0);
+      assert.deepEqual(calls[0].body, {
+        to: 'ws-2', message: 'rule --on X', priority: 'blocking', reason: 'awaiting-ruling', escalateAfterMinutes: 10
+      });
+      assert.match(res.stdout, /Exchange mx_1 \(blocking, stored\)/);
+      assert.match(res.stdout, /tc message close mx_1/);
+      assert.doesNotMatch(res.stdout, /ack the reply/, 'acking a reply does not close a reply-required exchange, so it is not suggested');
+    });
+
+    it('send refuses an unknown or incomplete flag before any network call', async () => {
+      for (const argv of [['send', '--urgent', 'ws', 'x'], ['send', '--priority']]) {
+        const res = await message.run({ ...noopCtx, argv });
+        assert.equal(res.code, 1, argv.join(' '));
+      }
+      const bad = await message.run({ ...noopCtx, argv: ['send', '--escalate-after', 'soon', 'ws', 'x'] });
+      assert.equal(bad.code, 1);
+      assert.match(bad.stderr, /number of minutes/);
+    });
+
+    it('tells the sender a no-reply exchange closes itself on the recipient\'s ack', async () => {
+      const res = await message.run({
+        env: {}, argv: ['send', 'ws-2', 'fyi'],
+        getJson: async () => ({ project: { id: 1, name: 'p' } }),
+        postJson: async () => ({ status: 'received', id: 'h1', exchange: { exchangeId: 'mx_2', priority: 'normal', label: 'stored', replyRequired: false } })
+      });
+      assert.match(res.stdout, /closes when the recipient acknowledges it/);
+      assert.doesNotMatch(res.stdout, /ack the reply/);
+    });
+
+    it('sent lists open exchanges with where each stands, and says so honestly when there are none', async () => {
+      const calls = [];
+      const none = await message.run({
+        env: {}, argv: ['sent'],
+        getJson: async (p) => { calls.push(p); return p.startsWith('/api/tc/whoami') ? { project: { id: 1, name: 'p' } } : { exchanges: [] }; },
+        postJson: async () => { throw new Error('sent must not POST'); }
+      });
+      assert.equal(none.code, 0);
+      assert.equal(calls[1], '/api/sessions/p/medusa/exchanges?direction=sent&open=1');
+      assert.match(none.stdout, /no open exchanges/);
+      const some = await message.run({
+        env: {}, argv: ['sent'],
+        getJson: async (p) => (p.startsWith('/api/tc/whoami') ? { project: { id: 1, name: 'p' } } : {
+          exchanges: [{ exchangeId: 'mx_1', priority: 'blocking', label: 'wake blocked', wakeCode: 'pane-composer-has-input', escalation: 'escalated', recipient: { workspaceId: 'ws-b' } }]
+        }),
+        postJson: async () => { throw new Error('sent must not POST'); }
+      });
+      assert.match(some.stdout, /mx_1 {2}blocking {2}to ws-b: wake blocked, waiting on pane-composer-has-input, escalation: escalated/);
+    });
+
+    it('close posts to the exchange route, id URL-encoded, and needs an id', async () => {
+      const bare = await message.run({ ...noopCtx, argv: ['close'] });
+      assert.equal(bare.code, 1);
+      assert.match(bare.stderr, /close needs the exchange id/);
+      const calls = [];
+      const res = await message.run({
+        env: {}, argv: ['close', 'mx_a/b'],
+        getJson: async () => ({ project: { id: 1, name: 'p q' } }),
+        postJson: async (p) => { calls.push(p); return { exchange: { exchangeId: 'mx_a/b', state: 'closed' } }; }
+      });
+      assert.equal(res.code, 0);
+      assert.equal(calls[0], '/api/sessions/p%20q/medusa/exchanges/mx_a%2Fb/close');
+      assert.match(res.stdout, /is closed/);
+    });
+
     it('a retargeted send relays the refreshed handle — the agent must not keep the dead one (#1023)', async () => {
       const ctx = {
         env: {}, argv: ['send', 'ws-stale', 'hello'],

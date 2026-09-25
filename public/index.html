@@ -413,6 +413,13 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
     <div id="behindOriginBanner" class="orphan-banner behind-origin-banner hidden" role="status">
       <span class="orphan-banner-text" id="behindOriginBannerText"></span>
     </div>
+    <!-- Medusa escalation banner (#1839). Hidden until /api/server-info reports
+         medusaEscalations: messages the delivery watchdog escalated to the
+         operator, or any critical one. role=alert: a session is blocked on it.
+         Base amber banner tone (dark text), below the stale-server danger colour. -->
+    <div id="medusaEscalationBanner" class="orphan-banner medusa-escalation-banner hidden" role="alert">
+      <span class="orphan-banner-text" id="medusaEscalationBannerText"></span>
+    </div>
     <!-- Live-checkout banner (#993). Hidden until /api/server-info reports that
          the served checkout is off main, detached, unpushed, or has uncommitted
          or untracked files, or that some of that could not be read. No button

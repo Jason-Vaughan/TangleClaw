@@ -47,7 +47,8 @@ describe('store: control-state schema (v48, #1861)', () => {
     const have = objects();
     for (const name of CONTROL_OBJECTS) assert.ok(have.has(name), `missing ${name}`);
     assert.equal(store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
-    assert.equal(store.CURRENT_SCHEMA_VERSION, 48);
+    // Later migrations advance the version; the control tables arrived at 48 and stay.
+    assert.ok(store.CURRENT_SCHEMA_VERSION >= 48);
   });
 
   it('a v47 store without the control tables migrates to v48 with them', () => {
@@ -67,7 +68,7 @@ describe('store: control-state schema (v48, #1861)', () => {
     store.init();
     const have = objects();
     for (const name of CONTROL_OBJECTS) assert.ok(have.has(name), `migration left ${name} missing`);
-    assert.equal(store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 48);
+    assert.equal(store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
   });
 
   it('one open assignment per project is enforced by the database itself', () => {
