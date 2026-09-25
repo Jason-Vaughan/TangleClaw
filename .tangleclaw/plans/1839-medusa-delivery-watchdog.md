@@ -10,14 +10,26 @@ partition: serial. Every chunk touches lib/store.js, server.js or lib/medusa*.js
 - [x] Plan written (rev 1, 2026-09-25); rev 2 adds Architect R19 (`retracted` terminal state, #1873)
 - [x] Architect rulings incorporated: R20 (message `6f9218fb`), rev 3, §0
 - [x] Implementation released: R20 released it on incorporation, with B2 as the sole writer. Stops: the governance checkpoint after chunk 02, and the Critic/draft-PR boundary
-- [ ] Chunk 01: schema v49 and `lib/medusa-exchanges.js` (state machine, facts, replay)
-- [ ] Chunk 02: send-side metadata, validation, arrival, read and ack facts, and the #1435 close-out
+- [ ] Chunk 01: schema v49 and `lib/medusa-exchanges.js` (facts, projection, replay). Built and committed `f00594e3`; review pending (checkpoint cumulative)
+- [ ] Chunk 02: built and committed; review pending (checkpoint cumulative). Scope: send-side metadata, validation, arrival, read and ack facts, and the #1435 close-out. **Governance checkpoint: STOP for the Architect** after the cumulative Critic over chunks 01–02
 - [ ] Chunk 03: wake transport seam, wake facts, and the watchdog timer (fake clock)
 - [ ] Chunk 04: escalation routing and surfaces (PM notice, sender and recipient views, operator dashboard, undeliverable recipients)
 - [ ] Chunk 05: docs, CHANGELOG, FEATURES, and the isolated-instance E2E
 - [ ] Verify: focused tests plus the full suite on the feature worktree (**not** the main instance)
 - [ ] Cumulative Critic
 - [ ] Draft PR opened. **STOP there**: the PM owns readiness and merge sequencing
+
+**Recorded decisions made during the build** (each reported to the Architect at the checkpoint):
+
+- **[DECISION] An arrival can beat the Hub's answer.** The Hub may push a message to a recipient on this host before the sender's `/send` call returns, so the recipient records an untracked arrival first. Hub-id uniqueness is therefore per origin (one `send` row and one `arrival` row). `bindHubId` adopts a matching arrival: it copies the arrival's `arrived`/`read`/`acknowledged` facts onto the send, with their original times and `adoptedFrom`, and closes the arrival row `adopted-by-send`. Correlation stays by Hub id only (R20 A1).
+- **[DECISION] A reused `requestId` is refused, not replayed.** The plan said sends are idempotent on `requestId`. Returning the existing exchange would still let the route call the Hub again. `createSendIntent` now refuses a seen `requestId` with `409 SEND_ALREADY_ATTEMPTED` (with the exchange id and state), so a retry after `send_unknown` never reaches the Hub (R20: never blindly retried).
+- **[DECISION, for ruling] Unverified readers.** Agents mark mail handled with a plain `/read`, as the generated guide instructs, and that carries no launch binding. Those reads and acks are recorded with actor `unverified-reader`, never `recipient`. Like `operator-ui` (P3), an unverified ack auto-closes a no-reply exchange but never satisfies a reply-required one. Reads and acks are de-duplicated **per actor**, so a dashboard ack does not hide the agent's later ack. The Architect may prefer that an unverified ack not close even no-reply mail; that is a one-line change.
+- **[DECISION] The dashboard is a browser-shaped operator request.** The dashboard sends no `x-tangleclaw-client` header. An operator caller with `Origin`/`Sec-Fetch-Site` (or the dashboard header) is `operator-ui` for reads and acks, using the same shape test `control-auth` applies.
+- **[DECISION] #1435 keeps a listener-less session listed.** An existing ledger test lists a skipped session with no listener. Absence of a listener is not evidence that mail was handled, so the filter drops a session only when its running listener shows no unread mail and no unacknowledged exchange addressed to it.
+- **[DECISION] What "this host can supervise" means.** A recipient is tracked when a live session on this host (or the Master) holds its workspace id, via the same match `peerReachability` uses. A retired local id is no longer held, so blocking or critical mail to it is refused with `WATCHDOG_UNAVAILABLE_REMOTE`, and normal mail is untracked.
+- **[DECISION] A Hub success with no id** is recorded as `send_unknown` (`hub-no-id`), since nothing can bind it.
+- **[ASSUMPTION] The recipient's `message.id` equals the Hub id `/send` returns.** Every fixture in `test/api-medusa.test.js` has envelope `messageId` equal to `message.id`, as does the live inbox shape. Arrivals are keyed on `message.id`. A live mismatch would show up as untracked arrivals with open sends never reaching `delivered`, which the chunk 05 isolated E2E will exercise.
+- **[DECISION] Review cadence.** Prawduct does not resolve plans under `.tangleclaw/plans/`, so it infers `cumulative` rather than per-chunk review. One cumulative Critic over chunks 01–02 serves as the governance-checkpoint review. The boundary cumulative runs again before the draft PR.
 
 # #1839 — Priority-aware Medusa delivery watchdog and escalation (Car B1): plan and design
 

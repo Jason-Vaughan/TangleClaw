@@ -142,13 +142,13 @@ describe('medusa-exchanges (#1839)', () => {
       assertReplayMatches(bound.exchange_id);
     });
 
-    it('is idempotent on requestId', () => {
+    it('refuses to record a reused requestId, so a retry never reaches the Hub twice', () => {
       const meta = mx.validateSendMeta({ requestId: 'req-a' }, PM, 10);
       const args = { meta, sender: { projectId: 10 }, recipient: { workspaceId: 'builder-ws', projectId: 20 } };
       const a = mx.createSendIntent(args);
-      const b = mx.createSendIntent(args);
-      assert.equal(a.exchange_id, b.exchange_id);
-      assert.equal(store.medusaExchanges.facts(a.exchange_id).length, 1);
+      assert.throws(() => mx.createSendIntent(args), (err) => err.code === 'SEND_ALREADY_ATTEMPTED' && err.status === 409
+        && err.details.exchangeId === a.exchange_id);
+      assert.equal(store.getDb().prepare('SELECT COUNT(*) AS n FROM medusa_exchanges').get().n, 1);
     });
 
     it('keeps an unknown Hub outcome as send_unknown and does not retry it', () => {
@@ -231,6 +231,28 @@ describe('medusa-exchanges (#1839)', () => {
       assert.equal(row.terminal_at, null);
       const ack = store.medusaExchanges.facts(x.exchange_id).find((f) => f.fact === 'acknowledged');
       assert.equal(ack.actor, 'operator-ui');
+    });
+
+    it('still records the agent acknowledging after the dashboard did', () => {
+      const x = sendPmToBuilder({ priority: 'blocking' });
+      mx.recordAcknowledged(['hub-1'], { kind: 'operator-ui' });
+      assert.equal(mx.recordAcknowledged(['hub-1'], BUILDER), 1);
+      assert.equal(mx.recordAcknowledged(['hub-1'], BUILDER), 0, 'the same actor twice adds nothing');
+      const actors = store.medusaExchanges.facts(x.exchange_id).filter((f) => f.fact === 'acknowledged').map((f) => f.actor);
+      assert.deepEqual(actors, ['operator-ui', 'recipient']);
+    });
+
+    it('records an unproven reader as unverified, never as the recipient', () => {
+      const x = sendPmToBuilder();
+      mx.recordRead(['hub-1'], UNBOUND);
+      assert.equal(store.medusaExchanges.facts(x.exchange_id).find((f) => f.fact === 'read').actor, 'unverified-reader');
+    });
+
+    it('follows a send the Hub delivered to a refreshed handle', () => {
+      const intent = sendPmToBuilder({}, null);
+      const bound = mx.bindHubId(intent.exchange_id, 'hub-1', { deliveredTo: 'builder-ws-new' });
+      assert.equal(bound.recipient_workspace_id, 'builder-ws-new');
+      assertReplayMatches(intent.exchange_id);
     });
 
     it('marks a no-reply message acknowledged in the dashboard as closed by the dashboard, not by the agent', () => {

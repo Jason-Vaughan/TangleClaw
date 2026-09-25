@@ -331,6 +331,7 @@ const controlState = require('./lib/control-state');
 const controlApi = require('./lib/control-api');
 const controlGate = require('./lib/control-gate');
 const { resolveControlCaller } = require('./lib/control-auth');
+const medusaExchanges = require('./lib/medusa-exchanges');
 
 const log = createLogger('server');
 
@@ -5009,8 +5010,28 @@ route('GET', '/api/medusa/deliveries', (req, res) => {
     if (query.limit !== undefined) options.limit = Number(query.limit);
     return jsonResponse(res, 200, { deliveries: store.medusaDeliveries.listForSession(query.sessionId, options) });
   }
-  return jsonResponse(res, 200, { undelivered: store.medusaDeliveries.sessionsWithUndeliveredMail() });
+  return jsonResponse(res, 200, {
+    undelivered: store.medusaDeliveries.sessionsWithUndeliveredMail().filter(_stillHasUnhandledMail)
+  });
 });
+
+/**
+ * Whether a session the wake ledger lists as un-nudged may still have mail
+ * nobody has handled (#1435). The ledger only writes while there is unread
+ * mail, so mail handled by hand never supersedes a skipped nudge; asking the
+ * listener and the exchange record now lets a session leave the list once its
+ * mail is dealt with. Only a running listener can show that, so a session
+ * with none stays listed: absence of a listener is not evidence of handling.
+ * @param {{sessionId: string}} row - A `sessionsWithUndeliveredMail` row
+ * @returns {boolean}
+ */
+function _stillHasUnhandledMail(row) {
+  const status = medusa.getStatus(row.sessionId);
+  if (status.state === 'off' || !status.workspaceId) return true;
+  if (status.unread > 0) return true;
+  return store.medusaExchanges.listOpenForRecipient(status.workspaceId)
+    .some((x) => !store.medusaExchanges.facts(x.exchange_id).some((f) => f.fact === 'acknowledged'));
+}
 
 // POST /api/session-rules — create { content, projectId, createdBy?, kind? }
 route('POST', '/api/session-rules', (_req, res, _params, body) => {
@@ -6605,6 +6626,51 @@ function resolveMasterMedusaTarget() {
  */
 function registerMedusaRoutes(prefix, resolve) {
   /**
+   * The project a resolved switchboard participant belongs to, or null (the
+   * Project Master belongs to none).
+   * @param {object|null} target - Resolved target.
+   * @returns {number|null}
+   */
+  function targetProjectId(target) {
+    if (!target || !target.name || !target.projectPath) return null;
+    const project = store.projects.getByName(target.name);
+    return project ? project.id : null;
+  }
+
+  /**
+   * Who is calling, in the terms the exchange record uses (#1839). A verified
+   * launch counts only for the participant's own project; the dashboard is
+   * `operator-ui` when `asReader`, since opening the inbox panel is the
+   * operator looking, not the agent.
+   * @param {import('http').IncomingMessage} req - Request.
+   * @param {number|null} projectId - The participant's project.
+   * @param {boolean} [asReader] - Resolving a read or ack rather than a send.
+   * @returns {object}
+   */
+  function exchangeCaller(req, projectId, asReader = false) {
+    const c = resolveControlCaller(req);
+    if (c.kind === 'operator') {
+      const proof = c.actor.operatorProof;
+      const h = req.headers || {};
+      const dashboard = h['sec-fetch-site'] !== undefined || h.origin !== undefined || h['x-tangleclaw-client'] === 'dashboard';
+      return asReader && dashboard ? { kind: 'operator-ui', proof } : { kind: 'operator', proof };
+    }
+    if (c.kind === 'project' && projectId != null && c.projectId === projectId) return { kind: 'project', projectId };
+    return { kind: 'unbound' };
+  }
+
+  /**
+   * Answer an exchange refusal, or rethrow anything else.
+   * @param {import('http').ServerResponse} res - Response.
+   * @param {Error} err - The error.
+   * @returns {void}
+   */
+  function exchangeRefusal(res, err) {
+    if (!(err instanceof medusaExchanges.ExchangeError)) throw err;
+    errorResponse(res, err.status, err.message, err.code, Object.keys(err.details || {}).length ? { details: err.details } : undefined);
+  }
+
+  /**
    * Answer the two refusal shapes. True when the route has already responded.
    * @param {import('http').ServerResponse} res - Response.
    * @param {object} r - Resolver result.
@@ -6728,6 +6794,15 @@ function registerMedusaRoutes(prefix, resolve) {
     if (r.error) return errorResponse(res, r.error.status, r.error.message, r.error.code);
     const sessionId = r.target ? r.target.sessionId : (r.fallbackSessionId || null);
     const messages = sessionId == null ? [] : medusa.getMessages(sessionId);
+    // #1839: record what was actually shown to the reader, and who read it.
+    if (r.target && messages.length > 0) {
+      try {
+        medusaExchanges.recordRead(messages.map((m) => m && m.id).filter(Boolean),
+          exchangeCaller(req, targetProjectId(r.target), true));
+      } catch (err) { // prawduct:allow prawduct/broad-except -- a failed read record must not withhold the inbox from its reader
+        log.warn('Could not record Medusa reads', { sessionId: String(sessionId), error: err.message });
+      }
+    }
     jsonResponse(res, 200, { messages });
   });
 
@@ -6739,7 +6814,7 @@ function registerMedusaRoutes(prefix, resolve) {
   // discarded anywhere. The bodyless form used to ACK everything, which meant
   // opening the inbox panel destroyed the last copy of what it displayed (#785).
   // Idempotent both ways; no listener is a safe no-op.
-  route('POST', `${prefix}/read`, (_req, res, params, body) => {
+  route('POST', `${prefix}/read`, (req, res, params, body) => {
     const r = resolve(params);
     if (r.error) return errorResponse(res, r.error.status, r.error.message, r.error.code);
     const sessionId = r.target ? r.target.sessionId : null;
@@ -6747,6 +6822,15 @@ function registerMedusaRoutes(prefix, resolve) {
       const ids = body && Array.isArray(body.ids) ? body.ids : null;
       if (ids) medusa.markHandled(sessionId, ids);
       else medusa.markRead(sessionId);
+      // #1839: handled mail is acknowledged, recorded as whoever handled it.
+      if (ids) {
+        try {
+          medusaExchanges.recordAcknowledged(ids.filter((id) => typeof id === 'string'),
+            exchangeCaller(req, targetProjectId(r.target), true));
+        } catch (err) { // prawduct:allow prawduct/broad-except -- the Hub ACK already happened; a failed record is logged, never turned into a failed read
+          log.warn('Could not record Medusa acknowledgements', { sessionId: String(sessionId), error: err.message });
+        }
+      }
       // #1861: a control notice marked handled is the target observing it.
       const readerProject = ids && r.target.name ? store.projects.getByName(r.target.name) : null;
       if (readerProject) controlApi.noticesHandled(ids, readerProject.id);
@@ -6829,21 +6913,99 @@ function registerMedusaRoutes(prefix, resolve) {
   // level may send (403). Returns the HONEST result — `received` (delivered
   // live) or `queued` (recipient offline) — never a blanket "sent"; validation
   // and Bridge failures surface as errors, not false successes.
-  route('POST', `${prefix}/send`, async (_req, res, params, body) => {
+  //
+  // #1839: the body may also carry delivery metadata (`priority`,
+  // `replyRequired`, `escalateAfterMinutes`, `reason`, `inReplyTo`,
+  // `requestId`). The exchange is recorded before the Hub is called and bound
+  // to the Hub's id afterwards; a send whose Hub outcome is lost is reported as
+  // `send_unknown` and is never re-sent, including when the same `requestId`
+  // comes back.
+  route('POST', `${prefix}/send`, async (req, res, params, body) => {
     const r = resolve(params);
     if (refused(res, r, 'send from')) return;
     if (outboundRefused(res, r.target)) return;
+    const senderProjectId = targetProjectId(r.target);
+    let meta;
     try {
-      const result = await medusa.sendMessage({
-        sessionId: r.target.sessionId,
-        to: body && body.to,
-        message: body && body.message
-      });
-      jsonResponse(res, 200, result);
+      meta = medusaExchanges.validateSendMeta(body, exchangeCaller(req, senderProjectId), senderProjectId);
     } catch (err) {
-      errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_SEND_FAILED');
+      return exchangeRefusal(res, err);
     }
+    const to = body && body.to;
+    let intent = null;
+    let result;
+    try {
+      result = await medusa.sendMessage({
+        sessionId: r.target.sessionId,
+        to,
+        message: body && body.message,
+        beforeHub: ({ from }) => {
+          const local = medusaWake.localParticipant(to);
+          intent = medusaExchanges.createSendIntent({
+            meta,
+            sender: { projectId: senderProjectId, sessionId: r.target.sessionId, workspaceId: from },
+            recipient: { workspaceId: to, projectId: local ? local.projectId : null, sessionId: local ? local.sessionId : null },
+            tracking: local ? 'tracked' : 'untracked'
+          });
+        }
+      });
+    } catch (err) {
+      if (err instanceof medusaExchanges.ExchangeError) return exchangeRefusal(res, err);
+      let row = null;
+      if (intent && err.hubOutcome === 'unknown') row = medusaExchanges.markSendUnknown(intent.exchange_id, 'bridge-unreachable');
+      else if (intent && err.hubOutcome === 'refused') row = medusaExchanges.markSendRefused(intent.exchange_id, 'hub-refused');
+      return errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_SEND_FAILED',
+        row ? { exchange: medusaExchanges.view(row) } : undefined);
+    }
+    let row = intent;
+    try {
+      row = result.id
+        ? medusaExchanges.bindHubId(intent.exchange_id, result.id, { hubStatus: result.status, deliveredTo: result.to })
+        : medusaExchanges.markSendUnknown(intent.exchange_id, 'hub-no-id');
+    } catch (err) { // prawduct:allow prawduct/broad-except -- the message is already on the Hub; failing the response would invite a duplicate resend
+      log.warn('Could not bind a sent Medusa message to its exchange', { exchangeId: intent.exchange_id, error: err.message });
+      return jsonResponse(res, 200, { ...result, exchange: medusaExchanges.view(store.medusaExchanges.get(intent.exchange_id)), exchangeError: 'binding-failed' });
+    }
+    jsonResponse(res, 200, { ...result, exchange: medusaExchanges.view(row) });
   }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
+
+  // GET <prefix>/exchanges — this participant's Medusa exchanges (#1839):
+  // `?direction=sent` (default) or `received`, `?open=1` for unfinished only.
+  // States and metadata only; never a message body.
+  route('GET', `${prefix}/exchanges`, (req, res, params) => {
+    const query = parseQuery(reqUrl(req).search);
+    const r = resolve(params, query);
+    if (refused(res, r, 'list exchanges for')) return;
+    const openOnly = query.open === '1' || query.open === 'true';
+    const limit = query.limit !== undefined ? Number(query.limit) : undefined;
+    let rows;
+    if (query.direction === 'received') {
+      const workspaceId = medusa.getStatus(r.target.sessionId).workspaceId;
+      rows = workspaceId ? store.medusaExchanges.listForRecipient(workspaceId, { openOnly, limit }) : [];
+    } else {
+      const projectId = targetProjectId(r.target);
+      rows = projectId != null ? store.medusaExchanges.listForSender(projectId, { openOnly, limit }) : [];
+    }
+    jsonResponse(res, 200, { exchanges: rows.map(medusaExchanges.view) });
+  });
+
+  // POST <prefix>/exchanges/:exchangeId/close — the initiator ends an exchange
+  // (#1839). Only a verified launch of the sending project, or the operator.
+  route('POST', `${prefix}/exchanges/:exchangeId/close`, (req, res, params) => {
+    const r = resolve(params);
+    if (refused(res, r, 'close an exchange for')) return;
+    const projectId = targetProjectId(r.target);
+    const row = store.medusaExchanges.get(params.exchangeId);
+    const caller = exchangeCaller(req, projectId);
+    if (!row || (caller.kind !== 'operator' && row.sender_project_id !== projectId)) {
+      return errorResponse(res, 404, 'No exchange this session sent has that id', 'EXCHANGE_NOT_FOUND');
+    }
+    try {
+      jsonResponse(res, 200, { exchange: medusaExchanges.view(medusaExchanges.close(row.exchange_id, caller)) });
+    } catch (err) {
+      exchangeRefusal(res, err);
+    }
+  });
 
   // POST <prefix>/loop — open a Medusa loop to a target workspace (MED-2K9P v2
   // T3, the setup modal's launch). Body `{ target, task, doneCriteria, mode,
@@ -6930,6 +7092,21 @@ function registerMedusaRoutes(prefix, resolve) {
 }
 
 registerMedusaRoutes('/api/sessions/:project/medusa', resolveProjectMedusaTarget);
+
+// #1839: every message a listener on this host receives is recorded against
+// the exchange its sender opened here, or as an untracked arrival. Keyed by the
+// Hub's message id; nothing is matched by order or body.
+medusa.setArrivalObserver(({ sessionKey, workspaceId, message }) => {
+  if (!message || typeof message.id !== 'string') return;
+  const session = /^\d+$/.test(sessionKey) ? store.sessions.get(Number(sessionKey)) : null;
+  medusaExchanges.recordArrival({
+    hubId: message.id,
+    recipientWorkspaceId: workspaceId,
+    recipientProjectId: session ? session.projectId : null,
+    recipientSessionId: session ? sessionKey : null,
+    senderWorkspaceId: typeof message.from === 'string' ? message.from : null
+  });
+});
 
 // ── Control state (#1861): durable HOLD / RELEASE / STOP ──
 //

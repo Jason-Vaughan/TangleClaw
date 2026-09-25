@@ -327,6 +327,50 @@ describe('tc verb roster (lib/tc-verbs)', () => {
       assert.deepEqual(calls[0].body, { to: 'ws-2', message: 'hello there' });
     });
 
+    // #1839 — delivery metadata rides leading flags; text after them is verbatim.
+    it('send passes leading flags as delivery metadata and reports the exchange', async () => {
+      const calls = [];
+      const res = await message.run({
+        env: {}, argv: ['send', '--priority', 'blocking', '--reason', 'awaiting-ruling', '--escalate-after', '10', 'ws-2', 'rule', '--on', 'X'],
+        getJson: async () => ({ project: { id: 1, name: 'p' } }),
+        postJson: async (p, body) => {
+          calls.push({ p, body });
+          return { status: 'received', id: 'h1', exchange: { exchangeId: 'mx_1', priority: 'blocking', label: 'stored', replyRequired: true } };
+        }
+      });
+      assert.equal(res.code, 0);
+      assert.deepEqual(calls[0].body, {
+        to: 'ws-2', message: 'rule --on X', priority: 'blocking', reason: 'awaiting-ruling', escalateAfterMinutes: 10
+      });
+      assert.match(res.stdout, /Exchange mx_1 \(blocking, stored\)/);
+      assert.match(res.stdout, /tc message close mx_1/);
+    });
+
+    it('send refuses an unknown or incomplete flag before any network call', async () => {
+      for (const argv of [['send', '--urgent', 'ws', 'x'], ['send', '--priority']]) {
+        const res = await message.run({ ...noopCtx, argv });
+        assert.equal(res.code, 1, argv.join(' '));
+      }
+      const bad = await message.run({ ...noopCtx, argv: ['send', '--escalate-after', 'soon', 'ws', 'x'] });
+      assert.equal(bad.code, 1);
+      assert.match(bad.stderr, /number of minutes/);
+    });
+
+    it('close posts to the exchange route, id URL-encoded, and needs an id', async () => {
+      const bare = await message.run({ ...noopCtx, argv: ['close'] });
+      assert.equal(bare.code, 1);
+      assert.match(bare.stderr, /close needs the exchange id/);
+      const calls = [];
+      const res = await message.run({
+        env: {}, argv: ['close', 'mx_a/b'],
+        getJson: async () => ({ project: { id: 1, name: 'p q' } }),
+        postJson: async (p) => { calls.push(p); return { exchange: { exchangeId: 'mx_a/b', state: 'closed' } }; }
+      });
+      assert.equal(res.code, 0);
+      assert.equal(calls[0], '/api/sessions/p%20q/medusa/exchanges/mx_a%2Fb/close');
+      assert.match(res.stdout, /is closed/);
+    });
+
     it('a retargeted send relays the refreshed handle — the agent must not keep the dead one (#1023)', async () => {
       const ctx = {
         env: {}, argv: ['send', 'ws-stale', 'hello'],
