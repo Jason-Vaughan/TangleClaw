@@ -316,6 +316,18 @@ describe('API — Medusa exchanges (#1839)', () => {
     assert.equal(normal.data.exchange.tracking, 'untracked');
   });
 
+  it('shows a lost or refused Hub answer on an untracked send too', async () => {
+    hub.setMode('drop');
+    const lost = await call(server, 'POST', `${pmBase()}/send`, { to: 'remote-ws', message: 'x' });
+    assert.equal(lost.status, 502);
+    assert.equal(lost.data.exchange.tracking, 'untracked');
+    assert.equal(lost.data.exchange.state, 'send_unknown');
+    hub.setMode('refuse');
+    const refused = await call(server, 'POST', `${pmBase()}/send`, { to: 'remote-ws', message: 'x' });
+    assert.equal(refused.status, 502);
+    assert.equal(refused.data.exchange.state, 'undeliverable');
+  });
+
   it('records the dashboard marking mail handled as operator-ui, and it does not satisfy a reply', async () => {
     const sent = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'x', priority: 'blocking' }, bPM.headers);
     const hubId = sent.data.id;
@@ -349,6 +361,19 @@ describe('API — Medusa exchanges (#1839)', () => {
     const theirs = await call(server, 'GET', `${builderBase()}/exchanges?direction=received`, null, bBuilder.headers);
     assert.equal(theirs.data.exchanges.length, 1);
     assert.ok(!JSON.stringify(theirs.data).includes('secret body'));
+  });
+
+  it('accepts bounded watchdog settings through PATCH /api/config and refuses the rest', async () => {
+    const bad = await call(server, 'PATCH', '/api/config', { medusaWatchdog: { tickMs: 1 } }, op);
+    assert.equal(bad.status, 400);
+    assert.match(bad.data.error, /tickMs/);
+    const unknown = await call(server, 'PATCH', '/api/config', { medusaWatchdog: { escalateEverything: true } }, op);
+    assert.equal(unknown.status, 400);
+    const ok = await call(server, 'PATCH', '/api/config', { medusaWatchdog: { maxRearms: 2 } }, op);
+    assert.equal(ok.status, 200, JSON.stringify(ok.data));
+    assert.equal(store.config.load().medusaWatchdog.maxRearms, 2);
+    await call(server, 'PATCH', '/api/config', { medusaWatchdog: { rearmAfterMs: 120000 } }, op);
+    assert.deepEqual(store.config.load().medusaWatchdog, { maxRearms: 2, rearmAfterMs: 120000 }, 'patches merge');
   });
 
   it('drops a session from the undelivered list once its mail is handled by hand (#1435)', async () => {

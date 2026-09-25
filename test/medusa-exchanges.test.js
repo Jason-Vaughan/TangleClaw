@@ -424,12 +424,34 @@ describe('medusa-exchanges (#1839)', () => {
       mx.recordWakeFact('hub-1', 'builder-ws', 'wake_attempted', { detail: { nonce: 'n1', nextEligibleAt: '2026-09-25T12:03:00.000Z' } });
       mx.recordWakeFact('hub-1', 'builder-ws', 'rearmed', { detail: { nextEligibleAt: '2026-09-25T12:05:00.000Z' } });
       const row = store.medusaExchanges.get(x.exchange_id);
-      assert.equal(row.state, 'wake_attempted');
+      assert.equal(row.state, 'wake_pending', 'a re-arm leaves the message waiting on the next wake');
+      assert.equal(row.wake_code, 'rearmed');
       assert.equal(row.rearm_count, 1);
       assert.equal(row.next_eligible_at, '2026-09-25T12:05:00.000Z');
       mx.recordEscalationFact(x.exchange_id, 'escalation_queued', { code: 'blocking-unread' });
       assert.equal(store.medusaExchanges.get(x.exchange_id).esc_level, 'escalated');
       assertReplayMatches(x.exchange_id);
+    });
+  });
+
+  describe('recipient-wide wake facts', () => {
+    it('records an unchanged blocked verdict once, however often it is reported, and every attempt', () => {
+      const x = sendPmToBuilder({ priority: 'blocking' });
+      mx.recordArrival({ hubId: 'hub-1', recipientWorkspaceId: 'builder-ws' });
+      assert.equal(mx.recordWakeForRecipient('builder-ws', 'wake_blocked', { code: 'pane-turn-in-flight' }), 1);
+      assert.equal(mx.recordWakeForRecipient('builder-ws', 'wake_blocked', { code: 'pane-turn-in-flight' }), 0);
+      assert.equal(mx.recordWakeForRecipient('builder-ws', 'wake_blocked', { code: 'pane-composer-has-input' }), 1, 'a new reason is a change');
+      assert.equal(mx.recordWakeForRecipient('builder-ws', 'wake_attempted', { code: 'tmux' }), 1);
+      assert.equal(mx.recordWakeForRecipient('builder-ws', 'wake_attempted', { code: 'tmux' }), 1, 'each attempt is its own fact');
+      assert.equal(store.medusaExchanges.facts(x.exchange_id).filter((f) => f.fact.startsWith('wake_')).length, 4);
+    });
+
+    it('concerns only unread mail to that workspace', () => {
+      sendPmToBuilder({}, 'hub-1');
+      mx.recordRead(['hub-1'], 'builder-ws', BUILDER);
+      assert.equal(mx.pendingWakeCount('builder-ws'), 0);
+      assert.equal(mx.recordWakeForRecipient('builder-ws', 'wake_attempted', { code: 'tmux' }), 0);
+      assert.equal(mx.recordWakeForRecipient('pm-ws', 'wake_attempted', { code: 'tmux' }), 0);
     });
   });
 

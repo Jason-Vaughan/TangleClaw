@@ -332,6 +332,7 @@ const controlApi = require('./lib/control-api');
 const controlGate = require('./lib/control-gate');
 const { resolveControlCaller } = require('./lib/control-auth');
 const medusaExchanges = require('./lib/medusa-exchanges');
+const medusaWatchdog = require('./lib/medusa-watchdog');
 
 const log = createLogger('server');
 
@@ -1878,7 +1879,7 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     // unauthenticated caller could set an admin credential of their choosing and
     // lock the owner out. Credential changes go through POST /api/auth/credential,
     // which refuses unless a live gate is already authenticating the request.
-    'serviceTokenEnabled', 'wrapDisabled', 'master'
+    'serviceTokenEnabled', 'wrapDisabled', 'master', 'medusaWatchdog'
   ];
 
   // Refuse rather than ignore. Unknown keys below are silently skipped by design,
@@ -1911,6 +1912,13 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
       const check = validateMasterPatch(value, config);
       if (check.error) return errorResponse(res, 400, check.error, 'BAD_REQUEST');
       config.master = check.value;
+      continue;
+    }
+    // #1839: the watchdog's tunables, bounded and merged over what is stored.
+    if (key === 'medusaWatchdog') {
+      const check = medusaWatchdog.validatePatch(value, config.medusaWatchdog);
+      if (check.error) return errorResponse(res, 400, check.error, 'BAD_REQUEST');
+      config.medusaWatchdog = check.value;
       continue;
     }
 
@@ -11467,6 +11475,10 @@ if (require.main === module) {
     // watcher that types a fixed nudge into an opted-in (`medusaWake`) session
     // when fresh inbound mail is waiting and the pane is at a bare prompt.
     medusaWake.start();
+    // Start the Medusa delivery watchdog (#1839): a deterministic pass over
+    // durable exchange state that re-arms a wake through the monitor's gates
+    // when a nudge provably did not land or went unanswered.
+    medusaWatchdog.start();
     // Start every registered startupControl adapter (#1825): each probes its
     // engine's version once, so capability resolution never spawns on a
     // request path, recovers the channels and in-flight fires a restart
@@ -11527,6 +11539,7 @@ if (require.main === module) {
     tunnelMonitor.stop();
     wrapSentinel.stop();
     medusaWake.stop();
+    medusaWatchdog.stop();
     launchUnready.stop();
     // Each startupControl adapter's reaper timer (#1825): the timers are unref'd,
     // so this is bookkeeping symmetry with `start`, not what lets the process exit.
