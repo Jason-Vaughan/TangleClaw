@@ -1,0 +1,63 @@
+{
+  "cmake": {
+    "source": "disposable venv in the harness scratch dir (system /usr/bin/python3 3.9.6)",
+    "version": "3.31.6",
+    "wheel": "cmake-3.31.6-py3-none-macosx_10_10_universal2.whl",
+    "wheel_sha256": "da9d4fd9abd571fd016ddb27da0428b10277010b23bb21e3678f8b9e96e1686e"
+  },
+  "ttyd_source": {
+    "url": "https://github.com/tsl0922/ttyd/archive/refs/tags/1.7.7.tar.gz",
+    "sha256": "039dd995229377caee919898b7bd54484accec3bba49c118e2d5cd6ec51e3650",
+    "matches_homebrew_formula_pin": true
+  },
+  "pr1573": {
+    "head": "82a15573d041523c49563cfadf271505f5a38645",
+    "diff_sha256": "c8c2961466ab8b48f7aaf6de3482216fdda66a1602e5aadf6e2735218d03e2d9",
+    "files": [
+      "src/pty.c"
+    ]
+  },
+  "a3c_patch": {
+    "file": "a3c-drain-after-close-darwin.diff",
+    "sha256": "672ac3829621fba053dfa4b8250c503a8669751bdc419a9849a2c0475bd85669",
+    "files": [
+      "src/protocol.c"
+    ],
+    "platform_gate": "__APPLE__"
+  },
+  "a3_oneshot_flush_patch_REJECTED": {
+    "file": "a3-oneshot-flush-REJECTED.diff",
+    "sha256": "0e910909e6281f4f396458e09db7061f145899c6669e07e21108bbbb019c2eab"
+  },
+  "compiler": "Apple clang version 17.0.0 (clang-1700.6.4.2)",
+  "cmake_args": "-DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/homebrew (Homebrew headers/libs read-only)",
+  "binaries_sha256": {
+    "control_1573_noflush": "644994c22b925e7ef7d7ade9340e8b140b969c75fbaea5c1a27f7d0904d2141a",
+    "a3_oneshot_flush": "6d2a3bb93d9306d126fba44b4ffd0d003cce66e4b302d81882d4084592a08cf5",
+    "a3c_final_release": "fe6c1813ad79daae9267be8f1a6d86e20ab12cb96478dbba6c87f89c7be5e7ed",
+    "mutant_m1": "c09a2d2b197c12e620c9e96fa4b5751b757d320bde478df6abfbecd35a78ce0c",
+    "mutant_m2": "32b19230d923c8c023857dfe6afe3b69b888f5d45f83eb424905b1dd0eef9b89",
+    "a3c_asan_ubsan": "06468634dd51c331d11da356e1d0375f27a47d252df2d391ab1ec8d9f4f26d22"
+  },
+  "a3c_final_equals_prelim_a3c": true,
+  "otool_L_a3c_final": [
+    "\t/usr/lib/libz.1.dylib (compatibility version 1.0.0, current version 1.2.12)",
+    "\t/opt/homebrew/opt/libwebsockets/lib/libwebsockets.21.dylib (compatibility version 21.0.0, current version 0.0.0)",
+    "\t/opt/homebrew/opt/json-c/lib/libjson-c.5.dylib (compatibility version 5.0.0, current version 5.5.0)",
+    "\t/opt/homebrew/opt/libuv/lib/libuv.1.dylib (compatibility version 1.0.0, current version 1.0.0)",
+    "\t/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib (compatibility version 3.0.0, current version 3.0.0)",
+    "\t/opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib (compatibility version 3.0.0, current version 3.0.0)",
+    "\t/usr/lib/libutil.dylib (compatibility version 1.0.0, current version 1.0.0)",
+    "\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)"
+  ],
+  "attach_script": {
+    "source": "origin/main:deploy/ttyd-attach.sh (pre-A1)",
+    "sha256": "e2b0051523accd1126adfef624e281b0b6ac157d4c5928a7aca45179481f3be2"
+  },
+  "homebrew_deps": {
+    "libwebsockets": "4.5.2",
+    "json-c": "0.19",
+    "libuv": "1.52.1",
+    "openssl@3": "3.6.2"
+  }
+}

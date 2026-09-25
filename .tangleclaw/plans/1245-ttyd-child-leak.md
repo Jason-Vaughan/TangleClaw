@@ -81,6 +81,47 @@ a ttyd runs an *isolated* one: its own unix socket, its own `tmux -L` server, a 
   branch. They do **not** deploy separately (section F is revised to match).
 - **Hold:** the plan is approved, but implementation stays held while B2 is the sole #1839 writer (see Status).
 
+## A3 build and matrix (2026-09-25; the Architect approved A3c at 21:34Z, controlling)
+
+Evidence, patches and provenance: `.tangleclaw/plans/1245-evidence/a3/` (`provenance.json` pins everything below).
+Every run used the ORIGINAL pre-A1 attach script (`origin/main:deploy/ttyd-attach.sh`), isolated under the R22 Q6 guards.
+The live ttyd 28870 and live tmux 1335 were verified unchanged after every run.
+
+**Provenance.**
+- CMake 3.31.6 from a disposable venv in scratch; the wheel sha256 is recorded.
+- ttyd 1.7.7 tarball sha256 `039dd995…`, which is Homebrew's formula pin.
+- #1573 at head `82a15573`.
+- Apple clang 17.0.0.
+- Built against Homebrew's libwebsockets 4.5.2, json-c 0.19, libuv 1.52.1 and openssl 3.6.2, read-only. `otool -L`
+  matches the installed 1.7.7_6.
+- No brew change, no `pip --user`, no install.
+
+| # | Build | Result | Meaning |
+|---|---|---|---|
+| 1 | 1.7.7 + #1573, no fix (control) | **reproduced**: 37/60 stuck `?Es`, PTY 45→83 | #1573 alone does not fix it |
+| 2 | + one-shot master `TIOCFLUSH(FWRITE)` after `pty_pause`, before `pty_kill` | **failed**: 51/60 stuck, PTY 45→97 | Rejected. The child (the tmux client) writes its teardown output AFTER the hang-up, which refills the queue the leader then waits on. A flush before the kill cannot precede writes made after it |
+| 3 | **A3c**: + drain after close (Darwin-gated, `src/protocol.c`) | **clean**, 200 prelim cycles: 0 stuck, 0 lingering, 200/200 reaped | Approved (21:34Z) |
+| M1 | A3c without the close-time `pty_resume` | **reproduced**: 11 stuck by 100 cycles | The close-time resume is necessary |
+| M2 | A3c without the per-chunk `pty_resume` | **reproduced**: 55 stuck by 60 cycles | The per-chunk resume is necessary |
+| S | A3c built with ASan + UBSan, 400 cycles | **clean**: 0 sanitizer reports, 0 restarts, 400/400 reaped | No callback-lifetime, double-free or use-after-free defect seen |
+
+**A3c rationale.** In ttyd 1.7.7, `paused` is set true at spawn and never cleared, so `pty_pause()` is a no-op.
+`read_cb` stops the stream after every chunk, and only a writable websocket restarts it (`pty_resume`). After a close,
+`process_read_cb` discards the next chunk (`ws_closed`) and never restarts reading, so the child's output queue is
+never read again. On Darwin a session leader's exit waits for that queue to drain, and that is the deadlock.
+
+A3c keeps reading after the close and discards until end of file:
+- in the `ws_closed` read path, free each non-null chunk exactly once and `pty_resume`; a null buffer (EOF or a read
+  error) does not resume;
+- at `LWS_CALLBACK_CLOSED`, `pty_resume` (after `ws_closed` is set) replaces the no-op `pty_pause`;
+- `ctx->pss` is never dereferenced after the close, and child exit keeps ownership of teardown.
+
+It is gated to `__APPLE__`, which leaves other platforms byte-for-byte unchanged. The Darwin binary is identical to the
+preliminary A3c (`fe6c1813…`). Generic upstreaming can be proposed separately.
+
+**Full acceptance (R22 Q7)** on the release build `fe6c1813…`: 2000 cycles plus a 2 h soak, started 21:38Z. The result
+is recorded here when it finishes.
+
 ## Architect R22 Q1 fallback ruling (2026-09-25 21:24Z, controlling)
 
 - **A1 is rejected** as the shipping root fix. 6 wedges in 1500 cycles fail the zero-defect contract; spend no more runs
