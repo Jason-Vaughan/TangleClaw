@@ -220,3 +220,5 @@ test-results.xml
 .prawduct/.test-report.xml.scope.json
 .prawduct/.critic-review-dispatch.json
 .prawduct/.pr-review-dispatch.json
+scratch/
+data/
