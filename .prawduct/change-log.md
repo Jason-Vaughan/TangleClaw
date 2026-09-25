@@ -35,6 +35,33 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-25 — ttyd churn harness and the baseline reproduction (#1245, chunk 01)
+
+<!-- prawduct: type=feature | scope=ttyd-1245 -->
+
+Pilot B1, #1245 chunk 01. The plan is `.tangleclaw/plans/1245-ttyd-child-leak.md`. Architect ruling R22 (Q1, Q6, Q7) governs it.
+
+**Why.** R22 made the fix an evidence-gated choice: first reproduce the installed-build failure with a mutation-sensitive harness, then hold every candidate to the same contract.
+
+**The change.**
+- `lib/ttyd-churn.js`: the pure decisions, all tested.
+  - Preflight: the live ttyd row must be clear, PTY use at most 15%, concurrency 1–10, and the binaries present.
+  - Stop rules: 5 wedges, 25% PTY use, or a blind measurement.
+  - The wedge floor (E/Z ≥ 10 s).
+  - Exiting-child lifetime tracking, and the verdicts (baseline `reproduced`; control `harness-fault`; candidate `pass` only on the full Q7 contract, otherwise `inconclusive`).
+- `scripts/ttyd-churn.js`: the runner.
+  - It uses a scratch ttyd on its own socket in `/tmp/tcc-<id>` (short on purpose: macOS limits a unix socket path to 104 bytes).
+  - A tmux shim pins `-L tcc-<id>` and its own `TMUX_TMPDIR`.
+  - Five close modes (clean, abrupt, paused, replay, noread) and a 250 ms sampler.
+  - Cleanup is by exact PID and verified.
+- `lib/ws-unix-client.js`: gains `path` and `protocol` options, with unchanged defaults. The test server exposes the request head.
+
+**Evidence.** The live ttyd 28870 and live tmux server 1335 were unchanged after every run.
+- Control (`exec cat`, 50 cycles): 0 wedges; the pool went 38 → 39 → 38.
+- Baseline (installed 1.7.7_6 plus the shipped script, 50 cycles): reproduced. 47 of 50 children never exited, the pool went 38 → 88, the ttyd fds 32 → 180, and after cleanup the pool was back to 38.
+- The reports are in `.tangleclaw/plans/1245-evidence/`.
+- The first attempt failed before starting anything, because its tmux socket path ran past the unix-socket limit. That led to the short `/tmp` default.
+
 ## 2026-09-25 — ttyd watcher: one shared reading, confirmed wedges, kickstart receipts (#1245, chunk 02)
 
 <!-- prawduct: type=bugfix | scope=ttyd-1245 -->

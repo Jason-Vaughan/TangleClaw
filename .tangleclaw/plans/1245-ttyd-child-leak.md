@@ -19,8 +19,9 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
       live-synced and wrapped, and B1 is the sole writer. B1's collision revalidation passed. #1839 touched none of the
       #1245 surfaces; its `server.js` boot-block lines only sit beside `ttydWatcher.start()`. The PM confirmed it at
       20:31Z. The branch was rebased onto origin/main 310dfbc3
-- [ ] Chunk 01: mutation-sensitive churn harness under the R22 host guards; fail-fast baseline reproduction against
-      the installed 1.7.7_6 plus mutation proof; T_age derived from the baseline data
+- [x] Chunk 01: mutation-sensitive churn harness under the R22 host guards; fail-fast baseline reproduction against
+      the installed 1.7.7_6 plus mutation proof. Harness at 44906acf; results in "Chunk 01 results" below. T_age is
+      bounded by the data but held provisional until chunk 03's candidates yield real transient lifetimes
 - [x] Chunk 02: bounded async single-flight `takeReading()`, PID/generation binding, confirmed-wedge predicate,
       action receipt, immediate boot check, env kill switch and bounded threshold. Committed at fd22adf9. The Critic
       cumulative review `rev-20260925T204343Z-b1361aa6` found 0 blocking. R-1 (a receipt on a reading with no
@@ -148,6 +149,33 @@ that clears them. The same deadlock was just fixed in upterm by flushing from th
   post-restart attaches (their elapsed time equals ttyd's). It was the PM's authorized `POST /api/server/restart` during the Car A2 live
   deployment (R23; see the end of this plan). That the watcher cannot see or record restarts it did not make is
   itself a finding (see C).
+
+## Chunk 01 results (2026-09-25, isolated; the live ttyd 28870 and live tmux server 1335 were verified unchanged after every run)
+
+Reports: `.tangleclaw/plans/1245-evidence/control-50.json`, `.tangleclaw/plans/1245-evidence/baseline-50.json`.
+Preflight each time: the live ttyd row was clear and PTY use was 38/511 (7.4%).
+
+| Run | Child | Cycles | Wedged (E/Z ≥ 10 s) | Still exiting at the end | PTY used (base, peak, after cleanup) | ttyd fds (base, end) | Verdict |
+|---|---|---|---|---|---|---|---|
+| control | `exec cat` (writes nothing) | 50 | 0 | 0 | 38, 39, 38 | 32, 33 | **pass** (the harness invents no wedges) |
+| baseline | installed ttyd 1.7.7_6 + shipped `ttyd-attach.sh` | 50 (stopped at the wedge limit) | 10 at the stop; 47 of 50 never exited | 47 (1–10 s old at the stop, none exited) | 38, **88**, 38 | 32, **180** | **reproduced** |
+
+**What this establishes:**
+- The installed build leaves nearly every churned `tmux attach` child stuck exiting. Each one holds a PTY (+50) and about three fds.
+- They never exit while ttyd lives. Killing only the scratch ttyd frees all of them, and the pool returned to baseline.
+- The only difference between the two runs is whether the child writes output. That is the evidence for the exit-drain
+  mechanism: output still queued at close is what wedges the child.
+- It also shows the harness is mutation-sensitive at the system level: it separates a wedging child from a clean one with the
+  same ttyd, socket and clients.
+
+**T_age:** no exiting child in either run was ever seen exiting and then gone. Clean exits finish inside one 250 ms sample,
+and wedged ones never finish. Any threshold from about 1 s up to hours separates these two populations in this data. The
+provisional 120 s stays until the chunk 03 candidates, whose children do exit, give a real transient distribution to set it
+from.
+
+**Not yet shown:** why the live install wedges only some connections, not nearly all. Likely factors: real tabs close with less
+queued output, and a 5-minute tick samples far less often. Chunk 03's candidates are measured under this worst-case load,
+which is stricter than live.
 
 ## Chunk 02 design (the shared reading, wedge predicate, receipt, boot check, knobs)
 

@@ -288,7 +288,9 @@ async function cleanup(s) {
 async function main(o) {
   const repoRoot = path.resolve(__dirname, '..');
   const runId = Date.now().toString(36);
-  const dir = o.out || path.join(os.tmpdir(), `tc-churn-${runId}`);
+  // Short on purpose: a unix socket path is limited to 104 bytes on macOS, and
+  // `os.tmpdir()` there is ~50 bytes before tmux adds `tmux-<uid>/<name>`.
+  const dir = o.out || path.join('/tmp', `tcc-${runId}`);
   const sock = path.join(dir, 'ttyd.sock');
   const ttydBin = o.ttydBin || await which('ttyd');
   const tmuxBin = await which('tmux');
@@ -306,7 +308,7 @@ async function main(o) {
   console.log(JSON.stringify({ preflight: { ...pre, facts, dir } }, null, 2));
   if (!pre.ok || o.preflightOnly) return { preflight: pre };
 
-  const s = { tmuxName: `tc-churn-${runId}`, ttydPid: null, shim: null, env: null };
+  const s = { tmuxName: `tcc-${runId}`, ttydPid: null, shim: null, env: null };
   const report = { runId, mode: o.mode, dir, ttydBin, attachScript: o.mode === 'control' ? 'exec cat' : (o.attachScript || 'deploy/ttyd-attach.sh'), startedAt: new Date().toISOString() };
   const tracker = new churn.LifetimeTracker();
   let sampler = null;
