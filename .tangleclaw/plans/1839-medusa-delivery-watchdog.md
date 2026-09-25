@@ -42,6 +42,20 @@ partition: serial. Every chunk touches lib/store.js, server.js or lib/medusa*.js
 - **[DECISION] The nonce** is appended at the injection site (`(wake ref <12 hex>)`), not inside `_nudgeLine`, so the pinned nudge-line tests keep their meaning. The negative-receipt check (`verifySubmission`) runs off the tick, only when an exchange is waiting on this wake.
 - **[DECISION] Settings** are not seeded into `DEFAULT_CONFIG`: absent means defaults, and a bad stored value is ignored with a warning, never used.
 - **Carried to chunk 04:** an exchange whose re-arm budget is spent and that is still unread is an escalation input.
+- **Chunk 03 Critic `rev-20260925T191930Z-4d2dd300`** (3 blocking, 7 warnings, 9 notes). Fixed in one commit:
+  - **B1:** chunk 03's full suite was recorded after the review's snapshot (all green).
+  - **B2:** a reconnect or blocked pane after an attempt no longer strands the exchange. Re-arm eligibility is read from the attempt history (`wakeStanding`), not the latest verdict. An owned edge refreshes a stale block to `wake_pending`/`awaiting-read`, and a reconnect advances the same exchange.
+  - **B3:** a positive receipt from a `positive`-receipt transport records `wake_accepted`, and an accepted wake is never re-armed. Tmux cannot record it however its check answers. There is a test with a fake native transport. *(The planned separate `test/wake-transports.test.js` was folded into `test/medusa-watchdog.test.js`, stated here rather than dropped.)*
+  - Receipts apply only to exchanges whose newest attempt carried that nonce.
+  - A blocked verdict after a re-arm is recorded, so the real blocker is visible, while the re-arm stays pending.
+  - `recordWakeFact` can no longer write `rearmed`.
+  - Logging replaces the bare catch in `_verifyWake`.
+  - A single dashboard-shape test lives in `control-auth` (`isOperatorShaped`), and there is a `hasFact` helper.
+  - `tc message send` gives one closing instruction.
+  - A stale `resolveThresholds` comment is gone.
+  - Retention is filed as **#1879**.
+- **[DECISION] #1621's lost Enter.** When our nonce stays in the composer, the re-armed wake is held by the composer gate, which is correct: the monitor never clears or overwrites a composer. The exchange now shows `pane-composer-has-input` as its blocker. The re-arm budget may not be spent while it waits, so chunk 04 escalates on age (blocking at 15 min) with that blocker named, not on budget exhaustion alone.
+- **Accepted, not fixed:** `markRecipientRetired` and `recordEscalationFact` have no callers until chunk 04 wires them. A new `tickMs` applies at the next start (documented). The backlog cross-check and learnings checks are not applicable here.
 - **[DECISION] Review cadence.** Prawduct does not resolve plans under `.tangleclaw/plans/`, so it infers `cumulative` rather than per-chunk review. One cumulative Critic over chunks 01–02 serves as the governance-checkpoint review. The boundary cumulative runs again before the draft PR.
 
 # #1839 — Priority-aware Medusa delivery watchdog and escalation (Car B1): plan and design

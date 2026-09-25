@@ -161,12 +161,37 @@ describe('medusa-watchdog (#1839)', () => {
       assert.equal(watchdog.tick(T0 + 30 * MIN).rearmed, 0);
     });
 
-    it('does not let a later blocked verdict erase a pending re-arm', () => {
+    it('shows a blocked verdict after a re-arm without cancelling the re-arm', () => {
       const x = deliveredBlocking();
       attempt();
       watchdog.tick(T0 + 3 * MIN);
-      mx.recordWakeForRecipient('builder-ws', 'wake_blocked', { code: 'pane-turn-in-flight' });
-      assert.equal(store.medusaExchanges.get(x.exchange_id).wake_code, 'rearmed');
+      mx.recordWakeForRecipient('builder-ws', 'wake_blocked', { code: 'pane-composer-has-input' });
+      assert.equal(store.medusaExchanges.get(x.exchange_id).wake_code, 'pane-composer-has-input', 'the real blocker is visible');
+      assert.equal(mx.rearmDue('builder-ws'), true, 'and the re-arm still stands');
+    });
+
+    it('still re-arms an attempted wake that a later reconnect or busy pane marked blocked', () => {
+      const x = deliveredBlocking();
+      attempt();
+      mx.recordWakeForRecipient('builder-ws', 'wake_blocked', { code: 'listener-connecting' });
+      assert.equal(store.medusaExchanges.get(x.exchange_id).state, 'wake_blocked');
+      assert.equal(watchdog.tick(T0 + 3 * MIN).rearmed, 1);
+    });
+
+    it('never re-arms a wake an engine-native receipt says was accepted', () => {
+      deliveredBlocking();
+      mx.recordWakeForRecipient('builder-ws', 'wake_attempted', { code: 'native', detail: { nonce: 'n1' } });
+      mx.recordWakeForRecipient('builder-ws', 'wake_accepted', { code: 'native', attemptNonce: 'n1' });
+      assert.equal(watchdog.tick(T0 + 30 * MIN).rearmed, 0);
+    });
+
+    it('applies a receipt only to the exchanges its attempt reached', () => {
+      const early = deliveredBlocking('hub-1');
+      mx.recordWakeForRecipient('builder-ws', 'wake_attempted', { code: 'tmux', detail: { nonce: 'n1' } });
+      const late = deliveredBlocking('hub-2');
+      mx.recordWakeForRecipient('builder-ws', 'wake_not_accepted', { code: 'nonce-in-composer', attemptNonce: 'n1' });
+      assert.equal(store.medusaExchanges.get(early.exchange_id).state, 'wake_not_accepted');
+      assert.equal(store.medusaExchanges.get(late.exchange_id).state, 'delivered', 'mail after the nudge did not miss it');
     });
   });
 
@@ -237,6 +262,46 @@ describe('medusa-watchdog (#1839)', () => {
       await new Promise((resolve) => setImmediate(resolve));
       assert.equal(store.medusaExchanges.get(x.exchange_id).state, 'wake_not_accepted');
       assert.equal(watchdog.tick(T0).rearmed, 1, 'a proven miss re-arms at once');
+    });
+
+    it('a reconnect after a nudge leaves the exchange awaiting read, not stuck on the old reason', () => {
+      const x = deliveredBlocking();
+      tickIdle();
+      world.status = { ...world.status, state: 'connecting' };
+      wake._internal.tick();
+      assert.equal(store.medusaExchanges.get(x.exchange_id).wake_code, 'listener-connecting');
+      world.status = { ...world.status, state: 'listening' };
+      wake._internal.tick();
+      const row = store.medusaExchanges.get(x.exchange_id);
+      assert.equal(row.state, 'wake_pending');
+      assert.equal(row.wake_code, 'awaiting-read');
+      assert.equal(world.injected.length, 1, 'the owned edge is not nudged again');
+    });
+
+    it('records wake_accepted from a positive-receipt transport, and only then', async () => {
+      const x = deliveredBlocking();
+      const native = {
+        id: 'native', channel: 'tmux-inject', receipts: 'positive',
+        deliver: (ctx, seams) => seams.injectCommand(ctx.project.name, ctx.line, {}),
+        verify: async () => ({ outcome: 'accepted' })
+      };
+      const origFor = wake._internal.transportFor;
+      wake._internal.transportFor = () => native;
+      try {
+        tickIdle();
+        await new Promise((resolve) => setImmediate(resolve));
+      } finally {
+        wake._internal.transportFor = origFor;
+      }
+      assert.equal(store.medusaExchanges.get(x.exchange_id).state, 'wake_accepted');
+
+      const y = deliveredBlocking('hub-2');
+      world.inbox = [...world.inbox, { id: 'hub-2', from: 'pm-ws', message: 'second' }];
+      world.status = { ...world.status, unread: 2 };
+      world.receipt = { outcome: 'accepted' };
+      tickIdle();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(store.medusaExchanges.get(y.exchange_id).state, 'wake_attempted', 'tmux never records accepted, whatever its check says');
     });
 
     it('records blocked verdicts once per change, not once per tick', () => {

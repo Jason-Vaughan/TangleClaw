@@ -422,7 +422,10 @@ describe('medusa-exchanges (#1839)', () => {
       mx.recordWakeFact('hub-1', 'builder-ws', 'wake_blocked', { code: 'pane-composer-has-input' });
       advance(1000);
       mx.recordWakeFact('hub-1', 'builder-ws', 'wake_attempted', { detail: { nonce: 'n1', nextEligibleAt: '2026-09-25T12:03:00.000Z' } });
-      mx.recordWakeFact('hub-1', 'builder-ws', 'rearmed', { detail: { nextEligibleAt: '2026-09-25T12:05:00.000Z' } });
+      assert.throws(() => mx.recordWakeFact('hub-1', 'builder-ws', 'rearmed'), /not a wake fact/, 're-arms go only through rearm()');
+      assert.ok(mx.rearm(x.exchange_id, { expectRearmCount: 0, nextEligibleAt: '2026-09-25T12:05:00.000Z', code: 'unconfirmed' }));
+      assert.equal(mx.rearm(x.exchange_id, { expectRearmCount: 0, nextEligibleAt: '2026-09-25T12:05:00.000Z', code: 'unconfirmed' }), null,
+        'a second re-arm before the next attempt is refused');
       const row = store.medusaExchanges.get(x.exchange_id);
       assert.equal(row.state, 'wake_pending', 'a re-arm leaves the message waiting on the next wake');
       assert.equal(row.wake_code, 'rearmed');

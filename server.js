@@ -330,7 +330,7 @@ const medusa = require('./lib/medusa');
 const controlState = require('./lib/control-state');
 const controlApi = require('./lib/control-api');
 const controlGate = require('./lib/control-gate');
-const { resolveControlCaller } = require('./lib/control-auth');
+const { resolveControlCaller, isOperatorShaped } = require('./lib/control-auth');
 const medusaExchanges = require('./lib/medusa-exchanges');
 const medusaWatchdog = require('./lib/medusa-watchdog');
 
@@ -5038,7 +5038,7 @@ function _stillHasUnhandledMail(row) {
   if (status.state === 'off' || !status.workspaceId) return true;
   if (status.unread > 0) return true;
   return store.medusaExchanges.listOpenForRecipient(status.workspaceId)
-    .some((x) => !store.medusaExchanges.facts(x.exchange_id).some((f) => f.fact === 'acknowledged'));
+    .some((x) => !medusaExchanges.hasFact(x.exchange_id, ['acknowledged']));
 }
 
 // POST /api/session-rules — create { content, projectId, createdBy?, kind? }
@@ -6659,9 +6659,7 @@ function registerMedusaRoutes(prefix, resolve) {
     const c = resolveControlCaller(req);
     if (c.kind === 'operator') {
       const proof = c.actor.operatorProof;
-      const h = req.headers || {};
-      const dashboard = h['sec-fetch-site'] !== undefined || h.origin !== undefined || h['x-tangleclaw-client'] === 'dashboard';
-      return asReader && dashboard ? { kind: 'operator-ui', proof } : { kind: 'operator', proof };
+      return asReader && isOperatorShaped(req) ? { kind: 'operator-ui', proof } : { kind: 'operator', proof };
     }
     if (c.kind === 'project' && projectId != null && c.projectId === projectId) return { kind: 'project', projectId };
     return { kind: 'unbound' };
