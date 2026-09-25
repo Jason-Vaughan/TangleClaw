@@ -35,6 +35,46 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-25 — HOLD and STOP are durable and refuse TangleClaw's own mutations before anyone reads them (#1861)
+
+<!-- prawduct: type=feature | scope=control-state-1861 -->
+
+Dual Builder Normalization Train, Chunk A, Car A1 (TangleClaw-Pilot-B2). Chunks 01–06 of `.tangleclaw/plans/1861-durable-control-state.md`. Architect rulings R1 (A1–A9), R2 (N1–N5) and R3 (B/C) are recorded in the plan, and the incident ruling I1 is recorded below.
+
+**The change.** Schema v48 adds four tables. `control_assignments` and `control_holds` are caches. `control_events` and `control_receipts` are append-only, enforced by triggers. `lib/control-state.js` holds the rules:
+- server-assigned generations, separate from receipt order;
+- cumulative named holds, released by compare-and-set on the expected generation, with per-issuer authority and explicit delegation;
+- STOP is terminal, and only an operator successor supersedes it atomically;
+- close is allowed only for an active assignment with no holds;
+- a `notify_pending` receipt is written in the same transaction as each event.
+
+The API and CLI: `/api/control/*` and `tc control` (`lib/control-auth.js` for the operator proof tier, `lib/control-api.js`). `lib/control-gate.js#checkMutation` reads the tables directly before every TangleClaw-owned side effect:
+- every wrap boundary, and inside the commit step before release-prepare, branch, commit, push, PR create and auto-merge arming;
+- `pr-merge`, the stranded-wrap PR, command injection, actions and the startup prompt;
+- restart and update-apply, gated on the caller;
+- launch into a stopped lane.
+
+A wrap is checked against the assignment it was admitted under. `lib/control-hooks.js` adds managed pre-commit and pre-push hooks as defense in depth: they chain a foreign hook transactionally, and a tracked hooks path is left UNPROTECTED. Docs: `docs/control-state.md`, plus a "Held or stopped?" line in every engine's guide.
+
+**Tests.** New: `control-state`, `store-control-migration`, `control-auth`, `api-control`, `control-gate`, `control-surfaces`, `control-hooks` (real repos, a stub API in a child process), `control-docs`, `tc-control`, and `control-e2e`. The e2e test is the exit condition: a HOLD whose notice is queued and unread refuses the wrap, and nothing is committed. Contract updates, none of them weakening:
+- the runner and wake option sets include the new server-owned keys, with typeof assertions;
+- the prime-golden fixtures gain the `control` verb (a word diff shows only that);
+- `startup-prompt-store` compares against `CURRENT_SCHEMA_VERSION`;
+- `api-update-apply` runs over a scratch store, because the route consults the gate.
+
+Mutation checks: removing each new guard or branch fails its test. One R-4 test first passed with the fix removed; it was rewritten to reproduce the real launch order.
+
+**Critic.** The cumulative review (`rev-20260925T143036Z-2bc1c66c`) found 2 blocking, 7 warnings and 6 notes:
+- **Blocking:** the notice-handled observation was dropped, and three plan-mandated tests were missing.
+- **Fixed:** R-2 through R-9, R-12 and R-13.
+- **Accepted:** R-10, R-11, R-14 and R-15.
+
+The first verify-resolutions ran before the fixes were committed and saw none of them. The second confirmed all 10, and raised one blocking finding: three new branches were untested. That was fixed in `01ac724d`, and the third pass found nothing. Four observations were accepted.
+
+**Incident I1.** An early run of `control-e2e` wrote a hook marker naming `localhost:3102`, because the pane exports `TANGLECLAW_PORT=3102` and that outranks the config. A scratch-repo commit then sent the live server one read-only `GET /api/control/check`, which answered 404. Nothing was written and nothing was restarted. The test now removes `TANGLECLAW_PORT` and asserts that the marker names its own instance, and every boundary suite ran with all `TANGLECLAW_*` variables unset.
+
+**Honest limit.** Shell `git`/`gh` is not server-enforceable. The managed hooks narrow the gap, and the docs list every bypass.
+
 ## 2026-09-25 — A wrap never commits a SQLite database, and it recommends safe answers (#1858)
 
 <!-- prawduct: type=bugfix | scope=wrap-file-safety-1858 -->

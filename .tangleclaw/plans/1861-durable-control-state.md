@@ -16,7 +16,7 @@ partition: serial for chunks 01–03 and 05–06 (they share lib/store.js, serve
 - [x] Chunk 05: `docs/control-state.md`, FEATURES, CHANGELOG, operational-guide line
 - [x] Chunk 06: E2E exit test on an isolated instance
 - [x] Verify: focused tests plus the full suite on this worktree (**not** the main instance)
-- [ ] Cumulative Critic
+- [x] Cumulative Critic
 - [ ] Draft PR opened. **STOP here**: the PM owns readiness and merge sequencing
 
 **Recorded decisions made during the build** (each reported to the Architect over Medusa):
