@@ -6,9 +6,9 @@ Dispatched by the PM on 2026-09-25.*
 ## Status
 
 - [x] Plan written; design items A1–A8 sent to the Architect. **STOP here** (dispatch boundary: "Stop at PLAN WRITTEN")
-- [x] Architect has ruled on A1–A8 (2026-09-25: A1, A3, A5, A6 approved; A2 and A4 approved with constraints; A7 modified; A8 rejected. See Rulings). Waiting for the PM's go-ahead
-- [ ] Chunk 01 — classifier + server enforcement (session-files, commit, changelog-coverage)
-- [ ] Chunk 02 — drawer: recommendations, Apply-and-retry, manifest, ignore remediation
+- [x] Architect has ruled on A1–A8 (2026-09-25: A1, A3, A5, A6 approved; A2 and A4 approved with constraints; A7 modified; A8 rejected. See Rulings). PM go-ahead 2026-09-25
+- [x] Chunk 01 — classifier + server enforcement (session-files, commit, changelog-coverage) — 1b4b7e56
+- [x] Chunk 02 — drawer: recommendations, Apply-and-retry, manifest, ignore remediation — 2ae024a9
 - [ ] Chunk 03 — docs + CHANGELOG, cumulative Critic (`Type: cumulative-final`)
 
 **Pilot envelope (IN FORCE):** no merging any PR, no pulling/updating the live checkout, no restarting the

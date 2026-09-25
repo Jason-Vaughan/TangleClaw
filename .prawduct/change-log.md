@@ -35,6 +35,11 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-25 — A wrap never commits a SQLite database, and it recommends safe answers (#1858)
+
+<!-- prawduct: type=bugfix | scope=wrap-file-safety-1858 -->
+Chunks 01–03 of `.tangleclaw/plans/1858-wrap-file-safety.md`. The new `_file-safety.js` gives each file one of four classes: protected, local, durable or ambiguous. `classify` withholds protected files (SQLite by header, extension or sidecar) from every bucket, so neither `session-files` nor `commit` will stage one, whatever Include arrives. Ignored Includes are recorded. Other files carry an advisory recommendation, and no answer is preset. Both steps emit a manifest by path, and `session-files` emits exact ignore lines. `changelog-coverage` no longer counts a withheld database as work. The drawer shows each recommendation, a projected manifest before a new Apply-recommendations-and-retry button, the withheld databases with no choice, and the manifest on settled rows. It also prunes remembered answers for withheld databases. The Architect ruled on A1–A8 on 2026-09-25 (A8, a handback refusal, was rejected and is not built).
+
 ## 2026-09-24 — `/clear` and compaction no longer drop a session's rules and launch context (#1761)
 
 <!-- prawduct: type=bugfix | scope=reentry-1761 -->
