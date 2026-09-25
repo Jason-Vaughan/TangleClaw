@@ -330,6 +330,7 @@ describe('what upstream holds decides before what kind of file it is', () => {
     assert.equal(res.status, 'done');
     assert.deepEqual(res.output.manifest.commit, ['lib.js']);
     assert.deepEqual(res.output.provenanceDiverged, ['lib.js'], 'the divergence is reported');
+    assert.match(res.output.detail, /1 changed on both this branch and origin\/main: lib\.js/, 'the operator sees it on the row');
   });
 
   it('negative control: an untracked file never qualifies as the branch\'s own, even after the branch deleted it', async () => {
@@ -637,6 +638,18 @@ describe('verdicts and tightening', () => {
     assert.equal(provenance.tightened('unverified', 'already-upstream'), true);
     assert.equal(provenance.tightened('none', 'unverified'), true, 'an Include is not carried onto evidence that can no longer be read');
     assert.equal(provenance.tightened('unverified', 'unverified'), false);
+  });
+
+  it('rebuilds verdicts from session-files\' output, dropping any it does not know', () => {
+    const p = provenance.fromPreviousResults([
+      { stepId: 'other', output: { provenance: { state: 'x' } } },
+      { stepId: 'session-files', output: { provenance: { state: 'established', ref: 'origin/main' },
+        provenanceVerdicts: { 'a.md': 'already-upstream', 'b.md': 'forged', 'c.md': 'upstream-owns' } } }
+    ]);
+    assert.equal(p.state, 'established');
+    assert.deepEqual(Object.keys(p.paths).sort(), ['a.md', 'c.md']);
+    assert.equal(p.paths['a.md'].verdict, 'already-upstream');
+    assert.equal(provenance.fromPreviousResults([]), null);
   });
 
   it('counts lines, including a last line with no newline', () => {

@@ -72,3 +72,22 @@ describe('UI-7H4K wrap-drawer decision selects are labelled for a11y', () => {
       'each pr-check select must be aria-labelledby its PR title');
   });
 });
+
+describe('#1868 path-decision radios carry the verdict each answer is given against', () => {
+  let body;
+
+  before(() => {
+    const root = path.resolve(__dirname, '..');
+    body = functionBody(fs.readFileSync(path.join(root, 'public/session.js'), 'utf8'), 'function renderPathDecisionWidget(');
+  });
+
+  it('stamps each radio with the path\'s upstream verdict, falling back to the weakest', () => {
+    assert.ok(/input\.dataset\.basis\s*=\s*f\.upstreamVerdict\s*\|\|\s*'none'/.test(body),
+      'the radio must echo the verdict the row was rendered with, or none');
+  });
+
+  it('describes the list by the provenance headline when there is one', () => {
+    assert.ok(/list\.setAttribute\('aria-describedby',\s*headlineId\)/.test(body),
+      'the path list must be aria-describedby the upstream headline');
+  });
+});
