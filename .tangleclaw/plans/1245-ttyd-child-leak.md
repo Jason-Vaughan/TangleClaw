@@ -26,8 +26,11 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
       action receipt, immediate boot check, env kill switch and bounded threshold. Committed at fd22adf9. The Critic
       cumulative review `rev-20260925T204343Z-b1361aa6` found 0 blocking. R-1 (a receipt on a reading with no
       generation) is fixed with tests. R-2 (this Status) and the design notes are fixed. The slow-restart note is accepted
-- [ ] Chunk 03: candidate matrix (A1+A2 and A3) against the same acceptance contract; the winner is chosen by evidence
-- [ ] Chunk 04: rollout and rollback docs, CHANGELOG, watcher re-tuned to a safety net
+- [ ] Chunk 03: candidate matrix (A1+A2 and A3) against the same acceptance contract; the winner is chosen by evidence.
+      A1 is committed (8c483c60, 2e714fbc). The ordering is traced in order on every close, and all modes are clean. The R22 Q7
+      acceptance on 2e714fbc is running, and the box is ticked when it passes. A3 is not needed unless it fails
+- [ ] Chunk 04: rollout and rollback docs (sections F and G, and the user guide), CHANGELOG. Re-tuning the watcher to a safety net waits
+      for live certification (F.5)
 - [ ] Verify, Critic, one draft PR (pilot boundary: no merge). #1245 stays open until post-merge live certification
 
 **Pilot envelope (IN FORCE):** no merging any PR, no pulling or updating the live checkout, no restarting the
@@ -412,24 +415,42 @@ from the same reading.
 - **Live acceptance after rollout** (the operator's): 72 h of normal use with zero `reason=orphan-children`
   kickstarts. The watcher stays armed throughout as the safety net.
 
-## F. Rollout
+## F. Rollout (chunk 04; revised with the shipped fix)
 
-*(Revised per R22.)* One PR, unless new evidence forces a split.
-1. Chunks 01–02 (harness, shared reading, receipt, boot check) are completed and validated first **on the branch**.
-   They do not deploy separately.
-2. Chunk 03 adds the evidence-selected root fix to the same PR. An A1 winner is a script change that takes effect on
-   the next attach. An A3 winner is built on the branch, but installing it, repointing the plist and any TCC grant are the
-   Operator's/PM's actions, not the builder's.
-3. After merge and deploy (Operator/PM), live certification per R22 Q7: ≥ 72 h plus a recorded, meaningful attach/detach
-   sample, with the receipts and logs as evidence. Only then is the orphan threshold relaxed to a safety net and #1245 closed.
+The fix that ships is A1 (`deploy/ttyd-attach.sh`), plus the chunk 02 watcher and health changes. A3 was not needed.
+
+1. **One PR** (R22 staging), opened only when the PM says so. The pilot envelope forbids a merge by B1.
+2. **Merge, then a restart of the main server (Operator/PM).** At boot, `server.js` calls
+   `ttydAttach.syncAttachScript` (`lib/ttyd-attach.js`), which copies `deploy/ttyd-attach.sh` to the non-TCC path
+   `~/.tangleclaw/deploy/ttyd-attach.sh` whenever the bytes differ. ttyd reads that file for **each new connection**, so:
+   - no ttyd restart, plist change, install step or TCC grant is needed;
+   - open terminals keep the old script until they reconnect, and every new or reconnected terminal gets the new one;
+   - the script needs only `/usr/bin/perl`, which is in the base system and not TCC-protected.
+3. **Verify right after the restart:**
+   - `cmp deploy/ttyd-attach.sh ~/.tangleclaw/deploy/ttyd-attach.sh` shows no difference;
+   - the boot log has `Synced ttyd attach script` (reason `refreshed`);
+   - open and close a few terminal tabs, then check that `ps -o pid,stat,etime -p $(pgrep -P $(pgrep -x ttyd))` shows no
+     `E` children;
+   - the watcher's boot tick logs a reading, and the health row carries `reading.pid`/`generation`/`sampledAt`.
+4. **Live certification (R22 Q7):** at least 72 h **and** a recorded, meaningful attach/detach sample, with zero
+   `reason=orphan-children` kickstarts, zero persistent E/Z (the health row's leaked count stays 0) and no upward PTY
+   trend. Extend the period if it is too quiet.
+   - Evidence: the kickstart receipts and `ttyd restarted outside the watcher` lines in `~/.tangleclaw/logs/tangleclaw.log`,
+     plus the panel's readings.
+   - #1245 stays open until then.
+5. **Only after certification**, relax the watcher to a pure safety net. That means leaving the pool gate as it is and
+   deciding with evidence whether to raise `DEFAULT_ORPHAN_THRESHOLD`. It is a separate, small change: the PM files it.
 
 ## G. Rollback
 
-- A1/A2: revert `deploy/ttyd-attach.sh`. It takes effect on the next attach.
-- A3: point the plist `ProgramArguments` back at `/opt/homebrew/bin/ttyd` and reload. The original Cellar path
-  and its TCC grant are untouched by the whole plan.
-- Watcher and reading changes: add a `TANGLECLAW_TTYD_WATCHER=off` kill switch and
-  `TANGLECLAW_TTYD_ORPHAN_THRESHOLD` (none exist today). A code revert restores the old gate exactly.
+- **The attach-script fix:** `git revert` the attach-script commits (8c483c60, 2e714fbc) and restart the server. The boot
+  sync puts the old script back, and new connections use it at once. `TANGLECLAW_TTYD_WATCHER` stays on throughout, so
+  the watcher keeps recycling a leak while the rollback takes effect.
+- **The watcher and health changes:** `TANGLECLAW_TTYD_WATCHER=off` in the server plist's `EnvironmentVariables` stops
+  the restarts at once. `TANGLECLAW_TTYD_ORPHAN_THRESHOLD` (5–200) moves the gate. A code revert restores the old gate
+  exactly.
+- **Nothing to undo outside the repo:** no binary, plist, TCC grant or port changes. The original Homebrew ttyd
+  (`1.7.7_6`) and its TCC grant are untouched.
 
 ## Tests: contracts that stay green and tests to add
 

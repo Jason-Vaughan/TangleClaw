@@ -937,6 +937,13 @@ condition fired or could not be measured. Each row carries its own fix; the back
   `docs/configuration-reference.md`. With the watcher off, a healthy reading shows as **Could not
   check**, never healthy, because nothing is then restarting a leaking ttyd; a full pool or leaked
   children still show as fired, with a note to restart ttyd by hand.
+
+  The leak itself is fixed in the attach script (#1245): when a tab closes, the script ends its
+  terminal's processes and discards any output nobody will read before it exits, so nothing is left
+  stuck. The server copies the script to `~/.tangleclaw/deploy/ttyd-attach.sh` each time it starts,
+  so it takes effect after an update and a server restart, for each terminal as it (re)connects.
+  If terminals misbehave after that, reverting `deploy/ttyd-attach.sh` and restarting the server
+  puts the previous script back.
 - **Full Disk Access missing** — the server process cannot read protected folders. A background
   (launchd-spawned) `node` gets no permission prompt; reads under `~/Documents`, `~/Desktop` and
   `~/Downloads` simply never return. Grant Full Disk Access to the exact `node` binary the
