@@ -737,3 +737,35 @@ tied to the send's nonce — not rendered-pane inference — and another explici
 
 `lib/wrap-delivery-receipt.js` is the only producer today, via the `ai-content` step.
 
+## Amended 2026-09-25 — what upstream already holds outranks what kind of file it is (#1868)
+
+Architect ruling R13 (controlling; it supersedes R11 on A1–A4 and the final-boundary rule), refined by R14. A stale session checkout after its worktree PR merged was
+offered its own merged plan, and a carrier byte-identical to upstream, as work to commit, because the
+advice read only the path.
+
+- **Precedence.** Methodology withholding, TangleClaw state and protected databases stay strongest.
+  Upstream provenance comes next and outranks TangleClaw maintenance, ownership and file kind. A
+  durable path is a weak hint when provenance does not contradict it. The credential scan still covers
+  every file the wrap could commit or asks about. A file already upstream is neither, so it is never
+  scanned. That is safe only because it can never be staged, which is recorded as an accepted Critic
+  disposition.
+- **Freshness (A1).** `session-files` makes at most one bounded refresh of the default branch's
+  remote-tracking ref, with no tags, no prune, and no index, work-tree or HEAD change. It honours the
+  behind-origin opt-outs and records the ref, the commit, the time, whether it refreshed, and any
+  failure. A failed refresh falls back to the local ref as `stale`. No other step reaches the network.
+- **Stale evidence (A2).** An exact match is proof even on a stale ref. Nothing else is proof: a
+  file upstream may not have is never recommended for Include. The advice becomes Keep local, and it
+  stays advice, never a preselected answer.
+- **Git content is the contract (A3).** No GitHub or wrap-ledger dependency in the wrap path.
+- **Already upstream (A4).** It is a visible, non-interactive bucket. It is never staged or asked,
+  it is named with its ref and reason, and the file is untouched.
+- **Final boundary (R11-E).** `commit` re-reads the tree and re-judges each path against the commit
+  `session-files` recorded, and against the newer one if the local ref moved. Newer evidence can only
+  tighten. An Include given against a weaker verdict (echoed as `pathDecisionBasis`) is not carried
+  forward: the path is asked about again, and the drawer drops the stale answer.
+- **No remote.** A repository with no remote has nothing upstream to duplicate, so its advice is
+  unchanged.
+- **The branch's own work (R14).** When commits unique to this branch changed a path since the
+  merge-base (the blob at HEAD differs from the blob at the merge-base; never an untracked path), a
+  local copy equal to upstream is the branch undoing its own change and is committed. A path both
+  sides changed stays ordinary feature-branch work, reported in `provenanceDiverged`.

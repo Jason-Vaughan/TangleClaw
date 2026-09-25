@@ -395,7 +395,7 @@ describe('session page: wrap anyway, and Retry (#1540)', () => {
     vm.createContext(sandbox);
     vm.runInContext([
       'let wrapReleaseChoice = ""; let wrapBumpLevel = ""; let wrapUntrackState = ""; let wrapSkipPreflight = false;',
-      'let wrapPathDecisions = {}; let wrapSkippedAiSteps = {}; let wrapProceedPastStranded = [];',
+      'let wrapPathDecisions = {}; let wrapPathDecisionBasis = {}; let wrapSkippedAiSteps = {}; let wrapProceedPastStranded = [];',
       // The page's own initial value (#1708): no keep-running choice made yet.
       'let wrapKeepRunning = null;',
       'let lastRefusedStrandedItems = null; let wrapDrawerStrandedItems = null; let wrapModalStrandedItems = null;',

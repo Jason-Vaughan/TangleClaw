@@ -106,6 +106,7 @@ function harness() {
     sessionState: { wrapDrawerOpen: false },
     wrapSkippedAiSteps: {},
     wrapPathDecisions: {},
+    wrapPathDecisionBasis: {},
     wrapSkipPreflight: false,
     wrapBumpLevel: '',
     wrapReleaseChoice: '',
@@ -351,6 +352,28 @@ describe('wrap-run wiring in session.js — executed', () => {
     // is that realm's and a strict deep-equal against this realm's literal fails.
     assert.deepEqual(JSON.parse(JSON.stringify(h.last('apiMutate')[2].options.pathDecisions)),
       { 'earlier.js': 'include', 'shared.js': 'leave', 'notes.md': 'include' });
+  });
+
+  it('#1868 — Retry sends the upstream verdict each answer was given against, and keeps an earlier one beside its answer', async () => {
+    await wrapToBlocked(h);
+    h.sandbox.wrapPathDecisions['earlier.md'] = 'include';
+    h.sandbox.wrapPathDecisionBasis['earlier.md'] = 'upstream-owns';
+    const radios = [
+      { dataset: { path: 'plan.md', basis: 'upstream-owns' }, value: 'include' },
+      { dataset: { path: 'new.md' }, value: 'leave' }
+    ];
+    h.sandbox.document.getElementById = () => ({
+      disabled: false,
+      classList: { add() {}, remove() {} },
+      querySelector: () => null,
+      querySelectorAll: (sel) => (sel.includes('wrap-decision-pathlist') ? radios : [])
+    });
+    h.net.post = { ok: true, runId: RETRY_RUN, status: 'wrapping' };
+    await h.w.retryWrap();
+    const sent = JSON.parse(JSON.stringify(h.last('apiMutate')[2].options));
+    assert.deepEqual(sent.pathDecisions, { 'earlier.md': 'include', 'plan.md': 'include', 'new.md': 'leave' });
+    // A radio with no recorded verdict echoes the weakest one, never a stronger claim.
+    assert.deepEqual(sent.pathDecisionBasis, { 'earlier.md': 'upstream-owns', 'plan.md': 'upstream-owns', 'new.md': 'none' });
   });
 
   it('#1229 — Retry sends "Wrap anyway", and a later retry keeps it', async () => {

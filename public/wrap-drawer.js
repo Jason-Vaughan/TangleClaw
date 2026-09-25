@@ -1092,9 +1092,16 @@
    * pre-checks. The widget carries the step's manifest, the databases it
    * withheld (they get no radio), the Includes it ignored, and exact ignore lines.
    *
+   * Each path also carries the upstream verdict it was judged against (#1868),
+   * which the radio echoes back as `pathDecisionBasis`, and whether upstream
+   * changed after it was answered. The widget carries one sentence on where
+   * the checkout stands against upstream.
+   *
    * @returns {{kind: 'path-decisions', optionsKey: 'pathDecisions',
-   *   paths: Array<{path: string, why: string, deleted: boolean, secret: boolean, recommendation: (string|null), recommendationWhy: string}>,
-   *   manifest: (object|null), protectedPaths: string[], refusedIncludes: string[], ignoreSuggestions: string[]}|null}
+   *   paths: Array<{path: string, why: string, deleted: boolean, secret: boolean, recommendation: (string|null), recommendationWhy: string,
+   *     upstreamVerdict: string, provenanceChanged: boolean}>,
+   *   manifest: (object|null), protectedPaths: string[], refusedIncludes: string[], ignoreSuggestions: string[],
+   *   provenanceHeadline: string, alreadyUpstream: string[]}|null}
    */
   function pathDecisionWidget(stepRow, rawOutput) {
     if (!stepRow || (stepRow.kind !== 'session-files' && stepRow.kind !== 'commit')) return null;
@@ -1112,7 +1119,9 @@
         recommendation: f.recommendation === 'leave'
           || (f.recommendation === 'include' && !(Array.isArray(f.secretRules) && f.secretRules.length > 0))
           ? f.recommendation : null,
-        recommendationWhy: typeof f.recommendationWhy === 'string' ? f.recommendationWhy : ''
+        recommendationWhy: typeof f.recommendationWhy === 'string' ? f.recommendationWhy : '',
+        upstreamVerdict: UPSTREAM_VERDICTS.includes(f.upstreamVerdict) ? f.upstreamVerdict : 'none',
+        provenanceChanged: f.provenanceChanged === true
       }));
     if (paths.length === 0) return null;
     const strings = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x) : []);
@@ -1123,9 +1132,14 @@
       manifest: normalizeManifest(rawOutput.manifest),
       protectedPaths: strings(rawOutput.safetyWithheld),
       refusedIncludes: strings(rawOutput.refusedIncludes),
-      ignoreSuggestions: strings(rawOutput.ignoreSuggestions)
+      ignoreSuggestions: strings(rawOutput.ignoreSuggestions),
+      provenanceHeadline: typeof rawOutput.provenanceHeadline === 'string' ? rawOutput.provenanceHeadline : '',
+      alreadyUpstream: strings(rawOutput.alreadyUpstream)
     };
   }
+
+  /** The upstream verdicts the server sends (#1868); anything else reads as `none`. */
+  const UPSTREAM_VERDICTS = Object.freeze(['none', 'unverified', 'upstream-owns', 'already-upstream']);
 
   /**
    * The words for an advisory recommendation (#1858), or '' when there is none.
@@ -1144,7 +1158,7 @@
    * or null when the step sent none.
    *
    * @param {*} raw - `output.manifest` as received.
-   * @returns {{commit: string[], keepLocal: string[], protected: string[], unresolved: string[], refusedIncludes: string[]}|null}
+   * @returns {{commit: string[], keepLocal: string[], protected: string[], alreadyUpstream: string[], unresolved: string[], refusedIncludes: string[]}|null}
    */
   function normalizeManifest(raw) {
     if (!raw || typeof raw !== 'object') return null;
@@ -1153,6 +1167,7 @@
       commit: strings(raw.commit),
       keepLocal: strings(raw.keepLocal),
       protected: strings(raw.protected),
+      alreadyUpstream: strings(raw.alreadyUpstream),
       unresolved: strings(raw.unresolved),
       refusedIncludes: strings(raw.refusedIncludes)
     };
@@ -1166,15 +1181,17 @@
    *
    * @param {object} widget - From {@link pathDecisionWidget}.
    * @param {Object<string, string>} chosen - `{[path]: 'include'|'leave'}` checked now.
-   * @returns {{commit: string[], keepLocal: string[], protected: string[], unresolved: string[]}}
+   * @returns {{commit: string[], keepLocal: string[], protected: string[], alreadyUpstream: string[], unresolved: string[]}}
    */
   function projectManifest(widget, chosen) {
-    const base = (widget && widget.manifest) || { commit: [], keepLocal: [], protected: [], unresolved: [] };
+    const base = (widget && widget.manifest) || { commit: [], keepLocal: [], protected: [], alreadyUpstream: [], unresolved: [] };
     const asked = new Set(((widget && widget.paths) || []).map((f) => f.path));
     const out = {
       commit: [...base.commit],
       keepLocal: base.keepLocal.filter((p) => !asked.has(p)),
       protected: base.protected.length ? [...base.protected] : [...((widget && widget.protectedPaths) || [])],
+      // #1868 — never an answer's to move: shown so the preview names every file.
+      alreadyUpstream: (base.alreadyUpstream || []).length ? [...base.alreadyUpstream] : [...((widget && widget.alreadyUpstream) || [])],
       unresolved: []
     };
     for (const f of (widget && widget.paths) || []) {
@@ -1228,6 +1245,57 @@
       }
     }
     return removed;
+  }
+
+  /**
+   * Drop answers the server says no longer stand (#1868): files upstream
+   * already holds (never committed, so an answer only rides every Retry), and
+   * Includes given before upstream changed, which must be asked again rather
+   * than resent. Mutates both maps.
+   *
+   * @param {Object<string, string>} accumulated - Session-level `{[path]: answer}`.
+   * @param {Object<string, string>} basis - Session-level `{[path]: verdict}`.
+   * @param {{results?: Array<{output?: object}>}} pipelineResult - The run just rendered.
+   * @returns {string[]} The paths removed.
+   */
+  function pruneUpstreamDecisions(accumulated, basis, pipelineResult) {
+    const removed = [];
+    if (!accumulated || !pipelineResult || !Array.isArray(pipelineResult.results)) return removed;
+    for (const r of pipelineResult.results) {
+      const out = r && r.output ? r.output : {};
+      const stale = [
+        ...(Array.isArray(out.alreadyUpstream) ? out.alreadyUpstream : []),
+        ...(Array.isArray(out.provenanceChanged) ? out.provenanceChanged : [])
+      ];
+      for (const p of stale) {
+        if (typeof p !== 'string') continue;
+        if (basis && Object.prototype.hasOwnProperty.call(basis, p)) delete basis[p];
+        if (Object.prototype.hasOwnProperty.call(accumulated, p)) {
+          delete accumulated[p];
+          removed.push(p);
+        }
+      }
+    }
+    return removed;
+  }
+
+  /**
+   * Merge this retry's per-answer upstream verdicts into the session-level
+   * record and write the set for every accumulated answer back onto `options`
+   * (#1868). A verdict is kept only beside an answer, so a pruned answer takes
+   * its verdict with it. Call after {@link accumulatePathDecisions}. Mutates
+   * both arguments; no DOM.
+   *
+   * @param {Object<string, string>} basis - Session-level `{[path]: verdict}`.
+   * @param {object} options - Retry options, `pathDecisions` already accumulated.
+   * @returns {Object<string, string>} The (mutated) `basis` map.
+   */
+  function accumulatePathDecisionBasis(basis, options) {
+    if (options && options.pathDecisionBasis) Object.assign(basis, options.pathDecisionBasis);
+    const answered = options && options.pathDecisions ? options.pathDecisions : {};
+    for (const p of Object.keys(basis)) if (!Object.prototype.hasOwnProperty.call(answered, p)) delete basis[p];
+    if (options && Object.keys(basis).length > 0) options.pathDecisionBasis = { ...basis };
+    return basis;
   }
 
   /**
@@ -1455,6 +1523,18 @@
         }
       }
     }
+    // #1868 — the upstream verdict each answer was given against, only beside an
+    // answer that is being sent, so the server can tell a stale Include apart.
+    if (accessors.pathDecisionBasis && options.pathDecisions) {
+      const v = accessors.pathDecisionBasis();
+      if (v && typeof v === 'object') {
+        const basis = {};
+        for (const k of Object.keys(options.pathDecisions)) {
+          if (UPSTREAM_VERDICTS.includes(v[k])) basis[k] = v[k];
+        }
+        if (Object.keys(basis).length > 0) options.pathDecisionBasis = basis;
+      }
+    }
     // #1512 — Stop tracking (approve) or Keep tracking (decline) TangleClaw state.
     // Only the two answers the server honors are sent; no answer means ask.
     if (accessors.untrackState) {
@@ -1529,7 +1609,8 @@
    * chosen, which is what the page held before the reload taught it anything.
    *
    * @param {*} options - `status.options` for the run being followed.
-   * @returns {{release: string, bumpLevel: string, skipPreflight: boolean, pathDecisions: Object<string, string>, skipAiContent: Object<string, true>, untrackState: string, proceedPastStranded: Array<object>, keepSessionRunning: (boolean|null)}}
+   * @returns {{release: string, bumpLevel: string, skipPreflight: boolean, pathDecisions: Object<string, string>,
+   *   pathDecisionBasis: Object<string, string>, skipAiContent: Object<string, true>, untrackState: string, proceedPastStranded: Array<object>, keepSessionRunning: (boolean|null)}}
    */
   function replayChoicesFromOptions(options) {
     const o = options && typeof options === 'object' ? options : {};
@@ -1541,6 +1622,13 @@
         if (v === 'include' || v === 'leave') pathDecisions[p] = v;
       }
     }
+    // #1868 — the verdict each replayed answer was given against, only beside an answer.
+    const pathDecisionBasis = {};
+    if (o.pathDecisionBasis && typeof o.pathDecisionBasis === 'object') {
+      for (const [p, v] of Object.entries(o.pathDecisionBasis)) {
+        if (Object.prototype.hasOwnProperty.call(pathDecisions, p) && UPSTREAM_VERDICTS.includes(v)) pathDecisionBasis[p] = v;
+      }
+    }
     const skipAiContent = {};
     if (o.skipAiContent && typeof o.skipAiContent === 'object') {
       for (const [stepId, v] of Object.entries(o.skipAiContent)) {
@@ -1549,7 +1637,7 @@
     }
     const untrackState = o.untrackState === 'approve' || o.untrackState === 'decline' ? o.untrackState : '';
     return {
-      release, bumpLevel, skipPreflight: o.skipPreflight === true, pathDecisions, skipAiContent, untrackState,
+      release, bumpLevel, skipPreflight: o.skipPreflight === true, pathDecisions, pathDecisionBasis, skipAiContent, untrackState,
       proceedPastStranded: strandedKeysOf(o.proceedPastStranded),
       // null when the run recorded no boolean: a Retry then sends nothing and
       // the server keeps whatever it resolved for the run.
@@ -2207,6 +2295,8 @@
     projectManifest,
     recommendationsToApply,
     pruneProtectedDecisions,
+    pruneUpstreamDecisions,
+    accumulatePathDecisionBasis,
     rowManifest,
     secretScanPhrase,
     releaseDecisionWidget,

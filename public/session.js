@@ -3905,6 +3905,7 @@ async function confirmWrap() {
 
   wrapSkippedAiSteps = {};
   wrapPathDecisions = {};
+  wrapPathDecisionBasis = {};
   wrapSkipPreflight = false;
   wrapUntrackState = '';
   // #1540: the stranded wraps confirmed in this modal, if any. Kept for every
@@ -4060,6 +4061,9 @@ let wrapSkippedAiSteps = {};
  * @type {Object<string, string>}
  */
 let wrapPathDecisions = {};
+// #1868 — the upstream verdict each answer in `wrapPathDecisions` was given
+// against, so the server can refuse to carry an Include past a change upstream.
+let wrapPathDecisionBasis = {};
 
 /**
  * #1229 — the operator chose "Wrap anyway" past a halting preflight during this
@@ -4448,6 +4452,9 @@ function renderWrapDrawer(pipelineResult, runContext) {
   // #1858 — a database the wrap withholds has no choice to carry; an earlier
   // Include for one must not ride every later Retry.
   H.pruneProtectedDecisions(wrapPathDecisions, pipelineResult);
+  // #1868 — a file upstream already holds has no choice to carry, and an Include
+  // given before upstream changed must be asked again, not resent.
+  H.pruneUpstreamDecisions(wrapPathDecisions, wrapPathDecisionBasis, pipelineResult);
 
   // #638 — one automatic release-state resolution when the commit opened a wrap
   // PR. The pipeline returns before GitHub merges, so `summarizePipelineStatus`
@@ -5038,11 +5045,22 @@ function renderPathDecisionWidget(widget) {
   label.id = groupLabelId;
   label.textContent = window.tcWrapDrawerHelpers.pathDecisionLabel(widget.paths);
   wrap.appendChild(label);
+  // #1868 — where this checkout stands against upstream, read before any row.
+  let headlineId = null;
+  if (widget.provenanceHeadline) {
+    headlineId = 'wrapPathDecisionProvenance';
+    const headline = document.createElement('div');
+    headline.className = 'wrap-decision-provenance';
+    headline.id = headlineId;
+    headline.textContent = widget.provenanceHeadline;
+    wrap.appendChild(headline);
+  }
 
   const list = document.createElement('div');
   list.className = 'wrap-decision-pathlist';
   list.setAttribute('role', 'group');
   list.setAttribute('aria-labelledby', groupLabelId);
+  if (headlineId) list.setAttribute('aria-describedby', headlineId);
   widget.paths.forEach((f, i) => {
     const row = document.createElement('fieldset');
     row.className = 'wrap-decision-pathrow';
@@ -5058,6 +5076,13 @@ function renderPathDecisionWidget(widget) {
       legend.appendChild(why);
     }
     row.appendChild(legend);
+    // #1868 — an earlier Include was not carried forward: say why it is asked again.
+    if (f.provenanceChanged) {
+      const changed = document.createElement('span');
+      changed.className = 'wrap-decision-pathchanged';
+      changed.textContent = 'Upstream changed after you answered, so choose again.';
+      row.appendChild(changed);
+    }
     // #1858 — advice beside the choice, never a checked radio.
     const recText = window.tcWrapDrawerHelpers.recommendationLabel(f.recommendation);
     if (recText) {
@@ -5074,6 +5099,8 @@ function renderPathDecisionWidget(widget) {
       input.name = `wrapPathDecision-${i}`;
       input.value = choice.v;
       input.dataset.path = f.path;
+      // #1868 — echoed back with the answer as the verdict it was given against.
+      input.dataset.basis = f.upstreamVerdict || 'none';
       input.addEventListener('change', () => refreshPathManifest(wrap, widget));
       opt.appendChild(input);
       const text = document.createElement('span');
@@ -5200,7 +5227,7 @@ function refreshPathManifest(wrap, widget) {
 /**
  * A compact manifest (#1858): one line per non-empty group, naming exact paths.
  *
- * @param {{commit: string[], keepLocal: string[], protected: string[], unresolved?: string[]}} manifest
+ * @param {{commit: string[], keepLocal: string[], protected: string[], alreadyUpstream?: string[], unresolved?: string[]}} manifest
  * @param {string} title - Caption.
  * @returns {HTMLElement|null} Null when every group is empty.
  */
@@ -5209,6 +5236,7 @@ function renderManifest(manifest, title) {
     ['Commit', manifest.commit],
     ['Keep local', manifest.keepLocal],
     ['Withheld (database)', manifest.protected],
+    ['Already upstream (not committed)', manifest.alreadyUpstream || []],
     ['Needs your choice', manifest.unresolved || []]
   ].filter(([, paths]) => paths && paths.length > 0);
   if (groups.length === 0) return null;
@@ -5695,6 +5723,13 @@ async function retryWrap() {
       for (const input of checked) out[input.dataset.path] = input.value;
       return out;
     },
+    // #1868 — the upstream verdict each checked answer was given against.
+    pathDecisionBasis: () => {
+      const checked = decisionEl.querySelectorAll('.wrap-decision-pathlist input[type="radio"]:checked');
+      const out = {};
+      for (const input of checked) out[input.dataset.path] = input.dataset.basis || 'none';
+      return out;
+    },
     // #1492 — a Cut or Hold answered under a version-bump halt, else the
     // choice already held for this wrap.
     release: () => {
@@ -5736,6 +5771,7 @@ async function retryWrap() {
   // #1406: the pipeline re-runs from its first step, so a file already answered
   // must keep its answer or the wrap would ask about it again.
   H.accumulatePathDecisions(wrapPathDecisions, options);
+  H.accumulatePathDecisionBasis(wrapPathDecisionBasis, options);
 
   // #328: accumulate ai-content skips across retries. The pipeline re-runs
   // from step 0 each retry, so an earlier content step's skip must persist or
@@ -6268,6 +6304,7 @@ function adoptWrapRunChoices(options) {
   wrapSkipPreflight = choices.skipPreflight;
   wrapUntrackState = choices.untrackState;
   wrapPathDecisions = choices.pathDecisions;
+  wrapPathDecisionBasis = choices.pathDecisionBasis;
   wrapSkippedAiSteps = choices.skipAiContent;
   wrapProceedPastStranded = choices.proceedPastStranded;
   wrapKeepRunning = choices.keepSessionRunning;
