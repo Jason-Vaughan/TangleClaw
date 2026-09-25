@@ -133,6 +133,22 @@ describe('control surfaces (#1861)', () => {
       });
     }
 
+    it('the operator passes a readable held lane, but not an unreadable control store (R4-B)', async () => {
+      const readable = await send(server, 'POST', '/api/server/restart', null, op);
+      assert.notEqual(readable.status, 423, 'a held lane does not hold the operator');
+      const orig = store.control.anyRestricted;
+      store.control.anyRestricted = () => { throw new Error('database is locked'); };
+      try {
+        for (const route of ['/api/server/restart', '/api/update/apply']) {
+          const r = await send(server, 'POST', route, { force: true }, op);
+          assert.equal(r.status, 503, `${route}: ${r.raw}`);
+          assert.equal(r.data.code, 'CONTROL_STATE_UNAVAILABLE');
+        }
+      } finally {
+        store.control.anyRestricted = orig;
+      }
+    });
+
     it('checking for an update and reading its status are not gated while a lane is held', async () => {
       assert.notEqual((await send(server, 'GET', '/api/update-status', null, {})).status, 423);
       assert.notEqual((await send(server, 'POST', '/api/update/check', {}, {})).status, 423);

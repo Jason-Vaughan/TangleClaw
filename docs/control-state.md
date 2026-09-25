@@ -224,9 +224,14 @@ There is no override or bypass endpoint. The audited recovery paths are:
 - **After a STOP:** the operator creates a successor assignment for the project. It supersedes
   the stopped one atomically, starts at generation 1, and the next launch rebinds to it.
 - **Control store unreadable:** governed mutations answer `503 CONTROL_STATE_UNAVAILABLE`.
-  A project is known to be governed from the store at boot, and from every control command and
-  rebind since. A project known to be ungoverned is unaffected. Until the boot-time read has
-  succeeded, every governed-shaped check is refused. Fix the store, then Retry the wrap.
+  - Restart and update-apply are refused for **every** caller, the operator included. A verified
+    operator passes a readable held lane, but nobody passes control state that cannot be
+    established, because there is no override.
+  - A project is known to be governed from the store at boot, and from every control command and
+    rebind since. A project known to be ungoverned is unaffected.
+  - Until the boot-time read has succeeded, every check is refused.
+
+  Fix the store, then Retry the wrap.
 
 ## Rolling back
 

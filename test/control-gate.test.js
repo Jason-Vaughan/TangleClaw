@@ -150,7 +150,7 @@ describe('control-gate (#1861)', () => {
     beforeEach(() => { orig = { ...store.control }; });
     afterEach(() => { Object.assign(store.control, orig); });
 
-    it('refuses a subject known to be governed with 503, and lets one never seen governed through', () => {
+    it('refuses a subject known to be governed, and every caller (the operator included), with 503; lets a project seen ungoverned through', () => {
       const governed = lane();
       const free = lane(false);
       gate.prime();
@@ -164,8 +164,11 @@ describe('control-gate (#1861)', () => {
         'CONTROL_STATE_UNAVAILABLE', 'a job with a captured assignment is governed by definition');
       assert.equal(gate.checkMutation({ surface: 'w', subject: { kind: 'target', projectId: free.project.id } }), null);
       assert.equal(gate.checkMutation({ surface: 'w', subject: { kind: 'caller', caller: { kind: 'unbound' } } }).code, 'CONTROL_STATE_UNAVAILABLE');
-      assert.equal(gate.checkMutation({ surface: 'w', subject: { kind: 'caller', caller: { kind: 'operator' } } }), null);
+      // Architect R4-B: identity is known, state is not; A1 has no override.
+      assert.equal(gate.checkMutation({ surface: 'w', subject: { kind: 'caller', caller: { kind: 'operator' } } }).code, 'CONTROL_STATE_UNAVAILABLE');
       assert.equal(gate.checkMutation({ surface: 'w', subject: { kind: 'caller', caller: { kind: 'master' } } }).code, 'CONTROL_STATE_UNAVAILABLE');
+      assert.equal(gate.checkMutation({ surface: 'w', subject: { kind: 'caller', caller: { kind: 'project', projectId: free.project.id } } }).code,
+        'CONTROL_STATE_UNAVAILABLE', 'a clear lane cannot be shown clear either');
     });
 
     it('when priming fails, a store failure refuses even a project never seen governed; once primed, an unseen project passes', () => {
@@ -176,7 +179,8 @@ describe('control-gate (#1861)', () => {
       assert.equal(gate.prime(), false);
       assert.equal(gate.checkMutation({ surface: 'w', subject: { kind: 'target', projectId: free.project.id } }).code,
         'CONTROL_STATE_UNAVAILABLE', 'unprimed: never seen is not evidence of ungoverned');
-      assert.equal(gate.checkMutation({ surface: 'w', subject: { kind: 'caller', caller: { kind: 'operator' } } }), null, 'the operator is never governed');
+      assert.equal(gate.checkMutation({ surface: 'w', subject: { kind: 'caller', caller: { kind: 'operator' } } }).code,
+        'CONTROL_STATE_UNAVAILABLE', 'R4-B: the operator does not pass state that was never established');
       store.control.listOpen = orig.listOpen;
       assert.equal(gate.prime(), true);
       assert.equal(gate.checkMutation({ surface: 'w', subject: { kind: 'target', projectId: free.project.id } }), null,
