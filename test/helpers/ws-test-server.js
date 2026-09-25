@@ -70,7 +70,8 @@ function parseClientFrames(buf) {
 
 /**
  * Serve WebSocket on a unix socket. `onConnection(conn)` gets an object with
- * `send(text)`, `raw(buffer)`, `end()`, `destroy()` and `onFrames(fn)`.
+ * `send(text)`, `raw(buffer)`, `end()`, `destroy()`, `onFrames(fn)` and
+ * `request` (the client's handshake request head, as text).
  * @param {string} sockPath - Where to listen.
  * @param {(conn: object) => void} onConnection - Per-connection handler.
  * @param {object} [opts]
@@ -104,6 +105,7 @@ function serve(sockPath, onConnection, opts = {}) {
         socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
         upgraded = true;
         buf = head.subarray(end + 4);
+        conn.request = req;
         onConnection(conn);
       } else {
         buf = Buffer.concat([buf, chunk]);

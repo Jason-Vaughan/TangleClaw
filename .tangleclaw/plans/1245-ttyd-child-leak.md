@@ -23,8 +23,8 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
       the installed 1.7.7_6 plus mutation proof; T_age derived from the baseline data
 - [x] Chunk 02: bounded async single-flight `takeReading()`, PID/generation binding, confirmed-wedge predicate,
       action receipt, immediate boot check, env kill switch and bounded threshold. Committed at fd22adf9. The Critic
-      cumulative review `rev-20260925T204343Z-b1361aa6` found 0 blocking. W1 (a receipt on a reading with no
-      generation) is fixed with tests. W2 (this Status) and the design notes are fixed. The slow-restart note is accepted
+      cumulative review `rev-20260925T204343Z-b1361aa6` found 0 blocking. R-1 (a receipt on a reading with no
+      generation) is fixed with tests. R-2 (this Status) and the design notes are fixed. The slow-restart note is accepted
 - [ ] Chunk 03: candidate matrix (A1+A2 and A3) against the same acceptance contract; the winner is chosen by evidence
 - [ ] Chunk 04: rollout and rollback docs, CHANGELOG, watcher re-tuned to a safety net
 - [ ] Verify, Critic, one draft PR (pilot boundary: no merge). #1245 stays open until post-merge live certification
@@ -230,6 +230,77 @@ New tests:
 - the env kill switch and threshold bounds, including invalid input
 - health serves the reading's own sampledAt, pid and generation
 - health reports disabled and ps-failure as unknown, never clear
+
+## Chunk 01 design: the guarded churn harness (R22 Q1, Q6, Q7)
+
+**Files**
+- `scripts/ttyd-churn.js`: the CLI. It is never run by the suite and never touches the live service.
+- `lib/ttyd-churn.js`: the pure, testable parts (guards, classification, lifetimes, verdict).
+- `test/ttyd-churn.test.js`: tests for the pure parts, including mutation-sensitivity checks.
+- `lib/ws-unix-client.js`: gains `path` and `protocols` options. Both are additive, and the defaults are unchanged
+  (`/`, none).
+
+**Isolation (Q6)**
+- The scratch directory is `<scratchpad>/churn-<runId>/`, outside `~/Documents`, so no TCC grant is needed.
+- The scratch ttyd runs as `<ttyd-bin> --writable --url-arg --interface <scratch>/ttyd.sock --port 0 <scratch>/attach.sh`.
+  - Its env is `PATH=<scratch>/bin:$PATH` plus `TMUX_TMPDIR=<scratch>/tmux`, with `TMUX` unset.
+  - `<scratch>/bin/tmux` is a shim: `exec <real tmux> -L tc-churn-<runId> "$@"`.
+  - The tmux socket is therefore both uniquely named and in a scratch directory. The live tmux server cannot be addressed.
+- `attach.sh` is a copy of the script under test (`--attach-script`, default `deploy/ttyd-attach.sh`) run unmodified.
+  The shim is what isolates it.
+- The tmux session is `churn`, running an output generator (default: a loop printing numbered lines every 20 ms). It
+  starts with pre-seeded scrollback, so the attach script's 10k-line replay has something to replay.
+- Cleanup is by exact PID only. It records the scratch ttyd's pid and its tmux server's pid, then:
+  - sends SIGTERM, waits, sends SIGKILL, and never uses `pkill`/`killall`;
+  - runs `tmux -L <name> kill-server`;
+  - verifies that no process with the scratch ttyd as parent remains.
+
+**Preflight (Q6), refusing to start unless all of these hold:**
+- `GET $TANGLECLAW_API/api/system/health` shows the `ttyd-leak` row `clear`;
+- global PTY use is ≤ 15% of `kern.tty.ptmx_max`, which leaves headroom below the 25% stop line;
+- the scratch socket path is unused;
+- the ttyd and tmux binaries resolve;
+- the platform is darwin.
+
+**Run**
+- Batches of at most **10** concurrent clients (a hard cap; asking for more is refused).
+- Each client does the following:
+  1. dial the unix socket: path `/ws?arg=churn`, subprotocol `tty`;
+  2. send `{"AuthToken":"","columns":120,"rows":40}`;
+  3. wait for the mode's trigger;
+  4. close by mode:
+     - `clean`: close with 1000 after the first output;
+     - `abrupt`: `socket.destroy()` after the first output (a killed tab);
+     - `paused`: send `2`, then destroy;
+     - `replay`: destroy on the first byte, while scrollback is still streaming;
+     - `noread`: pause the socket, never read, and destroy after 2 s.
+- **Sampler:** every 250 ms, one `ps -A -o pid=,ppid=,stat=,etime=`, filtered to the scratch ttyd's children. It
+  tracks each exiting child's first- and last-seen time, which gives the E/Z lifetime distribution used to derive
+  T_age (Q3).
+- **Between batches:**
+  - the global pool (sysctl plus `ls /dev/ttys*`);
+  - the scratch ttyd's fd count (`lsof -p <pid>`) and RSS;
+  - scratch wedges, using the watcher's own predicate (`classifyReading`) against a harness history, plus a
+    harness-side age floor.
+- **Fail fast** at ≥ 5 confirmed scratch wedges or ≥ 25% global PTY use. It stops, cleans up and reports
+  `reproduced` (wedges) or `aborted-pool`.
+- **Baseline mode** stops as soon as reproduction is established; it never runs 2000 failing cycles.
+
+**Verdict and report** (JSON, written to the scratch directory; a summary goes to stdout)
+- The run records `{cycles, modes, maxChildren, confirmedWedges, transientLifetimesMs: {p50, p95, p99, max}, pool
+  {baseline, peak, final}, fds {baseline, peak, final}, restarts: 0, cleanup: {ok, leftovers}}`.
+- **Pass (Q7)**, for each shippable candidate:
+  - 2000 cycles across all modes, then a 2 h soak;
+  - zero confirmed wedges and zero restarts;
+  - PTY and fd counts back to baseline (± tolerance) within 30 s of quiescence.
+
+**Mutation sensitivity**
+- The pure verdict and guard functions are unit-tested with fixtures in which a wedge must be found, and must not be
+  found for a transient child.
+- **The control run** uses a known-good command (`--control`: the scratch ttyd runs `cat` instead of `attach.sh`),
+  which must show zero wedges.
+- **The baseline run** uses the installed ttyd and the shipped script, which must reproduce.
+- A harness that reports "pass" for the baseline, or "fail" for the control, is itself broken.
 
 ## A. Root fix options
 
