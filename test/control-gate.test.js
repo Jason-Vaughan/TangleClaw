@@ -114,7 +114,7 @@ describe('control-gate (#1861)', () => {
       assert.equal(gate.checkMutation({ surface: 'wrap-push', subject: { kind: 'job', projectId: project.id, assignmentId: captured } }).code, 'CONTROL_HELD');
     });
 
-    it('caller subjects: the operator and the Master are never held; a bound caller is held only by its own lane; an unattributable caller is refused while any lane is held', () => {
+    it('caller subjects: the operator is never held; a bound caller is held only by its own lane; every unattributable caller, the Project Master included, is refused while any lane is held', () => {
       const caller = (kind, projectId) => ({ kind: 'caller', caller: { kind, projectId } });
       // With no lane held anywhere (a fresh store), an unattributable caller is not refused.
       const freshDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-control-gate-fresh-'));
@@ -124,6 +124,7 @@ describe('control-gate (#1861)', () => {
       try {
         lane();
         assert.equal(gate.checkMutation({ surface: 'r', subject: caller('unbound') }), null, 'nothing held');
+        assert.equal(gate.checkMutation({ surface: 'r', subject: caller('master') }), null, 'nothing held: compatibility pass, no new authority');
       } finally {
         store.close();
         store._setBasePath(tmpDir);
@@ -134,7 +135,8 @@ describe('control-gate (#1861)', () => {
       const pmLane = lane(false);
       holdIt(builder.assignmentId);
       assert.equal(gate.checkMutation({ surface: 'r', subject: caller('operator') }), null);
-      assert.equal(gate.checkMutation({ surface: 'r', subject: caller('master') }), null);
+      // A verified Master launch proves identity, not operator authority.
+      assert.equal(gate.checkMutation({ surface: 'r', subject: caller('master') }).code, 'CONTROL_CALLER_UNATTRIBUTABLE');
       assert.equal(gate.checkMutation({ surface: 'r', subject: caller('project', pmLane.project.id) }), null, 'a clear PM is allowed');
       assert.equal(gate.checkMutation({ surface: 'r', subject: caller('project', builder.project.id) }).code, 'CONTROL_HELD');
       for (const kind of ['unbound', 'invalid', 'operator-unverifiable']) {
@@ -163,6 +165,32 @@ describe('control-gate (#1861)', () => {
       assert.equal(gate.checkMutation({ surface: 'w', subject: { kind: 'target', projectId: free.project.id } }), null);
       assert.equal(gate.checkMutation({ surface: 'w', subject: { kind: 'caller', caller: { kind: 'unbound' } } }).code, 'CONTROL_STATE_UNAVAILABLE');
       assert.equal(gate.checkMutation({ surface: 'w', subject: { kind: 'caller', caller: { kind: 'operator' } } }), null);
+      assert.equal(gate.checkMutation({ surface: 'w', subject: { kind: 'caller', caller: { kind: 'master' } } }).code, 'CONTROL_STATE_UNAVAILABLE');
+    });
+
+    it('when priming fails, a store failure refuses even a project never seen governed; once primed, an unseen project passes', () => {
+      const free = lane(false);
+      gate._resetForTests();
+      store.control.listOpen = () => { throw new Error('database is locked'); };
+      store.control.getOpenForProject = () => { throw new Error('database is locked'); };
+      assert.equal(gate.prime(), false);
+      assert.equal(gate.checkMutation({ surface: 'w', subject: { kind: 'target', projectId: free.project.id } }).code,
+        'CONTROL_STATE_UNAVAILABLE', 'unprimed: never seen is not evidence of ungoverned');
+      assert.equal(gate.checkMutation({ surface: 'w', subject: { kind: 'caller', caller: { kind: 'operator' } } }), null, 'the operator is never governed');
+      store.control.listOpen = orig.listOpen;
+      assert.equal(gate.prime(), true);
+      assert.equal(gate.checkMutation({ surface: 'w', subject: { kind: 'target', projectId: free.project.id } }), null,
+        'primed and affirmatively unseen: compatibility pass');
+    });
+
+    it('a rebind keeps the governance memory current', () => {
+      const dir = fs.mkdtempSync(path.join(tmpDir, 'rebind-'));
+      const project = store.projects.create({ name: `rebind-${path.basename(dir)}`, path: dir, engine: 'claude' });
+      gate.prime();
+      control.create({ projectId: project.id, requestId: rid() }, OPERATOR);
+      require('../lib/sessions')._rebindControl(project, { id: 9001 }, 'launch-rebound');
+      store.control.getOpenForProject = () => { throw new Error('database is locked'); };
+      assert.equal(gate.checkMutation({ surface: 'w', subject: { kind: 'target', projectId: project.id } }).code, 'CONTROL_STATE_UNAVAILABLE');
     });
   });
 

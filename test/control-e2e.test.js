@@ -181,6 +181,24 @@ describe('#1861 exit: a queued HOLD blocks the next governed mutation before the
     assert.match(other.stderr, /HELD \(gen 2, 1 hold\)/);
   });
 
+  it('a registered project in another worktree of the clone stays out of the lane, even when it launched first', async () => {
+    const sessions = require('../lib/sessions');
+    execSync('git worktree add -q ../builder-sibling -b sibling', { cwd: builder.path, shell: '/bin/sh' });
+    const siblingPath = path.join(path.dirname(builder.path), 'builder-sibling');
+    const sibling = store.projects.create({ name: 'sibling', path: siblingPath, engine: 'claude' });
+    // The order that used to leak: the sibling launched before the clone was
+    // governed, so it has no marker of its own. Governing the Builder must
+    // write the sibling's explicit ungoverned marker by itself.
+    const siblingMarker = path.join(builder.path, '.git', 'worktrees', 'builder-sibling', 'tangleclaw-control.json');
+    fs.rmSync(siblingMarker, { force: true });
+    sessions.syncControlHooks(builder);
+    const marker = JSON.parse(fs.readFileSync(siblingMarker, 'utf8'));
+    assert.deepEqual(marker, { ungoverned: true });
+    fs.appendFileSync(path.join(siblingPath, 'work.txt'), 'sibling work\n');
+    const r = await run('git', ['commit', '-am', 'sibling commit while the Builder is held'], { cwd: siblingPath, env: process.env });
+    assert.equal(r.code, 0, r.stderr);
+  });
+
   it('the managed hook in the Builder\'s checkout refuses a shell commit while held, and allows it once released', async () => {
     const hookStatus = await send(server, 'GET', '/api/control/mine', null, bBuilder.headers);
     assert.equal(hookStatus.data.controlHook.protected, true, JSON.stringify(hookStatus.data.controlHook));

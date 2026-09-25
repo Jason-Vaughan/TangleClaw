@@ -18,6 +18,7 @@ setLevel('error');
 
 const store = require('../lib/store');
 const controlApi = require('../lib/control-api');
+const controlGate = require('../lib/control-gate');
 const { createServer } = require('../server');
 const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
 
@@ -275,6 +276,37 @@ describe('/api/control (#1861)', () => {
     }
     const st = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
     assert.equal(st.data.assignment.state, 'active');
+  });
+
+  it('the target marking the control notice handled is recorded as observed; another inbox marking the same id is not', async () => {
+    const { assignmentId, project } = await assigned();
+    let n2 = 0;
+    controlApi._internal.sendSystemMessage = async () => { n2 += 1; return { status: 'received', id: `notice-${assignmentId}-${n2}` }; };
+    await send(server, 'POST', `/api/control/assignments/${assignmentId}/hold`, { requestId: rid(), reasonCode: 'boundary' }, bPM.headers);
+    await settle();
+    const noticeId = `notice-${assignmentId}-1`;
+    await send(server, 'POST', `/api/sessions/${encodeURIComponent(pm.name)}/medusa/read`, { ids: [noticeId] }, bPM.headers);
+    let st = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+    assert.ok(!st.data.events.at(-1).receipts.some((r) => r.fact === 'observed'), 'another project\'s inbox proves nothing');
+    await send(server, 'POST', `/api/sessions/${encodeURIComponent(project.name)}/medusa/read`, { ids: [noticeId, 'unrelated-mail'] }, {});
+    st = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+    const observed = st.data.events.at(-1).receipts.filter((r) => r.fact === 'observed');
+    assert.equal(observed.length, 1);
+    assert.equal(observed[0].outcomeCode, 'notice-handled');
+    assert.equal(observed[0].actor, `project:${project.id}`);
+  });
+
+  it('a project governed after boot fails closed when the store later breaks', async () => {
+    controlGate._resetForTests();
+    const { project } = await assigned();
+    const orig = store.control.getOpenForProject;
+    store.control.getOpenForProject = () => { throw new Error('database is locked'); };
+    try {
+      const r = controlGate.checkMutation({ surface: 'wrap-commit', subject: { kind: 'target', projectId: project.id } });
+      assert.equal(r && r.code, 'CONTROL_STATE_UNAVAILABLE');
+    } finally {
+      store.control.getOpenForProject = orig;
+    }
   });
 
   it('the capability roster advertises control', async () => {

@@ -6747,6 +6747,9 @@ function registerMedusaRoutes(prefix, resolve) {
       const ids = body && Array.isArray(body.ids) ? body.ids : null;
       if (ids) medusa.markHandled(sessionId, ids);
       else medusa.markRead(sessionId);
+      // #1861: a control notice marked handled is the target observing it.
+      const readerProject = ids && r.target.name ? store.projects.getByName(r.target.name) : null;
+      if (readerProject) controlApi.noticesHandled(ids, readerProject.id);
     }
     jsonResponse(res, 200, medusa.getStatus(sessionId));
   });

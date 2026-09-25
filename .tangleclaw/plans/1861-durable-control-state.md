@@ -15,9 +15,15 @@ partition: serial for chunks 01–03 and 05–06 (they share lib/store.js, serve
 - [x] Chunk 04: `lib/control-hooks.js` and the governed marker (STOP at the A5 escalation clause if a constraint cannot be met)
 - [x] Chunk 05: `docs/control-state.md`, FEATURES, CHANGELOG, operational-guide line
 - [x] Chunk 06: E2E exit test on an isolated instance
-- [ ] Verify: focused tests plus the full suite on this worktree (**not** the main instance)
+- [x] Verify: focused tests plus the full suite on this worktree (**not** the main instance)
 - [ ] Cumulative Critic
 - [ ] Draft PR opened. **STOP here**: the PM owns readiness and merge sequencing
+
+**Recorded decisions made during the build** (each reported to the Architect over Medusa):
+
+- **[DECISION] Store-failure governance memory (§2.4).** The plan said a governed launch records its `assignment_id` on the launch record. The build does not add a launch-record column. The assignment row already carries `bound_launch_id`, and the gate needs to know which *projects* are governed, not which launches are. `lib/control-gate.js` keeps that in memory: primed from `control_assignments` at boot, retried on every check until priming succeeds, and updated synchronously by every committed control command and every rebind. Per Architect ruling R3-C: after a successful prime, a known-governed subject is `503` on a store failure and an affirmatively unseen one passes; until priming succeeds, every governed-shaped check is `503`.
+- **[DECISION] Project Master at the caller gate (Architect R3-B).** A verified Master launch is not operator-equivalent. While any assignment is held or stopped, its restart or update-apply is `423 CONTROL_CALLER_UNATTRIBUTABLE`.
+- **[DECISION] Linked worktrees (A5 constraint).** A governed main checkout also marks its common git dir, so worktrees the Builder creates under it share the lane. Governing it writes explicit `{ungoverned: true}` markers into every *registered* project that is a linked worktree of the same clone, whichever launched first. The hook sidecar lives in the hooks directory, not beside each worktree's marker, because the hooks are shared by every worktree of the clone.
 
 **Scope (Architect release):** no merge, auto-merge, live checkout/database/process mutation, live sync, restart, deploy, tag, release, destructive-data action, policy change, or work on #1865.
 

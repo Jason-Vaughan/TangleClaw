@@ -412,6 +412,11 @@ describe('launch kickoff (#1635)', () => {
       launchKickoff._internal.inject = () => ({ ok: false, error: 'gone' });
       produced.add(await launchKickoff.kickoff({ ...LIVE_LAUNCH }));
 
+      // #1861: a held lane refuses the kickoff before anything is typed.
+      launchKickoff.reset();
+      launchKickoff._internal.inject = () => ({ ok: false, error: 'CONTROL_HELD: held', controlRefusal: { code: 'CONTROL_HELD', status: 423 } });
+      produced.add(await launchKickoff.kickoff({ ...LIVE_LAUNCH }));
+
       launchKickoff.reset();
       launchKickoff._internal.assessIdle = () => ({ idle: false, reason: 'working', digest: 'd', idleTicks: 0 });
       produced.add(await launchKickoff.kickoff({ ...LIVE_LAUNCH }));

@@ -124,7 +124,7 @@ These routes gate the **caller**, and `force: true` never bypasses the gate:
 | The verified operator | Allowed |
 | A verified launch whose own assignment is clear (a PM doing live sync) | Allowed, even while another lane is held |
 | A verified launch whose own assignment is held or stopped | `423` |
-| No binding, or a mismatched or stale binding, while any lane is held or stopped | `423 CONTROL_CALLER_UNATTRIBUTABLE` |
+| No binding, a mismatched or stale binding, or the Project Master, while any lane is held or stopped | `423 CONTROL_CALLER_UNATTRIBUTABLE` (a Master launch proves identity, not operator authority) |
 
 A scripted live sync must therefore send its own `x-tangleclaw-project-id` and
 `x-tangleclaw-launch-id`. `GET /api/update-status` and `POST /api/update/check` are not gated.
@@ -223,7 +223,9 @@ There is no override or bypass endpoint. The audited recovery paths are:
 - **After a STOP:** the operator creates a successor assignment for the project. It supersedes
   the stopped one atomically, starts at generation 1, and the next launch rebinds to it.
 - **Control store unreadable:** governed mutations answer `503 CONTROL_STATE_UNAVAILABLE`.
-  Projects the server has never seen governed are unaffected. Fix the store, then Retry the wrap.
+  A project is known to be governed from the store at boot, and from every control command and
+  rebind since. A project known to be ungoverned is unaffected. Until the boot-time read has
+  succeeded, every governed-shaped check is refused. Fix the store, then Retry the wrap.
 
 ## Code
 

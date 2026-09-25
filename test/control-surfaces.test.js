@@ -181,6 +181,24 @@ describe('control surfaces (#1861)', () => {
       assert.equal(st.data.assignment.state, 'stopped');
     });
 
+    it('after an operator successor supersedes a STOP, a launch is no longer refused and rebinds to the successor', () => {
+      const dir = path.join(tmpDir, 'successor');
+      fs.mkdirSync(dir);
+      const proj = store.projects.create({ name: 'successor', path: dir, engine: 'claude' });
+      const old = control.create({ projectId: proj.id, requestId: rid() }, OPERATOR).assignment.assignmentId;
+      control.stop({ assignmentId: old, requestId: rid(), reasonCode: 'incident' }, OPERATOR);
+      assert.equal(sessions._stoppedLaunchRefusal(proj).code, 'CONTROL_STOPPED');
+      const successor = control.create({ projectId: proj.id, requestId: rid() }, OPERATOR).assignment.assignmentId;
+      assert.equal(sessions._stoppedLaunchRefusal(proj), null, 'the successor lets the launch through');
+      const launch = bindProject(proj);
+      sessions._rebindControl(proj, { id: launch.sessionId }, launch.launchId);
+      const st = control.status(successor);
+      assert.equal(st.assignment.boundSessionId, launch.sessionId);
+      assert.equal(st.events.at(-1).kind, 'rebind');
+      control.ack({ assignmentId: successor, stateGeneration: 1 }, { principal: `project:${proj.id}`, launchId: launch.launchId });
+      assert.equal(control.status(old).assignment.state, 'closed');
+    });
+
     it('a successor launch context says the lane is held before any work', () => {
       const lines = sessions._controlPrimeLines(builder).join('\n');
       assert.match(lines, /HELD at generation 2/);
