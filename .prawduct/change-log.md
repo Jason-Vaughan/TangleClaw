@@ -39,6 +39,10 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- prawduct: type=bugfix | scope=wrap-file-safety-1858 -->
 Chunks 01–03 of `.tangleclaw/plans/1858-wrap-file-safety.md`. The new `_file-safety.js` gives each file one of four classes: protected, local, durable or ambiguous. `classify` withholds protected files (SQLite by header, extension or sidecar) from every bucket, so neither `session-files` nor `commit` will stage one, whatever Include arrives. Ignored Includes are recorded. Other files carry an advisory recommendation, and no answer is preset. Both steps emit a manifest by path, and `session-files` emits exact ignore lines. `changelog-coverage` no longer counts a withheld database as work. The drawer shows each recommendation, a projected manifest before a new Apply-recommendations-and-retry button, the withheld databases with no choice, and the manifest on settled rows. It also prunes remembered answers for withheld databases. The Architect ruled on A1–A8 on 2026-09-25 (A8, a handback refusal, was rejected and is not built).
+## 2026-09-25 — `launch-rule-drift` tests import `node:assert/strict` (Pilot 4)
+
+<!-- prawduct: type=chore | scope=strict-assert-launch-rule-drift -->
+`test/launch-rule-drift.test.js` switched from `node:assert` to `node:assert/strict`, as the testing-conventions norm requires. Every assertion already called a strict method, so no test's accepted behaviour changes. Substituted for TST-5N8W, whose conversion shipped in #1378. Three suites still import non-strict `node:assert` (remote-output, wrap-consecutive-step-delivery, wrap-delivery-receipt) — tracked against #1377.
 
 ## 2026-09-24 — `/clear` and compaction no longer drop a session's rules and launch context (#1761)
 
