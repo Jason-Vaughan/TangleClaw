@@ -4445,6 +4445,10 @@ function renderWrapDrawer(pipelineResult, runContext) {
   // #571 item 4 — honest skip rollup under the banner.
   renderSkipRoll(pipelineResult);
 
+  // #1858 — a database the wrap withholds has no choice to carry; an earlier
+  // Include for one must not ride every later Retry.
+  H.pruneProtectedDecisions(wrapPathDecisions, pipelineResult);
+
   // #638 — one automatic release-state resolution when the commit opened a wrap
   // PR. The pipeline returns before GitHub merges, so `summarizePipelineStatus`
   // paints "release pending"; this resolves it to merged/pending/blocked. A
@@ -4684,6 +4688,12 @@ function renderStepRow(row) {
     detailLine.className = 'wrap-step-detail';
     detailLine.textContent = row.detail;
     main.appendChild(detailLine);
+  }
+
+  // #1858 — the record of what the wrap committed, kept local and withheld.
+  if (row.manifest) {
+    const manifestEl = renderManifest(row.manifest, 'What this wrap did with the uncommitted files');
+    if (manifestEl) main.appendChild(manifestEl);
   }
 
   if (row.blockers && row.blockers.length > 0) {
@@ -5048,6 +5058,14 @@ function renderPathDecisionWidget(widget) {
       legend.appendChild(why);
     }
     row.appendChild(legend);
+    // #1858 — advice beside the choice, never a checked radio.
+    const recText = window.tcWrapDrawerHelpers.recommendationLabel(f.recommendation);
+    if (recText) {
+      const rec = document.createElement('span');
+      rec.className = 'wrap-decision-pathrec';
+      rec.textContent = f.recommendationWhy ? `${recText}: ${f.recommendationWhy}` : recText;
+      row.appendChild(rec);
+    }
     for (const choice of [{ v: 'include', label: 'Include' }, { v: 'leave', label: 'Leave' }]) {
       const opt = document.createElement('label');
       opt.className = 'wrap-decision-pathchoice';
@@ -5056,6 +5074,7 @@ function renderPathDecisionWidget(widget) {
       input.name = `wrapPathDecision-${i}`;
       input.value = choice.v;
       input.dataset.path = f.path;
+      input.addEventListener('change', () => refreshPathManifest(wrap, widget));
       opt.appendChild(input);
       const text = document.createElement('span');
       text.textContent = choice.label;
@@ -5065,7 +5084,150 @@ function renderPathDecisionWidget(widget) {
     list.appendChild(row);
   });
   wrap.appendChild(list);
+  appendPathSafetyControls(wrap, widget);
   return wrap;
+}
+
+/**
+ * The Include / Leave answers currently checked in a path-decision widget.
+ *
+ * @param {HTMLElement} wrap - The widget root.
+ * @returns {Object<string, string>} `{[path]: 'include'|'leave'}`.
+ */
+function checkedPathDecisions(wrap) {
+  const out = {};
+  for (const input of wrap.querySelectorAll('.wrap-decision-pathlist input[type="radio"]:checked')) {
+    out[input.dataset.path] = input.value;
+  }
+  return out;
+}
+
+/**
+ * The #1858 additions under the Include / Leave list: the databases withheld
+ * with no choice to make, the manifest of what applying would do (kept current
+ * as answers change, so the click is made against it), the Apply
+ * recommendations and retry button, and exact ignore lines.
+ *
+ * @param {HTMLElement} wrap - The widget root.
+ * @param {object} widget - From `pathDecisionWidget`.
+ */
+function appendPathSafetyControls(wrap, widget) {
+  const H = window.tcWrapDrawerHelpers;
+  if (widget.protectedPaths.length > 0) {
+    const note = document.createElement('p');
+    note.className = 'wrap-decision-note wrap-decision-protected';
+    const refused = widget.refusedIncludes.length > 0
+      ? ` Include was ignored for ${widget.refusedIncludes.join(', ')}.`
+      : '';
+    note.textContent = `Withheld, with no choice to make: ${widget.protectedPaths.join(', ')}. `
+      + 'A wrap never commits a database, which can hold tokens in plaintext. If one truly belongs in the project, '
+      + `commit it yourself in a separate ordinary commit outside the wrap.${refused}`;
+    wrap.appendChild(note);
+  }
+
+  const manifestSlot = document.createElement('div');
+  manifestSlot.className = 'wrap-decision-manifest-slot';
+  wrap.appendChild(manifestSlot);
+
+  if (widget.paths.some((f) => f.recommendation)) {
+    const actions = document.createElement('div');
+    actions.className = 'wrap-decision-apply';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-primary wrap-decision-apply-btn';
+    btn.textContent = 'Apply recommendations and retry';
+    btn.addEventListener('click', () => {
+      const plan = H.recommendationsToApply(widget.paths, checkedPathDecisions(wrap));
+      for (const input of wrap.querySelectorAll('.wrap-decision-pathlist input[type="radio"]')) {
+        if (plan.fill[input.dataset.path] === input.value) input.checked = true;
+      }
+      refreshPathManifest(wrap, widget);
+      btn.disabled = true;
+      retryWrap().finally(() => { btn.disabled = false; });
+    });
+    actions.appendChild(btn);
+    const pending = document.createElement('span');
+    pending.className = 'wrap-decision-apply-pending';
+    pending.setAttribute('aria-live', 'polite');
+    actions.appendChild(pending);
+    wrap.appendChild(actions);
+  }
+
+  if (widget.ignoreSuggestions.length > 0) {
+    const details = document.createElement('details');
+    details.className = 'wrap-decision-ignore';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Ignore lines for files kept local';
+    details.appendChild(summary);
+    const hint = document.createElement('p');
+    hint.className = 'wrap-decision-note';
+    hint.textContent = 'Add these to .gitignore (shared) or .git/info/exclude (this machine only) so later wraps stop asking. Nothing is written for you.';
+    details.appendChild(hint);
+    const pre = document.createElement('pre');
+    pre.className = 'wrap-decision-ignore-lines';
+    pre.textContent = widget.ignoreSuggestions.join('\n');
+    details.appendChild(pre);
+    wrap.appendChild(details);
+  }
+
+  refreshPathManifest(wrap, widget);
+}
+
+/**
+ * Repaint the manifest and the "still needs a choice" count from the answers
+ * currently checked, with recommendations filling the rest.
+ *
+ * @param {HTMLElement} wrap - The widget root.
+ * @param {object} widget - From `pathDecisionWidget`.
+ */
+function refreshPathManifest(wrap, widget) {
+  const H = window.tcWrapDrawerHelpers;
+  const chosen = checkedPathDecisions(wrap);
+  const slot = wrap.querySelector('.wrap-decision-manifest-slot');
+  if (slot) {
+    slot.innerHTML = '';
+    const el = renderManifest(H.projectManifest(widget, chosen), 'If you apply the recommendations');
+    if (el) slot.appendChild(el);
+  }
+  const pending = wrap.querySelector('.wrap-decision-apply-pending');
+  if (pending) {
+    const n = H.recommendationsToApply(widget.paths, chosen).unresolved.length;
+    pending.textContent = n === 0 ? '' : `${n} file${n === 1 ? '' : 's'} with no recommendation still need${n === 1 ? 's' : ''} your choice`;
+  }
+}
+
+/**
+ * A compact manifest (#1858): one line per non-empty group, naming exact paths.
+ *
+ * @param {{commit: string[], keepLocal: string[], protected: string[], unresolved?: string[]}} manifest
+ * @param {string} title - Caption.
+ * @returns {HTMLElement|null} Null when every group is empty.
+ */
+function renderManifest(manifest, title) {
+  const groups = [
+    ['Commit', manifest.commit],
+    ['Keep local', manifest.keepLocal],
+    ['Withheld (database)', manifest.protected],
+    ['Needs your choice', manifest.unresolved || []]
+  ].filter(([, paths]) => paths && paths.length > 0);
+  if (groups.length === 0) return null;
+  const box = document.createElement('div');
+  box.className = 'wrap-decision-manifest';
+  const cap = document.createElement('div');
+  cap.className = 'wrap-decision-manifest-title';
+  cap.textContent = title;
+  box.appendChild(cap);
+  const dl = document.createElement('dl');
+  for (const [label, paths] of groups) {
+    const dt = document.createElement('dt');
+    dt.textContent = `${label} (${paths.length})`;
+    const dd = document.createElement('dd');
+    dd.textContent = paths.join(', ');
+    dl.appendChild(dt);
+    dl.appendChild(dd);
+  }
+  box.appendChild(dl);
+  return box;
 }
 
 /**

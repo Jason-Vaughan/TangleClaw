@@ -190,7 +190,9 @@
       warning,
       // #1515 — a content step a Retry reuses from the halted attempt rather
       // than asking again. The session paints the row distinctly.
-      reused: Boolean(reuse)
+      reused: Boolean(reuse),
+      // #1858 — what the wrap committed, kept local and withheld, by path.
+      manifest: rowManifest(stepResult)
     };
   }
 
@@ -1085,7 +1087,14 @@
    *
    * @param {object} stepRow - View-model from `buildStepRow`.
    * @param {object} rawOutput - Raw `step.output` from the runner.
-   * @returns {{kind: 'path-decisions', optionsKey: 'pathDecisions', paths: Array<{path: string, why: string, deleted: boolean, secret: boolean}>}|null}
+   * Each path also carries the step's advisory `recommendation` (#1858) —
+   * `include`, `leave` or null — which the drawer shows as text and never
+   * pre-checks. The widget carries the step's manifest, the databases it
+   * withheld (they get no radio), the Includes it ignored, and exact ignore lines.
+   *
+   * @returns {{kind: 'path-decisions', optionsKey: 'pathDecisions',
+   *   paths: Array<{path: string, why: string, deleted: boolean, secret: boolean, recommendation: (string|null), recommendationWhy: string}>,
+   *   manifest: (object|null), protectedPaths: string[], refusedIncludes: string[], ignoreSuggestions: string[]}|null}
    */
   function pathDecisionWidget(stepRow, rawOutput) {
     if (!stepRow || (stepRow.kind !== 'session-files' && stepRow.kind !== 'commit')) return null;
@@ -1096,10 +1105,138 @@
         path: f.path,
         why: typeof f.why === 'string' ? f.why : '',
         deleted: f.deleted === true,
-        secret: Array.isArray(f.secretRules) && f.secretRules.length > 0
+        secret: Array.isArray(f.secretRules) && f.secretRules.length > 0,
+        recommendation: f.recommendation === 'include' || f.recommendation === 'leave' ? f.recommendation : null,
+        recommendationWhy: typeof f.recommendationWhy === 'string' ? f.recommendationWhy : ''
       }));
     if (paths.length === 0) return null;
-    return { kind: 'path-decisions', optionsKey: 'pathDecisions', paths };
+    const strings = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x) : []);
+    return {
+      kind: 'path-decisions',
+      optionsKey: 'pathDecisions',
+      paths,
+      manifest: normalizeManifest(rawOutput.manifest),
+      protectedPaths: strings(rawOutput.safetyWithheld),
+      refusedIncludes: strings(rawOutput.refusedIncludes),
+      ignoreSuggestions: strings(rawOutput.ignoreSuggestions)
+    };
+  }
+
+  /**
+   * The words for an advisory recommendation (#1858), or '' when there is none.
+   *
+   * @param {('include'|'leave'|null)} recommendation
+   * @returns {string}
+   */
+  function recommendationLabel(recommendation) {
+    if (recommendation === 'include') return 'Include (recommended)';
+    if (recommendation === 'leave') return 'Keep local (recommended)';
+    return '';
+  }
+
+  /**
+   * A step's manifest (#1858) with every list present and holding only strings,
+   * or null when the step sent none.
+   *
+   * @param {*} raw - `output.manifest` as received.
+   * @returns {{commit: string[], keepLocal: string[], protected: string[], unresolved: string[], refusedIncludes: string[]}|null}
+   */
+  function normalizeManifest(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const strings = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x) : []);
+    return {
+      commit: strings(raw.commit),
+      keepLocal: strings(raw.keepLocal),
+      protected: strings(raw.protected),
+      unresolved: strings(raw.unresolved),
+      refusedIncludes: strings(raw.refusedIncludes)
+    };
+  }
+
+  /**
+   * What the wrap would do with each file if the operator pressed Apply
+   * recommendations and retry now (#1858): an answer already chosen wins, then
+   * the recommendation, and a file with neither stays unresolved. Shown before
+   * the click, so the click is given against the whole picture.
+   *
+   * @param {object} widget - From {@link pathDecisionWidget}.
+   * @param {Object<string, string>} chosen - `{[path]: 'include'|'leave'}` checked now.
+   * @returns {{commit: string[], keepLocal: string[], protected: string[], unresolved: string[]}}
+   */
+  function projectManifest(widget, chosen) {
+    const base = (widget && widget.manifest) || { commit: [], keepLocal: [], protected: [], unresolved: [] };
+    const asked = new Set(((widget && widget.paths) || []).map((f) => f.path));
+    const out = {
+      commit: [...base.commit],
+      keepLocal: base.keepLocal.filter((p) => !asked.has(p)),
+      protected: base.protected.length ? [...base.protected] : [...((widget && widget.protectedPaths) || [])],
+      unresolved: []
+    };
+    for (const f of (widget && widget.paths) || []) {
+      const answer = (chosen && chosen[f.path]) || f.recommendation;
+      if (answer === 'include') out.commit.push(f.path);
+      else if (answer === 'leave') out.keepLocal.push(f.path);
+      else out.unresolved.push(f.path);
+    }
+    return out;
+  }
+
+  /**
+   * Which unanswered files Apply recommendations and retry would fill (#1858).
+   * An explicit answer is never overwritten, and a file with no recommendation
+   * is left for the operator.
+   *
+   * @param {Array<{path: string, recommendation: (string|null)}>} paths - `widget.paths`.
+   * @param {Object<string, string>} chosen - Answers already checked.
+   * @returns {{fill: Object<string, string>, unresolved: string[]}}
+   */
+  function recommendationsToApply(paths, chosen) {
+    const fill = {};
+    const unresolved = [];
+    for (const f of paths || []) {
+      if (chosen && chosen[f.path]) continue;
+      if (f.recommendation) fill[f.path] = f.recommendation;
+      else unresolved.push(f.path);
+    }
+    return { fill, unresolved };
+  }
+
+  /**
+   * Drop answers for databases the wrap withholds (#1858). The server ignores
+   * such an Include anyway; pruning stops a stale one from riding every later
+   * Retry and being reported as ignored each time. Mutates `accumulated`.
+   *
+   * @param {Object<string, string>} accumulated - Session-level `{[path]: answer}`.
+   * @param {{results?: Array<{output?: object}>}} pipelineResult - The run just rendered.
+   * @returns {string[]} The paths removed.
+   */
+  function pruneProtectedDecisions(accumulated, pipelineResult) {
+    const removed = [];
+    if (!accumulated || !pipelineResult || !Array.isArray(pipelineResult.results)) return removed;
+    for (const r of pipelineResult.results) {
+      const withheld = r && r.output && Array.isArray(r.output.safetyWithheld) ? r.output.safetyWithheld : [];
+      for (const p of withheld) {
+        if (typeof p === 'string' && Object.prototype.hasOwnProperty.call(accumulated, p)) {
+          delete accumulated[p];
+          removed.push(p);
+        }
+      }
+    }
+    return removed;
+  }
+
+  /**
+   * The manifest to repeat on a settled `session-files` or `commit` row (#1858),
+   * as the record of what the wrap did. Null for any other row, or when the step
+   * sent none.
+   *
+   * @param {object} stepResult - A pipeline step result.
+   * @returns {object|null} From {@link normalizeManifest}.
+   */
+  function rowManifest(stepResult) {
+    if (!stepResult || (stepResult.kind !== 'session-files' && stepResult.kind !== 'commit')) return null;
+    if (stepResult.status !== 'done' && stepResult.status !== 'skipped') return null;
+    return normalizeManifest(stepResult.output && stepResult.output.manifest);
   }
 
   /**
@@ -2060,6 +2197,12 @@
     prCheckResolutionWidget,
     pathDecisionWidget,
     pathDecisionLabel,
+    recommendationLabel,
+    normalizeManifest,
+    projectManifest,
+    recommendationsToApply,
+    pruneProtectedDecisions,
+    rowManifest,
     secretScanPhrase,
     releaseDecisionWidget,
     untrackOfferWidget,

@@ -2358,6 +2358,57 @@ html[data-tc-keyboard] body {
   min-height: 30px;
   font-size: 0.9rem;
 }
+/* #1858 advisory recommendation, manifest, Apply and ignore lines under the path list */
+.wrap-decision-pathrec {
+  flex: 1 1 100%;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+.wrap-decision-manifest {
+  margin: 8px 0 0;
+  padding: 8px;
+  background: var(--card-bg);
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+.wrap-decision-manifest-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.wrap-decision-manifest dl {
+  margin: 0;
+}
+.wrap-decision-manifest dt {
+  color: var(--text-secondary);
+}
+.wrap-decision-manifest dd {
+  margin: 0 0 4px 12px;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono, monospace);
+}
+.wrap-decision-apply {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 8px;
+}
+.wrap-decision-apply-pending {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+.wrap-decision-ignore {
+  margin-top: 8px;
+  font-size: 0.8rem;
+}
+.wrap-decision-ignore-lines {
+  margin: 4px 0 0;
+  padding: 8px;
+  background: var(--card-bg);
+  border-radius: 4px;
+  overflow-x: auto;
+  user-select: all;
+}
 /* #1492 Cut / Hold under a version-bump halt; the radios reuse the path-row look */
 .wrap-decision-note.wrap-decision-release-checks {
   margin: 0 0 8px;
