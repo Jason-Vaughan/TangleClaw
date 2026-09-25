@@ -219,6 +219,8 @@ Critic findings.
 
 - **Plans are served at a shareable URL.** .tangleclaw/plans/ are served at a shareable URL: GET /api/projects/<projectId>/plans lists each one with the link to hand the operator (tc capabilities shows it with your project id) — hand back that link, never a local file path.
 
+- **Lost your launch context?** If your context was cleared or compacted mid-session, run `tc start review` to re-read the launch context you attested, rules included, before acting. It is read-only: do not re-attest or re-propose. Without a launch sequence, `tc rules` re-reads the project rules.
+
 ## Medusa Switchboard
 
 - TangleClaw runs your listener — do NOT open your own. Context, not a task: participate when a message arrives or when asked.
