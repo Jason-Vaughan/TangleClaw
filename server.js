@@ -327,6 +327,8 @@ const strandedWraps = require('./lib/stranded-wraps');
 const strandedCheck = require('./lib/stranded-check');
 const serviceToken = require('./lib/service-token');
 const medusa = require('./lib/medusa');
+const controlState = require('./lib/control-state');
+const controlApi = require('./lib/control-api');
 
 const log = createLogger('server');
 
@@ -4682,6 +4684,13 @@ route('GET', '/api/tc/whoami', (req, res) => {
         : 'unavailable: this call did not resolve to a registered project'
     },
     {
+      // #1861: durable HOLD/STOP. Experimental, and documented as such.
+      id: 'control', enabled: !!project,
+      detail: project
+        ? `durable HOLD/STOP control (experimental): \`tc control status\` shows whether your lane is held, \`tc control ack <generation>\` acknowledges it; GET ${api}/api/control/mine (send x-tangleclaw-project-id and x-tangleclaw-launch-id). A HOLD refuses TangleClaw-governed mutations; it cannot block shell git/gh, so honour it there too`
+        : 'unavailable: this call did not resolve to a registered project'
+    },
+    {
       // #1678: the fleet's checkouts, shaped to what this project may see.
       id: 'checkouts', enabled: true,
       detail: `which commit each live session is on and how it stands against origin/main: \`tc freshness\`, or GET ${api}/api/checkouts (your own row and your project groups' rows; send x-tangleclaw-project-id and x-tangleclaw-launch-id)`
@@ -6871,6 +6880,48 @@ function registerMedusaRoutes(prefix, resolve) {
 }
 
 registerMedusaRoutes('/api/sessions/:project/medusa', resolveProjectMedusaTarget);
+
+// ── Control state (#1861): durable HOLD / RELEASE / STOP ──
+//
+// The handlers live in lib/control-api.js. This wrapper writes the response
+// first and only then attempts the Medusa notice, because "accepted" must mean
+// "stored": a notice that fails is recorded, and never undoes the command.
+
+/**
+ * Register one control route.
+ * @param {string} method - HTTP method
+ * @param {string} pattern - Route pattern
+ * @param {(req: object, params: object, body: object) => {status: number, body: object, notify: (object|null)}} fn - Handler
+ * @returns {void}
+ */
+function controlRoute(method, pattern, fn) {
+  route(method, pattern, (req, res, params, body) => {
+    let out;
+    try {
+      out = fn(req, params, body);
+    } catch (err) { // prawduct:allow prawduct/broad-except -- a control command that did not commit must never read as accepted: a ControlError keeps its own status, and anything else (the store threw) is the fail-closed 503
+      if (err instanceof controlState.ControlError) {
+        return errorResponse(res, err.status, err.message, err.code, err.details);
+      }
+      log.error('Control state unavailable', { method, pattern, error: err.message });
+      return errorResponse(res, 503, 'control state is unavailable; nothing was changed', 'CONTROL_STATE_UNAVAILABLE');
+    }
+    jsonResponse(res, out.status, out.body);
+    if (out.notify) controlApi.notify(out.notify);
+  });
+}
+
+controlRoute('GET', '/api/control/assignments', (req) => controlApi.listOpen(req));
+controlRoute('POST', '/api/control/assignments', (req, _params, body) => controlApi.createAssignment(req, body));
+controlRoute('GET', '/api/control/assignments/:id', (req, params) => controlApi.getStatus(req, params));
+controlRoute('POST', '/api/control/assignments/:id/hold', (req, params, body) => controlApi.holdAssignment(req, params, body));
+controlRoute('POST', '/api/control/assignments/:id/release', (req, params, body) => controlApi.releaseAssignment(req, params, body));
+controlRoute('POST', '/api/control/assignments/:id/stop', (req, params, body) => controlApi.stopAssignment(req, params, body));
+controlRoute('POST', '/api/control/assignments/:id/close', (req, params, body) => controlApi.closeAssignment(req, params, body));
+controlRoute('POST', '/api/control/assignments/:id/ack', (req, params, body) => controlApi.ackAssignment(req, params, body));
+controlRoute('POST', '/api/control/assignments/:id/exchange-closed', (req, params, body) => controlApi.closeExchange(req, params, body));
+controlRoute('GET', '/api/control/mine', (req) => controlApi.mine(req));
+controlRoute('GET', '/api/control/check', (req) => controlApi.check(parseQuery(reqUrl(req).search)));
 // The Master's mount (#996). Deliberately the SAME family rather than a subset:
 // the outbound gate, not a missing route, is what a read-only Master meets.
 registerMedusaRoutes('/api/master/medusa', resolveMasterMedusaTarget);

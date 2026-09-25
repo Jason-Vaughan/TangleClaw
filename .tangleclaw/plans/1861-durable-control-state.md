@@ -10,7 +10,7 @@ partition: serial for chunks 01–03 and 05–06 (they share lib/store.js, serve
 - [x] Plan written; Architect rulings R1 and R2 incorporated (rev 3)
 - [x] Implementation released by the Architect ("#1861 IMPLEMENTATION RELEASED")
 - [x] Chunk 01: v48 schema, append-only triggers, `lib/control-state.js`, unit tests
-- [ ] Chunk 02: `/api/control/*`, operator proof tier, authority, ack/status, `tc control`, capabilities line
+- [x] Chunk 02: `/api/control/*`, operator proof tier, authority, ack/status, `tc control`, capabilities line
 - [ ] Chunk 03: `lib/control-gate.js`, admission capture, wiring at every §4 boundary, per-surface tests
 - [ ] Chunk 04: `lib/control-hooks.js` and the governed marker (STOP at the A5 escalation clause if a constraint cannot be met)
 - [ ] Chunk 05: `docs/control-state.md`, FEATURES, CHANGELOG, operational-guide line

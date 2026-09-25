@@ -27,7 +27,7 @@
  */
 
 const path = require('node:path');
-const { VERB_ROSTER, renderUsage, receiptVerbLabel, renderBodyTooLarge } = require(path.join(__dirname, '..', 'lib', 'tc-verbs.js'));
+const { VERB_ROSTER, renderUsage, receiptVerbLabel, renderBodyTooLarge, renderControlBanner } = require(path.join(__dirname, '..', 'lib', 'tc-verbs.js'));
 
 async function main() {
   const verb = process.argv[2];
@@ -163,6 +163,15 @@ async function main() {
       + 'say so instead of improvising.\n'
     );
     process.exit(2);
+  }
+  // #1861: a held lane is shown at the next tc call even if its notice mail is
+  // still queued. Best-effort and visibility only: a failed lookup prints
+  // nothing rather than failing the verb that was asked for.
+  if (verb !== 'control' && process.env.TANGLECLAW_LAUNCH_ID) {
+    try {
+      const banner = renderControlBanner(await ctx.getJson('/api/control/mine', { aux: true }));
+      if (banner) process.stderr.write(banner);
+    } catch { /* the banner is advisory; the verb's own answer stands */ } // prawduct:allow prawduct/broad-except -- a banner lookup failure must never fail the verb that was asked for
   }
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
