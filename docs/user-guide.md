@@ -920,7 +920,9 @@ condition fired or could not be measured. Each row carries its own fix; the back
   Closing a terminal tab makes its `tmux attach` child exit, and for a moment it is in the exiting
   state like a leaked one. A restart makes every open terminal reconnect at once, so it leaves a
   burst of those. The leaked-child count therefore includes only children that are **confirmed**
-  stuck: exiting for longer than two minutes, or still exiting on a later check of the same ttyd.
+  stuck: still exiting on a later check of the same ttyd, at least 30 seconds after one first saw it
+  exiting. How long a process has existed says nothing about how long it has been exiting, so a
+  tab open for hours is not counted the moment it closes.
   Younger ones are shown separately ("N more exiting but not yet confirmed wedged"), never counted, and
   never acted on, so a reconnect burst no longer blanks your terminals a second time. The pool gate
   is not affected: a full pool means no terminal can attach at all, which is worth an immediate

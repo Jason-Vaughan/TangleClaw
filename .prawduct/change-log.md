@@ -47,7 +47,7 @@ Pilot B1, #1245 chunk 01. The plan is `.tangleclaw/plans/1245-ttyd-child-leak.md
 - `lib/ttyd-churn.js`: the pure decisions, all tested.
   - Preflight: the live ttyd row must be clear, PTY use at most 15%, concurrency 1–10, and the binaries present.
   - Stop rules: 5 wedges, 25% PTY use, or a blind measurement.
-  - The wedge floor (E/Z ≥ 10 s).
+  - The wedge floor (seen exiting for ≥ 10 s, measured by the sampler, never by process age).
   - Exiting-child lifetime tracking, and the verdicts (baseline `reproduced`; control `harness-fault`; candidate `pass` only on the full Q7 contract, otherwise `inconclusive`).
 - `scripts/ttyd-churn.js`: the runner.
   - It uses a scratch ttyd on its own socket in `/tmp/tcc-<id>` (short on purpose: macOS limits a unix socket path to 104 bytes).
@@ -58,7 +58,7 @@ Pilot B1, #1245 chunk 01. The plan is `.tangleclaw/plans/1245-ttyd-child-leak.md
 
 **Evidence.** The live ttyd 28870 and live tmux server 1335 were unchanged after every run.
 - Control (`exec cat`, 50 cycles): 0 wedges; the pool went 38 → 39 → 38.
-- Baseline (installed 1.7.7_6 plus the shipped script, 50 cycles): reproduced. 47 of 50 children never exited, the pool went 38 → 88, the ttyd fds 32 → 180, and after cleanup the pool was back to 38.
+- Baseline (installed 1.7.7_6 plus the shipped script): reproduced. First run, under the process-age measure (superseded): 47 of 50 stuck, pool 38 → 88. Re-run after review fix R-1 (observed-exiting measure plus a 30 s watch before the kill): all 60 of 60 children were still exiting ≥ 29.8 s after first being seen exiting, the pool went 41 → 102, the ttyd fds 32 → 213, and after cleanup the pool was back to 41. The control re-run was clean.
 - The reports are in `.tangleclaw/plans/1245-evidence/`.
 - The first attempt failed before starting anything, because its tmux socket path ran past the unix-socket limit. That led to the short `/tmp` default.
 
@@ -73,7 +73,7 @@ Pilot B1, #1245 chunk 02. The plan is `.tangleclaw/plans/1245-ttyd-child-leak.md
 **The change.**
 - **One reading:** a single async, single-flight `takeReading()` owns measurement. It records the pid, a generation (`<pid>@<lstart>`), the sample time, each child's state and age from one `ps` call, and the pool. A failed probe is `null`.
 - **Sharing it:** the watcher tick classifies that exact reading, and `measureLeak` serves it to `lib/system-health.js`. History is per generation; a new generation drops the old readings.
-- **Confirmed wedges:** a child counts when it is E/Z AND (older than `wedgeAgeMs`, OR seen E/Z in an earlier reading of the same generation at least 30 s before). The 30 s gap exists because the panel and the tick share the store. Transients are reported apart from wedges. `wedgeAgeMs` = 120 s is provisional until chunk 01 measures it.
+- **Confirmed wedges:** a child counts when it is E/Z AND was seen E/Z in an earlier reading of the same generation at least `wedgeAgeMs` (30 s) before. (Superseded: the first cut also confirmed on process age ≥ 120 s. Review R-1/R-5 showed that `ps etime` is process age, not time exiting, so that route was removed.) Transients are reported apart from wedges.
 - **Receipts:** after a kickstart the watcher re-reads, bounded at 10 s, until a new generation appears, and records `ok` / `no-new-generation` / `failed`. A generation change it did not cause is `external-restart`, and no actor is named.
 - **Ticks:** they never overlap, and one runs at boot.
 - **Switches:** `TANGLECLAW_TTYD_WATCHER` and `TANGLECLAW_TTYD_ORPHAN_THRESHOLD` (5–200). Invalid values warn and use the safe default. When the watcher is disabled, health reports `unknown`.

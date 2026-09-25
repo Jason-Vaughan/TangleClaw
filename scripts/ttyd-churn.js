@@ -14,6 +14,7 @@
  *   node scripts/ttyd-churn.js --mode baseline|control|candidate
  *     [--cycles N] [--soak-minutes M] [--concurrency C]
  *     [--ttyd-bin PATH] [--attach-script PATH] [--out DIR] [--preflight-only]
+ *     [--modes clean,abrupt,paused,replay,noread]
  *
  *   baseline   the installed ttyd + the shipped attach script; expected to reproduce
  *   control    the scratch ttyd runs `cat` (no output), which must show no wedges
@@ -43,7 +44,7 @@ const KILL_GRACE_MS = 3000;
  * @returns {object} Options.
  */
 function parseArgs(argv) {
-  const o = { mode: null, cycles: null, soakMinutes: 0, concurrency: churn.MAX_CONCURRENCY, ttydBin: null, attachScript: null, out: null, preflightOnly: false };
+  const o = { mode: null, cycles: null, soakMinutes: 0, concurrency: churn.MAX_CONCURRENCY, ttydBin: null, attachScript: null, out: null, preflightOnly: false, modes: [...churn.CLOSE_MODES] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => argv[++i];
@@ -55,12 +56,16 @@ function parseArgs(argv) {
     else if (a === '--attach-script') o.attachScript = next();
     else if (a === '--out') o.out = next();
     else if (a === '--preflight-only') o.preflightOnly = true;
+    else if (a === '--modes') o.modes = String(next()).split(',').filter(Boolean);
     else throw new Error(`unknown argument ${a}`);
   }
   if (!['baseline', 'control', 'candidate'].includes(o.mode)) throw new Error('--mode must be baseline, control or candidate');
   if (o.cycles === null) o.cycles = o.mode === 'candidate' ? churn.ACCEPT_CYCLES : 500;
   if (!Number.isInteger(o.cycles) || o.cycles < 1) throw new Error('--cycles must be a positive integer');
   if (!(o.soakMinutes >= 0)) throw new Error('--soak-minutes must be zero or more');
+  if (o.modes.length === 0 || o.modes.some((m) => !churn.CLOSE_MODES.includes(m))) {
+    throw new Error(`--modes must be a comma-separated subset of ${churn.CLOSE_MODES.join(',')}`);
+  }
   return o;
 }
 
@@ -78,6 +83,21 @@ function run(cmd, args, opts = {}) {
       else resolve(String(stdout));
     });
   });
+}
+
+/**
+ * The path if it is an executable file, else null.
+ * @param {string|null} p - Candidate path.
+ * @returns {string|null}
+ */
+function executable(p) {
+  if (!p) return null;
+  try {
+    fs.accessSync(p, fs.constants.X_OK);
+    return fs.statSync(p).isFile() ? p : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -292,8 +312,10 @@ async function main(o) {
   // `os.tmpdir()` there is ~50 bytes before tmux adds `tmux-<uid>/<name>`.
   const dir = o.out || path.join('/tmp', `tcc-${runId}`);
   const sock = path.join(dir, 'ttyd.sock');
-  const ttydBin = o.ttydBin || await which('ttyd');
-  const tmuxBin = await which('tmux');
+  // Checked as executables, not just as strings: a wrong --ttyd-bin must be
+  // refused here, before a scratch tmux server exists to be orphaned.
+  const ttydBin = executable(o.ttydBin || await which('ttyd'));
+  const tmuxBin = executable(await which('tmux'));
   const basePool = await readPool();
   const facts = {
     platform: process.platform,
@@ -309,12 +331,19 @@ async function main(o) {
   if (!pre.ok || o.preflightOnly) return { preflight: pre };
 
   const s = { tmuxName: `tcc-${runId}`, ttydPid: null, shim: null, env: null };
-  const report = { runId, mode: o.mode, dir, ttydBin, attachScript: o.mode === 'control' ? 'exec cat' : (o.attachScript || 'deploy/ttyd-attach.sh'), startedAt: new Date().toISOString() };
+  const report = { runId, mode: o.mode, modes: o.modes, dir, ttydBin, attachScript: o.mode === 'control' ? 'exec cat' : (o.attachScript || 'deploy/ttyd-attach.sh'), startedAt: new Date().toISOString() };
   const tracker = new churn.LifetimeTracker();
   let sampler = null;
   let exitedEarly = false;
-  // A harness that dies must not leave a scratch ttyd behind.
-  const onSignal = () => { if (s.ttydPid && alive(s.ttydPid)) process.kill(s.ttydPid, 'SIGKILL'); process.exit(130); };
+  // An interrupted run must not leave its scratch ttyd, tmux server or output
+  // loop behind: the loop holds a PTY and prints every 20 ms forever.
+  let interrupted = false;
+  const onSignal = () => {
+    if (interrupted) return;
+    interrupted = true;
+    if (sampler) clearInterval(sampler);
+    cleanup(s).finally(() => process.exit(130));
+  };
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
   try {
@@ -326,6 +355,7 @@ async function main(o) {
       '--client-option', 'scrollback=10000', l.attach], { env: l.env, stdio: ['ignore', 'ignore', fs.openSync(path.join(dir, 'ttyd.log'), 'a')] });
     s.ttydPid = ttyd.pid;
     ttyd.on('exit', () => { exitedEarly = true; });
+    ttyd.on('error', () => { exitedEarly = true; });
     const socketDeadline = Date.now() + SOCKET_WAIT_MS;
     while (!fs.existsSync(sock) && Date.now() < socketDeadline) await sleep(50);
     if (!fs.existsSync(sock)) throw new Error('the scratch ttyd did not create its socket');
@@ -355,7 +385,9 @@ async function main(o) {
     const between = async () => {
       const pool = await readPool();
       if (pool && (!peakPool || pool.used > peakPool.used)) peakPool = pool;
-      const wedges = latest === null ? null : churn.scratchWedges(latest).length;
+      // Wedges are children SEEN exiting for the floor, from the sampler's own
+      // first sighting. A failed ps read leaves the run blind.
+      const wedges = latest === null ? null : churn.countWedges(tracker.stillOpen(Date.now()));
       if (wedges !== null) maxWedges = Math.max(maxWedges, wedges);
       if (exitedEarly) return 'aborted-unmeasured';
       return churn.nextStep({ wedges, pool });
@@ -363,7 +395,7 @@ async function main(o) {
     while (cycles < o.cycles) {
       const n = Math.min(o.concurrency, o.cycles - cycles);
       const results = await Promise.allSettled(Array.from({ length: n }, (_, i) =>
-        oneClient(sock, churn.CLOSE_MODES[(cycles + i) % churn.CLOSE_MODES.length])));
+        oneClient(sock, o.modes[(cycles + i) % o.modes.length])));
       for (const r of results) {
         if (r.status === 'fulfilled') { if (r.value) withOutput++; } else clientErrors++;
       }
@@ -372,21 +404,28 @@ async function main(o) {
       if (step !== 'continue') { stop = step; break; }
     }
 
-    // Quiet time: let every client's child finish exiting (or not), then the soak.
-    const soakMs = o.soakMinutes * 60 * 1000;
+    // Quiet time: let every client's child finish exiting (or not), then the
+    // soak. A reproduced run is watched for the same window before ttyd is
+    // killed, so "never exited" is a claim about 30 s, not about one sample.
+    // Only a run stopped at the pool limit or blind skips it.
+    const soakMs = stop === 'completed' ? o.soakMinutes * 60 * 1000 : 0;
     const quietUntil = Date.now() + churn.RETURN_WINDOW_MS + soakMs;
-    while (stop === 'completed' && Date.now() < quietUntil) {
+    while ((stop === 'completed' || stop === 'reproduced') && Date.now() < quietUntil) {
       await sleep(Math.min(SOAK_SAMPLE_MS, Math.max(0, quietUntil - Date.now())));
       const step = await between();
-      if (step !== 'continue') stop = step;
+      if (step === 'aborted-pool' || step === 'aborted-unmeasured') stop = step;
+      else if (step === 'reproduced' && stop === 'completed') stop = step;
     }
     clearInterval(sampler);
     sampler = null;
     const final = { pool: await readPool(), fds: await readFds(s.ttydPid), children: await readChildren(s.ttydPid) };
-    if (final.children) maxWedges = Math.max(maxWedges, churn.scratchWedges(final.children).length);
+    maxWedges = Math.max(maxWedges, churn.countWedges(tracker.stillOpen(Date.now())));
 
     report.run = {
       cycles, withOutput, clientErrors, stop, maxChildren, confirmedWedges: maxWedges,
+      // Every client has closed by now, so any child left is one ttyd never reaped.
+      lingering: final.children === null ? null : final.children.length,
+      lingeringStates: final.children === null ? null : final.children.map((c) => c.stat),
       transientLifetimesMs: churn.percentiles(tracker.lifetimes),
       stillExitingMs: tracker.stillOpen(Date.now()),
       pool: { baseline: basePool, peak: peakPool, final: final.pool },
@@ -410,7 +449,8 @@ async function main(o) {
     report.cleanup.ok = report.cleanup.leftovers.length === 0;
     report.verdict = churn.verdict({
       mode: o.mode, stop: r.stop, cycles: r.cycles, soakMs: r.soakMs, confirmedWedges: r.confirmedWedges,
-      restarts: r.restarts, poolReturned, fdsReturned, cleanupOk: report.cleanup.ok
+      restarts: r.restarts, clientErrors: r.clientErrors, withOutput: r.withOutput, lingering: r.lingering,
+      poolReturned, fdsReturned, cleanupOk: report.cleanup.ok
     });
   }
   fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(report, null, 2));

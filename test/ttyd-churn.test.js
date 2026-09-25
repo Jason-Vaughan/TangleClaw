@@ -36,6 +36,9 @@ function passingCandidate(overrides = {}) {
     soakMs: churn.ACCEPT_SOAK_MS,
     confirmedWedges: 0,
     restarts: 0,
+    clientErrors: 0,
+    withOutput: 1600,
+    lingering: 0,
     poolReturned: true,
     fdsReturned: true,
     cleanupOk: true,
@@ -79,17 +82,17 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
     });
   });
 
-  describe('scratchWedges', () => {
-    it('counts exiting or zombied children at or over the floor, and nothing else', () => {
+  describe('countWedges — time SEEN exiting, never process age', () => {
+    it('counts children observed exiting for at least the floor', () => {
       const f = churn.WEDGE_FLOOR_MS;
-      const children = [
-        { pid: 1, stat: '?Es', ageMs: f },
-        { pid: 2, stat: 'Z', ageMs: f + 1 },
-        { pid: 3, stat: '?Es', ageMs: f - 1 },
-        { pid: 4, stat: 'Ss', ageMs: f * 100 },
-        { pid: 5, stat: '?Es', ageMs: null }
-      ];
-      assert.deepEqual(churn.scratchWedges(children).map((c) => c.pid), [1, 2]);
+      assert.equal(churn.countWedges([f, f + 1, f - 1, 0]), 2);
+    });
+
+    it('an hours-old child first seen exiting now is not a wedge: the tracker, not etime, decides', () => {
+      const t = new churn.LifetimeTracker();
+      t.observe([{ pid: 10, stat: '?Es', ageMs: 5 * 3600 * 1000 }], 1000);
+      assert.equal(churn.countWedges(t.stillOpen(1000)), 0);
+      assert.equal(churn.countWedges(t.stillOpen(1000 + churn.WEDGE_FLOOR_MS)), 1);
     });
   });
 
@@ -182,8 +185,8 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
       assert.deepEqual(churn.verdict(passingCandidate()), { verdict: 'pass', why: [] });
     });
 
-    it('a candidate fails on any wedge, any restart, or resources that did not return', () => {
-      for (const bad of [{ confirmedWedges: 1 }, { restarts: 1 }, { poolReturned: false }, { fdsReturned: false }]) {
+    it('a candidate fails on any wedge, any lingering child, any restart, or resources that did not return', () => {
+      for (const bad of [{ confirmedWedges: 1 }, { lingering: 1 }, { restarts: 1 }, { poolReturned: false }, { fdsReturned: false }]) {
         assert.equal(churn.verdict(passingCandidate(bad)).verdict, 'fail', JSON.stringify(bad));
       }
     });
@@ -193,7 +196,8 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
         { cycles: churn.ACCEPT_CYCLES - 1 },
         { soakMs: churn.ACCEPT_SOAK_MS - 1 },
         { poolReturned: null },
-        { fdsReturned: null }
+        { fdsReturned: null },
+        { lingering: null }
       ]) {
         assert.equal(churn.verdict(passingCandidate(short)).verdict, 'inconclusive', JSON.stringify(short));
       }
@@ -204,6 +208,16 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
         assert.equal(churn.verdict(passingCandidate({ mode, stop: 'aborted-pool' })).verdict, 'inconclusive', mode);
         assert.equal(churn.verdict(passingCandidate({ mode, stop: 'aborted-unmeasured' })).verdict, 'inconclusive', mode);
       }
+    });
+
+    it('a run whose clients failed, or that never saw output, proves nothing in any mode', () => {
+      for (const mode of ['baseline', 'candidate']) {
+        assert.equal(churn.verdict(passingCandidate({ mode, clientErrors: 1 })).verdict, 'inconclusive', mode);
+        assert.equal(churn.verdict(passingCandidate({ mode, withOutput: 0 })).verdict, 'inconclusive', mode);
+      }
+      // The control's child writes nothing by design, so no output is expected there.
+      assert.equal(churn.verdict(passingCandidate({ mode: 'control', withOutput: 0 })).verdict, 'pass');
+      assert.equal(churn.verdict(passingCandidate({ mode: 'control', clientErrors: 2 })).verdict, 'inconclusive');
     });
 
     it('a failed cleanup is always named and blocks a pass', () => {
@@ -218,6 +232,12 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
       assert.throws(() => parseArgs([]), /--mode must be/);
       assert.equal(parseArgs(['--mode', 'candidate']).cycles, churn.ACCEPT_CYCLES);
       assert.equal(parseArgs(['--mode', 'baseline']).concurrency, churn.MAX_CONCURRENCY);
+    });
+
+    it('runs every close mode by default, and only the named ones with --modes', () => {
+      assert.deepEqual(parseArgs(['--mode', 'baseline']).modes, [...churn.CLOSE_MODES]);
+      assert.deepEqual(parseArgs(['--mode', 'candidate', '--modes', 'noread,replay']).modes, ['noread', 'replay']);
+      assert.throws(() => parseArgs(['--mode', 'candidate', '--modes', 'noread,sideways']), /--modes must be/);
     });
 
     it('refuses an unknown argument or a bad cycle count rather than guessing', () => {

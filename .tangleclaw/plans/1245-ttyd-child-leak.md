@@ -20,8 +20,8 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
       #1245 surfaces; its `server.js` boot-block lines only sit beside `ttydWatcher.start()`. The PM confirmed it at
       20:31Z. The branch was rebased onto origin/main 310dfbc3
 - [x] Chunk 01: mutation-sensitive churn harness under the R22 host guards; fail-fast baseline reproduction against
-      the installed 1.7.7_6 plus mutation proof. Harness at 44906acf; results in "Chunk 01 results" below. T_age is
-      bounded by the data but held provisional until chunk 03's candidates yield real transient lifetimes
+      the installed 1.7.7_6 plus mutation proof. Harness at 44906acf. Results (re-run after review) are in "Chunk 01
+      results" below. T_age is set to 30 s of observed exiting, pending the Architect's ruling on the R-1/R-5 predicate change
 - [x] Chunk 02: bounded async single-flight `takeReading()`, PID/generation binding, confirmed-wedge predicate,
       action receipt, immediate boot check, env kill switch and bounded threshold. Committed at fd22adf9. The Critic
       cumulative review `rev-20260925T204343Z-b1361aa6` found 0 blocking. R-1 (a receipt on a reading with no
@@ -152,28 +152,30 @@ that clears them. The same deadlock was just fixed in upterm by flushing from th
 
 ## Chunk 01 results (2026-09-25, isolated; the live ttyd 28870 and live tmux server 1335 were verified unchanged after every run)
 
-Reports: `.tangleclaw/plans/1245-evidence/control-50.json`, `.tangleclaw/plans/1245-evidence/baseline-50.json`.
-Preflight each time: the live ttyd row was clear and PTY use was 38/511 (7.4%).
+Reports: `.tangleclaw/plans/1245-evidence/control-50.json`, `.tangleclaw/plans/1245-evidence/baseline-60.json`. These are the
+re-runs after review fixes R-1/R-5 and R-9: wedges are counted by time SEEN exiting (the sampler's first sighting, never
+`ps etime`), and a reproduced run is watched for 30 s before ttyd is killed. Preflight was clear each time, at about 41/511.
 
-| Run | Child | Cycles | Wedged (E/Z ≥ 10 s) | Still exiting at the end | PTY used (base, peak, after cleanup) | ttyd fds (base, end) | Verdict |
+| Run | Child | Cycles | Wedged (seen exiting ≥ 10 s) | Left after every client closed | PTY used (base, peak, after cleanup) | ttyd fds (base, end) | Verdict |
 |---|---|---|---|---|---|---|---|
-| control | `exec cat` (writes nothing) | 50 | 0 | 0 | 38, 39, 38 | 32, 33 | **pass** (the harness invents no wedges) |
-| baseline | installed ttyd 1.7.7_6 + shipped `ttyd-attach.sh` | 50 (stopped at the wedge limit) | 10 at the stop; 47 of 50 never exited | 47 (1–10 s old at the stop, none exited) | 38, **88**, 38 | 32, **180** | **reproduced** |
+| control | `exec cat` (writes nothing) | 50 | 0 | 0 | 41, 42, 41 | 32, 33 | **pass** (the harness invents no wedges) |
+| baseline | installed ttyd 1.7.7_6 + shipped `ttyd-attach.sh` | 60 (stopped at the wedge limit, then watched 30 s) | **60** | 60, all `?Es`, each seen exiting ≥ 29.8 s | 41, **102**, 41 | 32, **213** | **reproduced** |
 
 **What this establishes:**
-- The installed build leaves nearly every churned `tmux attach` child stuck exiting. Each one holds a PTY (+50) and about three fds.
-- They never exit while ttyd lives. Killing only the scratch ttyd frees all of them, and the pool returned to baseline.
+- Under this churn the installed build leaves every connection's `tmux attach` child stuck exiting. Each one holds a PTY
+  and about three fds, and none exited in the 30 s it was watched.
+- Killing only the scratch ttyd frees all of them, and the pool returned to baseline.
 - The only difference between the two runs is whether the child writes output. That is the evidence for the exit-drain
   mechanism: output still queued at close is what wedges the child.
-- It also shows the harness is mutation-sensitive at the system level: it separates a wedging child from a clean one with the
-  same ttyd, socket and clients.
+- It also shows the harness is mutation-sensitive at the system level: it separates a wedging child from a clean one with
+  the same ttyd, socket and clients.
 
-**T_age:** no exiting child in either run was ever seen exiting and then gone. Clean exits finish inside one 250 ms sample,
-and wedged ones never finish. Any threshold from about 1 s up to hours separates these two populations in this data. The
-provisional 120 s stays until the chunk 03 candidates, whose children do exit, give a real transient distribution to set it
-from.
+**T_age (R22 Q3):** in both runs a clean exit finishes inside one 250 ms sample, and a wedged child is still exiting 30 s
+later. The watcher's `wedgeAgeMs` is therefore set to **30 s of observed exiting** between two readings of the same
+generation. The Architect must rule on this: the review showed that process age cannot stand in for time spent exiting
+(R-1/R-5), so the "age OR second sighting" predicate became "second sighting at least 30 s apart".
 
-**Not yet shown:** why the live install wedges only some connections, not nearly all. Likely factors: real tabs close with less
+**Not yet shown:** why the live install wedges only some connections, not all. Likely factors: real tabs close with less
 queued output, and a 5-minute tick samples far less often. Chunk 03's candidates are measured under this worst-case load,
 which is stricter than live.
 
@@ -197,12 +199,13 @@ old-generation entries are dropped (R22 Q2).
 **Classification** (`classifyReading(reading, previous, opts)`, pure):
 - `transient`: children in E/Z that are not confirmed.
 - `wedged`: children in E/Z where `ageMs ≥ wedgeAgeMs`, OR the same child pid was in E/Z in an earlier reading of
-  the same generation taken at least `MIN_OBSERVATION_GAP_MS` (30 s) before (K = 2). The gap is needed because the
+  the same generation taken at least `wedgeAgeMs` (30 s) before (K = 2). The gap is needed because the
   health panel and the watcher tick share the reading store: without it, two readings a second apart would confirm a
   one-second-old child.
-- `wedgeAgeMs` is **provisional (120 s)** until chunk 01's baseline measures how long a transient E/Z child actually
-  lasts (R22 Q3). [ASSUMPTION: 120 s sits well above a normal exit (milliseconds) and well below the observed
-  wedge lifetimes (hours). Chunk 01 replaces it with a measured value.]
+- *(Revised after review R-1/R-5.)* The first cut ALSO confirmed any E/Z child whose `ps etime` was at least 120 s.
+  etime is how long a process has existed, not how long it has been exiting, so that route would have tripped the gate
+  on hours-old tabs closing together. It was removed. Confirmation is only a second sighting at least `wedgeAgeMs` = 30 s
+  later, a value set from chunk 01's data (see "Chunk 01 results").
 - `orphanGate = wedged.length ≥ orphanThreshold`. `poolGate = pool.exhausted`. Both are independent, and the pool gate
   is never held.
 - If `children` is `null` (ps failed), the orphan gate is `null`/unknown and never acts (R22 Q2: no fail-safe zero).
@@ -342,7 +345,7 @@ New tests:
 
 ## B. Persistent vs transient: detection criterion
 
-A child counts as **wedged** only if it is in `E`/`Z`, **and** (its own `etime` ≥ T_age, proposed 120 s, **or** the
+*(Superseded by R-1/R-5: see chunk 02's design. Process age is not used.)* A child counts as **wedged** only if it is in `E`/`Z`, **and** (its own `etime` ≥ T_age, proposed 120 s, **or** the
 same child PID was seen in E/Z on K consecutive readings of the same ttyd generation, proposed K = 2). The gate
 counts wedged children only. A reconnect burst of young E children can no longer trip it; a real wedge still
 does within one or two ticks. The 15-minute ttyd-uptime hold becomes redundant for the orphan gate and is

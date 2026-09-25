@@ -1,13 +1,20 @@
 {
-  "runId": "muhfts3b",
+  "runId": "muhg5gsg",
   "mode": "control",
-  "dir": "/tmp/tcc-muhfts3b",
+  "modes": [
+    "clean",
+    "abrupt",
+    "paused",
+    "replay",
+    "noread"
+  ],
+  "dir": "/tmp/tcc-muhg5gsg",
   "ttydBin": "/opt/homebrew/bin/ttyd",
   "attachScript": "exec cat",
-  "startedAt": "2026-09-25T20:53:08.937Z",
+  "startedAt": "2026-09-25T21:02:14.212Z",
   "baseline": {
     "pool": {
-      "used": 38,
+      "used": 41,
       "cap": 511
     },
     "fds": 32
@@ -19,6 +26,8 @@
     "stop": "completed",
     "maxChildren": 10,
     "confirmedWedges": 0,
+    "lingering": 0,
+    "lingeringStates": [],
     "transientLifetimesMs": {
       "n": 0,
       "p50": null,
@@ -29,15 +38,15 @@
     "stillExitingMs": [],
     "pool": {
       "baseline": {
-        "used": 38,
+        "used": 41,
         "cap": 511
       },
       "peak": {
-        "used": 39,
+        "used": 42,
         "cap": 511
       },
       "final": {
-        "used": 39,
+        "used": 42,
         "cap": 511
       }
     },
@@ -54,7 +63,7 @@
   },
   "afterCleanup": {
     "pool": {
-      "used": 38,
+      "used": 41,
       "cap": 511
     }
   },

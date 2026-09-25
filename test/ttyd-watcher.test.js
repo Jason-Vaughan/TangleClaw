@@ -342,8 +342,10 @@ describe('ttyd-watcher', () => {
     }
 
     it('counts only exiting (E) or zombied (Z) children, never live S/R ones (#380 shape)', () => {
-      const r = reading([['?Es', '02:00:00'], ['?Es', '02:00:00'], ['?Z', '02:00:00'], ['Z+', '02:00:00'], ['?S', '02:00:00'], ['?R', '02:00:00']]);
-      const c = ttydWatcher.classifyReading(r, [], OPTS);
+      const kids = [['?Es', '02:00:00'], ['?Es', '02:00:00'], ['?Z', '02:00:00'], ['Z+', '02:00:00'], ['?S', '02:00:00'], ['?R', '02:00:00']];
+      const earlier = reading(kids, { sampledAt: 1_000_000 - OPTS.wedgeAgeMs });
+      const r = reading(kids);
+      const c = ttydWatcher.classifyReading(r, [earlier, r], OPTS);
       assert.equal(c.wedged.length, 4);
       assert.equal(c.transient.length, 0);
     });
@@ -356,22 +358,27 @@ describe('ttyd-watcher', () => {
       assert.equal(c.orphanGate, false);
     });
 
-    it('an E/Z child older than the wedge age is confirmed on its first sighting', () => {
-      const r = reading(many(25, '?Es', '05:00'));
-      const c = ttydWatcher.classifyReading(r, [], OPTS);
-      assert.equal(c.wedged.length, 25);
-      assert.equal(c.orphanGate, true);
+    // `ps etime` is how long a process has EXISTED. Tabs open for hours that all
+    // close at once (a network drop, a laptop waking) are hours "old" the moment
+    // they begin to exit; judging by etime would restart ttyd on their ordinary
+    // exit, the very thrash this predicate replaces.
+    it('a long-lived child seen exiting once is transient, however old the process is', () => {
+      const r = reading(many(25, '?Es', '3-02:00:00'));
+      const c = ttydWatcher.classifyReading(r, [r], OPTS);
+      assert.equal(c.wedged.length, 0);
+      assert.equal(c.transient.length, 25);
+      assert.equal(c.orphanGate, false);
     });
 
     it('is confirmed by being seen twice in the same generation, however young its reported age', () => {
       const first = reading(many(25, '?Es', '00:03'), { sampledAt: 1_000_000 });
-      const second = reading(many(25, '?Es', '00:03'), { sampledAt: 1_000_000 + ttydWatcher.MIN_OBSERVATION_GAP_MS });
+      const second = reading(many(25, '?Es', '00:03'), { sampledAt: 1_000_000 + OPTS.wedgeAgeMs });
       const c = ttydWatcher.classifyReading(second, [first, second], OPTS);
       assert.equal(c.wedged.length, 25);
       assert.equal(c.orphanGate, true);
     });
 
-    it('two readings closer together than the observation gap do not confirm each other', () => {
+    it('two readings closer together than the wedge age do not confirm each other', () => {
       // The panel and the watcher share one store; two readings a second apart
       // must not turn a one-second-old child into a wedge.
       const first = reading(many(25, '?Es', '00:01'), { sampledAt: 1_000_000 });
@@ -385,12 +392,12 @@ describe('ttyd-watcher', () => {
       assert.equal(ttydWatcher.classifyReading(now, [old, now], OPTS).wedged.length, 0);
     });
 
-    it('a child whose age is unreadable is not confirmed by age, but is by a second sighting', () => {
-      // The #1245 contract "an unreadable age does not suppress" in its new
-      // form: a failed age read delays the verdict by one observation at most.
+    it('never reads a child\'s process age: an unparseable etime is confirmed exactly like any other', () => {
+      // The #1245 contract "an unreadable age does not suppress", in the form it
+      // takes now that age is not an input at all.
       const first = reading([['?Es', 'weird']], { sampledAt: 1_000_000 });
       assert.equal(ttydWatcher.classifyReading(first, [first], { ...OPTS, orphanThreshold: 1 }).orphanGate, false);
-      const second = reading([['?Es', 'weird']], { sampledAt: 1_000_000 + ttydWatcher.MIN_OBSERVATION_GAP_MS });
+      const second = reading([['?Es', 'weird']], { sampledAt: 1_000_000 + OPTS.wedgeAgeMs });
       assert.equal(ttydWatcher.classifyReading(second, [first, second], { ...OPTS, orphanThreshold: 1 }).orphanGate, true);
     });
 
@@ -435,6 +442,17 @@ describe('ttyd-watcher', () => {
     });
   });
 
+  /**
+   * Take one reading, let the wedge age pass, then tick: the shape in which the
+   * watcher can confirm a child it saw exiting before.
+   * @returns {Promise<object>} The tick result.
+   */
+  async function tickAfterSighting() {
+    await ttydWatcher.takeReading();
+    clock.advance(ttydWatcher.DEFAULT_WEDGE_AGE_MS);
+    return ttydWatcher._tick();
+  }
+
   describe('_tick — the gates', () => {
     it('kickstarts when the PTY pool is exhausted past the threshold ratio', async () => {
       const runner = restartingRunner({ 'sh:-c': '527\n' }); // canonical #94 overflow
@@ -476,13 +494,13 @@ describe('ttyd-watcher', () => {
       // wedged for hours.
       const runner = restartingRunner({ 'sh:-c': '230\n', 'ps:-A': psRows(many(25, '?Es', '03:12:00')) });
       ttydWatcher._setRunner(runner);
-      assert.equal((await ttydWatcher._tick()).action, 'kickstart');
+      assert.equal((await tickAfterSighting()).action, 'kickstart');
     });
 
     it('does NOT kickstart when confirmed orphans are below threshold and the pool is healthy', async () => {
       const runner = ttydRunner({ 'ps:-A': psRows(many(5, '?Es', '03:12:00')) });
       ttydWatcher._setRunner(runner);
-      assert.equal((await ttydWatcher._tick()).action, 'ok');
+      assert.equal((await tickAfterSighting()).action, 'ok');
       assert.equal(kicks(runner), 0);
     });
 
@@ -492,7 +510,7 @@ describe('ttyd-watcher', () => {
         'ps:-A': psRows(many(30, '?Es', '03:12:00'))
       });
       ttydWatcher._setRunner(runner);
-      assert.equal((await ttydWatcher._tick()).action, 'kickstart');
+      assert.equal((await tickAfterSighting()).action, 'kickstart');
     });
 
     it('never kickstarts on an unknown reading: a broken pool with no confirmed orphans is measurement-failed', async () => {
@@ -519,14 +537,16 @@ describe('ttyd-watcher', () => {
       assert.equal(ttydWatcher.DEFAULT_ORPHAN_THRESHOLD, 20);
       const runner = restartingRunner({ 'ps:-A': psRows(many(10, '?Es', '03:12:00')) });
       ttydWatcher._setRunner(runner);
-      assert.equal((await ttydWatcher._tick()).action, 'ok', '10 wedges is under the default 20');
+      assert.equal((await tickAfterSighting()).action, 'ok', '10 wedges is under the default 20');
 
       ttydWatcher._reset();
       ttydWatcher._setClock(fakeClock());
       ttydWatcher._configure({ orphanThreshold: 8 });
       const runner2 = restartingRunner({ 'ps:-A': psRows(many(10, '?Es', '03:12:00')) });
       ttydWatcher._setRunner(runner2);
-      assert.equal((await ttydWatcher._tick()).action, 'kickstart', '10 wedges trips a threshold of 8');
+      clock = fakeClock();
+      ttydWatcher._setClock(clock);
+      assert.equal((await tickAfterSighting()).action, 'kickstart', '10 wedges trips a threshold of 8');
     });
   });
 
@@ -543,6 +563,13 @@ describe('ttyd-watcher', () => {
       assert.equal(r.action, 'ok');
       assert.equal(r.classification.transient.length, 25, 'it still MEASURED the burst — it declined to act on it');
       assert.equal(kicks(runner), 0, 'the terminals do not blank');
+    });
+
+    it('does not kickstart when 25 hours-old tabs are all caught mid-exit on one tick', async () => {
+      const runner = ttydRunner({ 'ps:-A': psRows(many(25, '?Es', '1-04:00:00')) });
+      ttydWatcher._setRunner(runner);
+      assert.equal((await ttydWatcher._tick()).action, 'ok');
+      assert.equal(kicks(runner), 0, 'process age is not time spent exiting');
     });
 
     it('does kickstart when the same children are still exiting on a later tick', async () => {
@@ -782,8 +809,15 @@ describe('ttyd-watcher', () => {
       assert.equal(m.disabled, false);
     });
 
-    it('counts CONFIRMED wedges as orphans, and a young burst separately as transient', async () => {
-      ttydWatcher._setRunner(ttydRunner({ 'ps:-A': psRows([...many(3, '?Es', '02:00:00'), ...many(7, '?Es', '00:02')]) }));
+    it('counts CONFIRMED wedges as orphans, and children not yet seen long enough separately as transient', async () => {
+      let later = false;
+      // Three children exiting in both readings; seven more appear only in the second.
+      ttydWatcher._setRunner(ttydRunner({
+        'ps:-A': () => psRows([...many(3, '?Es', '02:00:00'), ...(later ? many(7, '?Es', '00:02') : [])])
+      }));
+      await ttydWatcher.takeReading();
+      clock.advance(ttydWatcher.DEFAULT_WEDGE_AGE_MS);
+      later = true;
       const m = await ttydWatcher.measureLeak();
       assert.equal(m.orphans, 3);
       assert.equal(m.transient, 7);

@@ -48,7 +48,7 @@ function healthyLeak(overrides) {
     transient: 0,
     orphanThreshold: 20,
     ptyThresholdRatio: 0.85,
-    wedgeAgeMs: 120 * 1000,
+    wedgeAgeMs: 30 * 1000,
     disabled: false,
     disabledBy: null,
     lastReceipt: null,
@@ -150,7 +150,7 @@ describe('lib/system-health (#345)', () => {
       const c = await ttydVerdict({ measureLeak: async () => healthyLeak({ orphans: 0, transient: 25 }) });
       assert.equal(c.state, 'clear');
       assert.match(c.detail, /0 leaked tmux clients/);
-      assert.match(c.detail, /25 more exiting but not yet confirmed wedged \(younger than 120s and not seen twice\)/);
+      assert.match(c.detail, /25 more exiting but not yet confirmed wedged \(not yet seen exiting for 30s\)/);
     });
 
     it('fires on confirmed wedges and names the unconfirmed burst beside them', async () => {
@@ -167,14 +167,26 @@ describe('lib/system-health (#345)', () => {
     });
 
     // The kill switch (R22 Q5): with the watcher off nothing restarts a leaking
-    // ttyd, so however healthy the counts are, the row can never read as clear.
+    // ttyd, so a healthy reading can never read as clear.
     it('is unknown — never clear — while the watcher is disabled, and names the switch', async () => {
       const c = await ttydVerdict({
         measureLeak: async () => healthyLeak({ disabled: true, disabledBy: 'TANGLECLAW_TTYD_WATCHER=off' })
       });
       assert.equal(c.state, 'unknown');
       assert.match(c.detail, /ttyd watcher is disabled \(TANGLECLAW_TTYD_WATCHER=off\)/);
-      assert.match(c.detail, /40\/511 slots in use, 1 leaked tmux clients/, 'the counts are still shown');
+      assert.match(c.detail, /40\/511 slots in use; 1 leaked tmux clients/, 'the counts are still shown');
+    });
+
+    // With the watcher off, the panel is the only thing left that can prompt a
+    // restart, so a leak it can see must never be downgraded to "Could not check".
+    it('still FIRES on a full pool or confirmed wedges while the watcher is disabled, and says to act by hand', async () => {
+      const off = { disabled: true, disabledBy: 'TANGLECLAW_TTYD_WATCHER=off' };
+      const pool = await ttydVerdict({ measureLeak: async () => healthyLeak({ ...off, pool: { exhausted: true, used: 480, cap: 511, ratio: 0.94 } }) });
+      assert.equal(pool.state, 'fired');
+      assert.match(pool.detail, /disabled .*restart it by hand/);
+      systemHealth._reset();
+      const orphans = await ttydVerdict({ measureLeak: async () => healthyLeak({ ...off, orphans: 25 }) });
+      assert.equal(orphans.state, 'fired');
     });
 
     // The payload's `checkedAt` is the REQUEST time. Which ttyd and when it was
