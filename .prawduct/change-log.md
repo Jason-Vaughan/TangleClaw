@@ -35,6 +35,22 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Train 2: malformed project tags, inline-handler encoding, the Not a project mark (#1375, #1384, #1768)
+
+<!-- prawduct: type=bugfix | scope=train-2 -->
+
+Chunks 1–3 of `.tangleclaw/plans/train-2-ui-hardening.md`, dispatched by the ProjectManager over Medusa (de99255a) under Architect clearance R44 (0f8b59dc).
+
+**The change.**
+- **Chunk 1 (#1375):** `lib/store.js` `_normalizeTags` gives every consumer `string[]`. A legacy JSON-string row is split on commas, an array keeps its string members, and anything else is empty. `public/ui.js` `formatTagList` checks the shape itself, so the card detail shows None instead of throwing, and the tag filter matches whole tags, not substrings.
+- **Chunk 2 (#1384):** `public/landing.js` `jsArg(value)` = `esc(JSON.stringify(value))` is the one encoder for inline-handler arguments. All 34 single-quoted handler sites in `ui.js` use it, and `importLeaseProjects` receives its names array directly. A scan test keeps the single-quote form out of `ui.js`; a mutation check flags 34 offenders on main.
+- **Chunk 3 (#1768):** the ports panel badges an owner group whose leases are `external` and offers **Is a project**, which posts `ownerKind: 'project'` for the name, then reloads the ports and re-checks the import banner. The button stops click and keydown. [DECISION] The badge and undo are per owner name, not per lease; the reasoning is in the plan.
+- **Tests:** `test/project-tags-shape.test.js`, `test/inline-handler-args.test.js` and `test/port-owner-kind-panel.test.js` are new. Six existing harnesses now load the real `jsArg`/`formatTagList`, and three assertions that matched the rendered handler text follow the new encoding. None were weakened.
+
+**Reviews.** Chunk reviews found 0 blocking. The cumulative review rev-20260926T171739Z-91357fff found one blocking finding: the saved suite evidence includes the known `test/dir-scanner.test.js` 300ms deadline failure (#1884, red on a clean main on this host), accepted by the PM's owner ruling (c06c9eb8).
+
+**Follow-ups filed:** #1902 (the same apostrophe bug in other page scripts), #1903 (test-helper consolidation), #1906 (buttons nested in role=button rows).
+
 ## 2026-09-26 — Restart Session on the ended bar after a completed wrap (#1637)
 
 <!-- prawduct: type=feature | scope=1637-restart-session -->
