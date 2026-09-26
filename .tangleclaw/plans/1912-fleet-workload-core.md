@@ -1,6 +1,6 @@
 ---
 title: "Fleet Workload Visibility, Phase A: launch-bound workload receipts, a bounded activity observer, and the composed fleet read (#1912)"
-status: IN PROGRESS: A1–A3 done (a6dc0d77, 72e6fe69, 2bfdef7e, fixes 82019405; reviews ...6ae71db9, ...7439e104, ...86152bfc, verify ...ecd5128a, 0 blocking outstanding); A4 building
+status: BUILT — A1–A4 committed (A4 13f138d5); boundary: synced main (ADR 0020 via #1916), cumulative review + PR next (not merged by this session)
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-26 (message 806b9000), after Architect ruling FWV-A18 approved ADR 0020 at 533b1386
 contract: docs/adr/0020-session-workload-receipts.md (PR #1916). This plan implements it and does not restate it; where the two differ, the ADR wins and this plan is corrected.
 controlling_train_plan: /Users/jasonvaughan/Documents/Projects/TangleClaw-ProjectManager/.tangleclaw/plans/train-fleet-workload-visibility.md (the PM's; Phase A = A.1–A.3, A.4 typed dispatch excluded)

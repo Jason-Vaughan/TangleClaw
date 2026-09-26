@@ -35,6 +35,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Fleet Workload Visibility, Phase A: launch-bound workload receipts, activity observer, composed fleet read (#1912)
+
+<!-- prawduct: type=feature | scope=1912-fleet-workload -->
+
+Chunks A1–A4 of `.tangleclaw/plans/1912-fleet-workload-core.md`, implementing ADR 0020, which the Architect accepted as FWV-A18 (PR #1916). The PM dispatched this over Medusa (806b9000).
+
+**The change.**
+- **A1:** `workload_receipts` (schema v50, append-only, `UNIQUE (launch_id, seq)`), the `lib/workload.js` write path, `POST/GET /api/tc/workload`, and `tc workload set/show`. `resolveAccess` now returns the verified `sessionId` and `launchId`.
+- **A2:** `lib/activity-observer.js`. A 10 s tick of asynchronous serial captures, each bounded by min(1 s, the tick budget left), with a 3 s tick budget and round-robin. The strict at-rest gate reuses `assessSessionIdle`. Observations older than 30 s read `unknown`. Measured capture latency on this host: p95 29 ms.
+- **A3:**
+  - `lib/workload-compose.js` (pure): receipt currency, base rules 1–11, and monotone operator narrowing.
+  - `lib/workload-fleet.js`: gathers the inputs.
+  - `GET /api/tc/sessions` carries engine, workload and composed blocks, and runs no tmux.
+  - `POST /api/tc/workload/narrowing` is operator-only, recorded in `workload_narrowings`.
+  - A guard test fails if shipped code parses clearance phrases.
+- **A4:** a dashboard badge and a Workload detail row, `workloadLine` in every engine's config, the `workload` capability, and the docs.
+
+**Reviews.** A Critic review per chunk; carried findings rode each next commit. A3 had one blocking finding (the lane line untested), cleared by `verify-resolutions` rev-20260926T202440Z-ecd5128a.
+
+**Deliberately not done.**
+- Typed assignment-dispatch supersession (ADR §4, a named dependency not authorized by FWV-A18).
+- Project Master workload (composes UNKNOWN).
+- Table retention: #1918.
+
 ## 2026-09-26 — Train 2: malformed project tags, inline-handler encoding, the Not a project mark (#1375, #1384, #1768)
 
 <!-- prawduct: type=bugfix | scope=train-2 -->
