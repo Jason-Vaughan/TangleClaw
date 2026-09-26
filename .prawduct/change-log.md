@@ -35,6 +35,24 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Owned ttyd runtime, part 1: pinned inputs, build entry point, closure verifier (#1245, chunk 05)
+
+<!-- prawduct: type=feature | scope=ttyd-1245 -->
+
+R24 / ADR 0018 §2–3.
+- **`deploy/ttyd/inputs.json`** pins every input: the ttyd 1.7.7, libuv 1.52.1, json-c 0.19 and libwebsockets 4.5.2 tarballs, each digest matching Homebrew's pin; CMake 3.31.6's wheel; the two tracked patches (#1573 unmodified; A3c with its hunks identical to the accepted patch and only the headers normalized); the static build flags; and the allowed system roots.
+- **`lib/macho-closure.js`** walks the complete Mach-O graph, resolving `@rpath`, `@loader_path` and `@executable_path`. It allows only `/usr/lib/` and `/System/Library/` or the private bundle, and refuses any `LC_RPATH` outside the bundle.
+- **`scripts/build-ttyd.js`** is the deterministic entry point.
+  - It verifies every download before extracting it; poisoned cache entries are deleted, and `--offline` is supported.
+  - CMake comes from `pip --require-hashes` into a venv inside the work directory, and the build environment has no Homebrew on its PATH.
+  - Dependencies are built statically, the libwebsockets config is rewritten to name only the static target, and each patch is re-verified right before it is applied.
+  - The STAGED binary's closure is verified, and a provenance manifest is written. It never installs.
+
+**Evidence.**
+- A real build from the tracked inputs staged ttyd sha256 `dfae4e69…`, byte-identical to an independent earlier spike build, so the build is reproducible.
+- `otool -L` lists only `/usr/lib/libz`, `libutil` and `libSystem`, with no `LC_RPATH`.
+- The verifier passes the static binary and refuses both the Homebrew-linked A3c and the installed Homebrew ttyd, each on its five Homebrew dylibs.
+
 ## 2026-09-26 — Revert the A1 attach-script wrapper; adopt the owned ttyd runtime (#1245, R24)
 
 <!-- prawduct: type=chore | scope=ttyd-1245 -->

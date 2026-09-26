@@ -34,8 +34,9 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
       wrapper from the final tree. A3 is APPROVED: a build-only patched ttyd in scratch (see "A3 build" below)
 - [x] R24 recorded; A1 reverted from the product tree (the attach script and its tests are byte-identical to origin/main;
       the doc/CHANGELOG claims are removed; the evidence is kept)
-- [ ] Chunk 05: owned runtime, part 1. Pinned inputs and patches (`deploy/ttyd/`), the deterministic build/package entry
-      point (`scripts/build-ttyd.js`), and the recursive Mach-O closure verifier. Focused tests, no network in tests
+- [x] Chunk 05: owned runtime, part 1. Pinned inputs and patches (`deploy/ttyd/`), the deterministic build/package entry
+      point (`scripts/build-ttyd.js`), and the recursive Mach-O closure verifier. Focused tests, no network in tests.
+      A real build staged sha256 `dfae4e69…`, byte-identical to the independent spike (reproducible), with a system-only closure
 - [ ] Chunk 06: owned runtime, part 2. The shared resolver plus transactional install/rollback (`lib/ttyd-runtime.js`),
       consumed by `install.sh` and `scripts/ingress-cutover.js`. Fails closed and names the repair. Homebrew only as an
       explicit rollback, with a warning
