@@ -102,6 +102,41 @@ if [ "$NODE_MAJOR" -lt 22 ]; then
 fi
 green "  Node.js $NODE_VERSION ($NODE_PATH)"
 
+# ── Ingress-mode guard ──
+# This script installs the DIRECT-mode ttyd plist (TCP 3100) and restarts the
+# services. On a host whose persisted ingress mode is caddy, the server expects
+# ttyd on a Unix socket, so running it cuts the dashboard off with a 502. Refuse
+# here — node is resolved, nothing has been installed, built or written — and
+# name the switch for the host's actual mode. Only the ingress cutover persists
+# a mode, so choosing direct means running `--to direct`, after which this
+# script proceeds. A config that exists but cannot be parsed refuses too: the
+# mode is unknown, and the server will not start with that file either.
+CONFIG_FILE="$HOME/.tangleclaw/config.json"
+INGRESS_MODE="direct"
+if [ -f "$CONFIG_FILE" ]; then
+  INGRESS_MODE="$(node -e '
+    try { const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); process.stdout.write(c && c.ingressMode === "caddy" ? "caddy" : "direct"); }
+    catch { process.stdout.write("unreadable"); }
+  ' "$CONFIG_FILE" 2>/dev/null || echo "unreadable")"
+fi
+if [ "$INGRESS_MODE" = "caddy" ]; then
+  red "ERROR: this host's persisted ingress mode is 'caddy' (${CONFIG_FILE})."
+  red "       install.sh writes the DIRECT-mode ttyd plist and restarts the services,"
+  red "       which would cut the dashboard off. Nothing was changed."
+  red "       To re-apply the caddy-mode ttyd and Caddy plists:  node scripts/ingress-cutover.js --to caddy"
+  red "       To switch this host to direct mode:                node scripts/ingress-cutover.js --to direct"
+  red "       (after switching to direct, deploy/install.sh runs normally)"
+  red "       The other assets this script writes (server plist, ~/.tmux.conf, dependencies)"
+  red "       have no caddy-mode refresh yet: https://github.com/Jason-Vaughan/TangleClaw/issues/1901"
+  exit 1
+elif [ "$INGRESS_MODE" = "unreadable" ]; then
+  red "ERROR: cannot read the ingress mode: ${CONFIG_FILE} could not be read or parsed."
+  red "       install.sh rewrites the ttyd plist for DIRECT mode, which cuts off a"
+  red "       caddy-mode dashboard, so it refuses rather than guess. Nothing was changed."
+  red "       Fix or restore that file (the server cannot start with it either), then re-run."
+  exit 1
+fi
+
 # ttyd — terminal-over-websocket front end. launchd runs the TangleClaw-owned,
 # self-contained runtime at ~/.tangleclaw/bin/ttyd (#1245, ADR 0018): the
 # Homebrew build leaks a PTY per closed terminal on macOS. This script is that
@@ -376,7 +411,6 @@ echo ""
 # matches createServer()'s guard in server.js so the health-check URL is
 # consistent with what the server actually binds. Falls back to HTTP when
 # the config file is missing (first install) or fields are null.
-CONFIG_FILE="$HOME/.tangleclaw/config.json"
 PROTOCOL="http"
 CURL_OPTS=""
 if [ -f "$CONFIG_FILE" ]; then
@@ -393,16 +427,6 @@ if [ -f "$CONFIG_FILE" ]; then
   fi
 fi
 green "  Server protocol: $PROTOCOL"
-
-# AUTH-1 (#395): detect the configured ingress mode. install.sh only sets up the
-# DIRECT path; Caddy ingress is activated/rolled back by scripts/ingress-cutover.js.
-INGRESS_MODE="direct"
-if [ -f "$CONFIG_FILE" ]; then
-  INGRESS_MODE="$(node -e '
-    try { const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); process.stdout.write(c.ingressMode === "caddy" ? "caddy" : "direct"); }
-    catch { process.stdout.write("direct"); }
-  ' "$CONFIG_FILE" 2>/dev/null || echo "direct")"
-fi
 
 echo ""
 
@@ -465,26 +489,18 @@ echo "  Uninstall:      launchctl unload ~/Library/LaunchAgents/com.tangleclaw.*
 echo ""
 
 # AUTH-1 (#395) / #710: the password-gated Caddy ingress is the DEFAULT outcome of
-# setup as of v5, not an opt-in extra. This block runs after a bare install.sh,
-# which sets up direct mode only — so it tells the operator how to reach the
-# default state, and says plainly that the cutover alone does not create a login.
-if [ "$INGRESS_MODE" = "caddy" ]; then
-  yellow "  Ingress mode is 'caddy' but install.sh sets up DIRECT only."
-  yellow "  Activate Caddy:   node scripts/ingress-cutover.js --to caddy"
-  yellow "  THEN set the login: node scripts/reset-admin.js --create-gate --user <name>"
-  yellow "  (the cutover installs the ingress, NOT a password — without the second"
-  yellow "   command the dashboard is reachable with no login at all)"
-else
-  # Deliberately NOT "optional", and deliberately two commands. The cutover on
-  # its own configures an ingress with no password, succeeds, and prints a green
-  # health check -- docs/setup-guide.md carries the same warning in bold because
-  # following the single-command form is how an operator ends up serving an
-  # unprotected dashboard while believing the opposite.
-  echo "  Put a password and TLS in front of it (2 commands, both needed):"
-  echo "    node scripts/ingress-cutover.js --to caddy"
-  echo "    node scripts/reset-admin.js --create-gate --user <name>"
-  echo "  The first installs the ingress; the SECOND is the login. Run them back to back —"
-  echo "  in between, the dashboard is up with no password."
-  echo "  (reversible — roll back with: node scripts/ingress-cutover.js --to direct)"
-fi
+# setup as of v5, not an opt-in extra. The ingress-mode guard above means this
+# run was a direct-mode install, so tell the operator how to reach the default
+# state, and say plainly that the cutover alone does not create a login.
+# Deliberately NOT "optional", and deliberately two commands. The cutover on
+# its own configures an ingress with no password, succeeds, and prints a green
+# health check -- docs/setup-guide.md carries the same warning in bold because
+# following the single-command form is how an operator ends up serving an
+# unprotected dashboard while believing the opposite.
+echo "  Put a password and TLS in front of it (2 commands, both needed):"
+echo "    node scripts/ingress-cutover.js --to caddy"
+echo "    node scripts/reset-admin.js --create-gate --user <name>"
+echo "  The first installs the ingress; the SECOND is the login. Run them back to back —"
+echo "  in between, the dashboard is up with no password."
+echo "  (reversible — roll back with: node scripts/ingress-cutover.js --to direct)"
 echo ""
