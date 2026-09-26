@@ -34,6 +34,7 @@ Report at:
   - At most 10 each of issue, PR and task refs.
   - `--head` is a full 40-character SHA.
   - `--branch` is a valid git branch name.
+  - No free-text field (`summary`, `--wait-detail`, task ids, `--branch`, the narrowing `reason`) may contain control characters (C0, DEL, C1), Unicode bidi controls (U+061C, U+200E/F, U+202A–202E, U+2066–2069) or U+2028/U+2029. Text in any script, right-to-left included, is fine.
 - **Rate:** at most one receipt per second per lane (`429 WORKLOAD_RATE`).
 - **Identity:** the server stamps the project, session, launch and control-assignment ids, the sequence and the time from your verified launch. A body carrying any of them, or any unknown field, is refused (`400 WORKLOAD_FIELD_NOT_WRITABLE`).
 - **Who can write:** only your own pane, through `tc`, with a live launch (`403 WORKLOAD_BINDING_REQUIRED` otherwise).

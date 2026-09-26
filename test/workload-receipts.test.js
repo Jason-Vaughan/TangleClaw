@@ -151,6 +151,65 @@ describe('workload body validation (ADR 0020 §3)', () => {
   });
 });
 
+describe('text safety across every free-text field (Architect ruling A29)', () => {
+  // One representative per refused class, with its name for the message.
+  const UNSAFE = [
+    ['C0 NUL', '\u0000'], ['C0 TAB', '\t'], ['C0 LF', '\n'], ['C0 ESC', '\u001b'], ['DEL', '\u007f'],
+    ['C1 PAD', '\u0080'], ['C1 NEL', '\u0085'], ['C1 CSI', '\u009b'], ['C1 APC', '\u009f'],
+    ['bidi ALM', '؜'], ['bidi LRM', '‎'], ['bidi RLM', '‏'],
+    ['bidi LRE', '‪'], ['bidi RLE', '‫'], ['bidi PDF', '‬'], ['bidi LRO', '‭'], ['bidi RLO', '‮'],
+    ['bidi LRI', '⁦'], ['bidi RLI', '⁧'], ['bidi FSI', '⁨'], ['bidi PDI', '⁩'],
+    ['LINE SEPARATOR', ' '], ['PARAGRAPH SEPARATOR', ' ']
+  ];
+  // Text a lane may legitimately write: other scripts, right-to-left letters
+  // included, accents, symbols and emoji.
+  const SAFE = ['Train 2 merged', 'עבודה הושלמה', 'تم الدمج', '日本語のテスト', 'Café — naïve', 'CI ✓ 🙂', 'a b'];
+
+  const bodyWith = (field, value) => {
+    const base = { ...OK };
+    if (field === 'summary') return { ...base, summary: `before${value}after` };
+    if (field === 'waitDetail') return { ...base, state: 'waiting-external', clearance: 'do-not-clear', wait: 'ci', waitDetail: `pr${value}1921` };
+    if (field === 'tasks') return { ...base, tasks: [`A${value}1`] };
+    throw new Error(field);
+  };
+
+  for (const field of ['summary', 'waitDetail', 'tasks']) {
+    it(`refuses every unsafe class in ${field}`, () => {
+      for (const [name, ch] of UNSAFE) {
+        const r = workload.validate(bodyWith(field, ch));
+        assert.equal(r.ok, false, `${field} must refuse ${name}`);
+        assert.equal(r.code, 'WORKLOAD_BAD_FIELD', `${field}/${name}`);
+      }
+    });
+  }
+
+  it('refuses every unsafe class in branch', () => {
+    for (const [name, ch] of UNSAFE) {
+      assert.equal(workload.isValidBranchName(`feat/x${ch}y`), false, `branch must refuse ${name}`);
+      assert.equal(workload.validate({ ...OK, branch: `feat/x${ch}y` }).ok, false, `branch body must refuse ${name}`);
+    }
+  });
+
+  it('accepts ordinary text in every script, right-to-left included, in each text field', () => {
+    for (const text of SAFE) {
+      assert.equal(workload.validate({ ...OK, summary: text }).ok, true, `summary: ${text}`);
+      assert.equal(workload.validate({ ...OK, state: 'waiting-external', clearance: 'do-not-clear', wait: 'ci', waitDetail: text }).ok, true, `waitDetail: ${text}`);
+      assert.equal(workload.isSafeText(text), true, text);
+    }
+    assert.equal(workload.validate({ ...OK, tasks: ['日本-1', 'עבודה'] }).ok, true, 'task ids in other scripts');
+    assert.equal(workload.isValidBranchName('feat/日本-1912'), true, 'a branch name in another script');
+  });
+
+  it('isSafeText is the one predicate: it refuses exactly the listed classes', () => {
+    for (const [name, ch] of UNSAFE) assert.equal(workload.isSafeText(`x${ch}y`), false, name);
+    // Boundaries: the code points just outside each refused range are allowed.
+    for (const ch of [' ', '؛', '؝', '‍', '‐', '‧', ' ', '⁥', '⁪']) {
+      assert.equal(workload.isSafeText(`x${ch}y`), true, `U+${ch.codePointAt(0).toString(16).toUpperCase()} is outside the refused ranges`);
+    }
+    assert.equal(workload.isSafeText(42), false, 'a non-string is never safe text');
+  });
+});
+
 describe('who may write workload (ADR 0020 §1)', () => {
   const { KINDS } = require('../lib/shared-docs-access');
 

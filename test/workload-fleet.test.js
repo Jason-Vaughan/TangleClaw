@@ -236,6 +236,16 @@ describe('composed workload on the routes (ADR 0020 §6, §7, §10)', () => {
     assert.equal((await send(server, 'POST', '/api/tc/workload/narrowing', { sessionId: 999999, forceUnknown: true, reason: 'x' }, op)).status, 404);
   });
 
+  it('the narrowing reason refuses control, C1, bidi and line-separator characters, and accepts other scripts (A29)', async () => {
+    const b = bindProject(mkProject('reason-safety'));
+    for (const ch of ['\n', '\u0085', '‮', '⁦', '‏', ' ', ' ']) {
+      const r = await send(server, 'POST', '/api/tc/workload/narrowing', { sessionId: b.sessionId, forceUnknown: true, reason: `hold${ch}this` }, op);
+      assert.equal(r.status, 400, `U+${ch.codePointAt(0).toString(16)} must be refused`);
+    }
+    const ok = await send(server, 'POST', '/api/tc/workload/narrowing', { sessionId: b.sessionId, forceUnknown: true, reason: 'בדיקה — 検証' }, op);
+    assert.equal(ok.status, 201);
+  });
+
   it('the fleet read runs no tmux and never ticks the observer (no synchronous scan)', async () => {
     const b = bindProject(mkProject('no-scan'));
     await assertReceipt(b, { schema: 'tc.workload/1', state: 'complete', clearance: 'safe-to-clear', summary: 'done' });
