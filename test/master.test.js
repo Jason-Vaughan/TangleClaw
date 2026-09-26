@@ -52,6 +52,22 @@ after(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
+// A Codex Master launch probes the Codex executable's version to decide its
+// daemon isolation. Without this stub every Codex-engine ensure below would run
+// the host's real `codex --version`, which this file promises never to do, and
+// its command would depend on what the host has installed. The stub fails
+// closed (no version), so a test that means to exercise a version sets one.
+const codexAdapter = require('../lib/startup-control-codex');
+const realCodexProbe = codexAdapter._seams.execFileSync;
+const realCodexVersion = codexAdapter._internal._version.version;
+before(() => {
+  codexAdapter._seams.execFileSync = () => { throw new Error('no codex executable in this test'); };
+});
+after(() => {
+  codexAdapter._seams.execFileSync = realCodexProbe;
+  codexAdapter._internal._version.version = realCodexVersion;
+});
+
 /**
  * Fake tmux with programmable liveness; records createSession calls.
  *
@@ -2775,4 +2791,99 @@ describe('liveMasterLaunchId (#1626)', () => {
     master.liveMasterLaunchId({ tmuxLib: t });
     assert.deepEqual(opts, [{ timeout: 250 }, {}]);
   });
+});
+
+describe('ensureMasterSession — Codex daemon isolation (#1895)', () => {
+  const CODEX_BIN = '/opt/fake/bin/codex';
+  let home;
+  let probed;
+
+  beforeEach(() => {
+    clearMasterRules();
+    home = path.join(tmpDir, `master-home-d-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    probed = [];
+    codexAdapter._internal._version.version = null;
+  });
+
+  /**
+   * Make the Codex version probe answer as `version` would, recording which
+   * executable it was asked about. `null` makes the probe fail.
+   * @param {string|null} output - What `codex --version` prints, or null to fail.
+   * @returns {void}
+   */
+  function codexAnswers(output) {
+    codexAdapter._seams.execFileSync = (bin) => {
+      probed.push(bin);
+      if (output === null) throw new Error('spawn codex ENOENT');
+      return output;
+    };
+  }
+
+  /**
+   * Ensure a Master pinned to `engine`, with every engine installed at a known
+   * path, and return the tmux launch command.
+   * @param {object} masterBlock - Stored master settings over the defaults.
+   * @returns {{result: object, command: (string|null)}}
+   */
+  function ensureWith(masterBlock) {
+    const config = store.config.load();
+    const saved = config.master;
+    const enginesLib = {
+      detectEngine: (profile) => ({ available: true, path: profile && profile.id === 'codex' ? CODEX_BIN : `/opt/fake/bin/${profile && profile.id}` }),
+      resolveDefaultEngine: (cfg) => (cfg && cfg.defaultEngine) || 'claude'
+    };
+    try {
+      config.master = { accessLevel: 'read-only', scope: 'all', autoStart: false, ...masterBlock };
+      store.config.save(config);
+      const tmuxLib = fakeTmux({ alive: false });
+      const result = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib, enginesLib });
+      return { result, command: tmuxLib.calls.length ? tmuxLib.calls[0].opts.command : null };
+    } finally {
+      config.master = saved;
+      store.config.save(config);
+    }
+  }
+
+  for (const version of ['0.156.1', '0.157.1']) {
+    it(`isolates a Codex ${version} Master from the shared daemon, probing the exact executable`, () => {
+      codexAnswers(`codex-cli ${version}\n`);
+      const { result, command } = ensureWith({ engine: 'codex' });
+      assert.equal(result.created, true);
+      assert.equal(result.engine, 'codex');
+      assert.match(command, /(^|; )codex --no-daemon$/);
+      assert.deepEqual(probed, [CODEX_BIN], 'the probe must ask the executable this launch runs');
+    });
+  }
+
+  it('keeps the launch mode flags and appends isolation after them', () => {
+    codexAnswers('codex-cli 0.157.1\n');
+    const { result, command } = ensureWith({ engine: 'codex', launchMode: 'fullAuto' });
+    assert.equal(result.launchMode, 'fullAuto');
+    assert.match(command, /(^|; )codex --ask-for-approval never --sandbox workspace-write --no-daemon$/);
+  });
+
+  for (const [label, output] of [
+    ['an older version that rejects the flag', 'codex-cli 0.154.0\n'],
+    ['a future version nobody has verified', 'codex-cli 0.158.0\n'],
+    ['output the probe cannot parse', 'something unexpected\n'],
+    ['a probe that fails', null]
+  ]) {
+    it(`fails closed to the historical command for ${label}`, () => {
+      codexAnswers(output);
+      const { result, command } = ensureWith({ engine: 'codex' });
+      assert.equal(result.created, true);
+      assert.match(command, /(^|; )codex$/, 'an unverified version keeps the command it always had');
+      assert.doesNotMatch(command, /--no-daemon/);
+    });
+  }
+
+  for (const engine of ['claude', 'aider']) {
+    it(`leaves the ${engine} Master's command untouched and never probes Codex`, () => {
+      codexAnswers('codex-cli 0.157.1\n');
+      const { result, command } = ensureWith({ engine });
+      assert.equal(result.engine, engine);
+      assert.doesNotMatch(command, /--no-daemon/);
+      assert.deepEqual(probed, [], 'an engine that declares no adapter is never probed');
+    });
+  }
 });
