@@ -144,7 +144,9 @@ a composer holding **only** a switchboard nudge and its wake ref, seen down to t
 composer's lower border, is the switchboard's own stranded text rather than the
 operator's (#1621). The pane counts as at the prompt, the injector's prompt clear
 removes the stale nudge without filing it in the draft store, and a fresh nudge
-with a new nonce replaces it. Operator text before or after the nudge, or a
+with a new nonce replaces it. The composer is read again after the clear: if any of the
+stale nudge is left, because an engine's line-kill cleared only one wrapped row, the
+injection is refused rather than pasted after the leftover. Operator text before or after the nudge, or a
 composer whose end was not captured, is refused as before. Without the exception
 the stranded nudge refused the re-arm it had earned, and every later wake, until
 the exchange escalated. An engine whose composer draws no lower border gets no

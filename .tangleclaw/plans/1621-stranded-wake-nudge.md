@@ -60,6 +60,12 @@ Enter now recovers on the next eligible tick instead of never.
   cursor on a continuation row, where `_composerEmpty` answers `null` and the text check
   alone says `no-prompt`, not `composer-has-input`. Found by test before implementation.
 
+- [DECISION: re-read the composer after clearing a stranded nudge.] Critic warning: nothing
+  proves one `C-u` clears every wrapped row in every engine. If the re-read finds anything
+  left, `sendKeys` throws and the wake records `inject-failed`, instead of pasting after the
+  leftover. Live verification on a real Claude pane was not done in this chunk; the guard
+  makes the outcome safe either way.
+
 ## Out of scope
 
 - The cause of the lost Enter itself (the paste/Enter timing). File separately if it
@@ -88,4 +94,4 @@ the switchboard's own stranded nudge, and nothing else. CHANGELOG `### Fixed`.
 
 ## Status
 
-- [ ] Chunk 1 — own-nudge recognition in the draft gate and prompt clear, tests, docs
+- [x] Chunk 1 — own-nudge recognition in the draft gate and prompt clear, tests, docs
