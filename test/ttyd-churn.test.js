@@ -245,6 +245,13 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
         assert.equal(churn.lsofOutput(null, '', [1], alive(new Set([1]))), '');
       });
 
+      it('keeps exit 1 when a missing process is exiting or a zombie, which lsof cannot list', () => {
+        // mustBeReported is false for an E/Z process: the kernel has already torn
+        // its file table down, and its PTY masters are listed under ttyd.
+        const mustBeReported = (pid) => pid === 1;
+        assert.equal(churn.lsofOutput(exit1(), 'p1\nn/dev/ptmx\nn/dev/ptmx', [1, 700], mustBeReported), 'p1\nn/dev/ptmx\nn/dev/ptmx');
+      });
+
       it('keeps exit 1 when every missing process has really gone (lsof\'s ordinary vanished case)', () => {
         assert.equal(churn.lsofOutput(exit1(), 'p1\nn/dev/ptmx', [1, 2], alive(new Set([1]))), 'p1\nn/dev/ptmx');
         assert.equal(churn.lsofOutput(exit1(), '', [2, 3], alive(new Set())), '', 'all vanished: truly nothing held');

@@ -171,16 +171,22 @@ function childrenOf(table, ttydPid) {
 /**
  * The PTYs held by a set of processes (those still alive), from lsof.
  * @param {number[]} pids - Processes to ask about.
+ * @param {Array<object>|null} [table] - A process table, to tell an exiting or
+ *   zombie process (which lsof cannot list) from one lsof should have listed.
  * @returns {Promise<{slaves: string[], masters: number}|null>}
  */
-async function readOwnedPtys(pids) {
+async function readOwnedPtys(pids, table = null) {
   const live = pids.filter(alive);
   if (live.length === 0) return { slaves: [], masters: 0 };
   // Which lsof outcomes count as a reading is decided (and tested) in
   // lib/ttyd-churn.js#lsofOutput: exit 1 keeps its output, a cut-off run does not.
   const stdout = await new Promise((resolve) => {
     execFile('lsof', ['-F', 'pn', '-p', live.join(',')], { encoding: 'utf8', timeout: 30000, maxBuffer: 64 * 1024 * 1024 },
-      (err, out) => resolve(churn.lsofOutput(err, out, live, alive)));
+      (err, out) => {
+        const stat = new Map((table || []).map((r) => [r.pid, r.stat]));
+        const mustBeReported = (pid) => alive(pid) && !/[EZ]/.test(stat.get(pid) || '');
+        resolve(churn.lsofOutput(err, out, live, mustBeReported));
+      });
   });
   return stdout === null ? null : churn.parseLsofPtys(stdout);
 }
@@ -355,7 +361,7 @@ async function cleanup(s) {
     else {
       survivors = s.ledger.survivors(table).map((r) => ({ pid: r.pid, ppid: r.ppid, pgid: r.pgid, stat: r.stat }));
       if (survivors.length) leftovers.push(`${survivors.length} recorded processes survived: ${survivors.map((r) => `${r.pid}(${r.stat})`).join(', ')}`);
-      const ptys = await readOwnedPtys(survivors.map((r) => r.pid));
+      const ptys = await readOwnedPtys(survivors.map((r) => r.pid), table);
       if (ptys && (ptys.slaves.length || ptys.masters)) leftovers.push(`surviving processes still hold PTYs: ${JSON.stringify(ptys)}`);
     }
   }
@@ -506,7 +512,7 @@ async function main(o) {
       children: childrenOf(finalTable, s.ttydPid),
       // Exactly the run's recorded processes still alive (PID AND start time,
       // so a recycled PID is never measured) and the PTYs they hold.
-      ownedPtys: finalTable ? await readOwnedPtys(s.ledger.owned(finalTable).map((r) => r.pid)) : null
+      ownedPtys: finalTable ? await readOwnedPtys(s.ledger.owned(finalTable).map((r) => r.pid), finalTable) : null
     };
     maxWedges = Math.max(maxWedges, churn.countWedges(tracker.stillOpen(Date.now())));
 
