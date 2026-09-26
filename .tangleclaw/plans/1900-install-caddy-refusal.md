@@ -46,4 +46,5 @@ their calls and fail.
 ## Status
 
 - [x] Guard, tests, docs (configuration reference, rollout runbook, FEATURES) and CHANGELOG
-- [ ] Full suite, Critic review, PR (not merged: the pilot envelope forbids B1 from merging)
+- [x] Full suite green on 46b2798d. Critic: cumulative plus verify-resolutions, 0 blocking. PR review: 0 blocking.
+- [ ] PR merged (not by B1: the pilot envelope forbids B1 from merging). Archive this plan when #1900 closes.
