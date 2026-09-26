@@ -46,17 +46,27 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
       dfae4e69…). See "Chunk 07 packaged acceptance". Runs 1 and 5 are supporting evidence (each failed only on a harness
       measurement defect); runs 2–4 were stopped to meet the Architect's harness conditions. Awaiting the Architect's
       chunk 07 disposition
-- [ ] Chunk 08 (R24.9 / ADR 0018 amendment 950671db), after chunk 07 and its Critic:
-      (1) managed `install.sh` provisions the runtime itself (build to a temp stage, install, resolve) when it is absent,
-      invalid or stale, before any plist write; it skips only a verified runtime whose manifest `inputsJsonSha256`
-      matches the current `inputs.json`;
-      (2) the resolver refuses a stale runtime, and the cutover never builds but refuses and points to `install.sh`;
-      (3) fault-injection tests at every copy/rename boundary of install and rollback, with the docs rewritten to the
-      exact fail-closed, recoverable guarantee.
-      Also carried from review rev-20260926T010104Z-bd75ce00:
-      - `ttyd-runtime.js status` and the cutover result report which runtime was selected;
-      - the rollback docs say that after a pin change, the last known good no longer verifies and `TANGLECLAW_TTYD_RUNTIME=homebrew` is the way back.
-      Then the full suite and the cumulative Critic
+- [ ] **Chunk 08 (R24.9 / ADR 0018 §4) — REQUIRED IN THIS PR before merge-readiness review (Architect R34, 2026-09-26 08:07Z).**
+      No interim manual-provisioning contract, and ADR 0018 is not weakened or rewritten. Dispatch: PM-managed, in a FRESH
+      context. It must deliver:
+      (1) managed `install.sh` provisions the runtime itself (build to a temp stage via build-ttyd.js, install, resolve)
+          when it is absent, invalid or stale, before any plist write; it skips only a verified runtime whose manifest
+          `inputsJsonSha256` matches the current `deploy/ttyd/inputs.json`;
+      (2) whole-input currency: the resolver compares `inputsJsonSha256` (Critic R-4) and refuses a stale runtime; the
+          cutover never builds, it refuses and points to `install.sh`;
+      (3) fault-injection tests at every copy/rename boundary of install and rollback; the docs state the exact
+          fail-closed, recoverable guarantee;
+      (4) `ttyd-runtime.js status` and the cutover result report which runtime was selected;
+      (5) rollback docs after a pin change (the last known good no longer verifies; `TANGLECLAW_TTYD_RUNTIME=homebrew`
+          is the way back).
+      Also, in the SAME resolution batch (review rev-20260926T080127Z-ee1da76f):
+      - R-7: move the CHANGELOG harness line out of #1858's `### Fixed` entry into `### Internal`;
+      - R-8: keep the cause of every failed harness probe (readPool/readProcTable/readFds/which), as the watcher's
+        `reading.errors` does;
+      - R-5: one shared E/Z predicate (export the watcher's `_isExiting`);
+      - R-6: strip ruling/chunk ids from shipped code comments and state the rule itself;
+      - R-2: `git add -f` the gitignored scratch ttyd logs the evidence cites (run6/run5/acceptance-dfae4e69/a3c).
+      R-1 stays OPEN until this lands. Then run the full suite and a NEW cumulative Critic after chunks 08 and 04.
 - [ ] Chunk 04 (revised): rollout and rollback docs for the owned runtime (F/G, the user guide, the configuration
       reference), and the CHANGELOG. Re-tuning the watcher waits for live certification
 - [ ] Verify (the full suite), the cumulative Critic, one draft PR ONLY when the PM authorizes (pilot boundary: no merge).
