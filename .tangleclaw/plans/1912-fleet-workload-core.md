@@ -87,9 +87,9 @@ authorized by FWV-A18); Phase B (#1877); Phase C (#1889); Project Master workloa
 
 **Project Master lanes (A3 review R-4/R-6/R-13).** The Master is not a row in `sessions`, so the fleet read never reaches composition rule 2 in production. The rule stays, unit-tested, so that a future Master row composes `UNKNOWN` (`unsupported-master-lane`) rather than anything else. A4 adds no Master view: Master workload is out of scope (FWV-A18).
 
-**[DECISION] A24 UI freeze (2026-09-26 21:12Z).** The Architect froze dashboard and Master fleet-view UI. The PM (c9e2213a) directed that all UI be removed from #1921, so the pure backend and CLI portion can merge. A4's dashboard badge, Workload detail row, landing fetch, CSS and their test were removed. What A4 keeps is the guidance line, the capability, and docs that describe the CLI and API only. The dashboard view waits for the revised boundary.
+**[DECISION] A24 UI freeze (2026-09-26 21:12Z).** The Architect froze dashboard and Master fleet-view UI. The PM (c9e2213a) directed that all UI be removed from #1921, so the pure backend and CLI portion can merge. A4's dashboard badge, Workload detail row, landing fetch, CSS and their test were removed. What A4 keeps is the guidance line, the capability, and docs that describe the CLI and API only. The dashboard view waits for the revised boundary, tracked as #1923.
 
-## Chunk A4: the dashboard view, guidance and docs (ADR §9–§10)
+## Chunk A4: guidance and docs (ADR §9–§10); the dashboard view was deferred under A24 (#1923)
 
 **Carried in from the A3 verify pass (they ride this chunk's commit):**
 - **O-1:** move the `ACTIVITY_REASONS` block in `lib/medusa-wake.js` so `_FLEET_RE`'s explanatory comment sits directly on `_FLEET_RE` again.
@@ -101,7 +101,7 @@ authorized by FWV-A18); Phase B (#1877); Phase C (#1889); Project Master workloa
 - The injected operational guide and `tc capabilities` gain `tc workload set` and when to emit it.
 - User guide, FEATURES and CHANGELOG `### Added`.
 
-**Done when** the view renders every availability value from a composed response (test), the guidance names the verb and the emission points, the docs are updated, the cumulative review is clean, and the PR is open.
+**Done when** (the view clause was deferred under A24, #1923) the guidance names the verb and the emission points, the docs are updated, the cumulative review is clean, and the PR is open.
 
 ## Merge order
 
@@ -112,4 +112,4 @@ PR #1916 (ADR 0020) merges before this branch's PR. This branch syncs `main` bef
 - [x] Chunk A1: receipts and write surface
 - [x] Chunk A2: activity observer
 - [x] Chunk A3: composition, supersession, overrides, fleet read
-- [x] Chunk A4: dashboard, guidance, docs; cumulative review + PR (not merged by this session)
+- [x] Chunk A4: guidance, docs; cumulative review + PR (not merged by this session). The dashboard part was deferred under A24 (#1923)
