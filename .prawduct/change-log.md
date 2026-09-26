@@ -35,6 +35,27 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Caddy mode moves the tailnet host in two phases, with a strict check and an honest rollback (#1905, Chunk 2)
+
+<!-- prawduct: type=bugfix | scope=1905-magicdns-host-inventory -->
+
+Chunk 2 of `.tangleclaw/plans/1905-magicdns-host-inventory.md`, dispatched by the PM (d4027d15) after PR #1919 merged, the Rule 69 sync ran and health was verified. It is governed by Architect rulings A18 and A21 (addenda 1 and 2), plus the PM's A19 normalization request.
+
+**The change.**
+- **Prepare.** `reconcileTailnet: "prepare"` on generate-cert (caddy mode only) mints a transition cert with the old and new names and flips nothing. Caddy-mode `true` names prepare and apply in `next`.
+- **Apply.** `ingress-cutover.js --tailnet-host` refuses before any write, using `lib/tailnet-cutover.validateTailnetApply` (invalid, not observed, no change, ungated, cert missing). The Caddyfile site and `caddyTailnetHost` ride one `configPatch`.
+- **Verification.** After the reload, `strictHealth` accepts only HTTP 200 with `status: "ok"`, for the local site and for the candidate on 127.0.0.1 with SNI and Host set. The served cert must carry the name.
+- **Rollback.** On failure, `rollbackTailnetApply` restores the Caddyfile, the config and the reload. It reports `rolledBack: true` only when all three are proven; anything less is `tailnet-rollback-failed` with `residual` and `recovery`.
+- **Normalization.** `removeHosts` and the canonical check compare normalized names.
+
+**Tests.**
+- `test/tailnet-cutover.test.js` covers the refusals, strict health, retries, each injected rollback failure, the cutover's args, result fields and ordering, and parity through prepare, apply and rollback.
+- `test/api-setup-https.test.js` covers prepare in each mode, the caddy-mode `next`, and normalized conflicts and removals.
+
+**Fixed along the way.** Chunk 1's "removeHosts removes a carried name" test never reached its subject. The mkcert stub writes the same fixture cert every time, so a name added by an earlier request is never actually carried, and the test passed with removal disabled. It is rewritten as a one-request test and now turns red under that mutation.
+
+**Mutations.** Each of these turns its tests red: dropping normalization, dropping the incoming name from prepare, and dropping the removal filter.
+
 ## 2026-09-26 — The detected MagicDNS name is served through one host inventory (#1905, Chunk 1)
 
 <!-- prawduct: type=bugfix | scope=1905-magicdns-host-inventory -->

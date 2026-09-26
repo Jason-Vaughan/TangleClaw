@@ -1,7 +1,7 @@
 ---
 title: "#1905 The detected MagicDNS name is refused with HOST_NOT_SERVED"
-status: APPROVED by the Architect as A21 with addenda (2026-09-26). Chunk 1 is in progress. Chunk 2 stays serial behind Chunk 1's review, merge, Rule 69 sync and health verification.
-authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-26, message 0f830344 (dispatch to #1905, under R45 and R46). Architect rulings A17–A20, message 2f34bdfe. PM hold, message 3b23132e. Architect approval A21, message 43f5f31e.
+status: Chunk 1 MERGED as PR #1919 (b8203241). Chunk 2 is in progress on fix/1905-tailnet-cutover, dispatched by the PM (d4027d15) after the merge, the Rule 69 sync and health verification.
+authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-26, message 0f830344 (dispatch to #1905, under R45 and R46). Architect rulings A17–A20, message 2f34bdfe. PM hold, message 3b23132e. Architect approval A21, message 43f5f31e. Chunk 2 dispatch, message d4027d15 (adds the A19 normalization tests).
 issues: [1905]
 scope: 1905-magicdns-host-inventory
 branch: fix/1905-magicdns-host-inventory
@@ -163,7 +163,7 @@ A test proves the host is identical across the cert union, the allowlist, the op
 - after apply;
 - after a rolled-back apply, where everything is back on the old host.
 
-## Code already written (branch head e2e77407, local, not pushed)
+## Code already written before A21 (historical: local head e2e77407, squashed before Chunk 1 shipped)
 
 This work conforms and stays:
 - `lib/host-inventory.js`, including the miss retry.

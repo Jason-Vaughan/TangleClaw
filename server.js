@@ -3464,10 +3464,12 @@ route('POST', '/api/setup/generate-cert', (_req, res, _params, body) => {
   if (extras.error) return errorResponse(res, 400, extras.error, 'BAD_REQUEST');
   const removals = _certHostListArg(body && body.removeHosts, 'removeHosts');
   if (removals.error) return errorResponse(res, 400, removals.error, 'BAD_REQUEST');
-  if (body && body.reconcileTailnet !== undefined && typeof body.reconcileTailnet !== 'boolean') {
-    return errorResponse(res, 400, 'reconcileTailnet must be a boolean', 'BAD_REQUEST');
+  const reconcileArg = body ? body.reconcileTailnet : undefined;
+  if (reconcileArg !== undefined && typeof reconcileArg !== 'boolean' && reconcileArg !== 'prepare') {
+    return errorResponse(res, 400, 'reconcileTailnet must be true, false or "prepare"', 'BAD_REQUEST');
   }
-  const reconcileTailnet = Boolean(body && body.reconcileTailnet);
+  const reconcileTailnet = reconcileArg === true;
+  const prepareTailnet = reconcileArg === 'prepare';
 
   // A mutation boundary: probe the overlay afresh, so the certificate is minted
   // for the name the machine has now, and every later reader of the shared
@@ -3479,25 +3481,33 @@ route('POST', '/api/setup/generate-cert', (_req, res, _params, body) => {
   // Reconciling moves the canonical tailnet host, which every consumer reads, so
   // it is refused wherever it cannot move all of them together.
   let reconciled = null;
-  if (reconcileTailnet) {
+  let prepared = null;
+  if (reconcileTailnet || prepareTailnet) {
     if (!tailnet.drift) {
       return errorResponse(res, 409,
         'reconcileTailnet: the configured tailnet host matches the observed one '
         + `(${tailnet.host || 'none'}), so there is nothing to reconcile`, 'NO_TAILNET_DRIFT');
     }
-    if (cfg.ingressMode === 'caddy') {
+    const applyCommand = `node scripts/ingress-cutover.js --to caddy --tailnet-host ${tailnet.drift.observed}`;
+    if (cfg.ingressMode === 'caddy' && reconcileTailnet) {
       // The live Caddyfile names the configured host too, and this route writes
       // no Caddyfile. Flipping the config here would leave Caddy serving a name
-      // the rest no longer do. The prepare/apply flow through the cutover is not
-      // in this version, so say that rather than name a command that is not there.
+      // the rest no longer do, so caddy mode moves in two phases instead.
       return jsonResponse(res, 409, {
-        error: `reconcileTailnet: in caddy mode the tailnet host must move together with the live `
-          + `Caddyfile, and the prepare/apply cutover flow that does that is not available in this `
-          + `installed version. ${tailnet.drift.configured} keeps serving; ${tailnet.drift.observed} `
-          + 'is refused until then.',
+        error: 'reconcileTailnet: in caddy mode the tailnet host moves with the live Caddyfile, in two '
+          + 'phases. First {"reconcileTailnet": "prepare"} here, which mints a certificate carrying both '
+          + `names; then ${applyCommand}, which moves the site and the config together and rolls back if `
+          + `the new site is not healthy. ${tailnet.drift.configured} keeps serving until then.`,
         code: 'RECONCILE_NEEDS_CUTOVER',
-        drift: tailnet.drift
+        drift: tailnet.drift,
+        next: { prepare: { reconcileTailnet: 'prepare' }, apply: applyCommand }
       });
+    }
+    if (cfg.ingressMode !== 'caddy' && prepareTailnet) {
+      return errorResponse(res, 409,
+        'reconcileTailnet "prepare" is the first phase of a caddy-mode move. With no live Caddyfile, '
+        + '{"reconcileTailnet": true} moves the config and the certificate in one step.',
+        'PREPARE_NOT_NEEDED');
     }
     const gateState = authGate.resolveGateState(() => cfg, store.authSessions, _gateIngress);
     if (!caddy.tailnetSiteGated(cfg, gateState)) {
@@ -3509,7 +3519,14 @@ route('POST', '/api/setup/generate-cert', (_req, res, _params, body) => {
         + 'Arm the TangleClaw login (or enable a Caddy basic_auth credential), then reconcile.',
         'TAILNET_UNGATED');
     }
-    reconciled = { caddyTailnetHost: { from: tailnet.drift.configured, to: tailnet.drift.observed } };
+    if (prepareTailnet) {
+      // Prepare changes nothing but the certificate: the config, the allowlist,
+      // the links and the live Caddyfile all keep the configured host until the
+      // cutover applies the move.
+      prepared = { from: tailnet.drift.configured, to: tailnet.drift.observed, apply: applyCommand };
+    } else {
+      reconciled = { caddyTailnetHost: { from: tailnet.drift.configured, to: tailnet.drift.observed } };
+    }
   }
   const effectiveConfig = reconciled
     ? { ...cfg, caddyTailnetHost: reconciled.caddyTailnetHost.to } : cfg;
@@ -3517,11 +3534,15 @@ route('POST', '/api/setup/generate-cert', (_req, res, _params, body) => {
 
   // Names no request may remove. While reconciling, the outgoing name is still
   // canonical in the saved config until the save below lands, so it stays too.
+  // Compared in one normalized form, so `LOCALHOST` or `host.tailnet.ts.net.`
+  // cannot slip past the canonical check as a different name.
+  const hostKey = (h) => hostInventory.normalizeHostName(h) || String(h).trim().toLowerCase();
   const mandatory = new Set([
     ...httpsSetup.mandatoryCertHosts(effectiveConfig, { observation }),
-    ...(reconciled ? httpsSetup.mandatoryCertHosts(cfg, { observation }) : [])
-  ]);
-  const removeSet = new Set((removals.hosts || []).map((h) => h.toLowerCase()));
+    ...((reconciled || prepared) ? httpsSetup.mandatoryCertHosts(cfg, { observation }) : []),
+    ...(prepared ? [prepared.to] : [])
+  ].map(hostKey));
+  const removeSet = new Set((removals.hosts || []).map(hostKey));
   const refused = [...removeSet].filter((h) => mandatory.has(h));
   if (refused.length) {
     return jsonResponse(res, 409, {
@@ -3545,9 +3566,9 @@ route('POST', '/api/setup/generate-cert', (_req, res, _params, body) => {
     const minted = [...new Set([
       ...httpsSetup.certHostUnion(null, effectiveConfig, { observation }),
       ...(extras.hosts || [])
-    ])].filter((h) => !removeSet.has(h.toLowerCase()));
+    ])].filter((h) => !removeSet.has(hostKey(h)));
     for (const h of mandatory) {
-      if (!minted.some((m) => m.toLowerCase() === h)) minted.push(h);
+      if (!minted.some((m) => hostKey(m) === h)) minted.push(h);
     }
     result = httpsSetup.generateCerts({ hosts: minted });
   } catch (err) {
@@ -3598,7 +3619,8 @@ route('POST', '/api/setup/generate-cert', (_req, res, _params, body) => {
         omission: tailnet.omission,
         covered: tailnet.host ? mintedSet.has(tailnet.host) : null
       },
-      reconciled
+      reconciled,
+      prepared
     }
   });
 });

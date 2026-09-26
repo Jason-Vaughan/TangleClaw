@@ -13,6 +13,7 @@
 //   node scripts/ingress-cutover.js --to caddy --dry-run   print the plan, touch nothing
 //   node scripts/ingress-cutover.js --to caddy --force      overwrite a hand-edited Caddyfile
 //   node scripts/ingress-cutover.js --to caddy --result-file <path>
+//   node scripts/ingress-cutover.js --to caddy --tailnet-host <name>   move the tailnet site (#1905)
 //                                                          also write a JSON outcome for a
 //                                                          caller that is not reading stdout
 //
@@ -39,6 +40,8 @@ const ttydAttach = require(path.join(REPO_DIR, 'lib', 'ttyd-attach'));
 const ttydRuntimeLib = require(path.join(REPO_DIR, 'lib', 'ttyd-runtime'));
 const store = require(path.join(REPO_DIR, 'lib', 'store'));
 const authGate = require(path.join(REPO_DIR, 'lib', 'auth-gate'));
+const hostInventory = require(path.join(REPO_DIR, 'lib', 'host-inventory'));
+const tailnetCutover = require(path.join(REPO_DIR, 'lib', 'tailnet-cutover'));
 const bindPolicy = require(path.join(REPO_DIR, 'lib', 'bind-policy'));
 const tangleclawHome = require('../lib/tangleclaw-home');
 
@@ -113,6 +116,9 @@ function fillTemplate(tpl, subs) {
  * @param {string|null} [ctx.gateState] - TangleClaw's gate state
  *   (`lib/auth-gate.js#resolveGateState`). Decides whether the generated file
  *   still carries `basic_auth`; omitted, it does whenever config has a credential.
+ * @param {string} [ctx.tailnetHost] - A validated `--tailnet-host` name (#1905). Set,
+ *   the Caddyfile's tailnet site uses it and `configPatch` carries it, so the site
+ *   and `caddyTailnetHost` move in the same transaction. Absent, config decides.
  * @returns {{ target, caddyfile: {path,content}|null, plists: Array<{path,content}>, configPatch: object, launchctl: Array<string[]>, healthUrl: string, rollbackHint: string, bindNote: string|null, gateNote: string|null }}
  *   `gateNote` is set on a move to caddy mode: whether the written Caddyfile
  *   carries `basic_auth`, and the gate state that decided it.
@@ -171,7 +177,9 @@ function planCutover(target, ctx) {
       remoteHttpCatchAll: config.caddyRemoteHttp === true,
       // #434 — preserve the tailnet HTTPS site + http→https redirect (adopted
       // from the live file or set explicitly). Generator enforces gate-required.
-      tailnetHost: config.caddyTailnetHost || null,
+      // #1905 — a `--tailnet-host` apply builds the site for the new name; its
+      // config flip rides the same configPatch below, so the two cannot diverge.
+      tailnetHost: ctx.tailnetHost !== undefined ? ctx.tailnetHost : (config.caddyTailnetHost || null),
       // #846 — preserve the access log (adopted from the live file or set
       // explicitly). Without this the cutover regenerated a file with no `log`
       // block at all, silently ending the remote-facing site's audit trail.
@@ -210,7 +218,9 @@ function planCutover(target, ctx) {
         { path: ttydPlistPath, content: ttydPlist },
         { path: caddyPlistPath, content: caddyPlist }
       ],
-      configPatch: { ingressMode: 'caddy' },
+      configPatch: ctx.tailnetHost !== undefined
+        ? { ingressMode: 'caddy', caddyTailnetHost: ctx.tailnetHost }
+        : { ingressMode: 'caddy' },
       // Reload ttyd onto the socket, bring Caddy up, restart the server so it
       // re-binds localhost plain-HTTP. unload-before-load is idempotent.
       launchctl: [
@@ -329,6 +339,7 @@ function parseArgs(argv) {
   let dryRun = false;
   let force = false;
   let resultFile = null;
+  let tailnetHost = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--to') { target = argv[++i]; }
@@ -336,9 +347,16 @@ function parseArgs(argv) {
     else if (a === '--dry-run') { dryRun = true; }
     else if (a === '--force') { force = true; }
     else if (a === '--result-file') { resultFile = argv[++i] || null; }
+    else if (a === '--tailnet-host') { tailnetHost = argv[++i] || ''; }
   }
   if (target !== 'caddy' && target !== 'direct') target = null;
-  return { target, dryRun, force, resultFile };
+  // Moving the tailnet site only means something when the run writes a Caddyfile.
+  if (tailnetHost !== null && target !== 'caddy') target = null;
+  // The key appears only when the flag was given, so every existing caller
+  // (and the pinned shape they rely on) sees exactly the object it always did.
+  return tailnetHost === null
+    ? { target, dryRun, force, resultFile }
+    : { target, dryRun, force, resultFile, tailnetHost };
 }
 
 /**
@@ -360,6 +378,12 @@ const CUTOVER_CODES = Object.freeze({
   VALIDATE_FAILED: 'validate-failed',
   RELOCATED_BASE: 'relocated-base',
   TTYD_RUNTIME_UNAVAILABLE: 'ttyd-runtime-unavailable',
+  // #1905 — a `--tailnet-host` apply. Refusals come from
+  // `tailnetCutover.validateTailnetApply`; the last two are the apply's own
+  // outcome when the moved site did not come up healthy.
+  TAILNET_REFUSED: 'tailnet-refused',
+  TAILNET_ROLLED_BACK: tailnetCutover.TAILNET_CODES.ROLLED_BACK,
+  TAILNET_ROLLBACK_FAILED: tailnetCutover.TAILNET_CODES.ROLLBACK_FAILED,
   FAILED: 'failed'
 });
 
@@ -413,6 +437,15 @@ function writeCutoverResult(resultFile, result) {
       ttydRuntime: result.ttydRuntime
         ? { path: result.ttydRuntime.path, managed: Boolean(result.ttydRuntime.managed) }
         : null,
+      // #1905 — a `--tailnet-host` apply. `rolledBack` is true only when the
+      // prior Caddyfile, the prior caddyTailnetHost and the reload were ALL
+      // restored; otherwise `residual` says which part was not, and `recovery`
+      // gives the steps. Null on every other run.
+      tailnetHost: result.tailnetHost || null,
+      tailnetReason: result.tailnetReason || null,
+      rolledBack: typeof result.rolledBack === 'boolean' ? result.rolledBack : null,
+      residual: result.residual || null,
+      recovery: result.recovery || null,
       finishedAt: new Date().toISOString()
     })}\n`, { mode: 0o600 });
     return true;
@@ -479,9 +512,9 @@ function which(bin) {
 }
 
 function main() {
-  const { target, dryRun, force, resultFile } = parseArgs(process.argv.slice(2));
+  const { target, dryRun, force, resultFile, tailnetHost = null } = parseArgs(process.argv.slice(2));
   if (!target) {
-    process.stderr.write('Usage: node scripts/ingress-cutover.js --to caddy|direct [--dry-run] [--force] [--result-file <path>]\n       node scripts/ingress-cutover.js --rollback\n');
+    process.stderr.write('Usage: node scripts/ingress-cutover.js --to caddy|direct [--dry-run] [--force] [--result-file <path>]\n       node scripts/ingress-cutover.js --to caddy --tailnet-host <name> [--dry-run] [--result-file <path>]\n       node scripts/ingress-cutover.js --rollback\n');
     process.exit(2);
   }
 
@@ -774,6 +807,32 @@ function main() {
   // file this run is about to replace (`authGate.resolveIntendedGateState`).
   ctx.gateState = authGate.resolveIntendedGateState(() => config, store.authSessions);
 
+  // #1905 — `--tailnet-host`: the apply phase of a caddy-mode tailnet move.
+  // Judged before anything is written, against a FRESH overlay observation and
+  // the certificate the site will serve (prepare minted it with both names).
+  if (tailnetHost !== null) {
+    const httpsSetupLib = httpsSetupModule();
+    const servedCert = dryRun
+      ? (config.httpsCertPath || path.join(httpsSetupLib.getCertsDir(), 'cert.pem'))
+      : ctx.certPath;
+    const verdict = tailnetCutover.validateTailnetApply({
+      requested: tailnetHost,
+      config,
+      observation: hostInventory.observeOverlayDns({ refresh: true }),
+      certHosts: httpsSetupLib.certSanHosts(servedCert),
+      gated: caddy.tailnetSiteGated(config, ctx.gateState)
+    });
+    if (!verdict.ok) {
+      process.stderr.write(`ERROR: ${verdict.reason} (ingress untouched)\n`);
+      if (dryRun) { store.close(); process.exit(1); }
+      finish(CUTOVER_CODES.TAILNET_REFUSED, verdict.reason, { tailnetReason: verdict.code });
+    }
+    ctx.tailnetHost = verdict.host;
+    ctx.priorTailnetHost = config.caddyTailnetHost || null;
+    process.stdout.write(`Tailnet site: ${ctx.priorTailnetHost || '(none)'} → ${verdict.host}. `
+      + 'caddyTailnetHost moves in this same transaction, and only if the new site answers healthy.\n');
+  }
+
   let plan;
   try {
     plan = planCutover(target, ctx);
@@ -795,6 +854,13 @@ function main() {
   if (dryRun) {
     process.stdout.write(`\n[dry-run] ingress cutover → ${target}\n`);
     if (target === 'caddy') process.stdout.write(`  stage cert into: ${caddy.getStagedCertsDir()}\n`);
+    if (ctx.tailnetHost !== undefined) {
+      process.stdout.write(`  tailnet move:    ${ctx.priorTailnetHost || '(none)'} → ${ctx.tailnetHost} `
+        + '(caddyTailnetHost flips in this transaction\'s config patch)\n'
+        + '  verify:          local health AND the new name via 127.0.0.1 (SNI/Host set to it); '
+        + 'HTTP 200 with status "ok" only\n'
+        + '  on failure:      restore the Caddyfile, caddyTailnetHost and the reload, and report each\n');
+    }
     if (plan.caddyfile) {
       // Preview the clobber guard (#397 bug 3) so the operator knows a hand-edited
       // Caddyfile would be protected, not silently overwritten.
@@ -831,6 +897,10 @@ function main() {
 
   // 1. Caddyfile first, then VALIDATE before touching launchd (fail-closed).
   fs.mkdirSync(path.join(baseDir, 'logs'), { recursive: true });
+  // Held outside the block below: a `--tailnet-host` apply needs the prior bytes
+  // again at step 6, to roll back if the moved site does not come up healthy.
+  let priorCaddyfile = null;
+  let tailnetBackup = null;
   if (plan.caddyfile) {
     fs.mkdirSync(path.dirname(plan.caddyfile.path), { recursive: true });
     // #397 bug 3: never silently clobber a hand-edited Caddyfile (it may carry
@@ -866,9 +936,15 @@ function main() {
     // when Caddy refuses to start and nothing points at this moment as the cause.
     // Reachable without any bug of ours — Caddy renamed `basicauth` to
     // `basic_auth` in 2.8, so a version skew alone produces it.
-    const priorCaddyfile = fs.existsSync(plan.caddyfile.path)
+    priorCaddyfile = fs.existsSync(plan.caddyfile.path)
       ? fs.readFileSync(plan.caddyfile.path)
       : null;
+    // A tailnet move keeps its own copy of the prior file on disk, so a rollback
+    // that cannot restore it can still name where the operator's copy is.
+    if (ctx.tailnetHost !== undefined && priorCaddyfile !== null) {
+      tailnetBackup = `${plan.caddyfile.path}.tailnet-${new Date().toISOString().replace(/[:.]/g, '-')}.bak`;
+      fs.writeFileSync(tailnetBackup, priorCaddyfile, { mode: 0o600 });
+    }
     fs.writeFileSync(plan.caddyfile.path, plan.caddyfile.content, { mode: 0o600 });
     const v = caddy.validateCaddyfile(plan.caddyfile.path);
     if (!v.ok) {
@@ -931,6 +1007,19 @@ function main() {
   if (plan.bindNote) process.stdout.write(`  Network binding: ${plan.bindNote}\n`);
   process.stdout.write('\n');
 
+  // 6a. #1905 — a `--tailnet-host` apply is judged strictly (A21): the local
+  // site AND the new name, reached on 127.0.0.1 with SNI and Host set to it,
+  // must both answer HTTP 200 with status "ok". Anything else rolls back.
+  if (ctx.tailnetHost !== undefined) {
+    const port = new URL(plan.healthUrl).port || '443';
+    const localCheck = { label: 'local', url: plan.healthUrl };
+    const siteCheck = { label: ctx.tailnetHost, url: `https://127.0.0.1:${port}/api/health`, servername: ctx.tailnetHost };
+    runTailnetVerification({
+      plan, ctx, localCheck, siteCheck, priorCaddyfile, tailnetBackup, finish
+    });
+    return;
+  }
+
   // 6. Best-effort health poll (non-fatal — the operator VRF confirms end-to-end).
   // Captured so an unbuildable health URL reaches the RESULT FILE, not just
   // stderr the detached child has nobody reading. Without it the caller sees
@@ -948,6 +1037,80 @@ function main() {
     // install has no login.
     finish(CUTOVER_CODES.OK, null, { healthUrl: plan.healthUrl, healthOk: ok, healthError });
   });
+}
+
+/**
+ * Verify a `--tailnet-host` apply, and roll it back when the moved site is not
+ * strictly healthy (#1905, A21). Ends the run through `finish` in every branch.
+ *
+ * @param {object} args
+ * @param {object} args.plan - The applied plan.
+ * @param {object} args.ctx - The run context (`tailnetHost`, `priorTailnetHost`).
+ * @param {{label: string, url: string}} args.localCheck
+ * @param {{label: string, url: string, servername: string}} args.siteCheck
+ * @param {Buffer|null} args.priorCaddyfile - The Caddyfile bytes before this run.
+ * @param {string|null} args.tailnetBackup - Where those bytes were copied.
+ * @param {Function} args.finish - The run's `finish(code, error, extra)`.
+ * @returns {Promise<void>}
+ */
+async function runTailnetVerification({ plan, ctx, localCheck, siteCheck, priorCaddyfile, tailnetBackup, finish }) {
+  const applied = await tailnetCutover.verifyTailnetApply([localCheck, siteCheck]);
+  if (applied.ok) {
+    process.stdout.write(`  ✓ ${ctx.tailnetHost} answers healthy through Caddy; caddyTailnetHost is now ${ctx.tailnetHost}\n`);
+    finish(CUTOVER_CODES.OK, null, { healthUrl: plan.healthUrl, healthOk: true, tailnetHost: ctx.tailnetHost });
+    return;
+  }
+  const cause = tailnetCutover.describeChecks(applied.last);
+  process.stderr.write(`ERROR: the moved tailnet site is not healthy (${cause}) — rolling back\n`);
+
+  const caddyPlist = plan.plists.find((f) => /caddy/i.test(path.basename(f.path)));
+  const serverKick = plan.launchctl.find(([sub]) => sub === 'kickstart');
+  const rollback = await tailnetCutover.rollbackTailnetApply({
+    caddyfilePath: plan.caddyfile.path,
+    priorCaddyfile,
+    priorTailnetHost: ctx.priorTailnetHost,
+    backupPath: tailnetBackup,
+    effects: {
+      restoreCaddyfile: (bytes) => {
+        if (bytes === null) fs.rmSync(plan.caddyfile.path, { force: true });
+        else fs.writeFileSync(plan.caddyfile.path, bytes, { mode: 0o600 });
+      },
+      readCaddyfile: () => (fs.existsSync(plan.caddyfile.path) ? fs.readFileSync(plan.caddyfile.path) : null),
+      restoreConfig: (prior) => {
+        const cfg = store.config.load();
+        cfg.caddyTailnetHost = prior;
+        store.config.save(cfg);
+      },
+      readTailnetHost: () => store.config.load().caddyTailnetHost || null,
+      reload: () => {
+        // Caddy re-reads the restored file; the server re-reads the restored
+        // config. Unload may fail harmlessly (job not loaded); load and the
+        // kickstart may not.
+        if (caddyPlist) {
+          try { execFileSync('launchctl', ['unload', caddyPlist.path], { stdio: ['ignore', 'ignore', 'pipe'] }); } catch { /* not loaded */ }
+          execFileSync('launchctl', ['load', caddyPlist.path], { stdio: ['ignore', 'ignore', 'pipe'] });
+        }
+        if (serverKick) execFileSync('launchctl', serverKick, { stdio: ['ignore', 'ignore', 'pipe'] });
+      },
+      verifyLocal: () => tailnetCutover.verifyTailnetApply([localCheck])
+    }
+  });
+  const extra = {
+    healthUrl: plan.healthUrl,
+    healthOk: false,
+    tailnetHost: ctx.tailnetHost,
+    rolledBack: rollback.rolledBack,
+    residual: rollback.residual,
+    recovery: rollback.recovery
+  };
+  if (rollback.rolledBack) {
+    process.stderr.write(`Rolled back: the Caddyfile, caddyTailnetHost (${ctx.priorTailnetHost || 'none'}) and the reload are restored.\n`);
+    finish(CUTOVER_CODES.TAILNET_ROLLED_BACK, `the moved tailnet site was not healthy (${cause}); rolled back`, extra);
+    return;
+  }
+  process.stderr.write(`ROLLBACK INCOMPLETE: ${JSON.stringify(rollback.residual)}\n  Recovery: ${rollback.recovery}\n`);
+  finish(CUTOVER_CODES.TAILNET_ROLLBACK_FAILED,
+    `the moved tailnet site was not healthy (${cause}) and the rollback did not fully restore; see residual and recovery`, extra);
 }
 
 /**
@@ -1014,4 +1177,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { planCutover, describeTtydRuntime, describeDirectBind, describeGeneratedGate, fillTemplate, parseArgs, resolveUpstreamPort, applyDryRunAdoptionPreview, writeCutoverResult, pollHealth, certHostUnion, CUTOVER_CODES };
+module.exports = { planCutover, runTailnetVerification, describeTtydRuntime, describeDirectBind, describeGeneratedGate, fillTemplate, parseArgs, resolveUpstreamPort, applyDryRunAdoptionPreview, writeCutoverResult, pollHealth, certHostUnion, CUTOVER_CODES };
