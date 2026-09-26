@@ -1,11 +1,17 @@
 'use strict';
 
-const { describe, it } = require('node:test');
+const { describe, it, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
 const SCRIPT_PATH = path.join(__dirname, '..', 'deploy', 'install.sh');
+
+// Sandbox roots created by the executed tests, removed once the file finishes.
+const sandboxRoots = [];
+after(() => {
+  for (const root of sandboxRoots) fs.rmSync(root, { recursive: true, force: true });
+});
 
 describe('deploy/install.sh', () => {
   const script = fs.readFileSync(SCRIPT_PATH, 'utf8');
@@ -367,6 +373,7 @@ describe('deploy/install.sh', () => {
      */
     function sandbox(stubs) {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-install-sh-'));
+      sandboxRoots.push(root);
       const bin = path.join(root, 'bin');
       const home = path.join(root, 'home');
       fs.mkdirSync(bin);
@@ -529,6 +536,7 @@ describe('deploy/install.sh', () => {
      */
     function sandbox(configBody) {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-install-guard-'));
+      sandboxRoots.push(root);
       const bin = path.join(root, 'bin');
       const home = path.join(root, 'home');
       const calls = path.join(root, 'calls.log');
