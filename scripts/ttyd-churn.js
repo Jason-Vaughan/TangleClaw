@@ -150,7 +150,7 @@ async function readLiveTtydState() {
  */
 async function readProcTable() {
   try {
-    return churn.parseProcTable(await run('ps', ['-A', '-o', 'pid=,ppid=,pgid=,stat=,etime=']));
+    return churn.parseProcTable(await run('ps', ['-A', '-o', 'pid=,ppid=,pgid=,stat=,etime=,lstart=']));
   } catch {
     return null;
   }
@@ -175,12 +175,11 @@ function childrenOf(table, ttydPid) {
 async function readOwnedPtys(pids) {
   const live = pids.filter(alive);
   if (live.length === 0) return { slaves: [], masters: 0 };
-  // lsof exits 1 when any listed process vanished or could not be read, and
-  // what it DID print is still a true reading of the rest, so stdout is kept
-  // whatever the exit code. Only no output at all is an unmeasured reading.
+  // Which lsof outcomes count as a reading is decided (and tested) in
+  // lib/ttyd-churn.js#lsofOutput: exit 1 keeps its output, a cut-off run does not.
   const stdout = await new Promise((resolve) => {
     execFile('lsof', ['-F', 'pn', '-p', live.join(',')], { encoding: 'utf8', timeout: 30000, maxBuffer: 64 * 1024 * 1024 },
-      (err, out) => resolve(out || (err ? null : '')));
+      (err, out) => resolve(churn.lsofOutput(err, out)));
   });
   return stdout === null ? null : churn.parseLsofPtys(stdout);
 }

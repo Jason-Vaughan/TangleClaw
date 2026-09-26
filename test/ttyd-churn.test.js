@@ -145,19 +145,20 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
   });
 
   describe('run-owned resources (Architect ruling on chunk 07)', () => {
+    const T = 'Fri Sep 26 03:00:00 2026';
     const PS = [
-      '    1     0     1 Ss   13-02:11:47',
-      '  500     1   500 S    01:00:00',
-      '  600   500   600 Ss+  00:10',
-      '  601   600   600 S+   00:09',
-      '  700   500   700 ?Es  00:05',
-      '  900     1   900 S    02:00:00'
+      `    1     0     1 Ss   13-02:11:47 Sat Sep 13 00:48:13 2026`,
+      `  500     1   500 S    01:00:00 ${T}`,
+      `  600   500   600 Ss+  00:10 Fri Sep 26 03:59:50 2026`,
+      `  601   600   600 S+   00:09 Fri Sep 26 03:59:51 2026`,
+      `  700   500   700 ?Es  00:05 Fri Sep 26 03:59:55 2026`,
+      `  900     1   900 S    02:00:00 Fri Sep 26 02:00:00 2026`
     ].join('\n');
 
     it('parses pid, ppid, pgid, state and elapsed time', () => {
       const t = churn.parseProcTable(PS);
       assert.equal(t.length, 6);
-      assert.deepEqual(t[3], { pid: 601, ppid: 600, pgid: 600, stat: 'S+', etime: '00:09' });
+      assert.deepEqual(t[3], { pid: 601, ppid: 600, pgid: 600, stat: 'S+', etime: '00:09', lstart: 'Fri Sep 26 03:59:51 2026' });
     });
 
     it('finds every descendant, however deep, and nothing else', () => {
@@ -169,15 +170,54 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
     it('still finds a recorded process after it has been reparented to launchd', () => {
       const ledger = new churn.ProcessLedger(500);
       ledger.record(churn.parseProcTable(PS));
-      const after = churn.parseProcTable('    1     0     1 Ss   13-02:11:47\n  700     1   700 ?Es  00:40\n  900     1   900 S    02:00:00');
+      const after = churn.parseProcTable('    1     0     1 Ss   13-02:11:47 Sat Sep 13 00:48:13 2026\n  700     1   700 ?Es  00:40 Fri Sep 26 03:59:55 2026\n  900     1   900 S    02:00:00 Fri Sep 26 02:00:00 2026');
       assert.deepEqual(ledger.survivors(after).map((r) => r.pid), [700], 'the reparented survivor is caught; the unrelated 900 is not');
     });
 
     it('catches a process forked into a recorded group after the last sample', () => {
       const ledger = new churn.ProcessLedger(500);
       ledger.record(churn.parseProcTable(PS));
-      const after = churn.parseProcTable('  650     1   600 S    00:01');
+      const after = churn.parseProcTable('  650     1   600 S    00:01 Fri Sep 26 04:00:10 2026');
       assert.deepEqual(ledger.survivors(after).map((r) => r.pid), [650]);
+    });
+
+    // macOS recycles PIDs, and a two-hour run spawns tens of thousands of
+    // processes: a PID alone could make an unrelated process a "survivor".
+    it('does not mistake a new process that reused a recorded PID for a survivor', () => {
+      const ledger = new churn.ProcessLedger(500);
+      ledger.record(churn.parseProcTable(PS));
+      const after = churn.parseProcTable('  700     1   700 S    00:02 Fri Sep 26 05:10:00 2026');
+      assert.deepEqual(ledger.survivors(after), [], 'same PID 700, different start time: not ours');
+    });
+
+    it('does not claim a group whose id was reused by a new leader', () => {
+      const ledger = new churn.ProcessLedger(500);
+      ledger.record(churn.parseProcTable(PS));
+      const after = churn.parseProcTable([
+        '  600     1   600 Ss   00:05 Fri Sep 26 05:10:00 2026',
+        '  651   600   600 S    00:04 Fri Sep 26 05:10:01 2026'
+      ].join('\n'));
+      assert.deepEqual(ledger.survivors(after), [], 'group 600 now has a different leader');
+    });
+
+    describe('lsofOutput — a cut-off reading is never a reading', () => {
+      it('keeps a clean run\'s output, and treats empty clean output as "nothing held"', () => {
+        assert.equal(churn.lsofOutput(null, 'p1\nn/dev/ptmx'), 'p1\nn/dev/ptmx');
+        assert.equal(churn.lsofOutput(null, ''), '');
+      });
+      it('keeps the output of lsof\'s ordinary exit 1 (a listed process vanished)', () => {
+        const err = Object.assign(new Error('Command failed'), { code: 1, killed: false, signal: null });
+        assert.equal(churn.lsofOutput(err, 'p1\nn/dev/ptmx'), 'p1\nn/dev/ptmx');
+      });
+      it('rejects a timeout, a signal, a buffer overflow or any other exit as unmeasured', () => {
+        const cases = [
+          { code: null, killed: true, signal: 'SIGTERM' },
+          { code: 1, killed: false, signal: 'SIGKILL' },
+          { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER', killed: true, signal: 'SIGTERM' },
+          { code: 2, killed: false, signal: null }
+        ];
+        for (const c of cases) assert.equal(churn.lsofOutput(Object.assign(new Error('x'), c), 'p1\nn/dev/ptmx'), null, JSON.stringify(c));
+      });
     });
 
     it('counts slave PTYs by name and master handles by count from lsof -F pn', () => {
@@ -212,8 +252,8 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
 
   describe('returned', () => {
     it('allows the tolerance, refuses beyond it, and is null when unmeasured', () => {
-      assert.equal(churn.returned(30, 30 + churn.POOL_TOLERANCE, churn.POOL_TOLERANCE), true);
-      assert.equal(churn.returned(30, 31 + churn.POOL_TOLERANCE, churn.POOL_TOLERANCE), false);
+      assert.equal(churn.returned(30, 30 + churn.FD_TOLERANCE, churn.FD_TOLERANCE), true);
+      assert.equal(churn.returned(30, 31 + churn.FD_TOLERANCE, churn.FD_TOLERANCE), false);
       assert.equal(churn.returned(null, 30, 3), null);
       assert.equal(churn.returned(30, null, 3), null);
     });

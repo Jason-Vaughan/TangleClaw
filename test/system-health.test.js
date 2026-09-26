@@ -200,7 +200,7 @@ describe('lib/system-health (#345)', () => {
         generation: '4242@Fri Sep 25 11:28:54 2026',
         sampledAt: '2026-09-25T18:40:00.000Z',
         binary: null,
-        managed: false
+        managed: null
       });
       assert.deepEqual(c.lastReceipt, receipt);
     });
@@ -215,6 +215,14 @@ describe('lib/system-health (#345)', () => {
       assert.match(c.detail, /ttyd is running \/opt\/homebrew\/bin\/ttyd, not the owned runtime \/Users\/op\/\.tangleclaw\/bin\/ttyd, so the #1245 leak fix is not in force/);
       assert.equal(c.reading.binary, '/opt/homebrew/bin/ttyd');
       assert.equal(c.reading.managed, false);
+    });
+
+    it('says the binary is UNKNOWN — not "not managed" — when the probe could not read it', async () => {
+      const managedTtydPath = () => '/Users/op/.tangleclaw/bin/ttyd';
+      const c = await ttydVerdict({ managedTtydPath, measureLeak: async () => healthyLeak({ binary: null }) });
+      assert.equal(c.reading.managed, null);
+      assert.match(c.detail, /could not read which ttyd binary launchd is running/);
+      assert.ok(!/not the owned runtime/.test(c.detail), c.detail);
     });
 
     it('says nothing extra when launchd runs the owned runtime, and marks the reading managed', async () => {

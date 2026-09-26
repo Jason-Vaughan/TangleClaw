@@ -299,6 +299,13 @@ describe('ttyd-watcher', () => {
       assert.equal((await ttydWatcher.takeReading()).pool, null);
     });
 
+    it('records a failed binary probe as an error, and the binary as unknown', async () => {
+      ttydWatcher._setRunner(ttydRunner({ 'ps:-p': new Error('ps: no such process') }));
+      const r = await ttydWatcher.takeReading();
+      assert.equal(r.binary, null);
+      assert.ok(r.errors.some((e) => /^binary: ps: no such process/.test(e)), JSON.stringify(r.errors));
+    });
+
     it('leaves the children null — not empty — when ps failed', async () => {
       ttydWatcher._setRunner(ttydRunner({ 'ps:-A': new Error('ps: command not found') }));
       const r = await ttydWatcher.takeReading();

@@ -35,6 +35,17 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Harness gate hardened before the certification run (#1245, Critic rev-20260926T030542Z-e93b8543)
+
+<!-- prawduct: type=bugfix | scope=ttyd-1245 -->
+
+Run 2 was stopped about 15 minutes in, by exact PID (the interrupt cleanup left nothing), because two warnings were gate defects.
+- **W1, which could pass a leak:** a cut-off lsof reading (timeout, signal or buffer overflow) was read as complete. `lsofOutput` (lib, tested) keeps output only on a clean exit or lsof's ordinary exit 1; anything else is unmeasured, hence inconclusive.
+- **W2, which could fail a clean run falsely:** the ledger matched PIDs alone, and macOS reuses them (about 28,800 `ps` spawns per soak). The identity is now PID plus `lstart`, and a process group whose live leader has a different start time counts as reused, not ours.
+- **W3:** a failed binary probe is recorded in `reading.errors`, and the health row reports `managed: null` with "could not read which ttyd binary". It no longer reads as "not managed".
+- **Notes:** the unused `POOL_TOLERANCE` was dropped. The `latestGeneration` comment was moved. The `installRuntime` comment now states the real fail-closed guarantee, not "exactly as they were". The configuration reference names the provenance check.
+- **Smoke on the host:** packaged, 0 owned PTYs and 0 survivors (65 PIDs and 29 groups recorded); the control fails the gate with 177 held `/dev/ptmx` handles for 59 wedges.
+
 ## 2026-09-26 — Harness gate measures run-owned resources, not the global pool (#1245, chunk 07)
 
 <!-- prawduct: type=bugfix | scope=ttyd-1245 -->

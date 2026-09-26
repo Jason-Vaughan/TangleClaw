@@ -154,8 +154,9 @@ node scripts/ttyd-runtime.js rollback                   # restore the last known
 node scripts/ttyd-runtime.js status                     # what is installed, and whether it verifies
 ```
 
-A runtime verifies when its digest matches its manifest, its whole load graph stays within macOS
-system libraries, and it runs. The first switch to `~/.tangleclaw/bin/ttyd` needs a one-time macOS
+A runtime verifies when its digest matches its manifest, its manifest records that it was built from
+exactly the sources and patches pinned in `deploy/ttyd/inputs.json`, its whole load graph stays
+within macOS system libraries, and it runs. The first switch to `~/.tangleclaw/bin/ttyd` needs a one-time macOS
 permission approval for the new path (ADR 0018).
 
 ## Global Configuration (`config.json`)
