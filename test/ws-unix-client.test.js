@@ -86,6 +86,19 @@ describe('WsUnixClient', () => {
     client.close();
   });
 
+  it('asks for `/` with no subprotocol by default, and sends the path and subprotocol it was given', async () => {
+    let plain;
+    const c1 = await connected((conn) => { plain = conn.request; });
+    assert.match(plain, /^GET \/ HTTP\/1\.1\r\n/);
+    assert.ok(!/Sec-WebSocket-Protocol/i.test(plain), 'no subprotocol unless asked');
+    c1.close();
+    let named;
+    const c2 = await connected((conn) => { named = conn.request; }, undefined, { path: '/ws?arg=churn', protocol: 'tty' });
+    assert.match(named, /^GET \/ws\?arg=churn HTTP\/1\.1\r\n/);
+    assert.match(named, /\r\nSec-WebSocket-Protocol: tty\r\n/);
+    c2.close();
+  });
+
   it('refuses a non-101 answer and a wrong accept key', async () => {
     const p1 = sock();
     servers.push(await serve(p1, () => {}, { refuse: true }));

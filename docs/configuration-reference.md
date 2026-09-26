@@ -113,6 +113,105 @@ otherwise be retried on a reconnect loop forever. The cost is that the default i
 a normal-looking value for a read that did not succeed, so the log line is the
 operator's only signal that an override was ignored.
 
+### Turning off or tuning the ttyd watcher (macOS)
+
+The ttyd watcher (`lib/ttyd-watcher.js`) restarts the terminal service when its PTY pool fills or
+it collects leaked `tmux attach` children. Two environment variables, read when the server starts,
+are the rollback levers for it:
+
+| Variable | Values | Effect |
+|---|---|---|
+| `TANGLECLAW_TTYD_WATCHER` | `off` / `0` / `false` to disable; `on` / `1` / `true` (or unset) to enable | Disabled, the watcher never restarts ttyd and logs `ttyd watcher DISABLED` at warn on every start. The system health panel then shows a healthy reading as **Could not check**, never clear; a full pool or leaked children still show as fired, with a note to restart ttyd by hand. Any other value is logged at warn, and the watcher stays enabled. |
+| `TANGLECLAW_TTYD_ORPHAN_THRESHOLD` | An integer from 5 to 200 (default 20) | How many confirmed leaked children trip a restart. The value in force is logged at warn when it is not the default. Anything outside the range, or not an integer, is logged at warn and the default is used. |
+
+For a launchd install, set them in the server's plist (`EnvironmentVariables`) and restart the
+server; they are not read from `config.json`.
+
+### The ttyd runtime launchd runs (macOS)
+
+launchd runs a TangleClaw-owned, self-contained ttyd at `~/.tangleclaw/bin/ttyd`, not the Homebrew one.
+The Homebrew build leaks a pseudo-terminal each time a terminal tab closes (#1245); the owned runtime
+carries the fix. `deploy/install.sh` and `scripts/ingress-cutover.js` both get the path from one
+resolver (`lib/ttyd-runtime.js`), never from the PATH.
+
+- **`deploy/install.sh` provisions the runtime.** When the owned runtime is missing, does not verify,
+  or is stale, the installer builds it from `deploy/ttyd/inputs.json` into a temporary directory,
+  installs the verified result, and only then writes the ttyd plist. A runtime that verifies and is
+  current is kept without rebuilding. The build needs the Xcode Command Line Tools and, the first time,
+  network access to fetch the pinned sources (they are cached under
+  `~/.tangleclaw/cache/ttyd-build`). A failed build installs nothing, stops the install before any plist
+  is written, and keeps its build directory for inspection.
+- **The ingress cutover never builds.** When the runtime is missing, invalid or stale it stops before
+  its first write, with the code `ttyd-runtime-unavailable`. The refusal tells you to run
+  `node scripts/ttyd-runtime.js provision` and then select the runtime for your ingress mode:
+  `./deploy/install.sh` in direct mode, the cutover itself in caddy mode. Never run
+  `deploy/install.sh` on a caddy-mode host, because it rewrites the ttyd plist for direct mode.
+- **Stale** means built from a different `deploy/ttyd/inputs.json`: a runtime is current only when its
+  manifest records that file's exact SHA-256. Changing a build flag, the CMake pin or the deployment
+  target makes the installed runtime stale just as a new source or patch does.
+
+| Variable | Values | Effect |
+|---|---|---|
+| `TANGLECLAW_TTYD_RUNTIME` | `managed` (default) or `homebrew` | `homebrew` is the explicit rollback: launchd runs `/opt/homebrew/bin/ttyd` (or `/usr/local/bin/ttyd`), and every install and cutover prints a warning that the #1245 fix is not active and the ttyd watcher is again the only mitigation. It is never chosen automatically. Any other value is refused. |
+
+Set `TANGLECLAW_TTYD_RUNTIME` where the plist is written. For `deploy/install.sh`, or a cutover you
+run yourself, set it in that shell. For a cutover started from the setup wizard, set it in the
+TangleClaw server's plist (`EnvironmentVariables`) and restart the server, because the server passes its
+own environment to the cutover. The ttyd row of the system health panel says which binary launchd is
+actually running, and notes when it is not the owned runtime.
+
+Putting the owned runtime into service, and taking it out again, are Operator procedures with
+their own runbooks: [Roll out the owned ttyd runtime](runbooks/roll-out-the-owned-ttyd.md) and
+[Roll back the owned ttyd runtime](runbooks/roll-back-the-owned-ttyd.md).
+
+Build and manage the owned runtime by hand (none of these edit a plist or restart ttyd):
+
+```
+node scripts/ttyd-runtime.js provision                  # what install.sh runs: build and install only if needed
+node scripts/build-ttyd.js --out <stage-dir>            # build from deploy/ttyd/inputs.json, verified
+node scripts/ttyd-runtime.js install --from <stage-dir> # install; keeps the previous one as last known good
+node scripts/ttyd-runtime.js rollback                   # restore the last known good
+node scripts/ttyd-runtime.js status                     # which ttyd is selected, and whether each runtime verifies
+```
+
+`status` prints JSON. `selected` is the ttyd the resolver picks right now (with `managed: false` and a
+warning under the Homebrew rollback), or `refused` with the reason when it picks none. `current` and
+`previous` report the installed runtime and the last known good, each with `ok`, `stale` and every
+failing check. A completed cutover prints the ttyd it selected and records it in its result file as
+`ttydRuntime` (`{path, managed}`).
+
+A runtime verifies when its digest matches its manifest, it is current (see above), its manifest
+records exactly the sources and patches pinned in `deploy/ttyd/inputs.json`, its whole load graph
+stays within macOS system libraries, and it runs. macOS permissions follow the executable, so the first
+switch to `~/.tangleclaw/bin/ttyd`, and every rebuild that changes its sha256, needs the Operator's
+permission checkpoint in [the rollout runbook](runbooks/roll-out-the-owned-ttyd.md). Do not assume a
+grant survives a rebuild.
+
+**What an interrupted install or rollback leaves.** A runtime is two files, the binary and its
+manifest, so replacing one cannot be atomic. Both operations copy the incoming pair in beside the
+current one as `ttyd.new`, verify it there, and then rename the manifest and, last, the binary into
+place; the runtime being replaced is first copied to `ttyd.prev` (only if it verifies). Rollback
+copies `ttyd.prev`, never moves it, and copies the runtime it replaces to `ttyd.rolled-back`. Those
+copies are written to a `.tmp` name and renamed into place, never written over the old file, so an
+interrupted copy cannot damage the last known good. Whatever step fails, one of these holds:
+
+- the runtime the resolver selects verifies (the old one, or the new one), or
+- the resolver refuses the half-replaced pair. If a last known good verified before the failure, it
+  still verifies, and the refusal names it and `node scripts/ttyd-runtime.js rollback`, which
+  restores it.
+
+Nothing ever selects a partial runtime. When there is no verified last known good (a first install,
+or one that is stale after a pin change), `node scripts/ttyd-runtime.js provision` builds a current
+runtime instead.
+
+**Rolling back after `deploy/ttyd/inputs.json` changes.** The last known good was built from the old
+inputs, so it is stale and `rollback` refuses it, saying so. The way back is then the Homebrew ttyd:
+set `TANGLECLAW_TTYD_RUNTIME=homebrew` and select it for your ingress mode (`./deploy/install.sh` in
+direct mode, `node scripts/ingress-cutover.js --to caddy` in caddy mode); either restarts ttyd, under
+Operator/PM authority. This brings the leak back, the watcher is again the only mitigation, and every
+install and cutover says so. To return to the fix, unset the variable and follow
+[the rollout runbook](runbooks/roll-out-the-owned-ttyd.md), which builds a current runtime.
+
 ## Global Configuration (`config.json`)
 
 Auto-created on first run with defaults. Editable directly or via `PATCH /api/config`.

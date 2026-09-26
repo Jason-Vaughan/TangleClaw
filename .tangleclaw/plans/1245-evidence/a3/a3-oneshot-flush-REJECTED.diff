@@ -1,0 +1,51 @@
+diff -ru src-a3.orig/src/protocol.c src-a3/src/protocol.c
+--- src-a3.orig/src/protocol.c	2026-09-25 14:28:16
++++ src-a3/src/protocol.c	2026-09-25 14:28:16
+@@ -374,6 +374,7 @@
+         ((pty_ctx_t *)pss->process->ctx)->ws_closed = true;
+         if (process_running(pss->process)) {
+           pty_pause(pss->process);
++          pty_flush_output(pss->process);
+           lwsl_notice("killing process, pid: %d\n", pss->process->pid);
+           pty_kill(pss->process, server->sig_code);
+         }
+diff -ru src-a3.orig/src/pty.c src-a3/src/pty.c
+--- src-a3.orig/src/pty.c	2026-09-25 14:28:16
++++ src-a3/src/pty.c	2026-09-25 14:28:16
+@@ -163,6 +163,26 @@
+ #endif
+ }
+ 
++/*
++ * Discard whatever the child has written that ttyd has not read (#1245).
++ *
++ * On a websocket close ttyd stops reading the pty and signals the child. On
++ * Darwin a session leader's exit waits, with no timeout, for its terminal's
++ * output queue to drain; nothing reads it any more, so the child sticks in the
++ * exiting state, holding its pty, until ttyd itself exits. Flushing the output
++ * queue from the master side (FWRITE only: the input side is left alone) leaves
++ * the exit nothing to wait for. A no-op elsewhere.
++ */
++void pty_flush_output(pty_process *process) {
++#if defined(__APPLE__)
++  if (process == NULL || process->pty < 0) return;
++  int what = FWRITE;
++  ioctl(process->pty, TIOCFLUSH, &what);
++#else
++  (void) process;
++#endif
++}
++
+ bool pty_kill(pty_process *process, int sig) {
+   if (process == NULL) return false;
+ #ifdef _WIN32
+diff -ru src-a3.orig/src/pty.h src-a3/src/pty.h
+--- src-a3.orig/src/pty.h	2026-09-25 14:28:16
++++ src-a3/src/pty.h	2026-09-25 14:28:16
+@@ -64,5 +64,6 @@
+ int pty_write(pty_process *process, pty_buf_t *buf);
+ bool pty_resize(pty_process *process);
+ bool pty_kill(pty_process *process, int sig);
++void pty_flush_output(pty_process *process);
+ 
+ #endif  // TTYD_PTY_H

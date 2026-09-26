@@ -1,0 +1,40 @@
+diff -ru src-a3.orig/src/protocol.c src-final/src/protocol.c
+--- src-a3.orig/src/protocol.c	2026-09-25 14:28:16
++++ src-final/src/protocol.c	2026-09-25 14:36:07
+@@ -81,7 +81,21 @@
+ static void process_read_cb(pty_process *process, pty_buf_t *buf, bool eof) {
+   pty_ctx_t *ctx = (pty_ctx_t *)process->ctx;
+   if (ctx->ws_closed) {
++#if defined(__APPLE__)
++    // #1245: keep draining after the websocket closed. `read_cb` stops reading
++    // after every chunk and only a writable websocket restarts it, so without
++    // this the child's output queue is never read again. On Darwin a session
++    // leader cannot finish exiting while its output queue is non-empty, so the
++    // child sticks in the exiting state, holding its pty, until ttyd dies.
++    // Discard each chunk exactly once and read on; stop at end of file or a
++    // read error (buf == NULL). The closed session (ctx->pss) is never touched.
++    if (buf != NULL) {
++      pty_buf_free(buf);
++      pty_resume(process);
++    }
++#else
+     pty_buf_free(buf);
++#endif
+     return;
+   }
+ 
+@@ -373,7 +387,14 @@
+       if (pss->process != NULL) {
+         ((pty_ctx_t *)pss->process->ctx)->ws_closed = true;
+         if (process_running(pss->process)) {
++#if defined(__APPLE__)
++          // Start draining (see process_read_cb): reading may be stopped
++          // waiting for a writable websocket that will never come. ws_closed is
++          // already set above, so every chunk from here on is discarded.
++          pty_resume(pss->process);
++#else
+           pty_pause(pss->process);
++#endif
+           lwsl_notice("killing process, pid: %d\n", pss->process->pid);
+           pty_kill(pss->process, server->sig_code);
+         }

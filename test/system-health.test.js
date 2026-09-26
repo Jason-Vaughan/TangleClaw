@@ -32,21 +32,26 @@ const DARWIN = { platform: () => 'darwin', homedir: () => '/Users/op' };
 /**
  * A healthy ttyd reading, in the shape `ttydWatcher.measureLeak` really returns.
  *
- * `uptimeMs`/`minTtydAgeMs` are part of that shape (#1245) and are carried here
- * deliberately: a fixture missing a field the real producer emits makes every
- * branch that reads it unreachable, so the test passes while the code is
- * unexercised. Defaulted to an OLD ttyd, because that is the ordinary case —
- * a young one is the exception the panel has to speak about.
+ * Every field the producer emits is carried here deliberately — the reading's
+ * identity (`generation`, `sampledAt`), the unconfirmed `transient` count, the
+ * kill-switch state and the last receipt: a fixture missing a field the real
+ * producer emits makes every branch that reads it unreachable, so the test
+ * passes while the code is unexercised.
  */
 function healthyLeak(overrides) {
   return {
     pid: 4242,
+    generation: '4242@Fri Sep 25 11:28:54 2026',
+    sampledAt: Date.parse('2026-09-25T18:40:00Z'),
     pool: { exhausted: false, used: 40, cap: 511, ratio: 0.078 },
     orphans: 1,
+    transient: 0,
     orphanThreshold: 20,
     ptyThresholdRatio: 0.85,
-    uptimeMs: 6 * 60 * 60 * 1000,
-    minTtydAgeMs: 15 * 60 * 1000,
+    wedgeAgeMs: 30 * 1000,
+    disabled: false,
+    disabledBy: null,
+    lastReceipt: null,
     ...overrides
   };
 }
@@ -137,51 +142,110 @@ describe('lib/system-health (#345)', () => {
       assert.match(c.detail, /90 leaked tmux clients/);
     });
 
-    // #1245 — this row's remediation is `launchctl kickstart`, and a restart
-    // makes every terminal reconnect at once, which leaks. On a ttyd that only
-    // just restarted, the count shown may BE that burst, and the watcher is
-    // already holding its own gate down. Saying so is what stops the panel
-    // inviting the operator into a restart that buys nothing.
-    it('says when a young ttyd\'s orphan count may be the last restart\'s reconnect burst', async () => {
-      const c = await ttydVerdict({
-        measureLeak: async () => healthyLeak({ orphans: 25, uptimeMs: 4 * 60 * 1000 })
-      });
-      assert.equal(c.state, 'fired', 'it still reports the leak — it qualifies it');
-      assert.match(c.detail, /25 leaked tmux clients/);
-      assert.match(c.detail, /restarted 4 min ago/);
-      assert.match(c.detail, /holding off until it is 15 min old/);
+    // #1245 — the count is CONFIRMED wedges only, the number the watcher acts
+    // on. A reconnect burst's children are exiting but not yet confirmed; the
+    // panel names them separately, so a burst is visible without reading as a
+    // leak and without inviting a restart that would only make another burst.
+    it('does not fire on a reconnect burst — unconfirmed exiting children are named, not counted', async () => {
+      const c = await ttydVerdict({ measureLeak: async () => healthyLeak({ orphans: 0, transient: 25 }) });
+      assert.equal(c.state, 'clear');
+      assert.match(c.detail, /0 leaked tmux clients/);
+      assert.match(c.detail, /25 more exiting but not yet confirmed wedged \(not yet seen exiting for 30s\)/);
     });
 
-    it('does not qualify the count on a ttyd that has been up longer than the minimum age', async () => {
+    it('fires on confirmed wedges and names the unconfirmed burst beside them', async () => {
+      const c = await ttydVerdict({ measureLeak: async () => healthyLeak({ orphans: 22, transient: 6 }) });
+      assert.equal(c.state, 'fired');
+      assert.match(c.detail, /22 leaked tmux clients under ttyd \(threshold 20\)/);
+      assert.match(c.detail, /6 more exiting but not yet confirmed/);
+    });
+
+    it('says nothing about transients when there are none', async () => {
       const c = await ttydVerdict({ measureLeak: async () => healthyLeak({ orphans: 25 }) });
       assert.equal(c.state, 'fired');
-      assert.ok(!/reconnect burst/.test(c.detail),
-        `an old ttyd's leak is not excused by a restart: ${c.detail}`);
+      assert.ok(!/not yet confirmed/.test(c.detail), c.detail);
     });
 
-    // Pool exhaustion is never qualified. A full pool means no terminal can
-    // attach at all, so "this may be a restart burst" would be an invitation to
-    // wait through the #94 incident.
-    it('never qualifies POOL exhaustion, however young ttyd is', async () => {
+    // The kill switch (R22 Q5): with the watcher off nothing restarts a leaking
+    // ttyd, so a healthy reading can never read as clear.
+    it('is unknown — never clear — while the watcher is disabled, and names the switch', async () => {
       const c = await ttydVerdict({
-        measureLeak: async () => healthyLeak({
-          pool: { exhausted: true, used: 480, cap: 511, ratio: 0.94 },
-          orphans: 25,
-          uptimeMs: 30 * 1000
-        })
+        measureLeak: async () => healthyLeak({ disabled: true, disabledBy: 'TANGLECLAW_TTYD_WATCHER=off' })
       });
-      assert.equal(c.state, 'fired');
-      assert.ok(!/reconnect burst/.test(c.detail),
-        `a full pool is urgent regardless of ttyd's age: ${c.detail}`);
+      assert.equal(c.state, 'unknown');
+      assert.match(c.detail, /ttyd watcher is disabled \(TANGLECLAW_TTYD_WATCHER=off\)/);
+      assert.match(c.detail, /40\/511 slots in use; 1 leaked tmux clients/, 'the counts are still shown');
     });
 
-    it('does not qualify when ttyd\'s age could not be read', async () => {
-      const c = await ttydVerdict({
-        measureLeak: async () => healthyLeak({ orphans: 25, uptimeMs: null })
+    // With the watcher off, the panel is the only thing left that can prompt a
+    // restart, so a leak it can see must never be downgraded to "Could not check".
+    it('still FIRES on a full pool or confirmed wedges while the watcher is disabled, and says to act by hand', async () => {
+      const off = { disabled: true, disabledBy: 'TANGLECLAW_TTYD_WATCHER=off' };
+      const pool = await ttydVerdict({ measureLeak: async () => healthyLeak({ ...off, pool: { exhausted: true, used: 480, cap: 511, ratio: 0.94 } }) });
+      assert.equal(pool.state, 'fired');
+      assert.match(pool.detail, /disabled .*restart it by hand/);
+      systemHealth._reset();
+      const orphans = await ttydVerdict({ measureLeak: async () => healthyLeak({ ...off, orphans: 25 }) });
+      assert.equal(orphans.state, 'fired');
+    });
+
+    // The payload's `checkedAt` is the REQUEST time. Which ttyd and when it was
+    // sampled have to travel with the verdict, or the panel and the watcher can
+    // appear to disagree about the same instant (R22 Q2).
+    it('carries the reading\'s own pid, generation and sample time, and the last receipt', async () => {
+      const receipt = { at: 1, reason: 'orphan-children', from: { pid: 1, generation: 'g1' }, to: { pid: 4242, generation: 'g2' }, outcome: 'ok' };
+      const c = await ttydVerdict({ measureLeak: async () => healthyLeak({ lastReceipt: receipt }) });
+      assert.deepEqual(c.reading, {
+        pid: 4242,
+        generation: '4242@Fri Sep 25 11:28:54 2026',
+        sampledAt: '2026-09-25T18:40:00.000Z',
+        binary: null,
+        managed: null
       });
-      assert.equal(c.state, 'fired');
-      assert.ok(!/reconnect burst/.test(c.detail),
-        `an unread age establishes nothing, so it must not excuse a leak: ${c.detail}`);
+      assert.deepEqual(c.lastReceipt, receipt);
+    });
+
+    // #1245, ADR 0018: the fix lives in the owned runtime. A machine still on
+    // the Homebrew ttyd is not fixed, whatever its counts say today, and the
+    // live certification must be able to see which binary it is measuring.
+    it('says when launchd is running a binary other than the owned runtime', async () => {
+      const managedTtydPath = () => '/Users/op/.tangleclaw/bin/ttyd';
+      const c = await ttydVerdict({ managedTtydPath, measureLeak: async () => healthyLeak({ binary: '/opt/homebrew/bin/ttyd' }) });
+      assert.equal(c.state, 'clear', 'a note, not a state change');
+      assert.match(c.detail, /ttyd is running \/opt\/homebrew\/bin\/ttyd, not the owned runtime \/Users\/op\/\.tangleclaw\/bin\/ttyd, so the #1245 leak fix is not in force/);
+      assert.equal(c.reading.binary, '/opt/homebrew/bin/ttyd');
+      assert.equal(c.reading.managed, false);
+    });
+
+    it('says the binary is UNKNOWN — not "not managed" — when the probe could not read it', async () => {
+      const managedTtydPath = () => '/Users/op/.tangleclaw/bin/ttyd';
+      const c = await ttydVerdict({ managedTtydPath, measureLeak: async () => healthyLeak({ binary: null }) });
+      assert.equal(c.reading.managed, null);
+      assert.match(c.detail, /could not read which ttyd binary launchd is running/);
+      assert.ok(!/not the owned runtime/.test(c.detail), c.detail);
+    });
+
+    it('says nothing extra when launchd runs the owned runtime, and marks the reading managed', async () => {
+      const managedTtydPath = () => '/Users/op/.tangleclaw/bin/ttyd';
+      const c = await ttydVerdict({ managedTtydPath, measureLeak: async () => healthyLeak({ binary: '/Users/op/.tangleclaw/bin/ttyd' }) });
+      assert.ok(!/not in force/.test(c.detail), c.detail);
+      assert.equal(c.reading.managed, true);
+    });
+
+    it('drops a cached reading once ttyd has been replaced, instead of serving the dead process\'s counts', async () => {
+      let latest = '4242@Fri Sep 25 11:28:54 2026';
+      let calls = 0;
+      const c1 = await ttydVerdict({
+        latestGeneration: () => latest,
+        measureLeak: async () => { calls++; return healthyLeak({ orphans: 25 }); }
+      });
+      assert.equal(c1.state, 'fired');
+      latest = '5555@Fri Sep 25 12:00:00 2026';
+      const c2 = systemHealth.detectTtydLeak();
+      assert.equal(c2.state, 'unknown');
+      assert.match(c2.detail, /ttyd has restarted since the last reading/);
+      await systemHealth._settleTtyd();
+      assert.equal(calls, 2, 'a restart forces a re-measurement inside the TTL');
     });
 
     it('fires on the orphan gate when the pool reading failed — a broken pool never suppresses a leak', async () => {

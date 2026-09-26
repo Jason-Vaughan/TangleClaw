@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "purpose": "Pinned inputs for the TangleClaw-owned, self-contained ttyd runtime (#1245, ADR 0018). scripts/build-ttyd.js verifies every digest before use.",
+  "macosxDeploymentTarget": "14.0",
+  "cmake": {
+    "version": "3.31.6",
+    "wheel": "cmake-3.31.6-py3-none-macosx_10_10_universal2.whl",
+    "sha256": "da9d4fd9abd571fd016ddb27da0428b10277010b23bb21e3678f8b9e96e1686e",
+    "note": "Installed with pip --require-hashes into a venv inside the build work directory. Never Homebrew, never pip --user."
+  },
+  "sources": [
+    {
+      "name": "libuv",
+      "version": "1.52.1",
+      "url": "https://dist.libuv.org/dist/v1.52.1/libuv-v1.52.1.tar.gz",
+      "sha256": "66d511b9e6e334c0e62279eb234fbfb2b3110b1479c09b95b44c7afca8cff9e7",
+      "digestSource": "Homebrew formula libuv 1.52.1"
+    },
+    {
+      "name": "json-c",
+      "version": "0.19",
+      "url": "https://s3.amazonaws.com/json-c_releases/releases/json-c-0.19.tar.gz",
+      "sha256": "37ad0249902e301bd9052bf712e511fcc6acff4ecaad4b5900aad9ce564e26de",
+      "digestSource": "Homebrew formula json-c 0.19"
+    },
+    {
+      "name": "libwebsockets",
+      "version": "4.5.2",
+      "url": "https://github.com/warmcat/libwebsockets/archive/refs/tags/v4.5.2.tar.gz",
+      "sha256": "04244efb7a6438c8c6bfc79b21214db5950f72c9cf57e980af57ca321aae87b2",
+      "digestSource": "Homebrew formula libwebsockets 4.5.2 (homebrew-core 24a424896dadb2cce47c05eac07513c4dcf62858); the version the accepted A3c run linked"
+    },
+    {
+      "name": "ttyd",
+      "version": "1.7.7",
+      "url": "https://github.com/tsl0922/ttyd/archive/refs/tags/1.7.7.tar.gz",
+      "sha256": "039dd995229377caee919898b7bd54484accec3bba49c118e2d5cd6ec51e3650",
+      "digestSource": "Homebrew formula ttyd 1.7.7"
+    }
+  ],
+  "patches": [
+    {
+      "file": "patches/0001-pr1573-keep-reading-after-zero-byte-read.diff",
+      "sha256": "c8c2961466ab8b48f7aaf6de3482216fdda66a1602e5aadf6e2735218d03e2d9",
+      "origin": "tsl0922/ttyd PR #1573 at head 82a15573d041523c49563cfadf271505f5a38645 (GitHub .diff, unmodified)"
+    },
+    {
+      "file": "patches/0002-darwin-drain-after-close.diff",
+      "sha256": "8425f3f0958e177d215b7a3871274460270a5fb72a9c713bd53b70bf80d0dbd3",
+      "origin": "#1245 A3c, the candidate accepted under R22 (hunks identical to the accepted 672ac382... diff; only the file headers are normalized to a/ b/)"
+    }
+  ],
+  "build": {
+    "libuv": ["-DLIBUV_BUILD_SHARED=OFF", "-DBUILD_TESTING=OFF"],
+    "json-c": ["-DBUILD_SHARED_LIBS=OFF", "-DBUILD_STATIC_LIBS=ON", "-DBUILD_TESTING=OFF", "-DDISABLE_WERROR=ON", "-DBUILD_APPS=OFF"],
+    "libwebsockets": [
+      "-DLWS_WITH_SHARED=OFF", "-DLWS_WITH_STATIC=ON", "-DLWS_WITH_SSL=OFF",
+      "-DLWS_WITH_LIBUV=ON", "-DLWS_WITH_EVLIB_PLUGINS=OFF", "-DLWS_WITH_PLUGINS=OFF",
+      "-DLWS_IPV6=ON", "-DLWS_WITH_HTTP2=ON", "-DLWS_UNIX_SOCK=ON",
+      "-DLWS_WITHOUT_TESTAPPS=ON", "-DLWS_WITH_MINIMAL_EXAMPLES=OFF", "-DLWS_WITH_LIBEVENT=OFF"
+    ],
+    "ignorePrefixes": ["/opt/homebrew", "/usr/local", "/opt/local"]
+  },
+  "closure": {
+    "systemRoots": ["/usr/lib/", "/System/Library/"]
+  }
+}
