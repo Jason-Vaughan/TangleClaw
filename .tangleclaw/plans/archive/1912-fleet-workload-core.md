@@ -1,6 +1,6 @@
 ---
 title: "Fleet Workload Visibility, Phase A: launch-bound workload receipts, a bounded activity observer, and the composed fleet read (#1912)"
-status: BUILT AND REVIEWED; PR #1921 open, backend-only (UI deferred under A24/A25 as #1923, held on origin/held/ui-freeze-1912-dashboard-a3); A29/A30 display safety in, with ADR 0020 §3 amended; awaiting final exact-head CI and the PM's merge
+status: COMPLETE — Phase A shipped in PR #1921 (merged at 3da2c8ac, 2026-09-26, Architect ruling A31 at head b83ef15d); #1912 closed; dashboard UI deferred as #1923 (held on origin/held/ui-freeze-1912-dashboard-a3); archived
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-26 (message 806b9000), after Architect ruling FWV-A18 approved ADR 0020 at 533b1386
 contract: docs/adr/0020-session-workload-receipts.md (PR #1916). This plan implements it and does not restate it; where the two differ, the ADR wins and this plan is corrected.
 controlling_train_plan: /Users/jasonvaughan/Documents/Projects/TangleClaw-ProjectManager/.tangleclaw/plans/train-fleet-workload-visibility.md (the PM's; Phase A = A.1–A.3, A.4 typed dispatch excluded)

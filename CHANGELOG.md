@@ -343,6 +343,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- **Archived the Fleet Workload Phase A plan.** `.tangleclaw/plans/1912-fleet-workload-core.md` moved to `.tangleclaw/plans/archive/` now that PR #1921 has merged and #1912 is closed. The deferred dashboard view is tracked as #1923.
+
 - **ADR 0020 (accepted): session workload receipts** (#1912). A lane asserts its own workload through `tc workload set`. The server stamps identity and time from the verified launch binding, and the result is composed fail-closed with observed engine activity. Transcript parsing is banned as a source of clearance. A bounded background activity observer supplies engine state, and no fleet read captures a pane. Status: Accepted (Architect ruling FWV-A18); no implementation yet.
 
 - **ADR 0018 §4 gives the mode-aware repair** (#1245). A stale or invalid owned ttyd now sends the operator to `node scripts/ttyd-runtime.js provision`, then to `deploy/install.sh` in direct mode or `node scripts/ingress-cutover.js --to caddy` in caddy mode. The ADR said "rerun the installer", which is wrong on a caddy-mode host; the code already worked this way.
