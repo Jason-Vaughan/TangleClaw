@@ -1,6 +1,6 @@
 ---
 title: "Fleet Workload Visibility, Phase A: launch-bound workload receipts, a bounded activity observer, and the composed fleet read (#1912)"
-status: BUILT — A1–A4 committed (A4 13f138d5); boundary: synced main (ADR 0020 via #1916), cumulative review + PR next (not merged by this session)
+status: BUILT AND REVIEWED — A1–A4 done; boundary review rev-20260926T205009Z-fe3d8f70 resolved (verify ...6b3a3264, ...b240055a), 0 blocking; PR next (not merged by this session)
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-26 (message 806b9000), after Architect ruling FWV-A18 approved ADR 0020 at 533b1386
 contract: docs/adr/0020-session-workload-receipts.md (PR #1916). This plan implements it and does not restate it; where the two differ, the ADR wins and this plan is corrected.
 controlling_train_plan: /Users/jasonvaughan/Documents/Projects/TangleClaw-ProjectManager/.tangleclaw/plans/train-fleet-workload-visibility.md (the PM's; Phase A = A.1–A.3, A.4 typed dispatch excluded)
@@ -108,4 +108,4 @@ PR #1916 (ADR 0020) merges before this branch's PR. This branch syncs `main` bef
 - [x] Chunk A1: receipts and write surface
 - [x] Chunk A2: activity observer
 - [x] Chunk A3: composition, supersession, overrides, fleet read
-- [ ] Chunk A4: dashboard, guidance, docs; cumulative review + PR (not merged by this session)
+- [x] Chunk A4: dashboard, guidance, docs; cumulative review + PR (not merged by this session)
