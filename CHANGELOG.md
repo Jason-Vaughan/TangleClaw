@@ -6,6 +6,15 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **A session can report its own workload with `tc workload set`** (#1912, ADR 0020; Fleet Workload Visibility Phase A).
+  - **What it records:** the lane's state (`working`, `waiting-external`, `blocked` or `complete`), whether it is safe to clear, a one-line summary, what it is waiting on, and its issue, PR and task refs, branch and head.
+  - **Who can write it:** only a session with a verified launch, for itself, and only through the `tc` client (`POST /api/tc/workload`). The operator, an unbound caller and another project's launch are refused with `403 WORKLOAD_BINDING_REQUIRED`.
+  - **Stamped by the server:** project, session, launch and control-assignment ids, the per-launch sequence number and the time, all from the verified launch. A body that sends any of these, or any unknown field, is refused.
+  - **Validated at write:** exact values, consistency rules (`working` must be `do-not-clear`, `waiting-external` must say what it waits on) and field bounds. A lane can write at most one receipt per second.
+  - **Stored:** an append-only table (schema v50), unique on launch and sequence.
+  - **Reading it back:** `tc workload show` (`GET /api/tc/workload`) shows the lane its own newest receipt.
+  - **Not yet:** how receipts combine with observed engine activity into a fleet-wide verdict is the next part of Phase A.
+
 - **The ports panel shows which lease owners are marked "Not a project", and can undo the mark** (#1768). Marking an owner from the import banner used to leave no trace on the dashboard, and only a raw `POST /api/ports/owner-kind` reversed it. The owner's group now carries a **Not a project** badge and an **Is a project** button, which resets every lease under the name through the same route and re-checks the import banner.
 
 - **An opt-in provenance comment on the files TangleClaw generates for a project** (#1885, ADR 0019). A project can turn on `provenanceWatermark` to have its generated files open with a line like `<!-- tangleclaw:provenance Built by TangleClaw (Project: my-app) -->`, so a file's origin stays identifiable after it leaves the project.

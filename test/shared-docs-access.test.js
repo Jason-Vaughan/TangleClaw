@@ -80,7 +80,9 @@ describe('resolveAccess — operator', () => {
 describe('resolveAccess — project binding', () => {
   it('a live launch whose project matches the claim binds to that project and its groups', () => {
     const a = access.resolveAccess(req(BOUND_7), fakeDeps());
-    assert.deepEqual(a, { kind: KINDS.PROJECT, projectId: 7, groupIds: ['g-a', 'g-b'], reason: null });
+    assert.deepEqual(a, {
+      kind: KINDS.PROJECT, projectId: 7, groupIds: ['g-a', 'g-b'], reason: null, sessionId: 70, launchId: 'live-7'
+    });
   });
 
   it('with no launch id the caller is unbound, even with a project claim', () => {

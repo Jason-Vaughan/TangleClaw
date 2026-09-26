@@ -269,6 +269,7 @@ const launchSequence = require('./lib/launch-sequence');
 const ciStatus = require('./lib/ci-status');
 const master = require('./lib/master');
 const sharedDocsAccess = require('./lib/shared-docs-access');
+const workload = require('./lib/workload');
 const startupPrompt = require('./lib/startup-prompt');
 const startupControl = require('./lib/startup-control');
 const projectView = require('./lib/project-view');
@@ -4589,6 +4590,25 @@ route('POST', '/api/tc/start/next', (req, res, _params, body) => {
 route('POST', '/api/tc/start/ready', (req, res, _params, body) => {
   const { launchId, projectId } = _launchIdentity(req);
   const result = launchSequence.ready({ launchId, projectId, artifact: body || null });
+  return jsonResponse(res, result.status, result.body);
+});
+
+// POST /api/tc/workload — a session asserts its own workload (#1912, ADR 0020).
+//
+// The one write surface for workload: `tc workload set` in the lane's own pane.
+// Only a verified project launch may write, and only for itself; the server
+// stamps project, session, launch, assignment, sequence, time and source from
+// that launch (`lib/workload.js`). An assertion, never evidence, and it grants
+// nothing.
+route('POST', '/api/tc/workload', (req, res, _params, body) => {
+  const result = workload.record({ req, body });
+  return jsonResponse(res, result.status, result.body);
+});
+
+// GET /api/tc/workload — the calling lane's own newest receipt (`tc workload
+// show`). Same verified-launch binding as the write.
+route('GET', '/api/tc/workload', (req, res) => {
+  const result = workload.readOwn({ req });
   return jsonResponse(res, result.status, result.body);
 });
 
