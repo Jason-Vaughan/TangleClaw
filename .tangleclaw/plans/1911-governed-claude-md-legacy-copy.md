@@ -1,6 +1,6 @@
 # #1911 — Governed CLAUDE.md keeps TangleClaw's legacy whole-file guide beside the managed block
 
-**Status: BUILT on `fix/1911-governed-claude-md-legacy-copy`, PR pending (not merged by B1). Ruled by the Architect (A7–A10, 2026-09-26, Medusa 8869adf0). The full suite is green, and Critic and PR review found 0 blocking. No live-fleet healing was done.**
+**Status: PR #1917. The Architect rejected it for merge under A22 (three repair-path safety blockers), and the correction is on the same branch. Ruled A7–A10 (Medusa 8869adf0). No live-fleet healing.**
 Dispatched by the PM on 2026-09-26 (Medusa d5b2a91a). The dispatch rules out running contributor code
 and stops here until the Architect rules. The issue came from an external user (#1911); its body is
 analysis only, with no code attached. Archive this plan when #1911 closes.
@@ -102,6 +102,15 @@ cleans them by hand.
 
   A second repair must be a byte-identical no-op, and a refusal changes nothing. No live-fleet
   healing is authorized.
+
+## A22: merge rejected, then corrected (2026-09-26, Medusa c6ab9ee3)
+
+At a5993f55 the Architect rejected the merge on three narrow repair-path blockers. The A7–A10 architecture is otherwise accepted.
+1. **Quoting.** `repairCommand` must shellWord-quote every argv word, tested against hostile but legal paths. It now maps `lib/shell-word.js#shellWord` over `node`, the script, the project path and `--apply <digest>`. The test runs the emitted command through `/bin/sh` with a stub `node` that echoes its argv, over paths holding a space, `$HOME`, `$(…)`, a backtick, `"`, `\`, `'`, `;`, a newline and glob characters. Each one reaches the script byte for byte, and nothing executes.
+2. **Complete write.** `applyLegacyRepair` must complete all bytes or refuse without replacing the target. `_writeAll` continues through short writes. It throws on a write that makes no progress or fails, and the temp file's fstat size is checked before the rename. Any failure removes the temp file and leaves the target. The tests inject writes through `_setIoForTest`: short writes (7 bytes at a time) land the complete file; a zero-byte write and a mid-write ENOSPC both refuse with the target unchanged and no temp file left.
+3. **Symlink carriers.** A symlinked `CLAUDE.md` must be refused, checked with `lstat`, without mutation. `_carrierRefusal` refuses a symlink or non-regular file before reading and again just before the rename, and the CLI preview refuses it too. No target-binding design is proposed.
+
+Mutation checks: reverting each fix turns its tests red.
 
 ## Design (as built)
 

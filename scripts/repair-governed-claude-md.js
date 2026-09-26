@@ -90,6 +90,11 @@ function main(argv) {
   }
   const ctx = engines.legacyCarrierContext('markdown');
   if (!args.digest) {
+    const notRegular = legacy.carrierRefusal(file);
+    if (notRegular) {
+      emit({ status: 'refused', reason: notRegular }, [`${file}: REFUSED — ${notRegular}. Unchanged.`]);
+      return EXIT.REFUSED;
+    }
     let text;
     try {
       text = fs.readFileSync(file, 'utf8');

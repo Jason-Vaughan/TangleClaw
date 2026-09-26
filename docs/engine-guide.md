@@ -841,7 +841,7 @@ the plan together.
 
 **What `--apply` checks.** It refuses if the file or its plan changed since the preview, and it
 re-hashes the file just before replacing it. It writes atomically, keeps the file mode, and refuses
-a read-only carrier. It writes nothing on any refusal, and a second run finds nothing to do.
+a read-only carrier. It also refuses a symlinked carrier, which it never follows or replaces. It writes every byte or refuses without replacing the file. It writes nothing on any refusal, and a second run finds nothing to do. Every command TangleClaw prints for this is shell-quoted word by word, so any legal project path survives it (Architect A22).
 
 **What is never removed.** The Core, Extension and Global rules copies are never touched (A9):
 they are the operator's hand-kept copy. Nor are any section the block lacks, and anything from the

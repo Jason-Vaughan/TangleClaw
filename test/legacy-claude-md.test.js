@@ -145,7 +145,28 @@ describe('governed CLAUDE.md legacy duplicates (#1911)', () => {
     it('the repair command is absolute, so it runs from inside the governed project', () => {
       assert.ok(path.isAbsolute(legacy.REPAIR_SCRIPT));
       assert.ok(fs.existsSync(legacy.REPAIR_SCRIPT));
-      assert.equal(legacy.repairCommand('/p', 'abc'), `node "${legacy.REPAIR_SCRIPT}" "/p" --apply abc`);
+    });
+
+    it('quotes every word, so a hostile but legal project path reaches the script intact', () => {
+      // A stub `node` that echoes its argv, NUL-separated, stands in for the
+      // interpreter: the shell parses the emitted command and nothing else runs.
+      const bin = fs.mkdtempSync(path.join(base, 'bin-'));
+      fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nfor a in "$@"; do printf \'%s\\0\' "$a"; done\n');
+      fs.chmodSync(path.join(bin, 'node'), 0o755);
+      const cwd = fs.mkdtempSync(path.join(base, 'cwd-'));
+      const hostile = [
+        '/p/with space', '/p/$HOME', '/p/$(touch pwned)', '/p/`touch pwned`', '/p/"dq"',
+        '/p/back\\slash', "/p/it's", '/p/semi;touch pwned', '/p/new\nline', '/p/*glob?'
+      ];
+      for (const projectPath of hostile) {
+        for (const digest of [undefined, 'abc123']) {
+          const cmd = legacy.repairCommand(projectPath, digest);
+          const out = execFileSync('/bin/sh', ['-c', cmd], { cwd, env: { PATH: `${bin}:/usr/bin:/bin` }, encoding: 'utf8' });
+          const argv = out.split('\0').slice(0, -1);
+          assert.deepEqual(argv, [legacy.REPAIR_SCRIPT, projectPath, ...(digest ? ['--apply', digest] : [])], projectPath);
+        }
+      }
+      assert.equal(fs.existsSync(path.join(cwd, 'pwned')), false, 'nothing in a path was executed');
     });
 
     it('analysis is pure: it returns a plan and never touches the file', () => {
@@ -237,6 +258,91 @@ describe('governed CLAUDE.md legacy duplicates (#1911)', () => {
       const { digest } = legacy.analyzeLegacyCarrier(fs.readFileSync(md, 'utf8'), ctx);
       legacy.applyLegacyRepair(md, digest, ctx);
       assert.equal(fs.statSync(md).mode & 0o777, 0o664);
+    });
+  });
+
+  describe('the write completes or the target is not replaced', () => {
+    /**
+     * Apply with an injected write primitive.
+     * @param {Function} writeSync
+     * @returns {{md: string, before: string, result: object, leftovers: string[]}}
+     */
+    function applyWith(writeSync) {
+      const { proj, md } = affectedProject();
+      const before = fs.readFileSync(md, 'utf8');
+      const { digest } = legacy.analyzeLegacyCarrier(before, ctx);
+      const restore = legacy._setIoForTest({ writeSync });
+      let result;
+      try {
+        result = legacy.applyLegacyRepair(md, digest, ctx);
+      } finally {
+        restore();
+      }
+      const leftovers = fs.readdirSync(proj).filter((f) => f.includes('.tc-repair-'));
+      return { md, before, result, leftovers };
+    }
+
+    it('continues through short writes and lands every byte', () => {
+      const { md, before, result, leftovers } = applyWith((fd, buf, off, len) => fs.writeSync(fd, buf, off, Math.min(len, 7)));
+      assert.equal(result.status, 'applied');
+      const expected = legacy.repairedText(before, legacy.analyzeLegacyCarrier(before, ctx));
+      assert.equal(fs.readFileSync(md, 'utf8'), expected, 'the repaired file is complete');
+      assert.deepEqual(leftovers, []);
+    });
+
+    it('refuses a write that makes no progress, leaving the target and no temp file', () => {
+      const { md, before, result, leftovers } = applyWith(() => 0);
+      assert.equal(result.status, 'refused');
+      assert.match(result.reason, /stopped after 0 of/);
+      assert.equal(fs.readFileSync(md, 'utf8'), before);
+      assert.deepEqual(leftovers, []);
+    });
+
+    it('refuses a write that fails partway, leaving the target and no temp file', () => {
+      let calls = 0;
+      const { md, before, result, leftovers } = applyWith((fd, buf, off, len) => {
+        calls += 1;
+        if (calls > 1) throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+        return fs.writeSync(fd, buf, off, Math.min(len, 64));
+      });
+      assert.equal(result.status, 'refused');
+      assert.match(result.reason, /ENOSPC/);
+      assert.equal(fs.readFileSync(md, 'utf8'), before);
+      assert.deepEqual(leftovers, []);
+    });
+  });
+
+  describe('a symlink carrier is refused, never followed or replaced', () => {
+    it('apply refuses and leaves both the link and its target untouched', () => {
+      const { proj, md } = affectedProject();
+      const real = path.join(proj, 'REAL-CLAUDE.md');
+      fs.renameSync(md, real);
+      fs.symlinkSync(real, md);
+      const before = fs.readFileSync(real, 'utf8');
+      const { digest } = legacy.analyzeLegacyCarrier(before, ctx);
+
+      const result = legacy.applyLegacyRepair(md, digest, ctx);
+      assert.equal(result.status, 'refused');
+      assert.match(result.reason, /symlink/);
+      assert.ok(fs.lstatSync(md).isSymbolicLink(), 'the link is still a link');
+      assert.equal(fs.readFileSync(real, 'utf8'), before, 'its target is unchanged');
+    });
+
+    it('the preview refuses it too', () => {
+      const { proj, md } = affectedProject();
+      const real = path.join(proj, 'REAL-CLAUDE.md');
+      fs.renameSync(md, real);
+      fs.symlinkSync(real, md);
+      const out = (() => {
+        try {
+          return execFileSync(process.execPath, [SCRIPT, proj], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        } catch (err) {
+          assert.equal(err.status, 1);
+          return `${err.stdout || ''}`;
+        }
+      })();
+      assert.match(out, /symlink/);
+      assert.ok(fs.lstatSync(md).isSymbolicLink());
     });
   });
 

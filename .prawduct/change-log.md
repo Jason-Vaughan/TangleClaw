@@ -61,6 +61,13 @@ The PM dispatched this over Medusa (d5b2a91a). The plan came first and stopped a
 
 `test/sessions.test.js` covers the launch note, including that the prime never mutates the file. A mutation test that disabled the digest check turned the binding tests red.
 
+**Architect A22 correction.** The merge was rejected at a5993f55 on three repair-path safety blockers, and all three are fixed on the same branch:
+- `repairCommand` shellWord-quotes every argv word. A test sends hostile legal paths through `/bin/sh` and checks each arrives unchanged.
+- `_writeAll` writes every byte or refuses, and the fstat size is checked before the rename. Tests inject short, zero and ENOSPC writes.
+- A symlinked carrier is refused with `lstat`, before reading and again before the rename, and the preview refuses it too.
+
+A mutation check on each fix turned its tests red.
+
 ## 2026-09-26 — Train 2: malformed project tags, inline-handler encoding, the Not a project mark (#1375, #1384, #1768)
 
 <!-- prawduct: type=bugfix | scope=train-2 -->
