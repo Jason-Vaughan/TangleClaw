@@ -51,6 +51,7 @@ Chunks A1–A4 of `.tangleclaw/plans/1912-fleet-workload-core.md`, implementing 
   - `POST /api/tc/workload/narrowing` is operator-only, recorded in `workload_narrowings`.
   - A guard test fails if shipped code parses clearance phrases.
 - **A4:** a dashboard badge and a Workload detail row, `workloadLine` in every engine's config, the `workload` capability, and the docs.
+- **Boundary-review fixes:** a wrap request supersedes a receipt even after the wrap drawer acknowledges it (`wrap-sentinel` keeps `requestedAt`). A failed fleet fetch clears the dashboard badges (fail closed). The guidance and capability text are built from the server's constants. One session's failed assessment no longer stalls the observer.
 
 **Reviews.** A Critic review per chunk; carried findings rode each next commit. A3 had one blocking finding (the lane line untested), cleared by `verify-resolutions` rev-20260926T202440Z-ecd5128a.
 
