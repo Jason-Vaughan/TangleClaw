@@ -6,6 +6,12 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **Restart Session: after a wrap ends the session, relaunch the same project from the ended bar** (#1637). A wrap is most often run to clear the model's context and carry on, and that used to mean a trip back to the landing page. The relaunch is the ordinary launch (`POST /api/sessions/:project`) with `continuityMode: "continue"` and the project's default launch mode, so the new session still gets the wrap's handoff, and every launch gate still applies.
+  - **Offered only on durable evidence:** the status read confirms no session is running and the project's newest session `wrapped`. It is never offered for a killed or crashed session, while a wrap runs, or when liveness is unknown.
+  - **One press, at most one launch.** The button latches before the request. An answer that never arrived, or one after which a session may exist, is settled by reading status, never by sending again.
+  - **Refusals are shown by name and never routed around.** A STOP comes back with the button re-enabled. Stranded wraps and tunnel conflicts send you to Back to Projects, because this page does not acknowledge them. Unknown liveness holds the button until a reload.
+  - The decision logic is `public/session-relaunch.js`, tested in `test/session-relaunch.test.js`.
+
 - **Unanswered Medusa messages no longer wait silently: a delivery watchdog tracks each one and escalates it** (#1839, experimental). Until now TangleClaw recorded only wake nudges, so a message stored on the Hub but never read looked the same as one handled, and a blocked sender waited until the operator noticed a badge. The operator guide is `docs/medusa-delivery.md`.
   - **Each ordinary message to a recipient is now an exchange.** Its facts (sent, arrived, wake, read, acknowledged, replied, closed) are append-only, and the exchange's state is recomputed from them, so facts that race or arrive out of order still give the same answer.
   - **A send is recorded before the Hub is called.** A send whose Hub outcome is lost stays `send_unknown` rather than being retried or assumed delivered.
