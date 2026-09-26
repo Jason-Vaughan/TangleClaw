@@ -35,6 +35,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Harness: the scratch ttyd leads its own process group (#1245, Architect R27)
+
+<!-- prawduct: type=bugfix | scope=ttyd-1245 -->
+
+- **Run 5** (e9202d42, 03:29:23–05:36Z) PASSED every product gate:
+  - 2000/2000 cycles across 5 modes, and the 120-min soak;
+  - 0 wedges, 0 lingering, 0 restarts;
+  - owned PTYs 0→0, fds 16→17, 2000/2000 reaped.
+- **But its harness verdict was FAIL,** on two "survivors": the HARNESS itself (16642) and its own `ps`. The scratch ttyd had inherited the harness's process group, and a descendant sampled with that pgid recorded the harness's group as run-owned.
+- **Live-contact disclosure:** the diagnostic snapshot (bare-id filter) also ran a read-only lsof on a reused id (80116, the PM's `agy`); nothing was signalled.
+- **R27 ruling:** (b). Run 5 is kept as supporting evidence, and its fail is not relabelled. The evidence is in `.tangleclaw/plans/1245-evidence/packaged/run5/`.
+- **Own group:** the scratch ttyd is spawned `detached`, so it leads its own session and process group, and the run's group is never the harness's. The ledger records that root group with ttyd's own start time, so a late child left in it is still caught after ttyd is gone.
+- **The harness is excluded by exact identity only** (`notOwned`: PID plus start time), never by group, so a run process reusing that PID, or any other member of a recorded group, still counts.
+- **Snapshots:** they select via `ledger.survivors()` (identity), so a reused id is never listed or read by lsof.
+- **Tests (R27 regressions):**
+  - the harness and its ps are not survivors when ttyd leads its own group;
+  - the harness is excluded by identity even inside a recorded group, while the group is not blanket-excluded;
+  - a not-owned identity does not hide a run process reusing its PID;
+  - a late child in ttyd's own group is still caught;
+  - a wiring check that ttyd is spawned `detached`.
+- **The carried test:** exit 1, all omitted gone, empty output → `''`.
+- **Mutation checks:** not recording the root group, excluding by PID alone, and removing the survivor exclusion are all caught.
+- **Host smoke:** ttyd pgid == its pid (`Ss`); packaged 0 owned PTYs and 0 survivors; the control fails with 180 held ptmx for 60 wedges.
+
 ## 2026-09-26 — lsof exit 1 judged within the Architect's E/Z bounds (#1245, chunk 07)
 
 <!-- prawduct: type=bugfix | scope=ttyd-1245 -->

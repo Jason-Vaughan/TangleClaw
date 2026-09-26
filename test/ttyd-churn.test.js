@@ -208,6 +208,64 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
       assert.deepEqual(ledger.survivors(after).map((r) => r.pid), [700], 'the second 700 is the one that leaked');
     });
 
+    // R27. The scratch ttyd leads its own process group, so the run's group is
+    // ttyd's, never the harness's. Run 5 failed because ttyd had inherited the
+    // harness's group and the harness itself was then matched as a survivor.
+    it('never counts the harness, or its own ps, as a survivor when ttyd leads its own group', () => {
+      const ledger = new churn.ProcessLedger(500, { notOwned: [{ pid: 400, lstart: 'Fri Sep 26 02:59:00 2026' }] });
+      ledger.record(churn.parseProcTable([
+        `  400     1   400 Ss   01:00:00 Fri Sep 26 02:59:00 2026`,
+        `  500   400   500 S    01:00:00 ${T}`,
+        '  600   500   600 Ss+  00:10 Fri Sep 26 03:59:50 2026'
+      ].join('\n')));
+      const after = churn.parseProcTable([
+        '  400     1   400 Ss   02:07:00 Fri Sep 26 02:59:00 2026',
+        '  401   400   400 R    00:00 Fri Sep 26 05:36:00 2026'
+      ].join('\n'));
+      assert.deepEqual(ledger.survivors(after), []);
+    });
+
+    // The legacy shape from run 5: ttyd shared the harness's group, and a child
+    // sampled with that group id recorded it. The harness is excluded by its
+    // exact identity even inside a recorded group — but the GROUP is not
+    // blanket-excluded (R27), so any other member still counts.
+    it('excludes the harness by exact identity even inside a recorded group, without excluding the group', () => {
+      const H = 'Fri Sep 26 02:59:00 2026';
+      const ledger = new churn.ProcessLedger(500, { notOwned: [{ pid: 400, lstart: H }] });
+      ledger.record(churn.parseProcTable([
+        `  400     1   400 Ss   01:00:00 ${H}`,
+        `  500   400   400 S    01:00:00 ${T}`,
+        '  600   500   400 S    00:00 Fri Sep 26 03:59:50 2026'
+      ].join('\n')));
+      const after = churn.parseProcTable([
+        `  400     1   400 Ss   02:07:00 ${H}`,
+        '  650     1   400 S    00:20 Fri Sep 26 04:00:05 2026'
+      ].join('\n'));
+      assert.deepEqual(ledger.survivors(after).map((r) => r.pid), [650], 'the harness is not a survivor; a leaked member of the group is');
+    });
+
+    it('the scratch ttyd is spawned in its own process group (detached)', () => {
+      const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'scripts', 'ttyd-churn.js'), 'utf8');
+      assert.match(src, /spawn\(ttydBin, \[[^\]]*\], \{[^}]*detached: true/);
+    });
+
+    it('excludes a not-owned identity by PID AND start time only, so a run process reusing that PID is still caught', () => {
+      const ledger = new churn.ProcessLedger(500, { notOwned: [{ pid: 700, lstart: 'Fri Sep 26 01:00:00 2026' }] });
+      ledger.record(churn.parseProcTable(PS));
+      const after = churn.parseProcTable('  700     1   700 ?Es  00:40 Fri Sep 26 03:59:55 2026');
+      assert.deepEqual(ledger.survivors(after).map((r) => r.pid), [700], 'the run\'s 700 is not the excluded 700');
+    });
+
+    // R27 leak coverage: a child caught in ttyd's own group (e.g. before it
+    // moved into a session of its own), and anything it left behind, is found
+    // after ttyd itself is gone, even if its PID was never sampled.
+    it('still catches a late child left in the ttyd\'s own group after ttyd has gone', () => {
+      const ledger = new churn.ProcessLedger(500);
+      ledger.record(churn.parseProcTable(PS));
+      const after = churn.parseProcTable('  555     1   500 ?Es  00:20 Fri Sep 26 04:00:05 2026');
+      assert.deepEqual(ledger.survivors(after).map((r) => r.pid), [555]);
+    });
+
     it('does not claim a group whose id was reused by a new leader', () => {
       const ledger = new churn.ProcessLedger(500);
       ledger.record(churn.parseProcTable(PS));
@@ -252,6 +310,10 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
       it('keeps exit 1 when an omitted process is identity-proven gone: absent, or its PID now has another start time', () => {
         assert.equal(churn.lsofOutput(exit1(), OUT, REQ, after([])), OUT, 'absent after lsof');
         assert.equal(churn.lsofOutput(exit1(), OUT, REQ, after([[700, { lstart: L2, stat: 'Ss' }]])), OUT, 'PID reused by a new process');
+      });
+
+      it('reads exit 1 with every omitted process gone and no output as "nothing held"', () => {
+        assert.equal(churn.lsofOutput(exit1(), '', REQ, after([])), '');
       });
 
       it('keeps exit 1 when an omitted process is the SAME identity in exact state E or Z, read after lsof', () => {

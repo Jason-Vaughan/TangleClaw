@@ -212,18 +212,22 @@ async function readOwnedPtys(rows) {
  * @returns {Promise<void>}
  */
 async function snapshot(dir, label, ledger) {
+  // Selected through the ledger's identity check (PID + start time), so a
+  // reused PID or group id is never listed, let alone read by lsof.
   const out = [];
-  try {
-    const ps = await run('ps', ['-A', '-o', 'pid,ppid,pgid,stat,etime,command']);
-    const lines = ps.split('\n');
-    out.push(lines[0], ...lines.slice(1).filter((l) => {
-      const m = l.trim().match(/^(\d+)\s+(\d+)\s+(\d+)/);
-      return m && (ledger.pids.has(+m[1]) || ledger.pgids.has(+m[3]));
-    }));
-  } catch (err) { out.push(`ps failed: ${err.message}`); }
-  const live = [...ledger.pids].filter(alive);
-  if (live.length) {
-    try { out.push('--- lsof', await run('lsof', ['-p', live.join(',')])); } catch (err) { out.push('--- lsof', err.stdout || `lsof failed: ${err.message}`); }
+  let rows = [];
+  const table = await readProcTable();
+  if (table) rows = ledger.survivors(table);
+  else out.push('ps failed');
+  const pids = rows.map((r) => r.pid);
+  if (pids.length) {
+    try {
+      const ps = await run('ps', ['-o', 'pid,ppid,pgid,stat,etime,lstart,command', '-p', pids.join(',')]);
+      out.push(ps.trimEnd());
+    } catch (err) { out.push(err.stdout || `ps failed: ${err.message}`); }
+    try { out.push('--- lsof', await run('lsof', ['-p', pids.join(',')])); } catch (err) { out.push('--- lsof', err.stdout || `lsof failed: ${err.message}`); }
+  } else {
+    out.push('(no run-owned process by identity)');
   }
   fs.mkdirSync(path.join(dir, 'snapshots'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'snapshots', `${label}.txt`), out.join('\n') + '\n');
@@ -445,8 +449,11 @@ async function main(o) {
     Object.assign(s, { shim: l.shim, env: l.env });
     await run(l.shim, ['new-session', '-d', '-s', 'churn', '-x', '120', '-y', '40', '-c', dir, path.join(dir, 'generator.sh')], { env: l.env });
 
+    // `detached`: the scratch ttyd leads its own session and process group, so
+    // the run's group is ttyd's — never the harness's. Sharing the harness's
+    // group made the harness itself look like a surviving run process.
     const ttyd = spawn(ttydBin, ['--writable', '--url-arg', '--interface', sock, '--port', '0',
-      '--client-option', 'scrollback=10000', l.attach], { env: l.env, stdio: ['ignore', 'ignore', fs.openSync(path.join(dir, 'ttyd.log'), 'a')] });
+      '--client-option', 'scrollback=10000', l.attach], { env: l.env, detached: true, stdio: ['ignore', 'ignore', fs.openSync(path.join(dir, 'ttyd.log'), 'a')] });
     s.ttydPid = ttyd.pid;
     ttyd.on('exit', () => { exitedEarly = true; });
     ttyd.on('error', () => { exitedEarly = true; });
@@ -454,7 +461,10 @@ async function main(o) {
     while (!fs.existsSync(sock) && Date.now() < socketDeadline) await sleep(50);
     if (!fs.existsSync(sock)) throw new Error('the scratch ttyd did not create its socket');
 
-    s.ledger = new churn.ProcessLedger(s.ttydPid);
+    // The harness is excluded by its EXACT identity (PID + start time) only.
+    const selfTable = await readProcTable();
+    const self = selfTable && selfTable.find((r) => r.pid === process.pid);
+    s.ledger = new churn.ProcessLedger(s.ttydPid, { notOwned: self ? [{ pid: self.pid, lstart: self.lstart }] : [] });
     const baseTable = await readProcTable();
     if (baseTable) s.ledger.record(baseTable);
     report.baseline = { pool: basePool, fds: await readFds(s.ttydPid), ownedPtys: baseTable ? await readOwnedPtys(s.ledger.owned(baseTable)) : null };
