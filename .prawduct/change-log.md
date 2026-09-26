@@ -62,6 +62,20 @@ The PM dispatched this over Medusa (289a9266) under Architect ruling R43. Plan: 
 **Filed.** #1901: a caddy-mode host has no supported refresh for the server plist, `~/.tmux.conf` or dependencies.
 
 **Suite.** Two full runs each failed only the known load flake in `test/dir-scanner.test.js` (#1884/#1658) while another session's suite ran alongside. That test passes 3/3 in isolation on this tree and on base. Recorded `--degraded`.
+## 2026-09-26 — A stranded wake nudge no longer blocks its own recovery (#1621)
+
+<!-- prawduct: type=bugfix | scope=1621-stranded-wake-nudge -->
+
+The single chunk of `.tangleclaw/plans/1621-stranded-wake-nudge.md`. The PM dispatched it to Builder2 over Medusa (73798d5f) and approved the fix scope (081f2259).
+
+**Problem.** A nudge whose Enter is lost stays unsubmitted in the composer. #1839's receipt check records it as not accepted and the watchdog re-arms the wake, but the draft gate read the stranded nudge as operator input. So it refused the re-arm, and every later wake, until the exchange escalated.
+
+**The change.**
+- `medusa-wake.isOwnNudge` recognises a composer holding only a switchboard nudge and its wake ref. The pattern is derived from `_nudgeLineFor` + `withNonce`, and every slot is pinned. `_assessPane` treats such a composer as `at-prompt`, but only when its lower border was seen, and it checks before both refusal branches, because a wrapped nudge leaves the cursor on a continuation row, where the gate would otherwise say `no-prompt`.
+- `tmux._clearPromptLine` clears a stranded nudge without filing it in the draft store. It then re-reads the composer, and `sendKeys` refuses to paste after anything left behind.
+- Docs: `docs/medusa-delivery.md` "Wakes and re-arms" and CHANGELOG `### Fixed`, which also amends #1839's "still waits for a clear composer" sentence.
+
+**Not done.** The reason the Enter is lost at all is not established. Whether one `C-u` clears a wrapped nudge was not checked on a live Claude pane; the re-read guard makes a partial clear fail as `inject-failed`.
 
 ## 2026-09-26 — Opt-in provenance line on TangleClaw's private generated files (#1885, #1888)
 
