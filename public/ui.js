@@ -1022,6 +1022,18 @@ function renderAwarenessDetail(project) {
 }
 
 /**
+ * Format a project's tags for the card detail panel. Checks the shape rather
+ * than the length, because a string has a length too and `.map` on it throws,
+ * which takes the whole card down.
+ * @param {*} tags - The project's tags
+ * @returns {string} Escaped, comma-joined tags, or "None"
+ */
+function formatTagList(tags) {
+  if (!Array.isArray(tags) || tags.length === 0) return 'None';
+  return tags.map(t => esc(t)).join(', ');
+}
+
+/**
  * Render a card's detail panel.
  *
  * Pure — builds a string and touches no DOM — so `renderCard` can emit it
@@ -1037,7 +1049,7 @@ function renderCardDetail(project) {
   const engineInfo = project.engine ? `${esc(project.engine.name)}` : 'No engine';
   const sessionInfo = renderSessionDetail(project);
   const awarenessInfo = renderAwarenessDetail(project);
-  const tagsInfo = (project.tags || []).length > 0 ? project.tags.map(t => esc(t)).join(', ') : 'None';
+  const tagsInfo = formatTagList(project.tags);
   const gitInfo = renderGitDetail(project);
 
   const unreadable = tcUnreadableNotice(project);

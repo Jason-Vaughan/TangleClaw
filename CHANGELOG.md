@@ -193,6 +193,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **A project whose stored tags are a string no longer breaks its dashboard card** (#1375). Before `POST /api/projects` validated tags, it could store them as a JSON string. The card detail panel checked only `.length` and then called `.map`, which a string does not have, so opening the card threw; the settings modal's `.join` threw the same way, and the tag filter matched substrings (`prod` matched `production`). The store now reads tags as a list of strings whatever the row holds: a string is split on commas like the create form's field, an array keeps its string members, anything else is empty. The card also checks the shape itself and shows None. Saving the project rewrites the row in the corrected shape.
+
 - **Closing a terminal tab no longer leaks a pseudo-terminal on macOS: TangleClaw ships its own ttyd** (#1245, ADR 0018). ttyd stops reading a terminal once its tab closes. On macOS the terminal's process cannot finish exiting while its last output is unread, so it stuck, holding a pseudo-terminal, until ttyd restarted. That is why the watcher restarted ttyd every few hours.
   - **The fix:** launchd now runs a TangleClaw-owned ttyd 1.7.7 at `~/.tangleclaw/bin/ttyd` that keeps reading and discarding that output until the process exits.
   - **It is self-contained:** it loads only macOS system libraries, so a Homebrew upgrade cannot break it. It is built reproducibly from pinned, verified sources with `node scripts/build-ttyd.js`.

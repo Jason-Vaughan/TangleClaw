@@ -985,7 +985,8 @@ describe('the dashboard actually consults the helpers (#885)', () => {
         renderSessionHealthDetail: () => '',
         renderGitDetail: () => 'GIT-DELEGATED',
         tcUnreadableNotice: () => ({ why: 'FOLDER-DELEGATED', remedy: '' }),
-        renderNextActionRow: () => ''
+        renderNextActionRow: () => '',
+        formatTagList: liftRenderer(ui, 'function formatTagList(tags)', 'formatTagList', { esc })
       });
 
       const html = render({ name: 'p', engine: null, tags: [], groups: [] });

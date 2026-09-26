@@ -214,7 +214,8 @@ describe('the card detail panel (#1015)', () => {
       renderSessionHealthDetail: () => '',
       renderGitDetail: () => 'git',
       tcUnreadableNotice: () => null,
-      renderNextActionRow: () => nextRowHtml
+      renderNextActionRow: () => nextRowHtml,
+      formatTagList: lift('function formatTagList(tags)', 'formatTagList', { esc })
     })(project);
   }
 
@@ -234,6 +235,11 @@ describe('the card detail panel (#1015)', () => {
 
   it('is a string, touching no DOM, so a re-render can emit it inline', () => {
     assert.equal(typeof detail(WITH_NEXT), 'string');
+  });
+
+  it('renders a legacy string tags value as None instead of throwing (#1375)', () => {
+    const html = detail({ ...WITH_NEXT, tags: 'not-an-array' });
+    assert.match(html, /Tags<\/span><span class="detail-value">None</);
   });
 });
 
