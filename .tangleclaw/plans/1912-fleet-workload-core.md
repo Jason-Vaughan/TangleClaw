@@ -13,6 +13,8 @@ critic_mode: chunk per chunk, cumulative at the boundary before the PR
 
 # Fleet Workload Visibility, Phase A (#1912)
 
+**Requirements Confidence: High.** The contract is ADR 0020, accepted by the Architect as FWV-A18 after the FWV-A17 revisions. The PM's train plan fixes the scope (A.1–A.3, with A.4 typed dispatch excluded). The ADR ratifies the one judgment-dependent set of numbers, the expiry windows and the observer budget, and the observer budget is measured on this host (p95 29 ms per capture).
+
 One branch, one PR, four chunks. It is not merged by this session (Pilot Envelope).
 Out of scope: typed assignment-dispatch and dispatch supersession (ADR §4, a named dependency not
 authorized by FWV-A18); Phase B (#1877); Phase C (#1889); Project Master workload (composes UNKNOWN).
