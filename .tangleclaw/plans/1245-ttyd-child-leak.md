@@ -88,6 +88,9 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
 - [ ] Verify (the full suite), the cumulative Critic, one draft PR ONLY when the PM authorizes (pilot boundary: no merge).
       The PR body says `Refs #1245`, NOT `Fixes #1245`: the issue stays open until live certification (review
       rev-20260926T150050Z-6620a07c R-11).
+      Deferred from the PR review (note): `test/ttyd-churn.test.js` and `test/ttyd-watcher.test.js` still carry ruling
+      and chunk ids in describe titles and comments (`R27`, `R22 Q2`–`Q5`, "Architect ruling on chunk 07"). `lib/` and
+      `scripts/` are clean. Fold the deletion into the next commit that touches those tests.
       #1245 stays open until post-merge live certification. D3 (upstream offer) is prepared separately and not submitted
       without authorization
 
