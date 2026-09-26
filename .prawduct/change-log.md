@@ -35,6 +35,21 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Review fixes for the owned runtime (#1245, Critic rev-20260926T005348Z-79b3ab22)
+
+<!-- prawduct: type=bugfix | scope=ttyd-1245 -->
+
+- **Provenance (R-2):** `verifyRuntime` now checks the manifest's recorded source and patch digests against `deploy/ttyd/inputs.json`. `--version` cannot tell builds apart, so a runtime built without the fix is refused.
+- **Base directory (R-3):** `install.sh` passes `--base-dir "$HOME/.tangleclaw"`, the same base it writes everything else under.
+- **Which binary runs (R-5):** the watcher's reading records the running binary (`ps -p <pid> -o comm=`), and the health row notes when it is not the owned runtime. The live certification can see whether the fix is actually in force.
+- **Docs (R-1, R-6):**
+  - The CHANGELOG no longer claims the packaged binary's acceptance before it has run, and no longer contradicts itself.
+  - The configuration reference says where `TANGLECLAW_TTYD_RUNTIME` must be set.
+- **Notes:**
+  - A test keeps the two system-root declarations in sync.
+  - The watcher's unused reading history became a single `_latest`.
+  - The FEATURES wording on the wedge rule is corrected.
+
 ## 2026-09-26 — Owned ttyd runtime, part 2: one resolver, transactional install, fail-closed wiring (#1245, chunk 06)
 
 <!-- prawduct: type=feature | scope=ttyd-1245 -->

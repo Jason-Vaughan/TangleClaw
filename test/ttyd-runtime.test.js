@@ -21,6 +21,11 @@ const cli = require('../scripts/ttyd-runtime');
 const REPO = path.join(__dirname, '..');
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
+// The pinned inputs a runtime must have been built from (stands in for
+// deploy/ttyd/inputs.json), and a manifest's record of building from them.
+const EXPECTED = { sources: [{ name: 'ttyd', sha256: 'a'.repeat(64) }, { name: 'libwebsockets', sha256: 'b'.repeat(64) }], patches: ['c'.repeat(64), 'd'.repeat(64)] };
+const BUILT_FROM = { sources: EXPECTED.sources, patches: EXPECTED.patches.map((d) => ({ sha256: d })) };
+
 /**
  * Host operations for tests: a "binary" is a file whose text is its version
  * line; one containing "homebrew" fails the closure; one containing "broken"
@@ -39,7 +44,8 @@ function deps(homebrew = null) {
       if (text.includes('broken')) throw new Error('dyld: Library not loaded');
       return text;
     },
-    homebrewTtyd: () => homebrew
+    homebrewTtyd: () => homebrew,
+    expectedInputs: () => EXPECTED
   };
 }
 
@@ -55,7 +61,7 @@ function stage(dir, content, manifestOverride = {}) {
   fs.writeFileSync(path.join(dir, 'ttyd'), content, { mode: 0o755 });
   const digest = sha(content);
   fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({
-    schema: 1, binary: { file: 'ttyd', sha256: digest, version: content.trim() }, ...manifestOverride
+    schema: 1, binary: { file: 'ttyd', sha256: digest, version: content.trim() }, inputs: BUILT_FROM, ...manifestOverride
   }));
   return digest;
 }
@@ -101,11 +107,33 @@ describe('lib/ttyd-runtime (#1245, ADR 0018)', () => {
       for (const [content, pattern] of cases) {
         fs.mkdirSync(P().bin, { recursive: true });
         fs.writeFileSync(P().ttyd, content, { mode: 0o755 });
-        fs.writeFileSync(P().manifest, JSON.stringify({ schema: 1, binary: { sha256: sha(content), version: content.trim() } }));
+        fs.writeFileSync(P().manifest, JSON.stringify({ schema: 1, binary: { sha256: sha(content), version: content.trim() }, inputs: BUILT_FROM }));
         assert.throws(() => runtime.resolveTtydPath({ baseDir: base, env: {}, deps: deps() }), pattern, content);
       }
       fs.rmSync(P().manifest);
       assert.throws(() => runtime.resolveTtydPath({ baseDir: base, env: {}, deps: deps() }), /manifest .* missing or unreadable/);
+    });
+
+    // `--version` cannot tell builds apart: every static build says
+    // `1.7.7-unknown`. A runtime built without the fix, or before a patch
+    // changed, must not be selected as the fix.
+    it('refuses a runtime built without the pinned patches, or from different sources', () => {
+      const s = path.join(scratch, 'nofix');
+      stage(s, 'ttyd version 1.7.7-unknown\n', { inputs: { sources: BUILT_FROM.sources, patches: [{ sha256: 'c'.repeat(64) }] } });
+      assert.throws(() => runtime.installRuntime({ baseDir: base, stageDir: s, deps: deps() }), /not built with exactly the patches pinned/);
+      const s2 = path.join(scratch, 'othersrc');
+      stage(s2, 'ttyd version 1.7.7-unknown\n', { inputs: { sources: [{ name: 'ttyd', sha256: 'e'.repeat(64) }, BUILT_FROM.sources[1]], patches: BUILT_FROM.patches } });
+      assert.throws(() => runtime.installRuntime({ baseDir: base, stageDir: s2, deps: deps() }), /not built from the pinned ttyd/);
+      const s3 = path.join(scratch, 'noprov');
+      stage(s3, 'ttyd version 1.7.7-unknown\n', { inputs: undefined });
+      assert.throws(() => runtime.installRuntime({ baseDir: base, stageDir: s3, deps: deps() }), /not built from the pinned/);
+    });
+
+    it('the real expected inputs are the ones in deploy/ttyd/inputs.json', () => {
+      const inputs = JSON.parse(fs.readFileSync(path.join(REPO, 'deploy', 'ttyd', 'inputs.json'), 'utf8'));
+      const expected = runtime.defaultDeps().expectedInputs();
+      assert.deepEqual(expected.patches, inputs.patches.map((p) => p.sha256));
+      assert.deepEqual(expected.sources.map((s) => s.name), inputs.sources.map((s) => s.name));
     });
 
     it('selects Homebrew ONLY when the operator asks, and says the fix is off', () => {
@@ -218,6 +246,18 @@ describe('lib/ttyd-runtime (#1245, ADR 0018)', () => {
       assert.match(r.err, /^WARNING: .*WITHOUT the #1245 leak fix/);
     });
 
+    it('--base-dir overrides the default base, wherever it appears', () => {
+      const other = path.join(scratch, 'other');
+      fs.mkdirSync(other);
+      stage(path.join(scratch, 's1'), 'ttyd version 1.7.7-a\n');
+      const out = [];
+      const code = cli.main(['--base-dir', other, 'install', '--from', path.join(scratch, 's1')], { baseDir: base, env: {}, deps: deps(), out: (s) => out.push(s), err: () => {} });
+      assert.equal(code, 0);
+      assert.equal(fs.existsSync(runtime.runtimePaths(other).ttyd), true, 'installed under --base-dir');
+      assert.equal(fs.existsSync(runtime.runtimePaths(base).ttyd), false, 'not under the default');
+      assert.equal(cli.main(['resolve', '--base-dir'], { baseDir: base, env: {}, deps: deps(), out: () => {}, err: () => {} }), 2);
+    });
+
     it('install says ttyd was not restarted', () => {
       stage(path.join(scratch, 's1'), 'ttyd version 1.7.7-a\n');
       assert.match(run(['install', '--from', path.join(scratch, 's1')]).out, /NOT been restarted/);
@@ -231,7 +271,7 @@ describe('lib/ttyd-runtime (#1245, ADR 0018)', () => {
     const cutover = fs.readFileSync(path.join(REPO, 'scripts', 'ingress-cutover.js'), 'utf8');
 
     it('install.sh takes TTYD_PATH from the resolver, never from PATH, and stops before writing any plist', () => {
-      assert.match(installSh, /TTYD_PATH="\$\(node "\$\{REPO_DIR\}\/scripts\/ttyd-runtime\.js" resolve\)" \|\| \{/);
+      assert.match(installSh, /TTYD_PATH="\$\(node "\$\{REPO_DIR\}\/scripts\/ttyd-runtime\.js" resolve --base-dir "\$HOME\/\.tangleclaw"\)" \|\| \{/);
       assert.doesNotMatch(installSh, /TTYD_PATH="\$\(command -v ttyd\)"/);
       assert.ok(installSh.indexOf('ttyd-runtime.js" resolve') < installSh.indexOf('__TTYD_PATH__'),
         'the runtime is resolved before the plist is generated');

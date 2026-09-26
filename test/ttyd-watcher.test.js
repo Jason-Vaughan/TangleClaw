@@ -84,6 +84,7 @@ function ttydRunner(overrides = {}) {
     'sh:-c': '54\n', // ratio 0.106 — nowhere near the 0.85 pool gate
     'ps:-A': psRows([]),
     'ps:-o': `${LSTART}\n`,
+    'ps:-p': '/Users/op/.tangleclaw/bin/ttyd\n',
     'launchctl:kickstart': '',
     ...overrides
   });
@@ -279,9 +280,10 @@ describe('ttyd-watcher', () => {
       assert.equal((await ttydWatcher.takeReading()).pid, null);
     });
 
-    it('carries the pid, a generation bound to ttyd\'s start time, and the sample time', async () => {
+    it('carries the pid, a generation bound to ttyd\'s start time, the running binary, and the sample time', async () => {
       ttydWatcher._setRunner(ttydRunner());
       const r = await ttydWatcher.takeReading();
+      assert.equal(r.binary, '/Users/op/.tangleclaw/bin/ttyd', 'which executable launchd is running (#1245, ADR 0018)');
       assert.equal(r.pid, TTYD_PID);
       assert.equal(r.generation, `${TTYD_PID}@${LSTART}`);
       assert.equal(r.sampledAt, clock.now());

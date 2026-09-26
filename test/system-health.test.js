@@ -198,9 +198,30 @@ describe('lib/system-health (#345)', () => {
       assert.deepEqual(c.reading, {
         pid: 4242,
         generation: '4242@Fri Sep 25 11:28:54 2026',
-        sampledAt: '2026-09-25T18:40:00.000Z'
+        sampledAt: '2026-09-25T18:40:00.000Z',
+        binary: null,
+        managed: false
       });
       assert.deepEqual(c.lastReceipt, receipt);
+    });
+
+    // #1245, ADR 0018: the fix lives in the owned runtime. A machine still on
+    // the Homebrew ttyd is not fixed, whatever its counts say today, and the
+    // live certification must be able to see which binary it is measuring.
+    it('says when launchd is running a binary other than the owned runtime', async () => {
+      const managedTtydPath = () => '/Users/op/.tangleclaw/bin/ttyd';
+      const c = await ttydVerdict({ managedTtydPath, measureLeak: async () => healthyLeak({ binary: '/opt/homebrew/bin/ttyd' }) });
+      assert.equal(c.state, 'clear', 'a note, not a state change');
+      assert.match(c.detail, /ttyd is running \/opt\/homebrew\/bin\/ttyd, not the owned runtime \/Users\/op\/\.tangleclaw\/bin\/ttyd, so the #1245 leak fix is not in force/);
+      assert.equal(c.reading.binary, '/opt/homebrew/bin/ttyd');
+      assert.equal(c.reading.managed, false);
+    });
+
+    it('says nothing extra when launchd runs the owned runtime, and marks the reading managed', async () => {
+      const managedTtydPath = () => '/Users/op/.tangleclaw/bin/ttyd';
+      const c = await ttydVerdict({ managedTtydPath, measureLeak: async () => healthyLeak({ binary: '/Users/op/.tangleclaw/bin/ttyd' }) });
+      assert.ok(!/not in force/.test(c.detail), c.detail);
+      assert.equal(c.reading.managed, true);
     });
 
     it('drops a cached reading once ttyd has been replaced, instead of serving the dead process\'s counts', async () => {

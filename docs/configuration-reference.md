@@ -139,6 +139,12 @@ before changing anything and say how to fix it.
 |---|---|---|
 | `TANGLECLAW_TTYD_RUNTIME` | `managed` (default) or `homebrew` | `homebrew` is the explicit rollback: launchd runs `/opt/homebrew/bin/ttyd` (or `/usr/local/bin/ttyd`), and every install and cutover prints a warning that the #1245 fix is not active and the ttyd watcher is again the only mitigation. It is never chosen automatically. Any other value is refused. |
 
+Set `TANGLECLAW_TTYD_RUNTIME` where the plist is written. For `deploy/install.sh`, or a cutover you
+run yourself, set it in that shell. For a cutover started from the setup wizard, set it in the
+TangleClaw server's plist (`EnvironmentVariables`) and restart the server, because the server passes its
+own environment to the cutover. The ttyd row of the system health panel says which binary launchd is
+actually running, and notes when it is not the owned runtime.
+
 Build and manage the owned runtime (none of these edit a plist or restart ttyd):
 
 ```

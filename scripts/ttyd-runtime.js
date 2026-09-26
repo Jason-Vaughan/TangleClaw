@@ -12,6 +12,11 @@
  *   rollback             restore the last known good runtime
  *   status               report the current and last-known-good runtimes
  *
+ *   --base-dir DIR       the TangleClaw base directory to act on (default: the
+ *                        install's own, which honours TANGLECLAW_HOME). install.sh
+ *                        passes the one it writes everything else under, so a
+ *                        stray TANGLECLAW_HOME cannot split one install in two.
+ *
  * `install` and `rollback` change only files under ~/.tangleclaw/bin. Neither
  * edits a plist nor restarts ttyd: those follow through install.sh or the
  * ingress cutover, under Operator/PM authority.
@@ -28,8 +33,15 @@ const runtime = require('../lib/ttyd-runtime');
  * @returns {number} Exit code.
  */
 function main(argv, io) {
-  const [cmd, ...rest] = argv;
-  const baseDir = io.baseDir;
+  const args = [...argv];
+  let baseDir = io.baseDir;
+  const at = args.indexOf('--base-dir');
+  if (at !== -1) {
+    if (!args[at + 1]) { io.err('--base-dir needs a directory'); return 2; }
+    baseDir = path.resolve(args[at + 1]);
+    args.splice(at, 2);
+  }
+  const [cmd, ...rest] = args;
   try {
     if (cmd === 'resolve') {
       const r = runtime.resolveTtydPath({ baseDir, env: io.env, deps: io.deps });

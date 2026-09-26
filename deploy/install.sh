@@ -110,7 +110,9 @@ green "  Node.js $NODE_VERSION ($NODE_PATH)"
 # the repair. The Homebrew ttyd stays installed as the explicit rollback target
 # (TANGLECLAW_TTYD_RUNTIME=homebrew), never as a silent fallback.
 ensure_dep ttyd ttyd
-TTYD_PATH="$(node "${REPO_DIR}/scripts/ttyd-runtime.js" resolve)" || {
+# --base-dir: the same ~/.tangleclaw this script writes everything else under,
+# so a TANGLECLAW_HOME in the shell cannot point the plist somewhere else.
+TTYD_PATH="$(node "${REPO_DIR}/scripts/ttyd-runtime.js" resolve --base-dir "$HOME/.tangleclaw")" || {
   red "ERROR: no usable ttyd runtime (see above). Nothing was installed."
   exit 1
 }

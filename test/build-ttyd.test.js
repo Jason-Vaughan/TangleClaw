@@ -38,8 +38,11 @@ describe('scripts/build-ttyd.js (#1245, ADR 0018)', () => {
       }
     });
 
-    it('allows only the macOS system roots in the runtime\'s load graph', () => {
+    it('allows only the macOS system roots in the runtime\'s load graph, the same ones the verifier defaults to', () => {
       assert.deepEqual(load().closure.systemRoots, ['/usr/lib/', '/System/Library/']);
+      // Two declarations of one fact: the build checks against inputs.json, the
+      // installer against the verifier's default. They must not drift apart.
+      assert.deepEqual(load().closure.systemRoots, [...require('../lib/macho-closure').DEFAULT_SYSTEM_ROOTS]);
     });
   });
 
