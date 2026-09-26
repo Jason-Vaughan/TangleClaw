@@ -198,4 +198,4 @@ navigation and scope.
 ## Status
 
 - [x] Chunk 01: relaunch module + contract tests (1bd26d69; Critic rev-20260926T040831Z-cf8f4842: 0 blocking, 1 warning resolved by recorded evidence, 4 notes dispositioned)
-- [ ] Chunk 02: page wiring, ADR amendment, docs, regressions
+- [x] Chunk 02: page wiring, ADR amendment, docs, regressions (364df237, c74ceadd; cumulative Critic rev-20260926T042927Z-787c1eed: 1 blocking (stale #1884 flake evidence) resolved by a clean full run, verified in rev-20260926T043459Z-f0760bdd; 2 notes fixed, 2 observations accepted)
