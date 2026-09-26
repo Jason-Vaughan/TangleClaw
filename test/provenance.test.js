@@ -42,13 +42,13 @@ function isOneComment(syntax, line) {
 describe('provenance: the registry is the only grant', () => {
   it('registers exactly the approved private surfaces, with their syntax and placement', () => {
     const shape = Object.fromEntries(Object.entries(provenance.REGISTRY)
-      .map(([id, e]) => [id, `${e.relPath}|${e.syntax}|${e.placement}|${e.requiresUntracked === true}`]));
+      .map(([id, e]) => [id, `${e.relPath}|${e.syntax}|${e.placement}|${e.requiresUntracked === true}|${e.write || 'atomic'}`]));
     assert.deepEqual(shape, {
-      'session-prime': '.tangleclaw/session-prime.md|markdown|top|false',
-      'session-reentry': '.tangleclaw/session-reentry.md|markdown|top|false',
-      'ui-wrap-advisory': '.tangleclaw/ui-wrap-advisory.md|markdown|top|false',
-      'codex-config': '.codex.yaml|hash|after-header|true',
-      'aider-config': '.aider.conf.yml|hash|after-header|true'
+      'session-prime': '.tangleclaw/session-prime.md|markdown|top|false|atomic',
+      'session-reentry': '.tangleclaw/session-reentry.md|markdown|top|false|atomic',
+      'ui-wrap-advisory': '.tangleclaw/ui-wrap-advisory.md|markdown|top|false|atomic',
+      'codex-config': '.codex.yaml|hash|after-header|true|in-place',
+      'aider-config': '.aider.conf.yml|hash|after-header|true|in-place'
     });
   });
 
@@ -75,6 +75,8 @@ describe('provenance: reserved markers stay in step with their owners', () => {
     const generated = engSrc.match(/const GENERATED_HEADER_MARK = '([^']+)'/)[1];
     const inactive = engSrc.match(/const INACTIVE_CONFIG_MARK = '([^']+)'/)[1];
     assert.ok(has(generated), `"${generated}" (engines.js) must be reserved`);
+    assert.equal(provenance.GENERATED_HEADER_MARK, generated,
+      'the after-header placement keys on the same header the retire path reads');
     assert.ok(inactive.startsWith('TangleClaw: INACTIVE') && has('TangleClaw: INACTIVE'));
     assert.equal(tcOwned.match(/const GENERATED_HEADER_MARK = '([^']+)'/)[1], generated,
       'both copies of the generated mark agree, so one reserved entry covers both');

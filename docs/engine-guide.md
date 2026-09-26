@@ -245,7 +245,9 @@ prints the UI wrap advisory after the prime and, on a `clear` or `compact` fire,
 preamble before it. Each has its own separator. The prime is therefore fitted to the cap minus all
 of that in its worst case, the `clear` fire, including any provenance line (ADR 0019).
 `lib/prime-hook-output.js` owns the companion text and the framing, and computes the reserve.
-`test/prime-hook-output.test.js` runs the real hook script against it, so the two cannot drift. **Omit the field and the engine keeps the historical 16,000-character
+`test/prime-hook-output.test.js` runs the real hook script against it, so the two cannot drift.
+
+**Omit the field and the engine keeps the historical 16,000-character
 fallback**, so declaring it for one engine never changes another's behavior.
 
 The limit applies to the startup-hook channel only. When a project runs with `silentPrime` off the

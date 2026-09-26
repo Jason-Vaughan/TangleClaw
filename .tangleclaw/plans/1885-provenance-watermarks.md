@@ -271,7 +271,7 @@ registry is five private surfaces. The Architect kept three chunks, so 02 and 03
 
 ## Status
 
-- [x] 01 — `lib/provenance.js`, per-project key, `session-prime` slice. Built in 276d8107, fixed in 28790f51. Critic: cumulative rev-20260926T015617Z-736d9820 (1 blocking: the prime could exceed the hook budget; fixed), then verify-resolutions rev-20260926T022824Z-3f669706 clean. Suite: 13164 pass / 0 fail by node's TAP reporter at 28790f51.
+- [x] 01 — `lib/provenance.js`, per-project key, `session-prime` slice. Built in 276d8107, fixed in 28790f51. Critic: cumulative rev-20260926T015617Z-736d9820 (1 blocking: the prime could exceed the hook budget; fixed), then verify-resolutions rev-20260926T022824Z-3f669706 clean. Suite green by node's TAP reporter at 28790f51.
   - Carried into 02: tighten the `lineOverhead` bound in `test/provenance.test.js` to the exact comment-form overhead (O-2).
   - Carried into 02: for each surface, audit what its reader constrains (size or format), not only who reads it.
 - [ ] 02 — remaining four surfaces, with the shared tracked predicate
