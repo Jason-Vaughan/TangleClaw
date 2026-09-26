@@ -158,6 +158,10 @@ TangleClaw server's plist (`EnvironmentVariables`) and restart the server, becau
 own environment to the cutover. The ttyd row of the system health panel says which binary launchd is
 actually running, and notes when it is not the owned runtime.
 
+Putting the owned runtime into service, and taking it out again, are Operator procedures with
+their own runbooks: [Roll out the owned ttyd runtime](runbooks/roll-out-the-owned-ttyd.md) and
+[Roll back the owned ttyd runtime](runbooks/roll-back-the-owned-ttyd.md).
+
 Build and manage the owned runtime by hand (none of these edit a plist or restart ttyd):
 
 ```

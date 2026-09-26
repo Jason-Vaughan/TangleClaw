@@ -77,6 +77,10 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
 - [ ] Chunk 04 (revised): rollout and rollback docs for the owned runtime (F/G, the user guide, the configuration
       reference), and the CHANGELOG. Re-tuning the watcher waits for live certification. **In the SAME dispatch and PR
       as chunk 08 (Architect R35).**
+      **BUILT (2026-09-26).** Two Operator runbooks, `docs/runbooks/roll-out-the-owned-ttyd.md` and
+      `docs/runbooks/roll-back-the-owned-ttyd.md`, with the R36/R37 permission checkpoint before the restart; F and G
+      above revised to match; links from the configuration reference, the user guide and FEATURES; the CHANGELOG entry.
+      The runbooks are not validated until the Operator executes them. The box is ticked after the cumulative Critic.
 - [ ] Verify (the full suite), the cumulative Critic, one draft PR ONLY when the PM authorizes (pilot boundary: no merge).
       #1245 stays open until post-merge live certification. D3 (upstream offer) is prepared separately and not submitted
       without authorization
@@ -642,37 +646,41 @@ from the same reading.
 - **Live acceptance after rollout** (the operator's): 72 h of normal use with zero `reason=orphan-children`
   kickstarts. The watcher stays armed throughout as the safety net.
 
-## F. Rollout (revised for R24 / ADR 0018; the attach-script route was rejected with A1)
+## F. Rollout (revised for R24 / ADR 0018 §4 and R36/R37; the attach-script route was rejected with A1)
 
 What ships: the chunk 02 watcher/health work, and the A3c source fix delivered as a TangleClaw-owned, self-contained
-ttyd at `~/.tangleclaw/bin/ttyd`, built from tracked, pinned inputs.
+ttyd at `~/.tangleclaw/bin/ttyd`, built from tracked, pinned inputs. The Operator procedure is
+`docs/runbooks/roll-out-the-owned-ttyd.md`; this section is its outline.
 
 1. **One PR,** opened only when the PM says so. B1 does not merge.
-2. **Build (Operator/PM, on the host):** `node scripts/build-ttyd.js` fetches every pinned input, verifies its digest
-   before use, builds outside the repo, verifies the complete Mach-O load graph (system roots only), and stages the
-   runtime with a provenance manifest. Nothing installed is touched.
-3. **Install (Operator/PM):** a transactional install puts the staged runtime at `~/.tangleclaw/bin/ttyd`. It keeps
-   the previous managed runtime as last-known-good, and re-verifies the digest, loadability and closure before
-   selecting it. If anything fails, the current selection is untouched and the error names the repair.
-4. **Select it (Operator/PM):** `install.sh` / `ingress-cutover` get the ttyd path from the one shared resolver, write
-   it into the plist, and restart ttyd. The FIRST move to the new path needs the Operator's one-time macOS permission
-   action at the GUI (ADR 0018 §1).
+2. **Provision (Operator/PM, on the host):** `node scripts/ttyd-runtime.js provision` builds from the pinned inputs into a
+   temporary stage (every digest verified before use, the complete Mach-O load graph checked) and installs the result
+   fail-closed and recoverably, keeping the previous runtime as last known good. It changes no plist and restarts
+   nothing. It skips the build when the installed runtime already verifies and is current.
+3. **Permission checkpoint, first switch only (Operator present, R36/R37):** the new path gets exactly the macOS grants
+   the old ttyd path visibly holds, nothing more (no Full Disk Access unless the old path has it). The observed grants
+   are rollout evidence. If parity cannot be established, stop.
+4. **Select it (Operator/PM):** direct mode runs `./deploy/install.sh`; caddy mode runs
+   `node scripts/ingress-cutover.js --to caddy` (never install.sh, which rewrites the plist for direct mode). Both get
+   the ttyd path from the one shared resolver, write it into the plist and restart ttyd.
 5. **Verify right after:**
    - the plist's program path is `~/.tangleclaw/bin/ttyd`;
    - `otool -L` on it lists only `/usr/lib` and `/System/Library`;
-   - the watcher's boot reading carries the new pid and generation;
-   - open and close a few tabs, then check that `ps` shows no `E` children under ttyd.
-6. **Live certification (R22 Q7):** at least 72 h **and** a recorded, meaningful attach/detach sample, with zero
-   orphan kickstarts, zero persistent E/Z and no upward PTY trend. #1245 stays open until then.
+   - it is the running ttyd;
+   - open and close a few tabs, then check that `ps` shows no `E` or `Z` children under ttyd.
+6. **Live certification:** at least 72 h **and** a recorded, meaningful attach/detach sample, with zero orphan
+   kickstarts, zero persistent E/Z and no upward PTY trend. #1245 stays open until then.
 7. **Only after certification:** relax the watcher to a pure safety net, as a separate small change that the PM files.
 
 ## G. Rollback
 
-- **Back to the last-known-good managed runtime:** the transactional installer's rollback swaps it back, then ttyd is
-  restarted (Operator/PM).
-- **Back to Homebrew ttyd:** an explicit Operator action through the resolver's rollback option. It regenerates the plist
-  for `/opt/homebrew/bin/ttyd` and says plainly that the leak fix is no longer active and the watcher is again the
-  mitigation. It is never automatic.
+The Operator procedure is `docs/runbooks/roll-back-the-owned-ttyd.md`.
+
+- **Back to the last-known-good managed runtime:** `node scripts/ttyd-runtime.js rollback`, then restart ttyd
+  (Operator/PM). It refuses a last known good built from a different `deploy/ttyd/inputs.json`.
+- **Back to Homebrew ttyd:** an explicit Operator action, `TANGLECLAW_TTYD_RUNTIME=homebrew` on install.sh (direct) or
+  the cutover (caddy). It regenerates the plist for the Homebrew ttyd and says plainly that the leak fix is no longer
+  active and the watcher is again the mitigation. It is never automatic, and it is the only way back after a pin change.
 - **The watcher/health work:** `TANGLECLAW_TTYD_WATCHER=off` / `TANGLECLAW_TTYD_ORPHAN_THRESHOLD` in the server plist,
   or a code revert.
 - Homebrew's ttyd and its existing TCC grant are never modified by any of this.

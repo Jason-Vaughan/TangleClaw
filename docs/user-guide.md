@@ -944,7 +944,9 @@ condition fired or could not be measured. Each row carries its own fix; the back
   it is missing, broken or out of date, so a normal install needs no extra step. If the ingress
   cutover stops with "the managed ttyd runtime … cannot be used", re-run `deploy/install.sh`; if the
   installer itself stops there, its message says what failed (see "The ttyd runtime launchd runs"
-  in `docs/configuration-reference.md`, which also covers rolling back).
+  in `docs/configuration-reference.md`). To put it in service or take it out again, follow
+  [Roll out the owned ttyd runtime](runbooks/roll-out-the-owned-ttyd.md) or
+  [Roll back the owned ttyd runtime](runbooks/roll-back-the-owned-ttyd.md).
   `node scripts/ttyd-runtime.js status` shows which ttyd is in use. Running the Homebrew ttyd
   instead is possible (`TANGLECLAW_TTYD_RUNTIME=homebrew`) but brings the leak back, and every
   install says so.

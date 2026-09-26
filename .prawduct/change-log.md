@@ -35,6 +35,29 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Chunk 04: rollout and rollback runbooks for the owned ttyd (#1245)
+
+<!-- prawduct: type=feature | scope=ttyd-1245 -->
+
+Chunk 04, in the same dispatch and PR as chunk 08 (Architect R35). Authored with `/prawduct:runbook`: the commands and
+output strings were derived from the repo and checked against it (the cutover's and CLI's printed lines, the plist's
+`ProgramArguments.4`, the watcher's `ttyd kickstart receipt`, the user-guide anchor).
+
+- `docs/runbooks/roll-out-the-owned-ttyd.md` (Tier 3, 11 steps):
+  - provision, then a caddy-mode dry run;
+  - the R36/R37 permission checkpoint BEFORE the restart: exact visible parity with the old path, no Full Disk Access by
+    default, STOP if parity cannot be established, and the observed grants recorded as rollout evidence;
+  - the mode-specific switch (install.sh must not run on a caddy host, because it rewrites the ttyd plist for direct
+    mode);
+  - checks on the plist path, otool, the running pid and no E/Z children;
+  - 72 h of live certification, recorded by the PM.
+- `docs/runbooks/roll-back-the-owned-ttyd.md` (Tier 2, 7 steps): `status`, then either `rollback` plus a kickstart, or
+  the explicit Homebrew route (the only way back after a pin change), with a check that the watcher is on.
+- Plan sections F and G are revised to match provisioning and point at the runbooks. Links are added from the
+  configuration reference, the user guide, FEATURES and the CHANGELOG #1245 entry.
+- Neither runbook is validated until the Operator executes it. This repo has no `.prawduct/operator-verification.md`,
+  so the plan's chunk 04 line records that instead.
+
 ## 2026-09-26 — Chunk 08: install.sh provisions the owned ttyd runtime; whole-input currency; recoverable install and rollback (#1245)
 
 <!-- prawduct: type=feature | scope=ttyd-1245 -->
