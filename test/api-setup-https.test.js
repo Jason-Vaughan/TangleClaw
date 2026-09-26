@@ -185,13 +185,19 @@ describe('HTTPS Setup API', () => {
       assert.ok(platforms.includes('macOS'));
     });
 
-    it('accepts a custom hosts list', async (t) => {
+    it('adds a custom hosts list to the existing names rather than replacing them', async (t) => {
+      // #1905 / Architect ruling A19 retired the verbatim-replacement contract:
+      // a replacement list could drop a canonical host and recreate
+      // HOST_NOT_SERVED. `hosts` now adds, and `removeHosts` removes.
       if (!hasOpenssl) return t.skip('openssl not available');
       const { status, data } = await request(server, 'POST', '/api/setup/generate-cert', {
         hosts: ['localhost', 'example.local']
       });
       assert.equal(status, 200);
-      assert.deepEqual(data.hosts, ['localhost', 'example.local']);
+      assert.ok(data.hosts.includes('example.local'), 'the extra is minted');
+      for (const h of ['localhost', '127.0.0.1', '::1']) {
+        assert.ok(data.hosts.includes(h), `${h} is kept`);
+      }
     });
 
     it('returns 500 when mkcert is unavailable', async () => {
@@ -237,6 +243,263 @@ describe('HTTPS Setup API', () => {
       });
       assert.equal(status, 400);
       assert.match(data.error, /Invalid host/);
+    });
+
+    describe('#1905 — the tailnet name comes from the shared host inventory', () => {
+      const hostInventory = require('../lib/host-inventory');
+      const httpsSetup = require('../lib/https-setup');
+      const sessionOwnership = require('../lib/session-ownership');
+      const TS = 'box.tail123.ts.net';
+      let realExec;
+      let savedConfig;
+
+      /**
+       * Make `tailscale status --json` report `dnsName` (or fail when null).
+       * @param {string|null} dnsName - The Self.DNSName to report.
+       * @returns {void}
+       */
+      function tailscaleReports(dnsName) {
+        hostInventory._internal.execSync = () => {
+          if (dnsName === null) throw new Error('command not found: tailscale');
+          return JSON.stringify({ Self: { DNSName: dnsName } });
+        };
+      }
+
+      before(() => {
+        realExec = hostInventory._internal.execSync;
+        savedConfig = store.config.load();
+      });
+      after(() => {
+        hostInventory._internal.execSync = realExec;
+        hostInventory._resetForTest();
+      });
+      // Each case sets its own config; put the suite's back afterwards.
+      const restore = () => store.config.save({ ...savedConfig });
+
+      it('mints the detected MagicDNS name, normalized, beside the defaults', async (t) => {
+        if (!hasOpenssl) return t.skip('openssl not available');
+        tailscaleReports('Box.Tail123.ts.net.');
+        const { status, data } = await request(server, 'POST', '/api/setup/generate-cert', {});
+        assert.equal(status, 200);
+        assert.ok(data.hosts.includes(TS), 'the detected name is in the cert');
+        assert.ok(data.hosts.includes('localhost'), 'the defaults are kept');
+        assert.equal(data.inventory.tailnet.host, TS);
+        assert.equal(data.inventory.tailnet.source, 'detected');
+        assert.equal(data.inventory.tailnet.covered, true);
+        assert.equal(data.inventory.tailnet.caddySite, 'not-configured');
+        assert.equal(store.config.load().caddyTailnetHost, savedConfig.caddyTailnetHost,
+          'a detected name is not written into caddyTailnetHost');
+      });
+
+      it('reports the omission when detection is unavailable, and invents no host', async (t) => {
+        if (!hasOpenssl) return t.skip('openssl not available');
+        tailscaleReports(null);
+        const { status, data } = await request(server, 'POST', '/api/setup/generate-cert', {});
+        assert.equal(status, 200);
+        assert.equal(data.inventory.tailnet.host, null);
+        assert.match(data.inventory.tailnet.omission, /tailscale: unavailable/);
+        assert.ok(!data.hosts.some((h) => h.endsWith('.ts.net')));
+      });
+
+      it('an explicit hosts list cannot leave out the canonical tailnet host', async (t) => {
+        if (!hasOpenssl) return t.skip('openssl not available');
+        tailscaleReports(`${TS}.`);
+        const { status, data } = await request(server, 'POST', '/api/setup/generate-cert', {
+          hosts: ['localhost']
+        });
+        assert.equal(status, 200);
+        assert.ok(data.hosts.includes(TS), 'the mandatory canonical host is unioned in');
+        assert.equal(data.inventory.tailnet.covered, true);
+      });
+
+      it('removeHosts removes a carried non-canonical name', async (t) => {
+        if (!hasOpenssl) return t.skip('openssl not available');
+        tailscaleReports(null);
+        const added = await request(server, 'POST', '/api/setup/generate-cert', { hosts: ['extra.example'] });
+        assert.ok(added.data.hosts.includes('extra.example'));
+        const { status, data } = await request(server, 'POST', '/api/setup/generate-cert', {
+          removeHosts: ['extra.example']
+        });
+        assert.equal(status, 200);
+        assert.ok(!data.hosts.includes('extra.example'));
+        assert.ok(data.hosts.includes('localhost'));
+      });
+
+      for (const [label, name, probe] of [
+        ['the canonical tailnet host', TS, `${TS}.`],
+        ['a mkcert default', 'localhost', null],
+        ['the mDNS name', require('../lib/https-setup').mdnsHostFor(os.hostname()), null]
+      ]) {
+        it(`removeHosts naming ${label} is a typed conflict and mints nothing`, async () => {
+          tailscaleReports(probe);
+          const certPath = path.join(baseDir, 'certs', 'cert.pem');
+          const before = fs.existsSync(certPath) ? fs.statSync(certPath).mtimeMs : null;
+          const { status, data } = await request(server, 'POST', '/api/setup/generate-cert', {
+            removeHosts: [name.toUpperCase()]
+          });
+          assert.equal(status, 409);
+          assert.equal(data.code, 'CANONICAL_HOST_REMOVAL');
+          assert.deepEqual(data.hosts, [name.toLowerCase()]);
+          assert.equal(fs.existsSync(certPath) ? fs.statSync(certPath).mtimeMs : null, before,
+            'the certificate is not regenerated');
+        });
+      }
+
+      it('rejects a malformed removeHosts', async () => {
+        const { status, data } = await request(server, 'POST', '/api/setup/generate-cert', {
+          removeHosts: ['-install']
+        });
+        assert.equal(status, 400);
+        assert.equal(data.code, 'BAD_REQUEST');
+      });
+
+      it('drift is reported and not silently reconciled', async (t) => {
+        if (!hasOpenssl) return t.skip('openssl not available');
+        store.config.save({ ...savedConfig, caddyTailnetHost: 'old.tail123.ts.net' });
+        tailscaleReports(`${TS}.`);
+        try {
+          const { status, data } = await request(server, 'POST', '/api/setup/generate-cert', {});
+          assert.equal(status, 200);
+          assert.deepEqual(data.inventory.tailnet.drift,
+            { configured: 'old.tail123.ts.net', observed: TS });
+          assert.equal(data.inventory.tailnet.host, 'old.tail123.ts.net');
+          assert.ok(!data.hosts.includes(TS), 'the observed name is not half-adopted');
+          assert.equal(data.inventory.reconciled, null);
+          assert.equal(store.config.load().caddyTailnetHost, 'old.tail123.ts.net');
+        } finally {
+          restore();
+        }
+      });
+
+      it('direct mode: reconcileTailnet moves the configured name and the cert together, with parity before and after', async (t) => {
+        if (!hasOpenssl) return t.skip('openssl not available');
+        const gated = { ...savedConfig, caddyTailnetHost: 'old.tail123.ts.net', authEnabled: true, basicAuthUser: 'op', basicAuthHash: '$2a$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ01234' };
+        store.config.save(gated);
+        tailscaleReports(`${TS}.`);
+        try {
+          const cfgBefore = store.config.load();
+          const canonicalBefore = hostInventory.resolveTailnetHost(cfgBefore).host;
+          assert.equal(canonicalBefore, 'old.tail123.ts.net');
+          assert.equal(sessionOwnership.resolveOperatorHost({}, cfgBefore).host, canonicalBefore);
+          assert.ok(httpsSetup.servedHostAllowlist(cfgBefore).has(canonicalBefore));
+
+          const { status, data } = await request(server, 'POST', '/api/setup/generate-cert',
+            { reconcileTailnet: true });
+          assert.equal(status, 200);
+          assert.ok(data.hosts.includes(TS), 'the cert carries the new name');
+          assert.ok(data.hosts.includes('old.tail123.ts.net'), 'and still the outgoing one');
+          assert.deepEqual(data.inventory.reconciled.caddyTailnetHost,
+            { from: 'old.tail123.ts.net', to: TS });
+          assert.equal(data.inventory.reconciled.pending, undefined, 'nothing is left pending');
+
+          const cfgAfter = store.config.load();
+          assert.equal(cfgAfter.caddyTailnetHost, TS);
+          assert.equal(hostInventory.resolveTailnetHost(cfgAfter).host, TS);
+          assert.equal(sessionOwnership.resolveOperatorHost({}, cfgAfter).host, TS);
+          assert.ok(httpsSetup.servedHostAllowlist(cfgAfter, { certHosts: data.hosts }).has(TS));
+          assert.ok(httpsSetup.certHostUnion(null, cfgAfter).includes(TS));
+        } finally {
+          restore();
+        }
+      });
+
+      it('direct mode: a failed mint leaves the config unchanged', async () => {
+        store.config.save({ ...savedConfig, caddyTailnetHost: 'old.tail123.ts.net', authEnabled: true, basicAuthUser: 'op', basicAuthHash: '$2a$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ01234' });
+        tailscaleReports(`${TS}.`);
+        const saved = process.env.PATH;
+        process.env.PATH = path.join(tmpDir, 'nonexistent-dir-reconcile');
+        try {
+          const { status, data } = await request(server, 'POST', '/api/setup/generate-cert',
+            { reconcileTailnet: true });
+          assert.equal(status, 500);
+          assert.equal(data.code, 'MKCERT_FAILED');
+          assert.equal(store.config.load().caddyTailnetHost, 'old.tail123.ts.net');
+        } finally {
+          process.env.PATH = saved;
+          restore();
+        }
+      });
+
+      it('direct mode: a failed config save after the mint leaves the outgoing host canonical and covered everywhere', async (t) => {
+        if (!hasOpenssl) return t.skip('openssl not available');
+        store.config.save({ ...savedConfig, caddyTailnetHost: 'old.tail123.ts.net', authEnabled: true, basicAuthUser: 'op', basicAuthHash: '$2a$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ01234' });
+        tailscaleReports(`${TS}.`);
+        const realSave = store.config.save;
+        store.config.save = () => { throw new Error('EROFS: read-only file system'); };
+        let data;
+        let status;
+        try {
+          ({ status, data } = await request(server, 'POST', '/api/setup/generate-cert',
+            { reconcileTailnet: true }));
+        } finally {
+          store.config.save = realSave;
+        }
+        try {
+          assert.equal(status, 500);
+          assert.equal(data.code, 'RECONCILE_SAVE_FAILED');
+          assert.ok(data.hosts.includes('old.tail123.ts.net') && data.hosts.includes(TS),
+            'the minted cert carries both names');
+          const cfg = store.config.load();
+          assert.equal(cfg.caddyTailnetHost, 'old.tail123.ts.net', 'the config did not move');
+          const canonical = hostInventory.resolveTailnetHost(cfg).host;
+          assert.equal(canonical, 'old.tail123.ts.net');
+          assert.ok(httpsSetup.servedHostAllowlist(cfg, { certHosts: data.hosts }).has(canonical));
+          assert.equal(sessionOwnership.resolveOperatorHost({}, cfg).host, canonical);
+          assert.ok(data.hosts.includes(canonical), 'the canonical host is never uncovered');
+        } finally {
+          restore();
+        }
+      });
+
+      it('an ungated install is refused with a named remedy and nothing changes', async () => {
+        store.config.save({ ...savedConfig, caddyTailnetHost: 'old.tail123.ts.net', authEnabled: false });
+        tailscaleReports(`${TS}.`);
+        try {
+          const { status, data } = await request(server, 'POST', '/api/setup/generate-cert',
+            { reconcileTailnet: true });
+          assert.equal(status, 409);
+          assert.equal(data.code, 'TAILNET_UNGATED');
+          assert.match(data.error, /Arm the TangleClaw login/);
+          assert.equal(store.config.load().caddyTailnetHost, 'old.tail123.ts.net');
+        } finally {
+          restore();
+        }
+      });
+
+      it('caddy mode: reconcileTailnet is refused, says prepare is not in this version, and flips nothing', async () => {
+        store.config.save({ ...{ ...savedConfig, caddyTailnetHost: 'old.tail123.ts.net', authEnabled: true, basicAuthUser: 'op', basicAuthHash: '$2a$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ01234' }, ingressMode: 'caddy' });
+        tailscaleReports(`${TS}.`);
+        try {
+          const { status, data } = await request(server, 'POST', '/api/setup/generate-cert',
+            { reconcileTailnet: true });
+          assert.equal(status, 409);
+          assert.equal(data.code, 'RECONCILE_NEEDS_CUTOVER');
+          assert.match(data.error, /not available in this installed version/);
+          assert.doesNotMatch(data.error, /ingress-cutover|--tailnet-host|prepare"/,
+            'it must not name a command that has not landed');
+          assert.deepEqual(data.drift, { configured: 'old.tail123.ts.net', observed: TS });
+          assert.equal(store.config.load().caddyTailnetHost, 'old.tail123.ts.net');
+        } finally {
+          restore();
+        }
+      });
+
+      it('reconcileTailnet with nothing to reconcile is refused and changes nothing', async () => {
+        tailscaleReports(`${TS}.`);
+        const before = store.config.load().caddyTailnetHost;
+        const { status, data } = await request(server, 'POST', '/api/setup/generate-cert',
+          { reconcileTailnet: true });
+        assert.equal(status, 409);
+        assert.equal(data.code, 'NO_TAILNET_DRIFT');
+        assert.equal(store.config.load().caddyTailnetHost, before);
+      });
+
+      it('rejects a non-boolean reconcileTailnet', async () => {
+        const { status, data } = await request(server, 'POST', '/api/setup/generate-cert',
+          { reconcileTailnet: 'yes' });
+        assert.equal(status, 400);
+        assert.equal(data.code, 'BAD_REQUEST');
+      });
     });
   });
 

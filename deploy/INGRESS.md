@@ -144,7 +144,16 @@ The `basic_auth` credential is canonical in **config** (`basicAuthUser` +
 - **Tailnet HTTPS site** — `caddyTailnetHost` (#434, adopted from a live file
   carrying exactly one tls-bearing FQDN site that isn't `publicDomain`). Gated
   for the same reason as the catch-all: the generator refuses it without a
-  gate.
+  gate. A MagicDNS name detected from `tailscale status` is served by the
+  certificate and the Host allowlist even when this key is unset, but it never
+  creates this site: that stays your decision, because it needs a gate (#1905).
+  If this key differs from the detected name, the key keeps serving and the
+  detected name is refused until reconciled. In direct mode, `POST
+  /api/setup/generate-cert {"reconcileTailnet": true}` moves the key and the
+  certificate together (it is refused on an ungated install, since this site
+  would then be unbuildable). In caddy mode the key must move with the live
+  Caddyfile, so the route refuses with `RECONCILE_NEEDS_CUTOVER`: that
+  prepare/apply flow is not in this version yet.
 - **Access log** — `caddyAccessLogPath` (#846, adopted from a live per-site
   `log { output file <absolute path> }`). Unlike the shapes above it needs no
   credential, because a log opens no door. It is refused rather than partially

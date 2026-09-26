@@ -35,21 +35,36 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
-## 2026-09-26 — Train 2: malformed project tags, inline-handler encoding, the Not a project mark (#1375, #1384, #1768)
+## 2026-09-26 — The detected MagicDNS name is served through one host inventory (#1905, Chunk 1)
 
-<!-- prawduct: type=bugfix | scope=train-2 -->
+<!-- prawduct: type=bugfix | scope=1905-magicdns-host-inventory -->
 
-Chunks 1–3 of `.tangleclaw/plans/train-2-ui-hardening.md`, dispatched by the ProjectManager over Medusa (de99255a) under Architect clearance R44 (0f8b59dc).
+Chunk 1 of `.tangleclaw/plans/1905-magicdns-host-inventory.md`. The PM dispatched it to Builder2 over Medusa (0f830344). It is governed by the Architect's rulings R45/R46, A17–A20 (2f34bdfe) and the approval A21 (43f5f31e). #1905 stays open for Chunk 2 (A21 addendum 4), so this uses `Refs`, not `Fixes`.
+
+**Problem.** The operator links named the host that `tailscale status` reports. The certificate names and the served-Host allowlist read only `caddyTailnetHost`, which is null on a default install. So a browser write to the linked host got `403 HOST_NOT_SERVED`.
 
 **The change.**
-- **Chunk 1 (#1375):** `lib/store.js` `_normalizeTags` gives every consumer `string[]`. A legacy JSON-string row is split on commas, an array keeps its string members, and anything else is empty. `public/ui.js` `formatTagList` checks the shape itself, so the card detail shows None instead of throwing, and the tag filter matches whole tags, not substrings.
-- **Chunk 2 (#1384):** `public/landing.js` `jsArg(value)` = `esc(JSON.stringify(value))` is the one encoder for inline-handler arguments. All 34 single-quoted handler sites in `ui.js` use it, and `importLeaseProjects` receives its names array directly. A scan test keeps the single-quote form out of `ui.js`; a mutation check flags 34 offenders on main.
-- **Chunk 3 (#1768):** the ports panel badges an owner group whose leases are `external` and offers **Is a project**, which posts `ownerKind: 'project'` for the name, then reloads the ports and re-checks the import banner. The button stops click and keydown. [DECISION] The badge and undo are per owner name, not per lease; the reasoning is in the plan.
-- **Tests:** `test/project-tags-shape.test.js`, `test/inline-handler-args.test.js` and `test/port-owner-kind-panel.test.js` are new. Six existing harnesses now load the real `jsArg`/`formatTagList`, and three assertions that matched the rendered handler text follow the new encoding. None were weakened.
+- `lib/host-inventory.js` holds one `normalizeHostName` and one overlay-DNS probe with a provider registry. It also holds the process-wide observation (a miss is retried after 60 s) and `resolveTailnetHost` (configured, else detected, with drift and omission reported).
+- `certHostUnion`, the allowlist, the operator-link fallback and `mandatoryCertHosts` all read it.
+- The trailing dot is stripped from `Host`. The allowlist cache key includes the observed name.
+- generate-cert behaviour:
+  - It always unions the mandatory names: the mkcert defaults, the mDNS name and the canonical tailnet host.
+  - `hosts` now adds names (a ruled contract change, A19). `removeHosts` removes non-canonical names, and a canonical one gets `409 CANONICAL_HOST_REMOVAL`.
+  - Direct-mode `reconcileTailnet` checks the gate (`caddy.tailnetSiteGated`, pinned to the generator), then mints both names, then saves the config last.
+  - Caddy mode is refused with `RECONCILE_NEEDS_CUTOVER`. The message says the flow is not in this version (A21 addendum 3).
 
-**Reviews.** Chunk reviews found 0 blocking. The cumulative review rev-20260926T171739Z-91357fff found one blocking finding: the saved suite evidence includes the known `test/dir-scanner.test.js` 300ms deadline failure (#1884, red on a clean main on this host), accepted by the PM's owner ruling (c06c9eb8).
+**Tests.** `host-inventory` covers the probe shapes, normalization, resolution, the mandatory set and cross-consumer parity. `api-setup-https` covers:
+- the extras contract;
+- `removeHosts` and the three canonical-removal conflicts;
+- direct-mode reconcile with parity before and after;
+- mint failure;
+- an injected save failure, after which the old host stays canonical and covered;
+- the ungated refusal and the caddy-mode refusal.
 
-**Follow-ups filed:** #1902 (the same apostrophe bug in other page scripts), #1903 (test-helper consolidation), #1906 (buttons nested in role=button rows).
+`caddy` checks gate agreement across every combination. `server` covers a request under the detected name, with a trailing dot, and under a different tailnet name. Mutations: reverting the union turns the route, invariant and request tests red, and dropping the canonical-removal refusal turns the three conflict tests red.
+
+**Process.** The first version of this chunk used a verbatim `hosts` list and a caddy-mode reconcile that left the Caddyfile "pending". The Architect rejected both (A18/A19) while I kept building past the unread veto. Nothing was pushed. I rewrote the chunk to the approved plan and squashed it into one commit before the review.
+
 ## 2026-09-26 — install.sh refuses on a caddy-mode host before anything is changed (#1900)
 
 <!-- prawduct: type=bugfix | scope=install-1900 -->
