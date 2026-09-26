@@ -501,9 +501,9 @@ async function main(o) {
       pool: await readPool(),
       fds: await readFds(s.ttydPid),
       children: childrenOf(finalTable, s.ttydPid),
-      // Every recorded process still alive — the scratch ttyd and anything it
-      // spawned that has not exited — and the PTYs they hold.
-      ownedPtys: await readOwnedPtys([...s.ledger.pids])
+      // Exactly the run's recorded processes still alive (PID AND start time,
+      // so a recycled PID is never measured) and the PTYs they hold.
+      ownedPtys: finalTable ? await readOwnedPtys(s.ledger.owned(finalTable).map((r) => r.pid)) : null
     };
     maxWedges = Math.max(maxWedges, churn.countWedges(tracker.stillOpen(Date.now())));
 

@@ -35,6 +35,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Harness identity check completed (#1245, verify-resolutions rev-20260926T031244Z-51153184)
+
+<!-- prawduct: type=bugfix | scope=ttyd-1245 -->
+
+- **The rest of R-2:** the final run-owned PTY reading was still taken over bare PIDs. It now uses `ProcessLedger.owned()`, meaning exact PID plus start-time matches with no group fallback, so a recycled PID holding a terminal cannot fail a clean run.
+- **Every start time is kept:** the ledger keeps every start time seen per PID and per group leader. A run-owned process that reuses an earlier run PID and then leaks is still caught; keeping only the first start time erred toward passing it.
+- **Tests:** a test for each. A host smoke run confirms the candidate stays clean and the control still fails the gate.
+
 ## 2026-09-26 — Harness gate hardened before the certification run (#1245, Critic rev-20260926T030542Z-e93b8543)
 
 <!-- prawduct: type=bugfix | scope=ttyd-1245 -->

@@ -190,6 +190,24 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
       assert.deepEqual(ledger.survivors(after), [], 'same PID 700, different start time: not ours');
     });
 
+    it('measures PTYs only over processes that are exactly the run\'s own (PID and start time)', () => {
+      const ledger = new churn.ProcessLedger(500);
+      ledger.record(churn.parseProcTable(PS));
+      const later = churn.parseProcTable([
+        `  500     1   500 S    01:00:00 ${T}`,
+        '  700     1   700 S    00:02 Fri Sep 26 05:10:00 2026'
+      ].join('\n'));
+      assert.deepEqual(ledger.owned(later).map((r) => r.pid), [500], 'the recycled 700 is not the run\'s 700');
+    });
+
+    it('keeps every start time seen for a PID, so a later leak on a reused run PID is still caught', () => {
+      const ledger = new churn.ProcessLedger(500);
+      ledger.record(churn.parseProcTable(PS));
+      ledger.record(churn.parseProcTable(`  500     1   500 S    01:00:00 ${T}\n  700   500   700 ?Es  00:01 Fri Sep 26 04:30:00 2026`));
+      const after = churn.parseProcTable('  700     1   700 ?Es  00:40 Fri Sep 26 04:30:00 2026');
+      assert.deepEqual(ledger.survivors(after).map((r) => r.pid), [700], 'the second 700 is the one that leaked');
+    });
+
     it('does not claim a group whose id was reused by a new leader', () => {
       const ledger = new churn.ProcessLedger(500);
       ledger.record(churn.parseProcTable(PS));
