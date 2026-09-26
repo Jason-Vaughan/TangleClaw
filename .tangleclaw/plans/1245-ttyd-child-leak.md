@@ -96,6 +96,19 @@ live service, no tests on the main instance, no tag, publish or release, no depl
 a ttyd runs an *isolated* one: its own unix socket, its own `tmux -L` server, a scratch directory outside
 `~/Documents`.
 
+## Architect rulings R41 and R42 (2026-09-26 15:40Z; controlling)
+
+- **R41 (ADR 0018 §4):** correct §4 before merge. Its "rerun the installer" instruction is wrong for caddy mode. The
+  ADR now states the implemented `SELECT_BY_MODE` contract: on an absent, invalid or stale managed runtime, the
+  refusal directs the operator first to `node scripts/ttyd-runtime.js provision`, then to `deploy/install.sh` (direct
+  mode) or `node scripts/ingress-cutover.js --to caddy` (caddy mode). This is a narrow normative-document correction;
+  the PM and B1 own the edit. *Done 2026-09-26.*
+- **R42 (backup ref):** once the rewritten head and the clean verification receipt are durably recorded (they are:
+  this plan and `.prawduct/change-log.md` record head 7c1bf135 and verify-resolutions rev-20260926T153732Z-7d87805f),
+  delete the local-only `backup/1245-pre-r39-redaction` ref before any push. It served its recovery purpose and must
+  never be pushed. No object-store purge is required. *Done 2026-09-26: the ref is deleted, and no local ref still
+  contains the pre-rewrite commits.*
+
 ## Architect rulings R39 and R40 (2026-09-26 15:08Z, on cumulative review rev-20260926T150050Z-6620a07c; controlling)
 
 - **R39 (Critic R-8, evidence privacy):** the local history rewrite before any push is APPROVED. The run5

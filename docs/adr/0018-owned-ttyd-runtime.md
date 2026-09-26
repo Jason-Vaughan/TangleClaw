@@ -92,9 +92,14 @@ It may skip that work only when the installed runtime both verifies and matches 
 input set. The explicit `homebrew` rollback mode skips managed provisioning and prints its warning.
 
 The ingress cutover never builds. It resolves the same currentness predicate and refuses before its
-first write when the managed runtime is absent, invalid or stale, directing the operator to rerun the
-installer. This is the paired-state gate: a runtime can be internally valid and still be wrong for
-the checkout that is about to generate its plist.
+first write when the managed runtime is absent, invalid or stale. The refusal directs the operator
+first to `node scripts/ttyd-runtime.js provision` (build and install a current runtime), then to the
+switch for the host's ingress mode: `deploy/install.sh` in direct mode, or
+`node scripts/ingress-cutover.js --to caddy` in caddy mode. It never directs a caddy-mode host to the
+installer, which rewrites the ttyd plist for direct mode. This is the paired-state gate: a runtime can
+be internally valid and still be wrong for the checkout that is about to generate its plist.
+*(Corrected under Architect R41, 2026-09-26: the earlier text said "rerun the installer", which is
+wrong for caddy mode.)*
 
 A binary and its provenance manifest are two filesystem entries, so no comment may claim the pair is
 atomically replaced. The implementation instead guarantees recoverability at every mutation point:

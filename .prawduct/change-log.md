@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — ADR 0018 §4 states the mode-aware repair; backup ref deleted (#1245, Architect R41/R42)
+
+<!-- prawduct: type=docs | scope=ttyd-1245 -->
+
+- **R41:** ADR 0018 §4 said the cutover directs the operator to "rerun the installer", which is wrong on a caddy-mode
+  host (install.sh rewrites the ttyd plist for direct mode). The Architect ruled a narrow correction to the implemented
+  `SELECT_BY_MODE` contract: `provision` first, then `deploy/install.sh` (direct) or the cutover (caddy). The ADR now
+  says that, with a dated correction note. It is a normative-doc change that matches existing, reviewed code.
+- **R42:** the local-only `backup/1245-pre-r39-redaction` ref (the pre-rewrite head, 2fe1c50d, holding the unredacted
+  run5 evidence) is deleted before any push. `git for-each-ref --contains` confirms no local ref still reaches the
+  pre-rewrite commits. No object-store purge is required.
+
 ## 2026-09-26 — Close the two blockers verify-resolutions left open (#1245)
 
 <!-- prawduct: type=fix | scope=ttyd-1245 -->
