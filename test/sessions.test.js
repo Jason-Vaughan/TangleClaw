@@ -4237,6 +4237,54 @@ describe('sessions', () => {
       }
     });
 
+    it('_writePrimeFile writes the prime text exactly when provenance is off (ADR 0019)', () => {
+      const project = store.projects.getByName('silent-prime-test');
+      const out = sessions._writePrimeFile(project.path, '# prime\n', {
+        config: { provenanceWatermark: { enabled: false, template: 'x {project}' } }, project: 'silent-prime-test', engine: 'claude'
+      });
+      assert.equal(fs.readFileSync(out, 'utf8'), '# prime\n');
+    });
+
+    it('_writePrimeFile puts one provenance line first when the project opted in, and no second on rewrite', () => {
+      const project = store.projects.getByName('silent-prime-test');
+      const ctx = { config: { provenanceWatermark: { enabled: true, template: null } }, project: 'silent-prime-test', engine: 'claude' };
+      const out = sessions._writePrimeFile(project.path, '# prime\n', ctx);
+      sessions._writePrimeFile(project.path, '# prime\n', ctx);
+      assert.equal(fs.readFileSync(out, 'utf8'),
+        '<!-- tangleclaw:provenance Built by TangleClaw (Project: silent-prime-test) -->\n# prime\n');
+    });
+
+    it('launchSession stamps the prime file for a project that opted in, naming the project and engine', () => {
+      tmux.hasSession = (name) => name === 'silent-prime-test';
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+      const project = store.projects.getByName('silent-prime-test');
+      store.projectConfig.save(project.path, {
+        engine: 'claude',
+        silentPrime: true,
+        provenanceWatermark: { enabled: true, template: '{project} on {engine}' }
+      });
+
+      const result = sessions.launchSession('silent-prime-test');
+      assert.equal(result.error, null);
+
+      const lines = fs.readFileSync(path.join(project.path, '.tangleclaw', 'session-prime.md'), 'utf8').split('\n');
+      assert.equal(lines[0], `<!-- tangleclaw:provenance silent-prime-test on ${project.engineId} -->`);
+      assert.ok(!lines[1].includes('tangleclaw:provenance'), 'exactly one provenance line');
+      assert.ok(lines.slice(1).join('\n').length > 0, 'the prime itself follows');
+    });
+
+    it('launchSession leaves the prime file unstamped when provenance is not configured', () => {
+      tmux.hasSession = (name) => name === 'silent-prime-test';
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+      const project = store.projects.getByName('silent-prime-test');
+      store.projectConfig.save(project.path, { engine: 'claude', silentPrime: true });
+
+      const result = sessions.launchSession('silent-prime-test');
+      assert.equal(result.error, null);
+      const text = fs.readFileSync(path.join(project.path, '.tangleclaw', 'session-prime.md'), 'utf8');
+      assert.ok(!text.includes('tangleclaw:provenance'));
+    });
+
     it('launchSession writes prime file when projConfig.silentPrime is true', () => {
       // Mirror the orphan-adoption pattern from the launchSession tests above:
       // pretend a tmux session exists so launchSession kills+recreates rather
