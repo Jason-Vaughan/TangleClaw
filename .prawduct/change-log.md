@@ -59,6 +59,40 @@ Chunks A1–A4 of `.tangleclaw/plans/1912-fleet-workload-core.md`, implementing 
 - Typed assignment-dispatch supersession (ADR §4, a named dependency not authorized by FWV-A18).
 - Project Master workload (composes UNKNOWN).
 - Table retention: #1918.
+## 2026-09-26 — Detect, never auto-repair, legacy TangleClaw sections in governed CLAUDE.md (#1911)
+
+<!-- prawduct: type=bugfix | scope=engines-1911 -->
+
+The PM dispatched this over Medusa (d5b2a91a). The plan came first and stopped at Plan-Written. The Architect ruled A7–A10 (8869adf0). Plan: `.tangleclaw/plans/1911-governed-claude-md-legacy-copy.md`.
+
+**Problem.** When a CLAUDE.md written whole-file was later governed by the plugin, the first governed write appended the managed block. `spliceManagedBlock` treats all existing text as operator content, so TC's legacy guide stayed above the anchor, and the PortHub, Shared Documents and Session Memory sections and the bootstrap bullets all appeared twice. B1 reproduced it on main c600a7c6: 212 → 419 lines.
+
+**The change.**
+- **Analysis.** `lib/legacy-claude-md.js` does pure analysis. A candidate is a proven duplicate: a `##` heading or preamble bullet that the file's own managed block also carries. The scan skips fenced code, because the guides' samples contain `# ` comment lines. It refuses duplicate candidate headings, an unterminated fence, more than one anchor, an anchor inside or after the block, and malformed markers. The rules tiers are never candidates (A9).
+- **Guarded writer.** `applyLegacyRepair` takes a digest that covers both the file hash and the plan. It refuses on a mismatch or a read-only carrier (#1291). It writes a temp file, fsyncs it, re-hashes the target (compare-and-swap), then renames. It keeps the file mode, and a second run is a no-op. The header becomes neutral only when it is byte-identical (A8).
+- **Detection only (A10).** `engines.writeEngineConfig` warns after a governed write, and `sessions._ruleSourcesSection` adds a launch note. Nothing heals on launch, boot or PATCH.
+- **Operator action.** `scripts/repair-governed-claude-md.js` previews the removals, then `--apply <digest>` performs them.
+- **Docs.** The engine guide, FEATURES and CHANGELOG `### Fixed`.
+
+**Tests.** `test/legacy-claude-md.test.js` builds its fixtures with the real generators. It covers:
+- detection without mutation;
+- the digest binding, including a changed-after-preview refusal and a read-only refusal;
+- preservation of operator edits, including a section flagged as differing from the managed copy;
+- each ambiguous-bound refusal;
+- the neutral header versus an altered one;
+- idempotence and the preserved file mode;
+- the CLI's preview and apply, and its refusal of an ungoverned project.
+
+`test/sessions.test.js` covers the launch note, including that the prime never mutates the file. A mutation test that disabled the digest check turned the binding tests red.
+
+**Architect A22 correction.** The merge was rejected at a5993f55 on three repair-path safety blockers, and all three are fixed on the same branch:
+- `repairCommand` shellWord-quotes every argv word. A test sends hostile legal paths through `/bin/sh` and checks each arrives unchanged.
+- `_writeAll` writes every byte or refuses, and the fstat size is checked before the rename. Tests inject short, zero and ENOSPC writes.
+- A symlinked carrier is refused with `lstat`, before reading and again before the rename, and the preview refuses it too.
+
+A mutation check on each fix turned its tests red.
+
+**Cumulative review follow-up.** The preview always marked the legacy PortHub section as differing, because the whole-file layout put the API base URL and service-token lines after the PortHub guide with no heading between them, while the block keeps them in its first section. `_matchesManagedCopy` now accepts trailing lines that appear verbatim elsewhere in the block. Tests cover all four combinations of service token and Medusa on and off, plus an operator-edited PortHub body that must still be flagged.
 ## 2026-09-26 — Caddy mode moves the tailnet host in two phases, with a strict check and an honest rollback (#1905, Chunk 2)
 
 <!-- prawduct: type=bugfix | scope=1905-magicdns-host-inventory -->
