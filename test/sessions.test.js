@@ -204,8 +204,9 @@ describe('sessions', () => {
       const project = store.projects.getByName('prime-governed-legacy');
 
       const prompt = sessions.generatePrimePrompt(project, store.engines.get('claude'));
-      assert.match(prompt, /`CLAUDE\.md` still holds 1 legacy TangleClaw section above the Prawduct anchor/);
-      assert.match(prompt, /scripts\/repair-governed-claude-md\.js/);
+      assert.match(prompt, /`CLAUDE\.md` still holds 1 legacy TangleClaw item \(sections or bootstrap bullets\) above the Prawduct anchor/);
+      assert.ok(prompt.includes(require('../lib/legacy-claude-md').repairCommand(dir)),
+        'the note names the absolute, runnable command — the governed project has no scripts/ of its own');
       assert.equal(fs.readFileSync(carrier, 'utf8'), text, 'the prime reports; it never repairs');
 
       // A governed project whose legacy region holds no duplicate gets no such note.
@@ -216,7 +217,14 @@ describe('sessions', () => {
       fs.writeFileSync(path.join(cleanDir, 'CLAUDE.md'), text.replace('## Session Memory\n\nGuide.\n\n<!-- PRAWDUCT', '<!-- PRAWDUCT'));
       store.projects.create({ name: 'prime-governed-clean', path: cleanDir, engine: 'claude' });
       const clean = sessions.generatePrimePrompt(store.projects.getByName('prime-governed-clean'), store.engines.get('claude'));
-      assert.doesNotMatch(clean, /legacy TangleClaw section/);
+      assert.doesNotMatch(clean, /legacy TangleClaw (item|content)/);
+
+      // An unboundable legacy region is reported too, and still left alone.
+      const refusedText = text.replace('## Core Rules (Enforced)', '## Session Memory\n\nstray\n\n## Core Rules (Enforced)');
+      fs.writeFileSync(carrier, refusedText);
+      const refused = sessions.generatePrimePrompt(project, store.engines.get('claude'));
+      assert.match(refused, /cannot be bounded safely/);
+      assert.equal(fs.readFileSync(carrier, 'utf8'), refusedText);
     });
 
     it('names a vendored methodology hook as the third source (#796)', () => {

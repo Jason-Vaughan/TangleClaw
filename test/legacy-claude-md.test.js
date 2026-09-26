@@ -16,12 +16,32 @@ delete process.env.TANGLECLAW_PORT;
 const store = require('../lib/store');
 const engines = require('../lib/engines');
 const legacy = require('../lib/legacy-claude-md');
+const { setConsoleStream, setLevel, getLevel } = require('../lib/logger');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'repair-governed-claude-md.js');
 const PROJ_CONFIG = {
   rules: { core: { changelogPerChange: true, jsdocAllFunctions: true, unitTestRequirements: true, sessionWrapProtocol: true, porthubRegistration: true }, extensions: {} }
 };
 const ANCHOR_SECTION = '\n<!-- PRAWDUCT:ANCHOR -->\n## Governance (Prawduct)\n\nGoverned by the plugin.\n';
+
+/**
+ * Run a function and return everything the logger emitted meanwhile.
+ * @param {Function} fn
+ * @returns {string}
+ */
+function captureLogs(fn) {
+  const lines = [];
+  const level = getLevel();
+  setConsoleStream({ write: (text) => lines.push(text) });
+  setLevel('debug');
+  try {
+    fn();
+  } finally {
+    setConsoleStream(null);
+    setLevel(level);
+  }
+  return lines.join('\n');
+}
 
 /**
  * Count lines that are exactly a given heading.
@@ -104,6 +124,28 @@ describe('governed CLAUDE.md legacy duplicates (#1911)', () => {
 
       engines.writeEngineConfig('claude', proj, PROJ_CONFIG, profile);
       assert.equal(fs.readFileSync(md, 'utf8'), text, 'a further launch detects but removes nothing');
+    });
+
+    it('a governed launch warns with the absolute preview command', () => {
+      const { proj } = affectedProject();
+      const logged = captureLogs(() => engines.writeEngineConfig('claude', proj, PROJ_CONFIG, profile));
+      assert.match(logged, /duplicates TangleClaw operational sections above the Prawduct anchor/);
+      assert.ok(logged.includes(legacy.repairCommand(proj)), 'the warning names the runnable command');
+    });
+
+    it('a governed launch over an unboundable legacy region warns that it was left as is', () => {
+      const { proj, md } = affectedProject();
+      const text = fs.readFileSync(md, 'utf8').replace('## Core Rules (Enforced)', '## Shared Documents\n\nstray\n\n## Core Rules (Enforced)');
+      fs.writeFileSync(md, text);
+      const logged = captureLogs(() => engines.writeEngineConfig('claude', proj, PROJ_CONFIG, profile));
+      assert.match(logged, /cannot be bounded — left as is/);
+      assert.equal(fs.readFileSync(md, 'utf8'), text);
+    });
+
+    it('the repair command is absolute, so it runs from inside the governed project', () => {
+      assert.ok(path.isAbsolute(legacy.REPAIR_SCRIPT));
+      assert.ok(fs.existsSync(legacy.REPAIR_SCRIPT));
+      assert.equal(legacy.repairCommand('/p', 'abc'), `node "${legacy.REPAIR_SCRIPT}" "/p" --apply abc`);
     });
 
     it('analysis is pure: it returns a plan and never touches the file', () => {
@@ -190,10 +232,11 @@ describe('governed CLAUDE.md legacy duplicates (#1911)', () => {
 
     it('keeps the file mode', () => {
       const { md } = affectedProject();
-      fs.chmodSync(md, 0o640);
+      // 0664 is a mode a typical 022 umask would trim to 0644 on create.
+      fs.chmodSync(md, 0o664);
       const { digest } = legacy.analyzeLegacyCarrier(fs.readFileSync(md, 'utf8'), ctx);
       legacy.applyLegacyRepair(md, digest, ctx);
-      assert.equal(fs.statSync(md).mode & 0o777, 0o640);
+      assert.equal(fs.statSync(md).mode & 0o777, 0o664);
     });
   });
 

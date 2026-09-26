@@ -67,7 +67,7 @@ function previewLines(file, analysis) {
     ? `  replace header "${analysis.header.line}" with "${legacy.NEUTRAL_HEADER}"`
     : `  keep header "${analysis.header.line}" (not the generated form)`);
   lines.push('  Kept: everything else, including the Core, Extension and Global rules copies and all content from the Prawduct anchor on.');
-  lines.push(`  To apply exactly this: node scripts/repair-governed-claude-md.js "${path.dirname(file)}" --apply ${analysis.digest}`);
+  lines.push(`  To apply exactly this: ${legacy.repairCommand(path.dirname(file), analysis.digest)}`);
   return lines;
 }
 
