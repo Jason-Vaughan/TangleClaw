@@ -1,6 +1,6 @@
 ---
 title: "#1637 Restart Session: a one-click relaunch on the ended bar after a completed wrap"
-status: CHUNK 01 BUILT AND REVIEWED (2026-09-26). Chunk 02 waits for PM dispatch.
+status: CHUNK 01 BUILT AND REVIEWED (2026-09-26). Chunk 02 waits for PM dispatch after the V5 Bridge /clear.
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-26, message fb7882f1 ("initialize the new Train on a fresh branch, create the plan, and begin Chunk 01").
 issues: [1637]
 governed_by:
@@ -135,7 +135,7 @@ navigation and scope.
   before Stay. A `#relaunchStatus` `role="status" aria-live="polite"` span is added.
 - `session.js`: one `applyRelaunchEligibility(status)` shows or hides the button.
   - `handleSessionEnded(statusData)` calls it.
-  - **[DECISION]** When the status is eligible, `handleSessionEnded` does not start the 10 s
+  - **[DECISION, approved by the PM via Medusa 67e3a1f8 on 2026-09-26]** When the status is eligible, `handleSessionEnded` does not start the 10 s
     redirect, exactly as `handleWrapCompleted` already doesn't. Without this, a pipeline wrap or a
     reload would offer the button and then navigate away from it, and R26.1 requires the two paths
     to converge.
