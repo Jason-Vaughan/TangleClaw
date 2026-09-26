@@ -35,6 +35,32 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Restart Session on the ended bar after a completed wrap (#1637)
+
+<!-- prawduct: type=feature | scope=1637-restart-session -->
+
+Chunks 01 and 02 of `.tangleclaw/plans/1637-restart-session.md`, under Architect ruling R26. The PM dispatched both chunks over Medusa (fb7882f1, 343a758e) and approved the eligible-no-redirect decision (67e3a1f8).
+
+**Problem.** After a wrap ended the session, relaunching the same project meant going back to the landing page, clicking the project and passing the launch dialogs again. A context refresh is the most common reason to wrap, so this was the common case.
+
+**The change.**
+- **`public/session-relaunch.js`** is DOM-free and exported as `window.tcSessionRelaunch`.
+  - It offers the button only when `active === false`, no wrap is running, the session is tracked, and the newest session row is `wrapped`.
+  - The launch body is `{continuityMode: 'continue'}` alone, so the server applies the project's defaults.
+  - Refusals fall into four classes: retryable, needs-landing, liveness-unknown and uncertain.
+  - A controller latches before it sends, and an uncertain outcome is settled by a status read, never a second POST.
+- **Page wiring:**
+  - `applyRelaunchEligibility` is shared by both ended-bar painters. `handleSessionEnded` decides from its payload. `handleWrapCompleted` makes one status read, and a failed read hides the button.
+  - An eligible end suppresses the 10 s redirect.
+  - The launch POST is bounded at 60 s and a timeout goes to reconcile.
+  - `#relaunchStatus` is a polite live region.
+  - When the only way forward is the landing page, focus moves to Back to Projects.
+- **`sw.js`** serves the module network-first, in lockstep with `session.js`, and precaches it.
+- **Docs:** ADR 0002 "Amended 2026-09-26", the user guide, FEATURES and CHANGELOG. The server and its routes are unchanged.
+
+**Review.**
+- Chunk 01 Critic rev-20260926T040831Z-cf8f4842: 0 blocking. Its R-5 (no launch timeout) was built in chunk 02.
+- Cumulative Critic rev-20260926T042927Z-787c1eed: its one blocker was saved test evidence carrying the #1884 dir-scanner flake. A clean full run replaced it, and verify-resolutions rev-20260926T043459Z-f0760bdd confirmed.
 ## 2026-09-26 — ADR 0018 §4 states the mode-aware repair; backup ref deleted (#1245, Architect R41/R42)
 
 <!-- prawduct: type=docs | scope=ttyd-1245 -->

@@ -929,6 +929,7 @@ html[data-tc-keyboard] body {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-wrap: wrap;
   gap: 12px;
   padding: 10px 16px;
   background: var(--elevated-bg);
@@ -941,6 +942,13 @@ html[data-tc-keyboard] body {
   color: var(--text-muted);
   font-family: monospace;
 }
+.session-ended .relaunch-status {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.session-ended .relaunch-status:empty { display: none; }
+.session-ended .relaunch-status[data-tone="error"] { color: var(--danger); }
+.session-ended .relaunch-status[data-tone="warn"] { color: var(--warning); }
 
 /* ── Command Bar ── */
 .command-bar {

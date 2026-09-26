@@ -2341,9 +2341,18 @@ function handleSessionEnded(statusData) {
   // blocked-wrap report the operator is still reading is never navigated
   // away by the auto-redirect (#268). The operator dismisses the drawer
   // themselves; the ended bar then carries the manual "Back to Projects".
+  //
+  // Also suppressed when the bar offers Restart Session: a wrap that ended the
+  // session reaches this page through here (the server kills tmux and the next
+  // poll reads absence), and so does a reload of a wrapped page. Offering the
+  // button and then navigating away from it would leave the operator racing
+  // the countdown for the action the bar just offered — the same reason
+  // handleWrapCompleted starts none.
   const countdownEl = document.getElementById('countdown');
   const H = window.tcWrapDrawerHelpers;
-  const allowCountdown = !H || H.shouldStartEndedCountdown({ wrapDrawerOpen: sessionState.wrapDrawerOpen });
+  const offersRelaunch = applyRelaunchEligibility(statusData);
+  const allowCountdown = !offersRelaunch
+    && (!H || H.shouldStartEndedCountdown({ wrapDrawerOpen: sessionState.wrapDrawerOpen }));
   if (!allowCountdown) {
     countdownEl.textContent = '';
     return;
@@ -2359,6 +2368,125 @@ function handleSessionEnded(statusData) {
       countdownEl.textContent = `Returning in ${remaining}s`;
     }
   }, 1000);
+}
+
+// ── Restart Session (#1637) ──
+// After a wrap has ended the session, the ended bar offers one click to start
+// the next session of the same project. The decisions (when to offer it, what
+// to send, what a refusal means) live in session-relaunch.js; this is only the
+// wiring to the page's DOM and HTTP helpers.
+
+/**
+ * How long the page waits for the launch POST before treating it as an answer
+ * that never arrived. `apiMutate` has no timeout of its own, so without this a
+ * launch that never settles leaves the button on "Restarting…" for good. The
+ * timeout does not mean nothing launched — it goes down the controller's
+ * uncertain path, which reads status and never POSTs again. Generous, because a
+ * launch runs the handoff preflight and waits for tmux before it answers.
+ */
+const RELAUNCH_TIMEOUT_MS = 60 * 1000;
+
+let relaunchController = null;
+
+/**
+ * Show or hide Restart Session for a status read. Both ended-bar painters call
+ * this, so the two ways a page reaches the bar make the same decision.
+ *
+ * Fails closed: a missing module or an ineligible (or absent) status leaves the
+ * button hidden.
+ *
+ * @param {object|null|undefined} status - Body of `GET /api/sessions/:project/status`.
+ * @returns {boolean} Whether the button is now offered.
+ */
+function applyRelaunchEligibility(status) {
+  const btn = document.getElementById('relaunchBtn');
+  const R = window.tcSessionRelaunch;
+  const eligible = Boolean(btn && R && R.relaunchEligibility(status).eligible);
+  if (btn) btn.classList.toggle('hidden', !eligible);
+  return eligible;
+}
+
+/**
+ * Send the launch, bounded by `RELAUNCH_TIMEOUT_MS`.
+ *
+ * Reads `api.lastErrorCode` in the same continuation that receives the
+ * `apiMutate` result, since that side channel is shared by every call on the
+ * page. An answer that lands after the timeout is ignored: by then the
+ * controller has already moved on to reconcile by reading status.
+ *
+ * @param {object} body - The launch request body.
+ * @returns {Promise<{ok: boolean, data?: object, code?: (string|null), error?: (string|null)}>}
+ */
+function sendRelaunch(body) {
+  const R = window.tcSessionRelaunch;
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve({ ok: false, code: null, error: 'The launch did not answer in time.' });
+    }, RELAUNCH_TIMEOUT_MS);
+    apiMutate(`/api/sessions/${encodeURIComponent(projectName)}`, 'POST', body).then((data) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(R.launchResultFromApi(data, api));
+    }, () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ ok: false, code: null, error: null });
+    });
+  });
+}
+
+/**
+ * Read session status for a relaunch decision.
+ *
+ * @returns {Promise<(object|null)>} The status body, or null when the read failed.
+ */
+function readRelaunchStatus() {
+  return api(`/api/sessions/${encodeURIComponent(projectName)}/status`);
+}
+
+/**
+ * Paint a relaunch view onto the ended bar.
+ *
+ * @param {{label: string, disabled: boolean, message: string, tone: (string|null), pointToLanding: boolean}} view
+ */
+function renderRelaunch(view) {
+  const btn = document.getElementById('relaunchBtn');
+  const statusEl = document.getElementById('relaunchStatus');
+  btn.textContent = view.label;
+  btn.disabled = view.disabled;
+  statusEl.textContent = view.message || '';
+  if (view.tone) statusEl.dataset.tone = view.tone;
+  else delete statusEl.dataset.tone;
+  // The button the operator just pressed is now disabled and keeps no focus, so
+  // move it to where the message says to go.
+  if (view.pointToLanding) {
+    const back = document.getElementById('endedBackLink');
+    if (back && back.focus) back.focus();
+  }
+}
+
+/**
+ * Handle a press of Restart Session. The controller is built on first use and
+ * reused, since its latch is what keeps a double click to one launch.
+ *
+ * @returns {Promise<string>} The controller's resulting phase.
+ */
+function onRelaunchClick() {
+  if (!relaunchController) {
+    relaunchController = window.tcSessionRelaunch.createRelaunchController({
+      project: projectName,
+      launch: sendRelaunch,
+      readStatus: readRelaunchStatus,
+      navigate: (url) => { window.location.href = url; },
+      render: renderRelaunch
+    });
+  }
+  return relaunchController.activate();
 }
 
 // ── Project Master Drawer (chunk G slice 3, #331) ──
@@ -6782,6 +6910,10 @@ function handleWrapCompleted() {
   const endedBar = document.getElementById('sessionEnded');
   endedBar.classList.remove('hidden');
   document.getElementById('countdown').textContent = '';
+
+  // This path carries no status payload, so read one to decide whether to offer
+  // Restart Session. A failed read resolves null and leaves the button hidden.
+  return readRelaunchStatus().then(applyRelaunchEligibility);
 }
 
 // ── Event Bindings ──
@@ -7011,6 +7143,8 @@ function bindEvents() {
     $('countdown').textContent = 'Staying';
     $('stayBtn').disabled = true;
   });
+
+  $('relaunchBtn').addEventListener('click', onRelaunchClick);
 
   // Wrap-idle modal buttons + backdrop click
   $('wrapReturnBtn').addEventListener('click', confirmReturnFromWrapIdle);
