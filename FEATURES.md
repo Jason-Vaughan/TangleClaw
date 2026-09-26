@@ -758,3 +758,11 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/startup-control-codex.test.js` — the Codex adapter against the fake app-server: readiness green and each blocker, accepted via notification and via read-back alone, applied, failed, interrupted, approval pending, sockets lost before and after acceptance, reconcile of an indeterminate fire, version mismatch, and that TangleClaw never answers a server request.
 - `test/startup-control-launch.test.js` — the launch and teardown halves: a supported Codex launch spawns the app-server through the seams with the pane's env, attaches `--remote` ahead of the mode args, freezes the native/legacy selection, records the channel; unverified versions and failed starts launch unchanged; kill, wrap, keep-running wrap, boot re-sync and the reaper end or retain the channel correctly.
 - `test/ws-unix-client.test.js` — the unix-socket WebSocket client: handshake accept and refusal, masking, the 7/16/64-bit length forms, ping→pong, fragmented text, close.
+
+## TODO (auto-stubbed 2026-09-25)
+
+- **TBD** — touched in this session: `lib/wrap-steps/_upstream-provenance.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-upstream-provenance.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/medusa-exchanges.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/medusa-send.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/store-medusa-exchange-migration.test.js`. <!-- describe -->
