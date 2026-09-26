@@ -69,13 +69,15 @@ function main(argv, io) {
       if (at === -1 || !rest[at + 1]) { io.err('usage: ttyd-runtime.js install --from <stage-dir>'); return 2; }
       const r = runtime.installRuntime({ baseDir, stageDir: path.resolve(rest[at + 1]), deps: io.deps });
       io.out(`installed ${r.installed}${r.keptPrevious ? `; last known good is ${r.previous}` : '; there was no verified runtime to keep as last known good'}`);
-      io.out('ttyd has NOT been restarted: re-run deploy/install.sh or the ingress cutover to select it.');
+      io.out(`ttyd has NOT been restarted: to run it, ${runtime.SELECT_BY_MODE}.`);
       return 0;
     }
     if (cmd === 'rollback') {
       const r = runtime.rollbackRuntime({ baseDir, deps: io.deps });
       io.out(`restored ${r.restored}${r.setAside ? `; the replaced runtime is kept at ${r.setAside}` : ''}`);
-      io.out('ttyd has NOT been restarted.');
+      io.out('ttyd has NOT been restarted. If the ttyd plist already runs ~/.tangleclaw/bin/ttyd, '
+        + '`launchctl kickstart -k gui/$(id -u)/com.tangleclaw.ttyd` restarts it on the restored runtime; otherwise, '
+        + `${runtime.SELECT_BY_MODE}.`);
       return 0;
     }
     if (cmd === 'status') {

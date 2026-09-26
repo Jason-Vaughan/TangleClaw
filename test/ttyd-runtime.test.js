@@ -14,6 +14,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { spawnSync } = require('node:child_process');
 
 const runtime = require('../lib/ttyd-runtime');
 const cli = require('../scripts/ttyd-runtime');
@@ -719,6 +720,32 @@ describe('lib/ttyd-runtime (#1245, ADR 0018)', () => {
       const code = cli.main(['provision'], { baseDir: base, env: {}, deps: d, out: (x) => out.push(x), err: () => {} });
       assert.equal(code, 3);
       assert.deepEqual(out, []);
+    });
+
+    // A real build prints progress on stdout; install.sh captures provision's
+    // stdout as the plist's ttyd path, so the default build must send its
+    // output to stderr. Runs the default build in a child process with a
+    // stand-in builder and looks at what reaches that process's stdout.
+    it('the default build sends the builder\'s output to stderr, never stdout', () => {
+      const fake = path.join(scratch, 'fake-build.js');
+      fs.writeFileSync(fake, "console.log('[build-ttyd] noisy progress line'); console.error('[build-ttyd] to stderr');\n");
+      const driver = `require(${JSON.stringify(path.join(REPO, 'lib', 'ttyd-runtime'))}).defaultDeps().build({ work: ${JSON.stringify(path.join(scratch, 'w'))}, out: ${JSON.stringify(path.join(scratch, 'o'))}, script: ${JSON.stringify(fake)} })`;
+      const r = spawnSync(process.execPath, ['-e', driver], { encoding: 'utf8' });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(r.stdout, '', 'nothing from the build reaches stdout');
+      assert.match(r.stderr, /noisy progress line/);
+    });
+
+    // Every message that sends the operator on to selecting the runtime uses
+    // the one per-mode text, so none can send a caddy host to install.sh.
+    it('install, rollback and the refusal all name the per-mode switch', () => {
+      stage(path.join(scratch, 's1'), 'ttyd version 1.7.7-a\n');
+      stage(path.join(scratch, 's2'), 'ttyd version 1.7.7-b\n');
+      assert.ok(run(['install', '--from', path.join(scratch, 's1')]).out.includes(runtime.SELECT_BY_MODE));
+      run(['install', '--from', path.join(scratch, 's2')]);
+      assert.ok(run(['rollback']).out.includes(runtime.SELECT_BY_MODE));
+      assert.ok(runtime.REPAIR.includes(runtime.SELECT_BY_MODE));
+      assert.match(runtime.SELECT_BY_MODE, /direct mode: `\.\/deploy\/install\.sh`; caddy mode: `node scripts\/ingress-cutover\.js --to caddy` \(never deploy\/install\.sh/);
     });
 
     it('install says ttyd was not restarted', () => {

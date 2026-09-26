@@ -35,6 +35,21 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Close the two blockers verify-resolutions left open (#1245)
+
+<!-- prawduct: type=fix | scope=ttyd-1245 -->
+
+`verify-resolutions` rev-20260926T152837Z-80909b30 on ede42d18 found prior R-2 and R-7 not fully closed.
+
+- **R-1 (prior R-2), the real leak path:** `defaultDeps().build` gains an optional `script` (build-ttyd.js by default).
+  A new test runs the DEFAULT build in a child process with a stand-in builder that prints to stdout, and asserts
+  that nothing reaches the child's stdout. Mutation-checked: `stdio: ['ignore', 'inherit', 2]` fails it.
+- **R-2 (prior R-7), the class, not the site:** one exported `SELECT_BY_MODE` text (direct: install.sh; caddy: the
+  cutover; never install.sh on caddy) is used by REPAIR and by the CLI's `install` and `rollback` output. Rollback
+  also names the kickstart when the plist already runs the owned path. A test pins every site to the constant.
+- O-1, O-2 and O-3 are ACCEPTed, reasons recorded. O-2 (ADR 0018 §4's "rerun the installer") is the Architect's to
+  decide.
+
 ## 2026-09-26 — Resolve cumulative review rev-20260926T150050Z-6620a07c; redact the run5 evidence from history (#1245)
 
 <!-- prawduct: type=fix | scope=ttyd-1245 -->
