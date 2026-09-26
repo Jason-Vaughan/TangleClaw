@@ -68,6 +68,8 @@ The PM dispatched this over Medusa (d5b2a91a). The plan came first and stopped a
 
 A mutation check on each fix turned its tests red.
 
+**Cumulative review follow-up.** The preview always marked the legacy PortHub section as differing, because the whole-file layout put the API base URL and service-token lines after the PortHub guide with no heading between them, while the block keeps them in its first section. `_matchesManagedCopy` now accepts trailing lines that appear verbatim elsewhere in the block. Tests cover all four combinations of service token and Medusa on and off, plus an operator-edited PortHub body that must still be flagged.
+
 ## 2026-09-26 — Train 2: malformed project tags, inline-handler encoding, the Not a project mark (#1375, #1384, #1768)
 
 <!-- prawduct: type=bugfix | scope=train-2 -->

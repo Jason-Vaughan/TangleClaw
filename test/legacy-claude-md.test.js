@@ -80,14 +80,15 @@ describe('governed CLAUDE.md legacy duplicates (#1911)', () => {
    * launch, Prawduct onboarding, then a governed relaunch.
    * @returns {{proj: string, md: string}}
    */
-  function affectedProject() {
+  function affectedProject(projConfig = PROJ_CONFIG, onCreate = () => {}) {
     const proj = fs.mkdtempSync(path.join(base, 'proj-'));
+    onCreate(proj);
     const md = path.join(proj, 'CLAUDE.md');
-    assert.equal(engines.writeEngineConfig('claude', proj, PROJ_CONFIG, profile).written, true);
+    assert.equal(engines.writeEngineConfig('claude', proj, projConfig, profile).written, true);
     fs.appendFileSync(md, ANCHOR_SECTION);
     fs.mkdirSync(path.join(proj, '.claude'));
     fs.writeFileSync(path.join(proj, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'prawduct@prawduct': true } }));
-    assert.equal(engines.writeEngineConfig('claude', proj, PROJ_CONFIG, profile).written, true);
+    assert.equal(engines.writeEngineConfig('claude', proj, projConfig, profile).written, true);
     return { proj, md };
   }
 
@@ -354,6 +355,47 @@ describe('governed CLAUDE.md legacy duplicates (#1911)', () => {
       const { digest } = legacy.analyzeLegacyCarrier(fs.readFileSync(md, 'utf8'), ctx);
       legacy.applyLegacyRepair(md, digest, ctx);
       assert.ok(fs.readFileSync(md, 'utf8').includes(note), 'the hand-added section survives byte for byte');
+    });
+
+    it('an unedited file reports every candidate as matching, with the service token and Medusa on or off', () => {
+      // The whole-file generator wrote the API base URL and service-token lines
+      // straight after the PortHub guide, so the legacy PortHub section carries
+      // them while the block keeps them elsewhere. A preview that called that
+      // an edit on every file would teach operators to ignore the warning.
+      for (const token of [false, true]) {
+        for (const medusa of [false, true]) {
+          const c = store.config.load();
+          c.serviceTokenEnabled = token;
+          c.serviceToken = token ? `tcsk_${'A'.repeat(43)}` : null;
+          store.config.save(c);
+          try {
+            const projConfig = { ...PROJ_CONFIG, medusaEnabled: medusa };
+            const { md } = affectedProject(projConfig, (proj) => {
+              if (medusa) store.projects.create({ name: path.basename(proj), path: proj, engine: 'claude' });
+            });
+            const analysis = legacy.analyzeLegacyCarrier(fs.readFileSync(md, 'utf8'), ctx);
+            const label = `token=${token} medusa=${medusa}`;
+            assert.ok(analysis.candidates.some((cand) => cand.heading === '## Port Management (PortHub)'), label);
+            for (const cand of analysis.candidates) {
+              assert.equal(cand.matchesManagedCopy, true, `${label}: ${cand.heading || 'bullet'} should match`);
+            }
+          } finally {
+            const reset = store.config.load();
+            reset.serviceTokenEnabled = false;
+            reset.serviceToken = null;
+            store.config.save(reset);
+          }
+        }
+      }
+    });
+
+    it('still flags PortHub when an operator edited its body', () => {
+      const { md } = affectedProject();
+      const text = fs.readFileSync(md, 'utf8');
+      const legacyEnd = text.indexOf('<!-- PRAWDUCT:ANCHOR -->');
+      const edited = text.slice(0, legacyEnd).replace('### Rules\n', '### Rules\n\n- Our own port rule.\n') + text.slice(legacyEnd);
+      const porthub = legacy.analyzeLegacyCarrier(edited, ctx).candidates.find((c) => c.heading === '## Port Management (PortHub)');
+      assert.equal(porthub.matchesManagedCopy, false);
     });
 
     it('flags a candidate whose body differs from the managed copy', () => {

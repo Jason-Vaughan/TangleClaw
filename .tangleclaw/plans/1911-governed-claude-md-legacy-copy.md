@@ -112,6 +112,8 @@ At a5993f55 the Architect rejected the merge on three narrow repair-path blocker
 
 Mutation checks: reverting each fix turns its tests red.
 
+A cumulative-review follow-up fixed the preview so it no longer always flags PortHub as differing: the old layout's trailing API URL and token lines now count as matching when the block carries them verbatim.
+
 ## Design (as built)
 
 **`lib/legacy-claude-md.js`** holds pure analysis plus one guarded writer.
