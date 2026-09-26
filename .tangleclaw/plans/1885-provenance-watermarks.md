@@ -1,6 +1,6 @@
 ---
 title: "#1885 Provenance watermarks: an opt-in 'Built by TangleClaw' header on files TangleClaw owns whole"
-status: PLAN APPROVED WITH MODIFICATIONS by Architect ruling R25 (2026-09-26, message 7a015a50) and updated to it. Stopped until the PM dispatches implementation. No implementation has started.
+status: Chunk 01 BUILT and REVIEWED (Critic clean after one fix round, 2026-09-26). Chunks 02–03 await PM dispatch.
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-26 (message 06d614e1). The dispatch covers discovery and planning only, and stops at "Plan Written".
 issues: [1885]
 governed_by:
@@ -265,7 +265,9 @@ registry is five private surfaces. The Architect kept three chunks, so 02 and 03
 
 ## Status
 
-- [ ] 01 — `lib/provenance.js`, per-project key, `session-prime` slice
+- [x] 01 — `lib/provenance.js`, per-project key, `session-prime` slice. Built in 276d8107, fixed in 28790f51. Critic: cumulative rev-20260926T015617Z-736d9820 (1 blocking: the prime could exceed the hook budget; fixed), then verify-resolutions rev-20260926T022824Z-3f669706 clean. Suite: 13164 pass / 0 fail by node's TAP reporter at 28790f51.
+  - Carried into 02: tighten the `lineOverhead` bound in `test/provenance.test.js` to the exact comment-form overhead (O-2).
+  - Carried into 02: for each surface, audit what its reader constrains (size or format), not only who reads it.
 - [ ] 02 — remaining four surfaces, with the shared tracked predicate
 - [ ] 03 — Project Settings UI, disposition, capabilities, docs, CHANGELOG
 
