@@ -1,6 +1,6 @@
 ---
 title: "Fleet Workload Visibility, Phase A: launch-bound workload receipts, a bounded activity observer, and the composed fleet read (#1912)"
-status: IN PROGRESS: Chunk A1 building
+status: IN PROGRESS: A1 done (a6dc0d77, review rev-20260926T195653Z-6ae71db9, 0 blocking); A2 building
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-26 (message 806b9000), after Architect ruling FWV-A18 approved ADR 0020 at 533b1386
 contract: docs/adr/0020-session-workload-receipts.md (PR #1916). This plan implements it and does not restate it; where the two differ, the ADR wins and this plan is corrected.
 controlling_train_plan: /Users/jasonvaughan/Documents/Projects/TangleClaw-ProjectManager/.tangleclaw/plans/train-fleet-workload-visibility.md (the PM's; Phase A = A.1–A.3, A.4 typed dispatch excluded)
@@ -37,6 +37,14 @@ authorized by FWV-A18); Phase B (#1877); Phase C (#1889); Project Master workloa
 
 ## Chunk A2: the bounded activity observer (ADR §5)
 
+**Carried in from the A1 review (they ride this chunk's commit):**
+- **R-2:** a two-process test that calls `store.workloadReceipts.append` against one database, plus the retry-once on `SQLITE_BUSY` or a `UNIQUE` collision (ADR §2).
+- **R-3:** a `bindingRefusal` test for every non-project kind including `master`, plus a route test with a master-role claim.
+- **R-5:** a receipt dated in the future (the clock stepped back) must not lock the lane out.
+- **R-6:** restore `controlApi`'s JSDoc.
+
+**[DECISION] Captures are asynchronous.** `lib/tmux.js` runs through `execSync`, and the server's event loop would block for the whole capture. With a 3 s tick budget, that is up to 3 s of stalled server every 10 s. The observer uses `execFile` with the same 1 s timeout per capture instead, and checks the session exists before `display-message` (which otherwise answers for the attached client). The ADR's limits are unchanged; only the blocking is removed.
+
 `lib/activity-observer.js` reuses `_assessActivity`/`_composerEmpty` from `lib/medusa-wake.js`:
 - 10 s tick, serial captures, 1 s per-capture timeout, 3 s per-tick budget, round-robin.
 - Engines with a wake profile only.
@@ -53,6 +61,7 @@ authorized by FWV-A18); Phase B (#1877); Phase C (#1889); Project Master workloa
 - Supersession: current-receipt checks against control events and wrap start/request, plus expiry.
 - Operator narrowing: store, route, operator-only.
 - `GET /api/tc/sessions` gains `engine`, `workload` and `composed`. `tc sessions` renders them, and still runs no synchronous capture.
+- `GET /api/tc/workload` and `tc workload show` also carry the lane's `composed` verdict (ADR §1; A1 review R-4).
 - A transcript-parsing guard test.
 
 **Done when:**
@@ -68,9 +77,13 @@ authorized by FWV-A18); Phase B (#1877); Phase C (#1889); Project Master workloa
 
 **Done when** the view renders every availability value from a composed response (test), the guidance names the verb and the emission points, the docs are updated, the cumulative review is clean, and the PR is open.
 
+## Merge order
+
+PR #1916 (ADR 0020) merges before this branch's PR. This branch syncs `main` before the boundary review, so the ADR it cites is on it (A1 review R-7).
+
 ## Status
 
-- [ ] Chunk A1: receipts and write surface
+- [x] Chunk A1: receipts and write surface
 - [ ] Chunk A2: activity observer
 - [ ] Chunk A3: composition, supersession, overrides, fleet read
 - [ ] Chunk A4: dashboard, guidance, docs; cumulative review + PR (not merged by this session)
