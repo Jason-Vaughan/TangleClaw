@@ -29,7 +29,7 @@ const path = require('node:path');
 const { spawn, execFile } = require('node:child_process');
 
 const churn = require('../lib/ttyd-churn');
-const { _parseChildren, _poolFromCounts } = require('../lib/ttyd-watcher');
+const { _parseEtime, _poolFromCounts } = require('../lib/ttyd-watcher');
 const { WsUnixClient } = require('../lib/ws-unix-client');
 
 const SAMPLE_MS = 250;
@@ -145,16 +145,69 @@ async function readLiveTtydState() {
 }
 
 /**
- * The scratch ttyd's direct children.
- * @param {number} ttydPid - Scratch ttyd PID.
- * @returns {Promise<Array<{pid: number, stat: string, ageMs: number|null}>|null>}
+ * The whole process table, with process groups.
+ * @returns {Promise<Array<object>|null>}
  */
-async function readChildren(ttydPid) {
+async function readProcTable() {
   try {
-    return _parseChildren(await run('ps', ['-A', '-o', 'pid=,ppid=,stat=,etime=']), ttydPid);
+    return churn.parseProcTable(await run('ps', ['-A', '-o', 'pid=,ppid=,pgid=,stat=,etime=']));
   } catch {
     return null;
   }
+}
+
+/**
+ * The scratch ttyd's direct children, from a process table.
+ * @param {Array<object>|null} table - From `readProcTable`.
+ * @param {number} ttydPid - Scratch ttyd PID.
+ * @returns {Array<{pid: number, stat: string, ageMs: number|null}>|null}
+ */
+function childrenOf(table, ttydPid) {
+  if (!table) return null;
+  return table.filter((r) => r.ppid === ttydPid).map((r) => ({ pid: r.pid, stat: r.stat, ageMs: _parseEtime(r.etime) }));
+}
+
+/**
+ * The PTYs held by a set of processes (those still alive), from lsof.
+ * @param {number[]} pids - Processes to ask about.
+ * @returns {Promise<{slaves: string[], masters: number}|null>}
+ */
+async function readOwnedPtys(pids) {
+  const live = pids.filter(alive);
+  if (live.length === 0) return { slaves: [], masters: 0 };
+  // lsof exits 1 when any listed process vanished or could not be read, and
+  // what it DID print is still a true reading of the rest, so stdout is kept
+  // whatever the exit code. Only no output at all is an unmeasured reading.
+  const stdout = await new Promise((resolve) => {
+    execFile('lsof', ['-F', 'pn', '-p', live.join(',')], { encoding: 'utf8', timeout: 30000, maxBuffer: 64 * 1024 * 1024 },
+      (err, out) => resolve(out || (err ? null : '')));
+  });
+  return stdout === null ? null : churn.parseLsofPtys(stdout);
+}
+
+/**
+ * Keep a process-tree and open-file snapshot of the run's recorded processes.
+ * @param {string} dir - Run directory.
+ * @param {string} label - Snapshot name.
+ * @param {object} ledger - The run's `ProcessLedger`.
+ * @returns {Promise<void>}
+ */
+async function snapshot(dir, label, ledger) {
+  const out = [];
+  try {
+    const ps = await run('ps', ['-A', '-o', 'pid,ppid,pgid,stat,etime,command']);
+    const lines = ps.split('\n');
+    out.push(lines[0], ...lines.slice(1).filter((l) => {
+      const m = l.trim().match(/^(\d+)\s+(\d+)\s+(\d+)/);
+      return m && (ledger.pids.has(+m[1]) || ledger.pgids.has(+m[3]));
+    }));
+  } catch (err) { out.push(`ps failed: ${err.message}`); }
+  const live = [...ledger.pids].filter(alive);
+  if (live.length) {
+    try { out.push('--- lsof', await run('lsof', ['-p', live.join(',')])); } catch (err) { out.push('--- lsof', err.stdout || `lsof failed: ${err.message}`); }
+  }
+  fs.mkdirSync(path.join(dir, 'snapshots'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'snapshots', `${label}.txt`), out.join('\n') + '\n');
 }
 
 /**
@@ -292,12 +345,21 @@ async function cleanup(s) {
       leftovers.push(`scratch tmux server ${s.tmuxName}`);
     } catch { /* gone, as intended */ }
   }
-  if (s.ttydPid) {
-    const orphans = await readChildren(s.ttydPid);
-    if (orphans === null) leftovers.push('could not verify the scratch ttyd\'s children are gone');
-    else if (orphans.length) leftovers.push(`${orphans.length} processes still parented by the scratch ttyd`);
+  // Proof by the ledger, not by an end-time walk of ttyd's descendants: a
+  // survivor has been reparented to launchd by now and is no longer ttyd's.
+  let survivors = null;
+  if (s.ledger) {
+    await sleep(300);
+    const table = await readProcTable();
+    if (table === null) leftovers.push('could not read the process table to verify the run\'s processes are gone');
+    else {
+      survivors = s.ledger.survivors(table).map((r) => ({ pid: r.pid, ppid: r.ppid, pgid: r.pgid, stat: r.stat }));
+      if (survivors.length) leftovers.push(`${survivors.length} recorded processes survived: ${survivors.map((r) => `${r.pid}(${r.stat})`).join(', ')}`);
+      const ptys = await readOwnedPtys(survivors.map((r) => r.pid));
+      if (ptys && (ptys.slaves.length || ptys.masters)) leftovers.push(`surviving processes still hold PTYs: ${JSON.stringify(ptys)}`);
+    }
   }
-  return { ok: leftovers.length === 0, leftovers };
+  return { ok: leftovers.length === 0, leftovers, survivors, recordedPids: s.ledger ? s.ledger.pids.size : null, recordedGroups: s.ledger ? s.ledger.pgids.size : null };
 }
 
 /**
@@ -330,8 +392,16 @@ async function main(o) {
   console.log(JSON.stringify({ preflight: { ...pre, facts, dir } }, null, 2));
   if (!pre.ok || o.preflightOnly) return { preflight: pre };
 
-  const s = { tmuxName: `tcc-${runId}`, ttydPid: null, shim: null, env: null };
-  const report = { runId, mode: o.mode, modes: o.modes, dir, ttydBin, attachScript: o.mode === 'control' ? 'exec cat' : (o.attachScript || 'deploy/ttyd-attach.sh'), startedAt: new Date().toISOString() };
+  const s = { tmuxName: `tcc-${runId}`, ttydPid: null, shim: null, env: null, ledger: null };
+  // The exact harness revision and binary this run judged (frozen identity).
+  let harnessCommit = null;
+  let harnessDirty = null;
+  try {
+    harnessCommit = (await run('git', ['-C', repoRoot, 'rev-parse', 'HEAD'])).trim();
+    harnessDirty = (await run('git', ['-C', repoRoot, 'status', '--porcelain', '--', 'scripts/ttyd-churn.js', 'lib/ttyd-churn.js'])).trim() !== '';
+  } catch { /* not a checkout */ }
+  const ttydSha256 = require('node:crypto').createHash('sha256').update(fs.readFileSync(ttydBin)).digest('hex');
+  const report = { runId, mode: o.mode, modes: o.modes, dir, ttydBin, ttydSha256, harnessCommit, harnessDirty, attachScript: o.mode === 'control' ? 'exec cat' : (o.attachScript || 'deploy/ttyd-attach.sh'), startedAt: new Date().toISOString() };
   const tracker = new churn.LifetimeTracker();
   let sampler = null;
   let exitedEarly = false;
@@ -363,14 +433,18 @@ async function main(o) {
     while (!fs.existsSync(sock) && Date.now() < socketDeadline) await sleep(50);
     if (!fs.existsSync(sock)) throw new Error('the scratch ttyd did not create its socket');
 
-    report.baseline = { pool: basePool, fds: await readFds(s.ttydPid) };
+    s.ledger = new churn.ProcessLedger(s.ttydPid);
+    report.baseline = { pool: basePool, fds: await readFds(s.ttydPid), ownedPtys: await readOwnedPtys([s.ttydPid]) };
+    await snapshot(dir, 'baseline', s.ledger);
     let latest = [];
     let sampling = false;
     let maxChildren = 0;
     sampler = setInterval(async () => {
       if (sampling) return;
       sampling = true;
-      const kids = await readChildren(s.ttydPid);
+      const table = await readProcTable();
+      if (table) s.ledger.record(table);
+      const kids = childrenOf(table, s.ttydPid);
       sampling = false;
       latest = kids;
       if (kids) {
@@ -421,7 +495,17 @@ async function main(o) {
     }
     clearInterval(sampler);
     sampler = null;
-    const final = { pool: await readPool(), fds: await readFds(s.ttydPid), children: await readChildren(s.ttydPid) };
+    const finalTable = await readProcTable();
+    if (finalTable) s.ledger.record(finalTable);
+    await snapshot(dir, 'pre-cleanup', s.ledger);
+    const final = {
+      pool: await readPool(),
+      fds: await readFds(s.ttydPid),
+      children: childrenOf(finalTable, s.ttydPid),
+      // Every recorded process still alive — the scratch ttyd and anything it
+      // spawned that has not exited — and the PTYs they hold.
+      ownedPtys: await readOwnedPtys([...s.ledger.pids])
+    };
     maxWedges = Math.max(maxWedges, churn.countWedges(tracker.stillOpen(Date.now())));
 
     report.run = {
@@ -431,7 +515,10 @@ async function main(o) {
       lingeringStates: final.children === null ? null : final.children.map((c) => c.stat),
       transientLifetimesMs: churn.percentiles(tracker.lifetimes),
       stillExitingMs: tracker.stillOpen(Date.now()),
+      // Diagnostic only: the global pool counts every terminal on the host,
+      // the live service's own leaks included.
       pool: { baseline: basePool, peak: peakPool, final: final.pool },
+      ownedPtys: { baseline: report.baseline.ownedPtys, final: final.ownedPtys },
       fds: { baseline: report.baseline.fds, final: final.fds },
       restarts: exitedEarly ? 1 : 0,
       soakMs: stop === 'completed' ? soakMs : 0
@@ -440,21 +527,19 @@ async function main(o) {
     if (sampler) clearInterval(sampler);
     report.cleanup = await cleanup(s);
     report.afterCleanup = { pool: await readPool() };
+    if (s.ledger) await snapshot(dir, 'post-cleanup', s.ledger);
     process.removeListener('SIGINT', onSignal);
     process.removeListener('SIGTERM', onSignal);
   }
   if (report.run) {
     const r = report.run;
-    const poolReturned = churn.returned(r.pool.baseline && r.pool.baseline.used, r.pool.final && r.pool.final.used, churn.POOL_TOLERANCE);
+    const ownedPtysReturned = churn.ownedPtysReturned(r.ownedPtys.baseline, r.ownedPtys.final);
     const fdsReturned = churn.returned(r.fds.baseline, r.fds.final, churn.FD_TOLERANCE);
-    const cleanupPool = churn.returned(r.pool.baseline && r.pool.baseline.used, report.afterCleanup.pool && report.afterCleanup.pool.used, churn.POOL_TOLERANCE);
-    if (cleanupPool === false) report.cleanup.leftovers.push('the global PTY pool did not return to baseline after cleanup');
-    report.cleanup.ok = report.cleanup.leftovers.length === 0;
     report.verdict = churn.verdict({
       mode: o.mode, stop: r.stop, cycles: r.cycles, soakMs: r.soakMs, confirmedWedges: r.confirmedWedges,
       restarts: r.restarts, clientErrors: r.clientErrors, withOutput: r.withOutput, lingering: r.lingering,
       outputExpected: o.modes.some((m) => m !== 'noread'),
-      poolReturned, fdsReturned, cleanupOk: report.cleanup.ok
+      ownedPtysReturned, fdsReturned, cleanupOk: report.cleanup.ok
     });
   }
   fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(report, null, 2));

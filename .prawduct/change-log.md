@@ -35,6 +35,20 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Harness gate measures run-owned resources, not the global pool (#1245, chunk 07)
+
+<!-- prawduct: type=bugfix | scope=ttyd-1245 -->
+
+Architect ruling on the first packaged run (02:59Z): option (b) as modified.
+- **What the first run showed:** the run of `dfae4e69` was clean on run-owned evidence (2000/2000 reaped, 0 wedges, 0 lingering, fds back). But the harness failed it on the GLOBAL PTY pool (34 → 44), which the live, unfixed Homebrew ttyd drove by wedging 5 children from real use during the soak. That run is kept as supporting evidence.
+- **Recorded as they appear:** a `ProcessLedger` records the scratch ttyd, every descendant PID and every descendant process group from each 250 ms sample. An end-time walk would miss survivors that launchd has already reparented.
+- **Run-owned PTYs:** from `lsof -F pn` on the recorded live processes, counting slave `/dev/ttys*` by name and `/dev/ptmx` handles by count.
+- **The gate:** run-owned PTYs back to baseline, scratch ttyd fds back to baseline, and after cleanup no recorded PID or process group survives, nor holds a PTY. The global pool is diagnostic only.
+- **Snapshots:** process-tree plus lsof snapshots at the baseline, before cleanup and after cleanup.
+- **Frozen identity:** the report records the harness commit (and whether it was dirty) and the ttyd binary's sha256.
+- **Bug found by smoke-testing the gate:** lsof exits 1 when a listed process vanishes, and the helper lost its stdout, so the control read as unmeasured. `readOwnedPtys` now keeps stdout whatever the exit code.
+- **Mutation check:** the static no-drain control now fails the gate on 135 run-owned `/dev/ptmx` handles for 45 wedges (3 per wedge), against 0 at the baseline. The packaged candidate's smoke run held 0.
+
 ## 2026-09-26 — Review fixes for the owned runtime (#1245, Critic rev-20260926T005348Z-79b3ab22)
 
 <!-- prawduct: type=bugfix | scope=ttyd-1245 -->

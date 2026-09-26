@@ -41,7 +41,10 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
       consumed by `install.sh` and `scripts/ingress-cutover.js`. Fails closed and names the repair. Homebrew only as an
       explicit rollback, with a warning. `scripts/ttyd-runtime.js` is the CLI; the docs and CHANGELOG are updated
 - [ ] Chunk 07: build the packaged artifact from tracked inputs, verify its closure, then the full R22 acceptance on
-      that exact artifact (2000 cycles plus a 2 h soak). Record its digest and load graph
+      that exact artifact (2000 cycles plus a 2 h soak). Record its digest and load graph.
+      Run 1 (00:50–02:57Z) was clean on run-owned evidence, but the harness verdict failed on the GLOBAL pool (the live
+      leak). It is kept as supporting evidence (`1245-evidence/packaged/acceptance-dfae4e69-*`). Per the Architect's
+      ruling the harness now gates on run-owned PTYs, fds and recorded survivors. Run 2 on the frozen harness is pending
 - [ ] Chunk 08 (R24.9 / ADR 0018 amendment 950671db), after chunk 07 and its Critic:
       (1) managed `install.sh` provisions the runtime itself (build to a temp stage, install, resolve) when it is absent,
       invalid or stale, before any plist write; it skips only a verified runtime whose manifest `inputsJsonSha256`

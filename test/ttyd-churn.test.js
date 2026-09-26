@@ -39,7 +39,7 @@ function passingCandidate(overrides = {}) {
     clientErrors: 0,
     withOutput: 1600,
     lingering: 0,
-    poolReturned: true,
+    ownedPtysReturned: true,
     fdsReturned: true,
     cleanupOk: true,
     ...overrides
@@ -144,6 +144,61 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
     });
   });
 
+  describe('run-owned resources (Architect ruling on chunk 07)', () => {
+    const PS = [
+      '    1     0     1 Ss   13-02:11:47',
+      '  500     1   500 S    01:00:00',
+      '  600   500   600 Ss+  00:10',
+      '  601   600   600 S+   00:09',
+      '  700   500   700 ?Es  00:05',
+      '  900     1   900 S    02:00:00'
+    ].join('\n');
+
+    it('parses pid, ppid, pgid, state and elapsed time', () => {
+      const t = churn.parseProcTable(PS);
+      assert.equal(t.length, 6);
+      assert.deepEqual(t[3], { pid: 601, ppid: 600, pgid: 600, stat: 'S+', etime: '00:09' });
+    });
+
+    it('finds every descendant, however deep, and nothing else', () => {
+      assert.deepEqual(churn.descendantsOf(churn.parseProcTable(PS), 500).map((r) => r.pid).sort(), [600, 601, 700]);
+    });
+
+    // THE GAP THE RULING NAMED: a process that outlives the scratch ttyd is
+    // reparented to launchd, so an end-time walk of ttyd's tree misses it.
+    it('still finds a recorded process after it has been reparented to launchd', () => {
+      const ledger = new churn.ProcessLedger(500);
+      ledger.record(churn.parseProcTable(PS));
+      const after = churn.parseProcTable('    1     0     1 Ss   13-02:11:47\n  700     1   700 ?Es  00:40\n  900     1   900 S    02:00:00');
+      assert.deepEqual(ledger.survivors(after).map((r) => r.pid), [700], 'the reparented survivor is caught; the unrelated 900 is not');
+    });
+
+    it('catches a process forked into a recorded group after the last sample', () => {
+      const ledger = new churn.ProcessLedger(500);
+      ledger.record(churn.parseProcTable(PS));
+      const after = churn.parseProcTable('  650     1   600 S    00:01');
+      assert.deepEqual(ledger.survivors(after).map((r) => r.pid), [650]);
+    });
+
+    it('counts slave PTYs by name and master handles by count from lsof -F pn', () => {
+      const out = 'p500\nn/dev/ptmx\nn/dev/ptmx\nn/dev/null\np700\nn/dev/ttys042\nn/dev/ttys042\nn/tmp/x.sock';
+      assert.deepEqual(churn.parseLsofPtys(out), { slaves: ['/dev/ttys042'], masters: 2 });
+    });
+
+    it('says the run\'s PTYs returned only when nothing extra is held, and null when unmeasured', () => {
+      const base = { slaves: [], masters: 0 };
+      assert.equal(churn.ownedPtysReturned(base, { slaves: [], masters: 0 }), true);
+      assert.equal(churn.ownedPtysReturned(base, { slaves: ['/dev/ttys042'], masters: 0 }), false);
+      assert.equal(churn.ownedPtysReturned(base, { slaves: [], masters: 1 }), false);
+      assert.equal(churn.ownedPtysReturned(null, base), null);
+    });
+
+    it('never judges a run by the GLOBAL pool: the verdict has no input for it', () => {
+      assert.equal(churn.verdict({ ...passingCandidate(), poolReturned: false }).verdict, 'pass',
+        'a stray global-pool flag changes nothing');
+    });
+  });
+
   describe('percentiles', () => {
     it('uses nearest rank and reports the maximum', () => {
       const values = Array.from({ length: 100 }, (_, i) => i + 1);
@@ -186,7 +241,7 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
     });
 
     it('a candidate fails on any wedge, any lingering child, any restart, or resources that did not return', () => {
-      for (const bad of [{ confirmedWedges: 1 }, { lingering: 1 }, { restarts: 1 }, { poolReturned: false }, { fdsReturned: false }]) {
+      for (const bad of [{ confirmedWedges: 1 }, { lingering: 1 }, { restarts: 1 }, { ownedPtysReturned: false }, { fdsReturned: false }]) {
         assert.equal(churn.verdict(passingCandidate(bad)).verdict, 'fail', JSON.stringify(bad));
       }
     });
@@ -195,7 +250,7 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
       for (const short of [
         { cycles: churn.ACCEPT_CYCLES - 1 },
         { soakMs: churn.ACCEPT_SOAK_MS - 1 },
-        { poolReturned: null },
+        { ownedPtysReturned: null },
         { fdsReturned: null },
         { lingering: null }
       ]) {
