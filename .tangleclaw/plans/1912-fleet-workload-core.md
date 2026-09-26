@@ -87,7 +87,11 @@ authorized by FWV-A18); Phase B (#1877); Phase C (#1889); Project Master workloa
 
 **Project Master lanes (A3 review R-4/R-6/R-13).** The Master is not a row in `sessions`, so the fleet read never reaches composition rule 2 in production. The rule stays, unit-tested, so that a future Master row composes `UNKNOWN` (`unsupported-master-lane`) rather than anything else. A4 adds no Master view: Master workload is out of scope (FWV-A18).
 
-**[DECISION] A29 text safety (2026-09-26).** The Architect rejected the merge until the one-line text check also refuses C1 controls, Unicode bidi controls and U+2028/U+2029. One predicate, `isSafeText` in `lib/workload.js`, applies it to summary, waitDetail, task ids, branch and the narrowing reason (23c26e03). Characters A29 does not name, such as zero-width U+200B/U+2060/U+FEFF, U+00AD and the tag characters, still pass; whether to refuse them is put to the Architect, not decided here. ADR 0020 §3 still reads "no control characters"; amending it is the Architect's call.
+**[DECISION] A29/A30 display safety (2026-09-26).** The Architect rejected the merge twice until the text check was complete:
+- **A29:** the check must refuse C1 controls, bidi controls and U+2028/U+2029 (23c26e03).
+- **A30:** replace the enumerated set with one documented predicate, covering Unicode `Cc`, `Cf`, `Zl`, `Zp` and `Default_Ignorable_Code_Point`, plus at least one visible character. It applies to summary, waitDetail, task ids, branch and the narrowing reason.
+
+ADR 0020 §3 is amended in this PR as the authority. Normalization and homoglyph detection are explicitly not included.
 
 **[DECISION] A24 UI freeze (2026-09-26 21:12Z).** The Architect froze dashboard and Master fleet-view UI. The PM (Medusa message c9e2213a) directed that all UI be removed from #1921, so the pure backend and CLI portion can merge. A4's dashboard badge, Workload detail row, landing fetch, CSS and their test were removed. What A4 keeps is the guidance line, the capability, and docs that describe the CLI and API only. The dashboard view waits for the revised boundary, tracked as #1923.
 

@@ -200,13 +200,77 @@ describe('text safety across every free-text field (Architect ruling A29)', () =
     assert.equal(workload.isValidBranchName('feat/日本-1912'), true, 'a branch name in another script');
   });
 
-  it('isSafeText is the one predicate: it refuses exactly the listed classes', () => {
+  it('isSafeText refuses every A29 class, and allows the visible code points just outside A29\'s ranges', () => {
     for (const [name, ch] of UNSAFE) assert.equal(workload.isSafeText(`x${ch}y`), false, name);
-    // Boundaries: the code points just outside each refused range are allowed.
-    for (const ch of [' ', '؛', '؝', '‍', '‐', '‧', ' ', '⁥', '⁪']) {
+    // Boundaries: the visible code points just outside A29's ranges are allowed. U+200D, U+2065 and
+    // U+206A were outside A29's ranges too; A30 refuses them (format / default-ignorable).
+    for (const ch of ['\u00a0', '\u061b', '\u061d', '\u2010', '\u2027', '\u202f']) {
       assert.equal(workload.isSafeText(`x${ch}y`), true, `U+${ch.codePointAt(0).toString(16).toUpperCase()} is outside the refused ranges`);
     }
     assert.equal(workload.isSafeText(42), false, 'a non-string is never safe text');
+  });
+});
+
+describe('display safety by Unicode property (ADR 0020 §3, Architect ruling A30)', () => {
+  // One or more representatives per refused class. The predicate is shared,
+  // so the classes are proven here once; the wiring tests below prove each
+  // field uses it.
+  const REFUSED = {
+    'Cc control (C0, DEL, C1)': ['\u0000', '\t', '\u007f', '\u0085', '\u009f'],
+    'Cf format: bidi': ['\u061c', '\u200e', '\u202e', '\u2067'],
+    'Cf format: zero-width and word joiner': ['\u200b', '\u200c', '\u200d', '\u2060'],
+    'Cf format: byte-order mark': ['\ufeff'],
+    'Cf format: soft hyphen': ['\u00ad'],
+    'Cf format: tag characters': ['\u{E0001}', '\u{E0041}', '\u{E007F}'],
+    'Zl line separator': ['\u2028'],
+    'Zp paragraph separator': ['\u2029'],
+    'default-ignorable: variation selectors': ['\ufe00', '\ufe0f', '\u{E0100}', '\u{E01EF}'],
+    'default-ignorable: other invisibles': ['\u034f', '\u115f', '\u3164', '\u2065']
+  };
+
+  for (const [cls, chars] of Object.entries(REFUSED)) {
+    it(`refuses ${cls}`, () => {
+      for (const ch of chars) {
+        const cp = `U+${ch.codePointAt(0).toString(16).toUpperCase()}`;
+        assert.equal(workload.isSafeText(`a${ch}b`), false, `${cp} inside text`);
+        assert.equal(workload.isSafeText(ch), false, `${cp} alone`);
+      }
+    });
+  }
+
+  it('refuses text with no visible character: only spaces, or only combining marks', () => {
+    for (const t of [' ', '  ', '́', '́̈', ' ́ ']) {
+      assert.equal(workload.isSafeText(t), false, JSON.stringify(t));
+    }
+  });
+
+  it('keeps ordinary visible Unicode: accents, non-Latin scripts (right-to-left included), symbols, emoji', () => {
+    for (const t of ['Café naïve', 'é composed by a mark', 'עבודה', 'تم الدمج', '日本語', 'Ελληνικά', '✓ ★ € §', '\u{1F642}', 'a b']) {
+      assert.equal(workload.isSafeText(t), true, JSON.stringify(t));
+    }
+  });
+
+  it('refuses emoji written with a variation selector or zero-width joiner (an accepted consequence, ADR 0020 §3)', () => {
+    assert.equal(workload.isSafeText('❤\ufe0f'), false, 'heart with VS16');
+    assert.equal(workload.isSafeText('\u{1F468}\u200d\u{1F469}'), false, 'ZWJ sequence');
+  });
+
+  describe('each free-text field is wired to the predicate', () => {
+    const bodies = {
+      summary: (t) => ({ ...OK, summary: t }),
+      waitDetail: (t) => ({ ...OK, state: 'waiting-external', clearance: 'do-not-clear', wait: 'ci', waitDetail: t }),
+      'task ids': (t) => ({ ...OK, tasks: [t] }),
+      branch: (t) => ({ ...OK, branch: t })
+    };
+    for (const [field, body] of Object.entries(bodies)) {
+      it(`${field} refuses a zero-width character and invisible-only text, and accepts visible text`, () => {
+        const safe = field === 'branch' ? 'feat/日本-1' : 'visible 日本';
+        const withInvisible = field === 'branch' ? 'ma\u200bin' : 'ok\u200bok';
+        assert.equal(workload.validate(body(withInvisible)).ok, false, `${field}: zero-width`);
+        if (field !== 'branch') assert.equal(workload.validate(body('́')).ok, false, `${field}: marks only`);
+        assert.equal(workload.validate(body(safe)).ok, true, `${field}: visible`);
+      });
+    }
   });
 });
 

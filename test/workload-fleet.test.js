@@ -236,9 +236,9 @@ describe('composed workload on the routes (ADR 0020 §6, §7, §10)', () => {
     assert.equal((await send(server, 'POST', '/api/tc/workload/narrowing', { sessionId: 999999, forceUnknown: true, reason: 'x' }, op)).status, 404);
   });
 
-  it('the narrowing reason refuses control, C1, bidi and line-separator characters, and accepts other scripts (A29)', async () => {
+  it('the narrowing reason refuses control, format, invisible and line-separator characters, and accepts other scripts (A29, A30)', async () => {
     const b = bindProject(mkProject('reason-safety'));
-    for (const ch of ['\n', '\u0085', '\u202e', '\u2066', '\u200f', '\u2028', '\u2029']) {
+    for (const ch of ['\n', '\u0085', '\u202e', '\u2066', '\u200f', '\u2028', '\u2029', '\u200b', '\ufeff', '\u00ad', '\u{E0041}', '\ufe0f']) {
       const r = await send(server, 'POST', '/api/tc/workload/narrowing', { sessionId: b.sessionId, forceUnknown: true, reason: `hold${ch}this` }, op);
       assert.equal(r.status, 400, `U+${ch.codePointAt(0).toString(16)} must be refused`);
     }
