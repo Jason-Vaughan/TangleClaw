@@ -35,6 +35,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — lsof exit 1 counts only in its recognized case (#1245, Architect condition 03:13Z)
+
+<!-- prawduct: type=bugfix | scope=ttyd-1245 -->
+
+- **Why:** the Architect's approval of `cd9bffd2` set a precision condition: lsof exit 1 counts as measured only in its ordinary case, never as an arbitrary empty measurement. The existing tests did not pin that, so run 3 (started 03:18Z, about 10 min in) was stopped by exact PID (the cleanup left nothing).
+- **The rule:** `lsofOutput(err, stdout, requested, isAlive)` accepts exit 1 only when every requested PID missing from the output is verifiably gone and the output names no unrequested PID. Any other exit 1 (a permission failure, empty output for a live process) is unmeasured, and a timeout, signal or overflow still is.
+- **The old tests:** the three old `lsofOutput` tests are superseded by four stricter ones.
+- **`--review <id>`:** it records the clearing Critic review in the run report, beside the harness commit and the artifact digest.
+- **Caught before commit:** my first edit of the test file also removed three unrelated tests (the lsof -F pn parser, the PTY-return rule, and "never judged by the global pool"). The count check caught it (42 against the expected 45), and they were restored verbatim.
+
 ## 2026-09-26 — Harness identity check completed (#1245, verify-resolutions rev-20260926T031244Z-51153184)
 
 <!-- prawduct: type=bugfix | scope=ttyd-1245 -->

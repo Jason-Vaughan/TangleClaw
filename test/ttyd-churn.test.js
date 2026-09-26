@@ -218,26 +218,6 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
       assert.deepEqual(ledger.survivors(after), [], 'group 600 now has a different leader');
     });
 
-    describe('lsofOutput — a cut-off reading is never a reading', () => {
-      it('keeps a clean run\'s output, and treats empty clean output as "nothing held"', () => {
-        assert.equal(churn.lsofOutput(null, 'p1\nn/dev/ptmx'), 'p1\nn/dev/ptmx');
-        assert.equal(churn.lsofOutput(null, ''), '');
-      });
-      it('keeps the output of lsof\'s ordinary exit 1 (a listed process vanished)', () => {
-        const err = Object.assign(new Error('Command failed'), { code: 1, killed: false, signal: null });
-        assert.equal(churn.lsofOutput(err, 'p1\nn/dev/ptmx'), 'p1\nn/dev/ptmx');
-      });
-      it('rejects a timeout, a signal, a buffer overflow or any other exit as unmeasured', () => {
-        const cases = [
-          { code: null, killed: true, signal: 'SIGTERM' },
-          { code: 1, killed: false, signal: 'SIGKILL' },
-          { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER', killed: true, signal: 'SIGTERM' },
-          { code: 2, killed: false, signal: null }
-        ];
-        for (const c of cases) assert.equal(churn.lsofOutput(Object.assign(new Error('x'), c), 'p1\nn/dev/ptmx'), null, JSON.stringify(c));
-      });
-    });
-
     it('counts slave PTYs by name and master handles by count from lsof -F pn', () => {
       const out = 'p500\nn/dev/ptmx\nn/dev/ptmx\nn/dev/null\np700\nn/dev/ttys042\nn/dev/ttys042\nn/tmp/x.sock';
       assert.deepEqual(churn.parseLsofPtys(out), { slaves: ['/dev/ttys042'], masters: 2 });
@@ -254,6 +234,39 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
     it('never judges a run by the GLOBAL pool: the verdict has no input for it', () => {
       assert.equal(churn.verdict({ ...passingCandidate(), poolReturned: false }).verdict, 'pass',
         'a stray global-pool flag changes nothing');
+    });
+
+    describe('lsofOutput — only a recognized reading is a reading', () => {
+      const exit1 = () => Object.assign(new Error('Command failed'), { code: 1, killed: false, signal: null });
+      const alive = (set) => (pid) => set.has(pid);
+
+      it('keeps a clean run\'s output, and treats empty clean output as "nothing held"', () => {
+        assert.equal(churn.lsofOutput(null, 'p1\nn/dev/ptmx', [1], alive(new Set([1]))), 'p1\nn/dev/ptmx');
+        assert.equal(churn.lsofOutput(null, '', [1], alive(new Set([1]))), '');
+      });
+
+      it('keeps exit 1 when every missing process has really gone (lsof\'s ordinary vanished case)', () => {
+        assert.equal(churn.lsofOutput(exit1(), 'p1\nn/dev/ptmx', [1, 2], alive(new Set([1]))), 'p1\nn/dev/ptmx');
+        assert.equal(churn.lsofOutput(exit1(), '', [2, 3], alive(new Set())), '', 'all vanished: truly nothing held');
+      });
+
+      // THE CONDITION THE ARCHITECT SET: an arbitrary exit 1 — a permission
+      // failure, say — is not an empty measurement.
+      it('rejects exit 1 when a missing process is still alive, or the output names an unrequested one', () => {
+        assert.equal(churn.lsofOutput(exit1(), 'p1\nn/dev/ptmx', [1, 2], alive(new Set([1, 2]))), null, '2 is alive but unreported');
+        assert.equal(churn.lsofOutput(exit1(), '', [2], alive(new Set([2]))), null, 'empty output for a live process');
+        assert.equal(churn.lsofOutput(exit1(), 'p9\nn/dev/ptmx', [1], alive(new Set())), null, 'reported a process never asked about');
+      });
+
+      it('rejects a timeout, a signal, a buffer overflow or any other exit as unmeasured', () => {
+        const cases = [
+          { code: null, killed: true, signal: 'SIGTERM' },
+          { code: 1, killed: false, signal: 'SIGKILL' },
+          { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER', killed: true, signal: 'SIGTERM' },
+          { code: 2, killed: false, signal: null }
+        ];
+        for (const c of cases) assert.equal(churn.lsofOutput(Object.assign(new Error('x'), c), 'p1\nn/dev/ptmx', [1], alive(new Set())), null, JSON.stringify(c));
+      });
     });
   });
 
@@ -347,6 +360,11 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
       assert.throws(() => parseArgs([]), /--mode must be/);
       assert.equal(parseArgs(['--mode', 'candidate']).cycles, churn.ACCEPT_CYCLES);
       assert.equal(parseArgs(['--mode', 'baseline']).concurrency, churn.MAX_CONCURRENCY);
+    });
+
+    it('records the clearing review id given with --review', () => {
+      assert.equal(parseArgs(['--mode', 'candidate', '--review', 'rev-x']).review, 'rev-x');
+      assert.equal(parseArgs(['--mode', 'candidate']).review, null);
     });
 
     it('runs every close mode by default, and only the named ones with --modes', () => {

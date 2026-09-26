@@ -14,7 +14,7 @@
  *   node scripts/ttyd-churn.js --mode baseline|control|candidate
  *     [--cycles N] [--soak-minutes M] [--concurrency C]
  *     [--ttyd-bin PATH] [--attach-script PATH] [--out DIR] [--preflight-only]
- *     [--modes clean,abrupt,paused,replay,noread]
+ *     [--modes clean,abrupt,paused,replay,noread] [--review <critic-review-id>]
  *
  *   baseline   the installed ttyd + the shipped attach script; expected to reproduce
  *   control    the scratch ttyd runs `cat` (no output), which must show no wedges
@@ -44,7 +44,7 @@ const KILL_GRACE_MS = 3000;
  * @returns {object} Options.
  */
 function parseArgs(argv) {
-  const o = { mode: null, cycles: null, soakMinutes: 0, concurrency: churn.MAX_CONCURRENCY, ttydBin: null, attachScript: null, out: null, preflightOnly: false, modes: [...churn.CLOSE_MODES] };
+  const o = { mode: null, cycles: null, soakMinutes: 0, concurrency: churn.MAX_CONCURRENCY, ttydBin: null, attachScript: null, out: null, preflightOnly: false, modes: [...churn.CLOSE_MODES], review: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => argv[++i];
@@ -57,6 +57,7 @@ function parseArgs(argv) {
     else if (a === '--out') o.out = next();
     else if (a === '--preflight-only') o.preflightOnly = true;
     else if (a === '--modes') o.modes = String(next()).split(',').filter(Boolean);
+    else if (a === '--review') o.review = next();
     else throw new Error(`unknown argument ${a}`);
   }
   if (!['baseline', 'control', 'candidate'].includes(o.mode)) throw new Error('--mode must be baseline, control or candidate');
@@ -179,7 +180,7 @@ async function readOwnedPtys(pids) {
   // lib/ttyd-churn.js#lsofOutput: exit 1 keeps its output, a cut-off run does not.
   const stdout = await new Promise((resolve) => {
     execFile('lsof', ['-F', 'pn', '-p', live.join(',')], { encoding: 'utf8', timeout: 30000, maxBuffer: 64 * 1024 * 1024 },
-      (err, out) => resolve(churn.lsofOutput(err, out)));
+      (err, out) => resolve(churn.lsofOutput(err, out, live, alive)));
   });
   return stdout === null ? null : churn.parseLsofPtys(stdout);
 }
@@ -400,7 +401,9 @@ async function main(o) {
     harnessDirty = (await run('git', ['-C', repoRoot, 'status', '--porcelain', '--', 'scripts/ttyd-churn.js', 'lib/ttyd-churn.js'])).trim() !== '';
   } catch { /* not a checkout */ }
   const ttydSha256 = require('node:crypto').createHash('sha256').update(fs.readFileSync(ttydBin)).digest('hex');
-  const report = { runId, mode: o.mode, modes: o.modes, dir, ttydBin, ttydSha256, harnessCommit, harnessDirty, attachScript: o.mode === 'control' ? 'exec cat' : (o.attachScript || 'deploy/ttyd-attach.sh'), startedAt: new Date().toISOString() };
+  // --review: the Critic review that cleared this harness revision, recorded
+  // beside the commit and digest it vouches for.
+  const report = { runId, mode: o.mode, modes: o.modes, dir, ttydBin, ttydSha256, harnessCommit, harnessDirty, harnessReview: o.review, attachScript: o.mode === 'control' ? 'exec cat' : (o.attachScript || 'deploy/ttyd-attach.sh'), startedAt: new Date().toISOString() };
   const tracker = new churn.LifetimeTracker();
   let sampler = null;
   let exitedEarly = false;
