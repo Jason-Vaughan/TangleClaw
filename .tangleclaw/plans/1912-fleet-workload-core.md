@@ -87,6 +87,8 @@ authorized by FWV-A18); Phase B (#1877); Phase C (#1889); Project Master workloa
 
 **Project Master lanes (A3 review R-4/R-6/R-13).** The Master is not a row in `sessions`, so the fleet read never reaches composition rule 2 in production. The rule stays, unit-tested, so that a future Master row composes `UNKNOWN` (`unsupported-master-lane`) rather than anything else. A4 adds no Master view: Master workload is out of scope (FWV-A18).
 
+**[DECISION] A29 text safety (2026-09-26).** The Architect rejected the merge until the one-line text check also refuses C1 controls, Unicode bidi controls and U+2028/U+2029. One predicate, `isSafeText` in `lib/workload.js`, applies it to summary, waitDetail, task ids, branch and the narrowing reason (23c26e03). Characters A29 does not name, such as zero-width U+200B/U+2060/U+FEFF, U+00AD and the tag characters, still pass; whether to refuse them is put to the Architect, not decided here. ADR 0020 §3 still reads "no control characters"; amending it is the Architect's call.
+
 **[DECISION] A24 UI freeze (2026-09-26 21:12Z).** The Architect froze dashboard and Master fleet-view UI. The PM (Medusa message c9e2213a) directed that all UI be removed from #1921, so the pure backend and CLI portion can merge. A4's dashboard badge, Workload detail row, landing fetch, CSS and their test were removed. What A4 keeps is the guidance line, the capability, and docs that describe the CLI and API only. The dashboard view waits for the revised boundary, tracked as #1923.
 
 ## Chunk A4: guidance and docs (ADR §9–§10); the dashboard view was deferred under A24 (#1923)

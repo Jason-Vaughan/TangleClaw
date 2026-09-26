@@ -156,10 +156,10 @@ describe('text safety across every free-text field (Architect ruling A29)', () =
   const UNSAFE = [
     ['C0 NUL', '\u0000'], ['C0 TAB', '\t'], ['C0 LF', '\n'], ['C0 ESC', '\u001b'], ['DEL', '\u007f'],
     ['C1 PAD', '\u0080'], ['C1 NEL', '\u0085'], ['C1 CSI', '\u009b'], ['C1 APC', '\u009f'],
-    ['bidi ALM', '؜'], ['bidi LRM', '‎'], ['bidi RLM', '‏'],
-    ['bidi LRE', '‪'], ['bidi RLE', '‫'], ['bidi PDF', '‬'], ['bidi LRO', '‭'], ['bidi RLO', '‮'],
-    ['bidi LRI', '⁦'], ['bidi RLI', '⁧'], ['bidi FSI', '⁨'], ['bidi PDI', '⁩'],
-    ['LINE SEPARATOR', ' '], ['PARAGRAPH SEPARATOR', ' ']
+    ['bidi ALM', '\u061c'], ['bidi LRM', '\u200e'], ['bidi RLM', '\u200f'],
+    ['bidi LRE', '\u202a'], ['bidi RLE', '\u202b'], ['bidi PDF', '\u202c'], ['bidi LRO', '\u202d'], ['bidi RLO', '\u202e'],
+    ['bidi LRI', '\u2066'], ['bidi RLI', '\u2067'], ['bidi FSI', '\u2068'], ['bidi PDI', '\u2069'],
+    ['LINE SEPARATOR', '\u2028'], ['PARAGRAPH SEPARATOR', '\u2029']
   ];
   // Text a lane may legitimately write: other scripts, right-to-left letters
   // included, accents, symbols and emoji.
