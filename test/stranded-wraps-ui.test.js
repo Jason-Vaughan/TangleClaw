@@ -115,9 +115,9 @@ function makeDocument() {
   return { document, els };
 }
 
-// The page's own HTML escape, as landing.js defines it, for sandboxes that
-// render with `esc`.
-const escSrc = liftFunction(LANDING_SRC, 'function esc(');
+// The page's own HTML escape and handler-argument encoder, as landing.js
+// defines them, for sandboxes that render with `esc` and `jsArg`.
+const escSrc = `${liftFunction(LANDING_SRC, 'function esc(')}\n${liftFunction(LANDING_SRC, 'function jsArg(')}`;
 
 describe('shared stranded-wrap helpers (api-helper.js)', () => {
   it('lists each item with its full head SHA and remote', () => {
@@ -712,7 +712,7 @@ describe('dashboard card: GitHub check badges, row and Check now (#1542, #1543)'
       const sb = sandboxFor();
       const html = sb.detail({ name: 'p', stranded: counts(gh()) });
       assert.ok(html.includes(`checked ${sb.time(AT)}, nothing found`));
-      assert.match(html, /onclick="event.stopPropagation\(\); checkStrandedNow\('p'\)">Check now</);
+      assert.match(html, /onclick="event.stopPropagation\(\); checkStrandedNow\(&quot;p&quot;\)">Check now</);
     });
 
     it('says a failed check failed, when and why, and when the last good one was', () => {
@@ -870,8 +870,8 @@ describe('dashboard card: per-item actions and their dialog (#1545)', () => {
     const sb = sandboxFor();
     const items = [OLDER, ITEM];
     const html = sb.actions('p', items, ITEM);
-    assert.match(html, /openStrandedAction\('p', 'ack', 1\)">Acknowledge</);
-    assert.match(html, /openStrandedAction\('p', 'open-pr', 1\)">Open PR</);
+    assert.match(html, /openStrandedAction\(&quot;p&quot;, 'ack', 1\)">Acknowledge</);
+    assert.match(html, /openStrandedAction\(&quot;p&quot;, 'open-pr', 1\)">Open PR</);
     assert.doesNotMatch(html, /wrap\/1-x/, 'the branch name never goes into the handler');
     assert.equal(sb.requests.length, 0);
   });

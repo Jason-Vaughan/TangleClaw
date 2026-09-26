@@ -45,7 +45,9 @@ closes the string and kills the handler. Three different encodings coexist.
 single-quoted interpolation and the double-stringify form to it, adjusting the receiving handler
 where it `JSON.parse`s. A test scans `public/ui.js` so the single-quote form cannot come back. The
 `liftFunction` test-helper consolidation named in the issue is a rider: done only if it stays small,
-otherwise filed.
+otherwise filed. **Outcome:** filed as #1903 (it touches about 50 unrelated test files). The same
+single-quote form in `public/setup.js`, `session.js`, `landing.js` and `history-drawer.js`, found by
+running the scan over every page script, is filed as #1902; this chunk keeps to the file #1384 names.
 
 **Carried in from the Chunk 1 review (R-2).** `test/project-tags-shape.test.js` documents its `esc`
 as a copy of `public/landing.js` but accepts only strings; load the real one or correct the comment,

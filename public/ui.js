@@ -357,6 +357,7 @@ function renderCard(project) {
   const hasSession = project.session && project.session.active;
   const sessionClass = hasSession ? ' has-session' : '';
   const n = esc(project.name);
+  const nArg = jsArg(project.name);
 
   const versionBadge = project.git && project.git.latestTag
     ? `<span class="badge badge-version">${esc(project.git.latestTag)}</span>`
@@ -425,7 +426,7 @@ function renderCard(project) {
 
   return `<article class="project-card compact${sessionClass}${openClass}" tabindex="0"
     aria-expanded="${isOpen}"
-    onclick="toggleCardDetail('${n}')" onkeydown="if(event.key==='Enter')toggleCardDetail('${n}')">
+    onclick="toggleCardDetail(${nArg})" onkeydown="if(event.key==='Enter')toggleCardDetail(${nArg})">
     <div class="card-row">
       ${statusDot}
       <span class="card-name" title="${n}">${n}</span>
@@ -442,14 +443,14 @@ function renderCard(project) {
       ${githubBadge}
       ${sessionHealthBadge}
       <span class="card-row-actions">
-        <button class="btn btn-compact btn-launch" onclick="event.stopPropagation(); launchProject('${n}')">${hasSession ? 'Open' : 'Launch'}</button>
-        ${hasSession ? `<button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openPeekFromCard('${n}')" title="Peek">&#128065;</button>` : ''}
-        ${hasSession ? `<button class="btn btn-compact btn-icon-tiny btn-kill-card" onclick="event.stopPropagation(); openKill('${n}')" title="Kill session">&#9632;</button>` : ''}
-        <button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openHistory('${n}')" title="Session history &amp; search">&#128269;</button>
-        <button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openSettings('${n}')" title="Info">i</button>
-        ${!hasSession ? `<button class="btn btn-compact btn-icon-tiny btn-detach-subtle" onclick="event.stopPropagation(); archiveProjectUI('${n}')" title="Archive project">&#128451;</button>` : ''}
-        <button class="btn btn-compact btn-icon-tiny btn-detach-subtle" onclick="event.stopPropagation(); openDetach('${n}')" title="Detach from TangleClaw">&#8856;</button>
-        <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); openDelete('${n}')" title="Delete project">&times;</button>
+        <button class="btn btn-compact btn-launch" onclick="event.stopPropagation(); launchProject(${nArg})">${hasSession ? 'Open' : 'Launch'}</button>
+        ${hasSession ? `<button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openPeekFromCard(${nArg})" title="Peek">&#128065;</button>` : ''}
+        ${hasSession ? `<button class="btn btn-compact btn-icon-tiny btn-kill-card" onclick="event.stopPropagation(); openKill(${nArg})" title="Kill session">&#9632;</button>` : ''}
+        <button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openHistory(${nArg})" title="Session history &amp; search">&#128269;</button>
+        <button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openSettings(${nArg})" title="Info">i</button>
+        ${!hasSession ? `<button class="btn btn-compact btn-icon-tiny btn-detach-subtle" onclick="event.stopPropagation(); archiveProjectUI(${nArg})" title="Archive project">&#128451;</button>` : ''}
+        <button class="btn btn-compact btn-icon-tiny btn-detach-subtle" onclick="event.stopPropagation(); openDetach(${nArg})" title="Detach from TangleClaw">&#8856;</button>
+        <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); openDelete(${nArg})" title="Delete project">&times;</button>
       </span>
       <span class="card-chev" aria-hidden="true">&#9662;</span>
     </div>
@@ -459,6 +460,7 @@ function renderCard(project) {
 
 function renderUnregisteredCard(project) {
   const n = esc(project.name);
+  const nArg = jsArg(project.name);
   const gitBadge = renderGitBadge(project);
   const unreadableBadge = renderUnreadableBadge(project);
 
@@ -469,7 +471,7 @@ function renderUnregisteredCard(project) {
       ${unreadableBadge}
       ${gitBadge}
       <span class="card-row-actions">
-        <button class="btn btn-compact btn-attach" onclick="event.stopPropagation(); attachProject('${n}')">Attach</button>
+        <button class="btn btn-compact btn-attach" onclick="event.stopPropagation(); attachProject(${nArg})">Attach</button>
       </span>
     </div>
   </article>`;
@@ -482,14 +484,15 @@ function renderUnregisteredCard(project) {
  */
 function renderArchivedCard(project) {
   const n = esc(project.name);
+  const nArg = jsArg(project.name);
   return `<article class="project-card compact archived" tabindex="0">
     <div class="card-row">
       <span class="status-dot archived"></span>
       <span class="card-name card-name-muted" title="${n}">${n}</span>
       <span class="badge badge-archived">archived</span>
       <span class="card-row-actions">
-        <button class="btn btn-compact" onclick="event.stopPropagation(); unarchiveProject('${n}')">Unarchive</button>
-        <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); openDelete('${n}')" title="Delete project">&times;</button>
+        <button class="btn btn-compact" onclick="event.stopPropagation(); unarchiveProject(${nArg})">Unarchive</button>
+        <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); openDelete(${nArg})" title="Delete project">&times;</button>
       </span>
     </div>
   </article>`;
@@ -786,10 +789,10 @@ function renderStrandedGithubDetail(project) {
     else if (cached.github) list = strandedFindingsMarkup(cached.github.findings);
   }
   const run = strandedCheckState[project.name] || { busy: false, error: null };
-  const n = esc(project.name);
+  const nArg = jsArg(project.name);
   const button = g.state === 'none' ? ''
     : `<button class="btn btn-compact stranded-check-btn" ${run.busy ? 'disabled' : ''} `
-      + `onclick="event.stopPropagation(); checkStrandedNow('${n}')">${run.busy ? 'Checking…' : 'Check now'}</button>`;
+      + `onclick="event.stopPropagation(); checkStrandedNow(${nArg})">${run.busy ? 'Checking…' : 'Check now'}</button>`;
   const runError = run.error ? `<span class="detail-unknown">Check now failed: ${esc(run.error)}</span>` : '';
   const rowClass = g.state === 'failed' || g.redCi ? 'detail-row detail-row-warn' : 'detail-row';
   return `<div class="${rowClass}"><span class="detail-label">GitHub</span><span class="detail-value">`
@@ -827,13 +830,13 @@ async function checkStrandedNow(name) {
 function strandedItemActions(name, items, item) {
   const index = items.indexOf(item);
   if (index < 0) return '';
-  const n = esc(name);
+  const nArg = jsArg(name);
   const buttons = [];
   if (!item.acknowledged) {
-    buttons.push(`<button class="btn btn-compact" onclick="event.stopPropagation(); openStrandedAction('${n}', 'ack', ${index})">Acknowledge</button>`);
+    buttons.push(`<button class="btn btn-compact" onclick="event.stopPropagation(); openStrandedAction(${nArg}, 'ack', ${index})">Acknowledge</button>`);
   }
   if (!item.prOpened) {
-    buttons.push(`<button class="btn btn-compact" onclick="event.stopPropagation(); openStrandedAction('${n}', 'open-pr', ${index})">Open PR</button>`);
+    buttons.push(`<button class="btn btn-compact" onclick="event.stopPropagation(); openStrandedAction(${nArg}, 'open-pr', ${index})">Open PR</button>`);
   }
   return buttons.length ? `<span class="stranded-item-actions">${buttons.join('')}</span>` : '';
 }
@@ -1045,7 +1048,7 @@ function formatTagList(tags) {
  * @returns {string} HTML for the panel.
  */
 function renderCardDetail(project) {
-  const n = esc(project.name);
+  const nArg = jsArg(project.name);
   const engineInfo = project.engine ? `${esc(project.engine.name)}` : 'No engine';
   const sessionInfo = renderSessionDetail(project);
   const awarenessInfo = renderAwarenessDetail(project);
@@ -1076,9 +1079,9 @@ function renderCardDetail(project) {
       <div class="detail-row"><span class="detail-label">Groups</span><span class="detail-value">${groupsInfo}</span></div>
       ${renderNextActionRow(project)}
       <div class="detail-actions">
-        <button class="btn btn-compact" onclick="event.stopPropagation(); openSettings('${n}')">Settings</button>
-        ${project.session && project.session.active ? `<button class="btn btn-compact btn-kill-card" onclick="event.stopPropagation(); openKill('${n}')">Kill Session</button>` : ''}
-        <button class="btn btn-compact btn-danger-subtle" onclick="event.stopPropagation(); openDelete('${n}')">Delete</button>
+        <button class="btn btn-compact" onclick="event.stopPropagation(); openSettings(${nArg})">Settings</button>
+        ${project.session && project.session.active ? `<button class="btn btn-compact btn-kill-card" onclick="event.stopPropagation(); openKill(${nArg})">Kill Session</button>` : ''}
+        <button class="btn btn-compact btn-danger-subtle" onclick="event.stopPropagation(); openDelete(${nArg})">Delete</button>
       </div>
     </div>`;
 }
@@ -1102,13 +1105,13 @@ function renderNextActionRow(project) {
   const next = project.continuityIndex && project.continuityIndex.nextAction;
   if (!next || !String(next).trim()) return '';
 
-  const n = esc(project.name);
+  const nArg = jsArg(project.name);
   const open = openNextAction === project.name;
   const bodyId = `next-${cssId(project.name)}`;
 
   return `<button class="next-toggle" type="button"
       aria-expanded="${open}" aria-controls="${bodyId}"
-      onclick="event.stopPropagation(); toggleNextAction('${n}')">
+      onclick="event.stopPropagation(); toggleNextAction(${nArg})">
       <span class="detail-label">Next</span>
       ${open ? '<span class="next-spacer"></span>' : '<span class="next-hint">(click to reveal)</span>'}
       <span class="next-chev" aria-hidden="true">&#9662;</span>
@@ -1340,7 +1343,7 @@ function renderTagRow() {
     const isAll = tag === 'All';
     const active = isAll ? !state.activeTag : state.activeTag === tag;
     return `<button class="tag-pill${active ? ' active' : ''}"
-      onclick="toggleTag(${isAll ? 'null' : `'${esc(tag)}'`})">${esc(tag)}</button>`;
+      onclick="toggleTag(${isAll ? 'null' : jsArg(tag)})">${esc(tag)}</button>`;
   });
 
   // Unattached toggle pill
@@ -1396,8 +1399,8 @@ function renderPorts() {
 
     html += `<div class="port-group">`;
     html += `<div class="port-group-toggle" role="button" tabindex="0"
-      aria-expanded="${isOpen}" onclick="togglePortGroup('${esc(project)}')"
-      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();togglePortGroup('${esc(project)}');}">
+      aria-expanded="${isOpen}" onclick="togglePortGroup(${jsArg(project)})"
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();togglePortGroup(${jsArg(project)});}">
       <span class="${arrowClass}">&#9660;</span>
       <span class="port-group-name">${esc(project)}</span>
       <span style="color:var(--text-muted);font-size:10px">(${leases.length})</span>
@@ -4043,20 +4046,15 @@ function renderImportBanner(importable) {
     const conflictNote = p.conflicts.length > 0
       ? ` <span style="color:var(--error)">⚠ conflict on port${p.conflicts.length > 1 ? 's' : ''} ${p.conflicts.join(', ')}</span>`
       : '';
-    // #1383 — the buttons below take DIFFERENT argument shapes, so they
-    // cannot share one encoding. `importLeaseProjects` calls `JSON.parse` on
-    // what it receives, so its argument must arrive as a JSON string and is
-    // stringified twice. `ignoreLeaseProject` takes the RAW name and puts it
-    // straight into the ignore set, so it is stringified ONCE — a second pass
-    // handed it the name wrapped in literal quote characters, which never
-    // matched the canonical name and left Ignore doing nothing at all, on
-    // every install. `markLeaseOwnerExternal` takes the raw name too.
-    const ignoreArg = esc(JSON.stringify(p.name));
+    // Every button receives a real JS value through `jsArg`: Import gets the
+    // array of names it posts; Ignore and Not a project get the RAW name, which
+    // must match the canonical form exactly (#1383).
+    const nameArg = jsArg(p.name);
     return `<div class="import-banner-item">
       <strong>${esc(p.name)}</strong> — ports: ${portList}${conflictNote}
-      <button class="btn btn-primary btn-small" onclick="importLeaseProjects(${esc(JSON.stringify(JSON.stringify([p.name])))})">Import</button>
-      <button class="btn btn-small" onclick="markLeaseOwnerExternal(${ignoreArg})" title="Record that this owner is not a TangleClaw project, such as a brew services database. Its leases stay, and this banner stops listing it on every browser.">Not a project</button>
-      <button class="btn btn-small" onclick="ignoreLeaseProject(${ignoreArg})">Ignore</button>
+      <button class="btn btn-primary btn-small" onclick="importLeaseProjects(${jsArg([p.name])})">Import</button>
+      <button class="btn btn-small" onclick="markLeaseOwnerExternal(${nameArg})" title="Record that this owner is not a TangleClaw project, such as a brew services database. Its leases stay, and this banner stops listing it on every browser.">Not a project</button>
+      <button class="btn btn-small" onclick="ignoreLeaseProject(${nameArg})">Ignore</button>
     </div>`;
   }).join('');
 
@@ -4064,7 +4062,7 @@ function renderImportBanner(importable) {
   banner.innerHTML = `<div class="import-banner-header">
       <span>${importable.length} project${importable.length > 1 ? 's' : ''} found in port leases not registered in TangleClaw:</span>
       <div class="import-banner-actions">
-        <button class="btn btn-primary btn-small" onclick="importLeaseProjects(${esc(JSON.stringify(JSON.stringify(allNames)))})">Import All</button>
+        <button class="btn btn-primary btn-small" onclick="importLeaseProjects(${jsArg(allNames)})">Import All</button>
         <button class="btn btn-small" onclick="dismissImportBanner()">Dismiss</button>
       </div>
     </div>
@@ -4086,10 +4084,9 @@ function dismissImportBanner() {
 
 /**
  * Import lease projects by name, then refresh state.
- * @param {string} namesJson - JSON-encoded array of project names
+ * @param {string[]} names - Project names to import
  */
-async function importLeaseProjects(namesJson) {
-  const names = JSON.parse(namesJson);
+async function importLeaseProjects(names) {
   const result = await apiMutate('/api/projects/import', 'POST', { names });
   if (result && result.warnings && result.warnings.length) {
     // Every warning is shown, including "directory not found". Those names
@@ -4171,12 +4168,12 @@ function renderGroups() {
 
     html += `<div class="group-item">`;
     html += `<div class="group-item-toggle" role="button" tabindex="0"
-      aria-expanded="${isOpen}" onclick="toggleGroupItem('${esc(group.id)}')"
-      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleGroupItem('${esc(group.id)}');}">
+      aria-expanded="${isOpen}" onclick="toggleGroupItem(${jsArg(group.id)})"
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleGroupItem(${jsArg(group.id)});}">
       <span class="${arrowClass}">&#9660;</span>
       <span class="group-item-name">${esc(group.name)}</span>
       <span class="group-item-meta">${group.memberCount || 0} project${(group.memberCount || 0) !== 1 ? 's' : ''}, ${group.docCount || 0} doc${(group.docCount || 0) !== 1 ? 's' : ''}</span>
-      <button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openGroupModal('${esc(group.id)}')" title="Edit group">&#9998;</button>
+      <button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openGroupModal(${jsArg(group.id)})" title="Edit group">&#9998;</button>
     </div>`;
     html += `<div class="${contentClass}">`;
     if (group.description) {
@@ -4241,7 +4238,7 @@ async function loadGroupDetail(groupId) {
       for (const m of data.members) {
         html += `<div class="group-member-row">
           <span class="group-member-name">${esc(m.name)}</span>
-          <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); removeGroupMember('${esc(groupId)}', ${m.id})" title="Remove from group">&times;</button>
+          <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); removeGroupMember(${jsArg(groupId)}, ${m.id})" title="Remove from group">&times;</button>
         </div>`;
       }
       html += `</div>`;
@@ -4262,7 +4259,7 @@ async function loadGroupDetail(groupId) {
           <span class="group-doc-name">${esc(doc.name)}</span>
           <span class="group-doc-mode badge">${esc(doc.injectMode)}</span>
           ${doc.injectIntoConfig ? '<span class="group-doc-inject badge badge-engine">inject</span>' : ''}
-          <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); removeSharedDoc('${esc(doc.id)}')" title="Remove document">&times;</button>
+          <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); removeSharedDoc(${jsArg(doc.id)})" title="Remove document">&times;</button>
         </div>`;
       }
       html += `</div>`;
@@ -4367,7 +4364,7 @@ function renderGroupMembers(currentMembers, groupId) {
     if (groupId) {
       // Edit mode — toggle membership immediately via API
       return `<label class="group-member-check">
-        <input type="checkbox" ${checked} onchange="toggleGroupMembership('${esc(groupId)}', ${p.id}, this.checked)">
+        <input type="checkbox" ${checked} onchange="toggleGroupMembership(${jsArg(groupId)}, ${p.id}, this.checked)">
         <span>${esc(p.name)}</span>
       </label>`;
     } else {
@@ -4396,7 +4393,7 @@ function renderGroupDocs(docs) {
       <span>${lockIcon}</span>
       <span class="group-doc-name">${esc(doc.name)}</span>
       <span class="badge">${esc(doc.injectMode)}</span>
-      <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="deleteDocFromModal('${esc(doc.id)}')" title="Remove">&times;</button>
+      <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="deleteDocFromModal(${jsArg(doc.id)})" title="Remove">&times;</button>
     </div>`;
   }).join('');
 }
@@ -4602,13 +4599,13 @@ function renderOpenclawConnections() {
 
     html += `<div class="oc-item">`;
     html += `<div class="oc-item-toggle" role="button" tabindex="0"
-      aria-expanded="${isOpen}" onclick="toggleOpenclawItem('${esc(conn.id)}')"
-      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleOpenclawItem('${esc(conn.id)}');}">
+      aria-expanded="${isOpen}" onclick="toggleOpenclawItem(${jsArg(conn.id)})"
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleOpenclawItem(${jsArg(conn.id)});}">
       <span class="${arrowClass}">&#9660;</span>
       <span class="oc-item-name">${esc(conn.name)}</span>
       ${engineBadge}
       <span class="oc-item-meta">${esc(conn.host)}:${conn.port}</span>
-      <button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openConnectionModal('${esc(conn.id)}')" title="Edit connection">&#9998;</button>
+      <button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openConnectionModal(${jsArg(conn.id)})" title="Edit connection">&#9998;</button>
     </div>`;
     html += `<div class="${contentClass}">`;
     html += `<div class="oc-detail-grid">
@@ -4631,13 +4628,13 @@ function renderOpenclawConnections() {
       html += `<div class="oc-tunnel-status">
         <span class="badge badge-tunnel-active">tunnel active</span>
         <span class="oc-tunnel-detail">port ${ts.localPort}${ts.pid ? `, PID ${ts.pid}` : ''}</span>
-        <button class="btn btn-small btn-danger-subtle" onclick="event.stopPropagation(); killOpenclawTunnel('${esc(conn.id)}')" title="Kill SSH tunnel and release port">Kill Tunnel</button>
+        <button class="btn btn-small btn-danger-subtle" onclick="event.stopPropagation(); killOpenclawTunnel(${jsArg(conn.id)})" title="Kill SSH tunnel and release port">Kill Tunnel</button>
       </div>`;
     }
 
     html += `<div class="oc-actions">
-      <button class="btn btn-small btn-primary" onclick="event.stopPropagation(); launchOpenclawWebUI('${esc(conn.id)}')" title="Open Web UI via tunnel">Web UI</button>
-      <button class="btn btn-small" onclick="event.stopPropagation(); copyOpenclawSSH('${esc(conn.id)}')" title="Copy SSH command to clipboard">SSH</button>
+      <button class="btn btn-small btn-primary" onclick="event.stopPropagation(); launchOpenclawWebUI(${jsArg(conn.id)})" title="Open Web UI via tunnel">Web UI</button>
+      <button class="btn btn-small" onclick="event.stopPropagation(); copyOpenclawSSH(${jsArg(conn.id)})" title="Copy SSH command to clipboard">SSH</button>
     </div>`;
     html += '</div></div>';
   }

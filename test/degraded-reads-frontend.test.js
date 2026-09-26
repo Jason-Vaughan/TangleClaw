@@ -74,6 +74,18 @@ function liftRenderer(src, decl, name, scope) {
 }
 
 /**
+ * The production `jsArg`, lifted from `public/landing.js` and bound to the
+ * given `esc`, so handler arguments render exactly as they ship.
+ *
+ * @param {Function} escFn - The `esc` to bind.
+ * @returns {Function} `jsArg`.
+ */
+function realJsArg(escFn) {
+  const landing = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
+  return liftRenderer(landing, 'function jsArg(value)', 'jsArg', { esc: escFn });
+}
+
+/**
  * The production `esc`, copied from `public/landing.js` including its
  * non-string rejection. A more forgiving stub renders values the real one
  * drops, which would make assertions about rendered text quietly untrue.
@@ -531,6 +543,7 @@ describe('an unregistered card gets the same answer as a registered one (#885)',
     const uiSrc = fs.readFileSync(path.join(root, 'public/ui.js'), 'utf8');
     const badge = liftRenderer(uiSrc, 'function renderGitBadge(project)', 'renderGitBadge', {
       esc,
+      jsArg: realJsArg(esc),
       degradedTooltip: liftRenderer(uiSrc, 'function degradedTooltip(record)', 'degradedTooltip', { esc }),
       tcGitDirtyState: globalThis.tcGitDirtyState,
       tcGitRead: globalThis.tcGitRead
@@ -577,6 +590,7 @@ describe('the dashboard actually consults the helpers (#885)', () => {
         projectsScan: scan
       },
       esc,
+      jsArg: realJsArg(esc),
       tcScanNotice: globalThis.tcScanNotice
     });
     return render();
@@ -816,6 +830,7 @@ describe('the dashboard actually consults the helpers (#885)', () => {
     function badge(git) {
       const render = liftRenderer(ui, 'function renderGitBadge(project)', 'renderGitBadge', {
         esc,
+        jsArg: realJsArg(esc),
         degradedTooltip: liftRenderer(ui, 'function degradedTooltip(record)', 'degradedTooltip', { esc }),
         tcGitDirtyState: globalThis.tcGitDirtyState,
         tcGitRead: globalThis.tcGitRead
@@ -888,6 +903,7 @@ describe('the dashboard actually consults the helpers (#885)', () => {
   it('the unreadable badge renders the reason and the remedy in its tooltip', () => {
     const render = liftRenderer(ui, 'function renderUnreadableBadge(project)', 'renderUnreadableBadge', {
       esc,
+      jsArg: realJsArg(esc),
       degradedTooltip: liftRenderer(ui, 'function degradedTooltip(record)', 'degradedTooltip', { esc }),
       tcUnreadableNotice: globalThis.tcUnreadableNotice
     });
@@ -911,6 +927,7 @@ describe('the dashboard actually consults the helpers (#885)', () => {
     function detail(decl, name, project) {
       const render = liftRenderer(ui, decl, name, {
         esc,
+        jsArg: realJsArg(esc),
         tcSessionLiveness: globalThis.tcSessionLiveness,
         tcSessionRead: globalThis.tcSessionRead,
         tcGitDirtyState: globalThis.tcGitDirtyState,
@@ -978,6 +995,7 @@ describe('the dashboard actually consults the helpers (#885)', () => {
       // its OUTPUT instead — a source pin is satisfiable by a dead branch.
       const render = liftRenderer(ui, 'function renderCardDetail(project)', 'renderCardDetail', {
         esc,
+        jsArg: realJsArg(esc),
         renderSessionDetail: () => 'SESSION-DELEGATED',
         renderAwarenessDetail: () => '',
         renderStrandedDetail: () => '',

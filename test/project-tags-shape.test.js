@@ -39,18 +39,10 @@ function functionBody(src, decl) {
   assert.fail(`${decl} body must close`);
 }
 
-/**
- * The production `esc`, copied from `public/landing.js` including its
- * non-string rejection.
- *
- * @param {*} str - Value to escape.
- * @returns {string}
- */
-function esc(str) {
-  if (typeof str !== 'string') return '';
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
+// The production `esc`, lifted from `public/landing.js` rather than copied, so
+// the formatter is tested against the escape that ships.
+const landing = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
+const esc = new Function(`function esc(str)${functionBody(landing, 'function esc(str)')}\nreturn esc;`)();
 
 const decl = 'function formatTagList(tags)';
 const formatTagList = new Function('esc', `${decl}${functionBody(ui, decl)}\nreturn formatTagList;`)(esc);
