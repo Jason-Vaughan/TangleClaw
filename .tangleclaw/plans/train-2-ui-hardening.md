@@ -1,6 +1,6 @@
 ---
 title: "Train 2: malformed project tags, inline-handler string encoding, and the port lease 'Not a project' mark"
-status: IN PROGRESS — Chunk 1 building
+status: IN PROGRESS — Chunk 1 done (8f565ec8, review rev-20260926T164901Z-c875176e, 0 blocking); Chunk 2 building
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-26 (message de99255a; Architect clearance R44 confirmed in 0f8b59dc)
 issues: [1375, 1384, 1768]
 scope: train-2
@@ -47,6 +47,13 @@ where it `JSON.parse`s. A test scans `public/ui.js` so the single-quote form can
 `liftFunction` test-helper consolidation named in the issue is a rider: done only if it stays small,
 otherwise filed.
 
+**Carried in from the Chunk 1 review (R-2).** `test/project-tags-shape.test.js` documents its `esc`
+as a copy of `public/landing.js` but accepts only strings; load the real one or correct the comment,
+in this chunk's commit.
+
+**Scope found at chunk start.** Beyond the issue's 14, the card and stranded-wrap handlers interpolate
+`'${n}'` (an escaped project name) the same way; they are converted too.
+
 **Done when.** A handler rendered for `O'Brien` parses and receives the exact string; the scan test
 passes; CHANGELOG `### Fixed`; chunk Critic clean.
 
@@ -64,7 +71,7 @@ then the cumulative review before the PR.
 
 ## Status
 
-- [ ] Chunk 1 — #1375
+- [x] Chunk 1 — #1375
 - [ ] Chunk 2 — #1384
 - [ ] Chunk 3 — #1768
 - [ ] Cumulative review + PR (not merged by this session)
