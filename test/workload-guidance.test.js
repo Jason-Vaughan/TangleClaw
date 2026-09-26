@@ -23,8 +23,24 @@ describe('workload guidance (#1912)', () => {
     for (const point of ['dispatch acceptance', 'task transition', 'external wait', 'completion', 'before wrap', 'before exit', 'before it expires']) {
       assert.match(text, new RegExp(point), point);
     }
-    assert.match(text, /30 min working, 120 min otherwise/);
+    // Derived from the constants the server enforces, not a copy of them.
+    const { EXPIRY_MS } = require('../lib/workload-compose');
+    const { STATES, CLEARANCES, WAIT_KINDS } = require('../lib/workload');
+    assert.match(text, new RegExp(`${EXPIRY_MS.working / 60000} min working, ${EXPIRY_MS.complete / 60000} min otherwise`));
+    assert.ok(text.includes(STATES.join('|')) && text.includes(CLEARANCES.join('|')) && text.includes(WAIT_KINDS.join('|')));
     assert.match(text, /reads UNKNOWN, never available/);
+  });
+
+  it('follows a changed expiry instead of repeating a stale one', () => {
+    const compose = require('../lib/workload-compose');
+    const { workloadSentence } = require('../lib/ecosystem-primer');
+    const original = compose.EXPIRY_MS;
+    try {
+      Object.defineProperty(compose, 'EXPIRY_MS', { value: { ...original, working: 45 * 60000 }, configurable: true, writable: true });
+      assert.match(workloadSentence(), /45 min working/);
+    } finally {
+      Object.defineProperty(compose, 'EXPIRY_MS', { value: original, configurable: true, writable: true });
+    }
   });
 
   it('the comment form is #-prefixed and carries the same sentence', () => {

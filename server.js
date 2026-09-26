@@ -270,6 +270,7 @@ const ciStatus = require('./lib/ci-status');
 const master = require('./lib/master');
 const sharedDocsAccess = require('./lib/shared-docs-access');
 const workload = require('./lib/workload');
+const { workloadSentence } = require('./lib/ecosystem-primer');
 const workloadFleet = require('./lib/workload-fleet');
 // The one live fleet activity observer (#1912, ADR 0020 §5): started with the
 // other monitors, read by the fleet surfaces, never captured from on a request.
@@ -4819,7 +4820,7 @@ route('GET', '/api/tc/whoami', (req, res) => {
       // the composed verdict fleet-wide.
       id: 'workload', enabled: !!project,
       detail: project
-        ? 'report your workload so coordinators can read fleet capacity: `tc workload set <working|waiting-external|blocked|complete> --clearance <safe-to-clear|do-not-clear|unknown> --summary "<one line>"` at dispatch acceptance, each task transition, the start of any external wait (add --wait ci|review|operator|peer|merge|other), completion, before wrap and before exit, and again before it expires (30 min working, 120 min otherwise). `tc workload show` shows what coordinators see; `tc sessions` shows every lane. No receipt reads UNKNOWN, never available'
+        ? `report your workload so coordinators can read fleet capacity. ${workloadSentence()} \`tc workload show\` shows what coordinators see.`
         : 'unavailable: this call did not resolve to a registered project'
     },
     _startupControlCapability(activeSession),

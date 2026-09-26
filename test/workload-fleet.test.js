@@ -260,3 +260,68 @@ describe('composed workload on the routes (ADR 0020 §6, §7, §10)', () => {
     assert.deepEqual(calls, []);
   });
 });
+
+describe('a wrap request supersedes the receipt even after the drawer acknowledges it (ADR 0020 §4)', () => {
+  const wrapSentinel = require('../lib/wrap-sentinel');
+  const workloadFleet = require('../lib/workload-fleet');
+
+  it('the sentinel keeps the request time across the ack, and laneFor reads it', async () => {
+    const saved = { ...wrapSentinel._internal };
+    let text = 'working...';
+    const t0 = Date.parse('2026-09-26T22:00:00Z');
+    let now = t0;
+    Object.assign(wrapSentinel._internal, {
+      listLiveAll: () => [{ id: 4242, projectId: 1, engineId: 'claude', tmuxSession: 'x', sessionMode: 'tmux' }],
+      getProjectName: () => 'wrap-lane',
+      capturePane: () => ({ lines: [text] }),
+      getEngineProfile: () => null,
+      observeEngineErrors: () => {},
+      now: () => now
+    });
+    try {
+      await wrapSentinel._internal.tick();
+      text = `done\n${wrapSentinel.SENTINEL_TOKEN}`;
+      now = t0 + 5000;
+      await wrapSentinel._internal.tick();
+      assert.equal(wrapSentinel.isWrapRequested('wrap-lane'), true, 'precondition: the request was detected');
+      wrapSentinel.ackWrapRequest('wrap-lane');
+      assert.equal(wrapSentinel.isWrapRequested('wrap-lane'), false, 'the drawer acknowledged it');
+      assert.equal(wrapSentinel.wrapRequestedAt(4242), t0 + 5000, 'the request time survives the ack');
+    } finally {
+      Object.assign(wrapSentinel._internal, saved);
+      wrapSentinel.stop();
+    }
+  });
+
+  it('laneFor passes the request time through, so an older receipt reads stale', () => {
+    const wrap = (requestedAt) => ({ wrapRun: () => null, wrapRequested: () => false, wrapRequestedAt: () => requestedAt });
+    const observer = { get: () => ({ activity: 'at-rest', reason: 'x', observedAt: null, ageSeconds: 0, provenance: 'engine-observed' }) };
+    const receiptAt = Date.parse('2026-09-26T22:00:00Z');
+    const realGetBySession = store.launchSequences.getBySession;
+    const realLatest = store.workloadReceipts.latestForLaunch;
+    const realOpen = store.control.getOpenForProject;
+    const realNarrow = store.workloadReceipts.activeNarrowing;
+    store.launchSequences.getBySession = () => ({ launchId: 'L-wrap' });
+    store.workloadReceipts.latestForLaunch = () => ({
+      project_id: 1, session_id: 9, launch_id: 'L-wrap', assignment_id: null, seq: 1, state: 'complete',
+      clearance: 'safe-to-clear', summary: 's', wait_kind: null, wait_detail: null, refs_json: '{}', branch: null,
+      head_sha: null, source: 'tc-cli', received_at: new Date(receiptAt).toISOString()
+    });
+    store.control.getOpenForProject = () => null;
+    store.workloadReceipts.activeNarrowing = () => null;
+    try {
+      const session = { id: 9, projectId: 1, status: 'active' };
+      const before = workloadFleet.laneFor(session, { observer, projectName: 'p', nowMs: receiptAt + 60000, wrap: wrap(receiptAt - 1000) });
+      assert.equal(before.composed.availability, 'AVAILABLE', 'a request before the receipt does not supersede it');
+      const after = workloadFleet.laneFor(session, { observer, projectName: 'p', nowMs: receiptAt + 60000, wrap: wrap(receiptAt + 1000) });
+      assert.equal(after.workload.staleReason, 'wrap-requested');
+      assert.equal(after.composed.availability, 'UNKNOWN');
+    } finally {
+      store.launchSequences.getBySession = realGetBySession;
+      store.workloadReceipts.latestForLaunch = realLatest;
+      store.control.getOpenForProject = realOpen;
+      store.workloadReceipts.activeNarrowing = realNarrow;
+    }
+  });
+});
+

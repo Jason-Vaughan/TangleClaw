@@ -89,9 +89,9 @@ describe('dashboard workload badge and detail (#1912)', () => {
       'the browser line and the CLI line are the same text');
   });
 
-  it('the landing poll keys the fleet read by project, newest live session first, and keeps the last answer on failure', async () => {
+  it('the landing poll keys the fleet read by project, newest live session first, and clears on failure', async () => {
     const block = landing.slice(landing.indexOf("const fleet = await api('/api/tc/sessions');"));
-    const body = block.slice(0, block.indexOf('state.workload = byProject;') + 'state.workload = byProject;'.length + 4);
+    const body = block.slice(0, block.indexOf('state.workload = byProject;') + 'state.workload = byProject;'.length);
     const run = async (reply, prior) => {
       const state = { workload: prior };
       await new Function('api', 'state', `return (async () => { ${body} })();`)(async () => reply, state);
@@ -104,6 +104,7 @@ describe('dashboard workload badge and detail (#1912)', () => {
     ] }, {});
     assert.equal(two.workload[7].id, 9, 'the first (newest) session wins');
     assert.equal(two.workload[8].id, 4);
-    assert.deepEqual((await run(null, { 7: 'previous' })).workload, { 7: 'previous' }, 'a failed fetch keeps the last answer');
+    // Fail closed: a stale "available" badge would invite clearing a lane.
+    assert.deepEqual((await run(null, { 7: 'previous' })).workload, {}, 'a failed fetch clears every badge');
   });
 });

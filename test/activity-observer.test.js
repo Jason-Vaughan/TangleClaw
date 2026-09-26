@@ -97,6 +97,17 @@ describe('activity observer budget and round-robin (ADR 0020 §5)', () => {
 });
 
 describe('activity observer freshness and failure (ADR 0020 §5)', () => {
+  it('one failed assessment reads unknown for that session and does not stall the rest of the tick', async () => {
+    const { obs } = harness({
+      sessions: [S(1), S(2), S(3)],
+      verdict: (o) => { if (o.lines[0] === 's2') throw new Error('bad pane'); return { idle: true, reason: 'at-prompt', digest: 'd', idleTicks: 2 }; }
+    });
+    const r = await obs.tick();
+    assert.deepEqual(r.observed, [1, 2, 3], 'the rotation advanced past the failure');
+    assert.equal(obs.get(2).reason, 'assess-failed');
+    assert.equal(obs.get(3).activity, ACTIVITY.AT_REST);
+  });
+
   it('a never-observed session is unknown', () => {
     const { obs } = harness({ sessions: [] });
     assert.deepEqual(obs.get(42), {
