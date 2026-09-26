@@ -42,6 +42,17 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
       explicit rollback, with a warning. `scripts/ttyd-runtime.js` is the CLI; the docs and CHANGELOG are updated
 - [ ] Chunk 07: build the packaged artifact from tracked inputs, verify its closure, then the full R22 acceptance on
       that exact artifact (2000 cycles plus a 2 h soak). Record its digest and load graph
+- [ ] Chunk 08 (R24.9 / ADR 0018 amendment 950671db), after chunk 07 and its Critic:
+      (1) managed `install.sh` provisions the runtime itself (build to a temp stage, install, resolve) when it is absent,
+      invalid or stale, before any plist write; it skips only a verified runtime whose manifest `inputsJsonSha256`
+      matches the current `inputs.json`;
+      (2) the resolver refuses a stale runtime, and the cutover never builds but refuses and points to `install.sh`;
+      (3) fault-injection tests at every copy/rename boundary of install and rollback, with the docs rewritten to the
+      exact fail-closed, recoverable guarantee.
+      Also carried from review rev-20260926T010104Z-bd75ce00:
+      - `ttyd-runtime.js status` and the cutover result report which runtime was selected;
+      - the rollback docs say that after a pin change, the last known good no longer verifies and `TANGLECLAW_TTYD_RUNTIME=homebrew` is the way back.
+      Then the full suite and the cumulative Critic
 - [ ] Chunk 04 (revised): rollout and rollback docs for the owned runtime (F/G, the user guide, the configuration
       reference), and the CHANGELOG. Re-tuning the watcher waits for live certification
 - [ ] Verify (the full suite), the cumulative Critic, one draft PR ONLY when the PM authorizes (pilot boundary: no merge).
