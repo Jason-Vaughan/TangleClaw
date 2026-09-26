@@ -239,6 +239,25 @@ describe('the clear: records what it read, and still clears when it could not re
     }
   });
 
+  it('a stranded switchboard nudge is cleared without being kept as the operator\'s draft (#1621)', () => {
+    try {
+      paneWithDraft('');
+      const wake = require('../lib/medusa-wake');
+      const nudge = require('../lib/wake-transports').withNonce(
+        wake._nudgeLineFor('/api/sessions/proj-a/medusa', 1, 'http://localhost:3102'), 'a1b2c3d4e5f6');
+      const rows = [];
+      for (let i = 0; i < nudge.length; i += 76) rows.push((i === 0 ? `❯${NBSP}` : '  ') + nudge.slice(i, i + 76));
+      paneIs([DIVIDER, ...rows, DIVIDER, CLAUDE_FOOTER], cursorAtEnd(rows[rows.length - 1]));
+      const before = draftStore.readDrafts(ATTEMPT).length;
+      const out = logged(() => tmux._clearPromptLine(session, 'claude', ATTEMPT));
+      assert.match(out, /Cleared a stranded switchboard nudge from the prompt before injecting/);
+      assert.doesNotMatch(out, /kept in the draft store/);
+      assert.equal(draftStore.readDrafts(ATTEMPT).length, before, 'nothing the operator typed, so nothing kept');
+    } finally {
+      try { tmux.killSession(session); } catch (_) { /* already gone */ }
+    }
+  });
+
   it('an empty composer logs nothing', () => {
     try {
       paneWithDraft('');

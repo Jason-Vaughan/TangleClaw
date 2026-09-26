@@ -139,6 +139,21 @@ The watchdog re-arms a wake only on a durable trigger newer than the attempt:
   reconnecting) and eligible again since. Both halves are durable. It is
   eligible no sooner than `rearmAfterMs` after the attempt.
 
+A re-arm passes the draft gate like any wake, and that gate makes one exception:
+a composer holding **only** a switchboard nudge and its wake ref, seen down to the
+composer's lower border, is the switchboard's own stranded text rather than the
+operator's (#1621). The pane counts as at the prompt, the injector's prompt clear
+removes the stale nudge without filing it in the draft store, and a fresh nudge
+with a new nonce replaces it. Operator text before or after the nudge, or a
+composer whose end was not captured, is refused as before. Without the exception
+the stranded nudge refused the re-arm it had earned, and every later wake, until
+the exchange escalated. An engine whose composer draws no lower border gets no
+exception, so its stranded nudges still wait for the re-arm budget to run out and
+the escalation that follows.
+
+The exception recovers from a lost Enter. It does not prevent one: why the Enter
+after the paste is sometimes lost has not been established.
+
 **Elapsed time alone never re-arms and never spends the budget.** A nudge
 with no trigger stays unconfirmed and escalates by age instead. Re-arms back
 off (2, 4, then 8 minutes) up to 3 times. The count and the next eligible time
