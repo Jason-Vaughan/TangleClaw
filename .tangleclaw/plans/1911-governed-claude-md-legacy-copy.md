@@ -1,6 +1,6 @@
 # #1911 — Governed CLAUDE.md keeps TangleClaw's legacy whole-file guide beside the managed block
 
-**Status: Ruled (Architect A7–A10, 2026-09-26, Medusa 8869adf0). In implementation on `fix/1911-governed-claude-md-legacy-copy`.**
+**Status: BUILT on `fix/1911-governed-claude-md-legacy-copy`, PR pending (not merged by B1). Ruled by the Architect (A7–A10, 2026-09-26, Medusa 8869adf0). The full suite is green, and Critic and PR review found 0 blocking. No live-fleet healing was done.**
 Dispatched by the PM on 2026-09-26 (Medusa d5b2a91a). The dispatch rules out running contributor code
 and stops here until the Architect rules. The issue came from an external user (#1911); its body is
 analysis only, with no code attached. Archive this plan when #1911 closes.
