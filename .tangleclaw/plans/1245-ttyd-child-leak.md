@@ -46,7 +46,7 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
       dfae4e69…). See "Chunk 07 packaged acceptance". Runs 1 and 5 are supporting evidence (each failed only on a harness
       measurement defect); runs 2–4 were stopped to meet the Architect's harness conditions. Awaiting the Architect's
       chunk 07 disposition
-- [ ] **Chunk 08 (R24.9 / ADR 0018 §4) — REQUIRED IN THIS PR before merge-readiness review (Architect R34, 2026-09-26 08:07Z).**
+- [x] **Chunk 08 (R24.9 / ADR 0018 §4) — REQUIRED IN THIS PR before merge-readiness review (Architect R34, 2026-09-26 08:07Z).**
       No interim manual-provisioning contract, and ADR 0018 is not weakened or rewritten. Dispatch: PM-managed, in a FRESH
       context. It must deliver:
       (1) managed `install.sh` provisions the runtime itself (build to a temp stage via build-ttyd.js, install, resolve)
@@ -73,14 +73,18 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
       known good at rollback); install and rollback staged beside the current pair and promoted manifest-first, with
       rollback COPYING the last known good; fault-injection tests at every copy/chmod/rename boundary; `status.selected`
       and the cutover's `ttydRuntime`; the docs. R-7, R-8, R-5, R-6 and R-2 are in the same commit. The box is ticked
-      after the cumulative Critic (see R35).
-- [ ] Chunk 04 (revised): rollout and rollback docs for the owned runtime (F/G, the user guide, the configuration
+      after the cumulative Critic (see R35). **Reviewed and accepted 2026-09-26:** cumulative
+      rev-20260926T150050Z-6620a07c, then (after the R39 rewrite) rev-20260926T151846Z-e094065e and verify-resolutions
+      rev-20260926T152837Z-80909b30 and rev-20260926T153732Z-7d87805f. 0 blocking; branch coverage is composed with no
+      unresolved blocking. Fixes are at ede42d18 and 7c1bf135; the suite is green at 7c1bf135.
+- [x] Chunk 04 (revised): rollout and rollback docs for the owned runtime (F/G, the user guide, the configuration
       reference), and the CHANGELOG. Re-tuning the watcher waits for live certification. **In the SAME dispatch and PR
       as chunk 08 (Architect R35).**
       **BUILT (2026-09-26).** Two Operator runbooks, `docs/runbooks/roll-out-the-owned-ttyd.md` and
       `docs/runbooks/roll-back-the-owned-ttyd.md`, with the R36/R37 permission checkpoint before the restart; F and G
       above revised to match; links from the configuration reference, the user guide and FEATURES; the CHANGELOG entry.
-      The runbooks are not validated until the Operator executes them. The box is ticked after the cumulative Critic.
+      The runbooks are not validated until the Operator executes them. Reviewed with chunk 08 (see above); R40 added the
+      rebuild/rollback permission checkpoint and the live access check.
 - [ ] Verify (the full suite), the cumulative Critic, one draft PR ONLY when the PM authorizes (pilot boundary: no merge).
       The PR body says `Refs #1245`, NOT `Fixes #1245`: the issue stays open until live certification (review
       rev-20260926T150050Z-6620a07c R-11).
