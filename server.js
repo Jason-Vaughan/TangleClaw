@@ -269,6 +269,12 @@ const launchSequence = require('./lib/launch-sequence');
 const ciStatus = require('./lib/ci-status');
 const master = require('./lib/master');
 const sharedDocsAccess = require('./lib/shared-docs-access');
+const workload = require('./lib/workload');
+const { workloadSentence } = require('./lib/ecosystem-primer');
+const workloadFleet = require('./lib/workload-fleet');
+// The one live fleet activity observer (#1912, ADR 0020 §5): started with the
+// other monitors, read by the fleet surfaces, never captured from on a request.
+const activityObserver = require('./lib/activity-observer').createObserver();
 const startupPrompt = require('./lib/startup-prompt');
 const startupControl = require('./lib/startup-control');
 const projectView = require('./lib/project-view');
@@ -4737,6 +4743,40 @@ route('POST', '/api/tc/start/ready', (req, res, _params, body) => {
   return jsonResponse(res, result.status, result.body);
 });
 
+// POST /api/tc/workload — a session asserts its own workload (#1912, ADR 0020).
+//
+// The one write surface for workload: `tc workload set` in the lane's own pane.
+// Only a verified project launch may write, and only for itself; the server
+// stamps project, session, launch, assignment, sequence, time and source from
+// that launch (`lib/workload.js`). An assertion, never evidence, and it grants
+// nothing.
+route('POST', '/api/tc/workload', (req, res, _params, body) => {
+  const result = workload.record({ req, body });
+  return jsonResponse(res, result.status, result.body);
+});
+
+// GET /api/tc/workload — the calling lane's own newest receipt (`tc workload
+// show`). Same verified-launch binding as the write.
+route('GET', '/api/tc/workload', (req, res) => {
+  const access = sharedDocsAccess.resolveAccess(req);
+  const result = workload.readOwn({ req, access });
+  if (result.status !== 200) return jsonResponse(res, result.status, result.body);
+  // The lane's own composed verdict, from the same composition the fleet read
+  // uses (ADR 0020 §1, §10), so `tc workload show` says what coordinators see.
+  const session = store.sessions.get(access.sessionId);
+  const project = session ? store.projects.get(session.projectId) : null;
+  const lane = session ? _composedLane(session, project ? project.name : null) : null;
+  return jsonResponse(res, 200, { ...result.body, ...(lane || {}) });
+});
+
+// POST /api/tc/workload/narrowing — the operator narrows (or clears a
+// narrowing of) one lane's composed verdict (ADR 0020 §7). Operator only, with
+// control's proof tiers; a narrowing only ever lowers the verdict.
+route('POST', '/api/tc/workload/narrowing', (req, res, _params, body) => {
+  const result = workload.recordNarrowing({ caller: resolveControlCaller(req), body });
+  return jsonResponse(res, result.status, result.body);
+});
+
 // GET /api/tc/start/status — where the sequence stands: the cursor, and what
 // was served and acknowledged per step (Train 21, #1581).
 //
@@ -4919,6 +4959,14 @@ route('GET', '/api/tc/whoami', (req, res) => {
       // #1678: the fleet's checkouts, shaped to what this project may see.
       id: 'checkouts', enabled: true,
       detail: `which commit each live session is on and how it stands against origin/main: \`tc freshness\`, or GET ${api}/api/checkouts (your own row and your project groups' rows; send x-tangleclaw-project-id and x-tangleclaw-launch-id)`
+    },
+    {
+      // #1912, ADR 0020: a lane asserts its own workload; coordinators read
+      // the composed verdict fleet-wide.
+      id: 'workload', enabled: !!project,
+      detail: project
+        ? `report your workload so coordinators can read fleet capacity. ${workloadSentence()} \`tc workload show\` shows what coordinators see.`
+        : 'unavailable: this call did not resolve to a registered project'
     },
     _startupControlCapability(activeSession),
     _provenanceCapability(project, projConfig),
@@ -5135,11 +5183,34 @@ route('GET', '/api/tc/sessions', (_req, res) => {
       projectName: projectNames.get(s.projectId),
       engineId: s.engineId,
       status: s.status,
-      startedAt: s.startedAt
+      startedAt: s.startedAt,
+      ..._composedLane(s, projectNames.get(s.projectId))
     };
   });
   jsonResponse(res, 200, { sessions });
 });
+
+/**
+ * A lane's workload blocks for the fleet read (#1912, ADR 0020 §6, §10):
+ * `engine` from the observer's cache, `workload` from the receipts, `composed`
+ * from the one composition. Runs no tmux. A lane that fails to compose reads
+ * UNKNOWN rather than taking the roster down.
+ * @param {object} session - A live session
+ * @param {string|null} projectName - Its project's name
+ * @returns {{engine: object, workload: object, composed: object}}
+ */
+function _composedLane(session, projectName) {
+  try {
+    return workloadFleet.laneFor(session, { observer: activityObserver, projectName });
+  } catch (err) { // prawduct:allow prawduct/broad-except -- one lane's store failure must not take the fleet roster down; it composes UNKNOWN, fail-closed, and is logged
+    log.warn('workload composition failed for a lane', { sessionId: session.id, error: err.message });
+    return {
+      engine: activityObserver.get(session.id),
+      workload: { receipt: null, provenance: 'none', staleReason: null, ageSeconds: null },
+      composed: { availability: 'UNKNOWN', clearance: 'unknown', reasons: ['compose-failed'] }
+    };
+  }
+}
 
 // GET /api/checkouts — the fleet's checkouts in one answer (#1678, #993): one
 // row per project with a live session, from the same `projectCheckout` the
@@ -11644,6 +11715,10 @@ if (require.main === module) {
     // watcher that types a fixed nudge into an opted-in (`medusaWake`) session
     // when fresh inbound mail is waiting and the pane is at a bare prompt.
     medusaWake.start();
+    // Start the bounded fleet activity observer (#1912, ADR 0020 §5): one
+    // asynchronous capture per live session per 10 s tick, within a 3 s budget,
+    // so the fleet read can report engine activity without capturing a pane.
+    activityObserver.start();
     // Start the Medusa delivery watchdog (#1839): a deterministic pass over
     // durable exchange state that re-arms a wake through the monitor's gates
     // on a durable trigger: a nudge provably not accepted, or the session
@@ -11709,6 +11784,7 @@ if (require.main === module) {
     tunnelMonitor.stop();
     wrapSentinel.stop();
     medusaWake.stop();
+    activityObserver.stop();
     medusaWatchdog.stop();
     launchUnready.stop();
     // Each startupControl adapter's reaper timer (#1825): the timers are unref'd,
@@ -11736,4 +11812,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers };
+module.exports = { createServer, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver };

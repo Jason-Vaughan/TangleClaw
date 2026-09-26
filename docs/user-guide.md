@@ -167,6 +167,12 @@ or `unknown` with a reason.
 
 If TangleClaw detects an existing PortHub installation with active leases that haven't been imported yet, a banner appears at the top of the landing page offering to import those leases into TangleClaw's built-in port registry. This is a one-time migration convenience — once imported, TangleClaw manages ports directly.
 
+### Fleet Workload
+
+Sessions report what they are doing with `tc workload set`, and TangleClaw combines that with what each session's terminal is observed doing into one verdict per session. You see it with `tc sessions` from any launched pane, or `GET /api/tc/sessions`: `AVAILABLE`, `WORKING`, `WAITING`, `BLOCKED`, `COMPLETE_NOT_CLEAR`, `HELD`, `STOPPED` or `UNKNOWN`. A session that has not reported reads as unknown, never available.
+
+You can narrow a session's verdict (hold it at unknown, or mark it not safe to clear) through `POST /api/tc/workload/narrowing`. See [Fleet workload](fleet-workload.md). A dashboard view is deferred under the current operator UI freeze.
+
 ### Ports Panel
 
 Below the system stats, there's a collapsible **Ports** panel. Tap it to see all active port leases grouped by project. Each lease shows:

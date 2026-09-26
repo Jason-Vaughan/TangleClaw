@@ -1,8 +1,8 @@
 # ADR 0020: A session's workload is a launch-bound receipt it asserts, composed fail-closed with what the engine is observed doing
 
 **Status:** Accepted (2026-09-26, Architect ruling FWV-A18 for #1912, approving content at 533b1386
-after the FWV-A17 revisions). The approval authorizes no typed-dispatch implementation (§4), and
-Phase A waits for the ProjectManager to synchronize the train plan with this contract.
+after the FWV-A17 revisions). §3's display-safety rule was amended the same day under rulings A29
+and A30. The approval authorizes no typed-dispatch implementation (§4).
 **Source issue:** #1912: coordinators cannot tell from one read which Builder lanes are free,
 waiting on CI, or unsafe to clear.
 **Builds on:** ADR 0001 (one shared predicate for paired state), the A16 constraints for the Fleet
@@ -130,12 +130,45 @@ the §3 fields, with CHECK-constrained enums and an append-only trigger, in the 
 
 **Bounds:**
 
-- `summary`: 1–200 characters, one line, no control characters.
-- `wait_detail`: at most 200 characters.
-- Up to 10 each of `issue` and `pr` (positive integers) and `task` (at most 64 characters each).
-- `branch`: at most 255 characters, following git ref-name rules.
+- `summary`: 1–200 characters, one line, display-safe (below).
+- `wait_detail`: at most 200 characters, display-safe.
+- Up to 10 each of `issue` and `pr` (positive integers) and `task` (at most 64 characters each,
+  display-safe).
+- `branch`: at most 255 characters, following git ref-name rules, display-safe.
 - `head`: exactly 40 lowercase hex characters.
+- The operator narrowing `reason` (§7): 1–200 characters, display-safe.
 - A lane may write at most one receipt per second; a faster write gets `429 WORKLOAD_RATE`.
+
+**Display safety (amended 2026-09-26, Architect rulings A29 and A30).** Every free-text field is
+shown to coordinators as one line of plain text, and a coordinator acts on what it displays. So a
+free-text value is **display-safe** only when it meets both conditions:
+
+1. **It contains no character in these Unicode categories or properties:**
+   - general category `Cc` (controls: C0, DEL, C1 including NEL);
+   - `Cf` (format: bidi controls, zero-width characters, U+FEFF, U+00AD, the tag characters
+     U+E0000–U+E007F);
+   - `Zl` and `Zp` (U+2028, U+2029);
+   - property `Default_Ignorable_Code_Point` (including the variation selectors and other
+     characters a renderer may draw as nothing).
+2. **It contains at least one visible character:** a letter, number, punctuation mark or symbol
+   (`L`, `N`, `P`, `S`). So text made only of spaces or combining marks cannot display as empty.
+
+The rule is one predicate (`isSafeText` in `lib/workload.js`), shared by every field above, and it
+names categories, not a hand-kept list.
+
+*Why:*
+- **A29** found that the first version refused only C0 controls. That let bidi controls reorder
+  what a reader sees, and let line separators break the one line.
+- **A30** found that an enumerated list still admitted zero-width, soft-hyphen, BOM, tag and
+  variation-selector characters. With those, a summary could display as empty, and a branch
+  `ma\u200Bin` could display as `main`.
+
+*Consequence:* emoji written with a variation selector or a zero-width joiner are refused.
+Single-code-point emoji and symbols are not.
+
+*Not included:* this is **display integrity**, not Unicode normalization (NFC/NFKC) or
+homoglyph / confusable detection. A visible look-alike (Cyrillic `а` for Latin `a`) is still
+accepted. Detecting that is a separate, unratified concern.
 
 ### 4. Freshness and supersession: no assertion is trusted forever
 

@@ -35,6 +35,32 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Fleet Workload Visibility, Phase A: launch-bound workload receipts, activity observer, composed fleet read (#1912)
+
+<!-- prawduct: type=feature | scope=1912-fleet-workload -->
+
+Chunks A1–A4 of `.tangleclaw/plans/1912-fleet-workload-core.md`, implementing ADR 0020, which the Architect accepted as FWV-A18 (PR #1916). The PM dispatched this over Medusa (806b9000).
+
+**The change.**
+- **A1:** `workload_receipts` (schema v50, append-only, `UNIQUE (launch_id, seq)`), the `lib/workload.js` write path, `POST/GET /api/tc/workload`, and `tc workload set/show`. `resolveAccess` now returns the verified `sessionId` and `launchId`.
+- **A2:** `lib/activity-observer.js`. A 10 s tick of asynchronous serial captures, each bounded by min(1 s, the tick budget left), with a 3 s tick budget and round-robin. The strict at-rest gate reuses `assessSessionIdle`. Observations older than 30 s read `unknown`. Measured capture latency on this host: p95 29 ms.
+- **A3:**
+  - `lib/workload-compose.js` (pure): receipt currency, base rules 1–11, and monotone operator narrowing.
+  - `lib/workload-fleet.js`: gathers the inputs.
+  - `GET /api/tc/sessions` carries engine, workload and composed blocks, and runs no tmux.
+  - `POST /api/tc/workload/narrowing` is operator-only, recorded in `workload_narrowings`.
+  - A guard test fails if shipped code parses clearance phrases.
+- **A4:** `workloadLine` in every engine's config, the `workload` capability, and the docs. The dashboard badge and detail row built in A4 were removed before merge under Architect ruling A24 (the operator UI freeze); the PM held them (Medusa message c9e2213a). They are preserved on `origin/held/ui-freeze-1912-dashboard-a3` (51c8b2dd) and tracked as #1923.
+- **A29/A30 display safety:** every free-text field (summary, waitDetail, task ids, branch, the narrowing reason) is display-safe through one predicate, `isSafeText`. It refuses Unicode `Cc`, `Cf`, `Zl`, `Zp` and `Default_Ignorable_Code_Point`, and requires a visible character. ADR 0020 §3 is amended in this PR as the authority. Stricter at write time: invisible-only text, and emoji that need a variation selector or zero-width joiner, now get a 400. Normalization and homoglyph detection are out of scope.
+- **Boundary-review fixes:** a wrap request supersedes a receipt even after the wrap drawer acknowledges it (`wrap-sentinel` keeps `requestedAt`). The guidance and capability text are built from the server's constants. One session's failed assessment no longer stalls the observer.
+
+**Reviews.** A Critic review per chunk; carried findings rode each next commit. A3 had one blocking finding (the lane line untested), cleared by `verify-resolutions` rev-20260926T202440Z-ecd5128a.
+
+**Deliberately not done.**
+- Typed assignment-dispatch supersession (ADR §4, a named dependency not authorized by FWV-A18).
+- Project Master workload (composes UNKNOWN).
+- Table retention: #1918.
+
 ## 2026-09-26 — Detect, never auto-repair, legacy TangleClaw sections in governed CLAUDE.md (#1911)
 
 <!-- prawduct: type=bugfix | scope=engines-1911 -->

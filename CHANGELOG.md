@@ -6,6 +6,33 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **A session can report its own workload with `tc workload set`** (#1912, ADR 0020; Fleet Workload Visibility Phase A).
+  - **What it records:** the lane's state (`working`, `waiting-external`, `blocked` or `complete`), whether it is safe to clear, a one-line summary, what it is waiting on, and its issue, PR and task refs, branch and head.
+  - **Who can write it:** only a session with a verified launch, for itself, and only through the `tc` client (`POST /api/tc/workload`). The operator, an unbound caller and another project's launch are refused with `403 WORKLOAD_BINDING_REQUIRED`.
+  - **Stamped by the server:** project, session, launch and control-assignment ids, the per-launch sequence number and the time, all from the verified launch. A body that sends any of these, or any unknown field, is refused.
+  - **Validated at write:** exact values, consistency rules (`working` must be `do-not-clear`, `waiting-external` must say what it waits on) and field bounds. A lane can write at most one receipt per second. Every free-text field (summary, wait detail, task ids, branch, the narrowing reason) must be display-safe (ADR 0020 §3): no Unicode control, format, line/paragraph-separator or default-ignorable character (bidi controls, zero-width characters, BOM, soft hyphen, tag characters, variation selectors), and at least one visible character. A lane's text therefore cannot break a line, hide, or display differently from what is stored. Text in any script, right-to-left included, and single-code-point emoji and symbols are accepted; emoji using a variation selector or zero-width joiner are not.
+  - **Stored:** an append-only table (schema v50), unique on launch and sequence.
+  - **Reading it back:** `tc workload show` (`GET /api/tc/workload`) shows the lane its own newest receipt.
+  - **A background activity observer** watches the pane of every live tmux session whose engine has a wake profile, on its own 10-second tick, whether or not the session has mail (the wake monitor only looks when mail is pending). Any other session's engine reads as unknown.
+    - **Budget:** captures are asynchronous and serial, at most 1 s each, with 3 s of work per tick. A tick that runs out of budget resumes where it stopped on the next one.
+    - **Strict at-rest:** a lane counts as at rest only when there is no turn in flight, no running agents and an empty composer, seen on two stable consecutive observations.
+    - **Freshness:** an observation older than 30 s reads as unknown.
+  - **One composed verdict per lane.** `GET /api/tc/sessions` and `tc sessions` now show, for every live session:
+    - **What the engine was observed doing:** busy, at rest, not at rest, or unknown, with its age.
+    - **What the session last asserted:** the receipt, marked current or stale and why.
+    - **The composed verdict coordinators act on:** `AVAILABLE`, `WORKING`, `WAITING`, `BLOCKED`, `COMPLETE_NOT_CLEAR`, `HELD`, `STOPPED` or `UNKNOWN`, with a clearance and the rules that fired.
+  - **The rules fail closed:**
+    - An engine seen busy reads `WORKING` whatever the receipt says.
+    - `AVAILABLE` needs a current `complete` + `safe-to-clear` receipt *and* the engine observed at rest.
+    - No receipt, a stale one or an expired one reads `UNKNOWN`. Receipts expire after 30 min for `working` and 120 min for the other states.
+    - A control hold, release, stop, rebind or close, a wrap request (still counted after the wrap drawer acknowledges it), or a wrap started after the receipt makes it stale.
+  - **What does not end a receipt:** ordinary messages supersede nothing. A typed dispatch will, once it exists.
+  - **The read is cheap:** it captures no pane and runs no tmux. `tc workload show` gives a lane its own verdict.
+  - **The operator can narrow a lane** (`POST /api/tc/workload/narrowing`): cap its clearance, or read it as `UNKNOWN`, and clear that later. A narrowing only lowers the verdict and can never hide a lane that is `WORKING`, `HELD` or `STOPPED`. No session, ProjectManager or Architect can narrow.
+  - **The pane text is never parsed for clearance.** A test fails if shipped code starts matching "SAFE TO CLEAR" or "DO NOT CLEAR" in text.
+  - **Guidance:** every engine's generated config now tells the session to report its workload and when, and `tc capabilities` lists `workload`.
+  - **Reference:** `docs/fleet-workload.md`.
+
 - **`POST /api/setup/generate-cert` reports the tailnet host it served, takes `removeHosts`, and can reconcile drift in direct mode** (#1905).
   - **The response** carries `inventory.tailnet`: the host, whether it was configured or detected, whether the minted certificate covers it, and any omission or drift.
   - **`removeHosts`** takes non-canonical names out of the certificate. Naming a canonical one is refused with `409 CANONICAL_HOST_REMOVAL`: the mkcert defaults, the mDNS name and the tailnet host. Change the host itself instead.
