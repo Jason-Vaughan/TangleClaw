@@ -2299,6 +2299,24 @@ function esc(str) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+/**
+ * Encode a value as a JS argument for an inline event handler written inside a
+ * double-quoted HTML attribute: `onclick="fn(${jsArg(value)})"`.
+ *
+ * The HTML parser decodes entities in an attribute BEFORE the handler's JS is
+ * parsed, so `'${esc(v)}'` turns an apostrophe back into a quote that closes
+ * the string early (a project named O'Brien kills the handler). `JSON.stringify`
+ * produces a correct JS literal for any string, number, array or plain object,
+ * and `esc` then makes that literal attribute-safe; the parser undoes `esc`,
+ * leaving exactly the literal. `undefined` becomes `null` so the call still
+ * parses.
+ * @param {*} value - The argument the handler should receive
+ * @returns {string} Attribute-safe JS literal
+ */
+function jsArg(value) {
+  return esc(value === undefined ? 'null' : JSON.stringify(value));
+}
+
 // ── Initialization ──
 
 /**

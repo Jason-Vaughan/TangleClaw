@@ -75,6 +75,11 @@ function esc(str) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// The production `jsArg`, lifted from `public/landing.js` and bound to the
+// `esc` above, so handler arguments render exactly as they ship.
+const landing = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
+const jsArg = new Function('esc', `function jsArg(value)${functionBody(landing, 'function jsArg(value)')}\nreturn jsArg;`)(esc);
+
 /**
  * Run the real `renderNextActionRow`.
  *
@@ -85,6 +90,7 @@ function esc(str) {
 function nextRow(project, openNextAction = null) {
   return lift('function renderNextActionRow(project)', 'renderNextActionRow', {
     esc,
+    jsArg,
     renderNextMarkdown,
     openNextAction,
     cssId: lift('function cssId(name)', 'cssId', {})
@@ -207,6 +213,7 @@ describe('the card detail panel (#1015)', () => {
   function detail(project, nextRowHtml = '<NEXT-ROW>') {
     return lift('function renderCardDetail(project)', 'renderCardDetail', {
       esc,
+      jsArg,
       renderSessionDetail: () => 'session',
       renderAwarenessDetail: () => '',
       renderStrandedDetail: () => '',
@@ -214,7 +221,8 @@ describe('the card detail panel (#1015)', () => {
       renderSessionHealthDetail: () => '',
       renderGitDetail: () => 'git',
       tcUnreadableNotice: () => null,
-      renderNextActionRow: () => nextRowHtml
+      renderNextActionRow: () => nextRowHtml,
+      formatTagList: lift('function formatTagList(tags)', 'formatTagList', { esc })
     })(project);
   }
 
@@ -235,6 +243,11 @@ describe('the card detail panel (#1015)', () => {
   it('is a string, touching no DOM, so a re-render can emit it inline', () => {
     assert.equal(typeof detail(WITH_NEXT), 'string');
   });
+
+  it('renders a legacy string tags value as None instead of throwing (#1375)', () => {
+    const html = detail({ ...WITH_NEXT, tags: 'not-an-array' });
+    assert.match(html, /Tags<\/span><span class="detail-value">None</);
+  });
 });
 
 describe('open-ness survives a re-render (#1015)', () => {
@@ -248,6 +261,7 @@ describe('open-ness survives a re-render (#1015)', () => {
   function card(project, openCardDetail = null) {
     return lift('function renderCard(project)', 'renderCard', {
       esc,
+      jsArg,
       openCardDetail,
       renderUnregisteredCard: () => '<UNREGISTERED>',
       renderArchivedCard: () => '<ARCHIVED>',
@@ -270,6 +284,7 @@ describe('open-ness survives a re-render (#1015)', () => {
       // same way.
       renderStatusDot: lift('function renderStatusDot(project)', 'renderStatusDot', {
         esc,
+        jsArg,
         tcSessionLiveness: () => 'none',
         tcSessionWrapping: () => false,
         tcSessionWrapStep: () => null,
