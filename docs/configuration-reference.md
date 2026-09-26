@@ -144,8 +144,9 @@ resolver (`lib/ttyd-runtime.js`), never from the PATH.
 - **The ingress cutover never builds.** When the runtime is missing, invalid or stale it stops before
   its first write, with the code `ttyd-runtime-unavailable`. The refusal tells you to run
   `node scripts/ttyd-runtime.js provision` and then select the runtime for your ingress mode:
-  `./deploy/install.sh` in direct mode, the cutover itself in caddy mode. Never run
-  `deploy/install.sh` on a caddy-mode host, because it rewrites the ttyd plist for direct mode.
+  `./deploy/install.sh` in direct mode, the cutover itself in caddy mode. `deploy/install.sh`
+  rewrites the ttyd plist for direct mode, so on a caddy-mode host it refuses before changing
+  anything and names the cutover instead.
 - **Stale** means built from a different `deploy/ttyd/inputs.json`: a runtime is current only when its
   manifest records that file's exact SHA-256. Changing a build flag, the CMake pin or the deployment
   target makes the installed runtime stale just as a new source or patch does.

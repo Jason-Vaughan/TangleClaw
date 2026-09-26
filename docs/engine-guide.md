@@ -677,8 +677,14 @@ not sever it, and launches the pane's TUI with `--remote unix://<socket>` ahead 
 validated launch-mode arguments (the TUI applies `--ask-for-approval` and `--sandbox` in remote mode).
 The channel is recorded in `startup_control_channels`: a generic header (session, launch, engine,
 adapter, lifecycle) plus a bounded `adapterState` only the Codex adapter reads. A launch whose
-app-server cannot be started or probed launches today's command unchanged and records
-`channel_unavailable`. The channel ends with the session: kill, a wrap that ends the session, a
+app-server cannot be started or whose native protocol version is unverified records why it used the
+legacy path. On an explicitly verified Codex 0.156.1 or 0.157.1 binary that path appends
+`--no-daemon`, preventing a new session from inheriting another session's shell snapshot or launch identity through Codex's
+shared background daemon (#1895). Older or unknown versions keep their historical command because
+Codex 0.154.0 rejects that flag; future versions are also untrusted until tested, so capability
+hardening is never guessed. The Project Master never opens a native channel, so its launch takes the
+same hardening directly: its exact executable is probed and the same version bound applies. The channel ends with the
+session: kill, a wrap that ends the session, a
 detected crash, or a relaunch over a dead pane; a keep-running wrap keeps it. At boot TangleClaw
 revalidates every open channel of a live session, recovers in-flight fires without resending, and
 closes channels whose session has ended. Before signalling a process it checks the command line,
