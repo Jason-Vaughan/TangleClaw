@@ -35,6 +35,34 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — install.sh refuses on a caddy-mode host before anything is changed (#1900)
+
+<!-- prawduct: type=bugfix | scope=install-1900 -->
+
+The PM dispatched this over Medusa (289a9266) under Architect ruling R43. Plan: `.tangleclaw/plans/1900-install-caddy-refusal.md`.
+
+**Problem.** `deploy/install.sh` always wrote the direct-mode ttyd plist (TCP 3100) and reloaded launchd. On a host whose persisted `ingressMode` is `caddy`, the server expects ttyd on a Unix socket, so the dashboard answered 502. The script did read the mode, but only after the restart, and only to print advice.
+
+**The change.**
+- A guard runs right after the Node.js check, before any dependency install, runtime build, plist write or launchctl call.
+- On `caddy` it refuses. It names `ingress-cutover.js --to caddy`, which re-applies the ttyd and Caddy plists, and `--to direct`, which switches the host.
+- A config that cannot be read or parsed also refuses, because the server cannot load that file either. A missing config, or one without the key, is direct mode.
+- The post-restart detection and its now-unreachable caddy closing branch are removed.
+- The README update steps branch by mode. The configuration reference, the rollout runbook and FEATURES say the installer enforces this.
+
+**Decision (PM-ratified, e4c76eab).** Selecting direct means running `ingress-cutover.js --to direct`, the only writer of `ingressMode`. install.sh gets no override flag, because one would reinstall the outage.
+
+**Tests.** `test/install-sh.test.js` › "ingress-mode guard (#1900, executed)" runs the real script in a sandbox, with stubbed brew, curl and launchctl.
+- Caddy mode and an unparseable config leave HOME byte-identical, call no stub, and name the repair.
+- Direct, key absent, and no config all get past the guard.
+- Interlocks pin the guard ahead of every mutation, and pin the brew stop ahead of the real runtime build.
+
+**Critic.** `rev-20260926T164727Z-856105c8` found 0 blocking, 3 warnings and 1 note. All four were fixed in 99f89ecf and verified by `rev-20260926T165841Z-edb10e1d`, and both of its observations were accepted.
+
+**Filed.** #1901: a caddy-mode host has no supported refresh for the server plist, `~/.tmux.conf` or dependencies.
+
+**Suite.** Two full runs each failed only the known load flake in `test/dir-scanner.test.js` (#1884/#1658) while another session's suite ran alongside. That test passes 3/3 in isolation on this tree and on base. Recorded `--degraded`.
+
 ## 2026-09-26 — Restart Session on the ended bar after a completed wrap (#1637)
 
 <!-- prawduct: type=feature | scope=1637-restart-session -->
