@@ -40,11 +40,12 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
 - [x] Chunk 06: owned runtime, part 2. The shared resolver plus transactional install/rollback (`lib/ttyd-runtime.js`),
       consumed by `install.sh` and `scripts/ingress-cutover.js`. Fails closed and names the repair. Homebrew only as an
       explicit rollback, with a warning. `scripts/ttyd-runtime.js` is the CLI; the docs and CHANGELOG are updated
-- [ ] Chunk 07: build the packaged artifact from tracked inputs, verify its closure, then the full R22 acceptance on
+- [x] Chunk 07: build the packaged artifact from tracked inputs, verify its closure, then the full R22 acceptance on
       that exact artifact (2000 cycles plus a 2 h soak). Record its digest and load graph.
-      Run 1 (00:50–02:57Z) was clean on run-owned evidence, but the harness verdict failed on the GLOBAL pool (the live
-      leak). It is kept as supporting evidence (`1245-evidence/packaged/acceptance-dfae4e69-*`). Per the Architect's
-      ruling the harness now gates on run-owned PTYs, fds and recorded survivors. Run 2 on the frozen harness is pending
+      **Run 6 PASSED** (2026-09-26 05:48:38Z–07:56Z, harness 626280ec, review rev-20260926T054745Z-39931d6e, artifact
+      dfae4e69…). See "Chunk 07 packaged acceptance". Runs 1 and 5 are supporting evidence (each failed only on a harness
+      measurement defect); runs 2–4 were stopped to meet the Architect's harness conditions. Awaiting the Architect's
+      chunk 07 disposition
 - [ ] Chunk 08 (R24.9 / ADR 0018 amendment 950671db), after chunk 07 and its Critic:
       (1) managed `install.sh` provisions the runtime itself (build to a temp stage, install, resolve) when it is absent,
       invalid or stale, before any plist write; it skips only a verified runtime whose manifest `inputsJsonSha256`
@@ -197,6 +198,37 @@ to 23:47Z (`a3c-acceptance-PASS.json`, and the scratch ttyd's own log in `a3c-ac
 
 **STOP: the packaging/rollout boundary (R22 Q1).** The delivery options, and the revert of the rejected A1 wrapper,
 wait for the Architect and the PM.
+
+## Chunk 07 packaged acceptance (the terminal record)
+
+**Run 6: PASS** on the exact packaged artifact.
+- Start 2026-09-26T05:48:38.509Z, end ~07:56Z.
+- Harness `626280ec156516f40425703033616230c3fd8977` (clean), cleared by `rev-20260926T054745Z-39931d6e`.
+- Artifact sha256 `dfae4e69a9d07c026c5f99360670fc2c7607986ddc1916338e15ad46d5ba6cea`, self-contained: it loads only
+  `/usr/lib/libz.1.dylib`, `/usr/lib/libutil.dylib` and `/usr/lib/libSystem.B.dylib`.
+- Report sha256 `703e38ef3bafb7cd2a74c260876bea699a70d5ed1a7445e069694d1ff7e71e62`.
+- Original pre-A1 attach script.
+
+| Gate | Value |
+|---|---|
+| Cycles and modes | 2000/2000; clean, abrupt, paused, replay, noread; 1600 with output; 0 client errors |
+| Soak | 7,200,000 ms (the full 120 min); stop = completed |
+| Confirmed wedges / lingering / restarts | 0 / 0 / 0 (max 10 children at once) |
+| Run-owned PTYs | baseline {0 slaves, 0 masters} → final {0, 0} |
+| Scratch ttyd fds | 16 → 17 (within tolerance) |
+| Reaping | the scratch ttyd started 2000 and reaped 2000 |
+| Cleanup | ok: 0 survivors (1968 PIDs and 1660 groups recorded by identity); post-cleanup snapshot "no run-owned process by identity" |
+| Global pool (diagnostic) | 43 → 58 → 33. The drop is the LIVE watcher kickstarting the live, unfixed ttyd at 06:09:52Z on 27 orphans from real use (pid 10597 → 7826), not this run |
+
+Evidence: `.tangleclaw/plans/1245-evidence/packaged/run6/` (the report, the scratch ttyd log, the baseline, pre-cleanup
+and post-cleanup snapshots). The harness never touched the live ttyd or tmux.
+
+**Run history.**
+- Run 1: clean on run-owned evidence, but failed on the global pool (the live leak).
+- Runs 2–4: stopped to meet the Architect's harness conditions (the cut-off lsof reading, PID reuse, lsof exit 1, the E/Z bounds).
+- Run 5: every product gate passed, but it failed on a harness false positive (the shared process group). Kept as
+  supporting evidence and not relabelled (R27).
+- Run 6: PASS.
 
 ## Architect R22 Q1 fallback ruling (2026-09-25 21:24Z, controlling)
 

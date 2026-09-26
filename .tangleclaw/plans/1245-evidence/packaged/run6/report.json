@@ -1,0 +1,95 @@
+{
+  "runId": "muhyyffw",
+  "mode": "candidate",
+  "modes": [
+    "clean",
+    "abrupt",
+    "paused",
+    "replay",
+    "noread"
+  ],
+  "dir": "/tmp/tcc-muhyyffw",
+  "ttydBin": "/private/tmp/claude-501/-Users-jasonvaughan-Documents-Projects-TangleClaw-Pilot-B1/3340b1e4-3366-4cf5-802e-c4281748e42a/scratchpad/packaged/ttyd",
+  "ttydSha256": "dfae4e69a9d07c026c5f99360670fc2c7607986ddc1916338e15ad46d5ba6cea",
+  "harnessCommit": "626280ec156516f40425703033616230c3fd8977",
+  "harnessDirty": false,
+  "harnessReview": "rev-20260926T054745Z-39931d6e",
+  "attachScript": "/private/tmp/claude-501/-Users-jasonvaughan-Documents-Projects-TangleClaw-Pilot-B1/3340b1e4-3366-4cf5-802e-c4281748e42a/scratchpad/a3/attach-original.sh",
+  "startedAt": "2026-09-26T05:48:38.509Z",
+  "baseline": {
+    "pool": {
+      "used": 43,
+      "cap": 511
+    },
+    "fds": 16,
+    "ownedPtys": {
+      "slaves": [],
+      "masters": 0
+    }
+  },
+  "run": {
+    "cycles": 2000,
+    "withOutput": 1600,
+    "clientErrors": 0,
+    "stop": "completed",
+    "maxChildren": 10,
+    "confirmedWedges": 0,
+    "lingering": 0,
+    "lingeringStates": [],
+    "transientLifetimesMs": {
+      "n": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+    },
+    "stillExitingMs": [],
+    "pool": {
+      "baseline": {
+        "used": 43,
+        "cap": 511
+      },
+      "peak": {
+        "used": 58,
+        "cap": 511
+      },
+      "final": {
+        "used": 33,
+        "cap": 511
+      }
+    },
+    "ownedPtys": {
+      "baseline": {
+        "slaves": [],
+        "masters": 0
+      },
+      "final": {
+        "slaves": [],
+        "masters": 0
+      }
+    },
+    "fds": {
+      "baseline": 16,
+      "final": 17
+    },
+    "restarts": 0,
+    "soakMs": 7200000
+  },
+  "cleanup": {
+    "ok": true,
+    "leftovers": [],
+    "survivors": [],
+    "recordedPids": 1968,
+    "recordedGroups": 1660
+  },
+  "afterCleanup": {
+    "pool": {
+      "used": 32,
+      "cap": 511
+    }
+  },
+  "verdict": {
+    "verdict": "pass",
+    "why": []
+  }
+}

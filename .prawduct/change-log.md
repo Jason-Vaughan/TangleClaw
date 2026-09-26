@@ -35,6 +35,19 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Chunk 07 complete: the packaged ttyd passes the full acceptance (#1245)
+
+<!-- prawduct: type=feature | scope=ttyd-1245 -->
+
+- **Run 6 PASS** on artifact `dfae4e69…` with harness `626280ec` (review `rev-20260926T054745Z-39931d6e`):
+  - 2000 cycles across all 5 modes, and the 120-min soak;
+  - 0 wedges, 0 lingering, 0 restarts;
+  - owned PTYs 0→0, fds 16→17, 2000/2000 reaped;
+  - 0 cleanup survivors.
+- **Report sha256** `703e38ef…`. The evidence is in `.tangleclaw/plans/1245-evidence/packaged/run6/`.
+- **Global pool (diagnostic):** the drop is the live watcher kickstarting the live, unfixed ttyd at 06:09:52Z on 27 orphans.
+- **A4:** the carried test was added at 626280ec. This completion commit adds the plan's terminal record and the CHANGELOG `### Internal` line for the harness gate, and corrects the Fixed entry's "Tested" bullet now that the packaged binary has passed. The full suite and the cumulative Critic follow.
+
 ## 2026-09-26 — Harness: the scratch ttyd leads its own process group (#1245, Architect R27)
 
 <!-- prawduct: type=bugfix | scope=ttyd-1245 -->
