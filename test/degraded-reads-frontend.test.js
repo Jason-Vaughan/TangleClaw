@@ -998,7 +998,6 @@ describe('the dashboard actually consults the helpers (#885)', () => {
         jsArg: realJsArg(esc),
         renderSessionDetail: () => 'SESSION-DELEGATED',
         renderAwarenessDetail: () => '',
-        renderWorkloadDetail: () => '',
         renderStrandedDetail: () => '',
         renderStrandedGithubDetail: () => '',
         renderSessionHealthDetail: () => '',

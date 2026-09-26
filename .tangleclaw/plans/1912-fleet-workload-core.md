@@ -87,6 +87,8 @@ authorized by FWV-A18); Phase B (#1877); Phase C (#1889); Project Master workloa
 
 **Project Master lanes (A3 review R-4/R-6/R-13).** The Master is not a row in `sessions`, so the fleet read never reaches composition rule 2 in production. The rule stays, unit-tested, so that a future Master row composes `UNKNOWN` (`unsupported-master-lane`) rather than anything else. A4 adds no Master view: Master workload is out of scope (FWV-A18).
 
+**[DECISION] A24 UI freeze (2026-09-26 21:12Z).** The Architect froze dashboard and Master fleet-view UI. The PM (c9e2213a) directed that all UI be removed from #1921, so the pure backend and CLI portion can merge. A4's dashboard badge, Workload detail row, landing fetch, CSS and their test were removed. What A4 keeps is the guidance line, the capability, and docs that describe the CLI and API only. The dashboard view waits for the revised boundary.
+
 ## Chunk A4: the dashboard view, guidance and docs (ADR §9–§10)
 
 **Carried in from the A3 verify pass (they ride this chunk's commit):**

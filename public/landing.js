@@ -1503,18 +1503,6 @@ async function loadProjects() {
   if (aw && aw.projects) {
     state.awareness = Object.fromEntries(aw.projects.map((p) => [p.projectId, p]));
   }
-  // Fleet workload (#1912): the same composed verdict `tc sessions` shows,
-  // keyed by project (the newest live session wins; the list comes newest
-  // first). A failed fetch CLEARS it, unlike awareness: an "available" badge
-  // invites clearing a lane, so a stale one must not linger (fail closed).
-  const fleet = await api('/api/tc/sessions');
-  const byProject = {};
-  if (fleet && Array.isArray(fleet.sessions)) {
-    for (const s of fleet.sessions) {
-      if (s.composed && !(s.projectId in byProject)) byProject[s.projectId] = s;
-    }
-  }
-  state.workload = byProject;
   // Kept as sent, including on the healthy path — a field that only appears on
   // failure makes every reader probe for its existence instead of reading its
   // value. `renderRootPanel` decides what to draw; this only stops the answer

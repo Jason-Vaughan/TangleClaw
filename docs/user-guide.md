@@ -169,17 +169,9 @@ If TangleClaw detects an existing PortHub installation with active leases that h
 
 ### Fleet Workload
 
-Each project card with a live session can show what that session says it is doing, combined with what its terminal is observed doing:
+Sessions report what they are doing with `tc workload set`, and TangleClaw combines that with what each session's terminal is observed doing into one verdict per session. You see it with `tc sessions` from any launched pane, or `GET /api/tc/sessions`: `AVAILABLE`, `WORKING`, `WAITING`, `BLOCKED`, `COMPLETE_NOT_CLEAR`, `HELD`, `STOPPED` or `UNKNOWN`. A session that has not reported reads as unknown, never available.
 
-- **available**: the session reports its work complete and safe to clear, and its terminal is at rest.
-- **waiting**: it is waiting on something outside it (CI, a review, you).
-- **blocked**: it cannot proceed without a decision.
-- **done, not clear**: finished, but not yet safe to clear.
-- **held** / **stopped**: a control hold or stop is in force.
-
-A working session shows no badge. Open the card for the **Workload** row, which gives the full verdict, what the session asserted and how long ago, and what the terminal was seen doing.
-
-A session that has not reported reads as unknown, never available. Sessions report with `tc workload set`, and agents run `tc sessions` to see every lane. You can narrow a lane (hold its verdict at unknown, or mark it not safe to clear) through `POST /api/tc/workload/narrowing`; see [Fleet workload](fleet-workload.md).
+You can narrow a session's verdict (hold it at unknown, or mark it not safe to clear) through `POST /api/tc/workload/narrowing`. See [Fleet workload](fleet-workload.md). A dashboard view is deferred under the current operator UI freeze.
 
 ### Ports Panel
 

@@ -405,7 +405,6 @@ function renderCard(project) {
     : '';
 
   const awarenessBadge = renderAwarenessBadge(project);
-  const workloadBadge = renderWorkloadBadge(project);
   const strandedBadge = renderStrandedBadge(project);
   const githubBadge = renderStrandedGithubBadge(project);
   const sessionHealthBadge = renderSessionHealthBadge(project);
@@ -440,7 +439,6 @@ function renderCard(project) {
       ${auditBadge}
       ${driftBadge}
       ${awarenessBadge}
-      ${workloadBadge}
       ${strandedBadge}
       ${githubBadge}
       ${sessionHealthBadge}
@@ -589,67 +587,6 @@ function renderAwarenessBadge(project) {
   const latest = aw && aw.sessions && aw.sessions[0];
   if (!latest || latest.state !== 'unaware') return '';
   return `<span class="badge badge-unaware" title="${esc(latest.basis)}">&#9888; unaware</span>`;
-}
-
-/** Availability values that earn a card-row badge, with their label (#1912). */
-const WORKLOAD_BADGES = Object.freeze({
-  AVAILABLE: 'available',
-  WAITING: 'waiting',
-  BLOCKED: 'blocked',
-  COMPLETE_NOT_CLEAR: 'done, not clear',
-  HELD: 'held',
-  STOPPED: 'stopped'
-});
-
-/**
- * One line of a lane's composed workload (#1912, ADR 0020 §6): the verdict,
- * then what the session asserted and what the engine was observed doing, kept
- * apart. The browser twin of `renderLaneLine` in `lib/tc-verbs.js`; both
- * print the server's composition and neither re-derives it.
- * @param {object} lane - A lane from GET /api/tc/sessions (`composed`, `workload`, `engine`)
- * @returns {string} Plain text (the caller escapes it)
- */
-function formatWorkloadLine(lane) {
-  if (!lane || !lane.composed) return '';
-  const c = lane.composed;
-  const w = lane.workload || {};
-  const e = lane.engine || {};
-  let asserted = 'no receipt';
-  if (w.receipt) {
-    const age = Number.isInteger(w.ageSeconds) ? `, ${Math.round(w.ageSeconds / 60)}m ago` : '';
-    asserted = `asserted ${w.receipt.state}/${w.receipt.clearance}${w.provenance === 'stale' ? ` (stale: ${w.staleReason})` : ''}${age}: "${w.receipt.summary}"`;
-  }
-  const observed = `engine ${e.activity || 'unknown'}${e.reason ? ` (${e.reason})` : ''}`;
-  const narrowed = w.narrowing ? `; operator-narrowed: ${w.narrowing.reason}` : '';
-  return `${c.availability}, ${c.clearance} — ${asserted}; ${observed}${narrowed}`;
-}
-
-/**
- * The card-row workload badge (#1912). Only the states that change what a
- * coordinator does next render: WORKING is the ordinary state of a live
- * session, and UNKNOWN is the honest default the detail row explains. Text
- * always pairs with colour.
- * @param {object} project - Project data
- * @returns {string} Badge HTML, or ''
- */
-function renderWorkloadBadge(project) {
-  const lane = state.workload && state.workload[project.id];
-  const label = lane && lane.composed && WORKLOAD_BADGES[lane.composed.availability];
-  if (!label) return '';
-  const cls = `badge badge-workload badge-workload-${lane.composed.availability.toLowerCase().replace(/_/g, '-')}`;
-  return `<span class="${cls}" title="${esc(formatWorkloadLine(lane))}">${esc(label)}</span>`;
-}
-
-/**
- * The card detail's Workload row value (#1912), or '' when the project has no
- * live lane in the fleet read.
- * @param {object} project - Project data
- * @returns {string} HTML
- */
-function renderWorkloadDetail(project) {
-  const lane = state.workload && state.workload[project.id];
-  if (!lane || !lane.composed) return '';
-  return esc(formatWorkloadLine(lane));
 }
 
 /**
@@ -1115,7 +1052,6 @@ function renderCardDetail(project) {
   const engineInfo = project.engine ? `${esc(project.engine.name)}` : 'No engine';
   const sessionInfo = renderSessionDetail(project);
   const awarenessInfo = renderAwarenessDetail(project);
-  const workloadInfo = renderWorkloadDetail(project);
   const tagsInfo = formatTagList(project.tags);
   const gitInfo = renderGitDetail(project);
 
@@ -1135,7 +1071,6 @@ function renderCardDetail(project) {
       <div class="detail-row"><span class="detail-label">Engine</span><span class="detail-value">${engineInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Session</span><span class="detail-value">${sessionInfo}</span></div>
       ${awarenessInfo ? `<div class="detail-row"><span class="detail-label">Awareness</span><span class="detail-value">${awarenessInfo}</span></div>` : ''}
-      ${workloadInfo ? `<div class="detail-row"><span class="detail-label">Workload</span><span class="detail-value">${workloadInfo}</span></div>` : ''}
       ${renderSessionHealthDetail(project)}
       ${renderStrandedDetail(project)}
       ${renderStrandedGithubDetail(project)}
