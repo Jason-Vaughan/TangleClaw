@@ -21,7 +21,7 @@ authorized by FWV-A18); Phase B (#1877); Phase C (#1889); Project Master workloa
 
 - `lib/store.js`:
   - Schema v50 adds `workload_receipts` (append-only, `UNIQUE (launch_id, seq)`, CHECK-constrained enums), using a shared DDL function for fresh installs and the migration, plus a postcondition check.
-  - `store.workloadReceipts`: `record` allocates `seq` inside a `BEGIN IMMEDIATE` insert transaction; `current(launchId)` and `history`.
+  - `store.workloadReceipts`: `append` allocates `seq` inside a `BEGIN IMMEDIATE` insert transaction (with one retry); `latestForLaunch` and `listForLaunch`; A3 adds `appendNarrowing` and `activeNarrowing`.
 - `lib/shared-docs-access.js`: `resolveAccess` returns `sessionId` and `launchId` for a project caller.
 - `lib/workload.js`: body validation (schema `tc.workload/1`, refusal of unknown and server-owned keys, consistency rules, bounds), server stamping (ids, `assignment_id` from the open control assignment bound to the launch, `received_at`, `source`), and a per-lane rate limit.
 - `POST /api/tc/workload` and `GET /api/tc/workload` (the caller's own lane).
@@ -82,6 +82,8 @@ authorized by FWV-A18); Phase B (#1877); Phase C (#1889); Project Master workloa
 - The six #1912 acceptance cases pass as tests.
 - There is one test per composition rule, including STOPPED/HELD, Master UNKNOWN, expiry and the narrowing limits.
 - The route is proven to make no tmux call.
+
+**Project Master lanes (A3 review R-4/R-6/R-13).** The Master is not a row in `sessions`, so the fleet read never reaches composition rule 2 in production. The rule stays, unit-tested, so that a future Master row composes `UNKNOWN` (`unsupported-master-lane`) rather than anything else. A4 adds no Master view: Master workload is out of scope (FWV-A18).
 
 ## Chunk A4: the dashboard view, guidance and docs (ADR §9–§10)
 

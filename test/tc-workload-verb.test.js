@@ -9,7 +9,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { VERB_ROSTER, receiptVerbLabel, renderWorkloadReceipt } = require('../lib/tc-verbs');
+const { VERB_ROSTER, receiptVerbLabel, renderWorkloadReceipt, renderLaneLine, renderSessions } = require('../lib/tc-verbs');
 
 const verb = VERB_ROSTER.find((v) => v.id === 'workload');
 
@@ -106,7 +106,59 @@ describe('tc workload (#1912)', () => {
     assert.match(out.stdout, /branch: feat\/1912-fleet-workload @ cccccccccccc/);
   });
 
+  it('show adds the composed verdict coordinators see, when the server sends one', async () => {
+    const { ctx } = fakeCtx(['show'], {
+      receipt: RECEIPT,
+      composed: { availability: 'WAITING', clearance: 'do-not-clear', reasons: ['receipt-waiting'] },
+      workload: { receipt: RECEIPT, provenance: 'explicit-receipt', staleReason: null, ageSeconds: 180 },
+      engine: { activity: 'at-rest', reason: 'at-rest' }
+    });
+    const out = await verb.run(ctx);
+    assert.match(out.stdout, /Coordinators see: WAITING, do-not-clear/);
+  });
+
   it('says a lane with no receipt reads UNKNOWN to coordinators', () => {
     assert.match(renderWorkloadReceipt(null), /UNKNOWN/);
+  });
+});
+
+describe('the composed lane line (#1912, ADR 0020 §6)', () => {
+  const lane = (patch = {}) => ({
+    composed: { availability: 'AVAILABLE', clearance: 'safe-to-clear', reasons: [] },
+    workload: { receipt: { state: 'complete', clearance: 'safe-to-clear', summary: 'Train 2 merged' }, provenance: 'explicit-receipt', staleReason: null, ageSeconds: 300 },
+    engine: { activity: 'at-rest', reason: 'at-rest' },
+    ...patch
+  });
+
+  it('leads with the verdict, then keeps the assertion and the observation apart', () => {
+    assert.equal(renderLaneLine(lane()),
+      'AVAILABLE, safe-to-clear — asserted complete/safe-to-clear, 5m ago: "Train 2 merged"; engine at-rest (at-rest)');
+  });
+
+  it('says a receipt is stale and why', () => {
+    const line = renderLaneLine(lane({
+      composed: { availability: 'UNKNOWN', clearance: 'unknown', reasons: [] },
+      workload: { receipt: { state: 'complete', clearance: 'safe-to-clear', summary: 's' }, provenance: 'stale', staleReason: 'expired', ageSeconds: 9000 }
+    }));
+    assert.match(line, /^UNKNOWN, unknown — asserted complete\/safe-to-clear \(stale: expired\), 150m ago/);
+  });
+
+  it('says when there is no receipt, and names an operator narrowing', () => {
+    assert.match(renderLaneLine(lane({ workload: { receipt: null, provenance: 'none' } })), /— no receipt; engine at-rest/);
+    const narrowed = renderLaneLine(lane({ workload: { ...lane().workload, narrowing: { reason: 'reviewing' } } }));
+    assert.match(narrowed, /; operator-narrowed: reviewing$/);
+  });
+
+  it('renders nothing for a response without the blocks', () => {
+    assert.equal(renderLaneLine({}), '');
+    assert.equal(renderLaneLine(null), '');
+  });
+
+  it('tc sessions prints each lane\'s line beneath its session', () => {
+    const out = renderSessions({ sessions: [{ id: 7, projectId: 3, projectName: 'b2', engineId: 'claude', status: 'active', startedAt: 't', ...lane() }] }, {});
+    const lines = out.split('\n');
+    const i = lines.findIndex((l) => l.includes('#7 b2'));
+    assert.ok(i >= 0);
+    assert.match(lines[i + 1], /^ {6}AVAILABLE, safe-to-clear — /);
   });
 });

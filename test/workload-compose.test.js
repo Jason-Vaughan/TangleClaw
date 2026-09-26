@@ -217,9 +217,6 @@ describe('the #1912 acceptance cases', () => {
     assert.equal(lane({ receipt: receipt('complete', 'safe-to-clear', EXPIRY_MS.complete + 1) }).composed.availability, A.UNKNOWN);
   });
 
-  it('6. (the no-scan half is tested at the route in test/workload-fleet.test.js)', () => {
-    assert.ok(true);
-  });
 });
 
 /**

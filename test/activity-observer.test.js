@@ -206,6 +206,39 @@ describe('activity observer classification: the strict at-rest gate (ADR 0020 §
   });
 });
 
+describe('reading the observer never captures (ADR 0020 §10)', () => {
+  it('get() answers from memory: no capture, however often it is called', async () => {
+    let captures = 0;
+    const { obs } = harness({ sessions: [S(1)], capture: async () => { captures++; return { lines: [], cursor: null }; } });
+    await obs.tick();
+    const after = captures;
+    for (let k = 0; k < 50; k++) { obs.get(1); obs.get(2); }
+    assert.equal(captures, after);
+  });
+});
+
+describe('busy reasons are the wake assessment\'s own (ADR 0020 §5)', () => {
+  const medusaWake = require('../lib/medusa-wake');
+
+  it('the observer\'s busy set is built from the exported reason names, and excludes not-at-rest', () => {
+    const R = medusaWake.ACTIVITY_REASONS;
+    assert.deepEqual([...observerMod.BUSY_REASONS].sort(), [R.AGENTS_RUNNING, R.PANE_WRITING, R.TURN_IN_FLIGHT].sort());
+    assert.ok(!observerMod.BUSY_REASONS.has(R.NOT_AT_REST));
+  });
+
+  it('the real assessment returns those names for a busy marker and for a running agent fleet', () => {
+    const profile = { busyMarker: 'esc to interrupt' };
+    const R = medusaWake.ACTIVITY_REASONS;
+    assert.equal(medusaWake._assessActivity('✻ Working (esc to interrupt)', profile).reason, R.TURN_IN_FLIGHT);
+    assert.equal(medusaWake._assessActivity('  ◯ reviewer running tests', profile).reason, R.AGENTS_RUNNING);
+    assert.equal(medusaWake._assessActivity('done', { ...profile, idleMarker: '? for shortcuts' }).reason, R.NOT_AT_REST);
+
+    // A moving transcript: the same idle-looking pane with a different digest.
+    const moved = medusaWake.assessSessionIdle({ lines: ['new output'], profile, prevDigest: 'an-older-digest', mustBeTypeable: false });
+    assert.equal(moved.reason, R.PANE_WRITING);
+  });
+});
+
 describe('activity observer scope (ADR 0020 §5, §8)', () => {
   // Code only: the module's comments explain what it deliberately does NOT do,
   // and naming those things there is not doing them.

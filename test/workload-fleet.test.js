@@ -156,6 +156,19 @@ describe('composed workload on the routes (ADR 0020 §6, §7, §10)', () => {
     assert.equal(l.composed.availability, 'UNKNOWN');
   });
 
+  it('a held project reads HELD even when the assignment is bound to another launch', async () => {
+    const proj = mkProject('stale-binding');
+    const b = bindProject(proj);
+    await assertReceipt(b, { schema: 'tc.workload/1', state: 'complete', clearance: 'safe-to-clear', summary: 'done' });
+    engineBySession.set(b.sessionId, 'at-rest');
+    store.control.insertAssignment({
+      assignment_id: 'asg-stale', project_id: proj.id, issue_ref: null, authority_json: '{}',
+      bound_session_id: null, bound_launch_id: 'an-older-launch', state: 'stopped', state_generation: 2,
+      created_by_kind: 'operator'
+    });
+    assert.equal((await lane(b.sessionId)).composed.availability, 'STOPPED');
+  });
+
   it('GET /api/tc/workload gives a lane the same composed verdict coordinators see', async () => {
     const b = bindProject(mkProject('own-view'));
     await assertReceipt(b, { schema: 'tc.workload/1', state: 'complete', clearance: 'safe-to-clear', summary: 'done' });
