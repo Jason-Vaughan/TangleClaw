@@ -143,7 +143,9 @@ things (ADR 0019, Consequences):
   - When the setting is off or the surface is ineligible, it returns the content without the line.
   - With the setting off, content that never had the line comes back byte-identical.
 - **`writeOwnedFile(absPath, surfaceId, content, ctx)`** is the single shared writer.
-  - It calls `applyProvenance`, then `staged-write.writeAtomic`.
+  - It calls `applyProvenance`, then writes atomically through `staged-write.writeAtomic` by default.
+    A surface that declares `write: 'in-place'` (the codex and aider carriers) is written in place
+    instead, which keeps the file's mode and follows a symlink.
   - Only the five registered writers are switched to it.
 
 **One tracked-carrier predicate (R25 Q2, ADR 0001 paired state).**
@@ -220,6 +222,13 @@ things (ADR 0019, Consequences):
 - ADR 0013 disposition text: the setting applies only to the listed surfaces, and not to OpenClaw
   or to tracked carriers. Changes propagate gradually.
 - A read-only `tc capabilities` entry.
+- [DECISION, made during chunk 03: the ADR 0013 disposition is the settings hint plus the
+  capabilities report, not a new `ENGINE_CONDITIONAL_SETTINGS` row. Whether a file carries the line
+  is decided per surface (silent prime, git-ignored carrier), not per engine, and every engine keeps
+  at least the UI wrap advisory, so no engine makes the setting inert. The hint names each surface's
+  condition in words; `engines.provenanceSurfaces` answers the same conditions per project for
+  `tc capabilities`, reusing the writer's own gates. A caveat row would have needed the index-pointer
+  caveat machinery and its browser mirror generalized for one setting.]
 - Docs: `configuration-reference` (per-project table), `user-guide` and `FEATURES`.
 - CHANGELOG under `### Added`.
 
@@ -279,6 +288,26 @@ registry is five private surfaces. The Architect kept three chunks, so 02 and 03
   - Carried into 03: a fresh `prawduct-hook test-evidence record` run is owed at the PR boundary. Its earlier totals were untrustworthy; cross-check them against `node --test --test-reporter=tap test/*.test.js`.
   - #1888 closes only through the #1885 PR (`Fixes #1888`).
 - [ ] 03 — Project Settings UI, disposition, capabilities, docs, CHANGELOG
+
+## Boundary receipt: chunk 02 → 03 `/clear` (V5 Interim Bridge)
+
+Medusa message ids, between Pilot-B2 (`tangleclaw-pilot-b2-bbe700f7`) and the PM
+(`tangleclaw-projectmanager-af0fd8b0`), recorded as the Architect requires. The ids and times come
+from the switchboard's exchange records and the session transcript. No message carried the literal
+token `PREPARE_CLEAR`. The PM's protocol-update message is the one that asked for the clear boundary,
+so it is recorded in that slot.
+
+| Step | Direction | Message id | Time (UTC) |
+|---|---|---|---|
+| PREPARE_CLEAR (protocol update: clear at the chunk 02 boundary) | PM → B2 | `78f18abd-c71e-46d4-b0b2-bc574594588d` | 2026-09-26 02:57:31 |
+| B2 acknowledges | B2 → PM | `9487256f-6d7c-4c7e-ae72-8f7c53ca4d6c` | 03:00:21 |
+| PM: send READY_TO_CLEAR when done | PM → B2 | `cc811aa6-9479-4e19-8e97-5a93d588be9c` | 03:00:43 |
+| PM: it will inject `/clear` via tmux | PM → B2 | `67f0f729-220c-4608-bb6c-fc50ac429b10` | 03:02:35 |
+| READY_TO_CLEAR (chunk 02 complete, HEAD c4e682a9) | B2 → PM | `33fc4a44-5e71-4552-bb71-cd0d1a5ff5c6` | 03:07:22 |
+| PM: injecting `/clear` | PM → B2 | `90481abe-98a6-4ac6-b25b-68fad683ab2e` | 03:07:44 |
+| READY_AFTER_CLEAR (launch 148 READY, identity verified) | B2 → PM | `7c4b50b6-bd5c-4a91-a23c-cd4b9e059940` | 03:08:06 |
+| Chunk 03 dispatch | PM → B2 | `5d6643be-311e-4493-a854-1dc8dea5ba83` | 03:08:28 |
+| Architect's receipt requirement relayed | PM → B2 | `07bb101b-ba10-4cb8-922b-4be90c40956c` | 03:11:07 |
 
 ## Appendix: full write-site inventory (read-only discovery, 5f74a343)
 

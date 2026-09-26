@@ -58,7 +58,9 @@ headers, plists and installer-owned system files. Existing ownership markers rem
 ### 3. One renderer and writer own the format
 
 `lib/provenance.js` is a leaf module containing the frozen registry, comment renderers, template
-resolution, pure idempotent application and the shared atomic file writer. A registered writer
+resolution, pure idempotent application and the shared file writer. The writer is atomic by
+default. A surface that declares `write: 'in-place'` is written in place instead, which keeps the
+file's mode and symlink; the whole-file engine carriers declare it. A registered writer
 supplies a `surfaceId`, content and context. Repeated generation produces exactly one sentinel line;
 changing the template replaces it; disabling the setting or losing eligibility removes it.
 
