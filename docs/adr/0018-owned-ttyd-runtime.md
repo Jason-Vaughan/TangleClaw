@@ -84,6 +84,25 @@ names the repair. It must not silently select `/opt/homebrew/bin/ttyd`. An expli
 may select the Homebrew binary; the result must say that the permanent fix is no longer active and
 that the watcher is again the mitigation.
 
+`deploy/install.sh` is also the managed runtime's provisioner. A standard fresh install remains the
+documented one-command install: in managed mode, the script compares the installed manifest's input
+set with the tracked `deploy/ttyd/inputs.json`; when the runtime is absent, invalid or stale, it runs
+the tracked builder into a temporary stage and installs the verified result before writing a plist.
+It may skip that work only when the installed runtime both verifies and matches the current tracked
+input set. The explicit `homebrew` rollback mode skips managed provisioning and prints its warning.
+
+The ingress cutover never builds. It resolves the same currentness predicate and refuses before its
+first write when the managed runtime is absent, invalid or stale, directing the operator to rerun the
+installer. This is the paired-state gate: a runtime can be internally valid and still be wrong for
+the checkout that is about to generate its plist.
+
+A binary and its provenance manifest are two filesystem entries, so no comment may claim the pair is
+atomically replaced. The implementation instead guarantees recoverability at every mutation point:
+the selected pair verifies, or a verified last-known-good pair survives and the resolver refuses the
+partial state with the rollback command. Fault-injection tests cover interruption/failure at each
+copy and rename boundary. The executable's final rename is atomic; the two-file transaction is
+fail-closed and recoverable.
+
 ### 5. One product PR; upstream is parallel and non-blocking
 
 The #1245 product PR contains the accepted source patch, build/package/verifier path, shared runtime
