@@ -236,33 +236,42 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
         'a stray global-pool flag changes nothing');
     });
 
-    describe('lsofOutput — only a recognized reading is a reading', () => {
+    describe('lsofOutput — only a recognized reading is a reading (Architect bounds)', () => {
       const exit1 = () => Object.assign(new Error('Command failed'), { code: 1, killed: false, signal: null });
-      const alive = (set) => (pid) => set.has(pid);
+      const L1 = 'Fri Sep 26 03:00:00 2026';
+      const L2 = 'Fri Sep 26 03:30:00 2026';
+      const REQ = [{ pid: 1, lstart: L1 }, { pid: 700, lstart: L1 }];
+      const OUT = 'p1\nn/dev/ptmx\nn/dev/ptmx';
+      const after = (entries) => new Map(entries);
 
       it('keeps a clean run\'s output, and treats empty clean output as "nothing held"', () => {
-        assert.equal(churn.lsofOutput(null, 'p1\nn/dev/ptmx', [1], alive(new Set([1]))), 'p1\nn/dev/ptmx');
-        assert.equal(churn.lsofOutput(null, '', [1], alive(new Set([1]))), '');
+        assert.equal(churn.lsofOutput(null, OUT, REQ, null), OUT);
+        assert.equal(churn.lsofOutput(null, '', REQ, null), '');
       });
 
-      it('keeps exit 1 when a missing process is exiting or a zombie, which lsof cannot list', () => {
-        // mustBeReported is false for an E/Z process: the kernel has already torn
-        // its file table down, and its PTY masters are listed under ttyd.
-        const mustBeReported = (pid) => pid === 1;
-        assert.equal(churn.lsofOutput(exit1(), 'p1\nn/dev/ptmx\nn/dev/ptmx', [1, 700], mustBeReported), 'p1\nn/dev/ptmx\nn/dev/ptmx');
+      it('keeps exit 1 when an omitted process is identity-proven gone: absent, or its PID now has another start time', () => {
+        assert.equal(churn.lsofOutput(exit1(), OUT, REQ, after([])), OUT, 'absent after lsof');
+        assert.equal(churn.lsofOutput(exit1(), OUT, REQ, after([[700, { lstart: L2, stat: 'Ss' }]])), OUT, 'PID reused by a new process');
       });
 
-      it('keeps exit 1 when every missing process has really gone (lsof\'s ordinary vanished case)', () => {
-        assert.equal(churn.lsofOutput(exit1(), 'p1\nn/dev/ptmx', [1, 2], alive(new Set([1]))), 'p1\nn/dev/ptmx');
-        assert.equal(churn.lsofOutput(exit1(), '', [2, 3], alive(new Set())), '', 'all vanished: truly nothing held');
+      it('keeps exit 1 when an omitted process is the SAME identity in exact state E or Z, read after lsof', () => {
+        for (const stat of ['?Es', 'E', 'Z', 'Z+']) {
+          assert.equal(churn.lsofOutput(exit1(), OUT, REQ, after([[700, { lstart: L1, stat }]])), OUT, stat);
+        }
       });
 
-      // THE CONDITION THE ARCHITECT SET: an arbitrary exit 1 — a permission
-      // failure, say — is not an empty measurement.
-      it('rejects exit 1 when a missing process is still alive, or the output names an unrequested one', () => {
-        assert.equal(churn.lsofOutput(exit1(), 'p1\nn/dev/ptmx', [1, 2], alive(new Set([1, 2]))), null, '2 is alive but unreported');
-        assert.equal(churn.lsofOutput(exit1(), '', [2], alive(new Set([2]))), null, 'empty output for a live process');
-        assert.equal(churn.lsofOutput(exit1(), 'p9\nn/dev/ptmx', [1], alive(new Set())), null, 'reported a process never asked about');
+      it('refuses exit 1 when an omitted process is the same identity still running', () => {
+        for (const stat of ['S', 'Ss+', 'R', 'T']) {
+          assert.equal(churn.lsofOutput(exit1(), OUT, REQ, after([[700, { lstart: L1, stat }]])), null, stat);
+        }
+      });
+
+      it('refuses exit 1 when the post-lsof state could not be read', () => {
+        assert.equal(churn.lsofOutput(exit1(), OUT, REQ, null), null);
+      });
+
+      it('refuses exit 1 whose output names a process that was not requested', () => {
+        assert.equal(churn.lsofOutput(exit1(), 'p9\nn/dev/ptmx', REQ, after([])), null);
       });
 
       it('rejects a timeout, a signal, a buffer overflow or any other exit as unmeasured', () => {
@@ -272,7 +281,11 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
           { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER', killed: true, signal: 'SIGTERM' },
           { code: 2, killed: false, signal: null }
         ];
-        for (const c of cases) assert.equal(churn.lsofOutput(Object.assign(new Error('x'), c), 'p1\nn/dev/ptmx', [1], alive(new Set())), null, JSON.stringify(c));
+        for (const c of cases) assert.equal(churn.lsofOutput(Object.assign(new Error('x'), c), OUT, REQ, after([])), null, JSON.stringify(c));
+      });
+
+      it('lists the PIDs an lsof -F pn output reports on', () => {
+        assert.deepEqual([...churn.lsofReportedPids('p1\nn/x\np700\nn/y')], [1, 700]);
       });
     });
   });

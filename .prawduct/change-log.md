@@ -35,6 +35,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — lsof exit 1 judged within the Architect's E/Z bounds (#1245, chunk 07)
+
+<!-- prawduct: type=bugfix | scope=ttyd-1245 -->
+
+- **The bounds (Architect, 03:24Z):** an omitted PID is acceptable only if it is identity-proven gone, or is the SAME PID plus lstart in exact state E or Z, as observed AFTER lsof. A failure to read that state is unmeasured, and E/Z never removes an identity from the ledger or the survivor check.
+- **Why run 4 was stopped:** `1b2292ff` read the state from a table taken BEFORE lsof and matched on PID alone. Run 4 (started 03:24:46Z) was stopped about 2 min in by exact PID, and the cleanup left nothing.
+- **The new rule:** `lsofOutput(err, stdout, requested, after)` takes the requested identities and a state map read after lsof for just the omitted PIDs. `readOwnedPtys` passes full `{pid, lstart}` rows from `ProcessLedger.owned()` / `survivors()`, and reads the state after lsof via `ps`. The baseline reading now uses the ledger's identities too.
+- **Tests:** 8 stricter tests replace the 5 old `lsofOutput` tests. They cover a reused PID treated as gone, the same identity in E/Z accepted, the same identity still running refused, an unreadable state refused, an unrequested PID refused, and a cut-off reading refused.
+- **Host smoke:** packaged, 0 owned PTYs; the control fails with 177 held ptmx for 59 wedges.
+
 ## 2026-09-26 — lsof exit 1 counts only in its recognized case (#1245, Architect condition 03:13Z)
 
 <!-- prawduct: type=bugfix | scope=ttyd-1245 -->
