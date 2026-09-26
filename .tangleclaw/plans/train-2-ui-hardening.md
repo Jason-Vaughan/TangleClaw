@@ -1,6 +1,6 @@
 ---
 title: "Train 2: malformed project tags, inline-handler string encoding, and the port lease 'Not a project' mark"
-status: IN PROGRESS — Chunk 1 done (8f565ec8, review rev-20260926T164901Z-c875176e, 0 blocking); Chunk 2 building
+status: IN PROGRESS — Chunks 1–2 done (8f565ec8, 73665662; reviews rev-20260926T164901Z-c875176e, rev-20260926T170037Z-8314d2a7, 0 blocking); Chunk 3 building
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-26 (message de99255a; Architect clearance R44 confirmed in 0f8b59dc)
 issues: [1375, 1384, 1768]
 scope: train-2
@@ -74,6 +74,6 @@ then the cumulative review before the PR.
 ## Status
 
 - [x] Chunk 1 — #1375
-- [ ] Chunk 2 — #1384
+- [x] Chunk 2 — #1384
 - [ ] Chunk 3 — #1768
 - [ ] Cumulative review + PR (not merged by this session)
