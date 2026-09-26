@@ -151,9 +151,14 @@ The `basic_auth` credential is canonical in **config** (`basicAuthUser` +
   detected name is refused until reconciled. In direct mode, `POST
   /api/setup/generate-cert {"reconcileTailnet": true}` moves the key and the
   certificate together (it is refused on an ungated install, since this site
-  would then be unbuildable). In caddy mode the key must move with the live
-  Caddyfile, so the route refuses with `RECONCILE_NEEDS_CUTOVER`: that
-  prepare/apply flow is not in this version yet.
+  would then be unbuildable). In caddy mode the key moves with the live
+  Caddyfile, in two phases. First, `{"reconcileTailnet": "prepare"}` on that
+  route mints a certificate carrying both names and changes nothing else. Then
+  `node scripts/ingress-cutover.js --to caddy --tailnet-host <name>` moves the site
+  and the key in one cutover and requires the new name to answer HTTP 200
+  `status: "ok"` through Caddy. If it does not, the run restores the prior
+  Caddyfile, key and reload, and reports `tailnet-rollback-failed` with the
+  residual state and recovery steps when any of those could not be restored.
 - **Access log** — `caddyAccessLogPath` (#846, adopted from a live per-site
   `log { output file <absolute path> }`). Unlike the shapes above it needs no
   credential, because a log opens no door. It is refused rather than partially

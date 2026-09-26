@@ -312,17 +312,29 @@ describe('HTTPS Setup API', () => {
         assert.equal(data.inventory.tailnet.covered, true);
       });
 
-      it('removeHosts removes a carried non-canonical name', async (t) => {
+      it('removeHosts removes a non-canonical name from the minted list', async (t) => {
+        // One request, because the mkcert stub writes the same fixture cert every
+        // time: a name added by an earlier request is never actually carried, so a
+        // two-request version passed without removeHosts doing anything.
         if (!hasOpenssl) return t.skip('openssl not available');
         tailscaleReports(null);
-        const added = await request(server, 'POST', '/api/setup/generate-cert', { hosts: ['extra.example'] });
-        assert.ok(added.data.hosts.includes('extra.example'));
         const { status, data } = await request(server, 'POST', '/api/setup/generate-cert', {
-          removeHosts: ['extra.example']
+          hosts: ['extra.example', 'keep.example'], removeHosts: ['extra.example']
+        });
+        assert.equal(status, 200);
+        assert.ok(!data.hosts.includes('extra.example'), 'the removed name is not minted');
+        assert.ok(data.hosts.includes('keep.example'), 'the others are');
+        assert.ok(data.hosts.includes('localhost'));
+      });
+
+      it('removeHosts matches a dotted, upper-cased spelling of the name it removes', async (t) => {
+        if (!hasOpenssl) return t.skip('openssl not available');
+        tailscaleReports(null);
+        const { status, data } = await request(server, 'POST', '/api/setup/generate-cert', {
+          hosts: ['extra.example'], removeHosts: ['EXTRA.Example.']
         });
         assert.equal(status, 200);
         assert.ok(!data.hosts.includes('extra.example'));
-        assert.ok(data.hosts.includes('localhost'));
       });
 
       for (const [label, name, probe] of [
@@ -342,6 +354,21 @@ describe('HTTPS Setup API', () => {
           assert.deepEqual(data.hosts, [name.toLowerCase()]);
           assert.equal(fs.existsSync(certPath) ? fs.statSync(certPath).mtimeMs : null, before,
             'the certificate is not regenerated');
+        });
+      }
+
+      for (const [label, variant, canonical, probe] of [
+        ['the tailnet host, dotted and upper-cased', 'Box.Tail123.TS.NET.', 'box.tail123.ts.net', 'box.tail123.ts.net.'],
+        ['localhost with a trailing dot', 'LOCALHOST.', 'localhost', null]
+      ]) {
+        it(`removeHosts compares normalized names: ${label} is still a canonical conflict`, async () => {
+          tailscaleReports(probe);
+          const { status, data } = await request(server, 'POST', '/api/setup/generate-cert', {
+            removeHosts: [variant]
+          });
+          assert.equal(status, 409);
+          assert.equal(data.code, 'CANONICAL_HOST_REMOVAL');
+          assert.deepEqual(data.hosts, [canonical]);
         });
       }
 
@@ -466,7 +493,7 @@ describe('HTTPS Setup API', () => {
         }
       });
 
-      it('caddy mode: reconcileTailnet is refused, says prepare is not in this version, and flips nothing', async () => {
+      it('caddy mode: reconcileTailnet true is refused, names prepare and the apply command, and flips nothing', async () => {
         store.config.save({ ...{ ...savedConfig, caddyTailnetHost: 'old.tail123.ts.net', authEnabled: true, basicAuthUser: 'op', basicAuthHash: '$2a$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ01234' }, ingressMode: 'caddy' });
         tailscaleReports(`${TS}.`);
         try {
@@ -474,10 +501,63 @@ describe('HTTPS Setup API', () => {
             { reconcileTailnet: true });
           assert.equal(status, 409);
           assert.equal(data.code, 'RECONCILE_NEEDS_CUTOVER');
-          assert.match(data.error, /not available in this installed version/);
-          assert.doesNotMatch(data.error, /ingress-cutover|--tailnet-host|prepare"/,
-            'it must not name a command that has not landed');
+          assert.deepEqual(data.next, {
+            prepare: { reconcileTailnet: 'prepare' },
+            apply: `node scripts/ingress-cutover.js --to caddy --tailnet-host ${TS}`
+          });
           assert.deepEqual(data.drift, { configured: 'old.tail123.ts.net', observed: TS });
+          assert.equal(store.config.load().caddyTailnetHost, 'old.tail123.ts.net');
+        } finally {
+          restore();
+        }
+      });
+
+      it('caddy mode: prepare mints a transition cert with both names and changes nothing else', async (t) => {
+        if (!hasOpenssl) return t.skip('openssl not available');
+        store.config.save({ ...{ ...savedConfig, caddyTailnetHost: 'old.tail123.ts.net', authEnabled: true, basicAuthUser: 'op', basicAuthHash: '$2a$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ01234' }, ingressMode: 'caddy' });
+        tailscaleReports(`${TS}.`);
+        try {
+          const { status, data } = await request(server, 'POST', '/api/setup/generate-cert',
+            { reconcileTailnet: 'prepare' });
+          assert.equal(status, 200);
+          assert.ok(data.hosts.includes(TS) && data.hosts.includes('old.tail123.ts.net'),
+            'the transition cert carries the old and the new name');
+          assert.deepEqual(data.inventory.prepared, {
+            from: 'old.tail123.ts.net', to: TS,
+            apply: `node scripts/ingress-cutover.js --to caddy --tailnet-host ${TS}`
+          });
+          assert.equal(data.inventory.reconciled, null);
+          const cfg = store.config.load();
+          assert.equal(cfg.caddyTailnetHost, 'old.tail123.ts.net', 'no canonical flip in prepare');
+          assert.equal(hostInventory.resolveTailnetHost(cfg).host, 'old.tail123.ts.net');
+          assert.equal(sessionOwnership.resolveOperatorHost({}, cfg).host, 'old.tail123.ts.net');
+          assert.equal(data.inventory.tailnet.host, 'old.tail123.ts.net');
+        } finally {
+          restore();
+        }
+      });
+
+      it('caddy mode: prepare on an ungated install is refused', async () => {
+        store.config.save({ ...savedConfig, caddyTailnetHost: 'old.tail123.ts.net', authEnabled: false, ingressMode: 'caddy' });
+        tailscaleReports(`${TS}.`);
+        try {
+          const { status, data } = await request(server, 'POST', '/api/setup/generate-cert',
+            { reconcileTailnet: 'prepare' });
+          assert.equal(status, 409);
+          assert.equal(data.code, 'TAILNET_UNGATED');
+        } finally {
+          restore();
+        }
+      });
+
+      it('direct mode: prepare is refused as unnecessary', async () => {
+        store.config.save({ ...savedConfig, caddyTailnetHost: 'old.tail123.ts.net', authEnabled: true, basicAuthUser: 'op', basicAuthHash: '$2a$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ01234' });
+        tailscaleReports(`${TS}.`);
+        try {
+          const { status, data } = await request(server, 'POST', '/api/setup/generate-cert',
+            { reconcileTailnet: 'prepare' });
+          assert.equal(status, 409);
+          assert.equal(data.code, 'PREPARE_NOT_NEEDED');
           assert.equal(store.config.load().caddyTailnetHost, 'old.tail123.ts.net');
         } finally {
           restore();
