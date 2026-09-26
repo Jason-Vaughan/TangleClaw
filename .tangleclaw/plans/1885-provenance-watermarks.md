@@ -1,9 +1,11 @@
 ---
 title: "#1885 Provenance watermarks: an opt-in 'Built by TangleClaw' header on files TangleClaw owns whole"
-status: PLAN WRITTEN 2026-09-25 and awaiting the Architect's answers to Q1–Q8. No implementation has started.
+status: PLAN APPROVED WITH MODIFICATIONS by Architect ruling R25 (2026-09-26, message 7a015a50) and updated to it. Stopped until the PM dispatches implementation. No implementation has started.
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-26 (message 06d614e1). The dispatch covers discovery and planning only, and stops at "Plan Written".
 issues: [1885]
 governed_by:
+  - Architect ruling R25 on this plan (Q1–Q8, R25.9, R25.10), 2026-09-26 via Medusa
+  - ADR 0019 (docs/adr/0019-generated-file-provenance.md), authored by the Architect
   - Architect ruling A1–A6 on #1885 (issue comment, "Pre-planning constraints")
   - Operator comments on #1885: OFF by default; a config toggle; a default format with an optional override; deleting or nulling the override falls back cleanly to the default
   - ADR 0013 (settings take effect or say why not)
@@ -17,23 +19,29 @@ collision_guard: Pilot-B1 owns #1245 (ttyd). This plan touches no deploy/ttyd*, 
 
 # #1885 Provenance watermarks
 
-## Requirements confidence: Medium
+## Requirements confidence: High
 
-The problem, the success criteria and the bounds (A1–A6) are clear. Three things are still
-unconfirmed: which files are in scope (Q1–Q3), whether the setting is global or per-project
-(Q4), and whether agent sessions may change it (Q5). Each one changes the size of a chunk. None
-of them changes the design shape. **What would raise confidence:** the Architect answering
-Q1–Q8 below. No spike is needed, because discovery answered the technical unknowns.
+R25 answered every open question. The problem, success criteria and scope can each be stated in
+one sentence, and ADR 0019 records the contract.
 
 - **Problem:** across many projects and instances, you cannot tell which TangleClaw project
   generated a given file.
-- **Success:** with the setting on, every file in an explicit ownership registry carries exactly
-  one provenance line in its own comment syntax. Regeneration replaces that line and never stacks
-  a second one. Turning the setting off removes the line at the next regeneration. With the
-  setting off (the default), every generated file is byte-for-byte identical to today.
-- **Out of scope:** user-owned files, files TangleClaw seeds once and hands over (FEATURES.md,
-  PROJECT-MAP.md, CHANGELOG.md, MEMORY.md), vendor files, binaries, secrets, JSON, top-level
-  headers on managed-block carriers (A2), and any bulk sweep that rewrites the fleet on enable (A5).
+- **Success:**
+  - A project that opts in gets exactly one provenance line on each of five private generated
+    files, in that file's comment syntax.
+  - Regeneration replaces the line and never stacks a second one.
+  - Opting out, or the file becoming tracked, removes the line at the next regeneration.
+  - With the setting off (the default), every generated file is byte-for-byte identical to today.
+- **Out of scope** (ADR 0019 §2):
+  - whole-file `CLAUDE.md`;
+  - managed-block carriers, including inside TangleClaw's own block;
+  - git hooks, Master files and inactive notices;
+  - seeded or user-owned files;
+  - vendor files, binaries, JSON, state, logs and secrets;
+  - Caddy integrity headers and plists;
+  - any global setting;
+  - any `tc` mutation verb;
+  - any fleet sweep.
 
 ## Discovery findings (verified at 5f74a343)
 
@@ -97,162 +105,164 @@ file:line inventory is in the appendix.
 | (c) seeded, then user-owned | ~13 sites + 4 files the agent writes | **No** (A2: user-owned) |
 | (d) state, logs, DBs, temp | ~45 sites | **No** (JSON, binaries, secrets, internal) |
 
-### Proposed v1 registry (class (a), after the A2 exclusions)
+### Approved v1 registry (R25 Q1, ADR 0019 §2)
 
-| Surface | Writer | Syntax | Placement | Committed carrier? | Proposed |
-|---|---|---|---|---|---|
-| `<proj>/CLAUDE.md` (whole-file mode, not plugin-governed) | `engines.js:3495` | markdown | line 2, after the existing header | **usually committed** | Q2 |
-| `<proj>/.codex.yaml`, `.aider.conf.yml` | `engines.js:3495` | yaml | line 2, after the existing header | private per git check | in |
-| `<proj>/.tangleclaw/session-prime.md`, `session-reentry.md` | `sessions.js:5429,5453` | markdown | line 1 | private (`info/exclude`) | in |
-| `<proj>/.tangleclaw/ui-wrap-advisory.md` | `engines.js:3326` | markdown | line 1 | private | in |
-| `<proj>/.git/hooks/commit-msg`, `pre-commit`, `pre-push` | `git-hooks.js:171`, `control-hooks.js:255,269` | sh | after the shebang and after the `TC-OWNED-HOOK` line | not in the tree | Q1 |
-| `~/.tangleclaw/git-template/hooks/commit-msg` | `git-template.js:262` | sh | as above | not a project | Q1 |
-| Master: `master/CLAUDE.md`, `memory/FLEET.md`, `HOWTO.md`, `guard-writes.js` | `master.js` | md / js | after the existing header | not a project | Q1 |
-| **Excluded:** Caddyfile (a hash-integrity header), `.access-level` (read raw), `master/.claude/settings.json` and session-rules shards (JSON), `.claude/.gitignore` (usually an append into a user file), LaunchAgent plists and `~/.tmux.conf` (system files; the `install.sh` sites are not Node), the cleanroom Dockerfile (dev tooling), the inactive-notice retire write (it replaces a file with a pointer; it could carry the line, but see Q1) | | | | | out |
+| surfaceId | Writer | Syntax | Placement | Eligible when |
+|---|---|---|---|---|
+| `session-prime` → `<proj>/.tangleclaw/session-prime.md` | `sessions.js:5429` `_writePrimeFile` | markdown | line 1 | always (private) |
+| `session-reentry` → `<proj>/.tangleclaw/session-reentry.md` | `sessions.js:5453` `_writeReentryFile` | markdown | line 1 | always (private) |
+| `ui-wrap-advisory` → `<proj>/.tangleclaw/ui-wrap-advisory.md` | `engines.js:3326` | markdown | line 1 | always (private) |
+| `codex-config` → `<proj>/.codex.yaml` | `engines.js:3495` whole-file branch | yaml (`#`) | line 2, directly after the `Generated by TangleClaw` header | untracked, per the shared predicate |
+| `aider-config` → `<proj>/.aider.conf.yml` | `engines.js:3495` whole-file branch | yaml (`#`) | line 2, directly after the `Generated by TangleClaw` header | untracked, per the shared predicate |
 
-## Design (subject to the Q answers)
+Everything else in the inventory is deferred or excluded. Adding a surface later requires four
+things (ADR 0019, Consequences):
+- an ownership classification;
+- a placement rule;
+- an audit of what reads the file downstream;
+- tests.
 
-**One module, one writer API (A3, A6).** Add `lib/provenance.js`, a leaf module like
-`lib/managed-block.js`:
+## Design (per R25 and ADR 0019)
 
-- `REGISTRY`: an explicit, frozen list of `{ id, match(relPath|abs), syntax, placement }`. A file
-  gets a watermark **only** if a registry entry names it. Nothing is inferred from extension or
-  from "we wrote it". This is the ownership registry A2 requires.
-- `COMMENT_FORMS`: `markdown` → `<!-- … -->`, `hash` (yaml/toml/sh/Caddy-style) → `# …`,
-  `slash` (js) → `// …`. An unknown syntax is refused, matching the precedent at `engines.js:164`.
-- `renderLine(syntax, text)` wraps the text in a distinct sentinel so the line can be found and
-  replaced idempotently, e.g. `<!-- tangleclaw:provenance Built by TangleClaw (Project: X) -->`.
-  The sentinel token `tangleclaw:provenance` is what replace and remove key on. It is never the
-  free text.
-- `applyProvenance(entryId, content, ctx)` is pure. It removes any existing sentinel line, and
-  inserts one if the setting is on. The result is the same across repeated runs (A3), and with
-  the setting off it returns the content minus any sentinel line.
-- `writeOwnedFile(absPath, content, ctx)` is **the single shared writer (A6)**. It resolves the
-  registry entry, calls `applyProvenance`, and writes through `staged-write.writeAtomic`. Each
-  registry surface's writer is switched to call it. Surfaces outside the registry are untouched.
+**One leaf module, one writer (A3, A6).** `lib/provenance.js`, modelled on `lib/managed-block.js`:
 
-**Bounded template (A4).**
+- **`REGISTRY`** is frozen and **keyed by an explicit `surfaceId` that each writer passes**
+  (R25.9).
+  - It maps each id to `{ syntax, placement, eligibility }`.
+  - It may assert the expected path shape as a sanity check, but the id is the only grant.
+  - Nothing is inferred from an extension, a path pattern, or "TangleClaw wrote it".
+- **`COMMENT_FORMS`** covers markdown (`<!-- … -->`) and hash (`# …`). v1 needs no others.
+  - An unknown syntax is refused, matching the precedent at `engines.js:164`.
+- **`renderLine(syntax, text)`** emits a line carrying the sentinel `tangleclaw:provenance`, e.g.
+  `<!-- tangleclaw:provenance Built by TangleClaw (Project: X) -->`.
+  - Replace and remove find the line by the sentinel, never by the free text.
+- **`applyProvenance(surfaceId, content, ctx)`** is pure.
+  - It removes any sentinel line, then inserts one only if the project's setting is enabled **and**
+    the surface is eligible.
+  - It is idempotent.
+  - When the setting is off or the surface is ineligible, it returns the content without the line.
+  - With the setting off, content that never had the line comes back byte-identical.
+- **`writeOwnedFile(absPath, surfaceId, content, ctx)`** is the single shared writer.
+  - It calls `applyProvenance`, then `staged-write.writeAtomic`.
+  - Only the five registered writers are switched to it.
+
+**One tracked-carrier predicate (R25 Q2, ADR 0001 paired state).**
+- Eligibility for `codex-config` and `aider-config` is decided by `_carrierIsCommitted`
+  (`engines.js`), the existing #1619 git check.
+- That function is exported or passed in, and never re-derived.
+- The same call decides insertion and removal. A private carrier that later becomes tracked loses
+  its line at its next regeneration.
+- There is a test for that transition.
+
+**Bounded template (A4, R25 Q6).**
 - The default is `Built by TangleClaw (Project: {project})`.
-- The override is a string of at most 120 characters, with placeholders drawn only from a closed
-  set: `{project}` and `{engine}`.
-  - `{version}` is deliberately excluded. It would rewrite every watermarked file on each
-    TangleClaw upgrade, which is the fleet churn A5 warns about.
-  - Host names, paths, ids and tokens are excluded as non-stable or identity-bearing.
+- The override is at most 120 characters, and its placeholders are only `{project}` and `{engine}`.
 - Validation refuses:
   - unknown `{…}` tokens;
-  - newlines or control characters;
-  - any comment terminator (`-->`, `*/`);
-  - any reserved marker: `Generated by TangleClaw`, `TangleClaw: INACTIVE`, `BEGIN:` / `END:`
-    (tangleclaw), `TC-OWNED-HOOK`, `tangleclaw:provenance`.
+  - control characters and newlines;
+  - comment terminators (`-->`, `*/`);
+  - the reserved markers: `Generated by TangleClaw`, `TangleClaw: INACTIVE`,
+    `BEGIN:`/`END:tangleclaw`, `TC-OWNED-HOOK`, `tangleclaw:provenance`, `TANGLECLAW:PRIMING-ROLL`,
+    `tangleclaw-state`.
+- **The substituted values get the same treatment as the literal text** (R25 Q6).
+  - The rendered line is checked after substitution.
+  - A project or engine name that would end a comment, add a line, or produce a reserved marker
+    is neutralized. Unsafe characters are escaped, and a marker-forming result falls back to the
+    default template with `{project}` escaped.
+  - Tests cover adversarial names across every supported syntax, in both markdown and hash forms.
 
-  The reserved-marker refusal is what keeps the finding-1 overwrite hazard closed.
+**Per-project config (R25 Q4, Q5, Q8).**
+- `provenanceWatermark: { enabled: false, template: null }` goes in `DEFAULT_PROJECT_CONFIG`
+  (`lib/project-config.js`).
+- It is validated by a bounded-merge row in `PROJECT_UPDATE_VALIDATORS` (`lib/projects.js:2778`)
+  that refuses unknown keys (ADR 0013).
+- It is written through the existing `PATCH /api/projects/:name` route under its existing threat
+  model.
+- `resolveProvenance(projectConfig)` returns `{ enabled, template, source }`. A missing, `null` or
+  `''` template gives the default with `source: 'default'`, which is the operator's reset.
+- There is no global key, no `tc` mutation verb, and no claim that agents are authorized.
+- A read-only `tc capabilities` entry reports enabled or disabled and the eligible surfaceIds,
+  never a path (ADR 0019 §5).
 
-**Config and reset.**
-- The key is `provenanceWatermark: { enabled: false, template: null }`.
-- The camelCase name matches every other config key; the issue's snake_case is noted as an
-  intentional departure.
-- `resolveProvenance(cfg)` returns `{ enabled, template, source }`. A missing, `null` or `''`
-  template resolves to the default with `source: 'default'`. That gives the operator's reset: delete
-  or null the override.
-- Validation is a bounded-merge validator in the `medusaWatchdog.validatePatch` shape, which
-  refuses unknown keys (ADR 0013).
-
-**Migration policy (A5), proposed.**
-- Enabling or disabling the setting rewrites **nothing** by itself. There is no sweep.
-- Each registry file gains or loses its line only at its **own next natural regeneration**:
-  launch, master ensure, hook refresh.
-- Only the files a regeneration would already rewrite are touched, so there are no extra writes.
-- Committed carriers are governed by Q2.
-- The settings surface states this ("applies as each file is next regenerated") to satisfy ADR 0013.
+**Migration (A5, R25 Q7).**
+- There is no sweep.
+- Enabling, a template change, disabling, and an eligibility change all take effect only at each
+  file's own next natural regeneration.
+- The UI and the docs say that propagation is gradual.
 
 ## Chunks
 
 | # | Chunk | Type | Why this order |
 |---|---|---|---|
-| 01 | ADR 0018 draft, `lib/provenance.js` (registry, renderer, bounded template, resolver), the config key (default OFF, API validation), and **one** surface wired end to end: `session-prime.md` | feature | A thin vertical slice: it proves the registry, renderer, writer, config and regeneration path on the safest surface, which is private, markdown, and rewritten every launch. |
-| 02 | Wire the remaining approved registry surfaces through `writeOwnedFile`. Guard tests: the `GENERATED_HEADER_MARK` stays within 3 lines, `TC-OWNED-HOOK` and shebang order are preserved, and the retire and `_looksGenerated` behaviour is unchanged. | feature | Widens the path once it is proven. Its size depends on Q1–Q3. |
-| 03 | Settings UI (global toggle plus a template field with a blank-means-default placeholder and a live preview hint), the ADR 0013 disposition text, a `tc capabilities` entry, docs (configuration-reference, user-guide, FEATURES), and CHANGELOG `### Added` | feature | The operator-facing surface goes last, over a mechanism that is already in place. |
+| 01 | `lib/provenance.js` (registry, renderers, bounded template with value sanitization, resolver, `writeOwnedFile`), the per-project `provenanceWatermark` key and validator row (default OFF), and **one** surface wired end to end: `session-prime`. ADR 0019 is already committed. | feature | A thin vertical slice. It proves the registry, renderer, writer, config and regeneration path on the safest surface: private, markdown, rewritten every launch. |
+| 02 | Wire the remaining four surfaces: `session-reentry`, `ui-wrap-advisory`, `codex-config` and `aider-config`. The two yaml carriers use the shared tracked predicate for both insertion and removal. | feature | Widens the path once it is proven. See the tests below. |
+| 03 | Project Settings UI, the ADR 0013 disposition text, the read-only capabilities entry, docs and CHANGELOG. | feature | The operator-facing surface goes last, over a mechanism that is already in place. |
+
+**Chunk 02 tests:**
+- The `Generated by TangleClaw` header stays on line 1, within 3 lines.
+- The retire path and `_looksGenerated` behave unchanged.
+- Tracked to untracked to tracked adds the line and then removes it.
+
+**Chunk 03 scope:**
+- In the Project Settings UI, a per-project toggle, plus a template field whose placeholder shows
+  the default. A blank field means the default. A client-side preview hint shows the result.
+- ADR 0013 disposition text: the setting applies only to the listed surfaces, and not to OpenClaw
+  or to tracked carriers. Changes propagate gradually.
+- A read-only `tc capabilities` entry.
+- Docs: `configuration-reference` (per-project table), `user-guide` and `FEATURES`.
+- CHANGELOG under `### Added`.
 
 **Done when, for each chunk:**
-- The suite passes in the worktree. Only the targeted files run here; the Pilot Envelope
-  forbids tests on the main instance.
-- The Critic runs, and the Status box below is ticked.
+- The targeted tests pass in the worktree. The Pilot Envelope forbids tests on the main instance.
+- The Critic runs and the Status box is ticked.
 - There is a cumulative Critic at 03.
 
 **Verification beyond tests:**
-- Run a scratch project under a scratch `TANGLECLAW_HOME`, never the live instance.
-- Launch it with the setting off and diff the generated files against `main`: they must be
-  byte-identical.
-- Turn the setting on and relaunch: exactly one line appears, and it survives a second relaunch
-  unchanged.
-- Set a custom template, relaunch, then null it and relaunch: the text returns to the default.
-- Turn the setting off and relaunch: the line is gone.
+- Use a scratch project under a scratch `TANGLECLAW_HOME`, never the live instance.
+- **Off:** the generated files diff byte-identical against `main`.
+- **On:** exactly one line appears, and it is unchanged after a second regeneration.
+- **Custom template, then null:** the line returns to the default.
+- **Adversarial project name** (containing `-->`, a newline, or `Generated by TangleClaw`): the
+  file stays well-formed.
+- **`git add .codex.yaml` and regenerate:** the line is gone.
+- **Off again:** the line is gone.
 
 **Governance checkpoints:** after 01 (architecture validation) and before 03 (whole-trajectory review).
 
-### What I would do differently (advisory)
+### Advisory (resolved)
 
-- **Cut the Master and git-hook surfaces from v1**, unless the Architect wants them (Q1).
-  - The Master files are not a project, so "Project: X" means nothing there.
-  - The hooks already carry `TC-OWNED-HOOK`, which answers "who made this" better than a
-    watermark does.
-  - Dropping both halves chunk 02.
-- **Leave committed `CLAUDE.md` out of v1, or give it a line without the project name** (Q2).
-  #1619 forbids a project name in committed carriers, and stamping a committed file puts a diff
-  into every managed repo. That is the fleet rewrite A5 exists to prevent.
-- Given those two cuts, v1 is roughly "private per-project generated files", which is small and
-  safe. With the cuts, 02 and 03 could merge into one chunk.
+R25 adopted the cuts I proposed. Master files, hooks and committed `CLAUDE.md` are out, and the
+registry is five private surfaces. The Architect kept three chunks, so 02 and 03 stay separate.
 
-## Questions for the Architect
+## Architect rulings (R25, 2026-09-26)
 
-Each question has a recommendation. A1 (opt-in, OFF by default) needs no question.
-
-- **Q1: which registry surfaces are in v1?**
-  - *Rec:* project-tree private generated files only: `session-prime.md`, `session-reentry.md`,
-    `ui-wrap-advisory.md`, `.codex.yaml`, `.aider.conf.yml`.
-  - Defer the git hooks (already stamped `TC-OWNED-HOOK`), the Master files (not a project) and
-    the retire notice.
-- **Q2: committed whole-file carriers** (`CLAUDE.md` in whole-file mode, and any `.codex.yaml`
-  that git says is tracked). #1619 forbids the project name in them.
-  - *Options:* (a) exclude committed carriers entirely; (b) stamp them with `{project}` rendered
-    as empty or omitted; (c) stamp them in full.
-  - *Rec:* (a), decided by the same `_carrierIsCommitted` git check, so no repository diffs appear.
-- **Q3: A2 excludes top-level headers on managed-block carriers.** Is a line *inside* our own
-  `BEGIN:tangleclaw` block body also excluded?
-  - *Rec:* yes, excluded in v1. The block's markers already say "tangleclaw", and those carriers
-    are committed (see Q2).
-- **Q4: scope of the setting.**
-  - *Rec:* a global toggle plus a global template. A per-project on/off override can be added
-    later through `PROJECT_UPDATE_VALIDATORS` if needed.
-  - The alternative is per-project only, since the issue text says "Project: X".
-- **Q5: `PATCH /api/config` is reachable by agent sessions on loopback (`store.js:1524`).**
-  - *Rec:* acceptable. The template is bounded (closed placeholders, reserved markers refused), so
-    an agent can at worst toggle a comment line.
-  - The alternative is to make this key operator-only.
-- **Q6: placeholder set.**
-  - *Rec:* `{project}` and `{engine}` only.
-  - Leave out `{version}` (it rewrites the fleet on every upgrade) and host, id or path
-    (identity-bearing).
-- **Q7: migration (A5).**
-  - *Rec:* no sweep. A file changes only at its own next natural regeneration, and turning the
-    setting off removes the line the same way.
-  - Is "applies as each file is next regenerated" the policy you want recorded in ADR 0018?
-- **Q8: key name.**
-  - *Rec:* `provenanceWatermark: {enabled, template}` (camelCase, the repo convention).
-  - The alternative is the issue's literal `embed_provenance_watermark`.
+- **Q1:** APPROVED. Five private surfaces only.
+- **Q2:** Option A, with symmetry. Tracked carriers are excluded, and one shared predicate decides
+  both insertion and removal.
+- **Q3:** APPROVED. No watermark inside managed blocks.
+- **Q4:** Global REJECTED, per-project APPROVED. Project Settings only.
+- **Q5:** Only under the existing project-settings threat model. No `tc` mutation verb.
+  Capabilities reporting is read-only.
+- **Q6:** `{project}` and `{engine}` only. Substituted values must be syntax-safe and single-line,
+  tested in every syntax.
+- **Q7:** No sweep. Propagation happens through natural regeneration only, and the UI and docs say
+  so.
+- **Q8:** `provenanceWatermark`, in camelCase.
+- **R25.9:** The registry is keyed by an explicit `surfaceId` passed by each writer.
+- **R25.10:** ADR 0019 (0018 is reserved by #1245). It was authored by the Architect and committed
+  unchanged (`8e933e20`).
 
 ## Open assumptions
 
-- [ASSUMPTION: the "Project: X" field is the TangleClaw project name (`store.projects` row.name), not the directory name | MED | Architect can correct]
-- [ASSUMPTION: excluding every JSON file is absolute, including hook payloads that could tolerate a `_provenance` key | LOW | defer]
-- [ASSUMPTION: the watermark goes in as its own line, and never rewrites or merges with the existing `Generated by TangleClaw` header | HIGH | Architect can override. The alternative, folding the provenance into that header, collides with the retire and `_looksGenerated` detectors]
-- [ASSUMPTION: ADR 0018 is the next free number | LOW | verified at 5f74a343]
+- [ASSUMPTION: the `{project}` value is the TangleClaw project name (`store.projects` row.name), not the directory name | MED | Architect can correct]
+- [ASSUMPTION: the watermark is its own line and never rewrites or merges with the existing `Generated by TangleClaw` header | HIGH | consistent with ADR 0019 §3]
+- [ASSUMPTION: an unsafe substituted value is escaped rather than refusing the whole write. Generation must never fail because of a project name | MED | Architect can override]
 
 ## Status
 
-- [ ] 01 — ADR draft, `lib/provenance.js`, config key, `session-prime.md` slice
-- [ ] 02 — remaining registry surfaces through `writeOwnedFile`
-- [ ] 03 — settings UI, disposition, capabilities, docs, CHANGELOG
+- [ ] 01 — `lib/provenance.js`, per-project key, `session-prime` slice
+- [ ] 02 — remaining four surfaces, with the shared tracked predicate
+- [ ] 03 — Project Settings UI, disposition, capabilities, docs, CHANGELOG
 
 ## Appendix: full write-site inventory (read-only discovery, 5f74a343)
 
