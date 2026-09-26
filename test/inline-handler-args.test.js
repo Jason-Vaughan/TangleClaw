@@ -133,6 +133,7 @@ describe('public/ui.js handlers (#1384)', () => {
       jsArg,
       renderSessionDetail: () => '',
       renderAwarenessDetail: () => '',
+      renderWorkloadDetail: () => '',
       renderStrandedDetail: () => '',
       renderStrandedGithubDetail: () => '',
       renderSessionHealthDetail: () => '',

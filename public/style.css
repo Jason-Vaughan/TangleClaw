@@ -910,6 +910,23 @@ html[data-tc-keyboard] body {
   border-radius: 8px;
   font-weight: 600;
 }
+/* Fleet workload (#1912): the composed verdict coordinators act on. Only the
+   states that change the next assignment get a badge; the word carries the
+   meaning, the colour only groups it. Green: free to assign. Amber: finished
+   or paused on something outside the lane. Muted/red: an authority stopped it. */
+.badge-workload {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 600;
+  border: 1px solid currentColor;
+}
+.badge-workload-available { color: var(--primary); }
+.badge-workload-waiting,
+.badge-workload-blocked,
+.badge-workload-complete-not-clear { color: var(--amber); }
+.badge-workload-held { color: var(--text-muted); }
+.badge-workload-stopped { color: var(--danger, #EF5350); }
 /* Stranded wraps that hold the next launch (#1541): pushed wrap branches with
    no pull request that nobody has acknowledged. Amber, like the drift badge:
    work is waiting, nothing is broken. The glyph and the word carry it. */

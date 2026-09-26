@@ -4814,6 +4814,14 @@ route('GET', '/api/tc/whoami', (req, res) => {
       id: 'checkouts', enabled: true,
       detail: `which commit each live session is on and how it stands against origin/main: \`tc freshness\`, or GET ${api}/api/checkouts (your own row and your project groups' rows; send x-tangleclaw-project-id and x-tangleclaw-launch-id)`
     },
+    {
+      // #1912, ADR 0020: a lane asserts its own workload; coordinators read
+      // the composed verdict fleet-wide.
+      id: 'workload', enabled: !!project,
+      detail: project
+        ? 'report your workload so coordinators can read fleet capacity: `tc workload set <working|waiting-external|blocked|complete> --clearance <safe-to-clear|do-not-clear|unknown> --summary "<one line>"` at dispatch acceptance, each task transition, the start of any external wait (add --wait ci|review|operator|peer|merge|other), completion, before wrap and before exit, and again before it expires (30 min working, 120 min otherwise). `tc workload show` shows what coordinators see; `tc sessions` shows every lane. No receipt reads UNKNOWN, never available'
+        : 'unavailable: this call did not resolve to a registered project'
+    },
     _startupControlCapability(activeSession),
     _provenanceCapability(project, projConfig),
     {

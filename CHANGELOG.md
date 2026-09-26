@@ -30,6 +30,9 @@ All notable changes to TangleClaw are documented in this file.
   - **The read is cheap:** it captures no pane and runs no tmux. `tc workload show` gives a lane its own verdict.
   - **The operator can narrow a lane** (`POST /api/tc/workload/narrowing`): cap its clearance, or read it as `UNKNOWN`, and clear that later. A narrowing only lowers the verdict and can never hide a lane that is `WORKING`, `HELD` or `STOPPED`. No session, ProjectManager or Architect can narrow.
   - **The pane text is never parsed for clearance.** A test fails if shipped code starts matching "SAFE TO CLEAR" or "DO NOT CLEAR" in text.
+  - **On the dashboard:** a project card with a live session shows a badge (available, waiting, blocked, done-not-clear, held or stopped), and its detail panel has a **Workload** row with the same line `tc sessions` prints.
+  - **Guidance:** every engine's generated config now tells the session to report its workload and when, and `tc capabilities` lists `workload`.
+  - **Reference:** `docs/fleet-workload.md`.
 
 - **The ports panel shows which lease owners are marked "Not a project", and can undo the mark** (#1768). Marking an owner from the import banner used to leave no trace on the dashboard, and only a raw `POST /api/ports/owner-kind` reversed it. The owner's group now carries a **Not a project** badge and an **Is a project** button, which resets every lease under the name through the same route and re-checks the import banner.
 

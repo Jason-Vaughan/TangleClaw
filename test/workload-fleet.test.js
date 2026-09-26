@@ -156,7 +156,7 @@ describe('composed workload on the routes (ADR 0020 §6, §7, §10)', () => {
     assert.equal(l.composed.availability, 'UNKNOWN');
   });
 
-  it('a held project reads HELD even when the assignment is bound to another launch', async () => {
+  it('a stopped project reads STOPPED even when the assignment is bound to another launch', async () => {
     const proj = mkProject('stale-binding');
     const b = bindProject(proj);
     await assertReceipt(b, { schema: 'tc.workload/1', state: 'complete', clearance: 'safe-to-clear', summary: 'done' });
@@ -167,6 +167,18 @@ describe('composed workload on the routes (ADR 0020 §6, §7, §10)', () => {
       created_by_kind: 'operator'
     });
     assert.equal((await lane(b.sessionId)).composed.availability, 'STOPPED');
+  });
+
+  it('a held project reads HELD even when its assignment has no bound launch at all', async () => {
+    const proj = mkProject('unbound-assignment');
+    const b = bindProject(proj);
+    await assertReceipt(b, { schema: 'tc.workload/1', state: 'complete', clearance: 'safe-to-clear', summary: 'done' });
+    engineBySession.set(b.sessionId, 'at-rest');
+    store.control.insertAssignment({
+      assignment_id: 'asg-unbound', project_id: proj.id, issue_ref: null, authority_json: '{}',
+      bound_session_id: null, bound_launch_id: null, state: 'held', state_generation: 2, created_by_kind: 'operator'
+    });
+    assert.equal((await lane(b.sessionId)).composed.availability, 'HELD');
   });
 
   it('GET /api/tc/workload gives a lane the same composed verdict coordinators see', async () => {
