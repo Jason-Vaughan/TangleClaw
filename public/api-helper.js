@@ -4455,6 +4455,49 @@
   };
 
   /**
+   * What a Project Settings save sends for the provenance line (#1885), or
+   * null when the operator changed neither half of it.
+   *
+   * Only the half that changed is sent, and the server merges it over what is
+   * stored. So an unrelated save never writes the setting, and flipping the
+   * toggle never resends a stored template: one hand-edited into something
+   * the API refuses would otherwise fail the whole save for a change the
+   * operator did not make. A blank field is sent as null, the reset to the
+   * default template.
+   *
+   * @param {{enabled?: boolean, template?: (string|null)}|null} stored - `project.provenanceWatermark` as the modal received it.
+   * @param {boolean} enabled - The toggle now.
+   * @param {string} templateText - The line field now.
+   * @returns {{enabled?: boolean, template?: (string|null)}|null}
+   */
+  function tcProvenancePatch(stored, enabled, templateText) {
+    const storedEnabled = Boolean(stored && stored.enabled === true);
+    const storedTemplate = (stored && typeof stored.template === 'string' && stored.template.trim()) || null;
+    const template = (typeof templateText === 'string' && templateText.trim()) || null;
+    const patch = {};
+    if (enabled !== storedEnabled) patch.enabled = enabled;
+    if (template !== storedTemplate) patch.template = template;
+    return Object.keys(patch).length > 0 ? patch : null;
+  }
+
+  /**
+   * The preview hint under the provenance line field: the template with this
+   * project's name and engine filled in. A hint only — the server neutralizes
+   * unsafe values when it renders, and refuses a bad template on save.
+   *
+   * @param {string} templateText - The line field now; blank means the default.
+   * @param {string} defaultTemplate - The shipped template.
+   * @param {{project: string, engine: string}} values
+   * @param {boolean} enabled - The toggle now.
+   * @returns {string}
+   */
+  function tcProvenancePreview(templateText, defaultTemplate, values, enabled) {
+    const template = (typeof templateText === 'string' && templateText.trim()) || defaultTemplate;
+    const text = template.replace(/\{(project|engine)\}/g, (_, key) => String((values && values[key]) || ''));
+    return enabled ? 'Preview: ' + text : 'Off — no file carries a line. When on: ' + text;
+  }
+
+  /**
    * Whether an engine-conditional setting applies to a project, and what to
    * say when it does not (ADR 0013).
    *
@@ -4766,6 +4809,8 @@
   global.tcHonoredLaunchModes = tcHonoredLaunchModes;
   global.tcResolveEngineProfile = tcResolveEngineProfile;
   global.tcSettingDisposition = tcSettingDisposition;
+  global.tcProvenancePatch = tcProvenancePatch;
+  global.tcProvenancePreview = tcProvenancePreview;
   global.tcCreateProjectBody = tcCreateProjectBody;
   global.tcSettingDefaults = TC_SETTING_DEFAULTS;
   global.tcSettingRuleDefaults = TC_SETTING_RULE_DEFAULTS;

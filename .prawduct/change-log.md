@@ -35,6 +35,25 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Opt-in provenance line on TangleClaw's private generated files (#1885, #1888)
+
+<!-- prawduct: type=feature | scope=1885-provenance-watermarks -->
+
+Chunks 01–03 (TangleClaw-Pilot-B2). The plan is `.tangleclaw/plans/1885-provenance-watermarks.md`. Architect ruling R25 and ADR 0019 (`docs/adr/0019-generated-file-provenance.md`) govern it.
+
+**The problem.** Across many projects and instances, nothing said which TangleClaw project generated a given file.
+
+**The change.**
+- **`lib/provenance.js`, one leaf module and one writer.**
+  - A frozen registry is keyed by an explicit `surfaceId` each writer passes. It names five private surfaces: `session-prime`, `session-reentry`, `ui-wrap-advisory`, and `codex-config` and `aider-config` while git ignores them.
+  - The template is bounded, and substituted values are neutralized. A line that would still contain an ownership marker renders as the fixed `Built by TangleClaw`, so a provenance line can never grant overwrite permission.
+  - `applyProvenance` is pure and idempotent. `writeOwnedFile` writes atomically by default, and in place for the carriers, which keeps the file's mode and symlink.
+- **Per-project `provenanceWatermark`, default null, which means off.** A bounded validator row. A blank template resets to the default. There is no global key and no `tc` mutation verb.
+- **Carriers.** The #1619 committed-carrier predicate decides both insertion and removal. Drift is judged without the provenance line.
+- **#1888, a live bug fixed here.** The prime was budgeted as the SessionStart hook's only output, so the whole hook output could pass the engine's 10k cap and be cut to a preview. `lib/prime-hook-output.js` now owns the composition and reserves the companions' worst case. A parity test runs the real hook script.
+- **Operator and agent surfaces.** A Project Settings toggle, line field and preview. The save sends only the changed half (`tcProvenancePatch`). A read-only `provenance-watermark` row in `tc capabilities` names surfaces by id, never by path.
+
+**Verification.** Each chunk had a cumulative Critic plus verify-resolutions; the last pair is rev-20260926T032840Z-d99ab744, then rev-20260926T033429Z-61386ed9, which was clean. The suite is green at 614f0e17. End-to-end checks ran against scratch projects: with the setting off, every generated file is byte-identical to `main`.
 ## 2026-09-26 — Restart Session on the ended bar after a completed wrap (#1637)
 
 <!-- prawduct: type=feature | scope=1637-restart-session -->
