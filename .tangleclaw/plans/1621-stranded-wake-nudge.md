@@ -1,3 +1,14 @@
+---
+title: "#1621 A stranded wake nudge blocks its own recovery"
+status: CHUNK 1 BUILT (2026-09-26). Cumulative Critic rev-20260926T171019Z-9281dd66 plus verify-resolutions rev-20260926T172747Z-77f346ab, 0 blocking. PR opened for PM merge.
+authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-26, message 73798d5f (dispatch), fix scope approved in 081f2259.
+issues: [1621]
+scope: 1621-stranded-wake-nudge
+branch: fix/1621-stranded-wake-nudge
+partition: serial. One chunk.
+critic_mode: a cumulative review, then verify-resolutions over the guard commit
+---
+
 # #1621 — A stranded wake nudge blocks its own recovery
 
 Issue: https://github.com/Jason-Vaughan/TangleClaw/issues/1621 (OPEN at plan time).
