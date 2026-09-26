@@ -32,9 +32,20 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
       against 100% at baseline). Report: `.tangleclaw/plans/1245-evidence/a1-acceptance-2e714fbc-FAIL.json`. The Architect's
       R22 Q1 fallback ruling (21:24Z) REJECTS A1 as the shipping fix: keep its evidence, and plan to revert or exclude the
       wrapper from the final tree. A3 is APPROVED: a build-only patched ttyd in scratch (see "A3 build" below)
-- [ ] Chunk 04: rollout and rollback docs (sections F and G, and the user guide), CHANGELOG. Re-tuning the watcher to a safety net waits
-      for live certification (F.5)
-- [ ] Verify, Critic, one draft PR (pilot boundary: no merge). #1245 stays open until post-merge live certification
+- [x] R24 recorded; A1 reverted from the product tree (the attach script and its tests are byte-identical to origin/main;
+      the doc/CHANGELOG claims are removed; the evidence is kept)
+- [ ] Chunk 05: owned runtime, part 1. Pinned inputs and patches (`deploy/ttyd/`), the deterministic build/package entry
+      point (`scripts/build-ttyd.js`), and the recursive Mach-O closure verifier. Focused tests, no network in tests
+- [ ] Chunk 06: owned runtime, part 2. The shared resolver plus transactional install/rollback (`lib/ttyd-runtime.js`),
+      consumed by `install.sh` and `scripts/ingress-cutover.js`. Fails closed and names the repair. Homebrew only as an
+      explicit rollback, with a warning
+- [ ] Chunk 07: build the packaged artifact from tracked inputs, verify its closure, then the full R22 acceptance on
+      that exact artifact (2000 cycles plus a 2 h soak). Record its digest and load graph
+- [ ] Chunk 04 (revised): rollout and rollback docs for the owned runtime (F/G, the user guide, the configuration
+      reference), and the CHANGELOG. Re-tuning the watcher waits for live certification
+- [ ] Verify (the full suite), the cumulative Critic, one draft PR ONLY when the PM authorizes (pilot boundary: no merge).
+      #1245 stays open until post-merge live certification. D3 (upstream offer) is prepared separately and not submitted
+      without authorization
 
 **Pilot envelope (IN FORCE):** no merging any PR, no pulling or updating the live checkout, no restarting the
 live service, no tests on the main instance, no tag, publish or release, no deploy. Everything below that runs
@@ -81,6 +92,40 @@ a ttyd runs an *isolated* one: its own unix socket, its own `tmux -L` server, a 
 - **Staging: one PR** unless new evidence forces a split. Chunks 01–02 are completed and validated first on the
   branch. They do **not** deploy separately (section F is revised to match).
 - **Hold:** the plan is approved, but implementation stays held while B2 is the sole #1839 writer (see Status).
+
+## Architect ruling R24 (2026-09-26 00:40Z, controlling; the durable record is `docs/adr/0018-owned-ttyd-runtime.md`)
+
+- **D1 approved with modifications.** A TangleClaw-owned runtime at `~/.tangleclaw/bin/ttyd`, self-contained at process
+  start: its full Mach-O load graph may reference only its private bundle plus macOS system roots, with no Homebrew,
+  MacPorts, temp or Cellar dependency.
+- **Automatic fallback rejected.** A missing or unloadable managed runtime fails before the plist or live service changes
+  and names the repair. `/opt/homebrew/bin/ttyd` is an explicit Operator rollback only, with a warning that the fix is no
+  longer active. A last-known-good managed runtime is kept, and installation is transactional.
+- **D2 rejected** (a local tap moves the Cellar path). **D3 approved in parallel, non-blocking:** prepare the upstream
+  offer, but submit nothing external without PM/Operator authorization.
+- **A1 reverted** from the final tree, with its tests and every doc/CHANGELOG claim. Its failure artifacts and plan
+  history are kept.
+- **One product PR:**
+  - pinned inputs, patches and digests;
+  - a deterministic build/package entry point;
+  - a recursive Mach-O verifier;
+  - one shared ttyd-path resolver for `install.sh` and ingress-cutover;
+  - transactional install and rollback;
+  - the watcher/health work and the harness;
+  - corrected docs and CHANGELOG;
+  - ADR 0018, committed unchanged.
+- **The packaged self-contained binary must itself pass the full R22 contract.** The Homebrew-linked `fe6c…`
+  acceptance selects the source fix, not the package.
+- **Sequence:** revise the plan; revert A1; package with focused tests; verify the closure; mutation/control as needed;
+  the full acceptance on the exact packaged artifact; the cumulative Critic; one draft PR when the PM authorizes. STOP
+  before install, plist, TCC, restart, merge or upstream submission.
+
+**Feasibility, checked before any product code (scratch spike).** A static build of ttyd 1.7.7 + #1573 + A3c was made
+against static libwebsockets 4.5.2 (no TLS, libuv built in, unix sockets, IPv6, HTTP/2), libuv 1.52.1 and json-c 0.19,
+every tarball matching Homebrew's pinned digest. It loads only `/usr/lib/libz.1.dylib`, `/usr/lib/libutil.dylib` and
+`/usr/lib/libSystem.B.dylib`, with no `LC_RPATH`. So a self-contained closure is achievable and no escalation is needed.
+libwebsockets' installed CMake config names the shared target as well, so the build rewrites it to name only
+`websockets`.
 
 ## A3 build and matrix (2026-09-25; the Architect approved A3c at 21:34Z, controlling)
 
@@ -494,42 +539,40 @@ from the same reading.
 - **Live acceptance after rollout** (the operator's): 72 h of normal use with zero `reason=orphan-children`
   kickstarts. The watcher stays armed throughout as the safety net.
 
-## F. Rollout (chunk 04; revised with the shipped fix)
+## F. Rollout (revised for R24 / ADR 0018; the attach-script route was rejected with A1)
 
-The fix that ships is A1 (`deploy/ttyd-attach.sh`), plus the chunk 02 watcher and health changes. A3 was not needed.
+What ships: the chunk 02 watcher/health work, and the A3c source fix delivered as a TangleClaw-owned, self-contained
+ttyd at `~/.tangleclaw/bin/ttyd`, built from tracked, pinned inputs.
 
-1. **One PR** (R22 staging), opened only when the PM says so. The pilot envelope forbids a merge by B1.
-2. **Merge, then a restart of the main server (Operator/PM).** At boot, `server.js` calls
-   `ttydAttach.syncAttachScript` (`lib/ttyd-attach.js`), which copies `deploy/ttyd-attach.sh` to the non-TCC path
-   `~/.tangleclaw/deploy/ttyd-attach.sh` whenever the bytes differ. ttyd reads that file for **each new connection**, so:
-   - no ttyd restart, plist change, install step or TCC grant is needed;
-   - open terminals keep the old script until they reconnect, and every new or reconnected terminal gets the new one;
-   - the script needs only `/usr/bin/perl`, which is in the base system and not TCC-protected.
-3. **Verify right after the restart:**
-   - `cmp deploy/ttyd-attach.sh ~/.tangleclaw/deploy/ttyd-attach.sh` shows no difference;
-   - the boot log has `Synced ttyd attach script` (reason `refreshed`);
-   - open and close a few terminal tabs, then check that `ps -o pid,stat,etime -p $(pgrep -P $(pgrep -x ttyd))` shows no
-     `E` children;
-   - the watcher's boot tick logs a reading, and the health row carries `reading.pid`/`generation`/`sampledAt`.
-4. **Live certification (R22 Q7):** at least 72 h **and** a recorded, meaningful attach/detach sample, with zero
-   `reason=orphan-children` kickstarts, zero persistent E/Z (the health row's leaked count stays 0) and no upward PTY
-   trend. Extend the period if it is too quiet.
-   - Evidence: the kickstart receipts and `ttyd restarted outside the watcher` lines in `~/.tangleclaw/logs/tangleclaw.log`,
-     plus the panel's readings.
-   - #1245 stays open until then.
-5. **Only after certification**, relax the watcher to a pure safety net. That means leaving the pool gate as it is and
-   deciding with evidence whether to raise `DEFAULT_ORPHAN_THRESHOLD`. It is a separate, small change: the PM files it.
+1. **One PR,** opened only when the PM says so. B1 does not merge.
+2. **Build (Operator/PM, on the host):** `node scripts/build-ttyd.js` fetches every pinned input, verifies its digest
+   before use, builds outside the repo, verifies the complete Mach-O load graph (system roots only), and stages the
+   runtime with a provenance manifest. Nothing installed is touched.
+3. **Install (Operator/PM):** a transactional install puts the staged runtime at `~/.tangleclaw/bin/ttyd`. It keeps
+   the previous managed runtime as last-known-good, and re-verifies the digest, loadability and closure before
+   selecting it. If anything fails, the current selection is untouched and the error names the repair.
+4. **Select it (Operator/PM):** `install.sh` / `ingress-cutover` get the ttyd path from the one shared resolver, write
+   it into the plist, and restart ttyd. The FIRST move to the new path needs the Operator's one-time macOS permission
+   action at the GUI (ADR 0018 §1).
+5. **Verify right after:**
+   - the plist's program path is `~/.tangleclaw/bin/ttyd`;
+   - `otool -L` on it lists only `/usr/lib` and `/System/Library`;
+   - the watcher's boot reading carries the new pid and generation;
+   - open and close a few tabs, then check that `ps` shows no `E` children under ttyd.
+6. **Live certification (R22 Q7):** at least 72 h **and** a recorded, meaningful attach/detach sample, with zero
+   orphan kickstarts, zero persistent E/Z and no upward PTY trend. #1245 stays open until then.
+7. **Only after certification:** relax the watcher to a pure safety net, as a separate small change that the PM files.
 
 ## G. Rollback
 
-- **The attach-script fix:** `git revert` the attach-script commits (8c483c60, 2e714fbc) and restart the server. The boot
-  sync puts the old script back, and new connections use it at once. `TANGLECLAW_TTYD_WATCHER` stays on throughout, so
-  the watcher keeps recycling a leak while the rollback takes effect.
-- **The watcher and health changes:** `TANGLECLAW_TTYD_WATCHER=off` in the server plist's `EnvironmentVariables` stops
-  the restarts at once. `TANGLECLAW_TTYD_ORPHAN_THRESHOLD` (5–200) moves the gate. A code revert restores the old gate
-  exactly.
-- **Nothing to undo outside the repo:** no binary, plist, TCC grant or port changes. The original Homebrew ttyd
-  (`1.7.7_6`) and its TCC grant are untouched.
+- **Back to the last-known-good managed runtime:** the transactional installer's rollback swaps it back, then ttyd is
+  restarted (Operator/PM).
+- **Back to Homebrew ttyd:** an explicit Operator action through the resolver's rollback option. It regenerates the plist
+  for `/opt/homebrew/bin/ttyd` and says plainly that the leak fix is no longer active and the watcher is again the
+  mitigation. It is never automatic.
+- **The watcher/health work:** `TANGLECLAW_TTYD_WATCHER=off` / `TANGLECLAW_TTYD_ORPHAN_THRESHOLD` in the server plist,
+  or a code revert.
+- Homebrew's ttyd and its existing TCC grant are never modified by any of this.
 
 ## Tests: contracts that stay green and tests to add
 

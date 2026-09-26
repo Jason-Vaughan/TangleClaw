@@ -61,7 +61,7 @@ describe('deploy/ttyd-attach.sh', () => {
   });
 
   // The `=` alone is not enough, and getting this wrong is SILENT here: the
-  // capture-pane line discards its stderr, so a target tmux rejects
+  // capture-pane line ends in `2>/dev/null || true`, so a target tmux rejects
   // just skips the scrollback replay (#322) with no error anyone sees. tmux
   // accepts a bare `=name` only for target-SESSION verbs (has-session,
   // attach-session); pane-scoped verbs need the `:` suffix or they fail with
@@ -103,11 +103,12 @@ describe('deploy/ttyd-attach.sh', () => {
     );
   });
 
-  // #1245 — the no-session branch has nothing to drain, so it execs: ttyd gets
-  // exactly one process to reap, and `sleep` writes nothing, so as session
-  // leader it has no queued output to wait on. (The attach branch deliberately
-  // does NOT exec; see the drain contract below.)
-  it('the no-session branch execs its sleep, so it leaves no extra shell for ttyd to reap', () => {
+  // #1245 — ttyd does not reliably reap the child it spawns per websocket, and
+  // wedged children hold a /dev/ttys* slot until ttyd itself dies. Every path
+  // that ends this script must therefore leave ttyd exactly ONE process to
+  // reap, not a shell still holding one: of 18 wedged processes observed on
+  // 2026-09-07, one was a bash with its own tmux child.
+  it('every terminal branch execs, so no branch leaves a shell for ttyd to lose', () => {
     // The no-session branch sits here for 30s per failed attach. As a plain
     // `sleep` it was a live bash for all of it.
     assert.match(script, /^\s*exec\s+sleep\s+30\s*$/m,
@@ -126,66 +127,13 @@ describe('deploy/ttyd-attach.sh', () => {
     );
   });
 
-  // #1245 — the attach is deliberately NOT exec'd. An exec'd `tmux attach` was
-  // the session leader, and on macOS a session leader that exits with output
-  // queued waits for it to drain forever once ttyd stops reading: that was the
-  // leak. The churn harness reproduced it (every child stuck) and showed this
-  // shape clean. This replaces the old "exec the attach" contract; the
-  // no-session branch still execs (see above).
-  describe('the attach script stays session leader and drains on hang-up (#1245)', () => {
-    const body = () => codeLines().join('\n');
-
-    it('does not exec the attach: it runs it in the background under wait', () => {
-      const attachLine = codeLines().find(l => l.includes('tmux attach-session'));
-      assert.doesNotMatch(attachLine, /^\s*exec\b/, 'an exec\'d attach becomes the session leader that sticks');
-      assert.match(attachLine, /&\s*$/, 'the attach must run in the background so a trapped HUP interrupts `wait`');
-      assert.match(attachLine, /0<&0/, 'the terminal must stay the client\'s stdin despite running in the background');
-      assert.match(body(), /client=\$!\s*\n\s*wait "\$client"/);
-    });
-
-    it('runs the replay in the background under wait too, so a blocked replay cannot hold the trap off', () => {
-      const line = codeLines().find(l => l.includes('tmux capture-pane'));
-      assert.match(line, /&\s*$/);
-      assert.match(body(), /replay=\$!\s*\n\s*wait "\$replay"/);
-    });
-
-    it('sets the HUP trap before the replay starts', () => {
-      const trap = script.search(/^\s*trap drain_and_exit HUP\b/m);
-      assert.ok(trap > -1, 'HUP (and TERM/INT) must run drain_and_exit');
-      assert.ok(trap < script.indexOf('tmux capture-pane'), 'a tab can close while the replay is still streaming');
-    });
-
-    it('drains in order: ignore further signals, kill and reap the children, flush the output queue, then exit', () => {
-      const fn = script.slice(script.indexOf('drain_and_exit() {'), script.indexOf('\n  }', script.indexOf('drain_and_exit() {')));
-      const steps = [
-        fn.search(/trap '' HUP TERM INT/),
-        fn.search(/kill -KILL/),
-        fn.search(/\n\s*wait\b/),
-        fn.search(/POSIX::tcflush\(1, POSIX::TCOFLUSH\)/),
-        fn.search(/exit 0/)
-      ];
-      assert.ok(steps.every((i) => i > -1), `every step present: ${steps}`);
-      assert.deepEqual([...steps].sort((a, b) => a - b), steps, 'the flush must come after the children are gone and before exit');
-    });
-
-    // A hang-up can land after `tmux attach … &` forks and before `client=$!`
-    // records the PID. Killing from the variables would miss that client, and it
-    // could still be writing after the flush.
-    it('kills every RUNNING background job, not just the PIDs it managed to record', () => {
-      const fn = script.slice(script.indexOf('drain_and_exit() {'), script.indexOf('\n  }', script.indexOf('drain_and_exit() {')));
-      // `-r`: running jobs only, so a finished job's recycled PID is never signalled.
-      assert.match(fn, /for p in \$\(jobs -pr\); do kill -KILL "\$p"/);
-      assert.doesNotMatch(fn, /for p in \$replay \$client/, 'the recorded PIDs can be empty when the signal lands early');
-    });
-
-    it('calls perl by absolute path, since launchd gives ttyd a minimal PATH', () => {
-      assert.match(script, /\/usr\/bin\/perl -MPOSIX/);
-      assert.doesNotMatch(script.replace(/\/usr\/bin\/perl/g, ''), /^\s*perl\b/m);
-    });
-
-    it('drains on the normal path too, when the client exits because the session ended', () => {
-      assert.match(body(), /wait "\$client"\s*\n\s*client=\s*\n\s*drain_and_exit\s*$/m);
-    });
+  it('should exec the tmux attach command (not fork)', () => {
+    const attachLine = codeLines().find(l => l.includes('tmux attach-session'));
+    assert.match(
+      attachLine,
+      /^\s*exec\s+tmux/,
+      'tmux attach command should be called with exec to replace the shell process'
+    );
   });
 
   it('should quote the session variable', () => {
@@ -233,7 +181,7 @@ describe('deploy/ttyd-attach.sh', () => {
       const line = captureLine();
       assert.ok(line, 'must capture-pane to replay scrollback before attach');
       assert.ok(
-        script.indexOf('tmux capture-pane') < script.indexOf('tmux attach-session'),
+        script.indexOf('tmux capture-pane') < script.indexOf('exec tmux attach-session'),
         'capture-pane replay must run BEFORE the attach so history lands in the buffer'
       );
     });

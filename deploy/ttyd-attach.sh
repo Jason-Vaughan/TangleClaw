@@ -21,8 +21,8 @@ session=$(echo "$raw" | tr ' ' '-' | sed 's/[^a-zA-Z0-9_-]//g')
 # `capture-pane` takes a target-PANE and rejects `=name` outright ("can't find
 # pane"); it needs the trailing `:`, which resolves the session exactly and then
 # takes its current pane. Getting that wrong is silent here — the capture-pane
-# line discards its stderr, so a rejected target would just skip the scrollback
-# replay below with nothing to see. Measured against tmux 3.6a.
+# line ends in `2>/dev/null || true`, so a rejected target would just skip the
+# scrollback replay below with nothing to see. Measured against tmux 3.6a.
 if tmux has-session -t "=$session" 2>/dev/null; then
   # Replay scrolled-off history into the fresh xterm.js buffer before attaching
   # (#322). ttyd pipes this script's stdout straight into the browser terminal,
@@ -38,49 +38,8 @@ if tmux has-session -t "=$session" 2>/dev/null; then
   #             is about to redraw aren't printed twice
   # Errors (e.g. a brand-new pane with no history) are swallowed — the replay is
   # best-effort and must never block the attach.
-  #
-  # This script stays the SESSION LEADER instead of exec'ing tmux (#1245). When
-  # a tab closes, ttyd stops reading the pty and sends SIGHUP to this process
-  # group. On macOS a session leader that exits with output still queued on its
-  # terminal waits, with no timeout, for that output to drain, and nothing will
-  # ever read it: the process sticks in the exiting state, holding its
-  # /dev/ttys* slot until ttyd itself dies. That was the leak, and an exec'd
-  # `tmux attach` was the leader that stuck. So on HUP this script ends its
-  # children, discards whatever is queued (tcflush, which needs no root), and
-  # only then exits, with nothing left to wait for.
-  #
-  # Both children run in the background under `wait`, because bash runs a trap
-  # only after a FOREGROUND command returns, and a replay blocked writing to a
-  # pty nobody reads never returns. `wait` is interrupted by the trapped signal
-  # at once. The children are SIGKILLed: either may be blocked in that same
-  # write, and the only thing that matters now is that they are gone. They are
-  # found with `jobs -pr`, not from the variables below, because a hang-up can
-  # land after a child is forked and before its PID is recorded; a child
-  # missed there could still be writing after the flush. `-r` lists RUNNING
-  # jobs only: a finished job's PID may already belong to someone else.
-  replay=
-  client=
-  drain_and_exit() {
-    trap '' HUP TERM INT
-    for p in $(jobs -pr); do kill -KILL "$p" 2>/dev/null; done
-    wait 2>/dev/null
-    # Absolute path: ttyd runs under launchd with a minimal PATH.
-    /usr/bin/perl -MPOSIX -e 'POSIX::tcflush(1, POSIX::TCOFLUSH)' 2>/dev/null
-    exit 0
-  }
-  # Set before the replay, because a tab can close while it is still streaming.
-  trap drain_and_exit HUP TERM INT
-  tmux capture-pane -e -p -t "=$session:" -S -10000 -E -1 2>/dev/null &
-  replay=$!
-  wait "$replay"
-  replay=
-  # `0<&0` keeps the terminal as the client's stdin: without job control, bash
-  # otherwise gives a background command /dev/null.
-  tmux attach-session -t "=$session" 0<&0 &
-  client=$!
-  wait "$client"
-  client=
-  drain_and_exit
+  tmux capture-pane -e -p -t "=$session:" -S -10000 -E -1 2>/dev/null || true
+  exec tmux attach-session -t "=$session"
 else
   echo "Session '${session}' is not running."
   echo "Return to TangleClaw to start a new session."
@@ -88,9 +47,10 @@ else
   # the connection when this process exits, which would flash the message
   # too briefly to read. The frontend redirects after ~10s anyway.
   #
-  # `exec`, so ttyd has exactly one process to reap here. `sleep` writes
-  # nothing, so as session leader it has no queued output to wait on when it
-  # is hung up; the two short lines above are read before the tab can close
-  # in any ordinary case (#1245).
+  # `exec`, for the same reason the attach above uses it: ttyd does not reliably
+  # reap the child it spawns per websocket, and a non-exec'd bash sitting here
+  # for 30 seconds is a second process for it to lose (#1245 — of 18 wedged
+  # processes observed on 2026-09-07, one was a bash still holding a tmux
+  # child). Replacing the shell leaves ttyd exactly one child to reap.
   exec sleep 30
 fi

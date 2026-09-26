@@ -35,6 +35,19 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Revert the A1 attach-script wrapper; adopt the owned ttyd runtime (#1245, R24)
+
+<!-- prawduct: type=chore | scope=ttyd-1245 -->
+
+Architect ruling R24, with ADR 0018 committed unchanged.
+- **Why A1 is reverted:** it failed the R22 Q7 contract (6 wedges in 1500 cycles) and was rejected as the shipping fix.
+- **What the revert restores:** `deploy/ttyd-attach.sh` and `test/ttyd-attach.test.js` are byte-identical to origin/main
+  again, including the original "exec the attach" contract. The A1 claims in CHANGELOG, FEATURES and the user guide are
+  removed.
+- **What is kept:** the A1 evidence (`.tangleclaw/plans/1245-evidence/a1-acceptance-2e714fbc-FAIL.json`), its plan
+  history and the change-log entries below.
+- **Where the fix goes now:** the A3c source fix, delivered as a TangleClaw-owned, self-contained ttyd (chunks 05–07).
+
 ## 2026-09-25 — ttyd attach script drains on hang-up: the #1245 root fix candidate A1 (chunk 03)
 
 <!-- prawduct: type=bugfix | scope=ttyd-1245 -->
