@@ -67,6 +67,12 @@ function makeElement(tag, doc) {
       // without anything noticing.
       toggle: (c, on) => (on ? classes.add(c) : classes.delete(c))
     },
+    /**
+     * Take focus: records the element as the document's `activeElement`. Needed
+     * by the ended bar's Restart Session, which moves focus to Back to Projects
+     * when the only way forward is the landing page.
+     */
+    focus() { if (doc) doc.activeElement = el; },
     setAttribute(name, value) { attrs[name] = String(value); },
     getAttribute(name) { return Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null; },
     addEventListener(type, fn) {

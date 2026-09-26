@@ -211,9 +211,12 @@
   <!-- Session Ended Bar — tmux is gone -->
   <div class="session-ended hidden" id="sessionEnded">
     <span>Session ended</span>
-    <a href="/" class="btn btn-primary btn-small">Back to Projects</a>
+    <a href="/" class="btn btn-primary btn-small" id="endedBackLink">Back to Projects</a>
+    <!-- Restart Session (#1637): offered only after a completed wrap ended the session. -->
+    <button type="button" class="btn btn-small hidden" id="relaunchBtn">Restart Session</button>
     <button class="btn btn-small" id="stayBtn">Stay</button>
     <span class="countdown" id="countdown"></span>
+    <span class="relaunch-status" id="relaunchStatus" role="status" aria-live="polite"></span>
   </div>
 
   <!-- Command Bar -->
@@ -557,6 +560,7 @@
   <script src="/wrap-stream-events.js"></script>
   <script src="/wrap-drawer.js"></script>
   <script src="/wrap-run-controller.js"></script>
+  <script src="/session-relaunch.js"></script>
   <script src="/session.js"></script>
 </body>
 </html>
