@@ -270,6 +270,9 @@ const ciStatus = require('./lib/ci-status');
 const master = require('./lib/master');
 const sharedDocsAccess = require('./lib/shared-docs-access');
 const workload = require('./lib/workload');
+// The one live fleet activity observer (#1912, ADR 0020 §5): started with the
+// other monitors, read by the fleet surfaces, never captured from on a request.
+const activityObserver = require('./lib/activity-observer').createObserver();
 const startupPrompt = require('./lib/startup-prompt');
 const startupControl = require('./lib/startup-control');
 const projectView = require('./lib/project-view');
@@ -11506,6 +11509,10 @@ if (require.main === module) {
     // watcher that types a fixed nudge into an opted-in (`medusaWake`) session
     // when fresh inbound mail is waiting and the pane is at a bare prompt.
     medusaWake.start();
+    // Start the bounded fleet activity observer (#1912, ADR 0020 §5): one
+    // asynchronous capture per live session per 10 s tick, within a 3 s budget,
+    // so the fleet read can report engine activity without capturing a pane.
+    activityObserver.start();
     // Start the Medusa delivery watchdog (#1839): a deterministic pass over
     // durable exchange state that re-arms a wake through the monitor's gates
     // on a durable trigger: a nudge provably not accepted, or the session
@@ -11571,6 +11578,7 @@ if (require.main === module) {
     tunnelMonitor.stop();
     wrapSentinel.stop();
     medusaWake.stop();
+    activityObserver.stop();
     medusaWatchdog.stop();
     launchUnready.stop();
     // Each startupControl adapter's reaper timer (#1825): the timers are unref'd,

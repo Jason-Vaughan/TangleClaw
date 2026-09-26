@@ -13,7 +13,11 @@ All notable changes to TangleClaw are documented in this file.
   - **Validated at write:** exact values, consistency rules (`working` must be `do-not-clear`, `waiting-external` must say what it waits on) and field bounds. A lane can write at most one receipt per second.
   - **Stored:** an append-only table (schema v50), unique on launch and sequence.
   - **Reading it back:** `tc workload show` (`GET /api/tc/workload`) shows the lane its own newest receipt.
-  - **Not yet:** how receipts combine with observed engine activity into a fleet-wide verdict is the next part of Phase A.
+  - **A background activity observer** watches every live session's pane on its own 10-second tick, whether or not the session has mail (the wake monitor only looks when mail is pending).
+    - **Budget:** captures are asynchronous and serial, at most 1 s each, with 3 s of work per tick. A tick that runs out of budget resumes where it stopped on the next one.
+    - **Strict at-rest:** a lane counts as at rest only when there is no turn in flight, no running agents and an empty composer, seen on two stable consecutive observations.
+    - **Freshness:** an observation older than 30 s reads as unknown.
+  - **Not yet:** receipts and observations are not yet combined into a fleet-wide verdict; that is the next part of Phase A.
 
 - **The ports panel shows which lease owners are marked "Not a project", and can undo the mark** (#1768). Marking an owner from the import banner used to leave no trace on the dashboard, and only a raw `POST /api/ports/owner-kind` reversed it. The owner's group now carries a **Not a project** badge and an **Is a project** button, which resets every lease under the name through the same route and re-checks the import banner.
 

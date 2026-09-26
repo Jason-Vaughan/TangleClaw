@@ -43,6 +43,8 @@ authorized by FWV-A18); Phase B (#1877); Phase C (#1889); Project Master workloa
 - **R-5:** a receipt dated in the future (the clock stepped back) must not lock the lane out.
 - **R-6:** restore `controlApi`'s JSDoc.
 
+**Measured capture latency (2026-09-26, this host).** 20 `captureAsync` calls against this session's own pane: p50 21 ms, p95 29 ms, max 30 ms, with load average 9 to 13 and 8 tmux sessions. A 3 s tick budget therefore covers about 100 captures at worst-observed latency, and the ADR's 1 s timeout per capture has about 30× headroom. The budget stands as ratified.
+
 **[DECISION] Captures are asynchronous.** `lib/tmux.js` runs through `execSync`, and the server's event loop would block for the whole capture. With a 3 s tick budget, that is up to 3 s of stalled server every 10 s. The observer uses `execFile` with the same 1 s timeout per capture instead, and checks the session exists before `display-message` (which otherwise answers for the attached client). The ADR's limits are unchanged; only the blocking is removed.
 
 `lib/activity-observer.js` reuses `_assessActivity`/`_composerEmpty` from `lib/medusa-wake.js`:

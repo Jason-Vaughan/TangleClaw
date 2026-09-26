@@ -151,6 +151,23 @@ describe('workload body validation (ADR 0020 §3)', () => {
   });
 });
 
+describe('who may write workload (ADR 0020 §1)', () => {
+  const { KINDS } = require('../lib/shared-docs-access');
+
+  it('refuses every caller kind but a verified project launch, naming what it was', () => {
+    assert.equal(workload.bindingRefusal({ kind: KINDS.PROJECT, reason: null }), null);
+    for (const kind of [KINDS.OPERATOR, KINDS.MASTER, KINDS.UNBOUND]) {
+      const r = workload.bindingRefusal({ kind, reason: null });
+      assert.equal(r.status, 403, kind);
+      assert.equal(r.body.code, 'WORKLOAD_BINDING_REQUIRED', kind);
+      assert.equal(r.body.reason, kind);
+    }
+    const invalid = workload.bindingRefusal({ kind: KINDS.INVALID, reason: 'unknown-launch' });
+    assert.equal(invalid.status, 403);
+    assert.equal(invalid.body.reason, 'unknown-launch');
+  });
+});
+
 describe('POST/GET /api/tc/workload (ADR 0020 §1–§2)', () => {
   let tmpDir;
   let server;
@@ -234,6 +251,15 @@ describe('POST/GET /api/tc/workload (ADR 0020 §1–§2)', () => {
     assert.equal(r.status, 201);
     assert.equal(r.data.receipt.projectId, other.id);
     assert.equal(store.workloadReceipts.latestForLaunch(bBuilder.launchId).project_id, builder.id);
+  });
+
+  it('refuses a Project Master claim: a master-role launch id no project owns is never a project lane', async () => {
+    const r = await send(server, 'POST', '/api/tc/workload', OK, {
+      'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': 'not-a-project-launch', ...TC
+    });
+    assert.equal(r.status, 403);
+    assert.equal(r.data.code, 'WORKLOAD_BINDING_REQUIRED');
+    assert.notEqual(r.data.reason, 'project', 'a Master claim never becomes a project caller');
   });
 
   it('refuses a verified launch that did not come through the tc client', async () => {
@@ -351,30 +377,62 @@ describe('workload_receipts storage (ADR 0020 §2)', () => {
     }
   });
 
-  it('concurrent writers on separate connections never share a seq', () => {
-    // Two connections, as two server processes would have: BEGIN IMMEDIATE
-    // serializes them, so each takes the next number.
-    const dbPath = path.join(tmpDir, 'tangleclaw.db');
-    const a = new DatabaseSync(dbPath);
-    const b = new DatabaseSync(dbPath);
-    try {
-      const write = (db, i) => {
-        db.exec('BEGIN IMMEDIATE');
-        const last = db.prepare("SELECT MAX(seq) AS m FROM workload_receipts WHERE launch_id = 'L3'").get();
-        const seq = (last.m || 0) + 1;
-        db.prepare(
-          "INSERT INTO workload_receipts (project_id, session_id, launch_id, seq, state, clearance, summary, refs_json, source, received_at) "
-          + "VALUES (1, 1, 'L3', ?, 'working', 'do-not-clear', 's', '{}', 'tc-cli', ?)"
-        ).run(seq, `2026-09-26T00:00:0${i}Z`);
-        db.exec('COMMIT');
-        return seq;
-      };
-      const seqs = [write(a, 1), write(b, 2), write(a, 3), write(b, 4)];
-      assert.deepEqual(seqs, [1, 2, 3, 4]);
-    } finally {
-      a.close();
-      b.close();
-    }
+  it('two processes appending to one lane through the real store never share or skip a seq', async () => {
+    // Each child is a separate process with its own connection, as two server
+    // processes would have. Contention is real: the store sets no busy
+    // timeout, so a writer that loses the lock takes the one retry and, if it
+    // loses again, reports busy rather than guessing a number.
+    const { spawn } = require('node:child_process');
+    const child = (tag) => new Promise((resolve, reject) => {
+      const code = `
+        require(${JSON.stringify(path.join(__dirname, '..', 'lib', 'logger'))}).setLevel('error');
+        const store = require(${JSON.stringify(path.join(__dirname, '..', 'lib', 'store'))});
+        store._setBasePath(${JSON.stringify(tmpDir)});
+        // Both children open the store at once, and init writes; that race is
+        // the harness's, not the subject's, so init alone retries on a lock.
+        for (let n = 0; ; n++) {
+          try { store.init(); break; } catch (e) {
+            if (n > 50 || !/database is locked/.test(e.message)) throw e;
+            try { store.close(); } catch {}
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+          }
+        }
+        const out = { ok: 0, busy: 0 };
+        for (let i = 0; i < 25; i++) {
+          const r = store.workloadReceipts.append({
+            project_id: 1, session_id: 1, launch_id: 'LX', assignment_id: null, state: 'working',
+            clearance: 'do-not-clear', summary: ${JSON.stringify(tag)}, wait_kind: null, wait_detail: null,
+            refs_json: '{}', branch: null, head_sha: null, source: 'tc-cli', received_at: new Date().toISOString()
+          }, { minIntervalMs: 0, nowMs: Date.now() });
+          if (r.row) out.ok++; else if (r.busy) out.busy++; else throw new Error('unexpected ' + JSON.stringify(r));
+        }
+        store.close();
+        process.stdout.write('\\nRESULT ' + JSON.stringify(out) + '\\n');
+      `;
+      const p = spawn(process.execPath, ['--no-warnings', '-e', code], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = '';
+      let err = '';
+      p.stdout.on('data', (d) => { out += d; });
+      p.stderr.on('data', (d) => { err += d; });
+      p.on('close', (c) => {
+        const line = out.split('\n').find((l) => l.startsWith('RESULT '));
+        if (c === 0 && line) resolve(JSON.parse(line.slice(7)));
+        else reject(new Error(`child ${tag} exited ${c}: ${err}${out}`));
+      });
+    });
+    const [a, b] = await Promise.all([child('A'), child('B')]);
+    const rows = store.workloadReceipts.listForLaunch('LX');
+    assert.equal(rows.length, a.ok + b.ok, 'every append that reported a row stored exactly one');
+    assert.deepEqual(rows.map((r) => r.seq), rows.map((_, i) => i + 1), 'seqs are 1..n with no gap or duplicate');
+    assert.ok(rows.some((r) => r.summary === 'A') && rows.some((r) => r.summary === 'B'), 'both processes wrote');
+  });
+
+  it('a receipt dated ahead of the clock (the clock stepped back) does not lock the lane out', () => {
+    const t = Date.parse('2026-09-26T02:00:00Z');
+    store.workloadReceipts.append(row('L5', new Date(t + 60000).toISOString()), { minIntervalMs: 1000, nowMs: t + 60000 });
+    const r = store.workloadReceipts.append(row('L5', new Date(t).toISOString()), { minIntervalMs: 1000, nowMs: t });
+    assert.ok(r.row, 'the write after a backward clock step is accepted');
+    assert.equal(r.row.seq, 2, 'and still takes the next number');
   });
 
   it('enforces the per-lane rate limit inside the append transaction', () => {
