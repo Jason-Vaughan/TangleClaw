@@ -1,7 +1,7 @@
 ---
 title: "#1885 Provenance watermarks: an opt-in 'Built by TangleClaw' header on files TangleClaw owns whole"
 status: ALL THREE CHUNKS BUILT AND REVIEWED (2026-09-26). Chunk 03 is 790d5464 + 614f0e17; cumulative Critic rev-20260926T032840Z-d99ab744 (1 blocking, fixed), verify-resolutions rev-20260926T033429Z-61386ed9 clean. The PR waits for PM dispatch (Pilot Envelope forbids merging).
-authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-26 (message 06d614e1). The dispatch covers discovery and planning only, and stops at "Plan Written".
+authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-26. Discovery and planning were dispatched in message 06d614e1, which stopped at "Plan Written". The build of chunks 01–03 was dispatched after R25, with chunk 03 in message 5d6643be, and the PR in message 2e58ba65.
 issues: [1885]
 governed_by:
   - Architect ruling R25 on this plan (Q1–Q8, R25.9, R25.10), 2026-09-26 via Medusa
