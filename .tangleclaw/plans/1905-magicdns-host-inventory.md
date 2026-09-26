@@ -220,5 +220,5 @@ Builder2 stops and reports to the PM at the end of each chunk.
 
 ## Status
 
-- [ ] Chunk 1: inventory, host selection (A19), direct-mode reconcile (A18), caddy-mode refusal
+- [x] Chunk 1: inventory, host selection (A19), direct-mode reconcile (A18), caddy-mode refusal
 - [ ] Chunk 2: caddy-mode prepare/apply through the cutover, with rollback (A18)

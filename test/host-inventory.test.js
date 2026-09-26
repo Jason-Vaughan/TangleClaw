@@ -260,6 +260,20 @@ describe('host-inventory', () => {
       });
     }
 
+    it('drift with no config argument: the operator link still names the configured host', () => {
+      // The primer's no-request path calls resolveOperatorHost() bare. Without
+      // the saved config it would fall back to the observed name, which the
+      // server refuses under drift.
+      stubProbe(statusJson(`${TS_NAME}.`));
+      const saved = store.config.load();
+      store.config.save({ ...saved, caddyTailnetHost: 'old.tail123.ts.net' });
+      try {
+        assert.equal(sessionOwnership.resolveOperatorHost().host, 'old.tail123.ts.net');
+      } finally {
+        store.config.save(saved);
+      }
+    });
+
     it('drift: the observed name is in none of them until reconciled', () => {
       stubProbe(statusJson(`${TS_NAME}.`));
       const config = { caddyTailnetHost: 'old.tail123.ts.net' };

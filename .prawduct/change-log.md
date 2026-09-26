@@ -63,8 +63,30 @@ Chunk 1 of `.tangleclaw/plans/1905-magicdns-host-inventory.md`. The PM dispatche
 
 `caddy` checks gate agreement across every combination. `server` covers a request under the detected name, with a trailing dot, and under a different tailnet name. Mutations: reverting the union turns the route, invariant and request tests red, and dropping the canonical-removal refusal turns the three conflict tests red.
 
+**Critic.** The cumulative review `rev-20260926T201752Z-cd65bda6` found 0 blocking, 3 warnings and 3 notes.
+- Fixed: `resolveOperatorHost()` called with no config now reads the saved config for the tailnet answer (the primer path).
+- Fixed: the Train 2 entry, which this entry's first rewrite had deleted, is restored word for word.
+- Fixed: the retry's blocking cost is documented.
+- Accepted: R-5 (`caddySite` describes the config key) and R-6 (the plan format).
+- Verified by `rev-20260926T202127Z-e44e45c7`, with 0 findings.
+
 **Process.** The first version of this chunk used a verbatim `hosts` list and a caddy-mode reconcile that left the Caddyfile "pending". The Architect rejected both (A18/A19) while I kept building past the unread veto. Nothing was pushed. I rewrote the chunk to the approved plan and squashed it into one commit before the review.
 
+## 2026-09-26 — Train 2: malformed project tags, inline-handler encoding, the Not a project mark (#1375, #1384, #1768)
+
+<!-- prawduct: type=bugfix | scope=train-2 -->
+
+Chunks 1–3 of `.tangleclaw/plans/train-2-ui-hardening.md`, dispatched by the ProjectManager over Medusa (de99255a) under Architect clearance R44 (0f8b59dc).
+
+**The change.**
+- **Chunk 1 (#1375):** `lib/store.js` `_normalizeTags` gives every consumer `string[]`. A legacy JSON-string row is split on commas, an array keeps its string members, and anything else is empty. `public/ui.js` `formatTagList` checks the shape itself, so the card detail shows None instead of throwing, and the tag filter matches whole tags, not substrings.
+- **Chunk 2 (#1384):** `public/landing.js` `jsArg(value)` = `esc(JSON.stringify(value))` is the one encoder for inline-handler arguments. All 34 single-quoted handler sites in `ui.js` use it, and `importLeaseProjects` receives its names array directly. A scan test keeps the single-quote form out of `ui.js`; a mutation check flags 34 offenders on main.
+- **Chunk 3 (#1768):** the ports panel badges an owner group whose leases are `external` and offers **Is a project**, which posts `ownerKind: 'project'` for the name, then reloads the ports and re-checks the import banner. The button stops click and keydown. [DECISION] The badge and undo are per owner name, not per lease; the reasoning is in the plan.
+- **Tests:** `test/project-tags-shape.test.js`, `test/inline-handler-args.test.js` and `test/port-owner-kind-panel.test.js` are new. Six existing harnesses now load the real `jsArg`/`formatTagList`, and three assertions that matched the rendered handler text follow the new encoding. None were weakened.
+
+**Reviews.** Chunk reviews found 0 blocking. The cumulative review rev-20260926T171739Z-91357fff found one blocking finding: the saved suite evidence includes the known `test/dir-scanner.test.js` 300ms deadline failure (#1884, red on a clean main on this host), accepted by the PM's owner ruling (c06c9eb8).
+
+**Follow-ups filed:** #1902 (the same apostrophe bug in other page scripts), #1903 (test-helper consolidation), #1906 (buttons nested in role=button rows).
 ## 2026-09-26 — install.sh refuses on a caddy-mode host before anything is changed (#1900)
 
 <!-- prawduct: type=bugfix | scope=install-1900 -->
