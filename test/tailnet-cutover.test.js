@@ -29,7 +29,7 @@ const NEW = 'box.tail123.ts.net';
 describe('validateTailnetApply', () => {
   const base = {
     requested: NEW,
-    config: { caddyTailnetHost: OLD },
+    config: { caddyTailnetHost: OLD, ingressMode: 'caddy' },
     observation: { host: NEW },
     certHosts: ['localhost', OLD, NEW],
     gated: true
@@ -41,15 +41,17 @@ describe('validateTailnetApply', () => {
   });
 
   it('accepts creating the site for a detected name when none is configured', () => {
-    const v = tc.validateTailnetApply({ ...base, config: {} });
+    const v = tc.validateTailnetApply({ ...base, config: { ingressMode: 'caddy' } });
     assert.deepEqual(v, { ok: true, host: NEW, from: null });
   });
 
   for (const [label, patch, code] of [
+    ['a direct-mode install', { config: { caddyTailnetHost: OLD, ingressMode: 'direct' } }, tc.TAILNET_CODES.NOT_CADDY_MODE],
+    ['an install with no ingress mode set', { config: { caddyTailnetHost: OLD } }, tc.TAILNET_CODES.NOT_CADDY_MODE],
     ['an invalid name', { requested: 'not a host' }, tc.TAILNET_CODES.INVALID_NAME],
     ['a name the overlay does not report now', { observation: { host: 'other.tail123.ts.net' } }, tc.TAILNET_CODES.NOT_OBSERVED],
     ['no observation at all', { observation: { host: null, reason: 'tailscale: unavailable' } }, tc.TAILNET_CODES.NOT_OBSERVED],
-    ['the name already configured', { config: { caddyTailnetHost: `${NEW}.` } }, tc.TAILNET_CODES.NO_CHANGE],
+    ['the name already configured', { config: { caddyTailnetHost: `${NEW}.`, ingressMode: 'caddy' } }, tc.TAILNET_CODES.NO_CHANGE],
     ['an ungated install', { gated: false }, tc.TAILNET_CODES.UNGATED],
     ['a certificate that lacks the name (prepare not run)', { certHosts: ['localhost', OLD] }, tc.TAILNET_CODES.CERT_MISSING]
   ]) {
@@ -114,6 +116,25 @@ describe('strictHealth', () => {
       assert.ok(r.error);
     });
   }
+
+  it('settles as unhealthy when the response aborts mid-body', async () => {
+    const request = (opts, onRes) => {
+      const req = new EventEmitter();
+      req.end = () => setImmediate(() => {
+        const res = new EventEmitter();
+        res.statusCode = 200;
+        res.setEncoding = () => {};
+        onRes(res);
+        res.emit('data', '{"sta');
+        res.emit('error', new Error('aborted'));
+      });
+      req.destroy = () => {};
+      return req;
+    };
+    const r = await tc.strictHealth(local, { request });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /aborted/);
+  });
 
   it('presents the candidate as SNI and Host, and needs the served cert to carry it', async () => {
     const good = fakeRequest({ sans: `DNS:localhost, DNS:${NEW}` });
@@ -347,8 +368,110 @@ describe('parity across prepare, apply and rollback (R46)', () => {
     assert.deepEqual(c, { canonical: NEW, cert: true, allowlist: true, link: NEW, caddy: NEW });
   });
 
-  it('after a rollback: everything is back on the configured host', () => {
-    const c = consumers({ ...before_ }, ['localhost', OLD, NEW]);
-    assert.deepEqual(c, { canonical: OLD, cert: true, allowlist: true, link: OLD, caddy: OLD });
+  it('after a driven failed apply, the rollback puts every consumer back on the configured host', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tailnet-run-'));
+    try {
+      const run = await drive({ dir, verifyResults: [false, true] });
+      assert.equal(run.code, cutover.CUTOVER_CODES.TAILNET_ROLLED_BACK);
+      assert.equal(run.extra.rolledBack, true);
+      const cfg = run.configStore.load();
+      assert.equal(cfg.caddyTailnetHost, OLD, 'the config was really restored');
+      assert.equal(fs.readFileSync(run.caddyfilePath, 'utf8'), 'prior\n', 'the Caddyfile was really restored');
+      // The store here holds only the keys the apply moves; the gate lives in the base config.
+      const c = consumers({ ...GATED, ...cfg }, ['localhost', OLD, NEW]);
+      assert.deepEqual(c, { canonical: OLD, cert: true, allowlist: true, link: OLD, caddy: OLD });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * Drive `runTailnetVerification` against a real temp Caddyfile and an in-memory
+ * config store, as a `--tailnet-host` apply leaves them just before step 6.
+ *
+ * @param {object} args
+ * @param {string} args.dir - Temp directory.
+ * @param {boolean[]} args.verifyResults - What successive verify calls answer.
+ * @param {Function} [args.execFile] - launchctl stand-in.
+ * @returns {Promise<object>}
+ */
+async function drive({ dir, verifyResults, execFile = () => {} }) {
+  const caddyfilePath = path.join(dir, 'Caddyfile');
+  const backup = path.join(dir, 'Caddyfile.tailnet-x.bak');
+  fs.writeFileSync(caddyfilePath, 'moved\n');
+  fs.writeFileSync(backup, 'prior\n');
+  let saved = { ingressMode: 'caddy', caddyTailnetHost: NEW };
+  const configStore = { load: () => ({ ...saved }), save: (c) => { saved = { ...c }; } };
+  const calls = [];
+  let n = 0;
+  const verify = async (checks) => {
+    const ok = verifyResults[Math.min(n, verifyResults.length - 1)];
+    n += 1;
+    return { ok, rounds: 1, last: checks.map((c) => ({ label: c.label, ok, error: ok ? null : 'HTTP 503' })) };
+  };
+  const out = {};
+  await cutover.runTailnetVerification({
+    plan: {
+      healthUrl: 'https://localhost:8443/api/health',
+      caddyfile: { path: caddyfilePath },
+      plists: [{ path: '/L/com.tangleclaw.caddy.plist' }, { path: '/L/com.tangleclaw.ttyd.plist' }],
+      launchctl: [['kickstart', '-k', 'gui/501/com.tangleclaw.server']]
+    },
+    ctx: { tailnetHost: NEW, priorTailnetHost: OLD },
+    localCheck: { label: 'local', url: 'https://localhost:8443/api/health' },
+    siteCheck: { label: NEW, url: 'https://127.0.0.1:8443/api/health', servername: NEW },
+    priorCaddyfile: Buffer.from('prior\n'),
+    tailnetBackup: backup,
+    finish: (code, error, extra) => Object.assign(out, { code, error, extra }),
+    deps: { verify, configStore, execFile: (...a) => { calls.push(a); return execFile(...a); } }
+  });
+  return { ...out, configStore, caddyfilePath, backup, calls };
+}
+
+describe('runTailnetVerification, driven', () => {
+  let dir;
+  before(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tailnet-drive-')); });
+  after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const fresh = () => fs.mkdtempSync(path.join(dir, 'r-'));
+
+  it('a healthy move finishes ok, keeps the new config and drops the backup', async () => {
+    const run = await drive({ dir: fresh(), verifyResults: [true] });
+    assert.equal(run.code, cutover.CUTOVER_CODES.OK);
+    assert.equal(run.error, null);
+    assert.equal(run.configStore.load().caddyTailnetHost, NEW);
+    assert.equal(fs.existsSync(run.backup), false, 'a backup that may hold a credential is not left behind');
+    assert.equal(run.calls.length, 0, 'no reload on success');
+  });
+
+  it('an unhealthy move rolls back the Caddyfile, the config and the reload, and reports it', async () => {
+    const run = await drive({ dir: fresh(), verifyResults: [false, true] });
+    assert.equal(run.code, cutover.CUTOVER_CODES.TAILNET_ROLLED_BACK);
+    assert.ok(run.error, 'a rolled-back move is not a success');
+    assert.deepEqual(run.extra.residual, { caddyfile: 'restored', caddyTailnetHost: 'restored', reload: 'restored' });
+    assert.equal(run.configStore.load().caddyTailnetHost, OLD);
+    assert.equal(fs.readFileSync(run.caddyfilePath, 'utf8'), 'prior\n');
+    assert.deepEqual(run.calls.map((c) => c[1][0]), ['unload', 'load', 'kickstart'], 'Caddy and the server are reloaded');
+    assert.equal(fs.existsSync(run.backup), false);
+  });
+
+  it('a reload that fails is a typed rollback failure that keeps the backup and names the recovery', async () => {
+    const run = await drive({
+      dir: fresh(),
+      verifyResults: [false, true],
+      execFile: (_bin, args) => { if (args[0] === 'load') throw new Error('Load failed: 5: Input/output error'); }
+    });
+    assert.equal(run.code, cutover.CUTOVER_CODES.TAILNET_ROLLBACK_FAILED);
+    assert.equal(run.extra.rolledBack, false);
+    assert.match(run.extra.residual.reload, /^NOT restored: Load failed/);
+    assert.equal(run.extra.residual.caddyfile, 'restored');
+    assert.match(run.extra.recovery, /ingress-cutover\.js --to caddy/);
+    assert.equal(fs.existsSync(run.backup), true, 'the backup stays while recovery may need it');
+  });
+
+  it('a reload that leaves the site unhealthy is a rollback failure, not a rollback', async () => {
+    const run = await drive({ dir: fresh(), verifyResults: [false, false] });
+    assert.equal(run.code, cutover.CUTOVER_CODES.TAILNET_ROLLBACK_FAILED);
+    assert.match(run.extra.residual.reload, /not healthy/);
   });
 });

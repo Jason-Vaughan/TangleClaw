@@ -808,7 +808,9 @@ function main() {
   ctx.gateState = authGate.resolveIntendedGateState(() => config, store.authSessions);
 
   // #1905 — `--tailnet-host`: the apply phase of a caddy-mode tailnet move.
-  // Judged before anything is written, against a FRESH overlay observation and
+  // Judged before the Caddyfile, the config or launchd is touched (the cert has
+  // already been staged by then, which changes nothing Caddy serves), against a
+  // FRESH overlay observation and
   // the certificate the site will serve (prepare minted it with both names).
   if (tailnetHost !== null) {
     const httpsSetupLib = httpsSetupModule();
@@ -1014,8 +1016,19 @@ function main() {
     const port = new URL(plan.healthUrl).port || '443';
     const localCheck = { label: 'local', url: plan.healthUrl };
     const siteCheck = { label: ctx.tailnetHost, url: `https://127.0.0.1:${port}/api/health`, servername: ctx.tailnetHost };
+    // Every path out of the verification ends in `finish`; an unexpected throw
+    // must too, or a `--result-file` caller reads a missing file as a crash.
     runTailnetVerification({
       plan, ctx, localCheck, siteCheck, priorCaddyfile, tailnetBackup, finish
+    }).catch((err) => {
+      process.stderr.write(`ERROR: the tailnet move could not be verified or rolled back: ${err.message}\n`);
+      finish(CUTOVER_CODES.FAILED, `tailnet verification failed unexpectedly: ${err.message}`,
+        { tailnetHost: ctx.tailnetHost, rolledBack: false,
+          recovery: tailnetBackup
+            ? `copy ${tailnetBackup} back to ${plan.caddyfile.path}; set "caddyTailnetHost" back to `
+              + `${JSON.stringify(ctx.priorTailnetHost || null)} in config.json; then run: `
+              + 'node scripts/ingress-cutover.js --to caddy'
+            : null });
     });
     return;
   }
@@ -1051,11 +1064,24 @@ function main() {
  * @param {Buffer|null} args.priorCaddyfile - The Caddyfile bytes before this run.
  * @param {string|null} args.tailnetBackup - Where those bytes were copied.
  * @param {Function} args.finish - The run's `finish(code, error, extra)`.
+ * @param {object} [args.deps] - Seams for tests: `verify` (verifyTailnetApply),
+ *   `execFile` (execFileSync for launchctl) and `configStore` (the store's config API).
  * @returns {Promise<void>}
  */
-async function runTailnetVerification({ plan, ctx, localCheck, siteCheck, priorCaddyfile, tailnetBackup, finish }) {
-  const applied = await tailnetCutover.verifyTailnetApply([localCheck, siteCheck]);
+async function runTailnetVerification({
+  plan, ctx, localCheck, siteCheck, priorCaddyfile, tailnetBackup, finish, deps = {}
+}) {
+  const verify = deps.verify || tailnetCutover.verifyTailnetApply;
+  const execFile = deps.execFile || execFileSync;
+  const configStore = deps.configStore || store.config;
+  // The backup holds the prior file, which can carry a basic_auth hash. It is
+  // kept only while a recovery might need it.
+  const dropBackup = () => {
+    if (tailnetBackup) { try { fs.rmSync(tailnetBackup, { force: true }); } catch { /* best-effort cleanup */ } }
+  };
+  const applied = await verify([localCheck, siteCheck]);
   if (applied.ok) {
+    dropBackup();
     process.stdout.write(`  ✓ ${ctx.tailnetHost} answers healthy through Caddy; caddyTailnetHost is now ${ctx.tailnetHost}\n`);
     finish(CUTOVER_CODES.OK, null, { healthUrl: plan.healthUrl, healthOk: true, tailnetHost: ctx.tailnetHost });
     return;
@@ -1077,22 +1103,22 @@ async function runTailnetVerification({ plan, ctx, localCheck, siteCheck, priorC
       },
       readCaddyfile: () => (fs.existsSync(plan.caddyfile.path) ? fs.readFileSync(plan.caddyfile.path) : null),
       restoreConfig: (prior) => {
-        const cfg = store.config.load();
+        const cfg = configStore.load();
         cfg.caddyTailnetHost = prior;
-        store.config.save(cfg);
+        configStore.save(cfg);
       },
-      readTailnetHost: () => store.config.load().caddyTailnetHost || null,
+      readTailnetHost: () => configStore.load().caddyTailnetHost || null,
       reload: () => {
         // Caddy re-reads the restored file; the server re-reads the restored
         // config. Unload may fail harmlessly (job not loaded); load and the
         // kickstart may not.
         if (caddyPlist) {
-          try { execFileSync('launchctl', ['unload', caddyPlist.path], { stdio: ['ignore', 'ignore', 'pipe'] }); } catch { /* not loaded */ }
-          execFileSync('launchctl', ['load', caddyPlist.path], { stdio: ['ignore', 'ignore', 'pipe'] });
+          try { execFile('launchctl', ['unload', caddyPlist.path], { stdio: ['ignore', 'ignore', 'pipe'] }); } catch { /* not loaded */ }
+          execFile('launchctl', ['load', caddyPlist.path], { stdio: ['ignore', 'ignore', 'pipe'] });
         }
-        if (serverKick) execFileSync('launchctl', serverKick, { stdio: ['ignore', 'ignore', 'pipe'] });
+        if (serverKick) execFile('launchctl', serverKick, { stdio: ['ignore', 'ignore', 'pipe'] });
       },
-      verifyLocal: () => tailnetCutover.verifyTailnetApply([localCheck])
+      verifyLocal: () => verify([localCheck])
     }
   });
   const extra = {
@@ -1104,6 +1130,7 @@ async function runTailnetVerification({ plan, ctx, localCheck, siteCheck, priorC
     recovery: rollback.recovery
   };
   if (rollback.rolledBack) {
+    dropBackup();
     process.stderr.write(`Rolled back: the Caddyfile, caddyTailnetHost (${ctx.priorTailnetHost || 'none'}) and the reload are restored.\n`);
     finish(CUTOVER_CODES.TAILNET_ROLLED_BACK, `the moved tailnet site was not healthy (${cause}); rolled back`, extra);
     return;

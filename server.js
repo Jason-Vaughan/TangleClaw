@@ -11621,8 +11621,10 @@ if (require.main === module) {
     const bootTailnet = hostInventory.resolveTailnetHost(config);
     if (bootTailnet.drift) {
       log.warn('Configured tailnet host differs from the observed overlay name; the observed name '
-        + 'is refused until reconciled (direct mode: POST /api/setup/generate-cert '
-        + '{"reconcileTailnet": true}; caddy mode needs a cutover flow not in this version)',
+        + 'is refused until reconciled. Direct mode: POST /api/setup/generate-cert '
+        + '{"reconcileTailnet": true}. Caddy mode: POST /api/setup/generate-cert '
+        + '{"reconcileTailnet": "prepare"}, then node scripts/ingress-cutover.js --to caddy '
+        + `--tailnet-host ${bootTailnet.drift.observed}`,
       bootTailnet.drift);
     }
     // Start ttyd zombie-child watcher (#94). macOS-only; no-op elsewhere.

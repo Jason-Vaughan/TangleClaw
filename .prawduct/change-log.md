@@ -56,6 +56,16 @@ Chunk 2 of `.tangleclaw/plans/1905-magicdns-host-inventory.md`, dispatched by th
 
 **Mutations.** Each of these turns its tests red: dropping normalization, dropping the incoming name from prepare, and dropping the removal filter.
 
+**Critic.** Cumulative review `rev-20260926T205207Z-2b1d8491` found 1 blocking issue, 3 warnings and 4 notes.
+- Blocking, fixed: the boot drift warning and FEATURES said the caddy-mode flow did not exist. Both now name prepare and apply.
+- Fixed: `--tailnet-host` is refused unless the install is already in caddy mode (`tailnet-not-caddy-mode`). Before this, a direct install could cut over and then report a clean rollback while the ingress stayed switched.
+- Fixed: `runTailnetVerification` takes injectable `verify`, `execFile` and `configStore`. It is now driven against a temp Caddyfile for success, a rolled-back move, a failed reload and an unhealthy reload, which replaces a parity test that could not fail. Skipping the config restore turns two of those tests red.
+- Fixed: `strictHealth` settles on an aborted response.
+- Fixed: the verification promise has a `.catch` that still writes a result file.
+- Fixed: the wording now says validation runs before the Caddyfile, the config or launchd is touched, since the cert is already staged by then.
+- Fixed: the tailnet backup is dropped after a success or a proven rollback, and kept only for recovery.
+- Warning (stale test evidence): resolved by recording the suite on the final tree.
+
 ## 2026-09-26 — The detected MagicDNS name is served through one host inventory (#1905, Chunk 1)
 
 <!-- prawduct: type=bugfix | scope=1905-magicdns-host-inventory -->

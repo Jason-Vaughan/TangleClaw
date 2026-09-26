@@ -1,6 +1,6 @@
 ---
 title: "#1905 The detected MagicDNS name is refused with HOST_NOT_SERVED"
-status: Chunk 1 MERGED as PR #1919 (b8203241). Chunk 2 is in progress on fix/1905-tailnet-cutover, dispatched by the PM (d4027d15) after the merge, the Rule 69 sync and health verification.
+status: COMPLETE. Chunk 1 merged as PR #1919; Chunk 2 on fix/1905-tailnet-cutover, reviewed by cumulative rev-20260926T205207Z-2b1d8491 and verify-resolutions rev-20260926T205721Z-66a3ce57 (0 blocking). The Chunk 2 PR closes #1905.
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-26, message 0f830344 (dispatch to #1905, under R45 and R46). Architect rulings A17–A20, message 2f34bdfe. PM hold, message 3b23132e. Architect approval A21, message 43f5f31e. Chunk 2 dispatch, message d4027d15 (adds the A19 normalization tests).
 issues: [1905]
 scope: 1905-magicdns-host-inventory
@@ -221,4 +221,4 @@ Builder2 stops and reports to the PM at the end of each chunk.
 ## Status
 
 - [x] Chunk 1: inventory, host selection (A19), direct-mode reconcile (A18), caddy-mode refusal
-- [ ] Chunk 2: caddy-mode prepare/apply through the cutover, with rollback (A18)
+- [x] Chunk 2: caddy-mode prepare/apply through the cutover, with rollback (A18)
