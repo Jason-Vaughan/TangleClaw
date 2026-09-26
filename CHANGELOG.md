@@ -25,12 +25,12 @@ All notable changes to TangleClaw are documented in this file.
     - An engine seen busy reads `WORKING` whatever the receipt says.
     - `AVAILABLE` needs a current `complete` + `safe-to-clear` receipt *and* the engine observed at rest.
     - No receipt, a stale one or an expired one reads `UNKNOWN`. Receipts expire after 30 min for `working` and 120 min for the other states.
-    - A control hold, release, stop, rebind or close, a wrap request, or a wrap started after the receipt makes it stale.
+    - A control hold, release, stop, rebind or close, a wrap request (still counted after the wrap drawer acknowledges it), or a wrap started after the receipt makes it stale.
   - **What does not end a receipt:** ordinary messages supersede nothing. A typed dispatch will, once it exists.
   - **The read is cheap:** it captures no pane and runs no tmux. `tc workload show` gives a lane its own verdict.
   - **The operator can narrow a lane** (`POST /api/tc/workload/narrowing`): cap its clearance, or read it as `UNKNOWN`, and clear that later. A narrowing only lowers the verdict and can never hide a lane that is `WORKING`, `HELD` or `STOPPED`. No session, ProjectManager or Architect can narrow.
   - **The pane text is never parsed for clearance.** A test fails if shipped code starts matching "SAFE TO CLEAR" or "DO NOT CLEAR" in text.
-  - **On the dashboard:** a project card with a live session shows a badge (available, waiting, blocked, done-not-clear, held or stopped), and its detail panel has a **Workload** row with the same line `tc sessions` prints.
+  - **On the dashboard:** a project card with a live session shows a badge (available, waiting, blocked, done-not-clear, held or stopped), and its detail panel has a **Workload** row with the same line `tc sessions` prints If the fleet read fails, the badges clear rather than keep a stale "available".
   - **Guidance:** every engine's generated config now tells the session to report its workload and when, and `tc capabilities` lists `workload`.
   - **Reference:** `docs/fleet-workload.md`.
 

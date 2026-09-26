@@ -316,6 +316,14 @@ describe('a wrap request supersedes the receipt even after the drawer acknowledg
       const after = workloadFleet.laneFor(session, { observer, projectName: 'p', nowMs: receiptAt + 60000, wrap: wrap(receiptAt + 1000) });
       assert.equal(after.workload.staleReason, 'wrap-requested');
       assert.equal(after.composed.availability, 'UNKNOWN');
+
+      // A wrap run of THIS session started after the receipt supersedes it;
+      // a run of another session, or one that started before, does not.
+      const run = (sessionId, startedAt) => ({ wrapRun: () => ({ sessionId, startedAt }), wrapRequested: () => false, wrapRequestedAt: () => null });
+      const started = workloadFleet.laneFor(session, { observer, projectName: 'p', nowMs: receiptAt + 60000, wrap: run(9, receiptAt + 1000) });
+      assert.equal(started.workload.staleReason, 'wrap-started');
+      assert.equal(workloadFleet.laneFor(session, { observer, projectName: 'p', nowMs: receiptAt + 60000, wrap: run(10, receiptAt + 1000) }).composed.availability, 'AVAILABLE', 'another session\'s wrap does not');
+      assert.equal(workloadFleet.laneFor(session, { observer, projectName: 'p', nowMs: receiptAt + 60000, wrap: run(9, receiptAt - 1000) }).composed.availability, 'AVAILABLE', 'an earlier wrap does not');
     } finally {
       store.launchSequences.getBySession = realGetBySession;
       store.workloadReceipts.latestForLaunch = realLatest;
