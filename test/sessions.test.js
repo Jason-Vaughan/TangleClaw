@@ -1222,6 +1222,21 @@ describe('sessions', () => {
           `yielding must bring the prime within budget (got ${prompt.length})`);
       });
 
+      it('fits the prime to the hook budget minus reserveChars, so a line added afterwards still fits', () => {
+        const base = store.engines.get('claude');
+        const resPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-reserve-'));
+        store.projects.create({ name: 'reserve-test', path: resPath });
+        store.projectConfig.save(resPath, { engine: 'claude', silentPrime: true });
+        const resProject = store.projects.getByName('reserve-test');
+        const bare = sessions.generatePrimePrompt(resProject, base);
+        // A budget the unreserved prime fills exactly, so any reserve forces a yield.
+        const exact = { ...base, capabilities: { ...base.capabilities, startupInjection: { maxChars: bare.length } } };
+        assert.equal(sessions.generatePrimePrompt(resProject, exact), bare, 'precondition: it fits with nothing reserved');
+        const reserved = sessions.generatePrimePrompt(resProject, exact, { reserveChars: 80 });
+        assert.ok(reserved.length + 80 <= bare.length,
+          `the prime plus the reserve must fit the budget (got ${reserved.length} + 80 > ${bare.length})`);
+      });
+
       it('warns that directives are filling the channel BEFORE anything is dropped', () => {
         const { setLevel: setLogLevel } = require('../lib/logger');
         const base = store.engines.get('claude');
@@ -4235,6 +4250,132 @@ describe('sessions', () => {
       } finally {
         fs.rmSync(fakeProject, { force: true });
       }
+    });
+
+    it('_writePrimeFile writes the prime text exactly when provenance is off (ADR 0019)', () => {
+      const project = store.projects.getByName('silent-prime-test');
+      const out = sessions._writePrimeFile(project.path, '# prime\n', {
+        config: { provenanceWatermark: { enabled: false, template: 'x {project}' } }, project: 'silent-prime-test', engine: 'claude'
+      });
+      assert.equal(fs.readFileSync(out, 'utf8'), '# prime\n');
+    });
+
+    it('_writePrimeFile puts one provenance line first when the project opted in, and no second on rewrite', () => {
+      const project = store.projects.getByName('silent-prime-test');
+      const ctx = { config: { provenanceWatermark: { enabled: true, template: null } }, project: 'silent-prime-test', engine: 'claude' };
+      const out = sessions._writePrimeFile(project.path, '# prime\n', ctx);
+      sessions._writePrimeFile(project.path, '# prime\n', ctx);
+      assert.equal(fs.readFileSync(out, 'utf8'),
+        '<!-- tangleclaw:provenance Built by TangleClaw (Project: silent-prime-test) -->\n# prime\n');
+    });
+
+    it('launchSession stamps the prime file for a project that opted in, naming the project and engine', () => {
+      tmux.hasSession = (name) => name === 'silent-prime-test';
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+      const project = store.projects.getByName('silent-prime-test');
+      store.projectConfig.save(project.path, {
+        engine: 'claude',
+        silentPrime: true,
+        provenanceWatermark: { enabled: true, template: '{project} on {engine}' }
+      });
+
+      const result = sessions.launchSession('silent-prime-test');
+      assert.equal(result.error, null);
+
+      const lines = fs.readFileSync(path.join(project.path, '.tangleclaw', 'session-prime.md'), 'utf8').split('\n');
+      assert.equal(lines[0], `<!-- tangleclaw:provenance silent-prime-test on ${project.engineId} -->`);
+      assert.ok(!lines[1].includes('tangleclaw:provenance'), 'exactly one provenance line');
+      assert.ok(lines.slice(1).join('\n').length > 0, 'the prime itself follows');
+    });
+
+    it('launchSession keeps everything the SessionStart hook prints within the engine cap (#1888)', () => {
+      tmux.hasSession = (name) => name === 'silent-prime-test';
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+      const project = store.projects.getByName('silent-prime-test');
+      store.projectConfig.save(project.path, {
+        engine: 'claude', silentPrime: true, provenanceWatermark: { enabled: true, template: null }
+      });
+
+      // A cap the prime fills exactly when nothing is reserved. Without the
+      // launch reserving the companions and the provenance line, the hook
+      // would print the prime plus the advisory, past the cap, and the engine
+      // would inject only a preview.
+      // Yieldable project state, so the prime can give up the room the reserve
+      // needs. A bare fixture prime is mostly directives, which never yield, and
+      // at a cap this small they could not make room for anything.
+      const base = store.engines.get('claude');
+      const padding = [];
+      for (let i = 0; i < 12; i++) {
+        padding.push(store.learnings.create({
+          projectId: project.id, content: `Hook budget learning ${i}: ${'accumulated project state. '.repeat(10)}`, tier: 'active'
+        }));
+      }
+      const cap = sessions.generatePrimePrompt(project, base).length;
+      const originalGet = store.engines.get;
+      store.engines.get = (id) => {
+        const profile = originalGet.call(store.engines, id);
+        if (!profile || id !== 'claude') return profile;
+        return { ...profile, capabilities: { ...profile.capabilities, startupInjection: { maxChars: cap } } };
+      };
+      try {
+        assert.equal(sessions.launchSession('silent-prime-test').error, null);
+      } finally {
+        store.engines.get = originalGet;
+      }
+      // The advisory is written by the engine-config sync, which a launch runs
+      // or has run; write it here so the hook sees what a live project has.
+      require('../lib/provenance').writeOwnedFile(path.join(project.path, '.tangleclaw', 'ui-wrap-advisory.md'),
+        'ui-wrap-advisory', require('../lib/prime-hook-output').UI_WRAP_ADVISORY_TEXT,
+        { config: store.projectConfig.load(project.path), project: project.name, engine: 'claude' });
+
+      const hook = path.join(__dirname, '..', 'data', 'hooks', 'sessionstart-prime-claude.sh');
+      for (const source of ['startup', 'clear']) {
+        const r = require('node:child_process').spawnSync('bash', [hook], {
+          env: { ...process.env, CLAUDE_PROJECT_DIR: project.path },
+          input: JSON.stringify({ source }), encoding: 'utf8'
+        });
+        assert.ok(r.stdout.includes('tangleclaw:provenance'), 'the stamped files are what the hook printed');
+        assert.ok(r.stdout.length <= cap, `${source}: the hook printed ${r.stdout.length} against a ${cap} cap`);
+      }
+      for (const l of padding) store.learnings.delete(l.id);
+    });
+
+    it('launchSession renders the default over a corrupt stored template and logs why, once', () => {
+      tmux.hasSession = (name) => name === 'silent-prime-test';
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+      const project = store.projects.getByName('silent-prime-test');
+      store.projectConfig.save(project.path, {
+        engine: 'claude', silentPrime: true,
+        provenanceWatermark: { enabled: true, template: 'Generated by TangleClaw' }
+      });
+      const { setLevel: setLogLevel } = require('../lib/logger');
+      const logged = [];
+      const originalWrite = process.stdout.write.bind(process.stdout);
+      setLogLevel('warn');
+      process.stdout.write = (chunk, ...rest) => { logged.push(String(chunk)); return originalWrite(chunk, ...rest); };
+      let result;
+      try {
+        result = sessions.launchSession('silent-prime-test');
+      } finally {
+        process.stdout.write = originalWrite;
+        setLogLevel('error');
+      }
+      assert.equal(result.error, null, 'a corrupt template never blocks the launch');
+      const text = fs.readFileSync(path.join(project.path, '.tangleclaw', 'session-prime.md'), 'utf8');
+      assert.ok(text.startsWith('<!-- tangleclaw:provenance Built by TangleClaw (Project: silent-prime-test) -->\n'));
+      assert.equal(logged.filter((l) => l.includes('Provenance template ignored')).length, 1);
+    });
+
+    it('launchSession leaves the prime file unstamped when provenance is not configured', () => {
+      tmux.hasSession = (name) => name === 'silent-prime-test';
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+      const project = store.projects.getByName('silent-prime-test');
+      store.projectConfig.save(project.path, { engine: 'claude', silentPrime: true });
+
+      const result = sessions.launchSession('silent-prime-test');
+      assert.equal(result.error, null);
+      const text = fs.readFileSync(path.join(project.path, '.tangleclaw', 'session-prime.md'), 'utf8');
+      assert.ok(!text.includes('tangleclaw:provenance'));
     });
 
     it('launchSession writes prime file when projConfig.silentPrime is true', () => {

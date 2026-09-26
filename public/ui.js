@@ -1701,6 +1701,12 @@ function openSettings(name) {
   // through an engine with no idle signature — claude -> codex -> claude would
   // silently drop a tick the operator had just made.
   let medusaWakeNow = initialMedusaWakeChecked;
+  // Provenance line (#1885) — engine-agnostic control, off by default. What
+  // each engine's files carry is said in the hint, since the answer is per
+  // file rather than per engine.
+  // `enrichProject` always sends the default template, so it is never restated here.
+  const provenanceSetting = project.provenanceWatermark
+    || { enabled: false, template: null, defaultTemplate: '', warning: null };
   document.getElementById('settingsBody').innerHTML = `
     <div class="form-group">
       <label class="form-label" for="settingsName">Name</label>
@@ -1753,8 +1759,39 @@ function openSettings(name) {
         </label>
         <div class="form-hint">What a wrap does to this project's session when it completes, if whoever started it did not choose: another session, the Project Manager or a script. On, the session keeps running; off, the wrap ends it. The wrap dialog starts from this setting and can override it for one wrap. A wrap that stops, fails or is cancelled always leaves the session running.</div>
       </div>
+      <div class="form-group">
+        <label class="gs-toggle-label">
+          <span>Mark generated files with this project's name</span>
+          <input type="checkbox" id="settingsProvenance" ${provenanceSetting.enabled ? 'checked' : ''}>
+          <span class="toggle-switch"></span>
+        </label>
+        <label class="form-label" for="settingsProvenanceTemplate">Provenance line</label>
+        <input type="text" class="form-input" id="settingsProvenanceTemplate" maxlength="120"
+               placeholder="${esc(provenanceSetting.defaultTemplate)}" value="${esc(provenanceSetting.template || '')}"
+               autocomplete="off" autocorrect="off" autocapitalize="off">
+        <div class="form-hint" id="settingsProvenancePreview"></div>
+        ${provenanceSetting.warning ? `<div class="form-hint" style="color:var(--danger)">${esc(provenanceSetting.warning)}</div>` : ''}
+        <div class="form-hint">Adds one comment line naming this project to the files TangleClaw writes whole and keeps private: the session prime and re-entry notes (while silent prime is on), the UI wrap advisory, and a <code>.codex.yaml</code> or <code>.aider.conf.yml</code> that git ignores. It never touches <code>CLAUDE.md</code>, <code>AGENTS.md</code>, a config file git does not ignore, or any other file you own, so on an engine with no config file (OpenClaw) only the files in <code>.tangleclaw/</code> carry it. Off by default. Leave the line blank for the default; <code>{project}</code> and <code>{engine}</code> are the only placeholders. A change reaches each file the next time TangleClaw regenerates it — usually the next session launch — not when you save.</div>
+      </div>
     </div>
     ${renderProjectRulesSection(project)}`;
+
+  // Provenance preview (#1885): what the line will read, with this project's
+  // name and the engine now selected. `tcProvenancePreview` owns the wording.
+  const renderProvenancePreview = () => {
+    const templateEl = document.getElementById('settingsProvenanceTemplate');
+    const enabledEl = document.getElementById('settingsProvenance');
+    const previewEl = document.getElementById('settingsProvenancePreview');
+    if (!templateEl || !enabledEl || !previewEl) return;
+    const engineEl = document.getElementById('settingsEngine');
+    previewEl.textContent = tcProvenancePreview(templateEl.value, provenanceSetting.defaultTemplate,
+      { project: name, engine: engineEl ? engineEl.value : '' }, enabledEl.checked);
+  };
+  renderProvenancePreview();
+  ['settingsProvenanceTemplate', 'settingsProvenance', 'settingsEngine'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener(id === 'settingsProvenanceTemplate' ? 'input' : 'change', renderProvenancePreview);
+  });
 
   /**
    * Re-render both index toggles for an engine and a silent-prime state,
@@ -3037,6 +3074,15 @@ async function doSaveSettings() {
   const medusaWakeEl = document.getElementById('settingsMedusaWake');
   if (medusaWakeEl) {
     body.medusaWake = medusaWakeEl.checked;
+  }
+  // Provenance line (#1885) — only the half the operator changed, so an
+  // unrelated save never writes it (`tcProvenancePatch`).
+  const provenanceEl = document.getElementById('settingsProvenance');
+  const provenanceTemplateEl = document.getElementById('settingsProvenanceTemplate');
+  if (provenanceEl && provenanceTemplateEl) {
+    const storedProvenance = (state.projects.find(p => p.name === settingsTarget) || {}).provenanceWatermark || null;
+    const provenancePatch = tcProvenancePatch(storedProvenance, provenanceEl.checked, provenanceTemplateEl.value);
+    if (provenancePatch) body.provenanceWatermark = provenancePatch;
   }
   // CC-6 (#381): wrap-summary section selection. undefined → not rendered (skip);
   // null → all 8 (clear override); array → the chosen subset.

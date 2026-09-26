@@ -4620,6 +4620,39 @@ route('GET', '/api/tc/start/review', (req, res) => {
 });
 
 /**
+ * The `provenance-watermark` capability row for whoami (ADR 0019): whether
+ * this project stamps its private generated files, and which ones. Read-only —
+ * the setting is the operator's, changed in Project Settings, so the detail
+ * names no mutation route. Surfaces are reported by id, never by path.
+ * @param {object|null} project - The resolved project row, if any.
+ * @param {object|null} projConfig - That project's config (defaults merged).
+ * @returns {{id: string, enabled: boolean, detail: string}}
+ */
+function _provenanceCapability(project, projConfig) {
+  if (!project || !projConfig) {
+    return { id: 'provenance-watermark', enabled: false, detail: 'unavailable: this call did not resolve to a registered project' };
+  }
+  let report;
+  try {
+    report = engines.provenanceSurfaces(project.path, projConfig, project.engineId, engines.resolveProfile(project.engineId));
+  } catch (err) {
+    // prawduct:allow prawduct/broad-except -- a read-only report must not cost
+    // the caller the rest of its capability roster; the failure is named instead.
+    log.warn('Could not report the provenance surfaces', { project: project.name, error: err.message });
+    return { id: 'provenance-watermark', enabled: false, detail: 'unavailable: TangleClaw could not read this project\'s provenance setting' };
+  }
+  const unstamped = report.unstamped.map((u) => `${u.surfaceId} (${u.reason})`).join(', ');
+  const scope = `surfaces that carry it: ${report.stamped.join(', ')}${unstamped ? `; not: ${unstamped}` : ''}`;
+  return {
+    id: 'provenance-watermark',
+    enabled: report.enabled,
+    detail: report.enabled
+      ? `a "tangleclaw:provenance" line names this project on its private generated files, each at its next regeneration — ${scope}. The operator sets it in Project Settings`
+      : `off for this project: no generated file carries a provenance line. If the operator turns it on in Project Settings, ${scope}`
+  };
+}
+
+/**
  * The `startup-control` capability row for whoami (#1825): whether the
  * startup prompt can be fired at this session through its engine's native
  * channel. Reported disabled, with the reason, rather than omitted.
@@ -4743,6 +4776,7 @@ route('GET', '/api/tc/whoami', (req, res) => {
       detail: `which commit each live session is on and how it stands against origin/main: \`tc freshness\`, or GET ${api}/api/checkouts (your own row and your project groups' rows; send x-tangleclaw-project-id and x-tangleclaw-launch-id)`
     },
     _startupControlCapability(activeSession),
+    _provenanceCapability(project, projConfig),
     {
       id: 'switchboard', enabled: medusaEnabled && !!workspaceId,
       detail: medusaEnabled && workspaceId
@@ -6265,6 +6299,7 @@ route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
     silentPrime: result.project.silentPrime,
     medusaEnabled: result.project.medusaEnabled,
     medusaWake: result.project.medusaWake,
+    provenanceWatermark: result.project.provenanceWatermark,
     defaultLaunchMode: result.project.defaultLaunchMode,
     showLaunchModePicker: result.project.showLaunchModePicker,
     updatedAt: result.project.updatedAt

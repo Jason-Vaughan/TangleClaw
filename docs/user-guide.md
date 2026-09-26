@@ -310,6 +310,31 @@ directory keeps failing. **You do not need to restart anything**; the list fills
 the next attempt that succeeds. The wizard's Scan and Create buttons are not affected — those
 always read the directory for real, because you just asked them to.
 
+### Marking Generated Files With the Project's Name
+
+A project can mark the files TangleClaw generates for it with one comment line naming the project,
+so a file found later can be traced back to the project that produced it. Open the project's
+**Settings** and turn on **Mark generated files with this project's name**. It is off by default,
+and while it is off every file is exactly what it would otherwise be.
+
+The line reads `Built by TangleClaw (Project: <name>)` unless you type your own in **Provenance
+line**. Only `{project}` and `{engine}` may be filled in, and a preview under the field shows the
+result. Clear the field to go back to the default.
+
+The line goes only on files TangleClaw writes whole and keeps private:
+
+- the session prime and re-entry notes in `.tangleclaw/`, which exist only while silent prime is on;
+- the UI wrap advisory in `.tangleclaw/`;
+- a `.codex.yaml` or `.aider.conf.yml` that git ignores. If one becomes tracked, it loses the line
+  the next time it is regenerated.
+
+It never goes on `CLAUDE.md`, `AGENTS.md`, or any other file you own or commit. OpenClaw has no
+config file, so there only the files in `.tangleclaw/` carry it.
+
+Saving the setting rewrites nothing. Each file picks up the change the next time TangleClaw
+regenerates it, which is usually the next session launch. An agent can see what the setting reaches
+with `tc capabilities`, which reports it read-only.
+
 ## Sessions
 
 Sessions are the core of TangleClaw — they're how you interact with AI engines on your projects.
