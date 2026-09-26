@@ -19,7 +19,8 @@ Branch: `fix/1900-install-caddy-refusal`. Archive this plan when #1900 closes.
   point nothing has been installed, built or written. A missing config, or one without
   `ingressMode`, means direct, matching the store default.
 - `ingressMode === 'caddy'` refuses with two commands: `node scripts/ingress-cutover.js --to caddy`
-  to refresh the caddy install, and `--to direct` to switch the host. Neither command points a
+  re-applies the caddy-mode ttyd and Caddy plists, and `--to direct` switches the host. The refusal
+  and the README say that the other install.sh assets have no caddy-mode refresh yet (#1901). Neither command points a
   caddy host back at the installer, which matches ADR 0018 §4.
 - A config that exists but cannot be parsed also refuses. The mode is unknown, and `store.load()`
   throws `CONFIG_LOAD_FAILED` on the same file, so the server would not start either.
@@ -30,7 +31,7 @@ Branch: `fix/1900-install-caddy-refusal`. Archive this plan when #1900 closes.
 `ingress-cutover.js --to direct`; install.sh gets no override flag.]** An install.sh flag that
 went ahead on a caddy config would install the direct plist while the server still expects the
 socket, which is the #1900 outage again. The cutover is the only writer of `ingressMode`, and it
-already rewrites the plist and restarts. The PM can veto this.
+already rewrites the plist and restarts. Ratified by the PM over Medusa on 2026-09-26 (no veto).
 
 ## Tests
 

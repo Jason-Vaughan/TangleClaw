@@ -326,7 +326,7 @@ node scripts/apply-update.js   # same guarded applier as the button
 launchctl kickstart -k gui/$(id -u)/com.tangleclaw.server
 ```
 
-Run `./deploy/install.sh` **only** when a release changed a launchd plist or another deploy asset — it reloads both agents itself, so it replaces the `kickstart` above rather than following it.
+Run `./deploy/install.sh` **only** when a release changed a launchd plist or another deploy asset, and only on a direct-mode host — it reloads both agents itself, so it replaces the `kickstart` above rather than following it. On a caddy-mode host (the default since v5) it refuses, because it writes the direct-mode ttyd plist and would cut the dashboard off. There, `node scripts/ingress-cutover.js --to caddy` re-applies the ttyd and Caddy plists. The other assets install.sh writes (the server plist, `~/.tmux.conf`, dependencies) have no caddy-mode refresh yet — [#1901](https://github.com/Jason-Vaughan/TangleClaw/issues/1901).
 
 Use the script rather than `git pull`. A successful update leaves the checkout **detached at the release tag**, which is the intended state — pulling a branch on top of that moves you to an unreleased commit, and the updater then refuses to run again because HEAD no longer sits on a tag. The script fetches and checks out the release tag itself, and fails closed on a dirty tree or a branch that isn't meant to be updated.
 

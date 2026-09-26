@@ -123,12 +123,14 @@ if [ "$INGRESS_MODE" = "caddy" ]; then
   red "ERROR: this host's persisted ingress mode is 'caddy' (${CONFIG_FILE})."
   red "       install.sh writes the DIRECT-mode ttyd plist and restarts the services,"
   red "       which would cut the dashboard off. Nothing was changed."
-  red "       To refresh this caddy-mode install:  node scripts/ingress-cutover.js --to caddy"
-  red "       To switch this host to direct mode:  node scripts/ingress-cutover.js --to direct"
+  red "       To re-apply the caddy-mode ttyd and Caddy plists:  node scripts/ingress-cutover.js --to caddy"
+  red "       To switch this host to direct mode:                node scripts/ingress-cutover.js --to direct"
   red "       (after switching to direct, deploy/install.sh runs normally)"
+  red "       The other assets this script writes (server plist, ~/.tmux.conf, dependencies)"
+  red "       have no caddy-mode refresh yet: https://github.com/Jason-Vaughan/TangleClaw/issues/1901"
   exit 1
 elif [ "$INGRESS_MODE" = "unreadable" ]; then
-  red "ERROR: cannot read the ingress mode from ${CONFIG_FILE} (not valid JSON)."
+  red "ERROR: cannot read the ingress mode: ${CONFIG_FILE} could not be read or parsed."
   red "       install.sh rewrites the ttyd plist for DIRECT mode, which cuts off a"
   red "       caddy-mode dashboard, so it refuses rather than guess. Nothing was changed."
   red "       Fix or restore that file (the server cannot start with it either), then re-run."
