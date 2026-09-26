@@ -68,6 +68,12 @@ passes; CHANGELOG `### Fixed`; chunk Critic clean.
 `project` through the existing route, using the Chunk 2 encoder. Details settle when the chunk
 starts (read the ports panel and the route first).
 
+**[DECISION] The badge and undo are per group (owner name), not per lease.** The banner marks a
+name on every host (no `host` sent), and the panel already groups by name, so the undo mirrors it:
+one button resets every lease under the name. A lease marked external on one host only (possible
+through the API with `host`) still shows the group badge; the undo then resets that name on every
+host. Per-lease undo was rejected as a second control for a case nothing in the UI can create.
+
 **Done when.** UI test for the badge and the undo call; CHANGELOG `### Added`; chunk Critic clean,
 then the cumulative review before the PR.
 

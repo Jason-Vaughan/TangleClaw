@@ -175,6 +175,8 @@ Below the system stats, there's a collapsible **Ports** panel. Tap it to see all
 - **Service** — what the port is used for (e.g., "ttyd", "server")
 - **Type badge** — "permanent" for infrastructure ports, "TTL" for time-limited leases
 
+An owner you marked **Not a project** from the import banner (a `brew services` database, say) carries a **Not a project** badge on its group. Its **Is a project** button undoes the mark for every lease under that name; the import banner then offers the owner again.
+
 TangleClaw manages port assignments directly in its SQLite database. Leases survive server restarts (unlike the old PortHub daemon). The panel auto-refreshes every 30 seconds.
 
 TangleClaw also periodically scans the system for listening TCP ports using `lsof`. When you check a port's availability (via API or internally), TangleClaw will detect conflicts with ports bound by processes outside its registry — even if no lease exists for that port. This helps prevent "port already in use" errors when launching services.

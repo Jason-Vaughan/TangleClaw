@@ -6,6 +6,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **The ports panel shows which lease owners are marked "Not a project", and can undo the mark** (#1768). Marking an owner from the import banner used to leave no trace on the dashboard, and only a raw `POST /api/ports/owner-kind` reversed it. The owner's group now carries a **Not a project** badge and an **Is a project** button, which resets every lease under the name through the same route and re-checks the import banner.
+
 - **Unanswered Medusa messages no longer wait silently: a delivery watchdog tracks each one and escalates it** (#1839, experimental). Until now TangleClaw recorded only wake nudges, so a message stored on the Hub but never read looked the same as one handled, and a blocked sender waited until the operator noticed a badge. The operator guide is `docs/medusa-delivery.md`.
   - **Each ordinary message to a recipient is now an exchange.** Its facts (sent, arrived, wake, read, acknowledged, replied, closed) are append-only, and the exchange's state is recomputed from them, so facts that race or arrive out of order still give the same answer.
   - **A send is recorded before the Hub is called.** A send whose Hub outcome is lost stays `send_unknown` rather than being retried or assumed delivered.

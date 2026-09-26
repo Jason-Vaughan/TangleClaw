@@ -1396,6 +1396,17 @@ function renderPorts() {
     const isOpen = state.portGroupsOpen[project] !== false;
     const arrowClass = isOpen ? 'arrow open' : 'arrow';
     const contentClass = isOpen ? 'port-group-content open' : 'port-group-content';
+    // An owner marked "Not a project" (#1381) is marked by name, so the badge
+    // and its undo belong to the group, not a single lease.
+    const external = leases.some(l => l.ownerKind === 'external');
+    // The undo sits inside the toggle row: it stops click AND keydown, or Enter
+    // on the button would also reach the row's handler, which folds the group
+    // and cancels the press with preventDefault.
+    const ownerKind = external
+      ? `<span class="port-owner-kind" title="Marked as not a TangleClaw project. The import banner and the boot sweep skip its leases.">Not a project</span>
+      <button class="btn btn-compact port-owner-undo" onclick="event.stopPropagation(); markLeaseOwnerProject(${jsArg(project)})"
+        onkeydown="event.stopPropagation()" title="Undo the Not a project mark">Is a project</button>`
+      : '';
 
     html += `<div class="port-group">`;
     html += `<div class="port-group-toggle" role="button" tabindex="0"
@@ -1404,6 +1415,7 @@ function renderPorts() {
       <span class="${arrowClass}">&#9660;</span>
       <span class="port-group-name">${esc(project)}</span>
       <span style="color:var(--text-muted);font-size:10px">(${leases.length})</span>
+      ${ownerKind}
     </div>`;
     html += `<div class="${contentClass}">`;
     for (const lease of leases) {
@@ -4119,6 +4131,19 @@ async function markLeaseOwnerExternal(name) {
   const result = await apiMutate('/api/ports/owner-kind', 'POST', { project: name, ownerKind: 'external' });
   if (!result) return;
   dismissImportBanner();
+  await loadPorts();
+  checkPortImports();
+}
+
+/**
+ * Undo the "Not a project" mark (#1768): record that a lease owner IS a
+ * TangleClaw project again, for every lease under the name, then refresh the
+ * panel and re-check the import banner, which offers the owner again.
+ * @param {string} name - Owner name as it appears on the leases
+ */
+async function markLeaseOwnerProject(name) {
+  const result = await apiMutate('/api/ports/owner-kind', 'POST', { project: name, ownerKind: 'project' });
+  if (!result) return;
   await loadPorts();
   checkPortImports();
 }
