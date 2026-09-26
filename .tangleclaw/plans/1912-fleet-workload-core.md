@@ -1,6 +1,6 @@
 ---
 title: "Fleet Workload Visibility, Phase A: launch-bound workload receipts, a bounded activity observer, and the composed fleet read (#1912)"
-status: IN PROGRESS: A1 (a6dc0d77) and A2 (72e6fe69) done, reviews rev-20260926T195653Z-6ae71db9 and rev-20260926T200610Z-7439e104, 0 blocking; A3 building
+status: IN PROGRESS: A1–A3 done (a6dc0d77, 72e6fe69, 2bfdef7e, fixes 82019405; reviews ...6ae71db9, ...7439e104, ...86152bfc, verify ...ecd5128a, 0 blocking outstanding); A4 building
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-26 (message 806b9000), after Architect ruling FWV-A18 approved ADR 0020 at 533b1386
 contract: docs/adr/0020-session-workload-receipts.md (PR #1916). This plan implements it and does not restate it; where the two differ, the ADR wins and this plan is corrected.
 controlling_train_plan: /Users/jasonvaughan/Documents/Projects/TangleClaw-ProjectManager/.tangleclaw/plans/train-fleet-workload-visibility.md (the PM's; Phase A = A.1–A.3, A.4 typed dispatch excluded)
@@ -87,6 +87,12 @@ authorized by FWV-A18); Phase B (#1877); Phase C (#1889); Project Master workloa
 
 ## Chunk A4: the dashboard view, guidance and docs (ADR §9–§10)
 
+**Carried in from the A3 verify pass (they ride this chunk's commit):**
+- **O-1:** move the `ACTIVITY_REASONS` block in `lib/medusa-wake.js` so `_FLEET_RE`'s explanatory comment sits directly on `_FLEET_RE` again.
+- **O-2:** retitle the R-2 test to "a stopped project reads STOPPED …", and add the case of an assignment with no bound launch.
+
+**Before the PR:** sync `main`, which now carries ADR 0020 through #1916. Then `prawduct-hook backlog sync --repo Jason-Vaughan/TangleClaw`, the full suite with recorded evidence, and the cumulative review.
+
 - The dashboard/fleet view renders the same response.
 - The injected operational guide and `tc capabilities` gain `tc workload set` and when to emit it.
 - User guide, FEATURES and CHANGELOG `### Added`.
@@ -101,5 +107,5 @@ PR #1916 (ADR 0020) merges before this branch's PR. This branch syncs `main` bef
 
 - [x] Chunk A1: receipts and write surface
 - [x] Chunk A2: activity observer
-- [ ] Chunk A3: composition, supersession, overrides, fleet read
+- [x] Chunk A3: composition, supersession, overrides, fleet read
 - [ ] Chunk A4: dashboard, guidance, docs; cumulative review + PR (not merged by this session)
