@@ -1,6 +1,6 @@
 ---
 title: "#1637 Restart Session: a one-click relaunch on the ended bar after a completed wrap"
-status: CHUNK 01 BUILT AND REVIEWED (2026-09-26). Chunk 02 waits for PM dispatch after the V5 Bridge /clear.
+status: CHUNKS 01 AND 02 BUILT (2026-09-26). Chunk 02 dispatched by the PM (Medusa 343a758e); cumulative Critic rev-20260926T042927Z-787c1eed. PR opened for PM merge.
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-26, message fb7882f1 ("initialize the new Train on a fresh branch, create the plan, and begin Chunk 01").
 issues: [1637]
 governed_by:
