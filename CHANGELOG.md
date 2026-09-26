@@ -193,6 +193,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **`deploy/install.sh` refuses to run on a caddy-mode host instead of cutting the dashboard off (#1900).** It used to rewrite the ttyd plist for direct mode (TCP 3100) and restart the services wherever it ran, so on a host whose persisted `ingressMode` is `caddy` the server lost its ttyd socket and the dashboard answered 502. The installer now reads the persisted mode right after checking Node.js, before it installs, builds or writes anything, and on a caddy host it stops with nothing changed. It names the switch for each mode: `node scripts/ingress-cutover.js --to caddy` to refresh the caddy install, or `--to direct` to move the host to direct mode, after which the installer runs normally. A `config.json` that cannot be parsed also refuses, since the mode is unknown and the server will not start with that file either. A missing config, or one without `ingressMode`, is direct mode as before.
+
 - **Closing a terminal tab no longer leaks a pseudo-terminal on macOS: TangleClaw ships its own ttyd** (#1245, ADR 0018). ttyd stops reading a terminal once its tab closes. On macOS the terminal's process cannot finish exiting while its last output is unread, so it stuck, holding a pseudo-terminal, until ttyd restarted. That is why the watcher restarted ttyd every few hours.
   - **The fix:** launchd now runs a TangleClaw-owned ttyd 1.7.7 at `~/.tangleclaw/bin/ttyd` that keeps reading and discarding that output until the process exits.
   - **It is self-contained:** it loads only macOS system libraries, so a Homebrew upgrade cannot break it. It is built reproducibly from pinned, verified sources with `node scripts/build-ttyd.js`.

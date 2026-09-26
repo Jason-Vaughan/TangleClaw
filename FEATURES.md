@@ -480,7 +480,7 @@ fails any auto-stub section older than 14 days.
 - **System stats** — CPU / mem / disk for the landing page. `lib/system.js`.
 - **Port scanner** — local-port introspection for the PortHub UI. `lib/port-scanner.js`.
 - **PID file** — single-instance guard. `lib/pidfile.js`.
-- **Installer** — bootstrap script for fresh hosts. `deploy/install.sh`. macOS-only by explicit guard; the Homebrew bootstrap downloads, checks, then executes as separate steps so each failure mode reports honestly (#614, #615). Tests: `test/install-sh.test.js`.
+- **Installer** — bootstrap script for fresh hosts. `deploy/install.sh`. macOS-only by explicit guard; the Homebrew bootstrap downloads, checks, then executes as separate steps so each failure mode reports honestly (#614, #615). Refuses a host whose persisted ingress mode is caddy, or whose config cannot be parsed, before any install, build or plist write, naming the cutover for each mode (#1900). Tests: `test/install-sh.test.js`.
 - **Detached ttyd attach** — helper for reconnecting to the shared ttyd. `deploy/ttyd-attach.sh`.
 - **Owned ttyd runtime** (#1245, [ADR 0018](docs/adr/0018-owned-ttyd-runtime.md)): launchd runs a self-contained ttyd 1.7.7 at `~/.tangleclaw/bin/ttyd`, carrying ttyd PR #1573 and the Darwin drain-after-close fix. After a websocket closes, it keeps reading and discarding PTY output until EOF, so the session leader can exit instead of wedging with its PTY.
   - **Inputs:** `deploy/ttyd/inputs.json` pins every source, patch, the CMake wheel and the static build flags.

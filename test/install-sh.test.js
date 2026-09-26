@@ -510,6 +510,159 @@ describe('deploy/install.sh', () => {
     });
   });
 
+  // #1900: on a caddy-mode host install.sh rewrote the ttyd plist for DIRECT
+  // mode and restarted it, cutting the dashboard off with a 502. The refusal
+  // must happen before ANY mutation, so these tests run the real script and
+  // compare the sandbox HOME byte for byte before and after.
+  describe('ingress-mode guard (#1900, executed)', () => {
+    const { execFileSync } = require('node:child_process');
+    const os = require('node:os');
+
+    /**
+     * Build a sandbox whose PATH holds the real node and `which` (the guard
+     * parses the config with node) and stubs for every tool that mutates the
+     * machine. Each stub records its call in `calls.log` and fails, so a guard
+     * that let the script through is visible and still contained. A `brew` on
+     * PATH also keeps ensure_homebrew away from its absolute-path probes.
+     * @param {string|null} configBody - config.json contents, or null for none
+     * @returns {{ bin: string, home: string, calls: string }}
+     */
+    function sandbox(configBody) {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-install-guard-'));
+      const bin = path.join(root, 'bin');
+      const home = path.join(root, 'home');
+      const calls = path.join(root, 'calls.log');
+      fs.mkdirSync(bin);
+      fs.mkdirSync(home);
+      fs.symlinkSync(process.execPath, path.join(bin, 'node'));
+      for (const real of ['dirname', 'which']) {
+        const found = ['/usr/bin', '/bin'].map((d) => path.join(d, real)).find((p) => fs.existsSync(p));
+        if (found) fs.symlinkSync(found, path.join(bin, real));
+      }
+      const stubs = { uname: 'echo Darwin' };
+      // ttyd, tmux, mkcert and caddy are deliberately NOT stubbed: an absent ttyd
+      // sends ensure_dep to the failing brew stub, which stops the script before
+      // it can reach the real ttyd-runtime.js provision build.
+      for (const name of ['brew', 'curl', 'launchctl']) {
+        stubs[name] = `echo "${name} $*" >> "${calls}"; exit 99`;
+      }
+      for (const [name, body] of Object.entries(stubs)) {
+        const p = path.join(bin, name);
+        fs.writeFileSync(p, `#!/bin/sh\n${body}\n`);
+        fs.chmodSync(p, 0o755);
+      }
+      if (configBody !== null) {
+        fs.mkdirSync(path.join(home, '.tangleclaw'));
+        fs.writeFileSync(path.join(home, '.tangleclaw', 'config.json'), configBody);
+      }
+      return { bin, home, calls };
+    }
+
+    /**
+     * Snapshot every file under a directory as relative path → contents.
+     * @param {string} dir
+     * @returns {Record<string, string>}
+     */
+    function snapshot(dir) {
+      const out = {};
+      for (const entry of fs.readdirSync(dir, { recursive: true, withFileTypes: true })) {
+        const full = path.join(entry.parentPath || entry.path, entry.name);
+        out[path.relative(dir, full)] = entry.isFile() ? fs.readFileSync(full, 'utf8') : '<dir>';
+      }
+      return out;
+    }
+
+    /**
+     * Run install.sh in the sandbox.
+     * @param {{ bin: string, home: string }} box
+     * @returns {{ code: number, output: string }}
+     */
+    function runInstall(box) {
+      try {
+        const output = execFileSync('/bin/bash', [SCRIPT_PATH], {
+          env: { PATH: box.bin, HOME: box.home },
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 30000
+        });
+        return { code: 0, output };
+      } catch (err) {
+        return { code: err.status, output: `${err.stdout || ''}${err.stderr || ''}` };
+      }
+    }
+
+    /**
+     * Read the stub call log, empty when no stub ran.
+     * @param {{ calls: string }} box
+     * @returns {string}
+     */
+    function stubCalls(box) {
+      return fs.existsSync(box.calls) ? fs.readFileSync(box.calls, 'utf8') : '';
+    }
+
+    it('is positioned before every dependency install, build, plist write and restart', () => {
+      // Safety interlock: the executed tests below rely on the script stopping
+      // at the guard. If it moved later, fail here instead of running further.
+      const guardAt = script.search(/if \[ "\$INGRESS_MODE" = "caddy" \]/);
+      assert.notEqual(guardAt, -1, 'the ingress-mode guard must exist');
+      for (const re of [/ensure_dep ttyd/, /ttyd-runtime\.js" provision/, /mkdir -p "\$LAUNCH_AGENTS_DIR"/,
+        /> "\$\{LAUNCH_AGENTS_DIR\}\/\$\{TTYD_PLIST\}"/, /launchctl unload/, /launchctl load/, /cp "\$TMUX_CONF_SRC"/]) {
+        const at = script.search(re);
+        assert.notEqual(at, -1, `expected to find ${re}`);
+        assert.ok(guardAt < at, `the guard must precede ${re}`);
+      }
+    });
+
+    it('refuses a caddy-mode host with zero mutation and names the mode-appropriate repair', () => {
+      const box = sandbox(JSON.stringify({ ingressMode: 'caddy', httpsEnabled: false }));
+      const before = snapshot(box.home);
+      const { code, output } = runInstall(box);
+
+      assert.equal(code, 1, 'must exit non-zero on a caddy-mode host');
+      assert.deepEqual(snapshot(box.home), before, 'HOME must be byte-identical after the refusal');
+      assert.equal(stubCalls(box), '', 'no brew, launchctl or other mutating tool may run');
+      assert.match(output, /ingress mode is 'caddy'/);
+      assert.match(output, /node scripts\/ingress-cutover\.js --to caddy/,
+        'must name the caddy-mode refresh');
+      assert.match(output, /node scripts\/ingress-cutover\.js --to direct/,
+        'must name the explicit switch to direct mode');
+      assert.match(output, /Nothing was changed/);
+    });
+
+    it('refuses an unparseable config with zero mutation rather than guessing direct', () => {
+      const box = sandbox('{ "ingressMode": "caddy", ');
+      const before = snapshot(box.home);
+      const { code, output } = runInstall(box);
+
+      assert.equal(code, 1, 'must exit non-zero when the mode cannot be read');
+      assert.deepEqual(snapshot(box.home), before, 'HOME must be byte-identical after the refusal');
+      assert.equal(stubCalls(box), '', 'no mutating tool may run');
+      assert.match(output, /cannot read the ingress mode/);
+    });
+
+    for (const [label, body] of [
+      ['a persisted direct mode', JSON.stringify({ ingressMode: 'direct' })],
+      ['a config without ingressMode', JSON.stringify({ httpsEnabled: false })],
+      ['no config (first install)', null]
+    ]) {
+      it(`lets ${label} through to the dependency step`, () => {
+        // Safety interlock: the failing brew stub must stop the script at the
+        // ttyd dependency, before the real runtime build.
+        assert.ok(script.search(/ensure_dep ttyd/) < script.search(/ttyd-runtime\.js" provision/),
+          'ensure_dep ttyd must precede the runtime build, or this test would run it');
+        const box = sandbox(body);
+        const { code, output } = runInstall(box);
+
+        assert.doesNotMatch(output, /ingress mode is 'caddy'|cannot read the ingress mode/,
+          'must not refuse a direct-mode host');
+        // The stubbed brew fails the first dependency install, which proves the
+        // script got past the guard and stops it there.
+        assert.match(stubCalls(box), /^brew install ttyd/m, 'must proceed to the ttyd dependency');
+        assert.equal(code, 1);
+      });
+    }
+  });
+
   describe('server plist stderr breadcrumb (#324)', () => {
     const plist = fs.readFileSync(
       path.join(__dirname, '..', 'deploy', 'com.tangleclaw.server.plist'),
