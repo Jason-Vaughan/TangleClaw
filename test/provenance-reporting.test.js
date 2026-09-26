@@ -23,6 +23,7 @@ const store = require('../lib/store');
 const engines = require('../lib/engines');
 const provenance = require('../lib/provenance');
 const sessionOwnership = require('../lib/session-ownership');
+const loadApiHelperGlobals = require('./_api-helper-globals');
 
 /**
  * A defaults-merged project config with the given overrides.
@@ -258,6 +259,87 @@ describe('provenance reporting', () => {
       const cap = await capability(undefined);
       assert.equal(cap.enabled, false);
       assert.match(cap.detail, /unavailable/);
+    });
+  });
+
+  describe('the Project Settings control', () => {
+    let helpers;
+    let uiSrc;
+    before(() => {
+      helpers = loadApiHelperGlobals();
+      uiSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+    });
+
+    /**
+     * One function's body in public/ui.js, declaration to its column-0 close.
+     * @param {string} decl
+     * @returns {string}
+     */
+    function uiFunction(decl) {
+      const start = uiSrc.indexOf(decl);
+      assert.notEqual(start, -1, `${decl} must exist`);
+      return uiSrc.slice(start, uiSrc.indexOf('\n}\n', start));
+    }
+
+    const OFF = { enabled: false, template: null };
+
+    it('an unrelated save sends nothing for the setting', () => {
+      assert.equal(helpers.tcProvenancePatch(OFF, false, ''), null);
+      assert.equal(helpers.tcProvenancePatch({ enabled: true, template: 'By {project}' }, true, '  By {project} '), null,
+        'surrounding whitespace is not a change');
+      assert.equal(helpers.tcProvenancePatch(null, false, ''), null, 'a project the modal got no block for');
+    });
+
+    it('turning it on sends only the toggle', () => {
+      assert.deepEqual(JSON.parse(JSON.stringify(helpers.tcProvenancePatch(OFF, true, ''))), { enabled: true });
+    });
+
+    it('a new line sends only the template, and clearing it sends null, the reset', () => {
+      assert.deepEqual(JSON.parse(JSON.stringify(helpers.tcProvenancePatch(OFF, false, 'By {engine}'))), { template: 'By {engine}' });
+      assert.deepEqual(JSON.parse(JSON.stringify(helpers.tcProvenancePatch({ enabled: true, template: 'By {engine}' }, true, '   '))),
+        { template: null });
+    });
+
+    it('flipping the toggle never resends a stored template, even one the API would refuse', () => {
+      const patch = helpers.tcProvenancePatch({ enabled: true, template: 'bad {nope}' }, false, 'bad {nope}');
+      assert.deepEqual(JSON.parse(JSON.stringify(patch)), { enabled: false });
+    });
+
+    it('a patch the control sends is one the server accepts and merges', async () => {
+      const projects = require('../lib/projects');
+      const name = `prov-ui-${++seq}`;
+      const dir = path.join(projectsDir, name);
+      fs.mkdirSync(dir, { recursive: true });
+      store.projects.create({ name, path: dir, engine: 'claude' });
+      store.projectConfig.save(dir, config({ engine: 'claude', provenanceWatermark: { enabled: false, template: 'Kept {project}' } }));
+      const patch = JSON.parse(JSON.stringify(helpers.tcProvenancePatch({ enabled: false, template: 'Kept {project}' }, true, 'Kept {project}')));
+      const r = await projects.updateProject(name, { provenanceWatermark: patch });
+      assert.deepEqual(r.errors, []);
+      assert.deepEqual(store.projectConfig.load(dir).provenanceWatermark, { enabled: true, template: 'Kept {project}' });
+    });
+
+    it('the preview fills the placeholders and says when the setting is off', () => {
+      const dflt = provenance.DEFAULT_TEMPLATE;
+      assert.equal(helpers.tcProvenancePreview('', dflt, { project: 'app', engine: 'codex' }, true),
+        'Preview: Built by TangleClaw (Project: app)');
+      assert.equal(helpers.tcProvenancePreview('{engine} made {project}', dflt, { project: 'app', engine: 'codex' }, true),
+        'Preview: codex made app');
+      assert.match(helpers.tcProvenancePreview('', dflt, { project: 'app', engine: 'codex' }, false), /^Off — no file carries a line/);
+    });
+
+    it('the modal renders the stored template, the default as placeholder, and a stored template\'s warning', () => {
+      const body = uiFunction('function openSettings');
+      assert.match(body, /id="settingsProvenance"/);
+      assert.match(body, /placeholder="\$\{esc\(provenanceSetting\.defaultTemplate\)\}" value="\$\{esc\(provenanceSetting\.template \|\| ''\)\}"/);
+      assert.match(body, /provenanceSetting\.warning \?/);
+      assert.match(body, /tcProvenancePreview\(/);
+    });
+
+    it('the save asks tcProvenancePatch and attaches only what it returns', () => {
+      const body = uiFunction('async function doSaveSettings');
+      assert.match(body, /tcProvenancePatch\(storedProvenance, provenanceEl\.checked, provenanceTemplateEl\.value\)/);
+      assert.match(body, /if \(provenancePatch\) body\.provenanceWatermark = provenancePatch;/);
+      assert.doesNotMatch(body, /body\.provenanceWatermark = \{/, 'never a whole object rebuilt from the form');
     });
   });
 });

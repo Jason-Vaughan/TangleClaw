@@ -70,6 +70,17 @@ describe('provenance on whole-file engine carriers', () => {
 
   for (const [engineId, filename] of [['codex', '.codex.yaml'], ['aider', '.aider.conf.yml']]) {
     describe(filename, () => {
+      it('reports no drift when only TangleClaw\'s own line changed', () => {
+        const { dir } = makeRepo(engineId);
+        write(engineId, dir, {});
+        assert.equal(write(engineId, dir, ON).result.drifted, false, 'turning it on');
+        assert.equal(write(engineId, dir, { provenanceWatermark: { enabled: true, template: 'Other {project}' } }).result.drifted, false,
+          'changing the template');
+        assert.equal(write(engineId, dir, {}).result.drifted, false, 'turning it off');
+        fs.appendFileSync(path.join(dir, filename), '# an operator edit\n');
+        assert.equal(write(engineId, dir, ON).result.drifted, true, 'a real hand-edit is still drift');
+      });
+
       it('is byte-identical to a write without the setting while it is off', () => {
         const { dir } = makeRepo(engineId);
         const off = write(engineId, dir, {}).text;

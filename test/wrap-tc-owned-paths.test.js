@@ -118,12 +118,14 @@ describe('TangleClaw machine state is recognised by name', () => {
       `.tangleclaw/${channel.SHARD_STEM}-1.json`, `.tangleclaw/${channel.RECEIPT_STEM}.json`,
       `.tangleclaw/${versions.VERSION_CACHE_FILENAME}`, `.tangleclaw/${versions.STAGING_PREFIX}42.abcd.tmp`,
       `.tangleclaw/${require('../lib/provenance').STAGING_PREFIX}42.abcd.tmp`,
-      `${require('../lib/provenance').STAGING_PREFIX}42.abcd.tmp`,
       require('../lib/actions/invoke-critic').CRITIC_RUNS_RELPATH.split(path.sep).join('/'),
       ...require('../lib/wrap-default-pipeline').steps().map((st) => st.captureFile).filter((f) => typeof f === 'string' && f.startsWith('.tangleclaw/'))
     ]) {
       assert.equal(tcOwned.isStatePath(p), true, p);
     }
+    // The repo-root carriers are written in place and stage nothing, so a
+    // provenance-prefixed file at the root is not a file TangleClaw wrote.
+    assert.equal(tcOwned.isStatePath(`${require('../lib/provenance').STAGING_PREFIX}42.abcd.tmp`), false);
     const medusa = path.relative('/p', require('../lib/tangleclaw-project-files').resolveIn('/p', files.MEDUSA_REGISTRY_RELPATH)).split(path.sep).join('/');
     assert.equal(medusa, files.MEDUSA_REGISTRY_RELPATH);
   });

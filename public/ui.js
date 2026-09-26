@@ -1750,18 +1750,15 @@ function openSettings(name) {
     ${renderProjectRulesSection(project)}`;
 
   // Provenance preview (#1885): what the line will read, with this project's
-  // name and engine substituted. The server neutralizes unsafe values and
-  // refuses a bad template on save; this is a hint, not the validator.
+  // name and the engine now selected. `tcProvenancePreview` owns the wording.
   const renderProvenancePreview = () => {
     const templateEl = document.getElementById('settingsProvenanceTemplate');
     const enabledEl = document.getElementById('settingsProvenance');
     const previewEl = document.getElementById('settingsProvenancePreview');
     if (!templateEl || !enabledEl || !previewEl) return;
-    const template = templateEl.value.trim() || provenanceSetting.defaultTemplate;
     const engineEl = document.getElementById('settingsEngine');
-    const text = template.replace(/\{(project|engine)\}/g, (_, key) =>
-      (key === 'project' ? name : (engineEl ? engineEl.value : '')));
-    previewEl.textContent = enabledEl.checked ? `Preview: ${text}` : `Off — no file carries a line. When on: ${text}`;
+    previewEl.textContent = tcProvenancePreview(templateEl.value, provenanceSetting.defaultTemplate,
+      { project: name, engine: engineEl ? engineEl.value : '' }, enabledEl.checked);
   };
   renderProvenancePreview();
   ['settingsProvenanceTemplate', 'settingsProvenance', 'settingsEngine'].forEach((id) => {
@@ -3051,18 +3048,14 @@ async function doSaveSettings() {
   if (medusaWakeEl) {
     body.medusaWake = medusaWakeEl.checked;
   }
-  // Provenance line (#1885) — sent only when changed, so an unrelated save
-  // never writes the setting. A blank line is sent as null: the reset to the
-  // default template.
+  // Provenance line (#1885) — only the half the operator changed, so an
+  // unrelated save never writes it (`tcProvenancePatch`).
   const provenanceEl = document.getElementById('settingsProvenance');
   const provenanceTemplateEl = document.getElementById('settingsProvenanceTemplate');
   if (provenanceEl && provenanceTemplateEl) {
-    const storedProvenance = (state.projects.find(p => p.name === settingsTarget) || {}).provenanceWatermark
-      || { enabled: false, template: null };
-    const template = provenanceTemplateEl.value.trim() || null;
-    if (provenanceEl.checked !== storedProvenance.enabled || template !== (storedProvenance.template || null)) {
-      body.provenanceWatermark = { enabled: provenanceEl.checked, template };
-    }
+    const storedProvenance = (state.projects.find(p => p.name === settingsTarget) || {}).provenanceWatermark || null;
+    const provenancePatch = tcProvenancePatch(storedProvenance, provenanceEl.checked, provenanceTemplateEl.value);
+    if (provenancePatch) body.provenanceWatermark = provenancePatch;
   }
   // CC-6 (#381): wrap-summary section selection. undefined → not rendered (skip);
   // null → all 8 (clear override); array → the chosen subset.
