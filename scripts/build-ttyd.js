@@ -27,11 +27,29 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
+const { readPinnedInputs } = require('../lib/ttyd-runtime');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const INPUTS_DIR = path.join(REPO_ROOT, 'deploy', 'ttyd');
 const REQUIRED_SOURCES = ['libuv', 'json-c', 'libwebsockets', 'ttyd'];
 const SHA256 = /^[0-9a-f]{64}$/;
+
+/**
+ * The manifest's record of what a build was made from, taken from the ONE
+ * reading of inputs.json the build used (`readPinnedInputs`). It never reads
+ * the file again, so the recorded digest always matches the inputs built.
+ * @param {{inputs: object, sha256: string}} pinned - From `readPinnedInputs`.
+ * @returns {{inputsJsonSha256: string, sources: object[], patches: object[], cmake: object}}
+ */
+function manifestInputs(pinned) {
+  const { inputs } = pinned;
+  return {
+    inputsJsonSha256: pinned.sha256,
+    sources: inputs.sources.map((s) => ({ name: s.name, version: s.version, url: s.url, sha256: s.sha256 })),
+    patches: inputs.patches.map((p) => ({ file: p.file, sha256: p.sha256 })),
+    cmake: { version: inputs.cmake.version, wheelSha256: inputs.cmake.sha256 }
+  };
+}
 
 /**
  * Parse the command line.
@@ -162,7 +180,10 @@ function cleanEnv(venvBin, target) {
  */
 function build(o) {
   if (process.platform !== 'darwin') throw new Error('the owned ttyd runtime is built on macOS only');
-  const inputs = JSON.parse(fs.readFileSync(path.join(INPUTS_DIR, 'inputs.json'), 'utf8'));
+  // Read once: the manifest records the digest of exactly the bytes this build
+  // used, even if inputs.json changes while it runs.
+  const pinned = readPinnedInputs(path.join(INPUTS_DIR, 'inputs.json'));
+  const inputs = pinned.inputs;
   const problems = validateInputs(inputs);
   if (problems.length) throw new Error(`inputs.json is invalid:\n  ${problems.join('\n  ')}`);
 
@@ -246,12 +267,7 @@ function build(o) {
     schema: 1,
     builtAt: new Date().toISOString(),
     binary: { file: 'ttyd', sha256: sha256File(staged), version },
-    inputs: {
-      inputsJsonSha256: sha256File(path.join(INPUTS_DIR, 'inputs.json')),
-      sources: inputs.sources.map((s) => ({ name: s.name, version: s.version, url: s.url, sha256: s.sha256 })),
-      patches: inputs.patches.map((p) => ({ file: p.file, sha256: p.sha256 })),
-      cmake: { version: inputs.cmake.version, wheelSha256: inputs.cmake.sha256 }
-    },
+    inputs: manifestInputs(pinned),
     toolchain: {
       compiler: run('xcrun', ['clang', '--version']).split('\n')[0],
       sdk: run('xcrun', ['--show-sdk-version']).trim(),
@@ -288,4 +304,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { parseArgs, validateInputs, sha256File, fetchVerified, cleanEnv, REQUIRED_SOURCES };
+module.exports = { parseArgs, validateInputs, sha256File, fetchVerified, cleanEnv, manifestInputs, REQUIRED_SOURCES };

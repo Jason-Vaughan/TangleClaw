@@ -556,7 +556,7 @@ function main() {
   // (#1245, ADR 0018), never from PATH: rediscovering it here would quietly put
   // the leaking Homebrew build back on every cutover. The cutover never builds
   // a runtime: an absent, invalid or stale one stops it before anything is
-  // written, and the refusal sends the operator to deploy/install.sh.
+  // written, and the refusal names `provision` and the switch for each mode.
   try {
     ttydRuntime = ttydRuntimeLib.resolveTtydPath({ baseDir });
   } catch (err) {

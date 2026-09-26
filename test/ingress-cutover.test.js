@@ -121,6 +121,23 @@ describe('ingress-cutover', () => {
       assert.equal(r.healthOk, null);
     });
 
+    // Which ttyd the cutover put in the plist: the owned runtime, or the
+    // Homebrew build under the explicit rollback (#1245).
+    it('records the selected ttyd, and null when the run ended before one was resolved', () => {
+      const p = path.join(dir, 'ttyd.json');
+      cutover.writeCutoverResult(p, {
+        ok: true, code: 'ok', target: 'caddy', ttydRuntime: { path: '/Users/x/.tangleclaw/bin/ttyd', managed: true, warning: null }
+      });
+      assert.deepEqual(JSON.parse(fs.readFileSync(p, 'utf8')).ttydRuntime, { path: '/Users/x/.tangleclaw/bin/ttyd', managed: true });
+      cutover.writeCutoverResult(p, { ok: false, code: cutover.CUTOVER_CODES.TTYD_RUNTIME_UNAVAILABLE, target: 'caddy', error: 'x', ttydRuntime: null });
+      assert.equal(JSON.parse(fs.readFileSync(p, 'utf8')).ttydRuntime, null);
+    });
+
+    it('describes the selected ttyd, saying plainly when the leak fix is off', () => {
+      assert.equal(cutover.describeTtydRuntime({ path: '/Users/x/.tangleclaw/bin/ttyd', managed: true }), '/Users/x/.tangleclaw/bin/ttyd (the owned runtime)');
+      assert.match(cutover.describeTtydRuntime({ path: '/opt/homebrew/bin/ttyd', managed: false }), /^\/opt\/homebrew\/bin\/ttyd \(the Homebrew ttyd: explicit rollback, the #1245 leak fix is NOT active\)$/);
+    });
+
     it('creates the parent directory rather than failing on it', () => {
       const p = path.join(dir, 'nested', 'deeper', 'r.json');
       assert.equal(cutover.writeCutoverResult(p, { ok: true, code: 'ok', target: 'direct' }), true);

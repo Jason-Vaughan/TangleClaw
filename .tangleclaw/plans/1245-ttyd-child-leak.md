@@ -82,6 +82,8 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
       above revised to match; links from the configuration reference, the user guide and FEATURES; the CHANGELOG entry.
       The runbooks are not validated until the Operator executes them. The box is ticked after the cumulative Critic.
 - [ ] Verify (the full suite), the cumulative Critic, one draft PR ONLY when the PM authorizes (pilot boundary: no merge).
+      The PR body says `Refs #1245`, NOT `Fixes #1245`: the issue stays open until live certification (review
+      rev-20260926T150050Z-6620a07c R-11).
       #1245 stays open until post-merge live certification. D3 (upstream offer) is prepared separately and not submitted
       without authorization
 
@@ -89,6 +91,25 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
 live service, no tests on the main instance, no tag, publish or release, no deploy. Everything below that runs
 a ttyd runs an *isolated* one: its own unix socket, its own `tmux -L` server, a scratch directory outside
 `~/Documents`.
+
+## Architect rulings R39 and R40 (2026-09-26 15:08Z, on cumulative review rev-20260926T150050Z-6620a07c; controlling)
+
+- **R39 (Critic R-8, evidence privacy):** the local history rewrite before any push is APPROVED. The run5
+  `pre-cleanup.txt` and `post-cleanup.txt` snapshots carried an unrelated process's (`agy`) open-file table: the host's
+  LAN and public IPv6 addresses and that tool's oauth-token and conversation paths. Every commit containing them is
+  rewritten so those lines carry a stable redaction marker, and the whole range intended for push is validated clean.
+  No pre-rewrite commit or ref is ever pushed. *Done 2026-09-26:* the NAME field of all 105 `agy` lsof lines in each
+  file was replaced. Only the 5 commits from 626280ec onward changed, and no hash or reference pinned either file. A
+  scan of all 32 commits after 310dfbc3 (trees, added lines, messages) found none of the values. The pre-rewrite head
+  is kept ONLY as the local ref `backup/1245-pre-r39-redaction`, which must never be pushed.
+- **R40 (Critic R-7, macOS permissions):** "first switch only" is not a supportable promise. The parity checkpoint
+  applies on the initial switch AND after every rebuilt or replaced executable whose hash or signing identity changed
+  (rollback included), unless a stable signing requirement is later established and verified. It observes and proves
+  parity; it never authorizes broader grants (R37). Record the artifact's sha256 and signing identity and the observed
+  grants, run the live access check, and STOP on denial or ambiguity. Never claim that macOS keeps a grant across a
+  rebuild.
+- Also: resolve the other warnings and the R-3 wording, run the suite after the rewrite, then ONE verification review
+  over the rewritten, complete candidate before merge-readiness.
 
 ## Architect ruling R37 (2026-09-26 14:52Z; SECURITY CORRECTION, controlling over R36's Full Disk Access sentence)
 

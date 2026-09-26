@@ -201,6 +201,30 @@ describe('lib/ttyd-runtime (#1245, ADR 0018)', () => {
     });
   });
 
+  describe('the last known good is never written in place', () => {
+    // A signed binary modified in place can be killed by macOS when it next
+    // runs, and rollback runs the last known good to verify it.
+    it('install replaces ttyd.prev with a new file rather than rewriting it', () => {
+      for (const n of ['a', 'b', 'c']) stage(path.join(scratch, n), `ttyd version 1.7.7-${n}\n`);
+      runtime.installRuntime({ baseDir: base, stageDir: path.join(scratch, 'a'), deps: deps() });
+      runtime.installRuntime({ baseDir: base, stageDir: path.join(scratch, 'b'), deps: deps() });
+      const before = fs.statSync(P().prev).ino;
+      runtime.installRuntime({ baseDir: base, stageDir: path.join(scratch, 'c'), deps: deps() });
+      assert.notEqual(fs.statSync(P().prev).ino, before);
+      assert.equal(fs.existsSync(`${P().prev}.tmp`), false, 'no temporary copy is left behind');
+    });
+
+    it('rollback replaces ttyd.rolled-back with a new file rather than rewriting it', () => {
+      for (const n of ['a', 'b']) stage(path.join(scratch, n), `ttyd version 1.7.7-${n}\n`);
+      runtime.installRuntime({ baseDir: base, stageDir: path.join(scratch, 'a'), deps: deps() });
+      runtime.installRuntime({ baseDir: base, stageDir: path.join(scratch, 'b'), deps: deps() });
+      runtime.rollbackRuntime({ baseDir: base, deps: deps() });
+      const before = fs.statSync(P().discarded).ino;
+      runtime.rollbackRuntime({ baseDir: base, deps: deps() });
+      assert.notEqual(fs.statSync(P().discarded).ino, before);
+    });
+  });
+
   describe('rollbackRuntime', () => {
     it('restores the last known good and sets the replaced runtime aside', () => {
       const d1 = stage(path.join(scratch, 's1'), 'ttyd version 1.7.7-a\n');
@@ -253,9 +277,37 @@ describe('lib/ttyd-runtime (#1245, ADR 0018)', () => {
       assert.equal(runtime.defaultDeps().expectedInputs().inputsJsonSha256, sha(file));
     });
 
-    it('build-ttyd records the same digest the resolver compares', () => {
-      const builder = fs.readFileSync(path.join(REPO, 'scripts', 'build-ttyd.js'), 'utf8');
-      assert.match(builder, /inputsJsonSha256: sha256File\(path\.join\(INPUTS_DIR, 'inputs\.json'\)\)/);
+    // The builder and the resolver read the digest through one helper, and a
+    // build records the digest of the bytes it read, even if the file changes
+    // while it runs.
+    it('readPinnedInputs hashes exactly the bytes it parsed', () => {
+      const file = path.join(scratch, 'inputs.json');
+      const text = JSON.stringify({ sources: [{ name: 'ttyd', sha256: 'a'.repeat(64) }], patches: [] });
+      fs.writeFileSync(file, text);
+      const pinned = runtime.readPinnedInputs(file);
+      assert.equal(pinned.sha256, sha(text));
+      assert.deepEqual(pinned.inputs.sources, [{ name: 'ttyd', sha256: 'a'.repeat(64) }]);
+    });
+
+    it('a build records the digest it read, not the file as it is when the build ends', () => {
+      const { manifestInputs } = require('../scripts/build-ttyd');
+      const file = path.join(scratch, 'inputs.json');
+      const before = JSON.stringify({ sources: [{ name: 'ttyd', version: '1', url: 'u', sha256: 'a'.repeat(64) }], patches: [], cmake: { version: '3', sha256: 'c'.repeat(64) } });
+      fs.writeFileSync(file, before);
+      const pinned = runtime.readPinnedInputs(file);
+      fs.writeFileSync(file, before.replace('"1"', '"2"'));
+      assert.equal(manifestInputs(pinned).inputsJsonSha256, sha(before));
+    });
+
+    it('a manifest from the builder\'s record is current for the resolver reading the same inputs.json', () => {
+      const { manifestInputs } = require('../scripts/build-ttyd');
+      const pinned = runtime.readPinnedInputs();
+      const recorded = manifestInputs(pinned);
+      const s = path.join(scratch, 'real');
+      stage(s, 'ttyd version 1.7.7-real\n', { inputs: recorded });
+      const v = runtime.verifyRuntime(path.join(s, 'ttyd'), path.join(s, 'manifest.json'), { ...deps(), expectedInputs: runtime.defaultDeps().expectedInputs });
+      assert.equal(v.stale, false);
+      assert.deepEqual(v.reasons, []);
     });
 
     it('after a pin change, rollback refuses the stale last known good and names the Homebrew way back', () => {
@@ -282,8 +334,18 @@ describe('lib/ttyd-runtime (#1245, ADR 0018)', () => {
         (err) => err.message.includes(`a verified last-known-good runtime (${d1})`) && err.message.includes('node scripts/ttyd-runtime.js rollback'));
     });
 
-    it('the refusal names deploy/install.sh as the repair', () => {
-      assert.throws(() => runtime.resolveTtydPath({ baseDir: base, env: {}, deps: deps() }), /Re-run deploy\/install\.sh/);
+    // install.sh rewrites the ttyd plist for direct mode, so it is the wrong
+    // repair on a caddy-mode host: the refusal leads with provision and names
+    // the switch for each mode.
+    it('the refusal leads with provision and names the right switch for each ingress mode', () => {
+      assert.throws(() => runtime.resolveTtydPath({ baseDir: base, env: {}, deps: deps() }), (err) => {
+        const repair = err.message.slice(err.message.indexOf(runtime.REPAIR));
+        assert.ok(repair.startsWith('Run `node scripts/ttyd-runtime.js provision`'), repair);
+        assert.match(repair, /direct mode: `\.\/deploy\/install\.sh`/);
+        assert.match(repair, /caddy mode: `node scripts\/ingress-cutover\.js --to caddy`/);
+        assert.match(repair, /never deploy\/install\.sh/);
+        return true;
+      });
     });
   });
 
@@ -372,10 +434,24 @@ describe('lib/ttyd-runtime (#1245, ADR 0018)', () => {
         (err) => err instanceof runtime.RuntimeUnavailableError
           && /building the owned ttyd runtime failed \(cmake exited 1\); nothing was installed/.test(err.message)
           && err.message.includes(work)
-          && /Re-run deploy\/install\.sh/.test(err.message));
+          && err.message.includes(runtime.REPAIR));
       assert.equal(fs.existsSync(work), true, 'the failed build is kept');
       assert.equal(fs.existsSync(P().ttyd), false, 'nothing installed');
       fs.rmSync(work, { recursive: true, force: true });
+    });
+
+    it('when the install of a verified build fails, the build is kept and the refusal says how to install it', () => {
+      const d = deps();
+      let stageDir = null;
+      d.build = ({ out }) => { stageDir = out; stage(out, 'ttyd version 1.7.7-built\n'); };
+      const realRename = d.fs.renameSync;
+      d.fs.renameSync = (from, to) => { if (to === P().ttyd) throw new Error('EIO: i/o error'); realRename(from, to); };
+      assert.throws(() => runtime.provisionRuntime({ baseDir: base, env: {}, deps: d }),
+        (err) => err instanceof runtime.RuntimeUnavailableError
+          && err.message.includes(`The build is kept at ${stageDir}`)
+          && err.message.includes(`node scripts/ttyd-runtime.js install --from ${stageDir}`));
+      assert.equal(fs.existsSync(path.join(stageDir, 'ttyd')), true, 'the build is kept');
+      fs.rmSync(path.dirname(stageDir), { recursive: true, force: true });
     });
 
     it('a build that produces a runtime which does not verify installs nothing and keeps the current one', () => {
@@ -521,7 +597,8 @@ describe('lib/ttyd-runtime (#1245, ADR 0018)', () => {
       // copies and both renames.
       assert.deepEqual(ops, [
         'copy ttyd -> bin/ttyd.new', 'chmod bin/ttyd.new', 'copy manifest.json -> bin/ttyd.new.manifest.json',
-        'copy ttyd -> bin/ttyd.prev', 'chmod bin/ttyd.prev', 'copy ttyd.manifest.json -> bin/ttyd.prev.manifest.json',
+        'copy ttyd -> bin/ttyd.prev.tmp', 'chmod bin/ttyd.prev.tmp', 'copy ttyd.manifest.json -> bin/ttyd.prev.manifest.json.tmp',
+        'rename bin/ttyd.prev.manifest.json.tmp -> bin/ttyd.prev.manifest.json', 'rename bin/ttyd.prev.tmp -> bin/ttyd.prev',
         'rename bin/ttyd.new.manifest.json -> bin/ttyd.manifest.json', 'rename bin/ttyd.new -> bin/ttyd'
       ]);
     });
@@ -549,7 +626,8 @@ describe('lib/ttyd-runtime (#1245, ADR 0018)', () => {
       );
       assert.deepEqual(ops, [
         'copy ttyd.prev -> bin/ttyd.new', 'chmod bin/ttyd.new', 'copy ttyd.prev.manifest.json -> bin/ttyd.new.manifest.json',
-        'copy ttyd -> bin/ttyd.rolled-back', 'chmod bin/ttyd.rolled-back', 'copy ttyd.manifest.json -> bin/ttyd.rolled-back.manifest.json',
+        'copy ttyd -> bin/ttyd.rolled-back.tmp', 'chmod bin/ttyd.rolled-back.tmp', 'copy ttyd.manifest.json -> bin/ttyd.rolled-back.manifest.json.tmp',
+        'rename bin/ttyd.rolled-back.manifest.json.tmp -> bin/ttyd.rolled-back.manifest.json', 'rename bin/ttyd.rolled-back.tmp -> bin/ttyd.rolled-back',
         'rename bin/ttyd.new.manifest.json -> bin/ttyd.manifest.json', 'rename bin/ttyd.new -> bin/ttyd'
       ]);
     });
@@ -605,6 +683,42 @@ describe('lib/ttyd-runtime (#1245, ADR 0018)', () => {
       assert.equal(fs.existsSync(runtime.runtimePaths(other).ttyd), true, 'installed under --base-dir');
       assert.equal(fs.existsSync(runtime.runtimePaths(base).ttyd), false, 'not under the default');
       assert.equal(cli.main(['resolve', '--base-dir'], { baseDir: base, env: {}, deps: deps(), out: () => {}, err: () => {} }), 2);
+    });
+
+    // install.sh writes provision's stdout into the plist as the ttyd path, so
+    // stdout must be exactly one bare path, whatever else happens.
+    it('provision prints only the bare path on stdout when it builds, logging to stderr', () => {
+      const d = deps();
+      d.build = ({ out }) => stage(out, 'ttyd version 1.7.7-built\n');
+      const out = [];
+      const err = [];
+      const code = cli.main(['provision'], { baseDir: base, env: {}, deps: d, out: (x) => out.push(x), err: (x) => err.push(x) });
+      assert.equal(code, 0);
+      assert.deepEqual(out, [runtime.runtimePaths(base).ttyd]);
+      assert.match(err.join('\n'), /must be built/);
+      assert.match(err.join('\n'), /built and installed the owned ttyd runtime [0-9a-f]{64}/);
+    });
+
+    it('provision prints only the bare path when the runtime is already current', () => {
+      stage(path.join(scratch, 's1'), 'ttyd version 1.7.7-a\n');
+      run(['install', '--from', path.join(scratch, 's1')]);
+      assert.deepEqual(run(['provision']), { code: 0, out: runtime.runtimePaths(base).ttyd, err: '' });
+    });
+
+    it('provision under the Homebrew rollback prints only the path, with the warning on stderr', () => {
+      const r = run(['provision'], { TANGLECLAW_TTYD_RUNTIME: 'homebrew' }, '/opt/homebrew/bin/ttyd');
+      assert.equal(r.code, 0);
+      assert.equal(r.out, '/opt/homebrew/bin/ttyd');
+      assert.match(r.err, /^WARNING: .*WITHOUT the #1245 leak fix/);
+    });
+
+    it('provision prints nothing on stdout when it refuses', () => {
+      const d = deps();
+      d.build = () => { throw new Error('no compiler'); };
+      const out = [];
+      const code = cli.main(['provision'], { baseDir: base, env: {}, deps: d, out: (x) => out.push(x), err: () => {} });
+      assert.equal(code, 3);
+      assert.deepEqual(out, []);
     });
 
     it('install says ttyd was not restarted', () => {

@@ -1,6 +1,7 @@
 # Roll back the owned ttyd runtime
 
-Tier 2: it restarts ttyd. Run by the Operator, or by the PM with the Operator's go-ahead.
+Tier 2: it restarts ttyd. Run by the Operator, or by the PM with the Operator's go-ahead; step 2a needs
+the Operator at the Mac.
 
 ## When to use this
 
@@ -26,6 +27,11 @@ Run everything from the TangleClaw checkout the service runs from.
    → Expected: `restored <sha256>; the replaced runtime is kept at …/ttyd.rolled-back`, then
    `ttyd has NOT been restarted.`
    → If it refuses: go to step 4.
+
+2a. The restored binary is a different executable, so repeat the permission checkpoint, with the
+    Operator at the Mac. It is step 7 of [the rollout runbook](roll-out-the-owned-ttyd.md): the same
+    visible grants the path held before, nothing more, and no Full Disk Access unless it had it.
+    → If you cannot tell what it had: stop and report to the PM.
 
 3. Restart ttyd on it:
    `launchctl kickstart -k gui/$(id -u)/com.tangleclaw.ttyd`
@@ -55,12 +61,15 @@ Run everything from the TangleClaw checkout the service runs from.
    → Expected: one line for the ttyd you chose: `~/.tangleclaw/bin/ttyd` after step 3, or
    `/opt/homebrew/bin/ttyd` after step 5.
 
-7. Open a terminal tab in the dashboard.
-   → Expected: a shell prompt.
+7. Open a terminal tab in the dashboard for a project whose folder is under `~/Documents`, and run
+   `ls`.
+   → Expected: a shell prompt, then the project's files.
+   → If `ls` prints `Operation not permitted` after step 3: the restored binary lacks a grant it
+   needs. Stop and report the step 2a record to the PM; do not widen the grants yourself.
 
 ## Done when
 
-A terminal tab opens, and `pgrep -fl ttyd` shows the ttyd you chose.
+A terminal tab opens and lists a project's files, and `pgrep -fl ttyd` shows the ttyd you chose.
 
 ## Getting back to the fix
 

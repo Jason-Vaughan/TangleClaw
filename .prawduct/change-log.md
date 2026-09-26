@@ -35,6 +35,57 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Resolve cumulative review rev-20260926T150050Z-6620a07c; redact the run5 evidence from history (#1245)
+
+<!-- prawduct: type=fix | scope=ttyd-1245 -->
+
+The cumulative review of 2fe1c50d found 0 blocking, 6 warnings and 5 notes. Architect R39 and R40 (recorded in the
+plan) ruled on R-8 and R-7.
+
+- **R-8 (R39):** the local branch history was rewritten before any push. In the run5 pre-cleanup and post-cleanup
+  snapshots, every lsof line of the unrelated `agy` process keeps its first five columns, and the rest is replaced by
+  a stable marker, so its LAN and IPv6 addresses and its oauth-token and conversation paths are gone.
+  - `git filter-branch --index-filter` rewrote 310dfbc3..HEAD. Only the 5 commits from 626280ec onward changed. The
+    tree diff against the backup is exactly those two files.
+  - A scan of every commit in the range (trees, added lines, messages) finds none of the values.
+  - The pre-rewrite head survives only as the local ref `backup/1245-pre-r39-redaction`, which is never pushed.
+- **R-1:** the last known good and the set-aside copy are written to a `.tmp` name and renamed into place
+  (`_copyPairAside`), never overwritten in place. Tests: the inode changes on replacement. The pinned boundary lists
+  gain the temp-and-rename steps, and the recovery invariant holds at each of them. Both guards were mutation-checked.
+- **R-9:** the refusal text is mode-aware. It leads with `provision`, then names `./deploy/install.sh` for direct mode
+  and the cutover for caddy mode, and never install.sh on a caddy host. The by-hand route stays. My chunk 08 test
+  pinned the old "Re-run deploy/install.sh" text; it now pins `REPAIR` itself, and a new test pins the mode split.
+  The configuration reference, the user guide, the CHANGELOG and FEATURES are corrected.
+  - Unchanged, and the Architect's to decide: ADR 0018 §4's own wording, "directing the operator to rerun the
+    installer".
+- **R-4:** `readPinnedInputs` reads inputs.json once and hashes exactly those bytes. The resolver's `expectedInputs`
+  and build-ttyd (its new `manifestInputs`) share it.
+  - Changed test contract: the source-regex test "build-ttyd records the same digest the resolver compares" is
+    REPLACED by three behavioural tests. They check the helper's digest of the parsed bytes, that a build records the
+    digest it read even when the file changes afterwards, and that a builder-shaped manifest is current for the
+    resolver.
+- **R-2:** four CLI tests pin that `provision` prints only the bare path on stdout (when it builds, when the runtime is
+  already current, and under the Homebrew rollback), and nothing when it refuses. Mutation-checked.
+- **R-5:** `takeReading` and `_measure` no longer take `opts`. They always read the configured label and threshold,
+  and no production caller passed any.
+- **R-3:** the guarantee wording no longer overclaims, in the lib header, `_recoverably`'s message, the configuration
+  reference and the CHANGELOG. A last known good that verified before the failure still verifies; with none,
+  `provision` rebuilds.
+- **R-7 (R40):** the rollout runbook's checkpoint runs on the first switch AND after every rebuild. It records the
+  sha256 and the `codesign -dv` identity, and adds a live `ls` access check under `~/Documents` that STOPS on
+  denial. The rollback runbook repeats the checkpoint and the check for the restored binary (steps 2a and 7).
+- **R-11:** the plan's Verify line says the PR uses `Refs #1245`, not `Fixes`. R-6 and R-10 are ACCEPTed through
+  `prawduct-hook disposition`.
+- **Review of the rewritten head, rev-20260926T151846Z-e094065e:** `verify-resolutions` could not anchor to the
+  rewritten-away 2fe1c50d, so it fell back to a cumulative review of the committed head, WITHOUT this batch. Its
+  blocking R-2 and R-7 are the prior R-2 and R-9, fixed here. It also raised three items, fixed in the same commit:
+  - R-5: tests pin the cutover's `ttydRuntime` result key (and null before a runtime resolves) and
+    `describeTtydRuntime`.
+  - R-6/R-9: when the install of a verified build fails, `provisionRuntime` keeps the stage, names it, and gives the
+    `install --from <stage>` command instead of "re-run provision". A new test covers this.
+  - R-8: the `_isExiting` docstring no longer claims that the harness's and the watcher's wedge counts match. They
+    share the predicate, not the wedge age.
+
 ## 2026-09-26 — Chunk 04: rollout and rollback runbooks for the owned ttyd (#1245)
 
 <!-- prawduct: type=feature | scope=ttyd-1245 -->
