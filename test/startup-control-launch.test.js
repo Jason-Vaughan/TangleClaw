@@ -172,6 +172,7 @@ describe('startupControl at launch and teardown (codex)', () => {
     assert.equal(sp.opts.detached, true);
     assert.equal(sp.opts.cwd, l.project.path);
     assert.match(l.command, /codex --remote unix:\/\/\/private\/tmp\/fake-daemon\/[0-9a-f]{16} --ask-for-approval never --sandbox workspace-write/);
+    assert.ok(!l.command.includes('--no-daemon'), 'a per-launch --remote server needs no legacy daemon isolation');
     const channel = store.startupControlChannels.getOpenBySession(l.session.id);
     assert.ok(channel, 'a channel row is open for the session');
     assert.equal(channel.sequenceId, l.sequence.id);
@@ -238,21 +239,31 @@ describe('startupControl at launch and teardown (codex)', () => {
     assert.equal(created.opts.env.TANGLECLAW_LAUNCH_ID, env.TANGLECLAW_LAUNCH_ID, 'pane and server carry the same identity');
   });
 
-  it('an unverified version launches today\'s command with no channel, and so does a failed start', () => {
+  it('an unverified version isolates the shared daemon when supported, while older versions keep today\'s command', () => {
     healthySeams({ execFileSync: () => 'codex-cli 0.150.0\n' });
     let l = launched();
     assert.equal(calls.spawn.length, 0, 'no app-server for an unverified version');
     assert.ok(!l.command.includes('--remote'));
+    assert.ok(!l.command.includes('--no-daemon'), 'Codex 0.150 predates the isolation flag');
+    assert.equal(store.startupControlChannels.getOpenBySession(l.session.id), null);
+
+    healthySeams({ execFileSync: () => 'codex-cli 0.157.1\n' });
+    l = launched({ launchMode: 'fullAuto' });
+    assert.equal(calls.spawn.length, 0, 'an unverified native protocol does not start an app-server');
+    assert.ok(!l.command.includes('--remote'));
+    assert.match(l.command, /codex --ask-for-approval never --sandbox workspace-write --no-daemon$/);
     assert.equal(store.startupControlChannels.getOpenBySession(l.session.id), null);
 
     healthySeams({ spawn: () => { throw new Error('ENOENT'); } });
     l = launched();
     assert.ok(!l.command.includes('--remote'));
+    assert.match(l.command, /codex --no-daemon$/);
     assert.equal(store.startupControlChannels.getOpenBySession(l.session.id), null);
 
     healthySeams({ resolveSocket: () => null, now: (() => { let t = 0; return () => (t += 3000); })() });
     l = launched();
     assert.ok(!l.command.includes('--remote'), 'a socket that never appears means no channel');
+    assert.match(l.command, /codex --no-daemon$/);
     assert.deepEqual(calls.kills, [[-calls.spawn[0].pid, 'SIGTERM']], 'the server that never opened its socket is stopped');
     assert.equal(store.startupControlChannels.getOpenBySession(l.session.id), null);
   });

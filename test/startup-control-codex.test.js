@@ -917,6 +917,28 @@ describe('Codex startupControl adapter', () => {
       assert.equal(codex._internal._trusted({ config: {} }, '/a/b'), null);
     });
 
+    it('isolates legacy launches only when the probed Codex version accepts --no-daemon', () => {
+      const previous = codex._internal._version.version;
+      try {
+        codex._internal._version.version = null;
+        assert.equal(codex.legacyLaunchCommand('codex'), 'codex');
+        codex._internal._version.version = '0.154.0';
+        assert.equal(codex.legacyLaunchCommand('codex'), 'codex');
+        codex._internal._version.version = '0.156.1';
+        assert.equal(codex.legacyLaunchCommand('codex'), 'codex --no-daemon');
+        codex._internal._version.version = '0.157.1';
+        assert.equal(
+          codex.legacyLaunchCommand('codex --ask-for-approval never --sandbox workspace-write'),
+          'codex --ask-for-approval never --sandbox workspace-write --no-daemon'
+        );
+        assert.equal(codex.legacyLaunchCommand('codex --no-daemon'), 'codex --no-daemon');
+        codex._internal._version.version = '0.158.0';
+        assert.equal(codex.legacyLaunchCommand('codex'), 'codex', 'future versions are not guessed compatible');
+      } finally {
+        codex._internal._version.version = previous;
+      }
+    });
+
     it('maps a turn record to its outcome, and an item to its text', () => {
       assert.equal(codex._internal._turnOutcome({ status: 'inProgress' }), null);
       assert.equal(codex._internal._turnOutcome({ status: 'completed' }).outcome, 'applied');
