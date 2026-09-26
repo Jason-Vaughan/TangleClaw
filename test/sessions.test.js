@@ -4288,35 +4288,56 @@ describe('sessions', () => {
       assert.ok(lines.slice(1).join('\n').length > 0, 'the prime itself follows');
     });
 
-    it('launchSession keeps a stamped prime within the engine hook budget', () => {
+    it('launchSession keeps everything the SessionStart hook prints within the engine cap (#1888)', () => {
       tmux.hasSession = (name) => name === 'silent-prime-test';
       enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
       const project = store.projects.getByName('silent-prime-test');
-      const primeFile = path.join(project.path, '.tangleclaw', 'session-prime.md');
-      store.projectConfig.save(project.path, { engine: 'claude', silentPrime: true });
-      assert.equal(sessions.launchSession('silent-prime-test').error, null);
-      const unstamped = fs.readFileSync(primeFile, 'utf8').length;
+      store.projectConfig.save(project.path, {
+        engine: 'claude', silentPrime: true, provenanceWatermark: { enabled: true, template: null }
+      });
 
-      // The engine now allows exactly what the unstamped prime needed. Without
-      // the reservation, the provenance line would push the file over it, and
-      // the hook would discard the prime whole.
+      // A cap the prime fills exactly when nothing is reserved. Without the
+      // launch reserving the companions and the provenance line, the hook
+      // would print the prime plus the advisory, past the cap, and the engine
+      // would inject only a preview.
+      // Yieldable project state, so the prime can give up the room the reserve
+      // needs. A bare fixture prime is mostly directives, which never yield, and
+      // at a cap this small they could not make room for anything.
+      const base = store.engines.get('claude');
+      const padding = [];
+      for (let i = 0; i < 12; i++) {
+        padding.push(store.learnings.create({
+          projectId: project.id, content: `Hook budget learning ${i}: ${'accumulated project state. '.repeat(10)}`, tier: 'active'
+        }));
+      }
+      const cap = sessions.generatePrimePrompt(project, base).length;
       const originalGet = store.engines.get;
       store.engines.get = (id) => {
         const profile = originalGet.call(store.engines, id);
         if (!profile || id !== 'claude') return profile;
-        return { ...profile, capabilities: { ...profile.capabilities, startupInjection: { maxChars: unstamped } } };
+        return { ...profile, capabilities: { ...profile.capabilities, startupInjection: { maxChars: cap } } };
       };
       try {
-        store.projectConfig.save(project.path, {
-          engine: 'claude', silentPrime: true, provenanceWatermark: { enabled: true, template: null }
-        });
         assert.equal(sessions.launchSession('silent-prime-test').error, null);
       } finally {
         store.engines.get = originalGet;
       }
-      const text = fs.readFileSync(primeFile, 'utf8');
-      assert.ok(text.startsWith('<!-- tangleclaw:provenance '), 'the line is there');
-      assert.ok(text.length <= unstamped, `stamped prime ${text.length} exceeds the ${unstamped}-char budget`);
+      // The advisory is written by the engine-config sync, which a launch runs
+      // or has run; write it here so the hook sees what a live project has.
+      require('../lib/provenance').writeOwnedFile(path.join(project.path, '.tangleclaw', 'ui-wrap-advisory.md'),
+        'ui-wrap-advisory', require('../lib/prime-hook-output').UI_WRAP_ADVISORY_TEXT,
+        { config: store.projectConfig.load(project.path), project: project.name, engine: 'claude' });
+
+      const hook = path.join(__dirname, '..', 'data', 'hooks', 'sessionstart-prime-claude.sh');
+      for (const source of ['startup', 'clear']) {
+        const r = require('node:child_process').spawnSync('bash', [hook], {
+          env: { ...process.env, CLAUDE_PROJECT_DIR: project.path },
+          input: JSON.stringify({ source }), encoding: 'utf8'
+        });
+        assert.ok(r.stdout.includes('tangleclaw:provenance'), 'the stamped files are what the hook printed');
+        assert.ok(r.stdout.length <= cap, `${source}: the hook printed ${r.stdout.length} against a ${cap} cap`);
+      }
+      for (const l of padding) store.learnings.delete(l.id);
     });
 
     it('launchSession renders the default over a corrupt stored template and logs why, once', () => {

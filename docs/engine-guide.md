@@ -238,7 +238,14 @@ the directives it carried.
 
 TangleClaw assembles the prime against whatever an engine declares here: bulk sections yield first,
 each replaced by a pointer naming what was dropped, and anything still over budget is shipped whole
-with a notice rather than cut. **Omit the field and the engine keeps the historical 16,000-character
+with a notice rather than cut.
+
+**The cap covers everything the hook prints, not the prime alone (#1888).** Claude's prime hook also
+prints the UI wrap advisory after the prime and, on a `clear` or `compact` fire, the re-entry
+preamble before it. Each has its own separator. The prime is therefore fitted to the cap minus all
+of that in its worst case, the `clear` fire, including any provenance line (ADR 0019).
+`lib/prime-hook-output.js` owns the companion text and the framing, and computes the reserve.
+`test/prime-hook-output.test.js` runs the real hook script against it, so the two cannot drift. **Omit the field and the engine keeps the historical 16,000-character
 fallback**, so declaring it for one engine never changes another's behavior.
 
 The limit applies to the startup-hook channel only. When a project runs with `silentPrime` off the

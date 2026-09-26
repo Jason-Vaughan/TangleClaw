@@ -118,6 +118,7 @@ describe('TangleClaw machine state is recognised by name', () => {
       `.tangleclaw/${channel.SHARD_STEM}-1.json`, `.tangleclaw/${channel.RECEIPT_STEM}.json`,
       `.tangleclaw/${versions.VERSION_CACHE_FILENAME}`, `.tangleclaw/${versions.STAGING_PREFIX}42.abcd.tmp`,
       `.tangleclaw/${require('../lib/provenance').STAGING_PREFIX}42.abcd.tmp`,
+      `${require('../lib/provenance').STAGING_PREFIX}42.abcd.tmp`,
       require('../lib/actions/invoke-critic').CRITIC_RUNS_RELPATH.split(path.sep).join('/'),
       ...require('../lib/wrap-default-pipeline').steps().map((st) => st.captureFile).filter((f) => typeof f === 'string' && f.startsWith('.tangleclaw/'))
     ]) {
