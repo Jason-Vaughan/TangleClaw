@@ -35,6 +35,44 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Chunk 08: install.sh provisions the owned ttyd runtime; whole-input currency; recoverable install and rollback (#1245)
+
+<!-- prawduct: type=feature | scope=ttyd-1245 -->
+
+Chunk 08 (ADR 0018 §4, Architect R24.9/R34), dispatched by the PM in a fresh context. Architect R35 (recorded in the plan)
+adds chunk 04 to the same dispatch and PR; the full suite and ONE cumulative Critic follow chunk 04. R36 and R37
+(the first-switch macOS permission checkpoint: exact visible parity with the old ttyd path, never Full Disk Access by
+default) are recorded in the plan for chunk 04's runbook.
+
+- **(1) Provisioning:** `provisionRuntime` / `ttyd-runtime.js provision`. install.sh calls it instead of `resolve`. It
+  builds (via build-ttyd.js, into a temp stage) and installs only when the runtime is absent, invalid or stale. It never
+  builds under `homebrew` or an unknown mode. A failed build installs nothing and keeps its work directory.
+- **(2) Currency (R-4):** the manifest's `inputsJsonSha256` must equal the SHA-256 of the tracked inputs.json. The
+  source/patch comparison is kept for its specific messages. The cutover never builds, and REPAIR now leads with
+  re-running install.sh.
+- **(3) Recoverability:** install and rollback share `_stageBeside` (copy in as `ttyd.new`, then verify) and
+  `_promote` (manifest rename, then binary). Rollback now COPIES `ttyd.prev` rather than moving it, and copies the
+  replaced runtime aside.
+  - This fixes a real hole: the old move-order rollback, interrupted after the manifest rename, left no verified pair
+    anywhere. The new fault-injection test fails against that implementation (mutation-checked).
+  - The resolver's refusal names the rollback when a verified last known good exists.
+  - Mutating fs calls go through `deps.fs`. Tests fail each boundary in turn (a copy leaves a truncated file) and assert
+    that either the selected runtime verifies, or the refusal names the rollback and a rollback restores a verified one.
+- **(4) Selection reporting:** `runtimeStatus().selected`, plus `stale` on each report. The cutover writes
+  `ttydRuntime {path, managed}` to its result file (declared before `finish`, so an early refusal reports null) and
+  prints it, including under `--dry-run`.
+- **(5) Docs:** configuration-reference (provisioning, the exact guarantee, `status`, and rollback after a pin change),
+  user-guide, FEATURES.
+- **Carried findings:**
+  - R-7: the harness CHANGELOG line moved out of #1858's Fixed entry into the `### Internal` harness bullet.
+  - R-2: the four cited scratch ttyd logs are force-added (scanned: process start/stop lines only).
+  - R-5, R-6 and R-8 were delegated to a shared-worktree subagent. Its claims were re-derived: the grep for ruling and
+    chunk ids and for inline E/Z copies is empty, and the churn and watcher tests went 55→65 and 83→84.
+  - R-3 (Requirements Confidence line) was not dispatched and is left for disposition.
+- **Changed test contract:** the install.sh wiring test now pins `provision` instead of `resolve`, because ADR 0018 §4
+  makes install.sh the provisioner. Its other assertions (resolved before the plist, `exit 1` on refusal, never
+  `command -v ttyd`) are unchanged.
+
 ## 2026-09-26 — Chunk 07 complete: the packaged ttyd passes the full acceptance (#1245)
 
 <!-- prawduct: type=feature | scope=ttyd-1245 -->

@@ -940,10 +940,14 @@ condition fired or could not be measured. Each row carries its own fix; the back
 
   The leak itself is fixed in the ttyd TangleClaw ships (#1245): after a tab closes, it keeps
   reading and discarding that terminal's last output, so the child can finish exiting. launchd
-  runs it from `~/.tangleclaw/bin/ttyd`. If the installer or the ingress cutover stops with "the
-  managed ttyd runtime … cannot be used", build and install it as it says (see "The ttyd runtime
-  launchd runs" in `docs/configuration-reference.md`). Running the Homebrew ttyd instead is
-  possible (`TANGLECLAW_TTYD_RUNTIME=homebrew`) but brings the leak back, and every install says so.
+  runs it from `~/.tangleclaw/bin/ttyd`, and `deploy/install.sh` builds and installs it whenever
+  it is missing, broken or out of date, so a normal install needs no extra step. If the ingress
+  cutover stops with "the managed ttyd runtime … cannot be used", re-run `deploy/install.sh`; if the
+  installer itself stops there, its message says what failed (see "The ttyd runtime launchd runs"
+  in `docs/configuration-reference.md`, which also covers rolling back).
+  `node scripts/ttyd-runtime.js status` shows which ttyd is in use. Running the Homebrew ttyd
+  instead is possible (`TANGLECLAW_TTYD_RUNTIME=homebrew`) but brings the leak back, and every
+  install says so.
 
 - **Full Disk Access missing** — the server process cannot read protected folders. A background
   (launchd-spawned) `node` gets no permission prompt; reads under `~/Documents`, `~/Desktop` and

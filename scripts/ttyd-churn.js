@@ -18,7 +18,9 @@
  *
  *   baseline   the installed ttyd + the shipped attach script; expected to reproduce
  *   control    the scratch ttyd runs `cat` (no output), which must show no wedges
- *   candidate  a fix under test (--ttyd-bin and/or --attach-script); must meet R22 Q7
+ *   candidate  a fix under test (--ttyd-bin and/or --attach-script); must pass the
+ *              acceptance in lib/ttyd-churn.js (cycles, soak, zero wedges and
+ *              restarts, resources back at baseline)
  *
  * The decisions (preflight, stop lines, verdicts) live in lib/ttyd-churn.js.
  */
@@ -86,6 +88,19 @@ function run(cmd, args, opts = {}) {
   });
 }
 
+// What the probes run commands through. Replaceable only by tests, which must
+// never start a real process.
+let _exec = run;
+
+/**
+ * Replace the command runner the probes use (tests only).
+ * @param {Function|null} fn - `(cmd, args, opts) => Promise<string>`, or null for the real one.
+ * @returns {void}
+ */
+function _setRunner(fn) {
+  _exec = fn || run;
+}
+
 /**
  * The path if it is an executable file, else null.
  * @param {string|null} p - Candidate path.
@@ -104,55 +119,72 @@ function executable(p) {
 /**
  * Resolve a binary on PATH.
  * @param {string} name - Binary name.
+ * @param {string[]} [errors] - Receives `which: <cause>` when the lookup fails.
  * @returns {Promise<string|null>}
  */
-async function which(name) {
+async function which(name, errors = []) {
   try {
-    return (await run('/bin/sh', ['-c', `command -v ${name}`])).trim() || null;
-  } catch {
+    const found = (await _exec('/bin/sh', ['-c', `command -v ${name}`])).trim();
+    if (!found) errors.push(churn.probeError('which', `${name} printed nothing`));
+    return found || null;
+  } catch (err) {
+    errors.push(churn.probeError('which', `${name}: ${err.message}`));
     return null;
   }
 }
 
 /**
  * Read the global PTY pool.
- * @returns {Promise<{used: number, cap: number}|null>}
+ * @param {string[]} [errors] - Receives `pool: <cause>` when the read fails.
+ * @returns {Promise<{used: number, cap: number}|null>} null when unmeasured.
  */
-async function readPool() {
+async function readPool(errors = []) {
+  let cap;
+  let used;
   try {
-    const cap = parseInt(await run('sysctl', ['-n', 'kern.tty.ptmx_max']), 10);
-    const used = parseInt(await run('sh', ['-c', 'ls /dev/ttys* 2>/dev/null | wc -l']), 10);
-    const pool = _poolFromCounts(cap, used, 1);
-    return pool ? { used: pool.used, cap: pool.cap } : null;
-  } catch {
+    cap = parseInt(await _exec('sysctl', ['-n', 'kern.tty.ptmx_max']), 10);
+    used = parseInt(await _exec('sh', ['-c', 'ls /dev/ttys* 2>/dev/null | wc -l']), 10);
+  } catch (err) {
+    errors.push(churn.probeError('pool', err));
     return null;
   }
+  const pool = _poolFromCounts(cap, used, 1);
+  if (!pool) errors.push(churn.probeError('pool', `unusable counts (cap ${cap}, used ${used})`));
+  return pool ? { used: pool.used, cap: pool.cap } : null;
 }
 
 /**
  * Read the live health panel's ttyd row state, read-only.
+ * @param {string[]} [errors] - Receives `health: <cause>` when the read fails.
  * @returns {Promise<string|null>} `clear` / `fired` / `unknown`, or null if unreadable.
  */
-async function readLiveTtydState() {
+async function readLiveTtydState(errors = []) {
   const api = process.env.TANGLECLAW_API;
-  if (!api) return null;
+  if (!api) {
+    errors.push(churn.probeError('health', 'TANGLECLAW_API is not set'));
+    return null;
+  }
   try {
-    const body = JSON.parse(await run('curl', ['-sk', '--max-time', '10', `${api.replace(/\/$/, '')}/api/system/health`]));
+    const body = JSON.parse(await _exec('curl', ['-sk', '--max-time', '10', `${api.replace(/\/$/, '')}/api/system/health`]));
     const row = (body.conditions || []).find((c) => c.id === 'ttyd-leak');
+    if (!row) errors.push(churn.probeError('health', 'no ttyd-leak row'));
     return row ? row.state : null;
-  } catch {
+  } catch (err) {
+    errors.push(churn.probeError('health', err));
     return null;
   }
 }
 
 /**
  * The whole process table, with process groups.
- * @returns {Promise<Array<object>|null>}
+ * @param {string[]} [errors] - Receives `ps: <cause>` when the read fails.
+ * @returns {Promise<Array<object>|null>} null when unmeasured.
  */
-async function readProcTable() {
+async function readProcTable(errors = []) {
   try {
-    return churn.parseProcTable(await run('ps', ['-A', '-o', 'pid=,ppid=,pgid=,stat=,etime=,lstart=']));
-  } catch {
+    return churn.parseProcTable(await _exec('ps', ['-A', '-o', 'pid=,ppid=,pgid=,stat=,etime=,lstart=']));
+  } catch (err) {
+    errors.push(churn.probeError('ps', err));
     return null;
   }
 }
@@ -171,10 +203,11 @@ function childrenOf(table, ttydPid) {
 /**
  * The state of some PIDs, read now (after an lsof run), keyed by PID.
  * @param {number[]} pids - PIDs to look up.
+ * @param {string[]} [errors] - Receives `ps: <cause>` when the read fails.
  * @returns {Promise<Map<number, {lstart: string, stat: string}>|null>} null when ps could not be read.
  */
-async function readStateAfter(pids) {
-  const table = await readProcTable();
+async function readStateAfter(pids, errors = []) {
+  const table = await readProcTable(errors);
   if (!table) return null;
   const want = new Set(pids);
   return new Map(table.filter((r) => want.has(r.pid)).map((r) => [r.pid, { lstart: r.lstart, stat: r.stat }]));
@@ -186,9 +219,10 @@ async function readStateAfter(pids) {
  * an omitted process must be identity-proven gone or the same identity in
  * E/Z, judged from a state read taken AFTER lsof.
  * @param {Array<{pid: number, lstart: string}>} rows - Recorded identities to ask about.
- * @returns {Promise<{slaves: string[], masters: number}|null>}
+ * @param {string[]} [errors] - Receives `lsof: <cause>` (or `ps: <cause>`) when unmeasured.
+ * @returns {Promise<{slaves: string[], masters: number}|null>} null when unmeasured.
  */
-async function readOwnedPtys(rows) {
+async function readOwnedPtys(rows, errors = []) {
   if (rows.length === 0) return { slaves: [], masters: 0 };
   const { err, out } = await new Promise((resolve) => {
     execFile('lsof', ['-F', 'pn', '-p', rows.map((r) => r.pid).join(',')], { encoding: 'utf8', timeout: 30000, maxBuffer: 64 * 1024 * 1024 },
@@ -198,9 +232,10 @@ async function readOwnedPtys(rows) {
   if (err && err.code === 1 && !err.killed && !err.signal) {
     const reported = churn.lsofReportedPids(out);
     const omitted = rows.filter((r) => !reported.has(r.pid)).map((r) => r.pid);
-    if (omitted.length) after = await readStateAfter(omitted);
+    if (omitted.length) after = await readStateAfter(omitted, errors);
   }
   const text = churn.lsofOutput(err, out, rows, after);
+  if (text === null) errors.push(churn.lsofRefusal(err, after));
   return text === null ? null : churn.parseLsofPtys(text);
 }
 
@@ -216,9 +251,10 @@ async function snapshot(dir, label, ledger) {
   // reused PID or group id is never listed, let alone read by lsof.
   const out = [];
   let rows = [];
-  const table = await readProcTable();
+  const psErrors = [];
+  const table = await readProcTable(psErrors);
   if (table) rows = ledger.survivors(table);
-  else out.push('ps failed');
+  else out.push(psErrors.join('; '));
   const pids = rows.map((r) => r.pid);
   if (pids.length) {
     try {
@@ -236,13 +272,15 @@ async function snapshot(dir, label, ledger) {
 /**
  * The scratch ttyd's open file descriptor count.
  * @param {number} ttydPid - Scratch ttyd PID.
- * @returns {Promise<number|null>}
+ * @param {string[]} [errors] - Receives `lsof: <cause>` when the read fails.
+ * @returns {Promise<number|null>} null when unmeasured.
  */
-async function readFds(ttydPid) {
+async function readFds(ttydPid, errors = []) {
   try {
-    const out = await run('lsof', ['-p', String(ttydPid)]);
+    const out = await _exec('lsof', ['-p', String(ttydPid)]);
     return Math.max(0, out.trim().split('\n').length - 1);
-  } catch {
+  } catch (err) {
+    errors.push(churn.probeError('lsof', err));
     return null;
   }
 }
@@ -373,8 +411,9 @@ async function cleanup(s) {
   let survivors = null;
   if (s.ledger) {
     await sleep(300);
-    const table = await readProcTable();
-    if (table === null) leftovers.push('could not read the process table to verify the run\'s processes are gone');
+    const psErrors = [];
+    const table = await readProcTable(psErrors);
+    if (table === null) leftovers.push(`could not read the process table to verify the run's processes are gone (${psErrors.join('; ')})`);
     else {
       survivors = s.ledger.survivors(table).map((r) => ({ pid: r.pid, ppid: r.ppid, pgid: r.pgid, stat: r.stat }));
       if (survivors.length) leftovers.push(`${survivors.length} recorded processes survived: ${survivors.map((r) => `${r.pid}(${r.stat})`).join(', ')}`);
@@ -399,19 +438,21 @@ async function main(o) {
   const sock = path.join(dir, 'ttyd.sock');
   // Checked as executables, not just as strings: a wrong --ttyd-bin must be
   // refused here, before a scratch tmux server exists to be orphaned.
-  const ttydBin = executable(o.ttydBin || await which('ttyd'));
-  const tmuxBin = executable(await which('tmux'));
-  const basePool = await readPool();
+  // The cause of every preflight probe that failed, beside the facts it left null.
+  const preflightErrors = [];
+  const ttydBin = executable(o.ttydBin || await which('ttyd', preflightErrors));
+  const tmuxBin = executable(await which('tmux', preflightErrors));
+  const basePool = await readPool(preflightErrors);
   const facts = {
     platform: process.platform,
-    ttydLeakState: await readLiveTtydState(),
+    ttydLeakState: await readLiveTtydState(preflightErrors),
     pool: basePool,
     socketInUse: fs.existsSync(sock),
     ttydBin,
     tmuxBin,
     concurrency: o.concurrency
   };
-  const pre = churn.checkPreflight(facts);
+  const pre = { ...churn.checkPreflight(facts), probeErrors: preflightErrors };
   console.log(JSON.stringify({ preflight: { ...pre, facts, dir } }, null, 2));
   if (!pre.ok || o.preflightOnly) return { preflight: pre };
 
@@ -465,21 +506,33 @@ async function main(o) {
     const selfTable = await readProcTable();
     const self = selfTable && selfTable.find((r) => r.pid === process.pid);
     s.ledger = new churn.ProcessLedger(s.ttydPid, { notOwned: self ? [{ pid: self.pid, lstart: self.lstart }] : [] });
-    const baseTable = await readProcTable();
+    // The cause of each baseline resource measurement that failed: a candidate
+    // left without one is inconclusive, and says why.
+    const baselineErrors = [];
+    const baseTable = await readProcTable(baselineErrors);
     if (baseTable) s.ledger.record(baseTable);
-    report.baseline = { pool: basePool, fds: await readFds(s.ttydPid), ownedPtys: baseTable ? await readOwnedPtys(s.ledger.owned(baseTable)) : null };
+    report.baseline = {
+      pool: basePool,
+      fds: await readFds(s.ttydPid, baselineErrors),
+      ownedPtys: baseTable ? await readOwnedPtys(s.ledger.owned(baseTable), baselineErrors) : null,
+      probeErrors: baselineErrors
+    };
     await snapshot(dir, 'baseline', s.ledger);
     let latest = [];
+    // Why the newest sample could not read the children, when it could not.
+    let latestErrors = [];
     let sampling = false;
     let maxChildren = 0;
     sampler = setInterval(async () => {
       if (sampling) return;
       sampling = true;
-      const table = await readProcTable();
+      const errors = [];
+      const table = await readProcTable(errors);
       if (table) s.ledger.record(table);
       const kids = childrenOf(table, s.ttydPid);
       sampling = false;
       latest = kids;
+      latestErrors = errors;
       if (kids) {
         tracker.observe(kids, Date.now());
         maxChildren = Math.max(maxChildren, kids.length);
@@ -492,15 +545,21 @@ async function main(o) {
     let stop = 'completed';
     let peakPool = basePool;
     let maxWedges = 0;
+    // The causes behind an `aborted-unmeasured` stop, carried into the verdict.
+    let stopErrors = [];
     const between = async () => {
-      const pool = await readPool();
+      const errors = [];
+      const pool = await readPool(errors);
       if (pool && (!peakPool || pool.used > peakPool.used)) peakPool = pool;
       // Wedges are children SEEN exiting for the floor, from the sampler's own
       // first sighting. A failed ps read leaves the run blind.
       const wedges = latest === null ? null : churn.countWedges(tracker.stillOpen(Date.now()));
+      if (latest === null) errors.push(...latestErrors);
       if (wedges !== null) maxWedges = Math.max(maxWedges, wedges);
-      if (exitedEarly) return 'aborted-unmeasured';
-      return churn.nextStep({ wedges, pool });
+      if (exitedEarly) errors.push(churn.probeError('ttyd', 'the scratch ttyd exited mid-run'));
+      const step = exitedEarly ? 'aborted-unmeasured' : churn.nextStep({ wedges, pool });
+      if (step === 'aborted-unmeasured') stopErrors = errors;
+      return step;
     };
     while (cycles < o.cycles) {
       const n = Math.min(o.concurrency, o.cycles - cycles);
@@ -528,16 +587,19 @@ async function main(o) {
     }
     clearInterval(sampler);
     sampler = null;
-    const finalTable = await readProcTable();
+    const finalErrors = [];
+    const finalTable = await readProcTable(finalErrors);
     if (finalTable) s.ledger.record(finalTable);
     await snapshot(dir, 'pre-cleanup', s.ledger);
+    // The global pool is diagnostic only, so its failure is not a resource cause.
+    const poolErrors = [];
     const final = {
-      pool: await readPool(),
-      fds: await readFds(s.ttydPid),
+      pool: await readPool(poolErrors),
+      fds: await readFds(s.ttydPid, finalErrors),
       children: childrenOf(finalTable, s.ttydPid),
       // Exactly the run's recorded processes still alive (PID AND start time,
       // so a recycled PID is never measured) and the PTYs they hold.
-      ownedPtys: finalTable ? await readOwnedPtys(s.ledger.owned(finalTable)) : null
+      ownedPtys: finalTable ? await readOwnedPtys(s.ledger.owned(finalTable), finalErrors) : null
     };
     maxWedges = Math.max(maxWedges, churn.countWedges(tracker.stillOpen(Date.now())));
 
@@ -554,12 +616,18 @@ async function main(o) {
       ownedPtys: { baseline: report.baseline.ownedPtys, final: final.ownedPtys },
       fds: { baseline: report.baseline.fds, final: final.fds },
       restarts: exitedEarly ? 1 : 0,
-      soakMs: stop === 'completed' ? soakMs : 0
+      soakMs: stop === 'completed' ? soakMs : 0,
+      probeErrors: {
+        stop: stop === 'aborted-unmeasured' ? stopErrors : [],
+        resource: [...report.baseline.probeErrors, ...finalErrors],
+        pool: poolErrors
+      }
     };
   } finally {
     if (sampler) clearInterval(sampler);
     report.cleanup = await cleanup(s);
-    report.afterCleanup = { pool: await readPool() };
+    const afterErrors = [];
+    report.afterCleanup = { pool: await readPool(afterErrors), probeErrors: afterErrors };
     if (s.ledger) await snapshot(dir, 'post-cleanup', s.ledger);
     process.removeListener('SIGINT', onSignal);
     process.removeListener('SIGTERM', onSignal);
@@ -572,7 +640,8 @@ async function main(o) {
       mode: o.mode, stop: r.stop, cycles: r.cycles, soakMs: r.soakMs, confirmedWedges: r.confirmedWedges,
       restarts: r.restarts, clientErrors: r.clientErrors, withOutput: r.withOutput, lingering: r.lingering,
       outputExpected: o.modes.some((m) => m !== 'noread'),
-      ownedPtysReturned, fdsReturned, cleanupOk: report.cleanup.ok
+      ownedPtysReturned, fdsReturned, cleanupOk: report.cleanup.ok,
+      stopErrors: r.probeErrors.stop, resourceErrors: r.probeErrors.resource
     });
   }
   fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(report, null, 2));
@@ -603,4 +672,4 @@ if (require.main === module) {
   );
 }
 
-module.exports = { parseArgs };
+module.exports = { parseArgs, which, readPool, readLiveTtydState, readProcTable, readFds, _setRunner };

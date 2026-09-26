@@ -5,20 +5,28 @@
  * Command-line front end for the owned ttyd runtime (#1245, ADR 0018); the
  * logic lives in lib/ttyd-runtime.js.
  *
+ *   provision            make sure a current, verified runtime is installed —
+ *                        building and installing one when it is absent, invalid
+ *                        or stale — then print the ttyd path launchd should run
+ *                        (stdout only), or exit 3 naming the repair. Used by
+ *                        deploy/install.sh. Never builds under the explicit
+ *                        Homebrew rollback.
  *   resolve              print the ttyd path launchd should run (stdout only), or
- *                        exit 3 naming the repair. Used by deploy/install.sh.
+ *                        exit 3 naming the repair. Never builds.
  *   install --from DIR   install a runtime staged by scripts/build-ttyd.js,
- *                        transactionally, keeping the current one as last known good
+ *                        fail-closed, keeping the current one as last known good
  *   rollback             restore the last known good runtime
- *   status               report the current and last-known-good runtimes
+ *   status               report which ttyd is selected (or why none is), and
+ *                        the current and last-known-good runtimes
  *
  *   --base-dir DIR       the TangleClaw base directory to act on (default: the
  *                        install's own, which honours TANGLECLAW_HOME). install.sh
  *                        passes the one it writes everything else under, so a
  *                        stray TANGLECLAW_HOME cannot split one install in two.
  *
- * `install` and `rollback` change only files under ~/.tangleclaw/bin. Neither
- * edits a plist nor restarts ttyd: those follow through install.sh or the
+ * `provision`, `install` and `rollback` change only files under
+ * ~/.tangleclaw/bin (and a temporary build directory). None of them edits a
+ * plist or restarts ttyd: those follow through install.sh or the
  * ingress cutover, under Operator/PM authority.
  */
 
@@ -43,6 +51,13 @@ function main(argv, io) {
   }
   const [cmd, ...rest] = args;
   try {
+    if (cmd === 'provision') {
+      const r = runtime.provisionRuntime({ baseDir, env: io.env, deps: io.deps, log: (s) => io.err(s) });
+      if (r.warning) io.err(`WARNING: ${r.warning}`);
+      else if (r.built) io.err(`built and installed the owned ttyd runtime ${r.installed}`);
+      io.out(r.path);
+      return 0;
+    }
     if (cmd === 'resolve') {
       const r = runtime.resolveTtydPath({ baseDir, env: io.env, deps: io.deps });
       if (r.warning) io.err(`WARNING: ${r.warning}`);
@@ -64,10 +79,10 @@ function main(argv, io) {
       return 0;
     }
     if (cmd === 'status') {
-      io.out(JSON.stringify(runtime.runtimeStatus({ baseDir, deps: io.deps }), null, 2));
+      io.out(JSON.stringify(runtime.runtimeStatus({ baseDir, env: io.env, deps: io.deps }), null, 2));
       return 0;
     }
-    io.err('usage: ttyd-runtime.js resolve | install --from <stage-dir> | rollback | status');
+    io.err('usage: ttyd-runtime.js provision | resolve | install --from <stage-dir> | rollback | status');
     return 2;
   } catch (err) {
     if (err instanceof runtime.RuntimeUnavailableError) {

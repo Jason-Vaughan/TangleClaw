@@ -437,6 +437,99 @@ describe('lib/ttyd-churn (#1245 harness decisions)', () => {
     });
   });
 
+  describe('the harness judges "exiting" with the watcher\'s own predicate', () => {
+    const { _isExiting } = require('../lib/ttyd-watcher');
+    const STATS = ['?Es', 'E', 'Es', 'Z', 'Z+', 'ZN', '?E', 'Ss', 'S+', 'R', 'I', 'Ts', 'U', '?s', 'e', 'z'];
+
+    it('LifetimeTracker counts a child as exiting exactly when the watcher does', () => {
+      for (const stat of STATS) {
+        const t = new churn.LifetimeTracker();
+        t.observe([{ pid: 10, stat, ageMs: 0 }], 1000);
+        assert.equal(t.stillOpen(1000).length === 1, _isExiting(stat), stat);
+      }
+    });
+
+    it('lsofOutput explains an omission by E/Z exactly when the watcher counts that state as exiting', () => {
+      const err = Object.assign(new Error('Command failed'), { code: 1, killed: false, signal: null });
+      const L = 'Fri Sep 26 03:00:00 2026';
+      const req = [{ pid: 1, lstart: L }, { pid: 700, lstart: L }];
+      for (const stat of STATS) {
+        const read = churn.lsofOutput(err, 'p1\nn/dev/ptmx', req, new Map([[700, { lstart: L, stat }]]));
+        assert.equal(read !== null, _isExiting(stat), stat);
+      }
+    });
+
+    it('keeps no inline copy of the predicate in the harness', () => {
+      const fs = require('node:fs');
+      const path = require('node:path');
+      for (const file of ['lib/ttyd-churn.js', 'scripts/ttyd-churn.js']) {
+        const src = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+        assert.doesNotMatch(src, /includes\('[EZ]'\)|\[EZ\]/, file);
+      }
+    });
+  });
+
+  describe('a failed probe keeps its cause', () => {
+    const script = require('../scripts/ttyd-churn');
+    const failing = (message) => async () => { throw new Error(message); };
+
+    it('probeError names the probe and folds a multi-line message onto one line', () => {
+      assert.equal(churn.probeError('ps', new Error('Command failed: ps -A\nps: no memory\n')), 'ps: Command failed: ps -A | ps: no memory');
+      assert.equal(churn.probeError('pool', 'unusable counts'), 'pool: unusable counts');
+    });
+
+    it('each script probe returns null (unmeasured) and records `<probe>: <message>`', async () => {
+      script._setRunner(failing('spawn EAGAIN'));
+      try {
+        const errors = [];
+        assert.equal(await script.readPool(errors), null);
+        assert.equal(await script.readProcTable(errors), null);
+        assert.equal(await script.readFds(4242, errors), null);
+        assert.equal(await script.which('ttyd', errors), null);
+        assert.deepEqual(errors, ['pool: spawn EAGAIN', 'ps: spawn EAGAIN', 'lsof: spawn EAGAIN', 'which: ttyd: spawn EAGAIN']);
+      } finally {
+        script._setRunner(null);
+      }
+    });
+
+    it('a pool read that returns unusable counts is unmeasured, with the counts named', async () => {
+      script._setRunner(async () => 'garbage');
+      try {
+        const errors = [];
+        assert.equal(await script.readPool(errors), null);
+        assert.deepEqual(errors, ['pool: unusable counts (cap NaN, used NaN)']);
+      } finally {
+        script._setRunner(null);
+      }
+    });
+
+    it('lsofRefusal says why lsofOutput refused a result', () => {
+      const cut = Object.assign(new Error('stdout maxBuffer length exceeded'), { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' });
+      assert.equal(churn.lsofRefusal(cut, null), 'lsof: stdout maxBuffer length exceeded');
+      const exit1 = Object.assign(new Error('Command failed'), { code: 1, killed: false, signal: null });
+      assert.match(churn.lsofRefusal(exit1, null), /^lsof: exit 1 omitted requested processes, and their state could not be read/);
+      assert.match(churn.lsofRefusal(exit1, new Map()), /^lsof: exit 1 named a process not requested, or omitted one that is still running/);
+    });
+
+    it('a run stopped unmeasured names the failed probe and its cause in the verdict', () => {
+      for (const mode of ['baseline', 'control', 'candidate']) {
+        const v = churn.verdict(passingCandidate({ mode, stop: 'aborted-unmeasured', stopErrors: ['pool: spawn EAGAIN', 'ps: spawn EAGAIN'] }));
+        assert.equal(v.verdict, 'inconclusive', mode);
+        assert.ok(v.why.includes('a measurement failed mid-run: pool: spawn EAGAIN; ps: spawn EAGAIN'), JSON.stringify(v.why));
+      }
+    });
+
+    it('a candidate short of a resource measurement names the failed probe and its cause', () => {
+      const v = churn.verdict(passingCandidate({ fdsReturned: null, resourceErrors: ['lsof: Command failed: lsof -p 4242'] }));
+      assert.equal(v.verdict, 'inconclusive');
+      assert.ok(v.why.includes('resource return was not measured: lsof: Command failed: lsof -p 4242'), JSON.stringify(v.why));
+    });
+
+    it('with no recorded cause the reason is unchanged', () => {
+      assert.deepEqual(churn.verdict(passingCandidate({ stop: 'aborted-unmeasured' })).why, ['a measurement failed mid-run']);
+    });
+  });
+
   describe('scripts/ttyd-churn.js parseArgs', () => {
     it('requires a mode, and defaults a candidate to the full acceptance cycle count', () => {
       assert.throws(() => parseArgs([]), /--mode must be/);

@@ -67,8 +67,16 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
       - R-6: strip ruling/chunk ids from shipped code comments and state the rule itself;
       - R-2: `git add -f` the gitignored scratch ttyd logs the evidence cites (run6/run5/acceptance-dfae4e69/a3c).
       R-1 stays OPEN until this lands. Then run the full suite and a NEW cumulative Critic after chunks 08 and 04.
+      **BUILT (2026-09-26, dispatched by the PM 14:37Z in a fresh context).** All five deliverables and the carried batch
+      are in the chunk 08 commit: `provision` in `lib/ttyd-runtime.js`/`scripts/ttyd-runtime.js`, called by
+      `deploy/install.sh`; whole-file currency via `inputsJsonSha256` (a stale runtime is refused, and so is a stale last
+      known good at rollback); install and rollback staged beside the current pair and promoted manifest-first, with
+      rollback COPYING the last known good; fault-injection tests at every copy/chmod/rename boundary; `status.selected`
+      and the cutover's `ttydRuntime`; the docs. R-7, R-8, R-5, R-6 and R-2 are in the same commit. The box is ticked
+      after the cumulative Critic (see R35).
 - [ ] Chunk 04 (revised): rollout and rollback docs for the owned runtime (F/G, the user guide, the configuration
-      reference), and the CHANGELOG. Re-tuning the watcher waits for live certification
+      reference), and the CHANGELOG. Re-tuning the watcher waits for live certification. **In the SAME dispatch and PR
+      as chunk 08 (Architect R35).**
 - [ ] Verify (the full suite), the cumulative Critic, one draft PR ONLY when the PM authorizes (pilot boundary: no merge).
       #1245 stays open until post-merge live certification. D3 (upstream offer) is prepared separately and not submitted
       without authorization
@@ -77,6 +85,44 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
 live service, no tests on the main instance, no tag, publish or release, no deploy. Everything below that runs
 a ttyd runs an *isolated* one: its own unix socket, its own `tmux -L` server, a scratch directory outside
 `~/Documents`.
+
+## Architect ruling R37 (2026-09-26 14:52Z; SECURITY CORRECTION, controlling over R36's Full Disk Access sentence)
+
+R36 called Full Disk Access a documented minimum. That sentence is superseded; the rest of R36 stands.
+
+- The shipped ttyd plist's #500 contract says ttyd is intentionally DENIED Full Disk Access, and the attach script lives
+  outside `~/Documents` so that ttyd does not need it. That comment stays unless evidence proves it stale.
+- Least privilege controls. The Operator inspects the old ttyd path and gives `~/.tangleclaw/bin/ttyd` exact visible
+  parity, which means NO Full Disk Access when the old path has none. Never add Full Disk Access merely because projects
+  live under `~/Documents`.
+- If parity cannot be established, or a required live check fails, STOP and report. Any broader grant is a separate,
+  explicit Operator risk decision.
+- The checkpoint stays before the restart, and the exact grants observed stay as rollout evidence.
+
+## Architect ruling R36 (2026-09-26 14:50Z, relayed by the PM at 14:50Z; controlling for chunk 04's rollout runbook)
+
+The macOS permission (TCC) step of the first switch to `~/.tangleclaw/bin/ttyd`:
+
+- Do not invent or claim an exact, complete grant set from repo evidence.
+- ~~The documented minimum for this host's projects under `~/Documents` is **Full Disk Access**, keyed to ttyd's absolute
+  executable path.~~ **Superseded by R37: exact visible parity, and no Full Disk Access unless the old path has it.** The
+  old Homebrew ttyd path may hold resource-specific grants that the repo cannot enumerate.
+- The runbook makes this an explicit **Operator-present GUI checkpoint**: inspect the old ttyd entry, give
+  `~/.tangleclaw/bin/ttyd` the same visible grants (exact parity, per R37), then restart ttyd and verify in the real
+  launchd context.
+- The exact grants observed are **rollout evidence**, not pre-merge proof. No Builder performs this live step.
+
+## Architect ruling R35 (2026-09-26 14:39Z, relayed by the PM and confirmed by the Architect at 14:45Z; controlling)
+
+The chunk 08 dispatch is amended to include chunk 04 in the same context and the same PR boundary. Sequence:
+
+1. Complete and commit chunk 08 and the carried findings (R-1, R-2, R-4, R-5, R-6, R-7, R-8).
+2. Complete and commit chunk 04: the rollout docs, the user guide, the configuration reference and the CHANGELOG.
+3. Run the full suite ONCE, over the combined candidate.
+4. Run ONE new cumulative Critic over chunks 08 and 04 and all prior work.
+
+There is no merge-readiness checkpoint after chunk 08 alone. This ruling had to be recorded here before any work
+past chunk 08; it lands in the chunk 08 commit.
 
 ## Architect ruling R22 (2026-09-25 18:48Z, controlling; where it differs from the sections below, R22 wins)
 

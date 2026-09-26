@@ -264,6 +264,13 @@ describe('ttyd-watcher', () => {
     });
   });
 
+  describe('_isExiting — the one exiting-state predicate', () => {
+    it('is true exactly for a state holding uppercase E (exiting) or Z (zombie)', () => {
+      for (const stat of ['?Es', 'E', 'Es', 'Z', 'Z+', 'ZN', '?E']) assert.equal(ttydWatcher._isExiting(stat), true, stat);
+      for (const stat of ['Ss', 'S+', 'R', 'I', 'Ts', 'U', '?s', 'e', 'z']) assert.equal(ttydWatcher._isExiting(stat), false, stat);
+    });
+  });
+
   describe('takeReading', () => {
     it('reports pid null and measures nothing else when the job is not running', async () => {
       const runner = makeRunner({ 'launchctl:list': LAUNCHCTL_OUTPUT_NOT_RUNNING });

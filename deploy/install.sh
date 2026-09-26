@@ -104,16 +104,21 @@ green "  Node.js $NODE_VERSION ($NODE_PATH)"
 
 # ttyd — terminal-over-websocket front end. launchd runs the TangleClaw-owned,
 # self-contained runtime at ~/.tangleclaw/bin/ttyd (#1245, ADR 0018): the
-# Homebrew build leaks a PTY per closed terminal on macOS. The path comes from
-# the ONE resolver the ingress cutover also uses, never from PATH, and a missing
-# or invalid runtime stops the install HERE, before any plist is written, with
-# the repair. The Homebrew ttyd stays installed as the explicit rollback target
-# (TANGLECLAW_TTYD_RUNTIME=homebrew), never as a silent fallback.
+# Homebrew build leaks a PTY per closed terminal on macOS. This script is that
+# runtime's provisioner: when it is absent, invalid, or stale (built from a
+# different deploy/ttyd/inputs.json), `provision` builds it from the pinned
+# inputs into a temporary stage and installs the verified result; a runtime
+# that verifies and is current is kept as is. The path comes from the ONE
+# resolver the ingress cutover also uses, never from PATH, and a runtime that
+# cannot be provisioned stops the install HERE, before any plist is written,
+# with the repair. The Homebrew ttyd stays installed as the explicit rollback
+# target (TANGLECLAW_TTYD_RUNTIME=homebrew, which skips the build), never as a
+# silent fallback.
 ensure_dep ttyd ttyd
 # --base-dir: the same ~/.tangleclaw this script writes everything else under,
 # so a TANGLECLAW_HOME in the shell cannot point the plist somewhere else.
-TTYD_PATH="$(node "${REPO_DIR}/scripts/ttyd-runtime.js" resolve --base-dir "$HOME/.tangleclaw")" || {
-  red "ERROR: no usable ttyd runtime (see above). Nothing was installed."
+TTYD_PATH="$(node "${REPO_DIR}/scripts/ttyd-runtime.js" provision --base-dir "$HOME/.tangleclaw")" || {
+  red "ERROR: no usable ttyd runtime (see above). No plist was written."
   exit 1
 }
 green "  ttyd runtime: ${TTYD_PATH}"
