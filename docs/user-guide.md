@@ -480,7 +480,17 @@ Tap **Wrap** to trigger the session wrap. This:
 2. Captures session output (summary, next steps, learnings)
 3. Records the wrap in the database
 4. Ends the session
-5. Redirects to the landing page after a countdown
+5. Shows the ended bar, with **Back to Projects**, **Restart Session** and **Stay**
+
+**Restart Session** starts the next session of the same project from the page you are on, with no
+trip through the landing page (#1637). It launches the way the landing page does, with the
+project's default launch mode, and the new session resumes from the handoff this wrap published.
+The button appears only when TangleClaw can confirm the wrap ended the session. After a session
+that was killed or crashed, the bar keeps its 10-second return to the landing page instead. If the launch is refused, the reason appears beside
+the button. After a STOP you can press it again once the STOP is lifted. Stranded wraps or a tunnel
+conflict have to be resolved from Back to Projects. If TangleClaw can't tell whether the launch
+started (the connection dropped, or no answer came within a minute), it checks before letting you
+try again, so one press never starts two sessions.
 
 If a `deletePassword` is configured, you'll need to enter it to wrap.
 
