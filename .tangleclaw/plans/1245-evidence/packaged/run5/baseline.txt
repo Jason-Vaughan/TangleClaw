@@ -1,0 +1,21 @@
+  PID  PPID  PGID STAT     ELAPSED COMMAND
+16913 16642 16642 S          00:01 /private/tmp/claude-501/-Users-jasonvaughan-Documents-Projects-TangleClaw-Pilot-B1/3340b1e4-3366-4cf5-802e-c4281748e42a/scratchpad/packaged/ttyd --writable --url-arg --interface /tmp/tcc-muhtzcqc/ttyd.sock --port 0 --client-option scrollback 10000
+--- lsof
+COMMAND   PID         USER   FD     TYPE             DEVICE SIZE/OFF                NODE NAME
+ttyd    16913 jasonvaughan  cwd      DIR               1,18     1024           313083899 /Users/jasonvaughan/Documents/Projects/TangleClaw-Pilot-B1
+ttyd    16913 jasonvaughan  txt      REG               1,18   815880           324118049 /private/tmp/claude-501/-Users-jasonvaughan-Documents-Projects-TangleClaw-Pilot-B1/3340b1e4-3366-4cf5-802e-c4281748e42a/scratchpad/packaged/ttyd
+ttyd    16913 jasonvaughan  txt      REG               1,18  2289328 1152921500312524573 /usr/lib/dyld
+ttyd    16913 jasonvaughan    0r     CHR                3,2      0t0                 336 /dev/null
+ttyd    16913 jasonvaughan    1u     CHR                3,2      0t0                 336 /dev/null
+ttyd    16913 jasonvaughan    2w     REG               1,18      891           326146442 /private/tmp/tcc-muhtzcqc/ttyd.log
+ttyd    16913 jasonvaughan    3u  KQUEUE                                                 count=0, state=0xa
+ttyd    16913 jasonvaughan    4     PIPE 0x50a131903bfd5590    16384                     ->0x7705752c31019a75
+ttyd    16913 jasonvaughan    5     PIPE 0x7705752c31019a75    16384                     ->0x50a131903bfd5590
+ttyd    16913 jasonvaughan    6r     DIR               1,18      704                   2 /
+ttyd    16913 jasonvaughan    7r     CHR               17,1      0t0                 612 /dev/urandom
+ttyd    16913 jasonvaughan    8     PIPE 0x8d7e4beb318ec689    16384                     ->0xe188f3b1570cf3b0
+ttyd    16913 jasonvaughan    9     PIPE 0xe188f3b1570cf3b0    16384                     ->0x8d7e4beb318ec689
+ttyd    16913 jasonvaughan   10u    unix 0x32efb56a02dc59b5      0t0                     /tmp/tcc-muhtzcqc/ttyd.sock
+ttyd    16913 jasonvaughan   11     PIPE  0x3615a52f66ad32a    16384                     ->0xf4bc6439cc731348
+ttyd    16913 jasonvaughan   12     PIPE 0xf4bc6439cc731348    16384                     ->0x3615a52f66ad32a
+

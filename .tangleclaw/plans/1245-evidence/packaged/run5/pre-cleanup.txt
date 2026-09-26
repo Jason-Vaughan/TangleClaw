@@ -1,0 +1,130 @@
+  PID  PPID  PGID STAT     ELAPSED COMMAND
+16642 47223 16642 Ss      02:07:15 node scripts/ttyd-churn.js --mode candidate --cycles 2000 --soak-minutes 120 --review rev-20260926T032823Z-5d902843 --ttyd-bin /private/tmp/claude-501/-Users-jasonvaughan-Documents-Projects-TangleClaw-Pilot-B1/3340b1e4-3366-4cf5-802e-c4281748e42a/scratchpad/packaged/ttyd --attach-script /private/tmp/claude-501/-Users-jasonvaughan-Documents-Projects-TangleClaw-Pilot-B1/3340b1e4-3366-4cf5-802e-c4281748e42a/scratchpad/a3/attach-original.sh
+16913 16642 16642 S       02:07:15 /private/tmp/claude-501/-Users-jasonvaughan-Documents-Projects-TangleClaw-Pilot-B1/3340b1e4-3366-4cf5-802e-c4281748e42a/scratchpad/packaged/ttyd --writable --url-arg --interface /tmp/tcc-muhtzcqc/ttyd.sock --port 0 --client-option scrollback 10000
+88698 16642 16642 R          00:00 ps -A -o pid,ppid,pgid,stat,etime,command
+80116  1335 80116 Ss+        28:37 agy --dangerously-skip-permissions
+--- lsof
+COMMAND   PID         USER   FD      TYPE             DEVICE  SIZE/OFF                NODE NAME
+ttyd    16913 jasonvaughan  cwd       DIR               1,18      1024           313083899 /Users/jasonvaughan/Documents/Projects/TangleClaw-Pilot-B1
+ttyd    16913 jasonvaughan  txt       REG               1,18    815880           324118049 /private/tmp/claude-501/-Users-jasonvaughan-Documents-Projects-TangleClaw-Pilot-B1/3340b1e4-3366-4cf5-802e-c4281748e42a/scratchpad/packaged/ttyd
+ttyd    16913 jasonvaughan  txt       REG               1,18   2289328 1152921500312524573 /usr/lib/dyld
+ttyd    16913 jasonvaughan    0r      CHR                3,2       0t0                 336 /dev/null
+ttyd    16913 jasonvaughan    1u      CHR                3,2       0t0                 336 /dev/null
+ttyd    16913 jasonvaughan    2w      REG               1,18    638401           326146442 /private/tmp/tcc-muhtzcqc/ttyd.log
+ttyd    16913 jasonvaughan    3u   KQUEUE                                                  count=0, state=0xa
+ttyd    16913 jasonvaughan    4      PIPE 0x50a131903bfd5590     16384                     ->0x7705752c31019a75
+ttyd    16913 jasonvaughan    5      PIPE 0x7705752c31019a75     16384                     ->0x50a131903bfd5590
+ttyd    16913 jasonvaughan    6r      DIR               1,18       704                   2 /
+ttyd    16913 jasonvaughan    7r      CHR               17,1       0t0                 612 /dev/urandom
+ttyd    16913 jasonvaughan    8      PIPE 0x8d7e4beb318ec689     16384                     ->0xe188f3b1570cf3b0
+ttyd    16913 jasonvaughan    9      PIPE 0xe188f3b1570cf3b0     16384                     ->0x8d7e4beb318ec689
+ttyd    16913 jasonvaughan   10u     unix 0x32efb56a02dc59b5       0t0                     /tmp/tcc-muhtzcqc/ttyd.sock
+ttyd    16913 jasonvaughan   11      PIPE  0x3615a52f66ad32a     16384                     ->0xf4bc6439cc731348
+ttyd    16913 jasonvaughan   12      PIPE 0xf4bc6439cc731348     16384                     ->0x3615a52f66ad32a
+ttyd    16913 jasonvaughan   24r      CHR                3,2       0t0                 336 /dev/null
+agy     80116 jasonvaughan  cwd       DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan  txt       REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan  txt       REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan  txt       REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan  txt       REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan  txt       REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan    0u      CHR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan    1w      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan    2w      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan    3u   KQUEUE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan    4u   KQUEUE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan    5u      CHR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan    6u      CHR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan    7u    systm  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan    8w      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan    9u     unix  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   10u     IPv4  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   11u     IPv4  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   12      PIPE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   13   NPOLICY  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   14u     IPv4  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   15u     IPv6  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   16r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   17u     IPv6  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   20u   KQUEUE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   21      PIPE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   22      PIPE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   23r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   24r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   25r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   26r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   27r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   28r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   29r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   30r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   31r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   34r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   35r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   36r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   37r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   38r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   40r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   41r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   42r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   43r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   44r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   45r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   46r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   47r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   48r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   49r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   50u   KQUEUE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   51      PIPE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   52      PIPE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   53r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   54r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   55r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   56r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   57r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   58u   KQUEUE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   59      PIPE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   60      PIPE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   61r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   62r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   63r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   64r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   66      PIPE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   67u   KQUEUE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   68      PIPE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   69      PIPE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   70      PIPE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   71      PIPE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   75u   KQUEUE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   76      PIPE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   77      PIPE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   78r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   79r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   80r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   81r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   82r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   83r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   84r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   85r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   86r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   87u   KQUEUE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   88r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   89r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   90r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   91r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   92r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   93r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   94r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   95r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   96r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   97r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   98r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan   99r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan  100      PIPE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan  101      PIPE  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan  104r      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan  110u      REG  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan  111r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan  116r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan  117r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+agy     80116 jasonvaughan  118r      DIR  [REDACTED: open file of an unrelated process (agy), removed from the evidence under Architect R39]
+

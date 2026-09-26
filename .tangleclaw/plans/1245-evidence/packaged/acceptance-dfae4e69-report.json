@@ -1,0 +1,79 @@
+{
+  "runId": "muhoaejx",
+  "mode": "candidate",
+  "modes": [
+    "clean",
+    "abrupt",
+    "paused",
+    "replay",
+    "noread"
+  ],
+  "dir": "/tmp/tcc-muhoaejx",
+  "ttydBin": "/private/tmp/claude-501/-Users-jasonvaughan-Documents-Projects-TangleClaw-Pilot-B1/3340b1e4-3366-4cf5-802e-c4281748e42a/scratchpad/packaged/ttyd",
+  "attachScript": "/private/tmp/claude-501/-Users-jasonvaughan-Documents-Projects-TangleClaw-Pilot-B1/3340b1e4-3366-4cf5-802e-c4281748e42a/scratchpad/a3/attach-original.sh",
+  "startedAt": "2026-09-26T00:50:01.437Z",
+  "baseline": {
+    "pool": {
+      "used": 34,
+      "cap": 511
+    },
+    "fds": 16
+  },
+  "run": {
+    "cycles": 2000,
+    "withOutput": 1600,
+    "clientErrors": 0,
+    "stop": "completed",
+    "maxChildren": 10,
+    "confirmedWedges": 0,
+    "lingering": 0,
+    "lingeringStates": [],
+    "transientLifetimesMs": {
+      "n": 1,
+      "p50": 0,
+      "p95": 0,
+      "p99": 0,
+      "max": 0
+    },
+    "stillExitingMs": [],
+    "pool": {
+      "baseline": {
+        "used": 34,
+        "cap": 511
+      },
+      "peak": {
+        "used": 46,
+        "cap": 511
+      },
+      "final": {
+        "used": 44,
+        "cap": 511
+      }
+    },
+    "fds": {
+      "baseline": 16,
+      "final": 17
+    },
+    "restarts": 0,
+    "soakMs": 7200000
+  },
+  "cleanup": {
+    "ok": false,
+    "leftovers": [
+      "the global PTY pool did not return to baseline after cleanup"
+    ]
+  },
+  "afterCleanup": {
+    "pool": {
+      "used": 43,
+      "cap": 511
+    }
+  },
+  "verdict": {
+    "verdict": "fail",
+    "why": [
+      "cleanup did not verify: a scratch process may remain",
+      "the PTY pool did not return to baseline"
+    ]
+  }
+}

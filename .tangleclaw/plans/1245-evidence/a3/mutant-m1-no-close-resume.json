@@ -1,0 +1,98 @@
+{
+  "runId": "muhhdumc",
+  "mode": "baseline",
+  "modes": [
+    "clean",
+    "abrupt",
+    "paused",
+    "replay",
+    "noread"
+  ],
+  "dir": "/tmp/tcc-muhhdumc",
+  "ttydBin": "/private/tmp/claude-501/-Users-jasonvaughan-Documents-Projects-TangleClaw-Pilot-B1/3340b1e4-3366-4cf5-802e-c4281748e42a/scratchpad/a3/src-m1/build/ttyd",
+  "attachScript": "/private/tmp/claude-501/-Users-jasonvaughan-Documents-Projects-TangleClaw-Pilot-B1/3340b1e4-3366-4cf5-802e-c4281748e42a/scratchpad/a3/attach-original.sh",
+  "startedAt": "2026-09-25T21:36:44.923Z",
+  "baseline": {
+    "pool": {
+      "used": 45,
+      "cap": 511
+    },
+    "fds": 32
+  },
+  "run": {
+    "cycles": 100,
+    "withOutput": 80,
+    "clientErrors": 0,
+    "stop": "reproduced",
+    "maxChildren": 19,
+    "confirmedWedges": 11,
+    "lingering": 11,
+    "lingeringStates": [
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es"
+    ],
+    "transientLifetimesMs": {
+      "n": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+    },
+    "stillExitingMs": [
+      49688,
+      47938,
+      45926,
+      45926,
+      41904,
+      39889,
+      39620,
+      35861,
+      33848,
+      33848,
+      31828
+    ],
+    "pool": {
+      "baseline": {
+        "used": 45,
+        "cap": 511
+      },
+      "peak": {
+        "used": 57,
+        "cap": 511
+      },
+      "final": {
+        "used": 57,
+        "cap": 511
+      }
+    },
+    "fds": {
+      "baseline": 32,
+      "final": 66
+    },
+    "restarts": 0,
+    "soakMs": 0
+  },
+  "cleanup": {
+    "ok": true,
+    "leftovers": []
+  },
+  "afterCleanup": {
+    "pool": {
+      "used": 45,
+      "cap": 511
+    }
+  },
+  "verdict": {
+    "verdict": "reproduced",
+    "why": []
+  }
+}

@@ -36,6 +36,7 @@ const { execFileSync } = require('node:child_process');
 const REPO_DIR = path.resolve(__dirname, '..');
 const caddy = require(path.join(REPO_DIR, 'lib', 'caddy'));
 const ttydAttach = require(path.join(REPO_DIR, 'lib', 'ttyd-attach'));
+const ttydRuntimeLib = require(path.join(REPO_DIR, 'lib', 'ttyd-runtime'));
 const store = require(path.join(REPO_DIR, 'lib', 'store'));
 const authGate = require(path.join(REPO_DIR, 'lib', 'auth-gate'));
 const bindPolicy = require(path.join(REPO_DIR, 'lib', 'bind-policy'));
@@ -358,6 +359,7 @@ const CUTOVER_CODES = Object.freeze({
   UNGATE_REFUSED: 'ungate-refused',
   VALIDATE_FAILED: 'validate-failed',
   RELOCATED_BASE: 'relocated-base',
+  TTYD_RUNTIME_UNAVAILABLE: 'ttyd-runtime-unavailable',
   FAILED: 'failed'
 });
 
@@ -370,7 +372,7 @@ const CUTOVER_CODES = Object.freeze({
  * file is itself meaningful to the reader (the run died before finishing), so
  * silence here degrades honestly rather than misleading.
  * @param {string|null} resultFile - Path to write, or null to do nothing.
- * @param {{ok: boolean, code: string, target: string, error?: (string|null), healthUrl?: (string|null), healthOk?: (boolean|null), healthError?: (string|null)}} result
+ * @param {{ok: boolean, code: string, target: string, error?: (string|null), healthUrl?: (string|null), healthOk?: (boolean|null), healthError?: (string|null), ttydRuntime?: ({path: string, managed: boolean}|null)}} result
  *   `healthError` is why the health probe could not be *made*, and it is separate
  *   from `error` on purpose: `error` means the cutover failed, while a probe that
  *   could not run says nothing about whether the plan applied. Conflating them
@@ -405,6 +407,12 @@ function writeCutoverResult(resultFile, result) {
       // this key exists so it can be reported without inverting the outcome.
       // This builder names every key explicitly: anything absent here is dropped.
       healthError: caddy.redactHashes(result.healthError) || null,
+      // Which ttyd the cutover put in the plist: the owned runtime, or the
+      // Homebrew build under the explicit rollback (the leak fix is then off).
+      // Null when the run ended before a runtime was resolved.
+      ttydRuntime: result.ttydRuntime
+        ? { path: result.ttydRuntime.path, managed: Boolean(result.ttydRuntime.managed) }
+        : null,
       finishedAt: new Date().toISOString()
     })}\n`, { mode: 0o600 });
     return true;
@@ -454,6 +462,17 @@ function resolveUpstreamPort(serverPlistPath, config) {
   return require('../lib/https-setup').installedServerPort(serverPlistPath, config);
 }
 
+/**
+ * One line naming the ttyd a cutover selected, for the operator.
+ * @param {{path: string, managed: boolean}} selected - From `resolveTtydPath`.
+ * @returns {string}
+ */
+function describeTtydRuntime(selected) {
+  return selected.managed
+    ? `${selected.path} (the owned runtime)`
+    : `${selected.path} (the Homebrew ttyd: explicit rollback, the #1245 leak fix is NOT active)`;
+}
+
 function which(bin) {
   try { return execFileSync('which', [bin], { encoding: 'utf8' }).trim(); }
   catch { return null; }
@@ -487,9 +506,12 @@ function main() {
    *   `writeCutoverResult` names: a key it does not list is dropped silently.
    * @returns {never}
    */
+  // The ttyd the cutover selected, once it has resolved one; every result
+  // written after that point says which it was.
+  let ttydRuntime = null;
   const finish = (code, error, extra = {}) => {
     writeCutoverResult(resultFile, {
-      ok: !error, code, target, error: error || null, ...extra
+      ok: !error, code, target, error: error || null, ttydRuntime, ...extra
     });
     store.close();
     process.exit(error ? 1 : 0);
@@ -530,9 +552,22 @@ function main() {
     if (!launchdPath.split(':').includes(p)) launchdPath += `:${p}`;
   }
 
+  // The ttyd launchd runs comes from the ONE resolver install.sh also uses
+  // (#1245, ADR 0018), never from PATH: rediscovering it here would quietly put
+  // the leaking Homebrew build back on every cutover. The cutover never builds
+  // a runtime: an absent, invalid or stale one stops it before anything is
+  // written, and the refusal names `provision` and the switch for each mode.
+  try {
+    ttydRuntime = ttydRuntimeLib.resolveTtydPath({ baseDir });
+  } catch (err) {
+    if (!(err instanceof ttydRuntimeLib.RuntimeUnavailableError)) throw err;
+    finish(CUTOVER_CODES.TTYD_RUNTIME_UNAVAILABLE, err.message);
+  }
+  if (ttydRuntime.warning) console.warn(`WARNING: ${ttydRuntime.warning}`);
+
   const env = {
     caddyPath: which('caddy'),
-    ttydPath: which('ttyd'),
+    ttydPath: ttydRuntime.path,
     home,
     baseDir,
     repoDir: REPO_DIR,
@@ -781,6 +816,7 @@ function main() {
     for (const f of plan.plists) process.stdout.write(`  write plist:     ${f.path}\n`);
     process.stdout.write(`  config patch:    ${JSON.stringify(plan.configPatch)}\n`);
     for (const c of plan.launchctl) process.stdout.write(`  launchctl ${c.join(' ')}\n`);
+    process.stdout.write(`  ttyd runtime:    ${describeTtydRuntime(ttydRuntime)}\n`);
     process.stdout.write(`  health check:    ${plan.healthUrl}\n`);
     process.stdout.write(`  rollback:        ${plan.rollbackHint}\n`);
     if (plan.gateNote) process.stdout.write(`  login gate:      ${plan.gateNote}\n`);
@@ -890,6 +926,7 @@ function main() {
   }
 
   process.stdout.write(`\nIngress switched to '${target}'.\n  Health: ${plan.healthUrl}\n  Rollback: ${plan.rollbackHint}\n`);
+  process.stdout.write(`  ttyd: ${describeTtydRuntime(ttydRuntime)}\n`);
   if (plan.gateNote) process.stdout.write(`  Login gate: ${plan.gateNote}\n`);
   if (plan.bindNote) process.stdout.write(`  Network binding: ${plan.bindNote}\n`);
   process.stdout.write('\n');
@@ -977,4 +1014,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { planCutover, describeDirectBind, describeGeneratedGate, fillTemplate, parseArgs, resolveUpstreamPort, applyDryRunAdoptionPreview, writeCutoverResult, pollHealth, certHostUnion, CUTOVER_CODES };
+module.exports = { planCutover, describeTtydRuntime, describeDirectBind, describeGeneratedGate, fillTemplate, parseArgs, resolveUpstreamPort, applyDryRunAdoptionPreview, writeCutoverResult, pollHealth, certHostUnion, CUTOVER_CODES };

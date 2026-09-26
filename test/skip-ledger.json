@@ -42,8 +42,8 @@
     },
     {
       "id": "host-pty-pool-darwin",
-      "match": "^ttyd-watcher > production runner smoke test \\(darwin only\\) > (_isPtyPoolExhausted|_countTtydZombies) returns .* against the real host shell$",
-      "why": "Exercises the production BSD pgrep/sysctl path for the recurring PTY-exhaustion class (#94, #144, #380); the runner is Linux.",
+      "match": "^ttyd-watcher > production output shapes \\(darwin only\\) > (_parseChildren reads the real|_poolFromCounts classifies the real) .*$",
+      "why": "Runs the watcher's parsers against the real BSD `ps` and `sysctl` output for the recurring PTY-exhaustion class (#94, #144, #380, #1245); the runner is Linux, whose ps prints a different shape.",
       "runsWhere": "every macOS developer machine \u2014 the platform the watcher ships on."
     },
     {
