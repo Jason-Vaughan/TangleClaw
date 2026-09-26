@@ -215,6 +215,15 @@ describe('provenance: rendering adversarial values', () => {
     });
   }
 
+  it('a template that repeats a placeholder cannot exceed the rendered bound', () => {
+    const template = '{project}'.repeat(13);
+    assert.equal(provenance.validateTemplate(template), null, 'precondition: the template itself is legal');
+    const text = provenance.renderText(template, { project: 'x'.repeat(80) });
+    assert.equal(text, provenance.FALLBACK_TEXT);
+    const fits = provenance.renderText('{project} {project}', { project: 'abc' });
+    assert.equal(fits, 'abc abc', 'a short repeat renders normally');
+  });
+
   it('two values cannot form a reserved marker between them', () => {
     const text = provenance.renderText('{project} by {engine}', { project: 'Generated', engine: 'TangleClaw' });
     assert.equal(text, provenance.FALLBACK_TEXT);
@@ -272,6 +281,23 @@ describe('provenance: applyProvenance', () => {
     const line = '<!-- tangleclaw:provenance Built by TangleClaw (Project: Demo) -->';
     assert.equal(provenance.applyProvenance('session-prime', '', ctx(ON)), `${line}\n`);
     assert.equal(provenance.applyProvenance('session-prime', line, ctx(undefined)), '');
+  });
+});
+
+describe('provenance: lineOverhead', () => {
+  it('is 0 while off and exactly the added characters while on', () => {
+    const ctx = { project: 'Demo', engine: 'claude' };
+    assert.equal(provenance.lineOverhead('session-prime', { ...ctx, config: {} }), 0);
+    const on = { ...ctx, config: ON };
+    const content = '# prime\n';
+    assert.equal(provenance.lineOverhead('session-prime', on),
+      provenance.applyProvenance('session-prime', content, on).length - content.length);
+  });
+
+  it('is bounded whatever the template and values', () => {
+    const on = { project: 'x'.repeat(500), engine: 'y'.repeat(500),
+      config: { provenanceWatermark: { enabled: true, template: '{project}{engine}'.repeat(6) } } };
+    assert.ok(provenance.lineOverhead('session-prime', on) <= provenance.RENDERED_MAX_LENGTH + 40);
   });
 });
 
