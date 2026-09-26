@@ -555,6 +555,17 @@ html[data-tc-keyboard] body {
   background: rgba(255, 167, 38, 0.15);
   color: var(--amber);
 }
+.port-owner-kind {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  font-weight: 600;
+  background: rgba(255, 167, 38, 0.15);
+  color: var(--amber);
+}
+.port-owner-undo {
+  margin-left: auto;
+}
 
 /* ── Groups Panel ── */
 .groups-panel {

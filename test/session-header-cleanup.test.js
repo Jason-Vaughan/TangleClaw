@@ -120,7 +120,7 @@ describe('the ⋯ menu holds the command bar and Peek (#1474, #1475)', () => {
   });
 
   it('the dashboard keeps its Peek', () => {
-    assert.match(UI_SRC, /openPeekFromCard\('\$\{n\}'\)" title="Peek"/);
+    assert.match(UI_SRC, /openPeekFromCard\(\$\{nArg\}\)" title="Peek"/);
   });
 
   it('opens and closes on its button, keeping aria-expanded true to the menu', () => {

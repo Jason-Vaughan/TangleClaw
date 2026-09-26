@@ -4,10 +4,11 @@
  * #1383 — the port-lease import banner's Ignore button had never worked.
  *
  * `renderImportBanner` built ONE escaped value and fed it to both buttons,
- * but they take different argument shapes: `importLeaseProjects` JSON.parses
- * what it receives, `ignoreLeaseProject` takes the raw name. The shared
- * double-stringify handed Ignore the name wrapped in literal quotes, which
- * never matched the canonical form, so the banner returned forever.
+ * but they took different argument shapes. The shared double-stringify handed
+ * Ignore the name wrapped in literal quotes, which never matched the canonical
+ * form, so the banner returned forever. Every button now receives a real JS
+ * value through `jsArg` (#1384): Import the array of names, Ignore and Not a
+ * project the raw name.
  *
  * These assert the ROUND TRIP rather than the spelling of the source: each
  * onclick is decoded the way a browser would, and the argument the handler
@@ -68,7 +69,7 @@ describe('port-lease import banner buttons (#1383)', () => {
     // Evaluate the real template from the shipped file against a local `esc`,
     // so the assertions below run over the bytes that reach the browser.
     const body = ui.slice(start, end + ".join('')".length) + '; return details;';
-    render = new Function('importable', 'esc', `
+    render = new Function('importable', 'esc', 'jsArg', `
       ${body}
     `);
   });
@@ -77,8 +78,12 @@ describe('port-lease import banner buttons (#1383)', () => {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
+  // The shipped `jsArg`, lifted from landing.js and bound to the `esc` above.
+  const landingSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
+  const jsArg = new Function('esc', `${liftFunction(landingSrc, 'function jsArg(')}\nreturn jsArg;`)(esc);
+
   const onclicks = (name) => {
-    const html = render([{ name, ports: [{ port: 5432, service: 'postgresql@14' }], conflicts: [] }], esc);
+    const html = render([{ name, ports: [{ port: 5432, service: 'postgresql@14' }], conflicts: [] }], esc, jsArg);
     return [...html.matchAll(/onclick="([^"]*)"/g)].map(m => unescapeHtml(m[1]));
   };
 
@@ -90,12 +95,12 @@ describe('port-lease import banner buttons (#1383)', () => {
     assert.equal(argumentOf(ignore), 'Homebrew');
   });
 
-  it('Import still receives a JSON string, because it JSON.parses its argument', () => {
-    // The other half of the contract, pinned so a fix to Ignore cannot be
-    // applied to both call sites and silently break Import instead.
+  it('Import receives the array of names it posts (#1384)', () => {
+    // The other half of the contract, pinned so Import and Ignore cannot drift
+    // apart again: Import takes an ARRAY, Ignore a single raw name.
     const imp = onclicks('Homebrew').find(o => o.startsWith('importLeaseProjects('));
     assert.ok(imp, 'the Import button must exist');
-    assert.deepEqual(JSON.parse(argumentOf(imp)), ['Homebrew']);
+    assert.deepEqual(argumentOf(imp), ['Homebrew']);
   });
 
   it('Import All carries the same contract as Import (#1383 R-1)', () => {
@@ -108,10 +113,10 @@ describe('port-lease import banner buttons (#1383)', () => {
     assert.ok(m, 'the Import All button must still be findable');
 
     const allNames = ['Homebrew', "Odd\"Name"];
-    const attr = new Function('esc', 'allNames', 'return `' + m[1] + '`;')(esc, allNames);
+    const attr = new Function('esc', 'jsArg', 'allNames', 'return `' + m[1] + '`;')(esc, jsArg, allNames);
     // `attr` is the raw attribute text; decode it as the parser would, then read
     // the argument the handler receives.
-    assert.deepEqual(JSON.parse(argumentOf('importLeaseProjects(' + unescapeHtml(attr) + ')')), allNames);
+    assert.deepEqual(argumentOf('importLeaseProjects(' + unescapeHtml(attr) + ')'), allNames);
   });
 
   it('the CONSUMER side accepts what the button sends, end to end (#1383 R-13)', () => {
@@ -179,8 +184,28 @@ describe('port-lease import banner buttons (#1383)', () => {
     const [imp, ign] = ['importLeaseProjects(', 'ignoreLeaseProject(']
       .map(p => onclicks(name).find(o => o.startsWith(p)));
     assert.equal(argumentOf(ign), name);
-    assert.deepEqual(JSON.parse(argumentOf(imp)), [name]);
+    assert.deepEqual(argumentOf(imp), [name]);
   });
+  it('the Import button\'s argument reaches the import route as the names array (#1384)', async () => {
+    // Producer and consumer asserted against each other: the argument decoded
+    // off the rendered button is handed to the SHIPPED importLeaseProjects, and
+    // the body it posts must carry exactly those names.
+    const ui = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+    const posts = [];
+    const importLeaseProjects = new Function(
+      'apiMutate', 'document', 'dismissImportBanner', 'loadProjects', 'checkPortImports',
+      `${liftFunction(ui, 'async function importLeaseProjects(')}\nreturn importLeaseProjects;`
+    )(
+      async (url, method, body) => { posts.push({ url, method, body }); return {}; },
+      { getElementById: () => null },
+      () => {}, async () => {}, () => {}
+    );
+    const name = "O'Brien \"&\" Co";
+    const sent = argumentOf(onclicks(name).find(o => o.startsWith('importLeaseProjects(')));
+    await importLeaseProjects(sent);
+    assert.deepEqual(posts, [{ url: '/api/projects/import', method: 'POST', body: { names: [name] } }]);
+  });
+
   it('Not a project receives the RAW name, like Ignore (#1381)', () => {
     const mark = onclicks('Odd"Name').find(o => o.startsWith('markLeaseOwnerExternal('));
     assert.ok(mark, 'the Not a project button must exist');
@@ -273,7 +298,9 @@ describe('Not a project, traced widget → collector → POST → server (#1381)
       const esc = (str) => typeof str !== 'string' ? '' : str
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-      return new Function('importable', 'esc', ui.slice(start, end + ".join('')".length) + '; return details;')(rendered[0], esc);
+      const landingSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
+      const jsArg = new Function('esc', `${liftFunction(landingSrc, 'function jsArg(')}\nreturn jsArg;`)(esc);
+      return new Function('importable', 'esc', 'jsArg', ui.slice(start, end + ".join('')".length) + '; return details;')(rendered[0], esc, jsArg);
     })();
     const onclick = [...html.matchAll(/onclick="([^"]*)"/g)].map(m => unescapeHtml(m[1]))
       .find(o => o.startsWith('markLeaseOwnerExternal('));
