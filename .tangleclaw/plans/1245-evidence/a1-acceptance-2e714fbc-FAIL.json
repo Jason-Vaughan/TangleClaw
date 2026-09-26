@@ -1,0 +1,93 @@
+{
+  "runId": "muhgocg5",
+  "mode": "candidate",
+  "modes": [
+    "clean",
+    "abrupt",
+    "paused",
+    "replay",
+    "noread"
+  ],
+  "dir": "/tmp/tcc-muhgocg5",
+  "ttydBin": "/opt/homebrew/bin/ttyd",
+  "attachScript": "deploy/ttyd-attach.sh",
+  "startedAt": "2026-09-25T21:16:54.996Z",
+  "baseline": {
+    "pool": {
+      "used": 45,
+      "cap": 511
+    },
+    "fds": 32
+  },
+  "run": {
+    "cycles": 1500,
+    "withOutput": 1200,
+    "clientErrors": 0,
+    "stop": "reproduced",
+    "maxChildren": 15,
+    "confirmedWedges": 6,
+    "lingering": 6,
+    "lingeringStates": [
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es"
+    ],
+    "transientLifetimesMs": {
+      "n": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+    },
+    "stillExitingMs": [
+      310109,
+      106756,
+      104480,
+      73185,
+      41131,
+      30246
+    ],
+    "pool": {
+      "baseline": {
+        "used": 45,
+        "cap": 511
+      },
+      "peak": {
+        "used": 54,
+        "cap": 511
+      },
+      "final": {
+        "used": 53,
+        "cap": 511
+      }
+    },
+    "fds": {
+      "baseline": 32,
+      "final": 51
+    },
+    "restarts": 0,
+    "soakMs": 0
+  },
+  "cleanup": {
+    "ok": true,
+    "leftovers": []
+  },
+  "afterCleanup": {
+    "pool": {
+      "used": 47,
+      "cap": 511
+    }
+  },
+  "verdict": {
+    "verdict": "fail",
+    "why": [
+      "6 confirmed wedges",
+      "6 children still present after every client closed",
+      "the PTY pool did not return to baseline",
+      "ttyd's fd count did not return to baseline"
+    ]
+  }
+}

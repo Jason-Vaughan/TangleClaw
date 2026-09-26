@@ -54,6 +54,403 @@ Chunks 01–03 (TangleClaw-Pilot-B2). The plan is `.tangleclaw/plans/1885-proven
 - **Operator and agent surfaces.** A Project Settings toggle, line field and preview. The save sends only the changed half (`tcProvenancePatch`). A read-only `provenance-watermark` row in `tc capabilities` names surfaces by id, never by path.
 
 **Verification.** Each chunk had a cumulative Critic plus verify-resolutions; the last pair is rev-20260926T032840Z-d99ab744, then rev-20260926T033429Z-61386ed9, which was clean. The suite is green at 614f0e17. End-to-end checks ran against scratch projects: with the setting off, every generated file is byte-identical to `main`.
+## 2026-09-26 — ADR 0018 §4 states the mode-aware repair; backup ref deleted (#1245, Architect R41/R42)
+
+<!-- prawduct: type=docs | scope=ttyd-1245 -->
+
+- **R41:** ADR 0018 §4 said the cutover directs the operator to "rerun the installer", which is wrong on a caddy-mode
+  host (install.sh rewrites the ttyd plist for direct mode). The Architect ruled a narrow correction to the implemented
+  `SELECT_BY_MODE` contract: `provision` first, then `deploy/install.sh` (direct) or the cutover (caddy). The ADR now
+  says that, with a dated correction note. It is a normative-doc change that matches existing, reviewed code.
+- **R42:** the local-only `backup/1245-pre-r39-redaction` ref (the pre-rewrite head, 2fe1c50d, holding the unredacted
+  run5 evidence) is deleted before any push. `git for-each-ref --contains` confirms no local ref still reaches the
+  pre-rewrite commits. No object-store purge is required.
+
+## 2026-09-26 — Close the two blockers verify-resolutions left open (#1245)
+
+<!-- prawduct: type=fix | scope=ttyd-1245 -->
+
+`verify-resolutions` rev-20260926T152837Z-80909b30 on ede42d18 found prior R-2 and R-7 not fully closed.
+
+- **R-1 (prior R-2), the real leak path:** `defaultDeps().build` gains an optional `script` (build-ttyd.js by default).
+  A new test runs the DEFAULT build in a child process with a stand-in builder that prints to stdout, and asserts
+  that nothing reaches the child's stdout. Mutation-checked: `stdio: ['ignore', 'inherit', 2]` fails it.
+- **R-2 (prior R-7), the class, not the site:** one exported `SELECT_BY_MODE` text (direct: install.sh; caddy: the
+  cutover; never install.sh on caddy) is used by REPAIR and by the CLI's `install` and `rollback` output. Rollback
+  also names the kickstart when the plist already runs the owned path. A test pins every site to the constant.
+- O-1, O-2 and O-3 are ACCEPTed, reasons recorded. O-2 (ADR 0018 §4's "rerun the installer") is the Architect's to
+  decide.
+
+## 2026-09-26 — Resolve cumulative review rev-20260926T150050Z-6620a07c; redact the run5 evidence from history (#1245)
+
+<!-- prawduct: type=fix | scope=ttyd-1245 -->
+
+The cumulative review of 2fe1c50d found 0 blocking, 6 warnings and 5 notes. Architect R39 and R40 (recorded in the
+plan) ruled on R-8 and R-7.
+
+- **R-8 (R39):** the local branch history was rewritten before any push. In the run5 pre-cleanup and post-cleanup
+  snapshots, every lsof line of the unrelated `agy` process keeps its first five columns, and the rest is replaced by
+  a stable marker, so its LAN and IPv6 addresses and its oauth-token and conversation paths are gone.
+  - `git filter-branch --index-filter` rewrote 310dfbc3..HEAD. Only the 5 commits from 626280ec onward changed. The
+    tree diff against the backup is exactly those two files.
+  - A scan of every commit in the range (trees, added lines, messages) finds none of the values.
+  - The pre-rewrite head survives only as the local ref `backup/1245-pre-r39-redaction`, which is never pushed.
+- **R-1:** the last known good and the set-aside copy are written to a `.tmp` name and renamed into place
+  (`_copyPairAside`), never overwritten in place. Tests: the inode changes on replacement. The pinned boundary lists
+  gain the temp-and-rename steps, and the recovery invariant holds at each of them. Both guards were mutation-checked.
+- **R-9:** the refusal text is mode-aware. It leads with `provision`, then names `./deploy/install.sh` for direct mode
+  and the cutover for caddy mode, and never install.sh on a caddy host. The by-hand route stays. My chunk 08 test
+  pinned the old "Re-run deploy/install.sh" text; it now pins `REPAIR` itself, and a new test pins the mode split.
+  The configuration reference, the user guide, the CHANGELOG and FEATURES are corrected.
+  - Unchanged, and the Architect's to decide: ADR 0018 §4's own wording, "directing the operator to rerun the
+    installer".
+- **R-4:** `readPinnedInputs` reads inputs.json once and hashes exactly those bytes. The resolver's `expectedInputs`
+  and build-ttyd (its new `manifestInputs`) share it.
+  - Changed test contract: the source-regex test "build-ttyd records the same digest the resolver compares" is
+    REPLACED by three behavioural tests. They check the helper's digest of the parsed bytes, that a build records the
+    digest it read even when the file changes afterwards, and that a builder-shaped manifest is current for the
+    resolver.
+- **R-2:** four CLI tests pin that `provision` prints only the bare path on stdout (when it builds, when the runtime is
+  already current, and under the Homebrew rollback), and nothing when it refuses. Mutation-checked.
+- **R-5:** `takeReading` and `_measure` no longer take `opts`. They always read the configured label and threshold,
+  and no production caller passed any.
+- **R-3:** the guarantee wording no longer overclaims, in the lib header, `_recoverably`'s message, the configuration
+  reference and the CHANGELOG. A last known good that verified before the failure still verifies; with none,
+  `provision` rebuilds.
+- **R-7 (R40):** the rollout runbook's checkpoint runs on the first switch AND after every rebuild. It records the
+  sha256 and the `codesign -dv` identity, and adds a live `ls` access check under `~/Documents` that STOPS on
+  denial. The rollback runbook repeats the checkpoint and the check for the restored binary (steps 2a and 7).
+- **R-11:** the plan's Verify line says the PR uses `Refs #1245`, not `Fixes`. R-6 and R-10 are ACCEPTed through
+  `prawduct-hook disposition`.
+- **Review of the rewritten head, rev-20260926T151846Z-e094065e:** `verify-resolutions` could not anchor to the
+  rewritten-away 2fe1c50d, so it fell back to a cumulative review of the committed head, WITHOUT this batch. Its
+  blocking R-2 and R-7 are the prior R-2 and R-9, fixed here. It also raised three items, fixed in the same commit:
+  - R-5: tests pin the cutover's `ttydRuntime` result key (and null before a runtime resolves) and
+    `describeTtydRuntime`.
+  - R-6/R-9: when the install of a verified build fails, `provisionRuntime` keeps the stage, names it, and gives the
+    `install --from <stage>` command instead of "re-run provision". A new test covers this.
+  - R-8: the `_isExiting` docstring no longer claims that the harness's and the watcher's wedge counts match. They
+    share the predicate, not the wedge age.
+
+## 2026-09-26 — Chunk 04: rollout and rollback runbooks for the owned ttyd (#1245)
+
+<!-- prawduct: type=feature | scope=ttyd-1245 -->
+
+Chunk 04, in the same dispatch and PR as chunk 08 (Architect R35). Authored with `/prawduct:runbook`: the commands and
+output strings were derived from the repo and checked against it (the cutover's and CLI's printed lines, the plist's
+`ProgramArguments.4`, the watcher's `ttyd kickstart receipt`, the user-guide anchor).
+
+- `docs/runbooks/roll-out-the-owned-ttyd.md` (Tier 3, 11 steps):
+  - provision, then a caddy-mode dry run;
+  - the R36/R37 permission checkpoint BEFORE the restart: exact visible parity with the old path, no Full Disk Access by
+    default, STOP if parity cannot be established, and the observed grants recorded as rollout evidence;
+  - the mode-specific switch (install.sh must not run on a caddy host, because it rewrites the ttyd plist for direct
+    mode);
+  - checks on the plist path, otool, the running pid and no E/Z children;
+  - 72 h of live certification, recorded by the PM.
+- `docs/runbooks/roll-back-the-owned-ttyd.md` (Tier 2, 7 steps): `status`, then either `rollback` plus a kickstart, or
+  the explicit Homebrew route (the only way back after a pin change), with a check that the watcher is on.
+- Plan sections F and G are revised to match provisioning and point at the runbooks. Links are added from the
+  configuration reference, the user guide, FEATURES and the CHANGELOG #1245 entry.
+- Neither runbook is validated until the Operator executes it. This repo has no `.prawduct/operator-verification.md`,
+  so the plan's chunk 04 line records that instead.
+
+## 2026-09-26 — Chunk 08: install.sh provisions the owned ttyd runtime; whole-input currency; recoverable install and rollback (#1245)
+
+<!-- prawduct: type=feature | scope=ttyd-1245 -->
+
+Chunk 08 (ADR 0018 §4, Architect R24.9/R34), dispatched by the PM in a fresh context. Architect R35 (recorded in the plan)
+adds chunk 04 to the same dispatch and PR; the full suite and ONE cumulative Critic follow chunk 04. R36 and R37
+(the first-switch macOS permission checkpoint: exact visible parity with the old ttyd path, never Full Disk Access by
+default) are recorded in the plan for chunk 04's runbook.
+
+- **(1) Provisioning:** `provisionRuntime` / `ttyd-runtime.js provision`. install.sh calls it instead of `resolve`. It
+  builds (via build-ttyd.js, into a temp stage) and installs only when the runtime is absent, invalid or stale. It never
+  builds under `homebrew` or an unknown mode. A failed build installs nothing and keeps its work directory.
+- **(2) Currency (R-4):** the manifest's `inputsJsonSha256` must equal the SHA-256 of the tracked inputs.json. The
+  source/patch comparison is kept for its specific messages. The cutover never builds, and REPAIR now leads with
+  re-running install.sh.
+- **(3) Recoverability:** install and rollback share `_stageBeside` (copy in as `ttyd.new`, then verify) and
+  `_promote` (manifest rename, then binary). Rollback now COPIES `ttyd.prev` rather than moving it, and copies the
+  replaced runtime aside.
+  - This fixes a real hole: the old move-order rollback, interrupted after the manifest rename, left no verified pair
+    anywhere. The new fault-injection test fails against that implementation (mutation-checked).
+  - The resolver's refusal names the rollback when a verified last known good exists.
+  - Mutating fs calls go through `deps.fs`. Tests fail each boundary in turn (a copy leaves a truncated file) and assert
+    that either the selected runtime verifies, or the refusal names the rollback and a rollback restores a verified one.
+- **(4) Selection reporting:** `runtimeStatus().selected`, plus `stale` on each report. The cutover writes
+  `ttydRuntime {path, managed}` to its result file (declared before `finish`, so an early refusal reports null) and
+  prints it, including under `--dry-run`.
+- **(5) Docs:** configuration-reference (provisioning, the exact guarantee, `status`, and rollback after a pin change),
+  user-guide, FEATURES.
+- **Carried findings:**
+  - R-7: the harness CHANGELOG line moved out of #1858's Fixed entry into the `### Internal` harness bullet.
+  - R-2: the four cited scratch ttyd logs are force-added (scanned: process start/stop lines only).
+  - R-5, R-6 and R-8 were delegated to a shared-worktree subagent. Its claims were re-derived: the grep for ruling and
+    chunk ids and for inline E/Z copies is empty, and the churn and watcher tests went 55→65 and 83→84.
+  - R-3 (Requirements Confidence line) was not dispatched and is left for disposition.
+- **Changed test contract:** the install.sh wiring test now pins `provision` instead of `resolve`, because ADR 0018 §4
+  makes install.sh the provisioner. Its other assertions (resolved before the plist, `exit 1` on refusal, never
+  `command -v ttyd`) are unchanged.
+
+## 2026-09-26 — Chunk 07 complete: the packaged ttyd passes the full acceptance (#1245)
+
+<!-- prawduct: type=feature | scope=ttyd-1245 -->
+
+- **Run 6 PASS** on artifact `dfae4e69…` with harness `626280ec` (review `rev-20260926T054745Z-39931d6e`):
+  - 2000 cycles across all 5 modes, and the 120-min soak;
+  - 0 wedges, 0 lingering, 0 restarts;
+  - owned PTYs 0→0, fds 16→17, 2000/2000 reaped;
+  - 0 cleanup survivors.
+- **Report sha256** `703e38ef…`. The evidence is in `.tangleclaw/plans/1245-evidence/packaged/run6/`.
+- **Global pool (diagnostic):** the drop is the live watcher kickstarting the live, unfixed ttyd at 06:09:52Z on 27 orphans.
+- **A4:** the carried test was added at 626280ec. This completion commit adds the plan's terminal record and the CHANGELOG `### Internal` line for the harness gate, and corrects the Fixed entry's "Tested" bullet now that the packaged binary has passed. The full suite and the cumulative Critic follow.
+
+## 2026-09-26 — Harness: the scratch ttyd leads its own process group (#1245, Architect R27)
+
+<!-- prawduct: type=bugfix | scope=ttyd-1245 -->
+
+- **Run 5** (e9202d42, 03:29:23–05:36Z) PASSED every product gate:
+  - 2000/2000 cycles across 5 modes, and the 120-min soak;
+  - 0 wedges, 0 lingering, 0 restarts;
+  - owned PTYs 0→0, fds 16→17, 2000/2000 reaped.
+- **But its harness verdict was FAIL,** on two "survivors": the HARNESS itself (16642) and its own `ps`. The scratch ttyd had inherited the harness's process group, and a descendant sampled with that pgid recorded the harness's group as run-owned.
+- **Live-contact disclosure:** the diagnostic snapshot (bare-id filter) also ran a read-only lsof on a reused id (80116, the PM's `agy`); nothing was signalled.
+- **R27 ruling:** (b). Run 5 is kept as supporting evidence, and its fail is not relabelled. The evidence is in `.tangleclaw/plans/1245-evidence/packaged/run5/`.
+- **Own group:** the scratch ttyd is spawned `detached`, so it leads its own session and process group, and the run's group is never the harness's. The ledger records that root group with ttyd's own start time, so a late child left in it is still caught after ttyd is gone.
+- **The harness is excluded by exact identity only** (`notOwned`: PID plus start time), never by group, so a run process reusing that PID, or any other member of a recorded group, still counts.
+- **Snapshots:** they select via `ledger.survivors()` (identity), so a reused id is never listed or read by lsof.
+- **Tests (R27 regressions):**
+  - the harness and its ps are not survivors when ttyd leads its own group;
+  - the harness is excluded by identity even inside a recorded group, while the group is not blanket-excluded;
+  - a not-owned identity does not hide a run process reusing its PID;
+  - a late child in ttyd's own group is still caught;
+  - a wiring check that ttyd is spawned `detached`.
+- **The carried test:** exit 1, all omitted gone, empty output → `''`.
+- **Mutation checks:** not recording the root group, excluding by PID alone, and removing the survivor exclusion are all caught.
+- **Host smoke:** ttyd pgid == its pid (`Ss`); packaged 0 owned PTYs and 0 survivors; the control fails with 180 held ptmx for 60 wedges.
+
+## 2026-09-26 — lsof exit 1 judged within the Architect's E/Z bounds (#1245, chunk 07)
+
+<!-- prawduct: type=bugfix | scope=ttyd-1245 -->
+
+- **The bounds (Architect, 03:24Z):** an omitted PID is acceptable only if it is identity-proven gone, or is the SAME PID plus lstart in exact state E or Z, as observed AFTER lsof. A failure to read that state is unmeasured, and E/Z never removes an identity from the ledger or the survivor check.
+- **Why run 4 was stopped:** `1b2292ff` read the state from a table taken BEFORE lsof and matched on PID alone. Run 4 (started 03:24:46Z) was stopped about 2 min in by exact PID, and the cleanup left nothing.
+- **The new rule:** `lsofOutput(err, stdout, requested, after)` takes the requested identities and a state map read after lsof for just the omitted PIDs. `readOwnedPtys` passes full `{pid, lstart}` rows from `ProcessLedger.owned()` / `survivors()`, and reads the state after lsof via `ps`. The baseline reading now uses the ledger's identities too.
+- **Tests:** 8 stricter tests replace the 5 old `lsofOutput` tests. They cover a reused PID treated as gone, the same identity in E/Z accepted, the same identity still running refused, an unreadable state refused, an unrequested PID refused, and a cut-off reading refused.
+- **Host smoke:** packaged, 0 owned PTYs; the control fails with 177 held ptmx for 59 wedges.
+
+## 2026-09-26 — lsof exit 1 counts only in its recognized case (#1245, Architect condition 03:13Z)
+
+<!-- prawduct: type=bugfix | scope=ttyd-1245 -->
+
+- **Why:** the Architect's approval of `cd9bffd2` set a precision condition: lsof exit 1 counts as measured only in its ordinary case, never as an arbitrary empty measurement. The existing tests did not pin that, so run 3 (started 03:18Z, about 10 min in) was stopped by exact PID (the cleanup left nothing).
+- **The rule:** `lsofOutput(err, stdout, requested, mustBeReported)` accepts exit 1 only when every requested PID missing from the output is either gone or in the `E`/`Z` state, and the output names no unrequested PID. Any other exit 1 (a permission failure, empty output for a live running process) is unmeasured, and a timeout, signal or overflow still is.
+- **Why exiting processes count as a recognized case:** a smoke run showed the vanished-only form made the no-drain control unmeasured, because lsof cannot list an exiting process whose file table the kernel has already torn down. The PTY masters its parent ttyd holds are still counted under ttyd. With the exiting case recognized, the control fails the gate on 111 held masters for 37 wedges, and the packaged candidate holds 0.
+- **The old tests:** the three old `lsofOutput` tests are superseded by four stricter ones.
+- **`--review <id>`:** it records the clearing Critic review in the run report, beside the harness commit and the artifact digest.
+- **Caught before commit:** my first edit of the test file also removed three unrelated tests (the lsof -F pn parser, the PTY-return rule, and "never judged by the global pool"). The count check caught it (42 against the expected 45), and they were restored verbatim.
+
+## 2026-09-26 — Harness identity check completed (#1245, verify-resolutions rev-20260926T031244Z-51153184)
+
+<!-- prawduct: type=bugfix | scope=ttyd-1245 -->
+
+- **The rest of R-2:** the final run-owned PTY reading was still taken over bare PIDs. It now uses `ProcessLedger.owned()`, meaning exact PID plus start-time matches with no group fallback, so a recycled PID holding a terminal cannot fail a clean run.
+- **Every start time is kept:** the ledger keeps every start time seen per PID and per group leader. A run-owned process that reuses an earlier run PID and then leaks is still caught; keeping only the first start time erred toward passing it.
+- **Tests:** a test for each. A host smoke run confirms the candidate stays clean and the control still fails the gate.
+
+## 2026-09-26 — Harness gate hardened before the certification run (#1245, Critic rev-20260926T030542Z-e93b8543)
+
+<!-- prawduct: type=bugfix | scope=ttyd-1245 -->
+
+Run 2 was stopped about 15 minutes in, by exact PID (the interrupt cleanup left nothing), because two warnings were gate defects.
+- **W1, which could pass a leak:** a cut-off lsof reading (timeout, signal or buffer overflow) was read as complete. `lsofOutput` (lib, tested) keeps output only on a clean exit or lsof's ordinary exit 1; anything else is unmeasured, hence inconclusive.
+- **W2, which could fail a clean run falsely:** the ledger matched PIDs alone, and macOS reuses them (about 28,800 `ps` spawns per soak). The identity is now PID plus `lstart`, and a process group whose live leader has a different start time counts as reused, not ours.
+- **W3:** a failed binary probe is recorded in `reading.errors`, and the health row reports `managed: null` with "could not read which ttyd binary". It no longer reads as "not managed".
+- **Notes:** the unused `POOL_TOLERANCE` was dropped. The `latestGeneration` comment was moved. The `installRuntime` comment now states the real fail-closed guarantee, not "exactly as they were". The configuration reference names the provenance check.
+- **Smoke on the host:** packaged, 0 owned PTYs and 0 survivors (65 PIDs and 29 groups recorded); the control fails the gate with 177 held `/dev/ptmx` handles for 59 wedges.
+
+## 2026-09-26 — Harness gate measures run-owned resources, not the global pool (#1245, chunk 07)
+
+<!-- prawduct: type=bugfix | scope=ttyd-1245 -->
+
+Architect ruling on the first packaged run (02:59Z): option (b) as modified.
+- **What the first run showed:** the run of `dfae4e69` was clean on run-owned evidence (2000/2000 reaped, 0 wedges, 0 lingering, fds back). But the harness failed it on the GLOBAL PTY pool (34 → 44), which the live, unfixed Homebrew ttyd drove by wedging 5 children from real use during the soak. That run is kept as supporting evidence.
+- **Recorded as they appear:** a `ProcessLedger` records the scratch ttyd, every descendant PID and every descendant process group from each 250 ms sample. An end-time walk would miss survivors that launchd has already reparented.
+- **Run-owned PTYs:** from `lsof -F pn` on the recorded live processes, counting slave `/dev/ttys*` by name and `/dev/ptmx` handles by count.
+- **The gate:** run-owned PTYs back to baseline, scratch ttyd fds back to baseline, and after cleanup no recorded PID or process group survives, nor holds a PTY. The global pool is diagnostic only.
+- **Snapshots:** process-tree plus lsof snapshots at the baseline, before cleanup and after cleanup.
+- **Frozen identity:** the report records the harness commit (and whether it was dirty) and the ttyd binary's sha256.
+- **Bug found by smoke-testing the gate:** lsof exits 1 when a listed process vanishes, and the helper lost its stdout, so the control read as unmeasured. `readOwnedPtys` now keeps stdout whatever the exit code.
+- **Mutation check:** the static no-drain control now fails the gate on 135 run-owned `/dev/ptmx` handles for 45 wedges (3 per wedge), against 0 at the baseline. The packaged candidate's smoke run held 0.
+
+## 2026-09-26 — Review fixes for the owned runtime (#1245, Critic rev-20260926T005348Z-79b3ab22)
+
+<!-- prawduct: type=bugfix | scope=ttyd-1245 -->
+
+- **Provenance (R-2):** `verifyRuntime` now checks the manifest's recorded source and patch digests against `deploy/ttyd/inputs.json`. `--version` cannot tell builds apart, so a runtime built without the fix is refused.
+- **Base directory (R-3):** `install.sh` passes `--base-dir "$HOME/.tangleclaw"`, the same base it writes everything else under.
+- **Which binary runs (R-5):** the watcher's reading records the running binary (`ps -p <pid> -o comm=`), and the health row notes when it is not the owned runtime. The live certification can see whether the fix is actually in force.
+- **Docs (R-1, R-6):**
+  - The CHANGELOG no longer claims the packaged binary's acceptance before it has run, and no longer contradicts itself.
+  - The configuration reference says where `TANGLECLAW_TTYD_RUNTIME` must be set.
+- **Notes:**
+  - A test keeps the two system-root declarations in sync.
+  - The watcher's unused reading history became a single `_latest`.
+  - The FEATURES wording on the wedge rule is corrected.
+
+## 2026-09-26 — Owned ttyd runtime, part 2: one resolver, transactional install, fail-closed wiring (#1245, chunk 06)
+
+<!-- prawduct: type=feature | scope=ttyd-1245 -->
+
+R24 / ADR 0018 §1, §4.
+- **`lib/ttyd-runtime.js`:**
+  - `verifyRuntime` checks that the binary is executable, that its manifest records its sha256 and the digest matches, that its closure is clean, and that `--version` matches the manifest. Every failing check is reported.
+  - `resolveTtydPath` is the one answer. It returns the managed runtime or throws `RuntimeUnavailableError` with the repair. Homebrew is used only under an explicit `TANGLECLAW_TTYD_RUNTIME=homebrew`, with `ROLLBACK_WARNING`, and any other value is refused.
+  - `installRuntime` verifies the stage, copies to `ttyd.new`, re-verifies it in place, keeps the current runtime as `ttyd.prev` only if that verifies, renames the manifest and then the binary, and verifies again.
+  - `rollbackRuntime` restores `ttyd.prev` and sets the replaced runtime aside. `runtimeStatus` reports both.
+- **`scripts/ttyd-runtime.js`** provides `resolve` / `install --from` / `rollback` / `status`. `resolve` prints only the path on stdout and exits 3 with the repair.
+- **`deploy/install.sh`:** `TTYD_PATH` comes from `ttyd-runtime.js resolve`, which exits before any plist is written; the Homebrew ttyd stays installed as the rollback target.
+- **`scripts/ingress-cutover.js`:** it resolves through the same library (`which('ttyd')` is removed) and refuses with the new `ttyd-runtime-unavailable` code before its first write.
+- **Docs:** the configuration reference (`TANGLECLAW_TTYD_RUNTIME` and the commands), the user guide, FEATURES and a CHANGELOG `Fixed` entry.
+
+## 2026-09-26 — Owned ttyd runtime, part 1: pinned inputs, build entry point, closure verifier (#1245, chunk 05)
+
+<!-- prawduct: type=feature | scope=ttyd-1245 -->
+
+R24 / ADR 0018 §2–3.
+- **`deploy/ttyd/inputs.json`** pins every input: the ttyd 1.7.7, libuv 1.52.1, json-c 0.19 and libwebsockets 4.5.2 tarballs, each digest matching Homebrew's pin; CMake 3.31.6's wheel; the two tracked patches (#1573 unmodified; A3c with its hunks identical to the accepted patch and only the headers normalized); the static build flags; and the allowed system roots.
+- **`lib/macho-closure.js`** walks the complete Mach-O graph, resolving `@rpath`, `@loader_path` and `@executable_path`. It allows only `/usr/lib/` and `/System/Library/` or the private bundle, and refuses any `LC_RPATH` outside the bundle.
+- **`scripts/build-ttyd.js`** is the deterministic entry point.
+  - It verifies every download before extracting it; poisoned cache entries are deleted, and `--offline` is supported.
+  - CMake comes from `pip --require-hashes` into a venv inside the work directory, and the build environment has no Homebrew on its PATH.
+  - Dependencies are built statically, the libwebsockets config is rewritten to name only the static target, and each patch is re-verified right before it is applied.
+  - The STAGED binary's closure is verified, and a provenance manifest is written. It never installs.
+
+**Evidence.**
+- A real build from the tracked inputs staged ttyd sha256 `dfae4e69…`, byte-identical to an independent earlier spike build, so the build is reproducible.
+- `otool -L` lists only `/usr/lib/libz`, `libutil` and `libSystem`, with no `LC_RPATH`.
+- The verifier passes the static binary and refuses both the Homebrew-linked A3c and the installed Homebrew ttyd, each on its five Homebrew dylibs.
+
+## 2026-09-26 — Revert the A1 attach-script wrapper; adopt the owned ttyd runtime (#1245, R24)
+
+<!-- prawduct: type=chore | scope=ttyd-1245 -->
+
+Architect ruling R24, with ADR 0018 committed unchanged.
+- **Why A1 is reverted:** it failed the R22 Q7 contract (6 wedges in 1500 cycles) and was rejected as the shipping fix.
+- **What the revert restores:** `deploy/ttyd-attach.sh` and `test/ttyd-attach.test.js` are byte-identical to origin/main
+  again, including the original "exec the attach" contract. The A1 claims in CHANGELOG, FEATURES and the user guide are
+  removed.
+- **What is kept:** the A1 evidence (`.tangleclaw/plans/1245-evidence/a1-acceptance-2e714fbc-FAIL.json`), its plan
+  history and the change-log entries below.
+- **Where the fix goes now:** the A3c source fix, delivered as a TangleClaw-owned, self-contained ttyd (chunks 05–07).
+
+## 2026-09-25 — ttyd attach script drains on hang-up: the #1245 root fix candidate A1 (chunk 03)
+
+<!-- prawduct: type=bugfix | scope=ttyd-1245 -->
+
+**Root cause.** On close, ttyd pauses its pty reads and sends SIGHUP to the child's process group. The exec'd `tmux attach` was the session leader. On macOS a session leader's exit waits, with no timeout, for its terminal's output queue to drain, and ttyd never reads it again. The child stuck in `E` holding a PTY. The churn harness reproduced it: 60 of 60 stuck, while the no-output control stuck none.
+
+**The change (`deploy/ttyd-attach.sh`).**
+- The script stays the leader. The replay and the client run in the background under `wait`.
+- A HUP/TERM/INT trap, set before the replay, SIGKILLs and reaps both, runs `tcflush(TCOFLUSH)` via `/usr/bin/perl` POSIX, and exits.
+
+**Iteration history (scratch only).**
+- Revision 1 put the replay in the foreground. In the `replay` close mode, 8 of 20 scripts stayed in `Ss+`, because bash defers a trap until a foreground command returns, and a replay blocked writing to an unread pty never does.
+- Revision 2 backgrounds the replay.
+
+**Evidence.**
+- Revision 2: every close mode clean. A 100-cycle all-mode run had 0 wedges and 0 lingering, and the pool and fds returned to baseline.
+- A traced 50-cycle run showed `hup > drain-enter > children-reaped > flushed-exit` for all 50, with hang-up to exit at a p50 of 24 ms and a maximum of 54 ms. ttyd reaped 50 of 50.
+- **Race closed after review (observation O-3 of `rev-20260925T211252Z-51f4f2b6`).** A hang-up could land after `tmux attach … &` forked and before `client=$!`, so the trap would miss the client. The drain now kills `$(jobs -pr)`, meaning running jobs only, so a finished job's recycled PID is never signalled. It then waits for everything. Re-traced over 50 cycles: every close in order, hang-up to exit at a p50 of 28 ms and a max of 64 ms, and 50 of 50 reaped. The first acceptance run was stopped to test this revision instead; its interrupt cleanup left no scratch process.
+- The full R22 Q7 acceptance run (2000 cycles plus a 2 h soak) is recorded separately.
+
+**Test contracts changed (R22 Q1 required the old exec rationale to be covered):**
+- "should exec the tmux attach command" was replaced by the drain contract:
+  - no exec, the attach runs in the background under wait, and `0<&0`;
+  - the replay runs in the background;
+  - the trap is set before the replay;
+  - the drain order is ignore signals, kill, reap, flush, exit;
+  - perl is called by absolute path;
+  - the drain also runs on the normal path.
+- The "replay before attach" ordering test now anchors on `tmux attach-session`, not `exec tmux attach-session`.
+- The "every terminal branch execs" contract still holds for the no-session `exec sleep 30`.
+- Mutation checks: exec'ing the attach again, a foreground replay, and flushing before reaping are each caught.
+
+## 2026-09-25 — ttyd wedge predicate per the Architect's R22 Q3 amendment (#1245)
+
+<!-- prawduct: type=bugfix | scope=ttyd-1245 -->
+
+The Architect amended R22 Q3 (21:05Z) after review R-1/R-5.
+- **The etime route is gone.** A confirmed wedge is the same child PID seen E/Z in successful readings of one ttyd generation at least 30 s apart.
+- **The record:** `advanceExiting` keeps it per generation and child PID, and is pure. A child a successful reading shows absent or not exiting is reset. A failed reading, or one without a generation, neither advances nor confirms; its orphan gate is `null`, not `false`.
+- **Why the earlier cut was wrong:** it confirmed against *any* earlier qualifying reading. So a child that exited, went back to running and exited again was counted from its first exit.
+- **Tests:** added for each guard (a reset on "not exiting", a reset on "absent", a failed reading, no generation, a moment short of the age).
+
+## 2026-09-25 — ttyd churn harness and the baseline reproduction (#1245, chunk 01)
+
+<!-- prawduct: type=feature | scope=ttyd-1245 -->
+
+Pilot B1, #1245 chunk 01. The plan is `.tangleclaw/plans/1245-ttyd-child-leak.md`. Architect ruling R22 (Q1, Q6, Q7) governs it.
+
+**Why.** R22 made the fix an evidence-gated choice: first reproduce the installed-build failure with a mutation-sensitive harness, then hold every candidate to the same contract.
+
+**The change.**
+- `lib/ttyd-churn.js`: the pure decisions, all tested.
+  - Preflight: the live ttyd row must be clear, PTY use at most 15%, concurrency 1–10, and the binaries present.
+  - Stop rules: 5 wedges, 25% PTY use, or a blind measurement.
+  - The wedge floor (seen exiting for ≥ 10 s, measured by the sampler, never by process age).
+  - Exiting-child lifetime tracking, and the verdicts (baseline `reproduced`; control `harness-fault`; candidate `pass` only on the full Q7 contract, otherwise `inconclusive`).
+- `scripts/ttyd-churn.js`: the runner.
+  - It uses a scratch ttyd on its own socket in `/tmp/tcc-<id>` (short on purpose: macOS limits a unix socket path to 104 bytes).
+  - A tmux shim pins `-L tcc-<id>` and its own `TMUX_TMPDIR`.
+  - Five close modes (clean, abrupt, paused, replay, noread) and a 250 ms sampler.
+  - Cleanup is by exact PID and verified.
+- `lib/ws-unix-client.js`: gains `path` and `protocol` options, with unchanged defaults. The test server exposes the request head.
+
+**Evidence.** The live ttyd 28870 and live tmux server 1335 were unchanged after every run.
+- Control (`exec cat`, 50 cycles): 0 wedges; the pool went 38 → 39 → 38.
+- Baseline (installed 1.7.7_6 plus the shipped script): reproduced. First run, under the process-age measure (superseded): 47 of 50 stuck, pool 38 → 88. Re-run after review fix R-1 (observed-exiting measure plus a 30 s watch before the kill): all 60 of 60 children were still exiting ≥ 29.8 s after first being seen exiting, the pool went 41 → 102, the ttyd fds 32 → 213, and after cleanup the pool was back to 41. The control re-run was clean.
+- The reports are in `.tangleclaw/plans/1245-evidence/`.
+- The first attempt failed before starting anything, because its tmux socket path ran past the unix-socket limit. That led to the short `/tmp` default.
+
+## 2026-09-25 — ttyd watcher: one shared reading, confirmed wedges, kickstart receipts (#1245, chunk 02)
+
+<!-- prawduct: type=bugfix | scope=ttyd-1245 -->
+
+Pilot B1, #1245 chunk 02. The plan is `.tangleclaw/plans/1245-ttyd-child-leak.md`. Architect ruling R22 (Q2–Q5) governs it.
+
+**Root cause (of the disagreement, not of the leak).** The watcher, the health sampler and the UI cache each measured ttyd on their own. None of their readings was bound to a ttyd process. The watcher judged a single snapshot, in which a child that was merely exiting counted as leaked, and its synchronous probes turned a failed measurement into zero. So the panel could read 22/20 while a process read showed the five expected clients, and a restart the watcher did not make was invisible to it.
+
+**The change.**
+- **One reading:** a single async, single-flight `takeReading()` owns measurement. It records the pid, a generation (`<pid>@<lstart>`), the sample time, each child's state and age from one `ps` call, and the pool. A failed probe is `null`.
+- **Sharing it:** the watcher tick classifies that exact reading, and `measureLeak` serves it to `lib/system-health.js`. History is per generation; a new generation drops the old readings.
+- **Confirmed wedges:** a child counts when it is E/Z AND was seen E/Z in an earlier reading of the same generation at least `wedgeAgeMs` (30 s) before. (Superseded: the first cut also confirmed on process age ≥ 120 s. Review R-1/R-5 showed that `ps etime` is process age, not time exiting, so that route was removed.) Transients are reported apart from wedges.
+- **Receipts:** after a kickstart the watcher re-reads, bounded at 10 s, until a new generation appears, and records `ok` / `no-new-generation` / `failed`. A generation change it did not cause is `external-restart`, and no actor is named.
+- **Ticks:** they never overlap, and one runs at boot.
+- **Switches:** `TANGLECLAW_TTYD_WATCHER` and `TANGLECLAW_TTYD_ORPHAN_THRESHOLD` (5–200). Invalid values warn and use the safe default. When the watcher is disabled, health reports `unknown`.
+- **Health:** the ttyd condition carries `reading {pid, generation, sampledAt}` and `lastReceipt`. A cached reading of a replaced ttyd is dropped and re-measured.
+
+**Review.** The Critic cumulative review `rev-20260925T204343Z-b1361aa6` found 0 blocking.
+- **R-1, fixed:** a kickstart triggered on a reading with no readable start time could call the SAME ttyd a new one, and log its own restart as external. The proof of a restart now needs a different pid when the start time was missing, and the external suppression is keyed by pid.
+- **R-2 and R-3, fixed:** plan Status and design notes.
+- **R-4, accepted:** a slow respawn logs both lines.
+
+**Test contracts changed (approved by R22; none weakened silently):**
+- **Synchronous probes and `_check`:** the sync probes (`_getTtydPid`, `_isPtyPoolExhausted`, `_countTtydOrphans`, `_countTtydZombies`, `_ttydUptimeMs`) and the sync `_check` were removed (R22 Q2: no sync fail-safe zero). Their tests were ported to `_parsePid`, `_poolFromCounts`, `_parseChildren`, `classifyReading`, `takeReading` and `_tick`.
+- **The pool's failure value:** the pool "fail-safe `{cap: 0}`" contract became "`null`, never an empty pool".
+- **The 15-minute uptime hold:** retired (R22 Q3), together with its five watcher tests and four health tests. Its purpose, not tripping on a restart's reconnect burst, is now pinned by the burst tests (a young burst does not kickstart; the same children on a later tick do; an earlier sighting under a different generation confirms nothing). Its sub-contracts carried forward: the pool gate never held, a refused kickstart staying armed, and an unreadable age not suppressing (it now confirms on the second sighting).
+- **The zombie-count diagnostic:** dropped. The child list now carries every state.
+- **Real-host smoke tests:** these now run the parsers against real `ps` and `sysctl` output.
+
+**Verification.** Mutation checks (each break was caught, then reverted):
+- removing the observation gap;
+- counting every E/Z child as wedged;
+- acting on an unknown gate;
+- letting a disabled watcher read as clear;
+- serving a replaced ttyd's cached reading.
+
+The declared suite result is recorded by `prawduct-hook test-evidence`.
 
 ## 2026-09-25 — Medusa delivery watchdog: tracked exchanges, durable re-arms, escalation (#1839)
 

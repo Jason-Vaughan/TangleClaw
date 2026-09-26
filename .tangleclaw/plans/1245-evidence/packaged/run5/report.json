@@ -1,0 +1,112 @@
+{
+  "runId": "muhtzcqc",
+  "mode": "candidate",
+  "modes": [
+    "clean",
+    "abrupt",
+    "paused",
+    "replay",
+    "noread"
+  ],
+  "dir": "/tmp/tcc-muhtzcqc",
+  "ttydBin": "/private/tmp/claude-501/-Users-jasonvaughan-Documents-Projects-TangleClaw-Pilot-B1/3340b1e4-3366-4cf5-802e-c4281748e42a/scratchpad/packaged/ttyd",
+  "ttydSha256": "dfae4e69a9d07c026c5f99360670fc2c7607986ddc1916338e15ad46d5ba6cea",
+  "harnessCommit": "e9202d42ecc2450e50fcff8ed5c49f3961e3c9bb",
+  "harnessDirty": false,
+  "harnessReview": "rev-20260926T032823Z-5d902843",
+  "attachScript": "/private/tmp/claude-501/-Users-jasonvaughan-Documents-Projects-TangleClaw-Pilot-B1/3340b1e4-3366-4cf5-802e-c4281748e42a/scratchpad/a3/attach-original.sh",
+  "startedAt": "2026-09-26T03:29:23.663Z",
+  "baseline": {
+    "pool": {
+      "used": 41,
+      "cap": 511
+    },
+    "fds": 16,
+    "ownedPtys": {
+      "slaves": [],
+      "masters": 0
+    }
+  },
+  "run": {
+    "cycles": 2000,
+    "withOutput": 1600,
+    "clientErrors": 0,
+    "stop": "completed",
+    "maxChildren": 10,
+    "confirmedWedges": 0,
+    "lingering": 0,
+    "lingeringStates": [],
+    "transientLifetimesMs": {
+      "n": 1,
+      "p50": 0,
+      "p95": 0,
+      "p99": 0,
+      "max": 0
+    },
+    "stillExitingMs": [],
+    "pool": {
+      "baseline": {
+        "used": 41,
+        "cap": 511
+      },
+      "peak": {
+        "used": 51,
+        "cap": 511
+      },
+      "final": {
+        "used": 47,
+        "cap": 511
+      }
+    },
+    "ownedPtys": {
+      "baseline": {
+        "slaves": [],
+        "masters": 0
+      },
+      "final": {
+        "slaves": [],
+        "masters": 0
+      }
+    },
+    "fds": {
+      "baseline": 16,
+      "final": 17
+    },
+    "restarts": 0,
+    "soakMs": 7200000
+  },
+  "cleanup": {
+    "ok": false,
+    "leftovers": [
+      "2 recorded processes survived: 16642(Ss), 89047(R)"
+    ],
+    "survivors": [
+      {
+        "pid": 16642,
+        "ppid": 47223,
+        "pgid": 16642,
+        "stat": "Ss"
+      },
+      {
+        "pid": 89047,
+        "ppid": 16642,
+        "pgid": 16642,
+        "stat": "R"
+      }
+    ],
+    "recordedPids": 3497,
+    "recordedGroups": 1860
+  },
+  "afterCleanup": {
+    "pool": {
+      "used": 46,
+      "cap": 511
+    }
+  },
+  "verdict": {
+    "verdict": "fail",
+    "why": [
+      "cleanup did not verify: a scratch process may remain"
+    ]
+  }
+}
