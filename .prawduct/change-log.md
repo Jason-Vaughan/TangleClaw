@@ -69,6 +69,42 @@ The PM dispatched this over Medusa (d5b2a91a). The plan came first and stopped a
 A mutation check on each fix turned its tests red.
 
 **Cumulative review follow-up.** The preview always marked the legacy PortHub section as differing, because the whole-file layout put the API base URL and service-token lines after the PortHub guide with no heading between them, while the block keeps them in its first section. `_matchesManagedCopy` now accepts trailing lines that appear verbatim elsewhere in the block. Tests cover all four combinations of service token and Medusa on and off, plus an operator-edited PortHub body that must still be flagged.
+## 2026-09-26 — The detected MagicDNS name is served through one host inventory (#1905, Chunk 1)
+
+<!-- prawduct: type=bugfix | scope=1905-magicdns-host-inventory -->
+
+Chunk 1 of `.tangleclaw/plans/1905-magicdns-host-inventory.md`. The PM dispatched it to Builder2 over Medusa (0f830344). It is governed by the Architect's rulings R45/R46, A17–A20 (2f34bdfe) and the approval A21 (43f5f31e). #1905 stays open for Chunk 2 (A21 addendum 4), so this uses `Refs`, not `Fixes`.
+
+**Problem.** The operator links named the host that `tailscale status` reports. The certificate names and the served-Host allowlist read only `caddyTailnetHost`, which is null on a default install. So a browser write to the linked host got `403 HOST_NOT_SERVED`.
+
+**The change.**
+- `lib/host-inventory.js` holds one `normalizeHostName` and one overlay-DNS probe with a provider registry. It also holds the process-wide observation (a miss is retried after 60 s) and `resolveTailnetHost` (configured, else detected, with drift and omission reported).
+- `certHostUnion`, the allowlist, the operator-link fallback and `mandatoryCertHosts` all read it.
+- The trailing dot is stripped from `Host`. The allowlist cache key includes the observed name.
+- generate-cert behaviour:
+  - It always unions the mandatory names: the mkcert defaults, the mDNS name and the canonical tailnet host.
+  - `hosts` now adds names (a ruled contract change, A19). `removeHosts` removes non-canonical names, and a canonical one gets `409 CANONICAL_HOST_REMOVAL`.
+  - Direct-mode `reconcileTailnet` checks the gate (`caddy.tailnetSiteGated`, pinned to the generator), then mints both names, then saves the config last.
+  - Caddy mode is refused with `RECONCILE_NEEDS_CUTOVER`. The message says the flow is not in this version (A21 addendum 3).
+
+**Tests.** `host-inventory` covers the probe shapes, normalization, resolution, the mandatory set and cross-consumer parity. `api-setup-https` covers:
+- the extras contract;
+- `removeHosts` and the three canonical-removal conflicts;
+- direct-mode reconcile with parity before and after;
+- mint failure;
+- an injected save failure, after which the old host stays canonical and covered;
+- the ungated refusal and the caddy-mode refusal.
+
+`caddy` checks gate agreement across every combination. `server` covers a request under the detected name, with a trailing dot, and under a different tailnet name. Mutations: reverting the union turns the route, invariant and request tests red, and dropping the canonical-removal refusal turns the three conflict tests red.
+
+**Critic.** The cumulative review `rev-20260926T201752Z-cd65bda6` found 0 blocking, 3 warnings and 3 notes.
+- Fixed: `resolveOperatorHost()` called with no config now reads the saved config for the tailnet answer (the primer path).
+- Fixed: the Train 2 entry, which this entry's first rewrite had deleted, is restored word for word.
+- Fixed: the retry's blocking cost is documented.
+- Accepted: R-5 (`caddySite` describes the config key) and R-6 (the plan format).
+- Verified by `rev-20260926T202127Z-e44e45c7`, with 0 findings.
+
+**Process.** The first version of this chunk used a verbatim `hosts` list and a caddy-mode reconcile that left the Caddyfile "pending". The Architect rejected both (A18/A19) while I kept building past the unread veto. Nothing was pushed. I rewrote the chunk to the approved plan and squashed it into one commit before the review.
 
 ## 2026-09-26 — Train 2: malformed project tags, inline-handler encoding, the Not a project mark (#1375, #1384, #1768)
 

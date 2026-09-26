@@ -301,6 +301,7 @@ const openclawHtml = require('./lib/openclaw-html');
 const tunnelMonitor = require('./lib/tunnel-monitor');
 const net = require('node:net');
 const httpsSetup = require('./lib/https-setup');
+const hostInventory = require('./lib/host-inventory');
 const caddy = require('./lib/caddy');
 const caddyDrift = require('./lib/caddy-drift');
 const ingressProvision = require('./lib/ingress-provision');
@@ -683,6 +684,10 @@ let _servedHostsCache = null;
  * `servedHostAllowlist` derive names from it; without it a machine renamed
  * mid-run keeps answering to its old `.local` name until something else moves.
  *
+ * The observed overlay name is in the key for the same reason (#1905): with no
+ * `caddyTailnetHost` configured it is the tailnet name the list carries, and
+ * certificate generation refreshes it.
+ *
  * An unreadable or malformed cert must not take a request down with it, so
  * failure yields an empty set: names all refused, while an IP-literal `Host`
  * still passes inside `_hostIsAllowed` on reasoning that does not consult this
@@ -699,7 +704,7 @@ function _servedHostsOrEmpty(config) {
   } catch { /* no cert yet — a real state, and a stable cache key for it */ }
 
   const key = `${config.publicDomain || ''}|${config.caddyTailnetHost || ''}`
-    + `|${os.hostname()}|${certStamp}`;
+    + `|${hostInventory.observeOverlayDns().host || ''}|${os.hostname()}|${certStamp}`;
   if (_servedHostsCache && _servedHostsCache.key === key) return _servedHostsCache.value;
 
   let value;
@@ -808,6 +813,9 @@ function _hostIsAllowed(host, allowlist) {
   }
   // `URL` keeps IPv6 literals bracketed; unwrap before testing either branch.
   if (name.startsWith('[') && name.endsWith(']')) name = name.slice(1, -1);
+  // A fully qualified `host.tailnet.ts.net.` names the same host as the
+  // undotted form the allowlist stores (#1905).
+  name = name.replace(/\.+$/, '');
 
   // An IP literal is always allowed, and this is the whole shape of the attack.
   // Rebinding needs a NAME: the trick is to make a name the browser already
@@ -3431,52 +3439,167 @@ route('GET', '/api/setup/provision-status', (_req, res) => {
 // Valid host: letters/digits/dots/colons/hyphens, not starting with '-' so mkcert
 // can't mistake it for a flag. Max length 253 per RFC 1035 (plus IPv6 colons).
 const HOST_RE = /^[A-Za-z0-9]([A-Za-z0-9.\-:]{0,252})$/;
+/**
+ * Validate an optional host-name array from a generate-cert body.
+ *
+ * @param {*} value - The body field.
+ * @param {string} field - Its name, for the error message.
+ * @returns {{hosts: string[]|null, error: string|null}}
+ */
+function _certHostListArg(value, field) {
+  if (value === undefined) return { hosts: null, error: null };
+  if (!Array.isArray(value) || value.length === 0) {
+    return { hosts: null, error: `${field} must be a non-empty array of strings` };
+  }
+  for (const h of value) {
+    if (typeof h !== 'string' || !HOST_RE.test(h)) {
+      return { hosts: null, error: `Invalid host: ${JSON.stringify(h)}` };
+    }
+  }
+  return { hosts: value, error: null };
+}
+
 route('POST', '/api/setup/generate-cert', (_req, res, _params, body) => {
-  let hosts;
-  if (body && body.hosts !== undefined) {
-    if (!Array.isArray(body.hosts) || body.hosts.length === 0) {
-      return errorResponse(res, 400, 'hosts must be a non-empty array of strings', 'BAD_REQUEST');
+  const extras = _certHostListArg(body && body.hosts, 'hosts');
+  if (extras.error) return errorResponse(res, 400, extras.error, 'BAD_REQUEST');
+  const removals = _certHostListArg(body && body.removeHosts, 'removeHosts');
+  if (removals.error) return errorResponse(res, 400, removals.error, 'BAD_REQUEST');
+  if (body && body.reconcileTailnet !== undefined && typeof body.reconcileTailnet !== 'boolean') {
+    return errorResponse(res, 400, 'reconcileTailnet must be a boolean', 'BAD_REQUEST');
+  }
+  const reconcileTailnet = Boolean(body && body.reconcileTailnet);
+
+  // A mutation boundary: probe the overlay afresh, so the certificate is minted
+  // for the name the machine has now, and every later reader of the shared
+  // observation (the allowlist, the operator links) sees that same answer (#1905).
+  const observation = hostInventory.observeOverlayDns({ refresh: true });
+  const cfg = store.config.load();
+  let tailnet = hostInventory.resolveTailnetHost(cfg, observation);
+
+  // Reconciling moves the canonical tailnet host, which every consumer reads, so
+  // it is refused wherever it cannot move all of them together.
+  let reconciled = null;
+  if (reconcileTailnet) {
+    if (!tailnet.drift) {
+      return errorResponse(res, 409,
+        'reconcileTailnet: the configured tailnet host matches the observed one '
+        + `(${tailnet.host || 'none'}), so there is nothing to reconcile`, 'NO_TAILNET_DRIFT');
     }
-    for (const h of body.hosts) {
-      if (typeof h !== 'string' || !HOST_RE.test(h)) {
-        return errorResponse(res, 400, `Invalid host: ${JSON.stringify(h)}`, 'BAD_REQUEST');
-      }
+    if (cfg.ingressMode === 'caddy') {
+      // The live Caddyfile names the configured host too, and this route writes
+      // no Caddyfile. Flipping the config here would leave Caddy serving a name
+      // the rest no longer do. The prepare/apply flow through the cutover is not
+      // in this version, so say that rather than name a command that is not there.
+      return jsonResponse(res, 409, {
+        error: `reconcileTailnet: in caddy mode the tailnet host must move together with the live `
+          + `Caddyfile, and the prepare/apply cutover flow that does that is not available in this `
+          + `installed version. ${tailnet.drift.configured} keeps serving; ${tailnet.drift.observed} `
+          + 'is refused until then.',
+        code: 'RECONCILE_NEEDS_CUTOVER',
+        drift: tailnet.drift
+      });
     }
-    hosts = body.hosts;
+    const gateState = authGate.resolveGateState(() => cfg, store.authSessions, _gateIngress);
+    if (!caddy.tailnetSiteGated(cfg, gateState)) {
+      // `caddyTailnetHost` feeds a Caddy tailnet site, which the generator
+      // refuses without a gate: persisting it here would turn the next cutover
+      // into a failure.
+      return errorResponse(res, 409,
+        'reconcileTailnet: caddyTailnetHost feeds a Caddy tailnet site, and that site needs a gate. '
+        + 'Arm the TangleClaw login (or enable a Caddy basic_auth credential), then reconcile.',
+        'TAILNET_UNGATED');
+    }
+    reconciled = { caddyTailnetHost: { from: tailnet.drift.configured, to: tailnet.drift.observed } };
+  }
+  const effectiveConfig = reconciled
+    ? { ...cfg, caddyTailnetHost: reconciled.caddyTailnetHost.to } : cfg;
+  if (reconciled) tailnet = hostInventory.resolveTailnetHost(effectiveConfig, observation);
+
+  // Names no request may remove. While reconciling, the outgoing name is still
+  // canonical in the saved config until the save below lands, so it stays too.
+  const mandatory = new Set([
+    ...httpsSetup.mandatoryCertHosts(effectiveConfig, { observation }),
+    ...(reconciled ? httpsSetup.mandatoryCertHosts(cfg, { observation }) : [])
+  ]);
+  const removeSet = new Set((removals.hosts || []).map((h) => h.toLowerCase()));
+  const refused = [...removeSet].filter((h) => mandatory.has(h));
+  if (refused.length) {
+    return jsonResponse(res, 409, {
+      error: `removeHosts names ${refused.join(', ')}, which this install serves as a canonical host. `
+        + 'Change the host itself (the tailnet host through reconcileTailnet, the machine name or '
+        + 'config for the others) so every consumer moves with it.',
+      code: 'CANONICAL_HOST_REMOVAL',
+      hosts: refused
+    });
   }
 
   let result;
   try {
-    // Regeneration is ADDITIVE here too. Nothing records the host list a cert was
-    // minted with, so the cert is its own only record — and this route's shipped
-    // caller (`public/setup.js`, the "Generate Certificates" button) sends `{}`,
-    // no hosts at all. Generating from the defaults therefore dropped every name
-    // added earlier, including a tailnet FQDN, silently un-covering the tailnet
-    // HTTPS site that reuses this same certificate. An explicit `hosts` list is
-    // still honoured verbatim: a caller naming its hosts is replacing them on
-    // purpose, which is a different intent from the button's "refresh my certs".
-    const effectiveHosts = hosts || (() => {
-      const existing = httpsSetup.certSanHosts(
-        path.join(httpsSetup.getCertsDir(), 'cert.pem'));
-      const mdns = httpsSetup.mdnsHostFor(os.hostname());
-      const cfg = store.config.load();
-      return [...new Set([
-        ...existing, ...httpsSetup.MKCERT_HOSTS_DEFAULT, mdns,
-        cfg.caddyTailnetHost || null, cfg.publicDomain || null
-      ].filter(Boolean))];
-    })();
-    result = httpsSetup.generateCerts({ hosts: effectiveHosts });
+    // Regeneration is ADDITIVE. Nothing records the host list a cert was minted
+    // with, so the cert is its own only record — and this route's shipped caller
+    // (`public/setup.js`, the "Generate Certificates" button) sends `{}`, no hosts
+    // at all. `certHostUnion` carries every existing name forward with the
+    // mandatory ones, `hosts` adds to it, and only `removeHosts` takes a
+    // non-canonical name out. The mandatory names are unioned last, so no
+    // combination of inputs mints a certificate missing one (#1905).
+    const minted = [...new Set([
+      ...httpsSetup.certHostUnion(null, effectiveConfig, { observation }),
+      ...(extras.hosts || [])
+    ])].filter((h) => !removeSet.has(h.toLowerCase()));
+    for (const h of mandatory) {
+      if (!minted.some((m) => m.toLowerCase() === h)) minted.push(h);
+    }
+    result = httpsSetup.generateCerts({ hosts: minted });
   } catch (err) {
     return errorResponse(res, 500, err.message, 'MKCERT_FAILED');
   }
 
+  if (reconciled) {
+    // The config is saved LAST. The certificate now carries both names, so if
+    // this save fails the config, the allowlist, the links and the certificate
+    // all still agree on the outgoing name: no canonical host is ever uncovered.
+    try {
+      store.config.save({ ...store.config.load(), caddyTailnetHost: reconciled.caddyTailnetHost.to });
+    } catch (err) {
+      log.error('Reconcile minted the certificate but could not save the config', {
+        error: err.message, from: reconciled.caddyTailnetHost.from, to: reconciled.caddyTailnetHost.to
+      });
+      return jsonResponse(res, 500, {
+        error: `The certificate now carries ${reconciled.caddyTailnetHost.to} as well as `
+          + `${reconciled.caddyTailnetHost.from}, but the config could not be saved (${err.message}), `
+          + `so ${reconciled.caddyTailnetHost.from} is still the tailnet host everywhere. `
+          + 'Retry the same request once the config is writable.',
+        code: 'RECONCILE_SAVE_FAILED',
+        hosts: result.hosts
+      });
+    }
+    log.info('Reconciled the tailnet host with the observed overlay name', {
+      from: reconciled.caddyTailnetHost.from, to: reconciled.caddyTailnetHost.to
+    });
+  } else if (tailnet.drift) {
+    log.warn('Configured tailnet host differs from the observed overlay name', tailnet.drift);
+  }
+
+  const mintedSet = new Set((result.hosts || []).map((h) => String(h).toLowerCase()));
   jsonResponse(res, 200, {
     ok: true,
     certPath: result.certPath,
     keyPath: result.keyPath,
     hosts: result.hosts,
     expiry: result.expiry,
-    remoteTrust: httpsSetup.getRemoteTrustInstructions(result.carootPath)
+    remoteTrust: httpsSetup.getRemoteTrustInstructions(result.carootPath),
+    inventory: {
+      tailnet: {
+        host: tailnet.host,
+        source: tailnet.source,
+        provider: tailnet.provider,
+        caddySite: tailnet.caddySite,
+        drift: tailnet.drift,
+        omission: tailnet.omission,
+        covered: tailnet.host ? mintedSet.has(tailnet.host) : null
+      },
+      reconciled
+    }
   });
 });
 
@@ -11469,6 +11592,17 @@ if (require.main === module) {
       bind: bind.reason,
       bindSetting: bindPolicy.OPT_IN_KEY
     });
+    // #1905 — a configured tailnet name the overlay no longer reports keeps
+    // serving (it is what the certificate and the Caddy site were built for),
+    // and the observed one is refused until reconciled. Say so at boot, where an
+    // operator looking for "why is my MagicDNS name refused" reads first.
+    const bootTailnet = hostInventory.resolveTailnetHost(config);
+    if (bootTailnet.drift) {
+      log.warn('Configured tailnet host differs from the observed overlay name; the observed name '
+        + 'is refused until reconciled (direct mode: POST /api/setup/generate-cert '
+        + '{"reconcileTailnet": true}; caddy mode needs a cutover flow not in this version)',
+      bootTailnet.drift);
+    }
     // Start ttyd zombie-child watcher (#94). macOS-only; no-op elsewhere.
     ttydWatcher.start();
     // First ttyd health reading (#345), so the dashboard's first poll after a

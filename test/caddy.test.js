@@ -135,6 +135,41 @@ describe('caddy', () => {
     // other address failed the TLS handshake and the dashboard could not be
     // reached from a phone or a second machine. The fix adds the mDNS name to
     // the SAME site header rather than emitting a second block.
+    // #1905 — `tailnetSiteGated` is asked BEFORE `caddyTailnetHost` is
+    // persisted, so it must give exactly the generator's answer. Pinned over
+    // every combination rather than restated, so the two cannot drift.
+    describe('tailnetSiteGated agrees with the generator (#1905)', () => {
+      const HASH = '$2a$14$abcdefghijklmnopqrstuv';
+      for (const authEnabled of [true, false]) {
+        for (const withCred of [true, false]) {
+          for (const gateState of ['open', 'account-required', 'armed', 'locked', 'fallback', null]) {
+            it(`authEnabled=${authEnabled} credential=${withCred} gate=${gateState}`, () => {
+              const config = {
+                authEnabled,
+                basicAuthUser: withCred ? 'tcadmin' : null,
+                basicAuthHash: withCred ? HASH : null
+              };
+              let generatorEmits = true;
+              try {
+                // The cutover passes the credential only while authEnabled is on.
+                caddy.buildCaddyfileContent({
+                  ...opts,
+                  tailnetHost: 'box.tail123.ts.net',
+                  basicAuthUser: config.authEnabled ? config.basicAuthUser : null,
+                  basicAuthHash: config.authEnabled ? config.basicAuthHash : null,
+                  gateState
+                });
+              } catch (err) {
+                assert.match(err.message, /tailnetHost requires a gate/);
+                generatorEmits = false;
+              }
+              assert.equal(caddy.tailnetSiteGated(config, gateState), generatorEmits);
+            });
+          }
+        }
+      }
+    });
+
     describe('LAN hostname (#863)', () => {
       const gated = { ...opts, basicAuthUser: 'tcadmin', basicAuthHash: '$2a$14$abcdefghijklmnopqrstuv' };
 

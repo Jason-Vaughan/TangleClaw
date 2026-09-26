@@ -6,6 +6,13 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **`POST /api/setup/generate-cert` reports the tailnet host it served, takes `removeHosts`, and can reconcile drift in direct mode** (#1905).
+  - **The response** carries `inventory.tailnet`: the host, whether it was configured or detected, whether the minted certificate covers it, and any omission or drift.
+  - **`removeHosts`** takes non-canonical names out of the certificate. Naming a canonical one is refused with `409 CANONICAL_HOST_REMOVAL`: the mkcert defaults, the mDNS name and the tailnet host. Change the host itself instead.
+  - **When a configured `caddyTailnetHost` differs from the name the overlay now reports,** the configured name keeps serving and the drift is logged at boot.
+  - **In direct mode, `{"reconcileTailnet": true}`** mints a certificate carrying both names, then saves the new name. If that save fails, the outgoing name stays canonical and covered everywhere (`500 RECONCILE_SAVE_FAILED`). It is refused with `409 TAILNET_UNGATED` when a Caddy tailnet site would have no gate, and with `409 NO_TAILNET_DRIFT` when there is nothing to reconcile.
+  - **In caddy mode** it is refused with `409 RECONCILE_NEEDS_CUTOVER`, because the name must move with the live Caddyfile and that flow is not in this version yet.
+
 - **The ports panel shows which lease owners are marked "Not a project", and can undo the mark** (#1768). Marking an owner from the import banner used to leave no trace on the dashboard, and only a raw `POST /api/ports/owner-kind` reversed it. The owner's group now carries a **Not a project** badge and an **Is a project** button, which resets every lease under the name through the same route and re-checks the import banner.
 
 - **An opt-in provenance comment on the files TangleClaw generates for a project** (#1885, ADR 0019). A project can turn on `provenanceWatermark` to have its generated files open with a line like `<!-- tangleclaw:provenance Built by TangleClaw (Project: my-app) -->`, so a file's origin stays identifiable after it leaves the project.
@@ -125,6 +132,8 @@ All notable changes to TangleClaw are documented in this file.
   - Informational only: nothing here pulls, checks out, restarts or gates anything. `lib/checkout-fleet.js`.
 
 ### Changed
+- **`POST /api/setup/generate-cert`'s `hosts` now adds names instead of replacing the list** (#1905, Architect ruling A19). A replacement list could leave out a host the server serves, such as the tailnet name, and so recreate `HOST_NOT_SERVED`. The mandatory names are always kept. Use the new `removeHosts` to take a non-canonical name out.
+
 - **The ttyd watcher no longer restarts ttyd for a reconnect burst, and the health panel shows the watcher's own reading** (#1245). The panel and the watcher could disagree about the same moment: they took separate readings, neither tied to a ttyd process, and a single snapshot counted children that were merely exiting as leaked.
   - **One reading, shared.** The watcher and the health panel read ttyd through one measurement taken one at a time. It records which ttyd process it saw (pid and start time) and when, and each child's state and age. A probe that fails is unknown and never triggers a restart; it was previously read as zero. The panel's ttyd row now carries that reading's pid, generation, sample time and the last restart receipt, and it drops a cached reading once ttyd has been replaced.
   - **A leaked child must be confirmed.** One counts only if it is still exiting on a later check of the same ttyd, at least 30 seconds after an earlier check saw it exiting. How long a process has existed is not used, since it says nothing about how long it has been exiting: a tab open for hours is not counted the moment it closes. The panel shows the others separately ("not yet confirmed wedged"). This replaces the 15-minute hold after a restart. The churn harness saw clean exits finish within one 250 ms sample and wedged children still exiting after 30 s.
@@ -213,6 +222,15 @@ All notable changes to TangleClaw are documented in this file.
 ### Fixed
 
 - **A governed `CLAUDE.md` that carries TangleClaw's guide twice is now reported, and the operator can repair it safely** (#1911). When a project had a whole-file `CLAUDE.md` before the Prawduct plugin was onboarded, the first governed launch appended the managed block and left the old guide above the anchor. The PortHub, Shared Documents and Session Memory sections and the bootstrap bullets then appeared twice, and the old copy never updated. TangleClaw now detects this without changing the file. The launch or boot logs a warning, and the governed launch context tells the agent to pass it on. `node scripts/repair-governed-claude-md.js <project-path>` previews the exact removals, including whether each section still matches the managed copy, and prints a digest. `--apply <digest>` carries out that preview only. It refuses if the file changed since, or if `CLAUDE.md` is a symlink. It writes every byte or leaves the file untouched, replaces the file atomically, and does nothing on a second run. The command TangleClaw prints is shell-quoted, so any legal project path works. The Core, Extension and Global rules copies, hand-added sections and everything from the anchor on are never removed. The generated header becomes `# CLAUDE.md` only when it is unedited.
+
+- **A Tailscale MagicDNS name the operator links point at is no longer refused with `403 HOST_NOT_SERVED`** (#1905, Architect rulings R45/R46). The operator links named the name `tailscale status` reports, but the certificate and the served-Host allowlist read only `caddyTailnetHost`, which a default install leaves unset. All of them now read one normalized host inventory (`lib/host-inventory.js`).
+  - **The name comes from a validated local source only:** the configured `caddyTailnetHost`, else the overlay probe's `Self.DNSName`, never a request's `Host` header. It is added to the existing names; nothing is replaced.
+  - **An unknown name is still refused**, including another host on the same tailnet. A trailing dot (`host.tailnet.ts.net.`) now matches the same host.
+  - **When nothing is detected, nothing is invented:** `POST /api/setup/generate-cert` reports the omission, and a name can still be added with `hosts`.
+  - **A detected name is not written into the Caddy tailnet site.** That site needs a gate, so it stays your decision, and the inventory says `caddySite: not-configured`.
+  - **The route no longer rebuilds its own copy of the certificate name list.** It uses the same union as every other certificate path.
+  - **An existing certificate is not regenerated for you.** On a direct-HTTPS install the name now passes the Host check straight away, but the browser still warns until you press Generate Certificates in setup (or `POST /api/setup/generate-cert` with `{}`), which adds it.
+  - **A probe that found no name is retried after a minute**, so a Tailscale daemon that starts after TangleClaw is picked up without a restart.
 
 - **Dashboard buttons no longer stop working when a name contains an apostrophe** (#1384). Inline handlers in `public/ui.js` wrote their arguments as `fn('${esc(v)}')`. `esc` turns `'` into `&#39;`, which the browser decodes back before the handler runs, so a port-lease owner or tag named `O'Brien` closed the string early and the button did nothing. Every handler in `ui.js` now takes its argument through one encoder, `jsArg(value)` in `public/landing.js`. `importLeaseProjects` now receives its array of names directly instead of a JSON string it had to parse, removing the third encoding. A test scans `ui.js` so the old form cannot return. The same form in other page scripts is #1902.
 

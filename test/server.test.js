@@ -489,6 +489,45 @@ describe('server', () => {
             assert.equal(_hostIsAllowed('127.0.0.1:3102', new Set()), true);
             assert.equal(_hostIsAllowed('evil.example', new Set()), false);
           });
+          it('treats a fully qualified name with a trailing dot as the same host (#1905)', () => {
+            assert.equal(_hostIsAllowed('box.tail123.ts.net.:3102', allow), true);
+            assert.equal(_hostIsAllowed('evil.example.', allow), false);
+          });
+        });
+
+        describe('#1905 — the detected MagicDNS name is served', () => {
+          const hostInventory = require('../lib/host-inventory');
+          let realExec;
+          before(() => {
+            realExec = hostInventory._internal.execSync;
+            hostInventory._internal.execSync = () =>
+              JSON.stringify({ Self: { DNSName: 'Box.Tail123.ts.net.' } });
+            hostInventory._resetForTest();
+          });
+          after(() => {
+            hostInventory._internal.execSync = realExec;
+            hostInventory._resetForTest();
+          });
+
+          it('accepts a browser write under the name the overlay reports', async () => {
+            const res = await send('POST', '/api/config',
+              { host: 'box.tail123.ts.net:3102', ...BROWSER });
+            assert.notEqual(res.statusCode, 403,
+              'the operator links name this host, so the server must answer to it');
+          });
+
+          it('accepts it with a trailing dot too', async () => {
+            const res = await send('POST', '/api/config',
+              { host: 'box.tail123.ts.net.:3102', ...BROWSER });
+            assert.notEqual(res.statusCode, 403);
+          });
+
+          it('still refuses a different name on the same tailnet', async () => {
+            const res = await send('POST', '/api/config',
+              { host: 'other.tail123.ts.net:3102', ...BROWSER });
+            assert.equal(res.statusCode, 403);
+            assert.match(res.body, /HOST_NOT_SERVED/);
+          });
         });
       });
 
