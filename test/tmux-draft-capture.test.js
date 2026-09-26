@@ -239,6 +239,64 @@ describe('the clear: records what it read, and still clears when it could not re
     }
   });
 
+  it('a stranded switchboard nudge is cleared without being kept as the operator\'s draft (#1621)', () => {
+    try {
+      paneWithDraft('');
+      const wake = require('../lib/medusa-wake');
+      const nudge = require('../lib/wake-transports').withNonce(
+        wake._nudgeLineFor('/api/sessions/proj-a/medusa', 1, 'http://localhost:3102'), 'a1b2c3d4e5f6');
+      const rows = [];
+      for (let i = 0; i < nudge.length; i += 76) rows.push((i === 0 ? `❯${NBSP}` : '  ') + nudge.slice(i, i + 76));
+      const stranded = [DIVIDER, ...rows, DIVIDER, CLAUDE_FOOTER];
+      const emptyRow = `❯${NBSP}`;
+      // First read: the stranded nudge. After the clear: an empty composer.
+      let reads = 0;
+      tmux._draftSeams.capturePane = () => ({ lines: reads++ === 0 ? stranded : [DIVIDER, emptyRow, DIVIDER, CLAUDE_FOOTER], alternateScreen: false });
+      tmux._draftSeams.cursorInfo = () => (reads === 0 ? cursorAtEnd(rows[rows.length - 1]) : { x: 2, y: 0, line: emptyRow });
+      tmux._draftSeams.settle = () => {};
+      const before = draftStore.readDrafts(ATTEMPT).length;
+      let result;
+      const out = logged(() => { result = tmux._clearPromptLine(session, 'claude', ATTEMPT); });
+      assert.match(out, /Cleared a stranded switchboard nudge from the prompt before injecting/);
+      assert.doesNotMatch(out, /kept in the draft store/);
+      assert.equal(draftStore.readDrafts(ATTEMPT).length, before, 'nothing the operator typed, so nothing kept');
+      assert.notEqual(result.strandedNudgeResidue, true, 'the composer read empty after the clear');
+    } finally {
+      try { tmux.killSession(session); } catch (_) { /* already gone */ }
+    }
+  });
+
+  it('a stranded nudge the clear did not fully remove refuses the paste (#1621)', () => {
+    try {
+      paneWithDraft('');
+      const wake = require('../lib/medusa-wake');
+      const nudge = require('../lib/wake-transports').withNonce(
+        wake._nudgeLineFor('/api/sessions/proj-a/medusa', 1, 'http://localhost:3102'), 'a1b2c3d4e5f6');
+      const rows = [];
+      for (let i = 0; i < nudge.length; i += 76) rows.push((i === 0 ? `❯${NBSP}` : '  ') + nudge.slice(i, i + 76));
+      // An engine whose line-kill cleared only the cursor's row: the rows above remain.
+      const leftover = rows.slice(0, -1);
+      let reads = 0;
+      tmux._draftSeams.capturePane = () => ({
+        lines: reads++ === 0 ? [DIVIDER, ...rows, DIVIDER, CLAUDE_FOOTER] : [DIVIDER, ...leftover, DIVIDER, CLAUDE_FOOTER],
+        alternateScreen: false
+      });
+      tmux._draftSeams.cursorInfo = () => cursorAtEnd(reads === 0 ? rows[rows.length - 1] : leftover[leftover.length - 1]);
+      tmux._draftSeams.settle = () => {};
+      let result;
+      const out = logged(() => { result = tmux._clearPromptLine(session, 'claude', ATTEMPT); });
+      assert.equal(result.strandedNudgeResidue, true);
+      assert.match(out, /stranded switchboard nudge was not fully cleared/);
+      // The same sequence again, this time through the injector's entry point.
+      reads = 0;
+      assert.throws(() => tmux.sendKeys(session, 'SHOULD-NOT-PASTE', { engineId: 'claude', attemptKey: ATTEMPT, enter: false }),
+        /not fully cleared/);
+      assert.doesNotMatch(promptRow(), /SHOULD-NOT-PASTE/, 'nothing was pasted after the leftover');
+    } finally {
+      try { tmux.killSession(session); } catch (_) { /* already gone */ }
+    }
+  });
+
   it('an empty composer logs nothing', () => {
     try {
       paneWithDraft('');

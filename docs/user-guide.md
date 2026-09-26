@@ -308,6 +308,31 @@ directory keeps failing. **You do not need to restart anything**; the list fills
 the next attempt that succeeds. The wizard's Scan and Create buttons are not affected — those
 always read the directory for real, because you just asked them to.
 
+### Marking Generated Files With the Project's Name
+
+A project can mark the files TangleClaw generates for it with one comment line naming the project,
+so a file found later can be traced back to the project that produced it. Open the project's
+**Settings** and turn on **Mark generated files with this project's name**. It is off by default,
+and while it is off every file is exactly what it would otherwise be.
+
+The line reads `Built by TangleClaw (Project: <name>)` unless you type your own in **Provenance
+line**. Only `{project}` and `{engine}` may be filled in, and a preview under the field shows the
+result. Clear the field to go back to the default.
+
+The line goes only on files TangleClaw writes whole and keeps private:
+
+- the session prime and re-entry notes in `.tangleclaw/`, which exist only while silent prime is on;
+- the UI wrap advisory in `.tangleclaw/`;
+- a `.codex.yaml` or `.aider.conf.yml` that git ignores. If one becomes tracked, it loses the line
+  the next time it is regenerated.
+
+It never goes on `CLAUDE.md`, `AGENTS.md`, or any other file you own or commit. OpenClaw has no
+config file, so there only the files in `.tangleclaw/` carry it.
+
+Saving the setting rewrites nothing. Each file picks up the change the next time TangleClaw
+regenerates it, which is usually the next session launch. An agent can see what the setting reaches
+with `tc capabilities`, which reports it read-only.
+
 ## Sessions
 
 Sessions are the core of TangleClaw — they're how you interact with AI engines on your projects.
@@ -480,7 +505,17 @@ Tap **Wrap** to trigger the session wrap. This:
 2. Captures session output (summary, next steps, learnings)
 3. Records the wrap in the database
 4. Ends the session
-5. Redirects to the landing page after a countdown
+5. Shows the ended bar, with **Back to Projects**, **Restart Session** and **Stay**
+
+**Restart Session** starts the next session of the same project from the page you are on, with no
+trip through the landing page (#1637). It launches the way the landing page does, with the
+project's default launch mode, and the new session resumes from the handoff this wrap published.
+The button appears only when TangleClaw can confirm the wrap ended the session. After a session
+that was killed or crashed, the bar keeps its 10-second return to the landing page instead. If the launch is refused, the reason appears beside
+the button. After a STOP you can press it again once the STOP is lifted. Stranded wraps or a tunnel
+conflict have to be resolved from Back to Projects. If TangleClaw can't tell whether the launch
+started (the connection dropped, or no answer came within a minute), it checks before letting you
+try again, so one press never starts two sessions.
 
 If a `deletePassword` is configured, you'll need to enter it to wrap.
 
@@ -913,20 +948,46 @@ condition fired or could not be measured. Each row carries its own fix; the back
 - **Terminal (ttyd) PTY leak** — on macOS, `tmux attach` clients spawned by ttyd can wedge in the
   kernel's exiting state and hold `/dev/ttys*` slots until ttyd itself restarts. The ttyd watcher
   restarts it automatically once either gate trips (pool ≥ 85% full, or ≥ 20 leaked children);
-  the panel shows the same reading so you can act before the watcher's next five-minute tick, or
-  when the watcher's own restart did not take — read the note below about a recently restarted ttyd
-  first, because acting immediately is not always worth it. Sessions survive the restart — tmux servers are
-  separate processes and the browser reconnects.
+  it checks as soon as the server starts and then every five minutes. The panel shows the watcher's
+  own reading (the same ttyd process, the same sample), so the two never disagree about one moment.
+  Sessions survive the restart — tmux servers are separate processes and the browser reconnects.
 
-  A restart makes every open terminal reconnect at once, and that churn leaks children of its own,
-  so the leaked-child gate stays quiet until ttyd has been up for 15 minutes — otherwise it trips
-  on the reconnect burst a restart just caused and your terminals blank repeatedly for one
-  underlying leak. It is keyed to ttyd's own age, so **your** manual `launchctl kickstart` counts
-  exactly as the watcher's does; the panel will also tell you when the count it is showing may be a
-  recent restart's burst rather than a new leak, so you know another restart may buy nothing. The
-  pool gate is **not** held back: a full pool means no terminal can attach at all, which is worth
-  an immediate restart whenever it happens. If you see `ttyd orphan gate held down` in the log,
-  that is this wait, and it names how long is left.
+  Closing a terminal tab makes its `tmux attach` child exit, and for a moment it is in the exiting
+  state like a leaked one. A restart makes every open terminal reconnect at once, so it leaves a
+  burst of those. The leaked-child count therefore includes only children that are **confirmed**
+  stuck: seen exiting, without a break, by checks of the same ttyd at least 30 seconds apart. How
+  long a process has existed says nothing about how long it has been exiting, so a tab open for
+  hours is not counted the moment it closes.
+  The others are shown separately ("N more exiting but not yet confirmed wedged"), never counted, and
+  never acted on, so a reconnect burst no longer blanks your terminals a second time. The pool gate
+  is not affected: a full pool means no terminal can attach at all, which is worth an immediate
+  restart whenever it happens.
+
+  Every restart the watcher makes is checked: it looks for a new ttyd process afterwards and logs a
+  `ttyd kickstart receipt` whose `outcome` is `ok`, `no-new-generation` (launchd accepted the
+  restart but the same ttyd is still running) or `failed`. A ttyd restart the watcher did not make
+  — yours, a server restart, launchd respawning a crash — is logged as `ttyd restarted outside the
+  watcher`, without guessing who did it. To turn the watcher off, or move the leaked-child
+  threshold, see `TANGLECLAW_TTYD_WATCHER` and `TANGLECLAW_TTYD_ORPHAN_THRESHOLD` in
+  `docs/configuration-reference.md`. With the watcher off, a healthy reading shows as **Could not
+  check**, never healthy, because nothing is then restarting a leaking ttyd; a full pool or leaked
+  children still show as fired, with a note to restart ttyd by hand.
+
+  The leak itself is fixed in the ttyd TangleClaw ships (#1245): after a tab closes, it keeps
+  reading and discarding that terminal's last output, so the child can finish exiting. launchd
+  runs it from `~/.tangleclaw/bin/ttyd`, and `deploy/install.sh` builds and installs it whenever
+  it is missing, broken or out of date, so a normal install needs no extra step. If the ingress
+  cutover stops with "the managed ttyd runtime … cannot be used", run
+  `node scripts/ttyd-runtime.js provision` and then the cutover again (not `deploy/install.sh`, which
+  rewrites the terminal's launchd job for direct mode); if the installer itself stops there, its
+  message says what failed (see "The ttyd runtime launchd runs"
+  in `docs/configuration-reference.md`). To put it in service or take it out again, follow
+  [Roll out the owned ttyd runtime](runbooks/roll-out-the-owned-ttyd.md) or
+  [Roll back the owned ttyd runtime](runbooks/roll-back-the-owned-ttyd.md).
+  `node scripts/ttyd-runtime.js status` shows which ttyd is in use. Running the Homebrew ttyd
+  instead is possible (`TANGLECLAW_TTYD_RUNTIME=homebrew`) but brings the leak back, and every
+  install says so.
+
 - **Full Disk Access missing** — the server process cannot read protected folders. A background
   (launchd-spawned) `node` gets no permission prompt; reads under `~/Documents`, `~/Desktop` and
   `~/Downloads` simply never return. Grant Full Disk Access to the exact `node` binary the

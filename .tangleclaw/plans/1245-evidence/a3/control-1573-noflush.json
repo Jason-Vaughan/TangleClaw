@@ -1,0 +1,150 @@
+{
+  "runId": "muhh3hm9",
+  "mode": "baseline",
+  "modes": [
+    "clean",
+    "abrupt",
+    "paused",
+    "replay",
+    "noread"
+  ],
+  "dir": "/tmp/tcc-muhh3hm9",
+  "ttydBin": "/private/tmp/claude-501/-Users-jasonvaughan-Documents-Projects-TangleClaw-Pilot-B1/3340b1e4-3366-4cf5-802e-c4281748e42a/scratchpad/a3/src-control/build/ttyd",
+  "attachScript": "/private/tmp/claude-501/-Users-jasonvaughan-Documents-Projects-TangleClaw-Pilot-B1/3340b1e4-3366-4cf5-802e-c4281748e42a/scratchpad/a3/attach-original.sh",
+  "startedAt": "2026-09-25T21:28:41.649Z",
+  "baseline": {
+    "pool": {
+      "used": 45,
+      "cap": 511
+    },
+    "fds": 32
+  },
+  "run": {
+    "cycles": 60,
+    "withOutput": 48,
+    "clientErrors": 0,
+    "stop": "reproduced",
+    "maxChildren": 39,
+    "confirmedWedges": 37,
+    "lingering": 37,
+    "lingeringStates": [
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es",
+      "?Es"
+    ],
+    "transientLifetimesMs": {
+      "n": 1,
+      "p50": 0,
+      "p95": 0,
+      "p99": 0,
+      "max": 0
+    },
+    "stillExitingMs": [
+      42004,
+      41502,
+      41502,
+      41258,
+      41258,
+      41258,
+      40661,
+      39729,
+      39245,
+      38755,
+      38755,
+      38343,
+      38343,
+      38215,
+      36884,
+      36368,
+      36368,
+      34959,
+      34723,
+      34257,
+      34257,
+      34257,
+      34257,
+      32937,
+      32691,
+      32427,
+      32427,
+      32144,
+      32144,
+      30933,
+      30933,
+      30667,
+      30667,
+      30180,
+      30180,
+      30180,
+      29946
+    ],
+    "pool": {
+      "baseline": {
+        "used": 45,
+        "cap": 511
+      },
+      "peak": {
+        "used": 83,
+        "cap": 511
+      },
+      "final": {
+        "used": 83,
+        "cap": 511
+      }
+    },
+    "fds": {
+      "baseline": 32,
+      "final": 144
+    },
+    "restarts": 0,
+    "soakMs": 0
+  },
+  "cleanup": {
+    "ok": true,
+    "leftovers": []
+  },
+  "afterCleanup": {
+    "pool": {
+      "used": 45,
+      "cap": 511
+    }
+  },
+  "verdict": {
+    "verdict": "reproduced",
+    "why": []
+  }
+}

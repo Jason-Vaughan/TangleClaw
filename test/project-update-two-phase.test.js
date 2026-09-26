@@ -229,6 +229,7 @@ const VALID_SETTINGS_PATCH = {
   versionFilePath: 'VERSION.json',
   medusaEnabled: true,
   medusaWake: true,
+  provenanceWatermark: { enabled: true, template: null },
   wrapKeepSessionRunning: true,
   wrapSections: null,
   defaultLaunchMode: 'default',

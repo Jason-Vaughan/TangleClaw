@@ -35,148 +35,171 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
-## 2026-09-25 — Medusa delivery watchdog: tracked exchanges, durable re-arms, escalation (#1839)
+## 2026-09-26 — install.sh refuses on a caddy-mode host before anything is changed (#1900)
 
-<!-- prawduct: type=feature | scope=medusa-1839 -->
+<!-- prawduct: type=bugfix | scope=install-1900 -->
 
-Dual Builder Normalization Train, Chunk B, Car B1 (TangleClaw-Pilot-B2). The plan is `.tangleclaw/plans/1839-medusa-delivery-watchdog.md`. Architect rulings R19, R20, `e2956328` (unverified readers), A3 (`a06a43ac`, approved as corrected `1b6f3ca4`) are recorded there. The work was built in five chunks.
+The PM dispatched this over Medusa (289a9266) under Architect ruling R43. Plan: `.tangleclaw/plans/1900-install-caddy-refusal.md`.
 
-**Root cause.** "Sent" meant "the Hub stored it". Nothing owned whether a message reached its reader. The wake ledger recorded nudges only, so #1435's hand-read mail stayed listed forever and #1621's lost Enter was silent. A blocked sender waited until someone noticed a badge.
-
-**The change.**
-- **Schema v49 (additive):**
-  - `medusa_exchanges` is a projection;
-  - `medusa_exchange_facts` is append-only, enforced by triggers;
-  - both are keyed by the Hub message id, and no body is stored.
-- **Sending:**
-  - the intent is recorded before the Hub is called, then the Hub id is bound;
-  - a lost answer is `send_unknown`, never re-sent;
-  - a reused `requestId` is refused;
-  - an arrival that beats the answer is adopted, by Hub id only (verified against the Hub source).
-- **Priority and proof:**
-  - blocking needs a verified launch and critical needs the operator;
-  - reply, close and retract need verified callers;
-  - protected priorities off-host are refused.
-- **Recipient facts:**
-  - reads and acks are scoped to the reader's workspace and name their actor (`recipient`, `operator-ui`, `unverified-reader`);
-  - a reply-required exchange is satisfied only by a reply;
-  - `retracted` is a guarded terminal state (route: #1873).
-- **Wakes (`lib/wake-transports.js`):**
-  - each nudge carries a nonce;
-  - tmux gives negative receipts only;
-  - owned edges are watched observe-only;
-  - after a restart the monitor consults the durable attempts before nudging.
-- **The watchdog (`lib/medusa-watchdog.js`):**
-  - re-arms only on a negative receipt or a persisted post-attempt readiness change, never on time, with a persisted budget;
-  - climbs a one-way ladder: aged (sender), escalated (the `authority.escalation` route on the control assignment), operator (dashboard banner and activity row);
-  - records every notice as queued, then accepted or failed.
-- **Teardown** retires the workspace, so waiting exchanges end as `recipient_retired` and their initiators are told.
-- **Surfaces:**
-  - routes: `…/medusa/exchanges`, `…/exchanges/:id/close`, `/api/medusa/escalations`, `/api/server-info` `medusaEscalations`;
-  - `tc message send --priority …`, `tc message sent`, `tc message close`;
-  - the `medusaWatchdog` config;
-  - docs: `docs/medusa-delivery.md`, plus one guide line.
-
-**Tests.**
-- New: `test/medusa-exchanges.test.js`, `test/api-medusa-exchanges.test.js`, `test/medusa-watchdog.test.js`, `test/medusa-escalation.test.js`, `test/store-medusa-exchange-migration.test.js`, and the isolated exit test `test/medusa-watchdog-e2e.test.js`.
-- The existing wake tests pass unmodified. The full suite is green on the final tree.
-
-**Reviews.** Every chunk boundary had a Critic round. All blocking findings were fixed and verified, among them a restart duplicate wake, a forged-ack path and a reconnect-stranded re-arm.
-
-Fixes #1839, #1435. Refs #1873, #1806, #1621, #1879.
-
-## 2026-09-25 — Wrap advice knows what upstream already holds (#1868)
-
-<!-- prawduct: type=bugfix | scope=wrap-1868 -->
-
-Dual Builder Pilot, Car A2 (TangleClaw-Pilot-B1). The plan is `.tangleclaw/plans/1868-wrap-upstream-provenance.md`. Architect rulings R11, R13 (controlling) and R14 are recorded there.
-
-**Root cause.** Wrap advice was a function of file kind (`_file-safety.js` `durable` → Include), and no wrap step read a remote ref. So a session checkout left behind after its worktree PR merged was offered its own merged plan, and a carrier byte-identical to upstream, as work to commit.
+**Problem.** `deploy/install.sh` always wrote the direct-mode ttyd plist (TCP 3100) and reloaded launchd. On a host whose persisted `ingressMode` is `caddy`, the server expects ttyd on a Unix socket, so the dashboard answered 502. The script did read the mode, but only after the restart, and only to print advice.
 
 **The change.**
-- **`lib/wrap-steps/_upstream-provenance.js`:**
-  - resolves the default branch (`<remote>/HEAD`, else `main`/`master`);
-  - makes one bounded refresh in `session-files`, which honors the behind-origin opt-outs;
-  - records the commit the ref names;
-  - judges each dirty path from git content: `already-upstream`, `upstream-owns`, `unverified` or `none`. The exception for the branch's own work is proven from HEAD vs the merge-base, and never applies to an untracked path.
-- **`classify` precedence:** methodology > TC state > protected DB > provenance > TC maintenance > ownership > file kind (the secret scan still runs after classify).
-  - Exact matches go to a non-interactive `alreadyUpstream` bucket.
-  - `upstream-owns` is asked, with Keep local recommended.
-  - Unverified evidence never recommends Include.
-- **Commit rechecks** against the captured commit, and against the current ref if it moved, with no network. It only tightens. An Include whose echoed `pathDecisionBasis` is weaker than the current verdict is asked again (`provenanceChanged`), and the drawer prunes it.
-- **The drawer** shows the provenance headline, the "Already upstream" manifest group and the per-path copy.
-- **R15 local drawer smoke** (scratch instance, headless Chrome) found raw fetch stderr duplicated in the row copy, and that it was unredacted. The refresh reason is now redacted with `redactRemoteOutput` and shortened, it is shown once in the headline, and stale rows get a short sentence. The redaction test was seen to fail with redaction disabled.
-- **changelog-coverage** reuses session-files' verdicts, which was accepted in the Critic disposition.
+- A guard runs right after the Node.js check, before any dependency install, runtime build, plist write or launchctl call.
+- On `caddy` it refuses. It names `ingress-cutover.js --to caddy`, which re-applies the ttyd and Caddy plists, and `--to direct`, which switches the host.
+- A config that cannot be read or parsed also refuses, because the server cannot load that file either. A missing config, or one without the key, is direct mode.
+- The post-restart detection and its now-unreachable caddy closing branch are removed.
+- The README update steps branch by mode. The configuration reference, the rollout runbook and FEATURES say the installer enforces this.
 
-**Tests.** New `test/wrap-upstream-provenance.test.js`, which runs real bare-origin fleets. It covers:
-- the exact B2 incident;
-- an exact match, whether owned, maintenance or foreign;
-- an untracked path with richer upstream content;
-- a genuinely new plan;
-- unavailable, stale and no-remote upstream;
-- `trunk` on a remote named `upstream`, a detached HEAD, and a linked worktree;
-- an R11-E ref move before commit;
-- the R14 revert and both-sides cases, with negative controls;
-- deletions;
-- precedence;
-- the changelog predicate path;
-- no mutation.
+**Decision (PM-ratified, e4c76eab).** Selecting direct means running `ingress-cutover.js --to direct`, the only writer of `ingressMode`. install.sh gets no override flag, because one would reinstall the outage.
 
-The drawer and wiring tests are extended. Pinned shapes gained the new fields, and nothing was relaxed. The full suite is green at the reviewed head.
+**Tests.** `test/install-sh.test.js` › "ingress-mode guard (#1900, executed)" runs the real script in a sandbox, with stubbed brew, curl and launchctl.
+- Caddy mode and an unparseable config leave HOME byte-identical, call no stub, and name the repair.
+- Direct, key absent, and no config all get past the guard.
+- Interlocks pin the guard ahead of every mutation, and pin the brew stop ahead of the real runtime build.
 
-**Critic.** Cumulative `rev-20260925T161734Z-32402ac3` found 1 blocking issue: the changelog predicate path was untested. It is fixed and verified. The table break is fixed, and diverged paths are surfaced. Two items were accepted: the secret scan does not run on already-upstream files, and changelog-coverage replays verdicts. Verify-resolutions `rev-20260925T163746Z-f610b722` returned 0 findings.
+**Critic.** `rev-20260926T164727Z-856105c8` found 0 blocking, 3 warnings and 1 note. All four were fixed in 99f89ecf and verified by `rev-20260926T165841Z-edb10e1d`, and both of its observations were accepted.
 
-## 2026-09-25 — HOLD and STOP are durable and refuse TangleClaw's own mutations before anyone reads them (#1861)
+**Filed.** #1901: a caddy-mode host has no supported refresh for the server plist, `~/.tmux.conf` or dependencies.
 
-<!-- prawduct: type=feature | scope=control-state-1861 -->
+**Suite.** Two full runs each failed only the known load flake in `test/dir-scanner.test.js` (#1884/#1658) while another session's suite ran alongside. That test passes 3/3 in isolation on this tree and on base. Recorded `--degraded`.
+## 2026-09-26 — A stranded wake nudge no longer blocks its own recovery (#1621)
 
-Dual Builder Normalization Train, Chunk A, Car A1 (TangleClaw-Pilot-B2). Chunks 01–06 of `.tangleclaw/plans/1861-durable-control-state.md`. Architect rulings R1 (A1–A9), R2 (N1–N5), R3 (B/C) and R4-B are recorded in the plan, and the incident ruling I1 is recorded below.
+<!-- prawduct: type=bugfix | scope=1621-stranded-wake-nudge -->
 
-**The change.** Schema v48 adds four tables. `control_assignments` and `control_holds` are caches. `control_events` and `control_receipts` are append-only, enforced by triggers. `lib/control-state.js` holds the rules:
-- server-assigned generations, separate from receipt order;
-- cumulative named holds, released by compare-and-set on the expected generation, with per-issuer authority and explicit delegation;
-- STOP is terminal, and only an operator successor supersedes it atomically;
-- close is allowed only for an active assignment with no holds;
-- a `notify_pending` receipt is written in the same transaction as each event.
+The single chunk of `.tangleclaw/plans/1621-stranded-wake-nudge.md`. The PM dispatched it to Builder2 over Medusa (73798d5f) and approved the fix scope (081f2259).
 
-The API and CLI: `/api/control/*` and `tc control` (`lib/control-auth.js` for the operator proof tier, `lib/control-api.js`). `lib/control-gate.js#checkMutation` reads the tables directly before every TangleClaw-owned side effect:
-- every wrap boundary, and inside the commit step before release-prepare, branch, commit, push, PR create and auto-merge arming;
-- `pr-merge`, the stranded-wrap PR, command injection, actions and the startup prompt;
-- restart and update-apply, gated on the caller;
-- launch into a stopped lane.
+**Problem.** A nudge whose Enter is lost stays unsubmitted in the composer. #1839's receipt check records it as not accepted and the watchdog re-arms the wake, but the draft gate read the stranded nudge as operator input. So it refused the re-arm, and every later wake, until the exchange escalated.
 
-A wrap is checked against the assignment it was admitted under. `lib/control-hooks.js` adds managed pre-commit and pre-push hooks as defense in depth: they chain a foreign hook transactionally, and a tracked hooks path is left UNPROTECTED. Docs: `docs/control-state.md`, plus a "Held or stopped?" line in every engine's guide.
+**The change.**
+- `medusa-wake.isOwnNudge` recognises a composer holding only a switchboard nudge and its wake ref. The pattern is derived from `_nudgeLineFor` + `withNonce`, and every slot is pinned. `_assessPane` treats such a composer as `at-prompt`, but only when its lower border was seen, and it checks before both refusal branches, because a wrapped nudge leaves the cursor on a continuation row, where the gate would otherwise say `no-prompt`.
+- `tmux._clearPromptLine` clears a stranded nudge without filing it in the draft store. It then re-reads the composer, and `sendKeys` refuses to paste after anything left behind.
+- Docs: `docs/medusa-delivery.md` "Wakes and re-arms" and CHANGELOG `### Fixed`, which also amends #1839's "still waits for a clear composer" sentence.
 
-**Tests.** New: `control-state`, `store-control-migration`, `control-auth`, `api-control`, `control-gate`, `control-surfaces`, `control-hooks` (real repos, a stub API in a child process), `control-docs`, `tc-control`, and `control-e2e`. The e2e test is the exit condition: a HOLD whose notice is queued and unread refuses the wrap, and nothing is committed. Contract updates, none of them weakening:
-- the runner and wake option sets include the new server-owned keys, with typeof assertions;
-- the prime-golden fixtures gain the `control` verb (a word diff shows only that);
-- `startup-prompt-store` compares against `CURRENT_SCHEMA_VERSION`;
-- `api-update-apply` runs over a scratch store, because the route consults the gate.
+**Not done.** The reason the Enter is lost at all is not established. Whether one `C-u` clears a wrapped nudge was not checked on a live Claude pane; the re-read guard makes a partial clear fail as `inject-failed`.
 
-Mutation checks: removing each new guard or branch fails its test. One R-4 test first passed with the fix removed; it was rewritten to reproduce the real launch order.
+## 2026-09-26 — Opt-in provenance line on TangleClaw's private generated files (#1885, #1888)
 
-**Critic.** The cumulative review (`rev-20260925T143036Z-2bc1c66c`) found 2 blocking, 7 warnings and 6 notes:
-- **Blocking:** the notice-handled observation was dropped, and three plan-mandated tests were missing.
-- **Fixed:** R-2 through R-9, R-12 and R-13.
-- **Accepted:** R-10, R-11, R-14 and R-15.
+<!-- prawduct: type=feature | scope=1885-provenance-watermarks -->
 
-The first verify-resolutions ran before the fixes were committed and saw none of them. The second confirmed all 10, and raised one blocking finding: three new branches were untested. That was fixed in `01ac724d`, and the third pass found nothing. Four observations were accepted.
+Chunks 01–03 (TangleClaw-Pilot-B2). The plan is `.tangleclaw/plans/1885-provenance-watermarks.md`. Architect ruling R25 and ADR 0019 (`docs/adr/0019-generated-file-provenance.md`) govern it.
 
-**Incident I1.** An early run of `control-e2e` wrote a hook marker naming `localhost:3102`, because the pane exports `TANGLECLAW_PORT=3102` and that outranks the config. A scratch-repo commit then sent the live server one read-only `GET /api/control/check`, which answered 404. Nothing was written and nothing was restarted. The test now removes `TANGLECLAW_PORT` and asserts that the marker names its own instance, and every boundary suite ran with all `TANGLECLAW_*` variables unset.
+**The problem.** Across many projects and instances, nothing said which TangleClaw project generated a given file.
 
-**R4-B, applied after the draft PR opened.** When control state cannot be established, restart and update-apply refuse every caller, the operator included, with `503 CONTROL_STATE_UNAVAILABLE`. That covers an unprimed governed memory and an unreadable store. A verified operator passes a readable HOLD, never an unreadable store. The ruling reached the inbox during the Critic runs and was seen only after #1866 opened. It was fixed in `b7a163f8`, which has a verify-resolutions pass with no findings and a PR re-review with 0 blocking.
+**The change.**
+- **`lib/provenance.js`, one leaf module and one writer.**
+  - A frozen registry is keyed by an explicit `surfaceId` each writer passes. It names five private surfaces: `session-prime`, `session-reentry`, `ui-wrap-advisory`, and `codex-config` and `aider-config` while git ignores them.
+  - The template is bounded, and substituted values are neutralized. A line that would still contain an ownership marker renders as the fixed `Built by TangleClaw`, so a provenance line can never grant overwrite permission.
+  - `applyProvenance` is pure and idempotent. `writeOwnedFile` writes atomically by default, and in place for the carriers, which keeps the file's mode and symlink.
+- **Per-project `provenanceWatermark`, default null, which means off.** A bounded validator row. A blank template resets to the default. There is no global key and no `tc` mutation verb.
+- **Carriers.** The #1619 committed-carrier predicate decides both insertion and removal. Drift is judged without the provenance line.
+- **#1888, a live bug fixed here.** The prime was budgeted as the SessionStart hook's only output, so the whole hook output could pass the engine's 10k cap and be cut to a preview. `lib/prime-hook-output.js` now owns the composition and reserves the companions' worst case. A parity test runs the real hook script.
+- **Operator and agent surfaces.** A Project Settings toggle, line field and preview. The save sends only the changed half (`tcProvenancePatch`). A read-only `provenance-watermark` row in `tc capabilities` names surfaces by id, never by path.
 
-**Honest limit.** Shell `git`/`gh` is not server-enforceable. The managed hooks narrow the gap, and the docs list every bypass.
+**Verification.** Each chunk had a cumulative Critic plus verify-resolutions; the last pair is rev-20260926T032840Z-d99ab744, then rev-20260926T033429Z-61386ed9, which was clean. The suite is green at 614f0e17. End-to-end checks ran against scratch projects: with the setting off, every generated file is byte-identical to `main`.
+## 2026-09-26 — Restart Session on the ended bar after a completed wrap (#1637)
 
-## 2026-09-25 — A wrap never commits a SQLite database, and it recommends safe answers (#1858)
+<!-- prawduct: type=feature | scope=1637-restart-session -->
 
-<!-- prawduct: type=bugfix | scope=wrap-file-safety-1858 -->
-Chunks 01–03 of `.tangleclaw/plans/1858-wrap-file-safety.md`. The new `_file-safety.js` gives each file one of four classes: protected, local, durable or ambiguous. `classify` withholds protected files (SQLite by header, extension or sidecar) from every bucket, so neither `session-files` nor `commit` will stage one, whatever Include arrives. Ignored Includes are recorded. Other files carry an advisory recommendation, and no answer is preset. Both steps emit a manifest by path, and `session-files` emits exact ignore lines. `changelog-coverage` no longer counts a withheld database as work. The drawer shows each recommendation, a projected manifest before a new Apply-recommendations-and-retry button, the withheld databases with no choice, and the manifest on settled rows. It also prunes remembered answers for withheld databases. The Architect ruled on A1–A8 on 2026-09-25 (A8, a handback refusal, was rejected and is not built). The cumulative review caught one blocking bug: Apply could fill Include for a new plan that also matched a secret rule. The fix is that a secret-flagged file is never recommended for Include, on the server or in the drawer. The wrap API reference (`docs/configuration-reference.md`) now documents the new outputs.
+Chunks 01 and 02 of `.tangleclaw/plans/1637-restart-session.md`, under Architect ruling R26. The PM dispatched both chunks over Medusa (fb7882f1, 343a758e) and approved the eligible-no-redirect decision (67e3a1f8).
 
-## 2026-09-25 — `launch-rule-drift` tests import `node:assert/strict` (Pilot 4)
+**Problem.** After a wrap ended the session, relaunching the same project meant going back to the landing page, clicking the project and passing the launch dialogs again. A context refresh is the most common reason to wrap, so this was the common case.
 
-<!-- prawduct: type=chore | scope=strict-assert-launch-rule-drift -->
-`test/launch-rule-drift.test.js` switched from `node:assert` to `node:assert/strict`, as the testing-conventions norm requires. Every assertion already called a strict method, so no test's accepted behaviour changes. Substituted for TST-5N8W, whose conversion shipped in #1378. Three suites still import non-strict `node:assert` (remote-output, wrap-consecutive-step-delivery, wrap-delivery-receipt) — tracked against #1377.
+**The change.**
+- **`public/session-relaunch.js`** is DOM-free and exported as `window.tcSessionRelaunch`.
+  - It offers the button only when `active === false`, no wrap is running, the session is tracked, and the newest session row is `wrapped`.
+  - The launch body is `{continuityMode: 'continue'}` alone, so the server applies the project's defaults.
+  - Refusals fall into four classes: retryable, needs-landing, liveness-unknown and uncertain.
+  - A controller latches before it sends, and an uncertain outcome is settled by a status read, never a second POST.
+- **Page wiring:**
+  - `applyRelaunchEligibility` is shared by both ended-bar painters. `handleSessionEnded` decides from its payload. `handleWrapCompleted` makes one status read, and a failed read hides the button.
+  - An eligible end suppresses the 10 s redirect.
+  - The launch POST is bounded at 60 s and a timeout goes to reconcile.
+  - `#relaunchStatus` is a polite live region.
+  - When the only way forward is the landing page, focus moves to Back to Projects.
+- **`sw.js`** serves the module network-first, in lockstep with `session.js`, and precaches it.
+- **Docs:** ADR 0002 "Amended 2026-09-26", the user guide, FEATURES and CHANGELOG. The server and its routes are unchanged.
+
+**Review.**
+- Chunk 01 Critic rev-20260926T040831Z-cf8f4842: 0 blocking. Its R-5 (no launch timeout) was built in chunk 02.
+- Cumulative Critic rev-20260926T042927Z-787c1eed: its one blocker was saved test evidence carrying the #1884 dir-scanner flake. A clean full run replaced it, and verify-resolutions rev-20260926T043459Z-f0760bdd confirmed.
+
+## 2026-09-26 — ADR 0018 §4 states the mode-aware repair; backup ref deleted (#1245, Architect R41/R42)
+
+<!-- prawduct: type=docs | scope=ttyd-1245 -->
+
+- **R41:** ADR 0018 §4 said the cutover directs the operator to "rerun the installer", which is wrong on a caddy-mode
+  host (install.sh rewrites the ttyd plist for direct mode). The Architect ruled a narrow correction to the implemented
+  `SELECT_BY_MODE` contract: `provision` first, then `deploy/install.sh` (direct) or the cutover (caddy). The ADR now
+  says that, with a dated correction note. It is a normative-doc change that matches existing, reviewed code.
+- **R42:** the local-only `backup/1245-pre-r39-redaction` ref (the pre-rewrite head, 2fe1c50d, holding the unredacted
+  run5 evidence) is deleted before any push. `git for-each-ref --contains` confirms no local ref still reaches the
+  pre-rewrite commits. No object-store purge is required.
+
+## 2026-09-26 — Close the two blockers verify-resolutions left open (#1245)
+
+<!-- prawduct: type=fix | scope=ttyd-1245 -->
+
+`verify-resolutions` rev-20260926T152837Z-80909b30 on ede42d18 found prior R-2 and R-7 not fully closed.
+
+- **R-1 (prior R-2), the real leak path:** `defaultDeps().build` gains an optional `script` (build-ttyd.js by default).
+  A new test runs the DEFAULT build in a child process with a stand-in builder that prints to stdout, and asserts
+  that nothing reaches the child's stdout. Mutation-checked: `stdio: ['ignore', 'inherit', 2]` fails it.
+- **R-2 (prior R-7), the class, not the site:** one exported `SELECT_BY_MODE` text (direct: install.sh; caddy: the
+  cutover; never install.sh on caddy) is used by REPAIR and by the CLI's `install` and `rollback` output. Rollback
+  also names the kickstart when the plist already runs the owned path. A test pins every site to the constant.
+- O-1, O-2 and O-3 are ACCEPTed, reasons recorded. O-2 (ADR 0018 §4's "rerun the installer") is the Architect's to
+  decide.
+
+## 2026-09-26 — Resolve cumulative review rev-20260926T150050Z-6620a07c; redact the run5 evidence from history (#1245)
+
+<!-- prawduct: type=fix | scope=ttyd-1245 -->
+
+The cumulative review of 2fe1c50d found 0 blocking, 6 warnings and 5 notes. Architect R39 and R40 (recorded in the
+plan) ruled on R-8 and R-7.
+
+- **R-8 (R39):** the local branch history was rewritten before any push. In the run5 pre-cleanup and post-cleanup
+  snapshots, every lsof line of the unrelated `agy` process keeps its first five columns, and the rest is replaced by
+  a stable marker, so its LAN and IPv6 addresses and its oauth-token and conversation paths are gone.
+  - `git filter-branch --index-filter` rewrote 310dfbc3..HEAD. Only the 5 commits from 626280ec onward changed. The
+    tree diff against the backup is exactly those two files.
+  - A scan of every commit in the range (trees, added lines, messages) finds none of the values.
+  - The pre-rewrite head survives only as the local ref `backup/1245-pre-r39-redaction`, which is never pushed.
+- **R-1:** the last known good and the set-aside copy are written to a `.tmp` name and renamed into place
+  (`_copyPairAside`), never overwritten in place. Tests: the inode changes on replacement. The pinned boundary lists
+  gain the temp-and-rename steps, and the recovery invariant holds at each of them. Both guards were mutation-checked.
+- **R-9:** the refusal text is mode-aware. It leads with `provision`, then names `./deploy/install.sh` for direct mode
+  and the cutover for caddy mode, and never install.sh on a caddy host. The by-hand route stays. My chunk 08 test
+  pinned the old "Re-run deploy/install.sh" text; it now pins `REPAIR` itself, and a new test pins the mode split.
+  The configuration reference, the user guide, the CHANGELOG and FEATURES are corrected.
+  - Unchanged, and the Architect's to decide: ADR 0018 §4's own wording, "directing the operator to rerun the
+    installer".
+- **R-4:** `readPinnedInputs` reads inputs.json once and hashes exactly those bytes. The resolver's `expectedInputs`
+  and build-ttyd (its new `manifestInputs`) share it.
+  - Changed test contract: the source-regex test "build-ttyd records the same digest the resolver compares" is
+    REPLACED by three behavioural tests. They check the helper's digest of the parsed bytes, that a build records the
+    digest it read even when the file changes afterwards, and that a builder-shaped manifest is current for the
+    resolver.
+- **R-2:** four CLI tests pin that `provision` prints only the bare path on stdout (when it builds, when the runtime is
+  already current, and under the Homebrew rollback), and nothing when it refuses. Mutation-checked.
+- **R-5:** `takeReading` and `_measure` no longer take `opts`. They always read the configured label and threshold,
+  and no production caller passed any.
+- **R-3:** the guarantee wording no longer overclaims, in the lib header, `_recoverably`'s message, the configuration
+  reference and the CHANGELOG. A last known good that verified before the failure still verifies; with none,
+  `provision` rebuilds.
+- **R-7 (R40):** the rollout runbook's checkpoint runs on the first switch AND after every rebuild. It records the
+  sha256 and the `codesign -dv` identity, and adds a live `ls` access check under `~/Documents` that STOPS on
+  denial. The rollback runbook repeats the checkpoint and the check for the restored binary (steps 2a and 7).
+- **R-11:** the plan's Verify line says the PR uses `Refs #1245`, not `Fixes`. R-6 and R-10 are ACCEPTed through
+  `prawduct-hook disposition`.
+- **Review of the rewritten head, rev-20260926T151846Z-e094065e:** `verify-resolutions` could not anchor to the
+  rewritten-away 2fe1c50d, so it fell back to a cumulative review of the committed head, WITHOUT this batch. Its
+  blocking R-2 and R-7 are the prior R-2 and R-9, fixed here. It also raised three items, fixed in the same commit:
+  - R-5: tests pin the cutover's `ttydRuntime` result key (and null before a runtime resolves) and
+    `describeTtydRuntime`.
+  - R-6/R-9: when the install of a verified build fails, `provisionRuntime` keeps the stage, names it, and gives the
+    `install --from <stage>` command instead of "re-run provision". A new test covers this.
+  - R-8: the `_isExiting` docstring no longer claims that the harness's and the watcher's wedge counts match. They
+    share the predicate, not the wedge age.
 
 ## 2026-08-20 — #990: forensic review of the ungoverned Antigravity window fixes 8 confirmed bugs
 

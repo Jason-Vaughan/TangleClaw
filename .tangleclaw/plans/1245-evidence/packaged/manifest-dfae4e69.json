@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "builtAt": "2026-09-26T00:47:26.996Z",
+  "binary": {
+    "file": "ttyd",
+    "sha256": "dfae4e69a9d07c026c5f99360670fc2c7607986ddc1916338e15ad46d5ba6cea",
+    "version": "ttyd version 1.7.7-unknown"
+  },
+  "inputs": {
+    "inputsJsonSha256": "0c2b8e105ba988ae23e2e1dd95db1d8fa1974ccfce33f7c275b80286d59a8c6d",
+    "sources": [
+      {
+        "name": "libuv",
+        "version": "1.52.1",
+        "url": "https://dist.libuv.org/dist/v1.52.1/libuv-v1.52.1.tar.gz",
+        "sha256": "66d511b9e6e334c0e62279eb234fbfb2b3110b1479c09b95b44c7afca8cff9e7"
+      },
+      {
+        "name": "json-c",
+        "version": "0.19",
+        "url": "https://s3.amazonaws.com/json-c_releases/releases/json-c-0.19.tar.gz",
+        "sha256": "37ad0249902e301bd9052bf712e511fcc6acff4ecaad4b5900aad9ce564e26de"
+      },
+      {
+        "name": "libwebsockets",
+        "version": "4.5.2",
+        "url": "https://github.com/warmcat/libwebsockets/archive/refs/tags/v4.5.2.tar.gz",
+        "sha256": "04244efb7a6438c8c6bfc79b21214db5950f72c9cf57e980af57ca321aae87b2"
+      },
+      {
+        "name": "ttyd",
+        "version": "1.7.7",
+        "url": "https://github.com/tsl0922/ttyd/archive/refs/tags/1.7.7.tar.gz",
+        "sha256": "039dd995229377caee919898b7bd54484accec3bba49c118e2d5cd6ec51e3650"
+      }
+    ],
+    "patches": [
+      {
+        "file": "patches/0001-pr1573-keep-reading-after-zero-byte-read.diff",
+        "sha256": "c8c2961466ab8b48f7aaf6de3482216fdda66a1602e5aadf6e2735218d03e2d9"
+      },
+      {
+        "file": "patches/0002-darwin-drain-after-close.diff",
+        "sha256": "8425f3f0958e177d215b7a3871274460270a5fb72a9c713bd53b70bf80d0dbd3"
+      }
+    ],
+    "cmake": {
+      "version": "3.31.6",
+      "wheelSha256": "da9d4fd9abd571fd016ddb27da0428b10277010b23bb21e3678f8b9e96e1686e"
+    }
+  },
+  "toolchain": {
+    "compiler": "Apple clang version 17.0.0 (clang-1700.6.4.2)",
+    "sdk": "26.2",
+    "cmake": "cmake version 3.31.6",
+    "deploymentTarget": "14.0",
+    "host": "Darwin 24.6.0 arm64"
+  },
+  "closure": {
+    "systemRoots": [
+      "/usr/lib/",
+      "/System/Library/"
+    ],
+    "graph": [
+      {
+        "image": "/tmp/tc-ttyd-build-r24/stage/ttyd",
+        "deps": [
+          "/usr/lib/libz.1.dylib",
+          "/usr/lib/libutil.dylib",
+          "/usr/lib/libSystem.B.dylib"
+        ],
+        "rpaths": []
+      }
+    ]
+  }
+}

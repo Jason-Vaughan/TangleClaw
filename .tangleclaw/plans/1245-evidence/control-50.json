@@ -1,0 +1,74 @@
+{
+  "runId": "muhg5gsg",
+  "mode": "control",
+  "modes": [
+    "clean",
+    "abrupt",
+    "paused",
+    "replay",
+    "noread"
+  ],
+  "dir": "/tmp/tcc-muhg5gsg",
+  "ttydBin": "/opt/homebrew/bin/ttyd",
+  "attachScript": "exec cat",
+  "startedAt": "2026-09-25T21:02:14.212Z",
+  "baseline": {
+    "pool": {
+      "used": 41,
+      "cap": 511
+    },
+    "fds": 32
+  },
+  "run": {
+    "cycles": 50,
+    "withOutput": 0,
+    "clientErrors": 0,
+    "stop": "completed",
+    "maxChildren": 10,
+    "confirmedWedges": 0,
+    "lingering": 0,
+    "lingeringStates": [],
+    "transientLifetimesMs": {
+      "n": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+    },
+    "stillExitingMs": [],
+    "pool": {
+      "baseline": {
+        "used": 41,
+        "cap": 511
+      },
+      "peak": {
+        "used": 42,
+        "cap": 511
+      },
+      "final": {
+        "used": 42,
+        "cap": 511
+      }
+    },
+    "fds": {
+      "baseline": 32,
+      "final": 33
+    },
+    "restarts": 0,
+    "soakMs": 0
+  },
+  "cleanup": {
+    "ok": true,
+    "leftovers": []
+  },
+  "afterCleanup": {
+    "pool": {
+      "used": 41,
+      "cap": 511
+    }
+  },
+  "verdict": {
+    "verdict": "pass",
+    "why": []
+  }
+}
