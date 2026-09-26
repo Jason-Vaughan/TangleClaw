@@ -1,6 +1,6 @@
 ---
 title: "#1885 Provenance watermarks: an opt-in 'Built by TangleClaw' header on files TangleClaw owns whole"
-status: Chunk 01 BUILT and REVIEWED (Critic clean after one fix round, 2026-09-26). Chunks 02–03 await PM dispatch.
+status: Chunks 01 and 02 BUILT and REVIEWED (Critic clean after fix rounds, 2026-09-26). Chunk 02 includes the #1888 fix. Chunk 03 awaits explicit PM dispatch after a /clear re-entry (V5 Interim Bridge protocol).
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-26 (message 06d614e1). The dispatch covers discovery and planning only, and stops at "Plan Written".
 issues: [1885]
 governed_by:
@@ -274,7 +274,10 @@ registry is five private surfaces. The Architect kept three chunks, so 02 and 03
 - [x] 01 — `lib/provenance.js`, per-project key, `session-prime` slice. Built in 276d8107, fixed in 28790f51. Critic: cumulative rev-20260926T015617Z-736d9820 (1 blocking: the prime could exceed the hook budget; fixed), then verify-resolutions rev-20260926T022824Z-3f669706 clean. Suite green by node's TAP reporter at 28790f51.
   - Carried into 02: tighten the `lineOverhead` bound in `test/provenance.test.js` to the exact comment-form overhead (O-2).
   - Carried into 02: for each surface, audit what its reader constrains (size or format), not only who reads it.
-- [ ] 02 — remaining four surfaces, with the shared tracked predicate
+- [x] 02 — remaining four surfaces, with the shared tracked predicate, plus the #1888 fix. Built in 03840d79, fixed in 7e38760e. Critic: cumulative rev-20260926T025558Z-17c776e6 (0 blocking; R-2, the carriers' in-place write semantics, fixed), then verify-resolutions rev-20260926T030527Z-8370d762 clean. Suite green by node's TAP reporter at 7e38760e.
+  - Carried into 03: ADR 0019 line 61 and the Design section here still say `writeOwnedFile` writes atomically. They should say atomically by default, and in place for a surface that declares `write: 'in-place'` (O-1).
+  - Carried into 03: a fresh `prawduct-hook test-evidence record` run is owed at the PR boundary. Its earlier totals were untrustworthy; cross-check them against `node --test --test-reporter=tap test/*.test.js`.
+  - #1888 closes only through the #1885 PR (`Fixes #1888`).
 - [ ] 03 — Project Settings UI, disposition, capabilities, docs, CHANGELOG
 
 ## Appendix: full write-site inventory (read-only discovery, 5f74a343)
