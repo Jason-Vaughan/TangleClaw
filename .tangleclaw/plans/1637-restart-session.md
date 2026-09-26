@@ -1,6 +1,6 @@
 ---
 title: "#1637 Restart Session: a one-click relaunch on the ended bar after a completed wrap"
-status: CHUNK 01 IN PROGRESS (2026-09-26).
+status: CHUNK 01 BUILT AND REVIEWED (2026-09-26). Chunk 02 waits for PM dispatch.
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-26, message fb7882f1 ("initialize the new Train on a fresh branch, create the plan, and begin Chunk 01").
 issues: [1637]
 governed_by:
@@ -120,7 +120,8 @@ navigation and scope.
   - `active === false` → `absent`: show the failure and permit an explicit retry.
   - anything else, including a failed read → `unknown`: keep the button disabled and show the
     uncertainty.
-- `createRelaunchController({launch, readStatus, navigate, render})` returns `{activate, state}`.
+- `createRelaunchController({project, launch, readStatus, navigate, render})` returns `{activate, phase}`.
+  `project` is required, since it builds both navigation URLs. `phase()` reads the current phase.
   - `activate()` latches **before** awaiting. Every call while latched, or after a terminal
     outcome, returns without a request, which is what makes "at most one POST per click" hold.
   - It never POSTs twice on its own; a retry only comes from a new explicit `activate()` after the
@@ -141,6 +142,11 @@ navigation and scope.
   - `handleWrapCompleted` has no payload, so it performs one status read and applies the same
     decision. A failed read leaves the button hidden, which fails closed.
 - `sw.js`: `/session-relaunch.js` is added to the network-first lockstep set and to the precache.
+- **Carried from the chunk 01 Critic (R-5):** neither the controller nor `apiMutate` has a timeout,
+  so a launch that never settles would leave the button on "Restarting…". Chunk 02 bounds the
+  page's launch call with a timeout. A timeout is an answer that never arrived, so it takes the
+  controller's existing `uncertain` path: it is reconciled by a status read and is never
+  re-POSTed. Chunk 02 must test this.
 - ADR 0002: a `## Amended 2026-09-26 — an ended wrap may offer an explicit relaunch (#1637)`
   section.
 - CHANGELOG `### Added`; FEATURES.md if it lists session-page controls.
@@ -191,5 +197,5 @@ navigation and scope.
 
 ## Status
 
-- [ ] Chunk 01: relaunch module + contract tests
+- [x] Chunk 01: relaunch module + contract tests (1bd26d69; Critic rev-20260926T040831Z-cf8f4842: 0 blocking, 1 warning resolved by recorded evidence, 4 notes dispositioned)
 - [ ] Chunk 02: page wiring, ADR amendment, docs, regressions
