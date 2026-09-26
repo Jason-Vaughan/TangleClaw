@@ -193,6 +193,13 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **Closing a terminal tab no longer leaks a pseudo-terminal on macOS: TangleClaw ships its own ttyd** (#1245, ADR 0018). ttyd stops reading a terminal once its tab closes. On macOS the terminal's process cannot finish exiting while its last output is unread, so it stuck, holding a pseudo-terminal, until ttyd restarted. That is why the watcher restarted ttyd every few hours.
+  - **The fix:** launchd now runs a TangleClaw-owned ttyd 1.7.7 at `~/.tangleclaw/bin/ttyd` that keeps reading and discarding that output until the process exits.
+  - **It is self-contained:** it loads only macOS system libraries, so a Homebrew upgrade cannot break it. It is built reproducibly from pinned, verified sources with `node scripts/build-ttyd.js`.
+  - **Install and cutover fail closed:** `deploy/install.sh` and the ingress cutover refuse to continue if it is missing or does not verify, and say how to build and install it. They no longer pick up whatever ttyd is on the PATH.
+  - **Rolling back:** `node scripts/ttyd-runtime.js rollback` restores the previous owned runtime. `TANGLECLAW_TTYD_RUNTIME=homebrew` runs the Homebrew ttyd without the fix, with a warning each time.
+  - **Tested:** under a churn harness, the Homebrew-linked candidate, and then the packaged binary, each had to show 2000 tab closes and a two-hour soak with no stuck process.
+  - The first switch to the new path needs a one-time macOS permission approval.
 - **A session whose mail was handled by hand no longer stays listed as undelivered** (#1435). The wake ledger writes only while there is unread mail, so a skipped nudge followed by a manual read was never superseded. `GET /api/medusa/deliveries` now drops a session once its running listener has no unread mail and no unacknowledged exchange addressed to it. A session with no running listener stays listed: nothing proves its mail was handled.
 
 - **A wrap no longer recommends, or silently makes, a commit of work upstream has already merged** (#1868). After PR #1866 merged, a Builder's session checkout was 18 commits behind. The wrap recommended Include for that checkout's older copy of the merged plan, because the path looked like a TangleClaw plan. It also treated a regenerated `CLAUDE.md`, byte-identical to upstream, as work to commit. Leave was the safe answer, and only reading git history showed it. Now:

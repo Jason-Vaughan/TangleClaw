@@ -36,6 +36,7 @@ const { execFileSync } = require('node:child_process');
 const REPO_DIR = path.resolve(__dirname, '..');
 const caddy = require(path.join(REPO_DIR, 'lib', 'caddy'));
 const ttydAttach = require(path.join(REPO_DIR, 'lib', 'ttyd-attach'));
+const ttydRuntimeLib = require(path.join(REPO_DIR, 'lib', 'ttyd-runtime'));
 const store = require(path.join(REPO_DIR, 'lib', 'store'));
 const authGate = require(path.join(REPO_DIR, 'lib', 'auth-gate'));
 const bindPolicy = require(path.join(REPO_DIR, 'lib', 'bind-policy'));
@@ -358,6 +359,7 @@ const CUTOVER_CODES = Object.freeze({
   UNGATE_REFUSED: 'ungate-refused',
   VALIDATE_FAILED: 'validate-failed',
   RELOCATED_BASE: 'relocated-base',
+  TTYD_RUNTIME_UNAVAILABLE: 'ttyd-runtime-unavailable',
   FAILED: 'failed'
 });
 
@@ -530,9 +532,22 @@ function main() {
     if (!launchdPath.split(':').includes(p)) launchdPath += `:${p}`;
   }
 
+  // The ttyd launchd runs comes from the ONE resolver install.sh also uses
+  // (#1245, ADR 0018), never from PATH: rediscovering it here would quietly put
+  // the leaking Homebrew build back on every cutover. No usable runtime stops
+  // the cutover before anything is written.
+  let ttydRuntime;
+  try {
+    ttydRuntime = ttydRuntimeLib.resolveTtydPath({ baseDir });
+  } catch (err) {
+    if (!(err instanceof ttydRuntimeLib.RuntimeUnavailableError)) throw err;
+    finish(CUTOVER_CODES.TTYD_RUNTIME_UNAVAILABLE, err.message);
+  }
+  if (ttydRuntime.warning) console.warn(`WARNING: ${ttydRuntime.warning}`);
+
   const env = {
     caddyPath: which('caddy'),
-    ttydPath: which('ttyd'),
+    ttydPath: ttydRuntime.path,
     home,
     baseDir,
     repoDir: REPO_DIR,

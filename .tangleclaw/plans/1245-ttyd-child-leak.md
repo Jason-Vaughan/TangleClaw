@@ -37,9 +37,9 @@ Evidence comes from two disjoint read-only scouts: (1) upstream / Homebrew / iso
 - [x] Chunk 05: owned runtime, part 1. Pinned inputs and patches (`deploy/ttyd/`), the deterministic build/package entry
       point (`scripts/build-ttyd.js`), and the recursive Mach-O closure verifier. Focused tests, no network in tests.
       A real build staged sha256 `dfae4e69…`, byte-identical to the independent spike (reproducible), with a system-only closure
-- [ ] Chunk 06: owned runtime, part 2. The shared resolver plus transactional install/rollback (`lib/ttyd-runtime.js`),
+- [x] Chunk 06: owned runtime, part 2. The shared resolver plus transactional install/rollback (`lib/ttyd-runtime.js`),
       consumed by `install.sh` and `scripts/ingress-cutover.js`. Fails closed and names the repair. Homebrew only as an
-      explicit rollback, with a warning
+      explicit rollback, with a warning. `scripts/ttyd-runtime.js` is the CLI; the docs and CHANGELOG are updated
 - [ ] Chunk 07: build the packaged artifact from tracked inputs, verify its closure, then the full R22 acceptance on
       that exact artifact (2000 cycles plus a 2 h soak). Record its digest and load graph
 - [ ] Chunk 04 (revised): rollout and rollback docs for the owned runtime (F/G, the user guide, the configuration

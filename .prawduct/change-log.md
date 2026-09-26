@@ -35,6 +35,21 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Owned ttyd runtime, part 2: one resolver, transactional install, fail-closed wiring (#1245, chunk 06)
+
+<!-- prawduct: type=feature | scope=ttyd-1245 -->
+
+R24 / ADR 0018 §1, §4.
+- **`lib/ttyd-runtime.js`:**
+  - `verifyRuntime` checks that the binary is executable, that its manifest records its sha256 and the digest matches, that its closure is clean, and that `--version` matches the manifest. Every failing check is reported.
+  - `resolveTtydPath` is the one answer. It returns the managed runtime or throws `RuntimeUnavailableError` with the repair. Homebrew is used only under an explicit `TANGLECLAW_TTYD_RUNTIME=homebrew`, with `ROLLBACK_WARNING`, and any other value is refused.
+  - `installRuntime` verifies the stage, copies to `ttyd.new`, re-verifies it in place, keeps the current runtime as `ttyd.prev` only if that verifies, renames the manifest and then the binary, and verifies again.
+  - `rollbackRuntime` restores `ttyd.prev` and sets the replaced runtime aside. `runtimeStatus` reports both.
+- **`scripts/ttyd-runtime.js`** provides `resolve` / `install --from` / `rollback` / `status`. `resolve` prints only the path on stdout and exits 3 with the repair.
+- **`deploy/install.sh`:** `TTYD_PATH` comes from `ttyd-runtime.js resolve`, which exits before any plist is written; the Homebrew ttyd stays installed as the rollback target.
+- **`scripts/ingress-cutover.js`:** it resolves through the same library (`which('ttyd')` is removed) and refuses with the new `ttyd-runtime-unavailable` code before its first write.
+- **Docs:** the configuration reference (`TANGLECLAW_TTYD_RUNTIME` and the commands), the user guide, FEATURES and a CHANGELOG `Fixed` entry.
+
 ## 2026-09-26 — Owned ttyd runtime, part 1: pinned inputs, build entry point, closure verifier (#1245, chunk 05)
 
 <!-- prawduct: type=feature | scope=ttyd-1245 -->

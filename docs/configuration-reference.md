@@ -127,6 +127,31 @@ are the rollback levers for it:
 For a launchd install, set them in the server's plist (`EnvironmentVariables`) and restart the
 server; they are not read from `config.json`.
 
+### The ttyd runtime launchd runs (macOS)
+
+launchd runs a TangleClaw-owned, self-contained ttyd at `~/.tangleclaw/bin/ttyd`, not the Homebrew one.
+The Homebrew build leaks a pseudo-terminal each time a terminal tab closes (#1245); the owned runtime
+carries the fix. `deploy/install.sh` and `scripts/ingress-cutover.js` both get the path from one
+resolver (`lib/ttyd-runtime.js`). When the owned runtime is missing or does not verify, both stop
+before changing anything and say how to fix it.
+
+| Variable | Values | Effect |
+|---|---|---|
+| `TANGLECLAW_TTYD_RUNTIME` | `managed` (default) or `homebrew` | `homebrew` is the explicit rollback: launchd runs `/opt/homebrew/bin/ttyd` (or `/usr/local/bin/ttyd`), and every install and cutover prints a warning that the #1245 fix is not active and the ttyd watcher is again the only mitigation. It is never chosen automatically. Any other value is refused. |
+
+Build and manage the owned runtime (none of these edit a plist or restart ttyd):
+
+```
+node scripts/build-ttyd.js --out <stage-dir>          # build from deploy/ttyd/inputs.json, verified
+node scripts/ttyd-runtime.js install --from <stage-dir> # install; keeps the previous one as last known good
+node scripts/ttyd-runtime.js rollback                   # restore the last known good
+node scripts/ttyd-runtime.js status                     # what is installed, and whether it verifies
+```
+
+A runtime verifies when its digest matches its manifest, its whole load graph stays within macOS
+system libraries, and it runs. The first switch to `~/.tangleclaw/bin/ttyd` needs a one-time macOS
+permission approval for the new path (ADR 0018).
+
 ## Global Configuration (`config.json`)
 
 Auto-created on first run with defaults. Editable directly or via `PATCH /api/config`.
