@@ -215,13 +215,15 @@ Critic findings.
 
 **TangleClaw API base URL**: read it from the `TANGLECLAW_API` environment variable your launch exported (`tc whoami` prints it too). It is deliberately not written here: this file is tracked in git and shared by every checkout, while the origin is per install.
 
-- **Run `tc capabilities` BEFORE concluding a capability is missing — never improvise one.** `tc` is normally on PATH in a launched pane (verbs: `whoami`, `capabilities`, `sessions`, `message`, `control`, `start`, `freshness`, `ports`, `docs`, `rules`, `learnings`) and reports absence honestly; a capability assumed not checked is how sessions fabricate outcomes. If `tc` is missing, check `TANGLECLAW_API`; a renamed install can break PATH. Use the API with verified launch identity. If context is missing or inconsistent, report it and stop identity-dependent actions — absence of both is unavailable context, not proof of being unmanaged. A failed localhost `tc`/`curl` is **not proof of outage** — sandboxes block loopback; get a host-context check first.
+- **Run `tc capabilities` BEFORE concluding a capability is missing — never improvise one.** `tc` is normally on PATH in a launched pane (verbs: `whoami`, `capabilities`, `sessions`, `message`, `control`, `start`, `workload`, `freshness`, `ports`, `docs`, `rules`, `learnings`) and reports absence honestly; a capability assumed not checked is how sessions fabricate outcomes. If `tc` is missing, check `TANGLECLAW_API`; a renamed install can break PATH. Use the API with verified launch identity. If context is missing or inconsistent, report it and stop identity-dependent actions — absence of both is unavailable context, not proof of being unmanaged. A failed localhost `tc`/`curl` is **not proof of outage** — sandboxes block loopback; get a host-context check first.
 
 - **Plans are served at a shareable URL.** .tangleclaw/plans/ are served at a shareable URL: GET /api/projects/<projectId>/plans lists each one with the link to hand the operator (tc capabilities shows it with your project id) — hand back that link, never a local file path.
 
 - **Lost your launch context?** If your context was cleared or compacted mid-session, run `tc start review` to re-read the launch context you attested, rules included, before acting. It is read-only: do not re-attest or re-propose. Without a launch sequence, `tc rules` re-reads the project rules.
 
 - **Held or stopped?** A HOLD or STOP from your assignment's authorities is stored by TangleClaw and wins over any earlier go-ahead, even one you read later. `tc control status` shows your lane; acknowledge with `tc control ack <generation>`. While held, TangleClaw refuses its own governed mutations (wrap, commit, push, PR, restart); it cannot block shell `git`/`gh`, so honour the hold there too.
+
+- **Report your workload.** Report your workload with `tc workload set <working|waiting-external|blocked|complete> --clearance <safe-to-clear|do-not-clear|unknown> --summary "<one line>"` at dispatch acceptance, each task transition, the start of any external wait (`--wait ci|review|operator|peer|merge|other`), completion, before wrap and before exit, and again before it expires (30 min working, 120 min otherwise). Coordinators read it with `tc sessions`; a lane with no current receipt reads UNKNOWN, never available.
 
 ## Medusa Switchboard
 
