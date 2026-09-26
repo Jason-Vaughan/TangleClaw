@@ -262,6 +262,20 @@ describe('POST/GET /api/tc/workload (ADR 0020 §1–§2)', () => {
     assert.notEqual(r.data.reason, 'project', 'a Master claim never becomes a project caller');
   });
 
+  it('answers 503 WORKLOAD_BUSY, storing nothing, when the store reports busy', async () => {
+    const lane = bindProject(mkProject('busy-lane'));
+    const realAppend = store.workloadReceipts.append;
+    store.workloadReceipts.append = () => ({ busy: true });
+    try {
+      const r = await send(server, 'POST', '/api/tc/workload', OK, { ...lane.headers, ...TC });
+      assert.equal(r.status, 503);
+      assert.equal(r.data.code, 'WORKLOAD_BUSY');
+    } finally {
+      store.workloadReceipts.append = realAppend;
+    }
+    assert.equal(store.workloadReceipts.listForLaunch(lane.launchId).length, 0);
+  });
+
   it('refuses a verified launch that did not come through the tc client', async () => {
     const r = await send(server, 'POST', '/api/tc/workload', OK, bBuilder.headers);
     assert.equal(r.status, 403);
@@ -427,6 +441,57 @@ describe('workload_receipts storage (ADR 0020 §2)', () => {
     assert.ok(rows.some((r) => r.summary === 'A') && rows.some((r) => r.summary === 'B'), 'both processes wrote');
   });
 
+  describe('the retry-once (ADR 0020 §2), driven deterministically', () => {
+    const api = store.workloadReceipts;
+    const real = api._appendOnce;
+    const locked = () => new Error('database is locked');
+    const collided = () => new Error('UNIQUE constraint failed: workload_receipts.launch_id, workload_receipts.seq');
+    const script = (steps) => {
+      let n = 0;
+      api._appendOnce = function (...args) {
+        const step = steps[n++];
+        if (step === 'real') return real.apply(this, args);
+        throw step();
+      };
+      return () => n;
+    };
+    const restore = () => { api._appendOnce = real; };
+
+    it('a lock on the first attempt is retried once and the second attempt stores the row', () => {
+      const calls = script([locked, 'real']);
+      try {
+        const r = api.append(row('R1', new Date().toISOString()), { minIntervalMs: 0, nowMs: Date.now() });
+        assert.ok(r.row);
+        assert.equal(calls(), 2);
+      } finally { restore(); }
+    });
+
+    it('a seq collision on the first attempt is retried the same way', () => {
+      const calls = script([collided, 'real']);
+      try {
+        assert.ok(api.append(row('R2', new Date().toISOString()), { minIntervalMs: 0, nowMs: Date.now() }).row);
+        assert.equal(calls(), 2);
+      } finally { restore(); }
+    });
+
+    it('two retryable failures report busy and store nothing, with no third attempt', () => {
+      const calls = script([locked, collided]);
+      try {
+        assert.deepEqual(api.append(row('R3', new Date().toISOString()), { minIntervalMs: 0, nowMs: Date.now() }), { busy: true });
+        assert.equal(calls(), 2);
+        assert.equal(api.listForLaunch('R3').length, 0);
+      } finally { restore(); }
+    });
+
+    it('a non-retryable failure is thrown at once, never retried', () => {
+      const calls = script([() => new Error('disk I/O error')]);
+      try {
+        assert.throws(() => api.append(row('R4', new Date().toISOString()), { minIntervalMs: 0, nowMs: Date.now() }), /disk I\/O/);
+        assert.equal(calls(), 1);
+      } finally { restore(); }
+    });
+  });
+
   it('a receipt dated ahead of the clock (the clock stepped back) does not lock the lane out', () => {
     const t = Date.parse('2026-09-26T02:00:00Z');
     store.workloadReceipts.append(row('L5', new Date(t + 60000).toISOString()), { minIntervalMs: 1000, nowMs: t + 60000 });
@@ -459,6 +524,9 @@ describe('schema v50 migration (ADR 0020 §2)', () => {
       db.exec('DROP TRIGGER workload_receipts_append_only_update');
       db.exec('DROP TRIGGER workload_receipts_append_only_delete');
       db.exec('DROP TABLE workload_receipts');
+      db.exec('DROP TRIGGER workload_narrowings_append_only_update');
+      db.exec('DROP TRIGGER workload_narrowings_append_only_delete');
+      db.exec('DROP TABLE workload_narrowings');
       db.exec('DELETE FROM schema_version WHERE version >= 50');
       // A fresh install stamps only the current version; an upgraded one has 49 on record.
       db.exec('INSERT INTO schema_version (version) VALUES (49)');
@@ -477,6 +545,8 @@ describe('schema v50 migration (ADR 0020 §2)', () => {
         const triggers = after.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'workload_receipts%'")
           .all().map((r) => r.name).sort();
         assert.deepEqual(triggers, ['workload_receipts_append_only_delete', 'workload_receipts_append_only_update']);
+        assert.ok(after.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'workload_narrowings'").get(),
+          'the narrowings table arrives with the same migration');
       } finally {
         after.close();
       }

@@ -13,11 +13,23 @@ All notable changes to TangleClaw are documented in this file.
   - **Validated at write:** exact values, consistency rules (`working` must be `do-not-clear`, `waiting-external` must say what it waits on) and field bounds. A lane can write at most one receipt per second.
   - **Stored:** an append-only table (schema v50), unique on launch and sequence.
   - **Reading it back:** `tc workload show` (`GET /api/tc/workload`) shows the lane its own newest receipt.
-  - **A background activity observer** watches every live session's pane on its own 10-second tick, whether or not the session has mail (the wake monitor only looks when mail is pending).
+  - **A background activity observer** watches the pane of every live tmux session whose engine has a wake profile, on its own 10-second tick, whether or not the session has mail (the wake monitor only looks when mail is pending). Any other session's engine reads as unknown.
     - **Budget:** captures are asynchronous and serial, at most 1 s each, with 3 s of work per tick. A tick that runs out of budget resumes where it stopped on the next one.
     - **Strict at-rest:** a lane counts as at rest only when there is no turn in flight, no running agents and an empty composer, seen on two stable consecutive observations.
     - **Freshness:** an observation older than 30 s reads as unknown.
-  - **Not yet:** receipts and observations are not yet combined into a fleet-wide verdict; that is the next part of Phase A.
+  - **One composed verdict per lane.** `GET /api/tc/sessions` and `tc sessions` now show, for every live session:
+    - **What the engine was observed doing:** busy, at rest, not at rest, or unknown, with its age.
+    - **What the session last asserted:** the receipt, marked current or stale and why.
+    - **The composed verdict coordinators act on:** `AVAILABLE`, `WORKING`, `WAITING`, `BLOCKED`, `COMPLETE_NOT_CLEAR`, `HELD`, `STOPPED` or `UNKNOWN`, with a clearance and the rules that fired.
+  - **The rules fail closed:**
+    - An engine seen busy reads `WORKING` whatever the receipt says.
+    - `AVAILABLE` needs a current `complete` + `safe-to-clear` receipt *and* the engine observed at rest.
+    - No receipt, a stale one or an expired one reads `UNKNOWN`. Receipts expire after 30 min for `working` and 120 min for the other states.
+    - A control hold, release, stop, rebind or close, a wrap request, or a wrap started after the receipt makes it stale.
+  - **What does not end a receipt:** ordinary messages supersede nothing. A typed dispatch will, once it exists.
+  - **The read is cheap:** it captures no pane and runs no tmux. `tc workload show` gives a lane its own verdict.
+  - **The operator can narrow a lane** (`POST /api/tc/workload/narrowing`): cap its clearance, or read it as `UNKNOWN`, and clear that later. A narrowing only lowers the verdict and can never hide a lane that is `WORKING`, `HELD` or `STOPPED`. No session, ProjectManager or Architect can narrow.
+  - **The pane text is never parsed for clearance.** A test fails if shipped code starts matching "SAFE TO CLEAR" or "DO NOT CLEAR" in text.
 
 - **The ports panel shows which lease owners are marked "Not a project", and can undo the mark** (#1768). Marking an owner from the import banner used to leave no trace on the dashboard, and only a raw `POST /api/ports/owner-kind` reversed it. The owner's group now carries a **Not a project** badge and an **Is a project** button, which resets every lease under the name through the same route and re-checks the import banner.
 

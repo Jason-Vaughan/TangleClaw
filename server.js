@@ -270,6 +270,7 @@ const ciStatus = require('./lib/ci-status');
 const master = require('./lib/master');
 const sharedDocsAccess = require('./lib/shared-docs-access');
 const workload = require('./lib/workload');
+const workloadFleet = require('./lib/workload-fleet');
 // The one live fleet activity observer (#1912, ADR 0020 §5): started with the
 // other monitors, read by the fleet surfaces, never captured from on a request.
 const activityObserver = require('./lib/activity-observer').createObserver();
@@ -4611,7 +4612,22 @@ route('POST', '/api/tc/workload', (req, res, _params, body) => {
 // GET /api/tc/workload — the calling lane's own newest receipt (`tc workload
 // show`). Same verified-launch binding as the write.
 route('GET', '/api/tc/workload', (req, res) => {
-  const result = workload.readOwn({ req });
+  const access = sharedDocsAccess.resolveAccess(req);
+  const result = workload.readOwn({ req, access });
+  if (result.status !== 200) return jsonResponse(res, result.status, result.body);
+  // The lane's own composed verdict, from the same composition the fleet read
+  // uses (ADR 0020 §1, §10), so `tc workload show` says what coordinators see.
+  const session = store.sessions.get(access.sessionId);
+  const project = session ? store.projects.get(session.projectId) : null;
+  const lane = session ? _composedLane(session, project ? project.name : null) : null;
+  return jsonResponse(res, 200, { ...result.body, ...(lane || {}) });
+});
+
+// POST /api/tc/workload/narrowing — the operator narrows (or clears a
+// narrowing of) one lane's composed verdict (ADR 0020 §7). Operator only, with
+// control's proof tiers; a narrowing only ever lowers the verdict.
+route('POST', '/api/tc/workload/narrowing', (req, res, _params, body) => {
+  const result = workload.recordNarrowing({ caller: resolveControlCaller(req), body });
   return jsonResponse(res, result.status, result.body);
 });
 
@@ -5013,11 +5029,34 @@ route('GET', '/api/tc/sessions', (_req, res) => {
       projectName: projectNames.get(s.projectId),
       engineId: s.engineId,
       status: s.status,
-      startedAt: s.startedAt
+      startedAt: s.startedAt,
+      ..._composedLane(s, projectNames.get(s.projectId))
     };
   });
   jsonResponse(res, 200, { sessions });
 });
+
+/**
+ * A lane's workload blocks for the fleet read (#1912, ADR 0020 §6, §10):
+ * `engine` from the observer's cache, `workload` from the receipts, `composed`
+ * from the one composition. Runs no tmux. A lane that fails to compose reads
+ * UNKNOWN rather than taking the roster down.
+ * @param {object} session - A live session
+ * @param {string|null} projectName - Its project's name
+ * @returns {{engine: object, workload: object, composed: object}}
+ */
+function _composedLane(session, projectName) {
+  try {
+    return workloadFleet.laneFor(session, { observer: activityObserver, projectName });
+  } catch (err) { // prawduct:allow prawduct/broad-except -- one lane's store failure must not take the fleet roster down; it composes UNKNOWN, fail-closed, and is logged
+    log.warn('workload composition failed for a lane', { sessionId: session.id, error: err.message });
+    return {
+      engine: activityObserver.get(session.id),
+      workload: { receipt: null, provenance: 'none', staleReason: null, ageSeconds: null },
+      composed: { availability: 'UNKNOWN', clearance: 'unknown', reasons: ['compose-failed'] }
+    };
+  }
+}
 
 // GET /api/checkouts — the fleet's checkouts in one answer (#1678, #993): one
 // row per project with a live session, from the same `projectCheckout` the
@@ -11606,4 +11645,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers };
+module.exports = { createServer, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver };

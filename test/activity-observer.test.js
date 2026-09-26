@@ -53,6 +53,22 @@ describe('activity observer budget and round-robin (ADR 0020 §5)', () => {
     assert.deepEqual(captured, ['s1', 's2', 's3', 's4', 's5', 's1']);
   });
 
+  it('gives each capture only what is left of the tick, so a late capture cannot overrun the budget', async () => {
+    const sessions = [S(1), S(2), S(3)];
+    const clock = { t: 0 };
+    const given = [];
+    const obs = createObserver({
+      listSessions: () => sessions,
+      profileFor: () => ({ busyMarker: 'x' }),
+      now: () => clock.t,
+      capture: async (_name, timeoutMs) => { given.push(timeoutMs); clock.t += 1300; return { lines: [], cursor: null }; },
+      assess: () => ({ idle: false, reason: 'at-prompt', digest: 'd', idleTicks: 1 })
+    });
+    const r = await obs.tick();
+    assert.deepEqual(given, [1000, 1000, 400], 'the third capture gets the 400 ms left of the 3 s budget');
+    assert.deepEqual(r.observed, [1, 2, 3]);
+  });
+
   it('never starts a capture after the budget, even one that would be quick', async () => {
     const sessions = [S(1), S(2)];
     const { obs } = harness({ sessions, captureMs: TICK_BUDGET_MS });
@@ -139,14 +155,16 @@ describe('activity observer classification: the strict at-rest gate (ADR 0020 §
     return obs.get(1).activity;
   };
 
-  it('a turn in flight, running agents, a missing at-rest marker or a moving pane is busy', async () => {
-    for (const reason of ['turn-in-flight', 'agents-running', 'not-at-rest', 'pane-writing']) {
+  it('a turn in flight, running agents or a moving pane is busy', async () => {
+    for (const reason of ['turn-in-flight', 'agents-running', 'pane-writing']) {
       assert.equal(await classify({ idle: false, reason, digest: 'd', idleTicks: 0 }), ACTIVITY.BUSY, reason);
     }
   });
 
-  it('a filled composer, a dialog or a first unconfirmed observation is not-at-rest, never at-rest', async () => {
-    for (const reason of ['composer-has-input', 'no-prompt', 'at-prompt']) {
+  it('a filled composer, a dialog, a missing at-rest marker or a first unconfirmed observation is not-at-rest', async () => {
+    // A missing at-rest marker is what a permission prompt, a menu or a resting
+    // Codex pane shows: rest is not established, but no turn is in flight.
+    for (const reason of ['composer-has-input', 'no-prompt', 'not-at-rest', 'at-prompt']) {
       assert.equal(await classify({ idle: false, reason, digest: 'd', idleTicks: 1 }), ACTIVITY.NOT_AT_REST, reason);
     }
   });
