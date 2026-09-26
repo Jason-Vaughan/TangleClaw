@@ -51,6 +51,11 @@ const STATIC_ASSETS = [
   // ui.js throws while drawing the first project card — a blank dashboard
   // rather than a card without its next action.
   '/next-markdown.js',
+  // session-relaunch.js (#1637) is a plain `<script src>` on session.html that
+  // session.js calls into from the ended bar. Precached for the reason above —
+  // an offline network-first miss would serve a 503 in its place — and
+  // network-first below, in lockstep with session.js.
+  '/session-relaunch.js',
   '/manifest.json'
 ];
 
@@ -92,6 +97,9 @@ const NETWORK_FIRST_PATHS = new Set([
   // following the wrap.
   '/wrap-stream-events.js',
   '/wrap-run-controller.js',
+  // Same lockstep family: session.js paints the ended bar's Restart Session
+  // (#1637) from this module's eligibility decision and controller phases.
+  '/session-relaunch.js',
   // openclaw-tunnel-state.js is the pure-helper sibling of openclaw-view.js,
   // the same lockstep pair as session.js/wrap-drawer.js above. The view calls
   // its helpers at module top level, so a cached old helper against a fresh

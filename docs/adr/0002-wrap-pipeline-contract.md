@@ -769,3 +769,35 @@ advice read only the path.
   merge-base (the blob at HEAD differs from the blob at the merge-base; never an untracked path), a
   local copy equal to upstream is the branch undoing its own change and is committed. A path both
   sides changed stays ordinary feature-branch work, reported in `provenanceDiverged`.
+
+## Amended 2026-09-26 — an ended wrap may offer an explicit relaunch (#1637)
+
+Architect ruling R26. The #1558 amendment made a finished wrap end the session, and the most common
+reason to wrap is to clear the model's context and carry on in the same project. That left a trip
+through the landing page between every wrap and the next session.
+
+- **The ended bar may offer Restart Session**, beside Back to Projects and Stay. It offers the button
+  only on durable evidence: `GET /api/sessions/:project/status` answers `active: false` (tmux
+  confirmed absence, never `null`), no wrap is running, the session is tracked, and `lastSession`,
+  the project's newest session row, is `wrapped`. A killed or crashed session, or an older wrap
+  behind a newer session, is never offered a relaunch. Both painters of the ended bar make this one
+  decision. The one reached by a status poll (a pipeline wrap, or a reload) makes it from its payload.
+  The one reached after `wrap/complete` makes it from one status read, and a failed read hides the
+  button.
+- **The relaunch is the canonical launch transaction**, not a second path. It is one
+  `POST /api/sessions/:project` with `continuityMode: "continue"` and no launch mode, engine or
+  stranded acknowledgement, so the server applies the project's defaults and the new session
+  receives the handoff this wrap published (the #1586 amendment). Every launch gate stays
+  authoritative, and the page never routes around a refusal. Stranded wraps and tunnel conflicts send
+  the operator to the landing page, which is where they are acknowledged.
+- **The operator presses it.** The page never restarts a session on its own. Offering the button
+  suppresses the ended bar's 10-second redirect, because a page that offers an action and then
+  navigates away from it has not really offered it.
+- **At most one launch per press.** The page latches before it sends. An outcome after which a
+  session may exist is settled by reading status and never by sending again. That covers a lost
+  connection, a server error, an "already active" conflict, and a launch that has not answered
+  within the page's timeout. Only confirmed absence re-enables the button.
+- **No new route.** The server is unchanged. The page logic lives in `public/session-relaunch.js`.
+
+**Alternative rejected:** relaunching automatically when a wrap ends. An unattended restart is a
+separate decision with its own gates (#1886), and a wrap is also how an operator stops for the day.
