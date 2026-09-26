@@ -1,7 +1,8 @@
 # ADR 0020: A session's workload is a launch-bound receipt it asserts, composed fail-closed with what the engine is observed doing
 
-**Status:** Proposed. FWV-A17 (2026-09-26) required revisions, and this is the revised draft,
-awaiting FWV-A18. No implementation begins before approval.
+**Status:** Accepted (2026-09-26, Architect ruling FWV-A18 for #1912, approving content at 533b1386
+after the FWV-A17 revisions). The approval authorizes no typed-dispatch implementation (§4), and
+Phase A waits for the ProjectManager to synchronize the train plan with this contract.
 **Source issue:** #1912: coordinators cannot tell from one read which Builder lanes are free,
 waiting on CI, or unsafe to clear.
 **Builds on:** ADR 0001 (one shared predicate for paired state), the A16 constraints for the Fleet
