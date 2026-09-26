@@ -1,6 +1,6 @@
 ---
 title: "Fleet Workload Visibility, Phase A: launch-bound workload receipts, a bounded activity observer, and the composed fleet read (#1912)"
-status: IN PROGRESS: A1 done (a6dc0d77, review rev-20260926T195653Z-6ae71db9, 0 blocking); A2 building
+status: IN PROGRESS: A1 (a6dc0d77) and A2 (72e6fe69) done, reviews rev-20260926T195653Z-6ae71db9 and rev-20260926T200610Z-7439e104, 0 blocking; A3 building
 authorized_by: TangleClaw-ProjectManager via Medusa, 2026-09-26 (message 806b9000), after Architect ruling FWV-A18 approved ADR 0020 at 533b1386
 contract: docs/adr/0020-session-workload-receipts.md (PR #1916). This plan implements it and does not restate it; where the two differ, the ADR wins and this plan is corrected.
 controlling_train_plan: /Users/jasonvaughan/Documents/Projects/TangleClaw-ProjectManager/.tangleclaw/plans/train-fleet-workload-visibility.md (the PM's; Phase A = A.1–A.3, A.4 typed dispatch excluded)
@@ -59,6 +59,18 @@ authorized by FWV-A18); Phase B (#1877); Phase C (#1889); Project Master workloa
 
 ## Chunk A3: composition, supersession, overrides and the fleet read (ADR §4, §6, §7, §8)
 
+**Carried in from the A2 review (they ride this chunk's commit):**
+- **R-2:** the observer maps `not-at-rest` (a missing idle marker: a dialog, a menu, a resting Codex pane) to `NOT_AT_REST`, not `BUSY`. The ADR defines `busy` as a turn in flight or agents running.
+- **R-3:** each capture's timeout is `min(CAPTURE_TIMEOUT_MS, remaining tick budget)`, so a tick cannot overrun 3 s. A test asserts the timeout the capture receives.
+- **R-4:** deterministic tests of the append retry (fail once, fail twice, non-retryable) and of the route's 503 `WORKLOAD_BUSY`.
+- **R-6:** CHANGELOG says the observer covers tmux sessions whose engine has a wake profile.
+
+**Supersession sources (read at chunk start):**
+- **Wrap:** `wrapRunRegistry.get(project)` keeps the last run's `sessionId` and `startedAt`, finished or not. `wrapSentinel.isWrapRequested(project)` is a pending request with no timestamp.
+  - A receipt is stale when this session's wrap started after it, or while a request is pending.
+  - Both live in memory, so a server restart forgets a cancelled wrap and its receipt can read current again. That is bounded by expiry, and is a known limit.
+- **Control:** `control_events.created_at` is second-precision UTC. An event in the same second as a receipt counts as after it (fail closed). The kinds are hold, release, stop, rebind and close, on the receipt's assignment and on the lane's current open assignment.
+
 - `lib/workload-compose.js`: the pure base composition (rules 1–11) and monotone operator narrowing.
 - Supersession: current-receipt checks against control events and wrap start/request, plus expiry.
 - Operator narrowing: store, route, operator-only.
@@ -86,6 +98,6 @@ PR #1916 (ADR 0020) merges before this branch's PR. This branch syncs `main` bef
 ## Status
 
 - [x] Chunk A1: receipts and write surface
-- [ ] Chunk A2: activity observer
+- [x] Chunk A2: activity observer
 - [ ] Chunk A3: composition, supersession, overrides, fleet read
 - [ ] Chunk A4: dashboard, guidance, docs; cumulative review + PR (not merged by this session)
