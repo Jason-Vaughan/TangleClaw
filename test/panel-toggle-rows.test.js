@@ -299,6 +299,23 @@ describe('folding keeps keyboard focus on the toggle (#1946)', () => {
     });
   }
 
+  // foldToggleInPlace takes the element right after `.toggle-row` as the
+  // content. Held against the markup the shipped renders produce, so a badge or
+  // hint slipped between the row and its content fails here, not in a browser.
+  for (const [name, p] of Object.entries(PANELS)) {
+    it(`the ${name} render puts the row's content immediately after each toggle row`, () => {
+      const contentClass = { ports: 'port-group-content', groups: 'group-item-content', openclaw: 'oc-item-content' }[name];
+      const els = walk(p.html());
+      const rows = els.filter((e) => e.cls.includes('toggle-row'));
+      assert.ok(rows.length > 0);
+      for (const row of rows) {
+        const next = els.slice(els.indexOf(row) + 1).find((e) => e.parent === row.parent);
+        assert.ok(next, 'a toggle row must be followed by its content');
+        assert.ok(next.cls.includes(contentClass), `the element after the toggle row is .${contentClass}, not .${next.cls.join('.')}`);
+      }
+    });
+  }
+
   it('a group opened in place loads its details, and closing it loads nothing', () => {
     const state = { groupItemsOpen: { g1: false } };
     const { toggle, details } = liftToggle('toggleGroupItem', state);
