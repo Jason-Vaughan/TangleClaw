@@ -132,6 +132,8 @@ describe('ports panel: show and undo "Not a project" (#1768)', () => {
       liftFunction(landing, 'function jsArg('),
       liftFunction(landing, 'async function loadPorts('),
       liftFunction(ui, 'function renderPorts('),
+      // loadPorts re-renders through it so a poll keeps focus on a fold toggle (#1946).
+      liftFunction(ui, 'function renderKeepingFoldFocus('),
       liftFunction(ui, 'function showToast('),
       liftFunction(ui, 'function showOwnerKindRefusal('),
       liftFunction(ui, 'async function markLeaseOwnerProject(')

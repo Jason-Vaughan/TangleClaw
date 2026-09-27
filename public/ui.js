@@ -1409,7 +1409,7 @@ function renderPorts() {
 
     html += `<div class="port-group">`;
     html += `<div class="toggle-row">
-      <button type="button" class="toggle-btn port-group-toggle" aria-expanded="${isOpen}" onclick="togglePortGroup(${jsArg(project)})">
+      <button type="button" class="toggle-btn port-group-toggle" aria-expanded="${isOpen}" data-fold-key="${esc(project)}" onclick="togglePortGroup(${jsArg(project)}, this)">
         <span class="${arrowClass}">&#9660;</span>
         <span class="port-group-name">${esc(project)}</span>
         <span style="color:var(--text-muted);font-size:10px">(${leases.length})</span>
@@ -1433,9 +1433,55 @@ function renderPorts() {
   grid.innerHTML = html;
 }
 
-function togglePortGroup(project) {
-  state.portGroupsOpen[project] = !state.portGroupsOpen[project];
-  renderPorts();
+/**
+ * Fold or unfold one port group from its toggle.
+ * @param {string} project - The group's project name.
+ * @param {HTMLElement} [button] - The toggle that was pressed; folded in place when given.
+ * @returns {void}
+ */
+function togglePortGroup(project, button) {
+  const open = !state.portGroupsOpen[project];
+  state.portGroupsOpen[project] = open;
+  if (!foldToggleInPlace(button, open)) renderPorts();
+}
+
+/**
+ * Fold or unfold one panel row in place (#1946): flip the toggle's
+ * `aria-expanded`, its arrow and the row's content, and leave everything
+ * else alone. Re-rendering the whole panel replaced the pressed button, so
+ * keyboard focus fell to the page and a screen reader lost its place.
+ * @param {HTMLElement} [button] - The toggle inside a `.toggle-row` whose next sibling is the content.
+ * @param {boolean} open - The state to show.
+ * @returns {boolean} Whether the row was found and folded; false means the caller should re-render.
+ */
+function foldToggleInPlace(button, open) {
+  const row = button && typeof button.closest === 'function' ? button.closest('.toggle-row') : null;
+  const content = row ? row.nextElementSibling : null;
+  if (!content) return false;
+  button.setAttribute('aria-expanded', String(open));
+  const arrow = button.querySelector('.arrow');
+  if (arrow) arrow.classList.toggle('open', open);
+  content.classList.toggle('open', open);
+  return true;
+}
+
+/**
+ * Re-render a panel without dropping keyboard focus from a fold toggle
+ * (#1946). The panels re-render on their polling loops, which replaces every
+ * button; the toggle that had focus is found again by its `data-fold-key`.
+ * @param {HTMLElement|null} container - The panel element the render writes into.
+ * @param {Function} render - The panel's render function.
+ * @returns {void}
+ */
+function renderKeepingFoldFocus(container, render) {
+  const active = typeof document !== 'undefined' ? document.activeElement : null;
+  const key = container && active && container.contains(active) && active.dataset
+    ? active.dataset.foldKey : undefined;
+  render();
+  if (key === undefined || !container) return;
+  for (const b of container.querySelectorAll('[data-fold-key]')) {
+    if (b.dataset.foldKey === key) { b.focus(); return; }
+  }
 }
 
 // ── Rules Toggle ──
@@ -4284,7 +4330,7 @@ function renderGroups() {
 
     html += `<div class="group-item">`;
     html += `<div class="toggle-row">
-      <button type="button" class="toggle-btn group-item-toggle" aria-expanded="${isOpen}" onclick="toggleGroupItem(${jsArg(group.id)})">
+      <button type="button" class="toggle-btn group-item-toggle" aria-expanded="${isOpen}" data-fold-key="${esc(group.id)}" onclick="toggleGroupItem(${jsArg(group.id)}, this)">
         <span class="${arrowClass}">&#9660;</span>
         <span class="group-item-name">${esc(group.name)}</span>
         <span class="group-item-meta">${group.memberCount || 0} project${(group.memberCount || 0) !== 1 ? 's' : ''}, ${group.docCount || 0} doc${(group.docCount || 0) !== 1 ? 's' : ''}</span>
@@ -4312,10 +4358,17 @@ function renderGroups() {
 /**
  * Toggle a group item open/closed and load its details.
  * @param {string} groupId
+ * @param {HTMLElement} [button] - The toggle that was pressed; folded in place when given.
+ * @returns {void}
  */
-function toggleGroupItem(groupId) {
-  state.groupItemsOpen[groupId] = !state.groupItemsOpen[groupId];
-  renderGroups();
+function toggleGroupItem(groupId, button) {
+  const open = !state.groupItemsOpen[groupId];
+  state.groupItemsOpen[groupId] = open;
+  if (!foldToggleInPlace(button, open)) {
+    renderGroups();
+    return;
+  }
+  if (open) loadGroupDetail(groupId);
 }
 
 /**
@@ -4715,7 +4768,7 @@ function renderOpenclawConnections() {
 
     html += `<div class="oc-item">`;
     html += `<div class="toggle-row">
-      <button type="button" class="toggle-btn oc-item-toggle" aria-expanded="${isOpen}" onclick="toggleOpenclawItem(${jsArg(conn.id)})">
+      <button type="button" class="toggle-btn oc-item-toggle" aria-expanded="${isOpen}" data-fold-key="${esc(conn.id)}" onclick="toggleOpenclawItem(${jsArg(conn.id)}, this)">
         <span class="${arrowClass}">&#9660;</span>
         <span class="oc-item-name">${esc(conn.name)}</span>
         ${engineBadge}
@@ -4780,10 +4833,13 @@ function renderOpenclawConnections() {
 /**
  * Toggle an OpenClaw connection item open/closed.
  * @param {string} connId
+ * @param {HTMLElement} [button] - The toggle that was pressed; folded in place when given.
+ * @returns {void}
  */
-function toggleOpenclawItem(connId) {
-  state.openclawItemsOpen[connId] = !state.openclawItemsOpen[connId];
-  renderOpenclawConnections();
+function toggleOpenclawItem(connId, button) {
+  const open = !state.openclawItemsOpen[connId];
+  state.openclawItemsOpen[connId] = open;
+  if (!foldToggleInPlace(button, open)) renderOpenclawConnections();
 }
 
 /**
