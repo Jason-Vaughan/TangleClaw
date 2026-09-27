@@ -35,6 +35,22 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Roadmap Board: tc-queue block, train version/status, per-car state (#1933)
+
+<!-- prawduct: type=feature | scope=1933-board-queue -->
+
+This is the one renderer PR the operator budgeted for the dynamic board, following the Architect's ruling on A–D. Three pieces stay outside this PR: the generator grouping by v5, v6 and v7 plus the queue data (Shared `build-board.py`); the PM-owned 10-minute scheduled job; and the privacy cleanup, which is on HOLD.
+
+**The change.** `lib/plan-train-card.js` gains the following.
+- Optional train `version`, a short label matching `VERSION_RE`.
+- Train `status`, a closed enum: `planned | ready | in-progress | blocked | shipped | sunset`.
+- Optional car `state`, a closed enum: `open | in-progress | blocked | closed`. It must agree with `closed`, and when omitted the car keeps its old behaviour. Each pill is labelled in words.
+- A `tc-queue` block with the same closed-schema and escaping discipline. `createdAt` must be ISO-8601 with a zone. Ages, the `isNew` mark (inclusive at `newDays`) and newest-first order are all computed at render time, so age never removes an item.
+
+The shared JSON, item and issue checks were factored into `_parseObject`, `_needItem` and `_needIssue`. `lib/plan-docs.js` routes `tc-queue` blocks and threads an optional `now` through `renderPlanBody` and `renderPlanPage`; the server passes none, so the current time applies.
+
+**Tests.** The new cases cover badges, every status, refused versions and statuses, car-state colours and words, state/closed disagreement, the old default, the queue summary pills and counts, newest-first order, ages in hours and days, the inclusive threshold, future-timestamp skew, a custom and an empty title, escaping, render-time ageing, and malformed queues. They caught a real bug before commit: the `<1h` age was emitted unescaped. Eight hand mutations each turned tests red: the status enum, state agreement, sort, threshold, age escape, label escape, the ISO check and the version pattern.
+
 ## 2026-09-26 — Roadmap train cards on served plan pages, and unbroken table cells (#1930)
 
 <!-- prawduct: type=feature | scope=1930-train-cards -->

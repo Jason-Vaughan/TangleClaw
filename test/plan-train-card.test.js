@@ -210,3 +210,186 @@ describe('plan train cards (#1930)', () => {
     });
   });
 });
+
+describe('train version, status and car state (#1933)', () => {
+  it('shows an escaped version badge and a status badge after the count', () => {
+    const html = render(train({ version: 'v6', status: 'in-progress' }));
+    assert.match(html, /<span class="train-count">\(1\/2\)<\/span><span class="train-version">v6<\/span><span class="train-status status-in-progress">in progress<\/span><span class="train-badge">verified<\/span>/);
+  });
+
+  it('renders every status in the closed enum, and omits both badges when absent', () => {
+    for (const status of trainCard.TRAIN_STATUSES) {
+      assert.match(render(train({ status })), new RegExp(`<span class="train-status status-${status}">${status.replace('-', ' ')}</span>`));
+    }
+    assert.doesNotMatch(render(train()), /train-version|train-status/);
+  });
+
+  it('refuses a status outside the enum and a malformed version', () => {
+    refused(train({ status: 'done' }), /status must be one of planned, ready, in-progress, blocked, shipped, sunset/);
+    refused(train({ status: '<b>' }), /status must be one of/);
+    refused(train({ version: '' }), /version must start with a letter or digit/);
+    refused(train({ version: '-v6' }), /version must start with a letter or digit/);
+    refused(train({ version: 'v6<script>' }), /version must start with a letter or digit/);
+    refused(train({ version: 'v'.repeat(17) }), /version is longer than 16 characters/);
+    refused(train({ version: 6 }), /version must be a string/);
+    assert.match(render(train({ version: '5.30 beta_1' })), /<span class="train-version">5\.30 beta_1<\/span>/);
+  });
+
+  it('colours a car by its state, labels it in words, and says the state in the table', () => {
+    const html = render(train({
+      cars: [
+        { issue: 1, closed: false, state: 'in-progress' },
+        { issue: 2, closed: false, state: 'blocked' },
+        { issue: 3, closed: false, state: 'open' },
+        { issue: 4, closed: true, state: 'closed' }
+      ]
+    }));
+    assert.match(html, /<span class="train-car in-progress" title="#1 in progress" aria-label="#1 in progress">#1<\/span>/);
+    assert.match(html, /<span class="train-car blocked" title="#2 blocked" aria-label="#2 blocked">#2<\/span>/);
+    assert.match(html, /<span class="train-car open" title="#3 open" aria-label="#3 open">#3<\/span>/);
+    assert.match(html, /<span class="train-car closed" title="#4 closed" aria-label="#4 closed">#4<\/span>/);
+    assert.match(html, /<td class="train-state">◐ in progress<\/td>/);
+    assert.match(html, /<td class="train-state">⛔ blocked<\/td>/);
+    assert.match(html, /\(1\/4\)/);
+    assert.match(html, /<strong>3 open \(1 in progress, 1 blocked\) · 1 closed<\/strong>/);
+  });
+
+  it('keeps the old behaviour when a car has no state', () => {
+    const html = render(train({ cars: [{ issue: 5, closed: false }, { issue: 6, closed: true }] }));
+    assert.match(html, /train-car open" title="#5 open"/);
+    assert.match(html, /train-car closed" title="#6 closed"/);
+    assert.match(html, /<strong>1 open · 1 closed<\/strong>/);
+  });
+
+  it('refuses a state outside the enum, or one that disagrees with closed', () => {
+    refused(train({ cars: [{ issue: 1, closed: false, state: 'done' }] }), /cars\[0\]\.state must be one of open, in-progress, blocked, closed/);
+    refused(train({ cars: [{ issue: 1, closed: true, state: 'in-progress' }] }), /cars\[0\]\.state must agree with closed/);
+    refused(train({ cars: [{ issue: 1, closed: false, state: 'closed' }] }), /cars\[0\]\.state must agree with closed/);
+  });
+
+  it('colours in-progress amber, blocked red and a new queue issue blue', () => {
+    const page = planDocs.renderPlanPage({
+      project: { id: 1, name: 'p' }, file: 'x.md', relative: 'x.md', modifiedAt: '2026-09-27T00:00:00.000Z', markdown: '', timeZone: 'UTC'
+    });
+    assert.match(page, /\.train-car\.in-progress\{background:#9a6700;border-color:#9a6700;color:#fff\}/);
+    assert.match(page, /\.train-car\.blocked\{background:#cf222e;border-color:#cf222e;color:#fff\}/);
+    assert.match(page, /\.train-car\.queue-new\{background:#0969da;border-color:#0969da;color:#fff\}/);
+  });
+});
+
+describe('the new cards queue (#1933)', () => {
+  const NOW = Date.parse('2026-09-27T12:00:00Z');
+  const Q = 'https://github.com/Jason-Vaughan/TangleClaw/issues';
+
+  /**
+   * A valid queue, with overrides.
+   * @param {object} [over] - Fields to replace.
+   * @returns {object}
+   */
+  function queue(over = {}) {
+    return {
+      newDays: 14,
+      issues: [
+        { issue: 100, title: 'Old untriaged', href: `${Q}/100`, type: 'bug', labels: ['needs-triage'], createdAt: '2026-06-01T09:00:00Z' },
+        { issue: 1932, title: 'Fresh one', href: `${Q}/1932`, type: 'enhancement', createdAt: '2026-09-27T09:30:00Z' },
+        { issue: 1900, title: 'Last week', createdAt: '2026-09-20T12:00:00Z' }
+      ],
+      ...over
+    };
+  }
+
+  /**
+   * Render a queue block through the plan renderer at a fixed time.
+   * @param {object|string} body - Queue object, or raw block text.
+   * @returns {string}
+   */
+  function renderQ(body) {
+    const text = typeof body === 'string' ? body : JSON.stringify(body);
+    return planDocs.renderPlanBody(`\`\`\`tc-queue\n${text}\n\`\`\``, 0, { now: NOW });
+  }
+
+  /**
+   * Assert a queue block is refused with a reason matching `why`.
+   * @param {object|string} body - Block.
+   * @param {RegExp} why - Expected reason.
+   * @returns {void}
+   */
+  function refusedQ(body, why) {
+    const html = renderQ(body);
+    assert.doesNotMatch(html, /class="train-card/);
+    assert.match(html, /<p class="block-error">Queue block not rendered: /);
+    assert.match(html, /<pre><code class="language-tc-queue">/);
+    assert.match(html, why);
+  }
+
+  it('shows the new issues as pills in the summary, with the new and waiting counts', () => {
+    const html = renderQ(queue());
+    assert.match(html, /^<details class="train-card queue-card"><summary class="train-summary"><span class="train-engine" aria-hidden="true">📥<\/span>/);
+    assert.match(html, /<span class="train-car queue-new" title="#1932 new" aria-label="#1932 new">#1932<\/span><span class="train-car queue-new" title="#1900 new" aria-label="#1900 new">#1900<\/span><span class="train-name">New cards queue<\/span>/);
+    assert.match(html, /<span class="train-count">\(2 new · 3 waiting\)<\/span>/);
+    assert.doesNotMatch(html, /title="#100 new"/);
+  });
+
+  it('lists every waiting issue newest first, and age never removes an old one', () => {
+    const html = renderQ(queue());
+    const order = [...html.matchAll(/<td class="train-issue">(?:<a [^>]*>)?#(\d+)/g)].map((m) => Number(m[1]));
+    assert.deepEqual(order, [1932, 1900, 100]);
+    assert.match(html, /<td class="train-issue"><a href="https:\/\/github\.com\/Jason-Vaughan\/TangleClaw\/issues\/100">#100<\/a><\/td><td>bug<\/td><td><code>needs-triage<\/code><\/td><td class="train-state">118d<\/td><td>Old untriaged<\/td>/);
+  });
+
+  it('marks new rows and computes ages in hours and days from the render time', () => {
+    const html = renderQ(queue());
+    assert.match(html, /<td class="train-state">2h <span class="queue-new-badge">new<\/span><\/td><td>Fresh one<\/td>/);
+    assert.match(html, /<td class="train-state">7d <span class="queue-new-badge">new<\/span><\/td><td>Last week<\/td>/);
+  });
+
+  it('marks new by the threshold, inclusive, and reads a future timestamp as under an hour', () => {
+    const edge = renderQ(queue({ newDays: 7, issues: [{ issue: 1, createdAt: '2026-09-20T12:00:00Z' }, { issue: 2, createdAt: '2026-09-20T11:59:59Z' }] }));
+    assert.match(edge, /title="#1 new"/);
+    assert.doesNotMatch(edge, /title="#2 new"/);
+    const skew = renderQ(queue({ issues: [{ issue: 3, createdAt: '2026-09-27T13:00:00Z' }] }));
+    assert.match(skew, /<td class="train-state">&lt;1h <span class="queue-new-badge">new<\/span><\/td>/);
+  });
+
+  it('uses a custom title, escaped, and renders an empty queue', () => {
+    assert.match(renderQ(queue({ title: 'Inbox <b>' })), /<span class="train-name">Inbox &lt;b&gt;<\/span>/);
+    const empty = renderQ(queue({ issues: [] }));
+    assert.match(empty, /\(0 new · 0 waiting\)/);
+    assert.match(empty, /Nothing waiting\./);
+  });
+
+  it('escapes titles, types and labels', () => {
+    const evil = '<img src=x onerror=alert(1)>';
+    const html = renderQ(queue({ issues: [{ issue: 1, title: evil, type: '<b>', labels: ['<i>'], createdAt: '2026-09-27T00:00:00Z' }] }));
+    assert.doesNotMatch(html, /<img|<b>|<i>/);
+    assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  });
+
+  it('computes the age at render time, so the same block ages as time passes', () => {
+    const body = '```tc-queue\n' + JSON.stringify(queue()) + '\n```';
+    assert.match(planDocs.renderPlanBody(body, 0, { now: NOW + 30 * 86400000 }), /\(0 new · 3 waiting\)/);
+    const page = planDocs.renderPlanPage({
+      project: { id: 1, name: 'p' }, file: 'x.md', relative: 'x.md', modifiedAt: '2026-09-27T00:00:00.000Z',
+      markdown: body, timeZone: 'UTC', now: NOW
+    });
+    assert.match(page, /\(2 new · 3 waiting\)/);
+  });
+
+  it('refuses a malformed queue', () => {
+    refusedQ('nope', /block is not valid JSON/);
+    refusedQ({ ...queue(), extra: 1 }, /unknown key &quot;extra&quot;/);
+    refusedQ(queue({ newDays: 0 }), /newDays must be an integer from 1 to 365/);
+    refusedQ(queue({ newDays: '14' }), /newDays must be an integer/);
+    refusedQ(queue({ issues: 'x' }), /issues must be an array/);
+    refusedQ(queue({ issues: [{ issue: 1 }] }), /issues\[0\]\.createdAt must be an ISO-8601 timestamp with a zone/);
+    refusedQ(queue({ issues: [{ issue: 1, createdAt: '2026-09-27' }] }), /createdAt must be an ISO-8601/);
+    refusedQ(queue({ issues: [{ issue: 1, createdAt: '2026-13-45T99:99:00Z' }] }), /createdAt must be an ISO-8601/);
+    refusedQ(queue({ issues: [{ issue: 1, createdAt: '2026-09-27T00:00:00Z', state: 'x' }] }), /issues\[0\] has unknown key &quot;state&quot;/);
+    refusedQ(queue({ issues: [{ issue: 0, createdAt: '2026-09-27T00:00:00Z' }] }), /issues\[0\]\.issue must be a positive integer/);
+    refusedQ(queue({ issues: [{ issue: 1, createdAt: '2026-09-27T00:00:00Z', href: 'javascript:alert(1)' }] }), /issues\[0\]\.href must be an absolute https URL/);
+    refusedQ(queue({ issues: [{ issue: 1, createdAt: '2026-09-27T00:00:00Z', labels: 'bug' }] }), /issues\[0\]\.labels must be an array/);
+    refusedQ(queue({ issues: [{ issue: 1, createdAt: '2026-09-27T00:00:00Z', labels: [''] }] }), /labels\[0\] must be a string of 1 to 40 characters/);
+    refusedQ(queue({ issues: [{ issue: 1, createdAt: '2026-09-27T00:00:00Z', labels: Array(11).fill('a') }] }), /labels has more than 10 entries/);
+    refusedQ(queue({ issues: Array.from({ length: trainCard.LIMITS.queueIssues + 1 }, (_, i) => ({ issue: i + 1, createdAt: '2026-09-27T00:00:00Z' })) }), /issues has more than 1000 entries/);
+  });
+});
