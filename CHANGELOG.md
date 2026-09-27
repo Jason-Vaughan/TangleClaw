@@ -358,6 +358,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- **Docs: say which hosts the plain-HTTP port redirects** (#575). `docs/configuration-reference.md` said `caddyHttpPort` redirects to the HTTPS site. Only the `caddyTailnetHost` name is redirected. Any other host on that port is served by the `caddyRemoteHttp` catch-all without a redirect, which is how a phone can stay on `:8080`. The reference and `deploy/INGRESS.md` now say so and name the address to bookmark. No behaviour change.
+
 - **Two timing tests no longer flake on a loaded host** (#1950). Under the same 8-way concurrent load, the old versions failed 8 runs out of 8 and the new ones fail 0.
   - **The sidecar poll-loop test** counted how many failing ticks fit into 220 ms of wall clock, which backoff and a busy machine both shrink. It now fires each tick itself through a scheduler seam on the loop (`lib/sidecar.js#_seams`) and watches every re-arm happen, still against a real failing poll.
   - **The system-health test** asserted `getHealth()` answered within 1 second, a bound that really measured unrelated real probes (git, the filesystem, the network). It now stubs those probes and asserts what actually proves the contract: `getHealth()` resolves at all while the ttyd measurement it must not await never settles.
