@@ -6,6 +6,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **Roadmap train cards on served plan pages** (#1930). A plan can include a fenced block tagged `tc-train` holding one JSON object. TangleClaw renders it as a collapsible card: a 🚂 row of issue cars, green for closed and grey for open, then the train's name, a closed/total count and an optional `verified` badge. The card expands to the thesis, the issue table and the sequencing note. The Roadmap Board uses these cards. Raw HTML in plans is still shown as text: the card is built from fixed styles, every value is escaped, links must be absolute `https://` URLs, and unknown keys are refused. A block that doesn't validate shows as code, with the reason above it.
+
 - **A session can report its own workload with `tc workload set`** (#1912, ADR 0020; Fleet Workload Visibility Phase A).
   - **What it records:** the lane's state (`working`, `waiting-external`, `blocked` or `complete`), whether it is safe to clear, a one-line summary, what it is waiting on, and its issue, PR and task refs, branch and head.
   - **Who can write it:** only a session with a verified launch, for itself, and only through the `tc` client (`POST /api/tc/workload`). The operator, an unbound caller and another project's launch are refused with `403 WORKLOAD_BINDING_REQUIRED`.
@@ -165,6 +167,8 @@ All notable changes to TangleClaw are documented in this file.
   - Informational only: nothing here pulls, checks out, restarts or gates anything. `lib/checkout-fleet.js`.
 
 ### Changed
+- **Table cells on served plan pages no longer break words mid-way** (#1930). Issue numbers like `#1234` and short words like `enhancement` stay on one line; a wide table scrolls sideways inside its box instead.
+
 - **A served plan page shows its "updated" time in the server's local time zone** (#1928). A plan read in Los Angeles now shows `2026-09-26 17:50:36 PDT` (or `PST` in winter) instead of `2026-09-27 00:50:36 UTC`. The zone is the host's own IANA zone, so no configuration is involved. The `<time datetime>` attribute still carries the ISO UTC value for machine readers, and hovering the stamp shows the UTC reading. The plan-list API is unchanged: `modifiedAt` stays ISO UTC.
 
 - **`POST /api/setup/generate-cert`'s `hosts` now adds names instead of replacing the list** (#1905, Architect ruling A19). A replacement list could leave out a host the server serves, such as the tailnet name, and so recreate `HOST_NOT_SERVED`. The mandatory names are always kept. Use the new `removeHosts` to take a non-canonical name out.

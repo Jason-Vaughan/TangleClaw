@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Roadmap train cards on served plan pages, and unbroken table cells (#1930)
+
+<!-- prawduct: type=feature | scope=1930-train-cards -->
+
+Operator request (2026-09-26, with a reference screenshot). It follows the Architect's ruling that no raw-HTML passthrough is allowed and that the pill look comes from a typed, schema-validated block that escapes every value.
+
+**The change.** `lib/plan-train-card.js` is new. A ` ```tc-train ` fence holds one JSON object. `parseTrainBlock` validates it against a closed schema: unknown keys are refused (`__proto__` included), fields are type- and range-checked, sizes are bounded, and hrefs must be absolute https URLs that pass `_isSafeHref`. `renderTrainCard` builds a `<details>` card from fixed classes and escapes every string. The closed/total count is computed from `cars`. Thesis and sequencing go through the plan renderer's `renderInline`, which escapes first. An invalid block renders as escaped code, with the reason in a `block-error` paragraph. `lib/plan-docs.js` routes `tc-train` fences to it and appends its CSS. Table cells now use `overflow-wrap:normal`: the page-level `anywhere` had let a table column shrink to one character, splitting `#411`.
+
+**Tests.** `test/plan-train-card.test.js` asserts on output through `renderPlanBody`: card structure, count, badge, empty train, tilde fence, other fences unchanged, escaping of every field, a quote inside an accepted href, refused reasons not echoing markup, 13 hostile hrefs on both train and car, the closed schema, the bounds, and the page CSS. Four hand mutations each turned tests red: dropping the https check, unescaping the title, accepting unknown keys, and trusting the count.
+
+**Out of scope here.** Emitting the blocks is a separate change in the shared `build-board.py`, in the Shared repo, which has no remote.
+
 ## 2026-09-26 — Plan page "updated" stamp in the host's local time zone (#1928)
 
 <!-- prawduct: type=bugfix | scope=1928-plan-stamp -->

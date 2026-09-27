@@ -671,6 +671,20 @@ Every plan or design doc a session writes to `<project>/.tangleclaw/plans/<name>
 - A plan moved to `plans/archive/` answers 404 with **Plan archived**, so a stale link says why it stopped working.
 - A plan is addressed by its file name alone — a path, `..`, or a symlink pointing outside the plans directory is refused.
 - Sessions discover the links with `GET /api/projects/<projectId>/plans` (numeric id or project name), which returns every plan with its URL on the host you reach TangleClaw on — never `localhost`, and `url: null` with a note when TangleClaw cannot tell which host that is. `tc capabilities` names the endpoint.
+- Raw HTML in a plan is shown as text, never rendered. The one styled block is a **train card**: a fenced block tagged `tc-train` whose body is one JSON object. The card shows a 🚂 row of issue cars, green when closed, with the train's name, a closed/total count and an optional `verified` badge. Clicking it expands the thesis, the issue table and the sequencing note. The Roadmap Board uses these cards.
+
+  ````
+  ```tc-train
+  {"train": 1, "title": "First Install, Completed", "href": "https://github.com/<owner>/<repo>/milestone/5",
+   "verified": true, "thesis": "Markdown *inline* marks allowed.",
+   "cars": [{"issue": 411, "closed": false, "href": "https://github.com/<owner>/<repo>/issues/411",
+             "type": "bug", "title": "Issue title"}],
+   "sequencing": "Optional note."}
+  ```
+  ````
+
+  Every value is escaped. Links must be absolute `https://` URLs, unknown keys are refused, and the closed/total count is computed from `cars`. A block that doesn't validate shows as code, with the reason above it.
+- Table cells never break a word, so issue numbers like `#1234` stay on one line; a wide table scrolls sideways instead.
 
 ## Mobile Tips
 
