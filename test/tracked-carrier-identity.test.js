@@ -19,7 +19,7 @@
  * there at all" — five checkouts of one repository must produce byte-identical
  * tracked carriers, while each still addresses its own project at run time.
  */
-const { describe, it, before } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -623,5 +623,55 @@ describe('#1619 — a locked shared doc must not change the committed carrier', 
     } finally {
       store2.documentLocks.check = realCheck;
     }
+  });
+});
+
+describe('#1240 — the ungoverned write path keeps the live token out of a tracked CLAUDE.md', () => {
+  const { execFileSync } = require('node:child_process');
+  // Shape-only sentinel, assembled at runtime so no literal token sits in the repo.
+  const SENTINEL = 'tcsk_' + 'S'.repeat(43);
+  let dir;
+  let savedConfig;
+
+  before(() => {
+    store._setBasePath(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-1240-store-')));
+    store.init();
+    savedConfig = store.config.load();
+    store.config.save({ ...savedConfig, serviceTokenEnabled: true, serviceToken: SENTINEL });
+
+    // A real repository that does NOT ignore CLAUDE.md, so the carrier is one
+    // `git add` from being committed. The malformed settings file is the
+    // trigger: governance detection fails closed to ungoverned, which routes
+    // the write through `_generateClaudeMd` rather than the operational block.
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-1240-repo-'));
+    execFileSync('git', ['-C', dir, 'init', '-q']);
+    fs.writeFileSync(path.join(dir, '.gitignore'), 'node_modules/\n');
+    fs.mkdirSync(path.join(dir, '.claude'));
+    fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), '{ not valid json');
+  });
+
+  after(() => {
+    store.config.save(savedConfig);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('writes the fetch pointer, never the sentinel, to the file on disk', () => {
+    assert.equal(engines.isPluginGoverned(dir), false,
+      'precondition: malformed governance must read as ungoverned, or this is not the path under test');
+    assert.equal(engines._carrierIsCommitted(dir, 'CLAUDE.md'), true,
+      'precondition: git must classify the un-ignored carrier as committed');
+
+    const result = engines.writeEngineConfig('claude', dir,
+      { rules: { core: { porthubRegistration: true } } }, store.engines.get('claude'));
+    assert.equal(result.error, null, 'the write must succeed');
+    assert.equal(result.written, true, 'the carrier must actually be written');
+
+    const onDisk = fs.readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8');
+    assert.ok(!onDisk.includes(SENTINEL), 'a tracked CLAUDE.md must never receive the live token');
+    // The injected block only renders while the gate is on, so its presence is
+    // also what proves the sentinel was live when the file was generated.
+    assert.match(onDisk, /\*\*TangleClaw API authentication\*\*/, 'the gate-on auth block must be present');
+    assert.match(onDisk, /deliberately NOT written here/, 'and it must be the committed-carrier form');
+    assert.match(onDisk, /\$TANGLECLAW_API\/api\/service-token/, 'naming where to fetch the token instead');
   });
 });
