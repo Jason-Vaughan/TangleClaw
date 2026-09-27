@@ -82,9 +82,13 @@ machine-specific — TangleClaw's SessionStart hooks live in the ignored
   does not rewrite it. It creates a `proposed` replacement holding the new text
   (`replacesRuleId` = the rule), and the rule keeps governing its approved text. Approving
   the replacement retires the original through the same supersession as any
-  replacement; rejecting it leaves the original exactly as it was. So no text governs
-  that the operator has not approved, and nothing leaves force without a record. Master
-  rules are outside this contract; they keep their own confirmed baseline path.
+  replacement; rejecting it leaves the original exactly as it was. So an edit or a
+  rollback of an existing rule never puts unapproved text in force, and nothing leaves
+  force without a record. This covers changes to existing rules only. Creating a rule is
+  a separate door: `POST /api/session-rules` with no `createdBy` is treated as the
+  operator's and is live at once, as it always has been (see "What that does and does
+  not guarantee" below). Master rules are outside this contract; they keep their own
+  confirmed baseline path.
 - **A retired rule's text is history.** Changing it, by `PUT /:id` or a version rollback,
   is refused with `409 RULE_RETIRED`; its switch can still be changed. Otherwise retire →
   edit → restore → switch on would put text in force that no operator approved. A
