@@ -35,6 +35,22 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-27 — Rule approval compare-and-set, Chunk 1: store, route and wrap-drawer widget (#1053)
+
+<!-- prawduct: type=bugfix | scope=rule-approval-cas-1053 -->
+
+Chunk 01 of 02. The PM dispatched it over Medusa (874d9163). The Architect ruled A, B and C (3802bf4d): A and B are approved; C rejects folding the adjacent active-rule edit hole into this work, so it is recorded for the #1696/#1709 ruling instead. Plan: `.tangleclaw/plans/1053-rule-approval-cas.md` (local, not tracked).
+
+**Problem.** `PUT /api/session-rules/:id/status` activated whatever content the row held at the moment of approval. Both operator surfaces approve a snapshot (the wrap drawer's text from the wrap step, the Project Rules list's from its last fetch), and the content can change in between through the ungated `PUT /:id`, through `POST /:id/restore`, or across the drawer's own save-then-approve pair of writes.
+
+**The change.**
+- **Store.** `setStatus` takes `expectedContent`. For an approval the comparison is the UPDATE's own `WHERE id = ? AND content = ?`, and the rows it changed decide the result (ruling A: a true compare-and-set, not a read then a write). A mismatch throws `CONTENT_CHANGED` carrying `currentContent` and writes nothing, not even a version snapshot. The compare is exact because content is trimmed where it is written. A rejection is never compared.
+- **Route.** The token is passed through only after the password gate (ruling B), so a 403 never reveals whether, or how, the text changed. `CONTENT_CHANGED` maps to `409 RULE_CONTENT_CHANGED` with `currentContent`.
+- **Wrap drawer** (`resolveRuleProposal`). The approval sends the text shown, or after an edit the text the store persisted. A 409 swaps the current text into the row and leaves it undecided.
+- **Not yet.** The Project Rules list, and making the token mandatory, are Chunk 02.
+
+**Tests.** Store (7 cases plus a source pin on the conditional UPDATE, since a single-threaded test cannot tell a read-then-write from a compare-and-set). Route (6 cases: the PUT-swap race, 403 before 409 and before 400, a 409 with its body, a 400, and a rejection). Widget (5 behavioural cases that run the real function against a fake API). Mutation-checked: an unconditional UPDATE, a read-then-write, the route dropping the token, the widget omitting it, and the widget ignoring the 409 body each turn tests red.
+
 ## 2026-09-26 — Stop tracking this repo's internal plans and evidence
 
 <!-- prawduct: type=chore | scope=untrack-internal-plans -->

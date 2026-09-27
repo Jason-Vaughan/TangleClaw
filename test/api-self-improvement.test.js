@@ -200,6 +200,72 @@ describe('api self-improvement loop (#569)', () => {
       assert.equal((await request('PUT', `/api/session-rules/${rule.id}/status`, {})).status, 400);
       assert.equal((await request('PUT', '/api/session-rules/999999/status', { status: 'active' })).status, 404);
     });
+
+    // #1053: the operator approves text a surface showed them. The rule's
+    // content is editable by other callers in the meantime (PUT /:id is not
+    // gated), so approval names the text and the server refuses a stale one.
+    describe('approval names the text it approves (#1053)', () => {
+      it('approves when the named text is current', async () => {
+        const rule = proposal();
+        const res = await request('PUT', `/api/session-rules/${rule.id}/status`,
+          { status: 'active', expectedContent: rule.content });
+        assert.equal(res.status, 200);
+        assert.equal(res.data.status, 'active');
+      });
+
+      it('REFUSES a text swapped through PUT /:id between display and approval', async () => {
+        const rule = proposal();
+        const shown = rule.content;
+        const swap = await request('PUT', `/api/session-rules/${rule.id}`, { content: 'swapped by another caller' });
+        assert.equal(swap.status, 200, 'the swap itself is ungated — which is why approval must check');
+        const res = await request('PUT', `/api/session-rules/${rule.id}/status`,
+          { status: 'active', expectedContent: shown });
+        assert.equal(res.status, 409);
+        assert.equal(res.data.code, 'RULE_CONTENT_CHANGED');
+        assert.equal(res.data.currentContent, 'swapped by another caller',
+          'the refusal carries the current text so the surface can show it');
+        assert.equal(store.sessionRules.get(rule.id).status, 'proposed', 'nothing may be approved');
+      });
+
+      it('checks the password BEFORE the text, so a refused caller learns nothing about it', async () => {
+        const rule = proposal();
+        await request('PUT', `/api/session-rules/${rule.id}`, { content: 'swapped' });
+        setOperatorPassword('hunter2');
+        const stale = await request('PUT', `/api/session-rules/${rule.id}/status`,
+          { status: 'active', expectedContent: 'not what it says' });
+        assert.equal(stale.status, 403, 'a stale token without the password must answer 403, not 409');
+        assert.equal(stale.data.currentContent, undefined, 'a 403 must not disclose the current text');
+        const malformed = await request('PUT', `/api/session-rules/${rule.id}/status`,
+          { status: 'active', expectedContent: 42 });
+        assert.equal(malformed.status, 403, 'token validation must also wait for the password gate');
+      });
+
+      it('answers 409 to the operator once the password is supplied', async () => {
+        const rule = proposal();
+        await request('PUT', `/api/session-rules/${rule.id}`, { content: 'swapped' });
+        setOperatorPassword('hunter2');
+        const res = await request('PUT', `/api/session-rules/${rule.id}/status`,
+          { status: 'active', password: 'hunter2', expectedContent: 'not what it says' });
+        assert.equal(res.status, 409);
+        assert.equal(res.data.currentContent, 'swapped');
+      });
+
+      it('refuses a non-string expectedContent with 400', async () => {
+        const rule = proposal();
+        const res = await request('PUT', `/api/session-rules/${rule.id}/status`,
+          { status: 'active', expectedContent: 42 });
+        assert.equal(res.status, 400);
+        assert.equal(store.sessionRules.get(rule.id).status, 'proposed');
+      });
+
+      it('does not compare a rejection', async () => {
+        const rule = proposal();
+        const res = await request('PUT', `/api/session-rules/${rule.id}/status`,
+          { status: 'rejected', expectedContent: 'stale text' });
+        assert.equal(res.status, 200);
+        assert.equal(res.data.status, 'rejected');
+      });
+    });
   });
 
   describe('POST /api/session-rules/promote carries the same gate', () => {

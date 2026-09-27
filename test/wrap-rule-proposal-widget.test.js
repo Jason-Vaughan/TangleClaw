@@ -150,4 +150,105 @@ describe('#569 rule-proposal review widget (wrap drawer)', () => {
       assert.match(sessionCss, /\.wrap-proposal-row--decided \.wrap-proposal-actions\s*\{\s*display:\s*none/);
     });
   });
+
+  // #1053: approval names the text it approves. These run the real
+  // resolveRuleProposal against a fake API rather than matching its source,
+  // because what matters is which text reaches the server and what the row
+  // shows after a refusal.
+  describe('approval sends the text the row showed (#1053)', () => {
+    /**
+     * Build resolveRuleProposal from session.js with its three free variables
+     * supplied, plus stub row elements.
+     * @param {Function} respond - (url, method, body, api) => data|null; sets
+     *   api.lastErrorCode / api.lastBody itself when refusing
+     * @returns {{run: Function, calls: object[], els: object, api: object}}
+     */
+    function harness(respond) {
+      const calls = [];
+      const api = { lastError: null, lastErrorCode: null, lastBody: null };
+      const apiMutate = async (url, method, body) => {
+        calls.push({ url, method, body });
+        return respond(url, method, body, api);
+      };
+      const src = functionBody(session, 'async function resolveRuleProposal(');
+      // eslint-disable-next-line no-new-func
+      const fn = new Function('apiMutate', 'api', 'currentWrapPassword',
+        `return async function resolveRuleProposal(proposal, decision, els) ${src};`)(apiMutate, api, null);
+      const classes = new Set();
+      const els = {
+        row: { classList: { add: (c) => classes.add(c) } },
+        ta: { value: '', disabled: false },
+        approveBtn: { disabled: false },
+        rejectBtn: { disabled: false },
+        note: { textContent: '' },
+        passwordGroup: { classList: { remove: () => {} } },
+        passwordInput: { value: '', focus: () => {} },
+        decided: () => classes.has('wrap-proposal-row--decided')
+      };
+      return { run: (proposal, decision) => fn(proposal, decision, els), calls, els, api };
+    }
+
+    it('an unedited approval carries the shown text as expectedContent', async () => {
+      const h = harness(() => ({ id: 7, status: 'active' }));
+      h.els.ta.value = 'always lint';
+      await h.run({ ruleId: 7, content: 'always lint' }, 'active');
+      assert.equal(h.calls.length, 1);
+      assert.deepEqual(h.calls[0].body, { status: 'active', expectedContent: 'always lint' });
+      assert.ok(h.els.decided(), 'an accepted approval decides the row');
+    });
+
+    it('an edited approval carries the text the store persisted, not the local copy', async () => {
+      const h = harness((url, method, body) => (url.endsWith('/status')
+        ? { id: 7, status: 'active' }
+        : { id: 7, content: 'lint on commit (canonical)' }));
+      h.els.ta.value = 'lint on commit';
+      await h.run({ ruleId: 7, content: 'always lint' }, 'active');
+      assert.equal(h.calls[0].body.content, 'lint on commit', 'the edit is saved first');
+      assert.equal(h.calls[1].body.expectedContent, 'lint on commit (canonical)',
+        'the approval echoes the persisted text, closing the window between the two writes');
+    });
+
+    it('a 409 shows the current text, approves nothing and leaves the row open', async () => {
+      const h = harness((url, method, body, api) => {
+        api.lastErrorCode = 'RULE_CONTENT_CHANGED';
+        api.lastError = 'changed';
+        api.lastBody = { currentContent: 'swapped text' };
+        return null;
+      });
+      const proposal = { ruleId: 7, content: 'always lint' };
+      h.els.ta.value = 'always lint';
+      await h.run(proposal, 'active');
+      assert.equal(h.els.ta.value, 'swapped text', 'the operator must see what the rule now says');
+      assert.equal(proposal.content, 'swapped text', 'the next Approve must name the text now shown');
+      assert.match(h.els.note.textContent, /changed after it was shown/);
+      assert.match(h.els.note.textContent, /nothing was approved/);
+      assert.ok(!h.els.decided(), 'a refused approval must leave the row undecided');
+      assert.equal(h.els.approveBtn.disabled, false, 'Approve must be usable again');
+    });
+
+    it('approving again after a 409 sends the newly shown text', async () => {
+      let first = true;
+      const h = harness((url, method, body, api) => {
+        if (first) {
+          first = false;
+          api.lastErrorCode = 'RULE_CONTENT_CHANGED';
+          api.lastBody = { currentContent: 'swapped text' };
+          return null;
+        }
+        return { id: 7, status: 'active' };
+      });
+      const proposal = { ruleId: 7, content: 'always lint' };
+      h.els.ta.value = 'always lint';
+      await h.run(proposal, 'active');
+      await h.run(proposal, 'active');
+      assert.equal(h.calls.length, 2, 'the unchanged textarea must not trigger a content save');
+      assert.equal(h.calls[1].body.expectedContent, 'swapped text');
+    });
+
+    it('a rejection sends no expectedContent', async () => {
+      const h = harness(() => ({ id: 7, status: 'rejected' }));
+      await h.run({ ruleId: 7, content: 'always lint' }, 'rejected');
+      assert.deepEqual(h.calls[0].body, { status: 'rejected' });
+    });
+  });
 });

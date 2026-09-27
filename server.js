@@ -5468,13 +5468,22 @@ route('PUT', '/api/session-rules/:id/status', (_req, res, params, body) => {
       // misattribute a decision the gate just authorised.
       changedBy: body.status === 'active' ? 'operator' : body.changedBy,
       changeReason: body.changeReason,
-      criticGate: body.criticGate
+      criticGate: body.criticGate,
+      // The text the operator was shown. Read only AFTER the password gate
+      // above: a caller that cannot approve must not learn from a 409 whether
+      // the text has changed, let alone what it now says.
+      expectedContent: body.expectedContent
     });
     jsonResponse(res, 200, rule);
   } catch (err) {
     if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');
     if (err.code === 'BAD_REQUEST') return errorResponse(res, 400, err.message, 'BAD_REQUEST');
     if (err.code === 'FORBIDDEN') return errorResponse(res, 403, err.message, 'FORBIDDEN');
+    // The current text goes back so the surface can show the operator what
+    // they would actually be approving, instead of a bare refusal.
+    if (err.code === 'CONTENT_CHANGED') {
+      return errorResponse(res, 409, err.message, 'RULE_CONTENT_CHANGED', { currentContent: err.currentContent });
+    }
     throw err;
   }
 }, { maxBodySize: 256 * 1024 });

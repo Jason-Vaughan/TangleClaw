@@ -5684,6 +5684,8 @@ function renderRuleProposalWidget(widget) {
  * writes are sequential so an edit can never be approved un-saved. Reflects
  * the outcome inline and disables the row once decided; on a 403 (password
  * gate) reveals the widget's password input instead of failing opaquely.
+ * Approval names the text it approves (#1053); if the rule changed after the
+ * drawer rendered, the server refuses and the row shows the current text.
  *
  * @param {{ruleId: number, content: string}} proposal - The proposal as rendered.
  * @param {'active'|'rejected'} decision - The operator's answer.
@@ -5715,14 +5717,27 @@ async function resolveRuleProposal(proposal, decision, els) {
         finishEnabled();
         return;
       }
-      proposal.content = edited;
+      // What the store persisted, not our copy of it: the approval below must
+      // echo the canonical text back exactly.
+      proposal.content = typeof saved.content === 'string' ? saved.content : edited;
     }
-    const body = { status: 'active' };
+    // The text this row showed (or the edit just saved). The server approves
+    // only if the rule still holds exactly this, so a change made elsewhere
+    // after the drawer rendered cannot be ratified by this click.
+    const body = { status: 'active', expectedContent: proposal.content };
     const pw = (passwordInput && passwordInput.value) || currentWrapPassword;
     if (pw) body.password = pw;
     const data = await apiMutate(`/api/session-rules/${proposal.ruleId}/status`, 'PUT', body);
     if (!data) {
-      if (api.lastErrorCode === 'FORBIDDEN' && passwordGroup) {
+      if (api.lastErrorCode === 'RULE_CONTENT_CHANGED' && api.lastBody
+          && typeof api.lastBody.currentContent === 'string') {
+        // Show what the rule says now, so the next Approve is a decision about
+        // that text rather than a repeat of the refused one.
+        proposal.content = api.lastBody.currentContent;
+        ta.value = api.lastBody.currentContent;
+        note.textContent = 'This rule’s text changed after it was shown, so nothing was approved. '
+          + 'The current text is now shown above — review it, then Approve again.';
+      } else if (api.lastErrorCode === 'FORBIDDEN' && passwordGroup) {
         passwordGroup.classList.remove('hidden');
         note.textContent = 'The server needs the delete password to approve — enter it below and tap Approve again.';
         if (passwordInput) passwordInput.focus();

@@ -73,7 +73,7 @@ and `GET /api/learnings` (#1121); a valid project with no rules returns `200 []`
 | `POST /api/session-rules/:id/restore` `{versionNo}` | Roll back to a prior version |
 | `POST /api/session-rules/promote` `{learningId, content?, projectId?}` | Promote a learning → rule (operator-confirmed; defaults to the learning's project) |
 | `POST /api/session-rules/conflicts` `{content, projectId?}` | Non-authoritative conflict-candidate signal |
-| `PUT /api/session-rules/:id/status` `{status, changedBy?, changeReason?}` | #569 — approve (`active`) or decline (`rejected`) a proposal. An AI `changedBy` requesting `active` is refused with 403 |
+| `PUT /api/session-rules/:id/status` `{status, expectedContent?, changedBy?, changeReason?}` | #569 — approve (`active`) or decline (`rejected`) a proposal. An AI `changedBy` requesting `active` is refused with 403. #1053 — an approval that names `expectedContent` (the exact stored text the operator was shown) is refused with `409 RULE_CONTENT_CHANGED`, carrying `currentContent`, when the rule no longer holds that text. The password gate is checked first, so a caller without it learns nothing about the text. A rejection is never compared |
 | `GET /api/learnings?projectId=&tier=` | #569 — list a project's learnings |
 | `PUT /api/learnings/:id/tier` `{tier}` | #569 — operator override of a learning's tier |
 
@@ -108,7 +108,9 @@ was empty on every project and rules never evolved.
    anything, its results render as a decision widget — one row per proposal with editable
    text plus Approve / Reject. Approve saves any edit *first*, then flips the status
    (password-gated, replaying the password the wrap modal already collected; a 403 reveals
-   an inline password input). Reject needs no password. The step's row also reports the
+   an inline password input). The approval names the exact text it approves (#1053): if
+   the rule changed after the drawer rendered, the server refuses, and the row shows the
+   current text for a fresh decision. Reject needs no password. The step's row also reports the
    provisional-learnings backlog ("N provisional learnings building recurrence") so a
    young loop is distinguishable from a dead one.
 
