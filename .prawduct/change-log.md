@@ -35,6 +35,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-27 — Codex Full Auto reaches TangleClaw over loopback, and only loopback (#1836)
+
+<!-- prawduct: type=bugfix | scope=codex-fullauto-loopback-1836 -->
+
+Chunks 0 to 4, as a clean-room implementation: PR #1932 and all contributor code were never opened. The PM dispatched it over Medusa and the Architect ruled on four decisions (the residual accepted, the version gate, E3 conditional, inline `-c`). The PM folded Chunks 3 and 4 into this PR. Plan: `.tangleclaw/plans/1836-codex-fullauto-loopback.md` (local, not tracked).
+
+**Problem.** Full Auto ran Codex's `workspace-write` sandbox, which refuses every connection, loopback included. Every `tc` verb is loopback HTTP, so a Full Auto session never read its launch sequence and nothing named the cause. `sandbox_workspace_write.network_access=true` was ruled out because it opens the internet and the LAN.
+
+**The change.**
+- **The profile.** On a proven Codex version (0.156.1), Full Auto swaps `--sandbox workspace-write` for a Codex permission profile. The profile extends `:workspace`, its managed proxy allowlists exactly `127.0.0.1` and `localhost`, and it restates the `.git`, `.agents` and `.codex` read-only rules, because a profile extending `:workspace` drops them. The argv is written once, in `lib/codex-loopback-profile.js`.
+- **The version gate.** The Codex adapter (`loopbackLaunchCommand`) gates it on the probed version and answers why whenever it declines.
+- **Launches.** A mode that declares `loopbackNetwork` gets it on both the project launch and the Master launch. It skips the native channel (`mode_requires_legacy`), because the TUI's `--remote` thread start resends a legacy sandbox mode that drops the profile.
+- **Unproven versions** keep the no-network sandbox. A launch there gets no sequence; its context is pasted instead, and `notApplicableReason` says why (ADR 0013).
+- **`tc`** filters Node's `UNDICI-EHPA` warning, which the proxy's `NODE_USE_ENV_PROXY` otherwise prints on every call.
+
+**Evidence.**
+- **Chunk 0 spike:** real TUI turns. Legacy + profile passes every guard; the native path fails closed in all three variants tried.
+- **Stage A VRF:** the branch's exact pane command in a real TUI against the live API. `tc` rc 0 with empty stderr; 3102 and 3200 both 200; direct socket, public, LAN, own LAN IP, tailnet and DNS all refused; `.git`, `.agents`, `.codex` and `$HOME` denied.
+- **Stage B**, a real TangleClaw launch reaching sequence 4/4 with receipts, is post-merge verification on the live install.
+- **Reviews:** Critic rev-20260927T162157Z-48128f0a plus verify rev-20260927T162640Z-3a6ac8a6, 0 blocking.
+- **Suite:** 13,962 cases, 0 failed. Pre-existing flakes filed as #1950.
+
+**Descoped, explicitly:** a `tc capabilities` row, and a sandbox-specific `tc` error. The affected agent cannot reach `tc`, and `tc`'s existing unreachable message already names a sandbox as a likely cause.
+
 ## 2026-09-27 — Rule approval compare-and-set: approval ratifies only the text the operator saw (#1053)
 
 <!-- prawduct: type=bugfix | scope=rule-approval-cas-1053 -->
