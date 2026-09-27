@@ -13,6 +13,13 @@ const { _plainError } = require('../lib/dir-scanner-child');
 const HANG_CHILD = path.join(__dirname, '_dir-scanner-hang-child.js');
 const POOL_DEMO = path.join(__dirname, '_dir-scanner-pool-demo.js');
 
+// A deadline for a request that is expected to SUCCEED on a freshly forked child.
+// The clock starts before the fork, so the budget has to cover booting a node
+// process, which takes well over the 300 ms the deadline tests use when the
+// machine is busy. Those tests keep the short deadline for the request meant to
+// hang, and give their healthy requests this one.
+const COLD_START_MS = 10000;
+
 let tmpRoot;
 
 before(() => {
@@ -350,7 +357,7 @@ describe('lib/dir-scanner — the deadline kills, it does not merely give up', (
       exitGraceMs: 0
     });
     try {
-      await scanner.request('ping');
+      await scanner.request('ping', {}, { timeoutMs: COLD_START_MS });
       const pid = scanner.childPid();
       assert.ok(pid, 'a child should be running before the hang');
 
@@ -423,7 +430,7 @@ describe('lib/dir-scanner — the deadline kills, it does not merely give up', (
       // reaping a SIGKILLed one. A supervisor that failed everything pending on
       // any child's exit, rather than only the current child's, would reject
       // this healthy request and read as a flaky scanner.
-      const reply = await scanner.request('ping');
+      const reply = await scanner.request('ping', {}, { timeoutMs: COLD_START_MS });
       assert.equal(typeof reply.pid, 'number');
     } finally {
       await scanner.shutdown();
