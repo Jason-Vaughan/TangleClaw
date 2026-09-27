@@ -71,7 +71,9 @@ machine-specific — TangleClaw's SessionStart hooks live in the ignored
   same project and kind (not a Master rule), or creation is refused with
   `INVALID_REPLACES`. Approving the replacement retires the rule it replaces **in the
   same transaction** as the approval, and records `superseded_by` on the retired rule. If
-  that rule is no longer active by then, the approval still stands: the result carries
+  that rule is no longer active by then, an explicit amendment still stands, unless a
+  different replacement already replaced it (see below); an edit or rollback does not.
+  For an amendment that stands, the result carries
   `replaced: null`, and `replacementSkipped: {id, reason}` names the rule and says why
   nothing was retired. The activity log records the same. On success it is
   `replaced: {id}`. A replacement the operator creates already active retires its target
@@ -99,7 +101,7 @@ machine-specific — TangleClaw's SessionStart hooks live in the ignored
   differently. An amendment whose target is already gone still stands, with `replaced:
   null`. An edit or rollback is a change to *that* rule, so once the rule is gone it
   **fails closed** (`REPLACEMENT_TARGET_INACTIVE`) rather than resurrect edited text.
-- **One rule is replaced by one rule** (Architect ruling, R-3). Approving a replacement
+- **One rule is replaced by one rule** (Architect ruling on #1696). Approving a replacement
   whose target was already retired by a *different* replacement is refused with `409
   REPLACEMENT_SUPERSEDED` (with `targetId` and `supersededBy`), whatever its origin and
   even if it was once rejected. Otherwise a rejected amendment approved later would
@@ -143,13 +145,13 @@ and `GET /api/learnings` (#1121); a valid project with no rules returns `200 []`
 |---|---|
 | `GET /api/session-rules?projectId=&kind=` | List rules |
 | `POST /api/session-rules` `{content, projectId, createdBy?, kind?, replacesRuleId?}` | Create (projectId required). #1696 — `replacesRuleId` names the active rule (same project and kind) this one replaces; it is recorded and approving the new rule retires the old one. A value that cannot be honoured is `400 INVALID_REPLACES` and nothing is created |
-| `PUT /api/session-rules/:id` `{content?, enabled?, changedBy?}` | Update (snapshots a version). #1696 — a text change to an **active project rule** is not applied: it is filed as a replacement proposal, and the answer is `202` with `replacementProposed`. The rule keeps governing its approved text until the proposal is approved. `409 REPLACEMENT_PENDING` (with `pendingReplacementId`) when one is already waiting. `enabled` in the same call still applies to the rule. Proposals, and Master rules, still edit in place |
+| `PUT /api/session-rules/:id` `{content?, enabled?, changedBy?}` | Update (snapshots a version). A text change to a **retired** rule is refused with `409 RULE_RETIRED`. #1696 — a text change to an **active project rule** is not applied: it is filed as a replacement proposal, and the answer is `202` with `replacementProposed`. The rule keeps governing its approved text until the proposal is approved. `409 REPLACEMENT_PENDING` (with `pendingReplacementId`) when one is already waiting. `enabled` in the same call still applies to the rule. Proposals, and Master rules, still edit in place |
 | `DELETE /api/session-rules/:id` | Delete (snapshots a tombstone) |
 | `GET /api/session-rules/:id/versions` | Version history (newest first) |
-| `POST /api/session-rules/:id/restore` `{versionNo}` | Roll back to a prior version. #1696 — rolling an **active project rule** back to different text is filed as a replacement proposal (`202`, origin `restore`), leaving the rule and its switch as they are; `409 REPLACEMENT_PENDING` as above. A rollback that changes only the switch applies directly |
+| `POST /api/session-rules/:id/restore` `{versionNo}` | Roll back to a prior version. A rollback that would change a **retired** rule's text is `409 RULE_RETIRED`. #1696 — rolling an **active project rule** back to different text is filed as a replacement proposal (`202`, origin `restore`), leaving the rule and its switch as they are; `409 REPLACEMENT_PENDING` as above. A rollback that changes only the switch applies directly |
 | `POST /api/session-rules/promote` `{learningId, content?, projectId?}` | Promote a learning → rule (operator-confirmed; defaults to the learning's project) |
 | `POST /api/session-rules/conflicts` `{content, projectId?}` | Non-authoritative conflict-candidate signal |
-| `PUT /api/session-rules/:id/status` `{status, expectedContent, changedBy?, changeReason?}` | The lifecycle's one door. #1709 — `retired` retires an active rule; `active` on a retired rule restores it, disabled. Neither needs the password (neither grants anything): without the password, `active` is accepted only as a restore. A move the lifecycle forbids is `400 INVALID_TRANSITION`. An approval of a replacement returns `replaced: {id}`, or `replaced: null` with `replacementSkipped: {id, reason}` when that rule was no longer active and the replacement was an explicit amendment. An edit or rollback whose rule is no longer active is refused with `409 REPLACEMENT_TARGET_INACTIVE` (with `targetId`) and nothing changes. #569 — approve (`active`) or decline (`rejected`) a proposal. An AI `changedBy` requesting `active` is refused with 403. #1053 — an approval must carry `expectedContent`, the exact stored text the operator was shown: without it, `400 EXPECTED_CONTENT_REQUIRED`; when the rule no longer holds that text, `409 RULE_CONTENT_CHANGED` carrying `currentContent`, and nothing changes. The password gate is checked first, so a caller without it learns nothing about the text. A rejection needs no `expectedContent` and is never compared |
+| `PUT /api/session-rules/:id/status` `{status, expectedContent, changedBy?, changeReason?}` | The lifecycle's one door. #1709 — `retired` retires an active rule; `active` on a retired rule restores it, disabled. Neither needs the password (neither grants anything): without the password, `active` is accepted only as a restore. A move the lifecycle forbids is `400 INVALID_TRANSITION`. An approval of a replacement returns `replaced: {id}`, or `replaced: null` with `replacementSkipped: {id, reason}` when that rule was no longer active and the replacement was an explicit amendment. An edit or rollback whose rule is no longer active is refused with `409 REPLACEMENT_TARGET_INACTIVE` (with `targetId`), and any replacement whose rule a different replacement already replaced with `409 REPLACEMENT_SUPERSEDED` (with `targetId`, `supersededBy`); either way nothing changes. #569 — approve (`active`) or decline (`rejected`) a proposal. An AI `changedBy` requesting `active` is refused with 403. #1053 — an approval must carry `expectedContent`, the exact stored text the operator was shown: without it, `400 EXPECTED_CONTENT_REQUIRED`; when the rule no longer holds that text, `409 RULE_CONTENT_CHANGED` carrying `currentContent`, and nothing changes. The password gate is checked first, so a caller without it learns nothing about the text. A rejection needs no `expectedContent` and is never compared |
 | `GET /api/learnings?projectId=&tier=` | #569 — list a project's learnings |
 | `PUT /api/learnings/:id/tier` `{tier}` | #569 — operator override of a learning's tier |
 

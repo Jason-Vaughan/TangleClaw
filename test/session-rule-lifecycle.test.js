@@ -566,7 +566,7 @@ describe('session rule lifecycle (#1696, #1709)', () => {
         code('REPLACEMENT_TARGET_INACTIVE'));
     });
 
-    it('keeps C1’s contract for an explicit amendment: an inactive target still approves, replaced: null', () => {
+    it('keeps the amendment contract: an inactive target still approves, replaced: null', () => {
       const rule = activeRule('amended then retired');
       const amendment = proposal('the amendment', { replacesRuleId: rule.id });
       assert.equal(amendment.replacementOrigin, 'amendment');
@@ -641,8 +641,8 @@ describe('session rule lifecycle (#1696, #1709)', () => {
     });
   });
 
-  // Final review: a text change keyed only on 'active' left a way round
-  // approval through retirement: retire → edit → restore → switch on.
+  // A text change keyed only on 'active' would leave a way round approval
+  // through retirement: retire → edit → restore → switch on.
   describe('a retired rule’s text is history', () => {
     it('refuses to edit a retired rule, so retire → edit → restore → switch on cannot bring unapproved text into force', () => {
       const rule = activeRule('approved wording');
@@ -728,6 +728,11 @@ describe('session rule lifecycle (#1696, #1709)', () => {
       assert.equal(store.sessionRules.get(original.id).supersededBy, null, 'a hand retirement records no successor');
       const approved = store.sessionRules.setStatus(c.id, 'active', { expectedContent: 'second amendment' });
       assert.equal(approved.replaced, null);
+      // Stated, not hidden: B and C both govern here. That follows from the
+      // operator's own explicit decisions (restore the replaced rule, retire it
+      // by hand, approve C), not from an unguarded path. Tightening it would
+      // need a ruling on whether a hand retirement keeps the old successor link.
+      assert.deepEqual(delivered().sort(), ['first replacement', 'second amendment']);
     });
   });
 
@@ -746,7 +751,7 @@ describe('session rule lifecycle (#1696, #1709)', () => {
     });
   });
 
-  describe('review carry-overs', () => {
+  describe('restored history and project ids', () => {
     it('keeps what replaced a rule when it is restored from retirement', () => {
       const old = activeRule('replaced then restored');
       const next = proposal('its successor', { replacesRuleId: old.id });

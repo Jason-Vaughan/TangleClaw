@@ -245,6 +245,18 @@ describe('#569 rule-proposal review widget (wrap drawer)', () => {
       assert.equal(h.calls[1].body.expectedContent, 'swapped text');
     });
 
+    it('an edit of a rule approved elsewhere is filed, not claimed as approved (202)', async () => {
+      const h = harness((url) => (url.endsWith('/status')
+        ? { id: 7, status: 'active' }
+        : { id: 7, content: 'the old approved text', status: 'active',
+          replacementProposed: { id: 9, content: 'my edit', status: 'proposed' } }));
+      h.els.ta.value = 'my edit';
+      await h.run({ ruleId: 7, content: 'the old approved text' }, 'active');
+      assert.equal(h.calls.length, 1, 'no approval is sent after the edit was filed');
+      assert.doesNotMatch(h.els.note.textContent, /Approved ✓/);
+      assert.match(h.els.note.textContent, /filed as a change to it, awaiting approval/);
+    });
+
     it('a rejection sends no expectedContent', async () => {
       const h = harness(() => ({ id: 7, status: 'rejected' }));
       await h.run({ ruleId: 7, content: 'always lint' }, 'rejected');

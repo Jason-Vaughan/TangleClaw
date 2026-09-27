@@ -55,9 +55,16 @@ Chunk 04 of 04, cumulative-final. Rulings 7 and 8 (PM d40bf543 and 437ddd43): th
 - **R-2/R-4, fixed.** Edit-through-approval was keyed on status, so retire → edit (applied in place) → restore → switch on put unapproved text in force with no password. A retired rule's text is now immutable (`RULE_RETIRED`, 409, on both edit and rollback), and the test runs the four steps.
 - **R-5, fixed.** A stale edit or rollback proposal shows only Reject.
 - **R-6, fixed.** The creation event carries `replacesRuleId` and `replacementOrigin`.
-- **R-3, routed to the Architect.** A rejected amendment re-approved after a sibling replacement retired the original stands under ruling 2, so two replacements govern.
-- **R-1.** Degraded evidence (a system-health timing flake); an uncontended run is owed.
+- **R-3, routed to the Architect** and later ruled and fixed (below).
+- **R-1.** At that point the evidence was degraded (a system-health timing flake). Since resolved: the full suite passed cleanly at 342ec0fa and again on the final merged tree at ec9786b7.
 - **R-3, ruled and fixed (PM f690a64d).** Approving a replacement whose target was already superseded by a *different* replacement throws `REPLACEMENT_SUPERSEDED` (409, with `targetId` and `supersededBy`) inside the savepoint, for every origin, so the lineage stays single. A hand retirement still lets an amendment stand. The UI names the winning replacement and shows only Reject. The regression tests cover the Architect's exact sequence (reject A, approve sibling B, approve A: refused, only B governs), the edit variant, hand-retirement unchanged, and "latest retirement wins" after a restore. The mutant removing the guard fails 2 tests.
+
+**PR-boundary cumulative review** `rev-20260927T192447Z-e8c17c32` (after the main merge and R-3): 0 blocking, 3 warnings, 3 notes. The PR reviewer, in parallel: 0 blocking, 1 warning.
+- **R-1, fixed.** The wrap drawer's edit-then-approve read a 202 (edit filed as a replacement because the rule had been approved elsewhere) as the saved text, re-approved the OLD text and said "Approved ✓". It now says the edit was filed for approval and stops. There is a 202 widget test.
+- **R-4, fixed.** The edit/rollback-through-approval sequence lives in one helper, `_proposeTextChange`, which both doors use and which always runs in the savepoint (the rollback path was not transactional before).
+- **R-5, fixed, together with the PR reviewer's warning.** The docs table carries `RULE_RETIRED` and `REPLACEMENT_SUPERSEDED`, the amendment bullet is qualified, and the CHANGELOG has a rollback note for the v51 rebuild.
+- **R-6, fixed for this branch.** The review ids are gone from shipped comments, docs and test names. A repo-wide lint is left as a follow-up.
+- **R-2 and R-3, accepted and raised to the PM.** R-2: after restore → hand retire, a new amendment can govern beside the old replacement. That follows from explicit operator decisions, and the test now asserts it. R-3: the UI's approvability check is advisory; the server stays authoritative.
 
 **Existing tests reworked for the ruled contract, not weakened.** Tests that used "edit an active rule's text" only to generate version history (pruning, op constraint, critic_gate provenance, restore mechanics, `kind` survives a restore) now create their rule as `proposed`, whose text still edits in place. One of them ("kind survives a version restore") had started passing vacuously, and it now asserts the edit applied. The delivery digest test now also asserts that an unapproved edit does NOT change the delivered set, and that approving it does. The API critic-gate test keeps its operator-create check, adds the 202 path, and runs the in-place checks on an AI proposal.
 
@@ -105,7 +112,7 @@ Chunk 02 of 04. The PM authorized it (4718a04b) together with the Architect's W5
 
 <!-- prawduct: type=bugfix | scope=rule-retirement-1696-1709 -->
 
-Chunk 01 of 04. The PM dispatched it (0f6fd06f). Architect rulings 1-4 (cc2f6e32): (1) the existing status route; (2) a replacement whose target is inactive still approves, with `replaced: null` and an audit detail; (3) no install-specific ids in the migration; (4) edits to an active project rule demote it to proposed (Chunk 04). Plan: `.tangleclaw/plans/1696-1709-rule-retirement.md` (local, not tracked).
+Chunk 01 of 04. The PM dispatched it (0f6fd06f). Architect rulings 1-4 (cc2f6e32): (1) the existing status route; (2) a replacement whose target is inactive still approves, with `replaced: null` and an audit detail; (3) no install-specific ids in the migration; (4) edits to an active project rule go through approval. Ruling 4(a) first said to demote the rule to proposed; Chunk 04 shipped the Architect's later refinement (ruling 7), where an edit files a replacement proposal and the rule keeps governing. Plan: `.tangleclaw/plans/1696-1709-rule-retirement.md` (local, not tracked).
 
 **The change.**
 - **Schema v51.** `'retired'` is added to the status CHECK, plus `replaces_rule_id`, `superseded_by` and `retired_at`. SQLite cannot alter a CHECK, so the table is rebuilt with rows verbatim and foreign keys off outside the transaction. A postcondition refuses to advance the version.

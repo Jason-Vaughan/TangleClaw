@@ -2891,7 +2891,7 @@ function renderProjectRulesList(kind, rules) {
       // server fails it closed), so offering Approve would only invite a 409.
       const replacedTarget = isProposed && rule.replacesRuleId ? byId.get(rule.replacesRuleId) : null;
       // Replaced already by a DIFFERENT rule: approving would make two rules
-      // govern in one's place, so the server refuses it (R-3).
+      // govern in one's place, so the server refuses it (#1696).
       const supersededElsewhere = Boolean(replacedTarget && replacedTarget.status !== 'active'
         && replacedTarget.supersededBy && replacedTarget.supersededBy !== rule.id);
       const staleEdit = supersededElsewhere || (isProposed && rule.replacesRuleId
