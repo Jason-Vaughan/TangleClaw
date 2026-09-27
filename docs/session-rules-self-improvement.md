@@ -59,10 +59,11 @@ machine-specific — TangleClaw's SessionStart hooks live in the ignored
   <!-- lifecycle-table:end -->
 
   **Every other move is refused with `INVALID_TRANSITION`.** It is an allow-list. In
-  particular, an active rule is never rejected and never sent back to `proposed`
-  (Architect ruling on #1709): either move took a governing rule out of the list and the
-  Graveyard alike, with no password, and together they made a two-step way round the
-  one-step refusal. Retire is how a rule leaves force. A rule that never governed
+  particular, an active rule is never rejected (Architect ruling on #1709). It is also
+  never sent back to `proposed`, because that made a two-step way round the one-step
+  refusal. This part is built to enforce the ruling's intent and is pending the
+  Architect's explicit ratification. Either move took a governing rule out of the list
+  and the Graveyard alike, with no password. Retire is how a rule leaves force. A rule that never governed
   cannot be retired (operator ruling on #1709: "If a rule was never born, then it can
   never die").
 
