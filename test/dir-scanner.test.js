@@ -14,10 +14,11 @@ const HANG_CHILD = path.join(__dirname, '_dir-scanner-hang-child.js');
 const POOL_DEMO = path.join(__dirname, '_dir-scanner-pool-demo.js');
 
 // A deadline for a request that is expected to SUCCEED on a freshly forked child.
-// The clock starts before the fork, so the budget has to cover booting a node
-// process, which takes well over the 300 ms the deadline tests use when the
-// machine is busy. Those tests keep the short deadline for the request meant to
-// hang, and give their healthy requests this one.
+// The clock starts once the child is spawned, not once it is ready, so the
+// budget has to cover booting a node process, which takes well over the 300 ms
+// the deadline tests use when the machine is busy. Those tests keep the short
+// deadline for the request meant to hang, and give their healthy requests this
+// one.
 const COLD_START_MS = 10000;
 
 let tmpRoot;
