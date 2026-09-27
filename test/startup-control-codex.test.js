@@ -481,18 +481,23 @@ describe('Codex startupControl adapter', () => {
           server.state.turnStarted = true;
           server.state.userItem = { type: 'userMessage', id: 'item-1', clientId: p.clientUserMessageId, content: p.input };
           server.state.turn = { id: TURN, status: 'inProgress', items: [] };
-          setTimeout(() => {
-            server.notify('thread/status/changed', { threadId: THREAD, status: { type: 'active', activeFlags: [] } });
-            server.notify('turn/started', { threadId: THREAD, turn: server.state.turn });
-            server.notify('item/completed', { threadId: THREAD, turnId: TURN, item: server.state.userItem, completedAtMs: 1 });
-          }, 20);
-          setTimeout(() => {
-            server.state.turn = finishedTurn('completed', { durationMs: 1976 });
-            server.notify('thread/status/changed', { threadId: THREAD, status: { type: 'idle' } });
-            server.notify('turn/completed', { threadId: THREAD, turn: server.state.turn });
-          }, 80);
           return { turn: { id: TURN, status: 'inProgress', items: [] } };
         }
+      });
+      // The notifications follow the adapter's own read-back, not a clock: that
+      // read answers "in progress, nothing echoed", so acceptance can only come
+      // from the notification, and the turn cannot finish before the read-back
+      // runs. Socket order carries item/completed ahead of turn/completed.
+      let sequenced = false;
+      server.on('request', ({ method }) => {
+        if (method !== 'thread/turns/list' || sequenced) return;
+        sequenced = true;
+        server.notify('thread/status/changed', { threadId: THREAD, status: { type: 'active', activeFlags: [] } });
+        server.notify('turn/started', { threadId: THREAD, turn: server.state.turn });
+        server.notify('item/completed', { threadId: THREAD, turnId: TURN, item: server.state.userItem, completedAtMs: 1 });
+        server.state.turn = finishedTurn('completed', { durationMs: 1976 });
+        server.notify('thread/status/changed', { threadId: THREAD, status: { type: 'idle' } });
+        server.notify('turn/completed', { threadId: THREAD, turn: server.state.turn });
       });
       const c = channel();
       const f = pendingFire();

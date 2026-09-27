@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-27 — The Codex receipt test follows its read-back, not 20/80 ms timers (#1964)
+
+<!-- prawduct: type=bugfix | scope=codex-receipt-test-1964 -->
+
+The PM dispatched this over Medusa. It is the sibling of #1846, found by the v5.30 cross-PR matrix run (the failure appeared on PR #1958's CI, run 36336907896).
+
+**Problem.** `test/startup-control-codex.test.js`, *accepted on the echoed clientId + bytes notification…*: the fake app-server sent `turn/started` and `item/completed` on a 20 ms timer, and the completion on an 80 ms one. On a slow runner both fired before the adapter's post-subscribe read-back (`subscribeAndReadBack`), the fire settled, and the read-back was skipped, so `one read-back` saw 0.
+
+**The change.** Test-only. The notifications are sent from the fake server's `request` event, after it has answered the adapter's first `thread/turns/list` with the turn still in progress and nothing echoed. So the read-back always runs first, and acceptance can only come from the notification, which is what the test's title claims. Socket order carries `item/completed` ahead of `turn/completed`. Every assertion is unchanged. It edits a different test from #1846, so the test file merges cleanly with that branch; only `CHANGELOG.md` conflicts, at the top of `### Internal`.
+
+**Evidence.** With the old timers set to 0 and 1 ms, the test failed 7 runs in 10 on `one read-back` (0 !== 1), matching CI. The new shape passed 50 of 50 under 8 CPU-bound loads. File: 48 of 48.
+
 ## 2026-09-27 — Rule approval compare-and-set: approval ratifies only the text the operator saw (#1053)
 
 <!-- prawduct: type=bugfix | scope=rule-approval-cas-1053 -->
