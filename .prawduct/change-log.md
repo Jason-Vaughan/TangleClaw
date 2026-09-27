@@ -72,7 +72,7 @@ REQ2 only, dispatched by the PM on the Architect's authorization (4fd5e6b4). REQ
 - `loopbackTrustFacts` is tested against a fixture home;
 - REQ3 is filed as #1973 and cited.
 
-Accepted: the fact gatherer stays in the Codex adapter, the only engine with a loopback profile. Withheld reasons lost on prime-disabled and Master launches are #1836 code, passed to the PM.
+Accepted: the fact gatherer stays in the Codex adapter, the only engine with a loopback profile. Withheld reasons lost on prime-disabled and Master launches are #1836 code, passed to the PM. After the PR review (N1): the grant-but-not-applied branch now derives `blocksLoopback` from `hasLegacySandbox(launchCmd)`, as its sibling branches do. The early return already makes it true there, so nothing changes at runtime.
 
 ## 2026-09-27 — Codex Full Auto reaches TangleClaw over loopback, and only loopback (#1836)
 
