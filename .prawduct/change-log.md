@@ -51,7 +51,7 @@ Discord Operator Bridge, Chunk 1: the server half. The TangleClaw-Architect auth
 
 **Critic.** The cumulative review rev-20260927T175741Z-c70670ed found 0 blocking. R-1 (the token hash via /api/config), R-2 (an old target's replies quarantined after a target change) and R-3 (a 50-row batch letting one offline project hide live ones) were fixed in dc283f49, and verify-resolutions rev-20260927T180526Z-7cea6b10 confirmed them. R-6 (a crash between a successful send and settling it records `send_unknown`) was accepted, since nothing is ever sent twice. O-1 (a stale `resolveOutbound` JSDoc) was accepted and carries into C2's first commit.
 
-**Tests.** 38 new cases across store, unit and API end to end over a fake Hub:
+**Tests.** Three new test files (store, unit, and API end to end over a fake Hub):
 - delivery: offline-then-live delivery, replay idempotency, a lost Hub answer, retry under a fresh id after a refusal, per-project ordering past a backlog;
 - replies: the `inReplyTo` round trip, a reply after a target change, quarantine of another project's mail, of mail no send made, and of oversized mail;
 - fences: token scope on other routes, operator-only settings, the allowlist, length and rate limits, and the hash kept out of /api/config.

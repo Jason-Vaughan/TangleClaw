@@ -86,6 +86,14 @@ The target project replies through its own switchboard route, sending to the cha
 
 Text is kept only until it is handed on. Nothing prunes the rows yet.
 
+## Rolling back
+
+Schema v51 is purely additive. A v50 server:
+- ignores the two channel tables and the `operatorChannel` config key;
+- runs no listener and no pump, so nothing is sent or relayed while rolled back.
+
+Nothing is lost. After a re-upgrade, waiting messages are delivered and replies the Hub queued meanwhile are collected. To stop the channel without rolling back, turn it off with `PUT /api/operator-channel/config {"enabled": false}`.
+
 ## Setting it up
 
 1. Create the helper's chat identity and note the author, space and channel ids to allowlist.
