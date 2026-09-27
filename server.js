@@ -340,6 +340,7 @@ const controlGate = require('./lib/control-gate');
 const { resolveControlCaller, isOperatorShaped } = require('./lib/control-auth');
 const medusaExchanges = require('./lib/medusa-exchanges');
 const medusaWatchdog = require('./lib/medusa-watchdog');
+const operatorChannel = require('./lib/operator-channel');
 const medusaSend = require('./lib/medusa-send');
 
 const log = createLogger('server');
@@ -7345,13 +7346,26 @@ registerMedusaRoutes('/api/sessions/:project/medusa', resolveProjectMedusaTarget
 medusa.setArrivalObserver(({ sessionKey, workspaceId, message }) => {
   if (!message || typeof message.id !== 'string') return;
   const session = /^\d+$/.test(sessionKey) ? store.sessions.get(Number(sessionKey)) : null;
-  medusaExchanges.recordArrival({
-    hubId: message.id,
-    recipientWorkspaceId: workspaceId,
-    recipientProjectId: session ? session.projectId : null,
-    recipientSessionId: session ? sessionKey : null,
-    senderWorkspaceId: typeof message.from === 'string' ? message.from : null
-  });
+  try {
+    medusaExchanges.recordArrival({
+      hubId: message.id,
+      recipientWorkspaceId: workspaceId,
+      recipientProjectId: session ? session.projectId : null,
+      recipientSessionId: session ? sessionKey : null,
+      senderWorkspaceId: typeof message.from === 'string' ? message.from : null
+    });
+  } catch (err) { // prawduct:allow prawduct/broad-except -- the exchange record is bookkeeping; it must not stop the operator channel keeping its mail below
+    log.warn('Could not record a Medusa arrival', { sessionKey, workspaceId, error: err.message });
+  }
+  // The operator channel keeps what reaches its own workspace, durably, for its
+  // helper. Guarded on its own so neither write can cost the other its record;
+  // whether a reply is relayable is decided when the helper polls, so the order
+  // of the two does not matter.
+  try {
+    operatorChannel.recordArrival({ sessionKey, workspaceId, message });
+  } catch (err) { // prawduct:allow prawduct/broad-except -- a failed channel record must not cost the exchange its arrival; the Hub copy stays un-acked, so the Hub redelivers it after the next reconnect or restart
+    log.warn('Could not record an operator channel arrival', { sessionKey, error: err.message });
+  }
 });
 
 // ── Control state (#1861): durable HOLD / RELEASE / STOP ──
@@ -7398,6 +7412,103 @@ controlRoute('GET', '/api/control/check', (req) => controlApi.check(parseQuery(r
 // The Master's mount (#996). Deliberately the SAME family rather than a subset:
 // the outbound gate, not a missing route, is what a read-only Master meets.
 registerMedusaRoutes('/api/master/medusa', resolveMasterMedusaTarget);
+
+// ── Operator channel: a chat helper's line to one project (docs/operator-channel.md) ──
+//
+// Two kinds of caller. The helper (the Discord bridge) presents the channel's
+// own token on three routes; the perimeter refuses that token everywhere else.
+// The operator configures the channel and mints the token; an agent session
+// cannot, and neither can a local script.
+
+/** The only paths an operator channel token may reach. */
+const OPERATOR_CHANNEL_HELPER_PATH = /^\/api\/operator-channel\/(inbound|outbound|outbound\/[^/]+\/ack)$/;
+
+/**
+ * Answer a channel refusal, or rethrow anything else.
+ * @param {import('http').ServerResponse} res - Response
+ * @param {Error} err - The error
+ * @returns {void}
+ */
+function channelRefusal(res, err) {
+  if (!(err instanceof operatorChannel.ChannelError)) throw err;
+  errorResponse(res, err.status, err.message, err.code);
+}
+
+/**
+ * Refuse a caller that is not the operator. True when the route has already responded.
+ * @param {import('http').IncomingMessage} req - Request
+ * @param {import('http').ServerResponse} res - Response
+ * @returns {boolean}
+ */
+function channelOperatorRefused(req, res) {
+  const c = resolveControlCaller(req);
+  if (c.kind === 'operator') return false;
+  errorResponse(res, 403, 'Only the operator may manage the operator channel', 'OPERATOR_ONLY');
+  return true;
+}
+
+// POST /api/operator-channel/inbound — the helper hands over one operator
+// message: `{message: {id, authorId, spaceId, channelId}, text}`. 202 when new,
+// 200 for a message id already accepted. Delivery to the target project is
+// asynchronous and durable; the answer says only that it is kept.
+route('POST', '/api/operator-channel/inbound', (req, res, _params, body) => {
+  try {
+    const s = operatorChannel.settings();
+    operatorChannel.authorizeHelper(req, s);
+    const out = operatorChannel.acceptInbound(body, s);
+    jsonResponse(res, out.status, out.body);
+  } catch (err) {
+    channelRefusal(res, err);
+  }
+}, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
+
+// GET /api/operator-channel/outbound — the target project's replies waiting for
+// the helper, each with the operator message it answers when it names one.
+route('GET', '/api/operator-channel/outbound', (req, res) => {
+  try {
+    operatorChannel.authorizeHelper(req);
+    jsonResponse(res, 200, { replies: operatorChannel.listRelayable() });
+  } catch (err) {
+    channelRefusal(res, err);
+  }
+});
+
+// POST /api/operator-channel/outbound/:id/ack — the helper posted a reply:
+// `{postedId}`. The reply's text is dropped once acknowledged.
+route('POST', '/api/operator-channel/outbound/:id/ack', (req, res, params, body) => {
+  try {
+    operatorChannel.authorizeHelper(req);
+    const out = operatorChannel.acknowledge(/^\d+$/.test(params.id) ? Number(params.id) : NaN, body);
+    jsonResponse(res, out.status, out.body);
+  } catch (err) {
+    channelRefusal(res, err);
+  }
+});
+
+// GET /api/operator-channel/status — operator only. Settings (never the token
+// or its hash), the listener, and message counts per state.
+route('GET', '/api/operator-channel/status', (req, res) => {
+  if (channelOperatorRefused(req, res)) return;
+  jsonResponse(res, 200, operatorChannel.status());
+});
+
+// PUT /api/operator-channel/config — operator only: `{enabled?, targetProject?,
+// allowlist?: {authorId, spaceId, channelId}}`. Starts or stops the listener to match.
+route('PUT', '/api/operator-channel/config', (req, res, _params, body) => {
+  if (channelOperatorRefused(req, res)) return;
+  try {
+    jsonResponse(res, 200, { settings: operatorChannel.updateSettings(body) });
+  } catch (err) {
+    channelRefusal(res, err);
+  }
+});
+
+// POST /api/operator-channel/token — operator only: mint a new helper token,
+// shown once. The previous token stops working immediately.
+route('POST', '/api/operator-channel/token', (req, res) => {
+  if (channelOperatorRefused(req, res)) return;
+  jsonResponse(res, 200, operatorChannel.rotateToken());
+});
 
 
 /**
@@ -10323,6 +10434,14 @@ async function handleRequest(req, res) {
   req.tcGateState = gateState;
   req.tcGateActive = !authGate.standsDown(gateState);
 
+  // An operator channel token is good for the channel helper's three routes and
+  // nothing else. The helper that holds it relays a chat service, so nothing it
+  // sends may reach a route that would read it as the operator — refused here,
+  // at the perimeter, rather than in each operator check it could otherwise meet.
+  if (operatorChannel.presentsChannelToken(req) && !OPERATOR_CHANNEL_HELPER_PATH.test(pathname)) {
+    return errorResponse(res, 403, 'An operator channel token is not accepted on this route', 'CHANNEL_TOKEN_SCOPE');
+  }
+
   // The login page itself, on the one path `lib/auth-gate.js` exempts for it.
   // Served whether or not the gate is live, so the path does not blink into
   // existence at the moment the gate turns on. While no account exists there is
@@ -11762,6 +11881,10 @@ if (require.main === module) {
     // a TangleClaw restart would otherwise drop off the switchboard until its
     // next ensure. Probes tmux and starts nothing when tmux does not answer.
     master.resyncMasterMedusa();
+    // The operator channel's listener and delivery pump. A no-op until the
+    // operator turns the channel on; mail kept while the server was down is
+    // delivered on the first pass.
+    operatorChannel.start();
     // Resolve the operator's login PATH once, here, so no request ever pays for
     // it. launchd hands this service `/usr/bin:/bin:/usr/sbin:/sbin`, which
     // contains none of the places an engine CLI actually installs (#346) — and
@@ -11800,6 +11923,7 @@ if (require.main === module) {
     medusaWake.stop();
     activityObserver.stop();
     medusaWatchdog.stop();
+    operatorChannel.stop();
     launchUnready.stop();
     // Each startupControl adapter's reaper timer (#1825): the timers are unref'd,
     // so this is bookkeeping symmetry with `start`, not what lets the process exit.
