@@ -48,7 +48,8 @@ describe('sessionRules self-improvement (D1b)', () => {
     });
 
     it('appends a version on each update (newest first)', () => {
-      const rule = store.sessionRules.create({ content: 'v1 content', projectId: mkProject('sip-2') });
+      // proposed: an ACTIVE project rule's text no longer changes in place (edits become replacement proposals, #1696); this test is about the version mechanics, which are the same for any rule whose text does.
+      const rule = store.sessionRules.create({ content: 'v1 content', projectId: mkProject('sip-2'), status: 'proposed' });
       store.sessionRules.update(rule.id, { content: 'v2 content' });
       store.sessionRules.update(rule.id, { content: 'v3 content', changedBy: 'ai' });
       const versions = store.sessionRules.listVersions(rule.id);
@@ -76,7 +77,8 @@ describe('sessionRules self-improvement (D1b)', () => {
 
   describe('restore (rollback)', () => {
     it('rolls content + enabled back to a prior version and records the restore', () => {
-      const rule = store.sessionRules.create({ content: 'original', projectId: mkProject('sip-5') });
+      // proposed: an ACTIVE project rule's text no longer changes in place (edits become replacement proposals, #1696); this test is about the version mechanics, which are the same for any rule whose text does.
+      const rule = store.sessionRules.create({ content: 'original', projectId: mkProject('sip-5'), status: 'proposed' });
       store.sessionRules.update(rule.id, { content: 'risky autonomous edit' });
 
       const restored = store.sessionRules.restore(rule.id, 1);

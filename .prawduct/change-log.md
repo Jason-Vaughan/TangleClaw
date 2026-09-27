@@ -35,6 +35,108 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-27 — Rules lifecycle, Chunk 4: edits of a governing rule go through approval (#1696, #1709)
+
+<!-- prawduct: type=bugfix | scope=rule-retirement-1696-1709 -->
+
+Chunk 04 of 04, cumulative-final. Rulings 7 and 8 (PM d40bf543 and 437ddd43): the replacement-proposal design, and Option A on the stale-approval conflict.
+
+**The change.**
+- **Schema.** `replacement_origin` (`amendment` | `edit` | `restore`, CHECK-constrained) is added to the table definition and to the still-unshipped v51 migration's frozen DDL; the migration postcondition checks for it.
+- **Edits.** `update()` with a text change to an active project rule (`_textChangesNeedApproval`: active and not Master) files a proposal via `create()` (origin `edit`, `status: 'proposed'`, `replacesRuleId` = the rule) inside the savepoint, applies any `enabled` in the same call to the rule itself, and returns the rule plus `replacementProposed`.
+- **Rollbacks.** `restore()` does the same for a rollback to different text (origin `restore`), leaving the rule, switch included, untouched. A rollback that changes only the switch applies as before.
+- **One pending per rule.** `update()` and `restore()` refuse with `REPLACEMENT_PENDING` (carrying `pendingReplacementId`), and `create()` refuses a second amendment with `INVALID_REPLACES`. Rejected replacements do not count. Chains and cycles are impossible because a target must be active.
+- **Fail closed (Option A).** An `edit` or `restore` replacement whose target is not active at approval throws `REPLACEMENT_TARGET_INACTIVE` inside the savepoint, which undoes the approval. An explicit `amendment` keeps C1's `replaced: null`. The origin is set only by the store; the create route never passes it.
+- **Routes.** `PUT /:id` and `POST /:id/restore` answer 202 with `replacementProposed`, and 409 `REPLACEMENT_PENDING` with the pending id. The status route maps `REPLACEMENT_TARGET_INACTIVE` to 409 with `targetId`.
+- **UI.** An edit or rollback proposal reads "Edit of: <text> — approving replaces it", or "...which is now retired — it can no longer be approved". A 409 on approval explains itself and redraws the list.
+- **C3 review carry-overs.** R-4: project ids are compared numerically. R-5: restore keeps `superseded_by`. R-8: the `list()` docstring.
+
+**Final (cumulative) review** `rev-20260927T185142Z-4d706a82`: 0 blocking, 4 warnings, 4 notes.
+- **R-2/R-4, fixed.** Edit-through-approval was keyed on status, so retire → edit (applied in place) → restore → switch on put unapproved text in force with no password. A retired rule's text is now immutable (`RULE_RETIRED`, 409, on both edit and rollback), and the test runs the four steps.
+- **R-5, fixed.** A stale edit or rollback proposal shows only Reject.
+- **R-6, fixed.** The creation event carries `replacesRuleId` and `replacementOrigin`.
+- **R-3, routed to the Architect** and later ruled and fixed (below).
+- **R-1.** At that point the evidence was degraded (a system-health timing flake). The full suite later passed cleanly at 342ec0fa and on the merged tree at ec9786b7. At the PR head 75e0eef1 it was degraded by three load-sensitive tests outside the rules surface (projects dir-scanner timing, system-health wall-clock, tc-cli #1960) at load average ~24, while every session-rules test passed. The evidence is recorded as degraded rather than green.
+- **R-3, ruled and fixed (PM f690a64d).** Approving a replacement whose target was already superseded by a *different* replacement throws `REPLACEMENT_SUPERSEDED` (409, with `targetId` and `supersededBy`) inside the savepoint, for every origin, so the lineage stays single. A hand retirement still lets an amendment stand. The UI names the winning replacement and shows only Reject. The regression tests cover the Architect's exact sequence (reject A, approve sibling B, approve A: refused, only B governs), the edit variant, hand-retirement unchanged, and "latest retirement wins" after a restore. The mutant removing the guard fails 2 tests.
+
+**PR-boundary cumulative review** `rev-20260927T192447Z-e8c17c32` (after the main merge and R-3): 0 blocking, 3 warnings, 3 notes. The PR reviewer, in parallel: 0 blocking, 1 warning.
+- **R-1, fixed.** The wrap drawer's edit-then-approve read a 202 (edit filed as a replacement because the rule had been approved elsewhere) as the saved text, re-approved the OLD text and said "Approved ✓". It now says the edit was filed for approval and stops. There is a 202 widget test.
+- **R-4, fixed.** The edit/rollback-through-approval sequence lives in one helper, `_proposeTextChange`, which both doors use and which always runs in the savepoint (the rollback path was not transactional before).
+- **R-5, fixed, together with the PR reviewer's warning.** The docs table carries `RULE_RETIRED` and `REPLACEMENT_SUPERSEDED`, the amendment bullet is qualified, and the CHANGELOG has a rollback note for the v51 rebuild.
+- **R-6, fixed for this branch.** The review ids are gone from shipped comments, docs and test names. A repo-wide lint is left as a follow-up.
+- **R-2 and R-3, accepted and raised to the PM.** R-2: after restore → hand retire, a new amendment can govern beside the old replacement. That follows from explicit operator decisions, and the test now asserts it. R-3: the UI's approvability check is advisory; the server stays authoritative.
+
+**PR #1971 review, N1 (Architect ruling, PM bad9e071).** Retirement is a destructive governance state, so `active → retired` is now gated by the operator password in the status route. The check runs before anything about the rule is read: a refused caller gets 403, not an INVALID_TRANSITION or 404. The Retire button sends a typed password and reveals the field on 403, like Approve. Restore stays ungated because it lands disabled. The earlier "retire needs no password" test became the 403 contract, with new with-password and refused-learns-nothing cases, and the UI password-send and 403-reveal tests were added. The docs, the lifecycle table and the CHANGELOG replace the old "deliberately ungated" reasoning. Mutation-checked: removing the gate fails 2 tests; the UI omitting the password fails 1.
+
+**Existing tests reworked for the ruled contract, not weakened.** Tests that used "edit an active rule's text" only to generate version history (pruning, op constraint, critic_gate provenance, restore mechanics, `kind` survives a restore) now create their rule as `proposed`, whose text still edits in place. One of them ("kind survives a version restore") had started passing vacuously, and it now asserts the edit applied. The delivery digest test now also asserts that an unapproved edit does NOT change the delivered set, and that approving it does. The API critic-gate test keeps its operator-create check, adds the 202 path, and runs the in-place checks on an AI proposal.
+
+**Tests.** Store (19 new: proposal filing, approve/reject, one-pending in both directions, fail closed for retired and deleted targets, the amendment contract unchanged, enabled with content, no-op text, proposal and Master in-place edits, rollback as proposal with fail-closed and switch-only, no chains or cycles, both carry-overs). HTTP (5: 202, 409 pending with id, 409 target inactive with id, restore 202, origin not settable). UI (2). Mutation-checked six mutants: an active edit applied in place, edits not failing closed, `update` or `create` ignoring pending, a rollback applied in place, and the route passing the origin. Each turns tests red.
+
+## 2026-09-27 — Rules lifecycle, Chunk 3: the Rules Graveyard in Project Rules (#1696, #1709)
+
+<!-- prawduct: type=bugfix | scope=rule-retirement-1696-1709 -->
+
+Chunk 03 of 04. Authorized with rulings 6 and 7 (PM d40bf543): the allow-list is ratified, and the C4 replacement-proposal design is approved, with one open conflict against ruling 2, asked as a blocking question.
+
+**The change.**
+- **`renderProjectRulesList`** shows live rules only (proposed and active). Active rows get **Retire** (with a confirm); a replacement proposal shows "Approving retires: <text>", or the id when the target is not in the fetched set.
+- **The new `renderRulesGraveyard`** renders a closed `<details>`: retired rows with "Replaced by: <text>" (or `rule #N`), the retire time, and **Restore**. It renders nothing when no rule is retired.
+- **`retireProjectRule`** confirms first, then retires with no password. *(Superseded by the Architect's N1 ruling on PR #1971: retiring now needs the operator password; see the Chunk 4 entry.)* **`restoreProjectRule`** sends a bare `{status: 'active'}`, and its status line says the rule came back switched off. Both refresh the list; a failure is reported, not claimed as success.
+- **CSS:** 44px targets, and muted text via `--text-muted`.
+- **Docs.** The docs UI paragraph, the post-upgrade retire step (ruling 3), FEATURES and the CHANGELOG. The store JSDoc and docs now say the allow-list is ratified.
+- **Operator verification:** VRF-001 in the local queue covers layout, phone width, disclosure behaviour and themes. Render, escaping and wiring are pinned by tests.
+
+**Tests.** `test/project-rules-unknown.test.js` (#1054) had its own sandbox without the new helper or the #1053 shown-content map; both are added. Its handler-count guard now expects six mutation handlers (retire and restore joined add, toggle, delete and decide), and they all still re-read through the three-state refresh. The guard's real check, that `fetchProjectRules` is called only from the refresh, is unchanged. `test/project-rules-modal.test.js`: the #1053 harness now builds `renderRulesGraveyard`, `retireProjectRule` and `restoreProjectRule` from source, with a real escaper. Cases cover live/graveyard separation, the no-graveyard and ghost-only empty states, an unknown successor id, Retire on active rows only, the escaped replacement line, escaped retired and successor text, a declined confirm sending nothing, the Retire and Restore request bodies, a refused Retire reported honestly, handler routing, and the CSS targets.
+
+## 2026-09-27 — Rules lifecycle, Chunk 2: routes, tc rules, and no rejecting an active rule (#1696, #1709)
+
+<!-- prawduct: type=bugfix | scope=rule-retirement-1696-1709 -->
+
+Chunk 02 of 04. The PM authorized it (4718a04b) together with the Architect's W5 ruling.
+
+**The change.**
+- **`POST /api/session-rules`** passes `replacesRuleId` to the store and maps `INVALID_REPLACES` to 400. It is no longer dropped at the route either.
+- **Status route: retire and restore.** It is the lifecycle's one door (ruling 1). `retired` and a restore need no password. *(Superseded by the Architect's N1 ruling on PR #1971: retiring now needs the operator password; see the Chunk 4 entry.)* Without the password, `active` is accepted only as a restore: the route sets `restoreOnly`, and the store then refuses anything but `retired → active` (`APPROVAL_REQUIRES_AUTHORITY`, answered as 403). That closes the window between the route's read and the write.
+- **Status route: errors.** `INVALID_TRANSITION` maps to 400. An unknown rule without the password still answers 403, as before.
+- **W5 ruling.** `setStatus` refuses `active → rejected` with `INVALID_TRANSITION`, atomically, and retire still succeeds.
+- **`tc rules`.** The footer says retired rules are never in force and how to amend with `replacesRuleId`. It is carried there, not in the ecosystem primer, which sits at 2764 of its 2800-character cap and would have needed a budget decision.
+- **Carry-over O-4.** The wrap-reader test now calls `listWrapRules` itself.
+- **Two pre-existing tests encoded the move the W5 ruling forbids** (`test/self-improvement-loop.test.js`): "approve and reject, recording each as a version" rejected an active rule, and "drops a rule out of injection the moment it is rejected" did the same. Each keeps its intent through a path the ruling allows: reject, then approve (both decisions still snapshotted on one rule), and leaving force by retire. This is the contract change the ruling made, not a weakened test.
+
+**Chunk review** (`rev` at 7db44006): 1 blocking, 1 warning, 4 notes.
+- **Blocking, fixed.** An active rule could still be rejected in two password-free steps (active → proposed → rejected), because `setStatus` refused named moves and allowed everything else. It now enforces an allow-list, `SESSION_RULE_TRANSITIONS` (exported). The docs lifecycle table renders it between markers, and a test holds the two to each other. `active → proposed` and `rejected → proposed` are refused; no product surface used either (both UIs send only `active`, `rejected` and `retired`).
+- **Warning, fixed.** Master rules cannot be retired, which would have bypassed their `confirmBaselineEdit` path. Replacements already excluded them, and ruling 4 keeps Master rules outside this contract.
+- **Tests.** An exhaustive check of every from/to pair (allowed moves succeed; refused ones change neither status nor history), the two-step route, docs sync, and a Master retire over the store and HTTP. Mutation-checked: reopening `active → proposed` fails 2 tests; a move in code but not in the docs fails the sync test.
+
+**Tests.** Store (W5: status, text, history and delivery unchanged, plus the disabled-active case and retire still working; `restoreOnly`). HTTP (the create link and INVALID_REPLACES; approval `replaced` and `replacementSkipped`; `PUT /:id` refusing the field; ungated retire and restore; INVALID_TRANSITION; the approval gate unchanged; 403 for an unknown rule). `tc rules`. Mutation-checked seven mutants: restore gated, `restoreOnly` ignored, `active → rejected` allowed, `replacesRuleId` dropped at POST, INVALID_TRANSITION unmapped, the footer removed, and `listWrapRules` losing its filter. Each turns tests red.
+
+## 2026-09-27 — Rules lifecycle: retirement and supersession, Chunk 1: schema v51 and store transitions (#1696, #1709)
+
+<!-- prawduct: type=bugfix | scope=rule-retirement-1696-1709 -->
+
+Chunk 01 of 04. The PM dispatched it (0f6fd06f). Architect rulings 1-4 (cc2f6e32): (1) the existing status route; (2) a replacement whose target is inactive still approves, with `replaced: null` and an audit detail; (3) no install-specific ids in the migration; (4) edits to an active project rule go through approval. Ruling 4(a) first said to demote the rule to proposed; Chunk 04 shipped the Architect's later refinement (ruling 7), where an edit files a replacement proposal and the rule keeps governing. Plan: `.tangleclaw/plans/1696-1709-rule-retirement.md` (local, not tracked).
+
+**The change.**
+- **Schema v51.** `'retired'` is added to the status CHECK, plus `replaces_rule_id`, `superseded_by` and `retired_at`. SQLite cannot alter a CHECK, so the table is rebuilt with rows verbatim and foreign keys off outside the transaction. A postcondition refuses to advance the version.
+- **Table definition.** Fresh installs build the table from `_sessionRulesTableDdl()`. The v51 migration carries a frozen copy, and a test asserts that an upgraded store equals a fresh one. Pre-existing drift fixed: fresh installs never had `idx_session_rules_status`, because only the v26→v27 migration created it. It is now created after migrations in `init()`, not in the base schema, which would break a pre-v27 store that has no status column yet.
+- **Transitions** in `setStatus`: retire only from `active` (the #1709 operator ruling); restore only `retired → active`, landing `enabled: false`; everything else into or out of `retired` is refused with `INVALID_TRANSITION`. `create` refuses a born-retired rule.
+- **Supersession.** Approving a replacement retires its target atomically with #1053's CAS (the store's savepoint helper, so it also nests). The CAS runs first and throws inside the transaction, so a refused approval retires nothing. An inactive target yields `replaced: null` plus `replacementSkipped: {id, reason}` in both the result and the activity log (ruling 2). A replacement created already active retires its target at once.
+- **replacesRuleId** is validated at create (`INVALID_REPLACES`: missing, non-integer, another project or kind, not active, Master) and refused by `update`, not ignored.
+
+**Chunk review** (`rev-20260927T151645Z-8d41bfea`: 0 blocking, 6 warnings, 9 notes). Fixed before Chunk 02:
+- The result shape now matches Architect ruling 2 exactly: `replaced: null` plus `replacementSkipped: {id, reason}`.
+- `projectsWithUndeliveredRules` counts only active rules. Before, retired rules and, since #569, proposals raised false "undelivered" alarms.
+- The missing reader tests are added (wrap, Master, conflict candidates).
+- Supersession uses the savepoint helper, so it also works inside a caller's transaction.
+- `criticGate` is validated before any write.
+- Un-retiring logs `session_rule.unretired`, distinct from the version-rollback `restored`.
+- The v51 migration carries a frozen copy of its DDL, and a new test asserts that an upgraded store equals a fresh one.
+- The docs record why retire needs no password. *(Superseded by the Architect's N1 ruling on PR #1971: retiring now needs the operator password; see the Chunk 4 entry.)*
+
+W5 (an active rule can be set to `rejected` with no password, leaving both the list and the Graveyard) predates this work and is routed to the Architect.
+
+**Tests.** `test/session-rule-lifecycle.test.js` (new). `test/workload-receipts.test.js`'s upgrade assertion now compares against `CURRENT_SCHEMA_VERSION` instead of a literal 50, because a later migration runs after v50 on the same upgrade. Its table assertions are unchanged, so this is not a weakening. Mutation-checked eight mutants: retire from any status, restore leaving `enabled`, target status unchecked, a live replacement not retiring, `update` ignoring the field, retire-before-CAS without a transaction, an inactive target throwing, and a born-retired rule. Each turns tests red.
+
 ## 2026-09-27 — Rule approval compare-and-set: approval ratifies only the text the operator saw (#1053)
 
 <!-- prawduct: type=bugfix | scope=rule-approval-cas-1053 -->

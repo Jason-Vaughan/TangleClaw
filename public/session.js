@@ -5717,6 +5717,16 @@ async function resolveRuleProposal(proposal, decision, els) {
         finishEnabled();
         return;
       }
+      // The rule is already governing (approved elsewhere since this drawer
+      // rendered), so the server filed the edit as a replacement proposal
+      // instead of applying it (#1696). The body is the unchanged rule:
+      // approving it now would re-approve the OLD text and claim success while
+      // the edit waits. Say what happened and stop.
+      if (saved.replacementProposed) {
+        els.row.classList.add('wrap-proposal-row--decided');
+        note.textContent = 'This rule was already approved, so your edit was filed as a change to it, awaiting approval in Settings → Project Rules. Nothing else was approved.';
+        return;
+      }
       // What the store persisted, not our copy of it: the approval below must
       // echo the canonical text back exactly.
       proposal.content = typeof saved.content === 'string' ? saved.content : edited;

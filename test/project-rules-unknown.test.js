@@ -63,7 +63,8 @@ function build(api) {
     'async function refreshProjectRulesList(projectId, kind)',
     'async function refreshAfterProjectRuleMutation(verb, kind)',
     'function renderProjectRulesUnknown(kind, why)',
-    'function renderProjectRulesList(kind, rules)'
+    'function renderProjectRulesList(kind, rules)',
+    'function renderRulesGraveyard(retired, byId)'
   ];
   const source = decls.map((d) => d + functionBody(UI_SRC, d)).join('\n');
   const statuses = [];
@@ -74,6 +75,7 @@ function build(api) {
     esc: (s) => String(s == null ? '' : s),
     encodeURIComponent,
     projectRulesTargetId: 7,
+    projectRuleShownContent: new Map(),
     _setProjectRulesStatus: (text, ok) => statuses.push({ text, ok }),
     console
   });
@@ -170,8 +172,10 @@ describe('#1054 — a failed Project Rules read renders as unknown', () => {
     const calls = UI_SRC.match(/fetchProjectRules\(/g) || [];
     assert.equal(calls.length, 2,
       'fetchProjectRules is declared once and called once (inside refreshProjectRulesList)');
+    // Six handlers: add, toggle, delete, approve/reject, and retire and restore
+    // (#1709). A new handler that re-reads must come through here too.
     const handlers = UI_SRC.match(/refreshAfterProjectRuleMutation\(/g) || [];
-    assert.equal(handlers.length, 5,
-      'declared once and called by the four mutation handlers');
+    assert.equal(handlers.length, 7,
+      'declared once and called by the six mutation handlers');
   });
 });

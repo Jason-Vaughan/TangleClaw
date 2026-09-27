@@ -89,12 +89,15 @@ describe('self-improvement loop (#569)', () => {
       assert.equal(store.sessionRules.get(rule.id).status, 'proposed');
     });
 
-    it('lets the operator approve and reject, recording each as a version', () => {
+    it('lets the operator reject and approve, recording each as a version', () => {
+      // Reject first, then approve: an ACTIVE rule can no longer be rejected
+      // (#1709 ruling — retire is how an active rule leaves force), so this is
+      // the order in which one rule can carry both decisions.
       const rule = store.sessionRules.create({ content: 'a proposal', projectId: project.id, createdBy: 'ai' });
-      const approved = store.sessionRules.setStatus(rule.id, 'active', { expectedContent: 'a proposal' });
-      assert.equal(approved.status, 'active');
       const rejected = store.sessionRules.setStatus(rule.id, 'rejected');
       assert.equal(rejected.status, 'rejected');
+      const approved = store.sessionRules.setStatus(rule.id, 'active', { expectedContent: 'a proposal' });
+      assert.equal(approved.status, 'active');
       const versions = store.sessionRules.listVersions(rule.id);
       assert.ok(versions.length >= 3, 'create + two decisions must all be snapshotted');
     });
@@ -242,10 +245,12 @@ describe('self-improvement loop (#569)', () => {
       assert.ok(!injected.includes('proposed master'));
     });
 
-    it('drops a rule out of injection the moment it is rejected', () => {
+    it('drops a rule out of injection the moment it leaves force', () => {
+      // Retire, not reject: rejecting an active rule is refused since the #1709
+      // ruling, and retiring is how a governing rule is taken out of force.
       const rule = store.sessionRules.create({ content: 'was fine', projectId: project.id });
       assert.equal(store.sessionRules.listActiveForProject(project.id).length, 1);
-      store.sessionRules.setStatus(rule.id, 'rejected');
+      store.sessionRules.setStatus(rule.id, 'retired');
       assert.equal(store.sessionRules.listActiveForProject(project.id).length, 0);
     });
   });

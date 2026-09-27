@@ -96,8 +96,9 @@ describe('api/session-rules self-improvement (D1b)', () => {
   });
 
   it('lists versions and restores a prior version', async () => {
-    const created = (await request('POST', '/api/session-rules', { content: 'rev one', projectId: pid })).data;
-    await request('PUT', `/api/session-rules/${created.id}`, { content: 'rev two' });
+    // An AI proposal: proposed: an ACTIVE project rule's text no longer changes in place (edits become replacement proposals, #1696); this test is about the version mechanics, which are the same for any rule whose text does.
+    const created = (await request('POST', '/api/session-rules', { content: 'rev one', projectId: pid, createdBy: 'ai' })).data;
+    assert.equal((await request('PUT', `/api/session-rules/${created.id}`, { content: 'rev two' })).status, 200);
 
     const versions = (await request('GET', `/api/session-rules/${created.id}/versions`)).data.versions;
     assert.equal(versions.length, 2);
@@ -120,15 +121,22 @@ describe('api/session-rules self-improvement (D1b)', () => {
     let versions = (await request('GET', `/api/session-rules/${created.id}/versions`)).data.versions;
     assert.equal(versions[0].criticGate, 'not-required');
 
-    // Explicit attestation on an AI update flows through.
-    await request('PUT', `/api/session-rules/${created.id}`, { content: 'gate two', createdBy: 'ai', changedBy: 'ai', criticGate: 'passed' });
-    versions = (await request('GET', `/api/session-rules/${created.id}/versions`)).data.versions;
-    assert.equal(versions[0].criticGate, 'passed');
+    // An AI edit of that ACTIVE rule becomes a replacement proposal (#1696);
+    // the attestation travels onto the proposal's own first version.
+    const edit = await request('PUT', `/api/session-rules/${created.id}`, { content: 'gate two', changedBy: 'ai', criticGate: 'passed' });
+    assert.equal(edit.status, 202);
+    const proposalVersions = (await request('GET', `/api/session-rules/${edit.data.replacementProposed.id}/versions`)).data.versions;
+    assert.equal(proposalVersions[0].criticGate, 'passed');
 
-    // Attestation flows through restore too.
-    const restored = await request('POST', `/api/session-rules/${created.id}/restore`, { versionNo: 1, changedBy: 'ai', criticGate: 'passed' });
+    // Explicit attestation on an in-place AI update and a restore flows through.
+    // (An AI proposal: proposed: an ACTIVE project rule's text no longer changes in place (edits become replacement proposals, #1696); this test is about the version mechanics, which are the same for any rule whose text does.)
+    const draft = (await request('POST', '/api/session-rules', { content: 'draft one', projectId: pid, createdBy: 'ai' })).data;
+    await request('PUT', `/api/session-rules/${draft.id}`, { content: 'draft two', changedBy: 'ai', criticGate: 'passed' });
+    versions = (await request('GET', `/api/session-rules/${draft.id}/versions`)).data.versions;
+    assert.equal(versions[0].criticGate, 'passed');
+    const restored = await request('POST', `/api/session-rules/${draft.id}/restore`, { versionNo: 1, changedBy: 'ai', criticGate: 'passed' });
     assert.equal(restored.status, 200);
-    versions = (await request('GET', `/api/session-rules/${created.id}/versions`)).data.versions;
+    versions = (await request('GET', `/api/session-rules/${draft.id}/versions`)).data.versions;
     assert.equal(versions[0].criticGate, 'passed');
   });
 

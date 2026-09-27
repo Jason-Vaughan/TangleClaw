@@ -198,27 +198,46 @@ describe('Project Rules modal (CC-6, #381)', () => {
       const shown = new Map();
       const api = { lastError: null, lastErrorCode: null, lastBody: null };
       const listEl = { innerHTML: '' };
-      const document = { getElementById: (id) => (id.startsWith('projRulesList-') ? listEl : null) };
+      const pwGroupClasses = new Set(['hidden']);
+      const pwInput = { value: harness.typedPassword || '', focus: () => {} };
+      const pwGroup = { classList: { remove: (c) => pwGroupClasses.delete(c) } };
+      const document = { getElementById: (id) => {
+        if (id.startsWith('projRulesList-')) return listEl;
+        if (id === 'projRulesPw') return pwInput;
+        if (id === 'projRulesPwGroup') return pwGroup;
+        return null;
+      } };
       const apiMutate = async (url, method, body) => {
         calls.push({ url, method, body });
         return respond(url, method, body, api);
       };
+      const confirms = [];
+      const mutations = [];
       const deps = {
-        document, apiMutate, api, projectRuleShownContent: shown, esc: (x) => String(x),
+        document, apiMutate, api, projectRuleShownContent: shown,
+        // A real escaper, so the rendered HTML can be checked for injection.
+        esc: (x) => String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
         _setProjectRulesStatus: (msg, ok) => statuses.push({ msg, ok }),
         refreshProjectRulesList: async (pid, kind) => { refreshes.push({ pid, kind }); return true; },
-        refreshAfterProjectRuleMutation: async () => {},
-        projectRulesTargetId: 3
+        refreshAfterProjectRuleMutation: async (verb, kind) => { mutations.push({ verb, kind }); },
+        projectRulesTargetId: 3,
+        confirm: (msg) => { confirms.push(msg); return harness.confirmAnswer !== false; },
+        renderRulesGraveyard: null
       };
       const names = Object.keys(deps);
       // eslint-disable-next-line no-new-func
       const build = (sig, decl) => new Function(...names,
         `return ${sig} ${functionBody(decl)};`)(...names.map((n) => deps[n]));
+      deps.renderRulesGraveyard = build('function renderRulesGraveyard(retired, byId)', 'function renderRulesGraveyard(');
       return {
         render: build('function renderProjectRulesList(kind, rules)', 'function renderProjectRulesList('),
         resolve: build('async function resolveProjectRuleProposal(id, status, kind)',
           'async function resolveProjectRuleProposal('),
-        calls, statuses, refreshes, shown
+        retire: build('async function retireProjectRule(id, kind)', 'async function retireProjectRule('),
+        restore: build('async function restoreProjectRule(id, kind)', 'async function restoreProjectRule('),
+        html: () => listEl.innerHTML,
+        pwShown: () => !pwGroupClasses.has('hidden'),
+        calls, statuses, refreshes, shown, confirms, mutations
       };
     }
 
@@ -261,6 +280,204 @@ describe('Project Rules modal (CC-6, #381)', () => {
       h.render('startup', [proposed(5, 'text')]);
       await h.resolve(5, 'rejected', 'startup');
       assert.deepEqual(h.calls[0].body, { status: 'rejected' });
+    });
+
+    // #1709: retired rules leave the live list for the Rules Graveyard.
+    describe('the Rules Graveyard (#1709)', () => {
+      const active = (id, content, extra = {}) => ({ id, content, status: 'active', enabled: true, createdBy: 'operator', ...extra });
+      const retiredRule = (id, content, extra = {}) => ({ id, content, status: 'retired', enabled: true, createdBy: 'operator', retiredAt: '2026-09-27 16:00:00', supersededBy: null, ...extra });
+      const liveOf = (html) => html.split('<details')[0];
+      const graveOf = (html) => (html.includes('<details') ? html.slice(html.indexOf('<details')) : '');
+
+      it('keeps retired rules out of the live list and puts them in the Graveyard', () => {
+        const h = harness(() => ({}));
+        h.render('startup', [active(1, 'the new path'), retiredRule(2, 'the dead path', { supersededBy: 1 })]);
+        assert.match(liveOf(h.html()), /the new path/);
+        assert.doesNotMatch(liveOf(h.html()), /the dead path/, 'a dead rule must not look like one switched off');
+        assert.match(graveOf(h.html()), /Rules Graveyard \(1\)/);
+        assert.match(graveOf(h.html()), /the dead path/);
+        assert.match(graveOf(h.html()), /Replaced by: the new path/, 'the Graveyard says what replaced it');
+        assert.match(graveOf(h.html()), /Retired 2026-09-27 16:00:00/);
+        assert.match(graveOf(h.html()), /data-action="restore-rule" data-rule-id="2"/);
+      });
+
+      it('shows no Graveyard when nothing is retired, and the empty state when only dead rules exist', () => {
+        const h = harness(() => ({}));
+        h.render('startup', [active(1, 'alive')]);
+        assert.doesNotMatch(h.html(), /<details/);
+        h.render('startup', [retiredRule(2, 'only a ghost')]);
+        assert.match(liveOf(h.html()), /No rules yet\./);
+        assert.match(graveOf(h.html()), /only a ghost/);
+      });
+
+      it('names a successor it cannot see by id rather than inventing text', () => {
+        const h = harness(() => ({}));
+        h.render('startup', [retiredRule(2, 'orphaned', { supersededBy: 77 })]);
+        assert.match(graveOf(h.html()), /Replaced by: rule #77/);
+      });
+
+      it('offers Retire on an active row, and tells a replacement proposal what approving retires', () => {
+        const h = harness(() => ({}));
+        h.render('startup', [active(1, 'old <b>text</b>'), { ...proposed(3, 'new text'), replacesRuleId: 1 }]);
+        assert.match(h.html(), /data-action="retire-rule" data-rule-id="1"/);
+        assert.doesNotMatch(h.html(), /data-action="retire-rule" data-rule-id="3"/, 'a proposal cannot be retired');
+        assert.match(h.html(), /Approving retires: old &lt;b&gt;text&lt;\/b&gt;/, 'the replaced text, escaped');
+      });
+
+      it('does not promise a retirement that will not happen', () => {
+        const h = harness(() => ({}));
+        h.render('startup', [
+          retiredRule(1, 'already dead'),
+          { ...proposed(3, 'amends the dead one'), replacesRuleId: 1 },
+          { ...proposed(4, 'amends a deleted one'), replacesRuleId: 99 }
+        ]);
+        const live = liveOf(h.html());
+        assert.doesNotMatch(live, /Approving retires/, 'neither target will be retired');
+        assert.match(live, /Replaces already dead, which is already retired — approving retires nothing/);
+        assert.match(live, /Replaces rule #99, which no longer exists — approving retires nothing/);
+      });
+
+      it('says when an approval retired nothing', async () => {
+        const h = harness(() => ({ id: 3, status: 'active', replaced: null,
+          replacementSkipped: { id: 1, reason: 'rule 1 was already retired, so there was nothing to retire' } }));
+        h.render('startup', [{ ...proposed(3, 'late amendment'), replacesRuleId: 1 }]);
+        await h.resolve(3, 'active', 'startup');
+        assert.match(h.statuses[0].msg, /Nothing was retired: rule 1 was already retired/);
+      });
+
+      it('labels an edit or rollback as a change to that rule, and says when it can no longer be approved', () => {
+        const h = harness(() => ({}));
+        h.render('startup', [
+          active(1, 'live original'),
+          { ...proposed(3, 'edited'), replacesRuleId: 1, replacementOrigin: 'edit' },
+          retiredRule(5, 'dead original'),
+          { ...proposed(6, 'rolled back'), replacesRuleId: 5, replacementOrigin: 'restore' }
+        ]);
+        const live = liveOf(h.html());
+        assert.match(live, /Edit of: live original — approving replaces it/);
+        assert.match(live, /Rollback of dead original, which is now retired — it can no longer be approved/);
+        assert.doesNotMatch(live, /Approving retires: live original/, 'an edit is not an amendment');
+      });
+
+      it('offers only Reject on an edit whose rule is gone, since Approve can only fail', () => {
+        const h = harness(() => ({}));
+        h.render('startup', [
+          active(1, 'live original'),
+          { ...proposed(3, 'fresh edit'), replacesRuleId: 1, replacementOrigin: 'edit' },
+          { ...proposed(4, 'stale edit'), replacesRuleId: 99, replacementOrigin: 'edit' },
+          { ...proposed(5, 'stale amendment'), replacesRuleId: 99, replacementOrigin: 'amendment' }
+        ]);
+        assert.match(h.html(), /data-action="approve-rule" data-rule-id="3"/);
+        assert.doesNotMatch(h.html(), /data-action="approve-rule" data-rule-id="4"/);
+        assert.match(h.html(), /data-action="reject-rule" data-rule-id="4"/);
+        assert.match(h.html(), /data-action="approve-rule" data-rule-id="5"/, 'an amendment still stands on its own');
+      });
+
+      it('shows a replacement of an already-replaced rule as unapprovable, naming the winner', () => {
+        const h = harness(() => ({}));
+        h.render('startup', [
+          active(2, 'winning replacement'),
+          retiredRule(1, 'the original', { supersededBy: 2 }),
+          { ...proposed(3, 'losing amendment'), replacesRuleId: 1, replacementOrigin: 'amendment' }
+        ]);
+        assert.match(liveOf(h.html()), /Replaces the original, which was already replaced by winning replacement — it can no longer be approved/);
+        assert.doesNotMatch(h.html(), /data-action="approve-rule" data-rule-id="3"/);
+      });
+
+      it('explains a refused second replacement, and redraws', async () => {
+        const h = harness((url, method, body, api) => { api.lastErrorCode = 'REPLACEMENT_SUPERSEDED'; return null; });
+        h.render('startup', [proposed(3, 'late')]);
+        await h.resolve(3, 'active', 'startup');
+        assert.match(h.statuses[0].msg, /Another replacement already replaced that rule/);
+        assert.deepEqual(h.refreshes, [{ pid: 3, kind: 'startup' }]);
+      });
+
+      it('explains a stale edit refused at approval, and redraws', async () => {
+        const h = harness((url, method, body, api) => {
+          api.lastErrorCode = 'REPLACEMENT_TARGET_INACTIVE';
+          api.lastError = 'gone';
+          return null;
+        });
+        h.render('startup', [{ ...proposed(3, 'edited'), replacesRuleId: 1, replacementOrigin: 'edit' }]);
+        await h.resolve(3, 'active', 'startup');
+        assert.match(h.statuses[0].msg, /no longer active, so the edit cannot be approved — nothing was approved/);
+        assert.equal(h.statuses[0].ok, false);
+        assert.deepEqual(h.refreshes, [{ pid: 3, kind: 'startup' }]);
+      });
+
+      it('escapes retired content and successor text', () => {
+        const h = harness(() => ({}));
+        h.render('startup', [active(1, '<img src=x>'), retiredRule(2, '<script>x</script>', { supersededBy: 1 })]);
+        assert.doesNotMatch(h.html(), /<script>|<img src=x>/);
+      });
+
+      it('Retire asks first, and does nothing when declined', async () => {
+        const h = harness(() => ({ id: 1, status: 'retired' }));
+        harness.confirmAnswer = false;
+        try {
+          await h.retire(1, 'startup');
+        } finally {
+          harness.confirmAnswer = undefined;
+        }
+        assert.equal(h.confirms.length, 1);
+        assert.match(h.confirms[0], /Rules Graveyard/);
+        assert.equal(h.calls.length, 0, 'a declined confirm sends nothing');
+      });
+
+      it('Retire, once confirmed, retires and re-reads the list', async () => {
+        const h = harness(() => ({ id: 1, status: 'retired' }));
+        await h.retire(1, 'wrap');
+        assert.deepEqual(h.calls[0], { url: '/api/session-rules/1/status', method: 'PUT', body: { status: 'retired' } });
+        assert.match(h.statuses[0].msg, /Graveyard/);
+        assert.deepEqual(h.mutations, [{ verb: 'Retired', kind: 'wrap' }]);
+      });
+
+      it('Retire sends a typed password, as the server now requires one (#1709 ruling)', async () => {
+        harness.typedPassword = 'hunter2';
+        try {
+          const h = harness(() => ({ id: 1, status: 'retired' }));
+          await h.retire(1, 'startup');
+          assert.deepEqual(h.calls[0].body, { status: 'retired', password: 'hunter2' });
+        } finally {
+          harness.typedPassword = undefined;
+        }
+      });
+
+      it('a 403 on Retire reveals the password field instead of failing opaquely', async () => {
+        const h = harness((url, method, body, api) => { api.lastErrorCode = 'FORBIDDEN'; api.lastError = 'password required'; return null; });
+        await h.retire(1, 'startup');
+        assert.ok(h.pwShown(), 'the hidden password group is revealed');
+        assert.match(h.statuses[0].msg, /needs the delete password — enter it above and tap Retire again/);
+        assert.equal(h.mutations.length, 0, 'nothing is re-read as if it had succeeded');
+      });
+
+      it('Restore sends a bare restore and says the rule comes back switched off', async () => {
+        const h = harness(() => ({ id: 2, status: 'active', enabled: false }));
+        await h.restore(2, 'startup');
+        assert.deepEqual(h.calls[0].body, { status: 'active' }, 'no password, no expectedContent: a restore grants nothing');
+        assert.match(h.statuses[0].msg, /switched off/);
+        assert.deepEqual(h.mutations, [{ verb: 'Restored', kind: 'startup' }]);
+      });
+
+      it('reports a refused Retire instead of claiming it happened', async () => {
+        const h = harness((url, method, body, api) => { api.lastError = 'rule 1 is proposed'; return null; });
+        await h.retire(1, 'startup');
+        assert.equal(h.statuses[0].ok, false);
+        assert.match(h.statuses[0].msg, /Retire failed: rule 1 is proposed/);
+        assert.equal(h.mutations.length, 0);
+      });
+
+      it('style.css styles the Graveyard with 44px touch targets', () => {
+        assert.match(css, /\.rules-graveyard > summary\s*\{[^}]*min-height:\s*44px/);
+        assert.match(css, /\.session-rule-item--retired \.btn\s*\{[^}]*min-height:\s*44px/);
+        assert.match(css, /\.session-rule-replaces/);
+      });
+
+      it('routes the Retire and Restore buttons through the section handler', () => {
+        const body = functionBody('function handleProjectRulesEvent(');
+        assert.match(body, /action === 'retire-rule'[^}]*retireProjectRule\(/);
+        assert.match(body, /action === 'restore-rule'[^}]*restoreProjectRule\(/);
+      });
     });
   });
 });

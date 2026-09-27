@@ -183,7 +183,12 @@ describe('startup session-rule delivery (#595)', () => {
       const second = sessions.buildStartupRulesSection(project.id).digest;
       assert.equal(first, second, 'an unchanged rule set must hash identically');
 
-      store.sessionRules.update(rule.id, { content: 'edited directive' });
+      // An edit of an active rule is a replacement proposal (#1696): the rule
+      // set does not change until it is approved — and then it does.
+      const edited = store.sessionRules.update(rule.id, { content: 'edited directive' });
+      assert.equal(sessions.buildStartupRulesSection(project.id).digest, first,
+        'an unapproved edit must not change what sessions receive');
+      store.sessionRules.setStatus(edited.replacementProposed.id, 'active', { expectedContent: 'edited directive' });
       assert.notEqual(sessions.buildStartupRulesSection(project.id).digest, first);
     });
 
