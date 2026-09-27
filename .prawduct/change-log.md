@@ -46,6 +46,22 @@ The PM dispatched this over Medusa. The Architect scoped it strictly to test det
 **The change.** Test-only. The test calls `codex.fire` directly, awaits `handles.accepted`, and then sends the approval, resolve, user-input and completion sequence, waiting for each step's patch (`untilPatch`) instead of a wall-clock offset. Every assertion is unchanged. No product code changed.
 
 **Evidence.** With the old test's timer shortened to 1 ms it failed 9 runs in 10, on the same assertion as CI. The new test passed 50 of 50 under 8 CPU-bound loads. `test/startup-control-codex.test.js`: 48 of 48.
+## 2026-09-27 — Deterministic sidecar and system-health timing tests (#1950)
+
+<!-- prawduct: type=bugfix | scope=timing-flakes-1950 -->
+
+The PM dispatched it over Medusa. Both flakes were found in the #1836 suite run, where they were also red on clean base c5c05a70.
+
+**Problem.** `test/sidecar.test.js` "re-arms the loop after every tick" counted failing ticks in a 220 ms wall-clock window, which the loop's own backoff (20, 40, 80 ms) and host load both shrink. `test/system-health.test.js` "never awaits the measurement" asserted `getHealth()` < 1000 ms while leaving the real git, filesystem and network probes live. Under 8-way concurrent load, clean base failed 8 of 8 runs.
+
+**The change.**
+- **Sidecar.** `lib/sidecar.js` gains a scheduler seam (`_seams.setTimeout` / `clearTimeout`, real timers by default) that the loop and both stop paths go through. The test keeps the real failing poll, observes each re-arm as an event, fires the next tick itself, and also asserts the backoff grows.
+- **System-health.** The test stubs the unrelated probes and asserts that `getHealth()` resolves while the never-settling probe was started, which is the proof of "not awaited". The wall-clock bound is gone.
+- **Both** keep a 30-second guard that exists only to turn a hang into a failure.
+
+**Evidence.**
+- 8-way concurrent stress: 0 of 8 runs fail, against 8 of 8 on clean base.
+- Mutation checks: removing `.finally(scheduleNext)`, and making `getHealth` await the in-flight measurement, each fail the test with its named message.
 
 ## 2026-09-27 — Rule approval compare-and-set: approval ratifies only the text the operator saw (#1053)
 

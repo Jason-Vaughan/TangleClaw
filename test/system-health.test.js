@@ -115,10 +115,29 @@ describe('lib/system-health (#345)', () => {
       // THE MUTATION THIS CATCHES: `await probes.measureLeak()` on the request
       // path, which is the BLOCKING finding: `ps -A` stalls during the very
       // incident this detects.
-      systemHealth._setProbes({ ...DARWIN, measureLeak: () => new Promise(() => {}) });
-      const started = Date.now();
-      const health = await systemHealth.getHealth();
-      assert.ok(Date.now() - started < 1000, 'the route answered without waiting on the probe');
+      //
+      // The probe NEVER settles, so a getHealth that awaited it could never
+      // resolve: resolving at all is the proof, and no elapsed-time bound is
+      // involved. The other probes are stubbed so the answer does not depend on
+      // git, the filesystem or the network on a loaded host. The race below is
+      // only a hang detector, so a regression fails instead of stalling the run.
+      let probeStarted = false;
+      systemHealth._setProbes({
+        ...DARWIN,
+        measureLeak: () => { probeStarted = true; return new Promise(() => {}); },
+        serverInfo: () => syncedInfo(),
+        restartImpact: EXECUTABLE,
+        probeDir: async () => ({ entries: 3 })
+      });
+      const HUNG = Symbol('hung');
+      let guard;
+      const health = await Promise.race([
+        systemHealth.getHealth(),
+        new Promise((resolve) => { guard = setTimeout(() => resolve(HUNG), 30000); })
+      ]);
+      clearTimeout(guard);
+      assert.notEqual(health, HUNG, 'getHealth waited on a measurement that never completes');
+      assert.equal(probeStarted, true, 'the measurement was started, so resolving is not vacuous');
       assert.equal(health.conditions[0].state, 'unknown');
     });
 
