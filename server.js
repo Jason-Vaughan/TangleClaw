@@ -5488,7 +5488,8 @@ route('POST', '/api/session-rules/promote', (_req, res, _params, body) => {
 
 // PUT /api/session-rules/:id/status — the rule lifecycle's one door.
 // Approve ('active') or decline ('rejected') a proposal (#569); retire an
-// active rule ('retired') or restore a retired one ('active') (#1709). An
+// active rule ('retired', operator password required) or restore a retired
+// one ('active') (#1709). An
 // approval must carry `expectedContent`, the exact text the operator was
 // shown, and is refused (409) if the rule no longer holds it (#1053). A
 // rejection is RECORDED rather than deleted: the wrap proposes from recurring
@@ -5505,12 +5506,20 @@ route('PUT', '/api/session-rules/:id/status', (_req, res, params, body) => {
   // `changedBy` is the caller describing itself — an agent that omits it is
   // recorded as the operator — so it cannot be what decides this.
   //
-  // Declining a proposal and retiring a rule need no gate: neither grants
-  // anything. Restoring a retired rule needs none either, because it comes
-  // back DISABLED — so without the password, 'active' is allowed only as a
-  // restore, and `restoreOnly` makes the store refuse anything else. That
-  // closes the gap between this read and the write: a rule that stopped being
-  // retired in between cannot be approved through the un-gated door.
+  // Retiring takes a governing rule out of force for good — unlike switching
+  // it off, which the operator can undo in place — so it carries the same gate
+  // as approval (Architect ruling on #1709). Checked before anything about the
+  // rule is looked at, so a refused caller learns nothing about it.
+  if (body.status === 'retired') {
+    const check = projects.checkDeletePassword(body ? body.password : undefined);
+    if (!check.allowed) return errorResponse(res, 403, check.error, 'FORBIDDEN');
+  }
+  // Declining a proposal needs no gate: it grants nothing. Nor does restoring
+  // a retired rule, because it comes back DISABLED — so without the password,
+  // 'active' is allowed only as a restore, and `restoreOnly` makes the store
+  // refuse anything else. That closes the gap between this read and the
+  // write: a rule that stopped being retired in between cannot be approved
+  // through the un-gated door.
   let restoreOnly = false;
   if (body.status === 'active') {
     const check = projects.checkDeletePassword(body ? body.password : undefined);

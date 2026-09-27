@@ -340,12 +340,32 @@ describe('api self-improvement loop (#569)', () => {
       assert.equal(store.sessionRules.get(next.id).replacesRuleId, old.id);
     });
 
-    it('retires an active rule without the password — it grants nothing', async () => {
+    // Architect ruling on #1709: retiring takes a governing rule out of force,
+    // unlike a reversible switch-off, so it carries the approval gate.
+    it('REFUSES to retire an active rule without the operator password, changing nothing', async () => {
       const rule = live(`to retire ${Date.now()}`);
       setOperatorPassword('hunter2');
       const res = await request('PUT', `/api/session-rules/${rule.id}/status`, { status: 'retired' });
+      assert.equal(res.status, 403);
+      assert.equal(res.data.code, 'FORBIDDEN');
+      assert.equal(statusOf(rule.id), 'active', 'the rule still governs');
+    });
+
+    it('retires an active rule once the password is supplied', async () => {
+      const rule = live(`to retire with pw ${Date.now()}`);
+      setOperatorPassword('hunter2');
+      const res = await request('PUT', `/api/session-rules/${rule.id}/status`, { status: 'retired', password: 'hunter2' });
       assert.equal(res.status, 200);
       assert.equal(res.data.status, 'retired');
+    });
+
+    it('checks the password before the transition, so a refused caller learns nothing about the rule', async () => {
+      const rule = proposal();
+      setOperatorPassword('hunter2');
+      const res = await request('PUT', `/api/session-rules/${rule.id}/status`, { status: 'retired' });
+      assert.equal(res.status, 403, 'not the 400 INVALID_TRANSITION a proposal would otherwise answer');
+      const unknown = await request('PUT', '/api/session-rules/99999999/status', { status: 'retired' });
+      assert.equal(unknown.status, 403, 'nor a 404 for a rule that does not exist');
     });
 
     it('refuses to retire a proposal with 400 INVALID_TRANSITION', async () => {

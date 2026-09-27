@@ -54,7 +54,7 @@ machine-specific — TangleClaw's SessionStart hooks live in the ignored
   | `proposed` | `rejected` | Decline |
   | `rejected` | `active` | Approve a declined proposal after all (same gate and text check) |
   | `active` | `active` | Re-approve: a no-op beyond the text check |
-  | `active` | `retired` | Retire. Not for Master rules, which keep their own confirmed disable/delete path |
+  | `active` | `retired` | Retire: password-gated, like approval. Not for Master rules, which keep their own confirmed disable/delete path |
   | `retired` | `active` | Restore. Lands `enabled: false`, so it governs again only once switched on |
   <!-- lifecycle-table:end -->
 
@@ -114,12 +114,14 @@ machine-specific — TangleClaw's SessionStart hooks live in the ignored
   govern. A rejected replacement no longer counts. There are no chains or cycles: a
   target must be `active`, so a pending proposal, or a retired original, cannot be
   replaced.
-- **Retire and restore need no operator password, deliberately.** Retiring removes a rule
-  from force; it grants nothing. That matches today's posture for disabling (`PUT /:id
-  {enabled:false}`) and deleting a rule, both of which any local caller can already do.
-  Gating the actions that take governance away is a wider question than this lifecycle,
-  and it is left open rather than half-answered here. A restore lands disabled, so it
-  cannot make a rule govern either.
+- **Retiring needs the operator password; restoring does not** (Architect ruling on
+  #1709). Retirement is a destructive governance state: it takes a governing rule out
+  of force for good and out of the working list, unlike switching it off, which the
+  operator can undo in place. So `active → retired` carries the same gate as approval
+  (`checkDeletePassword`, revealed inline on 403). The gate is checked before anything
+  about the rule is looked at, so a refused caller learns nothing about it. A restore
+  stays ungated: it lands disabled, so it cannot make a rule govern. Like every gate
+  here, it is real protection only when a delete password is configured (see below).
 
 ## Learnings ingestion (the DB writer, #466)
 
@@ -151,7 +153,7 @@ and `GET /api/learnings` (#1121); a valid project with no rules returns `200 []`
 | `POST /api/session-rules/:id/restore` `{versionNo}` | Roll back to a prior version. A rollback that would change a **retired** rule's text is `409 RULE_RETIRED`. #1696 — rolling an **active project rule** back to different text is filed as a replacement proposal (`202`, origin `restore`), leaving the rule and its switch as they are; `409 REPLACEMENT_PENDING` as above. A rollback that changes only the switch applies directly |
 | `POST /api/session-rules/promote` `{learningId, content?, projectId?}` | Promote a learning → rule (operator-confirmed; defaults to the learning's project) |
 | `POST /api/session-rules/conflicts` `{content, projectId?}` | Non-authoritative conflict-candidate signal |
-| `PUT /api/session-rules/:id/status` `{status, expectedContent, changedBy?, changeReason?}` | The lifecycle's one door. #1709 — `retired` retires an active rule; `active` on a retired rule restores it, disabled. Neither needs the password (neither grants anything): without the password, `active` is accepted only as a restore. A move the lifecycle forbids is `400 INVALID_TRANSITION`. An approval of a replacement returns `replaced: {id}`, or `replaced: null` with `replacementSkipped: {id, reason}` when that rule was no longer active and the replacement was an explicit amendment. An edit or rollback whose rule is no longer active is refused with `409 REPLACEMENT_TARGET_INACTIVE` (with `targetId`), and any replacement whose rule a different replacement already replaced with `409 REPLACEMENT_SUPERSEDED` (with `targetId`, `supersededBy`); either way nothing changes. #569 — approve (`active`) or decline (`rejected`) a proposal. An AI `changedBy` requesting `active` is refused with 403. #1053 — an approval must carry `expectedContent`, the exact stored text the operator was shown: without it, `400 EXPECTED_CONTENT_REQUIRED`; when the rule no longer holds that text, `409 RULE_CONTENT_CHANGED` carrying `currentContent`, and nothing changes. The password gate is checked first, so a caller without it learns nothing about the text. A rejection needs no `expectedContent` and is never compared |
+| `PUT /api/session-rules/:id/status` `{status, expectedContent, changedBy?, changeReason?}` | The lifecycle's one door. #1709 — `retired` retires an active rule; `active` on a retired rule restores it, disabled. Retiring needs the operator password (403 without it, checked first); restoring does not, because the rule comes back disabled, so without the password `active` is accepted only as a restore. A move the lifecycle forbids is `400 INVALID_TRANSITION`. An approval of a replacement returns `replaced: {id}`, or `replaced: null` with `replacementSkipped: {id, reason}` when that rule was no longer active and the replacement was an explicit amendment. An edit or rollback whose rule is no longer active is refused with `409 REPLACEMENT_TARGET_INACTIVE` (with `targetId`), and any replacement whose rule a different replacement already replaced with `409 REPLACEMENT_SUPERSEDED` (with `targetId`, `supersededBy`); either way nothing changes. #569 — approve (`active`) or decline (`rejected`) a proposal. An AI `changedBy` requesting `active` is refused with 403. #1053 — an approval must carry `expectedContent`, the exact stored text the operator was shown: without it, `400 EXPECTED_CONTENT_REQUIRED`; when the rule no longer holds that text, `409 RULE_CONTENT_CHANGED` carrying `currentContent`, and nothing changes. The password gate is checked first, so a caller without it learns nothing about the text. A rejection needs no `expectedContent` and is never compared |
 | `GET /api/learnings?projectId=&tier=` | #569 — list a project's learnings |
 | `PUT /api/learnings/:id/tier` `{tier}` | #569 — operator override of a learning's tier |
 
@@ -203,7 +205,8 @@ was empty on every project and rules never evolved.
    the DB and the rule's version history, not the working list.
 
    The list holds live rules only: proposed and active (#1709). An active row has
-   **Retire**, behind a confirm because the rule leaves the list. Retired rules go to a
+   **Retire**, behind a confirm because the rule leaves the list, and gated by the operator
+   password like Approve (the field is revealed on 403). Retired rules go to a
    **Rules Graveyard** disclosure under each kind's list. It shows each retired rule's
    text, when it was retired and, where known, what replaced it, with **Restore**, which
    brings the rule back switched off. A replacement proposal shows **"Approving

@@ -2331,7 +2331,7 @@ function renderProjectRulesSection(project) {
         <div class="session-rules-list" id="projLaunchSequencesList" aria-live="polite"></div>
       </div>
       <div id="projRulesPwGroup" class="form-group hidden">
-        <label class="form-label" for="projRulesPw">Delete password (required to approve a proposed rule)</label>
+        <label class="form-label" for="projRulesPw">Delete password (required to approve or retire a rule)</label>
         <input type="password" class="form-input" id="projRulesPw" autocomplete="current-password">
       </div>
       <div id="projectRulesStatus" class="rules-status hidden" role="status"></div>
@@ -3053,15 +3053,27 @@ async function resolveProjectRuleProposal(id, status, kind) {
 
 /**
  * Retire an active rule (#1709): it stops governing sessions and moves to the
- * Rules Graveyard. Confirmed first, because the rule leaves the main list. No
- * password: retiring grants nothing.
+ * Rules Graveyard. Confirmed first, because the rule leaves the main list, and
+ * password-gated server-side like approval (retiring takes a governing rule
+ * out of force; Architect ruling). The password field is revealed on a 403
+ * rather than asked for up-front, exactly as for Approve.
  * @param {number} id - Rule id
  * @param {string} kind - Rule kind (for the targeted re-render)
  */
 async function retireProjectRule(id, kind) {
   if (!confirm('Retire this rule? It stops governing sessions and moves to the Rules Graveyard, where it can be restored.')) return;
-  const data = await apiMutate(`/api/session-rules/${id}/status`, 'PUT', { status: 'retired' });
+  const body = { status: 'retired' };
+  const pwInput = document.getElementById('projRulesPw');
+  if (pwInput && pwInput.value) body.password = pwInput.value;
+  const data = await apiMutate(`/api/session-rules/${id}/status`, 'PUT', body);
   if (!data) {
+    const pwGroup = document.getElementById('projRulesPwGroup');
+    if (api.lastErrorCode === 'FORBIDDEN' && pwGroup) {
+      pwGroup.classList.remove('hidden');
+      _setProjectRulesStatus('Retiring needs the delete password — enter it above and tap Retire again', false);
+      if (pwInput) pwInput.focus();
+      return;
+    }
     _setProjectRulesStatus(`Retire failed${api.lastError ? `: ${api.lastError}` : ''}`, false);
     return;
   }

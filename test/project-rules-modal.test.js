@@ -198,7 +198,15 @@ describe('Project Rules modal (CC-6, #381)', () => {
       const shown = new Map();
       const api = { lastError: null, lastErrorCode: null, lastBody: null };
       const listEl = { innerHTML: '' };
-      const document = { getElementById: (id) => (id.startsWith('projRulesList-') ? listEl : null) };
+      const pwGroupClasses = new Set(['hidden']);
+      const pwInput = { value: harness.typedPassword || '', focus: () => {} };
+      const pwGroup = { classList: { remove: (c) => pwGroupClasses.delete(c) } };
+      const document = { getElementById: (id) => {
+        if (id.startsWith('projRulesList-')) return listEl;
+        if (id === 'projRulesPw') return pwInput;
+        if (id === 'projRulesPwGroup') return pwGroup;
+        return null;
+      } };
       const apiMutate = async (url, method, body) => {
         calls.push({ url, method, body });
         return respond(url, method, body, api);
@@ -228,6 +236,7 @@ describe('Project Rules modal (CC-6, #381)', () => {
         retire: build('async function retireProjectRule(id, kind)', 'async function retireProjectRule('),
         restore: build('async function restoreProjectRule(id, kind)', 'async function restoreProjectRule('),
         html: () => listEl.innerHTML,
+        pwShown: () => !pwGroupClasses.has('hidden'),
         calls, statuses, refreshes, shown, confirms, mutations
       };
     }
@@ -415,12 +424,31 @@ describe('Project Rules modal (CC-6, #381)', () => {
         assert.equal(h.calls.length, 0, 'a declined confirm sends nothing');
       });
 
-      it('Retire, once confirmed, retires with no password and re-reads the list', async () => {
+      it('Retire, once confirmed, retires and re-reads the list', async () => {
         const h = harness(() => ({ id: 1, status: 'retired' }));
         await h.retire(1, 'wrap');
         assert.deepEqual(h.calls[0], { url: '/api/session-rules/1/status', method: 'PUT', body: { status: 'retired' } });
         assert.match(h.statuses[0].msg, /Graveyard/);
         assert.deepEqual(h.mutations, [{ verb: 'Retired', kind: 'wrap' }]);
+      });
+
+      it('Retire sends a typed password, as the server now requires one (#1709 ruling)', async () => {
+        harness.typedPassword = 'hunter2';
+        try {
+          const h = harness(() => ({ id: 1, status: 'retired' }));
+          await h.retire(1, 'startup');
+          assert.deepEqual(h.calls[0].body, { status: 'retired', password: 'hunter2' });
+        } finally {
+          harness.typedPassword = undefined;
+        }
+      });
+
+      it('a 403 on Retire reveals the password field instead of failing opaquely', async () => {
+        const h = harness((url, method, body, api) => { api.lastErrorCode = 'FORBIDDEN'; api.lastError = 'password required'; return null; });
+        await h.retire(1, 'startup');
+        assert.ok(h.pwShown(), 'the hidden password group is revealed');
+        assert.match(h.statuses[0].msg, /needs the delete password — enter it above and tap Retire again/);
+        assert.equal(h.mutations.length, 0, 'nothing is re-read as if it had succeeded');
       });
 
       it('Restore sends a bare restore and says the rule comes back switched off', async () => {
