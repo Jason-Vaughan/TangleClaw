@@ -58,6 +58,8 @@ The PM dispatched this over Medusa as the last stabilization task.
 
 **Tests.** `test/inline-handler-args.test.js`: the scan runs over every `public/*.js` file (plus a self-check that it still flags the old form), and the one-encoder check covers every file. Behavioural round trips with apostrophes: the wizard checkbox, both redirect buttons, the copy buttons, the launch-mode radio, the group pill (through `session.js`'s own `jsArg`), and the history drawer. Mutation-checked: against `main`'s page scripts, 12 of the new tests fail.
 
+**Test harnesses (b68386d4).** The first full-suite run failed because sandboxes that run `setup.js` and `landing.js`'s launch picker supplied `esc` but not `jsArg`. The product was unaffected: `jsArg` is a page global in the browser. Those five harnesses now load the production declaration through a new `test/_page-globals.js`, and `session-header-cleanup` lifts `session.js`'s own copy. Three assertions move to the `jsArg` form and stay exact: two group-pill markup regexes (`'g1'` becomes `&quot;g1&quot;`), and the proxy-redirect source pin, which had been pinning the broken `'${esc(redirectUrl)}'` spelling. Full suite on b68386d4: 13,978 pass, 0 fail.
+
 ## 2026-09-27 — Rule approval compare-and-set: approval ratifies only the text the operator saw (#1053)
 
 <!-- prawduct: type=bugfix | scope=rule-approval-cas-1053 -->
