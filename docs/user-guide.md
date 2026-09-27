@@ -699,6 +699,12 @@ Every plan or design doc a session writes to `<project>/.tangleclaw/plans/<name>
   - Issues filed within `newDays` are marked **new** and appear as blue pills on the card.
   - Age is worked out when the page is viewed, so an issue stops being new on its own as time passes.
   - Age never removes an issue from the queue.
+- A **progress card** is a fenced block tagged `tc-progress` holding only the card's name: `{"card": "project-health"}` or `{"card": "recent-progress"}`. The block has no figures in it. They come from the scorecard that is published to this host (`<TangleClaw base>/scorecard/v1.json`) and are read each time the page is viewed, so the plan never has to be edited to stay current.
+  - **Project Health** shows the open backlog, how many of those issues have gone untouched for 90+ days, and the backlog's net change. Below that is a table comparing the current window with the baseline window. **Delivery** (issues closed, PRs merged, cars and trains completed) and **Discovery / Intake** (issues opened) are shown as separate groups.
+  - **Recent Progress** is a single line for today (the Pacific calendar day) and the current window. Click it to open a day-by-day table. If the scorecard's newest day is not today's date, the line says **Latest day**, so an old figure is never labelled as today's.
+  - Every figure and trend is shown exactly as the scorecard states it. The page does not count or compare anything itself.
+  - Times are in Pacific time (PDT/PST), never UTC. Each card says when it was last refreshed and gives both windows' names and dates.
+  - If no scorecard has been published, or it cannot be read or is malformed, the card says so and shows no numbers. If it is past its refresh deadline, the numbers are shown under a **Stale** warning.
 - Table cells never break a word, so issue numbers like `#1234` stay on one line; a wide table scrolls sideways instead.
 
 ## Mobile Tips

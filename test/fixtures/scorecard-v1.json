@@ -1,0 +1,37 @@
+{
+  "schema": "tc.scorecard/v1",
+  "generatedAt": 1790550000000,
+  "freshUntil": 1790571600000,
+  "development": {
+    "timeZone": "America/Los_Angeles",
+    "windows": {
+      "current": { "label": "Last 7 days", "start": "2026-09-21", "end": "2026-09-27" },
+      "baseline": { "label": "Preceding 7 days", "start": "2026-09-14", "end": "2026-09-20" }
+    },
+    "openBacklog": { "count": 41, "staleOver90Days": 38, "net": -4, "baselineNet": 3, "trend": "down" },
+    "delivery": {
+      "issuesClosed": { "current": 12, "baseline": 9, "trend": "up" },
+      "prsMerged": { "current": 15, "baseline": 15, "trend": "flat" },
+      "carsCompleted": { "current": 6, "baseline": 4, "trend": "up" },
+      "trainsCompleted": { "current": 1, "baseline": null, "trend": "no-baseline" }
+    },
+    "intake": {
+      "issuesOpened": { "current": 8, "baseline": 11, "trend": "down" }
+    },
+    "today": {
+      "date": "2026-09-27",
+      "delivery": { "issuesClosed": 2, "prsMerged": 3, "carsCompleted": 1, "trainsCompleted": 0 },
+      "intake": { "issuesOpened": 1 },
+      "openBacklogNet": -1
+    },
+    "days": [
+      { "date": "2026-09-27", "delivery": { "issuesClosed": 2, "prsMerged": 3, "carsCompleted": 1, "trainsCompleted": 0 }, "intake": { "issuesOpened": 1 }, "openBacklogNet": -1 },
+      { "date": "2026-09-26", "delivery": { "issuesClosed": 3, "prsMerged": 4, "carsCompleted": 2, "trainsCompleted": 1 }, "intake": { "issuesOpened": 2 }, "openBacklogNet": -1 },
+      { "date": "2026-09-25", "delivery": { "issuesClosed": 1, "prsMerged": 2, "carsCompleted": 1, "trainsCompleted": 0 }, "intake": { "issuesOpened": 1 }, "openBacklogNet": 0 },
+      { "date": "2026-09-24", "delivery": { "issuesClosed": 2, "prsMerged": 2, "carsCompleted": 1, "trainsCompleted": 0 }, "intake": { "issuesOpened": 1 }, "openBacklogNet": -1 },
+      { "date": "2026-09-23", "delivery": { "issuesClosed": 1, "prsMerged": 1, "carsCompleted": 0, "trainsCompleted": 0 }, "intake": { "issuesOpened": 2 }, "openBacklogNet": 1 },
+      { "date": "2026-09-22", "delivery": { "issuesClosed": 2, "prsMerged": 2, "carsCompleted": 1, "trainsCompleted": 0 }, "intake": { "issuesOpened": 0 }, "openBacklogNet": -2 },
+      { "date": "2026-09-21", "delivery": { "issuesClosed": 1, "prsMerged": 1, "carsCompleted": 0, "trainsCompleted": 0 }, "intake": { "issuesOpened": 1 }, "openBacklogNet": 0 }
+    ]
+  }
+}

@@ -136,6 +136,32 @@ describe('#542 — served plan docs over HTTP', () => {
       }
     });
 
+    it('renders tc-progress cards from the local scorecard cache, and says so when there is none (#1949)', async () => {
+      const scorecardCache = require('../lib/scorecard-cache');
+      const file = path.join(project.path, '.tangleclaw', 'plans', 'registry.md');
+      fs.writeFileSync(file, '# Registry\n\n```tc-progress\n{"card":"project-health"}\n```\n');
+      const cache = scorecardCache.cachePath(store._getBasePath());
+      try {
+        let r = await get(server, `/plans/${project.id}/registry.md`);
+        assert.equal(r.status, 200);
+        assert.match(r.body, /Project Health: no figures to show/);
+        assert.match(r.body, /no scorecard has been published to this host yet/);
+
+        const doc = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'scorecard-v1.json'), 'utf8'));
+        doc.generatedAt = Date.now() - 1000;
+        doc.freshUntil = Date.now() + 3600000;
+        scorecardCache.writeScorecardCache(cache, doc);
+        r = await get(server, `/plans/${project.id}/registry.md`);
+        assert.equal(r.status, 200);
+        assert.match(r.body, /<span class="progress-figure">41<\/span> open issues in the backlog/);
+        assert.doesNotMatch(r.body, /progress-stale"/);
+        assert.doesNotMatch(r.body, /<script/);
+      } finally {
+        fs.rmSync(file, { force: true });
+        fs.rmSync(path.dirname(cache), { recursive: true, force: true });
+      }
+    });
+
     it('sends a Content-Security-Policy that allows only the inline stylesheet, on the page and its refusals', async () => {
       const csp = "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:";
       assert.equal((await get(server, `/plans/${project.id}/train.md`)).headers['content-security-policy'], csp);
