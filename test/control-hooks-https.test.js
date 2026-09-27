@@ -15,7 +15,7 @@ const path = require('node:path');
 const os = require('node:os');
 const https = require('node:https');
 const { execSync, execFileSync, spawnSync, spawn } = require('node:child_process');
-const { setLevel } = require('../lib/logger');
+const { setLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
 
@@ -419,6 +419,28 @@ describe('control hooks over direct-mode HTTPS (#1947)', () => {
       fs.appendFileSync(path.join(dir, 'a.txt'), 'x\n');
       const r = await run('git', ['commit', '-am', 'governed commit over https'], dir);
       assert.equal(r.code, 0, r.stderr);
+    });
+
+    it('an https origin with no issuing root on record is logged, naming where it looked, and the marker carries no caFile', async () => {
+      const dir = repo('e2e-noroot');
+      const project = store.projects.create({ name: 'e2e-https-noroot', path: dir, engine: 'claude' });
+      const created = await send('POST', '/api/control/assignments', { projectId: project.id, requestId: 'https-e2e-noroot', issueRef: '#1947' });
+      assert.equal(created.status, 201, created.raw);
+      process.env.CAROOT = pki.other.dir;
+      let out = '';
+      setConsoleStream({ write: (line) => { out += line; } });
+      setLevel('warn');
+      try {
+        require('../lib/sessions').syncControlHooks(project);
+      } finally {
+        setLevel('error');
+        setConsoleStream(null);
+        process.env.CAROOT = pki.ca.dir;
+      }
+      assert.match(out, /no local root CA issued the served certificate/);
+      assert.match(out, /mkcert -CAROOT/);
+      const marker = JSON.parse(fs.readFileSync(path.join(dir, '.git', hooks.MARKER_FILE), 'utf8'));
+      assert.equal('caFile' in marker, false);
     });
   });
 });
