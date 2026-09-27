@@ -68,15 +68,15 @@ describe('plan train cards (#1930)', () => {
 
     it('renders a collapsible card whose summary is the engine, the cars, the name, the count and the badge', () => {
       assert.match(html, /^<details class="train-card"><summary class="train-summary"><span class="train-engine" aria-hidden="true">🚂<\/span>/);
-      assert.match(html, /<span class="train-car open">#411<\/span><span class="train-joint" aria-hidden="true">—<\/span><span class="train-car closed">#1234<\/span>/);
+      assert.match(html, /<span class="train-car open" title="#411 open" aria-label="#411 open">#411<\/span><span class="train-joint" aria-hidden="true">—<\/span><span class="train-car closed" title="#1234 closed" aria-label="#1234 closed">#1234<\/span>/);
       assert.match(html, /<span class="train-name">Train 1: First Install, Completed<\/span><span class="train-count">\(1\/2\)<\/span><span class="train-badge">verified<\/span><\/summary>/);
     });
 
     it('expands to the thesis, the open/closed line with the milestone link, the issue table and the sequencing note', () => {
       assert.match(html, /<p><em>The rest of the <strong>first<\/strong> hour\.<\/em><\/p>/);
       assert.match(html, /<p><strong>1 open · 1 closed<\/strong> · <a href="https:\/\/github\.com\/Jason-Vaughan\/TangleClaw\/milestone\/5">milestone<\/a><\/p>/);
-      assert.match(html, /<td class="train-issue"><a href="https:\/\/github\.com\/Jason-Vaughan\/TangleClaw\/issues\/411">#411<\/a><\/td><td>bug<\/td><td>open<\/td><td>Stale service worker<\/td>/);
-      assert.match(html, /<td class="train-issue"><a [^>]*>#1234<\/a><\/td><td>enhancement<\/td><td>✅ closed<\/td><td><del>Done thing<\/del><\/td>/);
+      assert.match(html, /<td class="train-issue"><a href="https:\/\/github\.com\/Jason-Vaughan\/TangleClaw\/issues\/411">#411<\/a><\/td><td>bug<\/td><td class="train-state">open<\/td><td>Stale service worker<\/td>/);
+      assert.match(html, /<td class="train-issue"><a [^>]*>#1234<\/a><\/td><td>enhancement<\/td><td class="train-state">✅ closed<\/td><td><del>Done thing<\/del><\/td>/);
       assert.match(html, /<p><strong>Sequencing\.<\/strong> Do <code>A<\/code> first\.<\/p><\/div><\/details>$/);
     });
 
@@ -141,7 +141,7 @@ describe('plan train cards (#1930)', () => {
     }
 
     it('renders a car with no href as plain text in the table', () => {
-      assert.match(render(train({ cars: [{ issue: 7, closed: false }] })), /<td class="train-issue">#7<\/td><td>—<\/td><td>open<\/td><td><\/td>/);
+      assert.match(render(train({ cars: [{ issue: 7, closed: false }] })), /<td class="train-issue">#7<\/td><td>—<\/td><td class="train-state">open<\/td><td><\/td>/);
     });
   });
 
@@ -198,7 +198,7 @@ describe('plan train cards (#1930)', () => {
 
     it('keeps table cells from breaking a word, so an issue number never wraps', () => {
       assert.match(page, /main\.plan th,main\.plan td\{[^}]*overflow-wrap:normal[^}]*\}/);
-      assert.match(page, /td\.train-issue\{white-space:nowrap\}/);
+      assert.match(page, /td\.train-issue,td\.train-state\{white-space:nowrap\}/);
       assert.match(page, /\.train-car\{[^}]*white-space:nowrap/);
     });
 
