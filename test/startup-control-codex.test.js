@@ -162,6 +162,22 @@ describe('Codex startupControl adapter', () => {
   }
 
   /**
+   * Wait until a recorded patch satisfies `pred`, for steps that must follow
+   * the adapter's own processing rather than a wall-clock offset.
+   * @param {object} f - From `pendingFire`.
+   * @param {(patch: object, index: number) => boolean} pred - Match on a patch and its index.
+   * @param {number} [timeoutMs=5000] - Give up after this long.
+   * @returns {Promise<void>}
+   */
+  async function untilPatch(f, pred, timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs;
+    while (!f.patches.some(pred)) {
+      if (Date.now() > deadline) throw new Error(`no matching patch within ${timeoutMs} ms; patches: ${JSON.stringify(f.patches.map((p) => p.reasonCode))}`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  }
+
+  /**
    * The server's turn, finished with a status, carrying the echoed user item.
    * @param {string} status - Turn status.
    * @param {object} [extra] - Extra turn fields.
@@ -616,29 +632,29 @@ describe('Codex startupControl adapter', () => {
           server.state.turnStarted = true;
           server.state.userItem = { type: 'userMessage', id: 'item-1', clientId: p.clientUserMessageId, content: p.input };
           server.state.turn = { id: TURN, status: 'inProgress', items: [server.state.userItem] };
-          setTimeout(() => {
-            server.notify('thread/status/changed', { threadId: THREAD, status: { type: 'active', activeFlags: ['waitingOnApproval'] } });
-            server.serverRequest('item/commandExecution/requestApproval', { threadId: THREAD, turnId: TURN, itemId: 'cmd-1', command: 'echo hi' });
-          }, 40);
-          setTimeout(() => {
-            server.notify('serverRequest/resolved', { requestId: 0 });
-            server.notify('thread/status/changed', { threadId: THREAD, status: { type: 'active', activeFlags: [] } });
-          }, 80);
-          setTimeout(() => {
-            server.notify('thread/status/changed', { threadId: THREAD, status: { type: 'active', activeFlags: ['waitingOnUserInput'] } });
-            server.serverRequest('item/tool/requestUserInput', { threadId: THREAD, turnId: TURN, itemId: 'q-1' });
-          }, 110);
-          setTimeout(() => {
-            server.notify('thread/status/changed', { threadId: THREAD, status: { type: 'active', activeFlags: [] } });
-            server.state.turn = finishedTurn('completed');
-            server.notify('turn/completed', { threadId: THREAD, turn: server.state.turn });
-          }, 150);
           return { turn: { id: TURN, status: 'inProgress', items: [] } };
         }
       });
       channel();
       const f = pendingFire();
-      const { settled } = await fireAndSettle(f);
+      const handles = codex.fire({ session, project, sequenceId: 100, promptText: PROMPT, promptTextDigest: PROMPT_DIGEST, payloadDigest: DIGEST, onUpdate: f.onUpdate }, { reconnectPauseMs: 10 });
+      // The adapter drops status changes that arrive before the fire is
+      // accepted, so the waits start from acceptance, and each step waits for
+      // the patch the previous one produced rather than a wall-clock offset.
+      await handles.accepted;
+      server.notify('thread/status/changed', { threadId: THREAD, status: { type: 'active', activeFlags: ['waitingOnApproval'] } });
+      server.serverRequest('item/commandExecution/requestApproval', { threadId: THREAD, turnId: TURN, itemId: 'cmd-1', command: 'echo hi' });
+      await untilPatch(f, (p) => p.reasonCode === 'approval_pending');
+      server.notify('serverRequest/resolved', { requestId: 0 });
+      server.notify('thread/status/changed', { threadId: THREAD, status: { type: 'active', activeFlags: [] } });
+      await untilPatch(f, (p, i) => p.reasonCode === null && f.patches.slice(0, i).some((x) => x.reasonCode === 'approval_pending'));
+      server.notify('thread/status/changed', { threadId: THREAD, status: { type: 'active', activeFlags: ['waitingOnUserInput'] } });
+      server.serverRequest('item/tool/requestUserInput', { threadId: THREAD, turnId: TURN, itemId: 'q-1' });
+      await untilPatch(f, (p) => p.reasonCode === 'user_input_pending');
+      server.notify('thread/status/changed', { threadId: THREAD, status: { type: 'active', activeFlags: [] } });
+      server.state.turn = finishedTurn('completed');
+      server.notify('turn/completed', { threadId: THREAD, turn: server.state.turn });
+      const settled = await handles.settled;
       assert.equal(settled.outcome, 'applied');
       const codes = f.patches.map((p) => p.reasonCode);
       assert.ok(codes.includes('approval_pending'), 'the approval wait was recorded');
