@@ -99,6 +99,13 @@ machine-specific — TangleClaw's SessionStart hooks live in the ignored
   differently. An amendment whose target is already gone still stands, with `replaced:
   null`. An edit or rollback is a change to *that* rule, so once the rule is gone it
   **fails closed** (`REPLACEMENT_TARGET_INACTIVE`) rather than resurrect edited text.
+- **One rule is replaced by one rule** (Architect ruling, R-3). Approving a replacement
+  whose target was already retired by a *different* replacement is refused with `409
+  REPLACEMENT_SUPERSEDED` (with `targetId` and `supersededBy`), whatever its origin and
+  even if it was once rejected. Otherwise a rejected amendment approved later would
+  govern beside the replacement that won, leaving two rules in one rule's place. A target
+  the operator retired by hand still lets an amendment stand (`replaced: null`).
+  `superseded_by` reflects the latest retirement: a hand retirement records none.
 - **At most one pending replacement per rule**, whatever its origin. A second edit is
   refused (`409 REPLACEMENT_PENDING`, naming the pending one), and so is a second
   amendment (`400 INVALID_REPLACES`); two approved replacements of one rule would both

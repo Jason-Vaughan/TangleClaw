@@ -364,6 +364,25 @@ describe('Project Rules modal (CC-6, #381)', () => {
         assert.match(h.html(), /data-action="approve-rule" data-rule-id="5"/, 'an amendment still stands on its own');
       });
 
+      it('shows a replacement of an already-replaced rule as unapprovable, naming the winner', () => {
+        const h = harness(() => ({}));
+        h.render('startup', [
+          active(2, 'winning replacement'),
+          retiredRule(1, 'the original', { supersededBy: 2 }),
+          { ...proposed(3, 'losing amendment'), replacesRuleId: 1, replacementOrigin: 'amendment' }
+        ]);
+        assert.match(liveOf(h.html()), /Replaces the original, which was already replaced by winning replacement — it can no longer be approved/);
+        assert.doesNotMatch(h.html(), /data-action="approve-rule" data-rule-id="3"/);
+      });
+
+      it('explains a refused second replacement, and redraws', async () => {
+        const h = harness((url, method, body, api) => { api.lastErrorCode = 'REPLACEMENT_SUPERSEDED'; return null; });
+        h.render('startup', [proposed(3, 'late')]);
+        await h.resolve(3, 'active', 'startup');
+        assert.match(h.statuses[0].msg, /Another replacement already replaced that rule/);
+        assert.deepEqual(h.refreshes, [{ pid: 3, kind: 'startup' }]);
+      });
+
       it('explains a stale edit refused at approval, and redraws', async () => {
         const h = harness((url, method, body, api) => {
           api.lastErrorCode = 'REPLACEMENT_TARGET_INACTIVE';

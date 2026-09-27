@@ -680,6 +680,57 @@ describe('session rule lifecycle (#1696, #1709)', () => {
     });
   });
 
+  // Architect ruling R-3: one rule is replaced by one rule. A rejected
+  // replacement re-approved after a sibling replaced the original would
+  // otherwise leave two rules governing where there was one.
+  describe('one rule is replaced by one rule', () => {
+    it('REFUSES approving a rejected amendment after a sibling replacement retired the original', () => {
+      const original = activeRule('the original');
+      const a = proposal('amendment A', { replacesRuleId: original.id });
+      store.sessionRules.setStatus(a.id, 'rejected');
+      const b = proposal('amendment B', { replacesRuleId: original.id });
+      store.sessionRules.setStatus(b.id, 'active', { expectedContent: 'amendment B' });
+      const versions = store.sessionRules.listVersions(a.id).length;
+      assert.throws(
+        () => store.sessionRules.setStatus(a.id, 'active', { expectedContent: 'amendment A' }),
+        (err) => err.code === 'REPLACEMENT_SUPERSEDED' && err.targetId === original.id && err.supersededBy === b.id
+      );
+      assert.equal(store.sessionRules.get(a.id).status, 'rejected', 'the approval was undone');
+      assert.equal(store.sessionRules.listVersions(a.id).length, versions);
+      assert.deepEqual(delivered(), ['amendment B'], 'a single governing lineage');
+    });
+
+    it('refuses the same for an edit whose rule another replacement already replaced', () => {
+      const original = activeRule('edited original');
+      const e = store.sessionRules.update(original.id, { content: 'the edit' }).replacementProposed;
+      store.sessionRules.setStatus(e.id, 'rejected');
+      const b = proposal('the amendment', { replacesRuleId: original.id });
+      store.sessionRules.setStatus(b.id, 'active', { expectedContent: 'the amendment' });
+      assert.throws(() => store.sessionRules.setStatus(e.id, 'active', { expectedContent: 'the edit' }),
+        code('REPLACEMENT_SUPERSEDED'));
+    });
+
+    it('still lets an amendment stand when its target was retired by hand (ruling 2 unchanged)', () => {
+      const original = activeRule('retired by hand');
+      const a = proposal('stands anyway', { replacesRuleId: original.id });
+      store.sessionRules.setStatus(original.id, 'retired');
+      const approved = store.sessionRules.setStatus(a.id, 'active', { expectedContent: 'stands anyway' });
+      assert.equal(approved.replaced, null);
+    });
+
+    it('judges the latest retirement: a restored, then hand-retired rule is not "superseded"', () => {
+      const original = activeRule('twice retired');
+      const b = proposal('first replacement', { replacesRuleId: original.id });
+      store.sessionRules.setStatus(b.id, 'active', { expectedContent: 'first replacement' });
+      store.sessionRules.setStatus(original.id, 'active'); // restored, keeps superseded_by as history
+      const c = proposal('second amendment', { replacesRuleId: original.id });
+      store.sessionRules.setStatus(original.id, 'retired'); // retired by hand this time
+      assert.equal(store.sessionRules.get(original.id).supersededBy, null, 'a hand retirement records no successor');
+      const approved = store.sessionRules.setStatus(c.id, 'active', { expectedContent: 'second amendment' });
+      assert.equal(approved.replaced, null);
+    });
+  });
+
   describe('no chains, no cycles', () => {
     it('a pending replacement cannot itself be replaced', () => {
       const rule = activeRule('root');

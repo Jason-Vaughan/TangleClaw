@@ -465,6 +465,20 @@ describe('api self-improvement loop (#569)', () => {
       assert.equal(store.sessionRules.get(rule.id).content, rule.content);
     });
 
+    it('answers 409 REPLACEMENT_SUPERSEDED to a second replacement of one rule', async () => {
+      const original = live(`contested ${Date.now()}`);
+      const a = store.sessionRules.create({ content: `A ${Date.now()}`, projectId: pid, createdBy: 'ai', replacesRuleId: original.id });
+      store.sessionRules.setStatus(a.id, 'rejected');
+      const b = store.sessionRules.create({ content: `B ${Date.now()}`, projectId: pid, createdBy: 'ai', replacesRuleId: original.id });
+      store.sessionRules.setStatus(b.id, 'active', { expectedContent: b.content });
+      const res = await request('PUT', `/api/session-rules/${a.id}/status`, { status: 'active', expectedContent: a.content });
+      assert.equal(res.status, 409);
+      assert.equal(res.data.code, 'REPLACEMENT_SUPERSEDED');
+      assert.equal(res.data.targetId, original.id);
+      assert.equal(res.data.supersededBy, b.id);
+      assert.equal(statusOf(a.id), 'rejected');
+    });
+
     it('answers 403, not 404, for an unknown rule without the password — as before', async () => {
       setOperatorPassword('hunter2');
       const res = await request('PUT', '/api/session-rules/99999999/status', { status: 'active' });

@@ -2873,7 +2873,10 @@ function renderProjectRulesList(kind, rules) {
         const isEdit = rule.replacementOrigin === 'edit' || rule.replacementOrigin === 'restore';
         const what = rule.replacementOrigin === 'restore' ? 'Rollback' : 'Edit';
         let text;
-        if (target && target.status === 'active') {
+        if (target && target.status !== 'active' && target.supersededBy && target.supersededBy !== rule.id) {
+          const winner = byId.get(target.supersededBy);
+          text = `Replaces ${esc(target.content)}, which was already replaced by ${winner ? esc(winner.content) : `rule #${Number(target.supersededBy)}`} — it can no longer be approved`;
+        } else if (target && target.status === 'active') {
           text = isEdit ? `${what} of: ${esc(target.content)} — approving replaces it` : `Approving retires: ${esc(target.content)}`;
         } else if (isEdit) {
           text = `${what} of ${target ? `${esc(target.content)}, which is now ${esc(target.status)}` : `rule #${id}, which no longer exists`} — it can no longer be approved`;
@@ -2886,9 +2889,14 @@ function renderProjectRulesList(kind, rules) {
       }
       // An edit or rollback of a rule that is gone can never be approved (the
       // server fails it closed), so offering Approve would only invite a 409.
-      const staleEdit = isProposed && rule.replacesRuleId
+      const replacedTarget = isProposed && rule.replacesRuleId ? byId.get(rule.replacesRuleId) : null;
+      // Replaced already by a DIFFERENT rule: approving would make two rules
+      // govern in one's place, so the server refuses it (R-3).
+      const supersededElsewhere = Boolean(replacedTarget && replacedTarget.status !== 'active'
+        && replacedTarget.supersededBy && replacedTarget.supersededBy !== rule.id);
+      const staleEdit = supersededElsewhere || (isProposed && rule.replacesRuleId
         && (rule.replacementOrigin === 'edit' || rule.replacementOrigin === 'restore')
-        && !(byId.get(rule.replacesRuleId) && byId.get(rule.replacesRuleId).status === 'active');
+        && !(replacedTarget && replacedTarget.status === 'active'));
       const actions = isProposed
         ? `<span class="session-rule-decide">
              ${staleEdit ? '' : `<button class="btn btn-small btn-primary" data-action="approve-rule" data-rule-id="${rule.id}">Approve</button>`}
@@ -3011,7 +3019,10 @@ async function resolveProjectRuleProposal(id, status, kind) {
   const data = await apiMutate(`/api/session-rules/${id}/status`, 'PUT', body);
   if (!data) {
     const pwGroup = document.getElementById('projRulesPwGroup');
-    if (api.lastErrorCode === 'REPLACEMENT_TARGET_INACTIVE') {
+    if (api.lastErrorCode === 'REPLACEMENT_SUPERSEDED') {
+      _setProjectRulesStatus('Another replacement already replaced that rule, so this one cannot be approved — nothing was approved', false);
+      await refreshProjectRulesList(projectRulesTargetId, kind);
+    } else if (api.lastErrorCode === 'REPLACEMENT_TARGET_INACTIVE') {
       _setProjectRulesStatus('The rule this edit changes is no longer active, so the edit cannot be approved — nothing was approved', false);
       await refreshProjectRulesList(projectRulesTargetId, kind);
     } else if (api.lastErrorCode === 'RULE_CONTENT_CHANGED') {

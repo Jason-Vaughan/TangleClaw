@@ -5543,6 +5543,12 @@ route('PUT', '/api/session-rules/:id/status', (_req, res, params, body) => {
     if (err.code === 'INVALID_TRANSITION') return errorResponse(res, 400, err.message, 'INVALID_TRANSITION');
     // An edit or rollback whose rule is gone: approving it would resurrect
     // edited text, so it fails closed (#1696 ruling). Nothing changed.
+    // One rule is replaced by one rule: a second replacement of a rule another
+    // replacement already retired is refused (#1696 ruling, R-3).
+    if (err.code === 'REPLACEMENT_SUPERSEDED') {
+      return errorResponse(res, 409, err.message, 'REPLACEMENT_SUPERSEDED',
+        { targetId: err.targetId, supersededBy: err.supersededBy });
+    }
     if (err.code === 'REPLACEMENT_TARGET_INACTIVE') {
       return errorResponse(res, 409, err.message, 'REPLACEMENT_TARGET_INACTIVE', { targetId: err.targetId });
     }
