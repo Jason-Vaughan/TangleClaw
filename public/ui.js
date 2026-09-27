@@ -2258,6 +2258,8 @@ function closeSettings() {
 // posture is now the structured Launch settings above the rules grid.)
 // Scoped to this project's id + a kind. The DB project id of the open modal.
 let projectRulesTargetId = null;
+// Proposed rule id → the exact stored text its row is showing (#1053).
+const projectRuleShownContent = new Map();
 
 // The same project's NAME, kept beside its id because the two APIs this modal
 // talks to are keyed differently: the rule and launch-sequence reads take the
@@ -2826,6 +2828,12 @@ function wireLaunchRecoveryClears(list) {
 function renderProjectRulesList(kind, rules) {
   const list = document.getElementById(`projRulesList-${kind}`);
   if (!list) return;
+  // Remember the text each proposed row shows, exactly as stored, so Approve
+  // can name it (#1053). Kept beside the render rather than read back out of
+  // the escaped HTML, which is not the stored text.
+  for (const rule of rules) {
+    if (rule.status === 'proposed') projectRuleShownContent.set(rule.id, rule.content);
+  }
   if (rules.length === 0) {
     list.innerHTML = '<p class="session-rules-empty">No rules yet.</p>';
     return;
@@ -2912,6 +2920,8 @@ async function deleteProjectRule(id, kind) {
  * whose drawer was dismissed is decided here. Approve is password-gated
  * server-side; the hidden password field is revealed on a 403 rather than
  * asked for up-front (with no delete password configured it never appears).
+ * Approve names the text the row showed (#1053); if the rule changed since
+ * the list rendered, the server refuses and the list is redrawn.
  * A rejected rule leaves the list on re-render — the record lives on in the
  * DB, which is what stops the wrap re-proposing the same learning.
  * @param {number} id - Rule id
@@ -2922,10 +2932,19 @@ async function resolveProjectRuleProposal(id, status, kind) {
   const body = { status };
   const pwInput = document.getElementById('projRulesPw');
   if (status === 'active' && pwInput && pwInput.value) body.password = pwInput.value;
+  // The server approves only the text this row showed; a change made
+  // elsewhere after the list rendered cannot be ratified by this click.
+  if (status === 'active') body.expectedContent = projectRuleShownContent.get(id);
   const data = await apiMutate(`/api/session-rules/${id}/status`, 'PUT', body);
   if (!data) {
     const pwGroup = document.getElementById('projRulesPwGroup');
-    if (api.lastErrorCode === 'FORBIDDEN' && pwGroup) {
+    if (api.lastErrorCode === 'RULE_CONTENT_CHANGED') {
+      // Redraw from the server so the row shows what the rule says now; the
+      // next Approve is then a decision about that text.
+      _setProjectRulesStatus('This rule’s text changed after it was shown, so nothing was approved — '
+        + 'the list now shows its current text. Review it, then Approve again', false);
+      await refreshProjectRulesList(projectRulesTargetId, kind);
+    } else if (api.lastErrorCode === 'FORBIDDEN' && pwGroup) {
       pwGroup.classList.remove('hidden');
       _setProjectRulesStatus('Approving needs the delete password — enter it above and tap Approve again', false);
       if (pwInput) pwInput.focus();

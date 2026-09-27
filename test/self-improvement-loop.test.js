@@ -91,7 +91,7 @@ describe('self-improvement loop (#569)', () => {
 
     it('lets the operator approve and reject, recording each as a version', () => {
       const rule = store.sessionRules.create({ content: 'a proposal', projectId: project.id, createdBy: 'ai' });
-      const approved = store.sessionRules.setStatus(rule.id, 'active');
+      const approved = store.sessionRules.setStatus(rule.id, 'active', { expectedContent: 'a proposal' });
       assert.equal(approved.status, 'active');
       const rejected = store.sessionRules.setStatus(rule.id, 'rejected');
       assert.equal(rejected.status, 'rejected');
@@ -187,6 +187,25 @@ describe('self-improvement loop (#569)', () => {
       const body = src.slice(start, src.indexOf('\n  },', start));
       assert.match(body, /UPDATE session_rules SET status = \?[^"]*WHERE id = \? AND content = \?/);
       assert.match(body, /written\.changes === 0/);
+    });
+
+    it('REFUSES an approval that names no text, and changes nothing', () => {
+      const rule = proposal('unnamed approval');
+      assert.throws(
+        () => store.sessionRules.setStatus(rule.id, 'active'),
+        (err) => err.code === 'EXPECTED_CONTENT_REQUIRED'
+      );
+      assert.equal(store.sessionRules.get(rule.id).status, 'proposed');
+    });
+
+    it('refuses an AI approval as FORBIDDEN before it asks for the text', () => {
+      // The authority refusal comes first: a caller with no authority to
+      // approve is not told what an approval would need.
+      const rule = proposal('self approval');
+      assert.throws(
+        () => store.sessionRules.setStatus(rule.id, 'active', { changedBy: 'ai' }),
+        (err) => err.code === 'FORBIDDEN'
+      );
     });
 
     it('refuses a non-string expectedContent on approval', () => {

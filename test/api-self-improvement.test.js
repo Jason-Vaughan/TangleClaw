@@ -147,7 +147,8 @@ describe('api self-improvement loop (#569)', () => {
 
     it('approves a proposal into a governing rule', async () => {
       const rule = proposal();
-      const res = await request('PUT', `/api/session-rules/${rule.id}/status`, { status: 'active' });
+      const res = await request('PUT', `/api/session-rules/${rule.id}/status`,
+        { status: 'active', expectedContent: rule.content });
       assert.equal(res.status, 200);
       assert.equal(res.data.status, 'active');
     });
@@ -182,7 +183,7 @@ describe('api self-improvement loop (#569)', () => {
       const rule = proposal();
       setOperatorPassword('hunter2');
       const res = await request('PUT', `/api/session-rules/${rule.id}/status`,
-        { status: 'active', password: 'hunter2' });
+        { status: 'active', password: 'hunter2', expectedContent: rule.content });
       assert.equal(res.status, 200);
       assert.equal(res.data.status, 'active');
     });
@@ -248,6 +249,21 @@ describe('api self-improvement loop (#569)', () => {
           { status: 'active', password: 'hunter2', expectedContent: 'not what it says' });
         assert.equal(res.status, 409);
         assert.equal(res.data.currentContent, 'swapped');
+      });
+
+      it('REFUSES an approval that names no text with 400 EXPECTED_CONTENT_REQUIRED', async () => {
+        const rule = proposal();
+        const res = await request('PUT', `/api/session-rules/${rule.id}/status`, { status: 'active' });
+        assert.equal(res.status, 400);
+        assert.equal(res.data.code, 'EXPECTED_CONTENT_REQUIRED');
+        assert.equal(store.sessionRules.get(rule.id).status, 'proposed', 'an unnamed approval must not activate');
+      });
+
+      it('checks the password before asking for the missing text', async () => {
+        const rule = proposal();
+        setOperatorPassword('hunter2');
+        const res = await request('PUT', `/api/session-rules/${rule.id}/status`, { status: 'active' });
+        assert.equal(res.status, 403);
       });
 
       it('refuses a non-string expectedContent with 400', async () => {

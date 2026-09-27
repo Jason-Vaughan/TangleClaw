@@ -162,4 +162,105 @@ describe('Project Rules modal (CC-6, #381)', () => {
       assert.match(css, /\.session-rule-item--proposed\s*\{/);
     });
   });
+
+  // #1053: Approve names the text the row showed. These run the real
+  // renderProjectRulesList and resolveProjectRuleProposal against fakes,
+  // because the property is which text reaches the server and what the list
+  // does after a refusal, not what the source looks like.
+  describe('approval sends the text the row showed (#1053)', () => {
+    /**
+     * Slice a top-level function out of ui.js by brace-matching.
+     * @param {string} decl - The declaration to find
+     * @returns {string} The body, braces included
+     */
+    function functionBody(decl) {
+      const start = ui.indexOf(decl);
+      assert.ok(start !== -1, `${decl} must exist`);
+      const open = ui.indexOf('{', start);
+      let depth = 0;
+      for (let i = open; i < ui.length; i++) {
+        if (ui[i] === '{') depth++;
+        else if (ui[i] === '}' && --depth === 0) return ui.slice(open, i + 1);
+      }
+      return assert.fail(`${decl} must close`);
+    }
+
+    /**
+     * Build the two functions sharing one shown-content map, with every free
+     * variable they read supplied.
+     * @param {Function} respond - (url, method, body, api) => data|null
+     * @returns {object} The harness
+     */
+    function harness(respond) {
+      const calls = [];
+      const statuses = [];
+      const refreshes = [];
+      const shown = new Map();
+      const api = { lastError: null, lastErrorCode: null, lastBody: null };
+      const listEl = { innerHTML: '' };
+      const document = { getElementById: (id) => (id.startsWith('projRulesList-') ? listEl : null) };
+      const apiMutate = async (url, method, body) => {
+        calls.push({ url, method, body });
+        return respond(url, method, body, api);
+      };
+      const deps = {
+        document, apiMutate, api, projectRuleShownContent: shown, esc: (x) => String(x),
+        _setProjectRulesStatus: (msg, ok) => statuses.push({ msg, ok }),
+        refreshProjectRulesList: async (pid, kind) => { refreshes.push({ pid, kind }); return true; },
+        refreshAfterProjectRuleMutation: async () => {},
+        projectRulesTargetId: 3
+      };
+      const names = Object.keys(deps);
+      // eslint-disable-next-line no-new-func
+      const build = (sig, decl) => new Function(...names,
+        `return ${sig} ${functionBody(decl)};`)(...names.map((n) => deps[n]));
+      return {
+        render: build('function renderProjectRulesList(kind, rules)', 'function renderProjectRulesList('),
+        resolve: build('async function resolveProjectRuleProposal(id, status, kind)',
+          'async function resolveProjectRuleProposal('),
+        calls, statuses, refreshes, shown
+      };
+    }
+
+    const proposed = (id, content) => ({ id, content, status: 'proposed', enabled: true, createdBy: 'ai' });
+
+    it('rendering remembers each proposed row’s stored text; Approve sends it', async () => {
+      const h = harness(() => ({ id: 5, status: 'active' }));
+      h.render('startup', [proposed(5, 'use <b>tabs</b> & spaces'), { ...proposed(6, 'live'), status: 'active' }]);
+      assert.equal(h.shown.get(5), 'use <b>tabs</b> & spaces', 'the stored text, not the escaped HTML');
+      assert.equal(h.shown.has(6), false, 'only proposals are approvable');
+      await h.resolve(5, 'active', 'startup');
+      assert.deepEqual(h.calls[0].body, { status: 'active', expectedContent: 'use <b>tabs</b> & spaces' });
+    });
+
+    it('a re-render replaces the remembered text with what the row now shows', async () => {
+      const h = harness(() => ({ id: 5, status: 'active' }));
+      h.render('startup', [proposed(5, 'first')]);
+      h.render('startup', [proposed(5, 'second')]);
+      await h.resolve(5, 'active', 'startup');
+      assert.equal(h.calls[0].body.expectedContent, 'second');
+    });
+
+    it('a 409 redraws the list and says nothing was approved', async () => {
+      const h = harness((url, method, body, api) => {
+        api.lastErrorCode = 'RULE_CONTENT_CHANGED';
+        api.lastBody = { currentContent: 'swapped' };
+        return null;
+      });
+      h.render('wrap', [proposed(9, 'shown')]);
+      await h.resolve(9, 'active', 'wrap');
+      assert.deepEqual(h.refreshes, [{ pid: 3, kind: 'wrap' }], 'the list must be re-read so the row shows the current text');
+      assert.equal(h.statuses.length, 1);
+      assert.match(h.statuses[0].msg, /changed after it was shown/);
+      assert.match(h.statuses[0].msg, /nothing was approved/);
+      assert.equal(h.statuses[0].ok, false);
+    });
+
+    it('a rejection sends no expectedContent', async () => {
+      const h = harness(() => ({ id: 5, status: 'rejected' }));
+      h.render('startup', [proposed(5, 'text')]);
+      await h.resolve(5, 'rejected', 'startup');
+      assert.deepEqual(h.calls[0].body, { status: 'rejected' });
+    });
+  });
 });

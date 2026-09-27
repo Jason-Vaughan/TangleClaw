@@ -5444,7 +5444,9 @@ route('POST', '/api/session-rules/promote', (_req, res, _params, body) => {
 }, { maxBodySize: 256 * 1024 });
 
 // PUT /api/session-rules/:id/status — resolve a proposal (#569).
-// Approve ('active') or decline ('rejected') a rule the wrap proposed. A
+// Approve ('active') or decline ('rejected') a rule the wrap proposed. An
+// approval must carry `expectedContent`, the exact text the operator was
+// shown, and is refused (409) if the rule no longer holds it (#1053). A
 // rejection is RECORDED rather than deleted: the wrap proposes from recurring
 // learnings, so a deleted decision would simply be re-proposed at the next wrap.
 route('PUT', '/api/session-rules/:id/status', (_req, res, params, body) => {
@@ -5479,6 +5481,9 @@ route('PUT', '/api/session-rules/:id/status', (_req, res, params, body) => {
     if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');
     if (err.code === 'BAD_REQUEST') return errorResponse(res, 400, err.message, 'BAD_REQUEST');
     if (err.code === 'FORBIDDEN') return errorResponse(res, 403, err.message, 'FORBIDDEN');
+    if (err.code === 'EXPECTED_CONTENT_REQUIRED') {
+      return errorResponse(res, 400, err.message, 'EXPECTED_CONTENT_REQUIRED');
+    }
     // The current text goes back so the surface can show the operator what
     // they would actually be approving, instead of a bare refusal.
     if (err.code === 'CONTENT_CHANGED') {
