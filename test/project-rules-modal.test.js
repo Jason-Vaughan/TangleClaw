@@ -315,6 +315,27 @@ describe('Project Rules modal (CC-6, #381)', () => {
         assert.match(h.html(), /Approving retires: old &lt;b&gt;text&lt;\/b&gt;/, 'the replaced text, escaped');
       });
 
+      it('does not promise a retirement that will not happen', () => {
+        const h = harness(() => ({}));
+        h.render('startup', [
+          retiredRule(1, 'already dead'),
+          { ...proposed(3, 'amends the dead one'), replacesRuleId: 1 },
+          { ...proposed(4, 'amends a deleted one'), replacesRuleId: 99 }
+        ]);
+        const live = liveOf(h.html());
+        assert.doesNotMatch(live, /Approving retires/, 'neither target will be retired');
+        assert.match(live, /Replaces already dead, which is already retired — approving retires nothing/);
+        assert.match(live, /Replaces rule #99, which no longer exists — approving retires nothing/);
+      });
+
+      it('says when an approval retired nothing', async () => {
+        const h = harness(() => ({ id: 3, status: 'active', replaced: null,
+          replacementSkipped: { id: 1, reason: 'rule 1 was already retired, so there was nothing to retire' } }));
+        h.render('startup', [{ ...proposed(3, 'late amendment'), replacesRuleId: 1 }]);
+        await h.resolve(3, 'active', 'startup');
+        assert.match(h.statuses[0].msg, /Nothing was retired: rule 1 was already retired/);
+      });
+
       it('escapes retired content and successor text', () => {
         const h = harness(() => ({}));
         h.render('startup', [active(1, '<img src=x>'), retiredRule(2, '<script>x</script>', { supersededBy: 1 })]);

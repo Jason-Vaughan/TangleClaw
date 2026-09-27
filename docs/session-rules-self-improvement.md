@@ -162,7 +162,8 @@ was empty on every project and rules never evolved.
    recorded decision and re-arm re-proposal at the next wrap. Approve there is gated by
    the same operator password (revealed inline on 403), and names the exact text the row
    showed (#1053): if the rule changed after the list rendered, the server refuses and the
-   list is redrawn with the current text.
+   list is redrawn with the current text. Rejected rules don't render in the list: the record lives in
+   the DB and the rule's version history, not the working list.
 
    The list holds live rules only: proposed and active (#1709). An active row has
    **Retire**, behind a confirm because the rule leaves the list. Retired rules go to a
@@ -174,9 +175,7 @@ was empty on every project and rules never evolved.
 
    **After upgrading to schema v51:** rules someone switched off by hand because they
    were dead are still in the live list, switched off. No migration guesses which are
-   dead, because rule ids differ per install. Retire them from this list. Rejected rules don't render in
-   the list (the record lives in the DB and the rule's version history, not the working
-   list).
+   dead, because rule ids differ per install. Retire them from this list.
 
 **The gate, stated once:** AI authorship cannot produce a governing rule on its own say-so.
 `createdBy` records *authorship*, not *authority* — a rule promoted from a learning is

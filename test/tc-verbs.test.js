@@ -248,7 +248,10 @@ describe('tc verb roster (lib/tc-verbs)', () => {
       assert.match(out, /RETIRED rules are kept for history and are never in force/);
       // An agent reads its rules before amending one; this is where it must
       // learn that an unlinked amendment would govern beside the original.
-      assert.match(out, /"replacesRuleId":<its id>; approving it retires the old rule/);
+      assert.match(out, /"replacesRuleId":<its id>/);
+      // Without createdBy:"ai" the POST is the operator's, live at once, and it
+      // retires the original with no approval: the footer must never omit it.
+      assert.match(out, /"createdBy":"ai","replacesRuleId":<its id>/);
     });
 
     it('inbox: reading is pure and says so — the ack instruction rides every non-empty read', () => {

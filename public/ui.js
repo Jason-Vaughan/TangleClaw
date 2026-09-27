@@ -2859,10 +2859,20 @@ function renderProjectRulesList(kind, rules) {
       // #1696: approving a replacement also retires the rule it replaces, so
       // the row says so — approval and retirement are one decision, and the
       // second half must not be invisible.
+      //
+      // It says so only when it is still true. A target already retired, or
+      // gone, will not be retired by this approval, and a row promising
+      // otherwise would be exactly the invisible second half the line exists
+      // to show.
       let replaces = '';
       if (isProposed && rule.replacesRuleId) {
         const target = byId.get(rule.replacesRuleId);
-        replaces = `<span class="session-rule-replaces">Approving retires: ${target ? esc(target.content) : `rule #${Number(rule.replacesRuleId)}`}</span>`;
+        const id = Number(rule.replacesRuleId);
+        let text;
+        if (target && target.status === 'active') text = `Approving retires: ${esc(target.content)}`;
+        else if (target) text = `Replaces ${esc(target.content)}, which is already ${esc(target.status)} — approving retires nothing`;
+        else text = `Replaces rule #${id}, which no longer exists — approving retires nothing`;
+        replaces = `<span class="session-rule-replaces">${text}</span>`;
       }
       const actions = isProposed
         ? `<span class="session-rule-decide">
@@ -3001,8 +3011,13 @@ async function resolveProjectRuleProposal(id, status, kind) {
     }
     return;
   }
+  // An approved replacement whose target was already gone retired nothing;
+  // say so rather than let the operator assume the old rule is out of force.
+  const skipped = status === 'active' && data.replacementSkipped;
   _setProjectRulesStatus(status === 'active'
-    ? 'Approved — this rule now governs future sessions'
+    ? (skipped
+      ? `Approved — this rule now governs future sessions. Nothing was retired: ${skipped.reason}`
+      : 'Approved — this rule now governs future sessions')
     : 'Rejected — recorded, so it won’t be proposed again', true);
   await refreshAfterProjectRuleMutation(status === 'active' ? 'Approved' : 'Rejected', kind);
 }
