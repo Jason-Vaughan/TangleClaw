@@ -1671,6 +1671,12 @@ function redactConfigSecrets(config) {
   // whether one is set. It is revealed through the dedicated reveal endpoint.
   redacted.serviceTokenConfigured = !!redacted.serviceToken;
   delete redacted.serviceToken;
+  // The operator channel's token hash is not a credential, but no route
+  // returns it (docs/operator-channel.md); say only whether a token exists.
+  if (redacted.operatorChannel && typeof redacted.operatorChannel === 'object') {
+    const { tokenHash, ...channel } = redacted.operatorChannel;
+    redacted.operatorChannel = { ...channel, tokenConfigured: !!tokenHash };
+  }
   return redacted;
 }
 

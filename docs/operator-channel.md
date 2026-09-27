@@ -73,7 +73,7 @@ A message's text is dropped once it is `sent` or `send_unknown`.
 
 The target project replies through its own switchboard route, sending to the channel's workspace id with `inReplyTo` set to the message it answers. That works because the channel's message was a tracked send addressed to the project. The reply comes back to the helper with the chat message id it answers. A message sent without `inReplyTo` comes back as a reply to nothing.
 
-**Only mail TangleClaw recorded as a send from the target project is ever handed to the helper.** The Medusa Bridge accepts any local caller's `from`, so everything else is quarantined and its text dropped:
+**Only mail TangleClaw recorded as a send from the target project, or as a reply from the project a channel message was delivered to, is ever handed to the helper.** A message accepted before the operator changed the target still goes to its original project, so that project's answer still comes back. The Medusa Bridge accepts any local caller's `from`, so everything else is quarantined and its text dropped:
 
 - mail sent by another project is quarantined at once;
 - mail that no TangleClaw send made is quarantined after ten minutes;

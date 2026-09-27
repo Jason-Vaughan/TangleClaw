@@ -307,6 +307,23 @@ describe('API — operator channel', () => {
       assert.equal(store.operatorChannel.getInbound(offline.id).state, 'pending');
     });
 
+    it('reaches a live project past more queued messages than one batch holds for an offline one', async () => {
+      const offline = mkProject('backlog');
+      for (let i = 0; i < 60; i += 1) {
+        store.operatorChannel.insertInbound({
+          external_id: `backlog-${target.id}-${i}`, author_id: ALLOW.authorId, space_id: ALLOW.spaceId, channel_id: ALLOW.channelId,
+          // Older than the rate-limit window, so the backlog does not count against the live message.
+          target_project_id: offline.id, text: 'queued', created_at: new Date(clock - 5 * 60 * 1000).toISOString()
+        });
+      }
+      bringTargetOnline();
+      const body = msg();
+      await call(server, 'POST', '/api/operator-channel/inbound', body, helper());
+      await operatorChannel.pump();
+      assert.equal(store.operatorChannel.getInboundByExternalId(body.message.id).state, 'sent');
+      assert.equal(hub.received.length, 1);
+    });
+
     it('does not resend a message whose Hub outcome was lost', async () => {
       bringTargetOnline();
       hub.setMode('drop');
@@ -370,6 +387,22 @@ describe('API — operator channel', () => {
       assert.equal(empty.data.replies.length, 0);
       const again = await call(server, 'POST', `/api/operator-channel/outbound/${r.id}/ack`, { postedId: '444444444444444444' }, helper());
       assert.equal(again.data.duplicate, true);
+    });
+
+    it('still relays the original project\'s reply after the operator changes the target', async () => {
+      bringTargetOnline();
+      const body = msg();
+      await call(server, 'POST', '/api/operator-channel/inbound', body, helper());
+      await operatorChannel.pump();
+      const inHub = store.operatorChannel.getInboundByExternalId(body.message.id).hub_id;
+      await call(server, 'PUT', '/api/operator-channel/config', { targetProject: mkProject('successor').name }, op);
+
+      const reply = await call(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/medusa/send`,
+        { to: channelWs, message: 'answer from the old target', inReplyTo: inHub }, targetBinding.headers);
+      deliverToChannel(reply.data.id, targetWs, 'answer from the old target');
+      const out = await call(server, 'GET', '/api/operator-channel/outbound', null, helper());
+      assert.equal(out.data.replies.length, 1);
+      assert.deepEqual(out.data.replies[0].inReplyTo, { messageId: body.message.id });
     });
 
     it('relays a fresh message from the target as a reply to nothing', async () => {
@@ -463,6 +496,13 @@ describe('API — operator channel', () => {
       assert.equal(status.data.settings.tokenConfigured, true);
       assert.equal(JSON.stringify(status.data).includes(token), false);
       assert.equal('tokenHash' in status.data.settings, false);
+    });
+
+    it('never returns the token hash through the config API', async () => {
+      const cfg = await call(server, 'GET', '/api/config', null, op);
+      assert.equal(cfg.status, 200);
+      assert.equal(cfg.data.operatorChannel.tokenConfigured, true);
+      assert.equal('tokenHash' in cfg.data.operatorChannel, false);
     });
 
     it('accepts only the allowlisted author, space and channel', async () => {
