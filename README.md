@@ -430,6 +430,10 @@ Planned features and improvements — contributions and feedback welcome.
 - **Sidecar controls** — poll, refresh, dismiss, and terminate individual background processes from the detail panel
 - **Linux support** — systemd service management as an alternative to launchd
 
+## Community and Conduct
+
+We pledge to make participation in our community a harassment-free experience for everyone. Please review our [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

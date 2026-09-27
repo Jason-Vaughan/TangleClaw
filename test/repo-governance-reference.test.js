@@ -317,3 +317,46 @@ describe("this repo's plugin install reference is committed (#833)", () => {
       + 'edit the source and copy it here, never one alone');
   });
 });
+
+describe("this repo's internal plans and evidence stay out of the public tree", () => {
+  // This repo is public, and its own `.tangleclaw/plans/` and `.tangleclaw/archive/`
+  // hold internal working documents. They live on each checkout's disk and in the
+  // project's private shared storage. Both halves are guarded: nothing is tracked
+  // now, and a new file there is ignored, so a routine `git add -A` (the wrap's
+  // own commit step included) cannot quietly publish one again.
+
+  /**
+   * Every tracked path under a directory, as committed in the index.
+   * @param {string} dir - Repo-relative directory.
+   * @returns {string[]}
+   */
+  function trackedUnder(dir) {
+    return execFileSync('git', ['ls-files', '--', dir], { cwd: REPO_ROOT, encoding: 'utf8' })
+      .split('\n').filter(Boolean);
+  }
+
+  it('tracks nothing under .tangleclaw/plans or .tangleclaw/archive', () => {
+    assert.deepEqual(trackedUnder('.tangleclaw/plans'), []);
+    assert.deepEqual(trackedUnder('.tangleclaw/archive'), []);
+  });
+
+  it('ignores a new plan, a nested one, a non-markdown file and a new archive entry', () => {
+    for (const p of [
+      '.tangleclaw/plans/new-plan.md',
+      '.tangleclaw/plans/archive/shipped.md',
+      '.tangleclaw/plans/1245-evidence/probe.log',
+      '.tangleclaw/plans/manifest.json',
+      '.tangleclaw/archive/1839-medusa-delivery-watchdog.md'
+    ]) {
+      assert.equal(isIgnored(p), true, `${p} must be ignored in this public repo`);
+    }
+  });
+
+  it('carries no re-include for plans or archive in .gitignore', () => {
+    const rules = committed('.gitignore').split('\n').map((l) => l.trim());
+    for (const l of rules) {
+      assert.doesNotMatch(l, /^!\s*\/?\.tangleclaw\/(plans|archive)/,
+        `.gitignore re-includes an internal directory: "${l}"`);
+    }
+  });
+});

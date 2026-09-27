@@ -119,6 +119,23 @@ describe('#542 — served plan docs over HTTP', () => {
       assert.doesNotMatch(r.body, /<script/);
     });
 
+    it('shows the "updated" stamp in the host zone, keeping ISO UTC on datetime (#1928)', async () => {
+      const file = path.join(project.path, '.tangleclaw', 'plans', 'stamp.md');
+      fs.writeFileSync(file, '# Stamp\n');
+      const when = new Date('2026-01-15T08:05:09.000Z');
+      fs.utimesSync(file, when, when);
+      const realTz = process.env.TZ;
+      process.env.TZ = 'America/Los_Angeles';
+      try {
+        const r = await get(server, `/plans/${project.id}/stamp.md`);
+        assert.equal(r.status, 200);
+        assert.match(r.body, /<time datetime="2026-01-15T08:05:09\.000Z" title="2026-01-15 08:05:09 UTC">2026-01-15 00:05:09 PST<\/time>/);
+      } finally {
+        if (realTz === undefined) delete process.env.TZ; else process.env.TZ = realTz;
+        fs.rmSync(file, { force: true });
+      }
+    });
+
     it('sends a Content-Security-Policy that allows only the inline stylesheet, on the page and its refusals', async () => {
       const csp = "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:";
       assert.equal((await get(server, `/plans/${project.id}/train.md`)).headers['content-security-policy'], csp);

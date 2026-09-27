@@ -671,6 +671,32 @@ Every plan or design doc a session writes to `<project>/.tangleclaw/plans/<name>
 - A plan moved to `plans/archive/` answers 404 with **Plan archived**, so a stale link says why it stopped working.
 - A plan is addressed by its file name alone — a path, `..`, or a symlink pointing outside the plans directory is refused.
 - Sessions discover the links with `GET /api/projects/<projectId>/plans` (numeric id or project name), which returns every plan with its URL on the host you reach TangleClaw on — never `localhost`, and `url: null` with a note when TangleClaw cannot tell which host that is. `tc capabilities` names the endpoint.
+- Raw HTML in a plan is shown as text, never rendered. The one styled block is a **train card**: a fenced block tagged `tc-train` whose body is one JSON object. The card shows a 🚂 row of issue cars, green when closed, with the train's name, a closed/total count and an optional `verified` badge. Clicking it expands the thesis, the issue table and the sequencing note. The Roadmap Board uses these cards.
+
+  ````
+  ```tc-train
+  {"train": 1, "title": "First Install, Completed", "href": "https://github.com/<owner>/<repo>/milestone/5",
+   "verified": true, "thesis": "Markdown *inline* marks allowed.",
+   "cars": [{"issue": 411, "closed": false, "href": "https://github.com/<owner>/<repo>/issues/411",
+             "type": "bug", "title": "Issue title"}],
+   "sequencing": "Optional note."}
+  ```
+  ````
+
+  Every value is escaped. Links must be absolute `https://` URLs, unknown keys are refused, and the closed/total count is computed from `cars`. A block that doesn't validate shows as code, with the reason above it.
+
+  Optional train fields:
+
+  - `version`: a short label such as `v6`, shown as a badge.
+  - `status`: one of `planned`, `ready`, `in-progress`, `blocked`, `shipped` or `sunset`, shown as a badge.
+
+  A car may carry `state`: `open`, `in-progress` (amber), `blocked` (red) or `closed` (green). It must agree with `closed`. Without it, `closed` alone decides, as before. Each car is labelled with its state in words, so colour is never the only signal.
+- The **new cards queue** is a fenced block tagged `tc-queue`: `{"newDays": 14, "issues": [{"issue": 1932, "title": "…", "href": "https://…", "type": "bug", "labels": ["…"], "createdAt": "2026-09-27T09:30:00Z"}]}`, with an optional `title`.
+  - It lists every open issue that is not in a train, newest first.
+  - Issues filed within `newDays` are marked **new** and appear as blue pills on the card.
+  - Age is worked out when the page is viewed, so an issue stops being new on its own as time passes.
+  - Age never removes an issue from the queue.
+- Table cells never break a word, so issue numbers like `#1234` stay on one line; a wide table scrolls sideways instead.
 
 ## Mobile Tips
 
