@@ -20,6 +20,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { LANDING_JSARG_SRC } = require('./_page-globals');
 
 const SETUP_JS_PATH = path.join(__dirname, '..', 'public', 'setup.js');
 const RAW_SRC = fs.readFileSync(SETUP_JS_PATH, 'utf8');
@@ -89,6 +90,8 @@ function loadSetup(engines, config) {
   sandbox.location = { href: null };
 
   vm.createContext(sandbox);
+  // landing.js's `jsArg` is a page global setup.js calls (#1902).
+  vm.runInContext(LANDING_JSARG_SRC, sandbox);
   vm.runInContext(SETUP_JS_SRC, sandbox);
   sandbox.__elements = elements;
   return sandbox;

@@ -46,6 +46,19 @@ The PM dispatched this over Medusa. The Architect scoped it strictly to test det
 **The change.** Test-only. The test calls `codex.fire` directly, awaits `handles.accepted`, and then sends the approval, resolve, user-input and completion sequence, waiting for each step's patch (`untilPatch`) instead of a wall-clock offset. Every assertion is unchanged. No product code changed.
 
 **Evidence.** With the old test's timer shortened to 1 ms it failed 9 runs in 10, on the same assertion as CI. The new test passed 50 of 50 under 8 CPU-bound loads. `test/startup-control-codex.test.js`: 48 of 48.
+## 2026-09-27 — Inline handlers in every page script take their values through jsArg (#1902)
+
+<!-- prawduct: type=bugfix | scope=inline-handler-jsarg-1902 -->
+
+The PM dispatched this over Medusa as the last stabilization task.
+
+**Problem.** #1384 fixed `'${esc(v)}'` inside inline handler attributes in `ui.js` only. The HTML parser decodes `&#39;` back to `'` before the handler runs, so an apostrophe ends the string. The same form survived in `setup.js` (the wizard project checkbox, which is reachable with a project named O'Brien, plus two redirect buttons), `session.js` (the group pill), `landing.js` (the launch-mode radio) and `history-drawer.js` (three `safeSid` values, already constrained to `[A-Za-z0-9_-]`, converted for uniformity).
+
+**The change.** Every one of those sites uses `${jsArg(v)}`. The widened scan also found two `wizardCopyInstall(${esc(JSON.stringify(command))})` handlers in `setup.js`: correct, but a second spelling of the encoder, so they now use `jsArg` too. `session.html` doesn't load `landing.js`, so `session.js` gets its own `jsArg` beside its own `esc`, and a test pins its output to `landing.js`'s. Giving the encoders one owner is #1605, not this change. The service-worker cache needs no bump: the cache guard reports no cache-first asset changed.
+
+**Tests.** `test/inline-handler-args.test.js`: the scan runs over every `public/*.js` file (plus a self-check that it still flags the old form), and the one-encoder check covers every file. Behavioural round trips with apostrophes: the wizard checkbox, both redirect buttons, the copy buttons, the launch-mode radio, the group pill (through `session.js`'s own `jsArg`), and the history drawer. Mutation-checked: against `main`'s page scripts, 12 of the new tests fail.
+
+**Test harnesses (b68386d4).** The first full-suite run failed because sandboxes that run `setup.js` and `landing.js`'s launch picker supplied `esc` but not `jsArg`. The product was unaffected: `jsArg` is a page global in the browser. Those five harnesses now load the production declaration through a new `test/_page-globals.js`, and `session-header-cleanup` lifts `session.js`'s own copy. Three assertions move to the `jsArg` form and stay exact: two group-pill markup regexes (`'g1'` becomes `&quot;g1&quot;`), and the proxy-redirect source pin, which had been pinning the broken `'${esc(redirectUrl)}'` spelling. Full suite on b68386d4: 13,978 pass, 0 fail.
 
 ## 2026-09-27 — Rule approval compare-and-set: approval ratifies only the text the operator saw (#1053)
 

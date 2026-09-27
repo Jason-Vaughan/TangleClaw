@@ -7,6 +7,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { makeDocument, withIdParsingInnerHTML } = require('./_mini-dom');
 
+const { LANDING_JSARG_SRC } = require('./_page-globals');
 const LANDING_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
 const API_HELPER_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
 const engines = require('../lib/engines');
@@ -43,6 +44,8 @@ function setupLanding(state) {
   };
 
   vm.createContext(ctx);
+  // A page global from landing.js itself (#1902), bound to this sandbox's `esc`.
+  vm.runInContext(LANDING_JSARG_SRC, ctx);
   // The honored-mode predicate is shared frontend base (`public/api-helper.js`,
   // loaded before every page script), not landing-page code.
   vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);

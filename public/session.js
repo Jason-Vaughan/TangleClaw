@@ -152,6 +152,23 @@ function esc(str) {
 }
 
 /**
+ * Encode a value as a JS argument for an inline event handler written inside a
+ * double-quoted HTML attribute: `onclick="fn(${jsArg(value)})"`.
+ *
+ * The HTML parser decodes entities in an attribute BEFORE the handler's JS is
+ * parsed, so `'${esc(v)}'` turns an apostrophe back into a quote that closes
+ * the string early. `JSON.stringify` makes a correct JS literal and `esc` makes
+ * it attribute-safe. This page does not load `landing.js`, so it carries its
+ * own copy, as it does of `esc`; a test holds the two byte-identical in output
+ * until #1605 gives the encoders one owner.
+ * @param {*} value - The argument the handler should receive
+ * @returns {string} Attribute-safe JS literal
+ */
+function jsArg(value) {
+  return esc(value === undefined ? 'null' : JSON.stringify(value));
+}
+
+/**
  * Build <option> HTML for an engine dropdown.
  * OpenClaw entries no longer appear here (#459) — connection-backed harnesses
  * are reached via the top-bar OpenClaw panel, not assigned as a project's LLM.
@@ -697,7 +714,7 @@ function renderBannerGroups(groups) {
   if (groups.length === 1) {
     const g = groups[0];
     container.innerHTML =
-      `<span class="group-pill" data-group-id="${esc(g.id)}" data-tooltip="Project group" role="button" tabindex="0" onclick="toggleGroupPopover(this, '${esc(g.id)}')" onkeydown="onGroupPillKey(event)">${esc(g.name)}` +
+      `<span class="group-pill" data-group-id="${esc(g.id)}" data-tooltip="Project group" role="button" tabindex="0" onclick="toggleGroupPopover(this, ${jsArg(g.id)})" onkeydown="onGroupPillKey(event)">${esc(g.name)}` +
       `<span class="group-popover" id="groupPop-${esc(g.id)}"></span></span>`;
     return;
   }
