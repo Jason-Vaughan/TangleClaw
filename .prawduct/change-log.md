@@ -35,6 +35,22 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-27 — Rules lifecycle, Chunk 3: the Rules Graveyard in Project Rules (#1696, #1709)
+
+<!-- prawduct: type=bugfix | scope=rule-retirement-1696-1709 -->
+
+Chunk 03 of 04. Authorized with rulings 6 and 7 (PM d40bf543): the allow-list is ratified, and the C4 replacement-proposal design is approved, with one open conflict against ruling 2, asked as a blocking question.
+
+**The change.**
+- **`renderProjectRulesList`** shows live rules only (proposed and active). Active rows get **Retire** (with a confirm); a replacement proposal shows "Approving retires: <text>", or the id when the target is not in the fetched set.
+- **The new `renderRulesGraveyard`** renders a closed `<details>`: retired rows with "Replaced by: <text>" (or `rule #N`), the retire time, and **Restore**. It renders nothing when no rule is retired.
+- **`retireProjectRule`** confirms first, then retires with no password. **`restoreProjectRule`** sends a bare `{status: 'active'}`, and its status line says the rule came back switched off. Both refresh the list; a failure is reported, not claimed as success.
+- **CSS:** 44px targets, and muted text via `--text-muted`.
+- **Docs.** The docs UI paragraph, the post-upgrade retire step (ruling 3), FEATURES and the CHANGELOG. The store JSDoc and docs now say the allow-list is ratified.
+- **Operator verification:** VRF-001 in the local queue covers layout, phone width, disclosure behaviour and themes. Render, escaping and wiring are pinned by tests.
+
+**Tests.** `test/project-rules-unknown.test.js` (#1054) had its own sandbox without the new helper or the #1053 shown-content map; both are added. Its handler-count guard now expects six mutation handlers (retire and restore joined add, toggle, delete and decide), and they all still re-read through the three-state refresh. The guard's real check, that `fetchProjectRules` is called only from the refresh, is unchanged. `test/project-rules-modal.test.js`: the #1053 harness now builds `renderRulesGraveyard`, `retireProjectRule` and `restoreProjectRule` from source, with a real escaper. Cases cover live/graveyard separation, the no-graveyard and ghost-only empty states, an unknown successor id, Retire on active rows only, the escaped replacement line, escaped retired and successor text, a declined confirm sending nothing, the Retire and Restore request bodies, a refused Retire reported honestly, handler routing, and the CSS targets.
+
 ## 2026-09-27 — Rules lifecycle, Chunk 2: routes, tc rules, and no rejecting an active rule (#1696, #1709)
 
 <!-- prawduct: type=bugfix | scope=rule-retirement-1696-1709 -->

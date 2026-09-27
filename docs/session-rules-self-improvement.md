@@ -59,11 +59,10 @@ machine-specific — TangleClaw's SessionStart hooks live in the ignored
   <!-- lifecycle-table:end -->
 
   **Every other move is refused with `INVALID_TRANSITION`.** It is an allow-list. In
-  particular, an active rule is never rejected (Architect ruling on #1709). It is also
-  never sent back to `proposed`, because that made a two-step way round the one-step
-  refusal. This part is built to enforce the ruling's intent and is pending the
-  Architect's explicit ratification. Either move took a governing rule out of the list
-  and the Graveyard alike, with no password. Retire is how a rule leaves force. A rule that never governed
+  particular, an active rule is never rejected and never sent back to `proposed`; the
+  Architect ratified the whole table on #1709. Either move took a governing rule out of
+  the list and the Graveyard alike, with no password, and together they made a two-step
+  way round the one-step refusal. Retire is how a rule leaves force. A rule that never governed
   cannot be retired (operator ruling on #1709: "If a rule was never born, then it can
   never die").
 
@@ -163,7 +162,19 @@ was empty on every project and rules never evolved.
    recorded decision and re-arm re-proposal at the next wrap. Approve there is gated by
    the same operator password (revealed inline on 403), and names the exact text the row
    showed (#1053): if the rule changed after the list rendered, the server refuses and the
-   list is redrawn with the current text. Rejected rules don't render in
+   list is redrawn with the current text.
+
+   The list holds live rules only: proposed and active (#1709). An active row has
+   **Retire**, behind a confirm because the rule leaves the list. Retired rules go to a
+   **Rules Graveyard** disclosure under each kind's list. It shows each retired rule's
+   text, when it was retired and, where known, what replaced it, with **Restore**, which
+   brings the rule back switched off. A replacement proposal shows **"Approving
+   retires: <text>"**, so approving an amendment visibly retires what it amends
+   (#1696).
+
+   **After upgrading to schema v51:** rules someone switched off by hand because they
+   were dead are still in the live list, switched off. No migration guesses which are
+   dead, because rule ids differ per install. Retire them from this list. Rejected rules don't render in
    the list (the record lives in the DB and the rule's version history, not the working
    list).
 
