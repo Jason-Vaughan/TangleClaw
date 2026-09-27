@@ -135,7 +135,10 @@ describe('session rule lifecycle (#1696, #1709)', () => {
       const wrap = activeRule('retired wrap rule about linting', { kind: 'wrap' });
       const master = store.sessionRules.create({ content: 'retired master rule', kind: 'master' });
       try {
-        for (const r of [startup, wrap, master]) store.sessionRules.setStatus(r.id, 'retired');
+        for (const r of [startup, wrap]) store.sessionRules.setStatus(r.id, 'retired');
+        // Master rules cannot be retired through the lifecycle; the row is set
+        // directly to prove the Master reader's own filter would still hold.
+        store.getDb().prepare("UPDATE session_rules SET status = 'retired' WHERE id = ?").run(master.id);
         assert.ok(!delivered().includes('retired startup rule about linting'));
         const { _internal } = require('../lib/wrap-steps/ai-content');
         assert.ok(!_internal.listWrapRules(project.id).some((r) => r.id === wrap.id),
@@ -208,9 +211,71 @@ describe('session rule lifecycle (#1696, #1709)', () => {
       assert.equal(approved.status, 'active');
     });
 
-    it('an active rule can still be set back to proposed, where it stays visible for review', () => {
-      const a = activeRule('demoted by status');
-      assert.equal(store.sessionRules.setStatus(a.id, 'proposed').status, 'proposed');
+  });
+
+  // An allow-list, not a deny-list: refusing active → rejected alone still let
+  // an active rule be rejected in two steps, via proposed.
+  describe('the transition table is the whole contract', () => {
+    /**
+     * A rule sitting in the given status.
+     * @param {string} status - 'proposed' | 'rejected' | 'active' | 'retired'
+     * @returns {object} The rule
+     */
+    function ruleIn(status) {
+      const tag = `${status} ${Math.random()}`;
+      if (status === 'proposed' || status === 'rejected') {
+        const r = proposal(tag);
+        if (status === 'rejected') store.sessionRules.setStatus(r.id, 'rejected');
+        return r;
+      }
+      const r = activeRule(tag);
+      if (status === 'retired') store.sessionRules.setStatus(r.id, 'retired');
+      return r;
+    }
+
+    for (const from of store.SESSION_RULE_STATUSES) {
+      for (const to of store.SESSION_RULE_STATUSES) {
+        const allowed = store.SESSION_RULE_TRANSITIONS[from].includes(to);
+        it(`${from} → ${to} is ${allowed ? 'allowed' : 'refused, changing nothing'}`, () => {
+          const rule = ruleIn(from);
+          const opts = to === 'active' ? { expectedContent: rule.content } : {};
+          if (allowed) {
+            assert.equal(store.sessionRules.setStatus(rule.id, to, opts).status, to);
+          } else {
+            const versions = store.sessionRules.listVersions(rule.id).length;
+            assert.throws(() => store.sessionRules.setStatus(rule.id, to, opts), code('INVALID_TRANSITION'));
+            assert.equal(store.sessionRules.get(rule.id).status, from);
+            assert.equal(store.sessionRules.listVersions(rule.id).length, versions);
+          }
+        });
+      }
+    }
+
+    it('closes the two-step route round the ruling: active → proposed → rejected', () => {
+      const rule = activeRule('must not vanish in two steps');
+      assert.throws(() => store.sessionRules.setStatus(rule.id, 'proposed'), code('INVALID_TRANSITION'));
+      assert.throws(() => store.sessionRules.setStatus(rule.id, 'rejected'), code('INVALID_TRANSITION'));
+      assert.ok(delivered().includes('must not vanish in two steps'));
+    });
+
+    it('the lifecycle table in the docs lists exactly the allowed moves', () => {
+      const doc = fs.readFileSync(path.join(__dirname, '..', 'docs', 'session-rules-self-improvement.md'), 'utf8');
+      const block = doc.slice(doc.indexOf('lifecycle-table:start'), doc.indexOf('lifecycle-table:end'));
+      assert.ok(block.length > 0, 'the docs carry the marked lifecycle table');
+      const documented = [...block.matchAll(/^\s*\| `(\w+)` \| `(\w+)` \|/gm)].map((m) => `${m[1]} → ${m[2]}`).sort();
+      const code_ = Object.entries(store.SESSION_RULE_TRANSITIONS)
+        .flatMap(([from, tos]) => tos.map((to) => `${from} → ${to}`)).sort();
+      assert.deepEqual(documented, code_);
+    });
+
+    it('refuses to retire a Master rule — Master rules keep their confirmed baseline path', () => {
+      const master = store.sessionRules.create({ content: 'a shipped hard rule', kind: 'master' });
+      try {
+        assert.throws(() => store.sessionRules.setStatus(master.id, 'retired'), code('INVALID_TRANSITION'));
+        assert.equal(store.sessionRules.get(master.id).status, 'active');
+      } finally {
+        store.sessionRules.delete(master.id);
+      }
     });
   });
 

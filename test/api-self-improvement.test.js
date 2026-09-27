@@ -389,6 +389,26 @@ describe('api self-improvement loop (#569)', () => {
       assert.equal(statusOf(rule.id), 'proposed');
     });
 
+    it('refuses to retire a Master rule with 400 INVALID_TRANSITION', async () => {
+      const master = store.sessionRules.create({ content: `hard rule ${Date.now()}`, kind: 'master' });
+      try {
+        const res = await request('PUT', `/api/session-rules/${master.id}/status`, { status: 'retired' });
+        assert.equal(res.status, 400);
+        assert.equal(res.data.code, 'INVALID_TRANSITION');
+        assert.equal(statusOf(master.id), 'active');
+      } finally {
+        store.sessionRules.delete(master.id);
+      }
+    });
+
+    it('refuses active → proposed, so an active rule cannot be rejected in two steps', async () => {
+      const rule = live(`two-step ${Date.now()}`);
+      const demote = await request('PUT', `/api/session-rules/${rule.id}/status`, { status: 'proposed' });
+      assert.equal(demote.status, 400);
+      assert.equal(demote.data.code, 'INVALID_TRANSITION');
+      assert.equal(statusOf(rule.id), 'active');
+    });
+
     it('answers 403, not 404, for an unknown rule without the password — as before', async () => {
       setOperatorPassword('hunter2');
       const res = await request('PUT', '/api/session-rules/99999999/status', { status: 'active' });

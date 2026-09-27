@@ -47,15 +47,24 @@ machine-specific — TangleClaw's SessionStart hooks live in the ignored
   switched off, which is resting and can be re-enabled. The lifecycle, enforced in
   `store.sessionRules.setStatus`:
 
+  <!-- lifecycle-table:start — one row per allowed move; test/session-rule-lifecycle.test.js holds it to SESSION_RULE_TRANSITIONS -->
   | From | To | Meaning |
   |---|---|---|
-  | `proposed` / `rejected` | `active` | Approve: password-gated, and must carry `expectedContent` (#1053) |
+  | `proposed` | `active` | Approve: password-gated, and must carry `expectedContent` (#1053) |
   | `proposed` | `rejected` | Decline |
-  | `active` | `retired` | Retire. **Only** from `active`: a rule that never governed cannot be retired (operator ruling on #1709) |
+  | `rejected` | `active` | Approve a declined proposal after all (same gate and text check) |
+  | `active` | `active` | Re-approve: a no-op beyond the text check |
+  | `active` | `retired` | Retire. Not for Master rules, which keep their own confirmed disable/delete path |
   | `retired` | `active` | Restore. Lands `enabled: false`, so it governs again only once switched on |
-  | `active` | `rejected` | Refused `INVALID_TRANSITION` (Architect ruling): rejection answers a proposal that never governed, and on an active rule it was a password-free way to make the rule vanish from the list and the Graveyard. Retire it instead |
-  | `proposed` / `rejected` | `retired` | Refused `INVALID_TRANSITION` |
-  | `retired` | `proposed` / `rejected` | Refused `INVALID_TRANSITION` |
+  <!-- lifecycle-table:end -->
+
+  **Every other move is refused with `INVALID_TRANSITION`.** It is an allow-list. In
+  particular, an active rule is never rejected and never sent back to `proposed`
+  (Architect ruling on #1709): either move took a governing rule out of the list and the
+  Graveyard alike, with no password, and together they made a two-step way round the
+  one-step refusal. Retire is how a rule leaves force. A rule that never governed
+  cannot be retired (operator ruling on #1709: "If a rule was never born, then it can
+  never die").
 
 - `session_rules.replaces_rule_id` (#1696): set when a rule is created to replace another
   (`replacesRuleId`), and never changed afterwards. It must name an `active` rule of the
