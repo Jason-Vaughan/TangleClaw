@@ -165,6 +165,8 @@ All notable changes to TangleClaw are documented in this file.
   - Informational only: nothing here pulls, checks out, restarts or gates anything. `lib/checkout-fleet.js`.
 
 ### Changed
+- **A served plan page shows its "updated" time in the server's local time zone** (#1928). A plan read in Los Angeles now shows `2026-09-26 17:50:36 PDT` (or `PST` in winter) instead of `2026-09-27 00:50:36 UTC`. The zone is the host's own IANA zone, so no configuration is involved. The `<time datetime>` attribute still carries the ISO UTC value for machine readers, and hovering the stamp shows the UTC reading. The plan-list API is unchanged: `modifiedAt` stays ISO UTC.
+
 - **`POST /api/setup/generate-cert`'s `hosts` now adds names instead of replacing the list** (#1905, Architect ruling A19). A replacement list could leave out a host the server serves, such as the tailnet name, and so recreate `HOST_NOT_SERVED`. The mandatory names are always kept. Use the new `removeHosts` to take a non-canonical name out.
 
 - **The ttyd watcher no longer restarts ttyd for a reconnect burst, and the health panel shows the watcher's own reading** (#1245). The panel and the watcher could disagree about the same moment: they took separate readings, neither tied to a ttyd process, and a single snapshot counted children that were merely exiting as leaked.

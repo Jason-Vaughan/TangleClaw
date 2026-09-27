@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Plan page "updated" stamp in the host's local time zone (#1928)
+
+<!-- prawduct: type=bugfix | scope=1928-plan-stamp -->
+
+PM dispatch over Medusa (f7dd1a06), under an Architect ruling (e0b2cb45 / 34c4efe1): host-resolved IANA zone as the default, the zone injectable for deterministic tests, and no new config key.
+
+**The change.** `lib/plan-docs.js` gains `formatPlanStamp(iso, timeZone?)`, which uses `Intl.DateTimeFormat` with `timeZoneName: 'short'` and gives `YYYY-MM-DD HH:MM:SS PDT/PST`. `renderPlanPage` takes an optional `timeZone`, and the server passes none, so the host zone applies. `<time datetime>` keeps the ISO UTC value, a `title` tooltip gives the UTC reading, and an unparseable value falls back to its UTC reading rather than failing the page.
+
+**Tests.** Unit: PDT and PST dates, the datetime and title attributes, host default equals the resolved zone, a zone ahead of UTC crossing the date line, and the unparseable fallback. The existing bar fixture now pins `timeZone: 'UTC'`, so its visible-string assertion is unchanged. API: with `TZ=America/Los_Angeles` set in-process, `GET /plans/:id/stamp.md` shows `PST` for a January mtime. This proves the server's call site takes the host zone. It also passes when the runner itself is on UTC.
+
+**Out of scope.** The Roadmap Board's raw-HTML rendering belongs to the shared generator; the PM is coordinating it.
+
 ## 2026-09-26 — Fleet Workload Visibility, Phase A: launch-bound workload receipts, activity observer, composed fleet read (#1912)
 
 <!-- prawduct: type=feature | scope=1912-fleet-workload -->
