@@ -160,8 +160,8 @@ function renderHistoryResults(data) {
     ).join('');
     const more = (s.hits || []).length > 3 ? `<div class="form-hint">+${s.hits.length - 3} more match(es) — open to see all</div>` : '';
     return `<div class="history-result" id="hist-result-${safeSid(s.sid)}"
-        onclick="openHistorySession('${safeSid(s.sid)}')"
-        onkeydown="if(event.key==='Enter')openHistorySession('${safeSid(s.sid)}')" tabindex="0" role="button">
+        onclick="openHistorySession(${jsArg(safeSid(s.sid))})"
+        onkeydown="if(event.key==='Enter')openHistorySession(${jsArg(safeSid(s.sid))})" tabindex="0" role="button">
       <div class="card-row">
         <strong>session ${esc(s.sid)}</strong>
         <span class="form-hint">${esc(s.date || 'undated')}</span>
@@ -214,7 +214,7 @@ async function openHistorySession(sid) {
       <div class="card-row" style="margin-top:6px">
         <input type="text" class="form-input" id="historyTranscriptQuery"
                placeholder="Search this session's transcript…" style="flex:1">
-        <button class="btn btn-compact btn-primary" onclick="runTranscriptSearch('${safeSid(sid)}')">Search</button>
+        <button class="btn btn-compact btn-primary" onclick="runTranscriptSearch(${jsArg(safeSid(sid))})">Search</button>
       </div>
       <div id="historyTranscriptResults"></div>`;
   }

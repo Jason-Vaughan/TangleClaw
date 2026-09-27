@@ -7,6 +7,9 @@
  * apostrophe (a project named O'Brien) closed the string early and the handler
  * never ran. Every handler now takes its argument through `jsArg`.
  *
+ * #1902 carried the same fix to every other page script, and the scan below
+ * now covers all of `public/*.js`, not only `ui.js`.
+ *
  * The tests decode each attribute the way a browser does and then run the
  * handler text, so they assert what the handler RECEIVES rather than how the
  * source is spelled.
@@ -20,6 +23,8 @@ const path = require('node:path');
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
 const ui = read('ui.js');
 const landing = read('landing.js');
+const session = read('session.js');
+const PAGE_SCRIPTS = fs.readdirSync(path.join(__dirname, '..', 'public')).filter((f) => f.endsWith('.js')).sort();
 
 /**
  * Slice a function declaration out of source text by brace-matching.
@@ -98,33 +103,144 @@ describe('jsArg (#1384)', () => {
   });
 });
 
-describe('public/ui.js handlers (#1384)', () => {
-  it('has no inline handler that quotes an interpolation in single quotes', () => {
-    // A handler attribute is double-quoted; inside it, `'${...}'` is the broken
-    // construction whatever is interpolated. Code inside ${...} is skipped, so
-    // `${isAll ? 'null' : jsArg(tag)}` is not a hit.
-    const offenders = [];
-    for (const m of ui.matchAll(/\son[a-z]+="([^"]*)"/g)) {
-      const attr = m[1];
-      let depth = 0;
-      for (let i = 0; i < attr.length; i++) {
-        if (attr.startsWith('${', i)) { depth++; i++; continue; }
-        if (depth > 0 && attr[i] === '{') depth++;
-        else if (depth > 0 && attr[i] === '}') depth--;
-        else if (depth === 0 && attr[i] === "'" && attr.startsWith('${', i + 1)) {
-          offenders.push(m[0].slice(0, 120));
-          break;
-        }
+/**
+ * Every inline handler in `src` that quotes an interpolation in single quotes.
+ * A handler attribute is double-quoted; inside it, `'${...}'` is the broken
+ * construction whatever is interpolated. Code inside ${...} is skipped, so
+ * `${isAll ? 'null' : jsArg(tag)}` is not a hit.
+ *
+ * @param {string} src - Page script source.
+ * @returns {string[]} The offending attribute text, truncated.
+ */
+function quotedInterpolations(src) {
+  const offenders = [];
+  for (const m of src.matchAll(/\son[a-z]+="([^"]*)"/g)) {
+    const attr = m[1];
+    let depth = 0;
+    for (let i = 0; i < attr.length; i++) {
+      if (attr.startsWith('${', i)) { depth++; i++; continue; }
+      if (depth > 0 && attr[i] === '{') depth++;
+      else if (depth > 0 && attr[i] === '}') depth--;
+      else if (depth === 0 && attr[i] === "'" && attr.startsWith('${', i + 1)) {
+        offenders.push(m[0].slice(0, 120));
+        break;
       }
     }
-    assert.deepEqual(offenders, []);
+  }
+  return offenders;
+}
+
+/**
+ * Render one handler attribute from a source line as a template literal, with
+ * the named values in scope, decode it as the browser would, and run it.
+ *
+ * @param {string} src - Page script source.
+ * @param {string} needle - Text that picks the source line.
+ * @param {string} attrName - Attribute to take, e.g. `onchange`.
+ * @param {Record<string, *>} scope - Values the template interpolates.
+ * @returns {Array<{fn: string, args: Array<*>}>} Calls the handler made.
+ */
+function runSourceHandler(src, needle, attrName, scope) {
+  const line = src.split('\n').find((l) => l.includes(needle));
+  assert.ok(line, `no source line contains ${needle}`);
+  const attr = line.match(new RegExp(`${attrName}="([^"]*)"`))[1];
+  const names = Object.keys(scope);
+  const rendered = new Function(...names, 'return `' + attr + '`;')(...names.map((k) => scope[k]));
+  return runHandler(decodeAttr(rendered));
+}
+
+describe('every page script (#1384, #1902)', () => {
+  it('the scan covers more than ui.js', () => {
+    for (const f of ['ui.js', 'setup.js', 'session.js', 'landing.js', 'history-drawer.js']) assert.ok(PAGE_SCRIPTS.includes(f), f);
+  });
+
+  for (const f of PAGE_SCRIPTS) {
+    it(`${f} has no inline handler that quotes an interpolation in single quotes`, () => {
+      assert.deepEqual(quotedInterpolations(read(f)), []);
+    });
+  }
+
+  it('the scan still catches the old form', () => {
+    assert.equal(quotedInterpolations("x = `<i onclick=\"fn('${esc(v)}')\">`;").length, 1);
   });
 
   it('keeps one encoder: no esc(JSON.stringify(...)) left in a handler', () => {
-    const hits = [...ui.matchAll(/\son[a-z]+="[^"]*esc\(JSON\.stringify/g)].map((m) => m[0].slice(0, 120));
-    assert.deepEqual(hits, []);
+    for (const f of PAGE_SCRIPTS) {
+      const hits = [...read(f).matchAll(/\son[a-z]+="[^"]*esc\(JSON\.stringify/g)].map((m) => m[0].slice(0, 120));
+      assert.deepEqual(hits, [], f);
+    }
+  });
+});
+
+describe('session.js carries its own jsArg (#1902)', () => {
+  // session.html does not load landing.js. Until #1605 gives the encoders one
+  // owner, the copy must encode exactly as the original does.
+  const own = new Function(
+    `${liftFunction(session, 'function esc(')}\n${liftFunction(session, 'function jsArg(')}\nreturn jsArg;`
+  )();
+
+  it('encodes every awkward value exactly as landing.js does', () => {
+    for (const v of [...AWKWARD, undefined, 7, ["O'Brien", 'x'], null]) assert.equal(own(v), jsArg(v), JSON.stringify(v));
   });
 
+  it('the group pill hands an apostrophe group id to toggleGroupPopover intact', () => {
+    const calls = runSourceHandler(session, 'toggleGroupPopover(this,', 'onclick', { jsArg: own, esc, g: { id: "grp'1", name: 'x' } });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].fn, 'toggleGroupPopover');
+    assert.equal(calls[0].args[1], "grp'1", 'the group id arrives exactly');
+  });
+});
+
+describe('the other page scripts hand values over intact (#1902)', () => {
+  it('the setup wizard checkbox gives wizardToggleProject an apostrophe project name', () => {
+    const calls = runSourceHandler(read('setup.js'), 'wizardToggleProject(', 'onchange', { jsArg, esc, p: { name: "O'Brien" } });
+    assert.deepEqual(calls, [{ fn: 'wizardToggleProject', args: ["O'Brien", undefined] }]);
+  });
+
+  it('the setup redirect buttons navigate to a URL holding an apostrophe', () => {
+    const src = read('setup.js');
+    for (const [needle, name] of [["href=${jsArg(url)}", 'url'], ["href=${jsArg(redirectUrl)}", 'redirectUrl']]) {
+      const line = src.split('\n').find((l) => l.includes(needle));
+      assert.ok(line, needle);
+      const attr = line.match(/onclick="([^"]*)"/)[1];
+      const value = "https://h/?q=it's";
+      const rendered = new Function('jsArg', name, 'return `' + attr + '`;')(jsArg, value);
+      const window = { location: {} };
+      new Function('window', decodeAttr(rendered))(window);
+      assert.equal(window.location.href, value, name);
+    }
+  });
+
+  it('the install copy buttons give wizardCopyInstall the exact command', () => {
+    const command = `echo 'it\'s' && brew install "x"`;
+    const calls = runSourceHandler(read('setup.js'), 'wizardCopyInstall(${jsArg(command)})', 'onclick', { jsArg, command });
+    assert.deepEqual(calls, [{ fn: 'wizardCopyInstall', args: [command] }]);
+  });
+
+  it('the launch-mode radio assigns its key exactly', () => {
+    const line = landing.split('\n').find((l) => l.includes('selectedLaunchMode=${jsArg(key)}'));
+    assert.ok(line, 'the launch-mode radio must use jsArg');
+    const attr = line.match(/onchange="([^"]*)"/)[1];
+    const rendered = new Function('jsArg', 'key', 'return `' + attr + '`;')(jsArg, "odd'key");
+    let selectedLaunchMode = null;
+    const updateLaunchModeWarning = () => {};
+    new Function('ctx', 'updateLaunchModeWarning', decodeAttr(rendered).replace('selectedLaunchMode=', 'ctx.v='))(
+      { set v(x) { selectedLaunchMode = x; } }, updateLaunchModeWarning);
+    assert.equal(selectedLaunchMode, "odd'key");
+  });
+
+  it('the history drawer passes the session id through jsArg', () => {
+    const drawer = read('history-drawer.js');
+    for (const needle of ['onclick="openHistorySession(', 'openHistorySession(${jsArg(safeSid(s.sid))})" tabindex', 'runTranscriptSearch(']) {
+      const line = drawer.split('\n').find((l) => l.includes(needle));
+      assert.ok(line && line.includes('${jsArg(safeSid('), needle);
+    }
+    const calls = runSourceHandler(drawer, 'onclick="openHistorySession(', 'onclick', { jsArg, safeSid: (x) => String(x).replace(/[^A-Za-z0-9_-]/g, ''), s: { sid: 'abc-1' } });
+    assert.deepEqual(calls, [{ fn: 'openHistorySession', args: ['abc-1'] }]);
+  });
+});
+
+describe('public/ui.js handlers (#1384)', () => {
   it('the card detail panel hands O\'Brien to every handler intact', () => {
     const decl = 'function renderCardDetail(project)';
     const src = liftFunction(ui, decl);
