@@ -488,6 +488,25 @@ html[data-tc-keyboard] body {
   color: var(--text);
   margin-bottom: 0;
 }
+/* Collapsible panel rows (#1906): the toggle is a native button holding only
+   the arrow, the name and passive metadata; action controls sit beside it in
+   the row, because a control inside a button is hidden from assistive tech. */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.toggle-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+.toggle-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .port-group-toggle {
   display: flex;
   align-items: center;

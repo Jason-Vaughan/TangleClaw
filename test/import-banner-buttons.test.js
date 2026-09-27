@@ -311,4 +311,56 @@ describe('Not a project, traced widget → collector → POST → server (#1381)
     assert.ok(store.portLeases.get(5432), 'and kept the lease');
     assert.equal(rendered.length, 0, 'the refreshed banner no longer lists it');
   });
+
+  it('says why, and keeps the banner row, when the server refuses (#1915)', async () => {
+    // Offered in the banner, then released before the operator presses the button.
+    store.portLeases.lease({ port: 5440, project: 'Vanished', service: 'db', permanent: true });
+    store.portLeases.release(5440);
+
+    const ui = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+    const src = [
+      liftFunction(ui, 'function showToast('),
+      liftFunction(ui, 'function showOwnerKindRefusal('),
+      liftFunction(ui, 'async function markLeaseOwnerExternal(')
+    ].join('\n');
+    // Like public/api-helper.js: a refusal returns null and leaves the reason on api.lastError.
+    const api = { lastError: null };
+    const apiMutate = (url, method, body) => new Promise((resolve, reject) => {
+      const req = http.request({
+        hostname: '127.0.0.1', port: server.address().port, path: url, method,
+        headers: { 'Content-Type': 'application/json' }
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          const data = JSON.parse(Buffer.concat(chunks).toString('utf8') || 'null');
+          api.lastError = res.statusCode < 400 ? null : ((data && data.error) || `HTTP ${res.statusCode}`);
+          resolve(res.statusCode < 400 ? data : null);
+        });
+      });
+      req.on('error', reject);
+      req.write(JSON.stringify(body));
+      req.end();
+    });
+    const toast = { textContent: '', className: '', classList: { remove: () => {} } };
+    let dismissed = 0;
+    let reloaded = 0;
+    const page = new Function('document', 'api', 'apiMutate', 'dismissImportBanner', 'loadPorts', 'checkPortImports', `
+      ${src}
+      return { markLeaseOwnerExternal };
+    `)(
+      { getElementById: (id) => (id === 'toast' ? toast : null) },
+      api,
+      apiMutate,
+      () => { dismissed++; },
+      async () => { reloaded++; },
+      () => {}
+    );
+
+    await page.markLeaseOwnerExternal('Vanished');
+    assert.equal(toast.textContent, 'Could not mark "Vanished" as not a project: No lease is held under "Vanished"');
+    assert.match(toast.className, /\btoast-warn\b.*\bvisible\b/);
+    assert.equal(dismissed, 0, 'the banner row stays, since nothing was recorded');
+    assert.equal(reloaded, 0);
+  });
 });
