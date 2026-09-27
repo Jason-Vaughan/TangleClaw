@@ -58,6 +58,13 @@ after(() => {
 // its command would depend on what the host has installed. The stub fails
 // closed (no version), so a test that means to exercise a version sets one.
 const codexAdapter = require('../lib/startup-control-codex');
+
+// The loopback profile is granted only on facts a test states (#1957); these
+// tests exercise launches on an install where it may be applied.
+const { grantingFacts, useTrustFacts } = require('./_loopback-trust');
+let restoreTrust;
+before(() => { restoreTrust = useTrustFacts(grantingFacts()); });
+after(() => restoreTrust());
 const realCodexProbe = codexAdapter._seams.execFileSync;
 const realCodexVersion = codexAdapter._internal._version.version;
 before(() => {

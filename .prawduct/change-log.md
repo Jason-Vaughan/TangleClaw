@@ -47,6 +47,24 @@ The PM dispatched this over Medusa. The Architect scoped it strictly to test det
 
 **Evidence.** With the old test's timer shortened to 1 ms it failed 9 runs in 10, on the same assertion as CI. The new test passed 50 of 50 under 8 CPU-bound loads. `test/startup-control-codex.test.js`: 48 of 48.
 
+## 2026-09-27 — Fail-closed guard before the Codex loopback profile is applied (#1957 REQ2)
+
+<!-- prawduct: type=bugfix | scope=loopback-guard-1957-req2 -->
+
+REQ2 only, dispatched by the PM on the Architect's authorization (4fd5e6b4). REQ1 (live reproduction) is not included, and REQ3 (removing source-address trust) is kept as its own design. The design is `.tangleclaw/plans/1957-loopback-trust-remediation.md` § Requirement 2. This branch is stacked on #1957's `fix/1836-codex-fullauto-loopback`, and its PR targets that branch; the other lane's branch was not written to.
+
+**Problem.** The #1836 profile gives a sandboxed Full Auto agent every loopback port. ttyd on TCP is a writable terminal, and `lib/auth-gate.js#evaluate` admits a loopback machine client on every route without a token. So "sandboxed" would stop bounding the agent.
+
+**The change.**
+- `lib/loopback-trust-guard.js` (pure): `assessLoopbackTrust(facts)` grants only when `ingressMode === 'caddy'`, the installed ttyd job's `--interface` is the caddy socket, AUTH-4 is enabled with a token, and the machine-client carve-out requires the token. Every missing or unknown fact withholds, with a code. `isGranted` accepts only verdicts the guard issued (a private WeakSet).
+- `lib/codex-loopback-profile.js#applyLoopbackProfile(launchCmd, trust)` refuses without a grant.
+- `lib/auth-gate.js#MACHINE_CLIENT_REQUIRES_SERVICE_TOKEN = false` declares today's behaviour, and a test pins it to `evaluate`.
+- `lib/startup-control-codex.js#loopbackLaunchCommand` gathers the facts: the config, the installed plist (via `ttyd-bind#parseProgramArguments`), the socket path and the declaration. It withholds with `blocksLoopback: true`, the path already tested for an unproven version. A throw while gathering the facts withholds.
+
+**Consequence (confirmed as intended by the PM, bc5edec0).** The carve-out requires no token today, so the profile is withheld on every install until REQ3. Full Auto keeps the no-network sandbox and gets its context pasted.
+
+**Tests.** `test/loopback-trust-guard.test.js` covers the fail-closed matrix and the declaration pin. `test/codex-loopback-profile.test.js` covers the apply refusal, including lookalike and copied verdicts, the adapter's withheld reasons, a throwing fact source, and the real fact source withholding. `test/startup-control-launch.test.js` adds an end-to-end withheld launch. The existing apply-path tests in the launch, Master and profile suites now state granting facts through `test/_loopback-trust.js`, so they no longer read this machine's real ttyd plist; their assertions are unchanged. Mutation checks: removing the apply check, removing the adapter check, and flipping the declaration each turned tests red.
+
 ## 2026-09-27 — Codex Full Auto reaches TangleClaw over loopback, and only loopback (#1836)
 
 <!-- prawduct: type=bugfix | scope=codex-fullauto-loopback-1836 -->

@@ -22,8 +22,16 @@ const { execFileSync, execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 
 const profile = require('../lib/codex-loopback-profile');
+const loopbackTrust = require('../lib/loopback-trust-guard');
 const codex = require('../lib/startup-control-codex');
 const { initRepo } = require('./_temp-repo');
+
+// The loopback profile is granted only on facts a test states (#1957); these
+// tests exercise launches on an install where it may be applied.
+const { grantingFacts, useTrustFacts } = require('./_loopback-trust');
+let restoreTrust;
+before(() => { restoreTrust = useTrustFacts(grantingFacts()); });
+after(() => restoreTrust());
 
 /**
  * The `-c` overrides as a key → value map, asserting the argv is strictly
@@ -88,7 +96,7 @@ describe('codex loopback profile (#1836)', () => {
   });
 
   it('replaces --sandbox workspace-write in place, keeping what comes before and after it', () => {
-    const { command, applied } = profile.applyLoopbackProfile('codex --ask-for-approval never --sandbox workspace-write --no-daemon');
+    const { command, applied } = profile.applyLoopbackProfile('codex --ask-for-approval never --sandbox workspace-write --no-daemon', loopbackTrust.assessLoopbackTrust(grantingFacts()));
     assert.equal(applied, true);
     assert.ok(command.startsWith('codex --ask-for-approval never -c features.network_proxy=true '), command);
     assert.ok(command.endsWith(' --no-daemon'), command);
@@ -105,7 +113,82 @@ describe('codex loopback profile (#1836)', () => {
 
   it('adds no network grant to a command with no workspace-write sandbox to narrow', () => {
     for (const cmd of ['codex', 'codex --dangerously-bypass-approvals-and-sandbox', 'codex --sandbox read-only', 'codex --sandbox workspace-writer']) {
-      assert.deepEqual(profile.applyLoopbackProfile(cmd), { command: cmd, applied: false }, cmd);
+      assert.deepEqual(profile.applyLoopbackProfile(cmd, loopbackTrust.assessLoopbackTrust(grantingFacts())), { command: cmd, applied: false }, cmd);
+    }
+  });
+});
+
+describe('applyLoopbackProfile refuses without a grant from the trust guard (#1957)', () => {
+  const cmd = 'codex --ask-for-approval never --sandbox workspace-write';
+
+  it('refuses with no verdict, a withheld verdict, or an object that only claims to be a grant', () => {
+    const withheld = loopbackTrust.assessLoopbackTrust({ ...grantingFacts(), machineClientRequiresServiceToken: false });
+    assert.equal(withheld.granted, false);
+    const real = loopbackTrust.assessLoopbackTrust(grantingFacts());
+    for (const trust of [undefined, null, true, {}, { granted: true }, { ...real }, Object.freeze({ granted: true, code: 'granted', reason: 'x' }), withheld]) {
+      assert.deepEqual(profile.applyLoopbackProfile(cmd, trust), { command: cmd, applied: false }, JSON.stringify(trust));
+    }
+  });
+
+  it('applies with a grant the guard issued', () => {
+    assert.equal(profile.applyLoopbackProfile(cmd, loopbackTrust.assessLoopbackTrust(grantingFacts())).applied, true);
+  });
+});
+
+describe('codex adapter withholds the profile unless the trust guard grants it (#1957)', () => {
+  const saved = { ...codex._internal._version };
+  const cmd = 'codex --ask-for-approval never --sandbox workspace-write';
+  after(() => Object.assign(codex._internal._version, saved));
+
+  it('on a proven version, keeps the no-network sandbox and says why for each unsafe or unknown fact', () => {
+    codex._internal._version.version = '0.156.1';
+    const g = grantingFacts();
+    const cases = [
+      [{ ...g, config: { ...g.config, ingressMode: 'direct' } }, /withheld \(ttyd-on-tcp\)/],
+      [{ ...g, ttydArgs: ['/opt/ttyd', '--interface', '127.0.0.1', '--port', '3100'] }, /withheld \(ttyd-on-tcp\)/],
+      [{ ...g, ttydArgs: null }, /withheld \(ttyd-bind-unknown\)/],
+      [{ ...g, config: { ...g.config, serviceTokenEnabled: false } }, /withheld \(loopback-api-unauthenticated\)/],
+      [{ ...g, machineClientRequiresServiceToken: false }, /withheld \(loopback-api-unauthenticated\)/],
+      [{ ...g, config: null }, /withheld \(facts-unknown\)/],
+      [null, /withheld \(facts-unknown\)/]
+    ];
+    for (const [facts, reason] of cases) {
+      const restore = useTrustFacts(() => facts);
+      try {
+        const answer = codex.loopbackLaunchCommand(cmd);
+        assert.equal(answer.command, null, reason.source);
+        assert.equal(answer.blocksLoopback, true, `${reason.source}: the kept command is the no-network sandbox`);
+        assert.match(answer.reason, reason);
+      } finally {
+        restore();
+      }
+    }
+  });
+
+  it('withholds when gathering the facts throws, rather than failing open', () => {
+    codex._internal._version.version = '0.156.1';
+    const restore = useTrustFacts(() => { throw new Error('boom'); });
+    try {
+      const answer = codex.loopbackLaunchCommand(cmd);
+      assert.equal(answer.command, null);
+      assert.equal(answer.blocksLoopback, true);
+      assert.match(answer.reason, /withheld \(facts-unknown\)/);
+    } finally {
+      restore();
+    }
+  });
+
+  it('with the real fact source, withholds on this code base: the API admits loopback without the token', () => {
+    codex._internal._version.version = '0.156.1';
+    const facts = codex._internal.loopbackTrustFacts();
+    assert.equal(facts.machineClientRequiresServiceToken, false);
+    const restore = useTrustFacts(codex._internal.loopbackTrustFacts);
+    try {
+      const answer = codex.loopbackLaunchCommand(cmd);
+      assert.equal(answer.command, null);
+      assert.equal(answer.blocksLoopback, true);
+    } finally {
+      restore();
     }
   });
 });
