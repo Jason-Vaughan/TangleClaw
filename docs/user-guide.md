@@ -685,7 +685,7 @@ Every plan or design doc a session writes to `<project>/.tangleclaw/plans/<name>
 
   Every value is escaped. Links must be absolute `https://` URLs, unknown keys are refused, and the closed/total count is computed from `cars`. A block that doesn't validate shows as code, with the reason above it.
 
-  `train` is the card's permanent identity, printed as given, never worked out from where the block sits. It can be an integer (`16`), a number with up to two decimal places (`13.5`), or a short ID containing a letter (`"A"`, `"C-E"`). A number must be written as a JSON number, not as a string.
+  `train` is the card's permanent identity, printed as written (a number in its shortest form, so `13.50` shows as `13.5`), never worked out from where the block sits. It can be an integer (`16`), a number with up to two decimal places (`13.5`), or a short ID containing a letter (`"A"`, `"C-E"`). A number must be written as a JSON number, not as a string.
 
   Optional train fields:
 
