@@ -271,6 +271,34 @@ commits. Removing the hooks restores the checkout exactly.
 
 `git commit --no-verify` and `git push --no-verify` also get past the hooks in an emergency.
 
+### Control state survives a rollback, and comes back on re-upgrade
+
+Removing the hooks and markers unblocks git. It does **not** clear the control state, and neither
+does the rollback:
+
+- **Rollback deletes nothing.** The assignments, holds, events and receipts stay in the database.
+  A server whose schema predates control state runs no migration against a newer database, so it
+  never reads those tables and never clears them.
+- **Re-upgrading makes them authoritative again,** exactly as they were left. A lane that was HELD
+  or STOPPED before the rollback is still HELD or STOPPED:
+  - its governed mutations are refused again;
+  - an ordinary launch into a stopped project is refused;
+  - the next launch of a governed project reinstalls its hooks and markers.
+
+  This is the safe behavior: a hold nobody released is still in force. But a refusal right after
+  an upgrade can look like a regression. It is not a regression. It is state carried over from
+  before the rollback.
+- **Resolve it through the control workflows, never by editing the database.**
+  - Inspect what came back: `GET /api/control/assignments` lists every open assignment (operator
+    only), and `GET /api/control/assignments/:id` shows one assignment's holds and events. From a
+    pane, `tc control status` shows that lane's own state.
+  - Release holds that no longer apply, with `expectedGeneration` and a reason code.
+  - After a STOP, create a successor assignment.
+  - Close an active assignment whose work is finished.
+
+  The events and receipts tables are append-only by design, and a hand edit to the others bypasses
+  the generations and the audit trail that make those decisions safe to trust.
+
 ## Code
 
 - `lib/control-state.js`: the rules (state machine, authority, generations, receipts).
