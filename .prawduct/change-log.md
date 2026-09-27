@@ -48,6 +48,18 @@ Chunk 01 of 04. The PM dispatched it (0f6fd06f). Architect rulings 1-4 (cc2f6e32
 - **Supersession.** Approving a replacement retires its target in one `BEGIN IMMEDIATE` transaction with #1053's CAS. The CAS runs first and throws inside the transaction, so a refused approval retires nothing. An inactive target yields `replaced: {retired: false, reason}` in both the result and the activity log (ruling 2). A replacement created already active retires its target at once.
 - **replacesRuleId** is validated at create (`INVALID_REPLACES`: missing, non-integer, another project or kind, not active, Master) and refused by `update`, not ignored.
 
+**Chunk review** (`rev-20260927T151645Z-8d41bfea`: 0 blocking, 6 warnings, 9 notes). Fixed before Chunk 02:
+- The result shape now matches Architect ruling 2 exactly: `replaced: null` plus `replacementSkipped: {id, reason}`.
+- `projectsWithUndeliveredRules` counts only active rules. Before, retired rules and, since #569, proposals raised false "undelivered" alarms.
+- The missing reader tests are added (wrap, Master, conflict candidates).
+- Supersession uses the savepoint helper, so it also works inside a caller's transaction.
+- `criticGate` is validated before any write.
+- Un-retiring logs `session_rule.unretired`, distinct from the version-rollback `restored`.
+- The v51 migration carries a frozen copy of its DDL, and a new test asserts that an upgraded store equals a fresh one.
+- The docs record why retire needs no password.
+
+W5 (an active rule can be set to `rejected` with no password, leaving both the list and the Graveyard) predates this work and is routed to the Architect.
+
 **Tests.** `test/session-rule-lifecycle.test.js` (new). `test/workload-receipts.test.js`'s upgrade assertion now compares against `CURRENT_SCHEMA_VERSION` instead of a literal 50, because a later migration runs after v50 on the same upgrade. Its table assertions are unchanged, so this is not a weakening. Mutation-checked eight mutants: retire from any status, restore leaving `enabled`, target status unchecked, a live replacement not retiring, `update` ignoring the field, retire-before-CAS without a transaction, an inactive target throwing, and a born-retired rule. Each turns tests red.
 
 ## 2026-09-27 — Rule approval compare-and-set: approval ratifies only the text the operator saw (#1053)

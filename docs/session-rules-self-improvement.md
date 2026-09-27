@@ -61,11 +61,18 @@ machine-specific — TangleClaw's SessionStart hooks live in the ignored
   same project and kind (not a Master rule), or creation is refused with
   `INVALID_REPLACES`. Approving the replacement retires the rule it replaces **in the
   same transaction** as the approval, and records `superseded_by` on the retired rule. If
-  that rule is no longer active by then, the approval still stands, and the result and
-  the activity log say there was nothing to retire (`replaced: {retired: false,
-  reason}`). A replacement the operator creates already active retires its target at
-  once. Existing rules were never migrated into `retired`: which disabled rules are dead
-  is the operator's call, made with Retire.
+  that rule is no longer active by then, the approval still stands: the result carries
+  `replaced: null`, and `replacementSkipped: {id, reason}` names the rule and says why
+  nothing was retired. The activity log records the same. On success it is
+  `replaced: {id}`. A replacement the operator creates already active retires its target
+  at once. Existing rules were never migrated into `retired`: which disabled rules are
+  dead is the operator's call, made with Retire.
+- **Retire and restore need no operator password, deliberately.** Retiring removes a rule
+  from force; it grants nothing. That matches today's posture for disabling (`PUT /:id
+  {enabled:false}`) and deleting a rule, both of which any local caller can already do.
+  Gating the actions that take governance away is a wider question than this lifecycle,
+  and it is left open rather than half-answered here. A restore lands disabled, so it
+  cannot make a rule govern either.
 
 ## Learnings ingestion (the DB writer, #466)
 

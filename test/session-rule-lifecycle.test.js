@@ -109,6 +109,12 @@ describe('session rule lifecycle (#1696, #1709)', () => {
       assert.throws(() => store.sessionRules.setStatus(rule.id, 'retired'), code('INVALID_TRANSITION'));
     });
 
+    it('refuses an invalid criticGate before changing anything', () => {
+      const rule = activeRule('gate checked first');
+      assert.throws(() => store.sessionRules.setStatus(rule.id, 'retired', { criticGate: 'bogus' }));
+      assert.equal(store.sessionRules.get(rule.id).status, 'active');
+    });
+
     it('refuses to create a rule already retired', () => {
       assert.throws(() => activeRule('born dead', { status: 'retired' }), code('INVALID_TRANSITION'));
     });
@@ -123,6 +129,39 @@ describe('session rule lifecycle (#1696, #1709)', () => {
     });
   });
 
+  describe('a retired rule reaches no reader that delivers rules', () => {
+    it('is absent from the launch, wrap, Master and conflict readers', () => {
+      const startup = activeRule('retired startup rule about linting');
+      const wrap = activeRule('retired wrap rule about linting', { kind: 'wrap' });
+      const master = store.sessionRules.create({ content: 'retired master rule', kind: 'master' });
+      try {
+        for (const r of [startup, wrap, master]) store.sessionRules.setStatus(r.id, 'retired');
+        assert.ok(!delivered().includes('retired startup rule about linting'));
+        const wrapRules = store.sessionRules.list({ projectId: project.id, enabled: 1, status: 'active', kind: 'wrap' });
+        assert.ok(!wrapRules.some((r) => r.id === wrap.id), 'the wrap prompt reads active rules only');
+        assert.ok(!store.sessionRules.listActiveForMaster().some((r) => r.id === master.id));
+        const candidates = store.sessionRules.findConflictCandidates('retired startup rule about linting', project.id);
+        assert.ok(!candidates.some((c) => c.rule.id === startup.id), 'a dead rule cannot conflict with anything');
+      } finally {
+        store.sessionRules.delete(master.id);
+      }
+    });
+
+    it('does not count toward the undelivered-rules alarm', () => {
+      const rule = activeRule('only rule, then retired');
+      const flagged = () => store.sessionRuleDeliveries.projectsWithUndeliveredRules()
+        .some((p) => p.projectId === project.id);
+      assert.ok(flagged(), 'an active enabled rule with no delivery on record is flagged');
+      store.sessionRules.setStatus(rule.id, 'retired');
+      assert.ok(!flagged(), 'a retired rule is not waiting to be delivered');
+    });
+
+    it('does not count a proposal toward the undelivered-rules alarm either', () => {
+      proposal('awaiting approval, not delivery');
+      assert.ok(!store.sessionRuleDeliveries.projectsWithUndeliveredRules().some((p) => p.projectId === project.id));
+    });
+  });
+
   describe('restoring a retired rule', () => {
     it('brings it back active but DISABLED, so one click never makes it govern', () => {
       const rule = activeRule('back from the dead');
@@ -132,6 +171,8 @@ describe('session rule lifecycle (#1696, #1709)', () => {
       assert.equal(restored.enabled, false);
       assert.equal(restored.retiredAt, null);
       assert.ok(!delivered().includes('back from the dead'), 'disabled until the operator switches it on');
+      assert.equal(store.activity.query({ projectId: project.id, eventType: 'session_rule.unretired' }).length, 1,
+        'distinct from session_rule.restored, which is a version rollback');
       store.sessionRules.update(rule.id, { enabled: true });
       assert.ok(delivered().includes('back from the dead'));
     });
@@ -183,7 +224,8 @@ describe('session rule lifecycle (#1696, #1709)', () => {
       const approved = store.sessionRules.setStatus(next.id, 'active',
         { expectedContent: 'live checkout is /Projects/TangleClaw-Builder1' });
 
-      assert.deepEqual(approved.replaced, { id: old.id, retired: true });
+      assert.deepEqual(approved.replaced, { id: old.id });
+      assert.equal(approved.replacementSkipped, undefined);
       const oldNow = store.sessionRules.get(old.id);
       assert.equal(oldNow.status, 'retired');
       assert.equal(oldNow.supersededBy, next.id, 'the Graveyard can say what replaced it');
@@ -208,9 +250,9 @@ describe('session rule lifecycle (#1696, #1709)', () => {
       store.sessionRules.setStatus(old.id, 'retired');
       const approved = store.sessionRules.setStatus(next.id, 'active', { expectedContent: 'its replacement' });
       assert.equal(approved.status, 'active', 'the operator’s intent already holds, so the approval stands');
-      assert.equal(approved.replaced.id, old.id);
-      assert.equal(approved.replaced.retired, false);
-      assert.match(approved.replaced.reason, /already retired/);
+      assert.equal(approved.replaced, null, 'Architect ruling: replaced is null, not a refusal');
+      assert.equal(approved.replacementSkipped.id, old.id, 'the named rule is still reported');
+      assert.match(approved.replacementSkipped.reason, /already retired/);
       assert.equal(store.sessionRules.get(old.id).supersededBy, null, 'its retirement is not rewritten');
     });
 
@@ -220,8 +262,8 @@ describe('session rule lifecycle (#1696, #1709)', () => {
       store.sessionRules.delete(old.id);
       const approved = store.sessionRules.setStatus(next.id, 'active', { expectedContent: 'outlives it' });
       assert.equal(approved.status, 'active');
-      assert.equal(approved.replaced.retired, false);
-      assert.match(approved.replaced.reason, /no longer exists/);
+      assert.equal(approved.replaced, null);
+      assert.match(approved.replacementSkipped.reason, /no longer exists/);
     });
 
     it('keeps the outcome in the audit trail as well as the result', () => {
@@ -233,8 +275,8 @@ describe('session rule lifecycle (#1696, #1709)', () => {
         .map((e) => (typeof e.detail === 'string' ? JSON.parse(e.detail) : e.detail))
         .filter((d) => d && d.id === next.id && d.to === 'active');
       assert.equal(approvals.length, 1);
-      assert.equal(approvals[0].replaced.retired, false);
-      assert.match(approvals[0].replaced.reason, /already retired/);
+      assert.equal(approvals[0].replaced, null);
+      assert.match(approvals[0].replacementSkipped.reason, /already retired/);
     });
 
     it('re-approving a replacement that already governs retires nothing further', () => {
@@ -420,6 +462,25 @@ describe('session rule lifecycle (#1696, #1709)', () => {
         const idx = h.db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'session_rules'")
           .all().map((r) => r.name).sort();
         assert.deepEqual(idx, ['idx_session_rules_enabled', 'idx_session_rules_project', 'idx_session_rules_status']);
+      } finally { done(h); }
+    });
+
+    it('leaves an upgraded store with exactly the table a fresh install gets', () => {
+      // What keeps the migration's frozen DDL and the fresh-install DDL in step:
+      // if either changes alone, the two stores stop matching and this fails.
+      const shape = (db) => ({
+        columns: db.prepare('PRAGMA table_info(session_rules)').all()
+          .map((c) => [c.name, c.type, c.notnull, c.dflt_value, c.pk]),
+        check: /CHECK\s*\(status IN \(([^)]*)\)\)/.exec(
+          db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'session_rules'").get().sql)[1]
+          .replace(/\s+/g, ''),
+        indexes: db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'session_rules'")
+          .all().map((r) => r.name).sort()
+      });
+      const freshShape = shape(store.getDb());
+      const h = upgradeFromV50("INSERT INTO session_rules (project_id, content) VALUES (NULL, 'z');");
+      try {
+        assert.deepEqual(shape(h.db), freshShape);
       } finally { done(h); }
     });
 
