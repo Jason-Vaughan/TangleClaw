@@ -36,7 +36,7 @@ Engine profiles live in `~/.tangleclaw/engines/`. TangleClaw ships with five bui
   - **Filesystem:** a profile that extends `:workspace` loses `workspace-write`'s read-only `.git`, `.agents` and `.codex`, so the profile restates them.
   - **Why not the simpler options:** `--sandbox` is dropped because it switches Codex back to the legacy syntax, which has no proxy. `sandbox_workspace_write.network_access=true` is never used, because it opens everything.
   - **Legacy path only:** the profile does not survive Codex's native startup channel. The TUI's `--remote` thread start sends a legacy sandbox mode that overrides it, whichever side carries the keys. A Full Auto launch therefore skips the channel and records `mode_requires_legacy`.
-  - **Other versions** keep the network-off sandbox.
+  - **Other versions** keep the network-off sandbox. The adapter says so: `loopbackLaunchCommand` answers `{command, reason, blocksLoopback}`. Because `tc` cannot reach TangleClaw from that sandbox, `launchSession` gives the launch **no sequence**. It records `notApplicableReason` (`launch mode "fullAuto" runs a sandbox with no network (<reason>), so tc cannot reach TangleClaw; the launch context is pasted instead`) and pastes the full context, rather than pointing the session at a `tc start` it can never run (ADR 0013). The launch-sequences panel shows that reason.
   - **Side effects:**
     - Codex injects proxy variables into the agent's commands, `NODE_USE_ENV_PROXY=1` among them, and routes git-over-SSH through its proxy.
     - `tc` drops the "EnvHttpProxyAgent is experimental" warning that Node prints under that variable (`lib/tc-warnings.js`).

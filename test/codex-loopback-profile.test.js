@@ -95,6 +95,14 @@ describe('codex loopback profile (#1836)', () => {
     assert.ok(!/--sandbox/.test(command), 'the legacy flag would switch the profile off');
   });
 
+  it('recognises the no-network sandbox only as the exact flag pair', () => {
+    assert.equal(profile.hasLegacySandbox('codex --sandbox workspace-write'), true);
+    assert.equal(profile.hasLegacySandbox('codex --sandbox  workspace-write --no-daemon'), true);
+    for (const cmd of ['codex', 'codex --sandbox read-only', 'codex --sandbox workspace-writer', null]) {
+      assert.equal(profile.hasLegacySandbox(cmd), false, String(cmd));
+    }
+  });
+
   it('adds no network grant to a command with no workspace-write sandbox to narrow', () => {
     for (const cmd of ['codex', 'codex --dangerously-bypass-approvals-and-sandbox', 'codex --sandbox read-only', 'codex --sandbox workspace-writer']) {
       assert.deepEqual(profile.applyLoopbackProfile(cmd), { command: cmd, applied: false }, cmd);
@@ -109,16 +117,24 @@ describe('codex adapter gates the loopback profile on a proven version (#1836)',
   it('applies on 0.156.1 and on nothing else — not the next release, not an unknown version', () => {
     const cmd = 'codex --ask-for-approval never --sandbox workspace-write';
     codex._internal._version.version = '0.156.1';
-    assert.match(codex.loopbackLaunchCommand(cmd), /default_permissions/);
+    const proven = codex.loopbackLaunchCommand(cmd);
+    assert.match(proven.command, /default_permissions/);
+    assert.equal(proven.blocksLoopback, false);
     for (const v of ['0.157.1', '0.156.0', '0.156.1-beta', null]) {
       codex._internal._version.version = v;
-      assert.equal(codex.loopbackLaunchCommand(cmd), null, String(v));
+      const declined = codex.loopbackLaunchCommand(cmd);
+      assert.equal(declined.command, null, String(v));
+      assert.equal(declined.blocksLoopback, true, `${v}: the command kept is the no-network sandbox`);
+      assert.match(declined.reason, v ? new RegExp(`codex-cli ${v.replace(/\./g, '\\.')} is not a version`) : /version unknown/);
     }
   });
 
-  it('answers null for a proven version when there is no sandbox flag to replace', () => {
+  it('declines a command with no sandbox flag to replace, and says it blocks nothing', () => {
     codex._internal._version.version = '0.156.1';
-    assert.equal(codex.loopbackLaunchCommand('codex --dangerously-bypass-approvals-and-sandbox'), null);
+    const answer = codex.loopbackLaunchCommand('codex --dangerously-bypass-approvals-and-sandbox');
+    assert.equal(answer.command, null);
+    assert.equal(answer.blocksLoopback, false, 'no sandbox, so loopback is not refused and the launch must not claim it is');
+    assert.match(answer.reason, /no --sandbox workspace-write/);
   });
 });
 

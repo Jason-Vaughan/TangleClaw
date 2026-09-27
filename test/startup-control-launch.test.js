@@ -291,6 +291,7 @@ describe('startupControl at launch and teardown (codex)', () => {
     assert.equal(sessions._loopbackModeCommand('codex', profile, 'bypassPermissions', 'codex --dangerously-bypass-approvals-and-sandbox', '/opt/fake/bin/codex'), null);
     assert.equal(sessions._loopbackModeCommand('codex', profile, undefined, full, '/opt/fake/bin/codex'), null);
     const proven = sessions._loopbackModeCommand('codex', profile, 'fullAuto', full, '/opt/fake/bin/codex');
+    assert.equal(proven.applied, true);
     assert.equal(proven.adapterName, 'codex');
     assert.ok(proven.command.includes('default_permissions'), proven.command);
     healthySeams({ execFileSync: () => 'codex-cli 0.157.1\n' });
@@ -298,16 +299,34 @@ describe('startupControl at launch and teardown (codex)', () => {
     const captured = [];
     logger.setLevel('warn');
     logger.setConsoleStream({ write: (line) => captured.push(line) });
+    let unproven;
     try {
-      assert.equal(sessions._loopbackModeCommand('codex', profile, 'fullAuto', full, '/opt/fake/bin/codex'), null, 'an unproven version keeps the no-network sandbox');
+      unproven = sessions._loopbackModeCommand('codex', profile, 'fullAuto', full, '/opt/fake/bin/codex');
     } finally {
       logger.setConsoleStream(null);
       logger.setLevel('error');
     }
+    assert.equal(unproven.applied, false, 'an unproven version keeps the no-network sandbox');
+    assert.equal(unproven.blocksLoopback, true);
+    assert.match(unproven.reason, /codex-cli 0\.157\.1 is not a version the loopback network profile was proven on/);
     assert.match(captured.join(''), /Loopback network profile not applied.*tc cannot reach TangleClaw/, 'a no-network Full Auto says why instead of leaving a silent stuck session');
-    assert.match(captured.join(''), /0\.157\.1/);
     healthySeams({ execFileSync: () => { throw new Error('ENOENT'); } });
-    assert.equal(sessions._loopbackModeCommand('codex', profile, 'fullAuto', full, '/opt/fake/bin/codex'), null, 'an unknown version keeps it too');
+    const unknown = sessions._loopbackModeCommand('codex', profile, 'fullAuto', full, '/opt/fake/bin/codex');
+    assert.equal(unknown.applied, false, 'an unknown version keeps it too');
+    assert.match(unknown.reason, /version unknown/);
+  });
+
+  it('full auto on an unproven Codex gets no launch sequence — its context is pasted — and the panel is told why (#1836, ADR 0013)', () => {
+    healthySeams({ execFileSync: () => 'codex-cli 0.157.1\n' });
+    const l = launched({ launchMode: 'fullAuto', primePrompt: true });
+    assert.match(l.command, /--sandbox workspace-write --no-daemon$/, 'the no-network sandbox is kept on an unproven version');
+    assert.equal(l.sequence.applicability, 'not-applicable', 'a session whose tc cannot reach TangleClaw must not be pointed at tc start');
+    assert.match(l.sequence.notApplicableReason, /^launch mode "fullAuto" runs a sandbox with no network \(codex-cli 0\.157\.1 is not a version the loopback network profile was proven on\), so tc cannot reach TangleClaw; the launch context is pasted instead$/);
+    assert.ok(!/tc start next/.test(l.session.primePrompt || ''), 'the pasted prime does not send the session to a sequence it cannot read');
+
+    healthySeams();
+    const proven = launched({ launchMode: 'fullAuto', primePrompt: true });
+    assert.equal(proven.sequence.applicability, 'applicable', 'on a proven version tc reaches TangleClaw, so the sequence stands');
   });
 
   it('a resolved socket path unsafe for a shell command is refused, not interpolated', () => {
