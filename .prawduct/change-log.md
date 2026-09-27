@@ -81,7 +81,7 @@ Chunk 03 of 04. Authorized with rulings 6 and 7 (PM d40bf543): the allow-list is
 **The change.**
 - **`renderProjectRulesList`** shows live rules only (proposed and active). Active rows get **Retire** (with a confirm); a replacement proposal shows "Approving retires: <text>", or the id when the target is not in the fetched set.
 - **The new `renderRulesGraveyard`** renders a closed `<details>`: retired rows with "Replaced by: <text>" (or `rule #N`), the retire time, and **Restore**. It renders nothing when no rule is retired.
-- **`retireProjectRule`** confirms first, then retires with no password. **`restoreProjectRule`** sends a bare `{status: 'active'}`, and its status line says the rule came back switched off. Both refresh the list; a failure is reported, not claimed as success.
+- **`retireProjectRule`** confirms first, then retires with no password. *(Superseded by the Architect's N1 ruling on PR #1971: retiring now needs the operator password; see the Chunk 4 entry.)* **`restoreProjectRule`** sends a bare `{status: 'active'}`, and its status line says the rule came back switched off. Both refresh the list; a failure is reported, not claimed as success.
 - **CSS:** 44px targets, and muted text via `--text-muted`.
 - **Docs.** The docs UI paragraph, the post-upgrade retire step (ruling 3), FEATURES and the CHANGELOG. The store JSDoc and docs now say the allow-list is ratified.
 - **Operator verification:** VRF-001 in the local queue covers layout, phone width, disclosure behaviour and themes. Render, escaping and wiring are pinned by tests.
@@ -96,7 +96,7 @@ Chunk 02 of 04. The PM authorized it (4718a04b) together with the Architect's W5
 
 **The change.**
 - **`POST /api/session-rules`** passes `replacesRuleId` to the store and maps `INVALID_REPLACES` to 400. It is no longer dropped at the route either.
-- **Status route: retire and restore.** It is the lifecycle's one door (ruling 1). `retired` and a restore need no password. Without the password, `active` is accepted only as a restore: the route sets `restoreOnly`, and the store then refuses anything but `retired → active` (`APPROVAL_REQUIRES_AUTHORITY`, answered as 403). That closes the window between the route's read and the write.
+- **Status route: retire and restore.** It is the lifecycle's one door (ruling 1). `retired` and a restore need no password. *(Superseded by the Architect's N1 ruling on PR #1971: retiring now needs the operator password; see the Chunk 4 entry.)* Without the password, `active` is accepted only as a restore: the route sets `restoreOnly`, and the store then refuses anything but `retired → active` (`APPROVAL_REQUIRES_AUTHORITY`, answered as 403). That closes the window between the route's read and the write.
 - **Status route: errors.** `INVALID_TRANSITION` maps to 400. An unknown rule without the password still answers 403, as before.
 - **W5 ruling.** `setStatus` refuses `active → rejected` with `INVALID_TRANSITION`, atomically, and retire still succeeds.
 - **`tc rules`.** The footer says retired rules are never in force and how to amend with `replacesRuleId`. It is carried there, not in the ecosystem primer, which sits at 2764 of its 2800-character cap and would have needed a budget decision.
@@ -131,7 +131,7 @@ Chunk 01 of 04. The PM dispatched it (0f6fd06f). Architect rulings 1-4 (cc2f6e32
 - `criticGate` is validated before any write.
 - Un-retiring logs `session_rule.unretired`, distinct from the version-rollback `restored`.
 - The v51 migration carries a frozen copy of its DDL, and a new test asserts that an upgraded store equals a fresh one.
-- The docs record why retire needs no password.
+- The docs record why retire needs no password. *(Superseded by the Architect's N1 ruling on PR #1971: retiring now needs the operator password; see the Chunk 4 entry.)*
 
 W5 (an active rule can be set to `rejected` with no password, leaving both the list and the Graveyard) predates this work and is routed to the Architect.
 
