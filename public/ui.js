@@ -2517,12 +2517,13 @@ async function refreshProjectLaunchSequences(projectId) {
         'Close and reopen Settings to retry.'));
     return false;
   }
-  renderProjectLaunchSequences(data.sequences);
+  renderProjectLaunchSequences(data.sequences, data.projectRecoveryMode);
   // Wired here rather than inside the renderer, so the renderer stays a pure
   // markup function: this cycle is what owns fetch → render → wire, and a
   // renderer that also attached listeners could not be rendered anywhere that
   // is not a live document.
   wireLaunchRecoveryClears(list);
+  wireLaunchRecoveryModeSwitches(list);
   wireStartupFires(list);
   return true;
 }
@@ -2675,10 +2676,16 @@ function launchClearanceLabel(s) {
  * launch in `operator` mode. An `advisory` launch clears its own by reconciling,
  * so offering a button there would offer a decision the route refuses
  * (`RECOVERY_MODE_ADVISORY`) — a control that cannot work is worse than none.
+ *
+ * A row waiting on the operator names the panel's recovery-mode switch
+ * (#1937): a crash that sends the operator here to clear by hand is when they
+ * should learn the project can let its sessions reconcile their own. The
+ * pointer is said only while the project is still in operator mode.
  * @param {object} s - A sequence row from `GET /api/launch-sequences`
+ * @param {string|null} [projectRecoveryMode] - The project's current mode, as the route reports it
  * @returns {string} Markup, or an empty string when there is nothing to say
  */
-function launchRecoveryHtml(s) {
+function launchRecoveryHtml(s, projectRecoveryMode) {
   if (!s.recovery || s.recovery === 'none') return '';
   const verdict = s.preflightVerdict ? `<code>${esc(s.preflightVerdict)}</code>` : 'an unrecorded verdict';
   // The verdict WORD alone asks you to clear a launch without saying what
@@ -2706,7 +2713,46 @@ function launchRecoveryHtml(s) {
     + 'The task step is withheld and this session cannot attest until you clear it.</small>'
     + `<br><button type="button" class="btn btn-sm" data-launch-recovery-clear="${esc(s.sequenceId)}" `
     + `data-session-id="${esc(s.sessionId)}" data-recovery-revision="${esc(s.recoveryRevision)}">`
-    + 'Clear recovery</button>';
+    + 'Clear recovery</button>'
+    + (projectRecoveryMode === 'operator'
+      ? '<br><small class="session-rule-meta">To stop clearing by hand after every crash, use the '
+        + 'recovery-mode switch at the top of this panel.</small>'
+      : '');
+}
+
+/**
+ * The project's recovery-mode switch: one per panel (#1937).
+ *
+ * Driven by the project's CURRENT mode, not any row's frozen one, and rendered
+ * whatever the rows say. On a row it would vanish with the last launch waiting
+ * for a clear, and an advisory project has none waiting, so the way back would
+ * go with it. Says what each mode means before it is chosen, and that a change
+ * applies from the next launch: a launch keeps the mode it started with. Left
+ * out when the mode is unknown, since a switch that cannot say which way it
+ * goes is not offered.
+ * @param {string|null|undefined} projectRecoveryMode - The project's current mode
+ * @returns {string} Markup, or an empty string when the mode is unknown
+ */
+function launchRecoveryModeSwitchHtml(projectRecoveryMode) {
+  if (projectRecoveryMode === 'operator') {
+    return '<div class="session-rule-item"><div class="session-rule-content">'
+      + '<strong>Recovery mode: operator</strong>'
+      + '<br><small class="session-rule-meta">After a crash, each launch waits here until you clear it. In '
+      + 'advisory mode the session is served its task step with a warning and clears recovery itself with a '
+      + 'written reconciliation. A change applies from the next launch.</small>'
+      + '<br><button type="button" class="btn btn-sm" data-launch-recovery-mode="advisory">'
+      + 'Let sessions reconcile their own recovery</button></div></div>';
+  }
+  if (projectRecoveryMode === 'advisory') {
+    return '<div class="session-rule-item"><div class="session-rule-content">'
+      + '<strong>Recovery mode: advisory</strong>'
+      + '<br><small class="session-rule-meta">After a crash, the session clears recovery itself with a written '
+      + 'reconciliation. A change applies from the next launch; a launch that started in operator mode still '
+      + 'needs your clear below.</small>'
+      + '<br><button type="button" class="btn btn-sm" data-launch-recovery-mode="operator">'
+      + 'Go back to operator clearing</button></div></div>';
+  }
+  return '';
 }
 
 /**
@@ -2717,15 +2763,17 @@ function launchRecoveryHtml(s) {
  * the absent case is left blank, and telling them apart is the whole reason
  * these three records are kept separately (plan §2.5).
  * @param {object[]} sequences - Rows from `GET /api/launch-sequences`, newest first
+ * @param {string|null} [projectRecoveryMode] - The project's current recovery mode, from the same response
  */
-function renderProjectLaunchSequences(sequences) {
+function renderProjectLaunchSequences(sequences, projectRecoveryMode) {
   const list = document.getElementById('projLaunchSequencesList');
   if (!list) return;
+  const modeSwitch = launchRecoveryModeSwitchHtml(projectRecoveryMode);
   if (sequences.length === 0) {
-    list.innerHTML = '<p class="session-rules-empty">No launch sequences recorded for this project.</p>';
+    list.innerHTML = modeSwitch + '<p class="session-rules-empty">No launch sequences recorded for this project.</p>';
     return;
   }
-  list.innerHTML = sequences.map((s) => {
+  list.innerHTML = modeSwitch + sequences.map((s) => {
     const cls = window.tcLaunchReadinessClass(s);
     if (s.applicability === 'not-applicable') {
       return `<div class="session-rule-item">
@@ -2752,7 +2800,7 @@ function renderProjectLaunchSequences(sequences) {
         <br><small class="session-rule-meta">Rules channel: ${rules}</small>
         <br><small class="session-rule-meta">Served: ${esc(served)}/${esc(s.of)} step(s) | Acknowledged: ${esc(acked)}/${esc(s.of)} | ${nudges}</small>
         <br><small class="session-rule-meta">Launched ${esc(s.createdAt)} | revision ${esc(s.revision)}</small>
-        ${launchRecoveryHtml(s)}
+        ${launchRecoveryHtml(s, projectRecoveryMode)}
         ${launchStartupControlHtml(s)}
       </div>
     </div>`;
@@ -2814,6 +2862,37 @@ function wireLaunchRecoveryClears(list) {
       // Re-read either way. A refusal usually means the launch moved under the
       // click, and the panel must then show what is true now rather than the row
       // the operator was looking at when they pressed it.
+      if (projectRulesTargetId === projectId) await refreshProjectLaunchSequences(projectId);
+    });
+  }
+}
+
+/**
+ * Wire every recovery-mode switch the panel just rendered (#1937).
+ *
+ * Re-wired after each render for the same reason as the Clear buttons: the
+ * panel replaces its own markup. The PATCH names `recoveryMode` alone, because
+ * the route merges `launchSequence` and the project's other launch settings
+ * must be left as they are.
+ * @param {HTMLElement} list - The panel's container element
+ * @returns {void}
+ */
+function wireLaunchRecoveryModeSwitches(list) {
+  for (const btn of list.querySelectorAll('[data-launch-recovery-mode]')) {
+    btn.addEventListener('click', async () => {
+      const projectId = projectRulesTargetId;
+      const projectName = projectRulesTargetName;
+      if (!projectName) return;
+      const mode = btn.dataset.launchRecoveryMode;
+      btn.disabled = true;
+      const answer = await apiMutate(`/api/projects/${encodeURIComponent(projectName)}`, 'PATCH',
+        { launchSequence: { recoveryMode: mode } });
+      if (answer) {
+        _setProjectRulesStatus(`Recovery mode set to ${mode} — it applies from the project's next launch`, true);
+      } else {
+        btn.disabled = false;
+        _setProjectRulesStatus(api.lastError || 'The recovery mode could not be changed', false);
+      }
       if (projectRulesTargetId === projectId) await refreshProjectLaunchSequences(projectId);
     });
   }
