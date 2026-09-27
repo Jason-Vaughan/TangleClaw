@@ -69,6 +69,8 @@ The PM dispatched this over Medusa. It follows up #1906/#1915.
 
 Against `main`'s `ui.js` and `landing.js`, all 14 fail. Harness updates: `port-owner-kind-panel` lifts the new wrapper, because it runs `loadPorts`. `inline-handler-args` still asserts the exact name as the first argument and now also expects the button. Every test file touching `ui.js` or `landing.js` passes: 2,668 of 2,669, with 1 skipped.
 
+**Critic R-1 (rev-20260927T192852Z-30ab42ab).** In-place folding assumes the content follows `.toggle-row`. A test now walks each panel's real rendered HTML and asserts the next sibling carries the panel's content class. Mutation-checked: a hint inserted between the Ports row and its content turns it red.
+
 ## 2026-09-27 — Rule approval compare-and-set: approval ratifies only the text the operator saw (#1053)
 
 <!-- prawduct: type=bugfix | scope=rule-approval-cas-1053 -->
