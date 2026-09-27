@@ -193,6 +193,47 @@ describe('codex adapter withholds the profile unless the trust guard grants it (
   });
 });
 
+describe('loopbackTrustFacts reads the installed ttyd job from the user\'s home (#1957)', () => {
+  const store = require('../lib/store');
+  const caddy = require('../lib/caddy');
+  let home;
+  let base;
+  let savedHome;
+  let savedBase;
+  before(() => {
+    savedHome = process.env.HOME;
+    savedBase = store._getBasePath();
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-1957-home-'));
+    base = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-1957-base-'));
+    process.env.HOME = home;
+    store._setBasePath(base);
+  });
+  after(() => {
+    if (savedHome === undefined) delete process.env.HOME; else process.env.HOME = savedHome;
+    store._setBasePath(savedBase);
+    for (const dir of [home, base]) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reports the job\'s arguments, the caddy socket path and the gate\'s declaration; no job reads as unknown', () => {
+    let facts = codex._internal.loopbackTrustFacts();
+    assert.equal(facts.ttydArgs, null, 'no installed job is an unknown bind, never an assumed safe one');
+    assert.equal(facts.ttydSocketPath, caddy.getTtydSocketPath());
+    assert.ok(facts.ttydSocketPath.startsWith(base), 'the socket path follows the store base');
+    assert.equal(facts.machineClientRequiresServiceToken, require('../lib/auth-gate').MACHINE_CLIENT_REQUIRES_SERVICE_TOKEN);
+
+    const agents = path.join(home, 'Library', 'LaunchAgents');
+    fs.mkdirSync(agents, { recursive: true });
+    const socket = caddy.getTtydSocketPath();
+    fs.writeFileSync(path.join(agents, 'com.tangleclaw.ttyd.plist'),
+      `<plist><dict><key>ProgramArguments</key><array><string>/opt/ttyd</string><string>--interface</string><string>${socket}</string></array></dict></plist>`);
+    facts = codex._internal.loopbackTrustFacts();
+    assert.deepEqual(facts.ttydArgs, ['/opt/ttyd', '--interface', socket]);
+
+    fs.writeFileSync(path.join(agents, 'com.tangleclaw.ttyd.plist'), '<plist>no arguments here</plist>');
+    assert.equal(codex._internal.loopbackTrustFacts().ttydArgs, null, 'an unparseable job is unknown');
+  });
+});
+
 describe('codex adapter gates the loopback profile on a proven version (#1836)', () => {
   const saved = { ...codex._internal._version };
   after(() => Object.assign(codex._internal._version, saved));

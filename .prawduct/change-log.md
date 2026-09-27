@@ -65,6 +65,15 @@ REQ2 only, dispatched by the PM on the Architect's authorization (4fd5e6b4). REQ
 
 **Tests.** `test/loopback-trust-guard.test.js` covers the fail-closed matrix and the declaration pin. `test/codex-loopback-profile.test.js` covers the apply refusal, including lookalike and copied verdicts, the adapter's withheld reasons, a throwing fact source, and the real fact source withholding. `test/startup-control-launch.test.js` adds an end-to-end withheld launch. The existing apply-path tests in the launch, Master and profile suites now state granting facts through `test/_loopback-trust.js`, so they no longer read this machine's real ttyd plist; their assertions are unchanged. Mutation checks: removing the apply check, removing the adapter check, and flipping the declaration each turned tests red.
 
+**Review.** Cumulative review `rev-20260927T203004Z-78bc88f5`: 0 blocking. Fixed in one batch:
+- the constant is moved off `isMachineClient`'s JSDoc;
+- text that still said the profile applies is corrected (the `codex.json` description, the #1836 CHANGELOG line, the user guide, FEATURES and a `master.js` comment);
+- the guard reuses `ttyd-bind#describeInstalledBind`;
+- `loopbackTrustFacts` is tested against a fixture home;
+- REQ3 is filed as #1973 and cited.
+
+Accepted: the fact gatherer stays in the Codex adapter, the only engine with a loopback profile. Withheld reasons lost on prime-disabled and Master launches are #1836 code, passed to the PM.
+
 ## 2026-09-27 — Codex Full Auto reaches TangleClaw over loopback, and only loopback (#1836)
 
 <!-- prawduct: type=bugfix | scope=codex-fullauto-loopback-1836 -->
