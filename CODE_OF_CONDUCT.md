@@ -31,3 +31,26 @@ Community leaders are responsible for clarifying and enforcing our standards of 
 ## Scope
 
 This Code of Conduct applies within all community spaces, and also applies when an individual is officially representing the community in public spaces.
+
+## Reporting
+
+If you experience or witness behavior that breaks this Code of Conduct, please report it
+privately using this form:
+
+https://docs.google.com/forms/d/e/1FAIpQLSf7nFuK0Eb0yDWh3pWjHQte0SHMuxxKf9rSwZQoDRa8z0_RCQ/viewform
+
+Reports go only to the project maintainer. You can report anonymously; if you leave a way
+to reach you, we will follow up. Please don't use public issues or discussions for conduct
+reports.
+
+## Enforcement
+
+The maintainer will review every report promptly and fairly, and will respect the privacy
+and security of the person reporting. Depending on what happened, responses range from a
+private conversation or written warning, to removal of comments or contributions, to a
+temporary or permanent ban from the project's community spaces.
+
+## Attribution
+
+This Code of Conduct is adapted from the [Contributor Covenant](https://www.contributor-covenant.org),
+version 2.1.
