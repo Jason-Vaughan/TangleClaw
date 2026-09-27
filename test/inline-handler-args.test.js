@@ -159,7 +159,11 @@ describe('public/ui.js handlers (#1384)', () => {
     assert.ok(line, 'the port group toggle must exist');
     const attr = line.match(/onclick="([^"]*)"/)[1];
     const project = "O'Brien";
-    const rendered = new Function('jsArg', 'project', 'return `' + attr + '`;')(jsArg, project);
-    assert.deepEqual(runHandler(decodeAttr(rendered)), [{ fn: 'togglePortGroup', args: [project] }]);
+    const rendered = new Function('jsArg', 'esc', 'project', 'return `' + attr + '`;')(jsArg, esc, project);
+    const calls = runHandler(decodeAttr(rendered));
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].fn, 'togglePortGroup');
+    assert.equal(calls[0].args[0], project, 'the exact name arrives');
+    assert.equal(calls[0].args.length, 2, 'the pressed button rides along, so the row folds in place (#1946)');
   });
 });

@@ -193,3 +193,201 @@ describe('panel toggle rows are real buttons with their actions beside them (#19
     assert.ok(els.filter(isControl).some((e) => e.ancestors.some((a) => a.tag === 'button')));
   });
 });
+
+/*
+ * #1946 — folding a row re-rendered the whole panel, which replaced the
+ * pressed button and dropped keyboard focus. The toggles now fold their row in
+ * place, and the polling re-renders put focus back on the same toggle.
+ */
+
+/**
+ * A class list over a Set, as much of DOMTokenList as the fold code touches.
+ *
+ * @param {string[]} [initial] - Starting classes.
+ * @returns {{has: Function, toggle: Function, set: Set<string>}}
+ */
+function classList(initial = []) {
+  const set = new Set(initial);
+  return {
+    set,
+    has: (c) => set.has(c),
+    toggle(c, force) {
+      const on = force === undefined ? !set.has(c) : force;
+      if (on) set.add(c); else set.delete(c);
+      return on;
+    }
+  };
+}
+
+/**
+ * One panel row as the render functions build it: a `.toggle-row` holding the
+ * toggle, followed by the content element.
+ *
+ * @param {boolean} open - Initial state.
+ * @returns {{button: object, arrow: object, content: object}}
+ */
+function makeRow(open) {
+  const content = { classList: classList(open ? ['open'] : []) };
+  const row = { nextElementSibling: content };
+  const arrow = { classList: classList(open ? ['arrow', 'open'] : ['arrow']) };
+  const attrs = { 'aria-expanded': String(open) };
+  const button = {
+    attrs,
+    setAttribute(k, v) { attrs[k] = v; },
+    querySelector: (sel) => (sel === '.arrow' ? arrow : null),
+    closest: (sel) => (sel === '.toggle-row' ? row : null)
+  };
+  return { button, arrow, content };
+}
+
+/**
+ * Lift the fold helpers and one toggle function, with recording stubs for
+ * everything they call.
+ *
+ * @param {string} toggleFn - The toggle to lift, e.g. `togglePortGroup`.
+ * @param {object} state - Page state.
+ * @returns {{toggle: Function, renders: string[], details: string[]}}
+ */
+function liftToggle(toggleFn, state) {
+  const renders = [];
+  const details = [];
+  const src = [
+    liftFunction(ui, 'function foldToggleInPlace('),
+    liftFunction(ui, `function ${toggleFn}(`)
+  ].join('\n');
+  const toggle = new Function('state', 'renderPorts', 'renderGroups', 'renderOpenclawConnections', 'loadGroupDetail',
+    `${src}\nreturn ${toggleFn};`)(
+    state,
+    () => renders.push('ports'),
+    () => renders.push('groups'),
+    () => renders.push('openclaw'),
+    (id) => details.push(id)
+  );
+  return { toggle, renders, details };
+}
+
+describe('folding keeps keyboard focus on the toggle (#1946)', () => {
+  const CASES = [
+    { fn: 'togglePortGroup', key: 'portGroupsOpen', id: "O'Brien DB", startOpen: true },
+    { fn: 'toggleGroupItem', key: 'groupItemsOpen', id: 'g1', startOpen: false },
+    { fn: 'toggleOpenclawItem', key: 'openclawItemsOpen', id: 'c1', startOpen: false }
+  ];
+
+  for (const c of CASES) {
+    it(`${c.fn} folds its own row in place and re-renders nothing`, () => {
+      const state = { [c.key]: { [c.id]: c.startOpen } };
+      const { toggle, renders } = liftToggle(c.fn, state);
+      const { button, arrow, content } = makeRow(c.startOpen);
+      toggle(c.id, button);
+      const now = !c.startOpen;
+      assert.equal(state[c.key][c.id], now);
+      assert.equal(button.attrs['aria-expanded'], String(now));
+      assert.equal(arrow.classList.has('open'), now);
+      assert.equal(content.classList.has('open'), now);
+      assert.deepEqual(renders, [], 'the pressed button is never replaced');
+      toggle(c.id, button);
+      assert.equal(button.attrs['aria-expanded'], String(c.startOpen), 'and it folds back');
+      assert.deepEqual(renders, []);
+    });
+
+    it(`${c.fn} still re-renders when called without the button`, () => {
+      const state = { [c.key]: { [c.id]: c.startOpen } };
+      const { toggle, renders } = liftToggle(c.fn, state);
+      toggle(c.id);
+      assert.equal(renders.length, 1);
+      assert.equal(state[c.key][c.id], !c.startOpen);
+    });
+  }
+
+  it('a group opened in place loads its details, and closing it loads nothing', () => {
+    const state = { groupItemsOpen: { g1: false } };
+    const { toggle, details } = liftToggle('toggleGroupItem', state);
+    const { button } = makeRow(false);
+    toggle('g1', button);
+    assert.deepEqual(details, ['g1']);
+    toggle('g1', button);
+    assert.deepEqual(details, ['g1'], 'closing fetches nothing');
+  });
+
+  for (const [name, p] of Object.entries(PANELS)) {
+    it(`the ${name} toggles carry a fold key and hand the pressed button to ${p.toggleFn}`, () => {
+      const toggles = walk(p.html()).filter((e) => e.cls.includes(p.toggleClass));
+      assert.ok(toggles.length > 0);
+      for (const t of toggles) {
+        assert.match(t.attrs, /\bdata-fold-key="[^"]+"/);
+        assert.match(t.attrs, new RegExp(`onclick="${p.toggleFn}\\([^"]*, this\\)"`));
+      }
+    });
+  }
+
+  describe('renderKeepingFoldFocus', () => {
+    /**
+     * A panel whose render replaces every toggle with a new element, as
+     * `innerHTML` does, and a document that tracks focus.
+     *
+     * @param {string[]} keys - Fold keys the panel renders.
+     * @returns {{doc: object, panel: object, render: Function, current: Function}}
+     */
+    function setup(keys) {
+      const doc = { activeElement: null };
+      let buttons = [];
+      const build = () => {
+        buttons = keys.map((k) => {
+          const b = { dataset: { foldKey: k }, focus() { doc.activeElement = b; } };
+          return b;
+        });
+      };
+      build();
+      const panel = {
+        contains: (el) => buttons.includes(el),
+        querySelectorAll: (sel) => (sel === '[data-fold-key]' ? buttons : [])
+      };
+      return { doc, panel, render: build, current: () => buttons };
+    }
+
+    /**
+     * Lift `renderKeepingFoldFocus` against a given document.
+     *
+     * @param {object} doc - Fake document.
+     * @returns {Function}
+     */
+    const lift = (doc) => new Function('document', `${liftFunction(ui, 'function renderKeepingFoldFocus(')}\nreturn renderKeepingFoldFocus;`)(doc);
+
+    it('puts focus back on the re-rendered toggle with the same key', () => {
+      const { doc, panel, render, current } = setup(["O'Brien DB", 'SomeProject']);
+      current()[1].focus();
+      const before = current()[1];
+      lift(doc)(panel, render);
+      assert.notEqual(current()[1], before, 'the render replaced the button');
+      assert.equal(doc.activeElement, current()[1], 'focus followed it');
+    });
+
+    it('leaves focus alone when it was not on a toggle in this panel', () => {
+      const { doc, panel, render } = setup(['a']);
+      const elsewhere = { dataset: {} };
+      doc.activeElement = elsewhere;
+      lift(doc)(panel, render);
+      assert.equal(doc.activeElement, elsewhere);
+    });
+
+    it('moves nothing when the focused toggle is gone after the render', () => {
+      const s = setup(['a']);
+      s.current()[0].focus();
+      const gone = s.doc.activeElement;
+      s.panel.querySelectorAll = () => [];
+      lift(s.doc)(s.panel, s.render);
+      assert.equal(s.doc.activeElement, gone, 'no toggle to hand focus to, so none is stolen');
+    });
+  });
+
+  it('the polling loaders re-render through renderKeepingFoldFocus', () => {
+    for (const [fn, panel, render] of [
+      ['loadPorts', 'portsGrid', 'renderPorts'],
+      ['loadGroups', 'groupsPanel', 'renderGroups'],
+      ['loadOpenclawConnections', 'openclawPanel', 'renderOpenclawConnections']
+    ]) {
+      const body = liftFunction(landing, `async function ${fn}(`);
+      assert.match(body, new RegExp(`renderKeepingFoldFocus\\(document\\.getElementById\\('${panel}'\\), ${render}\\)`), fn);
+    }
+  });
+});

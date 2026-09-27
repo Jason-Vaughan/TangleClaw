@@ -46,6 +46,28 @@ The PM dispatched this over Medusa. The Architect scoped it strictly to test det
 **The change.** Test-only. The test calls `codex.fire` directly, awaits `handles.accepted`, and then sends the approval, resolve, user-input and completion sequence, waiting for each step's patch (`untilPatch`) instead of a wall-clock offset. Every assertion is unchanged. No product code changed.
 
 **Evidence.** With the old test's timer shortened to 1 ms it failed 9 runs in 10, on the same assertion as CI. The new test passed 50 of 50 under 8 CPU-bound loads. `test/startup-control-codex.test.js`: 48 of 48.
+## 2026-09-27 — Panel fold toggles keep keyboard focus (#1946)
+
+<!-- prawduct: type=bugfix | scope=panel-toggle-focus-1946 -->
+
+The PM dispatched this over Medusa. It follows up #1906/#1915.
+
+**Problem.** `togglePortGroup`, `toggleGroupItem` and `toggleOpenclawItem` flipped state and re-rendered the whole panel. `innerHTML` replaced the pressed button, so keyboard focus fell to `<body>`. The same happened every 30 s when the polling loaders (`loadPorts`, `loadGroups`, `loadOpenclawConnections`) re-rendered.
+
+**The change** (`public/ui.js`, `public/landing.js`):
+- `foldToggleInPlace(button, open)` flips `aria-expanded`, the arrow and the row's content (`.toggle-row` then its next sibling) with no re-render. Each toggle takes the pressed button (`onclick="…(key, this)"`) and falls back to the old re-render when there's no button or row. Opening a group in place still calls `loadGroupDetail`.
+- `renderKeepingFoldFocus(container, render)` wraps the three polling renders: if focus was on a toggle inside the panel, it is returned to the new toggle with the same `data-fold-key` (added to each toggle). Focus elsewhere is never moved.
+- The render functions themselves are unchanged apart from the new attribute and handler argument.
+
+**Tests.** `test/panel-toggle-rows.test.js`, 14 new tests running the shipped functions against small fakes:
+- each toggle folds in place and never re-renders;
+- each still falls back to a re-render without a button;
+- a group opened in place loads its details, and closing loads nothing;
+- the rendered toggles carry `data-fold-key` and pass `this`;
+- focus is restored after a re-render, left alone when it wasn't on a toggle, and not stolen when the toggle is gone;
+- all three loaders call the wrapper.
+
+Against `main`'s `ui.js` and `landing.js`, all 14 fail. Harness updates: `port-owner-kind-panel` lifts the new wrapper, because it runs `loadPorts`. `inline-handler-args` still asserts the exact name as the first argument and now also expects the button. Every test file touching `ui.js` or `landing.js` passes: 2,668 of 2,669, with 1 skipped.
 
 ## 2026-09-27 — Rule approval compare-and-set: approval ratifies only the text the operator saw (#1053)
 
