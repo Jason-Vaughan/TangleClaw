@@ -147,6 +147,13 @@ The `basic_auth` credential is canonical in **config** (`basicAuthUser` +
   gate. A MagicDNS name detected from `tailscale status` is served by the
   certificate and the Host allowlist even when this key is unset, but it never
   creates this site: that stays your decision, because it needs a gate (#1905).
+  With this key set, the generator also emits `http://<name> { redir … }`, so
+  the tailnet name on the plain-HTTP port is redirected to the HTTPS port.
+  **Only that name is redirected.** Any other host on the plain-HTTP port is
+  served by the catch-all above without a redirect, and a visit that starts
+  there stays there: the Tailscale IP, the short name, `.local`. The
+  landing-to-session hop is origin-relative. Point bookmarks and home-screen
+  icons at `https://<name>:<caddyHttpsPort>` (#575).
   If this key differs from the detected name, the key keeps serving and the
   detected name is refused until reconciled. In direct mode, `POST
   /api/setup/generate-cert {"reconcileTailnet": true}` moves the key and the
