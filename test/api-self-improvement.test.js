@@ -284,6 +284,118 @@ describe('api self-improvement loop (#569)', () => {
     });
   });
 
+  // #1696 / #1709 over HTTP: the lifecycle's one door is the status route.
+  describe('the rule lifecycle over HTTP (#1696, #1709)', () => {
+    /**
+     * @param {string} content - Rule text
+     * @returns {object} An operator-created, active startup rule
+     */
+    const live = (content) => store.sessionRules.create({ content, projectId: pid });
+    const statusOf = (id) => store.sessionRules.get(id).status;
+    /**
+     * @returns {object} An AI-authored proposal
+     */
+    const proposal = () => store.sessionRules.create({
+      content: `lifecycle proposal ${Date.now()}-${Math.random()}`, projectId: pid, createdBy: 'ai'
+    });
+
+    it('POST honours replacesRuleId, and approving the replacement retires the original', async () => {
+      const old = live(`original ${Date.now()}`);
+      const created = await request('POST', '/api/session-rules',
+        { content: `amended ${Date.now()}`, projectId: pid, createdBy: 'ai', replacesRuleId: old.id });
+      assert.equal(created.status, 201);
+      assert.equal(created.data.replacesRuleId, old.id, 'the link is recorded, not dropped');
+      const res = await request('PUT', `/api/session-rules/${created.data.id}/status`,
+        { status: 'active', expectedContent: created.data.content });
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.data.replaced, { id: old.id });
+      assert.equal(statusOf(old.id), 'retired');
+    });
+
+    it('POST refuses a replacesRuleId it cannot honour, and creates nothing', async () => {
+      const before = store.sessionRules.list({ projectId: pid }).length;
+      const res = await request('POST', '/api/session-rules',
+        { content: 'replaces nothing', projectId: pid, createdBy: 'ai', replacesRuleId: 99999999 });
+      assert.equal(res.status, 400);
+      assert.equal(res.data.code, 'INVALID_REPLACES');
+      assert.equal(store.sessionRules.list({ projectId: pid }).length, before);
+    });
+
+    it('an approval whose target is already gone stands, with replaced: null and the reason', async () => {
+      const old = live(`gone ${Date.now()}`);
+      const next = store.sessionRules.create({ content: `outlives ${Date.now()}`, projectId: pid, createdBy: 'ai', replacesRuleId: old.id });
+      store.sessionRules.setStatus(old.id, 'retired');
+      const res = await request('PUT', `/api/session-rules/${next.id}/status`,
+        { status: 'active', expectedContent: next.content });
+      assert.equal(res.status, 200);
+      assert.equal(res.data.replaced, null);
+      assert.match(res.data.replacementSkipped.reason, /already retired/);
+    });
+
+    it('PUT /:id refuses to change replacesRuleId', async () => {
+      const old = live(`fixed target ${Date.now()}`);
+      const next = store.sessionRules.create({ content: `x ${Date.now()}`, projectId: pid, createdBy: 'ai', replacesRuleId: old.id });
+      const res = await request('PUT', `/api/session-rules/${next.id}`, { replacesRuleId: live('other').id });
+      assert.equal(res.status, 400);
+      assert.equal(store.sessionRules.get(next.id).replacesRuleId, old.id);
+    });
+
+    it('retires an active rule without the password — it grants nothing', async () => {
+      const rule = live(`to retire ${Date.now()}`);
+      setOperatorPassword('hunter2');
+      const res = await request('PUT', `/api/session-rules/${rule.id}/status`, { status: 'retired' });
+      assert.equal(res.status, 200);
+      assert.equal(res.data.status, 'retired');
+    });
+
+    it('refuses to retire a proposal with 400 INVALID_TRANSITION', async () => {
+      const rule = proposal();
+      const res = await request('PUT', `/api/session-rules/${rule.id}/status`, { status: 'retired' });
+      assert.equal(res.status, 400);
+      assert.equal(res.data.code, 'INVALID_TRANSITION');
+      assert.equal(statusOf(rule.id), 'proposed');
+    });
+
+    it('REFUSES to reject an active rule, atomically, and retire still works', async () => {
+      const rule = live(`governing ${Date.now()}`);
+      const versions = store.sessionRules.listVersions(rule.id).length;
+      const res = await request('PUT', `/api/session-rules/${rule.id}/status`, { status: 'rejected' });
+      assert.equal(res.status, 400);
+      assert.equal(res.data.code, 'INVALID_TRANSITION');
+      const after = store.sessionRules.get(rule.id);
+      assert.equal(after.status, 'active');
+      assert.equal(after.content, rule.content);
+      assert.equal(store.sessionRules.listVersions(rule.id).length, versions);
+      const retire = await request('PUT', `/api/session-rules/${rule.id}/status`, { status: 'retired' });
+      assert.equal(retire.status, 200);
+    });
+
+    it('restores a retired rule without the password, and it comes back disabled', async () => {
+      const rule = live(`to restore ${Date.now()}`);
+      store.sessionRules.setStatus(rule.id, 'retired');
+      setOperatorPassword('hunter2');
+      const res = await request('PUT', `/api/session-rules/${rule.id}/status`, { status: 'active' });
+      assert.equal(res.status, 200);
+      assert.equal(res.data.status, 'active');
+      assert.equal(res.data.enabled, false, 'a restore never makes a rule govern on its own');
+    });
+
+    it('still demands the password to approve a proposal — the un-gated door is restore-only', async () => {
+      const rule = proposal();
+      setOperatorPassword('hunter2');
+      const res = await request('PUT', `/api/session-rules/${rule.id}/status`,
+        { status: 'active', expectedContent: rule.content });
+      assert.equal(res.status, 403);
+      assert.equal(statusOf(rule.id), 'proposed');
+    });
+
+    it('answers 403, not 404, for an unknown rule without the password — as before', async () => {
+      setOperatorPassword('hunter2');
+      const res = await request('PUT', '/api/session-rules/99999999/status', { status: 'active' });
+      assert.equal(res.status, 403);
+    });
+  });
+
   describe('POST /api/session-rules/promote carries the same gate', () => {
     it('refuses to mint a live rule without the operator password when one is set', async () => {
       const l = store.learnings.create({ projectId: pid, content: `promote guard ${Date.now()}` });

@@ -137,8 +137,9 @@ describe('session rule lifecycle (#1696, #1709)', () => {
       try {
         for (const r of [startup, wrap, master]) store.sessionRules.setStatus(r.id, 'retired');
         assert.ok(!delivered().includes('retired startup rule about linting'));
-        const wrapRules = store.sessionRules.list({ projectId: project.id, enabled: 1, status: 'active', kind: 'wrap' });
-        assert.ok(!wrapRules.some((r) => r.id === wrap.id), 'the wrap prompt reads active rules only');
+        const { _internal } = require('../lib/wrap-steps/ai-content');
+        assert.ok(!_internal.listWrapRules(project.id).some((r) => r.id === wrap.id),
+          'the wrap prompt reads active rules only');
         assert.ok(!store.sessionRules.listActiveForMaster().some((r) => r.id === master.id));
         const candidates = store.sessionRules.findConflictCandidates('retired startup rule about linting', project.id);
         assert.ok(!candidates.some((c) => c.rule.id === startup.id), 'a dead rule cannot conflict with anything');
@@ -207,11 +208,65 @@ describe('session rule lifecycle (#1696, #1709)', () => {
       assert.equal(approved.status, 'active');
     });
 
-    it('an active rule can still be set back to proposed or rejected', () => {
+    it('an active rule can still be set back to proposed, where it stays visible for review', () => {
       const a = activeRule('demoted by status');
       assert.equal(store.sessionRules.setStatus(a.id, 'proposed').status, 'proposed');
-      const b = activeRule('rejected after the fact');
-      assert.equal(store.sessionRules.setStatus(b.id, 'rejected').status, 'rejected');
+    });
+  });
+
+  // Architect ruling on #1709: 'rejected' answers a proposal that never
+  // governed. Used on an active rule it removed the rule from the list and the
+  // Graveyard alike, with no password — a silent way to make governance vanish.
+  describe('an active rule cannot be rejected', () => {
+    it('REFUSES active → rejected and changes nothing: status, text, history', () => {
+      const rule = activeRule('governs today');
+      const versionsBefore = store.sessionRules.listVersions(rule.id).length;
+      assert.throws(() => store.sessionRules.setStatus(rule.id, 'rejected'), code('INVALID_TRANSITION'));
+      const after = store.sessionRules.get(rule.id);
+      assert.equal(after.status, 'active');
+      assert.equal(after.content, 'governs today');
+      assert.equal(after.enabled, true);
+      assert.equal(store.sessionRules.listVersions(rule.id).length, versionsBefore, 'no decision was recorded');
+      assert.ok(delivered().includes('governs today'), 'it still governs');
+    });
+
+    it('refuses it for a switched-off active rule too', () => {
+      const rule = activeRule('resting, not rejectable');
+      store.sessionRules.update(rule.id, { enabled: false });
+      assert.throws(() => store.sessionRules.setStatus(rule.id, 'rejected'), code('INVALID_TRANSITION'));
+      assert.equal(store.sessionRules.get(rule.id).status, 'active');
+    });
+
+    it('leaves retire as the honest way out of force', () => {
+      const rule = activeRule('retire me instead');
+      assert.throws(() => store.sessionRules.setStatus(rule.id, 'rejected'));
+      assert.equal(store.sessionRules.setStatus(rule.id, 'retired').status, 'retired');
+    });
+  });
+
+  describe('restoreOnly: the door that can restore and nothing else', () => {
+    it('restores a retired rule', () => {
+      const rule = activeRule('restorable');
+      store.sessionRules.setStatus(rule.id, 'retired');
+      const restored = store.sessionRules.setStatus(rule.id, 'active', { restoreOnly: true });
+      assert.equal(restored.status, 'active');
+      assert.equal(restored.enabled, false);
+    });
+
+    it('REFUSES to approve a proposal through it, even with the right text', () => {
+      const rule = proposal('not a restore');
+      assert.throws(
+        () => store.sessionRules.setStatus(rule.id, 'active', { restoreOnly: true, expectedContent: 'not a restore' }),
+        code('APPROVAL_REQUIRES_AUTHORITY')
+      );
+      assert.equal(store.sessionRules.get(rule.id).status, 'proposed');
+    });
+
+    it('refuses any other move through it', () => {
+      const rule = activeRule('not retired');
+      assert.throws(() => store.sessionRules.setStatus(rule.id, 'retired', { restoreOnly: true }),
+        code('APPROVAL_REQUIRES_AUTHORITY'));
+      assert.equal(store.sessionRules.get(rule.id).status, 'active');
     });
   });
 

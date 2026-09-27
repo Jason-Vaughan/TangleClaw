@@ -35,6 +35,23 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-27 — Rules lifecycle, Chunk 2: routes, tc rules, and no rejecting an active rule (#1696, #1709)
+
+<!-- prawduct: type=bugfix | scope=rule-retirement-1696-1709 -->
+
+Chunk 02 of 04. The PM authorized it (4718a04b) together with the Architect's W5 ruling.
+
+**The change.**
+- **`POST /api/session-rules`** passes `replacesRuleId` to the store and maps `INVALID_REPLACES` to 400. It is no longer dropped at the route either.
+- **Status route: retire and restore.** It is the lifecycle's one door (ruling 1). `retired` and a restore need no password. Without the password, `active` is accepted only as a restore: the route sets `restoreOnly`, and the store then refuses anything but `retired → active` (`APPROVAL_REQUIRES_AUTHORITY`, answered as 403). That closes the window between the route's read and the write.
+- **Status route: errors.** `INVALID_TRANSITION` maps to 400. An unknown rule without the password still answers 403, as before.
+- **W5 ruling.** `setStatus` refuses `active → rejected` with `INVALID_TRANSITION`, atomically, and retire still succeeds.
+- **`tc rules`.** The footer says retired rules are never in force and how to amend with `replacesRuleId`. It is carried there, not in the ecosystem primer, which sits at 2764 of its 2800-character cap and would have needed a budget decision.
+- **Carry-over O-4.** The wrap-reader test now calls `listWrapRules` itself.
+- **Two pre-existing tests encoded the move the W5 ruling forbids** (`test/self-improvement-loop.test.js`): "approve and reject, recording each as a version" rejected an active rule, and "drops a rule out of injection the moment it is rejected" did the same. Each keeps its intent through a path the ruling allows: reject, then approve (both decisions still snapshotted on one rule), and leaving force by retire. This is the contract change the ruling made, not a weakened test.
+
+**Tests.** Store (W5: status, text, history and delivery unchanged, plus the disabled-active case and retire still working; `restoreOnly`). HTTP (the create link and INVALID_REPLACES; approval `replaced` and `replacementSkipped`; `PUT /:id` refusing the field; ungated retire and restore; INVALID_TRANSITION; the approval gate unchanged; 403 for an unknown rule). `tc rules`. Mutation-checked seven mutants: restore gated, `restoreOnly` ignored, `active → rejected` allowed, `replacesRuleId` dropped at POST, INVALID_TRANSITION unmapped, the footer removed, and `listWrapRules` losing its filter. Each turns tests red.
+
 ## 2026-09-27 — Rules lifecycle: retirement and supersession, Chunk 1: schema v51 and store transitions (#1696, #1709)
 
 <!-- prawduct: type=bugfix | scope=rule-retirement-1696-1709 -->

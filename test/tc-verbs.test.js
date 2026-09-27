@@ -237,6 +237,20 @@ describe('tc verb roster (lib/tc-verbs)', () => {
       assert.match(out, /PROPOSED rows await operator approval/);
     });
 
+    it('rules: a RETIRED rule is shown as dead, and the footer says how to amend (#1696, #1709)', () => {
+      const out = renderRules({
+        rules: [
+          { id: 4, kind: 'startup', status: 'retired', enabled: 1, content: 'old checkout path' },
+          { id: 5, kind: 'startup', status: 'active', enabled: 1, content: 'new checkout path' }
+        ]
+      });
+      assert.match(out, /\[#4 startup — RETIRED\] old checkout path/);
+      assert.match(out, /RETIRED rules are kept for history and are never in force/);
+      // An agent reads its rules before amending one; this is where it must
+      // learn that an unlinked amendment would govern beside the original.
+      assert.match(out, /"replacesRuleId":<its id>; approving it retires the old rule/);
+    });
+
     it('inbox: reading is pure and says so — the ack instruction rides every non-empty read', () => {
       assert.match(renderInbox({ messages: [] }), /inbox is empty/);
       const out = renderInbox({ messages: [{ id: 'm1', from: 'ws-2', message: 'ping' }] });

@@ -53,6 +53,7 @@ machine-specific — TangleClaw's SessionStart hooks live in the ignored
   | `proposed` | `rejected` | Decline |
   | `active` | `retired` | Retire. **Only** from `active`: a rule that never governed cannot be retired (operator ruling on #1709) |
   | `retired` | `active` | Restore. Lands `enabled: false`, so it governs again only once switched on |
+  | `active` | `rejected` | Refused `INVALID_TRANSITION` (Architect ruling): rejection answers a proposal that never governed, and on an active rule it was a password-free way to make the rule vanish from the list and the Graveyard. Retire it instead |
   | `proposed` / `rejected` | `retired` | Refused `INVALID_TRANSITION` |
   | `retired` | `proposed` / `rejected` | Refused `INVALID_TRANSITION` |
 
@@ -97,14 +98,14 @@ and `GET /api/learnings` (#1121); a valid project with no rules returns `200 []`
 | Method & path | Purpose |
 |---|---|
 | `GET /api/session-rules?projectId=&kind=` | List rules |
-| `POST /api/session-rules` `{content, projectId, createdBy?}` | Create (projectId required) |
+| `POST /api/session-rules` `{content, projectId, createdBy?, kind?, replacesRuleId?}` | Create (projectId required). #1696 — `replacesRuleId` names the active rule (same project and kind) this one replaces; it is recorded and approving the new rule retires the old one. A value that cannot be honoured is `400 INVALID_REPLACES` and nothing is created |
 | `PUT /api/session-rules/:id` `{content?, enabled?, changedBy?}` | Update (snapshots a version) |
 | `DELETE /api/session-rules/:id` | Delete (snapshots a tombstone) |
 | `GET /api/session-rules/:id/versions` | Version history (newest first) |
 | `POST /api/session-rules/:id/restore` `{versionNo}` | Roll back to a prior version |
 | `POST /api/session-rules/promote` `{learningId, content?, projectId?}` | Promote a learning → rule (operator-confirmed; defaults to the learning's project) |
 | `POST /api/session-rules/conflicts` `{content, projectId?}` | Non-authoritative conflict-candidate signal |
-| `PUT /api/session-rules/:id/status` `{status, expectedContent, changedBy?, changeReason?}` | #569 — approve (`active`) or decline (`rejected`) a proposal. An AI `changedBy` requesting `active` is refused with 403. #1053 — an approval must carry `expectedContent`, the exact stored text the operator was shown: without it, `400 EXPECTED_CONTENT_REQUIRED`; when the rule no longer holds that text, `409 RULE_CONTENT_CHANGED` carrying `currentContent`, and nothing changes. The password gate is checked first, so a caller without it learns nothing about the text. A rejection needs no `expectedContent` and is never compared |
+| `PUT /api/session-rules/:id/status` `{status, expectedContent, changedBy?, changeReason?}` | The lifecycle's one door. #1709 — `retired` retires an active rule; `active` on a retired rule restores it, disabled. Neither needs the password (neither grants anything): without the password, `active` is accepted only as a restore. A move the lifecycle forbids is `400 INVALID_TRANSITION`. An approval of a replacement returns `replaced: {id}`, or `replaced: null` with `replacementSkipped: {id, reason}` when that rule was no longer active. #569 — approve (`active`) or decline (`rejected`) a proposal. An AI `changedBy` requesting `active` is refused with 403. #1053 — an approval must carry `expectedContent`, the exact stored text the operator was shown: without it, `400 EXPECTED_CONTENT_REQUIRED`; when the rule no longer holds that text, `409 RULE_CONTENT_CHANGED` carrying `currentContent`, and nothing changes. The password gate is checked first, so a caller without it learns nothing about the text. A rejection needs no `expectedContent` and is never compared |
 | `GET /api/learnings?projectId=&tier=` | #569 — list a project's learnings |
 | `PUT /api/learnings/:id/tier` `{tier}` | #569 — operator override of a learning's tier |
 

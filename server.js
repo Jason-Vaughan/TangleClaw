@@ -5307,7 +5307,7 @@ function _stillHasUnhandledMail(row) {
     .some((x) => !medusaExchanges.hasFact(x.exchange_id, ['acknowledged']));
 }
 
-// POST /api/session-rules — create { content, projectId, createdBy?, kind? }
+// POST /api/session-rules — create { content, projectId, createdBy?, kind?, replacesRuleId? }
 route('POST', '/api/session-rules', (_req, res, _params, body) => {
   if (!body || typeof body.content !== 'string' || !body.content.trim()) {
     return errorResponse(res, 400, 'content (non-empty string) is required', 'BAD_REQUEST');
@@ -5322,13 +5322,19 @@ route('POST', '/api/session-rules', (_req, res, _params, body) => {
       // CC-6 (#381): 'startup' (default) | 'wrap' | 'master'. Invalid → store throws BAD_REQUEST.
       kind: body.kind,
       // SR-7K2P: optional Critic-gate attestation. Invalid → store throws BAD_REQUEST.
-      criticGate: body.criticGate
+      criticGate: body.criticGate,
+      // #1696: the active rule this one replaces. Honoured (approving the new
+      // rule retires the old one) or refused with INVALID_REPLACES — never
+      // silently dropped, which is how two amended rules came to govern at once.
+      replacesRuleId: body.replacesRuleId
     });
     jsonResponse(res, 201, rule);
   } catch (err) {
     if (err.code === 'BAD_REQUEST') {
       return errorResponse(res, 400, err.message, 'BAD_REQUEST');
     }
+    if (err.code === 'INVALID_REPLACES') return errorResponse(res, 400, err.message, 'INVALID_REPLACES');
+    if (err.code === 'INVALID_TRANSITION') return errorResponse(res, 400, err.message, 'INVALID_TRANSITION');
     // #1121: an unknown projectId used to die on the FK constraint as a bare
     // 500 — the caller most likely passed the project's name, not its id.
     if (err.code === 'INVALID_PROJECT_ID') {
@@ -5443,12 +5449,15 @@ route('POST', '/api/session-rules/promote', (_req, res, _params, body) => {
   }
 }, { maxBodySize: 256 * 1024 });
 
-// PUT /api/session-rules/:id/status — resolve a proposal (#569).
-// Approve ('active') or decline ('rejected') a rule the wrap proposed. An
+// PUT /api/session-rules/:id/status — the rule lifecycle's one door.
+// Approve ('active') or decline ('rejected') a proposal (#569); retire an
+// active rule ('retired') or restore a retired one ('active') (#1709). An
 // approval must carry `expectedContent`, the exact text the operator was
 // shown, and is refused (409) if the rule no longer holds it (#1053). A
 // rejection is RECORDED rather than deleted: the wrap proposes from recurring
 // learnings, so a deleted decision would simply be re-proposed at the next wrap.
+// Which moves are allowed is the store's transition table; a forbidden one is
+// 400 INVALID_TRANSITION.
 route('PUT', '/api/session-rules/:id/status', (_req, res, params, body) => {
   if (!body || typeof body.status !== 'string') {
     return errorResponse(res, 400, 'status is required', 'BAD_REQUEST');
@@ -5459,16 +5468,28 @@ route('PUT', '/api/session-rules/:id/status', (_req, res, params, body) => {
   // `changedBy` is the caller describing itself — an agent that omits it is
   // recorded as the operator — so it cannot be what decides this.
   //
-  // Declining a proposal needs no gate: it grants nothing.
+  // Declining a proposal and retiring a rule need no gate: neither grants
+  // anything. Restoring a retired rule needs none either, because it comes
+  // back DISABLED — so without the password, 'active' is allowed only as a
+  // restore, and `restoreOnly` makes the store refuse anything else. That
+  // closes the gap between this read and the write: a rule that stopped being
+  // retired in between cannot be approved through the un-gated door.
+  let restoreOnly = false;
   if (body.status === 'active') {
     const check = projects.checkDeletePassword(body ? body.password : undefined);
-    if (!check.allowed) return errorResponse(res, 403, check.error, 'FORBIDDEN');
+    if (!check.allowed) {
+      const existing = store.sessionRules.get(Number(params.id));
+      if (!existing || existing.status !== 'retired') return errorResponse(res, 403, check.error, 'FORBIDDEN');
+      restoreOnly = true;
+    }
   }
   try {
     const rule = store.sessionRules.setStatus(Number(params.id), body.status, {
       // Passing the gate IS the operator acting; recording anything else would
-      // misattribute a decision the gate just authorised.
-      changedBy: body.status === 'active' ? 'operator' : body.changedBy,
+      // misattribute a decision the gate just authorised. An un-gated restore
+      // was not authorised by it, so it records the caller as it describes itself.
+      changedBy: body.status === 'active' && !restoreOnly ? 'operator' : body.changedBy,
+      restoreOnly,
       changeReason: body.changeReason,
       criticGate: body.criticGate,
       // The text the operator was shown. Read only AFTER the password gate
@@ -5481,6 +5502,8 @@ route('PUT', '/api/session-rules/:id/status', (_req, res, params, body) => {
     if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');
     if (err.code === 'BAD_REQUEST') return errorResponse(res, 400, err.message, 'BAD_REQUEST');
     if (err.code === 'FORBIDDEN') return errorResponse(res, 403, err.message, 'FORBIDDEN');
+    if (err.code === 'APPROVAL_REQUIRES_AUTHORITY') return errorResponse(res, 403, err.message, 'FORBIDDEN');
+    if (err.code === 'INVALID_TRANSITION') return errorResponse(res, 400, err.message, 'INVALID_TRANSITION');
     if (err.code === 'EXPECTED_CONTENT_REQUIRED') {
       return errorResponse(res, 400, err.message, 'EXPECTED_CONTENT_REQUIRED');
     }
