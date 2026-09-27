@@ -294,7 +294,18 @@ describe('startupControl at launch and teardown (codex)', () => {
     assert.equal(proven.adapterName, 'codex');
     assert.ok(proven.command.includes('default_permissions'), proven.command);
     healthySeams({ execFileSync: () => 'codex-cli 0.157.1\n' });
-    assert.equal(sessions._loopbackModeCommand('codex', profile, 'fullAuto', full, '/opt/fake/bin/codex'), null, 'an unproven version keeps the no-network sandbox');
+    const logger = require('../lib/logger');
+    const captured = [];
+    logger.setLevel('warn');
+    logger.setConsoleStream({ write: (line) => captured.push(line) });
+    try {
+      assert.equal(sessions._loopbackModeCommand('codex', profile, 'fullAuto', full, '/opt/fake/bin/codex'), null, 'an unproven version keeps the no-network sandbox');
+    } finally {
+      logger.setConsoleStream(null);
+      logger.setLevel('error');
+    }
+    assert.match(captured.join(''), /Loopback network profile not applied.*tc cannot reach TangleClaw/, 'a no-network Full Auto says why instead of leaving a silent stuck session');
+    assert.match(captured.join(''), /0\.157\.1/);
     healthySeams({ execFileSync: () => { throw new Error('ENOENT'); } });
     assert.equal(sessions._loopbackModeCommand('codex', profile, 'fullAuto', full, '/opt/fake/bin/codex'), null, 'an unknown version keeps it too');
   });

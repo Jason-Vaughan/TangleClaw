@@ -23,6 +23,7 @@ const { promisify } = require('node:util');
 
 const profile = require('../lib/codex-loopback-profile');
 const codex = require('../lib/startup-control-codex');
+const { initRepo } = require('./_temp-repo');
 
 /**
  * The `-c` overrides as a key → value map, asserting the argv is strictly
@@ -149,7 +150,7 @@ describe('codex loopback profile against the installed CLI (#1836)', () => {
     port = server.address().port;
     workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-1836-ws-'));
     codexHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-1836-home-'));
-    execFileSync('git', ['init', '-q'], { cwd: workspace });
+    initRepo(workspace);
   });
 
   after(() => {

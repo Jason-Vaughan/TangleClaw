@@ -48,7 +48,7 @@ describe('tc warning filter (#1836)', () => {
     assert.deepEqual(seen, ['X-OTHER']);
   });
 
-  it('a real tc run under NODE_USE_ENV_PROXY prints its own error and no proxy-agent warning', () => {
+  it('a real tc run under NODE_USE_ENV_PROXY prints its own error and no proxy-agent warning (needs a Node that raises the env-proxy warning)', (t) => {
     const env = {
       ...process.env,
       NODE_USE_ENV_PROXY: '1',
@@ -58,6 +58,13 @@ describe('tc warning filter (#1836)', () => {
       TANGLECLAW_API: 'http://127.0.0.1:9'
     };
     delete env.NODE_NO_WARNINGS;
+    // The control: without the filter, does this Node print the warning at
+    // all? If not, "tc printed none" would prove nothing.
+    const control = spawnSync(process.execPath, ['-e', 'setTimeout(() => {}, 20)'], { env, encoding: 'utf8', timeout: 30000 });
+    if (!control.stderr.includes('UNDICI-EHPA')) {
+      t.skip(`Node ${process.version} does not raise the env-proxy warning, so its absence would prove nothing`);
+      return;
+    }
     const tc = spawnSync(process.execPath, [path.join(__dirname, '..', 'bin', 'tc'), 'whoami'], { env, encoding: 'utf8', timeout: 30000 });
     assert.equal(tc.status, 2, `tc reports the unreachable server: ${tc.stderr}`);
     assert.match(tc.stderr, /^tc: /m, 'tc still says what happened');
