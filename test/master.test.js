@@ -2862,6 +2862,14 @@ describe('ensureMasterSession — Codex daemon isolation (#1895)', () => {
     assert.match(command, /(^|; )codex --ask-for-approval never --sandbox workspace-write --no-daemon$/);
   });
 
+  it('runs a full-auto Master on a proven Codex under the loopback network profile, so its own tc reaches TangleClaw (#1836)', () => {
+    codexAnswers('codex-cli 0.156.1\n');
+    const { result, command } = ensureWith({ engine: 'codex', launchMode: 'fullAuto' });
+    assert.equal(result.launchMode, 'fullAuto');
+    assert.doesNotMatch(command, /--sandbox/, 'the legacy sandbox flag would switch the profile off');
+    assert.match(command, /(^|; )codex --ask-for-approval never -c features\.network_proxy=true -c 'default_permissions="tangleclaw-loopback"' .* --no-daemon$/);
+  });
+
   for (const [label, output] of [
     ['an older version that rejects the flag', 'codex-cli 0.154.0\n'],
     ['a future version nobody has verified', 'codex-cli 0.158.0\n'],

@@ -31,6 +31,16 @@ Engine profiles live in `~/.tangleclaw/engines/`. TangleClaw ships with five bui
 - **Config file**: `.codex.yaml` (YAML)
 - **Slash commands**: None
 - **Launch modes**: Interactive (default), Full Auto (`--ask-for-approval never --sandbox workspace-write` — no approval prompts, sandbox retained), Bypass (`--dangerously-bypass-approvals-and-sandbox` — no approvals **and no sandbox**, containers/VMs only). Verified against codex-cli 0.145.0. Note this is the one Bypass mode across all engines that also removes the sandbox: Claude's and Antigravity's `--dangerously-skip-permissions` skip approvals only. A bypass posture confirmed on another engine and carried to Codex by an engine switch is therefore wider than the one that was confirmed
+- **Full Auto's network** (#1836): `workspace-write` refuses every connection, loopback included, and every `tc` command is a loopback call. So on a Codex version the fix was proven on (0.156.1, listed in `lib/startup-control-codex.js`), Full Auto replaces `--sandbox workspace-write` with a Codex permission profile, written once in `lib/codex-loopback-profile.js`, and declared by the mode's `loopbackNetwork: true`.
+  - **Network:** the profile extends `:workspace` and turns on Codex's network proxy, allowing only `127.0.0.1` and `localhost`. The proxy ignores a port in a host rule, so the agent reaches **every** loopback service, not just TangleClaw. Public hosts, the LAN, this machine's other addresses, outside DNS and any socket that bypasses the proxy are refused.
+  - **Filesystem:** a profile that extends `:workspace` loses `workspace-write`'s read-only `.git`, `.agents` and `.codex`, so the profile restates them.
+  - **Why not the simpler options:** `--sandbox` is dropped because it switches Codex back to the legacy syntax, which has no proxy. `sandbox_workspace_write.network_access=true` is never used, because it opens everything.
+  - **Legacy path only:** the profile does not survive Codex's native startup channel. The TUI's `--remote` thread start sends a legacy sandbox mode that overrides it, whichever side carries the keys. A Full Auto launch therefore skips the channel and records `mode_requires_legacy`.
+  - **Other versions** keep the network-off sandbox.
+  - **Side effects:**
+    - Codex injects proxy variables into the agent's commands, `NODE_USE_ENV_PROXY=1` among them, and routes git-over-SSH through its proxy.
+    - `tc` drops the "EnvHttpProxyAgent is experimental" warning that Node prints under that variable (`lib/tc-warnings.js`).
+    - Codex ends a command at its first refused connection.
 - **Capabilities**: Prime prompt, config file, co-author
 
 ### Aider

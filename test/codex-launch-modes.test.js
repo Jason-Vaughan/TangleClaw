@@ -52,6 +52,19 @@ describe('Codex launch modes (#731)', () => {
     assert.ok(codex.launchModes.fullAuto.warning, 'unattended execution must carry a warning');
   });
 
+  it('full auto, and only full auto, runs under the loopback network profile, and its warning says what that reaches (#1836)', () => {
+    // The flag lets `tc` reach TangleClaw from inside the sandbox. It also
+    // reaches every other service on loopback — the proxy cannot narrow a host
+    // to one port — and the operator picking the mode is told so in plain words.
+    assert.equal(codex.launchModes.fullAuto.loopbackNetwork, true);
+    assert.equal(codex.launchModes.default.loopbackNetwork, undefined, 'interactive has no sandbox flag to narrow');
+    assert.equal(codex.launchModes.bypassPermissions.loopbackNetwork, undefined, 'bypass has no sandbox at all');
+    const warning = codex.launchModes.fullAuto.warning;
+    assert.match(warning, /EVERY service/);
+    assert.match(warning, /localhost\/127\.0\.0\.1/);
+    assert.match(warning, /never the internet or your LAN/);
+  });
+
   it('bypass drops the sandbox too, and says so', () => {
     assert.deepEqual(
       codex.launchModes.bypassPermissions.args,
