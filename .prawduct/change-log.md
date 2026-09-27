@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-26 — Stop tracking this repo's internal plans and evidence
+
+<!-- prawduct: type=chore | scope=untrack-internal-plans -->
+
+Operator decision: forward-only privacy cleanup with NO history rewrite. PM dispatch (ed7331a8) and Architect approval (e7ed90bb, merge gate a122a426). The merge waits for the PM's explicit go.
+
+**The change.** 170 files leave the index; their disk copies stay: 12 top-level plans, 126 in `plans/archive/`, 31 in `plans/1245-evidence/`, and the force-added `.tangleclaw/archive/1839-medusa-delivery-watchdog.md`. `.gitignore` drops `!.tangleclaw/plans/`, and its comments say why and that this is this repo's policy only. The 4 `.tangleclaw/priming/` files stay tracked pending their own audit. Nothing reads plans through git, and the wrap lists candidates with `git status --porcelain`, which omits ignored files, so no product behaviour changes.
+
+**Preservation.** A checksum-verified copy (170/170) is in private Shared storage. Before merging, the PM backed up every local checkout, because pulling a commit that stops tracking files deletes them from disk.
+
+**Tests.** `test/repo-governance-reference.test.js` asserts: nothing is tracked under either directory; new, nested, non-markdown and archive paths are ignored; and the committed `.gitignore` carries no re-include. Before the commit, the last assertion failed against the old `.gitignore`, which proves it detects the negation.
+
 ## 2026-09-26 — Roadmap train cards on served plan pages, and unbroken table cells (#1930)
 
 <!-- prawduct: type=feature | scope=1930-train-cards -->

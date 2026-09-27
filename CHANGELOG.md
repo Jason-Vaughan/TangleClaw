@@ -349,6 +349,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- **This repo's own planning documents are no longer tracked in the public repository.** `.tangleclaw/plans/` and `.tangleclaw/archive/` are now ignored, as the rest of `.tangleclaw/` already was. The files stay on each checkout's disk and in private project storage. A governance test keeps them out. This applies to the TangleClaw repository only: projects TangleClaw manages still treat their plans as project content. History is unchanged. A clone that pulls this change loses its tracked plan files from disk, so back up `.tangleclaw/plans` before pulling and restore it afterwards.
+
 - **ADR 0020 (accepted): session workload receipts** (#1912). A lane asserts its own workload through `tc workload set`. The server stamps identity and time from the verified launch binding, and the result is composed fail-closed with observed engine activity. Transcript parsing is banned as a source of clearance. A bounded background activity observer supplies engine state, and no fleet read captures a pane. Status: Accepted (Architect ruling FWV-A18); no implementation yet.
 
 - **ADR 0018 §4 gives the mode-aware repair** (#1245). A stale or invalid owned ttyd now sends the operator to `node scripts/ttyd-runtime.js provision`, then to `deploy/install.sh` in direct mode or `node scripts/ingress-cutover.js --to caddy` in caddy mode. The ADR said "rerun the installer", which is wrong on a caddy-mode host; the code already worked this way.

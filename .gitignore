@@ -34,7 +34,7 @@
 # Contents are ignored fail-closed; only the change-log is tracked — it feeds
 # the check-change-log-entry PR gate and the release flow (#485).
 #
-# `backlog.md` is tracked for the same reason `.tangleclaw/plans/` is (see below):
+# `backlog.md` is tracked because it is frozen project history, not working notes:
 # an untracked backlog is one machine's working tree, so it does not survive a
 # fresh clone and is not in any export. That matters most at the GitHub-Issues
 # cutover — once `backlog_service_repo` is set the skill treats this file as
@@ -59,17 +59,19 @@
 !.prawduct/artifacts/migration-restructure-preview.md
 
 # TangleClaw project config (dogfooding artifact).
-# Contents are ignored fail-closed, with ONE exception: `plans/` is tracked.
-# A plan is project state, not machine state — it must survive a fresh clone and
-# an engine switch, and the archiving convention explicitly leans on that ("the
-# issue-state check is the contract — it protects across fresh clones, which have
-# no local archive"). Ignoring plans made every clone of this repo planless.
+# Contents are ignored fail-closed. That includes `plans/` and `archive/`: this
+# repo's own plans and evidence are internal working documents, not part of the
+# public product, so they live on each checkout's disk and in the project's
+# private shared storage — never in this public repo. A fresh clone is therefore
+# planless by design; the issue-state check (`gh issue view`) is still the
+# contract for whether a plan is live. This is THIS repo's policy only: TangleClaw
+# still treats `.tangleclaw/plans/*.md` as durable content for the projects it
+# manages (lib/wrap-steps/_file-safety.js), and nothing here changes that.
 # `.tangleclaw/*` rather than `.tangleclaw/`: git never descends into an ignored
 # DIRECTORY, so a `!` negation below a bare `.tangleclaw/` would never match.
 .tangleclaw/*
-!.tangleclaw/plans/
 
-# Priming prompts, for the same reason and by the same mechanism. The Global
+# Priming prompts are the one tracked exception, re-included by negation. The Global
 # Rules say a recurring session role's prompt is "a durable artifact, not chat
 # memory" and name this path as git-tracked — but `.tangleclaw/*` above swallowed
 # the directory, so the rule had been quietly unfollowable: `roadmap-triage.md`
