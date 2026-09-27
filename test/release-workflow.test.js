@@ -168,3 +168,45 @@ describe('release.yml grants the write token only to the publishing job', () => 
     }
   });
 });
+
+describe('release.yml refuses unpublishable release notes before any tag, push or release (#1947)', () => {
+  const GATE = 'Refuse release notes GitHub cannot publish';
+
+  /**
+   * The text of one step, from its `- name:` line to the next step.
+   * @param {string} name - Step name.
+   * @returns {string}
+   */
+  function step(name) {
+    const start = stepIndex(name);
+    const next = PUBLISH.indexOf('\n      - ', start + 1);
+    return PUBLISH.slice(start, next < 0 ? PUBLISH.length : next);
+  }
+
+  it('measures the extracted notes after extraction and before the tag is created, pushed or verified, and before publishing', () => {
+    const gate = stepIndex(GATE);
+    assert.ok(stepIndex('Extract release notes from CHANGELOG') < gate);
+    assert.ok(gate < stepIndex('Create and push the tag'));
+    assert.ok(gate < stepIndex('Verify the tag on origin names the tested commit'));
+    assert.ok(gate < stepIndex('Publish the GitHub Release'));
+    assert.match(step(GATE), /^\s+run: \|\s*\n\s+set -euo pipefail\s*\n\s+node scripts\/release-notes-gate\.js release-notes\.md\s*$/m);
+    assert.match(step(GATE), /^\s+id: notes-gate\s*$/m);
+    assert.match(step('Publish the GitHub Release'), /--notes-file release-notes\.md/, 'the file measured is the file published');
+  });
+
+  it('runs whenever a Release will be published', () => {
+    assert.match(step(GATE), /^\s+if: steps\.existing\.outputs\.release_exists == 'false'\s*$/m);
+  });
+
+  it('tags only after the gate PASSED, so a skipped or refused gate never creates or pushes a tag', () => {
+    assert.match(step('Create and push the tag'),
+      /^\s+if: steps\.existing\.outputs\.tag_exists == 'false' && steps\.notes-gate\.outcome == 'success'\s*$/m);
+  });
+
+  it('nothing after a refusal can still run: no continue-on-error and no status function anywhere in the job', () => {
+    assert.doesNotMatch(PUBLISH, /continue-on-error/);
+    for (const [, cond] of PUBLISH.matchAll(/^\s+if:\s*(.*)$/gm)) {
+      assert.doesNotMatch(cond, /always\(\)|cancelled\(\)|failure\(\)|success\(\)/, `if: ${cond}`);
+    }
+  });
+});

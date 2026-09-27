@@ -196,11 +196,32 @@ before any work.
 
 When a project is governed, TangleClaw writes a machine-local marker and installs `pre-commit` and
 `pre-push` dispatchers where git reads hooks (`git rev-parse --git-path hooks`). The marker is
-`<git-dir>/tangleclaw-control.json`, which holds `{assignmentId, api}` and is never committed.
+`<git-dir>/tangleclaw-control.json`, which holds `{assignmentId, api}` (plus `caFile` on a direct-mode
+HTTPS install, below) and is never committed.
 
 - **Governed checkout.** The hook asks `GET /api/control/check`:
   - blocked: it refuses, with the code and generation;
-  - TangleClaw unreachable, or the marker unreadable: it **fails closed**.
+  - TangleClaw unreachable, the marker unreadable, or the API certificate untrusted: it **fails
+    closed**, and says which.
+- **HTTPS (#1947).** A direct-mode HTTPS install writes `https://localhost:<port>` into the marker.
+  Node's bundled roots do not include the operator's mkcert root, so a plain `fetch` refused every
+  governed commit, push and wrap. When TangleClaw can prove that its served certificate was issued by a
+  `rootCA.pem` in the mkcert CAROOT (`$CAROOT`, mkcert's platform default, then `mkcert -CAROOT`;
+  name *and* signature checked), it records that file as `caFile`. The hook then:
+  - uses `caFile` only after the origin's host is proven to be literally `localhost`, `127.0.0.1` or
+    `[::1]`. A `caFile` beside any other origin, or beside plain `http:`, is refused before any
+    connection is made;
+  - connects to the literal loopback address, so no DNS answer can move the request off this
+    machine, and verifies the chain and the hostname in full, trusting **only** `caFile` for that one
+    request. TLS is never relaxed;
+  - with no `caFile` (a plain `http:` origin, or a certificate TangleClaw cannot tie to the local
+    root), uses Node's default verification, as before.
+
+  *Threat rationale.* This trusts nothing the operator's own browser and `tc` do not already trust,
+  and only for a request that cannot leave the machine. It trusts the root rather than pinning the
+  leaf because a certificate regeneration from the same root would otherwise break every hook until
+  the next launch rewrote the marker. A marker written before this change has no `caFile`. Its hook
+  fails closed and names the certificate, and relaunching the session rewrites the marker.
 - **Ungoverned checkout** (no marker): the hook only runs any chained hook.
 - **Linked worktrees.**
   - A governed *main* checkout also marks its common git dir, so worktrees the Builder creates under
