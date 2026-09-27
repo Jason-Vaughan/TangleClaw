@@ -164,7 +164,7 @@ describe('plan train cards (#1930)', () => {
     it('refuses a missing or mistyped required field', () => {
       refused(train({ train: undefined }), /train must be an integer/);
       refused(train({ train: 0 }), /train must be an integer/);
-      refused(train({ train: 1.5 }), /train must be an integer/);
+      refused(train({ train: 1.555 }), /train must be an integer/);
       refused(train({ train: '1' }), /train must be an integer/);
       refused(train({ train: trainCard.LIMITS.train + 1 }), /train must be an integer/);
       refused(train({ title: '  ' }), /title must be a non-empty string/);
@@ -398,5 +398,77 @@ describe('the new cards queue (#1933)', () => {
     refusedQ(queue({ issues: [{ issue: 1, createdAt: '2026-09-27T00:00:00Z', labels: [''] }] }), /labels\[0\] must be a string of 1 to 40 characters/);
     refusedQ(queue({ issues: [{ issue: 1, createdAt: '2026-09-27T00:00:00Z', labels: Array(11).fill('a') }] }), /labels has more than 10 entries/);
     refusedQ(queue({ issues: Array.from({ length: trainCard.LIMITS.queueIssues + 1 }, (_, i) => ({ issue: i + 1, createdAt: '2026-09-27T00:00:00Z' })) }), /issues has more than 1000 entries/);
+  });
+});
+
+describe('permanent train identities and card kinds (#1942)', () => {
+  /**
+   * The text of a rendered card's name.
+   * @param {object} over - Fields to replace on the valid train.
+   * @returns {string}
+   */
+  function nameOf(over) {
+    const html = render(train(over));
+    assert.match(html, /class="train-card"/, 'the block must render as a card');
+    return html.match(/<span class="train-name">([^<]*)<\/span>/)[1];
+  }
+
+  it('prints the identity it is given, never a position', () => {
+    assert.equal(nameOf({ train: 16, title: 'Secure Surface' }), 'Train 16: Secure Surface');
+    assert.equal(nameOf({ train: 13.5, title: 'Half Step' }), 'Train 13.5: Half Step');
+    assert.equal(nameOf({ train: 'A', title: 'Version 5 Bridge Train A' }), 'Train A: Version 5 Bridge Train A');
+    assert.equal(nameOf({ train: 'C-E', title: 'Later trains' }), 'Train C-E: Later trains');
+  });
+
+  it('names a Topic Bucket and a Pilot as what they are, not as a train', () => {
+    assert.equal(nameOf({ kind: 'bucket', train: 'Infrastructure Hardening', title: 'Infrastructure Hardening' }),
+      'Topic Bucket: Infrastructure Hardening', 'an identity equal to the title is not printed twice');
+    assert.equal(nameOf({ kind: 'bucket', train: 'Infra', title: 'Infrastructure Hardening' }),
+      'Topic Bucket Infra: Infrastructure Hardening', 'a distinct identity is still shown');
+    assert.equal(nameOf({ kind: 'pilot', train: 'B2', title: 'Pilot lane' }), 'Pilot B2: Pilot lane');
+    assert.doesNotMatch(render(train({ kind: 'bucket', train: 'Infra', title: 'T' })), />Train /);
+  });
+
+  it('renders an unconfigured milestone with no identity, and refuses one that carries an identity', () => {
+    assert.equal(nameOf({ kind: 'unconfigured', train: undefined, title: 'New milestone' }), 'Unconfigured: New milestone');
+    refused(train({ kind: 'unconfigured', train: 3 }), /train must be absent when kind is unconfigured/);
+  });
+
+  it('keeps a block without kind reading as a train, as before', () => {
+    assert.equal(nameOf({ train: 1 }), 'Train 1: First Install, Completed');
+    assert.equal(nameOf({ kind: 'train', train: 1 }), 'Train 1: First Install, Completed');
+  });
+
+  it('refuses an identity every other kind needs, and a kind outside the enum', () => {
+    for (const kind of ['train', 'bucket', 'pilot']) {
+      refused(train({ kind, train: undefined }), /train must be an integer/);
+    }
+    refused(train({ kind: 'epic' }), /kind must be one of train, bucket, pilot, unconfigured/);
+    refused(train({ kind: 7 }), /kind must be one of/);
+  });
+
+  it('accepts only canonical identities', () => {
+    // A number is written as a JSON number, so "16" and 16 cannot both name one train.
+    refused(train({ train: '16' }), /train must be an integer/);
+    refused(train({ train: '13.5' }), /train must be an integer/);
+    refused(train({ train: 13.555 }), /train must be an integer/);
+    refused(train({ train: 0.5 }), /train must be an integer/);
+    refused(train({ train: -2 }), /train must be an integer/);
+    refused(train({ train: '' }), /train must be an integer/);
+    refused(train({ train: ' A' }), /train must be an integer/);
+    refused(train({ train: 'A ' }), /train must be an integer/);
+    refused(train({ train: 'x'.repeat(trainCard.LIMITS.trainId + 1) }), /train must be an integer/);
+    refused(train({ train: true }), /train must be an integer/);
+    refused(train({ train: ['A'] }), /train must be an integer/);
+    assert.match(render(train({ train: 'x'.repeat(trainCard.LIMITS.trainId) })), /class="train-card"/);
+    assert.match(render(train({ train: trainCard.LIMITS.train })), /class="train-card"/);
+  });
+
+  it('never lets an identity become markup', () => {
+    refused(train({ train: 'A<b>' }), /train must be an integer/);
+    refused(train({ train: 'A"x' }), /train must be an integer/);
+    const html = render(train({ kind: 'bucket', train: 'R&D', title: 'R&D' }));
+    assert.match(html, /class="block-error"/, 'an ampersand is outside the identity alphabet');
+    assert.doesNotMatch(html, /class="train-card"/);
   });
 });

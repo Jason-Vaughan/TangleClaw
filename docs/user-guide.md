@@ -685,8 +685,11 @@ Every plan or design doc a session writes to `<project>/.tangleclaw/plans/<name>
 
   Every value is escaped. Links must be absolute `https://` URLs, unknown keys are refused, and the closed/total count is computed from `cars`. A block that doesn't validate shows as code, with the reason above it.
 
+  `train` is the card's permanent identity, printed as given, never worked out from where the block sits. It can be an integer (`16`), a number with up to two decimal places (`13.5`), or a short ID containing a letter (`"A"`, `"C-E"`). A number must be written as a JSON number, not as a string.
+
   Optional train fields:
 
+  - `kind`: what the card stands for. `train` (the default) reads **Train 16: title**, `bucket` reads **Topic Bucket: title**, `pilot` reads **Pilot B2: title**, and `unconfigured` reads **Unconfigured: title**. An identity equal to the title is not printed twice. An `unconfigured` card must have no `train`; every other kind needs one.
   - `version`: a short label such as `v6`, shown as a badge.
   - `status`: one of `planned`, `ready`, `in-progress`, `blocked`, `shipped` or `sunset`, shown as a badge.
 
