@@ -5372,13 +5372,19 @@ function respondRuleWrite(res, rule) {
 }
 
 /**
- * Map the store's refusal of a second pending replacement to 409, naming the
- * one that is pending so the caller can go and decide it.
+ * Map the store's refusals of a text change to 409: a second pending
+ * replacement (naming the one that is pending, so the caller can go and decide
+ * it), or a change to a retired rule's text.
  * @param {http.ServerResponse} res
  * @param {Error} err
  * @returns {boolean} true when it answered
  */
 function answerReplacementPending(res, err) {
+  // A retired rule's text is history (#1709): refused, not silently applied.
+  if (err.code === 'RULE_RETIRED') {
+    errorResponse(res, 409, err.message, 'RULE_RETIRED');
+    return true;
+  }
   if (err.code !== 'REPLACEMENT_PENDING') return false;
   errorResponse(res, 409, err.message, 'REPLACEMENT_PENDING', { pendingReplacementId: err.pendingReplacementId });
   return true;

@@ -51,6 +51,13 @@ Chunk 04 of 04, cumulative-final. Rulings 7 and 8 (PM d40bf543 and 437ddd43): th
 - **UI.** An edit or rollback proposal reads "Edit of: <text> — approving replaces it", or "...which is now retired — it can no longer be approved". A 409 on approval explains itself and redraws the list.
 - **C3 review carry-overs.** R-4: project ids are compared numerically. R-5: restore keeps `superseded_by`. R-8: the `list()` docstring.
 
+**Final (cumulative) review** `rev-20260927T185142Z-4d706a82`: 0 blocking, 4 warnings, 4 notes.
+- **R-2/R-4, fixed.** Edit-through-approval was keyed on status, so retire → edit (applied in place) → restore → switch on put unapproved text in force with no password. A retired rule's text is now immutable (`RULE_RETIRED`, 409, on both edit and rollback), and the test runs the four steps.
+- **R-5, fixed.** A stale edit or rollback proposal shows only Reject.
+- **R-6, fixed.** The creation event carries `replacesRuleId` and `replacementOrigin`.
+- **R-3, routed to the Architect.** A rejected amendment re-approved after a sibling replacement retired the original stands under ruling 2, so two replacements govern.
+- **R-1.** Degraded evidence (a system-health timing flake); an uncontended run is owed.
+
 **Existing tests reworked for the ruled contract, not weakened.** Tests that used "edit an active rule's text" only to generate version history (pruning, op constraint, critic_gate provenance, restore mechanics, `kind` survives a restore) now create their rule as `proposed`, whose text still edits in place. One of them ("kind survives a version restore") had started passing vacuously, and it now asserts the edit applied. The delivery digest test now also asserts that an unapproved edit does NOT change the delivered set, and that approving it does. The API critic-gate test keeps its operator-create check, adds the 202 path, and runs the in-place checks on an AI proposal.
 
 **Tests.** Store (19 new: proposal filing, approve/reject, one-pending in both directions, fail closed for retired and deleted targets, the amendment contract unchanged, enabled with content, no-op text, proposal and Master in-place edits, rollback as proposal with fail-closed and switch-only, no chains or cycles, both carry-overs). HTTP (5: 202, 409 pending with id, 409 target inactive with id, restore 202, origin not settable). UI (2). Mutation-checked six mutants: an active edit applied in place, edits not failing closed, `update` or `create` ignoring pending, a rollback applied in place, and the route passing the origin. Each turns tests red.

@@ -641,6 +641,45 @@ describe('session rule lifecycle (#1696, #1709)', () => {
     });
   });
 
+  // Final review: a text change keyed only on 'active' left a way round
+  // approval through retirement: retire → edit → restore → switch on.
+  describe('a retired rule’s text is history', () => {
+    it('refuses to edit a retired rule, so retire → edit → restore → switch on cannot bring unapproved text into force', () => {
+      const rule = activeRule('approved wording');
+      store.sessionRules.setStatus(rule.id, 'retired');
+      assert.throws(() => store.sessionRules.update(rule.id, { content: 'never approved' }), code('RULE_RETIRED'));
+      store.sessionRules.setStatus(rule.id, 'active');
+      store.sessionRules.update(rule.id, { enabled: true });
+      assert.deepEqual(delivered(), ['approved wording'], 'only text an operator approved governs');
+    });
+
+    it('refuses a version rollback that would change a retired rule’s text', () => {
+      const rule = activeRule('w1', { status: 'proposed' });
+      store.sessionRules.update(rule.id, { content: 'w2' });
+      store.sessionRules.setStatus(rule.id, 'active', { expectedContent: 'w2' });
+      store.sessionRules.setStatus(rule.id, 'retired');
+      assert.throws(() => store.sessionRules.restore(rule.id, 1), code('RULE_RETIRED'));
+      assert.equal(store.sessionRules.get(rule.id).content, 'w2');
+    });
+
+    it('still lets a retired rule be switched, since that changes no text', () => {
+      const rule = activeRule('switch while retired');
+      store.sessionRules.setStatus(rule.id, 'retired');
+      assert.equal(store.sessionRules.update(rule.id, { enabled: false }).enabled, false);
+    });
+
+    it('records an edit proposal’s origin in the audit trail', () => {
+      const rule = activeRule('audited edit');
+      const p = store.sessionRules.update(rule.id, { content: 'audited edit, v2' }).replacementProposed;
+      const created = store.activity.query({ projectId: project.id, eventType: 'session_rule.created' })
+        .map((e) => (typeof e.detail === 'string' ? JSON.parse(e.detail) : e.detail))
+        .find((d) => d.replacesRuleId === rule.id);
+      assert.ok(created, 'the proposal’s creation names the rule it replaces');
+      assert.equal(created.replacementOrigin, 'edit');
+      assert.equal(p.replacementOrigin, 'edit');
+    });
+  });
+
   describe('no chains, no cycles', () => {
     it('a pending replacement cannot itself be replaced', () => {
       const rule = activeRule('root');

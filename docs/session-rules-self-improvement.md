@@ -85,6 +85,10 @@ machine-specific — TangleClaw's SessionStart hooks live in the ignored
   replacement; rejecting it leaves the original exactly as it was. So no text governs
   that the operator has not approved, and nothing leaves force without a record. Master
   rules are outside this contract; they keep their own confirmed baseline path.
+- **A retired rule's text is history.** Changing it, by `PUT /:id` or a version rollback,
+  is refused with `409 RULE_RETIRED`; its switch can still be changed. Otherwise retire →
+  edit → restore → switch on would put text in force that no operator approved. A
+  restore brings back exactly the text that governed before retirement.
 - **`session_rules.replacement_origin`** records how a replacement arose: `amendment`
   (filed with `replacesRuleId`), `edit` or `restore` (made by the store from a change to
   an active rule; a caller cannot set it). The two kinds answer a stale approval

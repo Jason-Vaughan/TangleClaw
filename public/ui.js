@@ -2885,9 +2885,14 @@ function renderProjectRulesList(kind, rules) {
         }
         replaces = `<span class="session-rule-replaces">${text}</span>`;
       }
+      // An edit or rollback of a rule that is gone can never be approved (the
+      // server fails it closed), so offering Approve would only invite a 409.
+      const staleEdit = isProposed && rule.replacesRuleId
+        && (rule.replacementOrigin === 'edit' || rule.replacementOrigin === 'restore')
+        && !(byId.get(rule.replacesRuleId) && byId.get(rule.replacesRuleId).status === 'active');
       const actions = isProposed
         ? `<span class="session-rule-decide">
-             <button class="btn btn-small btn-primary" data-action="approve-rule" data-rule-id="${rule.id}">Approve</button>
+             ${staleEdit ? '' : `<button class="btn btn-small btn-primary" data-action="approve-rule" data-rule-id="${rule.id}">Approve</button>`}
              <button class="btn btn-small" data-action="reject-rule" data-rule-id="${rule.id}">Reject</button>
            </span>`
         : `<span class="session-rule-decide">

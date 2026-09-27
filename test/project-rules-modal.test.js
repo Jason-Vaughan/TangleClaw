@@ -350,6 +350,20 @@ describe('Project Rules modal (CC-6, #381)', () => {
         assert.doesNotMatch(live, /Approving retires: live original/, 'an edit is not an amendment');
       });
 
+      it('offers only Reject on an edit whose rule is gone, since Approve can only fail', () => {
+        const h = harness(() => ({}));
+        h.render('startup', [
+          active(1, 'live original'),
+          { ...proposed(3, 'fresh edit'), replacesRuleId: 1, replacementOrigin: 'edit' },
+          { ...proposed(4, 'stale edit'), replacesRuleId: 99, replacementOrigin: 'edit' },
+          { ...proposed(5, 'stale amendment'), replacesRuleId: 99, replacementOrigin: 'amendment' }
+        ]);
+        assert.match(h.html(), /data-action="approve-rule" data-rule-id="3"/);
+        assert.doesNotMatch(h.html(), /data-action="approve-rule" data-rule-id="4"/);
+        assert.match(h.html(), /data-action="reject-rule" data-rule-id="4"/);
+        assert.match(h.html(), /data-action="approve-rule" data-rule-id="5"/, 'an amendment still stands on its own');
+      });
+
       it('explains a stale edit refused at approval, and redraws', async () => {
         const h = harness((url, method, body, api) => {
           api.lastErrorCode = 'REPLACEMENT_TARGET_INACTIVE';

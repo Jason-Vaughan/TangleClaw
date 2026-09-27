@@ -456,6 +456,15 @@ describe('api self-improvement loop (#569)', () => {
       assert.equal(res.data.replacementOrigin, 'amendment', 'only the store marks edits');
     });
 
+    it('answers 409 RULE_RETIRED to a text change on a retired rule', async () => {
+      const rule = live(`retired text ${Date.now()}`);
+      await request('PUT', `/api/session-rules/${rule.id}/status`, { status: 'retired' });
+      const res = await request('PUT', `/api/session-rules/${rule.id}`, { content: 'sneaked in' });
+      assert.equal(res.status, 409);
+      assert.equal(res.data.code, 'RULE_RETIRED');
+      assert.equal(store.sessionRules.get(rule.id).content, rule.content);
+    });
+
     it('answers 403, not 404, for an unknown rule without the password — as before', async () => {
       setOperatorPassword('hunter2');
       const res = await request('PUT', '/api/session-rules/99999999/status', { status: 'active' });
