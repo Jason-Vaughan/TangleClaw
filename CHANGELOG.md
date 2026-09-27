@@ -351,6 +351,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- **The #1240 token hazard is pinned end to end** (#1240). A test drives `writeEngineConfig` against a real repository that does not ignore `CLAUDE.md`, with a malformed `.claude/settings.json` (so the write takes the ungoverned path) and the AUTH-4 gate on, and checks the file on disk carries the fetch pointer and never the token. The production fix shipped in #1627; the earlier tests reached this path only through the carrier-name convention, not git. Two test comments that still described the defect as open, or contradicted their own assertion, are corrected.
 - **Code of Conduct reporting and discoverability.** Added Reporting, Enforcement, and Attribution sections to `CODE_OF_CONDUCT.md` with a private reporting Google Form link. Added a "Community and Conduct" link to the `README.md` for discoverability.
 - **This repo's own planning documents are no longer tracked in the public repository.** `.tangleclaw/plans/` and `.tangleclaw/archive/` are now ignored, as the rest of `.tangleclaw/` already was. The files stay on each checkout's disk and in private project storage. A governance test keeps them out. This applies to the TangleClaw repository only: projects TangleClaw manages still treat their plans as project content. History is unchanged. A clone that pulls this change loses its tracked plan files from disk, so back up `.tangleclaw/plans` before pulling and restore it afterwards.
 

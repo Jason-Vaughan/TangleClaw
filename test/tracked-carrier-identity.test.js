@@ -554,7 +554,7 @@ describe('#1619 — "unclassified fails toward shared" is a property, not a cons
 });
 
 describe('#1619 — the git probe is bounded and its failure is visible', () => {
-  it('falls back to the convention when git cannot be run, rather than throwing', () => {
+  it('treats a carrier as committed when git cannot be run, rather than throwing', () => {
     // `spawnSync` REPORTS ENOENT on `error` instead of throwing, which is how a
     // host without git on PATH would have fallen back to the pre-fix hardcoded
     // list in silence. The seam lets the failure be exercised rather than

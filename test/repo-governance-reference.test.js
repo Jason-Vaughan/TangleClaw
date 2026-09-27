@@ -285,13 +285,12 @@ describe("this repo's plugin install reference is committed (#833)", () => {
   });
 
   it('carries no live service token, now that the file is public', () => {
-    // `_generateClaudeMd` still inlines a live `Authorization: Bearer <token>`
-    // when the AUTH-4 gate is on, because `committedCarrier` is a per-generator
-    // constant it does not pass. That generator is the UNGOVERNED path, and
-    // `isPluginGoverned` fails closed — so one unreadable settings.json plus the
-    // gate enabled writes an M2M bearer into a tracked file. Deriving the flag
-    // from whether the target is actually tracked is the class fix (#1240);
-    // this asserts the outcome that would matter in the meantime.
+    // Generation already asks git whether a carrier is committed and writes a
+    // fetch pointer instead of the token into any file git does not ignore;
+    // `test/tracked-carrier-identity.test.js` pins that through the ungoverned
+    // write path. This checks the bytes actually committed here, so a token
+    // that reached the file some other way (a hand edit, a stale generator)
+    // still fails CI before it is pushed.
     const claudeMd = committed('CLAUDE.md');
     for (const m of claudeMd.matchAll(/Authorization:\s*Bearer\s+(\S+)/gi)) {
       assert.match(m[1], /^[`<]/,
