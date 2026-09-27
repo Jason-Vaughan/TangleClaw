@@ -35,6 +35,7 @@ const PUB = path.join(__dirname, '..', 'public');
 const SETUP_JS_SRC = fs.readFileSync(path.join(PUB, 'setup.js'), 'utf8')
   .replace(/^const wizard = /m, 'var wizard = ') + '\n;globalThis.wizard = wizard;\n';
 const API_HELPER_SRC = fs.readFileSync(path.join(PUB, 'api-helper.js'), 'utf8');
+const { LANDING_JSARG_SRC } = require('./_page-globals');
 const LANDING_SRC = fs.readFileSync(path.join(PUB, 'landing.js'), 'utf8');
 const UI_SRC = fs.readFileSync(path.join(PUB, 'ui.js'), 'utf8');
 
@@ -110,6 +111,7 @@ function renderList(scannedProjects) {
 
   vm.createContext(sandbox);
   vm.runInContext(liftFunction(LANDING_SRC, 'function esc(str)'), sandbox);
+  vm.runInContext(LANDING_JSARG_SRC, sandbox);
   vm.runInContext(liftFunction(UI_SRC, 'function degradedTooltip(record)'), sandbox);
   vm.runInContext(API_HELPER_SRC, sandbox);
   vm.runInContext(SETUP_JS_SRC, sandbox);

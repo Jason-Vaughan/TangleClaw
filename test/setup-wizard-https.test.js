@@ -12,6 +12,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { LANDING_JSARG_SRC } = require('./_page-globals');
 
 const SETUP_JS_PATH = path.join(__dirname, '..', 'public', 'setup.js');
 const RAW_SRC = fs.readFileSync(SETUP_JS_PATH, 'utf8');
@@ -130,6 +131,8 @@ function loadSetup(overrides = {}) {
   };
 
   vm.createContext(sandbox);
+  // landing.js's `jsArg` is a page global setup.js calls (#1902).
+  vm.runInContext(LANDING_JSARG_SRC, sandbox);
   vm.runInContext(SETUP_JS_SRC, sandbox);
 
   // setup.js declares its own `function dismissWizard()`, which overwrites the
@@ -608,7 +611,7 @@ describe('the restart overlay behind a proxy (#710 chunk 3)', () => {
   it('still offers the front door as the destination', () => {
     // Not probing it is not the same as not linking it — the address is still
     // where they are going.
-    assert.match(render, /window\.location\.href='\$\{esc\(redirectUrl\)\}'/);
+    assert.match(render, /window\.location\.href=\$\{jsArg\(redirectUrl\)\}/);
   });
 
   it('carries `via` from the server rather than guessing at it', () => {
