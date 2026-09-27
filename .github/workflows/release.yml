@@ -184,8 +184,22 @@ jobs:
           echo "Release notes ($(wc -l < release-notes.md) lines):"
           cat release-notes.md
 
+      # `gh release create` runs after the tag is pushed, so a body GitHub
+      # refuses would leave a tag with no Release. Measure the exact bytes
+      # --notes-file will send, now, before any tag, push or release. Oversized
+      # notes stop the run; they are never truncated.
+      - name: Refuse release notes GitHub cannot publish
+        id: notes-gate
+        if: steps.existing.outputs.release_exists == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/release-notes-gate.js release-notes.md
+
+      # Also requires the notes gate to have PASSED, not merely not failed: a
+      # skipped gate must never lead to a tag.
       - name: Create and push the tag
-        if: steps.existing.outputs.tag_exists == 'false'
+        if: steps.existing.outputs.tag_exists == 'false' && steps.notes-gate.outcome == 'success'
         shell: bash
         env:
           TAG: ${{ steps.version.outputs.tag }}

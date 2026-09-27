@@ -37,6 +37,13 @@ refuses red, naming both SHAs, when it does not:
   from a different commit, and this commit reuses its number.
 - **After a push**, the tag on origin is checked again before publishing.
 
+**Release notes are measured before anything is tagged (#1947).** `gh release create` runs after
+the tag is pushed, so a body GitHub refuses would leave a tag with no Release. The run therefore
+measures the exact UTF-8 bytes of the extracted notes first (`scripts/release-notes-gate.js`), and
+refuses red, before any tag, push or release, when they are empty or over **120,000 bytes**. That
+ceiling is conservatively below GitHub's limit and counts bytes, not characters. The notes are never
+truncated. An oversized section is fixed by shortening it in `CHANGELOG.md` and re-running.
+
 The workflow never moves or deletes a tag. A refusal is for the Operator to resolve.
 
 Only the publishing job holds `contents: write`. The workflow's default token, which the suite runs
@@ -186,5 +193,6 @@ old version.
 
 - `docs/adr/0002-wrap-pipeline-contract.md` — the wrap pipeline's step contract.
 - `lib/changelog-notes.js` — release-notes extraction, shared by the workflow and its tests.
+- `scripts/release-notes-gate.js` — refuses empty or oversized release notes before tagging.
 - `scripts/release-tag-gate.js` — decides whether a tag on origin dereferences to the released
   commit; `test/release-workflow.test.js` pins how the workflow calls it and what publishing waits on.

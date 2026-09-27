@@ -47,6 +47,24 @@ The PM dispatched this over Medusa. The Architect scoped it strictly to test det
 
 **Evidence.** With the old test's timer shortened to 1 ms it failed 9 runs in 10, on the same assertion as CI. The new test passed 50 of 50 under 8 CPU-bound loads. `test/startup-control-codex.test.js`: 48 of 48.
 
+## 2026-09-27 — Governed hooks work on direct-mode HTTPS; release notes gated before tagging (#1947)
+
+<!-- prawduct: type=bugfix | scope=hooks-https-trust-1947 -->
+
+The PM dispatched this over Medusa as a v5.30 release blocker (361f09a6), pulling this session off #1846. The Architect approved the plan and ruled on oversized notes: fail, never truncate, at 120,000 UTF-8 bytes (62d0cef4). Plan: `.tangleclaw/plans/1947-hooks-https-trust.md` (local, not tracked).
+
+**Problem.** On a direct-mode HTTPS install `_apiOrigin` writes `https://localhost:<port>` into the governed marker, and the hook's plain `fetch` does not trust the operator's mkcert root, so every governed commit, push and wrap failed closed (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`). Separately, `release.yml` pushed the tag before `gh release create`, so a body GitHub refused left a tag with no Release.
+
+**The change.**
+- `lib/https-setup.js#localTrustAnchor` returns the `rootCA.pem` (from `$CAROOT`, mkcert's platform default, then `mkcert -CAROOT`) only when it provably issued the served certificate, by name and signature.
+- `syncControlHooks` records it as the marker's `caFile`, and logs where it looked when none is found.
+- The dispatcher check is now a self-contained `_controlCheck` function embedded by its source. `caFile` is used only after the host is proven literally `localhost`, `127.0.0.1` or `[::1]`. The request goes to the literal loopback address with `ca` replacing the default roots and full verification on. A non-loopback or `http:` origin with `caFile` is refused before connecting. An untrusted certificate is reported as untrusted, not as unreachable.
+- `scripts/release-notes-gate.js` and a `notes-gate` step between extraction and tagging; the tag step requires `steps.notes-gate.outcome == 'success'`.
+
+**Tests.** `test/control-hooks-https.test.js` (15, with a throwaway CA made by openssl): HTTPS allow/hold, 127.0.0.1, untrusted, wrong CA, unreachable, four non-loopback names with a hit counter proving no connection, `caFile` beside http or unreadable, push to a bare remote, the wrap commit step allowed and held, the marker, `localTrustAnchor`, and an in-process HTTPS instance end to end. `test/release-notes-gate.test.js`: boundary-1, boundary and boundary+1, multibyte, empty, and the CLI exits. `test/release-workflow.test.js`: step order and the tag step's condition. Mutation-checked: the old hook fails 11 of the 15 hook tests, and the old `release.yml` fails 3 of the 4 new pins. Live check against the real mkcert root: the old hook refused an ACTIVE lane, and the new one allowed ACTIVE and refused HELD.
+
+**Critic.** Cumulative rev-20260927T160500Z-d2ccab90: 0 blocking. R-1 (`[Unreleased]` is already over the ceiling, so v5.30 will be refused) was accepted and filed as #1948. R-2 (silent null anchor) was fixed in da74e66d and verified by rev-20260927T162218Z-2514daab. R-3, R-4 and R-5 were accepted.
+
 ## 2026-09-27 — Rule approval compare-and-set: approval ratifies only the text the operator saw (#1053)
 
 <!-- prawduct: type=bugfix | scope=rule-approval-cas-1053 -->
