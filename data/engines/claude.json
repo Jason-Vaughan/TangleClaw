@@ -91,6 +91,17 @@
       }
     },
     "launchSequence": { "supported": true },
+    "privateTempRoot": {
+      "env": "CLAUDE_CODE_TMPDIR",
+      "socketSuffix": "cc-socks/4194304.sock",
+      "maxSocketPathBytes": 103,
+      "platformRootEnv": "XDG_RUNTIME_DIR",
+      "defaultRoot": "/tmp",
+      "evidence": {
+        "verifiedOn": "2026-09-27",
+        "source": "Read from the Claude Code 2.1.283 binary (#1904). The auto messaging socket is `(XDG_RUNTIME_DIR || CLAUDE_CODE_TMPDIR || \"/tmp\") + \"/cc-socks/<pid>.sock\"`, capped at 103 bytes; over the cap, or when that directory is refused, Claude falls back to `/tmp/cc-socks-<uid>/<pid>.sock`. It refuses a directory on the path that is world- or group-writable without the sticky bit or owned by someone other than the user or root, and its own remediation reads \"Point XDG_RUNTIME_DIR or CLAUDE_CODE_TMPDIR at a private (0700) directory you own\". `socketSuffix` carries the widest pid (Linux pid_max 4194304) so the length check holds for any process."
+      }
+    },
     "supportsSlashCommands": true,
     "supportsPrimePrompt": true,
     "supportsConfigFile": true,

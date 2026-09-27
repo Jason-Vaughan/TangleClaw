@@ -548,6 +548,28 @@ describe('stranded-wraps API (#868, #1538)', () => {
       }
     });
 
+    // #1904 — the launch route builds its 201 field by field, so a field the
+    // launch returns reaches the caller only if the route copies it.
+    it('carries the engine private temp root account in the 201, and null when none applies', async () => {
+      const realLaunch = sessions.launchSession;
+      const session = { id: 99, engineId: 'claude', sessionMode: 'tmux', tmuxSession: 'x', startedAt: 'now' };
+      const refused = {
+        state: 'refused', refusedPath: '/a', problem: 'world-writable', remediation: 'fix /a',
+        defaultRoot: { path: '/private/tmp', usable: false, remediation: 'sudo chmod +t /private/tmp' }
+      };
+      try {
+        sessions.launchSession = () => ({ session, primePrompt: null, ttydUrl: '/terminal/', error: null, strandedUnchecked: null, privateTempRoot: refused });
+        let res = await send('POST', `/api/sessions/${encodeURIComponent(project.name)}`, { body: {} });
+        assert.equal(res.statusCode, 201);
+        assert.deepEqual(json(res).privateTempRoot, refused);
+        sessions.launchSession = () => ({ session, primePrompt: null, ttydUrl: '/terminal/', error: null, strandedUnchecked: null, privateTempRoot: null });
+        res = await send('POST', `/api/sessions/${encodeURIComponent(project.name)}`, { body: {} });
+        assert.equal(json(res).privateTempRoot, null);
+      } finally {
+        sessions.launchSession = realLaunch;
+      }
+    });
+
     it('says in the 201 when the check was skipped, and null when it ran', async () => {
       const realLaunch = sessions.launchSession;
       const session = { id: 99, engineId: 'claude', sessionMode: 'tmux', tmuxSession: 'x', startedAt: 'now' };

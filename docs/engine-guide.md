@@ -22,7 +22,7 @@ Engine profiles live in `~/.tangleclaw/engines/`. TangleClaw ships with five bui
 - **Interaction model**: Session-based (spawns in tmux)
 - **Config file**: `CLAUDE.md` (Markdown)
 - **Slash commands**: `/compact` (compress context), `/clear` (clear conversation), `/review` (review changes)
-- **Capabilities**: Slash commands, prime prompt, config file, co-author
+- **Capabilities**: Slash commands, prime prompt, config file, co-author, private socket root (`privateTempRoot`)
 
 ### Codex
 
@@ -193,6 +193,7 @@ cache, so an engine you have just installed is never refused.
 | `readOnlyModeMarker` | **read** | How this engine's TUI says the session is in a read-only mode, so a wrap refuses instead of timing out — see below |
 | `wake` | **read** | The live-probed pane signature that lets TangleClaw tell a busy pane from a resting one on this engine — see below |
 | `startupControl` | **read** | The native channel TangleClaw can fire the startup prompt through, with a receipt. Active only when it names a registered adapter — see below |
+| `privateTempRoot` | **read** | The variable, socket suffix and byte cap TangleClaw uses to hand the engine a private socket root instead of a shared `/tmp` — see below |
 | `awareness` | declared only | OpenClaw only. Its own `reason` text records why no context carrier can be placed on the remote side — a documented gap rather than an oversight |
 
 **"Declared only" means the flag describes the engine accurately and TangleClaw does nothing with
@@ -779,6 +780,56 @@ thread. The bind that lands first wins, and a lost race answers `unknown`. After
 one" is established again from a fresh read. Given all that, the thread's `active` status is busy (an
 approval wait included) and `idle` is idle. Before an `idle` is returned, the channel row is read
 again: it must still be open, on the same launch, with the same thread.
+
+#### `privateTempRoot`
+
+Claude Code has its own **native cross-session messaging**: each session listens on a Unix socket, by
+default at `/tmp/cc-socks/<pid>.sock`. This is not the Medusa switchboard. Medusa is TangleClaw's
+transport, with its own listener that TangleClaw runs, and it works whatever this section says.
+Native messaging is Claude's, and Claude switches it off at startup ("Cross-session messaging is
+off: its socket directory could not be set up") when any directory on the socket path is world- or
+group-writable without the sticky bit, or owned by someone other than you or root. Claude is right to
+refuse that directory, because another local user could replace the socket. The effect is that one
+badly-moded `/tmp` (macOS `/private/tmp` at `0777` instead of `1777`) turns native messaging off in
+every session (#1904).
+
+A profile that declares `privateTempRoot` gets a private root for each launch instead:
+
+```json
+"privateTempRoot": {
+  "env": "CLAUDE_CODE_TMPDIR",
+  "socketSuffix": "cc-socks/4194304.sock",
+  "maxSocketPathBytes": 103,
+  "platformRootEnv": "XDG_RUNTIME_DIR",
+  "defaultRoot": "/tmp"
+}
+```
+
+At launch, `lib/engine-temp-root.js` creates `<TangleClaw base>/run/<engine>-tmp` (normally
+`~/.tangleclaw/run/claude-tmp`) at mode `0700`, and checks it the way the engine will. The run
+directory and the leaf must be real directories, not symlinks. The leaf must be yours, at `0700`.
+Every ancestor of its real path must be owned by you or root, and none may be group- or
+world-writable without the sticky bit. The real path plus `socketSuffix` (the widest possible pid)
+must fit in `maxSocketPathBytes`. A root that passes is exported to the pane, and to the Project
+Master's pane, as `env`. It sits above the ambient floor and below the profile's own `launch.env`.
+Setting the variable yourself, in `launch.env` or in TangleClaw's own environment, means TangleClaw
+provisions nothing.
+
+**It fails closed, and it never repairs a system directory.** A root that does not pass is not
+handed to the engine. The launch goes ahead, and the server log records the failing path and a
+command for you to run by hand. It also records whether the engine's default location
+(`platformRootEnv`, else `defaultRoot`) will work, and if not, which ancestor fails. The launch response (`POST /api/sessions/:project`) carries the same account as
+`privateTempRoot`, or `null` for an engine that declares no root. TangleClaw never changes the mode of `/tmp`,
+`/private/tmp` or any directory it does not own. The only `chmod` it performs is tightening its own
+leaf back to `0700`.
+
+`CLAUDE_CODE_TMPDIR` also moves Claude's other temporary files (its scratchpad included) under the
+same private root. Unlike `/tmp`, which the OS clears periodically, nothing clears this root yet, so it
+grows with use. To reclaim the space, stop every Claude session TangleClaw runs, then run
+`rm -rf ~/.tangleclaw/run/claude-tmp/*`. TangleClaw recreates the root at the next launch. Do not
+clear it while sessions are running: their live sockets and scratchpads are inside it. When `XDG_RUNTIME_DIR` is set, Claude still puts its sockets there, because that
+variable ranks first. It is normally a safe per-user directory, and TangleClaw does not override it,
+because every other program in the pane reads it too.
 
 ## Config File Generation
 

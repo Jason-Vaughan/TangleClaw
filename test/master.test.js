@@ -271,6 +271,26 @@ describe('ensureMasterSession', () => {
       'the launch command is PATH-floor wrapped like a project pane\'s (#1140)');
   });
 
+  it('the Master\'s pane gets the engine\'s private temp root, like a project pane (#1904)', () => {
+    const engineTempRoot = require('../lib/engine-temp-root');
+    const original = engineTempRoot.resolve;
+    const seen = [];
+    engineTempRoot.resolve = (args) => {
+      seen.push(args);
+      return { state: 'applied', dir: '/private/master-root', env: { CLAUDE_CODE_TMPDIR: '/private/master-root' } };
+    };
+    try {
+      const t = fakeTmux({ alive: false });
+      const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: availableEngines });
+      assert.equal(r.created, true);
+      assert.equal(t.calls[0].opts.env.CLAUDE_CODE_TMPDIR, '/private/master-root');
+      assert.equal(seen.length, 1);
+      assert.equal(seen[0].baseDir, store._getBasePath(), 'resolved against the relocatable store base');
+    } finally {
+      engineTempRoot.resolve = original;
+    }
+  });
+
   it('each launch carries a fresh launch id, the Master\'s binding for per-caller surfaces (#1626)', () => {
     const first = fakeTmux({ alive: false });
     master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: first, enginesLib: availableEngines });

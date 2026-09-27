@@ -754,4 +754,33 @@ describe('launch sequence (Train 21, Chunk 01)', () => {
       assert.equal(store.sessions.getActive(project.id), null, 'and no session row survives the refusal');
     });
   });
+
+  // #1904 — the project-pane hop. Each helper is tested on its own; this pins
+  // that `launchSession` actually hands the resolved root to the pane it
+  // creates, and reports it on the launch result.
+  describe('the engine private temp root reaches the pane', () => {
+    it('exports the resolved root into the tmux env and reports it on the result', () => {
+      const engineTempRoot = require('../lib/engine-temp-root');
+      const original = engineTempRoot.resolve;
+      const seen = [];
+      engineTempRoot.resolve = (args) => {
+        seen.push(args);
+        return { state: 'applied', dir: '/private/pane-root', env: { CLAUDE_CODE_TMPDIR: '/private/pane-root' } };
+      };
+      let paneOpts = null;
+      let result;
+      try {
+        makeProject('temp-root-pane');
+        result = launch('temp-root-pane', { createSession: (_name, opts) => { paneOpts = opts; return true; } });
+      } finally {
+        engineTempRoot.resolve = original;
+      }
+      assert.equal(result.error, null);
+      assert.equal(seen.length, 1);
+      assert.equal(seen[0].engineId, 'claude');
+      assert.equal(seen[0].baseDir, store._getBasePath());
+      assert.equal(paneOpts.env.CLAUDE_CODE_TMPDIR, '/private/pane-root');
+      assert.deepEqual(result.privateTempRoot, { state: 'applied', dir: '/private/pane-root' });
+    });
+  });
 });

@@ -6739,7 +6739,10 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
     iframeUrl: null,
     ttydUrl: result.ttydUrl,
     // #1539: why the stranded-wrap check was skipped, or null when it ran.
-    strandedUnchecked: result.strandedUnchecked || null
+    strandedUnchecked: result.strandedUnchecked || null,
+    // #1904: whether the engine got its private socket root, and if not, which
+    // path failed and the hand-run fix. Null for an engine that declares none.
+    privateTempRoot: result.privateTempRoot || null
   });
 });
 
