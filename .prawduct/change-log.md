@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-27 — The Codex approval/user-input wait test waits for acceptance, not a timer (#1846)
+
+<!-- prawduct: type=bugfix | scope=codex-wait-test-1846 -->
+
+The PM dispatched this over Medusa. The Architect scoped it strictly to test determinism; the product question (should acceptance read a wait already in progress?) stays with #1825. Plan: `.tangleclaw/plans/1846-codex-wait-test-determinism.md` (local, not tracked).
+
+**Problem.** In `test/startup-control-codex.test.js` the fake app-server sent `waitingOnApproval` on a 40 ms timer after `turn/start`. `_onNotification` drops status changes until the fire is accepted, and in this test acceptance comes only from the turn read-back. A slow runner (PR #1844, run 36052337183) accepted later than 40 ms, and `the approval wait was recorded` failed.
+
+**The change.** Test-only. The test calls `codex.fire` directly, awaits `handles.accepted`, and then sends the approval, resolve, user-input and completion sequence, waiting for each step's patch (`untilPatch`) instead of a wall-clock offset. Every assertion is unchanged. No product code changed.
+
+**Evidence.** With the old test's timer shortened to 1 ms it failed 9 runs in 10, on the same assertion as CI. The new test passed 50 of 50 under 8 CPU-bound loads. `test/startup-control-codex.test.js`: 48 of 48.
+
 ## 2026-09-27 — Rule approval compare-and-set: approval ratifies only the text the operator saw (#1053)
 
 <!-- prawduct: type=bugfix | scope=rule-approval-cas-1053 -->
