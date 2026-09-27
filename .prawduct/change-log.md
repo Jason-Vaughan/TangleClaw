@@ -58,6 +58,14 @@ Discord Operator Bridge, Chunk 1: the server half. The TangleClaw-Architect auth
 
 `test/workload-receipts.test.js` pinned the head schema version as a literal; it now reads `CURRENT_SCHEMA_VERSION`.
 
+**Architect independent review of PR #1966: remediation.**
+1. `PUT /config` and `POST /token` now require a verified-session operator. An ambient-open dashboard spoof or a local script is refused with `OPERATOR_VERIFICATION_REQUIRED`, and an install whose gate isn't armed cannot set the channel up.
+2. The rollback docs now say that a v50 server's `/api/config` exposes `tokenHash`, so the token must be rotated after re-upgrading.
+3. A relayed reply's tracked send must be addressed to the channel's own workspace; otherwise it is quarantined (`not-addressed-to-channel`).
+4. The ADR 0020 §3 display-safety rule (A29/A30) is applied to chat text in both directions, with line breaks and tabs allowed. Unsafe inbound text is refused with `400 UNSAFE_TEXT`, and an unsafe reply is quarantined (`unsafe-text`).
+
+Each has negative tests: spoofed dashboard callers on an open and an armed gate, a send addressed elsewhere, and bidi, zero-width, line-separator, soft-hyphen and BOM text. N5 is recorded as non-blocking per the Architect. N6 (cancellation and retention) carries into C2 planning.
+
 ## 2026-09-27 — Rule approval compare-and-set: approval ratifies only the text the operator saw (#1053)
 
 <!-- prawduct: type=bugfix | scope=rule-approval-cas-1053 -->

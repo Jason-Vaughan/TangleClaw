@@ -21,6 +21,7 @@ const store = require('../lib/store');
 const medusa = require('../lib/medusa');
 const operatorChannel = require('../lib/operator-channel');
 const { createServer } = require('../server');
+const authSession = require('../lib/auth-session');
 const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
 
 const OPEN = 1;
@@ -112,13 +113,15 @@ function call(server, method, urlPath, body, headers = {}) {
         const raw = Buffer.concat(chunks).toString('utf8');
         let data;
         try { data = JSON.parse(raw); } catch { data = raw; }
-        resolve({ status: res.statusCode, data });
+        resolve({ status: res.statusCode, data, headers: res.headers });
       });
     });
     r.on('error', reject);
     r.end(payload);
   });
 }
+
+const PASSWORD = 'correct-horse-battery-staple';
 
 const ALLOW = Object.freeze({ authorId: '111111111111111111', spaceId: '222222222222222222', channelId: '333333333333333333' });
 
@@ -197,6 +200,32 @@ describe('API — operator channel', () => {
     channelSocket.recv({ type: 'new_message', messageId: hubId, message: { id: hubId, from, message: text } });
   };
 
+  /**
+   * Arm the gate with one account, sign in, and return browser headers that
+   * carry the session and its CSRF token.
+   * @returns {Promise<Record<string, string>>}
+   */
+  const signIn = async () => {
+    store.users.create('operator', PASSWORD);
+    setGate(true);
+    const res = await call(server, 'POST', '/api/auth/login', { username: 'operator', password: PASSWORD });
+    assert.equal(res.status, 200, 'precondition: signed in');
+    const cookies = res.headers['set-cookie'].map((c) => c.split(';')[0]);
+    const csrf = cookies.find((c) => c.startsWith(`${authSession.CSRF_COOKIE}=`)).split('=')[1];
+    return { Cookie: cookies.join('; '), 'Sec-Fetch-Site': 'same-origin', [authSession.CSRF_HEADER]: csrf };
+  };
+
+  /**
+   * Arm or open TangleClaw's own login gate.
+   * @param {boolean} armed - Whether the gate is armed
+   * @returns {void}
+   */
+  const setGate = (armed) => {
+    const config = store.config.load();
+    Object.assign(config, { ingressMode: 'direct', authEnabled: armed });
+    store.config.save(config);
+  };
+
   before(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-oc-'));
     store._setBasePath(tmpDir);
@@ -207,7 +236,9 @@ describe('API — operator channel', () => {
     operatorChannel._internal.wsFactory = (u) => (channelSocket = new FakeWS(u));
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-    op = operatorHeaders(server);
+    // An armed gate and a signed-in operator: minting the token and changing
+    // the settings need a verified session, which only an armed gate gives.
+    op = await signIn();
     clock = Date.parse('2026-09-27T12:00:00.000Z');
     operatorChannel._internal.now = () => new Date(clock);
   });
@@ -433,6 +464,35 @@ describe('API — operator channel', () => {
       assert.equal(row.text, null);
     });
 
+    it('quarantines a target\'s send that was addressed to another workspace', async () => {
+      bringTargetOnline();
+      const other = mkProject('bystander');
+      const otherWs = listen(other, bindProject(other)).workspaceId;
+      const sent = await call(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/medusa/send`,
+        { to: otherWs, message: 'meant for the bystander' }, targetBinding.headers);
+      assert.equal(sent.status, 200);
+      deliverToChannel(sent.data.id, targetWs, 'meant for the bystander');
+      const out = await call(server, 'GET', '/api/operator-channel/outbound', null, helper());
+      assert.equal(out.data.replies.length, 0);
+      const row = store.getDb().prepare('SELECT * FROM operator_channel_outbound WHERE hub_id = ?').get(sent.data.id);
+      assert.equal(row.state, 'quarantined');
+      assert.equal(row.reason, 'not-addressed-to-channel');
+    });
+
+    it('quarantines a reply that is not display-safe, and never hands it to the helper', async () => {
+      bringTargetOnline();
+      const text = 'approve \u202Eesaeler';
+      const sent = await call(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/medusa/send`,
+        { to: channelWs, message: text }, targetBinding.headers);
+      deliverToChannel(sent.data.id, targetWs, text);
+      const out = await call(server, 'GET', '/api/operator-channel/outbound', null, helper());
+      assert.equal(out.data.replies.length, 0);
+      const row = store.getDb().prepare('SELECT * FROM operator_channel_outbound WHERE hub_id = ?').get(sent.data.id);
+      assert.equal(row.state, 'quarantined');
+      assert.equal(row.reason, 'unsafe-text');
+      assert.equal(row.text, null);
+    });
+
     it('quarantines mail no TangleClaw send made, once its grace period passes', async () => {
       deliverToChannel('hub-rogue', 'rogue-0000abcd', 'placed straight on the Bridge');
       let out = await call(server, 'GET', '/api/operator-channel/outbound', null, helper());
@@ -483,13 +543,15 @@ describe('API — operator channel', () => {
       }
     });
 
-    it('lets only the operator configure the channel or mint its token', async () => {
+    it('lets only a signed-in operator configure the channel or mint its token', async () => {
       bringTargetOnline();
-      for (const headers of [{}, targetBinding.headers]) {
+      // A local script, an agent session, and a local caller dressed as the dashboard.
+      const spoofed = { ...operatorHeaders(server), 'x-tangleclaw-client': 'dashboard' };
+      for (const headers of [{}, targetBinding.headers, spoofed]) {
         const s = await call(server, 'GET', '/api/operator-channel/status', null, headers);
         const c = await call(server, 'PUT', '/api/operator-channel/config', { enabled: false }, headers);
         const t = await call(server, 'POST', '/api/operator-channel/token', null, headers);
-        for (const r of [s, c, t]) assert.equal(r.status, 403);
+        for (const r of [s, c, t]) assert.ok(r.status === 401 || r.status === 403, `refused, got ${r.status}`);
       }
       const status = await call(server, 'GET', '/api/operator-channel/status', null, op);
       assert.equal(status.status, 200);
@@ -503,6 +565,34 @@ describe('API — operator channel', () => {
       assert.equal(cfg.status, 200);
       assert.equal(cfg.data.operatorChannel.tokenConfigured, true);
       assert.equal('tokenHash' in cfg.data.operatorChannel, false);
+    });
+
+    it('refuses the ambient-open operator: on an open gate the dashboard headers cannot mint a token or change the settings', async () => {
+      setGate(false);
+      try {
+        const spoofed = { ...operatorHeaders(server), 'x-tangleclaw-client': 'dashboard' };
+        const c = await call(server, 'PUT', '/api/operator-channel/config', { enabled: false }, spoofed);
+        const t = await call(server, 'POST', '/api/operator-channel/token', null, spoofed);
+        for (const r of [c, t]) {
+          assert.equal(r.status, 403);
+          assert.equal(r.data.code, 'OPERATOR_VERIFICATION_REQUIRED');
+        }
+        assert.equal(operatorChannel.settings().enabled, true, 'nothing changed');
+        const status = await call(server, 'GET', '/api/operator-channel/status', null, spoofed);
+        assert.equal(status.status, 200, 'reading the status needs no more than any operator read');
+      } finally {
+        setGate(true);
+      }
+    });
+
+    it('refuses inbound text that would display differently from what was sent, and keeps line breaks', async () => {
+      for (const text of ['ma\u200bin', 'left \u202Eright', 'a\u2028b', 'soft\u00ADhyphen', 'b\uFEFFom']) {
+        const r = await call(server, 'POST', '/api/operator-channel/inbound', msg({}, text), helper());
+        assert.equal(r.status, 400, JSON.stringify(text));
+        assert.equal(r.data.code, 'UNSAFE_TEXT');
+      }
+      const ok = await call(server, 'POST', '/api/operator-channel/inbound', msg({}, 'line one\nline two\n\tindented'), helper());
+      assert.equal(ok.status, 202);
     });
 
     it('accepts only the allowlisted author, space and channel', async () => {

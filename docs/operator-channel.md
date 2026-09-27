@@ -28,6 +28,7 @@ This page covers TangleClaw's side. The helper itself (the Discord Gateway clien
 ## The token
 
 - **Minting:** the operator mints the helper's token with `POST /api/operator-channel/token`. It starts with `ocsk_`, is shown once, and only its SHA-256 is stored. Minting again revokes the previous token at once.
+- **A signed-in session is required.** Minting the token and changing the settings need an operator signed in to TangleClaw's own login. The dashboard's headers on an open gate are not enough, because any local process can send them. On an install whose gate is open or in fallback behind Caddy, these two routes refuse everyone (`403 OPERATOR_VERIFICATION_REQUIRED`), so the channel cannot be set up until the gate is armed. Reading the status needs only what any operator read needs.
 - **Scope:** the token is good for exactly three routes, listed below. **A request carrying an `ocsk_` token is refused on every other route** with `403 CHANNEL_TOKEN_SCOPE`, even if it also carries dashboard headers or a signed-in session. The helper relays a third-party chat, so nothing it sends may be read as the operator.
 
 ## Routes
@@ -45,8 +46,8 @@ Only the operator may call these. An agent session, a local script, and a reques
 | Route | Does |
 |---|---|
 | `GET /api/operator-channel/status` | Settings (never the token or its hash), the listener, and message counts per state. |
-| `PUT /api/operator-channel/config` | Changes `enabled`, `targetProject` or `allowlist: {authorId, spaceId, channelId}`. The listener starts or stops to match. |
-| `POST /api/operator-channel/token` | Mints a new helper token, shown once. |
+| `PUT /api/operator-channel/config` | Signed-in operator only. Changes `enabled`, `targetProject` or `allowlist: {authorId, spaceId, channelId}`. The listener starts or stops to match. |
+| `POST /api/operator-channel/token` | Signed-in operator only. Mints a new helper token, shown once. |
 
 Inbound refusals:
 
@@ -54,9 +55,27 @@ Inbound refusals:
 - `503 CHANNEL_DISABLED`: the channel is off.
 - `403 NOT_ALLOWLISTED`: the author, space or channel isn't the allowlisted one, or no allowlist is set.
 - `409 NO_TARGET`: no target project is set.
-- `400`: a malformed message.
+- `400`: a malformed message, or `UNSAFE_TEXT` for text that is not display-safe (see below).
 - `413`: the text is over 4000 characters.
 - `429`: more than 20 new messages in a minute. A replay of an accepted id is always answered.
+
+## Display safety
+
+Chat text is checked in both directions against the display-safety rule of ADR 0020 §3 (Architect rulings A29 and A30, `workload.isSafeText`). The one difference: line breaks and tabs are allowed, because a chat message is many lines where a workload field is one.
+
+The rule refuses:
+- every other control character (a carriage return included);
+- bidi controls and zero-width characters;
+- U+2028 and U+2029;
+- default-ignorable characters such as variation selectors;
+- text with no visible character.
+
+So neither the agent nor the operator ever reads text that displays differently from what was sent.
+
+- **Inbound:** refused with `400 UNSAFE_TEXT`.
+- **Outbound:** a reply that is not display-safe is quarantined (`unsafe-text`) and never relayed.
+
+As in ADR 0020, this is display integrity only. It is not Unicode normalization, and it does not detect look-alike characters.
 
 ## Delivery
 
@@ -73,9 +92,9 @@ A message's text is dropped once it is `sent` or `send_unknown`.
 
 The target project replies through its own switchboard route, sending to the channel's workspace id with `inReplyTo` set to the message it answers. That works because the channel's message was a tracked send addressed to the project. The reply comes back to the helper with the chat message id it answers. A message sent without `inReplyTo` comes back as a reply to nothing.
 
-**Only mail TangleClaw recorded as a send from the target project, or as a reply from the project a channel message was delivered to, is ever handed to the helper.** A message accepted before the operator changed the target still goes to its original project, so that project's answer still comes back. The Medusa Bridge accepts any local caller's `from`, so everything else is quarantined and its text dropped:
+**Only mail TangleClaw recorded as a send addressed to the channel's own workspace, from the target project or as a reply from the project a channel message was delivered to, is ever handed to the helper.** A message accepted before the operator changed the target still goes to its original project, so that project's answer still comes back. The Medusa Bridge accepts any local caller's `from`, so everything else is quarantined and its text dropped:
 
-- mail sent by another project is quarantined at once;
+- mail sent by another project, or a send its sender addressed to another workspace, is quarantined at once;
 - mail that no TangleClaw send made is quarantined after ten minutes;
 - a message longer than 64 KiB, which no switchboard route accepts, is kept only as a quarantined record.
 
@@ -89,15 +108,18 @@ Text is kept only until it is handed on. Nothing prunes the rows yet.
 ## Rolling back
 
 Schema v51 is purely additive. A v50 server:
-- ignores the two channel tables and the `operatorChannel` config key;
-- runs no listener and no pump, so nothing is sent or relayed while rolled back.
+- ignores the two channel tables;
+- runs no listener and no pump, so nothing is sent or relayed while rolled back;
+- **does not know the `operatorChannel` config key, so its `GET /api/config` returns `operatorChannel.tokenHash` unredacted.** The hash cannot be used as the token, but no route is meant to return it.
 
-Nothing is lost. After a re-upgrade, waiting messages are delivered and replies the Hub queued meanwhile are collected. To stop the channel without rolling back, turn it off with `PUT /api/operator-channel/config {"enabled": false}`.
+**Rotate the token after re-upgrading** (`POST /api/operator-channel/token`), and give the helper the new one. The stored hash of a token that was visible while rolled back then names nothing.
+
+Nothing else is lost. After a re-upgrade, waiting messages are delivered and replies the Hub queued meanwhile are collected. To stop the channel without rolling back, turn it off with `PUT /api/operator-channel/config {"enabled": false}`.
 
 ## Setting it up
 
 1. Create the helper's chat identity and note the author, space and channel ids to allowlist.
-2. `PUT /api/operator-channel/config` with `enabled: true`, the target project's name and the allowlist.
+2. Sign in to TangleClaw (the gate must be armed), then `PUT /api/operator-channel/config` with `enabled: true`, the target project's name and the allowlist.
 3. `POST /api/operator-channel/token`, and give the token to the helper. Keep it in the macOS Keychain: never in a repository, a config file, a log or a command line.
 4. `GET /api/operator-channel/status` should show the listener `listening`.
 

@@ -135,6 +135,13 @@ describe('operator channel: delivery outcomes', () => {
     assert.equal(operatorChannel.presentsChannelToken(req(null)), false);
   });
 
+  it('applies the workload display-safety rule to chat text, with line breaks and tabs allowed', () => {
+    assert.equal(operatorChannel.isSafeChannelText('line one\nline two\n\tindented'), true);
+    for (const bad of ['ma\u200bin', 'a\u202Eb', 'a\u2028b', 'x\r\ny', 'a\u0007b', '\n\t\n', 'e\uFE0F']) {
+      assert.equal(operatorChannel.isSafeChannelText(bad), false, JSON.stringify(bad));
+    }
+  });
+
   it('reads malformed settings as unset', () => {
     const s = operatorChannel.settings({ operatorChannel: { enabled: 'yes', targetProject: '  ', allowlist: { authorId: 'has space' }, tokenHash: 'short' } });
     assert.equal(s.enabled, false);

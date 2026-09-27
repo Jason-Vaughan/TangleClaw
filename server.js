@@ -7442,13 +7442,25 @@ function channelRefusal(res, err) {
 
 /**
  * Refuse a caller that is not the operator. True when the route has already responded.
+ *
+ * `verified` demands a signed-in account session. Minting the helper's token
+ * and changing who the channel listens to or delivers to hand a third-party
+ * chat a line into the fleet, so they are never granted on the ambient-open
+ * proof, which any local process can present by sending the dashboard's
+ * headers. On an install whose gate is open or in fallback, those two routes
+ * therefore refuse everyone: the channel cannot be set up until the gate is armed.
  * @param {import('http').IncomingMessage} req - Request
  * @param {import('http').ServerResponse} res - Response
+ * @param {{verified?: boolean}} [options]
  * @returns {boolean}
  */
-function channelOperatorRefused(req, res) {
+function channelOperatorRefused(req, res, options = {}) {
   const c = resolveControlCaller(req);
-  if (c.kind === 'operator') return false;
+  if (c.kind === 'operator' && (!options.verified || c.actor.operatorProof === 'verified-session')) return false;
+  if (c.kind === 'operator') {
+    errorResponse(res, 403, 'Changing the operator channel needs a signed-in operator session', 'OPERATOR_VERIFICATION_REQUIRED');
+    return true;
+  }
   errorResponse(res, 403, 'Only the operator may manage the operator channel', 'OPERATOR_ONLY');
   return true;
 }
@@ -7498,10 +7510,10 @@ route('GET', '/api/operator-channel/status', (req, res) => {
   jsonResponse(res, 200, operatorChannel.status());
 });
 
-// PUT /api/operator-channel/config — operator only: `{enabled?, targetProject?,
+// PUT /api/operator-channel/config — a signed-in operator only: `{enabled?, targetProject?,
 // allowlist?: {authorId, spaceId, channelId}}`. Starts or stops the listener to match.
 route('PUT', '/api/operator-channel/config', (req, res, _params, body) => {
-  if (channelOperatorRefused(req, res)) return;
+  if (channelOperatorRefused(req, res, { verified: true })) return;
   try {
     jsonResponse(res, 200, { settings: operatorChannel.updateSettings(body) });
   } catch (err) {
@@ -7509,10 +7521,10 @@ route('PUT', '/api/operator-channel/config', (req, res, _params, body) => {
   }
 });
 
-// POST /api/operator-channel/token — operator only: mint a new helper token,
+// POST /api/operator-channel/token — a signed-in operator only: mint a new helper token,
 // shown once. The previous token stops working immediately.
 route('POST', '/api/operator-channel/token', (req, res) => {
-  if (channelOperatorRefused(req, res)) return;
+  if (channelOperatorRefused(req, res, { verified: true })) return;
   jsonResponse(res, 200, operatorChannel.rotateToken());
 });
 
