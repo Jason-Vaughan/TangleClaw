@@ -266,6 +266,17 @@ All notable changes to TangleClaw are documented in this file.
 ### Fixed
 
 - **`scripts/build-ttyd.js` no longer hangs forever when a download is blocked** (#1954). Its `curl` calls had no time bound, so blocked egress (seen with the json-c download from S3) stalled the build indefinitely. Each attempt is now bounded by `--connect-timeout 30` and `--max-time 300`, so the build fails with curl's error after at most three attempts.
+
+- **A Codex session in Full Auto can reach TangleClaw, and nothing else on the network** (#1836). Full Auto ran Codex's `workspace-write` sandbox, which refuses every connection including loopback. Every `tc` command is a loopback call, so a Full Auto session could never read its launch sequence and just sat there with nothing naming the cause.
+  - **What it gets:** on a Codex version this was proven on (0.156.1), Full Auto now runs under a Codex permission profile whose network proxy allows only `127.0.0.1` and `localhost`.
+    - It can reach **every service listening on localhost**, not just TangleClaw, because Codex's proxy cannot limit a host to one port. The mode's warning says so.
+    - It still cannot reach the internet, your LAN, this Mac's own LAN or tailnet addresses, or an outside DNS server, and it cannot open a socket that bypasses the proxy.
+    - The workspace rules are unchanged: it can write inside the project, while `.git`, `.agents`, `.codex` and your home directory stay read-only.
+  - **Launch path:** the profile cannot ride Codex's native startup channel, so a Full Auto launch uses the keystroke path, and its launch record says why.
+  - **Other Codex versions** keep the network-off sandbox until the profile has been proven on them.
+  - **The Project Master** gets the same treatment in Full Auto.
+  - **`tc` output stays clean:** `tc` no longer prints Node's "EnvHttpProxyAgent is experimental" warning, which the proxy triggered on every call. Every other warning still prints.
+
 - **The ports panel's owner buttons say why they did nothing** (#1915). When the server refuses **Not a project** (import banner) or **Is a project** (ports panel), for example because the lease was released meanwhile, a warning toast now shows the server's reason. The badge or banner row stays, as before. The dashboard's toast code is now one `showToast` helper at the three sites involved.
 - **Panel rows are real buttons, with their actions beside them** (#1906). The fold toggles in the ports, groups and OpenClaw panels were `role="button"` rows with the edit (✎) and **Is a project** buttons inside them, where a screen reader may not announce them. Each toggle is now a native button holding only the arrow, name and counts, and the action buttons are its siblings, with their own accessible names. Keyboard folding comes from the native button, and the hand-written key handlers and click-stopping are gone. **Intentional test-contract change:** two assertions in `test/port-owner-kind-panel.test.js` pinned the undo button's `stopPropagation`, which existed only because it was nested. They now assert that the undo is a sibling of the toggle and stops nothing.
 

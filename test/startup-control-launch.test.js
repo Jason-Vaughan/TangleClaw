@@ -162,7 +162,7 @@ describe('startupControl at launch and teardown (codex)', () => {
 
   it('starts the app-server with the exact executable, attaches the pane with --remote before the mode args, and records the channel', () => {
     healthySeams();
-    const l = launched({ launchMode: 'fullAuto' });
+    const l = launched({ launchMode: 'bypassPermissions' });
     assert.equal(calls.spawn.length, 1);
     const sp = calls.spawn[0];
     assert.equal(sp.bin, '/opt/fake/bin/codex');
@@ -171,7 +171,7 @@ describe('startupControl at launch and teardown (codex)', () => {
     assert.ok(sp.args[2].includes(tempDir), 'the socket is requested under the store base path');
     assert.equal(sp.opts.detached, true);
     assert.equal(sp.opts.cwd, l.project.path);
-    assert.match(l.command, /codex --remote unix:\/\/\/private\/tmp\/fake-daemon\/[0-9a-f]{16} --ask-for-approval never --sandbox workspace-write/);
+    assert.match(l.command, /codex --remote unix:\/\/\/private\/tmp\/fake-daemon\/[0-9a-f]{16} --dangerously-bypass-approvals-and-sandbox/);
     assert.ok(!l.command.includes('--no-daemon'), 'a per-launch --remote server needs no legacy daemon isolation');
     const channel = store.startupControlChannels.getOpenBySession(l.session.id);
     assert.ok(channel, 'a channel row is open for the session');
@@ -266,6 +266,37 @@ describe('startupControl at launch and teardown (codex)', () => {
     assert.match(l.command, /codex --no-daemon$/);
     assert.deepEqual(calls.kills, [[-calls.spawn[0].pid, 'SIGTERM']], 'the server that never opened its socket is stopped');
     assert.equal(store.startupControlChannels.getOpenBySession(l.session.id), null);
+  });
+
+  it('full auto on a proven Codex runs the loopback profile on the legacy path, and records why it has no channel (#1836)', () => {
+    healthySeams();
+    const l = launched({ launchMode: 'fullAuto' });
+    assert.equal(calls.spawn.length, 0, 'the profile cannot ride the native channel, so no app-server is started');
+    assert.ok(!l.command.includes('--remote'));
+    assert.ok(!/--sandbox/.test(l.command), 'the legacy sandbox flag would switch the profile off');
+    assert.match(l.command, /codex --ask-for-approval never -c features\.network_proxy=true -c 'default_permissions="tangleclaw-loopback"' /);
+    assert.ok(l.command.includes(`'permissions.tangleclaw-loopback.network.domains={"127.0.0.1"="allow","localhost"="allow"}'`), l.command);
+    assert.match(l.command, / --no-daemon$/, 'the legacy path keeps its daemon isolation');
+    assert.equal(store.startupControlChannels.getOpenBySession(l.session.id), null);
+    const latest = store.startupControlChannels.getLatestBySession(l.session.id);
+    assert.ok(latest, 'the launch records why it has no channel');
+    assert.match(latest.closeReason, /^mode_requires_legacy: launch mode "fullAuto" runs under the loopback network profile/);
+  });
+
+  it('only a mode that declares the loopback profile gets it, and only on a proven version (#1836)', () => {
+    const profile = enginesModule.resolveProfile('codex');
+    const full = sessions._buildLaunchCommand(profile, null, 'fullAuto');
+    healthySeams();
+    assert.equal(sessions._loopbackModeCommand('codex', profile, 'default', 'codex', '/opt/fake/bin/codex'), null);
+    assert.equal(sessions._loopbackModeCommand('codex', profile, 'bypassPermissions', 'codex --dangerously-bypass-approvals-and-sandbox', '/opt/fake/bin/codex'), null);
+    assert.equal(sessions._loopbackModeCommand('codex', profile, undefined, full, '/opt/fake/bin/codex'), null);
+    const proven = sessions._loopbackModeCommand('codex', profile, 'fullAuto', full, '/opt/fake/bin/codex');
+    assert.equal(proven.adapterName, 'codex');
+    assert.ok(proven.command.includes('default_permissions'), proven.command);
+    healthySeams({ execFileSync: () => 'codex-cli 0.157.1\n' });
+    assert.equal(sessions._loopbackModeCommand('codex', profile, 'fullAuto', full, '/opt/fake/bin/codex'), null, 'an unproven version keeps the no-network sandbox');
+    healthySeams({ execFileSync: () => { throw new Error('ENOENT'); } });
+    assert.equal(sessions._loopbackModeCommand('codex', profile, 'fullAuto', full, '/opt/fake/bin/codex'), null, 'an unknown version keeps it too');
   });
 
   it('a resolved socket path unsafe for a shell command is refused, not interpolated', () => {
