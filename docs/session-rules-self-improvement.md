@@ -42,6 +42,30 @@ machine-specific — TangleClaw's SessionStart hooks live in the ignored
   prime, the Project Master, or the wrap's own prompts. Keeping the two separate is what
   makes a REJECTED rule distinguishable from an unreviewed one; collapse them and the wrap
   re-proposes declined rules at every wrap that sees the same learning.
+- `session_rules.status` also has `retired` (#1709, schema v51): a rule that governed and
+  is now dead. It is never delivered, and it is distinct from a rule that is merely
+  switched off, which is resting and can be re-enabled. The lifecycle, enforced in
+  `store.sessionRules.setStatus`:
+
+  | From | To | Meaning |
+  |---|---|---|
+  | `proposed` / `rejected` | `active` | Approve: password-gated, and must carry `expectedContent` (#1053) |
+  | `proposed` | `rejected` | Decline |
+  | `active` | `retired` | Retire. **Only** from `active`: a rule that never governed cannot be retired (operator ruling on #1709) |
+  | `retired` | `active` | Restore. Lands `enabled: false`, so it governs again only once switched on |
+  | `proposed` / `rejected` | `retired` | Refused `INVALID_TRANSITION` |
+  | `retired` | `proposed` / `rejected` | Refused `INVALID_TRANSITION` |
+
+- `session_rules.replaces_rule_id` (#1696): set when a rule is created to replace another
+  (`replacesRuleId`), and never changed afterwards. It must name an `active` rule of the
+  same project and kind (not a Master rule), or creation is refused with
+  `INVALID_REPLACES`. Approving the replacement retires the rule it replaces **in the
+  same transaction** as the approval, and records `superseded_by` on the retired rule. If
+  that rule is no longer active by then, the approval still stands, and the result and
+  the activity log say there was nothing to retire (`replaced: {retired: false,
+  reason}`). A replacement the operator creates already active retires its target at
+  once. Existing rules were never migrated into `retired`: which disabled rules are dead
+  is the operator's call, made with Retire.
 
 ## Learnings ingestion (the DB writer, #466)
 

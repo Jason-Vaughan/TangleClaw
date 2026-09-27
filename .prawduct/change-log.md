@@ -35,6 +35,21 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-27 — Rules lifecycle: retirement and supersession, Chunk 1: schema v51 and store transitions (#1696, #1709)
+
+<!-- prawduct: type=bugfix | scope=rule-retirement-1696-1709 -->
+
+Chunk 01 of 04. The PM dispatched it (0f6fd06f). Architect rulings 1-4 (cc2f6e32): (1) the existing status route; (2) a replacement whose target is inactive still approves, with `replaced: null` and an audit detail; (3) no install-specific ids in the migration; (4) edits to an active project rule demote it to proposed (Chunk 04). Plan: `.tangleclaw/plans/1696-1709-rule-retirement.md` (local, not tracked).
+
+**The change.**
+- **Schema v51.** `'retired'` is added to the status CHECK, plus `replaces_rule_id`, `superseded_by` and `retired_at`. SQLite cannot alter a CHECK, so the table is rebuilt with rows verbatim and foreign keys off outside the transaction. A postcondition refuses to advance the version.
+- **One table definition.** The DDL is now one function shared by the fresh-install schema and the rebuild. Pre-existing drift fixed: fresh installs never had `idx_session_rules_status`, because only the v26→v27 migration created it. It is now created after migrations in `init()`, not in the base schema, which would break a pre-v27 store that has no status column yet.
+- **Transitions** in `setStatus`: retire only from `active` (the #1709 operator ruling); restore only `retired → active`, landing `enabled: false`; everything else into or out of `retired` is refused with `INVALID_TRANSITION`. `create` refuses a born-retired rule.
+- **Supersession.** Approving a replacement retires its target in one `BEGIN IMMEDIATE` transaction with #1053's CAS. The CAS runs first and throws inside the transaction, so a refused approval retires nothing. An inactive target yields `replaced: {retired: false, reason}` in both the result and the activity log (ruling 2). A replacement created already active retires its target at once.
+- **replacesRuleId** is validated at create (`INVALID_REPLACES`: missing, non-integer, another project or kind, not active, Master) and refused by `update`, not ignored.
+
+**Tests.** `test/session-rule-lifecycle.test.js` (new). `test/workload-receipts.test.js`'s upgrade assertion now compares against `CURRENT_SCHEMA_VERSION` instead of a literal 50, because a later migration runs after v50 on the same upgrade. Its table assertions are unchanged, so this is not a weakening. Mutation-checked eight mutants: retire from any status, restore leaving `enabled`, target status unchecked, a live replacement not retiring, `update` ignoring the field, retire-before-CAS without a transaction, an inactive target throwing, and a born-retired rule. Each turns tests red.
+
 ## 2026-09-27 — Rule approval compare-and-set: approval ratifies only the text the operator saw (#1053)
 
 <!-- prawduct: type=bugfix | scope=rule-approval-cas-1053 -->
