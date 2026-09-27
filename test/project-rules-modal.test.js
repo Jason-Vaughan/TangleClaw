@@ -336,6 +336,33 @@ describe('Project Rules modal (CC-6, #381)', () => {
         assert.match(h.statuses[0].msg, /Nothing was retired: rule 1 was already retired/);
       });
 
+      it('labels an edit or rollback as a change to that rule, and says when it can no longer be approved', () => {
+        const h = harness(() => ({}));
+        h.render('startup', [
+          active(1, 'live original'),
+          { ...proposed(3, 'edited'), replacesRuleId: 1, replacementOrigin: 'edit' },
+          retiredRule(5, 'dead original'),
+          { ...proposed(6, 'rolled back'), replacesRuleId: 5, replacementOrigin: 'restore' }
+        ]);
+        const live = liveOf(h.html());
+        assert.match(live, /Edit of: live original — approving replaces it/);
+        assert.match(live, /Rollback of dead original, which is now retired — it can no longer be approved/);
+        assert.doesNotMatch(live, /Approving retires: live original/, 'an edit is not an amendment');
+      });
+
+      it('explains a stale edit refused at approval, and redraws', async () => {
+        const h = harness((url, method, body, api) => {
+          api.lastErrorCode = 'REPLACEMENT_TARGET_INACTIVE';
+          api.lastError = 'gone';
+          return null;
+        });
+        h.render('startup', [{ ...proposed(3, 'edited'), replacesRuleId: 1, replacementOrigin: 'edit' }]);
+        await h.resolve(3, 'active', 'startup');
+        assert.match(h.statuses[0].msg, /no longer active, so the edit cannot be approved — nothing was approved/);
+        assert.equal(h.statuses[0].ok, false);
+        assert.deepEqual(h.refreshes, [{ pid: 3, kind: 'startup' }]);
+      });
+
       it('escapes retired content and successor text', () => {
         const h = harness(() => ({}));
         h.render('startup', [active(1, '<img src=x>'), retiredRule(2, '<script>x</script>', { supersededBy: 1 })]);

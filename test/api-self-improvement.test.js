@@ -409,6 +409,53 @@ describe('api self-improvement loop (#569)', () => {
       assert.equal(statusOf(rule.id), 'active');
     });
 
+    it('PUT of an active rule’s text answers 202 with the replacement proposal, and the rule is unchanged', async () => {
+      const rule = live(`active text ${Date.now()}`);
+      const res = await request('PUT', `/api/session-rules/${rule.id}`, { content: 'proposed wording', changedBy: 'ai' });
+      assert.equal(res.status, 202, 'accepted for approval, not applied');
+      assert.equal(res.data.content, rule.content);
+      assert.equal(res.data.replacementProposed.replacementOrigin, 'edit');
+      assert.equal(res.data.replacementProposed.status, 'proposed');
+    });
+
+    it('answers 409 REPLACEMENT_PENDING to a second edit, naming the pending one', async () => {
+      const rule = live(`busy ${Date.now()}`);
+      const first = await request('PUT', `/api/session-rules/${rule.id}`, { content: 'first' });
+      const second = await request('PUT', `/api/session-rules/${rule.id}`, { content: 'second' });
+      assert.equal(second.status, 409);
+      assert.equal(second.data.code, 'REPLACEMENT_PENDING');
+      assert.equal(second.data.pendingReplacementId, first.data.replacementProposed.id);
+    });
+
+    it('answers 409 REPLACEMENT_TARGET_INACTIVE to approving an edit whose rule was retired', async () => {
+      const rule = live(`doomed ${Date.now()}`);
+      const edit = (await request('PUT', `/api/session-rules/${rule.id}`, { content: 'late edit' })).data.replacementProposed;
+      await request('PUT', `/api/session-rules/${rule.id}/status`, { status: 'retired' });
+      const res = await request('PUT', `/api/session-rules/${edit.id}/status`, { status: 'active', expectedContent: 'late edit' });
+      assert.equal(res.status, 409);
+      assert.equal(res.data.code, 'REPLACEMENT_TARGET_INACTIVE');
+      assert.equal(res.data.targetId, rule.id);
+      assert.equal(statusOf(edit.id), 'proposed');
+    });
+
+    it('POST /:id/restore of an active rule to other text answers 202 with a restore-origin proposal', async () => {
+      const draft = store.sessionRules.create({ content: 'rv1', projectId: pid, createdBy: 'ai' });
+      store.sessionRules.update(draft.id, { content: 'rv2' });
+      store.sessionRules.setStatus(draft.id, 'active', { expectedContent: 'rv2' });
+      const res = await request('POST', `/api/session-rules/${draft.id}/restore`, { versionNo: 1 });
+      assert.equal(res.status, 202);
+      assert.equal(res.data.content, 'rv2');
+      assert.equal(res.data.replacementProposed.replacementOrigin, 'restore');
+    });
+
+    it('does not let a caller choose the replacement origin', async () => {
+      const old = live(`origin fixed ${Date.now()}`);
+      const res = await request('POST', '/api/session-rules',
+        { content: `claims to be an edit ${Date.now()}`, projectId: pid, createdBy: 'ai', replacesRuleId: old.id, replacementOrigin: 'edit' });
+      assert.equal(res.status, 201);
+      assert.equal(res.data.replacementOrigin, 'amendment', 'only the store marks edits');
+    });
+
     it('answers 403, not 404, for an unknown rule without the password — as before', async () => {
       setOperatorPassword('hunter2');
       const res = await request('PUT', '/api/session-rules/99999999/status', { status: 'active' });

@@ -164,7 +164,8 @@ describe('sessionRules store API (#347/D1a)', () => {
 
     it('updates content and enabled, bumps updated_at, logs an event', () => {
       const pid = mkProject('proj-upd');
-      const created = store.sessionRules.create({ content: 'before', projectId: pid });
+      // proposed: an ACTIVE project rule's text no longer changes in place (edits become replacement proposals, #1696), and this test is about the version mechanics, which are the same for any rule whose text does.
+      const created = store.sessionRules.create({ content: 'before', projectId: pid, status: 'proposed' });
       const updated = store.sessionRules.update(created.id, { content: 'after', enabled: false });
       assert.equal(updated.content, 'after');
       assert.equal(updated.enabled, false);
@@ -258,8 +259,10 @@ describe('sessionRules store API (#347/D1a)', () => {
 
     it('kind survives a version restore (immutable)', () => {
       const pid = mkProject('proj-restore');
-      const wrap = store.sessionRules.create({ content: 'v1', projectId: pid, kind: 'wrap' });
+      // proposed: an ACTIVE project rule's text no longer changes in place (edits become replacement proposals, #1696), and this test is about the version mechanics, which are the same for any rule whose text does.
+      const wrap = store.sessionRules.create({ content: 'v1', projectId: pid, kind: 'wrap', status: 'proposed' });
       store.sessionRules.update(wrap.id, { content: 'v2' });
+      assert.equal(store.sessionRules.get(wrap.id).content, 'v2', 'the edit applied, so the restore below has something to undo');
       const restored = store.sessionRules.restore(wrap.id, 1);
       assert.equal(restored.kind, 'wrap');
       assert.equal(restored.content, 'v1');
@@ -303,7 +306,8 @@ describe('sessionRules store API (#347/D1a)', () => {
       // enum-valid ops. Drive all four through the API and confirm none throws
       // and the recorded history carries exactly the enum values.
       const pid = mkProject('proj-ops');
-      const rule = store.sessionRules.create({ content: 'v1', projectId: pid }); // op=create
+      // proposed: an ACTIVE project rule's text no longer changes in place (edits become replacement proposals, #1696), and this test is about the version mechanics, which are the same for any rule whose text does.
+      const rule = store.sessionRules.create({ content: 'v1', projectId: pid, status: 'proposed' }); // op=create
       store.sessionRules.update(rule.id, { content: 'v2' });              // op=update
       store.sessionRules.restore(rule.id, 1);                            // op=restore
       store.sessionRules.delete(rule.id);                                // op=delete
@@ -364,7 +368,8 @@ describe('sessionRules store API (#347/D1a)', () => {
       // original author — an operator-created rule updated by the AI with no
       // attestation must record 'unknown', not inherit 'not-required'.
       const pid = mkProject('proj-gate-per-change');
-      const rule = store.sessionRules.create({ content: 'v1', projectId: pid }); // operator → not-required
+      // proposed: an ACTIVE project rule's text no longer changes in place (edits become replacement proposals, #1696), and this test is about the version mechanics, which are the same for any rule whose text does.
+      const rule = store.sessionRules.create({ content: 'v1', projectId: pid, status: 'proposed' }); // operator → not-required
       store.sessionRules.update(rule.id, { content: 'v2', changedBy: 'ai' });
       const versions = store.sessionRules.listVersions(rule.id);
       assert.equal(versions[0].criticGate, 'unknown');   // the AI update
@@ -430,7 +435,8 @@ describe('sessionRules store API (#347/D1a)', () => {
     let churnSeq = 0;
     function churn(total) {
       const pid = mkProject(`proj-churn-${++churnSeq}`);
-      const rule = store.sessionRules.create({ content: 'v1', projectId: pid });
+      // proposed: an ACTIVE project rule's text no longer changes in place (edits become replacement proposals, #1696), and this test is about the version mechanics, which are the same for any rule whose text does.
+      const rule = store.sessionRules.create({ content: 'v1', projectId: pid, status: 'proposed' });
       for (let i = 2; i <= total; i++) {
         store.sessionRules.update(rule.id, { content: `v${i}` });
       }

@@ -2868,10 +2868,21 @@ function renderProjectRulesList(kind, rules) {
       if (isProposed && rule.replacesRuleId) {
         const target = byId.get(rule.replacesRuleId);
         const id = Number(rule.replacesRuleId);
+        // An edit or rollback of an active rule is a change to THAT rule: it
+        // cannot be approved once the rule is gone (the server refuses), so it
+        // must not read like an amendment that would simply stand on its own.
+        const isEdit = rule.replacementOrigin === 'edit' || rule.replacementOrigin === 'restore';
+        const what = rule.replacementOrigin === 'restore' ? 'Rollback' : 'Edit';
         let text;
-        if (target && target.status === 'active') text = `Approving retires: ${esc(target.content)}`;
-        else if (target) text = `Replaces ${esc(target.content)}, which is already ${esc(target.status)} — approving retires nothing`;
-        else text = `Replaces rule #${id}, which no longer exists — approving retires nothing`;
+        if (target && target.status === 'active') {
+          text = isEdit ? `${what} of: ${esc(target.content)} — approving replaces it` : `Approving retires: ${esc(target.content)}`;
+        } else if (isEdit) {
+          text = `${what} of ${target ? `${esc(target.content)}, which is now ${esc(target.status)}` : `rule #${id}, which no longer exists`} — it can no longer be approved`;
+        } else if (target) {
+          text = `Replaces ${esc(target.content)}, which is already ${esc(target.status)} — approving retires nothing`;
+        } else {
+          text = `Replaces rule #${id}, which no longer exists — approving retires nothing`;
+        }
         replaces = `<span class="session-rule-replaces">${text}</span>`;
       }
       const actions = isProposed
@@ -2996,7 +3007,10 @@ async function resolveProjectRuleProposal(id, status, kind) {
   const data = await apiMutate(`/api/session-rules/${id}/status`, 'PUT', body);
   if (!data) {
     const pwGroup = document.getElementById('projRulesPwGroup');
-    if (api.lastErrorCode === 'RULE_CONTENT_CHANGED') {
+    if (api.lastErrorCode === 'REPLACEMENT_TARGET_INACTIVE') {
+      _setProjectRulesStatus('The rule this edit changes is no longer active, so the edit cannot be approved — nothing was approved', false);
+      await refreshProjectRulesList(projectRulesTargetId, kind);
+    } else if (api.lastErrorCode === 'RULE_CONTENT_CHANGED') {
       // Redraw from the server so the row shows what the rule says now; the
       // next Approve is then a decision about that text.
       _setProjectRulesStatus('This rule’s text changed after it was shown, so nothing was approved — '

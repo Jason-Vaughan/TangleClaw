@@ -35,6 +35,26 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-27 — Rules lifecycle, Chunk 4: edits of a governing rule go through approval (#1696, #1709)
+
+<!-- prawduct: type=bugfix | scope=rule-retirement-1696-1709 -->
+
+Chunk 04 of 04, cumulative-final. Rulings 7 and 8 (PM d40bf543 and 437ddd43): the replacement-proposal design, and Option A on the stale-approval conflict.
+
+**The change.**
+- **Schema.** `replacement_origin` (`amendment` | `edit` | `restore`, CHECK-constrained) is added to the table definition and to the still-unshipped v51 migration's frozen DDL; the migration postcondition checks for it.
+- **Edits.** `update()` with a text change to an active project rule (`_textChangesNeedApproval`: active and not Master) files a proposal via `create()` (origin `edit`, `status: 'proposed'`, `replacesRuleId` = the rule) inside the savepoint, applies any `enabled` in the same call to the rule itself, and returns the rule plus `replacementProposed`.
+- **Rollbacks.** `restore()` does the same for a rollback to different text (origin `restore`), leaving the rule, switch included, untouched. A rollback that changes only the switch applies as before.
+- **One pending per rule.** `update()` and `restore()` refuse with `REPLACEMENT_PENDING` (carrying `pendingReplacementId`), and `create()` refuses a second amendment with `INVALID_REPLACES`. Rejected replacements do not count. Chains and cycles are impossible because a target must be active.
+- **Fail closed (Option A).** An `edit` or `restore` replacement whose target is not active at approval throws `REPLACEMENT_TARGET_INACTIVE` inside the savepoint, which undoes the approval. An explicit `amendment` keeps C1's `replaced: null`. The origin is set only by the store; the create route never passes it.
+- **Routes.** `PUT /:id` and `POST /:id/restore` answer 202 with `replacementProposed`, and 409 `REPLACEMENT_PENDING` with the pending id. The status route maps `REPLACEMENT_TARGET_INACTIVE` to 409 with `targetId`.
+- **UI.** An edit or rollback proposal reads "Edit of: <text> — approving replaces it", or "...which is now retired — it can no longer be approved". A 409 on approval explains itself and redraws the list.
+- **C3 review carry-overs.** R-4: project ids are compared numerically. R-5: restore keeps `superseded_by`. R-8: the `list()` docstring.
+
+**Existing tests reworked for the ruled contract, not weakened.** Tests that used "edit an active rule's text" only to generate version history (pruning, op constraint, critic_gate provenance, restore mechanics, `kind` survives a restore) now create their rule as `proposed`, whose text still edits in place. One of them ("kind survives a version restore") had started passing vacuously, and it now asserts the edit applied. The delivery digest test now also asserts that an unapproved edit does NOT change the delivered set, and that approving it does. The API critic-gate test keeps its operator-create check, adds the 202 path, and runs the in-place checks on an AI proposal.
+
+**Tests.** Store (19 new: proposal filing, approve/reject, one-pending in both directions, fail closed for retired and deleted targets, the amendment contract unchanged, enabled with content, no-op text, proposal and Master in-place edits, rollback as proposal with fail-closed and switch-only, no chains or cycles, both carry-overs). HTTP (5: 202, 409 pending with id, 409 target inactive with id, restore 202, origin not settable). UI (2). Mutation-checked six mutants: an active edit applied in place, edits not failing closed, `update` or `create` ignoring pending, a rollback applied in place, and the route passing the origin. Each turns tests red.
+
 ## 2026-09-27 — Rules lifecycle, Chunk 3: the Rules Graveyard in Project Rules (#1696, #1709)
 
 <!-- prawduct: type=bugfix | scope=rule-retirement-1696-1709 -->

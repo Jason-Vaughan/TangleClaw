@@ -488,6 +488,190 @@ describe('session rule lifecycle (#1696, #1709)', () => {
     });
   });
 
+  // Architect ruling on #1696: a text change to an ACTIVE project rule does not
+  // rewrite it. It becomes a replacement proposal, and the rule keeps governing
+  // its approved text until the operator approves the new one.
+  describe('an edit of an active rule becomes a replacement proposal', () => {
+    it('leaves the rule untouched and files the new text as a proposal', () => {
+      const rule = activeRule('governing text');
+      const res = store.sessionRules.update(rule.id, { content: 'edited text', changedBy: 'ai' });
+      assert.equal(res.content, 'governing text', 'the rule itself is unchanged');
+      const p = res.replacementProposed;
+      assert.equal(p.status, 'proposed');
+      assert.equal(p.content, 'edited text');
+      assert.equal(p.replacesRuleId, rule.id);
+      assert.equal(p.replacementOrigin, 'edit');
+      assert.equal(p.createdBy, 'ai');
+      assert.equal(store.sessionRules.get(rule.id).content, 'governing text');
+      assert.deepEqual(delivered(), ['governing text'], 'no unseen text governs');
+    });
+
+    it('approving it retires the original, and the new text governs', () => {
+      const rule = activeRule('old wording');
+      const p = store.sessionRules.update(rule.id, { content: 'new wording' }).replacementProposed;
+      const approved = store.sessionRules.setStatus(p.id, 'active', { expectedContent: 'new wording' });
+      assert.deepEqual(approved.replaced, { id: rule.id });
+      assert.equal(store.sessionRules.get(rule.id).status, 'retired');
+      assert.deepEqual(delivered(), ['new wording']);
+    });
+
+    it('rejecting it leaves the original exactly as it was', () => {
+      const rule = activeRule('keep me');
+      const p = store.sessionRules.update(rule.id, { content: 'not this' }).replacementProposed;
+      store.sessionRules.setStatus(p.id, 'rejected');
+      const after = store.sessionRules.get(rule.id);
+      assert.equal(after.status, 'active');
+      assert.equal(after.content, 'keep me');
+      assert.deepEqual(delivered(), ['keep me']);
+    });
+
+    it('allows one pending replacement per rule: a second edit is refused, naming the first', () => {
+      const rule = activeRule('one at a time');
+      const first = store.sessionRules.update(rule.id, { content: 'first edit' }).replacementProposed;
+      assert.throws(() => store.sessionRules.update(rule.id, { content: 'second edit' }),
+        (err) => err.code === 'REPLACEMENT_PENDING' && err.pendingReplacementId === first.id);
+      store.sessionRules.setStatus(first.id, 'rejected');
+      assert.equal(store.sessionRules.update(rule.id, { content: 'second edit' }).replacementProposed.content, 'second edit',
+        'a decided replacement no longer blocks the next');
+    });
+
+    it('counts any pending replacement, whichever way it arose', () => {
+      const rule = activeRule('shared target');
+      store.sessionRules.update(rule.id, { content: 'an edit' });
+      assert.throws(() => proposal('an amendment', { replacesRuleId: rule.id }), code('INVALID_REPLACES'));
+      const other = activeRule('other target');
+      proposal('an amendment first', { replacesRuleId: other.id });
+      assert.throws(() => store.sessionRules.update(other.id, { content: 'then an edit' }), code('REPLACEMENT_PENDING'));
+    });
+
+    it('FAILS CLOSED when the edited rule is gone by approval time, changing nothing', () => {
+      const rule = activeRule('about to be retired');
+      const p = store.sessionRules.update(rule.id, { content: 'edit of a dying rule' }).replacementProposed;
+      store.sessionRules.setStatus(rule.id, 'retired');
+      const versions = store.sessionRules.listVersions(p.id).length;
+      assert.throws(
+        () => store.sessionRules.setStatus(p.id, 'active', { expectedContent: 'edit of a dying rule' }),
+        (err) => err.code === 'REPLACEMENT_TARGET_INACTIVE' && err.targetId === rule.id
+      );
+      assert.equal(store.sessionRules.get(p.id).status, 'proposed', 'the approval was undone');
+      assert.equal(store.sessionRules.listVersions(p.id).length, versions);
+      assert.ok(!delivered().includes('edit of a dying rule'), 'edited text is never resurrected');
+    });
+
+    it('fails closed for a deleted rule too', () => {
+      const rule = activeRule('about to be deleted');
+      const p = store.sessionRules.update(rule.id, { content: 'edit of a deleted rule' }).replacementProposed;
+      store.sessionRules.delete(rule.id);
+      assert.throws(() => store.sessionRules.setStatus(p.id, 'active', { expectedContent: 'edit of a deleted rule' }),
+        code('REPLACEMENT_TARGET_INACTIVE'));
+    });
+
+    it('keeps C1’s contract for an explicit amendment: an inactive target still approves, replaced: null', () => {
+      const rule = activeRule('amended then retired');
+      const amendment = proposal('the amendment', { replacesRuleId: rule.id });
+      assert.equal(amendment.replacementOrigin, 'amendment');
+      store.sessionRules.setStatus(rule.id, 'retired');
+      const approved = store.sessionRules.setStatus(amendment.id, 'active', { expectedContent: 'the amendment' });
+      assert.equal(approved.status, 'active');
+      assert.equal(approved.replaced, null);
+    });
+
+    it('applies an enabled toggle in the same call to the rule itself', () => {
+      const rule = activeRule('toggle and edit');
+      const res = store.sessionRules.update(rule.id, { content: 'edited', enabled: false });
+      assert.equal(res.enabled, false);
+      assert.equal(res.content, 'toggle and edit');
+      assert.equal(res.replacementProposed.content, 'edited');
+    });
+
+    it('files nothing for an unchanged text or a switch-only update', () => {
+      const rule = activeRule('same text');
+      assert.equal(store.sessionRules.update(rule.id, { content: '  same text  ' }).replacementProposed, undefined);
+      assert.equal(store.sessionRules.update(rule.id, { enabled: false }).replacementProposed, undefined);
+      assert.equal(store.sessionRules.get(rule.id).enabled, false);
+    });
+
+    it('still edits a proposal in place — the drawer’s edit-then-approve flow', () => {
+      const p = proposal('draft');
+      const res = store.sessionRules.update(p.id, { content: 'redraft' });
+      assert.equal(res.content, 'redraft');
+      assert.equal(res.replacementProposed, undefined);
+    });
+
+    it('leaves Master rules outside the contract: their text still edits in place', () => {
+      const master = store.sessionRules.create({ content: 'hard rule', kind: 'master' });
+      try {
+        const res = store.sessionRules.update(master.id, { content: 'hard rule, reworded' });
+        assert.equal(res.content, 'hard rule, reworded');
+        assert.equal(res.replacementProposed, undefined);
+      } finally {
+        store.sessionRules.delete(master.id);
+      }
+    });
+  });
+
+  describe('a version rollback of an active rule is a replacement proposal too', () => {
+    it('files the old text as a proposal and leaves the rule, switch included, as it is', () => {
+      const rule = activeRule('version one', { status: 'proposed' });
+      store.sessionRules.update(rule.id, { content: 'version two' });
+      store.sessionRules.setStatus(rule.id, 'active', { expectedContent: 'version two' });
+      const res = store.sessionRules.restore(rule.id, 1);
+      assert.equal(res.content, 'version two');
+      assert.equal(res.replacementProposed.content, 'version one');
+      assert.equal(res.replacementProposed.replacementOrigin, 'restore');
+      assert.equal(store.sessionRules.get(rule.id).content, 'version two');
+    });
+
+    it('fails closed like an edit when the rule is gone', () => {
+      const rule = activeRule('r1', { status: 'proposed' });
+      store.sessionRules.update(rule.id, { content: 'r2' });
+      store.sessionRules.setStatus(rule.id, 'active', { expectedContent: 'r2' });
+      const p = store.sessionRules.restore(rule.id, 1).replacementProposed;
+      store.sessionRules.setStatus(rule.id, 'retired');
+      assert.throws(() => store.sessionRules.setStatus(p.id, 'active', { expectedContent: 'r1' }),
+        code('REPLACEMENT_TARGET_INACTIVE'));
+    });
+
+    it('still applies a rollback that changes only the switch', () => {
+      const rule = activeRule('switch only');
+      store.sessionRules.update(rule.id, { enabled: false });
+      const res = store.sessionRules.restore(rule.id, 1);
+      assert.equal(res.replacementProposed, undefined);
+      assert.equal(res.enabled, true);
+    });
+  });
+
+  describe('no chains, no cycles', () => {
+    it('a pending replacement cannot itself be replaced', () => {
+      const rule = activeRule('root');
+      const pending = proposal('pending child', { replacesRuleId: rule.id });
+      assert.throws(() => proposal('grandchild', { replacesRuleId: pending.id }), code('INVALID_REPLACES'));
+    });
+
+    it('a retired original cannot be replaced back into force', () => {
+      const a = activeRule('A');
+      const b = proposal('B', { replacesRuleId: a.id });
+      store.sessionRules.setStatus(b.id, 'active', { expectedContent: 'B' });
+      assert.throws(() => proposal('A again', { replacesRuleId: a.id }), code('INVALID_REPLACES'));
+    });
+  });
+
+  describe('review carry-overs', () => {
+    it('keeps what replaced a rule when it is restored from retirement', () => {
+      const old = activeRule('replaced then restored');
+      const next = proposal('its successor', { replacesRuleId: old.id });
+      store.sessionRules.setStatus(next.id, 'active', { expectedContent: 'its successor' });
+      const restored = store.sessionRules.setStatus(old.id, 'active');
+      assert.equal(restored.supersededBy, next.id, 'history is not erased by a restore');
+    });
+
+    it('accepts a projectId sent as a numeric string', () => {
+      const old = activeRule('string project id');
+      const next = store.sessionRules.create({ content: 'by string id', projectId: String(project.id), createdBy: 'ai', replacesRuleId: old.id });
+      assert.equal(next.replacesRuleId, old.id);
+    });
+  });
+
   describe('the v50→v51 migration', () => {
     /**
      * Take a fresh store back to a v50 install holding the given rows, then

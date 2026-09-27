@@ -5358,7 +5358,37 @@ function refuseUnconfirmedBaselineEdit(rule, confirmed) {
   return !!(rule && rule.kind === 'master' && rule.createdBy === 'system' && !confirmed);
 }
 
+/**
+ * Answer a rule write that may have become a replacement proposal (#1696).
+ * A text change to an active project rule does not rewrite it: the store files
+ * a proposal and leaves the rule governing its approved text, so the honest
+ * answer is 202 — accepted for approval, not applied — with the proposal.
+ * @param {http.ServerResponse} res
+ * @param {object} rule - The store's result
+ * @returns {void}
+ */
+function respondRuleWrite(res, rule) {
+  jsonResponse(res, rule && rule.replacementProposed ? 202 : 200, rule);
+}
+
+/**
+ * Map the store's refusal of a second pending replacement to 409, naming the
+ * one that is pending so the caller can go and decide it.
+ * @param {http.ServerResponse} res
+ * @param {Error} err
+ * @returns {boolean} true when it answered
+ */
+function answerReplacementPending(res, err) {
+  if (err.code !== 'REPLACEMENT_PENDING') return false;
+  errorResponse(res, 409, err.message, 'REPLACEMENT_PENDING', { pendingReplacementId: err.pendingReplacementId });
+  return true;
+}
+
 // PUT /api/session-rules/:id — update { content?, enabled?, confirmBaselineEdit? }
+// A content change to an ACTIVE project rule is answered 202: it is filed as a
+// replacement proposal (replacementProposed) and the rule keeps governing its
+// approved text until that is approved (#1696). 409 REPLACEMENT_PENDING when
+// one is already waiting.
 route('PUT', '/api/session-rules/:id', (_req, res, params, body) => {
   if (!body || typeof body !== 'object') {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
@@ -5373,8 +5403,9 @@ route('PUT', '/api/session-rules/:id', (_req, res, params, body) => {
     }
     const { confirmBaselineEdit, ...updates } = body;
     const rule = store.sessionRules.update(Number(params.id), updates);
-    jsonResponse(res, 200, rule);
+    respondRuleWrite(res, rule);
   } catch (err) {
+    if (answerReplacementPending(res, err)) return;
     if (err.code === 'NOT_FOUND') {
       return errorResponse(res, 404, err.message, 'NOT_FOUND');
     }
@@ -5504,6 +5535,11 @@ route('PUT', '/api/session-rules/:id/status', (_req, res, params, body) => {
     if (err.code === 'FORBIDDEN') return errorResponse(res, 403, err.message, 'FORBIDDEN');
     if (err.code === 'APPROVAL_REQUIRES_AUTHORITY') return errorResponse(res, 403, err.message, 'FORBIDDEN');
     if (err.code === 'INVALID_TRANSITION') return errorResponse(res, 400, err.message, 'INVALID_TRANSITION');
+    // An edit or rollback whose rule is gone: approving it would resurrect
+    // edited text, so it fails closed (#1696 ruling). Nothing changed.
+    if (err.code === 'REPLACEMENT_TARGET_INACTIVE') {
+      return errorResponse(res, 409, err.message, 'REPLACEMENT_TARGET_INACTIVE', { targetId: err.targetId });
+    }
     if (err.code === 'EXPECTED_CONTENT_REQUIRED') {
       return errorResponse(res, 400, err.message, 'EXPECTED_CONTENT_REQUIRED');
     }
@@ -5606,8 +5642,11 @@ route('POST', '/api/session-rules/:id/restore', (_req, res, params, body) => {
     }
     // SR-7K2P: optional Critic-gate attestation. Invalid → store throws BAD_REQUEST.
     const rule = store.sessionRules.restore(Number(params.id), Number(body.versionNo), { changedBy: body.changedBy, criticGate: body.criticGate });
-    jsonResponse(res, 200, rule);
+    // A rollback of an active project rule to different text is a replacement
+    // proposal like any edit (#1696): 202, and the rule is left as it is.
+    respondRuleWrite(res, rule);
   } catch (err) {
+    if (answerReplacementPending(res, err)) return;
     if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');
     if (err.code === 'BAD_REQUEST') return errorResponse(res, 400, err.message, 'BAD_REQUEST');
     throw err;
