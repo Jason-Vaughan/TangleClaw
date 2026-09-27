@@ -1399,22 +1399,21 @@ function renderPorts() {
     // An owner marked "Not a project" (#1381) is marked by name, so the badge
     // and its undo belong to the group, not a single lease.
     const external = leases.some(l => l.ownerKind === 'external');
-    // The undo sits inside the toggle row: it stops click AND keydown, or Enter
-    // on the button would also reach the row's handler, which folds the group
-    // and cancels the press with preventDefault.
+    // The badge and its undo sit BESIDE the toggle button, never inside it
+    // (#1906): a control inside a button is hidden from assistive technology.
     const ownerKind = external
       ? `<span class="port-owner-kind" title="Marked as not a TangleClaw project. The import banner and the boot sweep skip its leases.">Not a project</span>
-      <button class="btn btn-compact port-owner-undo" onclick="event.stopPropagation(); markLeaseOwnerProject(${jsArg(project)})"
-        onkeydown="event.stopPropagation()" title="Undo the Not a project mark">Is a project</button>`
+      <button type="button" class="btn btn-compact port-owner-undo" onclick="markLeaseOwnerProject(${jsArg(project)})"
+        title="Undo the Not a project mark">Is a project</button>`
       : '';
 
     html += `<div class="port-group">`;
-    html += `<div class="port-group-toggle" role="button" tabindex="0"
-      aria-expanded="${isOpen}" onclick="togglePortGroup(${jsArg(project)})"
-      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();togglePortGroup(${jsArg(project)});}">
-      <span class="${arrowClass}">&#9660;</span>
-      <span class="port-group-name">${esc(project)}</span>
-      <span style="color:var(--text-muted);font-size:10px">(${leases.length})</span>
+    html += `<div class="toggle-row">
+      <button type="button" class="toggle-btn port-group-toggle" aria-expanded="${isOpen}" onclick="togglePortGroup(${jsArg(project)})">
+        <span class="${arrowClass}">&#9660;</span>
+        <span class="port-group-name">${esc(project)}</span>
+        <span style="color:var(--text-muted);font-size:10px">(${leases.length})</span>
+      </button>
       ${ownerKind}
     </div>`;
     html += `<div class="${contentClass}">`;
@@ -4173,17 +4172,38 @@ async function importLeaseProjects(names) {
     // deletes their leases, so the row stays until the operator decides.
     // Was console-only once, which meant a skipped import was invisible to
     // anyone not holding devtools open. The toast is the surface the operator has.
-    const t = document.getElementById('toast');
-    if (t) {
-      t.textContent = `Import warning: ${result.warnings.join('; ')}`;
-      t.className = 'toast toast-warn visible';
-      setTimeout(() => { t.classList.remove('visible'); }, 6000);
-    }
+    showToast(`Import warning: ${result.warnings.join('; ')}`, 'warn', 6000);
   }
   dismissImportBanner();
   await loadProjects();
   // Re-check in case some remain
   checkPortImports();
+}
+
+/**
+ * Show a message in the page toast, which is `role="alert"`, so a screen
+ * reader announces it as well as showing it.
+ * @param {string} text - Message text
+ * @param {'ok'|'warn'} kind - Toast style
+ * @param {number} ms - How long it stays visible
+ */
+function showToast(text, kind, ms) {
+  const t = document.getElementById('toast');
+  if (!t) return;
+  t.textContent = text;
+  t.className = `toast toast-${kind} visible`;
+  setTimeout(() => { t.classList.remove('visible'); }, ms);
+}
+
+/**
+ * Tell the operator why an owner-kind change was refused (#1915). The server
+ * names the reason (the lease was released meanwhile, or the kind is bad), and
+ * without this the button simply did nothing.
+ * @param {string} name - Owner name as it appears on the leases
+ * @param {string} what - What the click tried to record, e.g. `not a project`
+ */
+function showOwnerKindRefusal(name, what) {
+  showToast(`Could not mark "${name}" as ${what}: ${api.lastError || 'the server refused'}`, 'warn', 6000);
 }
 
 /**
@@ -4194,7 +4214,10 @@ async function importLeaseProjects(names) {
  */
 async function markLeaseOwnerExternal(name) {
   const result = await apiMutate('/api/ports/owner-kind', 'POST', { project: name, ownerKind: 'external' });
-  if (!result) return;
+  if (!result) {
+    showOwnerKindRefusal(name, 'not a project');
+    return;
+  }
   dismissImportBanner();
   await loadPorts();
   checkPortImports();
@@ -4208,7 +4231,10 @@ async function markLeaseOwnerExternal(name) {
  */
 async function markLeaseOwnerProject(name) {
   const result = await apiMutate('/api/ports/owner-kind', 'POST', { project: name, ownerKind: 'project' });
-  if (!result) return;
+  if (!result) {
+    showOwnerKindRefusal(name, 'a project');
+    return;
+  }
   await loadPorts();
   checkPortImports();
 }
@@ -4257,13 +4283,13 @@ function renderGroups() {
     const contentClass = isOpen ? 'group-item-content open' : 'group-item-content';
 
     html += `<div class="group-item">`;
-    html += `<div class="group-item-toggle" role="button" tabindex="0"
-      aria-expanded="${isOpen}" onclick="toggleGroupItem(${jsArg(group.id)})"
-      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleGroupItem(${jsArg(group.id)});}">
-      <span class="${arrowClass}">&#9660;</span>
-      <span class="group-item-name">${esc(group.name)}</span>
-      <span class="group-item-meta">${group.memberCount || 0} project${(group.memberCount || 0) !== 1 ? 's' : ''}, ${group.docCount || 0} doc${(group.docCount || 0) !== 1 ? 's' : ''}</span>
-      <button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openGroupModal(${jsArg(group.id)})" title="Edit group">&#9998;</button>
+    html += `<div class="toggle-row">
+      <button type="button" class="toggle-btn group-item-toggle" aria-expanded="${isOpen}" onclick="toggleGroupItem(${jsArg(group.id)})">
+        <span class="${arrowClass}">&#9660;</span>
+        <span class="group-item-name">${esc(group.name)}</span>
+        <span class="group-item-meta">${group.memberCount || 0} project${(group.memberCount || 0) !== 1 ? 's' : ''}, ${group.docCount || 0} doc${(group.docCount || 0) !== 1 ? 's' : ''}</span>
+      </button>
+      <button type="button" class="btn btn-compact btn-icon-tiny" onclick="openGroupModal(${jsArg(group.id)})" title="Edit group" aria-label="Edit group ${esc(group.name)}">&#9998;</button>
     </div>`;
     html += `<div class="${contentClass}">`;
     if (group.description) {
@@ -4688,14 +4714,14 @@ function renderOpenclawConnections() {
     const engineBadge = '';
 
     html += `<div class="oc-item">`;
-    html += `<div class="oc-item-toggle" role="button" tabindex="0"
-      aria-expanded="${isOpen}" onclick="toggleOpenclawItem(${jsArg(conn.id)})"
-      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleOpenclawItem(${jsArg(conn.id)});}">
-      <span class="${arrowClass}">&#9660;</span>
-      <span class="oc-item-name">${esc(conn.name)}</span>
-      ${engineBadge}
-      <span class="oc-item-meta">${esc(conn.host)}:${conn.port}</span>
-      <button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openConnectionModal(${jsArg(conn.id)})" title="Edit connection">&#9998;</button>
+    html += `<div class="toggle-row">
+      <button type="button" class="toggle-btn oc-item-toggle" aria-expanded="${isOpen}" onclick="toggleOpenclawItem(${jsArg(conn.id)})">
+        <span class="${arrowClass}">&#9660;</span>
+        <span class="oc-item-name">${esc(conn.name)}</span>
+        ${engineBadge}
+        <span class="oc-item-meta">${esc(conn.host)}:${conn.port}</span>
+      </button>
+      <button type="button" class="btn btn-compact btn-icon-tiny" onclick="openConnectionModal(${jsArg(conn.id)})" title="Edit connection" aria-label="Edit connection ${esc(conn.name)}">&#9998;</button>
     </div>`;
     html += `<div class="${contentClass}">`;
     html += `<div class="oc-detail-grid">

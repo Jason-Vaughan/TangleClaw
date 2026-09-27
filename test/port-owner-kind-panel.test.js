@@ -75,6 +75,14 @@ describe('ports panel: show and undo "Not a project" (#1768)', () => {
   });
 
   /**
+   * The page's `api` stand-in. Like `public/api-helper.js`, a refusal returns
+   * null and leaves the server's `error` on `api.lastError`, which is what the
+   * owner-kind handlers show the operator (#1915).
+   */
+  const api = (url) => call('GET', url);
+  api.lastError = null;
+
+  /**
    * A JSON request against the real server, standing in for the page's api.
    *
    * @param {string} method - HTTP method.
@@ -92,6 +100,7 @@ describe('ports panel: show and undo "Not a project" (#1768)', () => {
         res.on('data', (c) => chunks.push(c));
         res.on('end', () => {
           const data = JSON.parse(Buffer.concat(chunks).toString('utf8') || 'null');
+          api.lastError = res.statusCode < 400 ? null : ((data && data.error) || `HTTP ${res.statusCode}`);
           resolve(res.statusCode < 400 ? data : null);
         });
       });
@@ -104,10 +113,17 @@ describe('ports panel: show and undo "Not a project" (#1768)', () => {
   /**
    * Build the page slice under test from the shipped sources.
    *
-   * @returns {{page: object, grid: object, state: object, refreshes: string[]}}
+   * @returns {{page: object, grid: object, state: object, refreshes: string[], toast: object}}
    */
   function makePage() {
     const grid = { innerHTML: '' };
+    const toastClasses = new Set();
+    const toast = {
+      textContent: '',
+      set className(v) { toastClasses.clear(); for (const c of v.split(/\s+/)) toastClasses.add(c); },
+      get className() { return [...toastClasses].join(' '); },
+      classList: { remove: (c) => toastClasses.delete(c) }
+    };
     const count = { textContent: '' };
     const state = { ports: [], portGroupsOpen: {} };
     const refreshes = [];
@@ -116,6 +132,8 @@ describe('ports panel: show and undo "Not a project" (#1768)', () => {
       liftFunction(landing, 'function jsArg('),
       liftFunction(landing, 'async function loadPorts('),
       liftFunction(ui, 'function renderPorts('),
+      liftFunction(ui, 'function showToast('),
+      liftFunction(ui, 'function showOwnerKindRefusal('),
       liftFunction(ui, 'async function markLeaseOwnerProject(')
     ].join('\n');
     const page = new Function('state', 'document', 'api', 'apiMutate', 'checkPortImports', `
@@ -123,12 +141,12 @@ describe('ports panel: show and undo "Not a project" (#1768)', () => {
       return { loadPorts, markLeaseOwnerProject };
     `)(
       state,
-      { getElementById: (id) => (id === 'portsGrid' ? grid : id === 'portsCount' ? count : null) },
-      (url) => call('GET', url),
+      { getElementById: (id) => ({ portsGrid: grid, portsCount: count, toast })[id] || null },
+      api,
       (url, method, body) => call(method, url, body),
       () => refreshes.push('checkPortImports')
     );
-    return { page, grid, state, refreshes };
+    return { page, grid, state, refreshes, toast };
   }
 
   /**
@@ -162,9 +180,17 @@ describe('ports panel: show and undo "Not a project" (#1768)', () => {
     const external = groupOf(grid.innerHTML, 'O&#39;Brien DB');
     assert.match(external, /class="port-owner-kind"[^>]*>Not a project</);
     assert.match(external, /onclick="[^"]*markLeaseOwnerProject\(/);
-    // Enter on the button must not also reach the row's keydown, which folds
-    // the group and cancels the press.
-    assert.match(external, /markLeaseOwnerProject\([^"]*"\s*onkeydown="event\.stopPropagation\(\)"/);
+    // Contract changed deliberately by #1906: the undo used to sit INSIDE the
+    // role="button" toggle row and had to stop click and keydown from reaching
+    // it. It is now a sibling of a native toggle button, so it needs neither,
+    // and a screen reader announces it as its own control.
+    const toggleButton = external.match(/<button type="button" class="toggle-btn port-group-toggle"[\s\S]*?<\/button>/);
+    assert.ok(toggleButton, 'the group toggle is a native button');
+    assert.doesNotMatch(toggleButton[0], /markLeaseOwnerProject|Not a project/, 'the undo and badge are not inside the toggle');
+    assert.match(external.slice(external.indexOf(toggleButton[0]) + toggleButton[0].length),
+      /^\s*<span class="port-owner-kind"[^>]*>Not a project<\/span>\s*<button type="button" class="btn btn-compact port-owner-undo"/,
+      'the badge and undo follow the toggle as siblings in the row');
+    assert.doesNotMatch(external, /stopPropagation/, 'nothing nests, so nothing needs stopping');
 
     const project = groupOf(grid.innerHTML, 'SomeProject');
     assert.doesNotMatch(project, /Not a project/);
@@ -181,8 +207,8 @@ describe('ports panel: show and undo "Not a project" (#1768)', () => {
 
     const onclick = decodeAttr(groupOf(grid.innerHTML, 'O&#39;Brien DB')
       .match(/onclick="([^"]*markLeaseOwnerProject\([^"]*)"/)[1]);
-    // The toggle row owns the click; the undo must not also fold the group.
-    assert.match(onclick, /^event\.stopPropagation\(\); markLeaseOwnerProject\(/);
+    // A sibling of the toggle, so its click is its own (#1906 changed this contract).
+    assert.match(onclick, /^markLeaseOwnerProject\(/);
     const argSrc = onclick.match(/markLeaseOwnerProject\((.*)\)$/)[1];
     await page.markLeaseOwnerProject(JSON.parse(argSrc));
 
@@ -192,15 +218,19 @@ describe('ports panel: show and undo "Not a project" (#1768)', () => {
     assert.deepEqual(refreshes, ['checkPortImports'], 'the import banner is re-checked, since the owner is offered again');
   });
 
-  it('leaves the badge in place when the server refuses', async () => {
+  it('leaves the badge in place and says why when the server refuses (#1915)', async () => {
     store.portLeases.lease({ port: 5432, project: 'Gone', service: 'x', permanent: true });
     store.portLeases.setOwnerKind('Gone', 'external');
-    const { page, grid, refreshes } = makePage();
+    const { page, grid, refreshes, toast } = makePage();
     await page.loadPorts();
     store.portLeases.release(5432);
 
     await page.markLeaseOwnerProject('Gone');
     assert.match(grid.innerHTML, /Not a project/, 'a failed undo must not pretend it worked');
     assert.deepEqual(refreshes, []);
+    assert.equal(toast.textContent, 'Could not mark "Gone" as a project: No lease is held under "Gone"',
+      "the operator is told the server's reason");
+    assert.match(toast.className, /\btoast-warn\b/);
+    assert.match(toast.className, /\bvisible\b/);
   });
 });
