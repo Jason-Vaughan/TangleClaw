@@ -274,6 +274,8 @@ All notable changes to TangleClaw are documented in this file.
     - The workspace rules are unchanged: it can write inside the project, while `.git`, `.agents`, `.codex` and your home directory stay read-only.
   - **Launch path:** the profile cannot ride Codex's native startup channel, so a Full Auto launch uses the keystroke path, and its launch record says why.
   - **Other Codex versions** keep the network-off sandbox until the profile has been proven on them.
+    - On those versions a Full Auto launch no longer points the session at `tc start`, which it could never reach. It gets no launch sequence, its context is pasted instead, and the project's launch-sequences panel says why: the sandbox has no network, and the Codex version isn't proven.
+    - The server log records the same reason.
   - **The Project Master** gets the same treatment in Full Auto.
   - **`tc` output stays clean:** `tc` no longer prints Node's "EnvHttpProxyAgent is experimental" warning, which the proxy triggered on every call. Every other warning still prints.
 
