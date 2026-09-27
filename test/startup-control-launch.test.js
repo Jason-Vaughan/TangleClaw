@@ -314,6 +314,21 @@ describe('startupControl at launch and teardown (codex)', () => {
     const unknown = sessions._loopbackModeCommand('codex', profile, 'fullAuto', full, '/opt/fake/bin/codex');
     assert.equal(unknown.applied, false, 'an unknown version keeps it too');
     assert.match(unknown.reason, /version unknown/);
+
+    // A resolution that fails still keeps the no-network sandbox, so it must
+    // still say loopback is blocked — or the launch points the session at a
+    // `tc start` it can never reach.
+    const startupControl = require('../lib/startup-control');
+    const realResolve = startupControl.resolveForLaunch;
+    startupControl.resolveForLaunch = () => { throw new Error('boom'); };
+    try {
+      const failed = sessions._loopbackModeCommand('codex', profile, 'fullAuto', full, '/opt/fake/bin/codex');
+      assert.equal(failed.applied, false);
+      assert.equal(failed.blocksLoopback, true, 'the kept command is still the no-network sandbox');
+      assert.match(failed.reason, /could not be resolved \(boom\)/);
+    } finally {
+      startupControl.resolveForLaunch = realResolve;
+    }
   });
 
   it('full auto on an unproven Codex gets no launch sequence — its context is pasted — and the panel is told why (#1836, ADR 0013)', () => {
