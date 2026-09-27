@@ -275,6 +275,13 @@ describe('train version, status and car state (#1933)', () => {
     assert.match(page, /\.train-car\.blocked\{background:#cf222e;border-color:#cf222e;color:#fff\}/);
     assert.match(page, /\.train-car\.queue-new\{background:#0969da;border-color:#0969da;color:#fff\}/);
   });
+
+  it('lightens the coloured status badges in dark mode so small text stays legible', () => {
+    const page = planDocs.renderPlanPage({
+      project: { id: 1, name: 'p' }, file: 'x.md', relative: 'x.md', modifiedAt: '2026-09-27T00:00:00.000Z', markdown: '', timeZone: 'UTC'
+    });
+    assert.match(page, /@media \(prefers-color-scheme:dark\)\{\.train-status\.status-in-progress\{border-color:#d29922;color:#d29922\}\.train-status\.status-blocked\{border-color:#f85149;color:#f85149\}\.train-status\.status-shipped\{border-color:#3fb950;color:#3fb950\}\}/);
+  });
 });
 
 describe('the new cards queue (#1933)', () => {
