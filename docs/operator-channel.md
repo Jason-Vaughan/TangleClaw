@@ -77,6 +77,8 @@ So neither the agent nor the operator ever reads text that displays differently 
 
 As in ADR 0020, this is display integrity only. It is not Unicode normalization, and it does not detect look-alike characters.
 
+**Emoji.** Many common emoji are written with a variation selector (U+FE0F) or a zero-width joiner (U+200D), for example ❤️, or 👍🏽 with a skin tone. The rule refuses those, as it does in workload text. An operator message containing one is refused, and a reply containing one is quarantined. Single-code-point emoji and symbols are accepted.
+
 ## Delivery
 
 A delivery pump runs when a message is accepted, every 30 seconds, and at boot. It works through waiting messages in order:
