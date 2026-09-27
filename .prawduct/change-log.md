@@ -35,6 +35,24 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-27 — The operator-mode recovery gate says advisory mode exists, and the mode is the operator's (#1937)
+
+<!-- prawduct: type=feature | scope=recovery-mode-discoverability-1937 -->
+
+The PM dispatched this over Medusa. The Architect ruled mid-build that `recoveryMode` is operator-only on the API, recorded as ADR 0017 R3a. Plan: `.tangleclaw/plans/1937-recovery-mode-discoverability.md` (local, not tracked).
+
+**Problem.** After a crash, an `operator`-mode launch withholds its task step until someone clears recovery by hand, and no surface mentioned `launchSequence.recoveryMode: "advisory"`. Operators cleared by hand on every crash. The unready nudge also asked a held session for a `tc start ready` that would be refused.
+
+**The change.**
+- One shared hint (`ADVISORY_RECOVERY_HINT`, `lib/launch-page.js`) now ends the withheld task step, `RECOVERY_UNCLEARED`, `tc start status` and the nudge.
+- The Launch readiness panel has one recovery-mode switch, driven by the new `projectRecoveryMode` on `GET /api/launch-sequences`.
+- `launchSequence.taskStepWithheld` is the single owner of the "withheld" decision. The status block carries it as `taskWithheld`, and the nudge and `tc start status` read it.
+- `PATCH /api/projects/:name` refuses any non-operator request naming `recoveryMode`, even at its current value, with `403 OPERATOR_ONLY` before anything is written. This guards the API only: the value lives in the session-writable `project.json`, which #1982 tracks.
+
+**Review.** The first Critic pass (rev-20260927T230505Z-72594729) found 0 blocking. Its 4 points were fixed: overclaimed guarantee, vanishing way-back switch, triplicated gate check, ruling not in repo. The covering pass (rev-20260927T233553Z-d0966818) was clean, and its 5 observations were accepted on the record.
+
+**Evidence.** The full suite is green (a clean run at 2026-09-27T23:35Z). An earlier run had 5 failures in `test/tmux.test.js`, caused by its fixed tmux session names colliding with a concurrent suite on the same host. This branch does not change tmux; that bug is filed as #1983. The optional repeated-clears hint was descoped, with the PM informed.
+
 ## 2026-09-27 — The Codex approval/user-input wait test waits for acceptance, not a timer (#1846)
 
 <!-- prawduct: type=bugfix | scope=codex-wait-test-1846 -->

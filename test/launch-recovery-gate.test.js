@@ -207,6 +207,9 @@ describe('launch recovery gate (Train 21, #1587)', () => {
       assert.equal(answer.body.recoveryRevision, 1);
       assert.equal(answer.body.next, 'recovery-clear');
       assert.match(answer.body.content, /Launch readiness panel/);
+      // #1937: the per-project advisory switch is named, as the operator's.
+      assert.match(answer.body.content, /launchSequence\.recoveryMode/);
+      assert.match(answer.body.content, /the operator's/i);
       const task = store.launchSequences.listSteps(sequence.id, 1)[3];
       assert.deepEqual(task.pagesServed, [], 'a withheld step was not served');
       assert.equal(task.servedAt, null);
@@ -245,6 +248,31 @@ describe('launch recovery gate (Train 21, #1587)', () => {
       assert.equal(body.withheld, undefined);
       assert.equal(body.step.id, 'task');
       assert.equal(body.status.recovery, 'cleared');
+    });
+  });
+
+  // #1937: `tc start status` and the unready nudge describe the gate rather
+  // than re-deciding it, so the status block carries the gate's own answer.
+  describe('the status block reports the gate\'s decision', () => {
+    it('is true only while the gate is withholding the task step', () => {
+      const operator = launchInRecovery('operator');
+      assert.equal(launchSequence.status(operator.id).body.status.taskWithheld, false,
+        'the earlier steps are served in recovery, so nothing is withheld yet');
+      assert.equal(launchSequence.taskStepWithheld(store.launchSequences.getBySession(operator.session.id)), false);
+      ackThroughState(operator.id);
+      assert.equal(launchSequence.status(operator.id).body.status.taskWithheld, true);
+      assert.equal(launchSequence.taskStepWithheld(store.launchSequences.getBySession(operator.session.id)), true);
+      store.launchSequences.clearRecovery(operator.sequence.id, {
+        sessionId: operator.sequence.sessionId, recoveryRevision: 1, clearance: 'operator-verified', clearedBy: 'jason'
+      });
+      assert.equal(launchSequence.status(operator.id).body.status.taskWithheld, false, 'a cleared recovery withholds nothing');
+    });
+
+    it('is false for an advisory launch at its task step', () => {
+      const advisory = launchInRecovery('advisory');
+      ackThroughState(advisory.id);
+      assert.equal(launchSequence.status(advisory.id).body.status.taskWithheld, false,
+        'an advisory task step is served behind a warning, not withheld');
     });
   });
 
@@ -311,6 +339,7 @@ describe('launch recovery gate (Train 21, #1587)', () => {
       assert.equal(answer.body.code, 'RECOVERY_UNCLEARED');
       assert.equal(answer.body.recoveryMode, 'operator');
       assert.match(answer.body.error, /cannot stand in for that clear/);
+      assert.match(answer.body.error, /launchSequence\.recoveryMode/, 'the READY refusal names the switch too (#1937)');
       assert.equal(store.launchSequences.getBySession(sequence.sessionId).readyAt, null);
     });
 
