@@ -684,6 +684,18 @@ Every plan or design doc a session writes to `<project>/.tangleclaw/plans/<name>
   ````
 
   Every value is escaped. Links must be absolute `https://` URLs, unknown keys are refused, and the closed/total count is computed from `cars`. A block that doesn't validate shows as code, with the reason above it.
+
+  Optional train fields:
+
+  - `version`: a short label such as `v6`, shown as a badge.
+  - `status`: one of `planned`, `ready`, `in-progress`, `blocked`, `shipped` or `sunset`, shown as a badge.
+
+  A car may carry `state`: `open`, `in-progress` (amber), `blocked` (red) or `closed` (green). It must agree with `closed`. Without it, `closed` alone decides, as before. Each car is labelled with its state in words, so colour is never the only signal.
+- The **new cards queue** is a fenced block tagged `tc-queue`: `{"newDays": 14, "issues": [{"issue": 1932, "title": "…", "href": "https://…", "type": "bug", "labels": ["…"], "createdAt": "2026-09-27T09:30:00Z"}]}`, with an optional `title`.
+  - It lists every open issue that is not in a train, newest first.
+  - Issues filed within `newDays` are marked **new** and appear as blue pills on the card.
+  - Age is worked out when the page is viewed, so an issue stops being new on its own as time passes.
+  - Age never removes an issue from the queue.
 - Table cells never break a word, so issue numbers like `#1234` stay on one line; a wide table scrolls sideways instead.
 
 ## Mobile Tips

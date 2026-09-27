@@ -6,6 +6,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **Roadmap Board: a new-cards queue, version and status badges, and per-car states** (#1933). A plan can include a `tc-queue` block listing the open issues not yet in a train, newest first. Issues filed within a set number of days are marked **new** and shown as blue pills on the card. Age is worked out when the page is viewed, so an old issue stays in the queue but loses its new mark. Train cards can carry a `version` badge (such as `v6`) and a `status` badge (`planned`, `ready`, `in-progress`, `blocked`, `shipped` or `sunset`). A car can be `in-progress` (amber) or `blocked` (red) as well as open or closed, and is labelled in words, not colour alone. Existing boards render exactly as before.
+
 - **Roadmap train cards on served plan pages** (#1930). A plan can include a fenced block tagged `tc-train` holding one JSON object. TangleClaw renders it as a collapsible card: a 🚂 row of issue cars, green for closed and grey for open, then the train's name, a closed/total count and an optional `verified` badge. The card expands to the thesis, the issue table and the sequencing note; closed issues show ✅ and are not struck through. The Roadmap Board uses these cards. Raw HTML in plans is still shown as text: the card is built from fixed styles, every value is escaped, links must be absolute `https://` URLs, and unknown keys are refused. A block that doesn't validate shows as code, with the reason above it.
 
 - **A session can report its own workload with `tc workload set`** (#1912, ADR 0020; Fleet Workload Visibility Phase A).
