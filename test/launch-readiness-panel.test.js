@@ -48,10 +48,9 @@ function liftFunction(src, decl) {
 /**
  * Render the panel for a list of sequences.
  * @param {object[]} sequences - Rows as `GET /api/launch-sequences` returns them
- * @param {string} [projectRecoveryMode] - The project's CURRENT recovery mode, as the route reports it
  * @returns {string} The container's markup
  */
-function render(sequences, projectRecoveryMode) {
+function render(sequences) {
   const { doc } = makeDocument(['projLaunchSequencesList']);
   const ctx = { document: doc, window: {} };
   vm.createContext(ctx);
@@ -68,11 +67,10 @@ function render(sequences, projectRecoveryMode) {
   // install, where the panel renders the moment the file is saved.
   vm.runInContext(liftFunction(UI_SRC, 'function launchClearanceLabel'), ctx);
   vm.runInContext(liftFunction(UI_SRC, 'function launchRecoveryHtml'), ctx);
-  vm.runInContext(liftFunction(UI_SRC, 'function launchRecoveryModeSwitchHtml'), ctx);
   vm.runInContext(liftFunction(UI_SRC, 'function startupFireLabel'), ctx);
   vm.runInContext(liftFunction(UI_SRC, 'function launchStartupControlHtml'), ctx);
   vm.runInContext(liftFunction(UI_SRC, 'function renderProjectLaunchSequences'), ctx);
-  ctx.renderProjectLaunchSequences(sequences, projectRecoveryMode);
+  ctx.renderProjectLaunchSequences(sequences);
   return doc.getElementById('projLaunchSequencesList').innerHTML;
 }
 
@@ -311,43 +309,6 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
         'a control the route would refuse is worse than no control');
     });
 
-    // #1937: one switch per panel, driven by the project's CURRENT mode. On a
-    // row it would vanish with the last launch waiting for a clear, and once
-    // the project is advisory no launch waits, so the way back went with it.
-    it('shows one recovery-mode switch for the panel, and the row waiting on a clear points at it', () => {
-      const html = render([
-        row({ recovery: 'required', recoveryMode: 'operator', preflightVerdict: 'crash-recovery' }),
-        row({ sequenceId: 8, sessionId: 41, recovery: 'required', recoveryMode: 'operator', preflightVerdict: 'crash-recovery' })
-      ], 'operator');
-      assert.equal((html.match(/data-launch-recovery-mode=/g) || []).length, 1, 'one switch, however many rows wait');
-      assert.match(html, /data-launch-recovery-mode="advisory"/);
-      assert.match(html, /data-launch-recovery-clear="9"/);
-      assert.match(html, /next launch/i, 'a launch keeps the mode it froze, and the panel says so');
-      assert.match(html, /written reconciliation/, 'what advisory means is stated before it is chosen');
-      assert.match(html, /recovery-mode switch/i, 'the row that needs a clear names the switch that would end the chore');
-    });
-
-    it('offers the way back once the project is advisory, even with no launch waiting', () => {
-      for (const rows of [[], [row()], [row({ recovery: 'cleared', recoveryClearance: 'agent-reconciled', recoveryMode: 'advisory' })]]) {
-        const html = render(rows, 'advisory');
-        assert.match(html, /data-launch-recovery-mode="operator"/, `rows: ${rows.length}`);
-        assert.doesNotMatch(html, /data-launch-recovery-mode="advisory"/);
-      }
-    });
-
-    it('still offers the clear on an operator-mode launch after the project switched', () => {
-      const html = render([row({ recovery: 'required', recoveryMode: 'operator', preflightVerdict: 'crash-recovery' })], 'advisory');
-      assert.match(html, /data-launch-recovery-clear="9"/, 'this launch froze operator mode and still needs the clear');
-      assert.match(html, /data-launch-recovery-mode="operator"/);
-    });
-
-    it('offers no switch when the project\'s current mode is unknown', () => {
-      const html = render([row({ recovery: 'required', recoveryMode: 'operator', preflightVerdict: 'crash-recovery' })]);
-      assert.match(html, /data-launch-recovery-clear="9"/);
-      assert.doesNotMatch(html, /data-launch-recovery-mode/,
-        'a switch that cannot say which way it goes is not offered');
-    });
-
     it('never words an open install\'s clear as an operator\'s', () => {
       // The whole reason the three clearances are kept apart. An install with no
       // login proved that the click came from its own dashboard and nothing
@@ -482,63 +443,6 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
     });
   });
 
-  describe('the recovery-mode switch reaches the server (#1937)', () => {
-    /**
-     * Run `wireLaunchRecoveryModeSwitches` against one button and report what
-     * the handler sent.
-     * @param {string} mode - The mode the button was rendered to switch to
-     * @param {object|null} [answer] - What the PATCH answers with
-     * @returns {Promise<{calls: object[], status: object[], btn: object, refreshed: number}>}
-     */
-    async function click(mode, answer) {
-      const { doc } = makeDocument(['projLaunchSequencesList']);
-      const ctx = { document: doc, window: {} };
-      vm.createContext(ctx);
-      const calls = [];
-      const status = [];
-      let refreshed = 0;
-      const btn = {
-        disabled: false,
-        dataset: { launchRecoveryMode: mode },
-        _click: null,
-        addEventListener(type, fn) { if (type === 'click') this._click = fn; }
-      };
-      ctx.apiMutate = async (url, method, body) => {
-        calls.push({ url, method, body });
-        return answer === undefined ? { name: 'my project' } : answer;
-      };
-      ctx.api = { lastError: 'launchSequence.recoveryMode must be one of operator, advisory' };
-      ctx.projectRulesTargetId = 7;
-      ctx.projectRulesTargetName = 'my project';
-      ctx._setProjectRulesStatus = (text, ok) => status.push({ text, ok });
-      ctx.refreshProjectLaunchSequences = async () => { refreshed++; return true; };
-      vm.runInContext(liftFunction(UI_SRC, 'function wireLaunchRecoveryModeSwitches'), ctx);
-      ctx.wireLaunchRecoveryModeSwitches({ querySelectorAll: () => [btn] });
-      await btn._click();
-      return { calls, status, btn, refreshed };
-    }
-
-    it('PATCHes only the recovery mode, so the other launch settings are left alone', async () => {
-      const { calls, status, refreshed } = await click('advisory');
-      assert.equal(calls.length, 1);
-      assert.equal(calls[0].url, '/api/projects/my%20project');
-      assert.equal(calls[0].method, 'PATCH');
-      // Round-tripped: the body was built inside the vm realm, so its prototype
-      // is not this realm's Object and a strict deepEqual would compare that.
-      assert.deepEqual(JSON.parse(JSON.stringify(calls[0].body)), { launchSequence: { recoveryMode: 'advisory' } });
-      assert.equal(status[0].ok, true);
-      assert.match(status[0].text, /next launch/i);
-      assert.equal(refreshed, 1, 'the panel re-reads, so the row shows the mode that is now true');
-    });
-
-    it('re-enables the button and says why when the switch is refused', async () => {
-      const { status, btn } = await click('operator', null);
-      assert.equal(btn.disabled, false);
-      assert.equal(status[0].ok, false);
-      assert.match(status[0].text, /recoveryMode must be one of/);
-    });
-  });
-
   describe('the refresh cycle wires the buttons it just rendered (Train 21, #1587)', () => {
     it('renders and then wires, so a re-rendered panel is never inert', () => {
       // The hop between the two halves. `renderProjectLaunchSequences` replaces
@@ -550,19 +454,16 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
       const ctx = { document: doc, window: {} };
       vm.createContext(ctx);
       const order = [];
-      let renderedMode;
-      ctx.api = async () => ({ sequences: [row({ recovery: 'required', recoveryMode: 'operator' })], projectRecoveryMode: 'advisory' });
+      ctx.api = async () => ({ sequences: [row({ recovery: 'required', recoveryMode: 'operator' })] });
       ctx.projectRulesTargetId = 7;
-      ctx.renderProjectLaunchSequences = (_rows, mode) => { renderedMode = mode; order.push('render'); };
+      ctx.renderProjectLaunchSequences = () => order.push('render');
       ctx.wireLaunchRecoveryClears = () => order.push('wire');
-      ctx.wireLaunchRecoveryModeSwitches = () => order.push('wire-modes');
       ctx.wireStartupFires = () => order.push('wire-fires');
       vm.runInContext(liftFunction(UI_SRC, 'async function refreshProjectLaunchSequences'), ctx);
       return ctx.refreshProjectLaunchSequences(7).then((answer) => {
         assert.equal(answer, true);
-        assert.deepEqual(order, ['render', 'wire', 'wire-modes', 'wire-fires'],
-          'wiring runs after the render that produced the buttons, and runs at all — every button kind');
-        assert.equal(renderedMode, 'advisory', 'the project\'s current mode reaches the renderer (#1937)');
+        assert.deepEqual(order, ['render', 'wire', 'wire-fires'],
+          'wiring runs after the render that produced the buttons, and runs at all — both button kinds');
       });
     });
 
@@ -576,7 +477,6 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
       ctx.projectRulesTargetId = 7;
       ctx.renderProjectLaunchSequences = () => order.push('render');
       ctx.wireLaunchRecoveryClears = () => order.push('wire');
-      ctx.wireLaunchRecoveryModeSwitches = () => order.push('wire-modes');
       ctx.wireStartupFires = () => order.push('wire-fires');
       vm.runInContext(liftFunction(UI_SRC, 'async function refreshProjectLaunchSequences'), ctx);
       return ctx.refreshProjectLaunchSequences(7).then((answer) => {

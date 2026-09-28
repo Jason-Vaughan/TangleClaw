@@ -379,8 +379,7 @@ is served behind a warning and the session clears its own recovery by attesting 
 reconciliation, recorded as `agent-reconciled`. An unrecognised value reads as `operator`, so a typo
 can never be why a damaged handoff went unnoticed. Every operator-mode refusal (the withheld task step,
 `RECOVERY_UNCLEARED`, `tc start status`, and the unready nudge) names `advisory` as the operator's
-choice, and the Launch readiness panel shows a recovery-mode switch at its top (#1937). A switch applies
-from the next launch. The mode is the operator's choice (ADR 0017 R3a): a session that names it in
+choice (#1937), and a change applies from the next launch. The mode is the operator's choice (ADR 0017 R3a): a session that names it in
 `PATCH /api/projects/:name` is refused `403 OPERATOR_ONLY`. That guards the API; the stored value lives
 in the project's own `.tangleclaw/project.json`.
 

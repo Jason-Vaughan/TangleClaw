@@ -200,8 +200,10 @@ loosening its own gate. `PATCH /api/projects/:name` refuses the whole request, b
 looked up or written, with `403 OPERATOR_ONLY` whenever a non-operator caller names
 `launchSequence.recoveryMode`, even at its current value. The operator's dashboard path is unchanged,
 the project's other settings are not affected, and each launch still freezes the mode it started with.
-Every operator-mode refusal names the setting as the operator's choice, and the Launch readiness panel
-carries the switch, so the opt-in above can be found by the people who clear by hand.
+Every operator-mode refusal names the setting as the operator's choice, so the opt-in above can be found
+by the people who clear by hand. The operator sets it through that route. A dashboard control for it was
+built and withdrawn under the A24 UI freeze, which bars new dashboard controls until the overhaul is
+approved.
 
 The refusal guards the API path, not the value: the setting is stored in the project's own
 `.tangleclaw/project.json`, which that project's session can write, so it is not a hard security

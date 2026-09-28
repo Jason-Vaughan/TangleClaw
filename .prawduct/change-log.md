@@ -45,11 +45,11 @@ The PM dispatched this over Medusa. The Architect ruled mid-build that `recovery
 
 **The change.**
 - One shared hint (`ADVISORY_RECOVERY_HINT`, `lib/launch-page.js`) now ends the withheld task step, `RECOVERY_UNCLEARED`, `tc start status` and the nudge.
-- The Launch readiness panel has one recovery-mode switch, driven by the new `projectRecoveryMode` on `GET /api/launch-sequences`.
+- `GET /api/launch-sequences` reports the project's current mode as `projectRecoveryMode`. A Launch readiness panel switch was built and withdrawn on the Architect's A24 UI-freeze ruling, so `public/` is unchanged.
 - `launchSequence.taskStepWithheld` is the single owner of the "withheld" decision. The status block carries it as `taskWithheld`, and the nudge and `tc start status` read it.
 - `PATCH /api/projects/:name` refuses any non-operator request naming `recoveryMode`, even at its current value, with `403 OPERATOR_ONLY` before anything is written. This guards the API only: the value lives in the session-writable `project.json`, which #1982 tracks.
 
-**Review.** The first Critic pass (rev-20260927T230505Z-72594729) found 0 blocking. Its 4 points were fixed: overclaimed guarantee, vanishing way-back switch, triplicated gate check, ruling not in repo. The covering pass (rev-20260927T233553Z-d0966818) was clean, and its 5 observations were accepted on the record.
+**Review.** The first Critic pass (rev-20260927T230505Z-72594729) found 0 blocking. Its 4 points were fixed: overclaimed guarantee, vanishing way-back switch (the switch itself was later withdrawn under A24), triplicated gate check, ruling not in repo. The covering pass (rev-20260927T233553Z-d0966818) was clean, and its 5 observations were accepted on the record.
 
 **Evidence.** The full suite is green (a clean run at 2026-09-27T23:35Z). An earlier run had 5 failures in `test/tmux.test.js`, caused by its fixed tmux session names colliding with a concurrent suite on the same host. This branch does not change tmux; that bug is filed as #1983. The optional repeated-clears hint was descoped, with the PM informed.
 
