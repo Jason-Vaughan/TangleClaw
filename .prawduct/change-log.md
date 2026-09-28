@@ -48,10 +48,12 @@ The PM dispatched this on the Architect's ruling for #1799: a separate PR stacke
 - Each is a closed record: type, stable key, project, timestamp and fixed server-rendered text. It is stored as a relayable outbound item (schema v52, additive), listed with `kind`/`type` and settled only by the helper's ack.
 - `release-action-needed` and `certification-state-changed` are reserved and refused.
 - Nothing is recorded while the channel is off.
+- A notification's synthetic id is `notify/<key>`, outside the Hub id rule, and `recordArrival` refuses an arrival whose id breaks that rule. No received message can take a notification's id and suppress it.
+- A project name that is not display-safe is left out ("a project") and logged, so the notice still goes.
 
-**Review.** Critic `rev-20260928T012351Z-374bee12` found 0 blocking. Its observations were fixed: the fleet-idle episode was opened before its notice, and never closed while the channel was off; three untested failure paths; unneeded lazy requires; wording. Verify passes `rev-20260928T012758Z-4f809b73` and `rev-20260928T013019Z-483a305c` were clean. The second of them led to the stable pending key, so a crash cannot notify twice.
+**Review.** Critic `rev-20260928T012351Z-374bee12` found 0 blocking. Its observations were fixed: the fleet-idle episode was opened before its notice, and never closed while the channel was off; three untested failure paths; unneeded lazy requires; wording. Verify passes `rev-20260928T012758Z-4f809b73` and `rev-20260928T013019Z-483a305c` were clean. The second of them led to the stable pending key, so a crash cannot notify twice. Cumulative `rev-20260928T013906Z-c55e8d48` found 0 blocking. Its two warnings (the id collision, the silent drop on an unsafe name) were fixed, and verify `rev-20260928T014422Z-b2965cbb` was clean. The PR review found 0 blocking.
 
-**Evidence.** A full suite run recorded tree-valid at 2026-09-28T01:38Z was clean. 22 notification tests drive each source through its real detector (the watchdog ladder, `POST /api/tc/workload`, the channel pump), plus a v51→v52 in-place upgrade and a crash between recording and opening the episode. Each hook, and the stable key, was mutation-checked by removing it and watching its test go red.
+**Evidence.** The full suite is green on the final tree; its tree-valid run is in the evidence store. 25 notification tests drive each source through its real detector (the watchdog ladder, `POST /api/tc/workload`, the channel pump), plus a v51→v52 in-place upgrade and a crash between recording and opening the episode. Each hook, and the stable key, was mutation-checked by removing it and watching its test go red.
 
 ## 2026-09-27 — Operator channel: a chat helper's durable line to one project over Medusa (#1956)
 
