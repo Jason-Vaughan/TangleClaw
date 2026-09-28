@@ -35,6 +35,26 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-28 — Operator channel: merge main to clear #1966's conflicts (#1956)
+
+<!-- prawduct: type=chore | scope=operator-channel-1956 -->
+
+Stack integration S1 (dispatched by the PM, approved by the Architect).
+
+**Why:** `main` moved 54 commits past C1's base (`c5c05a70`), and #1966 no longer merged. C1.5 (#2001)
+and C2 (#2003) are stacked on C1's head `25f03e01`. A rebase would have rewritten that head, orphaned
+both PRs and needed a force-push. A merge commit keeps `25f03e01` as an ancestor, so both stay valid
+and untouched.
+
+**What:** a `--no-ff` merge of `main` @ `69fc2253` into `feat/operator-channel`. Only `CHANGELOG.md` and
+`FEATURES.md` conflicted, both as adjacent additions, and each is resolved as a union: `main`'s entries
+as `main` has them now, plus C1's operator-channel entries unchanged. Against `main`, the resolution
+adds only C1's own lines. The rest merged cleanly. Two checks found nothing to fix:
+- `main` did not touch `lib/store.js` and leaves the schema at v50, so C1's v51 migration has no
+  collision.
+- C1's `CHANNEL_TOKEN_SCOPE` check sits in the global request dispatcher, so it also covers the
+  rules and learnings routes `main` added.
+
 ## 2026-09-27 — Operator channel: a chat helper's durable line to one project over Medusa (#1956)
 
 <!-- prawduct: type=feature | scope=operator-channel-1956 -->
