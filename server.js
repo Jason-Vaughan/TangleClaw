@@ -4583,10 +4583,12 @@ route('GET', '/api/launch-sequences', (req, res) => {
       ...(readsStartupControl ? { startupControl: _startupControlForLaunch(sequence, access) } : {})
     };
   });
-  // #1937: each row carries the mode its launch FROZE; the panel also needs
-  // the project's CURRENT setting, or it would offer a switch already made and
-  // could not say that a change applies only from the next launch. `null` for
-  // a project this install does not have: no mode is not the default mode.
+  // #1937: each row carries the mode its launch FROZE; this is the project's
+  // CURRENT setting beside them, so a reader can tell a launch that started in
+  // operator mode from a project that is operator now (the setting applies from
+  // the next launch). No dashboard control reads it while the A24 freeze
+  // stands. `null` for a project this install does not have: no mode is not
+  // the default mode.
   const projectRow = store.projects.get(projectId);
   const projectRecoveryMode = projectRow
     ? projectConfig.resolveRecoveryMode(store.projectConfig.load(projectRow.path)).mode

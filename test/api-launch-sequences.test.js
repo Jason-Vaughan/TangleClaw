@@ -146,8 +146,8 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
     assert.ok(!theirs.body.sequences.some((s) => ids.includes(s.sequenceId)));
   });
 
-  // #1937: each row carries the mode its launch FROZE; the panel also needs
-  // the project's CURRENT mode, or it offers a switch that was already made.
+  // #1937: each row carries the mode its launch FROZE; the response also says
+  // the project's CURRENT mode, which a later change of the setting moves.
   it('reports the project\'s current recovery mode beside the frozen per-launch one', async () => {
     const before = await get(server, `/api/launch-sequences?projectId=${project.id}`);
     assert.equal(before.body.projectRecoveryMode, 'operator', 'the default, when the project sets nothing');
