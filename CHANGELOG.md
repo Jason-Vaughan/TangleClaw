@@ -291,6 +291,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- Windows browser Ctrl+V now uses native clipboard paste in project terminals and both Master terminal surfaces, instead of sending the terminal control character SYN. Existing bracketed-paste handling is preserved (#2023).
+
 - **Roadmap Topic Buckets render as cards instead of raw block text** (#2006). Under the unreleased #1942 identity rules, a `tc-train` block with `"kind": "bucket"` and no `train` was refused, because every kind except `unconfigured` required a train identity. The shared Roadmap Board, served from a live checkout of main, therefore showed its topic sections (Infrastructure Hardening, Master Control, Version 5 Subsequent) as code with an error. A bucket now renders as a normal collapsible card named **Topic Bucket: <title>**, and never shows or borrows a train number. A bucket that supplies a `train` is refused (it shows as code with the reason), which keeps topic buckets distinct from numbered trains: remove `train` from any such block. Train, pilot and unconfigured validation are unchanged.
 
 - **Opening the dashboard's Medusa inbox panel no longer acts on the agent's mail** (#1987). The panel acknowledged every message it displayed by ID. For a normal message, that removed it from the agent's inbox and closed the exchange before the agent ever saw it, so the sender never got a reply. The panel now only fetches and renders.

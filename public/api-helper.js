@@ -1403,6 +1403,33 @@
   }
 
   /**
+   * Leave Windows Ctrl+V to the browser instead of xterm's Ctrl+V (SYN).
+   * Capture before xterm's textarea handler cancels the native paste action.
+   * The subsequent paste event still uses xterm's bracketed-paste handling,
+   * including over HTTP where navigator.clipboard is unavailable.
+   * @param {Window} win - Parent window, for client platform detection.
+   * @param {object} term - The iframe's xterm instance.
+   * @param {Document} doc - The iframe document.
+   * @returns {boolean} Whether Windows paste handling is installed.
+   */
+  function tcWireWindowsTerminalPaste(win, term, doc) {
+    const nav = (doc && doc.defaultView && doc.defaultView.navigator) || (win && win.navigator);
+    if (!doc || !term || !nav || !/Win/i.test(nav.platform || '')) return false;
+    if (doc._tcWindowsPasteWired) return true;
+    doc._tcWindowsPasteWired = true;
+    doc.addEventListener('keydown', (event) => {
+      if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey
+          || event.isComposing || String(event.key).toLowerCase() !== 'v') return;
+      const target = event.target;
+      if (!target || !(target === term.textarea
+          || (term.element && term.element.contains(target)))) return;
+      // Do NOT preventDefault: that would cancel the browser paste as well.
+      event.stopImmediatePropagation();
+    }, true);
+    return true;
+  }
+
+  /**
    * Wire a ttyd terminal iframe with the full TangleClaw terminal stack:
    * theme, the #431 ⌥+drag local-selection override, the #443 touch-scroll
    * shim, and the #445 plain-drag/long-press copy path. One readiness retry
@@ -1437,6 +1464,7 @@
             const doc = frame.contentDocument;
             tcEnableLocalSelectionOverride(term, doc);
             if (doc) {
+              tcWireWindowsTerminalPaste(win, term, doc);
               tcWireTerminalTouchScroll(win, term, doc);
               tcWireTerminalDragCopy(win, term, doc);
             }
