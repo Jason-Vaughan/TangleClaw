@@ -17,7 +17,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { registerServiceWorker } = require('../public/sw-register.js');
+const { registerServiceWorker, requestServiceWorkerUpdate } = require('../public/sw-register.js');
 
 /**
  * Minimal mock of the `navigator.serviceWorker` surface the function uses:
@@ -100,5 +100,60 @@ describe('registerServiceWorker (#380 SW update propagation)', () => {
     const nav = makeNav({});
     nav.serviceWorker.register = () => Promise.reject(new Error('blocked'));
     assert.equal(await registerServiceWorker(nav, {}), null);
+  });
+});
+
+describe('requestServiceWorkerUpdate (#411 update check when the stale-server banner appears)', () => {
+  /**
+   * A nav whose container also answers getRegistration, as a real browser's does.
+   * @param {object} [cfg]
+   * @returns {object}
+   */
+  function navWithRegistration(cfg) {
+    const nav = makeNav(cfg);
+    nav.serviceWorker.getRegistration = () => Promise.resolve(nav._reg);
+    return nav;
+  }
+
+  it('checks for a new /sw.js through the page\'s existing registration', async () => {
+    const nav = navWithRegistration({});
+    assert.equal(await requestServiceWorkerUpdate(nav), true);
+    assert.equal(nav._reg.updateCount, 1);
+  });
+
+  it('end to end: the banner-triggered check finds a new worker, which takes control and reloads the page once', async () => {
+    // A long-lived tab: a worker already controls it, registration ran at load.
+    const nav = navWithRegistration({ controller: true });
+    let reloads = 0;
+    await registerServiceWorker(nav, { reload: () => { reloads++; }, addVisibilityListener: () => {} });
+    const loadChecks = nav._reg.updateCount;
+    // The next update check finds a new sw.js; skipWaiting + clients.claim in
+    // sw.js hand it control, which the browser reports as controllerchange.
+    nav._reg.update = function () {
+      this.updateCount++;
+      nav.serviceWorker._fire('controllerchange');
+      return Promise.resolve();
+    };
+    assert.equal(await requestServiceWorkerUpdate(nav), true);
+    assert.equal(nav._reg.updateCount, loadChecks + 1, 'the banner issued exactly one extra check');
+    assert.equal(reloads, 1, 'the existing guarded controllerchange path reloaded onto the new assets');
+  });
+
+  it('answers false, and never throws, when there is nothing to update', async () => {
+    assert.equal(await requestServiceWorkerUpdate(undefined), false);
+    assert.equal(await requestServiceWorkerUpdate({}), false);
+    assert.equal(await requestServiceWorkerUpdate({ serviceWorker: {} }), false, 'no getRegistration');
+    const none = makeNav({});
+    none.serviceWorker.getRegistration = () => Promise.resolve(undefined);
+    assert.equal(await requestServiceWorkerUpdate(none), false, 'page not yet registered');
+  });
+
+  it('swallows a failed check (offline, a rejected getRegistration) and answers false', async () => {
+    const offline = makeNav({ registration: { update: () => Promise.reject(new Error('offline')) } });
+    offline.serviceWorker.getRegistration = () => Promise.resolve(offline._reg);
+    assert.equal(await requestServiceWorkerUpdate(offline), false);
+    const broken = makeNav({});
+    broken.serviceWorker.getRegistration = () => { throw new Error('SecurityError'); };
+    assert.equal(await requestServiceWorkerUpdate(broken), false);
   });
 });

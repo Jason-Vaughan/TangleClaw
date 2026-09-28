@@ -85,6 +85,36 @@
     }).catch(function () { return null; });
   }
 
+  /**
+   * Ask the browser to check for a new /sw.js right now, through the
+   * registration this page already has (#411).
+   *
+   * The stale-server banner calls this when it appears: it is the moment the
+   * page has learned the server moved, and a tab that has sat in the
+   * foreground since then may not have triggered the visibility check above.
+   * When a new worker is found, the existing skipWaiting + clients.claim hand
+   * it control and the guarded controllerchange reload above brings the page
+   * onto the current assets. Nothing is shown; a failure is swallowed, the
+   * same posture as every other update check here.
+   *
+   * @param {{serviceWorker?: ServiceWorkerContainer}} nav - host exposing
+   *   `.serviceWorker` (the real `navigator`, or a mock in tests).
+   * @returns {Promise<boolean>} true when an update check was issued and
+   *   resolved; false when there is no worker, no registration, or it failed.
+   */
+  function requestServiceWorkerUpdate(nav) {
+    if (!nav || !nav.serviceWorker || typeof nav.serviceWorker.getRegistration !== 'function') {
+      return Promise.resolve(false);
+    }
+    return Promise.resolve()
+      .then(function () { return nav.serviceWorker.getRegistration(); })
+      .then(function (reg) {
+        if (!reg || typeof reg.update !== 'function') return false;
+        return reg.update().then(function () { return true; });
+      })
+      .catch(function () { return false; });
+  }
+
   // Browser: register immediately on load. Same trigger point as the old
   // inline landing.js block, now hardened against the iOS stranding bug.
   if (global && global.navigator && global.navigator.serviceWorker) {
@@ -92,9 +122,16 @@
       reload: function () { if (global.location) global.location.reload(); }
     });
   }
+  // landing.js loads after this file and calls the update check through this
+  // global, so it needs no reference to the registration of its own.
+  if (global) {
+    global.tcRequestServiceWorkerUpdate = function () {
+      return requestServiceWorkerUpdate(global.navigator);
+    };
+  }
 
   // Node (test): expose via CommonJS too.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { registerServiceWorker };
+    module.exports = { registerServiceWorker, requestServiceWorkerUpdate };
   }
 })(typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : null));
