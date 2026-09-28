@@ -184,6 +184,23 @@ describe('tc-discord-helper', () => {
       assert.equal(JSON.parse(errLines.at(-1)).code, 'helper-already-running');
     });
 
+    it('treats a lock it cannot read as held, never as stale', async () => {
+      await configure();
+      withSecrets();
+      fs.mkdirSync(p().dir, { recursive: true });
+      for (const junk of ['', 'not a pid']) {
+        fs.writeFileSync(p().pid, junk);
+        stopFn = null;
+        const running = cli.main(['run'], deps);
+        const early = await Promise.race([running, new Promise((r) => setTimeout(() => r('still running'), 50))]);
+        if (stopFn) { stopFn(); await running; }
+        assert.equal(early, 1, `refused over ${JSON.stringify(junk)}`);
+        assert.equal(fs.readFileSync(p().pid, 'utf8'), junk, 'the lock is left alone');
+      }
+      assert.equal(JSON.parse(errLines.at(-1)).code, 'helper-already-running');
+      assert.deepEqual(fs.readdirSync(p().dir).filter((f) => f.endsWith('.tmp')), [], 'no private pid file is left behind');
+    });
+
     it('lets only one of two helpers started at the same instant run', async () => {
       await configure();
       withSecrets();
