@@ -5641,8 +5641,10 @@ route('GET', '/api/learnings', (req, res) => {
 // PUT /api/learnings/:id/tier — correct a learning's tier by hand.
 // The loop advances tiers on its own via recurrence; this is the operator's
 // override for when it advanced something they disagree with, or held back
-// something they want live now.
-route('PUT', '/api/learnings/:id/tier', (_req, res, params, body) => {
+// something they want live now. An active learning is rendered into its
+// project's session primes, so the override is the operator's alone (#2018).
+route('PUT', '/api/learnings/:id/tier', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'change a learning\'s tier')) return;
   if (!body || typeof body.tier !== 'string') {
     return errorResponse(res, 400, 'tier is required', 'BAD_REQUEST');
   }

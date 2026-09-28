@@ -75,7 +75,7 @@ and `GET /api/learnings` (#1121); a valid project with no rules returns `200 []`
 | `POST /api/session-rules/conflicts` `{content, projectId?}` | Non-authoritative conflict-candidate signal |
 | `PUT /api/session-rules/:id/status` `{status, expectedContent, changeReason?}` | #569 — approve (`active`) or decline (`rejected`) a proposal. #1053 — an approval must carry `expectedContent`, the exact stored text the operator was shown: without it, `400 EXPECTED_CONTENT_REQUIRED`; when the rule no longer holds that text, `409 RULE_CONTENT_CHANGED` carrying `currentContent`, and nothing changes. The password gate is checked first, so a caller without it learns nothing about the text. A rejection needs no `expectedContent` and is never compared. #2013: approving needs the operator as the caller as well as the password; a bound session may decline its own project's still-proposed AI rule, and moving an `active` rule out of `active` is the operator's |
 | `GET /api/learnings?projectId=&tier=` | #569 — list a project's learnings |
-| `PUT /api/learnings/:id/tier` `{tier}` | #569 — operator override of a learning's tier |
+| `PUT /api/learnings/:id/tier` `{tier}` | #569 — operator override of a learning's tier. #2018: the operator only, because an active learning is rendered into the project's session primes |
 
 ## The automatic loop (#569)
 

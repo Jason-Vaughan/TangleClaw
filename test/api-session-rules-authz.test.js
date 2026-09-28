@@ -446,7 +446,33 @@ describe('api/session-rules caller gate (#2013)', () => {
     });
   });
 
-  describe('every rule-mutating route refuses an unbound caller', () => {
+  describe('PUT /api/learnings/:id/tier (#2018)', () => {
+    // An active learning is rendered into its project's session primes, so
+    // forcing a tier is as much a governance act as approving a rule.
+    it('a bound session cannot force a learning into the injected tier', async () => {
+      const learning = store.learnings.create({ projectId: own.id, content: `tier bound ${Math.random()}` });
+      const res = await request('PUT', `/api/learnings/${learning.id}/tier`, { tier: 'active' }, asOwn);
+      assert.equal(res.status, 403);
+      assert.equal(res.data.code, 'OPERATOR_ONLY');
+      assert.equal(store.learnings.list(own.id).find((l) => l.id === learning.id).tier, 'provisional');
+    });
+
+    it('an unbound caller cannot either', async () => {
+      const learning = store.learnings.create({ projectId: own.id, content: `tier unbound ${Math.random()}` });
+      const res = await request('PUT', `/api/learnings/${learning.id}/tier`, { tier: 'active' }, UNBOUND);
+      assert.equal(res.status, 403);
+      assert.equal(store.learnings.list(own.id).find((l) => l.id === learning.id).tier, 'provisional');
+    });
+
+    it('the operator still sets it', async () => {
+      const learning = store.learnings.create({ projectId: own.id, content: `tier operator ${Math.random()}` });
+      const res = await request('PUT', `/api/learnings/${learning.id}/tier`, { tier: 'active' }, asOperator);
+      assert.equal(res.status, 200);
+      assert.equal(store.learnings.list(own.id).find((l) => l.id === learning.id).tier, 'active');
+    });
+  });
+
+  describe('every rule- or learning-mutating route refuses an unbound caller', () => {
     // The roster is read from the route registrations in server.js — the one
     // place a route's verb and path are both written — so a mutation route
     // added later is swept in without anyone remembering to list it here.
@@ -454,7 +480,7 @@ describe('api/session-rules caller gate (#2013)', () => {
       'POST /api/session-rules/conflicts': 'a read-only candidate signal; it writes nothing'
     };
     const source = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-    const registered = [...source.matchAll(/route\('(POST|PUT|PATCH|DELETE)', '(\/api\/(?:session-rules|master\/rules)[^']*)'/g)]
+    const registered = [...source.matchAll(/route\('(POST|PUT|PATCH|DELETE)', '(\/api\/(?:session-rules|master\/rules|learnings)[^']*)'/g)]
       .map(([, method, urlPath]) => `${method} ${urlPath}`);
 
     it('the roster is non-trivial and its exemptions still exist', () => {
@@ -468,13 +494,14 @@ describe('api/session-rules caller gate (#2013)', () => {
         const [method, pattern] = key.split(' ');
         const target = activeRule(own.id, `sweep target ${key} ${Math.random()}`);
         const learning = store.learnings.create({ projectId: own.id, content: `sweep learning ${Math.random()}` });
-        const urlPath = pattern.replace(':id', String(target.id));
-        const snapshot = JSON.stringify(store.sessionRules.list({}));
+        const urlPath = pattern.replace(':id', String(pattern.startsWith('/api/learnings') ? learning.id : target.id));
+        const snapshot = JSON.stringify([store.sessionRules.list({}), store.learnings.list(own.id)]);
         const res = await request(method, urlPath,
-          { content: 'swept', projectId: own.id, status: 'rejected', enabled: false, versionNo: 1, learningId: learning.id },
+          { content: 'swept', projectId: own.id, status: 'rejected', enabled: false, versionNo: 1, learningId: learning.id, tier: 'active' },
           UNBOUND);
         assert.equal(res.status, 403, `${key} answered ${res.status}`);
-        assert.equal(JSON.stringify(store.sessionRules.list({})), snapshot, `${key} changed a rule while refusing`);
+        assert.equal(JSON.stringify([store.sessionRules.list({}), store.learnings.list(own.id)]), snapshot,
+          `${key} changed a rule or a learning while refusing`);
       });
     }
   });
