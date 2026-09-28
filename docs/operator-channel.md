@@ -11,7 +11,7 @@ The operator channel lets a local chat helper, such as the Discord bridge, talk 
 
 Messages are kept durably in both directions. A message written while the project is offline, or between two of its sessions, is delivered when a session is next live. No message is delivered twice.
 
-This page covers TangleClaw's side. The helper itself (the Discord Gateway client, where its token is kept, and the launchd job) is documented with the helper.
+This page covers TangleClaw's side. The Discord helper (the Gateway client, where its tokens are kept, and the launchd job) is documented in [discord-helper.md](discord-helper.md).
 
 ## What the channel is, and is not
 

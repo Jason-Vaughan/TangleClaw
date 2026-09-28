@@ -35,6 +35,42 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-28 — The Discord helper's command, launchd job and guide (#1799, C2 chunk B)
+
+<!-- prawduct: type=feature | scope=discord-helper-1799 -->
+
+C2 chunk B, completing C2 (chunk C was folded into A, because C1.5 carries notifications).
+
+**Problem.** Chunk A's modules had no caller: nothing could configure, run, check or install the helper.
+
+**The change.**
+- `bin/tc-discord-helper` is a thin launcher over `lib/discord-helper/cli.js`, whose dependencies are injected. Commands:
+  - `configure`: the non-secret config at `~/.tangleclaw/discord-helper.json`.
+  - `set-secret`: reads the token with echo off on a terminal, stores it through `security -i`, and reads it back as proof.
+  - `verify`: proves both tokens and posts one test notification.
+  - `run`: pid lock (two helpers would double-post), status snapshot, stop on SIGTERM/SIGINT. It exits 78 by closed code for no config, an unreadable record or a missing secret, before contacting anyone.
+  - `status`: reads the record with `peekState`, never writing it, so it cannot write back a copy older than the live helper's.
+  - `settle`: refused while the helper runs.
+  - `install-launchd` / `uninstall-launchd`.
+- `deploy/com.tangleclaw.discord-helper.plist` holds paths and a label only, with ThrottleInterval 30. A token Discord refuses stops the Gateway without ending the process, so KeepAlive restarts cannot spend the identify budget.
+- `docs/discord-helper.md` is the operator guide: the Developer Portal intent, the ids, secrets, verify, launchd, held replies, refusals and log codes. The docs that point to it were updated: operator-channel.md, FEATURES.md, PROJECT-MAP.md and CHANGELOG. VRF-003 is queued for the live round trip on the operator's Mac.
+
+**Review fixes riding this commit.**
+- From verify `rev-20260928T023958Z-f385749f`: O-1, pruning now happens only on an EMPTY listing, which is complete whatever the server's page size; O-3, `StateError` is consumed at start-up.
+- From cumulative `rev-20260928T025418Z-c82fad91` (0 blocking, 3 warnings, 11 notes; it covered HEAD 7f39395f, not this tree):
+  - R-1/R-5: inbound hand-overs are serialized through one queue, so a retried message is never overtaken.
+  - R-4: fixed by the empty-listing rule.
+  - R-2: `outbound-queue-held` is logged when every listed reply is held.
+  - R-3: the secret is read back after storing.
+  - R-6: refusal keys now match the server's codes (`MESSAGE_TOO_LONG`, `EMPTY_MESSAGE`, `BAD_MESSAGE`).
+  - R-7: a notification's title no longer repeats "TangleClaw:".
+  - R-8: the `listOutbound` JSDoc is corrected.
+  - R-10: a 429 wait is logged as `discord-rate-limited`.
+  - R-9/R-11: the docs and the caller are added here.
+  - R-12 (operator-channel row retention, C1's code) is accepted and routed to the PM. R-13 and R-14 are informational.
+
+**Evidence.** `test/discord-helper-cli.test.js` covers every command, with a sweep that finds neither secret in any file the commands wrote or anything they printed. The three helper test files are green. The real binary's `usage` and `status` were run on this host: `status` reads the Keychain and writes nothing. Four new guard mutations (queue, queue tail, held log, read-back) each turned a test red. The full suite was recorded green at the chunk B boundary before these review fixes (7816 passed, 0 failed, 1 skipped); it is re-run on the final tree before the PR.
+
 ## 2026-09-28 — The Discord helper's relay modules (#1799, C2 chunk A)
 
 <!-- prawduct: type=feature | scope=discord-helper-1799 -->

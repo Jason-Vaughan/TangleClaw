@@ -91,12 +91,18 @@ describe('discord helper log', () => {
 
   it('defines every code the modules log', () => {
     const used = new Set();
+    let callers = '';
     for (const f of fs.readdirSync(path.join(__dirname, '../lib/discord-helper'))) {
       const src = fs.readFileSync(path.join(__dirname, '../lib/discord-helper', f), 'utf8');
       for (const m of src.matchAll(/\blog\('([a-z-]+)'/g)) used.add(m[1]);
+      if (f !== 'log.js') callers += src;
     }
     assert.ok(used.size > 10, 'precondition: the scan found the log calls');
     for (const code of used) assert.ok(Object.hasOwn(CODES, code), `code ${code} is defined`);
+    for (const code of Object.keys(CODES)) {
+      // Some callers choose a code in a conditional, so look for it quoted anywhere outside log.js.
+      if (code !== 'unknown-code') assert.ok(callers.includes(`'${code}'`), `code ${code} is logged somewhere, so the docs can promise it`);
+    }
   });
 });
 
@@ -262,6 +268,10 @@ describe('discord helper REST client', () => {
     await assert.rejects(rest.createMessage('3', { content: 'x', nonce: 'n' }), (err) => err.status === 429 && err.sent === 'no');
     assert.deepEqual(slept, [1500]);
     assert.equal(f.calls.length, 2);
+    const told = [];
+    const rest2 = createDiscordRest({ token: BOT_TOKEN, fetch: fakeFetch([{ status: 429, body: { retry_after: 99 } }, { status: 200, body: { id: '1' } }]), sleep: async () => {}, api: 'https://d.test', onRateLimited: (ms) => told.push(ms) });
+    await rest2.createMessage('3', { content: 'x', nonce: 'n' });
+    assert.deepEqual(told, [30000], 'the wait is reported, capped at 30 s');
   });
 
   it('says whether a failed post may have landed', async () => {
@@ -391,7 +401,7 @@ describe('discord helper inbound', () => {
 
   const refusals = [
     [403, 'NOT_ALLOWLISTED'], [503, 'CHANNEL_DISABLED'], [409, 'NO_TARGET'], [400, 'UNSAFE_TEXT'],
-    [413, null], [429, 'RATE_LIMITED'], [401, null], [400, 'BAD_MESSAGE']
+    [413, 'MESSAGE_TOO_LONG'], [413, null], [429, 'RATE_LIMITED'], [401, 'UNAUTHORIZED'], [400, 'BAD_MESSAGE'], [400, 'EMPTY_MESSAGE']
   ];
   for (const [status, code] of refusals) {
     it(`tells the operator, in fixed words, when TangleClaw answers ${status} ${code || ''}`, async () => {
@@ -413,6 +423,46 @@ describe('discord helper inbound', () => {
     assert.equal(await r.handle(discordMessage(), { selfId: SELF }), 'inbound-transport-failed');
     assert.equal(r.handed.length, inbound.TRANSPORT_ATTEMPTS);
     assert.equal(r.posted[0].content, inbound.REFUSAL_TEXT.UNREACHABLE);
+  });
+
+  it('hands messages over in the order they arrived, even when the first must be retried', async () => {
+    const order = [];
+    let first = true;
+    const c1 = {
+      sendInbound: async (ids) => {
+        if (ids.id === '1' && first) { first = false; throw new C1Error(0, null); }
+        order.push(ids.id);
+        return { status: 202 };
+      }
+    };
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const handle = inbound.createInbound({
+      allow: ALLOW, c1, rest: { addReaction: async () => {}, createMessage: async () => ({ id: 'x' }) }, log: () => {},
+      sleep: () => gate
+    });
+    const a = handle(discordMessage({ id: '1', content: 'merge it' }), { selfId: SELF });
+    const b = handle(discordMessage({ id: '2', content: 'wait, do not' }), { selfId: SELF });
+    await new Promise(setImmediate);
+    assert.deepEqual(order, [], 'the second waits while the first is retrying');
+    release();
+    assert.deepEqual(await Promise.all([a, b]), ['inbound-accepted', 'inbound-accepted']);
+    assert.deepEqual(order, ['1', '2']);
+  });
+
+  it('keeps the queue moving after a message whose handling throws', async () => {
+    const seen = [];
+    const handle = inbound.createInbound({
+      allow: ALLOW,
+      c1: { sendInbound: async (ids) => { seen.push(ids.id); return { status: 202 }; } },
+      rest: { addReaction: async () => {}, createMessage: async () => ({ id: 'x' }) },
+      log: () => {}
+    });
+    const broken = discordMessage({ id: '1' });
+    Object.defineProperty(broken, 'author', { get: () => { throw new Error('malformed payload'); } });
+    await assert.rejects(handle(broken, { selfId: SELF }), /malformed payload/);
+    assert.equal(await handle(discordMessage({ id: '2' }), { selfId: SELF }), 'inbound-accepted');
+    assert.deepEqual(seen, ['2']);
   });
 
   it('delivers on a retry after a passing transport failure', async () => {
@@ -604,21 +654,32 @@ describe('discord helper outbound', () => {
     });
   }
 
-  it('forgets entries for items a complete listing no longer holds, and only then', async () => {
-    const c1 = fakeC1([]);
+  it('forgets entries for items TangleClaw no longer holds only when its listing is empty', async () => {
+    const c1 = fakeC1([item(100)]);
     state.set(5, { state: 'posting', since: clock, parts: [] });
     state.set(6, { state: 'uncertain', since: clock, parts: [] });
-    const full = Array.from({ length: outbound.LIST_PAGE }, (_, k) => item(100 + k));
-    c1.items = full;
-    c1.ackDown = true;
     const d = fakeDiscord();
     d.fail = { status: 0, sent: 'no' };
     await relay(c1, d).out.tick();
-    assert.ok(state.get(5) && state.get(6), 'a full page may be hiding them');
+    assert.ok(state.get(5) && state.get(6), 'a listing is one page, so a missing item may only be further down');
     c1.items = [];
     await relay(c1, d).out.tick();
     assert.equal(state.get(5), undefined);
     assert.equal(state.get(6), undefined);
+  });
+
+  it('says so when every listed reply is held, since newer ones may be queued behind them', async () => {
+    const c1 = fakeC1([item(1), item(2)]);
+    state.set(1, { state: 'uncertain', since: clock, parts: [] });
+    state.set(2, { state: 'rejected', since: null, parts: [] });
+    const { out, logs } = relay(c1, fakeDiscord());
+    assert.equal(await out.tick(), 'ok');
+    const rec = logs.lines.map((l) => JSON.parse(l)).find((r) => r.code === 'outbound-queue-held');
+    assert.deepEqual({ code: rec.code, held: rec.held }, { code: 'outbound-queue-held', held: 2 });
+    c1.items.push(item(3));
+    const quiet = relay(c1, fakeDiscord());
+    await quiet.out.tick();
+    assert.ok(!quiet.logs.codes().includes('outbound-queue-held'), 'not while something still moves');
   });
 
   it('drops a posted item TangleClaw no longer has instead of retrying its ack forever', async () => {
@@ -639,9 +700,9 @@ describe('discord helper outbound', () => {
 
   it('renders a notification under its title and a reply as written', () => {
     assert.equal(outbound.render(item(1, 'plain words')), 'plain words');
-    assert.equal(outbound.render({ id: 2, kind: 'notification', type: 'operator-needed', text: 'An exchange needs you.' }),
-      '\u{1F514} **TangleClaw: Operator needed**\nAn exchange needs you.');
-    assert.match(outbound.render({ id: 3, kind: 'notification', type: 'something-new', text: 'x' }), /TangleClaw: Notification\*\*/);
+    assert.equal(outbound.render({ id: 2, kind: 'notification', type: 'operator-needed', text: 'TangleClaw: an exchange needs you.' }),
+      '\u{1F514} **Operator needed**\nTangleClaw: an exchange needs you.');
+    assert.match(outbound.render({ id: 3, kind: 'notification', type: 'something-new', text: 'x' }), /^\u{1F514} \*\*Notification\*\*\nx$/u);
   });
 
   it('splits a long item into Discord-sized parts, posts them in order, and acks with the first', async () => {

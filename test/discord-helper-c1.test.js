@@ -275,7 +275,7 @@ describe('discord helper against the real operator channel', () => {
     discord.down = false;
     assert.equal(await out.tick(), 'ok');
     assert.equal(discord.messages.length, 1);
-    assert.match(discord.messages[0].content, /^\u{1F514} \*\*TangleClaw: Operator needed\*\*\n/u);
+    assert.match(discord.messages[0].content, /^\u{1F514} \*\*Operator needed\*\*\nTangleClaw: /u);
     const row = store.operatorChannel.getOutbound(emitted.id);
     assert.equal(row.state, 'delivered');
     assert.equal(await out.tick(), 'ok');
