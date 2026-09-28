@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- The Discord helper (#1799), written by `tc-discord-helper install-launchd`.
+         Paths and a label only: the helper reads its two secrets from the
+         Keychain and its ids from ~/.tangleclaw/discord-helper.json, so nothing
+         secret is ever placed here. -->
+    <key>Label</key>
+    <string>com.tangleclaw.discord-helper</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__NODE_PATH__</string>
+        <string>__REPO_DIR__/bin/tc-discord-helper</string>
+        <string>run</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__REPO_DIR__</string>
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+    <!-- A helper that cannot start (no config, a missing secret) exits at once;
+         this spaces launchd's restarts so that costs nothing. It never touches
+         Discord before its config and secrets load, and a token Discord refuses
+         stops the Gateway without ending the process, so restarts cannot spend
+         Discord's daily identify budget. -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>/dev/null</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.tangleclaw/logs/discord-helper.log</string>
+</dict>
+</plist>

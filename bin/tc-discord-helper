@@ -1,0 +1,36 @@
+#!/usr/bin/env node
+'use strict';
+
+/**
+ * tc-discord-helper: the Discord Operator Bridge helper (#1799).
+ *
+ * A thin launcher. Every command lives in `lib/discord-helper/cli.js`; this
+ * file only supplies the real process: the home directory, the Keychain, the
+ * network, `launchctl`, and SIGTERM/SIGINT as the stop signal. Setup and
+ * operation: `docs/discord-helper.md`.
+ */
+
+const path = require('node:path');
+const os = require('node:os');
+const { execFile } = require('node:child_process');
+const { main } = require(path.join(__dirname, '..', 'lib', 'discord-helper', 'cli.js'));
+
+main(process.argv.slice(2), {
+  home: os.homedir(),
+  repoDir: path.resolve(__dirname, '..'),
+  nodePath: process.execPath,
+  uid: process.getuid(),
+  pid: process.pid,
+  out: (line) => process.stdout.write(`${line}\n`),
+  errLine: (line) => process.stderr.write(`${line}\n`),
+  stdin: process.stdin,
+  launchctl: (args) => new Promise((resolve) => {
+    execFile('/bin/launchctl', args, (err) => resolve(err ? (typeof err.code === 'number' ? err.code : 1) : 0));
+  }),
+  onStop: (fn) => { process.once('SIGTERM', fn); process.once('SIGINT', fn); }
+}).then((code) => { process.exitCode = code; }, (err) => {
+  // Every expected failure is answered inside with a closed code. Anything
+  // else is reported by its type alone: its message is not ours to vouch for.
+  process.stderr.write(`tc-discord-helper: unexpected ${err && err.name ? err.name : 'failure'}\n`);
+  process.exitCode = 2;
+});
