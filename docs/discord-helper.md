@@ -114,7 +114,7 @@ When TangleClaw refuses a message, the helper replies to it in fixed words and a
 | `config-missing`, `config-invalid` | Run `configure`. |
 | `secret-missing`, `secret-read-failed` | Run `set-secret` for the named secret. `secret-read-failed` can also mean the login Keychain is locked. |
 | `state-unreadable` | `~/.tangleclaw/discord-helper/state.json` is damaged. The helper will not start without it, because forgetting a reply in flight could post it twice. Look at it, and move it aside only once you have checked the channel for the replies it names. |
-| `helper-already-running` | Another helper is running. |
+| `helper-already-running` | Another helper is running. With `pid: -1`, the lock file `~/.tangleclaw/discord-helper/helper.pid` is unreadable instead: the helper never leaves one like that, so something else damaged it. Check that no helper is running (`pgrep -fl tc-discord-helper`), then delete the file. |
 | `gateway-fatal` | Discord refused the connection for a reason a retry cannot fix. The close code is in the log and in `status`: 4004 is a bad bot token (run `set-secret bot`), and 4014 means Message Content Intent is off (step 1). The helper keeps posting replies, but reads nothing until it is restarted. |
 | `outbound-uncertain`, `outbound-rejected` | A reply is held; see "When it is held". |
 | `outbound-poll-failed`, `inbound-transport-failed` | TangleClaw could not be reached. |
