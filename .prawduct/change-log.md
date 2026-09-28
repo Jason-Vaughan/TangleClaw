@@ -141,7 +141,6 @@ Discord Operator Bridge, Chunk 1: the server half. The TangleClaw-Architect auth
 
 Each has negative tests: spoofed dashboard callers on an open and an armed gate, a send addressed elsewhere, and bidi, zero-width, line-separator, soft-hyphen and BOM text. N5 is recorded as non-blocking per the Architect. N6 (cancellation and retention) carries into C2 planning.
 
-## 2026-09-27 — Rule approval compare-and-set: approval ratifies only the text the operator saw (#1053)
 ## 2026-09-28 — Session-rule mutations are gated on a verified caller (#2013)
 
 <!-- prawduct: type=bugfix | scope=2013-session-rules-authz -->
