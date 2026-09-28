@@ -15,6 +15,7 @@ const os = require('node:os');
 const store = require('../lib/store');
 const { createServer } = require('../server');
 const { setLevel } = require('../lib/logger');
+const { operatorHeaders } = require('./_shared-docs-callers');
 
 setLevel('error');
 
@@ -29,7 +30,10 @@ describe('api/session-rules self-improvement (D1b)', () => {
     return new Promise((resolve, reject) => {
       const options = {
         hostname: '127.0.0.1', port, path: urlPath, method,
-        headers: { 'Content-Type': 'application/json' }
+        // These cases model the dashboard, so they are the operator's requests
+        // (#2013 refuses an unnamed caller); caller classes are covered in
+        // test/api-session-rules-authz.test.js.
+        headers: { 'Content-Type': 'application/json', ...operatorHeaders(server) }
       };
       const bodyStr = body ? JSON.stringify(body) : null;
       if (bodyStr) options.headers['Content-Length'] = Buffer.byteLength(bodyStr);
@@ -120,7 +124,8 @@ describe('api/session-rules self-improvement (D1b)', () => {
     let versions = (await request('GET', `/api/session-rules/${created.id}/versions`)).data.versions;
     assert.equal(versions[0].criticGate, 'not-required');
 
-    // Explicit attestation on an AI update flows through.
+    // Explicit attestation on an update flows through. The operator is the
+    // caller here, so the body's author claims are not what gets recorded.
     await request('PUT', `/api/session-rules/${created.id}`, { content: 'gate two', createdBy: 'ai', changedBy: 'ai', criticGate: 'passed' });
     versions = (await request('GET', `/api/session-rules/${created.id}/versions`)).data.versions;
     assert.equal(versions[0].criticGate, 'passed');

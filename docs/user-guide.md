@@ -193,7 +193,7 @@ Below the ports panel, there's a collapsible **Global Rules** panel. These are m
 
 - **Edit**: Expand the panel, modify the textarea, and tap **Save**
 - **Revert**: restore it from git (`data/global-rules.md` is tracked). There is no Reset button: the old one called an endpoint that, since the canonical-source model (#240), returns the current content unchanged, so it looked like a revert and did nothing (#243)
-- **API**: `GET /api/rules/global`, `PUT /api/rules/global`. `POST /api/rules/global/reset` still exists as a back-compat no-op since #240 — it returns the current content unchanged
+- **API**: `GET /api/rules/global`, `PUT /api/rules/global` (the operator's, like the panel). `POST /api/rules/global/reset` still exists as a back-compat no-op since #240 — it returns the current content unchanged
 
 Global rules live in one git-tracked file, `data/global-rules.md` in the TangleClaw repo (#240). Saving from the panel writes that file directly; there is no bundled default and no per-install copy under `~/.tangleclaw/`. A leftover `~/.tangleclaw/global-rules.md` from an older install is ignored — if its content differs, TangleClaw backs it up next to itself and logs a warning on startup so you can merge what you still want.
 
@@ -689,7 +689,7 @@ Every plan or design doc a session writes to `<project>/.tangleclaw/plans/<name>
 
   Optional train fields:
 
-  - `kind`: what the card stands for. `train` (the default) reads **Train 16: title**, `bucket` reads **Topic Bucket: title**, `pilot` reads **Pilot B2: title**, and `unconfigured` reads **Unconfigured: title**. An identity equal to the title is not printed twice. An `unconfigured` card must have no `train`; every other kind needs one.
+  - `kind`: what the card stands for. `train` (the default) reads **Train 16: title**, `bucket` reads **Topic Bucket: title**, `pilot` reads **Pilot B2: title**, and `unconfigured` reads **Unconfigured: title**. An identity equal to the title is not printed twice. A `bucket` or `unconfigured` card must have no `train`, so a Topic Bucket never shows or borrows a train number; `train` and `pilot` cards need one.
   - `version`: a short label such as `v6`, shown as a badge.
   - `status`: one of `planned`, `ready`, `in-progress`, `blocked`, `shipped` or `sunset`, shown as a badge.
 
@@ -817,6 +817,30 @@ above should make the tree clean without deleting the generated file. If other
 files remain, inspect and commit or stash them rather than bypassing the
 updater's clean-tree guard.
 
+### Before Deleting a Branch, Resetting, or Removing a Worktree
+
+A local commit survives only while a named ref points at it. Before a session deletes a branch, runs `git reset --hard`, removes a worktree or "normalizes" a checkout, it should ask `tc branch check <branch>` from inside that checkout (#1878):
+
+```
+tc branch check feat/my-work          # human-readable report
+tc branch check feat/my-work --json   # the same assessment, for scripts
+tc branch check feat/my-work --repo /path/to/checkout
+```
+
+The check fetches and prunes the branch's remote, because a remote-tracking ref counts as evidence only straight after a fetch. It then reports the branch and its commit, its upstream and whether the fetch succeeded, the commits that exist on no other branch, tag or freshly fetched remote ref, and every worktree holding the branch with its staged, unstaged, unmerged and untracked paths. It never deletes, resets or removes anything.
+
+| Verdict | Exit | Meaning |
+|---|---|---|
+| `safe` | 0 | Every commit is reachable elsewhere, no worktree holds the branch, and the fetch succeeded. |
+| `preserve` | 3 | Retiring the branch would lose commits or disrupt a live worktree. Keep it. |
+| `unknown` | 4 | Something could not be proven, such as a failed fetch, several remotes and no upstream, or a worktree missing from disk. Treat it as `preserve`. |
+
+Each reason carries a stable code (for example `UNIQUE_COMMITS`, `CHECKED_OUT`, `WORKTREE_DIRTY`, `FETCH_FAILED`). For anything but `safe`, the report's next step is the same: do not delete or reset the branch, and continue in a separate clean worktree made from the freshly fetched main. A merged PR does not make a branch safe, because a commit made after the merge (a wrap commit, say) is not in it. The reflog is not a recovery plan.
+
+A branch that a worktree still holds always reads `preserve`. To retire both, check that the tree holds nothing you need (`git -C <tree> status --porcelain --untracked-files=all --ignored`). The `--ignored` matters, because `worktree remove` deletes gitignored files such as a local plan or an `.env` without refusing. Then remove it with plain `git worktree remove <tree>`, never `--force`: git refuses a tree that has changes or untracked files. When a worktree holds the branch, the check's own next-step line spells this out. Only then check the branch. Before a `git reset --hard`, make sure the tree is clean (the same status check, since a reset discards uncommitted changes and pinning does not save them), then pin the current tip under a named branch (`git branch keep/<branch>-<date>`) so no commit is dropped. Check and retire one branch at a time: two branches that each hold the only other copy of a commit both look safe until one of them is gone.
+
+This is a check and a rule. It runs from a TangleClaw-launched pane, because `tc` needs `TANGLECLAW_API`. Nothing yet stops a raw `git branch -D`, `reset --hard` or `worktree remove --force` typed in a shell, and TangleClaw does not retire merged branches or worktrees for you (#1267).
+
 ### Update Blocked by Local Changes
 
 **Update now** never moves a checkout that has uncommitted changes someone may
@@ -931,6 +955,18 @@ service worker's state) is gone the moment the condition clears, which it does
 on its own. The runbook also says why bumping the service worker's
 `CACHE_NAME` is not the fix.
 
+### Dashboard Still Looks Old After the Server Moved
+
+A dashboard tab left open for a long time can be running page code older than the server it talks to. TangleClaw keeps that from sticking in three ways (#411), and none of them needs you to open DevTools or unregister the service worker:
+
+- **The page scripts are fetched fresh.** `landing.js` and the other core scripts are served network-first, so any reload gets the server's current copy.
+- **The service worker checks for a new version** when the page loads, whenever the tab comes back to the foreground, and when the "TC server is out of date" banner first appears. When it finds one, the new worker takes over and the page reloads itself once onto the current assets.
+- **Restarting from the banner reloads the page** only after the new server process answers, so the reload cannot land on a dead server and fall back to a cached copy.
+
+If the page still looks old after that, reload it once. That is expected: a tab whose service worker has not changed keeps the code it loaded until something reloads it, and the dashboard does not show a separate "your page is older than the server" notice.
+
+**A restart that does not seem to take is a different problem.** If "Restart TangleClaw" appears to do nothing and the uptime keeps counting, the server process itself is not recycling, and nothing above addresses that. In the incident behind #411 that symptom was fixed from a terminal (`launchctl kickstart -k gui/$UID/com.tangleclaw.server`), and its cause was never found. If you see it, capture the server log (`~/.tangleclaw/logs/tangleclaw.log`) and the `startedAt` from `/api/server-info` before and after the click, and file an issue.
+
 ### Dashboard Constantly Refreshes After Enabling HTTPS
 
 Port 3102 serves either HTTP or HTTPS, not both. If HTTPS is enabled but the
@@ -1015,8 +1051,8 @@ condition fired or could not be measured. Each row carries its own fix; the back
   runs it from `~/.tangleclaw/bin/ttyd`, and `deploy/install.sh` builds and installs it whenever
   it is missing, broken or out of date, so a normal install needs no extra step. If the ingress
   cutover stops with "the managed ttyd runtime … cannot be used", run
-  `node scripts/ttyd-runtime.js provision` and then the cutover again (not `deploy/install.sh`, which
-  rewrites the terminal's launchd job for direct mode); if the installer itself stops there, its
+  `node scripts/ttyd-runtime.js provision` and then the cutover again (or `deploy/install.sh`, which
+  in caddy mode does both); if the installer itself stops there, its
   message says what failed (see "The ttyd runtime launchd runs"
   in `docs/configuration-reference.md`). To put it in service or take it out again, follow
   [Roll out the owned ttyd runtime](runbooks/roll-out-the-owned-ttyd.md) or

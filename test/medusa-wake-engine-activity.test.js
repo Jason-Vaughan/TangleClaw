@@ -398,3 +398,128 @@ describe('medusa-wake — assessSessionIdle takes the engine\'s answer as an inp
     assert.equal(r.idle, true);
   });
 });
+
+describe('medusa-wake — a prolonged engine-thread-unknown alerts the operator (#1978)', () => {
+  let saved;
+  beforeEach(() => {
+    saved = { ...wake._internal };
+    wake.stop();
+  });
+  afterEach(() => {
+    wake.stop();
+    Object.assign(wake._internal, saved);
+  });
+
+  const UNKNOWN = { channel: 'present', state: 'unknown', reasonCode: 'thread-ambiguous' };
+
+  /**
+   * Tick through `ms` of server time in five-second steps, the monitor's own cadence.
+   * @param {object} world - The world whose clock advances.
+   * @param {number} ms - How long to run.
+   * @returns {Promise<void>}
+   */
+  async function runFor(world, ms) {
+    for (let t = 0; t < ms; t += 5000) {
+      world.clock += 5000;
+      await ticks(1);
+    }
+  }
+
+  it('says nothing before the threshold, then names the stalled session, its adapter reason and its age', async () => {
+    const world = installWorld({ activity: UNKNOWN });
+    await runFor(world, wake.WAKE_STALL_ALERT_MS - 60 * 1000);
+    assert.equal(wake.wakeStallSummary(), null);
+    await runFor(world, 2 * 60 * 1000);
+    const summary = wake.wakeStallSummary();
+    assert.equal(summary.count, 1);
+    assert.equal(summary.oldest.sessionId, 1);
+    assert.equal(summary.oldest.project, 'proj-cx');
+    assert.equal(summary.oldest.engineReason, 'thread-ambiguous');
+    assert.ok(summary.oldest.ageMinutes >= wake.WAKE_STALL_ALERT_MS / 60000);
+    assert.equal(summary.oldest.meaning, wake.peerReasonMeaning('engine-thread-unknown'));
+    assert.equal(world.injected.length, 0, 'the alert never types into the pane');
+  });
+
+  it('clears the moment the engine answers idle', async () => {
+    const world = installWorld({ activity: UNKNOWN });
+    await runFor(world, wake.WAKE_STALL_ALERT_MS + 60 * 1000);
+    assert.equal(wake.wakeStallSummary().count, 1);
+    world.activity = { channel: 'present', state: 'idle', reasonCode: 'thread-idle' };
+    await runFor(world, 10 * 1000);
+    assert.equal(wake.wakeStallSummary(), null);
+  });
+
+  it('clears when the mail is read, and a later stall starts its own clock', async () => {
+    const world = installWorld({ activity: UNKNOWN });
+    await runFor(world, wake.WAKE_STALL_ALERT_MS + 60 * 1000);
+    world.status = { ...world.status, unread: 0 };
+    world.inbox = [];
+    await runFor(world, 5000);
+    assert.equal(wake.wakeStallSummary(), null);
+    world.status = { ...world.status, unread: 1 };
+    world.inbox = [{ id: 'm2', from: 'peer', message: 'again' }];
+    await runFor(world, 60 * 1000);
+    assert.equal(wake.wakeStallSummary(), null, 'the old episode\'s age does not carry over');
+  });
+
+  it('a busy engine is not a stall — it is working, and the wake waits for it', async () => {
+    const world = installWorld({ activity: { channel: 'present', state: 'busy', reasonCode: 'thread-active' } });
+    await runFor(world, wake.WAKE_STALL_ALERT_MS + 60 * 1000);
+    assert.equal(wake.wakeStallSummary(), null);
+  });
+
+  it('warns once per stall episode, and again for the next episode', async () => {
+    const logger = require('../lib/logger');
+    const lines = [];
+    logger.setLevel('warn');
+    logger.setConsoleStream({ write: (line) => { lines.push(String(line)); return true; } });
+    try {
+      const stallWarnings = () => lines.filter((l) => l.includes('held for want of an engine answer')).length;
+      const world = installWorld({ activity: UNKNOWN });
+      await runFor(world, wake.WAKE_STALL_ALERT_MS - 60 * 1000);
+      assert.equal(stallWarnings(), 0, 'nothing before the threshold');
+      await runFor(world, 5 * 60 * 1000);
+      assert.equal(stallWarnings(), 1, 'one warning, not one per tick');
+      world.activity = { channel: 'present', state: 'busy', reasonCode: 'thread-active' };
+      await runFor(world, 10 * 1000);
+      world.activity = UNKNOWN;
+      await runFor(world, wake.WAKE_STALL_ALERT_MS + 60 * 1000);
+      assert.equal(stallWarnings(), 2, 'a new episode is said again');
+    } finally {
+      logger.setConsoleStream(null);
+      logger.setLevel('error');
+    }
+  });
+
+  it('with several sessions stalled, counts them all and names the one stalled longest', async () => {
+    const world = installWorld({ activity: UNKNOWN });
+    const second = { ...world.session, id: 2, projectId: 20, tmuxSession: 'tc-2' };
+    const projects = { 10: world.project, 20: { id: 20, name: 'proj-late', path: '/tmp/proj-late' } };
+    wake._internal.getProject = (id) => projects[id];
+    await runFor(world, 3 * 60 * 1000);
+    wake._internal.listLiveAll = () => [world.session, second];
+    await runFor(world, wake.WAKE_STALL_ALERT_MS + 60 * 1000);
+    const summary = wake.wakeStallSummary();
+    assert.equal(summary.count, 2);
+    assert.equal(summary.oldest.sessionId, 1);
+    assert.equal(summary.oldest.project, 'proj-cx');
+  });
+
+  it('a project lookup that throws still raises the alert, unnamed', async () => {
+    const world = installWorld({ activity: UNKNOWN });
+    await runFor(world, wake.WAKE_STALL_ALERT_MS + 60 * 1000);
+    wake._internal.getProject = () => { throw new Error('store closed'); };
+    const summary = wake.wakeStallSummary();
+    assert.equal(summary.count, 1);
+    assert.equal(summary.oldest.project, null);
+    assert.equal(summary.oldest.sessionId, 1);
+  });
+
+  it('clears when the session ends', async () => {
+    const world = installWorld({ activity: UNKNOWN });
+    await runFor(world, wake.WAKE_STALL_ALERT_MS + 60 * 1000);
+    wake._internal.listLiveAll = () => [];
+    await runFor(world, 5000);
+    assert.equal(wake.wakeStallSummary(), null);
+  });
+});

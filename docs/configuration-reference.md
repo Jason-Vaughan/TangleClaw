@@ -144,9 +144,9 @@ resolver (`lib/ttyd-runtime.js`), never from the PATH.
 - **The ingress cutover never builds.** When the runtime is missing, invalid or stale it stops before
   its first write, with the code `ttyd-runtime-unavailable`. The refusal tells you to run
   `node scripts/ttyd-runtime.js provision` and then select the runtime for your ingress mode:
-  `./deploy/install.sh` in direct mode, the cutover itself in caddy mode. `deploy/install.sh`
-  rewrites the ttyd plist for direct mode, so on a caddy-mode host it refuses before changing
-  anything and names the cutover instead.
+  `./deploy/install.sh` in direct mode, the cutover itself in caddy mode. `deploy/install.sh` also
+  works in caddy mode: there it never writes the direct-mode ttyd plist, and provisions the runtime
+  and then hands the ttyd plist to the cutover.
 - **Stale** means built from a different `deploy/ttyd/inputs.json`: a runtime is current only when its
   manifest records that file's exact SHA-256. Changing a build flag, the CMake pin or the deployment
   target makes the installed runtime stale just as a new source or patch does.
@@ -341,7 +341,7 @@ Editable markdown rules that apply to all projects across all engines. When an e
 
 - **File**: `data/global-rules.md` in the TangleClaw repo — the single canonical source since #240, tracked in git. UI/API saves and PR-driven edits both land in this one file; there is no separate bundled default and no per-install copy
 - **Legacy `~/.tangleclaw/global-rules.md`**: no longer read. On startup, if one exists and differs from the canonical file, TangleClaw backs it up beside itself (`.pre-240-backup` suffix) and logs a warning with recovery steps; merge wanted sections by hand via the editor
-- **Edit via**: Landing page "Global Rules" panel, or `PUT /api/rules/global`
+- **Edit via**: Landing page "Global Rules" panel, or `PUT /api/rules/global` as the operator (#2013: a session is refused with `OPERATOR_ONLY`; a Builder drafts or proposes text and the operator applies it)
 - **Revert**: restore it from git (`data/global-rules.md` is tracked). There is no Reset button (#243): under the canonical-source model (#240) `POST /api/rules/global/reset` is a back-compat no-op that returns the current content unchanged, so a button wired to it looked like a revert and changed nothing.
 
 ## Per-Project Configuration (`project.json`)

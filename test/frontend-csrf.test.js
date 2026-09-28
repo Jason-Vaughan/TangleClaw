@@ -181,7 +181,7 @@ describe('frontend CSRF plumbing (#1418)', () => {
 
     it('attaches it to a BODYLESS write too', () => {
       // The dashboard sends genuine bodyless writes (`medusa/toggle`,
-      // `medusa/read`, `wrap-sentinel/ack`) that do not go via apiMutate. A
+      // `wrap-sentinel/ack`) that do not go via apiMutate. A
       // per-call-site header would be a rule to remember on every future
       // write, and the one that got forgotten would fail only on a gated
       // install.

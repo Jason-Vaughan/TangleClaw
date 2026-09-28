@@ -620,8 +620,8 @@
       if (prov && prov.action === 'manual') {
         const lines = [];
         if (prov.assetsChanged && prov.assetsChanged.length > 0) {
-          lines.push('Deploy assets changed — after the restart, re-run the matching deploy steps '
-            + 'on the server machine (see deploy/install.sh):');
+          lines.push('Deploy assets changed — on the server machine, run ./deploy/install.sh '
+            + '(it works in both ingress modes and restarts the server itself):');
           for (const f of prov.assetsChanged) lines.push(`  ${f}`);
         }
         if (prov.manifestChanged) {

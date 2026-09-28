@@ -1479,6 +1479,14 @@ route('GET', '/api/server-info', (_req, res) => {
     log.warn('Could not summarize Medusa escalations', { error: err.message });
     info.medusaEscalations = null;
   }
+  // #1978: sessions whose wakes have been held for want of an engine answer,
+  // with mail waiting — read-only evidence; no dashboard UI renders it.
+  try {
+    info.medusaWakeStalls = medusaWake.wakeStallSummary();
+  } catch (err) { // prawduct:allow prawduct/broad-except -- a monitor read must not cost the dashboard its whole status poll
+    log.warn('Could not summarize Medusa wake stalls', { error: err.message });
+    info.medusaWakeStalls = null;
+  }
   jsonResponse(res, 200, info);
 });
 
@@ -1560,7 +1568,9 @@ route('POST', '/api/master/kill', (_req, res) => {
 // with the shipped baseline (the recovery path if an edit ever weakened the
 // boundary). History survives in session_rule_versions. A live master picks
 // the change up on the next ensure (identity regeneration).
-route('POST', '/api/master/rules/restore-defaults', (_req, res) => {
+route('POST', '/api/master/rules/restore-defaults', (req, res) => {
+  // It deletes every master rule the operator added, so it is theirs to run.
+  if (!operatorProjectCaller(req, res, 'restore the Project Master\'s default rules')) return;
   const rules = master.restoreDefaultMasterRules();
   jsonResponse(res, 200, { ok: true, rules });
 });
@@ -4404,7 +4414,10 @@ route('GET', '/api/rules/global', (_req, res) => {
 // same per-route override pattern — see `/api/audit/ingest` at the
 // 512 KB cap (`server.js:2834`) and the upload route at 15 MB
 // (`server.js:1574`).
-route('PUT', '/api/rules/global', (_req, res, _params, body) => {
+route('PUT', '/api/rules/global', (req, res, _params, body) => {
+  // The document binds every project on the install. A Builder may draft or
+  // propose its text; applying it is the operator's.
+  if (!operatorProjectCaller(req, res, 'change the global rules')) return;
   if (typeof body.content !== 'string') {
     return errorResponse(res, 400, 'content (string) is required', 'BAD_REQUEST');
   }
@@ -4413,7 +4426,10 @@ route('PUT', '/api/rules/global', (_req, res, _params, body) => {
 }, { maxBodySize: 256 * 1024 });
 
 // POST /api/rules/global/reset
-route('POST', '/api/rules/global/reset', (_req, res) => {
+route('POST', '/api/rules/global/reset', (req, res) => {
+  // A no-op today, but its intent is privileged: it stays the operator's so a
+  // future implementation inherits the gate rather than having to add one.
+  if (!operatorProjectCaller(req, res, 'reset the global rules')) return;
   const content = store.globalRules.reset();
   jsonResponse(res, 200, { content });
 });
@@ -4937,7 +4953,7 @@ route('GET', '/api/tc/whoami', (req, res) => {
     {
       id: 'session-rules', enabled: !!project,
       detail: project
-        ? `durable project rules: GET/POST ${api}/api/session-rules?projectId=${project.id} (AI proposals land as status='proposed' until the operator approves)`
+        ? `durable project rules: GET/POST ${api}/api/session-rules?projectId=${project.id} (a POST needs x-tangleclaw-project-id and x-tangleclaw-launch-id; your rules land as status='proposed' until the operator approves, and only the operator changes, disables or removes a governing rule)`
         : 'unavailable: this call did not resolve to a registered project'
     },
     {
@@ -5328,8 +5344,101 @@ function _stillHasUnhandledMail(row) {
     .some((x) => !medusaExchanges.hasFact(x.exchange_id, ['acknowledged']));
 }
 
+/**
+ * Resolve who is changing a session rule, and refuse a caller the change is
+ * not theirs to make (#2013). A startup rule governs every future session of
+ * its project, so only the operator may create a governing rule or change,
+ * disable, delete, demote, restore or approve one. A session bound to a
+ * project keeps the one role the proposal model gives it: it may propose a
+ * rule for its OWN project, and revise, withdraw or decline an AI proposal in
+ * that project while it is still a proposal. Unbound, invalid and Project Master
+ * callers change nothing.
+ *
+ * The binding is checked before the rule is looked up, so a refused caller
+ * learns nothing about the rule it named; a rule that does not exist then
+ * answers 404. Attribution comes from the verified caller, never from the
+ * request body — a body saying `changedBy: 'operator'` is a claim, and a
+ * local process can make it.
+ *
+ * The operator is recognised the way every operator-only project route
+ * recognises it (`sharedDocsAccess.resolveAccess`, #1752). Approval keeps its
+ * password on top of that, at its own route.
+ * @param {http.IncomingMessage} req - The request
+ * @param {http.ServerResponse} res - The response, written only on refusal
+ * @param {object} target - What the caller is changing
+ * @param {number} [target.ruleId] - The rule being changed; omitted for a create
+ * @param {*} [target.projectId] - For a create: the project the rule is for
+ * @param {string} [target.kind] - For a create: the rule's kind
+ * @param {boolean} target.proposalAction - Whether a bound session may do this
+ *   to a still-proposed AI rule in its own project (a create is always a proposal)
+ * @param {string} target.action - Completes "Only the operator can …"
+ * @returns {{operator: boolean, changedBy: string, rule: (object|null)}|null}
+ *   The caller, or null when the request was answered
+ */
+function sessionRuleCaller(req, res, target) {
+  const access = sharedDocsAccess.resolveAccess(req);
+  const isCreate = target.ruleId === undefined;
+  const operator = access.kind === sharedDocsAccess.KINDS.OPERATOR;
+  if (!operator) {
+    const refusal = sharedDocsAccess.projectRefusalFor(access, sharedDocsAccess.NEEDS.OWN_PROJECT);
+    if (refusal) {
+      _refuseProjectWrite(req, res, refusal, _callerLogFields(req, access));
+      return null;
+    }
+  }
+  const rule = isCreate ? null : store.sessionRules.get(target.ruleId);
+  if (!isCreate && !rule) {
+    errorResponse(res, 404, `Session rule ${target.ruleId} not found`, 'NOT_FOUND');
+    return null;
+  }
+  if (operator) return { operator: true, changedBy: 'operator', rule };
+
+  const operatorOnly = {
+    status: 403,
+    code: 'OPERATOR_ONLY',
+    message: `Only the operator can ${target.action}. A session may propose rules for its own project, `
+      + 'and revise, withdraw or decline AI proposals in that project while they are still proposals; approving, '
+      + 'changing or removing a rule that governs sessions is the operator\'s, from the TangleClaw dashboard.'
+  };
+  const details = { callerProjectId: access.projectId, ruleId: rule ? rule.id : null };
+  // Project Master rules have no project, so no project session owns one.
+  const masterRule = isCreate ? target.kind === 'master' : rule.kind === 'master';
+  if (masterRule) {
+    _refuseProjectWrite(req, res, operatorOnly, details);
+    return null;
+  }
+  const targetProjectId = isCreate ? target.projectId : rule.projectId;
+  // A create with no projectId falls through to the store, which answers the
+  // same 400 it gives the operator.
+  const present = targetProjectId !== undefined && targetProjectId !== null;
+  if (present && String(targetProjectId) !== String(access.projectId)) {
+    _refuseProjectWrite(req, res, {
+      status: 403,
+      code: 'OTHER_PROJECT',
+      message: 'This session is bound to another project, so it cannot change that project\'s rules. '
+        + 'A project\'s rules are proposed by that project\'s own session, or set by the operator from the '
+        + 'TangleClaw dashboard.'
+    }, { ...details, targetProjectId });
+    return null;
+  }
+  const ownProposal = isCreate
+    || (rule.status === 'proposed' && rule.createdBy === 'ai');
+  if (!target.proposalAction || !ownProposal) {
+    _refuseProjectWrite(req, res, operatorOnly, details);
+    return null;
+  }
+  return { operator: false, changedBy: 'ai', rule };
+}
+
 // POST /api/session-rules — create { content, projectId, createdBy?, kind? }
-route('POST', '/api/session-rules', (_req, res, _params, body) => {
+route('POST', '/api/session-rules', (req, res, _params, body) => {
+  const caller = sessionRuleCaller(req, res, {
+    projectId: body ? body.projectId : undefined,
+    kind: body ? body.kind : undefined,
+    proposalAction: true,
+    action: 'create a Project Master rule'
+  });
+  if (!caller) return;
   if (!body || typeof body.content !== 'string' || !body.content.trim()) {
     return errorResponse(res, 400, 'content (non-empty string) is required', 'BAD_REQUEST');
   }
@@ -5339,7 +5448,9 @@ route('POST', '/api/session-rules', (_req, res, _params, body) => {
       // Required for every kind except 'master' (singleton-scoped, projectId
       // forbidden) — the store enforces both directions with BAD_REQUEST.
       projectId: body.projectId,
-      createdBy: body.createdBy || 'operator',
+      // The operator may record an explicit author; anyone else's rule is an
+      // AI proposal whatever the body says, so it lands 'proposed'.
+      createdBy: caller.operator ? (body.createdBy || 'operator') : 'ai',
       // CC-6 (#381): 'startup' (default) | 'wrap' | 'master'. Invalid → store throws BAD_REQUEST.
       kind: body.kind,
       // SR-7K2P: optional Critic-gate attestation. Invalid → store throws BAD_REQUEST.
@@ -5374,20 +5485,28 @@ function refuseUnconfirmedBaselineEdit(rule, confirmed) {
 }
 
 // PUT /api/session-rules/:id — update { content?, enabled?, confirmBaselineEdit? }
-route('PUT', '/api/session-rules/:id', (_req, res, params, body) => {
+route('PUT', '/api/session-rules/:id', (req, res, params, body) => {
   if (!body || typeof body !== 'object') {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
+  // A bound session may revise the text of an AI proposal in its project; enabling or
+  // disabling is never a proposal-level act.
+  const caller = sessionRuleCaller(req, res, {
+    ruleId: Number(params.id),
+    proposalAction: body.enabled === undefined,
+    action: 'change or disable a session rule'
+  });
+  if (!caller) return;
   try {
-    const existing = store.sessionRules.get(Number(params.id));
+    const existing = caller.rule;
     const weakens = body.content !== undefined || body.enabled === false || body.enabled === 0;
     if (weakens && refuseUnconfirmedBaselineEdit(existing, body.confirmBaselineEdit === true)) {
       return errorResponse(res, 400,
         'This is a shipped Master boundary rule — editing or disabling it requires confirmBaselineEdit: true (Restore defaults always recovers the baseline)',
         'CONFIRM_REQUIRED');
     }
-    const { confirmBaselineEdit, ...updates } = body;
-    const rule = store.sessionRules.update(Number(params.id), updates);
+    const { confirmBaselineEdit, changedBy: _claimedBy, ...updates } = body;
+    const rule = store.sessionRules.update(Number(params.id), { ...updates, changedBy: caller.changedBy });
     jsonResponse(res, 200, rule);
   } catch (err) {
     if (err.code === 'NOT_FOUND') {
@@ -5403,15 +5522,22 @@ route('PUT', '/api/session-rules/:id', (_req, res, params, body) => {
 // DELETE /api/session-rules/:id — ?confirm=true required for shipped Master
 // baseline rules (see refuseUnconfirmedBaselineEdit)
 route('DELETE', '/api/session-rules/:id', (req, res, params) => {
+  // A bound session may withdraw an AI proposal in its project, and nothing else.
+  const caller = sessionRuleCaller(req, res, {
+    ruleId: Number(params.id),
+    proposalAction: true,
+    action: 'delete a session rule'
+  });
+  if (!caller) return;
   try {
     const query = parseQuery(reqUrl(req).search);
-    const existing = store.sessionRules.get(Number(params.id));
+    const existing = caller.rule;
     if (refuseUnconfirmedBaselineEdit(existing, query.confirm === 'true')) {
       return errorResponse(res, 400,
         'This is a shipped Master boundary rule — deleting it requires ?confirm=true (Restore defaults always recovers the baseline)',
         'CONFIRM_REQUIRED');
     }
-    store.sessionRules.delete(Number(params.id));
+    store.sessionRules.delete(Number(params.id), { changedBy: caller.changedBy });
     jsonResponse(res, 200, { ok: true, id: Number(params.id) });
   } catch (err) {
     if (err.code === 'NOT_FOUND') {
@@ -5428,15 +5554,20 @@ route('DELETE', '/api/session-rules/:id', (req, res, params) => {
 // `docs/session-rules-self-improvement.md`.
 
 // POST /api/session-rules/promote — promote a learning into a rule (operator-confirmed)
-route('POST', '/api/session-rules/promote', (_req, res, _params, body) => {
+route('POST', '/api/session-rules/promote', (req, res, _params, body) => {
+  // This route mints a LIVE rule from AI-authored text, so it is the
+  // operator's, exactly as approval is: the operator as the caller, then the
+  // password. The password alone is no gate on an install that has none set.
+  const caller = sessionRuleCaller(req, res, {
+    projectId: body ? body.projectId : undefined,
+    kind: body ? body.kind : undefined,
+    proposalAction: false,
+    action: 'promote a learning into a rule that governs sessions'
+  });
+  if (!caller) return;
   if (!body || body.learningId === undefined) {
     return errorResponse(res, 400, 'learningId is required', 'BAD_REQUEST');
   }
-  // This route mints a LIVE rule from AI-authored text, so it carries the same
-  // operator gate as approval. It previously asserted operator authority simply
-  // because the route had been reached — but this API is on localhost and this
-  // project instructs in-session agents to call it, so "a request arrived" is
-  // not evidence a human sent it.
   const promoteCheck = projects.checkDeletePassword(body ? body.password : undefined);
   if (!promoteCheck.allowed) return errorResponse(res, 403, promoteCheck.error, 'FORBIDDEN');
   try {
@@ -5470,26 +5601,29 @@ route('POST', '/api/session-rules/promote', (_req, res, _params, body) => {
 // shown, and is refused (409) if the rule no longer holds it (#1053). A
 // rejection is RECORDED rather than deleted: the wrap proposes from recurring
 // learnings, so a deleted decision would simply be re-proposed at the next wrap.
-route('PUT', '/api/session-rules/:id/status', (_req, res, params, body) => {
+route('PUT', '/api/session-rules/:id/status', (req, res, params, body) => {
   if (!body || typeof body.status !== 'string') {
     return errorResponse(res, 400, 'status is required', 'BAD_REQUEST');
   }
-  // Approving a proposal grants it authority over every future session, so it
-  // is gated like TangleClaw's other privileged operations (project delete,
-  // session kill, wrap) rather than inferred from a caller-supplied field.
-  // `changedBy` is the caller describing itself — an agent that omits it is
-  // recorded as the operator — so it cannot be what decides this.
-  //
-  // Declining a proposal needs no gate: it grants nothing.
+  // Declining an AI proposal in its project is the one status change a bound
+  // session may make. Approving, and moving a governing rule out of 'active', are the
+  // operator's: either one decides what every future session is told.
+  const caller = sessionRuleCaller(req, res, {
+    ruleId: Number(params.id),
+    proposalAction: body.status !== 'active',
+    action: body.status === 'active' ? 'approve a proposed rule' : 'change the status of a governing rule'
+  });
+  if (!caller) return;
+  // Approving a proposal grants it authority over every future session, so on
+  // top of the operator caller it takes the password, like TangleClaw's other
+  // privileged operations (project delete, session kill, wrap).
   if (body.status === 'active') {
     const check = projects.checkDeletePassword(body ? body.password : undefined);
     if (!check.allowed) return errorResponse(res, 403, check.error, 'FORBIDDEN');
   }
   try {
     const rule = store.sessionRules.setStatus(Number(params.id), body.status, {
-      // Passing the gate IS the operator acting; recording anything else would
-      // misattribute a decision the gate just authorised.
-      changedBy: body.status === 'active' ? 'operator' : body.changedBy,
+      changedBy: caller.changedBy,
       changeReason: body.changeReason,
       criticGate: body.criticGate,
       // The text the operator was shown. Read only AFTER the password gate
@@ -5534,8 +5668,10 @@ route('GET', '/api/learnings', (req, res) => {
 // PUT /api/learnings/:id/tier — correct a learning's tier by hand.
 // The loop advances tiers on its own via recurrence; this is the operator's
 // override for when it advanced something they disagree with, or held back
-// something they want live now.
-route('PUT', '/api/learnings/:id/tier', (_req, res, params, body) => {
+// something they want live now. An active learning is rendered into its
+// project's session primes, so the override is the operator's alone (#2018).
+route('PUT', '/api/learnings/:id/tier', (req, res, params, body) => {
+  if (!operatorProjectCaller(req, res, 'change a learning\'s tier')) return;
   if (!body || typeof body.tier !== 'string') {
     return errorResponse(res, 400, 'tier is required', 'BAD_REQUEST');
   }
@@ -5574,12 +5710,18 @@ route('GET', '/api/session-rules/:id/versions', (_req, res, params) => {
 // the same eyes-open gate when the restore would weaken them (content change
 // or restoring a disabled snapshot) — the gate predicates must stay symmetric
 // across every path that can alter a rule, or the confirm is bypassable.
-route('POST', '/api/session-rules/:id/restore', (_req, res, params, body) => {
+route('POST', '/api/session-rules/:id/restore', (req, res, params, body) => {
   if (!body || body.versionNo === undefined) {
     return errorResponse(res, 400, 'versionNo is required', 'BAD_REQUEST');
   }
+  const caller = sessionRuleCaller(req, res, {
+    ruleId: Number(params.id),
+    proposalAction: false,
+    action: 'restore an earlier version of a session rule'
+  });
+  if (!caller) return;
   try {
-    const existing = store.sessionRules.get(Number(params.id));
+    const existing = caller.rule;
     if (refuseUnconfirmedBaselineEdit(existing, body.confirmBaselineEdit === true)) {
       const target = store.sessionRules.listVersions(Number(params.id))
         .find((v) => v.versionNo === Number(body.versionNo));
@@ -5603,7 +5745,7 @@ route('POST', '/api/session-rules/:id/restore', (_req, res, params, body) => {
       }
     }
     // SR-7K2P: optional Critic-gate attestation. Invalid → store throws BAD_REQUEST.
-    const rule = store.sessionRules.restore(Number(params.id), Number(body.versionNo), { changedBy: body.changedBy, criticGate: body.criticGate });
+    const rule = store.sessionRules.restore(Number(params.id), Number(body.versionNo), { changedBy: caller.changedBy, criticGate: body.criticGate });
     jsonResponse(res, 200, rule);
   } catch (err) {
     if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');
@@ -7094,19 +7236,30 @@ function registerMedusaRoutes(prefix, resolve) {
     jsonResponse(res, 200, bridge ? { ...status, bridge } : status);
   });
 
-  // GET <prefix>/messages — the received inbox (MED-2K9P Chunk 02). A pure
-  // read (no mark-read side effect on GET); the read panel clears unread via
-  // POST /read. No live participant → an empty inbox.
+  // GET <prefix>/messages — the received inbox (MED-2K9P Chunk 02). It never
+  // marks mail handled or clears unread. For any other reader it records a
+  // `read` fact for what it returned (#1839); for the dashboard (`operator-ui`)
+  // it records nothing, because a read fact changes the exchange: it ends
+  // awaiting-read and wake re-arms, and forbids a retract. The inbox panel
+  // calls this route and nothing else, so viewing mail never acts for the
+  // agent (#1987). No live participant → an empty inbox.
   route('GET', `${prefix}/messages`, (req, res, params) => {
     const r = resolve(params, parseQuery(reqUrl(req).search));
     if (r.error) return errorResponse(res, r.error.status, r.error.message, r.error.code);
     const sessionId = r.target ? r.target.sessionId : (r.fallbackSessionId || null);
     const messages = sessionId == null ? [] : medusa.getMessages(sessionId);
     // #1839: record what was actually shown to the reader, and who read it.
-    if (r.target && messages.length > 0) {
+    // The dashboard records nothing (#1987): recordRead ignores `operator-ui`,
+    // and a browser-shaped request that is not the agent's verified launch is
+    // treated as the dashboard too, so an auth gate in fallback or unreadable
+    // (the operator unproven) does not turn viewing into an unverified read.
+    // Presenting that shape can only suppress a read record, never forge one.
+    const reader = r.target && messages.length > 0 ? exchangeCaller(req, targetProjectId(r.target), true) : null;
+    const viewing = reader && reader.kind !== 'project' && isOperatorShaped(req);
+    if (reader && !viewing) {
       try {
         medusaExchanges.recordRead(messages.map((m) => m && m.id).filter(Boolean),
-          medusa.getStatus(sessionId).workspaceId, exchangeCaller(req, targetProjectId(r.target), true));
+          medusa.getStatus(sessionId).workspaceId, reader);
       } catch (err) { // prawduct:allow prawduct/broad-except -- a failed read record must not withhold the inbox from its reader
         log.warn('Could not record Medusa reads', { sessionId: String(sessionId), error: err.message });
       }
@@ -10341,8 +10494,8 @@ async function handleRequest(req, res) {
     // header, and they keep working exactly as written.
     //
     // Keyed on a body being PRESENT, not on the method. The dashboard sends
-    // genuine bodyless writes (`medusa/toggle`, `medusa/read`,
-    // `wrap-sentinel/ack` go through `api()` with no body and no
+    // genuine bodyless writes (`medusa/toggle` and `wrap-sentinel/ack` go
+    // through `api()` with no body and no
     // Content-Type), and refusing those would break the operator's own UI to
     // close nothing — a request with no body carries no forged payload. The
     // residual is a bodyless same-site POST to a route that acts without one;

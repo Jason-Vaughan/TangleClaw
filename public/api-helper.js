@@ -82,7 +82,7 @@
    *
    * Applied inside `api()` rather than at each call site, because `api()` is
    * the one choke-point every dashboard fetch already goes through — including
-   * the genuinely bodyless writes (`medusa/toggle`, `medusa/read`,
+   * the genuinely bodyless writes (`medusa/toggle`,
    * `wrap-sentinel/ack`) that do not go via `apiMutate`. A per-call-site header
    * would be a rule to remember on every future write, and the one that got
    * forgotten would fail only on a gated install.
@@ -3449,9 +3449,9 @@
      * @returns {string} HTML.
      */
     function renderMessages(messages) {
-      // Header carries an explicit ✕ close: the badge that opens the panel
-      // self-hides on read (unread → 0), so it can't be the only dismiss control
-      // (mobile trap).
+      // Header carries an explicit ✕ close, so the panel never depends on the
+      // badge to dismiss it: the badge hides whenever the agent's unread count
+      // reaches zero, which can happen while the panel is open (mobile trap).
       const head = '<div class="group-popover-title medusa-panel-head"><span>Medusa inbox</span>'
         + '<button type="button" class="medusa-panel-close" aria-label="Close inbox">✕</button></div>';
       if (!messages.length) {
@@ -3466,14 +3466,15 @@
     }
 
     /**
-     * Open the inbox read panel (the badge click): fetch received messages,
-     * render them, and report exactly those messages handled. Toggles closed if
-     * already open.
+     * Open the inbox read panel (the badge click): fetch received messages and
+     * render them. Toggles closed if already open.
      *
-     * Reporting by id rather than sending a bare badge clear is what makes the
-     * panel honest: a handled message leaves the inbox and is ACKed to the Hub,
-     * and anything that arrived after this fetch is untouched, so it cannot be
-     * discarded unseen (#784, #785).
+     * A pure observation: no `/read` call of either form (#1987, Architect
+     * ruling). Reporting the displayed ids handled removed the agent's mail and
+     * closed normal exchanges before the agent saw them, and even the bodyless
+     * badge clear zeroes `unread`, which the wake monitor reads as "inbox read"
+     * and so cancels the agent's nudge. The badge therefore means "the agent has
+     * not handled this", and viewing it here leaves it so.
      * @returns {Promise<void>}
      */
     async function openInbox() {
@@ -3487,25 +3488,12 @@
       const messages = (data && data.messages) || [];
       panel.innerHTML = renderMessages(messages);
       panel.hidden = false;
-
-      const handled = messages.map((msg) => msg && msg.id).filter((id) => id != null);
-      const status = handled.length
-        ? await deps.api(`${deps.apiBase}/read`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ids: handled })
-        })
-        : await deps.api(`${deps.apiBase}/read`, { method: 'POST' });
-      if (status) {
-        m.unread = status.unread || 0;
-        render();
-      }
     }
 
     /**
      * Close the inbox read panel (the ✕, Escape, outside click). Safe when
-     * already closed — the badge self-hides on read, so it is never the only
-     * path to dismiss the panel it opened.
+     * already closed — the badge hides whenever the agent's unread count
+     * reaches zero, so it is never the only path to dismiss the panel it opened.
      * @returns {void}
      */
     function closeInbox() {

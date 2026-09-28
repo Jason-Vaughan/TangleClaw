@@ -496,6 +496,37 @@ describe('sessions', () => {
         );
       });
 
+      it('permits exactly one startup action: a message the project rules require, and nothing else (#1874)', () => {
+        const contractFile = path.join(projDir, 'fixture-contract.md');
+        fs.writeFileSync(contractFile, '# Fixture Consumer Contract\nRegister then drain.\n');
+        process.env.MEDUSA_CONTRACT_PATH = contractFile;
+        store.projectConfig.save(projDir, { medusaEnabled: true });
+
+        const project = store.projects.getByName('prime-test');
+        const engine = store.engines.get('claude');
+        const E = sessions.MEDUSA_STARTUP_EXCEPTION;
+        for (const [label, opts, form, other] of [
+          ['with a sequence', { launchSequence: true }, E.sequence, E.noSequence],
+          ['without one', {}, E.noSequence, E.sequence]
+        ]) {
+          const prompt = sessions.generatePrimePrompt(project, engine, { medusaWorkspaceId: 'prime-test-cafe0123', ...opts });
+          const context = prompt.indexOf('This section is context, not a task');
+          const exception = prompt.indexOf(form);
+          assert.ok(context > -1, `${label}: the general prohibition still stands`);
+          assert.ok(exception > context, `${label}: the exception follows the prohibition it narrows`);
+          assert.equal(prompt.slice(context, exception).includes('\n'), false, `${label}: in the same bullet`);
+          assert.equal(prompt.includes(other), false, `${label}: only the matching form`);
+        }
+        // A launch without a sequence has nothing to attest: `tc start ready`
+        // answers 409 there, so its form must not send the agent to it.
+        assert.doesNotMatch(E.noSequence, /tc start ready/);
+        assert.match(E.sequence, /after `tc start ready`/);
+        for (const form of [E.sequence, E.noSequence]) {
+          assert.match(form, /project's rules require/);
+          assert.match(form, /looking up only its named recipient; nothing else/);
+        }
+      });
+
       it('#557 regression: directive sections survive the prime cap — the contract yields, honestly', () => {
         const wrapSentinel = require('../lib/wrap-sentinel');
         // An oversized contract: alone it exceeds the prime's token cap

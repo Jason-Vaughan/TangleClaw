@@ -547,9 +547,10 @@
 .medusa-msg-from { font-weight: 600; color: var(--root-accent); font-size: 11px; }
 .medusa-msg-body { color: var(--text); font-size: 12px; word-break: break-word; white-space: pre-wrap; }
 .medusa-msg-empty { color: var(--text-muted); font-size: 12px; }
-/* Explicit dismiss control — the badge that opens the inbox self-hides once read
-   (unread → 0), so the panel needs its own close affordance. Touch-first: relying
-   on an outside tap left the panel un-closeable on mobile once the badge vanished. */
+/* Explicit dismiss control — the badge that opens the inbox hides whenever the
+   agent's unread count reaches zero, which can happen while the panel is open, so
+   the panel needs its own close affordance. Touch-first: relying on an outside tap
+   left the panel un-closeable on mobile once the badge vanished. */
 .medusa-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .medusa-panel-close {
   border: none;

@@ -464,6 +464,71 @@ describe('API — operator channel', () => {
       assert.equal(row.text, null);
     });
 
+    // The send route records its sender from the URL's project, so a send
+    // through the target's own route is attributed to the target whoever made
+    // it. Only the target's verified launch may speak for it in the operator's chat.
+    it('quarantines a send through the target\'s route that carries no launch headers', async () => {
+      bringTargetOnline();
+      const sent = await call(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/medusa/send`,
+        { to: channelWs, message: 'spoofed status: all green' });
+      assert.equal(sent.status, 200, JSON.stringify(sent.data));
+      deliverToChannel(sent.data.id, targetWs, 'spoofed status: all green');
+
+      const out = await call(server, 'GET', '/api/operator-channel/outbound', null, helper());
+      assert.equal(out.data.replies.length, 0);
+      const row = store.getDb().prepare('SELECT * FROM operator_channel_outbound WHERE hub_id = ?').get(sent.data.id);
+      assert.equal(row.state, 'quarantined');
+      assert.equal(row.reason, 'sender-not-verified');
+      assert.equal(row.text, null);
+    });
+
+    it('quarantines a send through the target\'s route made with another project\'s launch headers', async () => {
+      bringTargetOnline();
+      const other = mkProject('impostor');
+      const otherBinding = bindProject(other);
+      const sent = await call(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/medusa/send`,
+        { to: channelWs, message: 'post this as the target' }, otherBinding.headers);
+      assert.equal(sent.status, 200, JSON.stringify(sent.data));
+      deliverToChannel(sent.data.id, targetWs, 'post this as the target');
+
+      const out = await call(server, 'GET', '/api/operator-channel/outbound', null, helper());
+      assert.equal(out.data.replies.length, 0);
+      const row = store.getDb().prepare('SELECT * FROM operator_channel_outbound WHERE hub_id = ?').get(sent.data.id);
+      assert.equal(row.state, 'quarantined');
+      assert.equal(row.reason, 'sender-not-verified');
+    });
+
+    it('quarantines an operator\'s send through the target\'s route: it is not the project speaking', async () => {
+      bringTargetOnline();
+      const sent = await call(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/medusa/send`,
+        { to: channelWs, message: 'written by the operator' }, op);
+      assert.equal(sent.status, 200, JSON.stringify(sent.data));
+      deliverToChannel(sent.data.id, targetWs, 'written by the operator');
+
+      const out = await call(server, 'GET', '/api/operator-channel/outbound', null, helper());
+      assert.equal(out.data.replies.length, 0);
+      const row = store.getDb().prepare('SELECT * FROM operator_channel_outbound WHERE hub_id = ?').get(sent.data.id);
+      assert.equal(row.state, 'quarantined');
+      assert.equal(row.reason, 'sender-not-verified');
+    });
+
+    it('quarantines a send the target\'s route recorded as the operator\'s even when it answers a channel message', async () => {
+      bringTargetOnline();
+      const body = msg();
+      await call(server, 'POST', '/api/operator-channel/inbound', body, helper());
+      await operatorChannel.pump();
+      const inHub = store.operatorChannel.getInboundByExternalId(body.message.id).hub_id;
+      const sent = await call(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/medusa/send`,
+        { to: channelWs, message: 'an operator-written answer', inReplyTo: inHub }, op);
+      assert.equal(sent.status, 200, JSON.stringify(sent.data));
+      deliverToChannel(sent.data.id, targetWs, 'an operator-written answer');
+
+      const out = await call(server, 'GET', '/api/operator-channel/outbound', null, helper());
+      assert.equal(out.data.replies.length, 0);
+      const row = store.getDb().prepare('SELECT * FROM operator_channel_outbound WHERE hub_id = ?').get(sent.data.id);
+      assert.equal(row.reason, 'sender-not-verified');
+    });
+
     it('quarantines a target\'s send that was addressed to another workspace', async () => {
       bringTargetOnline();
       const other = mkProject('bystander');

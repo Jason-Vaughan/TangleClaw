@@ -25,14 +25,55 @@ const { renderScenarios } = require('./_prime-golden-scenarios');
 
 const FIXTURE_DIR = path.join(__dirname, 'fixtures', 'prime-golden');
 
+/**
+ * Length every run's base directory is padded to. The fixtures replace the
+ * base with `<BASE>` and the host with `<HOST>`, but the prime's size budget is
+ * spent BEFORE that — on the real strings. A macOS temp path is ~50 chars
+ * longer than a Linux runner's `/tmp/...`, and it appears several times, so a
+ * scenario near its budget chose different sections to yield on each machine
+ * and the fixture could only ever match one of them. Padding to one length
+ * (and pinning the host below) makes the budget see the same number of bytes
+ * everywhere.
+ */
+const GOLDEN_BASE_LENGTH = 160;
+
+/** The host every run renders, for the same reason. */
+const GOLDEN_HOST = 'golden-host.example.test';
+
+/**
+ * A fresh temporary directory whose real path is exactly GOLDEN_BASE_LENGTH
+ * characters long.
+ * @returns {{root: string, base: string}} `root` to remove afterwards, `base` to use.
+ */
+function fixedLengthBase() {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-prime-golden-')));
+  const pad = GOLDEN_BASE_LENGTH - root.length - 1;
+  assert.ok(pad >= 1, `temp dir ${root} is too long to pad to ${GOLDEN_BASE_LENGTH} chars`);
+  const base = path.join(root, 'p'.repeat(pad));
+  fs.mkdirSync(base);
+  assert.equal(base.length, GOLDEN_BASE_LENGTH);
+  return { root, base };
+}
+
 describe('pushed prime byte identity (car 21.2)', () => {
   let tmpDir;
+  let tmpRoot;
   let rendered;
   let savedContract;
+  const ownership = require('../lib/session-ownership');
+  let savedHostname;
+  let savedExecSync;
 
   before(() => {
     savedContract = process.env.MEDUSA_CONTRACT_PATH;
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-prime-golden-'));
+    ({ root: tmpRoot, base: tmpDir } = fixedLengthBase());
+    // The local host is memoized and prefers the overlay DNS name, so pin both
+    // sources and clear the memo; restored in after().
+    savedHostname = ownership._internal.hostname;
+    savedExecSync = ownership._internal.execSync;
+    ownership._internal.hostname = () => GOLDEN_HOST;
+    ownership._internal.execSync = () => { throw new Error('no overlay in the golden run'); };
+    ownership._resetHostCacheForTest();
     store._setBasePath(tmpDir);
     store.init();
     const config = store.config.load();
@@ -52,7 +93,10 @@ describe('pushed prime byte identity (car 21.2)', () => {
     if (savedContract === undefined) delete process.env.MEDUSA_CONTRACT_PATH;
     else process.env.MEDUSA_CONTRACT_PATH = savedContract;
     store.close();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    ownership._internal.hostname = savedHostname;
+    ownership._internal.execSync = savedExecSync;
+    ownership._resetHostCacheForTest();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
   });
 
   it('has a fixture for every scenario and a scenario for every fixture', () => {

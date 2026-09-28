@@ -76,9 +76,9 @@ Run everything from the TangleClaw checkout the service runs from, for example
    - Caddy mode: `node scripts/ingress-cutover.js --to caddy`
      → Expected: `Ingress switched to 'caddy'.`, then `ttyd: /Users/…/.tangleclaw/bin/ttyd (the owned runtime)`.
 
-   Do not run `./deploy/install.sh` on a caddy-mode host: it rewrites the ttyd plist for direct
-   mode, and Caddy then has no socket to proxy to. It refuses there before changing anything
-   (`ERROR: this host's persisted ingress mode is 'caddy'`), naming the cutover.
+   On a caddy-mode host `./deploy/install.sh` also works: it never writes the direct-mode ttyd
+   plist there, and ends by running this same cutover. It also restarts the server and refreshes
+   its other deploy assets, so use the cutover when only the ttyd runtime changed.
 
 9. Check the plist now points at it:
    `plutil -extract ProgramArguments.4 raw ~/Library/LaunchAgents/com.tangleclaw.ttyd.plist`

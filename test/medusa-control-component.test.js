@@ -263,11 +263,10 @@ describe('tcCreateMedusaControl — talks to ITS api base', () => {
     assert.equal(c.state.unread, 1);
   });
 
-  it('openInbox renders escaped messages newest-first, then marks read and clears the badge', async () => {
+  it('openInbox renders escaped messages newest-first, and toggles closed', async () => {
     const ids = G.tcMedusaIds('');
     const w = world(ids, {
-      messages: { messages: [{ from: 'a', message: 'first' }, { from: '<b>', message: '<script>x</script>' }] },
-      read: { state: 'listening', unread: 0 }
+      messages: { messages: [{ from: 'a', message: 'first' }, { from: '<b>', message: '<script>x</script>' }] }
     });
     const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
     c.applyStatus({ state: 'listening', unread: 2 });
@@ -278,40 +277,44 @@ describe('tcCreateMedusaControl — talks to ITS api base', () => {
     assert.ok(html.indexOf('&lt;b&gt;') >= 0, 'sender escaped');
     assert.ok(html.indexOf('&lt;b&gt;') < html.indexOf('>a<'), 'newest first');
     assert.match(html, /medusa-panel-close/);
-    assert.equal(w.calls.at(-1).url, '/api/sessions/p/medusa/read');
-    assert.equal(w.el.medusaBadge.hidden, true);
     await c.openInbox();
     assert.equal(w.el.medusaPanel.hidden, true, 'a second call toggles it closed');
   });
 
-  it('openInbox reports the displayed messages handled, by id', async () => {
-    // A bare badge clear leaves the mail in the inbox forever, so every consumer
-    // has to keep a private watermark to avoid answering twice (#784). Naming
-    // the ids it actually rendered is what lets the panel say "these are dealt
-    // with" — and confines the claim to what the operator was shown.
+  // #1987 (Architect ruling, option B): opening the panel is a pure observation.
+  // Acknowledging by id closed normal exchanges and removed the agent's mail
+  // before it saw it; even the bodyless badge clear zeroes `unread`, which the
+  // wake monitor reads as "inbox read" and so cancels the agent's nudge. The
+  // badge therefore means "the agent has not handled this" and viewing leaves it.
+  it('openInbox makes no /read call of either form: displaying mail never speaks for the agent (#1987)', async () => {
     const ids = G.tcMedusaIds('');
-    const w = world(ids, {
-      messages: { messages: [{ id: 'm1', from: 'a', message: 'first' }, { id: 'm2', from: 'b', message: 'second' }] },
-      read: { state: 'listening', unread: 0 }
-    });
-    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
-    await c.openInbox();
-    const readCall = w.calls.at(-1);
-    assert.equal(readCall.url, '/api/sessions/p/medusa/read');
-    assert.deepEqual(JSON.parse(readCall.opts.body), { ids: ['m1', 'm2'] });
+    for (const messages of [
+      [{ id: 'm1', from: 'a', message: 'first' }, { id: 'm2', from: 'b', message: 'second' }],
+      [{ from: 'a', message: 'no id' }],
+      []
+    ]) {
+      const w = world(ids, { messages: { messages } });
+      const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+      await c.openInbox();
+      assert.deepEqual(w.calls.map((call) => call.url), ['/api/sessions/p/medusa/messages'],
+        `only the GET, for ${messages.length} message(s)`);
+      assert.ok(!w.calls.some((call) => call.opts && call.opts.method === 'POST'), 'nothing is posted');
+    }
   });
 
-  it('openInbox falls back to a bare badge clear when no message carries an id', async () => {
+  it('openInbox leaves the unread badge as the agent left it, and a later arrival still shows (#1987)', async () => {
     const ids = G.tcMedusaIds('');
-    const w = world(ids, {
-      messages: { messages: [{ from: 'a', message: 'first' }] },
-      read: { state: 'listening', unread: 0 }
-    });
+    // `read` answers as the server would (unread zeroed), so a regression that
+    // posts either form is caught here as well as in the call-log test above.
+    const w = world(ids, { messages: { messages: [{ id: 'm1', from: 'a', message: 'first' }] }, read: { state: 'listening', unread: 0 } });
     const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    c.applyStatus({ state: 'listening', unread: 1 });
     await c.openInbox();
-    const readCall = w.calls.at(-1);
-    assert.equal(readCall.url, '/api/sessions/p/medusa/read');
-    assert.ok(!readCall.opts.body, 'nothing addressable to report handled');
+    assert.equal(c.state.unread, 1, 'viewing does not clear the count');
+    assert.equal(w.el.medusaBadge.hidden, false, 'the badge still says the agent has mail');
+    c.applyStatus({ state: 'listening', unread: 2 });
+    assert.equal(c.state.unread, 2, 'a post-fetch arrival is counted, not hidden');
+    assert.equal(w.el.medusaBadge.hidden, false);
   });
 
   it('stays hidden when the project has not opted in (#820)', async () => {

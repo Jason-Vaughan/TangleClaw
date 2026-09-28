@@ -420,13 +420,10 @@ describe('permanent train identities and card kinds (#1942)', () => {
     assert.equal(nameOf({ train: 'C-E', title: 'Later trains' }), 'Train C-E: Later trains');
   });
 
-  it('names a Topic Bucket and a Pilot as what they are, not as a train', () => {
-    assert.equal(nameOf({ kind: 'bucket', train: 'Infrastructure Hardening', title: 'Infrastructure Hardening' }),
-      'Topic Bucket: Infrastructure Hardening', 'an identity equal to the title is not printed twice');
-    assert.equal(nameOf({ kind: 'bucket', train: 'Infra', title: 'Infrastructure Hardening' }),
-      'Topic Bucket Infra: Infrastructure Hardening', 'a distinct identity is still shown');
+  it('names a Pilot as what it is, not as a train', () => {
     assert.equal(nameOf({ kind: 'pilot', train: 'B2', title: 'Pilot lane' }), 'Pilot B2: Pilot lane');
-    assert.doesNotMatch(render(train({ kind: 'bucket', train: 'Infra', title: 'T' })), />Train /);
+    assert.equal(nameOf({ kind: 'pilot', train: 'B2', title: 'B2' }), 'Pilot: B2', 'an identity equal to the title is not printed twice');
+    assert.doesNotMatch(render(train({ kind: 'pilot', train: 'B2', title: 'T' })), />Train /);
   });
 
   it('renders an unconfigured milestone with no identity, and refuses one that carries an identity', () => {
@@ -440,7 +437,7 @@ describe('permanent train identities and card kinds (#1942)', () => {
   });
 
   it('refuses an identity every other kind needs, and a kind outside the enum', () => {
-    for (const kind of ['train', 'bucket', 'pilot']) {
+    for (const kind of ['train', 'pilot']) {
       refused(train({ kind, train: undefined }), /train must be an integer/);
     }
     refused(train({ kind: 'epic' }), /kind must be one of train, bucket, pilot, unconfigured/);
@@ -467,8 +464,70 @@ describe('permanent train identities and card kinds (#1942)', () => {
   it('never lets an identity become markup', () => {
     refused(train({ train: 'A<b>' }), /train must be an integer/);
     refused(train({ train: 'A"x' }), /train must be an integer/);
-    const html = render(train({ kind: 'bucket', train: 'R&D', title: 'R&D' }));
+    const html = render(train({ kind: 'pilot', train: 'R&D', title: 'R&D' }));
     assert.match(html, /class="block-error"/, 'an ampersand is outside the identity alphabet');
     assert.doesNotMatch(html, /class="train-card"/);
+  });
+});
+
+describe('ID-less Topic Buckets (#2006)', () => {
+  /**
+   * A bucket shaped like the shared roadmap's: no `train`, a milestone link
+   * and open cars.
+   * @param {object} [over] - Fields to replace.
+   * @returns {object}
+   */
+  function bucket(over = {}) {
+    return {
+      kind: 'bucket',
+      title: 'Infrastructure Hardening',
+      href: `${REPO}/milestone/9`,
+      verified: false,
+      thesis: 'Non-train topic bucket.',
+      cars: [
+        { issue: 192, closed: false, state: 'open', href: `${REPO}/issues/192`, type: 'bug', title: 'Multi-line paste corrupts input' },
+        { issue: 254, closed: false, state: 'open', href: `${REPO}/issues/254`, type: 'bug', title: 'Device re-pairing each launch' }
+      ],
+      ...over
+    };
+  }
+
+  it('renders a bucket with no train as a collapsible card', () => {
+    const html = render(bucket());
+    assert.match(html, /<details class="train-card"/);
+    assert.match(html, /<summary class="train-summary"/);
+    assert.match(html, /aria-label="#192 open"/);
+  });
+
+  it('names it exactly "Topic Bucket: <title>", with no train number', () => {
+    const html = render(bucket());
+    assert.equal(html.match(/<span class="train-name">([^<]*)<\/span>/)[1], 'Topic Bucket: Infrastructure Hardening');
+    assert.doesNotMatch(html, />Train /);
+    assert.equal(trainCard.parseTrainBlock(JSON.stringify(bucket()), () => true).train, undefined,
+      'the parser never assigns a bucket an identity');
+  });
+
+  it('refuses a bucket that carries a train identity', () => {
+    for (const id of [3, 13.5, 'Infra', 'Infrastructure Hardening']) {
+      refused(bucket({ train: id }), /train must be absent when kind is bucket/);
+    }
+  });
+
+  it('renders every current roadmap bucket shape without a block error', () => {
+    for (const title of ['Infrastructure Hardening', 'Master Control', 'Version 5 Subsequent (Trains C-E)']) {
+      const html = render(bucket({ title }));
+      assert.doesNotMatch(html, /block-error/, title);
+      assert.doesNotMatch(html, /language-tc-train/, title);
+      assert.match(html, /class="train-card"/, title);
+    }
+  });
+
+  it('leaves train and pilot identity validation unchanged', () => {
+    refused(train({ kind: 'train', train: undefined }), /train must be an integer/);
+    refused(train({ kind: 'pilot', train: undefined }), /train must be an integer/);
+    refused(train({ train: '16' }), /train must be an integer/);
+    refused(train({ kind: 'unconfigured', train: 3 }), /train must be absent when kind is unconfigured/);
+    assert.match(render(train({ kind: 'train', train: 16 })), /class="train-card"/);
+    assert.match(render(train({ kind: 'pilot', train: 'B2' })), /class="train-card"/);
   });
 });

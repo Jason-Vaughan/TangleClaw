@@ -211,6 +211,9 @@ describe('ensureMasterSession — the listener follows live ∧ enabled', () => 
     assert.match(identity, /POST \/api\/master\/medusa\/send/);
     assert.match(identity, /you close the loop/i);
     assert.match(identity, /Sending is enabled/);
+    // #1874: the one startup send the "context, not a task" line permits.
+    assert.match(identity, /Startup exception:\*\* a startup message your rules require/);
+    assert.match(identity, /looking up only its named recipient; nothing else/);
     const howto = fs.readFileSync(path.join(home, 'memory', 'HOWTO.md'), 'utf8');
     assert.match(howto, /you are a participant/);
     assert.doesNotMatch(howto, /you are not a participant/);
@@ -222,6 +225,7 @@ describe('ensureMasterSession — the listener follows live ∧ enabled', () => 
     const identity = fs.readFileSync(master.masterIdentityPath(home), 'utf8');
     assert.match(identity, /Sending is disabled/);
     assert.match(identity, /403 `ACCESS_LEVEL`/);
+    assert.doesNotMatch(identity, /Startup exception/, 'a Master that cannot send is not told to send at startup');
   });
 
   it('with the setting off the identity has no switchboard section and HOWTO says so honestly', () => {

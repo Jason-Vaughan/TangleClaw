@@ -162,6 +162,22 @@ describe('Codex startupControl adapter', () => {
   }
 
   /**
+   * Wait until a recorded patch satisfies `pred`, for steps that must follow
+   * the adapter's own processing rather than a wall-clock offset.
+   * @param {object} f - From `pendingFire`.
+   * @param {(patch: object, index: number) => boolean} pred - Match on a patch and its index.
+   * @param {number} [timeoutMs=5000] - Give up after this long.
+   * @returns {Promise<void>}
+   */
+  async function untilPatch(f, pred, timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs;
+    while (!f.patches.some(pred)) {
+      if (Date.now() > deadline) throw new Error(`no matching patch within ${timeoutMs} ms; patches: ${JSON.stringify(f.patches.map((p) => p.reasonCode))}`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  }
+
+  /**
    * The server's turn, finished with a status, carrying the echoed user item.
    * @param {string} status - Turn status.
    * @param {object} [extra] - Extra turn fields.
@@ -424,10 +440,86 @@ describe('Codex startupControl adapter', () => {
       assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'channel-changed' });
     });
 
-    it('a second thread for the project directory makes it unknown — the operator may be working in the other one', async () => {
-      await serve({ 'thread/loaded/list': () => ({ data: [THREAD, 'other-thread'] }) });
-      channel({ threadId: THREAD });
-      assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-ambiguous' });
+    describe('a bound thread beside other loaded threads for the project directory (#1978)', () => {
+      const SUB = 'sub-thread';
+      const OTHER = 'other-root-thread';
+      /**
+       * Serve the bound thread plus extra same-directory threads.
+       * @param {object<string, object>} extras - Thread id → fields (`status`, `parentThreadId`, `source`).
+       * @returns {Promise<FakeAppServer>}
+       */
+      const serveWith = (extras) => serve({
+        'thread/loaded/list': () => ({ data: [THREAD, ...Object.keys(extras)] }),
+        'thread/read': (p) => ({
+          thread: p.threadId === THREAD
+            ? { id: THREAD, cwd: PROJECT_PATH, status: server.state.threadStatus, parentThreadId: null, source: 'cli' }
+            : { id: p.threadId, cwd: PROJECT_PATH, parentThreadId: null, source: 'cli', ...extras[p.threadId] }
+        })
+      });
+      const subagent = (status) => ({ status, parentThreadId: THREAD, source: { subAgent: { thread_spawn: { parent_thread_id: THREAD, depth: 1 } } } });
+
+      it('an idle bound root with an idle subagent loaded is idle, so the wake reaches the pane gates', async () => {
+        await serveWith({ [SUB]: subagent({ type: 'idle' }) });
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle' });
+      });
+
+      it('an idle bound root with another idle root thread loaded is idle — the bound thread is authoritative', async () => {
+        await serveWith({ [OTHER]: { status: { type: 'idle' } }, [SUB]: subagent({ type: 'systemError' }) });
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle' });
+      });
+
+      it('any other loaded thread that is working makes it busy — the operator may be working in it', async () => {
+        await serveWith({ [OTHER]: { status: { type: 'active', activeFlags: [] } } });
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'busy', reasonCode: 'other-thread-active' });
+      });
+
+      it('a working subagent makes it busy, named as a subagent from the protocol metadata', async () => {
+        await serveWith({ [SUB]: subagent({ type: 'active', activeFlags: [] }) });
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'busy', reasonCode: 'subagent-active' });
+        server.close();
+        // A subagent known only by its source, with no parent id, is still a subagent.
+        await serveWith({ [SUB]: { status: { type: 'active', activeFlags: [] }, source: { subAgent: 'review' } } });
+        store.getDb().prepare('DELETE FROM startup_control_channels').run();
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'busy', reasonCode: 'subagent-active' });
+      });
+
+      it('another thread in a status the protocol does not promise is unknown', async () => {
+        await serveWith({ [OTHER]: { status: { type: 'somethingNew' } } });
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'other-thread-status-unknown' });
+        server.close();
+        await serveWith({ [OTHER]: { status: undefined } });
+        store.getDb().prepare('DELETE FROM startup_control_channels').run();
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'other-thread-status-unknown' });
+      });
+
+      it('the bound thread\'s own state still decides first: busy, not loaded, and a changed channel', async () => {
+        await serveWith({ [OTHER]: { status: { type: 'idle' } } });
+        channel({ threadId: THREAD });
+        server.state.threadStatus = { type: 'active', activeFlags: [] };
+        assert.deepEqual(await observe(), { state: 'busy', reasonCode: 'thread-active' });
+        store.getDb().prepare('DELETE FROM startup_control_channels').run();
+        channel({ threadId: 'bound-but-gone' });
+        assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-not-loaded' });
+      });
+
+      it('an idle answer beside other threads is still withheld when the channel changed under the read', async () => {
+        await serve({
+          'thread/loaded/list': () => ({ data: [THREAD, OTHER] }),
+          'thread/read': (p) => {
+            if (p.threadId === OTHER) store.getDb().prepare("UPDATE startup_control_channels SET state = 'closed'").run();
+            return { thread: { id: p.threadId, cwd: PROJECT_PATH, status: { type: 'idle' } } };
+          }
+        });
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'channel-changed' });
+      });
     });
 
     it('a second thread in ANOTHER directory does not', async () => {
@@ -616,29 +708,29 @@ describe('Codex startupControl adapter', () => {
           server.state.turnStarted = true;
           server.state.userItem = { type: 'userMessage', id: 'item-1', clientId: p.clientUserMessageId, content: p.input };
           server.state.turn = { id: TURN, status: 'inProgress', items: [server.state.userItem] };
-          setTimeout(() => {
-            server.notify('thread/status/changed', { threadId: THREAD, status: { type: 'active', activeFlags: ['waitingOnApproval'] } });
-            server.serverRequest('item/commandExecution/requestApproval', { threadId: THREAD, turnId: TURN, itemId: 'cmd-1', command: 'echo hi' });
-          }, 40);
-          setTimeout(() => {
-            server.notify('serverRequest/resolved', { requestId: 0 });
-            server.notify('thread/status/changed', { threadId: THREAD, status: { type: 'active', activeFlags: [] } });
-          }, 80);
-          setTimeout(() => {
-            server.notify('thread/status/changed', { threadId: THREAD, status: { type: 'active', activeFlags: ['waitingOnUserInput'] } });
-            server.serverRequest('item/tool/requestUserInput', { threadId: THREAD, turnId: TURN, itemId: 'q-1' });
-          }, 110);
-          setTimeout(() => {
-            server.notify('thread/status/changed', { threadId: THREAD, status: { type: 'active', activeFlags: [] } });
-            server.state.turn = finishedTurn('completed');
-            server.notify('turn/completed', { threadId: THREAD, turn: server.state.turn });
-          }, 150);
           return { turn: { id: TURN, status: 'inProgress', items: [] } };
         }
       });
       channel();
       const f = pendingFire();
-      const { settled } = await fireAndSettle(f);
+      const handles = codex.fire({ session, project, sequenceId: 100, promptText: PROMPT, promptTextDigest: PROMPT_DIGEST, payloadDigest: DIGEST, onUpdate: f.onUpdate }, { reconnectPauseMs: 10 });
+      // The adapter drops status changes that arrive before the fire is
+      // accepted, so the waits start from acceptance, and each step waits for
+      // the patch the previous one produced rather than a wall-clock offset.
+      await handles.accepted;
+      server.notify('thread/status/changed', { threadId: THREAD, status: { type: 'active', activeFlags: ['waitingOnApproval'] } });
+      server.serverRequest('item/commandExecution/requestApproval', { threadId: THREAD, turnId: TURN, itemId: 'cmd-1', command: 'echo hi' });
+      await untilPatch(f, (p) => p.reasonCode === 'approval_pending');
+      server.notify('serverRequest/resolved', { requestId: 0 });
+      server.notify('thread/status/changed', { threadId: THREAD, status: { type: 'active', activeFlags: [] } });
+      await untilPatch(f, (p, i) => p.reasonCode === null && f.patches.slice(0, i).some((x) => x.reasonCode === 'approval_pending'));
+      server.notify('thread/status/changed', { threadId: THREAD, status: { type: 'active', activeFlags: ['waitingOnUserInput'] } });
+      server.serverRequest('item/tool/requestUserInput', { threadId: THREAD, turnId: TURN, itemId: 'q-1' });
+      await untilPatch(f, (p) => p.reasonCode === 'user_input_pending');
+      server.notify('thread/status/changed', { threadId: THREAD, status: { type: 'active', activeFlags: [] } });
+      server.state.turn = finishedTurn('completed');
+      server.notify('turn/completed', { threadId: THREAD, turn: server.state.turn });
+      const settled = await handles.settled;
       assert.equal(settled.outcome, 'applied');
       const codes = f.patches.map((p) => p.reasonCode);
       assert.ok(codes.includes('approval_pending'), 'the approval wait was recorded');

@@ -621,21 +621,9 @@ describe('deploy/install.sh', () => {
       }
     });
 
-    it('refuses a caddy-mode host with zero mutation and names the mode-appropriate repair', () => {
-      const box = sandbox(JSON.stringify({ ingressMode: 'caddy', httpsEnabled: false }));
-      const before = snapshot(box.home);
-      const { code, output } = runInstall(box);
-
-      assert.equal(code, 1, 'must exit non-zero on a caddy-mode host');
-      assert.deepEqual(snapshot(box.home), before, 'HOME must be byte-identical after the refusal');
-      assert.equal(stubCalls(box), '', 'no brew, launchctl or other mutating tool may run');
-      assert.match(output, /ingress mode is 'caddy'/);
-      assert.match(output, /node scripts\/ingress-cutover\.js --to caddy/,
-        'must name the caddy-mode refresh');
-      assert.match(output, /node scripts\/ingress-cutover\.js --to direct/,
-        'must name the explicit switch to direct mode');
-      assert.match(output, /Nothing was changed/);
-    });
+    // #1901 replaced the caddy-mode refusal with a refresh. What it protected (no
+    // mutation before it is known to be safe) is pinned more strictly by the
+    // preflight tests in 'caddy-mode refresh (#1901, executed)' below.
 
     it('refuses an unparseable config with zero mutation rather than guessing direct', () => {
       const box = sandbox('{ "ingressMode": "caddy", ');
@@ -656,7 +644,10 @@ describe('deploy/install.sh', () => {
       it(`lets ${label} through to the dependency step`, () => {
         // Safety interlock: the failing brew stub must stop the script at the
         // ttyd dependency, before the real runtime build.
-        assert.ok(script.search(/ensure_dep ttyd/) < script.search(/ttyd-runtime\.js" provision/),
+        // The direct path's build is the TTYD_PATH line. The caddy-only bootstrap
+        // (#1901) also names provision, earlier, but a direct-mode run never
+        // reaches it, so the interlock guards the line this test could run.
+        assert.ok(script.search(/ensure_dep ttyd/) < script.search(/TTYD_PATH="\$\(node "\$\{REPO_DIR\}\/scripts\/ttyd-runtime\.js" provision/),
           'ensure_dep ttyd must precede the runtime build, or this test would run it');
         const box = sandbox(body);
         const { code, output } = runInstall(box);
@@ -667,6 +658,7 @@ describe('deploy/install.sh', () => {
         // script got past the guard and stops it there.
         assert.match(stubCalls(box), /^brew install ttyd/m, 'must proceed to the ttyd dependency');
         assert.equal(code, 1);
+        assert.doesNotMatch(output, /Caddy mode: checking/, 'a direct-mode run never runs the caddy preflight');
       });
     }
   });
@@ -683,5 +675,311 @@ describe('deploy/install.sh', () => {
       assert.match(m[1], /\.tangleclaw\/logs\//, 'stderr should land in the TangleClaw logs dir');
       assert.match(m[1], /^__HOME__\//, 'path must use the __HOME__ placeholder so install.sh substitutes it');
     });
+  });
+});
+
+// #1901: on a caddy-mode host install.sh refreshes what it owns and hands the
+// ingress to the cutover, instead of refusing. Run for real in a sandbox:
+// `launchctl`, `curl`, `brew`, the dependency binaries and `sleep` are stubs
+// that log, and a `node` wrapper hands `scripts/ingress-cutover.js` and
+// `scripts/ttyd-runtime.js` to a scripted fake while every other node call runs
+// for real. Nothing here can reach this machine's launchd or its live server.
+describe('deploy/install.sh caddy-mode refresh (#1901, executed)', () => {
+  const { execFileSync } = require('node:child_process');
+  const os = require('node:os');
+
+  // The fake cutover / runtime. Reads the scenario, logs its call, and answers
+  // the way the real script would for that scenario.
+  const FAKE = `
+    const fs = require('fs');
+    const [, , which, script, ...args] = process.argv;
+    const box = process.env.TC_FAKE_BOX;
+    const scenario = JSON.parse(fs.readFileSync(box + '/scenario.json', 'utf8'));
+    fs.appendFileSync(box + '/calls.log', which + ' ' + args.join(' ') + '\\n');
+    const resultAt = args.indexOf('--result-file');
+    const resultFile = resultAt >= 0 ? args[resultAt + 1] : null;
+    if (which === 'runtime') {
+      if (scenario.provisionFails) { console.error('build failed'); process.exit(1); }
+      process.stdout.write(box + '/home/.tangleclaw/bin/ttyd\\n');
+      process.exit(0);
+    }
+    if (args.includes('--dry-run')) {
+      const n = fs.existsSync(box + '/dryruns') ? Number(fs.readFileSync(box + '/dryruns', 'utf8')) : 0;
+      fs.writeFileSync(box + '/dryruns', String(n + 1));
+      const step = scenario.dryRuns[Math.min(n, scenario.dryRuns.length - 1)];
+      if (step.code && resultFile) fs.writeFileSync(resultFile, JSON.stringify({ ok: false, code: step.code }));
+      if (step.status !== 0) console.error('fake dry run: ' + (step.reason || step.code || 'refuse'));
+      process.exit(step.status);
+    }
+    const real = scenario.cutover || { status: 0, ok: true, code: 'ok', healthOk: true };
+    fs.writeFileSync(resultFile, JSON.stringify({ ok: real.ok, code: real.code, healthOk: real.healthOk,
+      healthUrl: 'https://localhost:8443/api/health', gateNote: real.gateNote || null,
+      gateChanges: real.gateChanges || [] }));
+    process.exit(real.status);
+  `;
+
+  /**
+   * Build a caddy-mode sandbox.
+   * @param {object} scenario - What the fake cutover, runtime and curl answer.
+   * @returns {{root: string, bin: string, home: string}}
+   */
+  function sandbox(scenario) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-install-caddy-'));
+    sandboxRoots.push(root);
+    const bin = path.join(root, 'bin');
+    const home = path.join(root, 'home');
+    fs.mkdirSync(bin);
+    fs.mkdirSync(path.join(home, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.tangleclaw', 'config.json'), JSON.stringify({ ingressMode: 'caddy' }));
+    fs.writeFileSync(path.join(root, 'scenario.json'), JSON.stringify(scenario));
+    fs.writeFileSync(path.join(root, 'fake.js'), FAKE);
+    const calls = path.join(root, 'calls.log');
+    const stubs = {
+      node: `case "$1" in\n  */scripts/ingress-cutover.js) shift; exec "${process.execPath}" "${root}/fake.js" cutover x "$@";;\n`
+        + `  */scripts/ttyd-runtime.js) shift; exec "${process.execPath}" "${root}/fake.js" runtime x "$@";;\nesac\n`
+        + `exec "${process.execPath}" "$@"`,
+      uname: 'echo Darwin',
+      sleep: 'exit 0',
+      launchctl: `echo "launchctl $*" >> "${calls}"`,
+      brew: `echo "brew $*" >> "${calls}"; exit 99`,
+      curl: `url=""; for a in "$@"; do url="$a"; done\necho "curl $url" >> "${calls}"\n`
+        + `case "$url" in *127.0.0.1*) printf '%s' "${scenario.restart1 || '200'}";; *) printf '%s' "${scenario.caddyHealth || '200'}";; esac`,
+      tmux: `echo "tmux $*" >> "${calls}"; exit 1`,
+      mkcert: `echo "mkcert $*" >> "${calls}"`,
+      ttyd: 'exit 0',
+      caddy: 'exit 0'
+    };
+    for (const [name, body] of Object.entries(stubs)) {
+      fs.writeFileSync(path.join(bin, name), `#!/bin/sh\n${body}\n`);
+      fs.chmodSync(path.join(bin, name), 0o755);
+    }
+    return { root, bin, home };
+  }
+
+  /**
+   * Run install.sh in the sandbox.
+   * @param {{bin: string, home: string, root: string}} box
+   * @returns {{code: number, output: string}}
+   */
+  function runInstall(box) {
+    try {
+      const output = execFileSync('/bin/bash', [SCRIPT_PATH], {
+        env: { PATH: `${box.bin}:/usr/bin:/bin`, HOME: box.home, TMPDIR: box.root, TC_FAKE_BOX: box.root },
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000
+      });
+      return { code: 0, output };
+    } catch (err) {
+      return { code: err.status, output: `${err.stdout || ''}${err.stderr || ''}` };
+    }
+  }
+
+  /** @returns {string[]} The logged calls, one per line. */
+  const callsOf = (box) => (fs.existsSync(path.join(box.root, 'calls.log'))
+    ? fs.readFileSync(path.join(box.root, 'calls.log'), 'utf8').trim().split('\n').filter(Boolean) : []);
+
+  /**
+   * Snapshot every file under HOME as relative path → contents.
+   * @param {string} dir
+   * @returns {Record<string, string>}
+   */
+  function snapshot(dir) {
+    const out = {};
+    for (const entry of fs.readdirSync(dir, { recursive: true, withFileTypes: true })) {
+      const full = path.join(entry.parentPath || entry.path, entry.name);
+      out[path.relative(dir, full)] = entry.isFile() ? fs.readFileSync(full, 'utf8') : '<dir>';
+    }
+    return out;
+  }
+
+  /** Index of the first call matching `re`, or -1. */
+  const firstCall = (calls, re) => calls.findIndex((c) => re.test(c));
+
+  const CLEAN = { dryRuns: [{ status: 0 }] };
+
+  it('the sandbox shadows every tool that could touch this machine', () => {
+    const box = sandbox(CLEAN);
+    const env = { PATH: `${box.bin}:/usr/bin:/bin`, HOME: box.home };
+    for (const tool of ['launchctl', 'curl', 'brew', 'tmux', 'node', 'mkcert', 'caddy', 'ttyd']) {
+      const where = execFileSync('/bin/sh', ['-c', `command -v ${tool}`], { env, encoding: 'utf8' }).trim();
+      assert.equal(where, path.join(box.bin, tool), `${tool} must resolve to the sandbox stub`);
+    }
+  });
+
+  it('refreshes the server plist, tmux.conf and attach script, writes NO ttyd plist, and confirms both restarts', () => {
+    const box = sandbox(CLEAN);
+    const { code, output } = runInstall(box);
+    assert.equal(code, 0, output);
+
+    const agents = path.join(box.home, 'Library', 'LaunchAgents');
+    assert.ok(fs.existsSync(path.join(agents, 'com.tangleclaw.server.plist')), 'the server plist is refreshed');
+    assert.ok(!fs.existsSync(path.join(agents, 'com.tangleclaw.ttyd.plist')),
+      'caddy mode must never write the TCP ttyd plist, which cuts the dashboard off (#1900)');
+    assert.equal(fs.readFileSync(path.join(box.home, '.tmux.conf'), 'utf8'),
+      fs.readFileSync(path.join(__dirname, '..', 'deploy', 'tmux.conf'), 'utf8'));
+    assert.ok(fs.existsSync(path.join(box.home, '.tangleclaw', 'deploy', 'ttyd-attach.sh')));
+
+    assert.match(output, /Restart 1 of 2 confirmed: the server is up on 127\.0\.0\.1:3102/);
+    assert.match(output, /Restart 2 of 2: the ingress cutover re-applies the ttyd and Caddy plists/);
+    assert.match(output, /Restart 2 of 2 confirmed: healthy through Caddy \(https:\/\/localhost:8443\/api\/health\)/);
+    assert.doesNotMatch(output, /Put a password and TLS in front of it/, 'a caddy host already has its gate');
+  });
+
+  it('runs the preflight before anything else, then restarts in order: server reload, health, cutover', () => {
+    const box = sandbox(CLEAN);
+    runInstall(box);
+    const calls = callsOf(box);
+    assert.match(calls[0], /^cutover --to caddy --dry-run --result-file /, 'the first call is the preflight');
+    const reload = firstCall(calls, /^launchctl load .*com\.tangleclaw\.server\.plist/);
+    const health = firstCall(calls, /^curl http:\/\/127\.0\.0\.1:3102\/api\/health/);
+    const real = firstCall(calls, /^cutover --to caddy --result-file /);
+    assert.ok(reload > 0 && reload < health && health < real, calls.join('\n'));
+    assert.ok(!calls.some((c) => /^launchctl .*(ttyd|caddy)\.plist/.test(c)),
+      'install.sh never loads the ttyd or Caddy plist itself in caddy mode; the cutover does');
+  });
+
+  it('a predicted refusal (3) aborts with HOME byte-identical and nothing but the preflight run', () => {
+    const box = sandbox({ dryRuns: [{ status: 3, reason: 'the Caddyfile is hand-edited' }] });
+    const before = snapshot(box.home);
+    const { code, output } = runInstall(box);
+    assert.equal(code, 1);
+    assert.deepEqual(snapshot(box.home), before, 'HOME must be byte-identical');
+    assert.deepEqual(callsOf(box).map((c) => c.split(' ').slice(0, 4).join(' ')),
+      ['cutover --to caddy --dry-run'], 'no brew, launchctl, provision or real cutover');
+    assert.match(output, /the Caddyfile is hand-edited/, 'the cutover\'s reason reaches the operator');
+    assert.match(output, /the ingress cutover would refuse \(reason above\), so nothing was refreshed/);
+    assert.match(output, /Nothing was changed/);
+  });
+
+  it('any other preflight failure aborts the same way, without the bootstrap', () => {
+    const box = sandbox({ dryRuns: [{ status: 1, code: 'failed', reason: 'generator error' }] });
+    const before = snapshot(box.home);
+    const { code, output } = runInstall(box);
+    assert.equal(code, 1);
+    assert.deepEqual(snapshot(box.home), before);
+    assert.equal(callsOf(box).length, 1, 'only the preflight ran');
+    assert.match(output, /preflight failed \(status 1; reason above\)/);
+  });
+
+  it('a stale runtime (typed code) bootstraps ONLY the runtime, re-runs the full preflight, then proceeds', () => {
+    const box = sandbox({ dryRuns: [{ status: 1, code: 'ttyd-runtime-unavailable' }, { status: 0 }] });
+    const { code, output } = runInstall(box);
+    assert.equal(code, 0, output);
+    const calls = callsOf(box);
+    assert.match(calls[0], /^cutover --to caddy --dry-run/);
+    assert.match(calls[1], /^runtime provision --base-dir /, 'the bootstrap provisions the runtime');
+    assert.match(calls[2], /^cutover --to caddy --dry-run/, 'then the COMPLETE preflight runs again');
+    assert.ok(!calls.slice(0, 3).some((c) => /^(brew|launchctl|mkcert|tmux)/.test(c)),
+      'nothing but the runtime is touched before the preflight passes');
+    assert.match(output, /Provisioning it into ~\/\.tangleclaw\/bin/);
+  });
+
+  it('a bootstrap whose re-run preflight refuses says the new runtime is in place but not in use', () => {
+    const box = sandbox({ dryRuns: [{ status: 1, code: 'ttyd-runtime-unavailable' }, { status: 3, reason: 'hand-edited' }] });
+    const before = snapshot(box.home);
+    const { code, output } = runInstall(box);
+    assert.equal(code, 1);
+    assert.deepEqual(snapshot(box.home), before, 'the (faked) runtime write is the only one allowed, and it is faked');
+    assert.deepEqual(callsOf(box).map((c) => c.split(' ')[0] + ' ' + c.split(' ')[1]),
+      ['cutover --to', 'runtime provision', 'cutover --to']);
+    assert.match(output, /A new ttyd runtime WAS provisioned into ~\/\.tangleclaw\/bin\. It is not in use/);
+  });
+
+  it('a bootstrap that cannot provision stops there', () => {
+    const box = sandbox({ dryRuns: [{ status: 1, code: 'ttyd-runtime-unavailable' }], provisionFails: true });
+    const { code, output } = runInstall(box);
+    assert.equal(code, 1);
+    assert.equal(callsOf(box).length, 2, 'no second preflight and nothing else');
+    assert.match(output, /the ttyd runtime could not be provisioned/);
+  });
+
+  it('a server that does not come back after restart 1 stops before the cutover, and says the gate is intact', () => {
+    const box = sandbox({ ...CLEAN, restart1: '000' });
+    const { code, output } = runInstall(box);
+    assert.equal(code, 1);
+    const calls = callsOf(box);
+    assert.equal(calls.filter((c) => /^curl http:\/\/127\.0\.0\.1:3102/.test(c)).length, 30, 'bounded: 30 probes');
+    assert.ok(!calls.some((c) => /^cutover --to caddy --result-file/.test(c)), 'the cutover is not run');
+    assert.match(output, /did not come back after restart 1 of 2/);
+    assert.match(output, /Caddy and its login gate are unchanged/);
+  });
+
+  it('a failed cutover exits non-zero with its code', () => {
+    const box = sandbox({ ...CLEAN, cutover: { status: 1, ok: false, code: 'validate-failed', healthOk: false } });
+    const { code, output } = runInstall(box);
+    assert.equal(code, 1);
+    assert.match(output, /the ingress cutover failed \(status 1, code validate-failed/);
+  });
+
+  it('confirms restart 2 itself when the cutover\'s own short health poll did not', () => {
+    const box = sandbox({ ...CLEAN, cutover: { status: 0, ok: true, code: 'ok', healthOk: false } });
+    const { code, output } = runInstall(box);
+    assert.equal(code, 0, output);
+    assert.ok(callsOf(box).some((c) => c === 'curl https://localhost:8443/api/health'), 'install.sh polls through Caddy');
+    assert.match(output, /Restart 2 of 2 confirmed/);
+  });
+
+  it('every surface that tells an operator how to refresh deploy assets names install.sh for both modes', () => {
+    const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+    assert.match(read('public/update-beacon.js'), /run \.\/deploy\/install\.sh '\s*\+ '\(it works in both ingress modes/);
+    assert.match(read('lib/update-applier.js'), /runs `\.\/deploy\/install\.sh`, which handles both ingress modes/);
+    const readme = read('README.md');
+    assert.match(readme, /It works in both ingress modes:/);
+    for (const [f, text] of [['README.md', readme], ['docs/configuration-reference.md', read('docs/configuration-reference.md')],
+      ['docs/runbooks/roll-out-the-owned-ttyd.md', read('docs/runbooks/roll-out-the-owned-ttyd.md')],
+      ['docs/user-guide.md', read('docs/user-guide.md')], ['lib/ttyd-runtime.js', read('lib/ttyd-runtime.js')]]) {
+      assert.doesNotMatch(text, /no caddy-mode refresh yet|never deploy\/install\.sh|on a caddy-mode host it refuses/,
+        `${f} still sends caddy-mode operators to the old refusal`);
+    }
+  });
+
+  it('names the gate that remains in the cutover\'s own words, and never claims a Caddy password was kept', () => {
+    const box = sandbox({ ...CLEAN, cutover: { status: 0, ok: true, code: 'ok', healthOk: true,
+      gateNote: "Caddy's basic_auth is NOT written — TangleClaw's login (armed) is the gate for every site",
+      gateChanges: ["Caddy's basic_auth (1 user) will be REMOVED: the regenerated Caddyfile carries none"] } });
+    const { code, output } = runInstall(box);
+    assert.equal(code, 0, output);
+    assert.match(output, /Login gate now: Caddy's basic_auth is NOT written — TangleClaw's login \(armed\) is the gate for every site/);
+    assert.match(output, /Gate change: {4}Caddy's basic_auth \(1 user\) will be REMOVED/);
+    assert.doesNotMatch(output, /gate was kept/i, 'an existing Caddy gate must never be claimed as preserved');
+    assert.match(output, /which login gate is in force is above/);
+  });
+
+  it('leaves none of the cutover\'s scratch result files behind, whether it succeeds or refuses', () => {
+    const leftovers = (box) => fs.readdirSync(box.root).filter((f) => /^tc-install-(preflight|cutover)\./.test(f));
+    const ok = sandbox(CLEAN);
+    assert.equal(runInstall(ok).code, 0);
+    assert.deepEqual(leftovers(ok), []);
+    const refused = sandbox({ dryRuns: [{ status: 3, reason: 'hand-edited' }] });
+    assert.equal(runInstall(refused).code, 1, 'the cleanup keeps the run\'s own exit status');
+    assert.deepEqual(leftovers(refused), []);
+  });
+
+  it('fails, bounded, when restart 2 never confirms healthy', () => {
+    const box = sandbox({ ...CLEAN, caddyHealth: '502', cutover: { status: 0, ok: true, code: 'ok', healthOk: false } });
+    const { code, output } = runInstall(box);
+    assert.equal(code, 1);
+    assert.equal(callsOf(box).filter((c) => c === 'curl https://localhost:8443/api/health').length, 30);
+    assert.match(output, /restart 2 of 2 could not be confirmed healthy through Caddy/);
+  });
+
+  it('still names the gate now in force, once, when a successful cutover is followed by a health timeout', () => {
+    const leftovers = (b) => fs.readdirSync(b.root).filter((f) => /^tc-install-(preflight|cutover)\./.test(f));
+    const box = sandbox({ ...CLEAN, caddyHealth: '502', cutover: { status: 0, ok: true, code: 'ok', healthOk: false,
+      gateNote: "Caddy's basic_auth is NOT written — TangleClaw's login (armed) is the gate for every site",
+      gateChanges: [
+        "Caddy's basic_auth (1 user) will be REMOVED: the regenerated Caddyfile carries none",
+        'the existing Caddyfile has a `import` directive this tool does not generate; the cutover '
+          + 'converges to the canonical config, and anything it provided (a gate included) will NOT be carried over'
+      ] } });
+    const { code, output } = runInstall(box);
+    assert.equal(code, 1, 'the timeout is still a bounded failure');
+    assert.equal(callsOf(box).filter((c) => c === 'curl https://localhost:8443/api/health').length, 30);
+    assert.match(output, /restart 2 of 2 could not be confirmed healthy through Caddy/);
+    const count = (re) => (output.match(re) || []).length;
+    assert.equal(count(/Login gate now: Caddy's basic_auth is NOT written — TangleClaw's login \(armed\) is the gate for every site/g), 1);
+    assert.equal(count(/Gate change: {4}Caddy's basic_auth \(1 user\) will be REMOVED/g), 1);
+    assert.equal(count(/Gate change: {4}the existing Caddyfile has a `import` directive/g), 1);
+    assert.doesNotMatch(output, /Restart 2 of 2 confirmed/);
+    assert.deepEqual(leftovers(box), [], 'the EXIT trap still removes the result files');
   });
 });
