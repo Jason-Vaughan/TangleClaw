@@ -7494,8 +7494,9 @@ route('POST', '/api/operator-channel/inbound', (req, res, _params, body) => {
   }
 }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
 
-// GET /api/operator-channel/outbound — the target project's replies waiting for
-// the helper, each with the operator message it answers when it names one.
+// GET /api/operator-channel/outbound — what is waiting for the helper: the target
+// project's replies, each with the operator message it answers when it names
+// one, and server notifications (#1799), each marked by `kind` and `type`.
 route('GET', '/api/operator-channel/outbound', (req, res) => {
   try {
     operatorChannel.authorizeHelper(req);
@@ -7505,8 +7506,8 @@ route('GET', '/api/operator-channel/outbound', (req, res) => {
   }
 });
 
-// POST /api/operator-channel/outbound/:id/ack — the helper posted a reply:
-// `{postedId}`. The reply's text is dropped once acknowledged.
+// POST /api/operator-channel/outbound/:id/ack — the helper posted a reply or a
+// notification: `{postedId}`. Its text is dropped once acknowledged.
 route('POST', '/api/operator-channel/outbound/:id/ack', (req, res, params, body) => {
   try {
     operatorChannel.authorizeHelper(req);

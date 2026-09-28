@@ -1,6 +1,6 @@
 'use strict';
 
-// #1799 C1.5: the operator channel's server notifications. Three events have a
+// #1799: the operator channel's server notifications. Three events have a
 // source and are emitted, each once per idempotency key; two are reserved and
 // refused. A notification is an ordinary outbound item: listed with its kind
 // and type, settled only by the helper's acknowledgement. Nothing is recorded
@@ -64,7 +64,7 @@ const notifications = () => store.operatorChannel.listOutbound('relayable', 500)
   .filter((r) => r.kind === 'notification')
   .sort((a, b) => a.id - b.id);
 
-describe('operator channel notifications (#1799 C1.5)', () => {
+describe('operator channel notifications (#1799)', () => {
   let tmpDir;
   let enabled;
   const saved = {};
@@ -100,7 +100,7 @@ describe('operator channel notifications (#1799 C1.5)', () => {
   describe('the store (schema v52)', () => {
     it('reads an existing reply row as a reply, and adds the notification columns', () => {
       const { row } = store.operatorChannel.insertOutbound({ hub_id: 'hub-1', from_workspace_id: 'ws', text: 'hi', received_at: new Date(T0).toISOString() });
-      assert.equal(row.kind, 'reply', 'a C1 reply reads exactly as before');
+      assert.equal(row.kind, 'reply', 'an existing reply reads exactly as before');
       assert.equal(row.notify_type, null);
       assert.equal(row.idem_key, null);
     });
@@ -147,7 +147,7 @@ describe('operator channel notifications (#1799 C1.5)', () => {
       assert.equal(again.inserted, false);
       assert.equal(again.row.text, 'TangleClaw: x', 'the first record stands');
       assert.equal(first.row.state, 'relayable');
-      assert.equal(first.row.hub_id, 'notify:work-blocked:1');
+      assert.equal(first.row.hub_id, 'notify/work-blocked:1');
     });
 
     it('keeps the notifier\'s state across a restart', () => {
@@ -190,10 +190,17 @@ describe('operator channel notifications (#1799 C1.5)', () => {
       assert.deepEqual(Object.keys(notify.TEMPLATES).sort(), Object.keys(notify.EMITTED).sort());
     });
 
-    it('refuses text that is not display-safe, such as a project name with a bidi control', () => {
+    it('leaves out a project name that is not display-safe, and still tells the operator', () => {
       const p = mkProject('ok');
-      store.getDb().prepare('UPDATE projects SET name = ? WHERE id = ?').run('evil‮name', p.id);
-      assert.equal(notify.emit('work-blocked', { key: 'k-bidi', projectId: p.id }).reason, 'unsafe-text');
+      store.getDb().prepare('UPDATE projects SET name = ? WHERE id = ?').run('evil\u202Ename', p.id);
+      assert.equal(notify.emit('work-blocked', { key: 'k-bidi', projectId: p.id }).emitted, true);
+      const [row] = notifications();
+      assert.equal(row.text, 'TangleClaw: a project reports its work is blocked.');
+    });
+
+    it('refuses a notice whose fixed text itself fails the display-safety rule', () => {
+      notify._internal.isSafe = () => false;
+      assert.equal(notify.emit('work-blocked', { key: 'k-never' }).reason, 'unsafe-text');
       assert.equal(notifications().length, 0);
     });
 
@@ -210,6 +217,26 @@ describe('operator channel notifications (#1799 C1.5)', () => {
     it('never throws into its caller', () => {
       notify._internal.enabled = () => { throw new Error('config unreadable'); };
       assert.deepEqual(notify.emit('work-blocked', { key: 'k-err' }), { emitted: false, reason: 'error' });
+    });
+  });
+
+  describe('a notification\'s id cannot be taken by a received message', () => {
+    it('refuses an arrival whose id breaks the Hub id rule, so it cannot occupy a notification\'s id', () => {
+      const row = operatorChannel.recordArrival({
+        sessionKey: operatorChannel.CHANNEL_KEY,
+        message: { id: 'notify/work-blocked:7', from: 'ws', message: 'spoof' }
+      });
+      assert.equal(row, null);
+      assert.equal(notify.emit('work-blocked', { key: 'work-blocked:7' }).emitted, true, 'the real notice is still recorded');
+    });
+
+    it('a received message shaped like a Hub id never suppresses a notification', () => {
+      operatorChannel.recordArrival({
+        sessionKey: operatorChannel.CHANNEL_KEY,
+        message: { id: 'notify:work-blocked:8', from: 'ws', message: 'spoof' }
+      });
+      assert.equal(notify.emit('work-blocked', { key: 'work-blocked:8' }).emitted, true);
+      assert.equal(notifications().filter((r) => r.idem_key === 'work-blocked:8').length, 1);
     });
   });
 
@@ -368,7 +395,7 @@ describe('operator channel notifications (#1799 C1.5)', () => {
   });
 });
 
-describe('work-blocked, from the workload route (#1799 C1.5)', () => {
+describe('work-blocked, from the workload route (#1799)', () => {
   let tmpDir;
   let server;
   const saved = {};

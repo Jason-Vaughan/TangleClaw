@@ -114,7 +114,7 @@ Three events are emitted. Each has one source, and each is emitted once per idem
 
 `release-action-needed` and `certification-state-changed` are reserved names. Neither is emitted until its trigger is defined.
 
-The schema is closed: a type, a key, the project the event concerns (none for `fleet-idle`), a timestamp, and text rendered on the server from a fixed template. The template takes only the project's name from the store and a lane count, so no agent or chat text reaches a notification. The text passes the channel's display-safety rule.
+The schema is closed: a type, a key, the project the event concerns (none for `fleet-idle`), a timestamp, and text rendered on the server from a fixed template. The template takes only the project's name from the store and a lane count, so no agent or chat text reaches a notification. The text passes the channel's display-safety rule; a project name that fails it is left out ("a project") and the omission is logged, so the operator is still told.
 
 **Notifications are recorded only while the channel is on.** Turning it on does not deliver a backlog of stale alerts.
 
@@ -123,7 +123,7 @@ The schema is closed: a type, a key, the project the event concerns (none for `f
 - `operator_channel_inbound`: one row per message, unique by the helper's message id. States: `pending`, `sent`, `send_unknown`, `failed`.
 - `operator_channel_outbound`: one row per received message, unique by Hub id. States: `unverified`, `relayable`, `delivered`, `quarantined`.
   - v52 added `kind` (`reply` or `notification`), `notify_type`, `idem_key` (unique when set) and `project_id`.
-  - A notification is stored as `relayable` from the start, under a synthetic Hub id `notify:<key>` that no Hub id can take.
+  - A notification is stored as `relayable` from the start, under a synthetic id `notify/<key>`. The `/` is outside the Hub's id rule, and the channel refuses an arrival whose id breaks that rule, so no received message can take a notification's id.
 - `operator_channel_notify_state`: small key/value state the notifier needs to survive a restart, such as where a `fleet-idle` spell stands.
 
 Text is kept only until it is handed on. Nothing prunes the rows yet: each reply and each notification (an escalation, a lane entering `blocked`, an idle episode) leaves one small row whose text is cleared once it is posted.
