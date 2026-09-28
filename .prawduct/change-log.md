@@ -71,7 +71,18 @@ C2 chunk B, completing C2 (chunk C was folded into A, because C1.5 carries notif
 
 **Follow-up from verify `rev-20260928T030041Z-3a1dca3e`** (0 findings). O-1 (a restated suite count) is accepted. O-2: the one-helper lock is now exclusive. Following verify `rev-20260928T031015Z-07457490`, the pid is written to a private file and hard-linked into place, so the lock never exists empty, and an unreadable lock is treated as held. Two `run`s started at once cannot both post. One race remains, stated in `acquireLock`: two starts that find the same stale lock (after a crash) at the same moment. launchd runs one job per label, so it needs two starts by hand. O-3: `status` checks a snapshot's shape before reading it, and the launcher reports an unexpected failure by its type alone. Tests cover each: two simultaneous helpers, and a `{}` snapshot. The lock mutant (`w` for `wx`) turns the file red.
 
-**Evidence.** `test/discord-helper-cli.test.js` covers every command, with a sweep that finds neither secret in any file the commands wrote or anything they printed. The three helper test files are green. The real binary's `usage` and `status` were run on this host: `status` reads the Keychain and writes nothing. Four new guard mutations (queue, queue tail, held log, read-back) each turned a test red. The full suite was recorded green at the chunk B boundary before these review fixes (7816 passed, 0 failed, 1 skipped); it is re-run on the final tree before the PR.
+**History rewrite and the review after it.** GitHub push protection refused the first push because the fake test bot token had the shape of a real Discord token. The unpushed branch was rewritten with filter-branch, changing only that constant (now plainly fake) in two test files.
+
+The fresh cumulative `rev-20260928T032547Z-04e82142` then found 1 blocking issue, fixed here: R-1. A definite failure after a doubtful attempt cleared the doubt, so a later retry could post twice. Now only the attempt that opened the doubt may clear it; a test covers timeout, then network down, then recovery.
+
+The rest of that review:
+- R-3: INVALID_SESSION now uses the shared backoff, with a 1-5 s floor, rather than retrying every few seconds.
+- R-2 and R-4: `run` takes the lock before opening the record, and `settle` takes and releases the same lock.
+- R-6 (the ✅ does not confirm delivery): documented, accepted, and routed to the PM as a C1 follow-up.
+- R-5, R-7, R-8, R-9: accepted.
+- Five mutants, one per fix, each fail a test cleanly.
+
+**Evidence.** `test/discord-helper-cli.test.js` covers every command, with a sweep that finds neither secret in any file the commands wrote or anything they printed. The three helper test files are green. The real binary's `usage` and `status` were run on this host: `status` reads the Keychain and writes nothing. Four new guard mutations (queue, queue tail, held log, read-back) each turned a test red. The full suite was recorded green at the chunk B boundary before these review fixes (7816 passed, 0 failed, 1 skipped); it is re-run on the final tree before the PR (recorded on that tree; see test-status).
 
 ## 2026-09-28 — The Discord helper's relay modules (#1799, C2 chunk A)
 

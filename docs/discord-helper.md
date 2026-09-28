@@ -15,6 +15,7 @@ It talks to Discord over Discord's API and Gateway only. The Discord desktop app
 - **One operator, one server, one channel.** Messages from anyone else, from another server or channel, from a bot (itself included) or from a webhook are ignored. They are ignored by their ids, before their text is read, so nothing of theirs reaches TangleClaw, a log or a reply.
 - **Only the channel's three routes.** The helper holds the channel's `ocsk_` token, which TangleClaw refuses on every other route. It has no dashboard session and no service token.
 - **Text only.** Attachments, voice and slash commands are not relayed.
+- **✅ means TangleClaw has the message, not that the project read it.** TangleClaw delivers it when the project's session is next live. If that delivery later fails, or its outcome is lost, the helper is not told, so no reply comes. `GET /api/operator-channel/status` counts messages by state (`failed`, `send_unknown`), and those are the ones to send again.
 - **Messages sent while the helper is down are not caught up.** The Gateway does not replay them. Send those messages again once `status` shows the Gateway `ready`. Replies and notifications are different: they wait on TangleClaw's side, so nothing is lost while the helper or Discord is down.
 
 ## Setting it up
@@ -103,6 +104,8 @@ When TangleClaw refuses a message, the helper replies to it in fixed words and a
 | no target project is set | the channel has no target project |
 | the text is not display-safe | control or invisible characters, or emoji written with a variation selector or joiner (a red heart, a skin tone) |
 | over 4000 characters | the length limit |
+| the message has no text | an attachment or sticker with no text |
+| TangleClaw could not accept this message | TangleClaw found the message malformed |
 | more than 20 messages in a minute | the rate limit |
 | TangleClaw refused the helper's token | the token was re-minted; run `set-secret channel` with the new one |
 | TangleClaw could not be reached | three attempts failed; send it again later |

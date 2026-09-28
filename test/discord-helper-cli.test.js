@@ -174,14 +174,25 @@ describe('tc-discord-helper', () => {
       assert.equal(fetchCalls.length, 0, 'Discord and TangleClaw were never contacted');
     });
 
-    it('refuses to be a second helper', async () => {
+    it('refuses to be a second helper, without touching the running one\'s record', async () => {
       await configure();
       withSecrets();
-      fs.mkdirSync(p().dir, { recursive: true });
+      const st = openState(p().state);
+      st.set(3, { state: 'posting', since: 1, parts: [] });
+      const before = fs.readFileSync(p().state, 'utf8');
+      const mtime = fs.statSync(p().state).mtimeMs;
       fs.writeFileSync(p().pid, '777');
       liveOthers.add(777);
       assert.equal(await cli.main(['run'], deps), 1);
       assert.equal(JSON.parse(errLines.at(-1)).code, 'helper-already-running');
+      assert.equal(fs.readFileSync(p().state, 'utf8'), before);
+      assert.equal(fs.statSync(p().state).mtimeMs, mtime, 'the record was not rewritten');
+    });
+
+    it('releases the lock when it cannot start after taking it', async () => {
+      await configure();
+      assert.equal(await cli.main(['run'], deps), 78, 'no secrets');
+      assert.equal(fs.existsSync(p().pid), false);
     });
 
     it('treats a lock it cannot read as held, never as stale', async () => {
@@ -311,6 +322,7 @@ describe('tc-discord-helper', () => {
       liveOthers.clear();
       assert.equal(await cli.main(['settle', '3', '--posted', '900000000000000009'], deps), 0);
       assert.deepEqual(openState(p().state).get(3), { state: 'posted', postedId: '900000000000000009' });
+      assert.equal(fs.existsSync(p().pid), false, 'settle took the lock and released it');
       assert.equal(await cli.main(['settle', '3', '--repost'], deps), 1, 'no longer held');
       assert.equal(await cli.main(['settle', 'x'], deps), 1);
     });

@@ -611,6 +611,25 @@ describe('discord helper outbound', () => {
     assert.deepEqual(out.status().items, [{ outboundId: 1, state: 'uncertain', partsPosted: 0 }]);
   });
 
+  it('keeps a doubtful attempt in doubt when a later attempt fails outright, so it never posts twice', async () => {
+    const c1 = fakeC1([item(1)]);
+    const d = fakeDiscord();
+    // 1: times out, but the post landed. 2: the network is gone, definitely not sent.
+    d.fail = { status: 0, sent: 'unknown', landFirst: true, once: true };
+    await relay(c1, d).out.tick();
+    clock += 30 * 1000;
+    d.fail = { status: 0, sent: 'no' };
+    await relay(c1, d).out.tick();
+    assert.notEqual(state.get(1).since, null, 'the first attempt is still in doubt');
+    // 3: long after, Discord is back. A repost would now duplicate: hold it instead.
+    clock += 10 * 60 * 1000;
+    d.fail = null;
+    await relay(c1, d).out.tick();
+    assert.equal(d.messages.length, 1, 'posted once');
+    assert.equal(state.get(1).state, 'uncertain');
+    assert.equal(c1.acks.length, 0);
+  });
+
   it('settles an uncertain item the way the operator says', async () => {
     const c1 = fakeC1([item(1), item(2)]);
     const d = fakeDiscord();
@@ -939,6 +958,20 @@ describe('discord helper gateway', () => {
     ws().recv({ op: 10, d: { heartbeat_interval: 40000 } });
     assert.ok(ws().sent.some((p) => p.op === 2));
     assert.ok(!ws().sent.some((p) => p.op === 6));
+  });
+
+  it('backs off a session Discord keeps invalidating, instead of retrying every few seconds', () => {
+    gw.start();
+    const waits = [];
+    for (let i = 0; i < 6; i++) {
+      ws().recv({ op: 10, d: { heartbeat_interval: 40000 } });
+      ws().recv({ op: 9, d: false });
+      waits.push(timers.fire());
+    }
+    assert.ok(waits.every((w) => w >= 1000), 'never under the short pause');
+    assert.ok(waits.at(-1) > waits[0], `the wait grows: ${waits.join(', ')}`);
+    assert.equal(waits.at(-1), 6000, 'up to the backoff cap');
+    assert.equal(gw.status().reconnectAttempts, 6);
   });
 
   it('identifies afresh after a close that ends the session', () => {
