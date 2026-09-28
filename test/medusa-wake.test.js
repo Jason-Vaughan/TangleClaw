@@ -944,6 +944,21 @@ describe('medusa-wake — the Project Master is scanned like any session (#996)'
     assert.ok(!line.includes('\n'), 'still one line');
   });
 
+  it('names the reply path that works, before the ack (#1976)', () => {
+    // The nudge said mark handled, then reply with a raw POST /send. A raw send
+    // carrying inReplyTo without the launch headers is refused
+    // (EXCHANGE_BINDING_REQUIRED), and one sent without inReplyTo records no
+    // reply, so following the nudge left the initiator blocked either way.
+    const line = wake._nudgeLineFor('/api/sessions/p/medusa', 1, 'http://localhost:3102');
+    assert.match(line, /tc message send --in-reply-to <message-id>/);
+    assert.match(line, /launch headers/, 'the raw path names what it needs');
+    assert.match(line, /tc message ack <message-id>/);
+    assert.ok(line.indexOf('--in-reply-to') < line.indexOf('tc message ack'), 'reply comes before the ack');
+    assert.match(line, /tc message owed/);
+    assert.match(line, /Never use \/clear as an acknowledgement/);
+    assert.ok(!line.includes('\n'), 'still one line');
+  });
+
   it('states the API origin outright instead of pointing at a guide (#1020)', () => {
     // "base URL + auth are in your project guide" dangled: the guide never
     // carried one, and for a plugin-governed project TangleClaw does not write

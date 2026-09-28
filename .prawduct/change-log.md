@@ -35,6 +35,27 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-27 — Sessions reply to Medusa messages in a way that works, and can list what they owe (#1976, Chunk 01)
+
+<!-- prawduct: type=bugfix | scope=medusa-owed-replies -->
+
+The PM dispatched this over Medusa. The Architect admitted Chunk 01 to v5.30: prose fixes, one read-only verb and tests, with no schema, protocol, escalation or UI change. Chunks 02–03 are post-v5.30. Plan: `.prawduct/artifacts/build-plan-1976-medusa-owed-replies.md` (local, not tracked).
+
+**Problem.** The wake nudge said "mark them handled: raw POST /read, then reply: raw POST /send". It never mentioned `inReplyTo` or the launch headers. A raw `inReplyTo` send without headers is refused (`EXCHANGE_BINDING_REQUIRED`), which B5 hit first-hand today. A reply without `inReplyTo` records no reply, so the initiator stayed blocked. A recipient also had no view of what it owed: `tc message sent` is the sender's view.
+
+**The change.**
+- **Text:** the nudge, the prime's Medusa "How to interact" line and the engine config block now name `tc message send --in-reply-to <message-id> <workspace-id> "<reply>"` and put the reply before the ack. The prime edit is net-neutral in length, because a longer Role line pushed the full silent prime over budget and dropped the ecosystem primer. The golden fixtures were caught and regenerated to show only that one-line change.
+- **`tc message owed`:** reads the existing `direction=received&open=1` route. It lists replies owed first, with the exact command, then unhandled messages. An `untracked` exchange (state never moves past `untracked`, found live) is counted, never listed.
+
+**Evidence.**
+- New tests were red before the change. The untracked filter is mutation-checked.
+- The targeted ring is green: 1336 tests. The full suite was not run, under the Pilot Envelope.
+- The live `tc message owed` against the running server reported "owe nothing, 1 untracked not counted".
+
+**Filed separately (Architect Q3):** #1987 (the dashboard panel acks on display) and #1988 (the Master cannot reply with `inReplyTo`).
+
+**Review.** Cumulative review `rev-20260927T235204Z-81ec7b19` found 1 blocking finding: the plan's "never use `/clear` as an acknowledgement" line had been dropped silently. It now ships in the nudge and in every config form through a shared `MEDUSA_REPLY_GUIDANCE`, and is descoped from the prime (D1: prime length budget). The review's warnings were also fixed: `owed` reads 200 rows and says when the page is full, skips sends still in flight (no Hub id), and all four config renderings are pinned.
+
 ## 2026-09-27 — The Codex approval/user-input wait test waits for acceptance, not a timer (#1846)
 
 <!-- prawduct: type=bugfix | scope=codex-wait-test-1846 -->

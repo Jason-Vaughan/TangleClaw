@@ -567,3 +567,23 @@ describe('engine profiles: upstream facts carry evidence; the paste path is neve
     });
   }
 });
+
+// #1976 — the reply guidance is what stops a recipient acking without
+// answering. Every Medusa config form carries it, committed or engine-private,
+// markdown or comment, so an edit that drops it from one form fails here.
+describe('Medusa reply guidance in every config form (#1976)', () => {
+  const engines = require('../lib/engines');
+  const rules = { medusaEnabled: true, medusaProjectName: 'p', serverProtocol: 'http', serverPort: 3102 };
+  for (const committedCarrier of [true, false]) {
+    for (const format of ['md', 'comment']) {
+      test(`${committedCarrier ? 'committed' : 'engine-private'} ${format}: reply with inReplyTo through tc, before the ack, never /clear`, () => {
+        const text = engines._medusaSwitchboardLines(rules, format, { committedCarrier }).join('\n');
+        assert.match(text, /tc message send --in-reply-to <message-id>/);
+        assert.match(text, /launch headers/);
+        assert.match(text, /BEFORE you mark the message handled/);
+        assert.match(text, /tc message owed/);
+        assert.match(text, /Never use `?\/clear`? as an acknowledgement/);
+      });
+    }
+  }
+});

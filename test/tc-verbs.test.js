@@ -387,6 +387,97 @@ describe('tc verb roster (lib/tc-verbs)', () => {
       assert.match(some.stdout, /mx_1 {2}blocking {2}to ws-b: wake blocked, waiting on pane-composer-has-input, escalation: escalated/);
     });
 
+    // #1976 — a recipient could not see what it owed: `sent` is the sender's
+    // view, and nothing read the received side. A reply the recipient forgot
+    // left the initiator blocked with no surface naming the debt.
+    it('owed lists what this session still owes, reply-first, and never POSTs', async () => {
+      const calls = [];
+      const now = Date.parse('2026-09-27T12:00:00Z');
+      const ctxFor = (exchanges) => ({
+        env: {}, argv: ['owed'], now: () => now,
+        getJson: async (p) => { calls.push(p); return p.startsWith('/api/tc/whoami') ? { project: { id: 1, name: 'p q' } } : { exchanges }; },
+        postJson: async () => { throw new Error('owed must not POST'); }
+      });
+      const none = await message.run(ctxFor([]));
+      assert.equal(none.code, 0);
+      assert.equal(calls[1], '/api/sessions/p%20q/medusa/exchanges?direction=received&open=1&limit=200');
+      assert.match(none.stdout, /You owe nothing/);
+
+      const some = await message.run(ctxFor([
+        { exchangeId: 'mx_r', hubId: 'h-reply', replyRequired: true, state: 'acknowledged', label: 'acknowledged',
+          sender: { workspaceId: 'ws-pm' }, createdAt: '2026-09-27T11:20:00Z' },
+        { exchangeId: 'mx_n', hubId: 'h-note', replyRequired: false, state: 'delivered', label: 'delivered',
+          sender: { workspaceId: 'ws-b2' }, createdAt: '2026-09-27T11:55:00Z' },
+        { exchangeId: 'mx_s', hubId: 'h-done', replyRequired: true, state: 'replied', label: 'satisfied, awaiting initiator close',
+          sender: { workspaceId: 'ws-pm' }, createdAt: '2026-09-27T10:00:00Z' }
+      ]));
+      assert.equal(some.code, 0);
+      assert.match(some.stdout, /1 reply you owe/);
+      assert.match(some.stdout, /\[h-reply\] from ws-pm, 40 min ago \(acknowledged\)/);
+      assert.match(some.stdout, /tc message send --in-reply-to h-reply ws-pm/, 'the exact reply command, ids filled in');
+      assert.match(some.stdout, /1 message not yet handled/);
+      assert.match(some.stdout, /\[h-note\] from ws-b2, 5 min ago/);
+      assert.doesNotMatch(some.stdout, /h-done/, 'an answered exchange is the initiator\'s to close, not a debt');
+      assert.ok(some.stdout.indexOf('h-reply') < some.stdout.indexOf('h-note'), 'replies owed come first');
+    });
+
+    it('owed never counts an untracked exchange as a debt, and says it left one out', async () => {
+      // Found live: an untracked row keeps state `untracked` even after it is
+      // acknowledged, so listing it would report a debt forever.
+      const res = await message.run({
+        env: {}, argv: ['owed'], now: () => Date.parse('2026-09-27T12:00:00Z'),
+        getJson: async (p) => (p.startsWith('/api/tc/whoami') ? { project: { id: 1, name: 'p' } } : {
+          exchanges: [{ exchangeId: 'mx_u', hubId: 'h-u', tracking: 'untracked', replyRequired: false, state: 'untracked', label: 'untracked',
+            sender: { workspaceId: 'ws-pm' }, createdAt: '2026-09-27T10:00:00Z' }]
+        }),
+        postJson: async () => { throw new Error('owed must not POST'); }
+      });
+      assert.match(res.stdout, /You owe nothing/);
+      assert.doesNotMatch(res.stdout, /h-u/);
+      assert.match(res.stdout, /1 exchange this host cannot supervise is not counted/);
+    });
+
+    it('owed skips a send still in flight, which the recipient has not received', async () => {
+      const res = await message.run({
+        env: {}, argv: ['owed'], now: () => Date.parse('2026-09-27T12:00:00Z'),
+        getJson: async (p) => (p.startsWith('/api/tc/whoami') ? { project: { id: 1, name: 'p' } } : {
+          exchanges: [
+            { exchangeId: 'mx_p', hubId: null, tracking: 'tracked', replyRequired: true, state: 'send_pending', label: 'send pending', sender: { workspaceId: 'ws-a' }, createdAt: '2026-09-27T11:59:00Z' },
+            { exchangeId: 'mx_u', hubId: 'h-x', tracking: 'tracked', replyRequired: true, state: 'send_unknown', label: 'send unknown', sender: { workspaceId: 'ws-a' }, createdAt: '2026-09-27T11:59:00Z' }
+          ]
+        }),
+        postJson: async () => { throw new Error('owed must not POST'); }
+      });
+      assert.match(res.stdout, /You owe nothing/);
+      assert.doesNotMatch(res.stdout, /null/, 'no row without a Hub id is printed');
+    });
+
+    it('owed says when the page was full instead of claiming nothing is owed', async () => {
+      const rows = Array.from({ length: 200 }, (_, i) => ({
+        exchangeId: `mx_${i}`, hubId: `h-${i}`, tracking: 'untracked', replyRequired: false, state: 'untracked', label: 'untracked',
+        sender: { workspaceId: 'ws-a' }, createdAt: '2026-09-27T11:00:00Z'
+      }));
+      const res = await message.run({
+        env: {}, argv: ['owed'], now: () => Date.parse('2026-09-27T12:00:00Z'),
+        getJson: async (p) => (p.startsWith('/api/tc/whoami') ? { project: { id: 1, name: 'p' } } : { exchanges: rows }),
+        postJson: async () => { throw new Error('owed must not POST'); }
+      });
+      assert.doesNotMatch(res.stdout, /You owe nothing/, 'a truncated read cannot prove an empty debt');
+      assert.match(res.stdout, /Nothing owed among the exchanges read/);
+      assert.match(res.stdout, /Only the newest 200 open exchanges were read/);
+    });
+
+    it('read tells the recipient to reply before it acks, and where the debt list is', async () => {
+      const res = await message.run({
+        env: {}, argv: ['read'],
+        getJson: async (p) => (p.startsWith('/api/tc/whoami') ? { project: { id: 1, name: 'p' } } : { messages: [{ id: 'h1', from: 'ws-a', message: 'hi' }] }),
+        postJson: async () => { throw new Error('read must not POST'); }
+      });
+      assert.match(res.stdout, /tc message send --in-reply-to <id>/);
+      assert.match(res.stdout, /tc message owed/);
+      assert.ok(res.stdout.indexOf('--in-reply-to') < res.stdout.indexOf('tc message ack'), 'reply is named before ack');
+    });
+
     it('close posts to the exchange route, id URL-encoded, and needs an id', async () => {
       const bare = await message.run({ ...noopCtx, argv: ['close'] });
       assert.equal(bare.code, 1);
