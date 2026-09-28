@@ -2,9 +2,9 @@
 
 ## Current build chunk
 
-**Active:** Chunk 01 — `tc start review` (read-only re-read). Type: feature
+**Active:** Chunk 2 — Live verification
 
-**On deck:** Chunk 02 — Re-entry through SessionStart `clear` / `compact`. Type: fix
+**On deck:** Chunk 2 — evidence, Stage A (2026-09-27, codex-cli 0.156.1, real TUI)
 
-Plan: `.tangleclaw/plans/1761-clear-drops-context.md`
+Plan: `.tangleclaw/plans/1836-codex-fullauto-loopback.md`
 <!-- TANGLECLAW:PRIMING-ROLL:END -->
