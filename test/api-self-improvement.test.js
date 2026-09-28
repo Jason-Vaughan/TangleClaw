@@ -23,6 +23,7 @@ const os = require('node:os');
 const store = require('../lib/store');
 const { createServer } = require('../server');
 const { setLevel } = require('../lib/logger');
+const { operatorHeaders } = require('./_shared-docs-callers');
 
 setLevel('error');
 
@@ -43,7 +44,10 @@ describe('api self-improvement loop (#569)', () => {
     return new Promise((resolve, reject) => {
       const options = {
         hostname: '127.0.0.1', port, path: urlPath, method,
-        headers: { 'Content-Type': 'application/json' }
+        // These cases model the dashboard, so they are the operator's requests
+        // (#2013 refuses an unnamed caller); caller classes are covered in
+        // test/api-session-rules-authz.test.js.
+        headers: { 'Content-Type': 'application/json', ...operatorHeaders(server) }
       };
       const bodyStr = body ? JSON.stringify(body) : null;
       if (bodyStr) options.headers['Content-Length'] = Buffer.byteLength(bodyStr);

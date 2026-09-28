@@ -4937,7 +4937,7 @@ route('GET', '/api/tc/whoami', (req, res) => {
     {
       id: 'session-rules', enabled: !!project,
       detail: project
-        ? `durable project rules: GET/POST ${api}/api/session-rules?projectId=${project.id} (AI proposals land as status='proposed' until the operator approves)`
+        ? `durable project rules: GET/POST ${api}/api/session-rules?projectId=${project.id} (a POST needs x-tangleclaw-project-id and x-tangleclaw-launch-id; your rules land as status='proposed' until the operator approves, and only the operator changes, disables or removes a governing rule)`
         : 'unavailable: this call did not resolve to a registered project'
     },
     {
@@ -5315,8 +5315,101 @@ function _stillHasUnhandledMail(row) {
     .some((x) => !medusaExchanges.hasFact(x.exchange_id, ['acknowledged']));
 }
 
+/**
+ * Resolve who is changing a session rule, and refuse a caller the change is
+ * not theirs to make (#2013). A startup rule governs every future session of
+ * its project, so only the operator may create a governing rule or change,
+ * disable, delete, demote, restore or approve one. A session bound to a
+ * project keeps the one role the proposal model gives it: it may propose a
+ * rule for its OWN project, and revise, withdraw or decline its own AI rule
+ * while that rule is still a proposal. Unbound, invalid and Project Master
+ * callers change nothing.
+ *
+ * The binding is checked before the rule is looked up, so a refused caller
+ * learns nothing about the rule it named; a rule that does not exist then
+ * answers 404. Attribution comes from the verified caller, never from the
+ * request body — a body saying `changedBy: 'operator'` is a claim, and a
+ * local process can make it.
+ *
+ * The operator is recognised the way every operator-only project route
+ * recognises it (`sharedDocsAccess.resolveAccess`, #1752). Approval keeps its
+ * password on top of that, at its own route.
+ * @param {http.IncomingMessage} req - The request
+ * @param {http.ServerResponse} res - The response, written only on refusal
+ * @param {object} target - What the caller is changing
+ * @param {number} [target.ruleId] - The rule being changed; omitted for a create
+ * @param {*} [target.projectId] - For a create: the project the rule is for
+ * @param {string} [target.kind] - For a create: the rule's kind
+ * @param {boolean} target.proposalAction - Whether a bound session may do this
+ *   to its own project's still-proposed AI rule (a create is always a proposal)
+ * @param {string} target.action - Completes "Only the operator can …"
+ * @returns {{operator: boolean, changedBy: string, rule: (object|null)}|null}
+ *   The caller, or null when the request was answered
+ */
+function sessionRuleCaller(req, res, target) {
+  const access = sharedDocsAccess.resolveAccess(req);
+  const isCreate = target.ruleId === undefined;
+  const operator = access.kind === sharedDocsAccess.KINDS.OPERATOR;
+  if (!operator) {
+    const refusal = sharedDocsAccess.projectRefusalFor(access, sharedDocsAccess.NEEDS.OWN_PROJECT);
+    if (refusal) {
+      _refuseProjectWrite(req, res, refusal, _callerLogFields(req, access));
+      return null;
+    }
+  }
+  const rule = isCreate ? null : store.sessionRules.get(target.ruleId);
+  if (!isCreate && !rule) {
+    errorResponse(res, 404, `Session rule ${target.ruleId} not found`, 'NOT_FOUND');
+    return null;
+  }
+  if (operator) return { operator: true, changedBy: 'operator', rule };
+
+  const operatorOnly = {
+    status: 403,
+    code: 'OPERATOR_ONLY',
+    message: `Only the operator can ${target.action}. A session may propose rules for its own project, `
+      + 'and revise, withdraw or decline its own proposals while they are still proposals; approving, '
+      + 'changing or removing a rule that governs sessions is the operator\'s, from the TangleClaw dashboard.'
+  };
+  const details = { callerProjectId: access.projectId, ruleId: rule ? rule.id : null };
+  // Project Master rules have no project, so no project session owns one.
+  const masterRule = isCreate ? target.kind === 'master' : rule.kind === 'master';
+  if (masterRule) {
+    _refuseProjectWrite(req, res, operatorOnly, details);
+    return null;
+  }
+  const targetProjectId = isCreate ? target.projectId : rule.projectId;
+  // A create with no projectId falls through to the store, which answers the
+  // same 400 it gives the operator.
+  const present = targetProjectId !== undefined && targetProjectId !== null;
+  if (present && String(targetProjectId) !== String(access.projectId)) {
+    _refuseProjectWrite(req, res, {
+      status: 403,
+      code: 'OTHER_PROJECT',
+      message: 'This session is bound to another project, so it cannot change that project\'s rules. '
+        + 'A project\'s rules are proposed by that project\'s own session, or set by the operator from the '
+        + 'TangleClaw dashboard.'
+    }, { ...details, targetProjectId });
+    return null;
+  }
+  const ownProposal = isCreate
+    || (rule.status === 'proposed' && rule.createdBy === 'ai');
+  if (!target.proposalAction || !ownProposal) {
+    _refuseProjectWrite(req, res, operatorOnly, details);
+    return null;
+  }
+  return { operator: false, changedBy: 'ai', rule };
+}
+
 // POST /api/session-rules — create { content, projectId, createdBy?, kind? }
-route('POST', '/api/session-rules', (_req, res, _params, body) => {
+route('POST', '/api/session-rules', (req, res, _params, body) => {
+  const caller = sessionRuleCaller(req, res, {
+    projectId: body ? body.projectId : undefined,
+    kind: body ? body.kind : undefined,
+    proposalAction: true,
+    action: 'create a Project Master rule'
+  });
+  if (!caller) return;
   if (!body || typeof body.content !== 'string' || !body.content.trim()) {
     return errorResponse(res, 400, 'content (non-empty string) is required', 'BAD_REQUEST');
   }
@@ -5326,7 +5419,9 @@ route('POST', '/api/session-rules', (_req, res, _params, body) => {
       // Required for every kind except 'master' (singleton-scoped, projectId
       // forbidden) — the store enforces both directions with BAD_REQUEST.
       projectId: body.projectId,
-      createdBy: body.createdBy || 'operator',
+      // The operator may record an explicit author; anyone else's rule is an
+      // AI proposal whatever the body says, so it lands 'proposed'.
+      createdBy: caller.operator ? (body.createdBy || 'operator') : 'ai',
       // CC-6 (#381): 'startup' (default) | 'wrap' | 'master'. Invalid → store throws BAD_REQUEST.
       kind: body.kind,
       // SR-7K2P: optional Critic-gate attestation. Invalid → store throws BAD_REQUEST.
@@ -5361,20 +5456,28 @@ function refuseUnconfirmedBaselineEdit(rule, confirmed) {
 }
 
 // PUT /api/session-rules/:id — update { content?, enabled?, confirmBaselineEdit? }
-route('PUT', '/api/session-rules/:id', (_req, res, params, body) => {
+route('PUT', '/api/session-rules/:id', (req, res, params, body) => {
   if (!body || typeof body !== 'object') {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
+  // A bound session may revise the text of its own proposal; enabling or
+  // disabling is never a proposal-level act.
+  const caller = sessionRuleCaller(req, res, {
+    ruleId: Number(params.id),
+    proposalAction: body.enabled === undefined,
+    action: 'change or disable a session rule'
+  });
+  if (!caller) return;
   try {
-    const existing = store.sessionRules.get(Number(params.id));
+    const existing = caller.rule;
     const weakens = body.content !== undefined || body.enabled === false || body.enabled === 0;
     if (weakens && refuseUnconfirmedBaselineEdit(existing, body.confirmBaselineEdit === true)) {
       return errorResponse(res, 400,
         'This is a shipped Master boundary rule — editing or disabling it requires confirmBaselineEdit: true (Restore defaults always recovers the baseline)',
         'CONFIRM_REQUIRED');
     }
-    const { confirmBaselineEdit, ...updates } = body;
-    const rule = store.sessionRules.update(Number(params.id), updates);
+    const { confirmBaselineEdit, changedBy: _claimedBy, ...updates } = body;
+    const rule = store.sessionRules.update(Number(params.id), { ...updates, changedBy: caller.changedBy });
     jsonResponse(res, 200, rule);
   } catch (err) {
     if (err.code === 'NOT_FOUND') {
@@ -5390,15 +5493,22 @@ route('PUT', '/api/session-rules/:id', (_req, res, params, body) => {
 // DELETE /api/session-rules/:id — ?confirm=true required for shipped Master
 // baseline rules (see refuseUnconfirmedBaselineEdit)
 route('DELETE', '/api/session-rules/:id', (req, res, params) => {
+  // A bound session may withdraw its own proposal, and nothing else.
+  const caller = sessionRuleCaller(req, res, {
+    ruleId: Number(params.id),
+    proposalAction: true,
+    action: 'delete a session rule'
+  });
+  if (!caller) return;
   try {
     const query = parseQuery(reqUrl(req).search);
-    const existing = store.sessionRules.get(Number(params.id));
+    const existing = caller.rule;
     if (refuseUnconfirmedBaselineEdit(existing, query.confirm === 'true')) {
       return errorResponse(res, 400,
         'This is a shipped Master boundary rule — deleting it requires ?confirm=true (Restore defaults always recovers the baseline)',
         'CONFIRM_REQUIRED');
     }
-    store.sessionRules.delete(Number(params.id));
+    store.sessionRules.delete(Number(params.id), { changedBy: caller.changedBy });
     jsonResponse(res, 200, { ok: true, id: Number(params.id) });
   } catch (err) {
     if (err.code === 'NOT_FOUND') {
@@ -5457,10 +5567,19 @@ route('POST', '/api/session-rules/promote', (_req, res, _params, body) => {
 // shown, and is refused (409) if the rule no longer holds it (#1053). A
 // rejection is RECORDED rather than deleted: the wrap proposes from recurring
 // learnings, so a deleted decision would simply be re-proposed at the next wrap.
-route('PUT', '/api/session-rules/:id/status', (_req, res, params, body) => {
+route('PUT', '/api/session-rules/:id/status', (req, res, params, body) => {
   if (!body || typeof body.status !== 'string') {
     return errorResponse(res, 400, 'status is required', 'BAD_REQUEST');
   }
+  // Declining its own proposal is the one status change a bound session may
+  // make. Approving, and moving a governing rule out of 'active', are the
+  // operator's: either one decides what every future session is told.
+  const caller = sessionRuleCaller(req, res, {
+    ruleId: Number(params.id),
+    proposalAction: body.status !== 'active',
+    action: body.status === 'active' ? 'approve a proposed rule' : 'change the status of a governing rule'
+  });
+  if (!caller) return;
   // Approving a proposal grants it authority over every future session, so it
   // is gated like TangleClaw's other privileged operations (project delete,
   // session kill, wrap) rather than inferred from a caller-supplied field.
@@ -5476,7 +5595,7 @@ route('PUT', '/api/session-rules/:id/status', (_req, res, params, body) => {
     const rule = store.sessionRules.setStatus(Number(params.id), body.status, {
       // Passing the gate IS the operator acting; recording anything else would
       // misattribute a decision the gate just authorised.
-      changedBy: body.status === 'active' ? 'operator' : body.changedBy,
+      changedBy: caller.changedBy,
       changeReason: body.changeReason,
       criticGate: body.criticGate,
       // The text the operator was shown. Read only AFTER the password gate
@@ -5561,12 +5680,18 @@ route('GET', '/api/session-rules/:id/versions', (_req, res, params) => {
 // the same eyes-open gate when the restore would weaken them (content change
 // or restoring a disabled snapshot) — the gate predicates must stay symmetric
 // across every path that can alter a rule, or the confirm is bypassable.
-route('POST', '/api/session-rules/:id/restore', (_req, res, params, body) => {
+route('POST', '/api/session-rules/:id/restore', (req, res, params, body) => {
   if (!body || body.versionNo === undefined) {
     return errorResponse(res, 400, 'versionNo is required', 'BAD_REQUEST');
   }
+  const caller = sessionRuleCaller(req, res, {
+    ruleId: Number(params.id),
+    proposalAction: false,
+    action: 'restore an earlier version of a session rule'
+  });
+  if (!caller) return;
   try {
-    const existing = store.sessionRules.get(Number(params.id));
+    const existing = caller.rule;
     if (refuseUnconfirmedBaselineEdit(existing, body.confirmBaselineEdit === true)) {
       const target = store.sessionRules.listVersions(Number(params.id))
         .find((v) => v.versionNo === Number(body.versionNo));
@@ -5590,7 +5715,7 @@ route('POST', '/api/session-rules/:id/restore', (_req, res, params, body) => {
       }
     }
     // SR-7K2P: optional Critic-gate attestation. Invalid → store throws BAD_REQUEST.
-    const rule = store.sessionRules.restore(Number(params.id), Number(body.versionNo), { changedBy: body.changedBy, criticGate: body.criticGate });
+    const rule = store.sessionRules.restore(Number(params.id), Number(body.versionNo), { changedBy: caller.changedBy, criticGate: body.criticGate });
     jsonResponse(res, 200, rule);
   } catch (err) {
     if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');

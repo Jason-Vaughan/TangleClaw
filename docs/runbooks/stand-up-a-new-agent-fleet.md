@@ -190,9 +190,11 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
    Expected: the response names each `.md` file found.
    If it returns `"Group has no sharedDir configured"`: step 7's verification was skipped — go back.
 
-10. Give **each** fleet project its own copy of the live-checkout rule naming `Acme-Core`, via the
-    dashboard's rules panel or `POST $TANGLECLAW_API/api/session-rules`.
-    Expected: `tc rules` in a launched pane of each project prints it.
+10. Give **each** fleet project its own copy of the live-checkout rule naming `Acme-Core`, from the
+    dashboard's rules panel. A pane can instead propose it for its own project with
+    `POST $TANGLECLAW_API/api/session-rules` and `"${BIND[@]}"`; that lands `proposed`, and you
+    approve it in the same panel. Only the operator can create a rule that governs sessions (#2013).
+    Expected: `tc rules` in a launched pane of each project prints it as active.
 
     > Repeating it per project is correct, not duplication. Global Rules bind *every* project on
     this install, which this does not; a shared doc is canon, not a Project Rule. Until
