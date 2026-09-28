@@ -340,7 +340,7 @@ Editable markdown rules that apply to all projects across all engines. When an e
 
 - **File**: `data/global-rules.md` in the TangleClaw repo — the single canonical source since #240, tracked in git. UI/API saves and PR-driven edits both land in this one file; there is no separate bundled default and no per-install copy
 - **Legacy `~/.tangleclaw/global-rules.md`**: no longer read. On startup, if one exists and differs from the canonical file, TangleClaw backs it up beside itself (`.pre-240-backup` suffix) and logs a warning with recovery steps; merge wanted sections by hand via the editor
-- **Edit via**: Landing page "Global Rules" panel, or `PUT /api/rules/global`
+- **Edit via**: Landing page "Global Rules" panel, or `PUT /api/rules/global` as the operator (#2013: a session is refused with `OPERATOR_ONLY`; a Builder drafts or proposes text and the operator applies it)
 - **Revert**: restore it from git (`data/global-rules.md` is tracked). There is no Reset button (#243): under the canonical-source model (#240) `POST /api/rules/global/reset` is a back-compat no-op that returns the current content unchanged, so a button wired to it looked like a revert and changed nothing.
 
 ## Per-Project Configuration (`project.json`)

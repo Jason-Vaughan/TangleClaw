@@ -4406,7 +4406,10 @@ route('GET', '/api/rules/global', (_req, res) => {
 // same per-route override pattern — see `/api/audit/ingest` at the
 // 512 KB cap (`server.js:2834`) and the upload route at 15 MB
 // (`server.js:1574`).
-route('PUT', '/api/rules/global', (_req, res, _params, body) => {
+route('PUT', '/api/rules/global', (req, res, _params, body) => {
+  // The document binds every project on the install. A Builder may draft or
+  // propose its text; applying it is the operator's.
+  if (!operatorProjectCaller(req, res, 'change the global rules')) return;
   if (typeof body.content !== 'string') {
     return errorResponse(res, 400, 'content (string) is required', 'BAD_REQUEST');
   }
@@ -4415,7 +4418,10 @@ route('PUT', '/api/rules/global', (_req, res, _params, body) => {
 }, { maxBodySize: 256 * 1024 });
 
 // POST /api/rules/global/reset
-route('POST', '/api/rules/global/reset', (_req, res) => {
+route('POST', '/api/rules/global/reset', (req, res) => {
+  // A no-op today, but its intent is privileged: it stays the operator's so a
+  // future implementation inherits the gate rather than having to add one.
+  if (!operatorProjectCaller(req, res, 'reset the global rules')) return;
   const content = store.globalRules.reset();
   jsonResponse(res, 200, { content });
 });

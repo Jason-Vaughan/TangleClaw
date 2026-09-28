@@ -115,6 +115,10 @@ describe('api/session-rules caller gate (#2013)', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-session-rules-authz-'));
     store._setBasePath(path.join(tmpDir, 'store'));
     store.init();
+    // The global-rules document is a tracked repo file by default; a test that
+    // could write it (a regressed gate would) must point it somewhere else.
+    store.globalRules._setBundledGlobalRulesPath(path.join(tmpDir, 'global-rules.md'));
+    fs.writeFileSync(path.join(tmpDir, 'global-rules.md'), '# Global rules under test\n');
     for (const name of ['own-proj', 'other-proj']) fs.mkdirSync(path.join(tmpDir, name), { recursive: true });
     own = store.projects.create({ name: 'own-proj', path: path.join(tmpDir, 'own-proj'), engine: 'claude' });
     other = store.projects.create({ name: 'other-proj', path: path.join(tmpDir, 'other-proj'), engine: 'claude' });
@@ -127,6 +131,7 @@ describe('api/session-rules caller gate (#2013)', () => {
 
   after(async () => {
     await new Promise((resolve) => server.close(resolve));
+    store.globalRules._resetBundledGlobalRulesPath();
     store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -472,6 +477,42 @@ describe('api/session-rules caller gate (#2013)', () => {
     });
   });
 
+  describe('the global rules document', () => {
+    it('a bound session cannot change it — a Builder proposes text, the operator applies it', async () => {
+      const before = store.globalRules.load();
+      const res = await request('PUT', '/api/rules/global', { content: '# replaced by a pane' }, asOwn);
+      assert.equal(res.status, 403);
+      assert.equal(res.data.code, 'OPERATOR_ONLY');
+      assert.equal(store.globalRules.load(), before);
+    });
+
+    it('an unbound caller cannot change it', async () => {
+      const before = store.globalRules.load();
+      const res = await request('PUT', '/api/rules/global', { content: '# replaced unbound' }, UNBOUND);
+      assert.equal(res.status, 403);
+      // An operator-only route names what is missing — the operator — to every
+      // other caller, bound or not (the #1752 contract).
+      assert.equal(res.data.code, 'OPERATOR_ONLY');
+      assert.equal(store.globalRules.load(), before);
+    });
+
+    it('reset is the operator\'s too, for a bound and an unbound caller', async () => {
+      for (const [caller, code] of [[asOwn, 'OPERATOR_ONLY'], [UNBOUND, 'OPERATOR_ONLY']]) {
+        const res = await request('POST', '/api/rules/global/reset', null, caller);
+        assert.equal(res.status, 403);
+        assert.equal(res.data.code, code);
+      }
+    });
+
+    it('the operator still changes and resets it', async () => {
+      const put = await request('PUT', '/api/rules/global', { content: '# operator edit\n' }, asOperator);
+      assert.equal(put.status, 200);
+      assert.equal(store.globalRules.load(), '# operator edit\n');
+      const reset = await request('POST', '/api/rules/global/reset', null, asOperator);
+      assert.equal(reset.status, 200);
+    });
+  });
+
   describe('every rule- or learning-mutating route refuses an unbound caller', () => {
     // The roster is read from the route registrations in server.js — the one
     // place a route's verb and path are both written — so a mutation route
@@ -480,7 +521,7 @@ describe('api/session-rules caller gate (#2013)', () => {
       'POST /api/session-rules/conflicts': 'a read-only candidate signal; it writes nothing'
     };
     const source = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-    const registered = [...source.matchAll(/route\('(POST|PUT|PATCH|DELETE)', '(\/api\/(?:session-rules|master\/rules|learnings)[^']*)'/g)]
+    const registered = [...source.matchAll(/route\('(POST|PUT|PATCH|DELETE)', '(\/api\/(?:session-rules|master\/rules|learnings|rules\/global)[^']*)'/g)]
       .map(([, method, urlPath]) => `${method} ${urlPath}`);
 
     it('the roster is non-trivial and its exemptions still exist', () => {
@@ -495,13 +536,13 @@ describe('api/session-rules caller gate (#2013)', () => {
         const target = activeRule(own.id, `sweep target ${key} ${Math.random()}`);
         const learning = store.learnings.create({ projectId: own.id, content: `sweep learning ${Math.random()}` });
         const urlPath = pattern.replace(':id', String(pattern.startsWith('/api/learnings') ? learning.id : target.id));
-        const snapshot = JSON.stringify([store.sessionRules.list({}), store.learnings.list(own.id)]);
+        const snapshot = JSON.stringify([store.sessionRules.list({}), store.learnings.list(own.id), store.globalRules.load()]);
         const res = await request(method, urlPath,
           { content: 'swept', projectId: own.id, status: 'rejected', enabled: false, versionNo: 1, learningId: learning.id, tier: 'active' },
           UNBOUND);
         assert.equal(res.status, 403, `${key} answered ${res.status}`);
-        assert.equal(JSON.stringify([store.sessionRules.list({}), store.learnings.list(own.id)]), snapshot,
-          `${key} changed a rule or a learning while refusing`);
+        assert.equal(JSON.stringify([store.sessionRules.list({}), store.learnings.list(own.id), store.globalRules.load()]), snapshot,
+          `${key} changed a rule, a learning or the global rules while refusing`);
       });
     }
   });
