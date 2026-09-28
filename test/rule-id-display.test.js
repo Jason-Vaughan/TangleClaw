@@ -71,7 +71,8 @@ const labelDeps = {
   tcRuleLabel: helpers.tcRuleLabel,
   tcStripSameIdPrefix: helpers.tcStripSameIdPrefix,
   tcAuthoredIdMismatch: helpers.tcAuthoredIdMismatch,
-  tcRuleMismatchBadge: helpers.tcRuleMismatchBadge
+  tcRuleMismatchBadge: helpers.tcRuleMismatchBadge,
+  tcRuleMismatchTitle: helpers.tcRuleMismatchTitle
 };
 
 /** Escape as the pages do, so assertions see what the browser would. */
@@ -180,6 +181,33 @@ describe('Rule #<id> on every surface (#2029)', () => {
       const body = shards.map((s) => s.body).join('\n');
       assert.match(body, new RegExp(`- Rule #${rules.active.id} — Always run lint`));
       assert.match(body, new RegExp(`- Rule #${rules.replacement.id} — RM-LEASE X generation 2`));
+    });
+  });
+
+  describe('agent-facing carriers beyond the prime', () => {
+    it('names each stored Hard rule by id in the Project Master\'s instructions', () => {
+      const masterMod = require('../lib/master');
+      const m = store.sessionRules.get(master.id);
+      const md = masterMod.buildMasterClaudeMd({ serverPort: 3102 }, { rules: [m] });
+      assert.match(md, new RegExp(`^- Rule #${m.id} — Never force-push main\\.$`, 'm'));
+    });
+
+    it('renders the shipped baseline as written when no rule is stored (it has no id)', () => {
+      const masterMod = require('../lib/master');
+      const md = masterMod.buildMasterClaudeMd({ serverPort: 3102 }, { rules: [] });
+      assert.doesNotMatch(md, /^- Rule #/m);
+    });
+
+    it('names each wrap rule by id in the wrap prompt', () => {
+      const aic = require('../lib/wrap-steps/ai-content');
+      const saved = aic._internal.listWrapRules;
+      try {
+        aic._internal.listWrapRules = () => [rules.active];
+        const out = aic._appendWrapRules('base', project);
+        assert.match(out, new RegExp(`^- Rule #${rules.active.id} — Always run lint before commit\\.$`, 'm'));
+      } finally {
+        aic._internal.listWrapRules = saved;
+      }
     });
   });
 
@@ -348,7 +376,8 @@ describe('Rule #<id> on every surface (#2029)', () => {
       };
       const render = lift(SESSION_SRC, 'function renderRuleProposalWidget(', 'widget', {
         document: { createElement: node }, resolveRuleProposal: () => {},
-        tcRuleLabel: helpers.tcRuleLabel, tcAuthoredIdMismatch: helpers.tcAuthoredIdMismatch
+        tcRuleLabel: helpers.tcRuleLabel, tcAuthoredIdMismatch: helpers.tcAuthoredIdMismatch,
+        tcRuleMismatchTitle: helpers.tcRuleMismatchTitle
       });
       render({ kind: 'rule-proposal', proposals: [{ ruleId: 5, content: 'a' }, { ruleId: 6, content: 'RULE #99 — b' }] });
       const labels = made.filter((n) => n.className && n.className.includes('wrap-proposal-label')).map((n) => n.textContent);

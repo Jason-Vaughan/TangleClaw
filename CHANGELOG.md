@@ -183,14 +183,16 @@ All notable changes to TangleClaw are documented in this file.
   - the `rule-proposal` step's detail;
   - `tc rules`;
   - the startup rules delivered to a session (inline in the prime, over the rules hook, and in the launch step);
-  - the delivery ledger, which now lists the delivered rules instead of a count;
+  - the wrap rules in the wrap prompt, and the Hard rules in the Project Master's instructions (the shipped baseline the Master falls back to with no stored rules has no id, and renders as written);
+  - the delivery ledger, which now lists the delivered rules instead of a count (a hand-edited id that is not a positive integer shows as `unreadable rule id …` instead of blanking the panel);
   - the operator-only refusal message.
 
   API rule objects carry a new `label` field. If a rule's text opens with `RULE #<id> — ` naming the same rule, that prefix is left out of the display so the label is not doubled. A prefix naming a different id stays visible and is flagged: the lists and the wrap drawer show a **text says #94** badge, and `tc rules` adds `text says #94, not this rule`. Only a leading prefix counts; a number mentioned later in the text, such as `supersedes: RULE #97`, is a reference and is not flagged. Stored text never changes, and approval still checks the exact stored text. Existing assertions on the old unlabelled wording now expect the labelled wording, each still checking the same thing:
   - the `tc rules` row format (`test/tc-verbs.test.js`);
   - the ledger's `Rules: 2` and `Rules: 0`, now `Rules: Rule #1, Rule #2` and `Rules: none` (`test/project-deliveries-ledger.test.js`);
   - the Project Rules escaping probe, which now matches the escaped, prefix-stripped text and also forbids a raw `${rule.content}` (`test/project-rules-modal.test.js`);
-  - the wrap widget's empty-text probe (`test/wrap-rule-proposal-widget.test.js`).
+  - the wrap widget's empty-text probe (`test/wrap-rule-proposal-widget.test.js`);
+  - the wrap-prompt and Master rule fixtures, which now carry the ids every stored rule has, with their expected lines labelled (`test/wrap-step-ai-content.test.js`, `test/master.test.js`).
 
   Four browser test sandboxes now load the real label helpers from `api-helper.js`, just as the pages do.
 

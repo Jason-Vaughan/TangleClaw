@@ -68,7 +68,7 @@ function helperGlobals() {
     tcRulesUnknownHtml: sandbox.tcRulesUnknownHtml,
     tcDegradedRead: sandbox.tcDegradedRead,
     tcDeliveryOutcomeClass: sandbox.tcDeliveryOutcomeClass,
-    tcRuleLabel: sandbox.tcRuleLabel
+    tcRuleLabelList: sandbox.tcRuleLabelList
   };
 }
 
@@ -115,7 +115,7 @@ function build(api) {
     document,
     window: helpers,
     tcDeliveryOutcomeClass: helpers.tcDeliveryOutcomeClass,
-    tcRuleLabel: helpers.tcRuleLabel,
+    tcRuleLabelList: helpers.tcRuleLabelList,
     esc,
     encodeURIComponent,
     projectRulesTargetId: 7,
@@ -228,6 +228,18 @@ describe('#1164 — the Settings modal renders the rule-delivery ledger', () => 
 
     assert.equal(ok, null, 'a retargeted modal is neither a read nor an outage');
     assert.equal(list.innerHTML, '', 'the other project\'s container is left alone');
+  });
+
+  it('shows an unreadable rule id instead of blanking the panel (#2029)', async () => {
+    // A ledger row is a stored JSON array; a hand edit can put anything in it.
+    const { refresh, list } = build(apiStub({ deliveries: [
+      { sessionId: 1, outcome: 'delivered', channel: 'x', digest: 'abcdef0123', ruleIds: [4, '<b>x</b>', 0], skipReason: null },
+      { sessionId: 2, outcome: 'delivered', channel: 'x', digest: 'abcdef0123', ruleIds: [5], skipReason: null }
+    ] }));
+
+    assert.equal(await refresh(7), true);
+    assert.match(list.innerHTML, /Rules: Rule #4, unreadable rule id &quot;&lt;b&gt;x&lt;\/b&gt;&quot;, unreadable rule id 0</);
+    assert.match(list.innerHTML, /Rules: Rule #5</, 'the other rows still render');
   });
 
   it('escapes ledger fields before they reach the page', async () => {

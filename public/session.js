@@ -5651,7 +5651,7 @@ function renderRuleProposalWidget(widget) {
       const cue = document.createElement('span');
       cue.className = 'session-rule-badge session-rule-badge--mismatch';
       cue.textContent = `text says #${claimed}`;
-      cue.title = `This rule’s text calls itself RULE #${claimed}, but it is ${label}. The label comes from the database.`;
+      cue.title = tcRuleMismatchTitle(p.ruleId, claimed);
       heading.appendChild(cue);
     }
 

@@ -776,11 +776,12 @@ describe('wrap-step ai-content — wrap-rules bridge', () => {
     it('appends enabled wrap rules as a ## Project wrap rules block', () => {
       aic._internal.listWrapRules = (projectId) => {
         assert.equal(projectId, 7);
-        return [{ content: 'Always update the roadmap' }, { content: '  Note open threads  ' }];
+        // Store rows always carry their id; the prompt names each rule by it (#2029).
+        return [{ id: 3, content: 'Always update the roadmap' }, { id: 4, content: '  Note open threads  ' }];
       };
       const out = aic._appendWrapRules('base prompt', PROJECT);
       assert.match(out, /^base prompt\n\n## Project wrap rules\n/);
-      assert.match(out, /- Always update the roadmap\n- Note open threads$/);
+      assert.match(out, /- Rule #3 — Always update the roadmap\n- Rule #4 — Note open threads$/);
     });
 
     it('returns the bare prompt when the project has no wrap rules', () => {
@@ -789,7 +790,7 @@ describe('wrap-step ai-content — wrap-rules bridge', () => {
     });
 
     it('skips blank-content rules and degrades to the bare prompt on a store failure', () => {
-      aic._internal.listWrapRules = () => [{ content: '   ' }];
+      aic._internal.listWrapRules = () => [{ id: 5, content: '   ' }];
       assert.equal(aic._appendWrapRules('base prompt', PROJECT), 'base prompt');
 
       aic._internal.listWrapRules = () => { throw new Error('db unavailable'); };
@@ -805,7 +806,7 @@ describe('wrap-step ai-content — wrap-rules bridge', () => {
       aic._internal.newNonce = () => 'n0nce';
     aic._internal.readPaneTail = () => 'TCWRAP-DONE n0nce'; // the AI printed its completion line
       aic._internal.capturePane = () => ({ lines: ['plenty of words here to clear the min-chars gate'] });
-      aic._internal.listWrapRules = () => [{ content: 'Close every open loop' }];
+      aic._internal.listWrapRules = () => [{ id: 11, content: 'Close every open loop' }];
 
       const res = await aic.run({
         project: PROJECT,
@@ -819,13 +820,13 @@ describe('wrap-step ai-content — wrap-rules bridge', () => {
       assert.equal(res.status, 'done');
       // #627 — the self-identifying header leads, then the body, then the rules.
       assert.match(sentPrompt, /^\[TangleClaw wrap — memory-update\]\n\nwrite the block\n\n## Project wrap rules\n/);
-      assert.match(sentPrompt, /- Close every open loop/);
+      assert.match(sentPrompt, /- Rule #11 — Close every open loop/);
     });
 
     it('an empty step prompt still skips — rules never turn a no-op step into a send', async () => {
       let sent = false;
       aic._internal.sendKeys = () => { sent = true; };
-      aic._internal.listWrapRules = () => [{ content: 'Close every open loop' }];
+      aic._internal.listWrapRules = () => [{ id: 11, content: 'Close every open loop' }];
 
       const res = await aic.run({
         project: PROJECT,
@@ -854,7 +855,7 @@ describe('wrap-step ai-content — wrap-rules bridge (gateway path + ordering)',
     aic._internal.sleep = async () => {};
     aic._internal.now = () => 0;
     aic._internal.getBridgeContext = () => ({ localPort: 4567, token: 'tok', project: 'proj' });
-    aic._internal.listWrapRules = () => [{ content: 'Close every open loop' }];
+    aic._internal.listWrapRules = () => [{ id: 11, content: 'Close every open loop' }];
     // Armed: nothing to clear. This test is about the prompt's content, and an
     // unstubbed arm reaches the real bridge client and correctly blocks (#840).
     aic._internal.bridgeClearCaptureFile = async () => (
@@ -880,7 +881,7 @@ describe('wrap-step ai-content — wrap-rules bridge (gateway path + ordering)',
     assert.equal(res.status, 'done');
     // #627 — header leads on the gateway path too, matching the tmux path.
     assert.match(sentMessage, /^\[TangleClaw wrap — summary-derive\]\n\nwrap please\n\n## Project wrap rules\n/);
-    assert.match(sentMessage, /- Close every open loop/);
+    assert.match(sentMessage, /- Rule #11 — Close every open loop/);
   });
 
   it('default listWrapRules returns enabled wrap rules oldest-first (store-backed)', () => {

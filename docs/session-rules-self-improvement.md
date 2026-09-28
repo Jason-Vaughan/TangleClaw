@@ -46,8 +46,10 @@ machine-specific — TangleClaw's SessionStart hooks live in the ignored
   `session_rules.id`, never from the text: the Project Rules and Global rules lists, their
   Approve / Reject / Delete / toggle controls and status lines, the wrap drawer's proposal
   rows and summary, the `rule-proposal` step's detail, `tc rules`, the startup rules
-  delivered to a session (inline, over the hook channel and in the launch step), the
-  delivery ledger, and the operator-only refusal message. Every rule object from the API
+  delivered to a session (inline, over the hook channel and in the launch step), the wrap
+  rules in the wrap prompt, the Hard rules in the Project Master's instructions, the
+  delivery ledger, and the operator-only refusal message. The Master's shipped baseline,
+  used only when no Hard rule is stored, has no id and renders as written. Every rule object from the API
   carries `label` (`"Rule #<id>"`). The authored text is displayed after the label; when it
   opens with a `RULE #<id> — ` prefix naming the **same** rule, that prefix is dropped from
   the display so the label is not doubled. Exactly one such prefix is dropped. A prefix naming a

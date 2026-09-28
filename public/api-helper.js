@@ -1646,6 +1646,9 @@
     return (apiFn && apiFn.lastError) || fallback;
   }
 
+  /** A leading authored "RULE #<n> — " (any case, any dash); mirrors lib/rule-label.js. */
+  const TC_AUTHORED_RULE_PREFIX = /^\s*RULE\s*#(\d+)\s*[\u2014\u2013-]\s*/i;
+
   /**
    * The label a rule is known by everywhere: "Rule #<id>", from its database
    * id and never from its authored text (#2029). Mirrors `lib/rule-label.js`;
@@ -1672,7 +1675,7 @@
    */
   function tcStripSameIdPrefix(id, content) {
     const text = typeof content === 'string' ? content : '';
-    const m = /^\s*RULE\s*#(\d+)\s*[\u2014\u2013-]\s*/i.exec(text);
+    const m = TC_AUTHORED_RULE_PREFIX.exec(text);
     if (m && `Rule #${Number(m[1])}` === tcRuleLabel(id)) return text.slice(m[0].length);
     return text;
   }
@@ -1700,7 +1703,7 @@
   function tcAuthoredIdMismatch(rule) {
     if (!rule || typeof rule !== 'object') throw new TypeError('tcAuthoredIdMismatch needs a rule object');
     const own = tcRuleLabel(rule.id);
-    const m = /^\s*RULE\s*#(\d+)\s*[\u2014\u2013-]\s*/i.exec(typeof rule.content === 'string' ? rule.content : '');
+    const m = TC_AUTHORED_RULE_PREFIX.exec(typeof rule.content === 'string' ? rule.content : '');
     return m && `Rule #${Number(m[1])}` !== own ? Number(m[1]) : null;
   }
 
@@ -1713,12 +1716,43 @@
   function tcRuleMismatchBadge(rule) {
     const claimed = tcAuthoredIdMismatch(rule);
     if (claimed === null) return '';
-    return `<span class="session-rule-badge session-rule-badge--mismatch" title="This rule’s text calls itself RULE #${claimed}, but it is ${tcRuleLabel(rule.id)}. The label comes from the database.">text says #${claimed}</span> `;
+    return `<span class="session-rule-badge session-rule-badge--mismatch" title="${tcRuleMismatchTitle(rule.id, claimed)}">text says #${claimed}</span> `;
+  }
+
+  /**
+   * The tooltip for a mismatch cue — one wording for every surface that shows it.
+   * @param {number|string} id - The rule's database id
+   * @param {number} claimed - The number its text claims
+   * @returns {string}
+   */
+  function tcRuleMismatchTitle(id, claimed) {
+    return `This rule’s text calls itself RULE #${claimed}, but it is ${tcRuleLabel(id)}. The label comes from the database.`;
+  }
+
+  /**
+   * Label a list of stored rule ids for display. An id that is not a positive
+   * integer can only come from a hand-edited record; it is shown as unreadable
+   * rather than thrown, so one bad row cannot blank the panel that lists it.
+   * @param {Array<unknown>} ids - Rule ids as a record stored them
+   * @returns {string} e.g. "Rule #1, Rule #2" or "none"
+   */
+  function tcRuleLabelList(ids) {
+    if (!Array.isArray(ids) || ids.length === 0) return 'none';
+    return ids.map((id) => {
+      try {
+        return tcRuleLabel(id);
+      } catch (err) {
+        if (!(err instanceof TypeError)) throw err;
+        return `unreadable rule id ${JSON.stringify(id)}`;
+      }
+    }).join(', ');
   }
 
   global.tcRuleLabel = tcRuleLabel;
   global.tcAuthoredIdMismatch = tcAuthoredIdMismatch;
   global.tcRuleMismatchBadge = tcRuleMismatchBadge;
+  global.tcRuleMismatchTitle = tcRuleMismatchTitle;
+  global.tcRuleLabelList = tcRuleLabelList;
   global.tcStripSameIdPrefix = tcStripSameIdPrefix;
   global.tcDisplayRuleText = tcDisplayRuleText;
   global.tcUtf8Bytes = tcUtf8Bytes;

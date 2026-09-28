@@ -2490,7 +2490,7 @@ function renderProjectRuleDeliveries(deliveries) {
       <div class="session-rule-content">
         <strong>${esc(d.sessionId)}</strong>: <span class="${outcomeClass}">${esc(d.outcome)}</span>
         ${d.skipReason ? `<br><small class="session-rule-meta">Reason: ${esc(d.skipReason)}</small>` : ''}
-        <br><small class="session-rule-meta">Channel: ${esc(d.channel)} | Digest: <code>${esc(d.digest ? d.digest.slice(0, 8) : 'none')}</code> | Rules: ${d.ruleIds && d.ruleIds.length ? esc(d.ruleIds.map(tcRuleLabel).join(', ')) : 'none'}</small>
+        <br><small class="session-rule-meta">Channel: ${esc(d.channel)} | Digest: <code>${esc(d.digest ? d.digest.slice(0, 8) : 'none')}</code> | Rules: ${esc(tcRuleLabelList(d.ruleIds))}</small>
       </div>
     </div>`;
   }).join('');
