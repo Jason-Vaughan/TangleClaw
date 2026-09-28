@@ -35,6 +35,76 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-28 — Operator channel: merge main to clear #1966's conflicts (#1956)
+
+<!-- prawduct: type=chore | scope=operator-channel-1956 -->
+
+Stack integration S1 (dispatched by the PM, approved by the Architect).
+
+**Why:** `main` moved 54 commits past C1's base (`c5c05a70`), and #1966 no longer merged. C1.5 (#2001)
+and C2 (#2003) are stacked on C1's head `25f03e01`. A rebase would have rewritten that head, orphaned
+both PRs and needed a force-push. A merge commit keeps `25f03e01` as an ancestor, so both stay valid
+and untouched.
+
+**What:** a `--no-ff` merge of `main` @ `69fc2253` into `feat/operator-channel`. Only `CHANGELOG.md` and
+`FEATURES.md` conflicted, both as adjacent additions, and each is resolved as a union: `main`'s entries
+as `main` has them now, plus C1's operator-channel entries unchanged. Against `main`, the resolution
+adds only C1's own lines. The rest merged cleanly. Two checks found nothing to fix:
+- `main` did not touch `lib/store.js` and leaves the schema at v50, so C1's v51 migration has no
+  collision.
+- C1's `CHANNEL_TOKEN_SCOPE` check sits in the global request dispatcher, so it also covers the
+  rules and learnings routes `main` added.
+
+**Security fix, on the Architect's ruling:** the cumulative review of the merged tree
+(`rev-20260928T211036Z-a1b6674a`) found a blocking gap in C1 itself, present at the merge base.
+`resolveOutbound` trusted the send's recorded sender project, and the send route fills that in
+from the project in its URL. So a send through the target's own route, with no launch headers
+or with another project's, was relayed to the operator's chat as the target's reply. Now only a
+send recorded with `sender_verified = 1` and `sender_proof = 'launch'` qualifies. That is the
+target's own launch, since `exchangeCaller` records another project's headers as unbound. The
+existing project-id match still applies on top. Everything else is quarantined as
+`sender-not-verified`, and operator-written mail on the target's route is quarantined too,
+because it is not the project speaking. Four negative tests, each shown failing before the fix:
+- a header-less send;
+- another project's launch headers;
+- an operator's unsolicited send;
+- an operator's `inReplyTo` answer.
+
+The existing verified reply and unsolicited-message tests are unchanged and still pass. The docs,
+the CHANGELOG entry and the FEATURES line now say which senders qualify.
+
+## 2026-09-27 — Operator channel: a chat helper's durable line to one project over Medusa (#1956)
+
+<!-- prawduct: type=feature | scope=operator-channel-1956 -->
+
+Discord Operator Bridge, Chunk 1: the server half. The TangleClaw-Architect authorized it directly over Medusa, building on Builder2's v2 design spike and the Architect's rulings (guild channel, GUILD_MESSAGES + MESSAGE_CONTENT, exact user+guild+channel allowlist, conversation not authority). The PM filed #1956. C2 (the Discord helper) is out of scope and not yet authorized. This work is not in v5.30 scope.
+
+**Problem.** Nothing outside a session could reach an agent's Medusa inbox and get the reply back: the routes need a live session, `inReplyTo` needs a tracked send, and a restart retires the recipient's workspace id.
+
+**The change.**
+- **The principal.** `lib/operator-channel.js` is a non-session Medusa participant with a stable workspace id, following the Project Master precedent. Its listener runs while the channel is enabled.
+- **Inbound.** Operator messages are kept durably (schema v51, `operator_channel_inbound`, unique by the chat message id). They are delivered as ordinary tracked sends from an unbound caller: normal priority only, stamped conversation-not-authority, sent when the target project has a live session. Order is kept per project, and one offline project never holds back another. A message is never sent twice: a lost Hub answer becomes `send_unknown`, and a retry after an interrupted attempt reuses its request id so the exchange record's duplicate guard catches it. A refused send retries under a fresh id, up to five attempts.
+- **Outbound.** `operator_channel_outbound` is unique by Hub id. A received message is relayable only if TangleClaw recorded a send for it from the target project, or a reply from the project the answered message was delivered to. Everything else is quarantined and its text dropped, because the Bridge trusts any local `from`.
+- **Auth.** The helper's `ocsk_` token is stored as a SHA-256 hash and compared in constant time. It is refused on every route but the three helper routes, at the perimeter (`CHANNEL_TOKEN_SCOPE`). Configuring the channel and minting its token are operator-only. `GET /api/config` shows only `tokenConfigured`.
+
+**Critic.** The cumulative review rev-20260927T175741Z-c70670ed found 0 blocking. R-1 (the token hash via /api/config), R-2 (an old target's replies quarantined after a target change) and R-3 (a 50-row batch letting one offline project hide live ones) were fixed in dc283f49, and verify-resolutions rev-20260927T180526Z-7cea6b10 confirmed them. R-6 (a crash between a successful send and settling it records `send_unknown`) was accepted, since nothing is ever sent twice. O-1 (a stale `resolveOutbound` JSDoc) was fixed in the Architect-review remediation (15e68ef7).
+
+**Tests.** Three new test files (store, unit, and API end to end over a fake Hub):
+- delivery: offline-then-live delivery, replay idempotency, a lost Hub answer, retry under a fresh id after a refusal, per-project ordering past a backlog;
+- replies: the `inReplyTo` round trip, a reply after a target change, quarantine of another project's mail, of mail no send made, and of oversized mail;
+- fences: token scope on other routes, operator-only settings, the allowlist, length and rate limits, and the hash kept out of /api/config.
+
+`test/workload-receipts.test.js` pinned the head schema version as a literal; it now reads `CURRENT_SCHEMA_VERSION`.
+
+**Architect independent review of PR #1966: remediation.**
+1. `PUT /config` and `POST /token` now require a verified-session operator. An ambient-open dashboard spoof or a local script is refused with `OPERATOR_VERIFICATION_REQUIRED`, and an install whose gate isn't armed cannot set the channel up.
+2. The rollback docs now say that a v50 server's `/api/config` exposes `tokenHash`, so the token must be rotated after re-upgrading.
+3. A relayed reply's tracked send must be addressed to the channel's own workspace; otherwise it is quarantined (`not-addressed-to-channel`).
+4. The ADR 0020 §3 display-safety rule (A29/A30) is applied to chat text in both directions, with line breaks and tabs allowed. Unsafe inbound text is refused with `400 UNSAFE_TEXT`, and an unsafe reply is quarantined (`unsafe-text`).
+
+Each has negative tests: spoofed dashboard callers on an open and an armed gate, a send addressed elsewhere, and bidi, zero-width, line-separator, soft-hyphen and BOM text. N5 is recorded as non-blocking per the Architect. N6 (cancellation and retention) carries into C2 planning.
+
+## 2026-09-27 — Rule approval compare-and-set: approval ratifies only the text the operator saw (#1053)
 ## 2026-09-28 — Session-rule mutations are gated on a verified caller (#2013)
 
 <!-- prawduct: type=bugfix | scope=2013-session-rules-authz -->
