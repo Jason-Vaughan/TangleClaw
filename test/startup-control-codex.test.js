@@ -440,10 +440,86 @@ describe('Codex startupControl adapter', () => {
       assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'channel-changed' });
     });
 
-    it('a second thread for the project directory makes it unknown — the operator may be working in the other one', async () => {
-      await serve({ 'thread/loaded/list': () => ({ data: [THREAD, 'other-thread'] }) });
-      channel({ threadId: THREAD });
-      assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-ambiguous' });
+    describe('a bound thread beside other loaded threads for the project directory (#1978)', () => {
+      const SUB = 'sub-thread';
+      const OTHER = 'other-root-thread';
+      /**
+       * Serve the bound thread plus extra same-directory threads.
+       * @param {object<string, object>} extras - Thread id → fields (`status`, `parentThreadId`, `source`).
+       * @returns {Promise<FakeAppServer>}
+       */
+      const serveWith = (extras) => serve({
+        'thread/loaded/list': () => ({ data: [THREAD, ...Object.keys(extras)] }),
+        'thread/read': (p) => ({
+          thread: p.threadId === THREAD
+            ? { id: THREAD, cwd: PROJECT_PATH, status: server.state.threadStatus, parentThreadId: null, source: 'cli' }
+            : { id: p.threadId, cwd: PROJECT_PATH, parentThreadId: null, source: 'cli', ...extras[p.threadId] }
+        })
+      });
+      const subagent = (status) => ({ status, parentThreadId: THREAD, source: { subAgent: { thread_spawn: { parent_thread_id: THREAD, depth: 1 } } } });
+
+      it('an idle bound root with an idle subagent loaded is idle, so the wake reaches the pane gates', async () => {
+        await serveWith({ [SUB]: subagent({ type: 'idle' }) });
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle' });
+      });
+
+      it('an idle bound root with another idle root thread loaded is idle — the bound thread is authoritative', async () => {
+        await serveWith({ [OTHER]: { status: { type: 'idle' } }, [SUB]: subagent({ type: 'systemError' }) });
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle' });
+      });
+
+      it('any other loaded thread that is working makes it busy — the operator may be working in it', async () => {
+        await serveWith({ [OTHER]: { status: { type: 'active', activeFlags: [] } } });
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'busy', reasonCode: 'other-thread-active' });
+      });
+
+      it('a working subagent makes it busy, named as a subagent from the protocol metadata', async () => {
+        await serveWith({ [SUB]: subagent({ type: 'active', activeFlags: [] }) });
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'busy', reasonCode: 'subagent-active' });
+        server.close();
+        // A subagent known only by its source, with no parent id, is still a subagent.
+        await serveWith({ [SUB]: { status: { type: 'active', activeFlags: [] }, source: { subAgent: 'review' } } });
+        store.getDb().prepare('DELETE FROM startup_control_channels').run();
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'busy', reasonCode: 'subagent-active' });
+      });
+
+      it('another thread in a status the protocol does not promise is unknown', async () => {
+        await serveWith({ [OTHER]: { status: { type: 'somethingNew' } } });
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'other-thread-status-unknown' });
+        server.close();
+        await serveWith({ [OTHER]: { status: undefined } });
+        store.getDb().prepare('DELETE FROM startup_control_channels').run();
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'other-thread-status-unknown' });
+      });
+
+      it('the bound thread\'s own state still decides first: busy, not loaded, and a changed channel', async () => {
+        await serveWith({ [OTHER]: { status: { type: 'idle' } } });
+        channel({ threadId: THREAD });
+        server.state.threadStatus = { type: 'active', activeFlags: [] };
+        assert.deepEqual(await observe(), { state: 'busy', reasonCode: 'thread-active' });
+        store.getDb().prepare('DELETE FROM startup_control_channels').run();
+        channel({ threadId: 'bound-but-gone' });
+        assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-not-loaded' });
+      });
+
+      it('an idle answer beside other threads is still withheld when the channel changed under the read', async () => {
+        await serve({
+          'thread/loaded/list': () => ({ data: [THREAD, OTHER] }),
+          'thread/read': (p) => {
+            if (p.threadId === OTHER) store.getDb().prepare("UPDATE startup_control_channels SET state = 'closed'").run();
+            return { thread: { id: p.threadId, cwd: PROJECT_PATH, status: { type: 'idle' } } };
+          }
+        });
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'channel-changed' });
+      });
     });
 
     it('a second thread in ANOTHER directory does not', async () => {

@@ -1477,6 +1477,14 @@ route('GET', '/api/server-info', (_req, res) => {
     log.warn('Could not summarize Medusa escalations', { error: err.message });
     info.medusaEscalations = null;
   }
+  // #1978: sessions whose wakes have been held for want of an engine answer,
+  // with mail waiting — read-only evidence; no dashboard UI renders it.
+  try {
+    info.medusaWakeStalls = medusaWake.wakeStallSummary();
+  } catch (err) { // prawduct:allow prawduct/broad-except -- a monitor read must not cost the dashboard its whole status poll
+    log.warn('Could not summarize Medusa wake stalls', { error: err.message });
+    info.medusaWakeStalls = null;
+  }
   jsonResponse(res, 200, info);
 });
 

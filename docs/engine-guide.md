@@ -566,6 +566,12 @@ profile names an adapter that can observe it (`declaresObserver`; today, Codex):
   launch and never gets a channel, so a relaunch does not change it.
 - The adapter's own reason (`version-mismatch`, `thread-ambiguous`, …) is logged whenever it changes.
   The ledger and the peer route carry only the bounded wake code.
+- A session held as `engine-thread-unknown`, with mail waiting, for 10 minutes (`WAKE_STALL_ALERT_MS`) is
+  reported (#1978). One warning is logged per episode, and `/api/server-info` carries
+  `medusaWakeStalls` (the count, plus the oldest session's project, age and adapter reason) as
+  read-only evidence. No dashboard UI renders it. The alert is derived from the wake verdict, so it clears as soon as
+  the engine answers, the mail is read or the session ends. It never types into the pane or sends a
+  message.
 
 Every other engine skips all of this and never has a channel looked up, so its pane gate is exactly as before. The launch-time readiness gate is unchanged.
 It must not create a thread or spend a turn to obtain wake evidence.
@@ -773,14 +779,24 @@ version probe. It is an observation, never permission: it checks no trust, accou
 does not authorize a fire.
 
 The Codex adapter reads it from the protocol alone and opens no turn. It speaks only for the launch's
-own app-server process (command, socket and birth time) on the installed and recorded version, and only
-for exactly one thread. Any second loaded thread whose canonical cwd is the project directory makes it
-`unknown`, because a thread started from the TUI would leave the recorded one idle while the other
-works. A channel whose thread was never recorded (its startup fire was blocked or never ran) has it
+own app-server process (command, socket and birth time) on the installed and recorded version, and for
+the launch's recorded thread, which it identifies exactly (#1978). Other loaded threads whose canonical
+cwd is the project directory (subagents, or a thread the operator opened) cannot make the recorded one
+unknowable, but they can hold the answer:
+- If any of them is `active`, the answer is busy. A thread started from the TUI leaves the recorded one
+  idle while it works, and the pane shows that work. The reason code is `subagent-active` or
+  `other-thread-active`, read from the protocol's subagent metadata (`parentThreadId`, or a `subAgent`
+  `source`).
+- If any of them has a status outside `idle`, `systemError` and `notLoaded`, the answer is `unknown`
+  (`other-thread-status-unknown`).
+- A resting extra thread holds nothing.
+
+A channel whose thread was never recorded (its startup fire was blocked or never ran) has it
 bound here, to the **sole** loaded project thread. The bind is TangleClaw's own metadata, written
 compare-and-set (`startupControlChannels.updateAdapterStateIf`), so it never replaces a recorded
-thread. The bind that lands first wins, and a lost race answers `unknown`. After a bind, "the only
-one" is established again from a fresh read. Given all that, the thread's `active` status is busy (an
+thread. The bind that lands first wins, and a lost race answers `unknown`. Because that bind was an
+inference from "the only one", in that same observation "the only one" is established again from a
+fresh read, and a second thread there answers `thread-ambiguous`. Given all that, the thread's `active` status is busy (an
 approval wait included) and `idle` is idle. Before an `idle` is returned, the channel row is read
 again: it must still be open, on the same launch, with the same thread.
 

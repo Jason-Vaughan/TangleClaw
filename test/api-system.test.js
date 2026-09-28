@@ -292,6 +292,26 @@ describe('API — system, engines, tmux', () => {
       }
     });
 
+    it('carries the Medusa wake-stall alert (#1978), and a monitor read that throws costs only that field', async () => {
+      const medusaWake = require('../lib/medusa-wake');
+      const orig = medusaWake.wakeStallSummary;
+      try {
+        let { status, data } = await request('GET', '/api/server-info');
+        assert.equal(status, 200);
+        assert.equal(data.medusaWakeStalls, null, 'nothing stalled, nothing to show');
+        const summary = { count: 1, oldest: { sessionId: 3, project: 'arch', engineReason: 'thread-ambiguous', ageMinutes: 12, since: '2026-09-27T00:00:00.000Z', meaning: 'm' } };
+        medusaWake.wakeStallSummary = () => summary;
+        ({ data } = await request('GET', '/api/server-info'));
+        assert.deepEqual(data.medusaWakeStalls, summary);
+        medusaWake.wakeStallSummary = () => { throw new Error('boom'); };
+        ({ status, data } = await request('GET', '/api/server-info'));
+        assert.equal(status, 200);
+        assert.equal(data.medusaWakeStalls, null);
+      } finally {
+        medusaWake.wakeStallSummary = orig;
+      }
+    });
+
     it('restartImpact classifies startupSha..currentDiskSha when stale, and is null when not', async () => {
       const serverInfo = require('../lib/server-info');
       const checkoutState = require('../lib/checkout-state');
