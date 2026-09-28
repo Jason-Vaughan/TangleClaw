@@ -1566,7 +1566,9 @@ route('POST', '/api/master/kill', (_req, res) => {
 // with the shipped baseline (the recovery path if an edit ever weakened the
 // boundary). History survives in session_rule_versions. A live master picks
 // the change up on the next ensure (identity regeneration).
-route('POST', '/api/master/rules/restore-defaults', (_req, res) => {
+route('POST', '/api/master/rules/restore-defaults', (req, res) => {
+  // It deletes every master rule the operator added, so it is theirs to run.
+  if (!operatorProjectCaller(req, res, 'restore the Project Master\'s default rules')) return;
   const rules = master.restoreDefaultMasterRules();
   jsonResponse(res, 200, { ok: true, rules });
 });
@@ -5321,8 +5323,8 @@ function _stillHasUnhandledMail(row) {
  * its project, so only the operator may create a governing rule or change,
  * disable, delete, demote, restore or approve one. A session bound to a
  * project keeps the one role the proposal model gives it: it may propose a
- * rule for its OWN project, and revise, withdraw or decline its own AI rule
- * while that rule is still a proposal. Unbound, invalid and Project Master
+ * rule for its OWN project, and revise, withdraw or decline an AI proposal in
+ * that project while it is still a proposal. Unbound, invalid and Project Master
  * callers change nothing.
  *
  * The binding is checked before the rule is looked up, so a refused caller
@@ -5341,7 +5343,7 @@ function _stillHasUnhandledMail(row) {
  * @param {*} [target.projectId] - For a create: the project the rule is for
  * @param {string} [target.kind] - For a create: the rule's kind
  * @param {boolean} target.proposalAction - Whether a bound session may do this
- *   to its own project's still-proposed AI rule (a create is always a proposal)
+ *   to a still-proposed AI rule in its own project (a create is always a proposal)
  * @param {string} target.action - Completes "Only the operator can …"
  * @returns {{operator: boolean, changedBy: string, rule: (object|null)}|null}
  *   The caller, or null when the request was answered
@@ -5368,7 +5370,7 @@ function sessionRuleCaller(req, res, target) {
     status: 403,
     code: 'OPERATOR_ONLY',
     message: `Only the operator can ${target.action}. A session may propose rules for its own project, `
-      + 'and revise, withdraw or decline its own proposals while they are still proposals; approving, '
+      + 'and revise, withdraw or decline AI proposals in that project while they are still proposals; approving, '
       + 'changing or removing a rule that governs sessions is the operator\'s, from the TangleClaw dashboard.'
   };
   const details = { callerProjectId: access.projectId, ruleId: rule ? rule.id : null };
@@ -5460,7 +5462,7 @@ route('PUT', '/api/session-rules/:id', (req, res, params, body) => {
   if (!body || typeof body !== 'object') {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
-  // A bound session may revise the text of its own proposal; enabling or
+  // A bound session may revise the text of an AI proposal in its project; enabling or
   // disabling is never a proposal-level act.
   const caller = sessionRuleCaller(req, res, {
     ruleId: Number(params.id),
@@ -5493,7 +5495,7 @@ route('PUT', '/api/session-rules/:id', (req, res, params, body) => {
 // DELETE /api/session-rules/:id — ?confirm=true required for shipped Master
 // baseline rules (see refuseUnconfirmedBaselineEdit)
 route('DELETE', '/api/session-rules/:id', (req, res, params) => {
-  // A bound session may withdraw its own proposal, and nothing else.
+  // A bound session may withdraw an AI proposal in its project, and nothing else.
   const caller = sessionRuleCaller(req, res, {
     ruleId: Number(params.id),
     proposalAction: true,
@@ -5525,15 +5527,20 @@ route('DELETE', '/api/session-rules/:id', (req, res, params) => {
 // `docs/session-rules-self-improvement.md`.
 
 // POST /api/session-rules/promote — promote a learning into a rule (operator-confirmed)
-route('POST', '/api/session-rules/promote', (_req, res, _params, body) => {
+route('POST', '/api/session-rules/promote', (req, res, _params, body) => {
+  // This route mints a LIVE rule from AI-authored text, so it is the
+  // operator's, exactly as approval is: the operator as the caller, then the
+  // password. The password alone is no gate on an install that has none set.
+  const caller = sessionRuleCaller(req, res, {
+    projectId: body ? body.projectId : undefined,
+    kind: body ? body.kind : undefined,
+    proposalAction: false,
+    action: 'promote a learning into a rule that governs sessions'
+  });
+  if (!caller) return;
   if (!body || body.learningId === undefined) {
     return errorResponse(res, 400, 'learningId is required', 'BAD_REQUEST');
   }
-  // This route mints a LIVE rule from AI-authored text, so it carries the same
-  // operator gate as approval. It previously asserted operator authority simply
-  // because the route had been reached — but this API is on localhost and this
-  // project instructs in-session agents to call it, so "a request arrived" is
-  // not evidence a human sent it.
   const promoteCheck = projects.checkDeletePassword(body ? body.password : undefined);
   if (!promoteCheck.allowed) return errorResponse(res, 403, promoteCheck.error, 'FORBIDDEN');
   try {
@@ -5571,8 +5578,8 @@ route('PUT', '/api/session-rules/:id/status', (req, res, params, body) => {
   if (!body || typeof body.status !== 'string') {
     return errorResponse(res, 400, 'status is required', 'BAD_REQUEST');
   }
-  // Declining its own proposal is the one status change a bound session may
-  // make. Approving, and moving a governing rule out of 'active', are the
+  // Declining an AI proposal in its project is the one status change a bound
+  // session may make. Approving, and moving a governing rule out of 'active', are the
   // operator's: either one decides what every future session is told.
   const caller = sessionRuleCaller(req, res, {
     ruleId: Number(params.id),
@@ -5580,21 +5587,15 @@ route('PUT', '/api/session-rules/:id/status', (req, res, params, body) => {
     action: body.status === 'active' ? 'approve a proposed rule' : 'change the status of a governing rule'
   });
   if (!caller) return;
-  // Approving a proposal grants it authority over every future session, so it
-  // is gated like TangleClaw's other privileged operations (project delete,
-  // session kill, wrap) rather than inferred from a caller-supplied field.
-  // `changedBy` is the caller describing itself — an agent that omits it is
-  // recorded as the operator — so it cannot be what decides this.
-  //
-  // Declining a proposal needs no gate: it grants nothing.
+  // Approving a proposal grants it authority over every future session, so on
+  // top of the operator caller it takes the password, like TangleClaw's other
+  // privileged operations (project delete, session kill, wrap).
   if (body.status === 'active') {
     const check = projects.checkDeletePassword(body ? body.password : undefined);
     if (!check.allowed) return errorResponse(res, 403, check.error, 'FORBIDDEN');
   }
   try {
     const rule = store.sessionRules.setStatus(Number(params.id), body.status, {
-      // Passing the gate IS the operator acting; recording anything else would
-      // misattribute a decision the gate just authorised.
       changedBy: caller.changedBy,
       changeReason: body.changeReason,
       criticGate: body.criticGate,

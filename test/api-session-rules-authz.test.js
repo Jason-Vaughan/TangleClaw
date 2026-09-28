@@ -418,6 +418,67 @@ describe('api/session-rules caller gate (#2013)', () => {
     });
   });
 
+  describe('POST /api/session-rules/promote', () => {
+    it('an unbound caller cannot promote a learning into a live rule, even with no delete password set', async () => {
+      const learning = store.learnings.create({ projectId: own.id, content: `promote unbound ${Date.now()}` });
+      const before = rulesOf(own.id).length;
+      const res = await request('POST', '/api/session-rules/promote',
+        { learningId: learning.id, content: 'any text I like' }, UNBOUND);
+      assert.equal(res.status, 403);
+      assert.equal(res.data.code, 'PROJECT_BINDING_REQUIRED');
+      assert.equal(rulesOf(own.id).length, before);
+    });
+
+    it('a bound session cannot promote either — promotion mints a governing rule', async () => {
+      const learning = store.learnings.create({ projectId: own.id, content: `promote bound ${Date.now()}` });
+      const before = rulesOf(own.id).length;
+      const res = await request('POST', '/api/session-rules/promote', { learningId: learning.id }, asOwn);
+      assert.equal(res.status, 403);
+      assert.equal(res.data.code, 'OPERATOR_ONLY');
+      assert.equal(rulesOf(own.id).length, before);
+    });
+
+    it('the operator still promotes, and the rule is live', async () => {
+      const learning = store.learnings.create({ projectId: own.id, content: `promote operator ${Date.now()}` });
+      const res = await request('POST', '/api/session-rules/promote', { learningId: learning.id }, asOperator);
+      assert.equal(res.status, 201);
+      assert.equal(res.data.status, 'active');
+    });
+  });
+
+  describe('every rule-mutating route refuses an unbound caller', () => {
+    // The roster is read from the route registrations in server.js — the one
+    // place a route's verb and path are both written — so a mutation route
+    // added later is swept in without anyone remembering to list it here.
+    const NOT_A_MUTATION = {
+      'POST /api/session-rules/conflicts': 'a read-only candidate signal; it writes nothing'
+    };
+    const source = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    const registered = [...source.matchAll(/route\('(POST|PUT|PATCH|DELETE)', '(\/api\/(?:session-rules|master\/rules)[^']*)'/g)]
+      .map(([, method, urlPath]) => `${method} ${urlPath}`);
+
+    it('the roster is non-trivial and its exemptions still exist', () => {
+      assert.ok(registered.length >= 7, `expected the rule mutation routes, found ${registered.join(', ')}`);
+      for (const key of Object.keys(NOT_A_MUTATION)) assert.ok(registered.includes(key), `${key} is exempt but no longer registered`);
+    });
+
+    for (const key of registered) {
+      if (NOT_A_MUTATION[key]) continue;
+      it(`${key} answers 403 and changes nothing`, async () => {
+        const [method, pattern] = key.split(' ');
+        const target = activeRule(own.id, `sweep target ${key} ${Math.random()}`);
+        const learning = store.learnings.create({ projectId: own.id, content: `sweep learning ${Math.random()}` });
+        const urlPath = pattern.replace(':id', String(target.id));
+        const snapshot = JSON.stringify(store.sessionRules.list({}));
+        const res = await request(method, urlPath,
+          { content: 'swept', projectId: own.id, status: 'rejected', enabled: false, versionNo: 1, learningId: learning.id },
+          UNBOUND);
+        assert.equal(res.status, 403, `${key} answered ${res.status}`);
+        assert.equal(JSON.stringify(store.sessionRules.list({})), snapshot, `${key} changed a rule while refusing`);
+      });
+    }
+  });
+
   describe('POST /api/session-rules/:id/restore', () => {
     it('after approval, a bound session cannot restore an older text', async () => {
       const governing = activeRule(own.id, 'original text');

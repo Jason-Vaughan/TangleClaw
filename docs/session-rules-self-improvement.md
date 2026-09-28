@@ -71,9 +71,9 @@ and `GET /api/learnings` (#1121); a valid project with no rules returns `200 []`
 | `DELETE /api/session-rules/:id` | Delete (snapshots a tombstone). #2013: the operator only, except that a bound session may withdraw its own project's still-proposed AI rule |
 | `GET /api/session-rules/:id/versions` | Version history (newest first) |
 | `POST /api/session-rules/:id/restore` `{versionNo}` | Roll back to a prior version. #2013: the operator only |
-| `POST /api/session-rules/promote` `{learningId, content?, projectId?}` | Promote a learning → rule (operator-confirmed; defaults to the learning's project) |
+| `POST /api/session-rules/promote` `{learningId, content?, projectId?}` | Promote a learning → rule (defaults to the learning's project). #2013: the operator as the caller, then the password |
 | `POST /api/session-rules/conflicts` `{content, projectId?}` | Non-authoritative conflict-candidate signal |
-| `PUT /api/session-rules/:id/status` `{status, expectedContent, changedBy?, changeReason?}` | #569 — approve (`active`) or decline (`rejected`) a proposal. An AI `changedBy` requesting `active` is refused with 403. #1053 — an approval must carry `expectedContent`, the exact stored text the operator was shown: without it, `400 EXPECTED_CONTENT_REQUIRED`; when the rule no longer holds that text, `409 RULE_CONTENT_CHANGED` carrying `currentContent`, and nothing changes. The password gate is checked first, so a caller without it learns nothing about the text. A rejection needs no `expectedContent` and is never compared. #2013: approving needs the operator as the caller as well as the password; a bound session may decline its own project's still-proposed AI rule, and moving an `active` rule out of `active` is the operator's |
+| `PUT /api/session-rules/:id/status` `{status, expectedContent, changeReason?}` | #569 — approve (`active`) or decline (`rejected`) a proposal. #1053 — an approval must carry `expectedContent`, the exact stored text the operator was shown: without it, `400 EXPECTED_CONTENT_REQUIRED`; when the rule no longer holds that text, `409 RULE_CONTENT_CHANGED` carrying `currentContent`, and nothing changes. The password gate is checked first, so a caller without it learns nothing about the text. A rejection needs no `expectedContent` and is never compared. #2013: approving needs the operator as the caller as well as the password; a bound session may decline its own project's still-proposed AI rule, and moving an `active` rule out of `active` is the operator's |
 | `GET /api/learnings?projectId=&tier=` | #569 — list a project's learnings |
 | `PUT /api/learnings/:id/tier` `{tier}` | #569 — operator override of a learning's tier |
 
@@ -140,10 +140,12 @@ using the caller model every operator-only project route uses (`sharedDocsAccess
 #1752):
 
 - **The operator** (an authenticated dashboard session) may create a governing rule, and edit,
-  disable, delete, restore, approve or reject any rule.
+  disable, delete, restore, approve or reject any rule, promote a learning, and restore the
+  Project Master's default rules.
 - **A session bound to the project** (its `x-tangleclaw-project-id` and `x-tangleclaw-launch-id`
   headers, verified against a live launch) may propose a rule for its OWN project, and revise,
-  withdraw or decline its own AI rule while that rule is still `proposed`. What it creates is
+  withdraw or decline an AI proposal in that project, the wrap's included, while it is still
+  `proposed`. What it creates is
   recorded as `createdBy:'ai'` and lands `proposed`, whatever the body claims. Once the operator
   approves a proposal, the session that wrote it has no more rights over it than any other.
 - **Anyone else** — no binding, a binding that does not verify, another project's session, the
@@ -156,8 +158,9 @@ could claim either, and an omitted field was recorded as the operator's.
 
 Approval (`PUT /api/session-rules/:id/status` with `status:'active'`) and
 `POST /api/session-rules/promote` also keep the **operator password** (`checkDeletePassword`).
-That password is only real protection when one is configured, but approval no longer rests on it
-alone: a session is refused before the password is consulted.
+That password is only real protection when one is configured, but neither route rests on it
+alone any more: a session, or any caller that is not the operator, is refused before the password is
+consulted.
 
 **The remaining boundary, stated rather than glossed.** When the auth gate stands down (no
 admin account exists yet), `resolveAccess` accepts a same-origin, browser-shaped request as the
@@ -207,7 +210,7 @@ every one of these; without them it is refused.
 
 - New AI rule: `POST /api/session-rules {content, projectId}` — lands `proposed`, authored `ai`
 - Promote: `POST /api/session-rules/promote {learningId, ...}` — the operator, with the password
-- Edit: `PUT /api/session-rules/:id {content}` — a session only on its own still-proposed rule;
+- Edit: `PUT /api/session-rules/:id {content}` — a session only on a still-proposed AI rule in its project;
   enabling, disabling and every edit to a governing rule are the operator's
 - Roll back: `POST /api/session-rules/:id/restore {versionNo}` — the operator
 
@@ -255,8 +258,9 @@ At wrap, the AI may notice a recurring wrap-process improvement (e.g. "this proj
 needs a lint pass before the wrap commit"). It proposes a **`kind='wrap'`** rule. Because
 this is an **autonomous (AI-authored) edit**, it goes through the **same Critic gate** as
 any `createdBy:'ai'` edit (procedure above) and is **surfaced user-gated** — never
-auto-applied. Apply path: `POST /api/session-rules {content, projectId, kind:'wrap',
-createdBy:'ai'}` or `/promote {learningId, kind:'wrap'}`. The accepted rule lands in the
+auto-applied. Apply path: a session proposes it with `POST /api/session-rules {content, projectId,
+kind:'wrap'}` and its launch headers, or the operator promotes a learning with
+`/promote {learningId, kind:'wrap'}`. The accepted rule lands in the
 project's **Wrap rules** box in the Project Rules modal and is auto-versioned like any other.
 
 This keeps the contract's "self-improvement suggestions are user-gated, never auto-applied,
