@@ -100,6 +100,10 @@ installer, which rewrites the ttyd plist for direct mode. This is the paired-sta
 be internally valid and still be wrong for the checkout that is about to generate its plist.
 *(Corrected under Architect R41, 2026-09-26: the earlier text said "rerun the installer", which is
 wrong for caddy mode.)*
+*(Amended under the Architect's #1901 ruling D1, 2026-09-27: the installer no longer rewrites the ttyd
+plist for direct mode on a caddy-mode host. There it provisions the runtime and hands the ttyd plist to
+this cutover, so it is a correct step in either mode. The refusal still names the cutover for caddy
+mode, as the narrower step, and names the installer as the alternative.)*
 
 A binary and its provenance manifest are two filesystem entries, so no comment may claim the pair is
 atomically replaced. The implementation instead guarantees recoverability at every mutation point:

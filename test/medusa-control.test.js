@@ -108,8 +108,8 @@ describe('Medusa control (MED-2K9P Chunk 02; shared component since #996)', () =
     assert.match(helper, /live: 'medusaLive'/);
   });
 
-  // Regression — inbox modal could not be dismissed once opened: opening it marks
-  // read → unread 0 → the badge (the toggle) self-hides, leaving no close control
+  // Regression — inbox modal could not be dismissed once opened: when unread reaches
+  // 0 the badge (the toggle) self-hides, leaving no close control
   // and no Escape handler (mobile trap). Fix: explicit ✕ in the panel header, a
   // delegated close handler, Escape-to-close, and a dedicated closeInbox().
   describe('inbox panel is dismissable (regression: self-hiding badge left it stuck)', () => {

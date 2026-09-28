@@ -33,6 +33,11 @@ const REPO_ROOT = path.resolve(__dirname, '..');
 const INPUTS_DIR = path.join(REPO_ROOT, 'deploy', 'ttyd');
 const REQUIRED_SOURCES = ['libuv', 'json-c', 'libwebsockets', 'ttyd'];
 const SHA256 = /^[0-9a-f]{64}$/;
+// Bounds on each download attempt, in seconds: a blocked or stalled network
+// must fail the build, never hang it. The largest pinned input is a few MB, so
+// five minutes per attempt is generous on any working link (#1954).
+const CURL_CONNECT_TIMEOUT_S = 30;
+const CURL_MAX_TIME_S = 300;
 
 /**
  * The manifest's record of what a build was made from, taken from the ONE
@@ -129,6 +134,20 @@ function run(cmd, args, opts = {}) {
 }
 
 /**
+ * The curl arguments for one download: fail on HTTP errors, follow redirects,
+ * retry twice, and bound every attempt's connect and total time so blocked
+ * egress fails fast instead of hanging forever (#1954).
+ * @param {string} url - Source URL.
+ * @param {string} dest - File to write.
+ * @returns {string[]}
+ */
+function curlArgs(url, dest) {
+  return ['-fsSL', '--retry', '2',
+    '--connect-timeout', String(CURL_CONNECT_TIMEOUT_S), '--max-time', String(CURL_MAX_TIME_S),
+    '-o', dest, url];
+}
+
+/**
  * Put an input in the cache, verified. A cached file whose digest does not
  * match is deleted and fetched again; a download whose digest does not match
  * is refused and never moved into the cache.
@@ -146,7 +165,7 @@ function fetchVerified(input, cacheDir, offline) {
   }
   if (offline) throw new Error(`--offline and ${input.url} is not in the cache`);
   const tmp = `${dest}.part`;
-  run('curl', ['-fsSL', '--retry', '2', '-o', tmp, input.url]);
+  run('curl', curlArgs(input.url, tmp));
   const actual = sha256File(tmp);
   if (actual !== input.sha256) {
     fs.rmSync(tmp);
@@ -304,4 +323,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { parseArgs, validateInputs, sha256File, fetchVerified, cleanEnv, manifestInputs, REQUIRED_SOURCES };
+module.exports = { parseArgs, validateInputs, sha256File, curlArgs, fetchVerified, cleanEnv, manifestInputs, REQUIRED_SOURCES, CURL_MAX_TIME_S };

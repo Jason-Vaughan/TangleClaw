@@ -223,7 +223,7 @@ describe('medusa-exchanges (#1839)', () => {
       assertReplayMatches(x.exchange_id);
     });
 
-    it('records the dashboard auto-ack as operator-ui and leaves a reply-required exchange unsatisfied', () => {
+    it('records an operator-ui acknowledgement as such and leaves a reply-required exchange unsatisfied', () => {
       const x = sendPmToBuilder({ priority: 'blocking' });
       mx.recordAcknowledged(['hub-1'], 'builder-ws', { kind: 'operator-ui' });
       const row = store.medusaExchanges.get(x.exchange_id);

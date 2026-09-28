@@ -264,3 +264,23 @@ describe('launch step contents (car 21.2)', () => {
     });
   });
 });
+
+describe('launch bootstrap authorizes a project-required startup message (#1874)', () => {
+  const sessions = require('../lib/sessions');
+  const lines = sessions.LAUNCH_BOOTSTRAP_LINES;
+
+  it('names the required message inside step (c), which the (a)-(c) authorization covers', () => {
+    const c = lines.find((l) => l.startsWith('(c) '));
+    assert.ok(c, 'step (c) exists');
+    assert.match(c, /tc start ready/);
+    assert.match(c, /require a startup message once READY/);
+    assert.match(c, /send exactly that right after attesting/);
+    const auth = lines.findIndex((l) => l.startsWith('(a) through (c) are routine initialization and are already authorized'));
+    assert.ok(auth > lines.indexOf(c), 'the authorization sentence follows and so covers it');
+  });
+
+  it('keeps project work behind (d): the message is the only addition to initialization', () => {
+    const d = lines.find((l) => l.startsWith('(d) '));
+    assert.equal(d, '(d) Propose the project action, and stop there.');
+  });
+});

@@ -17,6 +17,8 @@ setLevel('error');
 
 const store = require('../lib/store');
 const medusa = require('../lib/medusa');
+const medusaExchanges = require('../lib/medusa-exchanges');
+const gateFallback = require('../lib/gate-fallback');
 const { createServer } = require('../server');
 const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
 
@@ -336,10 +338,84 @@ describe('API — Medusa exchanges (#1839)', () => {
     await call(server, 'POST', `${builderBase()}/read`, { ids: [hubId] }, op);
     const x = store.medusaExchanges.getByHubId(hubId, 'send');
     const facts = store.medusaExchanges.facts(x.exchange_id);
-    assert.equal(facts.find((f) => f.fact === 'read').actor, 'operator-ui');
+    // Viewing in the dashboard records no read (#1987); an explicit handled-mark does.
+    assert.equal(facts.some((f) => f.fact === 'read'), false);
     assert.equal(facts.find((f) => f.fact === 'acknowledged').actor, 'operator-ui');
     assert.equal(x.state, 'acknowledged');
     assert.equal(x.terminal_at, null);
+  });
+
+  /**
+   * Send a tracked message from the PM to the Builder, deliver it, and leave
+   * it with a wake the Builder's pane did not accept: unread, awaiting read,
+   * and due a re-arm.
+   * @returns {Promise<string>} Hub id
+   */
+  const unreadWithWake = async () => {
+    const sent = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'x' }, bPM.headers);
+    const hubId = sent.data.id;
+    deliverToBuilder(hubId);
+    medusaExchanges.recordWakeForRecipient(builderWs, 'wake_attempted', { detail: { nonce: 'n1' } });
+    medusaExchanges.recordWakeForRecipient(builderWs, 'wake_not_accepted', { attemptNonce: 'n1' });
+    return hubId;
+  };
+  const standing = (hubId) => {
+    const x = store.medusaExchanges.getByHubId(hubId, 'send');
+    const facts = store.medusaExchanges.facts(x.exchange_id);
+    return { state: x.state, awaiting: medusaExchanges.pendingWakeCount(builderWs), rearm: medusaExchanges.rearmTrigger(facts), read: facts.filter((f) => f.fact === 'read') };
+  };
+
+  it('leaves the exchange untouched when the operator views the inbox in the dashboard (#1987)', async () => {
+    const hubId = await unreadWithWake();
+    const before = standing(hubId);
+    assert.equal(before.awaiting, 1);
+    assert.equal(before.rearm, 'not-accepted');
+    const viewed = await call(server, 'GET', `${builderBase()}/messages`, null, op);
+    assert.equal(viewed.status, 200);
+    assert.ok(viewed.data.messages.some((m) => m.id === hubId), 'the operator sees the message');
+    assert.deepEqual(standing(hubId), before, 'no read fact, still awaiting read, re-arm still due, same projection');
+    assert.ok(medusa.getStatus(bBuilder.sessionId).unread > 0, 'unread stays pending');
+    const again = await call(server, 'GET', `${builderBase()}/messages`, null, op);
+    assert.ok(again.data.messages.some((m) => m.id === hubId), 'still in the inbox');
+    const pmCaller = { kind: 'project', projectId: pm.id };
+    assert.equal(medusaExchanges.retract(hubId, pmCaller, { reason: 'superseded' }).state, 'retracted', 'still retractable');
+  });
+
+  it('records no read for a dashboard view whose operator cannot be proven (gate in fallback)', async () => {
+    const hubId = await unreadWithWake();
+    const before = standing(hubId);
+    const cfg = store.config.load();
+    const prevAuth = cfg.authEnabled;
+    store.users.create(`rosie${Date.now()}`, 'correct horse battery staple');
+    store.config.save({ ...cfg, authEnabled: true });
+    gateFallback.writeMarker(gateFallback.markerPath(), { createdAt: new Date().toISOString() });
+    try {
+      const viewed = await call(server, 'GET', `${builderBase()}/messages`, null, op);
+      assert.equal(viewed.status, 200, JSON.stringify(viewed.data));
+      assert.ok(viewed.data.messages.some((m) => m.id === hubId));
+    } finally {
+      gateFallback.removeMarker(gateFallback.markerPath());
+      store.getDb().prepare('DELETE FROM users').run();
+      store.config.save({ ...store.config.load(), authEnabled: prevAuth });
+    }
+    assert.deepEqual(standing(hubId), before, 'no unverified-reader read either');
+    // A caller that is not browser-shaped (an agent's plain curl) still records its read.
+    await call(server, 'GET', `${builderBase()}/messages`);
+    assert.equal(standing(hubId).read[0].actor, 'unverified-reader');
+  });
+
+  it('still records the agent\'s own read, with every transition it carries (#1987 pair)', async () => {
+    const hubId = await unreadWithWake();
+    const read = await call(server, 'GET', `${builderBase()}/messages`, null, bBuilder.headers);
+    assert.equal(read.status, 200);
+    const after = standing(hubId);
+    assert.equal(after.read.length, 1);
+    assert.equal(after.read[0].actor, 'recipient');
+    assert.equal(after.state, 'read');
+    assert.equal(after.awaiting, 0);
+    assert.equal(after.rearm, null);
+    const pmCaller = { kind: 'project', projectId: pm.id };
+    assert.throws(() => medusaExchanges.retract(hubId, pmCaller, { reason: 'superseded' }), { code: 'NOT_RETRACTABLE' });
   });
 
   it('records nothing when a sender reports its own message to someone else as handled', async () => {

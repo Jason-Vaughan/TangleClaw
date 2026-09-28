@@ -50,18 +50,29 @@ function request(server, method, urlPath, headers = {}) {
   return new Promise((resolve, reject) => {
     const addr = server.address();
     const req = http.request(
-      { hostname: '127.0.0.1', port: addr.port, path: urlPath, method, headers },
+      // A fresh connection per request (#1960). Node 22's default agent keeps
+      // sockets alive, and these tests spend seconds in synchronous `tc` spawns
+      // between requests. Reusing an idle pooled socket the server is closing
+      // is the race Node documents as ECONNRESET with `req.reusedSocket`. A test
+      // gains nothing from keep-alive, so it takes none.
+      { hostname: '127.0.0.1', port: addr.port, path: urlPath, method, headers, agent: false },
       (res) => {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
         res.on('end', () => {
           let parsed;
           try { parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { parsed = null; }
-          resolve({ status: res.statusCode, body: parsed });
+          resolve({ status: res.statusCode, body: parsed, reusedSocket: req.reusedSocket });
         });
       }
     );
-    req.on('error', reject);
+    req.on('error', (err) => {
+      // If a reset ever recurs, say which kind it was: a reused socket (the
+      // keep-alive race) or a fresh one (something else, such as a port collision).
+      err.message += ` [#1960 diagnostics: reusedSocket=${req.reusedSocket}, `
+        + `local=${req.socket && req.socket.localPort}, remote=${addr.port}]`;
+      reject(err);
+    });
     req.end();
   });
 }
@@ -294,6 +305,16 @@ describe('tc CLI vertical slice (ambient-awareness Chunk 02)', () => {
       assert.equal(res.status, 1);
       assert.match(res.stderr, /unknown verb 'frobnicate'/);
       assert.match(res.stderr, /usage: tc/);
+    });
+  });
+
+  describe('the test client itself (#1960)', () => {
+    it('opens a fresh connection per request, so no request can race a closing keep-alive socket', async () => {
+      const first = await request(server, 'GET', `/api/tc/whoami?projectId=${project.id}`);
+      const second = await request(server, 'GET', `/api/tc/whoami?projectId=${project.id}`);
+      assert.equal(first.status, 200);
+      assert.equal(second.status, 200);
+      assert.equal(second.reusedSocket, false, 'a reused socket is where Node documents the ECONNRESET race');
     });
   });
 

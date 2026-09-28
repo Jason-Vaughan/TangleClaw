@@ -9,6 +9,7 @@ const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const { createServer } = require('../server');
+const { operatorHeaders } = require('./_shared-docs-callers');
 
 setLevel('error');
 
@@ -28,7 +29,9 @@ function request(server, method, urlPath, body) {
       port: addr.port,
       path: urlPath,
       method,
-      headers: { 'Content-Type': 'application/json' }
+      // The landing-page editor is the operator's surface; caller classes are
+      // covered in test/api-session-rules-authz.test.js.
+      headers: { 'Content-Type': 'application/json', ...operatorHeaders(server) }
     };
 
     const req = http.request(options, (res) => {

@@ -105,6 +105,31 @@ describe('scripts/build-ttyd.js (#1245, ADR 0018)', () => {
     });
   });
 
+  describe('curlArgs — a download is bounded in time (#1954)', () => {
+    const argAfter = (args, flag) => {
+      const i = args.indexOf(flag);
+      assert.ok(i >= 0, `${flag} is passed`);
+      return Number(args[i + 1]);
+    };
+
+    it('bounds every attempt\'s total and connect time, so blocked egress fails instead of hanging', () => {
+      const args = build.curlArgs('https://example.invalid/z-1.0.tar.gz', '/tmp/z.part');
+      const maxTime = argAfter(args, '--max-time');
+      const connect = argAfter(args, '--connect-timeout');
+      assert.ok(Number.isInteger(maxTime) && maxTime > 0 && maxTime <= 600, `--max-time ${maxTime}`);
+      assert.ok(Number.isInteger(connect) && connect > 0 && connect < maxTime, `--connect-timeout ${connect}`);
+      assert.equal(maxTime, build.CURL_MAX_TIME_S);
+    });
+
+    it('still fails on HTTP errors, retries, and writes the URL to the given file', () => {
+      const args = build.curlArgs('https://example.invalid/z-1.0.tar.gz', '/tmp/z.part');
+      assert.equal(args[0], '-fsSL');
+      assert.equal(argAfter(args, '--retry'), 2);
+      assert.equal(args[args.indexOf('-o') + 1], '/tmp/z.part');
+      assert.equal(args[args.length - 1], 'https://example.invalid/z-1.0.tar.gz');
+    });
+  });
+
   describe('cleanEnv and parseArgs', () => {
     it('builds with no Homebrew, MacPorts or /usr/local on PATH, and no inherited compiler hints', () => {
       const env = build.cleanEnv('/w/venv/bin', '14.0');

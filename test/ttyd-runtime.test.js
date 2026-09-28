@@ -335,16 +335,19 @@ describe('lib/ttyd-runtime (#1245, ADR 0018)', () => {
         (err) => err.message.includes(`a verified last-known-good runtime (${d1})`) && err.message.includes('node scripts/ttyd-runtime.js rollback'));
     });
 
-    // install.sh rewrites the ttyd plist for direct mode, so it is the wrong
-    // repair on a caddy-mode host: the refusal leads with provision and names
-    // the switch for each mode.
+    // The refusal leads with provision and names the switch for each mode. In
+    // caddy mode that is the cutover, with install.sh as the alternative: since
+    // the #1901 ruling install.sh hands the ttyd plist to the cutover there
+    // instead of writing the direct-mode one, so it is no longer the wrong step.
+    // (Contract changed deliberately: this used to pin "never deploy/install.sh".)
     it('the refusal leads with provision and names the right switch for each ingress mode', () => {
       assert.throws(() => runtime.resolveTtydPath({ baseDir: base, env: {}, deps: deps() }), (err) => {
         const repair = err.message.slice(err.message.indexOf(runtime.REPAIR));
         assert.ok(repair.startsWith('Run `node scripts/ttyd-runtime.js provision`'), repair);
         assert.match(repair, /direct mode: `\.\/deploy\/install\.sh`/);
         assert.match(repair, /caddy mode: `node scripts\/ingress-cutover\.js --to caddy`/);
-        assert.match(repair, /never deploy\/install\.sh/);
+        assert.match(repair, /or `\.\/deploy\/install\.sh`, which in caddy mode hands the ttyd plist to that cutover/);
+        assert.doesNotMatch(repair, /never deploy\/install\.sh/);
         return true;
       });
     });
@@ -737,7 +740,7 @@ describe('lib/ttyd-runtime (#1245, ADR 0018)', () => {
     });
 
     // Every message that sends the operator on to selecting the runtime uses
-    // the one per-mode text, so none can send a caddy host to install.sh.
+    // the one per-mode text, so they cannot disagree about a caddy host.
     it('install, rollback and the refusal all name the per-mode switch', () => {
       stage(path.join(scratch, 's1'), 'ttyd version 1.7.7-a\n');
       stage(path.join(scratch, 's2'), 'ttyd version 1.7.7-b\n');
@@ -745,7 +748,7 @@ describe('lib/ttyd-runtime (#1245, ADR 0018)', () => {
       run(['install', '--from', path.join(scratch, 's2')]);
       assert.ok(run(['rollback']).out.includes(runtime.SELECT_BY_MODE));
       assert.ok(runtime.REPAIR.includes(runtime.SELECT_BY_MODE));
-      assert.match(runtime.SELECT_BY_MODE, /direct mode: `\.\/deploy\/install\.sh`; caddy mode: `node scripts\/ingress-cutover\.js --to caddy` \(never deploy\/install\.sh/);
+      assert.match(runtime.SELECT_BY_MODE, /direct mode: `\.\/deploy\/install\.sh`; caddy mode: `node scripts\/ingress-cutover\.js --to caddy` \(or `\.\/deploy\/install\.sh`, which in caddy mode hands the ttyd plist to that cutover\)/);
     });
 
     it('install says ttyd was not restarted', () => {

@@ -835,3 +835,75 @@ describe('ingress-cutover — the direct-mode binding is named on the way out of
     assert.ok(resolved > -1 && resolved < planned, 'the gate state is read before the plan is built');
   });
 });
+
+// #1901 — install.sh re-applies the cutover on every caddy-mode refresh, so the
+// gate contract it converges to is pinned here as a table (Architect ruling):
+// TangleClaw's login ARMED (or locked) → Caddy's basic_auth is omitted; any
+// state where TangleClaw cannot guard the door → Caddy carries the fallback
+// gate; and a gate that cannot be proven is refused rather than dropped.
+describe('ingress-cutover — the gate a refresh converges to (#1901)', () => {
+  const HASH = `$2a$14$${'a'.repeat(53)}`;
+  const creds = { authEnabled: true, basicAuthUser: 'jason', basicAuthHash: HASH };
+
+  for (const [gateState, carriesBasicAuth] of [
+    ['armed', false], ['locked', false],
+    ['open', true], ['account-required', true], ['unreadable', true], ['fallback', true]
+  ]) {
+    it(`gate ${gateState}: Caddy basic_auth is ${carriesBasicAuth ? 'written (the fallback gate)' : 'omitted (TangleClaw guards the door)'}`, () => {
+      const plan = cutover.planCutover('caddy', { ...makeCtx({ config: creds }), gateState });
+      const users = require('../lib/caddy').listBasicAuthUsers(plan.caddyfile.content);
+      assert.equal(users.length > 0, carriesBasicAuth, plan.gateNote);
+    });
+  }
+
+  it('refuses, rather than drops, a gate it cannot prove: unreadable store, no credential, a gated file on disk', () => {
+    const gated = `localhost {\n  basic_auth {\n    jason ${HASH}\n  }\n  reverse_proxy 127.0.0.1:3102\n}\n`;
+    assert.throws(
+      () => cutover.planCutover('caddy', { ...makeCtx(), gateState: 'unreadable', existingCaddyfileText: gated }),
+      (err) => err.cutoverCode === 'ungate-refused');
+  });
+
+  describe('describeGateChange', () => {
+    const gated = `localhost {\n  basic_auth {\n    admin ${HASH}\n  }\n  reverse_proxy 127.0.0.1:3102\n}\n`;
+    const plain = 'localhost {\n  reverse_proxy 127.0.0.1:3102\n}\n';
+
+    it('says a Caddy password will be REMOVED when the new file carries none', () => {
+      const [change, ...rest] = cutover.describeGateChange(gated, plain);
+      assert.match(change, /basic_auth \(1 user\) will be REMOVED/);
+      assert.match(change, /TangleClaw's login guards the door/);
+      assert.deepEqual(rest, []);
+      assert.ok(!change.includes(HASH), 'never echoes the hash');
+    });
+
+    it('says an unsupported manual gate converges to the canonical config', () => {
+      const manual = 'localhost {\n  forward_auth 127.0.0.1:9000 {\n    uri /check\n  }\n  import tcauth\n  reverse_proxy 127.0.0.1:3102\n}\n';
+      const changes = cutover.describeGateChange(manual, plain);
+      assert.equal(changes.length, 2);
+      assert.match(changes[0], /`forward_auth` directive this tool does not generate; the cutover converges to the canonical config/);
+      assert.match(changes[1], /`import` directive/);
+    });
+
+    it('says nothing when the gate is unchanged or there was no file', () => {
+      assert.deepEqual(cutover.describeGateChange(gated, gated), []);
+      assert.deepEqual(cutover.describeGateChange(plain, plain), []);
+      assert.deepEqual(cutover.describeGateChange(null, plain), []);
+      assert.deepEqual(cutover.describeGateChange('', plain), []);
+    });
+  });
+
+  it('reports the gate and its changes on both runs and in the result file', () => {
+    assert.equal((CUTOVER_SRC.match(/for \(const change of gateChanges\) process\.stdout\.write/g) || []).length, 2,
+      'printed on the dry run and on the real run');
+    assert.match(CUTOVER_SRC, /gateNote: plan\.gateNote, gateChanges \}\)/, 'carried into the result file');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-gate-result-'));
+    try {
+      const f = path.join(dir, 'r.json');
+      cutover.writeCutoverResult(f, { ok: true, code: 'ok', target: 'caddy', gateNote: 'n', gateChanges: ['c'] });
+      const r = JSON.parse(fs.readFileSync(f, 'utf8'));
+      assert.equal(r.gateNote, 'n');
+      assert.deepEqual(r.gateChanges, ['c']);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

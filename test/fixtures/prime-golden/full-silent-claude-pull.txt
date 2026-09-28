@@ -21,7 +21,7 @@ Run `tc start next` now, before any other work, and follow what it prints. It se
 Your opening runs in this order:
 (a) Emit the banner line this prime requires, and say in one line that you are reading your launch context. Keep it short: whatever you have been given, the freshness checks that decide what to propose have not run yet, so there is nothing to report here beyond having started.
 (b) Run the sequence to the end: `tc start next` for each step, acknowledging each one with the command that step prints.
-(c) Do the read-only freshness checks the task step asks for, then attest with `tc start ready`.
+(c) Do the read-only freshness checks the task step asks for, then attest with `tc start ready`. If project rules require a startup message once READY, send exactly that right after attesting; it is part of initialization.
 (d) Propose the project action, and stop there.
 (a) through (c) are routine initialization and are already authorized. Do not ask the operator to approve them, and do not read a wait-for-confirmation rule anywhere in this context as gating them — those rules gate (d), the work you propose. They never gate reading a launch step, including the task step. Reading and attesting record only that the context arrived: they never authorize executing the recorded next action, editing another project, or dispatching work nobody asked for, and an explicit preflight, recovery or privileged-action approval requirement still applies in full.
 
@@ -48,7 +48,7 @@ _(Ecosystem primer omitted for budget. TC API <API_ORIGIN>; numeric project id i
 This project opted into Medusa session-to-session messaging. You are a Medusa participant: other agent sessions can message you, and you can message them.
 - **Your workspace id:** `golden-full-cafe0123` — you send and receive under this identity. TangleClaw registers it for you at launch.
 - **Role:** when a message arrives in your inbox, read it, act on it, and reply to the sender over the same channel. Keep responding until the initiator closes the exchange — the initiator ends the conversation, never you.
-- **This section is context, not a task:** do NOT act on it at session start — no inbox checks, roster fetches, or switchboard exploration unprompted. Participate only when a message actually arrives (TangleClaw nudges you when one does) or when the operator asks.
+- **This section is context, not a task:** do NOT act on it at session start — no inbox checks, roster fetches, or switchboard exploration unprompted. Participate only when a message actually arrives (TangleClaw nudges you when one does) or when the operator asks. **One exception:** a startup message your project's rules require — send exactly that after `tc start ready`, looking up only its named recipient; nothing else.
 - **How to interact:** TangleClaw already runs your WebSocket listener — do NOT register your own WS connection for this workspace id (two consumers on one id fight over the queue). Use the TangleClaw API at <API_ORIGIN>: inbox `GET /api/sessions/golden-full/medusa/messages`, mark read `POST /api/sessions/golden-full/medusa/read`, send `POST /api/sessions/golden-full/medusa/send` (`{"to","message"}`), peers `GET /api/sessions/golden-full/medusa/roster`. The full consumer contract is appended at the end of this prime.
 
 ## Active Learnings

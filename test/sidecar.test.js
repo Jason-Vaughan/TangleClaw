@@ -324,14 +324,48 @@ describe('sidecar', () => {
     it('re-arms the loop after every tick, including a failing one', async () => {
       // Without `.finally(scheduleNext)` the loop runs exactly once and the
       // whole suite still passes, because _pollers is populated before tick one.
-      const connId = createConn('LoopClaw', 59998); // nothing listening -> every tick fails
-      sidecar.startPolling(connId, 20);
-      await new Promise(r => setTimeout(r, 220));
-      const failures = sidecar._failures.get(connId) || 0;
-      sidecar.stopPolling(connId);
-      assert.ok(failures >= 2,
-        `expected the loop to re-arm and poll repeatedly, saw ${failures} failure(s) — ` +
-        'one means it ran once and never rescheduled');
+      //
+      // The poll is real (nothing listens, so every tick fails); only the
+      // scheduler is taken over. Each re-arm is observed as it happens and the
+      // test fires the next tick itself, so nothing depends on how many ticks
+      // fit into a stretch of wall clock on a loaded host. The guard only turns
+      // a loop that never re-arms into a failure instead of a hang.
+      const connId = createConn('LoopClaw', 59998);
+      const realSeams = { ...sidecar._seams };
+      const armed = [];
+      let onArm = null;
+      sidecar._seams.setTimeout = (fn, ms) => {
+        const handle = { fn, ms, unref() {} };
+        armed.push(handle);
+        if (onArm) { const notify = onArm; onArm = null; notify(); }
+        return handle;
+      };
+      sidecar._seams.clearTimeout = () => {};
+      const NEVER = Symbol('never re-armed');
+      const nextArm = () => {
+        let guard;
+        return Promise.race([
+          new Promise((resolve) => { onArm = resolve; }),
+          new Promise((resolve) => { guard = realSeams.setTimeout(() => resolve(NEVER), 30000); })
+        ]).finally(() => realSeams.clearTimeout(guard));
+      };
+      try {
+        let rearmed = nextArm();
+        sidecar.startPolling(connId, 20);
+        assert.notEqual(await rearmed, NEVER, 'the loop never re-armed after its first tick');
+        assert.equal(sidecar._failures.get(connId), 1, 'tick one ran and failed');
+        assert.equal(armed.length, 1, 'the loop re-armed after the failing tick');
+
+        rearmed = nextArm();
+        armed[0].fn();
+        assert.notEqual(await rearmed, NEVER, 'the loop never re-armed after its second tick');
+        assert.equal(sidecar._failures.get(connId), 2, 'tick two ran from the re-armed timer and failed');
+        assert.equal(armed.length, 2, 'the loop re-armed after the second failure too');
+        assert.ok(armed[1].ms > armed[0].ms, 'and backed off, rather than re-dialling at a fixed cadence');
+      } finally {
+        sidecar.stopPolling(connId);
+        Object.assign(sidecar._seams, realSeams);
+      }
     });
 
     it('settles even when the socket dies after headers but before the body', async () => {

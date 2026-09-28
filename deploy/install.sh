@@ -102,14 +102,13 @@ if [ "$NODE_MAJOR" -lt 22 ]; then
 fi
 green "  Node.js $NODE_VERSION ($NODE_PATH)"
 
-# ── Ingress-mode guard ──
-# This script installs the DIRECT-mode ttyd plist (TCP 3100) and restarts the
-# services. On a host whose persisted ingress mode is caddy, the server expects
-# ttyd on a Unix socket, so running it cuts the dashboard off with a 502. Refuse
-# here — node is resolved, nothing has been installed, built or written — and
-# name the switch for the host's actual mode. Only the ingress cutover persists
-# a mode, so choosing direct means running `--to direct`, after which this
-# script proceeds. A config that exists but cannot be parsed refuses too: the
+# ── Ingress mode ──
+# This script refreshes every deploy asset it owns in BOTH ingress modes (#1901).
+# What differs is the ttyd plist and the restart. Direct mode writes the TCP ttyd
+# plist and reloads both agents. Caddy mode never writes a TCP ttyd plist (the
+# server expects ttyd on a Unix socket, and a TCP one cuts the dashboard off with
+# a 502, #1900); it hands the ttyd and Caddy plists to the ingress cutover, which
+# keeps the login gate. A config that exists but cannot be parsed refuses: the
 # mode is unknown, and the server will not start with that file either.
 CONFIG_FILE="$HOME/.tangleclaw/config.json"
 INGRESS_MODE="direct"
@@ -119,22 +118,93 @@ if [ -f "$CONFIG_FILE" ]; then
     catch { process.stdout.write("unreadable"); }
   ' "$CONFIG_FILE" 2>/dev/null || echo "unreadable")"
 fi
-if [ "$INGRESS_MODE" = "caddy" ]; then
-  red "ERROR: this host's persisted ingress mode is 'caddy' (${CONFIG_FILE})."
-  red "       install.sh writes the DIRECT-mode ttyd plist and restarts the services,"
-  red "       which would cut the dashboard off. Nothing was changed."
-  red "       To re-apply the caddy-mode ttyd and Caddy plists:  node scripts/ingress-cutover.js --to caddy"
-  red "       To switch this host to direct mode:                node scripts/ingress-cutover.js --to direct"
-  red "       (after switching to direct, deploy/install.sh runs normally)"
-  red "       The other assets this script writes (server plist, ~/.tmux.conf, dependencies)"
-  red "       have no caddy-mode refresh yet: https://github.com/Jason-Vaughan/TangleClaw/issues/1901"
-  exit 1
-elif [ "$INGRESS_MODE" = "unreadable" ]; then
+if [ "$INGRESS_MODE" = "unreadable" ]; then
   red "ERROR: cannot read the ingress mode: ${CONFIG_FILE} could not be read or parsed."
   red "       install.sh rewrites the ttyd plist for DIRECT mode, which cuts off a"
   red "       caddy-mode dashboard, so it refuses rather than guess. Nothing was changed."
   red "       Fix or restore that file (the server cannot start with it either), then re-run."
   exit 1
+fi
+
+# ── Caddy-mode preflight (#1901) ──
+# Before ANYTHING that could affect the ingress or the running services is
+# written — no plist, config.json, Caddyfile, ~/.tmux.conf or attach script, and
+# no launchctl — ask the cutover whether it would re-apply cleanly. A dry run
+# exits 0 when it would, 3 when it would refuse (a hand-edited or unreadable
+# Caddyfile, replacing a gated Caddyfile with an ungated one, or a refused
+# tailnet move), and 1 when it cannot plan at all. A Caddy password the new file
+# omits because TangleClaw's own login guards the door is reported, not refused.
+#
+# One narrow bootstrap: when the ONLY reason is that the owned ttyd runtime is
+# missing or stale (the typed `ttyd-runtime-unavailable` code, never prose), that
+# runtime is what this script exists to provide. Provision it — inert, into its
+# private ~/.tangleclaw/bin, nothing else — and run the complete dry run again.
+# Nothing else runs until the preflight passes.
+#
+# A passing preflight rules out the cutover's predictable refusals, not every
+# failure: a missing caddy binary, the certificate it generates and the
+# credential it adopts are only exercised by the real cutover, after restart 1.
+# If that fails, the refreshed server plist and assets stay in place, Caddy and
+# its gate are untouched, and the failure below says so and how to re-run.
+CUTOVER_SCRIPT="${REPO_DIR}/scripts/ingress-cutover.js"
+PREFLIGHT_STATUS=0
+PREFLIGHT_RESULT=""
+CUTOVER_RESULT=""
+# The cutover's result files are scratch: remove them however the run ends.
+# The run's own exit status is kept: a cleanup that failed must never be what
+# the caller reads as the outcome of the install.
+cleanup_results() {
+  local status=$?
+  if [ -n "$PREFLIGHT_RESULT$CUTOVER_RESULT" ]; then rm -f "$PREFLIGHT_RESULT" "$CUTOVER_RESULT" 2>/dev/null || true; fi
+  exit "$status"
+}
+trap cleanup_results EXIT
+BOOTSTRAPPED_RUNTIME=""
+run_cutover_preflight() {
+  [ -n "$PREFLIGHT_RESULT" ] && rm -f "$PREFLIGHT_RESULT"
+  PREFLIGHT_RESULT="$(mktemp "${TMPDIR:-/tmp}/tc-install-preflight.XXXXXX")"
+  set +e
+  node "$CUTOVER_SCRIPT" --to caddy --dry-run --result-file "$PREFLIGHT_RESULT"
+  PREFLIGHT_STATUS=$?
+  set -e
+}
+# The typed code a failed dry run left in its result file, or nothing.
+preflight_code() {
+  node -e '
+    try { const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); process.stdout.write(String(r.code || "")); }
+    catch { /* no result file: a dry run that passed or predicted a refusal writes none */ }
+  ' "$PREFLIGHT_RESULT" 2>/dev/null || true
+}
+if [ "$INGRESS_MODE" = "caddy" ]; then
+  echo "Caddy mode: checking that the ingress cutover would re-apply cleanly, before changing anything..."
+  run_cutover_preflight
+  if [ "$PREFLIGHT_STATUS" -ne 0 ] && [ "$(preflight_code)" = "ttyd-runtime-unavailable" ]; then
+    yellow "  The owned ttyd runtime is missing or stale. Provisioning it into ~/.tangleclaw/bin"
+    yellow "  (nothing else is changed), then re-running the preflight..."
+    node "${REPO_DIR}/scripts/ttyd-runtime.js" provision --base-dir "$HOME/.tangleclaw" >/dev/null || {
+      red "ERROR: the ttyd runtime could not be provisioned (see above). Nothing else was changed."
+      exit 1
+    }
+    BOOTSTRAPPED_RUNTIME="yes"
+    run_cutover_preflight
+  fi
+  if [ "$PREFLIGHT_STATUS" -ne 0 ]; then
+    if [ "$PREFLIGHT_STATUS" -eq 3 ]; then
+      red "ERROR: the ingress cutover would refuse (reason above), so nothing was refreshed."
+    else
+      red "ERROR: the ingress cutover preflight failed (status ${PREFLIGHT_STATUS}; reason above), so nothing was refreshed."
+    fi
+    if [ -n "$BOOTSTRAPPED_RUNTIME" ]; then
+      red "       A new ttyd runtime WAS provisioned into ~/.tangleclaw/bin. It is not in use:"
+      red "       ttyd still runs the one its launchd job already names."
+    else
+      red "       Nothing was changed."
+    fi
+    red "       Fix the reason above, then re-run: ./deploy/install.sh"
+    exit 1
+  fi
+  green "  Preflight passed: the cutover would re-apply cleanly"
+  echo ""
 fi
 
 # ttyd — terminal-over-websocket front end. launchd runs the TangleClaw-owned,
@@ -338,10 +408,12 @@ green "  ${TTYD_ATTACH}"
 # Every install is loopback-only here, and stays that way: ttyd does NOT follow
 # the `bindAllInterfaces` dashboard opt-in, because nothing addresses this port
 # directly — TangleClaw proxies to it.
-# Caddy mode rebinds ttyd to a Unix socket via scripts/ingress-cutover.js; this
-# keeps the default install path unchanged (true rollback target). See AUTH-1.
+# Caddy mode rebinds ttyd to a Unix socket via scripts/ingress-cutover.js, so a
+# caddy-mode run writes NO ttyd plist here: the cutover re-applies it below
+# (#1901), and a TCP one would cut the dashboard off (#1900).
 # (The ttyd plist no longer carries __REPO_DIR__ — the attach script moved out of
 # the repo to the non-TCC path above; __REPO_DIR__ lives only in the server plist.)
+if [ "$INGRESS_MODE" = "direct" ]; then
 sed \
   -e "s|__TTYD_PATH__|${TTYD_PATH}|g" \
   -e "s|__TTYD_ATTACH__|${TTYD_ATTACH}|g" \
@@ -354,6 +426,9 @@ sed \
   "${SCRIPT_DIR}/${TTYD_PLIST}" > "${LAUNCH_AGENTS_DIR}/${TTYD_PLIST}"
 
 green "  ${LAUNCH_AGENTS_DIR}/${TTYD_PLIST}"
+else
+green "  ttyd and Caddy plists: re-applied by the ingress cutover below (caddy mode)"
+fi
 
 echo ""
 
@@ -392,18 +467,125 @@ echo "Loading services..."
 # parent directory is missing.
 mkdir -p "$HOME/.tangleclaw/logs"
 
-# Unload existing (idempotent — ignore errors if not loaded)
-launchctl unload "${LAUNCH_AGENTS_DIR}/${SERVER_PLIST}" 2>/dev/null || true
-launchctl unload "${LAUNCH_AGENTS_DIR}/${TTYD_PLIST}" 2>/dev/null || true
+# Poll a health URL until it answers 200 or 503 (the server is up; 503 is its
+# own degraded report), at most $2 times a second apart. Bounded, so a server
+# that never comes back ends the run with a clear message instead of hanging.
+wait_for_health() {
+  local url="$1" tries="$2" i status=""
+  for i in $(seq 1 "$tries"); do
+    status="$(curl -s -k -o /dev/null -w '%{http_code}' "$url" 2>/dev/null || true)"
+    if [ "$status" = "200" ] || [ "$status" = "503" ]; then HEALTH_STATUS="$status"; return 0; fi
+    sleep 1
+  done
+  HEALTH_STATUS="${status:-timeout}"
+  return 1
+}
 
-# Load
-launchctl load "${LAUNCH_AGENTS_DIR}/${SERVER_PLIST}"
-green "  Loaded ${SERVER_PLIST}"
+# What a failed restart may be down to, for the message that reports it.
+tcc_hint() {
+  if [ -n "$TCC_PROTECTED" ]; then
+    red "  Likely cause (#324): macOS TCC is blocking node from the repo under a"
+    red "  protected folder. Grant Full Disk Access to: $RESOLVED_NODE"
+  fi
+  yellow "  Check logs:    tail -f ~/.tangleclaw/logs/tangleclaw.log"
+  yellow "  Server stderr: tail -f ~/.tangleclaw/logs/server.err.log"
+}
 
-launchctl load "${LAUNCH_AGENTS_DIR}/${TTYD_PLIST}"
-green "  Loaded ${TTYD_PLIST}"
+if [ "$INGRESS_MODE" = "direct" ]; then
+  # Unload existing (idempotent — ignore errors if not loaded)
+  launchctl unload "${LAUNCH_AGENTS_DIR}/${SERVER_PLIST}" 2>/dev/null || true
+  launchctl unload "${LAUNCH_AGENTS_DIR}/${TTYD_PLIST}" 2>/dev/null || true
 
-echo ""
+  # Load
+  launchctl load "${LAUNCH_AGENTS_DIR}/${SERVER_PLIST}"
+  green "  Loaded ${SERVER_PLIST}"
+
+  launchctl load "${LAUNCH_AGENTS_DIR}/${TTYD_PLIST}"
+  green "  Loaded ${TTYD_PLIST}"
+
+  echo ""
+else
+  # Caddy mode restarts the server TWICE, one after the other, and confirms each.
+  # The first makes the refreshed server plist take effect (the cutover only
+  # kickstarts the job, which does not re-read its plist). The second is the
+  # cutover's own: it re-applies ttyd and Caddy and restarts the server so it
+  # re-binds for caddy mode. Caddy stays loaded, and its login gate in force, the
+  # whole time: while the server restarts the front door answers 502, never an
+  # open dashboard.
+  SERVER_PORT="$(node -e '
+    try { const m = require("fs").readFileSync(process.argv[1], "utf8").match(/<key>TANGLECLAW_PORT<\/key>\s*<string>(\d+)<\/string>/); process.stdout.write(m ? m[1] : "3102"); }
+    catch { process.stdout.write("3102"); }
+  ' "${LAUNCH_AGENTS_DIR}/${SERVER_PLIST}" 2>/dev/null || echo 3102)"
+
+  echo "Restart 1 of 2: reloading the server so its refreshed launchd plist takes effect..."
+  launchctl unload "${LAUNCH_AGENTS_DIR}/${SERVER_PLIST}" 2>/dev/null || true
+  launchctl load "${LAUNCH_AGENTS_DIR}/${SERVER_PLIST}"
+  if wait_for_health "http://127.0.0.1:${SERVER_PORT}/api/health" 30; then
+    green "  Restart 1 of 2 confirmed: the server is up on 127.0.0.1:${SERVER_PORT} (health: HTTP ${HEALTH_STATUS})"
+  else
+    red "ERROR: the server did not come back after restart 1 of 2 (health: HTTP ${HEALTH_STATUS})."
+    red "       The ingress was NOT re-applied. Caddy and its login gate are unchanged, so the"
+    red "       dashboard answers 502 until the server starts; it is not open."
+    tcc_hint
+    red "       Once the server is up, re-run: ./deploy/install.sh"
+    exit 1
+  fi
+
+  echo "Restart 2 of 2: the ingress cutover re-applies the ttyd and Caddy plists, and restarts"
+  echo "the server once more so it re-binds for caddy mode..."
+  CUTOVER_RESULT="$(mktemp "${TMPDIR:-/tmp}/tc-install-cutover.XXXXXX")"
+  set +e
+  node "$CUTOVER_SCRIPT" --to caddy --result-file "$CUTOVER_RESULT"
+  CUTOVER_STATUS=$?
+  set -e
+  # ok / code / error / healthOk / healthUrl from the cutover's own report.
+  CUTOVER_FIELDS="$(node -e '
+    try { const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+      process.stdout.write([r.ok === true, r.code || "", r.healthOk === true, r.healthUrl || ""].join("|")); }
+    catch { process.stdout.write("false|no-result|false|"); }
+  ' "$CUTOVER_RESULT" 2>/dev/null || echo 'false|no-result|false|')"
+  # "|" rather than a tab: tab is IFS whitespace, so an EMPTY field would collapse
+  # and shift every later value into the wrong variable.
+  IFS='|' read -r CUTOVER_OK CUTOVER_CODE CUTOVER_HEALTHY CUTOVER_HEALTH_URL <<< "$CUTOVER_FIELDS"
+  # Which gate remains, in the cutover's own words, and anything the regenerated
+  # Caddyfile no longer carries. Reported, never assumed: when TangleClaw's login
+  # guards the door the cutover omits Caddy's basic_auth by design (#1420), so a
+  # refresh must not claim an existing Caddy password survived. Once a cutover has
+  # succeeded this is owed on EVERY exit, the health timeout's included: the gate
+  # has already changed, and the EXIT trap deletes the result file that says how.
+  report_cutover_gate() {
+    node -e '
+      try { const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+        if (r.gateNote) console.log("  Login gate now: " + r.gateNote);
+        for (const c of r.gateChanges || []) console.log("  Gate change:    " + c); }
+      catch { console.log("  Login gate now: not reported by the cutover (see its output above)"); }
+    ' "$CUTOVER_RESULT" 2>/dev/null || true
+  }
+  if [ "$CUTOVER_STATUS" -ne 0 ] || [ "$CUTOVER_OK" != "true" ]; then
+    red "ERROR: the ingress cutover failed (status ${CUTOVER_STATUS}, code ${CUTOVER_CODE:-none}; reason above)."
+    red "       The server plist, ~/.tmux.conf and dependencies WERE refreshed. The ingress was"
+    red "       not re-applied; fix the reason above and re-run: ./deploy/install.sh"
+    exit 1
+  fi
+  # The cutover's own health poll is short and best-effort. It saying "not yet"
+  # is not a confirmation either way, so keep polling the same URL, bounded.
+  if [ "$CUTOVER_HEALTHY" != "true" ]; then
+    if [ -z "$CUTOVER_HEALTH_URL" ] || ! wait_for_health "$CUTOVER_HEALTH_URL" 30; then
+      red "ERROR: restart 2 of 2 could not be confirmed healthy through Caddy (${CUTOVER_HEALTH_URL:-no health URL}; last: HTTP ${HEALTH_STATUS:-none})."
+      red "       The ingress cutover itself succeeded, so its gate is already in force:"
+      report_cutover_gate
+      tcc_hint
+      exit 1
+    fi
+  fi
+  green "  Restart 2 of 2 confirmed: healthy through Caddy (${CUTOVER_HEALTH_URL})"
+  report_cutover_gate
+  echo ""
+fi
+
+# Caddy mode has confirmed both restarts above, through Caddy; the checks below
+# are direct mode's, where the server's own listener is the front door.
+if [ "$INGRESS_MODE" = "direct" ]; then
 
 # ── Detect protocol from config ──
 # Reads ~/.tangleclaw/config.json to determine whether the running server
@@ -460,6 +642,8 @@ else
   yellow "Server stderr: tail -f ~/.tangleclaw/logs/server.err.log"
 fi
 
+fi # direct mode: protocol detection and health check
+
 echo ""
 echo "======================================"
 green "TangleClaw installed successfully!"
@@ -481,17 +665,25 @@ if [ -n "$TCC_PROJECTS_PROTECTED" ]; then
   yellow "   'brew upgrade node' moves it and the grant must be given again.)"
   echo ""
 fi
-echo "  Landing page:  ${PROTOCOL}://localhost:3102"
-echo "  Terminal:       http://localhost:3100"
+if [ "$INGRESS_MODE" = "caddy" ]; then
+  echo "  Mode:           caddy (deploy assets refreshed; which login gate is in force is above)"
+  echo "  Landing page:   ${CUTOVER_HEALTH_URL%/api/health}"
+else
+  echo "  Landing page:  ${PROTOCOL}://localhost:3102"
+  echo "  Terminal:       http://localhost:3100"
+fi
 echo ""
 echo "  Logs:           tail -f ~/.tangleclaw/logs/tangleclaw.log"
 echo "  Uninstall:      launchctl unload ~/Library/LaunchAgents/com.tangleclaw.*.plist"
 echo ""
 
 # AUTH-1 (#395) / #710: the password-gated Caddy ingress is the DEFAULT outcome of
-# setup as of v5, not an opt-in extra. The ingress-mode guard above means this
-# run was a direct-mode install, so tell the operator how to reach the default
-# state, and say plainly that the cutover alone does not create a login.
+# setup as of v5, not an opt-in extra. A direct-mode run is told how to reach
+# that default state, and plainly that the cutover alone does not create a
+# login. A caddy-mode run is already there, and has reported which gate is in force.
+if [ "$INGRESS_MODE" = "caddy" ]; then
+  exit 0
+fi
 # Deliberately NOT "optional", and deliberately two commands. The cutover on
 # its own configures an ingress with no password, succeeds, and prints a green
 # health check -- docs/setup-guide.md carries the same warning in bold because

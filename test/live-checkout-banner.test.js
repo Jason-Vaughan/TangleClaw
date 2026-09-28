@@ -55,6 +55,7 @@ function makeDom(ids) {
       classList: {
         add(c) { classes.add(c); },
         remove(c) { classes.delete(c); },
+        contains(c) { return classes.has(c); },
         toggle(c, force) { if (force) classes.add(c); else classes.delete(c); }
       }
     };
@@ -185,6 +186,67 @@ describe('live-checkout banner (#993) — executed against a DOM stub', () => {
     const call = src.indexOf('renderLiveCheckoutBanner(data.liveCheckout, data.behindOrigin)');
     assert.ok(call > -1);
     assert.ok(call < src.indexOf('if (data.isStale === null)'));
+  });
+});
+
+describe('stale-server banner asks the service worker to update (#411)', () => {
+  /**
+   * Render the real stale banner, with a window exposing the update hook.
+   * @param {object} dom - From makeDom.
+   * @param {object|undefined} win - The `window` the page code sees.
+   * @returns {void}
+   */
+  function render(dom, win) {
+    const info = { startupSha: 'd0124256d000', currentDiskSha: '7e25288c5000', commitsAhead: 1, uptimeSeconds: 5 };
+    const ctx = vm.createContext({ document: dom.document, info, window: win, formatUptime: (s) => `${s}s` });
+    vm.runInContext(`${ESC_SRC}\n${extract('_restartImpactWording')}\n${extract('toggleStaleRestartBtn')}\n${extract('renderStaleServerBanner')}\nrenderStaleServerBanner(info);`, ctx);
+  }
+  const ids = ['staleServerBanner', 'staleServerBannerText', 'staleServerRestartBtn'];
+
+  it('requests one update as the banner appears, and none while it stays up across polls', () => {
+    const dom = makeDom(ids);
+    let calls = 0;
+    const win = { tcRequestServiceWorkerUpdate: () => { calls++; return Promise.resolve(true); } };
+    render(dom, win);
+    assert.equal(dom.els.staleServerBanner._hidden, false);
+    assert.equal(calls, 1, 'the appearance triggers the check');
+    render(dom, win);
+    render(dom, win);
+    assert.equal(calls, 1, 'a banner already showing does not re-trigger on each 60 s poll');
+  });
+
+  it('requests again when the banner reappears after being hidden', () => {
+    const dom = makeDom(ids);
+    let calls = 0;
+    const win = { tcRequestServiceWorkerUpdate: () => { calls++; } };
+    render(dom, win);
+    dom.els.staleServerBanner.classList.add('hidden');
+    render(dom, win);
+    assert.equal(calls, 2);
+  });
+
+  it('renders normally when the hook is absent (an old sw-register.js, or no window)', () => {
+    for (const win of [undefined, {}]) {
+      const dom = makeDom(ids);
+      render(dom, win);
+      assert.equal(dom.els.staleServerBanner._hidden, false);
+      assert.match(dom.els.staleServerBannerText.innerHTML, /Running <code>d012425<\/code>/);
+    }
+  });
+
+  it('adds no visible UI: the banner text and restart button match a page without the hook', () => {
+    const withHook = makeDom(ids);
+    const without = makeDom(ids);
+    render(withHook, { tcRequestServiceWorkerUpdate: () => {} });
+    render(without, undefined);
+    assert.equal(withHook.els.staleServerBannerText.innerHTML, without.els.staleServerBannerText.innerHTML);
+    assert.equal(withHook.els.staleServerRestartBtn._hidden, without.els.staleServerRestartBtn._hidden);
+  });
+
+  it('index.html loads sw-register.js before landing.js, so the hook exists when the banner first renders', () => {
+    const reg = INDEX_SRC.indexOf('<script src="/sw-register.js"></script>');
+    const landing = INDEX_SRC.indexOf('<script src="/landing.js"></script>');
+    assert.ok(reg > -1 && landing > -1 && reg < landing);
   });
 });
 

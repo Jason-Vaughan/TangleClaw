@@ -95,13 +95,22 @@ From a pane: `tc message send --priority blocking --reason awaiting-ruling <work
 
 ## Reading, acknowledging, replying, closing
 
-- `GET <base>/medusa/messages` records `read` for the messages it returns.
-  `POST <base>/medusa/read {"ids": [...]}` records `acknowledged`. Both apply
-  only to mail addressed to the reading session, and record who did it:
+- `GET <base>/medusa/messages` records `read` for the messages it returns,
+  except when the dashboard fetches them. `POST <base>/medusa/read {"ids": [...]}`
+  records `acknowledged`. Both apply only to mail addressed to the reading
+  session, and record who did it:
   - `recipient`: a verified launch;
-  - `operator-ui`: the dashboard, whose inbox panel marks everything it shows
-    as handled;
-  - `unverified-reader`: an unproven caller.
+  - `operator-ui`: the dashboard. Its inbox panel is a pure observation (#1987):
+    opening it records nothing, never acknowledges and never clears the unread
+    count. A `read` fact would take the message out of awaiting-read, end its
+    wake re-arms and make it unretractable, and a cleared count would cancel
+    the agent's wake nudge, all for mail the agent has not seen. Only an
+    explicit handled-mark from the dashboard is recorded, as `acknowledged`.
+    A browser-shaped request that is not the agent's verified launch counts
+    as the dashboard for reads, so an auth gate in fallback (operator
+    unproven) does not turn viewing into an unverified read;
+  - `operator`: the operator outside the dashboard (an authenticated API call);
+  - `unverified-reader`: an unproven caller that is not browser-shaped.
 - **A message that needs no reply closes on acknowledgement**, whoever
   acknowledged it; the record names who.
 - **A reply-required message stays open until a reply arrives.** An
