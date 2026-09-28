@@ -35,6 +35,27 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-28 — Every rule is named "Rule #<id>" from its DB id (#2029)
+
+<!-- prawduct: type=feature | scope=2029-rule-id-display -->
+
+The PM dispatched this over Medusa as a v5.30 release blocker, under RULE #120 (RM-LEASE TC-RM02 generation 2). Every rule surface showed only authored text, so the only number an operator could see was one an author typed, which could be missing or name another rule.
+
+**The change.** `lib/rule-label.js` derives the label from `session_rules.id`, and `public/api-helper.js` mirrors it for the pages. The label now appears on:
+- the Project and Global lists, with their controls, status lines and confirmations;
+- the wrap drawer (rows, notes and summary) and the `rule-proposal` step's detail;
+- `tc rules`, the delivered startup rules (inline, hook and launch step), the wrap prompt and the Project Master's Hard rules;
+- the delivery ledger, the operator-only refusal, and an API `label` field.
+
+**Architect rulings.**
+- Exactly one leading authored `RULE #<id> — ` naming the same rule is elided on display. A prefix naming a different id stays visible and is flagged *text says #N*.
+- Stored text and the `expectedContent` approval semantics are unchanged.
+- "Superseded" is not a stored state, so it is tested as an active rule disabled by its replacement. `rejected` is tested as its own state.
+
+**Tests.** `test/rule-label.test.js`, `test/rule-label-drift.test.js` (server and browser agree) and `test/rule-id-display.test.js` (every surface × every state, plus a source guard that every approval-outcome line names the rule). Existing assertions on the old wording were updated to the labelled form, and each still checks the same thing. Mutation checks confirmed four new guards go red when their subject breaks.
+
+**Review.** The cumulative Critic found 0 blocking and 2 warnings: the wrap prompt and the Master's instructions were still unlabelled. Both were fixed in `c4d70c75`, and verify-resolutions was clean. The independent exact-head review (TC-RM03) certified `c4d70c75` green. This also resolves #1695.
+
 ## 2026-09-28 — Session-rule mutations are gated on a verified caller (#2013)
 
 <!-- prawduct: type=bugfix | scope=2013-session-rules-authz -->
