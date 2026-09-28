@@ -55,6 +55,24 @@ adds only C1's own lines. The rest merged cleanly. Two checks found nothing to f
 - C1's `CHANNEL_TOKEN_SCOPE` check sits in the global request dispatcher, so it also covers the
   rules and learnings routes `main` added.
 
+**Security fix, on the Architect's ruling:** the cumulative review of the merged tree
+(`rev-20260928T211036Z-a1b6674a`) found a blocking gap in C1 itself, present at the merge base.
+`resolveOutbound` trusted the send's recorded sender project, and the send route fills that in
+from the project in its URL. So a send through the target's own route, with no launch headers
+or with another project's, was relayed to the operator's chat as the target's reply. Now only a
+send recorded with `sender_verified = 1` and `sender_proof = 'launch'` qualifies. That is the
+target's own launch, since `exchangeCaller` records another project's headers as unbound. The
+existing project-id match still applies on top. Everything else is quarantined as
+`sender-not-verified`, and operator-written mail on the target's route is quarantined too,
+because it is not the project speaking. Four negative tests, each shown failing before the fix:
+- a header-less send;
+- another project's launch headers;
+- an operator's unsolicited send;
+- an operator's `inReplyTo` answer.
+
+The existing verified reply and unsolicited-message tests are unchanged and still pass. The docs,
+the CHANGELOG entry and the FEATURES line now say which senders qualify.
+
 ## 2026-09-27 — Operator channel: a chat helper's durable line to one project over Medusa (#1956)
 
 <!-- prawduct: type=feature | scope=operator-channel-1956 -->
