@@ -43,8 +43,9 @@
         "--sandbox",
         "workspace-write"
       ],
-      "description": "Never asks for approval, still sandboxed to the workspace",
-      "warning": "Sandboxed but unattended — review the generated diffs before merging."
+      "description": "Never asks for approval, still sandboxed to the workspace. Its sandbox has no network until loopback stops granting privilege by address (#1973); then, on a proven Codex version, its only network is localhost, so tc can reach TangleClaw",
+      "warning": "Sandboxed but unattended — review the generated diffs before merging. On a proven Codex version the agent can reach EVERY service listening on localhost/127.0.0.1 (never the internet or your LAN).",
+      "loopbackNetwork": true
     },
     "bypassPermissions": {
       "label": "Bypass",

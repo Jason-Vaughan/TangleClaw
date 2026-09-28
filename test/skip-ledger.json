@@ -29,6 +29,18 @@
       "runsWhere": "same hosts as engine-cli-launch-flags."
     },
     {
+      "id": "tc-env-proxy-warning-control",
+      "match": "^tc warning filter \\(#1836\\) > .+ \\(needs a Node that raises the env-proxy warning\\)$",
+      "why": "Proves tc keeps Node's `UNDICI-EHPA` env-proxy warning off stderr. A control run first checks that this Node raises the warning under NODE_USE_ENV_PROXY at all; on a Node that never does, the absence would pass for the wrong reason, so the test skips instead.",
+      "runsWhere": "any Node 22 release that implements NODE_USE_ENV_PROXY (22.21 and later, including the CI runner's current 22.x) \u2014 the skip exists only for older Node."
+    },
+    {
+      "id": "codex-loopback-profile-live",
+      "match": "^codex loopback profile against the installed CLI \\(#1836\\) > .+ \\(needs a proven codex-cli installed\\)$",
+      "why": "Runs the real `codex sandbox` with the Full Auto loopback profile's exact arguments and proves loopback is reached through Codex's proxy, a direct socket is refused and .git stays read-only. Only Codex's own parser and macOS sandbox can say that; the runner has no Codex, and a version the profile was not proven on is skipped rather than guessed.",
+      "runsWhere": "any developer or operator machine with a proven codex-cli installed (0.156.1 today) \u2014 where an upstream change to Codex's permission profiles would surface."
+    },
+    {
       "id": "prawduct-upstream-drift",
       "match": "^C1 \u2014 per-project plugin migration \\(#262\\) > engines\\.PRAWDUCT_INSTALL_REFERENCE > matches the installed plugin\u2019s INSTALL_REFERENCE \\(skipped when not installed\\)$",
       "why": "Compares TangleClaw's install reference with the INSTALLED prawduct plugin's source under ~/.claude; the runner has no plugin checkout.",

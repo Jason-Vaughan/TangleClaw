@@ -58,6 +58,13 @@ after(() => {
 // its command would depend on what the host has installed. The stub fails
 // closed (no version), so a test that means to exercise a version sets one.
 const codexAdapter = require('../lib/startup-control-codex');
+
+// The loopback profile is granted only on facts a test states (#1957); these
+// tests exercise launches on an install where it may be applied.
+const { grantingFacts, useTrustFacts } = require('./_loopback-trust');
+let restoreTrust;
+before(() => { restoreTrust = useTrustFacts(grantingFacts()); });
+after(() => restoreTrust());
 const realCodexProbe = codexAdapter._seams.execFileSync;
 const realCodexVersion = codexAdapter._internal._version.version;
 before(() => {
@@ -2860,6 +2867,14 @@ describe('ensureMasterSession — Codex daemon isolation (#1895)', () => {
     const { result, command } = ensureWith({ engine: 'codex', launchMode: 'fullAuto' });
     assert.equal(result.launchMode, 'fullAuto');
     assert.match(command, /(^|; )codex --ask-for-approval never --sandbox workspace-write --no-daemon$/);
+  });
+
+  it('runs a full-auto Master on a proven Codex under the loopback network profile, so its own tc reaches TangleClaw (#1836)', () => {
+    codexAnswers('codex-cli 0.156.1\n');
+    const { result, command } = ensureWith({ engine: 'codex', launchMode: 'fullAuto' });
+    assert.equal(result.launchMode, 'fullAuto');
+    assert.doesNotMatch(command, /--sandbox/, 'the legacy sandbox flag would switch the profile off');
+    assert.match(command, /(^|; )codex --ask-for-approval never -c features\.network_proxy=true -c 'default_permissions="tangleclaw-loopback"' .* --no-daemon$/);
   });
 
   for (const [label, output] of [

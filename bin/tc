@@ -27,6 +27,7 @@
  */
 
 const path = require('node:path');
+require(path.join(__dirname, '..', 'lib', 'tc-warnings.js')).suppressBenignWarnings();
 const { VERB_ROSTER, renderUsage, receiptVerbLabel, renderBodyTooLarge, renderControlBanner } = require(path.join(__dirname, '..', 'lib', 'tc-verbs.js'));
 
 async function main() {

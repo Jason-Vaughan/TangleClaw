@@ -77,6 +77,57 @@ The PM dispatched it over Medusa. Both flakes were found in the #1836 suite run,
 - 8-way concurrent stress: 0 of 8 runs fail, against 8 of 8 on clean base.
 - Mutation checks: removing `.finally(scheduleNext)`, and making `getHealth` await the in-flight measurement, each fail the test with its named message.
 
+## 2026-09-27 — Fail-closed guard before the Codex loopback profile is applied (#1957 REQ2)
+
+<!-- prawduct: type=bugfix | scope=loopback-guard-1957-req2 -->
+
+REQ2 only, dispatched by the PM on the Architect's authorization (4fd5e6b4). REQ1 (live reproduction) is not included, and REQ3 (removing source-address trust) is kept as its own design. The design is `.tangleclaw/plans/1957-loopback-trust-remediation.md` § Requirement 2. This branch is stacked on #1957's `fix/1836-codex-fullauto-loopback`, and its PR targets that branch; the other lane's branch was not written to.
+
+**Problem.** The #1836 profile gives a sandboxed Full Auto agent every loopback port. ttyd on TCP is a writable terminal, and `lib/auth-gate.js#evaluate` admits a loopback machine client on every route without a token. So "sandboxed" would stop bounding the agent.
+
+**The change.**
+- `lib/loopback-trust-guard.js` (pure): `assessLoopbackTrust(facts)` grants only when `ingressMode === 'caddy'`, the installed ttyd job's `--interface` is the caddy socket, AUTH-4 is enabled with a token, and the machine-client carve-out requires the token. Every missing or unknown fact withholds, with a code. `isGranted` accepts only verdicts the guard issued (a private WeakSet).
+- `lib/codex-loopback-profile.js#applyLoopbackProfile(launchCmd, trust)` refuses without a grant.
+- `lib/auth-gate.js#MACHINE_CLIENT_REQUIRES_SERVICE_TOKEN = false` declares today's behaviour, and a test pins it to `evaluate`.
+- `lib/startup-control-codex.js#loopbackLaunchCommand` gathers the facts: the config, the installed plist (via `ttyd-bind#parseProgramArguments`), the socket path and the declaration. It withholds with `blocksLoopback: true`, the path already tested for an unproven version. A throw while gathering the facts withholds.
+
+**Consequence (confirmed as intended by the PM, bc5edec0).** The carve-out requires no token today, so the profile is withheld on every install until REQ3. Full Auto keeps the no-network sandbox and gets its context pasted.
+
+**Tests.** `test/loopback-trust-guard.test.js` covers the fail-closed matrix and the declaration pin. `test/codex-loopback-profile.test.js` covers the apply refusal, including lookalike and copied verdicts, the adapter's withheld reasons, a throwing fact source, and the real fact source withholding. `test/startup-control-launch.test.js` adds an end-to-end withheld launch. The existing apply-path tests in the launch, Master and profile suites now state granting facts through `test/_loopback-trust.js`, so they no longer read this machine's real ttyd plist; their assertions are unchanged. Mutation checks: removing the apply check, removing the adapter check, and flipping the declaration each turned tests red.
+
+**Review.** Cumulative review `rev-20260927T203004Z-78bc88f5`: 0 blocking. Fixed in one batch:
+- the constant is moved off `isMachineClient`'s JSDoc;
+- text that still said the profile applies is corrected (the `codex.json` description, the #1836 CHANGELOG line, the user guide, FEATURES and a `master.js` comment);
+- the guard reuses `ttyd-bind#describeInstalledBind`;
+- `loopbackTrustFacts` is tested against a fixture home;
+- REQ3 is filed as #1973 and cited.
+
+Accepted: the fact gatherer stays in the Codex adapter, the only engine with a loopback profile. Withheld reasons lost on prime-disabled and Master launches are #1836 code, passed to the PM. After the PR review (N1): the grant-but-not-applied branch now derives `blocksLoopback` from `hasLegacySandbox(launchCmd)`, as its sibling branches do. The early return already makes it true there, so nothing changes at runtime.
+
+## 2026-09-27 — Codex Full Auto reaches TangleClaw over loopback, and only loopback (#1836)
+
+<!-- prawduct: type=bugfix | scope=codex-fullauto-loopback-1836 -->
+
+Chunks 0 to 4, as a clean-room implementation: PR #1932 and all contributor code were never opened. The PM dispatched it over Medusa and the Architect ruled on four decisions (the residual accepted, the version gate, E3 conditional, inline `-c`). The PM folded Chunks 3 and 4 into this PR. Plan: `.tangleclaw/plans/1836-codex-fullauto-loopback.md` (local, not tracked).
+
+**Problem.** Full Auto ran Codex's `workspace-write` sandbox, which refuses every connection, loopback included. Every `tc` verb is loopback HTTP, so a Full Auto session never read its launch sequence and nothing named the cause. `sandbox_workspace_write.network_access=true` was ruled out because it opens the internet and the LAN.
+
+**The change.**
+- **The profile.** On a proven Codex version (0.156.1), Full Auto swaps `--sandbox workspace-write` for a Codex permission profile. The profile extends `:workspace`, its managed proxy allowlists exactly `127.0.0.1` and `localhost`, and it restates the `.git`, `.agents` and `.codex` read-only rules, because a profile extending `:workspace` drops them. The argv is written once, in `lib/codex-loopback-profile.js`.
+- **The version gate.** The Codex adapter (`loopbackLaunchCommand`) gates it on the probed version and answers why whenever it declines.
+- **Launches.** A mode that declares `loopbackNetwork` gets it on both the project launch and the Master launch. It skips the native channel (`mode_requires_legacy`), because the TUI's `--remote` thread start resends a legacy sandbox mode that drops the profile.
+- **Unproven versions** keep the no-network sandbox. A launch there gets no sequence; its context is pasted instead, and `notApplicableReason` says why (ADR 0013).
+- **`tc`** filters Node's `UNDICI-EHPA` warning, which the proxy's `NODE_USE_ENV_PROXY` otherwise prints on every call.
+
+**Evidence.**
+- **Chunk 0 spike:** real TUI turns. Legacy + profile passes every guard; the native path fails closed in all three variants tried.
+- **Stage A VRF:** the branch's exact pane command in a real TUI against the live API. `tc` rc 0 with empty stderr; 3102 and 3200 both 200; direct socket, public, LAN, own LAN IP, tailnet and DNS all refused; `.git`, `.agents`, `.codex` and `$HOME` denied.
+- **Stage B**, a real TangleClaw launch reaching sequence 4/4 with receipts, is post-merge verification on the live install.
+- **Reviews:** Critic rev-20260927T162157Z-48128f0a plus verify rev-20260927T162640Z-3a6ac8a6, 0 blocking.
+- **Suite:** 13,962 cases, 0 failed. Pre-existing flakes filed as #1950.
+
+**Descoped, explicitly:** a `tc capabilities` row, and a sandbox-specific `tc` error. The affected agent cannot reach `tc`, and `tc`'s existing unreachable message already names a sandbox as a likely cause.
+
 ## 2026-09-27 — Rule approval compare-and-set: approval ratifies only the text the operator saw (#1053)
 
 <!-- prawduct: type=bugfix | scope=rule-approval-cas-1053 -->

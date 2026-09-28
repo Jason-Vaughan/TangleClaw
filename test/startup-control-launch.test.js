@@ -28,6 +28,13 @@ const launchBootstrap = require('../lib/launch-bootstrap');
 const launchKickoff = require('../lib/launch-kickoff');
 const wrapRunRegistry = require('../lib/wrap-run-registry');
 
+// The loopback profile is granted only on facts a test states (#1957); these
+// tests exercise launches on an install where it may be applied.
+const { grantingFacts, useTrustFacts } = require('./_loopback-trust');
+let restoreTrust;
+before(() => { restoreTrust = useTrustFacts(grantingFacts()); });
+after(() => restoreTrust());
+
 describe('startupControl at launch and teardown (codex)', () => {
   let tempDir;
   let prevBase;
@@ -162,7 +169,7 @@ describe('startupControl at launch and teardown (codex)', () => {
 
   it('starts the app-server with the exact executable, attaches the pane with --remote before the mode args, and records the channel', () => {
     healthySeams();
-    const l = launched({ launchMode: 'fullAuto' });
+    const l = launched({ launchMode: 'bypassPermissions' });
     assert.equal(calls.spawn.length, 1);
     const sp = calls.spawn[0];
     assert.equal(sp.bin, '/opt/fake/bin/codex');
@@ -171,7 +178,7 @@ describe('startupControl at launch and teardown (codex)', () => {
     assert.ok(sp.args[2].includes(tempDir), 'the socket is requested under the store base path');
     assert.equal(sp.opts.detached, true);
     assert.equal(sp.opts.cwd, l.project.path);
-    assert.match(l.command, /codex --remote unix:\/\/\/private\/tmp\/fake-daemon\/[0-9a-f]{16} --ask-for-approval never --sandbox workspace-write/);
+    assert.match(l.command, /codex --remote unix:\/\/\/private\/tmp\/fake-daemon\/[0-9a-f]{16} --dangerously-bypass-approvals-and-sandbox/);
     assert.ok(!l.command.includes('--no-daemon'), 'a per-launch --remote server needs no legacy daemon isolation');
     const channel = store.startupControlChannels.getOpenBySession(l.session.id);
     assert.ok(channel, 'a channel row is open for the session');
@@ -266,6 +273,96 @@ describe('startupControl at launch and teardown (codex)', () => {
     assert.match(l.command, /codex --no-daemon$/);
     assert.deepEqual(calls.kills, [[-calls.spawn[0].pid, 'SIGTERM']], 'the server that never opened its socket is stopped');
     assert.equal(store.startupControlChannels.getOpenBySession(l.session.id), null);
+  });
+
+  it('full auto on a proven Codex runs the loopback profile on the legacy path, and records why it has no channel (#1836)', () => {
+    healthySeams();
+    const l = launched({ launchMode: 'fullAuto' });
+    assert.equal(calls.spawn.length, 0, 'the profile cannot ride the native channel, so no app-server is started');
+    assert.ok(!l.command.includes('--remote'));
+    assert.ok(!/--sandbox/.test(l.command), 'the legacy sandbox flag would switch the profile off');
+    assert.match(l.command, /codex --ask-for-approval never -c features\.network_proxy=true -c 'default_permissions="tangleclaw-loopback"' /);
+    assert.ok(l.command.includes(`'permissions.tangleclaw-loopback.network.domains={"127.0.0.1"="allow","localhost"="allow"}'`), l.command);
+    assert.match(l.command, / --no-daemon$/, 'the legacy path keeps its daemon isolation');
+    assert.equal(store.startupControlChannels.getOpenBySession(l.session.id), null);
+    const latest = store.startupControlChannels.getLatestBySession(l.session.id);
+    assert.ok(latest, 'the launch records why it has no channel');
+    assert.match(latest.closeReason, /^mode_requires_legacy: launch mode "fullAuto" runs under the loopback network profile/);
+  });
+
+  it('only a mode that declares the loopback profile gets it, and only on a proven version (#1836)', () => {
+    const profile = enginesModule.resolveProfile('codex');
+    const full = sessions._buildLaunchCommand(profile, null, 'fullAuto');
+    healthySeams();
+    assert.equal(sessions._loopbackModeCommand('codex', profile, 'default', 'codex', '/opt/fake/bin/codex'), null);
+    assert.equal(sessions._loopbackModeCommand('codex', profile, 'bypassPermissions', 'codex --dangerously-bypass-approvals-and-sandbox', '/opt/fake/bin/codex'), null);
+    assert.equal(sessions._loopbackModeCommand('codex', profile, undefined, full, '/opt/fake/bin/codex'), null);
+    const proven = sessions._loopbackModeCommand('codex', profile, 'fullAuto', full, '/opt/fake/bin/codex');
+    assert.equal(proven.applied, true);
+    assert.equal(proven.adapterName, 'codex');
+    assert.ok(proven.command.includes('default_permissions'), proven.command);
+    healthySeams({ execFileSync: () => 'codex-cli 0.157.1\n' });
+    const logger = require('../lib/logger');
+    const captured = [];
+    logger.setLevel('warn');
+    logger.setConsoleStream({ write: (line) => captured.push(line) });
+    let unproven;
+    try {
+      unproven = sessions._loopbackModeCommand('codex', profile, 'fullAuto', full, '/opt/fake/bin/codex');
+    } finally {
+      logger.setConsoleStream(null);
+      logger.setLevel('error');
+    }
+    assert.equal(unproven.applied, false, 'an unproven version keeps the no-network sandbox');
+    assert.equal(unproven.blocksLoopback, true);
+    assert.match(unproven.reason, /codex-cli 0\.157\.1 is not a version the loopback network profile was proven on/);
+    assert.match(captured.join(''), /Loopback network profile not applied.*tc cannot reach TangleClaw/, 'a no-network Full Auto says why instead of leaving a silent stuck session');
+    healthySeams({ execFileSync: () => { throw new Error('ENOENT'); } });
+    const unknown = sessions._loopbackModeCommand('codex', profile, 'fullAuto', full, '/opt/fake/bin/codex');
+    assert.equal(unknown.applied, false, 'an unknown version keeps it too');
+    assert.match(unknown.reason, /version unknown/);
+
+    // A resolution that fails still keeps the no-network sandbox, so it must
+    // still say loopback is blocked — or the launch points the session at a
+    // `tc start` it can never reach.
+    const startupControl = require('../lib/startup-control');
+    const realResolve = startupControl.resolveForLaunch;
+    startupControl.resolveForLaunch = () => { throw new Error('boom'); };
+    try {
+      const failed = sessions._loopbackModeCommand('codex', profile, 'fullAuto', full, '/opt/fake/bin/codex');
+      assert.equal(failed.applied, false);
+      assert.equal(failed.blocksLoopback, true, 'the kept command is still the no-network sandbox');
+      assert.match(failed.reason, /could not be resolved \(boom\)/);
+    } finally {
+      startupControl.resolveForLaunch = realResolve;
+    }
+  });
+
+  it('full auto on a proven Codex whose install fails the trust guard keeps the no-network sandbox, and its context is pasted (#1957)', () => {
+    healthySeams();
+    const restore = useTrustFacts({ ...grantingFacts(), machineClientRequiresServiceToken: false });
+    try {
+      const l = launched({ launchMode: 'fullAuto', primePrompt: true });
+      assert.match(l.command, /--sandbox workspace-write( |$)/, 'the profile is withheld, so the no-network sandbox stays');
+      assert.ok(!l.command.includes('default_permissions'), l.command);
+      assert.equal(l.sequence.applicability, 'not-applicable');
+      assert.match(l.sequence.notApplicableReason, /loopback network profile is withheld \(loopback-api-unauthenticated\)/);
+    } finally {
+      restore();
+    }
+  });
+
+  it('full auto on an unproven Codex gets no launch sequence — its context is pasted — and the panel is told why (#1836, ADR 0013)', () => {
+    healthySeams({ execFileSync: () => 'codex-cli 0.157.1\n' });
+    const l = launched({ launchMode: 'fullAuto', primePrompt: true });
+    assert.match(l.command, /--sandbox workspace-write --no-daemon$/, 'the no-network sandbox is kept on an unproven version');
+    assert.equal(l.sequence.applicability, 'not-applicable', 'a session whose tc cannot reach TangleClaw must not be pointed at tc start');
+    assert.match(l.sequence.notApplicableReason, /^launch mode "fullAuto" runs a sandbox with no network \(codex-cli 0\.157\.1 is not a version the loopback network profile was proven on\), so tc cannot reach TangleClaw; the launch context is pasted instead$/);
+    assert.ok(!/tc start next/.test(l.session.primePrompt || ''), 'the pasted prime does not send the session to a sequence it cannot read');
+
+    healthySeams();
+    const proven = launched({ launchMode: 'fullAuto', primePrompt: true });
+    assert.equal(proven.sequence.applicability, 'applicable', 'on a proven version tc reaches TangleClaw, so the sequence stands');
   });
 
   it('a resolved socket path unsafe for a shell command is refused, not interpolated', () => {
