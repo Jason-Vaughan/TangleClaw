@@ -35,6 +35,24 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-28 — The operator channel sends server notifications (#1799)
+
+<!-- prawduct: type=feature | scope=c15-notify-emitter-1799 -->
+
+The PM dispatched this on the Architect's ruling for #1799: a separate PR stacked on C1 (#1966 @25f03e01, not amended) for a server-side emitter of the three events that have a source today. Plan: `.tangleclaw/plans/1799-c15-notify-emitter.md` (local, not tracked).
+
+**Problem.** The Discord helper may call only C1's three routes, and C1's outbound carried only a project's replies, so TangleClaw had no way to tell the operator it needed attention.
+
+**The change.**
+- `lib/operator-channel-notify.js` emits `operator-needed` (watchdog `_alertOperator`), `work-blocked` (`workload.record`, on entry into `blocked`) and `fleet-idle` (the channel pump, every live lane idle, once per spell).
+- Each is a closed record: type, stable key, project, timestamp and fixed server-rendered text. It is stored as a relayable outbound item (schema v52, additive), listed with `kind`/`type` and settled only by the helper's ack.
+- `release-action-needed` and `certification-state-changed` are reserved and refused.
+- Nothing is recorded while the channel is off.
+
+**Review.** Critic `rev-20260928T012351Z-374bee12` found 0 blocking. Its observations were fixed: the fleet-idle episode was opened before its notice, and never closed while the channel was off; three untested failure paths; unneeded lazy requires; wording. Verify passes `rev-20260928T012758Z-4f809b73` and `rev-20260928T013019Z-483a305c` were clean. The second of them led to the stable pending key, so a crash cannot notify twice.
+
+**Evidence.** A full suite run recorded tree-valid at 2026-09-28T01:38Z was clean. 22 notification tests drive each source through its real detector (the watchdog ladder, `POST /api/tc/workload`, the channel pump), plus a v51→v52 in-place upgrade and a crash between recording and opening the episode. Each hook, and the stable key, was mutation-checked by removing it and watching its test go red.
+
 ## 2026-09-27 — Operator channel: a chat helper's durable line to one project over Medusa (#1956)
 
 <!-- prawduct: type=feature | scope=operator-channel-1956 -->
