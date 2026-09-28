@@ -2543,16 +2543,37 @@ describe('projects', () => {
       // One shared child made every caller collateral for every other: a hung
       // ten-second poll of the projects directory times out, the supervisor kills
       // the child to reclaim its thread, and an operator's scan of a completely
-      // HEALTHY folder dies alongside it. Patching only the background entry
-      // point proves the separation — if this route still used it, the stub would
-      // be reached and the scan would fail.
+      // HEALTHY folder dies alongside it. The background entry point rejects and
+      // counts its callers; the interactive one answers at once and counts its
+      // own. If this route still used the poll, the first count would move and the
+      // scan would fail.
+      //
+      // Both are stubs, so nothing here spawns a child or walks a directory. A
+      // real scan races the 5 s scan deadline on a loaded host, and a red then
+      // says "the host was busy", not "the routes crossed".
       const realBackground = dirScanner.request;
-      dirScanner.request = () => Promise.reject(new Error('the poll must not be consulted here'));
+      const realInteractive = dirScanner.interactiveRequest;
+      const backgroundCalls = [];
+      const interactiveCalls = [];
+      dirScanner.request = (...args) => {
+        backgroundCalls.push(args);
+        return Promise.reject(new Error('the poll must not be consulted here'));
+      };
+      dirScanner.interactiveRequest = (...args) => {
+        interactiveCalls.push(args);
+        return Promise.resolve({ projects: [{ name: 'alpha', path: path.join(projectsDir, 'alpha') }] });
+      };
       try {
         const result = await projects.scanDirectoryForProjects(projectsDir);
         assert.equal(result.ok, true, 'the wizard scan must be independent of the polled route');
+        assert.deepEqual(result.projects.map((p) => p.name), ['alpha'],
+          'the answer must be the one the interactive scanner gave');
+        assert.equal(backgroundCalls.length, 0, 'the polled entry point must never be reached');
+        assert.equal(interactiveCalls.length, 1, 'exactly one interactive scan');
+        assert.equal(interactiveCalls[0][0], 'scanEntries');
       } finally {
         dirScanner.request = realBackground;
+        dirScanner.interactiveRequest = realInteractive;
       }
     });
 
