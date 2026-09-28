@@ -1,6 +1,6 @@
 # Operator channel
 
-Status: experimental. Schema v51.
+Status: experimental. Schema v52 (v51 added the channel; v52 added its notifications).
 
 The operator channel lets a local chat helper, such as the Discord bridge, talk to one TangleClaw project on the operator's behalf:
 
@@ -38,8 +38,8 @@ The helper calls these with `Authorization: Bearer <token>`:
 | Route | Does |
 |---|---|
 | `POST /api/operator-channel/inbound` | Hands over one message: `{message: {id, authorId, spaceId, channelId}, text}`. Returns `202` for a new message and `200` for an id already accepted, which changes nothing. Delivery is asynchronous. |
-| `GET /api/operator-channel/outbound` | The replies waiting to be posted: `{replies: [{id, text, inReplyTo: {messageId} or null, receivedAt}]}`. |
-| `POST /api/operator-channel/outbound/:id/ack` | The helper posted a reply: `{postedId}`. Its text is then dropped. A second ack is answered from the record. |
+| `GET /api/operator-channel/outbound` | What is waiting to be posted: `{replies: [{id, kind, type, text, inReplyTo: {messageId} or null, receivedAt}]}`. `kind` is `reply` for a project's reply and `notification` for a server notification, whose `type` names the event (see Notifications); `type` is `null` for a reply. |
+| `POST /api/operator-channel/outbound/:id/ack` | The helper posted a reply or notification: `{postedId}`. Its text is then dropped. A second ack is answered from the record. |
 
 Only the operator may call these. An agent session, a local script, and a request carrying a channel token are refused:
 
@@ -101,16 +101,37 @@ The target project replies through its own switchboard route, with its launch he
 - mail that no TangleClaw send made is quarantined after ten minutes;
 - a message longer than 64 KiB, which no switchboard route accepts, is kept only as a quarantined record.
 
+## Notifications
+
+TangleClaw also tells the operator when it needs attention, through the same outbound queue. A notification is listed by `GET /outbound` with `kind: 'notification'` and settled by the same acknowledgement, only after the helper has posted it. No route is added, and the channel token reaches nothing new.
+
+Three events are emitted. Each has one source, and each is emitted once per idempotency key:
+
+| `type` | Raised when | Key |
+|---|---|---|
+| `operator-needed` | The Medusa watchdog escalates an exchange to the operator rung (`lib/medusa-watchdog.js`). | the exchange id |
+| `work-blocked` | A lane's workload receipt enters `blocked`. A repeated `blocked` is not a new event. | the receipt id |
+| `fleet-idle` | Every live session's composed lane is `AVAILABLE` or `COMPLETE_NOT_CLEAR`, judged on the channel's 30-second pump. It is emitted once per idle episode; the episode ends when any lane leaves idle, and it survives a restart. | the episode's start |
+
+`release-action-needed` and `certification-state-changed` are reserved names. Neither is emitted until its trigger is defined.
+
+The schema is closed: a type, a key, the project the event concerns (none for `fleet-idle`), a timestamp, and text rendered on the server from a fixed template. The template takes only the project's name from the store and a lane count, so no agent or chat text reaches a notification. The text passes the channel's display-safety rule; a project name that fails it is left out ("a project") and the omission is logged, so the operator is still told.
+
+**Notifications are recorded only while the channel is on.** Turning it on does not deliver a backlog of stale alerts.
+
 ## Storage
 
 - `operator_channel_inbound`: one row per message, unique by the helper's message id. States: `pending`, `sent`, `send_unknown`, `failed`.
 - `operator_channel_outbound`: one row per received message, unique by Hub id. States: `unverified`, `relayable`, `delivered`, `quarantined`.
+  - v52 added `kind` (`reply` or `notification`), `notify_type`, `idem_key` (unique when set) and `project_id`.
+  - A notification is stored as `relayable` from the start, under a synthetic id `notify/<key>`. The `/` is outside the Hub's id rule, and the channel refuses an arrival whose id breaks that rule, so no received message can take a notification's id.
+- `operator_channel_notify_state`: small key/value state the notifier needs to survive a restart, such as where a `fleet-idle` spell stands.
 
-Text is kept only until it is handed on. Nothing prunes the rows yet.
+Text is kept only until it is handed on. Nothing prunes the rows yet: each reply and each notification (an escalation, a lane entering `blocked`, an idle episode) leaves one small row whose text is cleared once it is posted.
 
 ## Rolling back
 
-Schema v51 is purely additive. A v50 server:
+Schema v52 is purely additive: a v51 server ignores the notification columns and the state table, and a notification waiting at rollback is listed to a v51 helper as an ordinary reply without its `kind`. v51 was additive over v50 in the same way. A v50 server:
 - ignores the two channel tables;
 - runs no listener and no pump, so nothing is sent or relayed while rolled back;
 - **does not know the `operatorChannel` config key, so its `GET /api/config` returns `operatorChannel.tokenHash` unredacted.** The hash cannot be used as the token, but no route is meant to return it.

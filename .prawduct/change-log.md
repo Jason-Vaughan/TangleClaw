@@ -35,6 +35,43 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-28 — C1.5: merge C1 (#1966) to carry main and the relay fix forward (#1799)
+
+<!-- prawduct: type=chore | scope=c15-notify-emitter-1799 -->
+
+Stack integration S2 (dispatched by the PM, approved by the Architect).
+
+**Why:** #1966 now carries `main` @ `69fc2253` and the fix that relays only a project launch's own
+sends to the operator's chat (`3efdca1e`). C1.5 is stacked on C1's old head `25f03e01` and had
+neither. A `--no-ff` merge brings both in without rewriting C1.5. That keeps `198acf21` an ancestor,
+so C2 (#2003) stays valid on top of it.
+
+**What:** only `FEATURES.md` conflicted. The Medusa lines take C1's text, which is `main`'s current
+wording. The Operator channel line combines two edits that do not overlap: C1.5's notifications
+sentence and C1's launch-proof wording. Against C1, the result differs only by C1.5's own one-line
+change. The rest merged cleanly, including `lib/operator-channel.js`. Notification rows are stored
+`relayable` under `notify/<key>` and never pass through `resolveOutbound`, so the new sender check
+leaves them alone. The schema stays at C1.5's v52.
+
+## 2026-09-28 — The operator channel sends server notifications (#1799)
+
+<!-- prawduct: type=feature | scope=c15-notify-emitter-1799 -->
+
+The PM dispatched this on the Architect's ruling for #1799: a separate PR stacked on C1 (#1966 @25f03e01, not amended) for a server-side emitter of the three events that have a source today. Plan: `.tangleclaw/plans/1799-c15-notify-emitter.md` (local, not tracked).
+
+**Problem.** The Discord helper may call only C1's three routes, and C1's outbound carried only a project's replies, so TangleClaw had no way to tell the operator it needed attention.
+
+**The change.**
+- `lib/operator-channel-notify.js` emits `operator-needed` (watchdog `_alertOperator`), `work-blocked` (`workload.record`, on entry into `blocked`) and `fleet-idle` (the channel pump, every live lane idle, once per spell).
+- Each is a closed record: type, stable key, project, timestamp and fixed server-rendered text. It is stored as a relayable outbound item (schema v52, additive), listed with `kind`/`type` and settled only by the helper's ack.
+- `release-action-needed` and `certification-state-changed` are reserved and refused.
+- Nothing is recorded while the channel is off.
+- A notification's synthetic id is `notify/<key>`, outside the Hub id rule, and `recordArrival` refuses an arrival whose id breaks that rule. No received message can take a notification's id and suppress it.
+- A project name that is not display-safe is left out ("a project") and logged, so the notice still goes.
+
+**Review.** Critic `rev-20260928T012351Z-374bee12` found 0 blocking. Its observations were fixed: the fleet-idle episode was opened before its notice, and never closed while the channel was off; three untested failure paths; unneeded lazy requires; wording. Verify passes `rev-20260928T012758Z-4f809b73` and `rev-20260928T013019Z-483a305c` were clean. The second of them led to the stable pending key, so a crash cannot notify twice. Cumulative `rev-20260928T013906Z-c55e8d48` found 0 blocking. Its two warnings (the id collision, the silent drop on an unsafe name) were fixed, and verify `rev-20260928T014422Z-b2965cbb` was clean. The PR review found 0 blocking.
+
+**Evidence.** The full suite is green on the final tree; its tree-valid run is in the evidence store. 25 notification tests drive each source through its real detector (the watchdog ladder, `POST /api/tc/workload`, the channel pump), plus a v51→v52 in-place upgrade and a crash between recording and opening the episode. Each hook, and the stable key, was mutation-checked by removing it and watching its test go red.
 ## 2026-09-28 — Operator channel: merge main to clear #1966's conflicts (#1956)
 
 <!-- prawduct: type=chore | scope=operator-channel-1956 -->
@@ -104,7 +141,6 @@ Discord Operator Bridge, Chunk 1: the server half. The TangleClaw-Architect auth
 
 Each has negative tests: spoofed dashboard callers on an open and an armed gate, a send addressed elsewhere, and bidi, zero-width, line-separator, soft-hyphen and BOM text. N5 is recorded as non-blocking per the Architect. N6 (cancellation and retention) carries into C2 planning.
 
-## 2026-09-27 — Rule approval compare-and-set: approval ratifies only the text the operator saw (#1053)
 ## 2026-09-28 — Session-rule mutations are gated on a verified caller (#2013)
 
 <!-- prawduct: type=bugfix | scope=2013-session-rules-authz -->

@@ -341,6 +341,7 @@ const { resolveControlCaller, isOperatorShaped } = require('./lib/control-auth')
 const medusaExchanges = require('./lib/medusa-exchanges');
 const medusaWatchdog = require('./lib/medusa-watchdog');
 const operatorChannel = require('./lib/operator-channel');
+const operatorChannelNotify = require('./lib/operator-channel-notify');
 const medusaSend = require('./lib/medusa-send');
 
 const log = createLogger('server');
@@ -5235,6 +5236,19 @@ function _composedLane(session, projectName) {
   }
 }
 
+/**
+ * Every live session's composed availability, for the operator channel's
+ * `fleet-idle` (#1799). The same composition the fleet roster serves, so the
+ * notification and `tc sessions` cannot disagree about whether the fleet is idle.
+ * @returns {string[]} One availability per live session
+ */
+function _fleetAvailabilities() {
+  return store.sessions.listLiveAll().map((s) => {
+    const project = store.projects.get(s.projectId);
+    return _composedLane(s, project ? project.name : null).composed.availability;
+  });
+}
+
 // GET /api/checkouts — the fleet's checkouts in one answer (#1678, #993): one
 // row per project with a live session, from the same `projectCheckout` the
 // project route, the prime and the session chip read, so the PM, the Master, a
@@ -7633,8 +7647,9 @@ route('POST', '/api/operator-channel/inbound', (req, res, _params, body) => {
   }
 }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
 
-// GET /api/operator-channel/outbound — the target project's replies waiting for
-// the helper, each with the operator message it answers when it names one.
+// GET /api/operator-channel/outbound — what is waiting for the helper: the target
+// project's replies, each with the operator message it answers when it names
+// one, and server notifications (#1799), each marked by `kind` and `type`.
 route('GET', '/api/operator-channel/outbound', (req, res) => {
   try {
     operatorChannel.authorizeHelper(req);
@@ -7644,8 +7659,8 @@ route('GET', '/api/operator-channel/outbound', (req, res) => {
   }
 });
 
-// POST /api/operator-channel/outbound/:id/ack — the helper posted a reply:
-// `{postedId}`. The reply's text is dropped once acknowledged.
+// POST /api/operator-channel/outbound/:id/ack — the helper posted a reply or a
+// notification: `{postedId}`. Its text is dropped once acknowledged.
 route('POST', '/api/operator-channel/outbound/:id/ack', (req, res, params, body) => {
   try {
     operatorChannel.authorizeHelper(req);
@@ -12055,6 +12070,11 @@ if (require.main === module) {
     // The operator channel's listener and delivery pump. A no-op until the
     // operator turns the channel on; mail kept while the server was down is
     // delivered on the first pass.
+    //
+    // `fleet-idle` (#1799) needs every live lane's composed availability, and
+    // only the server holds the activity observer that composition reads. The
+    // same composition the fleet roster serves, so the two cannot disagree.
+    operatorChannelNotify.setFleetSource(_fleetAvailabilities);
     operatorChannel.start();
     // Resolve the operator's login PATH once, here, so no request ever pays for
     // it. launchd hands this service `/usr/bin:/bin:/usr/sbin:/sbin`, which
@@ -12121,4 +12141,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver };
+module.exports = { createServer, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver, _fleetAvailabilities };
