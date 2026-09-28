@@ -2879,7 +2879,7 @@
       }
       const data = await apiMutate(`/api/session-rules/${id}/restore`, 'POST', body);
       if (data) _setMasterRulesStatus(`Restored ${tcRuleLabel(id)} to v${versionNo}`, true);
-      else _setMasterRulesStatus('Restore failed', false);
+      else _setMasterRulesStatus(`Restore ${tcRuleLabel(id)} to v${versionNo} failed`, false);
       loadMasterRules();
     }
 

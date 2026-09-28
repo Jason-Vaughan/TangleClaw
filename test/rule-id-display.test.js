@@ -266,6 +266,50 @@ describe('Rule #<id> on every surface (#2029)', () => {
     });
   });
 
+  describe('Global rules — every single-rule outcome names the rule', () => {
+    /** Run restoreMasterRuleVersion against a scripted server answer. */
+    async function restoreOutcome(answer, createdBy = 'operator') {
+      const statuses = [];
+      const prompts = [];
+      const restore = lift(HELPER_SRC, 'async function restoreMasterRuleVersion(', 'id, versionNo', {
+        _getMasterRule: async () => ({ id: 12, createdBy }),
+        confirm: (msg) => { prompts.push(msg); return true; },
+        apiMutate: async () => answer,
+        _setMasterRulesStatus: (msg) => statuses.push(msg),
+        loadMasterRules: () => {},
+        ...labelDeps
+      });
+      await restore(12, 3);
+      return { statuses, prompts };
+    }
+
+    it('a failed version restore says which rule', async () => {
+      assert.deepEqual((await restoreOutcome(null)).statuses, ['Restore Rule #12 to v3 failed']);
+    });
+
+    it('a successful version restore says which rule (parity with the failure path)', async () => {
+      assert.deepEqual((await restoreOutcome({ id: 12 })).statuses, ['Restored Rule #12 to v3']);
+    });
+
+    it('the baseline-restore confirmation names the rule', async () => {
+      const { prompts } = await restoreOutcome({ id: 12 }, 'system');
+      assert.equal(prompts.length, 1);
+      assert.match(prompts[0], /^Restore shipped boundary rule Rule #12 to v3\?/);
+    });
+
+    it('source guard: toggle, delete and version restore label every status line', () => {
+      // These act on ONE rule, so each outcome must say which. (Add and
+      // restore-all-defaults act on none and are exempt by construction.)
+      for (const decl of ['async function toggleMasterRule(', 'async function deleteMasterRule(',
+        'async function restoreMasterRuleVersion(']) {
+        const body = functionBody(HELPER_SRC, decl);
+        const calls = body.match(/_setMasterRulesStatus\([^;]*;/gs) || [];
+        assert.ok(calls.length > 0, `${decl} reports an outcome`);
+        for (const call of calls) assert.match(call, /tcRuleLabel\(id\)/, `${decl}: ${call}`);
+      }
+    });
+  });
+
   describe('approval prompts cannot omit the id', () => {
     /**
      * Run resolveProjectRuleProposal with a scripted server answer and
