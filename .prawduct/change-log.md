@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-28 — The wizard-scan routing test stubs both scanner entry points (#1993)
+
+<!-- prawduct: type=bugfix | scope=scanner-routing-test-1993 -->
+
+The PM dispatched this over Medusa for v5.31. The Architect scoped it strictly to the test: production scanner code and `PROJECT_SCAN_TIMEOUT_MS` stay unchanged.
+
+**Problem.** In `test/projects.test.js`, *uses a scanner the background poll cannot kill underneath it* stubbed only `dirScanner.request` and then ran a real interactive scan through the scanner child under the 5 s `PROJECT_SCAN_TIMEOUT_MS`. Under full-suite parallelism and fleet load (load average 20-27), spawning the child and walking the directory could overrun the deadline. The test then failed for a busy host, not for crossed routes.
+
+**The change.** Test-only. Both entry points are stubbed, count their calls, and are restored in `finally`. `request` rejects if it is reached; `interactiveRequest` answers at once. The test asserts `ok`, that the result is the interactive answer, one interactive call with `scanEntries`, and zero background calls. No child is spawned and no directory is walked.
+
+**Evidence.** Pointing `scanDirectoryForProjects` at `dirScanner.request` turned the test red; I reverted that mutation. It passed 20 of 20 at a load average near 29, and `test/projects.test.js` passed with none failing. The full declared suite passed with none failing. Critic `rev-20260928T013441Z-2f7f6123` found 0 blocking. It raised 1 warning, stale evidence, which the recorded suite run closed. Its 2 notes were accepted and flagged to the PM: other unstubbed real scans, including the sibling `createProjectsDir` routing test, and a pre-existing `withScanner` JSDoc naming the wrong entry point.
+
 ## 2026-09-27 — The stale-server banner asks the service worker to update (#411)
 
 <!-- prawduct: type=bugfix | scope=sw-update-stale-banner-411 -->
