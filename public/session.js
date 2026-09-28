@@ -5637,12 +5637,30 @@ function renderRuleProposalWidget(widget) {
     row.className = 'wrap-proposal-row';
     row.dataset.ruleId = String(p.ruleId);
 
+    // #2029: the row is named by DB id above its editable text, so the label
+    // survives any edit and two proposals can never be confused.
+    const label = tcRuleLabel(p.ruleId);
+    const heading = document.createElement('div');
+    heading.className = 'wrap-proposal-label session-rule-label';
+    heading.textContent = label;
+    row.appendChild(heading);
+    // The text is editable and shown whole, so a number it claims that is not
+    // this rule's own is flagged beside the label rather than left to be noticed.
+    const claimed = tcAuthoredIdMismatch({ id: p.ruleId, content: p.content });
+    if (claimed !== null) {
+      const cue = document.createElement('span');
+      cue.className = 'session-rule-badge session-rule-badge--mismatch';
+      cue.textContent = `text says #${claimed}`;
+      cue.title = `This rule’s text calls itself RULE #${claimed}, but it is ${label}. The label comes from the database.`;
+      heading.appendChild(cue);
+    }
+
     const ta = document.createElement('textarea');
     ta.className = 'wrap-proposal-text';
     ta.value = p.content;
     ta.rows = 3;
     ta.spellcheck = false;
-    ta.setAttribute('aria-label', `Proposed rule ${p.ruleId} — edit before approving if needed`);
+    ta.setAttribute('aria-label', `Proposed ${label} — edit before approving if needed`);
     row.appendChild(ta);
 
     const actions = document.createElement('div');
@@ -5651,12 +5669,14 @@ function renderRuleProposalWidget(widget) {
     approveBtn.type = 'button';
     approveBtn.className = 'btn btn-small btn-primary wrap-proposal-approve';
     approveBtn.textContent = 'Approve';
-    approveBtn.title = 'Make this a governing rule for future sessions (saves your edits first).';
+    approveBtn.setAttribute('aria-label', `Approve ${label}`);
+    approveBtn.title = `Make ${label} a governing rule for future sessions (saves your edits first).`;
     const rejectBtn = document.createElement('button');
     rejectBtn.type = 'button';
     rejectBtn.className = 'btn btn-small wrap-proposal-reject';
     rejectBtn.textContent = 'Reject';
-    rejectBtn.title = 'Decline — recorded so this learning is not proposed again.';
+    rejectBtn.setAttribute('aria-label', `Reject ${label}`);
+    rejectBtn.title = `Decline ${label} — recorded so this learning is not proposed again.`;
     actions.appendChild(approveBtn);
     actions.appendChild(rejectBtn);
     row.appendChild(actions);
@@ -5693,6 +5713,7 @@ function renderRuleProposalWidget(widget) {
  */
 async function resolveRuleProposal(proposal, decision, els) {
   const { ta, approveBtn, rejectBtn, note, passwordGroup, passwordInput } = els;
+  const label = tcRuleLabel(proposal.ruleId);
   approveBtn.disabled = true;
   rejectBtn.disabled = true;
   ta.disabled = true;
@@ -5706,14 +5727,14 @@ async function resolveRuleProposal(proposal, decision, els) {
   if (decision === 'active') {
     const edited = ta.value.trim();
     if (!edited) {
-      note.textContent = 'Rule text can’t be empty — edit it or Reject instead.';
+      note.textContent = `${label}’s text can’t be empty — edit it or Reject instead.`;
       finishEnabled();
       return;
     }
     if (edited !== proposal.content.trim()) {
       const saved = await apiMutate(`/api/session-rules/${proposal.ruleId}`, 'PUT', { content: edited });
       if (!saved) {
-        note.textContent = `Couldn’t save your edit: ${api.lastError || 'unknown error'}. Nothing was approved.`;
+        note.textContent = `Couldn’t save your edit to ${label}: ${api.lastError || 'unknown error'}. Nothing was approved.`;
         finishEnabled();
         return;
       }
@@ -5735,27 +5756,27 @@ async function resolveRuleProposal(proposal, decision, els) {
         // that text rather than a repeat of the refused one.
         proposal.content = api.lastBody.currentContent;
         ta.value = api.lastBody.currentContent;
-        note.textContent = 'This rule’s text changed after it was shown, so nothing was approved. '
+        note.textContent = `${label}’s text changed after it was shown, so nothing was approved. `
           + 'The current text is now shown above — review it, then Approve again.';
       } else if (api.lastErrorCode === 'FORBIDDEN' && passwordGroup) {
         passwordGroup.classList.remove('hidden');
-        note.textContent = 'The server needs the delete password to approve — enter it below and tap Approve again.';
+        note.textContent = `The server needs the delete password to approve ${label} — enter it below and tap Approve again.`;
         if (passwordInput) passwordInput.focus();
       } else {
-        note.textContent = `Approve failed: ${api.lastError || 'unknown error'}.`;
+        note.textContent = `Approve ${label} failed: ${api.lastError || 'unknown error'}.`;
       }
       finishEnabled();
       return;
     }
-    note.textContent = 'Approved ✓ — this rule now governs future sessions.';
+    note.textContent = `Approved ${label} ✓ — it now governs future sessions.`;
   } else {
     const data = await apiMutate(`/api/session-rules/${proposal.ruleId}/status`, 'PUT', { status: 'rejected' });
     if (!data) {
-      note.textContent = `Reject failed: ${api.lastError || 'unknown error'}.`;
+      note.textContent = `Reject ${label} failed: ${api.lastError || 'unknown error'}.`;
       finishEnabled();
       return;
     }
-    note.textContent = 'Rejected — recorded, so this won’t be proposed again.';
+    note.textContent = `Rejected ${label} — recorded, so it won’t be proposed again.`;
   }
   // Decided: the row stays visible as a record but takes no further input.
   els.row.classList.add('wrap-proposal-row--decided');

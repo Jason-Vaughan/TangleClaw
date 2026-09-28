@@ -2490,7 +2490,7 @@ function renderProjectRuleDeliveries(deliveries) {
       <div class="session-rule-content">
         <strong>${esc(d.sessionId)}</strong>: <span class="${outcomeClass}">${esc(d.outcome)}</span>
         ${d.skipReason ? `<br><small class="session-rule-meta">Reason: ${esc(d.skipReason)}</small>` : ''}
-        <br><small class="session-rule-meta">Channel: ${esc(d.channel)} | Digest: <code>${esc(d.digest ? d.digest.slice(0, 8) : 'none')}</code> | Rules: ${d.ruleIds ? d.ruleIds.length : 0}</small>
+        <br><small class="session-rule-meta">Channel: ${esc(d.channel)} | Digest: <code>${esc(d.digest ? d.digest.slice(0, 8) : 'none')}</code> | Rules: ${d.ruleIds && d.ruleIds.length ? esc(d.ruleIds.map(tcRuleLabel).join(', ')) : 'none'}</small>
       </div>
     </div>`;
   }).join('');
@@ -2846,22 +2846,25 @@ function renderProjectRulesList(kind, rules) {
     // would erase the recorded decision and re-arm re-proposal at the next
     // wrap (the exact zombie the recorded `rejected` state exists to prevent).
     const isProposed = rule.status === 'proposed';
+    // #2029: named from the DB id, never from the text, so two proposals can
+    // always be told apart — and the controls below say which rule they act on.
+    const label = tcRuleLabel(rule.id);
     const badges = [
       rule.createdBy === 'ai' ? '<span class="session-rule-badge" title="AI-authored">AI</span> ' : '',
       isProposed ? '<span class="session-rule-badge session-rule-badge--proposed" title="Proposed by the wrap from a recurring learning — not governing sessions yet. Approve or reject it here, or in the wrap drawer right after the wrap that proposed it.">Proposed</span> ' : ''
     ].join('');
     const actions = isProposed
       ? `<span class="session-rule-decide">
-           <button class="btn btn-small btn-primary" data-action="approve-rule" data-rule-id="${rule.id}">Approve</button>
-           <button class="btn btn-small" data-action="reject-rule" data-rule-id="${rule.id}">Reject</button>
+           <button class="btn btn-small btn-primary" data-action="approve-rule" data-rule-id="${rule.id}" aria-label="Approve ${label}" title="Approve ${label}">Approve</button>
+           <button class="btn btn-small" data-action="reject-rule" data-rule-id="${rule.id}" aria-label="Reject ${label}" title="Reject ${label}">Reject</button>
          </span>`
-      : `<button class="btn btn-small btn-danger session-rule-delete" data-action="delete-rule" data-rule-id="${rule.id}" aria-label="Delete rule">&times;</button>`;
+      : `<button class="btn btn-small btn-danger session-rule-delete" data-action="delete-rule" data-rule-id="${rule.id}" aria-label="Delete ${label}" title="Delete ${label}">&times;</button>`;
     return `
     <div class="session-rule-item${rule.enabled ? '' : ' session-rule-disabled'}${isProposed ? ' session-rule-item--proposed' : ''}" data-rule-id="${rule.id}">
       <label class="session-rule-toggle">
-        <input type="checkbox" data-action="toggle-rule" data-rule-id="${rule.id}" ${rule.enabled && !isProposed ? 'checked' : ''} ${isProposed ? 'disabled' : ''}>
+        <input type="checkbox" data-action="toggle-rule" data-rule-id="${rule.id}" aria-label="Enable ${label}" ${rule.enabled && !isProposed ? 'checked' : ''} ${isProposed ? 'disabled' : ''}>
       </label>
-      <span class="session-rule-content">${badges}${esc(rule.content)}</span>
+      <span class="session-rule-content"><span class="session-rule-label">${esc(label)}</span> ${tcRuleMismatchBadge(rule)}${badges}${esc(tcStripSameIdPrefix(rule.id, rule.content).trim())}</span>
       ${actions}
     </div>`;
   }).join('');
@@ -2896,8 +2899,8 @@ async function addProjectRule(kind) {
  */
 async function toggleProjectRule(id, enabled, kind) {
   const data = await apiMutate(`/api/session-rules/${id}`, 'PUT', { enabled });
-  if (!data) { _setProjectRulesStatus('Update failed', false); return; }
-  await refreshAfterProjectRuleMutation('Updated', kind);
+  if (!data) { _setProjectRulesStatus(`Update ${tcRuleLabel(id)} failed`, false); return; }
+  await refreshAfterProjectRuleMutation(`Updated ${tcRuleLabel(id)}`, kind);
 }
 
 /**
@@ -2907,8 +2910,8 @@ async function toggleProjectRule(id, enabled, kind) {
  */
 async function deleteProjectRule(id, kind) {
   const data = await apiMutate(`/api/session-rules/${id}`, 'DELETE', {});
-  if (!data) { _setProjectRulesStatus('Delete failed', false); return; }
-  _setProjectRulesStatus('Deleted', true);
+  if (!data) { _setProjectRulesStatus(`Delete ${tcRuleLabel(id)} failed`, false); return; }
+  _setProjectRulesStatus(`Deleted ${tcRuleLabel(id)}`, true);
   await refreshAfterProjectRuleMutation('Deleted', kind);
 }
 
@@ -2940,21 +2943,21 @@ async function resolveProjectRuleProposal(id, status, kind) {
     if (api.lastErrorCode === 'RULE_CONTENT_CHANGED') {
       // Redraw from the server so the row shows what the rule says now; the
       // next Approve is then a decision about that text.
-      _setProjectRulesStatus('This rule’s text changed after it was shown, so nothing was approved — '
+      _setProjectRulesStatus(`${tcRuleLabel(id)}’s text changed after it was shown, so nothing was approved — `
         + 'the list now shows its current text. Review it, then Approve again', false);
       await refreshProjectRulesList(projectRulesTargetId, kind);
     } else if (api.lastErrorCode === 'FORBIDDEN' && pwGroup) {
       pwGroup.classList.remove('hidden');
-      _setProjectRulesStatus('Approving needs the delete password — enter it above and tap Approve again', false);
+      _setProjectRulesStatus(`Approving ${tcRuleLabel(id)} needs the delete password — enter it above and tap Approve again`, false);
       if (pwInput) pwInput.focus();
     } else {
-      _setProjectRulesStatus(`${status === 'active' ? 'Approve' : 'Reject'} failed`, false);
+      _setProjectRulesStatus(`${status === 'active' ? 'Approve' : 'Reject'} ${tcRuleLabel(id)} failed`, false);
     }
     return;
   }
   _setProjectRulesStatus(status === 'active'
-    ? 'Approved — this rule now governs future sessions'
-    : 'Rejected — recorded, so it won’t be proposed again', true);
+    ? `Approved ${tcRuleLabel(id)} — it now governs future sessions`
+    : `Rejected ${tcRuleLabel(id)} — recorded, so it won’t be proposed again`, true);
   await refreshAfterProjectRuleMutation(status === 'active' ? 'Approved' : 'Rejected', kind);
 }
 

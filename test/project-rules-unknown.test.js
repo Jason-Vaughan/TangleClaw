@@ -46,7 +46,13 @@ function helperGlobals() {
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(HELPER_SRC, sandbox);
-  return { tcRulesUnknownHtml: sandbox.tcRulesUnknownHtml, tcDegradedRead: sandbox.tcDegradedRead };
+  return {
+    tcRulesUnknownHtml: sandbox.tcRulesUnknownHtml,
+    tcDegradedRead: sandbox.tcDegradedRead,
+    tcRuleLabel: sandbox.tcRuleLabel,
+    tcStripSameIdPrefix: sandbox.tcStripSameIdPrefix,
+    tcRuleMismatchBadge: sandbox.tcRuleMismatchBadge
+  };
 }
 
 /**
@@ -67,10 +73,15 @@ function build(api) {
   ];
   const source = decls.map((d) => d + functionBody(UI_SRC, d)).join('\n');
   const statuses = [];
+  const helpers = helperGlobals();
   const ctx = vm.createContext({
     api,
     document,
-    window: helperGlobals(),
+    window: helpers,
+    // Page globals api-helper.js publishes before ui.js runs (#2029).
+    tcRuleLabel: helpers.tcRuleLabel,
+    tcStripSameIdPrefix: helpers.tcStripSameIdPrefix,
+    tcRuleMismatchBadge: helpers.tcRuleMismatchBadge,
     esc: (s) => String(s == null ? '' : s),
     encodeURIComponent,
     projectRulesTargetId: 7,

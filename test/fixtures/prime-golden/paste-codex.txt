@@ -24,7 +24,7 @@ Stranded wraps: none recorded for this project.
 ## Project Rules
 
 Operator-authored rules for this project. They apply for the whole session:
-- Keep diffs small.
+- Rule #3 — Keep diffs small.
 
 ## Rule sources in force
 2 binding rule sources reach this session. A directive can come from any of them; when two disagree, say so rather than pick one silently.

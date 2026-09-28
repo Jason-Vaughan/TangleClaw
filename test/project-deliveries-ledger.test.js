@@ -67,7 +67,8 @@ function helperGlobals() {
   return {
     tcRulesUnknownHtml: sandbox.tcRulesUnknownHtml,
     tcDegradedRead: sandbox.tcDegradedRead,
-    tcDeliveryOutcomeClass: sandbox.tcDeliveryOutcomeClass
+    tcDeliveryOutcomeClass: sandbox.tcDeliveryOutcomeClass,
+    tcRuleLabel: sandbox.tcRuleLabel
   };
 }
 
@@ -114,6 +115,7 @@ function build(api) {
     document,
     window: helpers,
     tcDeliveryOutcomeClass: helpers.tcDeliveryOutcomeClass,
+    tcRuleLabel: helpers.tcRuleLabel,
     esc,
     encodeURIComponent,
     projectRulesTargetId: 7,
@@ -171,7 +173,8 @@ describe('#1164 — the Settings modal renders the rule-delivery ledger', () => 
     assert.match(list.innerHTML, /<strong>9000<\/strong>: <span class="rules-status-ok">delivered<\/span>/);
     assert.match(list.innerHTML, /<span class="rules-status-err">skipped<\/span>/);
     assert.match(list.innerHTML, /Reason: engine has no silent-prime channel/);
-    assert.match(list.innerHTML, /Channel: rules-hook \| Digest: <code>abcdef01<\/code> \| Rules: 2/);
+    // #2029: the ledger names each delivered rule by its DB id, not just a count.
+    assert.match(list.innerHTML, /Channel: rules-hook \| Digest: <code>abcdef01<\/code> \| Rules: Rule #1, Rule #2/);
     assert.equal((list.innerHTML.match(/session-rule-item/g) || []).length, 5, 'the newest five, not the whole ledger');
     assert.doesNotMatch(list.innerHTML, /9005|9006/);
     assert.doesNotMatch(list.innerHTML, /No delivery records|Deliveries unknown/);
@@ -236,6 +239,7 @@ describe('#1164 — the Settings modal renders the rule-delivery ledger', () => 
 
     assert.doesNotMatch(list.innerHTML, /<img src=x>|<b>why<\/b>/);
     assert.match(list.innerHTML, /&lt;img src=x&gt;/);
-    assert.match(list.innerHTML, /Digest: <code>none<\/code> \| Rules: 0/);
+    // #2029: a record that names no rules says so in words, not as a count.
+    assert.match(list.innerHTML, /Digest: <code>none<\/code> \| Rules: none/);
   });
 });

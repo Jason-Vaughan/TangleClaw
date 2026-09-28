@@ -231,9 +231,10 @@ describe('tc verb roster (lib/tc-verbs)', () => {
           { id: 3, kind: 'startup', status: 'active', enabled: 0, content: 'was Z' }
         ]
       });
-      assert.match(out, /\[#1 startup — active\] always X/);
-      assert.match(out, /\[#2 wrap — PROPOSED\] maybe Y/);
-      assert.match(out, /\[#3 startup — active but DISABLED\] was Z/);
+      // #2029: each row is named "Rule #<id>" from the DB id.
+      assert.match(out, /\[startup — active\] Rule #1 — always X/);
+      assert.match(out, /\[wrap — PROPOSED\] Rule #2 — maybe Y/);
+      assert.match(out, /\[startup — active but DISABLED\] Rule #3 — was Z/);
       assert.match(out, /PROPOSED rows await operator approval/);
     });
 

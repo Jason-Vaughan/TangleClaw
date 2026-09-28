@@ -175,6 +175,25 @@ All notable changes to TangleClaw are documented in this file.
   - Informational only: nothing here pulls, checks out, restarts or gates anything. `lib/checkout-fleet.js`.
 
 ### Changed
+
+- **Every rule is shown as `Rule #<id>`, from its database id** (#2029). Operators could not tell rules apart: every surface showed only the authored text, so the only number visible was whatever the author typed, and it could be missing or wrong (rule #117 could open with "RULE #94"). The label now comes from the rule's id on:
+  - the Project Rules and Global rules lists;
+  - the Approve, Reject, Delete, toggle and history controls, and their status lines and confirmations;
+  - the wrap drawer's proposal rows, their outcome notes and the drawer summary;
+  - the `rule-proposal` step's detail;
+  - `tc rules`;
+  - the startup rules delivered to a session (inline in the prime, over the rules hook, and in the launch step);
+  - the delivery ledger, which now lists the delivered rules instead of a count;
+  - the operator-only refusal message.
+
+  API rule objects carry a new `label` field. If a rule's text opens with `RULE #<id> — ` naming the same rule, that prefix is left out of the display so the label is not doubled. A prefix naming a different id stays visible and is flagged: the lists and the wrap drawer show a **text says #94** badge, and `tc rules` adds `text says #94, not this rule`. Only a leading prefix counts; a number mentioned later in the text, such as `supersedes: RULE #97`, is a reference and is not flagged. Stored text never changes, and approval still checks the exact stored text. Existing assertions on the old unlabelled wording now expect the labelled wording, each still checking the same thing:
+  - the `tc rules` row format (`test/tc-verbs.test.js`);
+  - the ledger's `Rules: 2` and `Rules: 0`, now `Rules: Rule #1, Rule #2` and `Rules: none` (`test/project-deliveries-ledger.test.js`);
+  - the Project Rules escaping probe, which now matches the escaped, prefix-stripped text and also forbids a raw `${rule.content}` (`test/project-rules-modal.test.js`);
+  - the wrap widget's empty-text probe (`test/wrap-rule-proposal-widget.test.js`).
+
+  Four browser test sandboxes now load the real label helpers from `api-helper.js`, just as the pages do.
+
 - **`./deploy/install.sh` now refreshes deploy assets on a caddy-mode host too** (#1901). It used to refuse there, and the only way to refresh the server plist, `~/.tmux.conf` or dependencies was `--to direct`, then install.sh, then `--to caddy`, with the dashboard unprotected in between. In caddy mode it now:
   - **Checks before changing anything.** It first runs `ingress-cutover --to caddy --dry-run` and stops, with nothing changed, if the cutover would refuse. The one exception: when the only problem is a missing or stale ttyd runtime, it builds that runtime (which writes only `~/.tangleclaw/bin`), then runs the whole check again.
   - **Refreshes what it owns:** the server plist, `~/.tmux.conf`, the attach script and dependencies. It never writes the direct-mode ttyd plist.

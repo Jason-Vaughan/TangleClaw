@@ -1646,6 +1646,81 @@
     return (apiFn && apiFn.lastError) || fallback;
   }
 
+  /**
+   * The label a rule is known by everywhere: "Rule #<id>", from its database
+   * id and never from its authored text (#2029). Mirrors `lib/rule-label.js`;
+   * `test/rule-label-drift.test.js` runs both on the same inputs. Throws on an
+   * id it cannot use, so no surface can render an unlabelled rule.
+   * @param {number|string} id - The rule's database id
+   * @returns {string}
+   */
+  function tcRuleLabel(id) {
+    const n = typeof id === 'string' && /^\d+$/.test(id.trim()) ? Number(id) : id;
+    if (typeof n !== 'number' || !Number.isInteger(n) || n <= 0) {
+      throw new TypeError(`a rule label needs a positive integer id, got ${String(id)}`);
+    }
+    return `Rule #${n}`;
+  }
+
+  /**
+   * The text shown after a rule's label: its content, minus an authored
+   * "RULE #<id> — " opening that names this same rule (so the line is not
+   * "Rule #120 — RULE #120 — …"). A prefix naming another id stays visible.
+   * @param {number|string} id - The rule's database id
+   * @param {string} content - The rule's stored text
+   * @returns {string}
+   */
+  function tcStripSameIdPrefix(id, content) {
+    const text = typeof content === 'string' ? content : '';
+    const m = /^\s*RULE\s*#(\d+)\s*[\u2014\u2013-]\s*/i.exec(text);
+    if (m && `Rule #${Number(m[1])}` === tcRuleLabel(id)) return text.slice(m[0].length);
+    return text;
+  }
+
+  /**
+   * A rule as one displayable string: "Rule #<id> — <text>". Display only;
+   * the stored content is untouched.
+   * @param {{id: number|string, content?: string}} rule - A session rule
+   * @returns {string}
+   */
+  function tcDisplayRuleText(rule) {
+    if (!rule || typeof rule !== 'object') throw new TypeError('tcDisplayRuleText needs a rule object');
+    const label = tcRuleLabel(rule.id);
+    const body = tcStripSameIdPrefix(rule.id, rule.content).trim();
+    return body ? `${label} \u2014 ${body}` : label;
+  }
+
+  /**
+   * The number a rule's text claims for itself when it is not the rule's own
+   * (a leading "RULE #<n> — " only), else null. Mirrors
+   * `lib/rule-label.js#authoredIdMismatch`.
+   * @param {{id: number|string, content?: string}} rule - A session rule
+   * @returns {number|null}
+   */
+  function tcAuthoredIdMismatch(rule) {
+    if (!rule || typeof rule !== 'object') throw new TypeError('tcAuthoredIdMismatch needs a rule object');
+    const own = tcRuleLabel(rule.id);
+    const m = /^\s*RULE\s*#(\d+)\s*[\u2014\u2013-]\s*/i.exec(typeof rule.content === 'string' ? rule.content : '');
+    return m && `Rule #${Number(m[1])}` !== own ? Number(m[1]) : null;
+  }
+
+  /**
+   * The badge that flags a rule whose text claims another rule's number, or ''
+   * when it does not. Shared by every rules list so the cue reads the same.
+   * @param {{id: number|string, content?: string}} rule - A session rule
+   * @returns {string} HTML
+   */
+  function tcRuleMismatchBadge(rule) {
+    const claimed = tcAuthoredIdMismatch(rule);
+    if (claimed === null) return '';
+    return `<span class="session-rule-badge session-rule-badge--mismatch" title="This rule’s text calls itself RULE #${claimed}, but it is ${tcRuleLabel(rule.id)}. The label comes from the database.">text says #${claimed}</span> `;
+  }
+
+  global.tcRuleLabel = tcRuleLabel;
+  global.tcAuthoredIdMismatch = tcAuthoredIdMismatch;
+  global.tcRuleMismatchBadge = tcRuleMismatchBadge;
+  global.tcStripSameIdPrefix = tcStripSameIdPrefix;
+  global.tcDisplayRuleText = tcDisplayRuleText;
   global.tcUtf8Bytes = tcUtf8Bytes;
   global.tcFormatKB = tcFormatKB;
   global.tcMessageSize = tcMessageSize;
@@ -2627,17 +2702,21 @@
         return;
       }
       const ordered = rules.slice().sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id - b.id));
-      list.innerHTML = ordered.map((rule) => `
+      // #2029: each row, and each control on it, names its rule by DB id.
+      list.innerHTML = ordered.map((rule) => {
+        const label = tcRuleLabel(rule.id);
+        return `
     <div class="session-rule-item${rule.enabled ? '' : ' session-rule-disabled'}" data-rule-id="${rule.id}">
       <label class="session-rule-toggle">
-        <input type="checkbox" data-action="master-toggle-rule" data-rule-id="${rule.id}" ${rule.enabled ? 'checked' : ''}>
+        <input type="checkbox" data-action="master-toggle-rule" data-rule-id="${rule.id}" aria-label="Enable ${label}" ${rule.enabled ? 'checked' : ''}>
       </label>
-      <span class="session-rule-content">${rule.createdBy === 'system' ? '<span class="session-rule-badge" title="Shipped baseline rule">baseline</span> ' : ''}${rule.createdBy === 'ai' ? '<span class="session-rule-badge" title="AI-authored">AI</span> ' : ''}${esc(rule.content)}</span>
-      <button class="btn btn-small session-rule-history" data-action="master-rule-history" data-rule-id="${rule.id}" aria-label="Version history" title="Version history">&#8635;</button>
-      <button class="btn btn-small btn-danger session-rule-delete" data-action="master-delete-rule" data-rule-id="${rule.id}" aria-label="Delete rule">&times;</button>
+      <span class="session-rule-content"><span class="session-rule-label">${esc(label)}</span> ${tcRuleMismatchBadge(rule)}${rule.createdBy === 'system' ? '<span class="session-rule-badge" title="Shipped baseline rule">baseline</span> ' : ''}${rule.createdBy === 'ai' ? '<span class="session-rule-badge" title="AI-authored">AI</span> ' : ''}${esc(tcStripSameIdPrefix(rule.id, rule.content).trim())}</span>
+      <button class="btn btn-small session-rule-history" data-action="master-rule-history" data-rule-id="${rule.id}" aria-label="Version history of ${label}" title="Version history of ${label}">&#8635;</button>
+      <button class="btn btn-small btn-danger session-rule-delete" data-action="master-delete-rule" data-rule-id="${rule.id}" aria-label="Delete ${label}" title="Delete ${label}">&times;</button>
     </div>
     <div class="master-rule-history hidden" id="masterRuleHistory-${rule.id}"></div>
-  `).join('');
+  `;
+      }).join('');
     }
 
     /**
@@ -2677,7 +2756,7 @@
       if (!enabled) {
         const rule = await _getMasterRule(id);
         if (rule && rule.createdBy === 'system') {
-          if (!confirm('This is a shipped boundary rule. Disable it anyway? Restore defaults can always bring it back.')) {
+          if (!confirm(`${tcRuleLabel(id)} is a shipped boundary rule. Disable it anyway? Restore defaults can always bring it back.`)) {
             loadMasterRules();
             return;
           }
@@ -2685,7 +2764,7 @@
         }
       }
       const data = await apiMutate(`/api/session-rules/${id}`, 'PUT', body);
-      if (!data) { _setMasterRulesStatus('Update failed', false); }
+      if (!data) { _setMasterRulesStatus(`Update ${tcRuleLabel(id)} failed`, false); }
       loadMasterRules();
     }
 
@@ -2698,13 +2777,13 @@
       const rule = await _getMasterRule(id);
       const isBaseline = rule && rule.createdBy === 'system';
       const msg = isBaseline
-        ? 'This is a shipped boundary rule. Delete it anyway? Restore defaults can always bring it back.'
-        : 'Delete this Hard rule?';
+        ? `${tcRuleLabel(id)} is a shipped boundary rule. Delete it anyway? Restore defaults can always bring it back.`
+        : `Delete Hard rule ${tcRuleLabel(id)}?`;
       if (!confirm(msg)) return;
       const url = `/api/session-rules/${id}${isBaseline ? '?confirm=true' : ''}`;
       const data = await apiMutate(url, 'DELETE', {});
-      if (data) _setMasterRulesStatus('Deleted', true);
-      else _setMasterRulesStatus('Delete failed', false);
+      if (data) _setMasterRulesStatus(`Deleted ${tcRuleLabel(id)}`, true);
+      else _setMasterRulesStatus(`Delete ${tcRuleLabel(id)} failed`, false);
       loadMasterRules();
     }
 
@@ -2743,7 +2822,7 @@
         ? '<p class="session-rules-empty">No history.</p>'
         : versions.map((v) => `
       <div class="master-rule-version">
-        <span class="master-rule-version-meta">v${v.versionNo} · ${esc(v.op)} · ${esc(v.changedBy)} · ${esc(v.createdAt)}${v.enabled ? '' : ' · disabled'}</span>
+        <span class="master-rule-version-meta">${esc(tcRuleLabel(id))} v${v.versionNo} · ${esc(v.op)} · ${esc(v.changedBy)} · ${esc(v.createdAt)}${v.enabled ? '' : ' · disabled'}</span>
         <span class="master-rule-version-content">${esc(v.content)}</span>
         <button class="btn btn-small" data-action="master-restore-version" data-rule-id="${id}" data-version-no="${v.versionNo}">Restore</button>
       </div>`).join('');
@@ -2761,11 +2840,11 @@
       const body = { versionNo };
       const rule = await _getMasterRule(id);
       if (rule && rule.createdBy === 'system') {
-        if (!confirm(`Restore this shipped boundary rule to v${versionNo}? If the version differs from the current text, this changes the boundary.`)) return;
+        if (!confirm(`Restore shipped boundary rule ${tcRuleLabel(id)} to v${versionNo}? If the version differs from the current text, this changes the boundary.`)) return;
         body.confirmBaselineEdit = true;
       }
       const data = await apiMutate(`/api/session-rules/${id}/restore`, 'POST', body);
-      if (data) _setMasterRulesStatus(`Restored v${versionNo}`, true);
+      if (data) _setMasterRulesStatus(`Restored ${tcRuleLabel(id)} to v${versionNo}`, true);
       else _setMasterRulesStatus('Restore failed', false);
       loadMasterRules();
     }

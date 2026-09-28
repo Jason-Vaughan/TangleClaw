@@ -17,6 +17,7 @@ if (Number.isFinite(_nodeMajor) && _nodeMajor < 22) {
 
 const { createLogger, setLevel, initFileLogging } = require('./lib/logger');
 const store = require('./lib/store');
+const { ruleLabel } = require('./lib/rule-label');
 
 // --- Shared Docs Watcher ---
 const sharedDocWatchers = new Map();
@@ -5375,7 +5376,8 @@ function sessionRuleCaller(req, res, target) {
   const operatorOnly = {
     status: 403,
     code: 'OPERATOR_ONLY',
-    message: `Only the operator can ${target.action}. A session may propose rules for its own project, `
+    message: `Only the operator can ${target.action}${rule ? ` (${ruleLabel(rule.id)})` : ''}. `
+      + 'A session may propose rules for its own project, '
       + 'and revise, withdraw or decline AI proposals in that project while they are still proposals; approving, '
       + 'changing or removing a rule that governs sessions is the operator\'s, from the TangleClaw dashboard.'
   };

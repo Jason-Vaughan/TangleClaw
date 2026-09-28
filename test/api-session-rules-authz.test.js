@@ -191,6 +191,7 @@ describe('api/session-rules caller gate (#2013)', () => {
       const res = await request('POST', '/api/session-rules', { content: 'master from a pane', kind: 'master' }, asOwn);
       assert.equal(res.status, 403);
       assert.equal(res.data.code, 'OPERATOR_ONLY');
+      assert.doesNotMatch(res.data.error, /Rule #/, 'a create has no rule to name yet');
       assert.equal(store.sessionRules.list({ kind: 'master' }).length, before);
     });
 
@@ -210,6 +211,8 @@ describe('api/session-rules caller gate (#2013)', () => {
       const res = await request('PUT', `/api/session-rules/${governing.id}`, { content: 'swapped text' }, asOwn);
       assert.equal(res.status, 403);
       assert.equal(res.data.code, 'OPERATOR_ONLY');
+      // #2029: the refusal names the rule it refused, by DB id.
+      assert.match(res.data.error, new RegExp(`\\(Rule #${governing.id}\\)\\.`));
       const now = store.sessionRules.get(governing.id);
       assert.equal(now.content, governing.content);
       assert.equal(now.status, 'active');
