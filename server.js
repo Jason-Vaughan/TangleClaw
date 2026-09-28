@@ -1276,17 +1276,23 @@ function servePlanPage(res, pathname) {
       message: `No project has the id ${parts[2]}. Project ids are numeric — see GET /api/projects.`
     }));
   }
+  
+  const projConfig = store.projectConfig.load(project.path);
+  const documentHomeUrl = projConfig ? projConfig.documentHomeUrl : null;
+
   const resolved = planDocs.resolvePlanFile(project.path, file);
   if (resolved.status === 'archived') {
     return htmlResponse(res, 404, planDocs.renderMessagePage({
       title: 'Plan archived',
-      message: `${file} has been archived in ${project.name}: its work shipped and the plan was moved to the plans archive. It is no longer served.`
+      message: `${file} has been archived in ${project.name}: its work shipped and the plan was moved to the plans archive. It is no longer served.`,
+      documentHomeUrl
     }));
   }
   if (resolved.status !== 'ok') {
     return htmlResponse(res, 404, planDocs.renderMessagePage({
       title: 'Plan not found',
-      message: `${project.name} has no plan named ${file} in ${planDocs.plansDirCandidates(project.path).map((c) => c.relative).join(' or ')}.`
+      message: `${project.name} has no plan named ${file} in ${planDocs.plansDirCandidates(project.path).map((c) => c.relative).join(' or ')}.`,
+      documentHomeUrl
     }));
   }
   let markdown;
@@ -1296,7 +1302,8 @@ function servePlanPage(res, pathname) {
     log.warn('Plan file resolved but could not be read', { path: resolved.path, error: err.message });
     return htmlResponse(res, 404, planDocs.renderMessagePage({
       title: 'Plan not readable',
-      message: `${file} exists in ${project.name} but could not be read: ${err.message}`
+      message: `${file} exists in ${project.name} but could not be read: ${err.message}`,
+      documentHomeUrl
     }));
   }
   htmlResponse(res, 200, planDocs.renderPlanPage({
@@ -1304,7 +1311,8 @@ function servePlanPage(res, pathname) {
     file,
     relative: resolved.relative,
     modifiedAt: resolved.modifiedAt,
-    markdown
+    markdown,
+    documentHomeUrl
   }));
 }
 
