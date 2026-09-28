@@ -35,6 +35,24 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-28 — C1.5: merge C1 (#1966) to carry main and the relay fix forward (#1799)
+
+<!-- prawduct: type=chore | scope=c15-notify-emitter-1799 -->
+
+Stack integration S2 (dispatched by the PM, approved by the Architect).
+
+**Why:** #1966 now carries `main` @ `69fc2253` and the fix that relays only a project launch's own
+sends to the operator's chat (`3efdca1e`). C1.5 is stacked on C1's old head `25f03e01` and had
+neither. A `--no-ff` merge brings both in without rewriting C1.5. That keeps `198acf21` an ancestor,
+so C2 (#2003) stays valid on top of it.
+
+**What:** only `FEATURES.md` conflicted. The Medusa lines take C1's text, which is `main`'s current
+wording. The Operator channel line combines two edits that do not overlap: C1.5's notifications
+sentence and C1's launch-proof wording. Against C1, the result differs only by C1.5's own one-line
+change. The rest merged cleanly, including `lib/operator-channel.js`. Notification rows are stored
+`relayable` under `notify/<key>` and never pass through `resolveOutbound`, so the new sender check
+leaves them alone. The schema stays at C1.5's v52.
+
 ## 2026-09-28 — The operator channel sends server notifications (#1799)
 
 <!-- prawduct: type=feature | scope=c15-notify-emitter-1799 -->
