@@ -35,6 +35,25 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-28 — The Discord helper's relay modules (#1799, C2 chunk A)
+
+<!-- prawduct: type=feature | scope=discord-helper-1799 -->
+
+C2 chunk A, resumed on the PM's go (Medusa df246926) after C1.5. The parked WIP (log, secrets, state, C1 client, Discord REST) was rebased onto C1.5 @198acf21, and the rest was built. Plan: `.tangleclaw/plans/1799-discord-helper.md` (local, not tracked); its "Decisions made while building chunk A" section records every departure from the design.
+
+**Problem.** C1 and C1.5 give the operator a chat-agnostic channel with no chat client. Nothing yet connects Discord to it.
+
+**The change.** Modules under `lib/discord-helper/`, with no new dependency and not yet runnable (the CLI and launchd job are chunk B):
+- `gateway.js`: HELLO/heartbeat/IDENTIFY with GUILDS, GUILD_MESSAGES and MESSAGE_CONTENT only. A zombie connection is detected by a missing ACK and closed with 4000 so the session survives. It resumes on `resume_gateway_url`, identifies afresh after 4007/4009 or a non-resumable INVALID_SESSION, and stops for good on 4004/4010-4014. Reconnect uses capped jittered backoff. The Gateway URL is fetched from `GET /gateway/bot` and cached.
+- `inbound.js`: an id-only allowlist filter that runs before `content` is read (a test tripwires the getter). A message is relayed verbatim under its Discord id and gets a ✅ reaction on 202/200. A refusal is answered in fixed words, with a nonce derived from the message id so it is posted once. An unreachable TangleClaw is retried three times, then the operator is told.
+- `outbound.js`: bounded poll with capped backoff, and single-flight. Each item is acked only with Discord's returned id. The durable record and the nonce make a crash mid-post safe inside a 2-minute window. Past it the item is `uncertain`; a Discord 400 makes it `rejected`. Both are held for the operator and never retried, so one bad item cannot block the queue. A long item is split into up to 5 parts, each nonce'd and recorded as it lands. Notifications are titled by `type`.
+- `secrets.js`: stores through `security -i` on stdin (probed live on this Mac with a throwaway item, then deleted). The prompt-on-`-w` design was dropped, because a prompt may read the terminal rather than stdin. A value is limited to token characters, so it cannot inject a second command. The call has a timeout.
+- `log.js`: fields are capped at 32 characters and `ocsk_` values are refused, so neither secret fits. `state.js`: an unreadable record stops start-up with `state-unreadable` rather than being silently replaced.
+
+**Review.** Critic `rev-20260928T023538Z-e04e0fa7` found 0 blocking and 5 observations. O-1 (suite evidence predates the files) is accepted: the suite runs at the chunk B boundary. O-2 to O-5 (store via prompt, corrupt state, stale `posting` entries, the cut count) were fixed in this commit, along with a head-of-line block I found myself: a Discord 400 on one item stalled every later one.
+
+**Evidence.** `test/discord-helper.test.js` (unit) and `test/discord-helper-c1.test.js` (the helper's real modules against the real channel routes: one inbound row per Discord id, nothing recorded for other authors, guilds or channels, a merge request delivered stamped, a notification held through an outage then posted and acked once, and the token refused off-channel) are green. 16 guard mutations were run; 15 turned a test red, and the 16th is equivalent (a redundant parse guard).
+
 ## 2026-09-28 — The operator channel sends server notifications (#1799)
 
 <!-- prawduct: type=feature | scope=c15-notify-emitter-1799 -->

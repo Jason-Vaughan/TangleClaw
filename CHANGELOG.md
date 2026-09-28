@@ -6,6 +6,12 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **The Discord helper's relay modules** (#1799, first half of C2). A local helper, run as its own process, will connect the operator's Discord to the operator channel. This change adds its modules and tests; the command, the launchd job and the setup guide follow, so there is nothing to run yet. Under `lib/discord-helper/`:
+  - **Gateway client:** heartbeat, identify with only the three intents it needs, resume, reconnect with capped jittered backoff, and a full stop on a close Discord marks as unfixable.
+  - **Inbound:** only the one allowlisted author, server and channel are relayed, checked on ids before a message's text is read. A message goes over under its Discord id, so a replay records nothing new, and a refusal is answered in fixed words.
+  - **Outbound:** replies and notifications are posted and acknowledged only after Discord returns the posted message's id. A local record and Discord's message nonce make a restart mid-post safe; an item whose post cannot be confirmed is held for the operator rather than reposted.
+  - **Secrets:** the bot token and channel token are read from and written to the macOS Keychain without ever appearing in a process argument, a log or an error. The log records closed codes and ids only.
+
 - **The operator channel sends server notifications** (#1799). TangleClaw now tells the operator, through the channel's helper, when it needs attention: `operator-needed` when the Medusa watchdog escalates an exchange to the operator, `work-blocked` when a lane's workload receipt enters `blocked`, and `fleet-idle` when every live session is idle (once per idle episode). Each is a closed record: a type, an idempotency key, the project, a timestamp and server-rendered text. It rides the channel's outbound queue, listed with `kind` and `type` by `GET /api/operator-channel/outbound` and settled only by the helper's acknowledgement after it has posted. No route is added and the channel token reaches nothing new. Notifications are recorded only while the channel is on. `release-action-needed` and `certification-state-changed` are reserved and not yet emitted. Schema v52 (additive).
 
 - **An operator channel lets a chat helper talk to one project through TangleClaw.** It is the server half of the Discord Operator Bridge; the helper itself is separate. See `docs/operator-channel.md`.
