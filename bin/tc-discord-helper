@@ -28,4 +28,9 @@ main(process.argv.slice(2), {
     execFile('/bin/launchctl', args, (err) => resolve(err ? (typeof err.code === 'number' ? err.code : 1) : 0));
   }),
   onStop: (fn) => { process.once('SIGTERM', fn); process.once('SIGINT', fn); }
-}).then((code) => { process.exitCode = code; });
+}).then((code) => { process.exitCode = code; }, (err) => {
+  // Every expected failure is answered inside with a closed code. Anything
+  // else is reported by its type alone: its message is not ours to vouch for.
+  process.stderr.write(`tc-discord-helper: unexpected ${err && err.name ? err.name : 'failure'}\n`);
+  process.exitCode = 2;
+});

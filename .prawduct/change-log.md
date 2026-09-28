@@ -69,6 +69,8 @@ C2 chunk B, completing C2 (chunk C was folded into A, because C1.5 carries notif
   - R-9/R-11: the docs and the caller are added here.
   - R-12 (operator-channel row retention, C1's code) is accepted and routed to the PM. R-13 and R-14 are informational.
 
+**Follow-up from verify `rev-20260928T030041Z-3a1dca3e`** (0 findings). O-1 (a restated suite count) is accepted. O-2: the one-helper lock is now an exclusive create (`wx`), which takes over a stale file only when its owner is dead, so two `run`s started at once cannot both post. O-3: `status` checks a snapshot's shape before reading it, and the launcher reports an unexpected failure by its type alone. Tests cover each: two simultaneous helpers, and a `{}` snapshot. The lock mutant (`w` for `wx`) turns the file red.
+
 **Evidence.** `test/discord-helper-cli.test.js` covers every command, with a sweep that finds neither secret in any file the commands wrote or anything they printed. The three helper test files are green. The real binary's `usage` and `status` were run on this host: `status` reads the Keychain and writes nothing. Four new guard mutations (queue, queue tail, held log, read-back) each turned a test red. The full suite was recorded green at the chunk B boundary before these review fixes (7816 passed, 0 failed, 1 skipped); it is re-run on the final tree before the PR.
 
 ## 2026-09-28 — The Discord helper's relay modules (#1799, C2 chunk A)

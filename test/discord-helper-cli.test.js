@@ -184,6 +184,24 @@ describe('tc-discord-helper', () => {
       assert.equal(JSON.parse(errLines.at(-1)).code, 'helper-already-running');
     });
 
+    it('lets only one of two helpers started at the same instant run', async () => {
+      await configure();
+      withSecrets();
+      const stops = [];
+      const twin = (pid) => ({ ...deps, pid, alive: (x) => x === 4242 || x === 4243, onStop: (fn) => stops.push(fn) });
+      const results = [];
+      const a = cli.main(['run'], twin(4242)).then((c) => results.push(c));
+      const b = cli.main(['run'], twin(4243)).then((c) => results.push(c));
+      await new Promise((r) => setTimeout(r, 20));
+      const started = stops.length;
+      const refusedEarly = [...results];
+      for (const stop of stops) stop();
+      await Promise.all([a, b]);
+      assert.equal(started, 1, 'exactly one started');
+      assert.deepEqual(refusedEarly, [1], 'the other refused');
+      assert.ok(errLines.some((l) => JSON.parse(l).code === 'helper-already-running'));
+    });
+
     it('runs until stopped: asks Discord for the Gateway, polls TangleClaw, keeps a pid and a status, and cleans up', async () => {
       await configure();
       withSecrets();
@@ -222,6 +240,15 @@ describe('tc-discord-helper', () => {
       assert.doesNotMatch(text, /reply 4/);
       assert.equal(fs.readFileSync(p().state, 'utf8'), before);
       assert.equal(fs.statSync(p().state).mtimeMs, mtime);
+    });
+
+    it('survives a status snapshot that parses but is not one', async () => {
+      fs.mkdirSync(p().dir, { recursive: true });
+      fs.writeFileSync(p().pid, '777');
+      liveOthers.add(777);
+      fs.writeFileSync(p().status, '{}');
+      assert.equal(await cli.main(['status'], deps), 0);
+      assert.match(outLines.join('\n'), /status snapshot: unreadable/);
     });
 
     it('names a missing secret and a missing config by code', async () => {
