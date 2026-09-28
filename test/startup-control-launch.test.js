@@ -28,6 +28,13 @@ const launchBootstrap = require('../lib/launch-bootstrap');
 const launchKickoff = require('../lib/launch-kickoff');
 const wrapRunRegistry = require('../lib/wrap-run-registry');
 
+// The loopback profile is granted only on facts a test states (#1957); these
+// tests exercise launches on an install where it may be applied.
+const { grantingFacts, useTrustFacts } = require('./_loopback-trust');
+let restoreTrust;
+before(() => { restoreTrust = useTrustFacts(grantingFacts()); });
+after(() => restoreTrust());
+
 describe('startupControl at launch and teardown (codex)', () => {
   let tempDir;
   let prevBase;
@@ -328,6 +335,20 @@ describe('startupControl at launch and teardown (codex)', () => {
       assert.match(failed.reason, /could not be resolved \(boom\)/);
     } finally {
       startupControl.resolveForLaunch = realResolve;
+    }
+  });
+
+  it('full auto on a proven Codex whose install fails the trust guard keeps the no-network sandbox, and its context is pasted (#1957)', () => {
+    healthySeams();
+    const restore = useTrustFacts({ ...grantingFacts(), machineClientRequiresServiceToken: false });
+    try {
+      const l = launched({ launchMode: 'fullAuto', primePrompt: true });
+      assert.match(l.command, /--sandbox workspace-write( |$)/, 'the profile is withheld, so the no-network sandbox stays');
+      assert.ok(!l.command.includes('default_permissions'), l.command);
+      assert.equal(l.sequence.applicability, 'not-applicable');
+      assert.match(l.sequence.notApplicableReason, /loopback network profile is withheld \(loopback-api-unauthenticated\)/);
+    } finally {
+      restore();
     }
   });
 
