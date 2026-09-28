@@ -786,3 +786,17 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/store-operator-channel-migration.test.js` — schema v51: a fresh install and a migrated v50 store both have the channel tables, each direction is unique per message, and text is cleared once handed on.
 - `test/wrap-upstream-provenance.test.js` — #1868: wrap advice that knows what upstream already holds, driven against real repositories with a real bare origin — a stale session checkout offering its own merged plan, and a carrier identical to upstream, are not presented as new work.
 - `test/store-medusa-exchange-migration.test.js` — #1839: schema v49's Medusa exchange tables exist on a fresh install at the current version and arrive on a v48 store through the migration; the postcondition refuses to stamp the version over tables that cannot keep an append-only record.
+
+## TODO (auto-stubbed 2026-09-27)
+
+- **TBD** — touched in this session: `lib/discord-helper/c1-client.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/discord-helper/cli.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/discord-helper/discord-rest.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/discord-helper/gateway.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/discord-helper/inbound.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/discord-helper/log.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/discord-helper/outbound.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/discord-helper/secrets.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/discord-helper/state.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/panel-toggle-rows.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/port-owner-kind-panel.test.js`. <!-- describe -->
