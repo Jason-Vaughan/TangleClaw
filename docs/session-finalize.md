@@ -148,9 +148,11 @@ with the session's launch baseline:
   files, or a pre-existing one whose digest changed, is the session's work. A
   clean new worktree is not; its commits are counted below. A launch baseline
   without the worktree record refuses whenever any linked worktree exists;
-- no commit made since the session started exists on any other local branch
-  without a remote-tracking ref, and nothing was stashed since then. Commits on
-  a local branch from before the launch are not the session's. These two are
+- no commit made since the session started exists on any other local branch,
+  or on any worktree's HEAD (a detached HEAD included, such as a worktree
+  added with `--detach` from the fetched main), without a remote-tracking ref,
+  and nothing was stashed since then. Commits from before the launch are not
+  the session's. These two are
   judged by commit time, because the baseline records only HEAD.
 
 Paths TangleClaw provably owns are judged the way the wrap judges them

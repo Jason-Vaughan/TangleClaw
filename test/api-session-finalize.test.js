@@ -1101,6 +1101,50 @@ describe('POST /api/sessions/:project/finalize (#2027)', () => {
       assert.equal(ok.status, 200, JSON.stringify(ok.data));
     });
 
+    /**
+     * A launched lane with a pushed `origin/main` and a live pane, and a
+     * detached linked worktree made from the fetched main: the clean worktree
+     * CLAUDE.md tells a session to continue in.
+     * @param {string} prefix
+     * @returns {Promise<{lane: object, wt: string}>}
+     */
+    async function detachedFromOrigin(prefix) {
+      const base = launched(prefix);
+      const bare = path.join(tmpDir, `${base.project.name}.git`);
+      git(tmpDir, ['init', '-q', '--bare', bare]);
+      git(base.dir, ['remote', 'add', 'origin', bare]);
+      git(base.dir, ['push', '-q', 'origin', 'main']);
+      store.sessions.kill(base.sessionId, 'test: relaunch with a pane');
+      const lane = { ...base, ...bind(base.project, base.dir, `tc-${base.project.name}`) };
+      await receipt(lane);
+      const wt = fs.realpathSync(tmpDir) + `/${base.project.name}-detached-wt`;
+      git(base.dir, ['worktree', 'add', '-q', '--detach', wt, 'origin/main']);
+      return { lane, wt };
+    }
+
+    it('a commit since launch on a detached HEAD in a linked worktree is owned work, with the pane in the registered checkout', async () => {
+      const { lane, wt } = await detachedFromOrigin('wt-detached');
+      fs.writeFileSync(path.join(wt, 'detached-work.txt'), 'x\n');
+      git(wt, ['add', 'detached-work.txt']);
+      git(wt, ['commit', '-q', '-m', 'work on a detached HEAD']);
+      assert.equal(git(wt, ['status', '--porcelain']).trim(), '', 'the worktree is clean: only the commit holds the work');
+      await withPane(lane.dir, async () => {
+        const r = await finalize(lane, lane.headers);
+        assert.equal(r.status, 409, JSON.stringify(r.data));
+        assert.equal(r.data.code, 'OWNED_WORK_PRESENT');
+        assert.equal(r.data.unpushedOnBranches, 1);
+      });
+      assert.equal(store.sessions.get(lane.sessionId).status, 'active');
+    });
+
+    it('a detached worktree at the fetched main with no commit of its own is not work', async () => {
+      const { lane } = await detachedFromOrigin('wt-detached-clean');
+      await withPane(lane.dir, async () => {
+        const r = await finalize(lane, lane.headers);
+        assert.equal(r.status, 200, JSON.stringify(r.data));
+      });
+    });
+
     it('the operator\'s worktree that was dirty at launch is preserved while unchanged, and refuses once changed', async () => {
       const mk = (prefix) => launched(prefix, (dir) => {
         const wt = `${dir}-op-wt`;
