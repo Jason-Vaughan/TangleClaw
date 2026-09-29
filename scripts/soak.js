@@ -10,6 +10,11 @@
  *                 [--load-mean-ms <n>] [--fault-mean-ms <n>] [--fault-quiet-ms <n>]
  *   soak validate --schedule <file>
  *   soak run      --schedule <file> --api <url> --log <file> [--allow-unverified-live] [--no-live-install]
+ *   soak repos    --root <dir> --origins <dir> [--projects a,b,c]
+ *
+ * `repos` creates the synthetic `soak-*` repos the load targets, each with a
+ * local bare origin, or confirms they already exist exactly as it would create
+ * them. It refuses any path it does not own (`lib/soak/repos`).
  *
  * `run` executes against the server named by `--api` and nothing else. There
  * is deliberately no fallback to `TANGLECLAW_API`. Because a soak's load
@@ -41,13 +46,15 @@ const fs = require('node:fs');
 const scheduleLib = require('../lib/soak/schedule');
 const driver = require('../lib/soak/driver');
 const { EXECUTORS } = require('../lib/soak/executors');
+const reposLib = require('../lib/soak/repos');
 
 const USAGE = [
   'usage: soak plan     --seed <s> --phase certifying|destructive --duration-hours <h> --out <file>',
   '                     [--classes api,engine,browser,fault] [--projects a,b,c]',
   '                     [--load-mean-ms <n>] [--fault-mean-ms <n>] [--fault-quiet-ms <n>]',
   '       soak validate --schedule <file>',
-  '       soak run      --schedule <file> --api <url> --log <file> [--allow-unverified-live] [--no-live-install]'
+  '       soak run      --schedule <file> --api <url> --log <file> [--allow-unverified-live] [--no-live-install]',
+  '       soak repos    --root <dir> --origins <dir> [--projects a,b,c]'
 ].join('\n');
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -260,6 +267,28 @@ async function cmdRun(flags, io, deps) {
 }
 
 /**
+ * `repos`: create or confirm the synthetic repos and their local bare origins.
+ * @param {Object<string, string>} flags - Flags
+ * @param {object} io - `{stdout, stderr}`
+ * @returns {number} Exit code: 0 done, 3 refused
+ */
+function cmdRepos(flags, io) {
+  expectFlags(flags, ['root', 'origins'], ['projects']);
+  const projects = flags.projects === undefined ? undefined : flags.projects.split(',').map((s) => s.trim()).filter(Boolean);
+  let result;
+  try {
+    result = reposLib.ensureRepos({ root: flags.root, origins: flags.origins, projects });
+  } catch (err) {
+    if (!(err instanceof reposLib.RepoRefusal)) throw err;
+    if (err.code === reposLib.REFUSAL.BAD_ROOTS || err.code === reposLib.REFUSAL.BAD_PROJECTS) throw new UsageError(err.message);
+    io.stderr.write(`${JSON.stringify({ code: err.code, message: err.message, details: err.details })}\n`);
+    return 3;
+  }
+  io.stdout.write(`${JSON.stringify(result)}\n`);
+  return 0;
+}
+
+/**
  * Entry point, with every side effect injectable for tests.
  * @param {string[]} argv - Arguments after the script name
  * @param {object} [deps] - `{stdout, stderr, env, fetch, lookup, clock, onStopSignal}`
@@ -280,6 +309,7 @@ async function main(argv, deps = {}) {
     if (command === 'plan') return cmdPlan(flags, io);
     if (command === 'validate') return cmdValidate(flags, io);
     if (command === 'run') return await cmdRun(flags, io, full);
+    if (command === 'repos') return cmdRepos(flags, io);
     throw new UsageError(command ? `unknown command: ${command}` : 'a command is required');
   } catch (err) {
     if (err instanceof UsageError) {

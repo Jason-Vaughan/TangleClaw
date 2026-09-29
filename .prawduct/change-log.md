@@ -35,6 +35,48 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-29 — Soak guest definition and synthetic `soak-*` repos (#2020 Chunk 1)
+
+<!-- prawduct: type=feature | scope=2020-chunk1-soak-guest-repos -->
+
+#2020 Chunk 1. The PM dispatched it over Medusa under Rule #124 (RM-LEASE TC-RM07 generation 3). Chunk 1 was reassigned from TC-RM02 on #2020 on 2026-09-29. Plan: `/Users/jasonvaughan/Documents/Projects/TC-RM07/.tangleclaw/plans/2020-chunk1-soak-guest-repos.md`.
+
+**Why.** The soak's `run` needs the synthetic projects to exist on the target, and the Architect ruling made generating them mandatory before the dry run. There was also no guest definition and no default-deny network profile.
+
+**The change.**
+- `lib/soak/repos.js` and `soak.js repos` create each `soak-*` repo with a local bare origin.
+  - Deterministic seed commit: the SHA is also computed without git and checked.
+  - Exact ownership: a `soak.owner` marker in both repos' config, plus the committed marker file.
+  - Every path is inspected before anything is written.
+  - Each repo is built in staging and renamed into place, origin first.
+  - Running it again is a no-op.
+- `deploy/soak/guest/`:
+  - `guest.conf`;
+  - `pf/soak-deny.conf`;
+  - `host-provision.sh`: dry run unless `--execute` and `SOAK_OPERATOR_APPROVED=1`;
+  - `guest-setup.sh`: in the guest only; loads pf and proves the loaded ruleset, working loopback, and no egress over IPv4, IPv6 or UDP DNS (Architect A38 refinement), installs the stub, creates the repos and attaches them.
+
+**Decisions** (recorded in the plan):
+- pf allows inbound SSH from the host, because the requirement is default-deny, not zero ingress.
+- Installing and starting the pinned RC in the guest is left to the runbook chunk.
+- Attach uses the dashboard client header while the guest's gate is down, and refuses when it is up.
+
+**Tests.** `test/soak-repos.test.js`, all in temp directories:
+- seed determinism across roots, and against the independent computation;
+- idempotency, checked against a byte-level snapshot;
+- each case that is not owned;
+- rebuilding from the origin;
+- immunity to `GIT_*` in the caller's environment;
+- the CLI's exit codes.
+
+`test/soak-guest.test.js` uses fake tart, sudo and sysctl, so no host action can run:
+- the dry run by default, and the approval gate;
+- refusing an existing VM, and refusing to share `$HOME` or `/`;
+- the exact pf rules, and no secrets in the config;
+- guest-setup refusing in a live pane, outside macOS, or on a machine that is not a VM.
+
+The existing soak tests are unchanged.
+
 ## 2026-09-28 — Every rule is named "Rule #<id>" from its DB id (#2029)
 
 <!-- prawduct: type=feature | scope=2029-rule-id-display -->

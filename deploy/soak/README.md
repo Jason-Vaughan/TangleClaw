@@ -8,9 +8,10 @@ It judges nothing. Whether the release candidate passes is decided by the releas
 judge (`rc-cert`) and the soak's own acceptance gates. This tool only produces the conditions and
 records what happened.
 
-> **Status: Chunk 2A (the core).** This directory has the schedule, the runner for the `api` and `engine`
-> load classes, and the stub engine. Not built yet:
-> - the guest itself;
+> **Status: Chunks 2A (the core) and 1 (the guest and the synthetic repos).** This directory has the
+> schedule, the runner for the `api` and `engine` load classes, the stub engine, the guest definition
+> (`guest/`) and the generator for the synthetic `soak-*` repos. Not built yet:
+> - installing and starting the pinned release candidate inside the guest (the operator runbook);
 > - the executors for the `browser` and `fault` classes;
 > - integrity sampling, the evidence bundle and the operator runbook;
 > - the certification judge (Chunks 3 and 4 of #2020, with the link to rc-cert). Until it exists,
@@ -20,9 +21,6 @@ records what happened.
 >     projects and ports);
 >   - stub-engine sessions that exercise wrap and the switchboard (2A's engine cycle covers launch,
 >     commands and kill);
-> - **Chunk 1, also mandatory before the dry run:** deterministic, idempotent creation of the
->   exact-owned synthetic `soak-*` repos with local bare origins. Until then they must already exist
->   on the target.
 >
 > Until the missing executors exist, `run` **refuses** any schedule containing those kinds
 > (`NO_EXECUTOR`) rather than skipping them. Plan with `--classes api,engine` to run the load
@@ -256,3 +254,97 @@ The guest has no network access and holds no vendor credentials, so the `engine`
 
 It exercises TangleClaw's side of a session: launch, tmux, ttyd, command injection and kill.
 **Real-vendor engine behaviour is outside this soak.**
+
+## The synthetic repos
+
+The load targets projects that must exist on the target. `repos` creates them:
+
+```sh
+node scripts/soak.js repos --root ~/Projects --origins ~/soak-origins [--projects soak-a,soak-b,soak-c]
+```
+
+- **Each project is `<root>/<name>`, with a bare origin at `<origins>/<name>.git`.** The origin is a
+  local path, never a network remote, and nothing is pushed anywhere else. `--root` must be the
+  target TangleClaw's `projectsDir`.
+- **The names follow the schedule's rules** (`soak-…`, at most 20, no repeats), and the default set is
+  the schedule's own, so the repos and the load agree.
+- **Each repo's seed commit has the same SHA on every machine and every run.**
+  - It is built from a fixed tree, author, date and message. The operator's git config, `GIT_*`
+    environment and hooks are all kept out.
+  - The SHA is also computed without git, and a commit that differs is refused (`SEED_MISMATCH`).
+  - The output carries each seed SHA and a `digest` of the set, so evidence can name exactly which
+    repos a soak ran against.
+- **The seed tree:**
+  - `.soak-synthetic.json`, the marker;
+  - `.tangleclaw/project.json`, naming the `soak-stub` engine;
+  - `CHANGELOG.md`;
+  - `README.md`;
+  - `src/index.js`.
+
+  Because of the first two, attaching the project to TangleClaw picks the stub engine and adds nothing
+  to the work tree.
+- **It touches only repos it made.**
+  - A repo is owned when its git config holds `soak.owner = tc.soak-repos/v1:<name>`, its origin's
+    does too, its `origin` remote is exactly that local path, and its history contains the seed commit.
+  - Anything else at either path is refused with `NOT_OWNED` and left untouched: a file, a symlink,
+    an empty directory, a plain directory inside some other repo, a repo with another marker or
+    remote, or a work repo whose origin is gone.
+  - Every path is inspected before anything is written, so a refusal creates nothing.
+- **Running it again is safe.**
+  - An owned repo is reported `present` and not written to.
+  - `pristine` says whether the work repo and its origin still sit exactly at the seed. A soak moves
+    them on, and that does not make them any less owned.
+  - Each repo is assembled in a `.soak-staging-*` directory and renamed into place, origin first. A
+    crash between the two renames leaves an owned origin with no work repo, and the next run rebuilds
+    the work repo from that origin. A process killed mid-build can leave a `.soak-staging-*`
+    directory behind; it is never mistaken for a repo, and can be removed by hand.
+
+Exit codes: 0 done, 2 usage (including relative, identical or nested roots, or a refused project
+list), 3 refused (`NOT_OWNED`, `SEED_MISMATCH` or `GIT_FAILED`, printed as JSON on stderr).
+
+## The guest
+
+`guest/` defines the isolated macOS guest the soak runs in, as files. Nothing here runs by itself.
+Creating, starting or deleting a VM, installing tart, and changing host networking are the operator's
+actions.
+
+- **`guest.conf`** holds the pinned settings: VM name, base image, CPU, memory, disk, the one shared
+  directory, the guest's projects and origins roots, and the synthetic project names.
+  - Every value can be overridden from the environment. Record what was exported with the run's
+    evidence.
+  - It holds no secrets.
+  - The base image and the tart flags are operator-checked: confirm them against the installed tart
+    before the first run.
+- **`pf/soak-deny.conf`** is the default-deny network profile.
+  - Loopback is unfiltered, so the guest's TangleClaw, ttyd and the driver can talk to each other.
+  - SSH in from the host's address is the one other thing allowed, and pf's state lets only that
+    session's replies out.
+  - There is no DNS, no egress and no route to production.
+- **`host-provision.sh`** runs on the host.
+  - By default it only prints the `tart clone`, `tart set` and `tart run` commands.
+  - It runs them only with **both** `--execute` and `SOAK_OPERATOR_APPROVED=1`.
+  - It refuses to reuse an existing VM of the same name: a certification starts from a pristine guest,
+    and deleting one is the operator's call.
+  - It refuses to share `/`, `$HOME` or a relative path into the guest. The shared directory is the
+    only host path the guest sees, so it must be a dedicated one.
+- **`guest-setup.sh`** runs inside the guest, from a checkout of the pinned release candidate, once that
+  TangleClaw is answering on loopback.
+  - It refuses to run where `TANGLECLAW_API` is set (a live pane), outside macOS, or on a machine that
+    is not a VM (`kern.hv_vmm_present`).
+  - It loads the pf profile, then **proves it holds**, because a profile that loaded but does not block
+    is not isolation. Any failure or ambiguity stops it (exit 3) before anything else runs:
+    - pf must report `Enabled`;
+    - the rules pf reports must be exactly the profile's, in pfctl's own form;
+    - `lo0` must be skipped;
+    - loopback must answer on `127.0.0.1` and `::1`, and so must the guest TangleClaw's `/api/health`;
+    - nothing outside may answer: TCP to a literal IPv4 and a literal IPv6 address, and a DNS query over
+      UDP sent straight to a resolver's address. None of it depends on DNS.
+  - It installs `soak-stub` on `PATH` and its engine profile.
+  - It runs `soak.js repos`.
+  - It attaches each project through the guest TangleClaw's own API. With the guest's auth gate down,
+    it uses the dashboard client header. With the gate up, it refuses and tells you to attach from the
+    dashboard. It never reads or writes a token.
+  - Every step is safe to repeat.
+
+The dry run and the certifying run then drive the guest's own TangleClaw from inside the guest, with
+`run --no-live-install`.
