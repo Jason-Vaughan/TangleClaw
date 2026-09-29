@@ -173,6 +173,10 @@ Sessions report what they are doing with `tc workload set`, and TangleClaw combi
 
 You can narrow a session's verdict (hold it at unknown, or mark it not safe to clear) through `POST /api/tc/workload/narrowing`. See [Fleet workload](fleet-workload.md). A dashboard view is deferred under the current operator UI freeze.
 
+### Coordinator Context Rotation
+
+A Codex coordinator (Architect or ProjectManager) that needs to clear its context runs `tc rotation prepare --checkpoint <file>` instead of a bare `/clear`. TangleClaw then holds the coordinator's new dispatch, clears it once its turn ends, and binds the new thread. It tells that thread to reconcile the checkpoint and submit a receipt with `tc rotation resume`. Dispatch resumes only when the receipt checks out. If a rotation cannot finish, the operator ends it with `POST /api/tc/rotation/abandon`. See [Coordinator context rotation](coordinator-rotation.md).
+
 ### Ports Panel
 
 Below the system stats, there's a collapsible **Ports** panel. Tap it to see all active port leases grouped by project. Each lease shows:

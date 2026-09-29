@@ -172,6 +172,7 @@ describe('the wake monitor replaces a stranded nudge (#1621)', () => {
     wake._internal.getProject = () => world.project;
     wake._internal.loadProjectConfig = () => ({ medusaWake: true });
     wake._internal.wrapRunning = () => false;
+    wake._internal.rotationOpen = () => false;
     wake._internal.getStatus = () => world.status;
     wake._internal.getMessages = () => world.inbox;
     wake._internal.capturePane = () => ({ lines: world.pane });

@@ -270,6 +270,7 @@ const ciStatus = require('./lib/ci-status');
 const master = require('./lib/master');
 const sharedDocsAccess = require('./lib/shared-docs-access');
 const workload = require('./lib/workload');
+const coordinatorRotation = require('./lib/coordinator-rotation');
 const { workloadSentence } = require('./lib/ecosystem-primer');
 const workloadFleet = require('./lib/workload-fleet');
 // The one live fleet activity observer (#1912, ADR 0020 §5): started with the
@@ -4785,6 +4786,80 @@ route('GET', '/api/tc/workload', (req, res) => {
   return jsonResponse(res, 200, { ...result.body, ...(lane || {}) });
 });
 
+// Governed coordinator context rotation (#2032). A coordinator prepares its
+// own rotation with a structured checkpoint; the server fences its new
+// dispatch, types /clear, binds the one replacement thread it can prove and
+// delivers a re-entry turn; the replacement context resumes with a receipt the
+// server cross-checks before lifting the fence. Every route but abandon is
+// bound to the caller's own verified launch, like workload.
+
+/**
+ * The caller's verified launch for a rotation route, or a refusal written to
+ * `res`.
+ * @param {object} req - The request.
+ * @param {object} res - The response.
+ * @returns {object|null} The access, or null when refused.
+ */
+function _rotationAccess(req, res) {
+  const access = sharedDocsAccess.resolveAccess(req);
+  if (access.kind === sharedDocsAccess.KINDS.PROJECT) return access;
+  const why = access.kind === sharedDocsAccess.KINDS.INVALID ? access.reason : access.kind;
+  errorResponse(res, 403, 'A coordinator rotation is prepared, read and resumed only by the session\'s own verified launch '
+    + `(x-tangleclaw-project-id and x-tangleclaw-launch-id). This caller is ${why}.`, 'ROTATION_BINDING_REQUIRED', { reason: why });
+  return null;
+}
+
+// POST /api/tc/rotation/prepare — `{attemptKey, checkpoint}`: begin a rotation
+// of the caller's own session and start the server's side of it.
+route('POST', '/api/tc/rotation/prepare', (req, res, _params, body) => {
+  const access = _rotationAccess(req, res);
+  if (!access) return;
+  const result = coordinatorRotation.prepare({ access, body });
+  if (result.status === 201 || result.status === 200) coordinatorRotation.drive(result.body.rotation.rotationId);
+  return jsonResponse(res, result.status, result.body);
+}, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
+
+// GET /api/tc/rotation — the caller's open rotation, checkpoint included (what
+// the replacement context reconciles against), or its most recent one.
+route('GET', '/api/tc/rotation', (req, res) => {
+  const access = _rotationAccess(req, res);
+  if (!access) return;
+  const open = coordinatorRotation.openRotation(access.projectId);
+  return jsonResponse(res, 200, {
+    rotation: coordinatorRotation.view(open, { checkpoint: true }),
+    generation: store.coordinatorRotations.currentGeneration(access.projectId)
+  });
+});
+
+// POST /api/tc/rotation/advance — retry the server's side of the caller's open
+// rotation after a failure it has since fixed (a busy thread, a refused clear).
+route('POST', '/api/tc/rotation/advance', async (req, res) => {
+  const access = _rotationAccess(req, res);
+  if (!access) return;
+  const open = coordinatorRotation.openRotation(access.projectId);
+  if (!open) return errorResponse(res, 404, 'This project has no rotation in progress.', 'ROTATION_NOT_FOUND');
+  const r = await coordinatorRotation.advance(open.rotationId);
+  if (r && (r.state === 'fenced' || r.state === 'rebinding')) coordinatorRotation.drive(r.rotationId);
+  return jsonResponse(res, 200, { rotation: coordinatorRotation.view(r) });
+});
+
+// POST /api/tc/rotation/resume — `{rotationId, attemptKey, generation, receipt}`:
+// the replacement context's proof. Accepted only when every fact the server can
+// observe agrees; that acceptance is what lifts the fence.
+route('POST', '/api/tc/rotation/resume', (req, res, _params, body) => {
+  const access = _rotationAccess(req, res);
+  if (!access) return;
+  const result = coordinatorRotation.resume({ access, body });
+  return jsonResponse(res, result.status, result.body);
+}, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
+
+// POST /api/tc/rotation/abandon — `{rotationId, reason}`: the operator ends a
+// rotation that cannot finish, lifting the fence. Operator only.
+route('POST', '/api/tc/rotation/abandon', (req, res, _params, body) => {
+  const result = coordinatorRotation.abandon({ caller: resolveControlCaller(req), body });
+  return jsonResponse(res, result.status, result.body);
+});
+
 // POST /api/tc/workload/narrowing — the operator narrows (or clears a
 // narrowing of) one lane's composed verdict (ADR 0020 §7). Operator only, with
 // control's proof tiers; a narrowing only ever lowers the verdict.
@@ -7365,6 +7440,10 @@ function registerMedusaRoutes(prefix, resolve) {
     if (refused(res, r, 'send from')) return;
     if (outboundRefused(res, r.target)) return;
     const senderProjectId = targetProjectId(r.target);
+    // #2032: a coordinator in managed context rotation sends no new dispatch
+    // until its resume receipt is accepted; replies still go through.
+    const fenced = coordinatorRotation.sendFenceRefusal(senderProjectId, body);
+    if (fenced) return jsonResponse(res, fenced.status, fenced.body);
     const out = await medusaSend.sendTracked({
       sessionId: r.target.sessionId, senderProjectId, caller: exchangeCaller(req, senderProjectId), body
     });
@@ -11911,6 +11990,10 @@ if (require.main === module) {
     // listeners are in-memory, so without this a server restart silently
     // deregistered every running session from the switchboard.
     sessions.resyncMedusaListeners();
+    // Resume the server's side of any coordinator rotation a restart
+    // interrupted (#2032); each step is a compare-and-set, so a pass that had
+    // already landed is not repeated.
+    coordinatorRotation.recover();
     // The Master's half of that re-sync (#996): a Master left running across
     // a TangleClaw restart would otherwise drop off the switchboard until its
     // next ensure. Probes tmux and starts nothing when tmux does not answer.

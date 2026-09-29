@@ -70,6 +70,8 @@ function installWorld(overrides = {}) {
     // Whether `lib/wrap-run-registry` says a wrap pipeline is running for this
     // project. False is the ordinary case.
     wrapRunning: false,
+    // Whether the project is a coordinator in managed context rotation (#2032).
+    rotating: false,
     // The Master's seams (#996). `null` = no Master to scan, which keeps every
     // project-only test exactly as it was; the Master tests set a record.
     masterRecord: null,
@@ -92,6 +94,7 @@ function installWorld(overrides = {}) {
   // resolve there too, so an unstubbed read makes this gate inert in every test
   // instead of exercised in one.
   wake._internal.wrapRunning = () => world.wrapRunning;
+  wake._internal.rotationOpen = () => world.rotating;
   wake._internal.getStatus = () => world.status;
   wake._internal.getMessages = () => world.inbox;
   wake._internal.capturePane = () => ({ lines: world.pane });
@@ -742,6 +745,29 @@ describe('medusa-wake — gates (each one blocks alone)', () => {
     world.wrapRunning = false;
     tickThroughDebounce();
     assert.equal(world.injected.length, 1, 'the held nudge fires once the wrap is over');
+  });
+
+  it('never nudges a coordinator in managed context rotation, and nudges once when it resumes (#2032)', () => {
+    // The rotation types its own /clear and delivers its own re-entry turn; a
+    // nudge typed into the pane meanwhile would land in the clear or on top of
+    // the reconciliation. Mail waits, and is nudged once after the resume.
+    const world = installWorld({ rotating: true });
+    tickThroughDebounce();
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 0);
+    assert.ok(world.recorded.some((r) => r.skipReason === 'coordinator-rotating'), 'the hold is recorded, not silent');
+
+    world.rotating = false;
+    tickThroughDebounce();
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1, 'the waiting mail is nudged exactly once after the rotation resumes');
+  });
+
+  it('holds the nudge when the rotation record cannot be read (#2032)', () => {
+    const world = installWorld({ sessions: [claudeSession(7)] });
+    wake._internal.rotationOpen = () => { throw new Error('store locked'); };
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 0);
   });
 
   // #1314 — every test above stubs `_internal.wrapRunning`, so none of them can

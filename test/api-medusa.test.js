@@ -1523,6 +1523,28 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     assert.notEqual(bridge.received[0].from, 'system');
   });
 
+  it('a project in managed context rotation sends no new dispatch until it resumes; replies still go (#2032)', async () => {
+    const now = new Date().toISOString();
+    store.coordinatorRotations.insert({
+      rotationId: 'rot_send_fence', attemptKey: 'send-fence-0001', projectId: project.id, sessionId: active.id,
+      launchId: 'l', engineId: 'codex', channelId: 1, sequenceId: 1, generation: 1, priorThreadId: 't',
+      checkpointSchema: 1, checkpointDigest: 'd'.repeat(64), checkpoint: {}, inboxIds: [], now
+    });
+    try {
+      const fenced = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'live-ws', message: 'go build #9' });
+      assert.equal(fenced.status, 409);
+      assert.equal(fenced.data.code, 'COORDINATOR_FENCED');
+      assert.equal(bridge.received.length, 0, 'nothing reached the Bridge');
+      const reply = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'live-ws', message: 'yes', inReplyTo: 'msg-1' });
+      assert.notEqual(reply.data.code, 'COORDINATOR_FENCED');
+      store.coordinatorRotations.updateIf('rot_send_fence', 'fenced', { state: 'abandoned' }, { now });
+      const lifted = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'live-ws', message: 'go build #9' });
+      assert.equal(lifted.status, 200);
+    } finally {
+      store.getDb().prepare("DELETE FROM coordinator_rotations WHERE rotation_id = 'rot_send_fence'").run();
+    }
+  });
+
   it('send to an offline target → 200 queued (surfaced as queued, not sent)', async () => {
     const { status, data } = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'offline-ws', message: 'later' });
     assert.equal(status, 200);

@@ -368,6 +368,16 @@ describe('coordinator context rotation (#2032)', () => {
       assert.equal(typed.length, 1);
     });
 
+    it('a pass still waiting on the same thing does not rewrite the row', async () => {
+      await serve({ [PRIOR]: { status: { type: 'active', activeFlags: [] } } });
+      channel();
+      const id = prepare().body.rotation.rotationId;
+      const first = await rotation.advance(id, { ...deps(), now: () => '2026-09-29T00:00:01.000Z' });
+      const again = await rotation.advance(id, { ...deps(), now: () => '2026-09-29T00:00:09.000Z' });
+      assert.equal(first.failureCode, 'prior-thread-busy');
+      assert.equal(again.updatedAt, first.updatedAt);
+    });
+
     it('waits for the coordinator\'s turn to finish before clearing', async () => {
       await serve({ [PRIOR]: { status: { type: 'active', activeFlags: [] } } });
       channel();
@@ -473,6 +483,37 @@ describe('coordinator context rotation (#2032)', () => {
       assert.deepEqual(await codex.deliverTurn(ch, project, turn, OURS), { status: 'sent' });
       assert.deepEqual(await codex.deliverTurn(ch, project, turn, OURS), { status: 'already' });
       assert.equal(server.calls('turn/start').length, 1);
+    });
+
+    it('a crash after the re-entry turn was sent but before the rotation recorded it does not send it twice', async () => {
+      const rot = await toReconciling();
+      // Rewind the record to just before its last write; the turn is already on the thread.
+      store.getDb().prepare("UPDATE coordinator_rotations SET state = 'rebinding', reentry_digest = NULL WHERE rotation_id = ?").run(rot.rotationId);
+      const r = await rotation.advance(rot.rotationId, deps());
+      assert.equal(r.state, 'reconciling');
+      assert.equal(server.calls('turn/start').length, 1);
+    });
+
+    it('concurrent passes type /clear once and bind once', async () => {
+      await serve();
+      channel();
+      const id = prepare().body.rotation.rotationId;
+      await Promise.all([rotation.advance(id, deps()), rotation.advance(id, deps()), rotation.advance(id, deps())]);
+      assert.equal(typed.length, 1);
+      const joined = [rotation.drive(id, { attempts: 5, deps: deps() }), rotation.drive(id, { attempts: 5, deps: deps() })];
+      assert.equal(joined[0], joined[1], 'a second driver joins the first');
+      const [r] = await Promise.all(joined);
+      assert.equal(r.state, 'reconciling');
+      assert.equal(server.calls('turn/start').length, 1);
+    });
+
+    it('the old thread reappearing after the rebind does not move the binding back', async () => {
+      await toReconciling();
+      server.state.threads.set(PRIOR, { status: { type: 'idle' } });
+      assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle' });
+      assert.equal(threadOf(), NEXT);
+      server.state.threads.set(PRIOR, { status: { type: 'active', activeFlags: [] } });
+      assert.deepEqual(await observe(), { state: 'busy', reasonCode: 'other-thread-active' }, 'a working old thread still holds the wake');
     });
 
     it('rebindThread refuses a channel whose recorded thread is neither the prior nor the replacement', async () => {

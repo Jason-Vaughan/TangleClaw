@@ -35,6 +35,26 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-29 — A Codex coordinator's context rotation is a governed transition (#2032)
+
+<!-- prawduct: type=bugfix | scope=2032-coordinator-rotation -->
+
+The Architect dispatched this as an emergency (message e2f2d7c2, the plan at TangleClaw-Architect/.tangleclaw/plans/2032-coordinator-context-rotation-emergency.md), and the PM confirmed it. The scope was E1, then the smallest complete safe path through E2 and E3; E4 (full wrap/relaunch parity, operator surface) is not built. The incident: Architect session 1199 survived `/clear`, but its startup-control channel stayed on the pre-clear Codex thread, so every wake answered `thread-not-loaded` and the replacement context resumed with no fence and no proof it had reconciled.
+
+**Reproduction first.** `test/coordinator-rotation.test.js` opens with the incident against the fake app-server: the recorded thread unloads, a replacement loads, observation answers `thread-not-loaded` and keeps the old binding. It still does after this change, with or without an open rotation, so the #1628/D8 invariant (observation never replaces a recorded thread) holds.
+
+**The change.**
+- **Record and fence.** A `coordinator_rotations` record (schema v51) is created by `prepare` together with a validated, canonical-JSON-digested checkpoint and the inbox ids at that moment, in one insert, so the checkpoint never exists without the fence. A partial unique index allows one open rotation per project.
+- **Clear and rebind.** The server's driver types `/clear` when the prior thread is idle, then binds the one provable replacement through `startup-control-codex#rebindThread`: new since the clear, root, same directory, prior gone. That function is a compare-and-set on the channel and the only writer allowed to move a recorded thread.
+- **Re-entry.** The re-entry turn is delivered by `deliverTurn`, which reads the thread back for the rotation's client-id digest before sending.
+- **Resume.** It is accepted only on the server's own checks (digest, prepare interval drained, git head, control generation, a post-prepare workload receipt), and acceptance is the compare-and-set that lifts the fence.
+- **What the fence holds.** Medusa `send` (non-replies) and the wake (`coordinator-rotating`).
+- **Wiring.** `tc rotation prepare|show|advance|resume`, launch-bound routes under `/api/tc/rotation`, operator-only abandon, and driver recovery at boot. Engines without a rebindable channel are refused at prepare.
+
+**Decisions to confirm.** Schema v51 is also claimed by #1971 and #1966, so whichever lands second renumbers. "Dispatch" is taken as new outbound Medusa sends, with replies allowed. The inbox high-water mark is the set of message ids present at prepare. Old and new contexts share one pane and one launch, so generation is enforced where it is carried (resume); marking mail handled and closing an exchange are not generation-bound. GitHub reconciliation is asserted in the receipt, not queried by the server.
+
+**Tests.** Rotation tests cover prepare, the fence, the rebind and resume, including every rejection, crash-retry at the rebind and the re-entry send, concurrent passes and old-thread reappearance. There are also route-binding, verb, send-fence route and wake-gate tests. The v50 migration test compared against a literal `50`; it now reads `CURRENT_SCHEMA_VERSION`, as the store asks, so it still means "advances to HEAD". The four prime golden fixtures changed only by the new `rotation` verb in the generated verb list, regenerated with `UPDATE_PRIME_GOLDEN=1`. The other wake and watchdog tests now stub the new seam so none reads an ambient store.
+
 ## 2026-09-28 — Session-rule mutations are gated on a verified caller (#2013)
 
 <!-- prawduct: type=bugfix | scope=2013-session-rules-authz -->
