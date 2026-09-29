@@ -69,9 +69,10 @@ authority. The database allows one open rotation per project, enforced by a part
   - **Claim.** Once the old session has ended, the operator makes the **relaunch claim**:
     `POST /api/tc/rotation/relaunch {rotationId}`. The server launches the successor session and, in
     one compare-and-set, binds the rotation to exactly that new session, launch and control channel.
-  - **Rebind.** The replacement is the thread the successor's channel records, or the successor
-    app-server's sole root thread when none is recorded yet. The re-entry turn tells the successor to
-    finish its own launch sequence first.
+  - **Rebind.** The replacement is the thread the successor's own channel records. It is never
+    inferred from a thread that has merely become visible. Until the channel records one, the rotation
+    waits with `successor-thread-unrecorded`. The re-entry turn tells the successor to finish its own
+    launch sequence first.
   - **Unclaimed launches.** A launch the claim did not make, such as an ordinary launch from the
     dashboard, is never bound. It stays fenced, and it must end before the claim can run.
   - **Unbindable successor.** A successor with no rebindable channel is not claimed. It is recorded as
@@ -240,6 +241,7 @@ coordinator its own rotation, and `tc sessions` (`GET /api/tc/sessions`) adds a 
 every lane that is rotating. Each of them shows:
 - the state and mode;
 - the checkpoint digest;
+- the **binding**: session, thread and generation. It never includes the launch id or the nonce;
 - the receipt verdict (`accepted`, or the persisted readiness verdict);
 - the **blocker** in words;
 - **exactly one next command** for whoever holds the rotation. That is `tc rotation advance` while

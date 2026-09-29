@@ -5409,7 +5409,7 @@ function _laneRotation(session) {
   return {
     rotation: {
       rotationId: v.rotationId, state: v.state, mode: v.mode, generation: v.generation, checkpointDigest: v.checkpointDigest,
-      receiptVerdict: v.receiptVerdict, blocker: v.blocker, nextCommand: v.nextCommand
+      binding: v.binding, receiptVerdict: v.receiptVerdict, blocker: v.blocker, nextCommand: v.nextCommand
     }
   };
 }

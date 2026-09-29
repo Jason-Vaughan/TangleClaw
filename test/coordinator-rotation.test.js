@@ -922,7 +922,7 @@ describe('coordinator context rotation (#2032)', () => {
         store.startupControlChannels.open({
           sessionId: successor.id, sequenceId: store.launchSequences.getBySession(successor.id).id, engineId: 'codex', adapter: 'codex',
           adapterState: { pid: 4242, birth: 'Wed Sep 23 18:00:04 2026', socketPath: '/x/requested.sock', resolvedSocketPath: server.sockPath,
-            engineVersion: '0.156.1', threadId: null, serverVersion: null }
+            engineVersion: '0.156.1', threadId: opts.recorded === undefined ? SUCCESSOR_THREAD : opts.recorded, serverVersion: null }
         });
       }
       return { session: successor, error: null };
@@ -990,6 +990,31 @@ describe('coordinator context rotation (#2032)', () => {
       assert.equal((await rotation.resume({ access: access(), threadId: SUCCESSOR_THREAD, body }, deps())).body.code, 'ROTATION_NOT_YOURS');
       const done = await rotation.resume({ access: successorAccess, threadId: SUCCESSOR_THREAD, body }, deps());
       assert.equal(done.status, 200, JSON.stringify(done.body));
+    });
+
+    it('a successor whose channel has not recorded its thread is never bound by inference from a visible thread (A16)', async () => {
+      await serve();
+      channel();
+      const rot = (await prepare({ mode: 'relaunch' })).body.rotation;
+      endOld();
+      server.state.threads = new Map([[SUCCESSOR_THREAD, { status: { type: 'idle' } }]]);
+      assert.equal(rotation.claimRelaunch({ caller: operator, body: { rotationId: rot.rotationId } }, relaunchDeps({ recorded: null })).status, 200);
+      const r = await rotation.drive(rot.rotationId, { attempts: 3, deps: deps() });
+      assert.equal(r.state, 'rebinding');
+      assert.equal(r.failureCode, 'successor-thread-unrecorded');
+      assert.equal(r.replacementThreadId, null);
+      assert.equal(store.startupControlChannels.getOpenBySession(successor.id).adapterState.threadId, null, 'nothing was written');
+      assert.equal(server.calls('turn/start').length, 0);
+    });
+
+    it('the read surfaces show the binding and never a launch id or nonce (A16)', async () => {
+      const rot = await toReconciling();
+      const v = rotation.view(store.coordinatorRotations.get(rot.rotationId), { checkpoint: true });
+      assert.deepEqual(v.binding, { sessionId: session.id, threadId: NEXT, generation: rot.generation });
+      const text = JSON.stringify(v);
+      assert.ok(!text.includes(launchId), 'no launch id');
+      assert.ok(!text.includes(nonce()), 'no nonce');
+      assert.ok(!/resumeNonceHash/.test(text), 'no nonce hash either');
     });
 
     it('an ordinary launch nobody claimed stays fenced, and blocks the claim until it ends', async () => {
