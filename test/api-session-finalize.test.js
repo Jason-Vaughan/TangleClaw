@@ -1216,6 +1216,55 @@ describe('POST /api/sessions/:project/finalize (#2027)', () => {
       assert.equal(r.data.unpushedOnBranches, 1);
     });
 
+    /**
+     * Commit one file on a side branch and return to main, leaving the commit
+     * reachable only from the side branch until the caller retires it.
+     * @param {string} dir
+     * @returns {string} The side commit's id
+     */
+    function sideCommit(dir) {
+      git(dir, ['checkout', '-q', '-b', 'side']);
+      fs.writeFileSync(path.join(dir, 'side.txt'), 'x\n');
+      git(dir, ['add', 'side.txt']);
+      git(dir, ['commit', '-q', '-m', 'work kept by a tag']);
+      const sha = git(dir, ['rev-parse', 'HEAD']).trim();
+      git(dir, ['checkout', '-q', 'main']);
+      return sha;
+    }
+
+    for (const kind of ['lightweight', 'annotated']) {
+      it(`a commit since launch kept only by ${kind === 'annotated' ? 'an' : 'a'} ${kind} local tag, its branch deleted, is owned work`, async () => {
+        const lane = launched(`tag-only-${kind}`);
+        await receipt(lane);
+        const sha = sideCommit(lane.dir);
+        git(lane.dir, kind === 'annotated' ? ['tag', '-a', '-m', 'kept', 'kept', sha] : ['tag', 'kept', sha]);
+        git(lane.dir, ['branch', '-q', '-D', 'side']);
+        const r = await finalize(lane, lane.headers);
+        assert.equal(r.status, 409, JSON.stringify(r.data));
+        assert.equal(r.data.code, 'OWNED_WORK_PRESENT');
+        assert.equal(r.data.unpushedOnBranches, 1);
+        assert.equal(store.sessions.get(lane.sessionId).status, 'active');
+      });
+    }
+
+    it('a commit reached by both a branch and a tag is counted once', async () => {
+      const lane = launched('tag-and-branch');
+      await receipt(lane);
+      const sha = sideCommit(lane.dir);
+      git(lane.dir, ['tag', 'kept', sha]);
+      const r = await finalize(lane, lane.headers);
+      assert.equal(r.data.code, 'OWNED_WORK_PRESENT', JSON.stringify(r.data));
+      assert.equal(r.data.unpushedOnBranches, 1);
+    });
+
+    it('a tag made since launch on history from before it is not work', async () => {
+      const lane = launched('tag-old');
+      await receipt(lane);
+      git(lane.dir, ['tag', '-a', '-m', 'marks old history', 'old-mark', 'HEAD']);
+      const r = await finalize(lane, lane.headers);
+      assert.equal(r.status, 200, JSON.stringify(r.data));
+    });
+
     it('work stashed since launch is owned work (W1)', async () => {
       const lane = launched('w1-stash');
       await receipt(lane);

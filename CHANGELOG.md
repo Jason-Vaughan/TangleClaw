@@ -70,7 +70,7 @@ All notable changes to TangleClaw are documented in this file.
     - It must have no unresolved Medusa obligation: mail sent to it acknowledged, and answered where a reply is required, and replies it is owed received.
     - It must work in the project's registered checkout: a session whose pane is in a linked worktree, or whose pane cannot be read, is refused. Every linked worktree is also compared with its launch record, so work in a worktree the pane does not show is still found.
     - A webui session is refused, because its tunnel is not part of the shared teardown.
-    - It must have no work of its own since launch: no changed paths, no change to a file already dirty at launch, no commits a freshly fetched remote lacks (on HEAD, any local branch, or any worktree's HEAD, a detached one included), and nothing stashed.
+    - It must have no work of its own since launch: no changed paths, no change to a file already dirty at launch, no commits a freshly fetched remote lacks (on HEAD, any local branch or tag, or any worktree's HEAD, a detached one included), and nothing stashed.
     - It must not be held or stopped, and no wrap may be running.
   - **Anything else refuses with nothing changed** and a code naming the one blocker (`NOT_CLEAR`, `EXCHANGES_OPEN`, `OWNED_WORK_PRESENT`, `WORK_STATE_UNKNOWN`, `WRAP_IN_PROGRESS`, `SESSION_CHANGED`, `FINALIZE_STAGE_FAILED`). `tc` exits 3.
   - **Success means it finished.** If publishing or teardown is interrupted, the answer is `FINALIZE_INCOMPLETE` with what is left, and repeating the request (`tc finalize --session <id>`) finishes the same attempt without staging another.
