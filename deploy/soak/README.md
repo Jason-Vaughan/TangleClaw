@@ -317,54 +317,91 @@ actions.
     before the first run.
 - **`pf/soak-deny.conf`** is the default-deny network profile.
   - Loopback is unfiltered, so the guest's TangleClaw, ttyd and the driver can talk to each other.
-  - SSH in from the host's address is the one other thing allowed, and pf's state lets only that
-    session's replies out.
-  - There is no DNS, no egress and no route to production.
+  - Two other things are allowed, both only on the guest interface (`$guest_if`):
+    - SSH in from the host's address (`$host_addr`), the operator's management path. pf's state lets
+      only that session's replies out; the guest cannot open a connection.
+    - DHCP, client port 68 to server port 67 only, so the guest keeps its address, and with it the
+      management path, for a 72-hour run. Broadcast is allowed for DISCOVER, REQUEST and REBIND.
+      Unicast RENEW goes only to the DHCP server (`$dhcp_server`), and replies come in only from it.
+      That server is `SOAK_DHCP_SERVER` or, when that is empty, the server identifier from the guest's
+      current lease. It is never assumed to be the SSH host.
+  - There is no DNS, no IPv6 beyond loopback, no egress and no route to production.
 - **`host-provision.sh`** runs on the host.
   - By default it only prints the `tart clone`, `tart set` and `tart run` commands.
-  - It runs them only with **both** `--execute` and `SOAK_OPERATOR_APPROVED=1`.
+  - It runs them only with **both** `--execute` and `SOAK_OPERATOR_APPROVED=1`. That is a safety
+    interlock, not authority: creating a VM stays the operator's decision.
   - It refuses to reuse an existing VM of the same name: a certification starts from a pristine guest,
     and deleting one is the operator's call.
   - The shared directory is the only host path the guest sees, read-write, so it must be a dedicated
     one. The script compares real paths, following symlinks and `..`. It refuses `/`, `$HOME`, any
     directory that contains `$HOME` (such as `/Users`), a relative path, and a directory that does not
     exist.
-- **`guest-setup.sh`** runs inside the guest, from a checkout of the pinned release candidate, once that
-  TangleClaw is answering on loopback.
-  - It refuses to run where `TANGLECLAW_API` is set (a live pane), outside macOS, or on a machine that
-    is not a VM (`kern.hv_vmm_present`).
-  - It loads the pf profile, then **proves it holds**, because a profile that loaded but does not block
-    is not isolation. Any failure or ambiguity stops it (exit 3) before anything else runs:
-    - pf must report `Enabled`;
-    - the rules pf reports must be exactly the profile's, in pfctl's own form;
-    - `lo0` must be skipped;
-    - loopback must answer on `127.0.0.1` and `::1`, and so must the guest TangleClaw's `/api/health`;
-    - nothing outside may answer: TCP to a literal IPv4 and a literal IPv6 address, and a DNS query over
-      UDP sent straight to a resolver's address. None of it depends on DNS.
-  - It installs `soak-stub` on `PATH` and its engine profile.
-  - It runs `soak.js repos`.
-  - It attaches each project through the guest TangleClaw's own API. With the guest's auth gate down,
-    it uses the dashboard client header. With the gate up, it refuses and tells you to attach from the
-    dashboard. It never reads or writes a token.
-  - Every step is safe to repeat.
-  - **`guest-setup.sh --verify-network` only re-proves the network boundary.** It doesn't reload pf,
-    because reloading would hide a pf that had been turned off. The soak runner must run it during and
-    at the end of a run (that runner is a later chunk).
+- **`guest-setup.sh`** runs inside the guest, as the admin, from a checkout of the pinned release
+  candidate that the workload user can read (such as under `/Users/Shared`), once that TangleClaw is
+  answering on loopback. Every mode first:
+  - refuses to run where `TANGLECLAW_API` is set (a live pane), outside macOS, or on a machine that is
+    not a VM (`kern.hv_vmm_present`);
+  - validates its inputs, so nothing ambiguous reaches pfctl, sudo or a URL: the interface name, the
+    host's IPv4 address, the workload user name, the port, the project names and the probe timeout.
 
-**Known limits of the isolation.** The boundary is pf inside the guest. `tart run` uses tart's default
-network: nothing on the host side restricts the guest.
-- **Anything in the guest with sudo can turn pf off.** The Cirrus Labs base images give the admin user
-  passwordless sudo. The runbook must remove that, or run the soak workload as a user without admin
-  rights, before certification begins.
-- **pf rules do not survive a guest reboot.** Run `guest-setup.sh` again after any reboot. It is
-  idempotent.
-- **Setup proves isolation once.** Isolation during and at the end of the run is proven only when the
-  runner calls `--verify-network`.
-- **The profile also blocks DHCP.** If the guest's address lease expires during a 72-hour run, the
-  operator may lose SSH to it. The soak itself runs on loopback and is unaffected. The dry run should
-  show whether this happens.
-- **Host-side restriction is not used yet.** Tart's softnet options could add a second layer. They are
-  not used until an operator checks them against the installed tart.
+  Setup then, stopping at the first failure:
+  1. **Creates or confirms the workload user** (`SOAK_WORKLOAD_USER`, default `soakrun`). It is a
+     standard account with a random password nobody keeps. It refuses an account that is in `admin` or
+     `wheel`, or that has any sudo rights. It never demotes an existing account; fix one by hand.
+  2. **Loads the pf profile and attests both planes** (below). Either verifier failing stops setup.
+  3. **Installs** `soak-stub` on `PATH`, and its engine profile for the workload user.
+  4. **Creates the synthetic repos** as the workload user (`soak.js repos`), under its home.
+  5. **Attaches each project** through the guest TangleClaw's own API. With the guest's auth gate down,
+     it uses the dashboard client header. With the gate up, it refuses and tells you to attach from the
+     dashboard. It never reads or writes a token.
+
+  Every step is safe to repeat.
+
+### Attestation
+
+The guest is attested from two planes, because neither can see everything. Each verifier prints exactly
+one JSON line (schema `tc.soak-guest-attest/v1`) with `ok` true or false, the boot identity
+(`kern.bootsessionuuid` and the boot time), the time, and the artifact version: `scriptSha256` and
+`profileSha256`, the sha256 of `guest-setup.sh` and of the pf profile, reported separately. Any failure or ambiguity is `ok: false` with a `reason`, and
+exit 3.
+
+- **`guest-setup.sh --verify-admin`** runs as the admin, with sudo, and inspects pf itself:
+  - pf must report `Enabled`;
+  - the loaded ruleset must equal pfctl's own parse of the profile with the same macros
+    (`pfctl -n -v`), so no pfctl output format is assumed, and must have the profile's rule count;
+  - `lo0` must be skipped.
+
+  It reports:
+  - the sha256 of the expected rules and of the active rules, and whether they match (a mismatch is
+    also reported this way, with `ok: false`);
+  - the guest interface and its IPv4 address, and the host's address;
+  - the DHCP server pf allows, whether it came from config or from the lease, and the lease's duration;
+  - that something is listening on port 22, the SSH management path.
+
+  It never loads pf.
+- **`guest-setup.sh --verify-workload`** runs as the workload user and proves what that user can and
+  cannot do. It never inspects pf, because the workload must not be able to.
+  - It must be running as that user, with a non-system uid, in neither `admin` nor `wheel`.
+  - `sudo` and `pfctl` must both be refused to it. A hang doesn't count as a refusal.
+  - Loopback must answer on `127.0.0.1` and `::1`, and so must the guest TangleClaw's `/api/health`.
+  - Nothing outside may answer: TCP to a literal IPv4 and a literal IPv6 address, and a DNS query over
+    UDP sent straight to a resolver's address. None of it depends on DNS.
+- **Every probe is killed after `SOAK_PROBE_TIMEOUT` seconds** (default 10). A probe that hangs is a
+  failure, never a pass, including an egress probe, where a hang proves nothing.
+
+The soak runner (a later chunk) joins the two attestations at admission, at every evidence sample and
+at finalization. It binds them to the run and fails closed on a mismatch or a stale one. A reboot
+changes the boot identity, so no time survives one.
+
+**Known limits.**
+- **Host-side restriction is not used yet.** `tart run` uses tart's default network, and the boundary is
+  pf inside the guest, attested as above. Tart's softnet options could add a second layer; they are not
+  used until an operator checks them against the installed tart.
+- **pf rules do not survive a guest reboot.** A reboot invalidates the run anyway. Re-provision, run
+  setup again and restart the clock.
+- **The DHCP allowance is a best effort at keeping the management path**, not a proof. The dry run must
+  show that the address, and SSH, survive a lease renewal. If they don't, the fallback is a static
+  address or an independently proven tart console path.
 
 The dry run and the certifying run then drive the guest's own TangleClaw from inside the guest, with
 `run --no-live-install`.

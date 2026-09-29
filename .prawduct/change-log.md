@@ -85,6 +85,14 @@ The existing soak tests are unchanged.
 - `SOAK_PROJECTS` is trimmed.
 - The DHCP expiry risk is documented, for the dry run to observe.
 
+**Architect A38-final and A44 (security contract), in the third commit.**
+- `guest-setup.sh` creates a dedicated non-admin workload user with no sudo.
+- The pf SSH rule is bound to the guest interface. The DHCP allowance (68 to 67) reaches only the DHCP server attested from the lease or config, never assumed to be the host.
+- All inputs are validated before `pfctl -D`, and every probe has a watchdog.
+- Two JSON verifiers, `--verify-admin` and `--verify-workload`, carry the boot identity and separate `scriptSha256` and `profileSha256`. The admin verifier compares the loaded ruleset with pfctl's own parse and fingerprints it. The workload verifier proves sudo and pfctl are refused and that there is no egress, and never inspects pf.
+- They replace `--verify-network`. The runner's joining of the two is left to its own chunk.
+- During the PM's quiet window no tests of any kind were run. Suite evidence waits for a PM-issued window.
+
 ## 2026-09-28 — Every rule is named "Rule #<id>" from its DB id (#2029)
 
 <!-- prawduct: type=feature | scope=2029-rule-id-display -->

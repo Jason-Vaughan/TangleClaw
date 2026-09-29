@@ -53,14 +53,17 @@ describe('soak guest: files', () => {
     }
   });
 
-  it('pf profile denies everything but loopback and SSH in from the host', () => {
+  it('pf profile denies everything but loopback, SSH in from the host, and DHCP 68→67 with the attested server, all on the guest interface', () => {
     const rules = fs.readFileSync(path.join(GUEST, 'pf', 'soak-deny.conf'), 'utf8')
       .split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
     assert.deepEqual(rules, [
       'set block-policy drop',
       'set skip on lo0',
       'block drop all',
-      'pass in quick inet proto tcp from $host_addr to any port 22 flags S/SA keep state'
+      'pass in quick on $guest_if inet proto tcp from $host_addr to ($guest_if) port 22 flags S/SA keep state',
+      'pass out quick on $guest_if inet proto udp from any port 68 to 255.255.255.255 port 67 keep state',
+      'pass out quick on $guest_if inet proto udp from any port 68 to $dhcp_server port 67 keep state',
+      'pass in quick on $guest_if inet proto udp from $dhcp_server port 67 to any port 68 keep state'
     ]);
   });
 
@@ -157,10 +160,22 @@ describe('soak guest: host-provision.sh', () => {
   });
 });
 
+
+/** The rules pfctl reports for the profile, in its normalized form (fake). */
+const PF_RULES = [
+  'block drop all',
+  'pass in quick on en0 inet proto tcp from 192.168.64.1 to (en0) port = 22 flags S/SA keep state',
+  'pass out quick on en0 inet proto udp from any port = 68 to 255.255.255.255 port = 67 keep state',
+  'pass out quick on en0 inet proto udp from any port = 68 to 192.168.64.2 port = 67 keep state',
+  'pass in quick on en0 inet proto udp from 192.168.64.2 port = 67 to any port = 68 keep state'
+].join('\n') + '\n';
+
 /**
- * Fake system commands for a full guest-setup.sh run inside a "VM". Each one
- * logs its call; `over` replaces a command's script body, so a test can make
- * one probe misbehave.
+ * Fake system commands for guest-setup.sh inside a "VM". `FAKE_USER` in the
+ * environment is who is running (default the admin); `sudo -u` switches it,
+ * and only the admin may use sudo or pfctl. Each command logs its call, with
+ * the user, to calls.log; `over` replaces a command's shell body so a test can
+ * make one thing misbehave.
  * @param {string} dir - Directory to create them in
  * @param {Object<string, string>} [over] - Command name → shell body
  * @returns {{bin: string, calls: () => string[]}} Fakes
@@ -169,23 +184,64 @@ function guestFakes(dir, over = {}) {
   const bin = path.join(dir, 'bin');
   const log = path.join(dir, 'calls.log');
   fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'rules.txt'), PF_RULES);
+  const rules = path.join(dir, 'rules.txt');
   const bodies = {
     uname: 'echo Darwin',
-    sysctl: 'echo 1',
-    sudo: 'exec "$@"',
+    sysctl: [
+      'case "$*" in',
+      '  "-n kern.hv_vmm_present") echo 1;;',
+      '  "-n kern.bootsessionuuid") echo 11111111-2222-3333-4444-555555555555;;',
+      '  "-n kern.boottime") echo "{ sec = 1790000000, usec = 0 } Tue Sep 29 00:00:00 2026";;',
+      'esac'
+    ].join('\n'),
+    sudo: [
+      '[ "$1" = "-v" ] && exit 0',
+      '[ "$1" = "-n" ] && shift',
+      'if [ "$1" = "-l" ]; then echo "User $3 is not allowed to run sudo on guest."; exit 0; fi',
+      'if [ "$1" = "-u" ]; then u="$2"; shift 2; [ "$1" = "-H" ] && shift; FAKE_USER="$u"; export FAKE_USER; exec "$@"; fi',
+      '[ "${FAKE_USER:-admin}" = admin ] || exit 1',
+      'exec "$@"'
+    ].join('\n'),
     pfctl: [
+      '[ "${FAKE_USER:-admin}" = admin ] || { echo "pfctl: /dev/pf: Permission denied" >&2; exit 1; }',
       'case "$*" in',
       '  "-s info") echo "Status: Enabled for 0 days 00:00:01";;',
-      '  "-s rules") printf "block drop all\\npass in quick inet proto tcp from 192.168.64.1 to any port = 22 flags S/SA keep state\\n";;',
+      `  "-s rules") cat "${rules}";;`,
+      `  *"-n -v"*) cat "${rules}";;`,
       '  "-s Interfaces -v") printf "en0\\nlo0 (skip)\\n";;',
       'esac'
     ].join('\n'),
+    id: [
+      'u="${FAKE_USER:-admin}"',
+      'case "$*" in',
+      '  -un) echo "$u";;',
+      '  -u) if [ "$u" = admin ]; then echo 501; else echo 502; fi;;',
+      '  -Gn) if [ "$u" = admin ]; then echo "staff admin"; else echo "staff everyone localaccounts"; fi;;',
+      '  *) [ -n "$FAKE_USER_EXISTS" ] && exit 0; exit 1;;',
+      'esac'
+    ].join('\n'),
+    dseditgroup: 'exit 1',
+    sysadminctl: 'exit 0',
+    openssl: 'echo 0123456789abcdef',
+    install: 'exit 0',
+    mkdir: 'exit 0',
+    node: 'exit 0',
+    ifconfig: 'exit 0',
+    // The lease names a DHCP server that is not the SSH host, so nothing can
+    // pass by assuming the two are the same.
+    ipconfig: [
+      'case "$*" in',
+      '  "getifaddr en0") echo 192.168.64.5;;',
+      '  "getpacket en0") printf "op = BOOTREPLY\\nyiaddr = 192.168.64.5\\nserver_identifier (ip): 192.168.64.2\\nlease_time (uint32): 0x15180\\n";;',
+      '  *) exit 1;;',
+      'esac'
+    ].join('\n'),
+    netstat: 'echo "tcp4       0      0  *.22                   *.*                    LISTEN"',
     ping: 'exit 0',
     ping6: 'exit 0',
     nc: 'exit 1',
     dig: 'exit 9',
-    install: 'exit 0',
-    node: 'exit 0',
     curl: [
       'case "$*" in',
       '  *api/projects/attach*) printf 201;;',
@@ -195,120 +251,272 @@ function guestFakes(dir, over = {}) {
     ...over
   };
   for (const [name, body] of Object.entries(bodies)) {
-    fs.writeFileSync(path.join(bin, name), `#!/bin/sh\necho "${name} $*" >> "${log}"\n${body}\n`, { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, name), `#!/bin/sh\necho "[\${FAKE_USER:-admin}] ${name} $*" >> "${log}"\n${body}\n`, { mode: 0o755 });
   }
   return { bin, calls: () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n') : []) };
 }
 
-describe('soak guest: guest-setup.sh network proof', () => {
+/**
+ * Run guest-setup.sh with the fakes, a short probe timeout, and `env` on top.
+ * @param {string[]} args - Arguments
+ * @param {{bin: string}} f - Fakes
+ * @param {string} home - HOME
+ * @param {Object<string, string>} [env] - Extra environment
+ * @returns {{status: number, stdout: string, stderr: string, json: object[]}} Result, with stdout's JSON lines parsed
+ */
+function setup(args, f, home, env = {}) {
+  const r = runScript(GUEST_SETUP, args, f.bin, { HOME: home, SOAK_PROBE_TIMEOUT: '2', ...env });
+  const json = r.stdout.split('\n').filter((l) => l.startsWith('{')).map((l) => JSON.parse(l));
+  return { ...r, json };
+}
+
+/**
+ * The sha256 of a string, as shasum prints it.
+ * @param {string|Buffer} s - Input
+ * @returns {string} Hex digest
+ */
+const sha256 = (s) => require('node:crypto').createHash('sha256').update(s).digest('hex');
+
+describe('soak guest: guest-setup.sh setup', () => {
   let tmp;
 
   beforeEach(() => {
-    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'soak-guest-net-'));
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'soak-guest-setup-'));
   });
 
   afterEach(() => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  /**
-   * Whether any call after the network step ran (stub, repos or attach).
-   * @param {string[]} calls - Logged calls
-   * @returns {boolean} True when setup went past the network proof
-   */
-  const wentPastNetwork = (calls) => calls.some((c) => /^install |^node |api\/projects/.test(c));
-
-  it('with everything holding, proves the network then installs, creates and attaches, in that order', () => {
+  it('creates the workload user, loads pf, attests both planes, then installs, creates and attaches, in that order', () => {
     const f = guestFakes(tmp);
-    const r = runScript(GUEST_SETUP, [], f.bin, { HOME: tmp });
+    const r = setup([], f, tmp);
     assert.equal(r.status, 0, r.stderr);
     const calls = f.calls();
     const idx = (re) => calls.findIndex((c) => re.test(c));
-    assert.ok(idx(/^pfctl -D host_addr=192\.168\.64\.1 -f .*soak-deny\.conf -E$/) >= 0);
-    for (const re of [/^pfctl -s info$/, /^pfctl -s rules$/, /^ping -c 1 -t 2 127\.0\.0\.1$/, /^ping6 -c 1 ::1$/, /^nc -z -G 3 1\.1\.1\.1 443$/, /^nc -6 -z -G 3 2606:4700:4700::1111 443$/, /^dig @1\.1\.1\.1 /]) {
-      assert.ok(idx(re) >= 0 && idx(re) < idx(/^install /), `${re} must run before the stub install`);
+    const order = [
+      /^\[admin\] sysadminctl -addUser soakrun .*-password 0123456789abcdef$/,
+      /^\[admin\] pfctl -D host_addr=192\.168\.64\.1 -D dhcp_server=192\.168\.64\.2 -D guest_if=en0 -f .*soak-deny\.conf -E$/,
+      /^\[admin\] pfctl -s rules$/,
+      /^\[soakrun\] ping6 -c 1 ::1$/,
+      /^\[soakrun\] dig @1\.1\.1\.1 /,
+      /^\[admin\] install -m 0755 .*soak-stub\.js .*\/soak-stub$/,
+      /^\[soakrun\] node .*scripts\/soak\.js repos --root \/Users\/soakrun\/Projects --origins \/Users\/soakrun\/soak-origins --projects soak-a,soak-b,soak-c$/
+    ];
+    let last = -1;
+    for (const re of order) {
+      const i = idx(re);
+      assert.ok(i > last, `${re} out of order or missing:\n${calls.join('\n')}`);
+      last = i;
     }
-    assert.ok(idx(/^curl -fsS --max-time 10 http:\/\/127\.0\.0\.1:3102\/api\/health$/) < idx(/^install /));
-    assert.ok(idx(/^node .*scripts\/soak\.js repos --root .* --origins .* --projects soak-a,soak-b,soak-c$/) > idx(/^install /));
     for (const name of ['soak-a', 'soak-b', 'soak-c']) {
       assert.ok(calls.some((c) => c.includes(`{"name":"${name}"}`) && c.includes('http://127.0.0.1:3102/api/projects/attach')), name);
     }
+    assert.deepEqual(r.json.map((j) => [j.mode, j.ok]), [['admin', true], ['workload', true]]);
     assert.match(r.stdout, /guest ready/);
   });
 
-  const failures = {
-    'pf not enabled': { pfctl: 'case "$*" in "-s info") echo "Status: Disabled";; esac' },
-    'an extra pass-out rule loaded': { pfctl: 'case "$*" in "-s info") echo "Status: Enabled";; "-s rules") printf "block drop all\\npass out all\\npass in quick inet proto tcp from 192.168.64.1 to any port = 22 flags S/SA keep state\\n";; "-s Interfaces -v") echo "lo0 (skip)";; esac' },
-    'no rules loaded': { pfctl: 'case "$*" in "-s info") echo "Status: Enabled";; "-s Interfaces -v") echo "lo0 (skip)";; esac' },
-    'lo0 not skipped': { pfctl: 'case "$*" in "-s info") echo "Status: Enabled";; "-s rules") printf "block drop all\\npass in quick inet proto tcp from 192.168.64.1 to any port = 22 flags S/SA keep state\\n";; "-s Interfaces -v") echo "lo0";; esac' },
-    'IPv4 loopback down': { ping: 'exit 2' },
-    'IPv6 loopback down': { ping6: 'exit 2' },
-    'guest API not answering': { curl: 'exit 7' },
-    'IPv4 egress reachable': { nc: 'case "$*" in *-6*) exit 1;; *) exit 0;; esac' },
-    'IPv6 egress reachable': { nc: 'case "$*" in *-6*) exit 0;; *) exit 1;; esac' },
-    'DNS over UDP answered': { dig: 'exit 0' }
+  it('reuses an existing non-admin workload user without recreating it', () => {
+    const f = guestFakes(tmp);
+    const r = setup([], f, tmp, { FAKE_USER_EXISTS: '1' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(!f.calls().some((c) => c.includes('sysadminctl')));
+  });
+
+  it('refuses a workload user in the admin group, before touching pf, and never demotes it', () => {
+    const f = guestFakes(tmp, { dseditgroup: 'case "$*" in *" admin") exit 0;; *) exit 1;; esac' });
+    const r = setup([], f, tmp, { FAKE_USER_EXISTS: '1' });
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /member of admin/);
+    assert.ok(!f.calls().some((c) => /pfctl -D/.test(c) || /dseditgroup -o (edit|delete)/.test(c)));
+  });
+
+  it('refuses a workload user with sudo rights', () => {
+    const f = guestFakes(tmp, { sudo: '[ "$1" = "-v" ] && exit 0\n[ "$1" = "-n" ] && shift\nif [ "$1" = "-l" ]; then echo "User soakrun may run the following commands"; exit 0; fi\nexec "$@"' });
+    const r = setup([], f, tmp, { FAKE_USER_EXISTS: '1' });
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /has sudo rights/);
+  });
+
+  const badInputs = {
+    'an interface name carrying shell or pf syntax': { SOAK_GUEST_IF: 'en0 -f /etc/pf.conf' },
+    'lo0 as the guest interface': { SOAK_GUEST_IF: 'lo0' },
+    'an out-of-range host address': { SOAK_HOST_ADDR: '999.1.1.1' },
+    'a host address with trailing text': { SOAK_HOST_ADDR: '192.168.64.1 -f x' },
+    'root as the workload user': { SOAK_WORKLOAD_USER: 'root' },
+    'a non-synthetic project': { SOAK_PROJECTS: 'soak-a,prod' },
+    'a zero probe timeout': { SOAK_PROBE_TIMEOUT: '0' }
   };
-  for (const [label, over] of Object.entries(failures)) {
-    it(`refuses (exit 3) before any workload when ${label}`, () => {
-      const f = guestFakes(tmp, over);
-      const r = runScript(GUEST_SETUP, [], f.bin, { HOME: tmp });
+  for (const [label, env] of Object.entries(badInputs)) {
+    it(`refuses ${label} before any sudo, user or pf action`, () => {
+      const f = guestFakes(tmp);
+      const r = setup([], f, tmp, env);
       assert.equal(r.status, 3, `${label}: ${r.stderr}`);
-      assert.match(r.stderr, /^refused: /m);
-      assert.equal(wentPastNetwork(f.calls()), false, `${label} went on to: ${f.calls().join(' | ')}`);
+      assert.ok(!f.calls().some((c) => /\] (sudo|pfctl|sysadminctl)/.test(c)), f.calls().join('\n'));
     });
   }
 
-  it('--verify-network re-proves the boundary without reloading pf or doing any setup', () => {
-    const f = guestFakes(tmp);
-    const r = runScript(GUEST_SETUP, ['--verify-network'], f.bin, { HOME: tmp });
-    assert.equal(r.status, 0, r.stderr);
-    const calls = f.calls();
-    assert.ok(calls.includes('pfctl -s rules'));
-    assert.ok(calls.some((c) => c.startsWith('dig ')));
-    assert.ok(!calls.some((c) => c.startsWith('pfctl -D') || c.includes(' -f ')), 'must not reload pf');
-    assert.equal(wentPastNetwork(calls), false);
-  });
-
-  it('--verify-network fails (exit 3) when pf was disabled after setup', () => {
-    const f = guestFakes(tmp, { pfctl: 'case "$*" in "-s info") echo "Status: Disabled";; esac' });
-    const r = runScript(GUEST_SETUP, ['--verify-network'], f.bin, { HOME: tmp });
-    assert.equal(r.status, 3);
-    assert.match(r.stderr, /pf is not enabled/);
-  });
-
-  it('exits 2 on an unknown argument', () => {
-    const f = guestFakes(tmp);
-    assert.equal(runScript(GUEST_SETUP, ['--skip-network'], f.bin, { HOME: tmp }).status, 2);
-    assert.equal(wentPastNetwork(f.calls()), false);
-  });
-
-  it('strips spaces from SOAK_PROJECTS before using the names', () => {
-    const f = guestFakes(tmp);
-    const r = runScript(GUEST_SETUP, [], f.bin, { HOME: tmp, SOAK_PROJECTS: 'soak-a, soak-b' });
-    assert.equal(r.status, 0, r.stderr);
-    assert.ok(f.calls().some((c) => /--projects soak-a,soak-b$/.test(c)));
-    assert.ok(f.calls().some((c) => c.includes('{"name":"soak-b"}')));
-  });
-
   it('skips a project the guest already has, and refuses when the auth gate is up', () => {
     let f = guestFakes(tmp, { curl: 'case "$*" in *http_code*) printf 200;; esac' });
-    let r = runScript(GUEST_SETUP, [], f.bin, { HOME: tmp });
+    let r = setup([], f, tmp);
     assert.equal(r.status, 0, r.stderr);
     assert.equal(f.calls().filter((c) => c.includes('api/projects/attach')).length, 0);
     fs.rmSync(path.join(tmp, 'calls.log'));
     f = guestFakes(tmp, { curl: 'case "$*" in *api/projects/attach*) printf 401;; *http_code*) printf 404;; esac' });
-    r = runScript(GUEST_SETUP, [], f.bin, { HOME: tmp });
+    r = setup([], f, tmp);
     assert.equal(r.status, 3);
     assert.match(r.stderr, /auth gate is up/);
   });
+
+  it('exits 2 on an unknown or retired argument', () => {
+    const f = guestFakes(tmp);
+    for (const arg of ['--verify-network', '--skip-network']) assert.equal(setup([arg], f, tmp).status, 2, arg);
+    assert.deepEqual(f.calls(), []);
+  });
 });
 
-describe('soak guest: guest-setup.sh', () => {
+describe('soak guest: admin verifier', () => {
+  let tmp;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'soak-guest-admin-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('prints one JSON line attesting pf, the exact ruleset fingerprint, the interface, SSH and the boot identity', () => {
+    const f = guestFakes(tmp);
+    const r = setup(['--verify-admin'], f, tmp);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout.trim().split('\n').length, 1);
+    const [j] = r.json;
+    assert.equal(j.schema, 'tc.soak-guest-attest/v1');
+    assert.equal(j.mode, 'admin');
+    assert.equal(j.ok, true);
+    assert.deepEqual(j.pf, { enabled: true, expectedRulesSha256: sha256(PF_RULES), activeRulesSha256: sha256(PF_RULES), rulesMatch: true, rules: 5 });
+    assert.deepEqual(j.interface, { name: 'en0', address: '192.168.64.5' });
+    assert.equal(j.host, '192.168.64.1');
+    assert.deepEqual(j.dhcp, { server: '192.168.64.2', source: 'lease', leaseSeconds: 86400 });
+    assert.deepEqual(j.management, { ssh: 'listening' });
+    assert.deepEqual(j.boot, { session: '11111111-2222-3333-4444-555555555555', time: 1790000000 });
+    assert.deepEqual(j.artifact, { scriptSha256: sha256(fs.readFileSync(GUEST_SETUP)), profileSha256: sha256(fs.readFileSync(path.join(GUEST, 'pf', 'soak-deny.conf'))) });
+    assert.ok(!f.calls().some((c) => / -E$/.test(c)), 'a verifier must never load pf');
+    assert.ok(f.calls().some((c) => c.includes('pfctl -n -v -D host_addr=192.168.64.1 -D dhcp_server=192.168.64.2 -D guest_if=en0 -f ')));
+  });
+
+  it('uses a configured DHCP server over the lease, and says so', () => {
+    const rules = path.join(tmp, 'rules.txt');
+    const f = guestFakes(tmp);
+    fs.writeFileSync(rules, PF_RULES.replaceAll('192.168.64.2', '192.168.64.9'));
+    const r = setup(['--verify-admin'], f, tmp, { SOAK_DHCP_SERVER: '192.168.64.9' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.json[0].dhcp.server, '192.168.64.9');
+    assert.equal(r.json[0].dhcp.source, 'config');
+  });
+
+  it('reports both ruleset digests and rulesMatch false when the loaded rules differ', () => {
+    const f = guestFakes(tmp, { pfctl: `case "$*" in "-s info") echo "Status: Enabled";; "-s rules") printf "pass out all\\n"; cat "$RULES";; *"-n -v"*) cat "$RULES";; esac` });
+    const r = setup(['--verify-admin'], f, tmp, { RULES: path.join(tmp, 'rules.txt') });
+    assert.equal(r.status, 3);
+    const [j] = r.json;
+    assert.equal(j.ok, false);
+    assert.equal(j.pf.rulesMatch, false);
+    assert.equal(j.pf.expectedRulesSha256, sha256(PF_RULES));
+    assert.equal(j.pf.activeRulesSha256, sha256(`pass out all\n${PF_RULES}`));
+  });
+
+  const failures = {
+    'sudo is unavailable': [{}, { FAKE_USER: 'soakrun' }, /needs non-interactive sudo/],
+    'pf is disabled': [{ pfctl: 'case "$*" in "-s info") echo "Status: Disabled";; esac' }, {}, /pf is not enabled/],
+    'an extra rule is loaded': [{ pfctl: `case "$*" in "-s info") echo "Status: Enabled";; "-s rules") printf "pass out all\\n"; cat "${'${RULES}'}";; *"-n -v"*) cat "${'${RULES}'}";; "-s Interfaces -v") echo "lo0 (skip)";; esac` }, {}, /not exactly the soak profile/],
+    'pfctl parses a different rule count': [{ pfctl: 'case "$*" in "-s info") echo "Status: Enabled";; *"-n -v"*) echo "block drop all";; esac' }, {}, /unexpected number of rules/],
+    'lo0 is not skipped': [{ pfctl: `case "$*" in "-s info") echo "Status: Enabled";; "-s rules"|*"-n -v"*) cat "${'${RULES}'}";; "-s Interfaces -v") echo "lo0";; esac` }, {}, /not skipping lo0/],
+    'the guest interface has no address': [{ ipconfig: 'case "$*" in "getpacket en0") echo "server_identifier (ip): 192.168.64.2";; *) exit 1;; esac' }, {}, /no IPv4 address/],
+    'there is no DHCP lease and none is configured': [{ ipconfig: 'case "$*" in "getifaddr en0") echo 192.168.64.5;; *) exit 1;; esac' }, {}, /no valid DHCP server/],
+    'the configured DHCP server is not an address': [{}, { SOAK_DHCP_SERVER: '192.168.64.2 port 53' }, /no valid DHCP server/],
+    'SSH is not listening': [{ netstat: 'echo "tcp4 0 0 127.0.0.1.3102 *.* LISTEN"' }, {}, /SSH management path is down/],
+    'the boot identity is unreadable': [{ sysctl: 'case "$*" in "-n kern.hv_vmm_present") echo 1;; esac' }, {}, /boot identity/]
+  };
+  for (const [label, [over, env, reason]] of Object.entries(failures)) {
+    it(`fails closed (exit 3, ok:false) when ${label}`, () => {
+      const f = guestFakes(tmp, over);
+      const r = setup(['--verify-admin'], f, tmp, { RULES: path.join(tmp, 'rules.txt'), ...env });
+      assert.equal(r.status, 3, `${label}: ${r.stderr}`);
+      assert.equal(r.json.length, 1);
+      assert.equal(r.json[0].ok, false);
+      assert.match(r.json[0].reason, reason);
+    });
+  }
+});
+
+describe('soak guest: workload verifier', () => {
+  let tmp;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'soak-guest-workload-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('as the workload user, attests identity, refused privileges, loopback and denied egress, without inspecting pf', () => {
+    const f = guestFakes(tmp);
+    const r = setup(['--verify-workload'], f, tmp, { FAKE_USER: 'soakrun' });
+    assert.equal(r.status, 0, r.stderr);
+    const [j] = r.json;
+    assert.equal(j.mode, 'workload');
+    assert.equal(j.ok, true);
+    assert.deepEqual(j.identity, { user: 'soakrun', uid: 502, groups: 'staff everyone localaccounts' });
+    assert.deepEqual(j.refused, ['sudo', 'pfctl']);
+    assert.deepEqual(Object.keys(j.artifact), ['scriptSha256', 'profileSha256']);
+    assert.ok(!f.calls().some((c) => c.includes('getpacket')), 'the workload plane has no use for the lease');
+    assert.deepEqual(j.egress, { tcp4: 'denied', tcp6: 'denied', udpDns: 'denied' });
+    assert.equal(j.boot.session, '11111111-2222-3333-4444-555555555555');
+    const pf = f.calls().filter((c) => c.includes('] pfctl'));
+    assert.deepEqual(pf, ['[soakrun] pfctl -s info'], 'pfctl is only tried, to prove it is refused');
+    for (const re of [/nc -z -G 3 1\.1\.1\.1 443$/, /nc -6 -z -G 3 2606:4700:4700::1111 443$/, /dig @1\.1\.1\.1 \+time=2 \+tries=1 /]) {
+      assert.ok(f.calls().some((c) => re.test(c)), String(re));
+    }
+  });
+
+  const failures = {
+    'it runs as the admin instead': [{}, { FAKE_USER: 'admin' }, /must run as soakrun/],
+    'the workload is in the admin group': [{ id: 'case "$*" in -un) echo soakrun;; -u) echo 502;; -Gn) echo "staff admin";; esac' }, {}, /in the admin group/],
+    'the workload has a system uid': [{ id: 'case "$*" in -un) echo soakrun;; -u) echo 0;; -Gn) echo staff;; esac' }, {}, /system or root uid/],
+    'sudo works for the workload': [{ sudo: 'exit 0' }, {}, /sudo works/],
+    'pfctl works for the workload': [{ pfctl: 'echo "Status: Enabled"' }, {}, /pfctl works/],
+    'sudo hangs': [{ sudo: 'sleep 30' }, {}, /sudo hung/],
+    'IPv4 loopback is down': [{ ping: 'exit 2' }, {}, /IPv4 loopback/],
+    'IPv6 loopback hangs': [{ ping6: 'sleep 30' }, {}, /IPv6 loopback/],
+    'the guest API does not answer': [{ curl: 'exit 7' }, {}, /no TangleClaw answering/],
+    'IPv4 egress answers': [{ nc: 'case "$*" in *-6*) exit 1;; *) exit 0;; esac' }, {}, /\(IPv4\) answered/],
+    'IPv6 egress answers': [{ nc: 'case "$*" in *-6*) exit 0;; *) exit 1;; esac' }, {}, /\(IPv6\) answered/],
+    'a TCP egress probe hangs': [{ nc: 'sleep 30' }, {}, /hung past 2s: denial is not proven/],
+    'DNS over UDP answers': [{ dig: 'exit 0' }, {}, /over UDP answered/]
+  };
+  for (const [label, [over, env, reason]] of Object.entries(failures)) {
+    it(`fails closed (exit 3, ok:false) when ${label}`, () => {
+      const f = guestFakes(tmp, over);
+      const started = Date.now();
+      const r = setup(['--verify-workload'], f, tmp, { FAKE_USER: 'soakrun', ...env });
+      assert.equal(r.status, 3, `${label}: ${r.stderr}`);
+      assert.equal(r.json.length, 1);
+      assert.equal(r.json[0].ok, false);
+      assert.match(r.json[0].reason, reason);
+      assert.ok(Date.now() - started < 15000, 'a hung probe must be cut off by the watchdog');
+    });
+  }
+});
+
+describe('soak guest: guest-setup.sh guards', () => {
   let tmp;
   let f;
 
   beforeEach(() => {
-    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'soak-guest-setup-'));
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'soak-guest-guard-'));
     f = fakes(tmp, { sudo: '', pfctl: '', sysctl: '0', uname: 'Darwin', node: '', curl: '' });
   });
 
@@ -316,12 +524,14 @@ describe('soak guest: guest-setup.sh', () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it('refuses in a live TangleClaw pane before touching anything', () => {
-    const r = runScript(GUEST_SETUP, [], f.bin, { HOME: tmp, TANGLECLAW_API: 'http://localhost:3102' });
-    assert.equal(r.status, 3);
-    assert.match(r.stderr, /live TangleClaw pane/);
-    assert.deepEqual(f.calls(), []);
-  });
+  for (const mode of [[], ['--verify-admin'], ['--verify-workload']]) {
+    it(`refuses in a live TangleClaw pane before touching anything (${mode[0] || 'setup'})`, () => {
+      const r = runScript(GUEST_SETUP, mode, f.bin, { HOME: tmp, TANGLECLAW_API: 'http://localhost:3102' });
+      assert.equal(r.status, 3);
+      assert.match(r.stderr, /live TangleClaw pane/);
+      assert.deepEqual(f.calls(), []);
+    });
+  }
 
   it('refuses outside macOS', () => {
     f = fakes(tmp, { sudo: '', sysctl: '1', uname: 'Linux' });
