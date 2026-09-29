@@ -63,7 +63,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 **Tests.** `test/soak-repos.test.js`, all in temp directories:
 - seed determinism across roots, and against the independent computation;
-- idempotency, checked against a byte-level snapshot;
+- idempotency, checked against a snapshot of path, size and mtime;
 - each case that is not owned;
 - rebuilding from the origin;
 - immunity to `GIT_*` in the caller's environment;
@@ -76,6 +76,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 - guest-setup refusing in a live pane, outside macOS, or on a machine that is not a VM.
 
 The existing soak tests are unchanged.
+
+**Review.** The cumulative Critic at `52beea1b` found 0 blocking, 4 warnings and 3 notes. All of them are fixed in the follow-up commit:
+- The share guard now compares real paths and refuses any directory containing `$HOME`.
+- The in-guest pf boundary is recorded as a decision, with its known limits. `--verify-network` lets the runner re-prove the boundary without reloading pf.
+- New wrapper-driven tests cover `SEED_MISMATCH`, `GIT_FAILED` staging cleanup, and a path appearing before the rename. Mutation checks confirm the empty-directory pre-check is needed.
+- `place()` checks the destination before the rename.
+- `SOAK_PROJECTS` is trimmed.
+- The DHCP expiry risk is documented, for the dry run to observe.
 
 ## 2026-09-28 — Every rule is named "Rule #<id>" from its DB id (#2029)
 

@@ -325,8 +325,10 @@ actions.
   - It runs them only with **both** `--execute` and `SOAK_OPERATOR_APPROVED=1`.
   - It refuses to reuse an existing VM of the same name: a certification starts from a pristine guest,
     and deleting one is the operator's call.
-  - It refuses to share `/`, `$HOME` or a relative path into the guest. The shared directory is the
-    only host path the guest sees, so it must be a dedicated one.
+  - The shared directory is the only host path the guest sees, read-write, so it must be a dedicated
+    one. The script compares real paths, following symlinks and `..`. It refuses `/`, `$HOME`, any
+    directory that contains `$HOME` (such as `/Users`), a relative path, and a directory that does not
+    exist.
 - **`guest-setup.sh`** runs inside the guest, from a checkout of the pinned release candidate, once that
   TangleClaw is answering on loopback.
   - It refuses to run where `TANGLECLAW_API` is set (a live pane), outside macOS, or on a machine that
@@ -345,6 +347,24 @@ actions.
     it uses the dashboard client header. With the gate up, it refuses and tells you to attach from the
     dashboard. It never reads or writes a token.
   - Every step is safe to repeat.
+  - **`guest-setup.sh --verify-network` only re-proves the network boundary.** It doesn't reload pf,
+    because reloading would hide a pf that had been turned off. The soak runner must run it during and
+    at the end of a run (that runner is a later chunk).
+
+**Known limits of the isolation.** The boundary is pf inside the guest. `tart run` uses tart's default
+network: nothing on the host side restricts the guest.
+- **Anything in the guest with sudo can turn pf off.** The Cirrus Labs base images give the admin user
+  passwordless sudo. The runbook must remove that, or run the soak workload as a user without admin
+  rights, before certification begins.
+- **pf rules do not survive a guest reboot.** Run `guest-setup.sh` again after any reboot. It is
+  idempotent.
+- **Setup proves isolation once.** Isolation during and at the end of the run is proven only when the
+  runner calls `--verify-network`.
+- **The profile also blocks DHCP.** If the guest's address lease expires during a 72-hour run, the
+  operator may lose SSH to it. The soak itself runs on loopback and is unaffected. The dry run should
+  show whether this happens.
+- **Host-side restriction is not used yet.** Tart's softnet options could add a second layer. They are
+  not used until an operator checks them against the installed tart.
 
 The dry run and the certifying run then drive the guest's own TangleClaw from inside the guest, with
 `run --no-live-install`.

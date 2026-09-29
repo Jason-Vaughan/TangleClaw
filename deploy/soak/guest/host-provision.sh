@@ -29,14 +29,20 @@ if [ "$#" -gt 1 ]; then echo "usage: host-provision.sh [--execute]" >&2; exit 2;
 
 refuse() { echo "refused: $*" >&2; exit 3; }
 
+# The share is the only host path the guest can see, read-write. Compare real
+# paths, so `$HOME/..`, `$HOME/.`, a symlink or a parent such as /Users cannot
+# carry the home directory (and ~/.ssh) into the guest.
 case "$SOAK_SHARE_DIR" in
   /*) ;;
   *) refuse "SOAK_SHARE_DIR must be an absolute path: $SOAK_SHARE_DIR" ;;
 esac
-share="${SOAK_SHARE_DIR%/}"
-if [ -z "$share" ] || [ "$share" = "${HOME%/}" ]; then
-  refuse "SOAK_SHARE_DIR must be a dedicated directory, not / or \$HOME: it is the only host path the guest can see"
-fi
+[ -d "$SOAK_SHARE_DIR" ] || refuse "SOAK_SHARE_DIR does not exist: create a dedicated, empty directory for it ($SOAK_SHARE_DIR)"
+share="$(cd "$SOAK_SHARE_DIR" && pwd -P)"
+home_real="$(cd "$HOME" && pwd -P)"
+case "$home_real/" in
+  "$share"/*) refuse "SOAK_SHARE_DIR resolves to $share, which is or contains \$HOME ($home_real); use a dedicated directory" ;;
+esac
+[ "$share" != "/" ] || refuse "SOAK_SHARE_DIR must not be /"
 
 cmds=(
   "tart clone $(printf '%q' "$SOAK_BASE_IMAGE") $(printf '%q' "$SOAK_VM_NAME")"
@@ -55,7 +61,6 @@ command -v tart >/dev/null 2>&1 || refuse "tart is not installed (installing it 
 if tart list --quiet 2>/dev/null | grep -Fxq -- "$SOAK_VM_NAME"; then
   refuse "a VM named $SOAK_VM_NAME already exists; a soak starts from a pristine guest, so delete or rename it yourself first"
 fi
-[ -d "$share" ] || refuse "SOAK_SHARE_DIR does not exist: $share"
 
 tart clone "$SOAK_BASE_IMAGE" "$SOAK_VM_NAME"
 tart set "$SOAK_VM_NAME" --cpu "$SOAK_CPU" --memory "$SOAK_MEMORY_MB" --disk-size "$SOAK_DISK_GB"

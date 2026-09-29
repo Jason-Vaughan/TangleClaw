@@ -15,10 +15,23 @@
 #
 # Every step is safe to repeat. Needs sudo for pf and for SOAK_BIN_DIR.
 #
+#   guest-setup.sh                   set up, as above
+#   guest-setup.sh --verify-network  only re-prove the network boundary, without
+#                                    reloading pf (reloading would hide a pf that
+#                                    was disabled). The soak runner calls this
+#                                    during and at the end of a run.
+#
 # Exit codes: 0 done, 3 refused, any other non-zero: the failing step's own code.
 set -euo pipefail
 
 refuse() { echo "refused: $*" >&2; exit 3; }
+
+verify_only=0
+case "${1:-}" in
+  '') ;;
+  --verify-network) verify_only=1 ;;
+  *) echo "usage: guest-setup.sh [--verify-network]" >&2; exit 2 ;;
+esac
 
 # A pane launched by a live TangleClaw exports TANGLECLAW_API. This script
 # rewrites the firewall and registers projects, so it never runs there.
@@ -31,37 +44,50 @@ repo="$(cd "$here/../../.." && pwd)"
 # shellcheck source=guest.conf
 . "$here/guest.conf"
 
-echo "== 1/4 default-deny network"
+# The names go into URLs and JSON below; soak.js repos trims them too.
+SOAK_PROJECTS="${SOAK_PROJECTS//[[:space:]]/}"
 api="http://127.0.0.1:$SOAK_TC_PORT"
-sudo pfctl -D "host_addr=$SOAK_HOST_ADDR" -f "$here/pf/soak-deny.conf" -E
 
-# The ruleset pf reports, not the file, is what is in force. Anything other
-# than exactly the profile, in pfctl's normalized form, is refused.
-sudo pfctl -s info 2>/dev/null | grep -q '^Status: Enabled' || refuse "pf is not enabled after loading the profile"
-rules="$(sudo pfctl -s rules 2>/dev/null | sed '/^[[:space:]]*$/d')"
-expected="block drop all
+# Prove the boundary pf is meant to hold, from what pf reports and from what
+# the network actually does. Refuses (exit 3) on any failure or ambiguity.
+verify_network() {
+  # The ruleset pf reports, not the file, is what is in force. Anything other
+  # than exactly the profile, in pfctl's normalized form, is refused.
+  sudo pfctl -s info 2>/dev/null | grep -q '^Status: Enabled' || refuse "pf is not enabled"
+  rules="$(sudo pfctl -s rules 2>/dev/null | sed '/^[[:space:]]*$/d')"
+  expected="block drop all
 pass in quick inet proto tcp from $SOAK_HOST_ADDR to any port = 22 flags S/SA keep state"
-[ "$rules" = "$expected" ] || refuse "pf's loaded rules are not exactly the soak profile:
+  [ "$rules" = "$expected" ] || refuse "pf's loaded rules are not exactly the soak profile:
 $rules"
-sudo pfctl -s Interfaces -v 2>/dev/null | grep -Eq '^lo0 .*\(skip\)' || refuse "pf is not skipping lo0"
+  sudo pfctl -s Interfaces -v 2>/dev/null | grep -Eq '^lo0 .*\(skip\)' || refuse "pf is not skipping lo0"
 
-# Loopback must still work, or the soak would fail for the wrong reason.
-ping -c 1 -t 2 127.0.0.1 >/dev/null 2>&1 || refuse "IPv4 loopback is unreachable with pf loaded"
-ping6 -c 1 ::1 >/dev/null 2>&1 || refuse "IPv6 loopback is unreachable with pf loaded"
-curl -fsS --max-time 10 "$api/api/health" >/dev/null || refuse "no TangleClaw answering at $api; start the pinned release candidate first"
+  # Loopback must still work, or the soak would fail for the wrong reason.
+  ping -c 1 -t 2 127.0.0.1 >/dev/null 2>&1 || refuse "IPv4 loopback is unreachable with pf loaded"
+  ping6 -c 1 ::1 >/dev/null 2>&1 || refuse "IPv6 loopback is unreachable with pf loaded"
+  curl -fsS --max-time 10 "$api/api/health" >/dev/null || refuse "no TangleClaw answering at $api; start the pinned release candidate first"
 
-# Nothing outside may answer. Each probe uses a literal address.
-command -v dig >/dev/null 2>&1 || refuse "dig is missing, so DNS egress cannot be checked"
-if nc -z -G 3 "$SOAK_EGRESS_PROBE_ADDR" 443 >/dev/null 2>&1; then
-  refuse "reached $SOAK_EGRESS_PROBE_ADDR:443 over IPv4 with pf loaded: the guest is not isolated"
+  # Nothing outside may answer. Each probe uses a literal address.
+  command -v dig >/dev/null 2>&1 || refuse "dig is missing, so DNS egress cannot be checked"
+  if nc -z -G 3 "$SOAK_EGRESS_PROBE_ADDR" 443 >/dev/null 2>&1; then
+    refuse "reached $SOAK_EGRESS_PROBE_ADDR:443 over IPv4 with pf loaded: the guest is not isolated"
+  fi
+  if nc -6 -z -G 3 "$SOAK_EGRESS_PROBE_ADDR6" 443 >/dev/null 2>&1; then
+    refuse "reached [$SOAK_EGRESS_PROBE_ADDR6]:443 over IPv6 with pf loaded: the guest is not isolated"
+  fi
+  if dig "@$SOAK_DNS_PROBE_ADDR" +time=2 +tries=1 +short tangleclaw.invalid >/dev/null 2>&1; then
+    refuse "a DNS query to $SOAK_DNS_PROBE_ADDR got an answer with pf loaded: the guest is not isolated"
+  fi
+  echo "pf enabled with the soak profile; loopback works; no egress over TCP (IPv4, IPv6) or UDP DNS"
+}
+
+if [ "$verify_only" -eq 1 ]; then
+  verify_network
+  exit 0
 fi
-if nc -6 -z -G 3 "$SOAK_EGRESS_PROBE_ADDR6" 443 >/dev/null 2>&1; then
-  refuse "reached [$SOAK_EGRESS_PROBE_ADDR6]:443 over IPv6 with pf loaded: the guest is not isolated"
-fi
-if dig "@$SOAK_DNS_PROBE_ADDR" +time=2 +tries=1 +short tangleclaw.invalid >/dev/null 2>&1; then
-  refuse "a DNS query to $SOAK_DNS_PROBE_ADDR got an answer with pf loaded: the guest is not isolated"
-fi
-echo "pf enabled with the soak profile; loopback works; no egress over TCP (IPv4, IPv6) or UDP DNS"
+
+echo "== 1/4 default-deny network"
+sudo pfctl -D "host_addr=$SOAK_HOST_ADDR" -f "$here/pf/soak-deny.conf" -E
+verify_network
 
 echo "== 2/4 stub engine"
 sudo install -m 0755 "$repo/deploy/soak/stub-engine/soak-stub.js" "$SOAK_BIN_DIR/soak-stub"

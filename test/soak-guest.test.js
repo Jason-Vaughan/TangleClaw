@@ -118,7 +118,7 @@ describe('soak guest: host-provision.sh', () => {
     assert.equal(calls[0], 'tart list --quiet');
     assert.match(calls[1], /^tart clone \S+ vm-t$/);
     assert.equal(calls[2], 'tart set vm-t --cpu 4 --memory 8192 --disk-size 80');
-    assert.equal(calls[3], `tart run vm-t --no-graphics --dir=soak:${share}`);
+    assert.equal(calls[3], `tart run vm-t --no-graphics --dir=soak:${fs.realpathSync(share)}`);
   });
 
   it('refuses a VM name that already exists instead of reusing it', () => {
@@ -129,11 +129,27 @@ describe('soak guest: host-provision.sh', () => {
     assert.deepEqual(f.calls(), ['tart list --quiet']);
   });
 
-  it('refuses to share $HOME, /, or a relative path into the guest', () => {
-    for (const dir of [tmp, `${tmp}/`, '/', 'relative/share']) {
+  it('refuses to share $HOME, anything containing it, /, a relative path or a missing directory', () => {
+    fs.symlinkSync(tmp, path.join(share, 'to-home'));
+    const cases = [
+      tmp, `${tmp}/`, `${tmp}/.`, `${share}/..`, path.dirname(tmp),
+      path.join(share, 'to-home'), '/', 'relative/share', path.join(tmp, 'missing')
+    ];
+    for (const dir of cases) {
       const r = runScript(HOST_PROVISION, [], f.bin, { HOME: tmp, SOAK_SHARE_DIR: dir });
-      assert.equal(r.status, 3, dir);
+      assert.equal(r.status, 3, `${dir}: ${r.stdout}`);
+      assert.match(r.stderr, /^refused: /m, dir);
     }
+    assert.deepEqual(f.calls(), []);
+  });
+
+  it('prints the resolved share path, so a symlinked share is shown as what the guest gets', () => {
+    const real = path.join(tmp, 'real-share');
+    fs.mkdirSync(real);
+    fs.symlinkSync(real, path.join(tmp, 'link-share'));
+    const r = runScript(HOST_PROVISION, [], f.bin, { HOME: tmp, SOAK_SHARE_DIR: path.join(tmp, 'link-share') });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes(`--dir=soak:${fs.realpathSync(real)}`), r.stdout);
   });
 
   it('exits 2 on an unknown argument', () => {
@@ -241,6 +257,38 @@ describe('soak guest: guest-setup.sh network proof', () => {
       assert.equal(wentPastNetwork(f.calls()), false, `${label} went on to: ${f.calls().join(' | ')}`);
     });
   }
+
+  it('--verify-network re-proves the boundary without reloading pf or doing any setup', () => {
+    const f = guestFakes(tmp);
+    const r = runScript(GUEST_SETUP, ['--verify-network'], f.bin, { HOME: tmp });
+    assert.equal(r.status, 0, r.stderr);
+    const calls = f.calls();
+    assert.ok(calls.includes('pfctl -s rules'));
+    assert.ok(calls.some((c) => c.startsWith('dig ')));
+    assert.ok(!calls.some((c) => c.startsWith('pfctl -D') || c.includes(' -f ')), 'must not reload pf');
+    assert.equal(wentPastNetwork(calls), false);
+  });
+
+  it('--verify-network fails (exit 3) when pf was disabled after setup', () => {
+    const f = guestFakes(tmp, { pfctl: 'case "$*" in "-s info") echo "Status: Disabled";; esac' });
+    const r = runScript(GUEST_SETUP, ['--verify-network'], f.bin, { HOME: tmp });
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /pf is not enabled/);
+  });
+
+  it('exits 2 on an unknown argument', () => {
+    const f = guestFakes(tmp);
+    assert.equal(runScript(GUEST_SETUP, ['--skip-network'], f.bin, { HOME: tmp }).status, 2);
+    assert.equal(wentPastNetwork(f.calls()), false);
+  });
+
+  it('strips spaces from SOAK_PROJECTS before using the names', () => {
+    const f = guestFakes(tmp);
+    const r = runScript(GUEST_SETUP, [], f.bin, { HOME: tmp, SOAK_PROJECTS: 'soak-a, soak-b' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(f.calls().some((c) => /--projects soak-a,soak-b$/.test(c)));
+    assert.ok(f.calls().some((c) => c.includes('{"name":"soak-b"}')));
+  });
 
   it('skips a project the guest already has, and refuses when the auth gate is up', () => {
     let f = guestFakes(tmp, { curl: 'case "$*" in *http_code*) printf 200;; esac' });

@@ -284,6 +284,95 @@ describe('soak repos: ensureRepos', () => {
   });
 });
 
+describe('soak repos: failures mid-build', () => {
+  let tmp;
+  let root;
+  let origins;
+  let savedPath;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'soak-repos-fail-'));
+    root = path.join(tmp, 'projects');
+    origins = path.join(tmp, 'origins');
+    // A git wrapper first on PATH makes one step misbehave; everything else
+    // reaches the real git. The module strips only GIT_* from the environment,
+    // so SOAK_TEST_* reaches the wrapper.
+    const realGit = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    const bin = path.join(tmp, 'bin');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, 'git'), [
+      '#!/bin/sh',
+      'case "$SOAK_TEST_GIT_MODE:$*" in',
+      '  seed:*"rev-parse HEAD") case "$(pwd -P)" in *.soak-staging-*) echo 0000000000000000000000000000000000000000; exit 0;; esac;;',
+      '  failcommit:*" commit "*) echo "simulated commit failure" >&2; exit 1;;',
+      `  race:*"--set-upstream-to=origin/main main") "${realGit}" "$@" || exit $?; mkdir -p "$SOAK_TEST_RACE_PATH"; [ -n "$SOAK_TEST_RACE_EMPTY" ] || echo x > "$SOAK_TEST_RACE_PATH/foreign"; exit 0;;`,
+      'esac',
+      `exec "${realGit}" "$@"`
+    ].join('\n'), { mode: 0o755 });
+    savedPath = process.env.PATH;
+    process.env.PATH = `${bin}:${savedPath}`;
+  });
+
+  afterEach(() => {
+    process.env.PATH = savedPath;
+    delete process.env.SOAK_TEST_GIT_MODE;
+    delete process.env.SOAK_TEST_RACE_PATH;
+    delete process.env.SOAK_TEST_RACE_EMPTY;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  /**
+   * Names left in a directory, or [] when it does not exist.
+   * @param {string} dir - Directory
+   * @returns {string[]} Sorted names
+   */
+  const left = (dir) => (fs.existsSync(dir) ? fs.readdirSync(dir).sort() : []);
+
+  it('refuses a commit that differs from the computed seed, leaving nothing behind', () => {
+    process.env.SOAK_TEST_GIT_MODE = 'seed';
+    assert.throws(() => repos.ensureRepos({ root, origins, projects: ['soak-a'] }), (e) => {
+      assert.equal(e.code, repos.REFUSAL.SEED_MISMATCH);
+      assert.equal(e.details.expected, repos.expectedSeedSha('soak-a'));
+      return true;
+    });
+    assert.deepEqual(left(root), []);
+    assert.deepEqual(left(origins), []);
+  });
+
+  it('reports a git failure and removes its staging directory', () => {
+    process.env.SOAK_TEST_GIT_MODE = 'failcommit';
+    assert.throws(() => repos.ensureRepos({ root, origins, projects: ['soak-a'] }), (e) => {
+      assert.equal(e.code, repos.REFUSAL.GIT_FAILED);
+      assert.match(e.details.stderr, /simulated commit failure/);
+      return true;
+    });
+    assert.deepEqual(left(root), []);
+    assert.deepEqual(left(origins), []);
+  });
+
+  it('refuses to replace a path that appeared after inspection, and the next run refuses it too', () => {
+    process.env.SOAK_TEST_GIT_MODE = 'race';
+    process.env.SOAK_TEST_RACE_PATH = path.join(root, 'soak-a');
+    assert.throws(() => repos.ensureRepos({ root, origins, projects: ['soak-a'] }), (e) => {
+      assert.equal(e.code, repos.REFUSAL.NOT_OWNED);
+      assert.equal(e.details.path, path.join(root, 'soak-a'));
+      return true;
+    });
+    assert.equal(fs.readFileSync(path.join(root, 'soak-a', 'foreign'), 'utf8'), 'x\n');
+    assert.deepEqual(left(root), ['soak-a']);
+    delete process.env.SOAK_TEST_GIT_MODE;
+    assert.throws(() => repos.ensureRepos({ root, origins, projects: ['soak-a'] }), (e) => e.code === repos.REFUSAL.NOT_OWNED);
+  });
+  it('refuses to replace even an empty directory that appeared after inspection', () => {
+    process.env.SOAK_TEST_GIT_MODE = 'race';
+    process.env.SOAK_TEST_RACE_EMPTY = '1';
+    process.env.SOAK_TEST_RACE_PATH = path.join(root, 'soak-a');
+    assert.throws(() => repos.ensureRepos({ root, origins, projects: ['soak-a'] }), (e) => e.code === repos.REFUSAL.NOT_OWNED && /before rename/.test(e.details.found));
+    assert.deepEqual(left(path.join(root, 'soak-a')), []);
+    assert.deepEqual(left(root), ['soak-a']);
+  });
+});
+
 describe('soak repos: no network', () => {
   it('loads only local-filesystem and process modules, never a network one', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'soak', 'repos.js'), 'utf8');
