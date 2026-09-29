@@ -23,6 +23,20 @@ against what it can see.
 Ordinary wake observation is unchanged: it still never replaces a recorded thread. Only an open
 rotation may, and only to the replacement it proved.
 
+## Who may rotate
+
+Only a project the operator has granted a **coordinator role** may prepare a rotation:
+`POST /api/coordinator-roles {projectId, role: "architect" | "project-manager", note?}`.
+- **One active role per project.** Granting again replaces the active role and bumps its
+  **authority version**.
+- **Revoking:** `POST /api/coordinator-roles/revoke {projectId}` ends it.
+- **Listing:** `GET /api/coordinator-roles`.
+- All three are operator-only. The `role` named in a checkpoint is not authority.
+
+A rotation records the role and authority version it was prepared under. If either changes while the
+rotation is open, that is **authority drift**. No receipt can accept it, and only the operator can
+recover the rotation.
+
 ## States
 
 ```
@@ -91,12 +105,22 @@ than as "nothing there":
   "assignments": [{ "lane": "RM01", "issue": 2027, "head": "<sha>" }],
   "decisions": [{ "id": "A1", "state": "open" }],
   "exchanges": [{ "id": "mx_…", "with": "tangleclaw-projectmanager" }],
-  "branch": { "head": "<sha>", "status": "clean" },
+  "branch": { "head": "<sha>", "ref": "main", "ownedDirt": ["lib/x.js"], "importantIgnored": [".env"] },
   "nextActions": ["…"],
   "note": "where it ended"
 }
 ```
 
+- **Checkout.** At prepare the server fingerprints the project checkout and the checkpoint must agree
+  with it:
+  - `head` and `ref` must be the checkout's own values;
+  - `ownedDirt` must name every changed or untracked path, and a checkout with undeclared dirt is
+    refused;
+  - every `importantIgnored` file must exist and be ignored.
+
+  The fingerprint hashes the whole tracked diff against HEAD, every untracked file (directories are
+  expanded) and each declared important ignored file. It never reads an ignored dependency or build
+  cache.
 - **Digest:** the server takes the SHA-256 of the canonical JSON (keys sorted), so key order does not
   matter.
 - **Size:** the checkpoint may be at most 60,000 bytes.
@@ -114,8 +138,6 @@ than as "nothing there":
   "restored": ["each checkpoint fact confirmed"],
   "drift": ["each fact that had changed, and how"],
   "reconciled": {
-    "git": { "head": "<git rev-parse HEAD>" },
-    "github": { "checkedAt": "<ISO time>" },
     "control": { "stateGeneration": 3 },
     "medusa": { "handled": ["<message ids>"] }
   },
@@ -123,12 +145,20 @@ than as "nothing there":
 }
 ```
 
-The server accepts the receipt only when every check it can make itself agrees. The checks are:
+Before it looks at the receipt, the server re-observes what must not change while a coordinator is
+absent: the coordinator role, and the checkout's content fingerprint. Either kind of difference is
+**integrity drift**. It is stored on the rotation as typed items with before and after digests, and
+the resume is refused with `409 ROTATION_OPERATOR_RECOVERY_REQUIRED`. No acknowledgement in the
+receipt accepts integrity drift. The replacement must therefore not commit or edit its checkout
+before it resumes. A checkout that cannot be observed is refused with
+`409 ROTATION_EVIDENCE_UNAVAILABLE`.
+
+After that, the server accepts the receipt only when every check it can make itself agrees. The
+checks are:
 
 - the digest matches the recorded checkpoint;
 - none of the prepare-time inbox messages are still unhandled (mail that arrived later stays queued
   and does not block);
-- `git.head` is the checkout's actual HEAD;
 - `control.stateGeneration` is the lane's current control generation, or `null` when there is no
   assignment;
 - the launch has published a workload receipt since the rotation began.
@@ -165,12 +195,11 @@ reason. Claude keeps its own re-entry path: the SessionStart hook's re-entry pre
   longer exists, and the server cannot tell a request replayed from it apart from the replacement's
   own. Generation is therefore enforced on the calls that carry it (resume, and through it the fence
   release). Marking mail handled and closing an exchange are not generation-bound.
-- **GitHub is asserted, not checked.** The receipt carries `github.checkedAt`, but the server does
-  not query GitHub itself.
 - **Full wrap-and-relaunch parity, and a dashboard view of rotation state, are not built yet.** They
   are #2032's E4 slice.
 
 Implementation: `lib/coordinator-rotation.js`, `lib/startup-control-codex.js` (`rotationThreads`,
 `rebindThread`, `deliverTurn`) and the `coordinator_rotations` table (schema v51). Tests:
 `test/coordinator-rotation.test.js`, `test/api-coordinator-rotation.test.js` and
-`test/tc-rotation-verb.test.js`.
+`test/tc-rotation-verb.test.js` and `test/checkout-fingerprint.test.js`. The checkout fingerprint is
+`lib/checkout-fingerprint.js`.

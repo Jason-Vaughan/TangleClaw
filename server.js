@@ -4860,6 +4860,25 @@ route('POST', '/api/tc/rotation/abandon', (req, res, _params, body) => {
   return jsonResponse(res, result.status, result.body);
 });
 
+// Coordinator-role contracts (#2032, ruling A6a): the operator's durable
+// statement that a project is a coordinator, which a rotation's prepare
+// requires and its resume re-checks. Operator only.
+route('GET', '/api/coordinator-roles', (req, res) => {
+  const caller = resolveControlCaller(req);
+  if (caller.kind !== 'operator') return errorResponse(res, 403, 'Only the operator lists coordinator roles.', 'OPERATOR_ONLY');
+  return jsonResponse(res, 200, { roles: store.coordinatorRoles.list() });
+});
+
+route('POST', '/api/coordinator-roles', (req, res, _params, body) => {
+  const result = coordinatorRotation.grantRole({ caller: resolveControlCaller(req), body });
+  return jsonResponse(res, result.status, result.body);
+});
+
+route('POST', '/api/coordinator-roles/revoke', (req, res, _params, body) => {
+  const result = coordinatorRotation.revokeRole({ caller: resolveControlCaller(req), body });
+  return jsonResponse(res, result.status, result.body);
+});
+
 // POST /api/tc/workload/narrowing — the operator narrows (or clears a
 // narrowing of) one lane's composed verdict (ADR 0020 §7). Operator only, with
 // control's proof tiers; a narrowing only ever lowers the verdict.

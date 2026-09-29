@@ -49,7 +49,7 @@ function checkpoint(over = {}) {
     assignments: [{ lane: 'RM01', issue: 2027, head: 'b'.repeat(40) }],
     decisions: [{ id: 'A1', state: 'open' }],
     exchanges: [{ id: 'mx_1', with: 'tangleclaw-projectmanager' }],
-    branch: { head: HEAD, status: 'clean' },
+    branch: { head: HEAD, ref: 'main', ownedDirt: [], status: 'clean' },
     nextActions: ['review #2029 at its exact head'],
     note: 'Wrapping for a controlled relaunch.',
     ...over
@@ -71,7 +71,13 @@ describe('coordinator context rotation (#2032)', () => {
   let typed;
   /** What typing `/clear` does to the fake server's threads. */
   let onClear;
-  let gitHead;
+  /** What the checkout fingerprint seam observes. */
+  let checkout;
+  /** A clean checkout on main at HEAD. */
+  const cleanCheckout = () => ({
+    path: projectPath, ref: 'refs/heads/main', head: HEAD, statusDigest: 's'.repeat(64), trackedDiffDigest: 't'.repeat(64),
+    dirty: [], untracked: {}, importantIgnored: {}
+  });
   /** This test's launch: workload receipts are append-only, so each test gets its own. */
   let launchId;
   let launchN = 0;
@@ -96,10 +102,11 @@ describe('coordinator context rotation (#2032)', () => {
 
   beforeEach(() => {
     codex._internal._version.version = '0.156.1';
-    for (const t of ['startup_control_channels', 'coordinator_rotations']) store.getDb().prepare(`DELETE FROM ${t}`).run();
+    for (const t of ['startup_control_channels', 'coordinator_rotations', 'coordinator_roles']) store.getDb().prepare(`DELETE FROM ${t}`).run();
+    grant();
     inbox = [];
     typed = [];
-    gitHead = HEAD;
+    checkout = { ok: true, fingerprint: cleanCheckout() };
     launchId = `launch-architect-${++launchN}`;
     onClear = () => {
       // Codex /clear: the old thread unloads, one new root thread appears.
@@ -167,6 +174,14 @@ describe('coordinator context rotation (#2032)', () => {
     });
   }
 
+  /**
+   * The operator grants this test's project the architect role.
+   * @returns {object} The role.
+   */
+  function grant() {
+    return rotation.grantRole({ caller: { kind: 'operator' }, body: { projectId: project.id, role: 'architect' } }).body.role;
+  }
+
   const access = () => ({ projectId: project.id, sessionId: session.id, launchId });
   const threadOf = () => store.startupControlChannels.getOpenBySession(session.id).adapterState.threadId;
   const observe = () => codex.observeActivity(store.startupControlChannels.getOpenBySession(session.id), project, OURS);
@@ -175,7 +190,7 @@ describe('coordinator context rotation (#2032)', () => {
   const deps = () => ({
     adapterDeps: OURS,
     messages: () => inbox.slice(),
-    gitHead: () => gitHead,
+    fingerprint: () => (checkout.ok ? { ok: true, fingerprint: JSON.parse(JSON.stringify(checkout.fingerprint)) } : checkout),
     inject: (_name, command, opts) => {
       typed.push({ command, opts });
       if (command === '/clear') onClear();
@@ -222,8 +237,6 @@ describe('coordinator context rotation (#2032)', () => {
       restored: ['lane table', 'pending decisions'],
       drift: [],
       reconciled: {
-        git: { head: HEAD },
-        github: { checkedAt: new Date().toISOString() },
         control: { stateGeneration: null },
         medusa: { handled: [] }
       },
@@ -276,7 +289,7 @@ describe('coordinator context rotation (#2032)', () => {
       assert.equal(r.status, 400);
       assert.equal(r.body.code, 'ROTATION_CHECKPOINT_INCOMPLETE');
       assert.ok(r.body.missing.includes('note'));
-      assert.ok(r.body.missing.includes('branch.head'));
+      assert.ok(r.body.missing.includes('branch'));
       assert.ok(r.body.missing.some((m) => m.startsWith('schema')));
       assert.equal(rotation.openRotation(project.id), null);
       assert.equal(prepare({ checkpoint: 'prose summary' }).status, 400);
@@ -546,15 +559,14 @@ describe('coordinator context rotation (#2032)', () => {
       assert.equal(changed.body.code, 'ROTATION_ALREADY_ACTIVE');
     });
 
-    it('missing evidence keeps the fence up and names each gap: undrained inbox, git drift, no workload receipt, wrong checkpoint', async () => {
+    it('missing evidence keeps the fence up and names each gap: undrained inbox, no workload receipt, wrong checkpoint', async () => {
       inbox = [{ id: 'left-behind' }];
       const rot = await toReconciling();
-      gitHead = 'f'.repeat(40);
       const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, receipt: receipt(rot, { checkpointDigest: '0'.repeat(64) }) };
       const r = rotation.resume({ access: access(), body }, deps());
       assert.equal(r.status, 409);
       assert.equal(r.body.code, 'ROTATION_EVIDENCE_MISSING');
-      assert.deepEqual(r.body.missing.map((m) => m.fact).sort(), ['checkpoint', 'git', 'medusa', 'workload']);
+      assert.deepEqual(r.body.missing.map((m) => m.fact).sort(), ['checkpoint', 'medusa', 'workload']);
       assert.match(r.body.error, /left-behind/);
       assert.equal(store.coordinatorRotations.get(rot.rotationId).state, 'reconciling');
       assert.equal(rotation.sendFenceRefusal(project.id, { to: 'x', message: 'dispatch' }).status, 409);
@@ -645,6 +657,117 @@ describe('coordinator context rotation (#2032)', () => {
     });
   });
 
+  describe('A6a: the coordinator role is an operator grant, not a claim', () => {
+    it('a project with no active role cannot prepare, whatever its checkpoint says it is', async () => {
+      await serve();
+      channel();
+      store.getDb().prepare('DELETE FROM coordinator_roles').run();
+      const r = prepare({ checkpoint: checkpoint({ role: 'architect' }) });
+      assert.equal(r.status, 403);
+      assert.equal(r.body.code, 'ROTATION_NOT_COORDINATOR');
+      assert.equal(rotation.openRotation(project.id), null);
+    });
+
+    it('prepare records the role and authority version it was prepared under', async () => {
+      await serve();
+      channel();
+      const role = store.coordinatorRoles.getActiveForProject(project.id);
+      const r = prepare();
+      assert.deepEqual(r.body.rotation.role, { roleId: role.roleId, authorityVersion: role.authorityVersion });
+    });
+
+    it('only the operator grants or revokes a role; a regrant bumps the authority version', () => {
+      assert.equal(rotation.grantRole({ caller: { kind: 'project' }, body: { projectId: project.id, role: 'architect' } }).status, 403);
+      assert.equal(rotation.revokeRole({ caller: { kind: 'project' }, body: { projectId: project.id } }).status, 403);
+      assert.equal(rotation.grantRole({ caller: { kind: 'operator-unverifiable', reason: 'x' }, body: {} }).status, 503);
+      assert.equal(rotation.grantRole({ caller: { kind: 'operator' }, body: { projectId: project.id, role: 'emperor' } }).status, 400);
+      assert.equal(rotation.grantRole({ caller: { kind: 'operator' }, body: { projectId: 99999, role: 'architect' } }).status, 404);
+      const before = store.coordinatorRoles.getActiveForProject(project.id);
+      const again = grant();
+      assert.equal(again.authorityVersion, before.authorityVersion + 1);
+      assert.equal(store.coordinatorRoles.get(before.roleId).status, 'revoked');
+      const revoked = rotation.revokeRole({ caller: { kind: 'operator' }, body: { projectId: project.id } });
+      assert.equal(revoked.status, 200);
+      assert.equal(store.coordinatorRoles.getActiveForProject(project.id), null);
+      assert.equal(rotation.revokeRole({ caller: { kind: 'operator' }, body: { projectId: project.id } }).status, 404);
+    });
+
+    it('a role revoked or regranted while the rotation is open is authority drift: no receipt can resume it', async () => {
+      const rot = await toReconciling();
+      workloadReceipt();
+      grant();
+      const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, receipt: receipt(rot) };
+      const r = rotation.resume({ access: access(), body }, deps());
+      assert.equal(r.status, 409);
+      assert.equal(r.body.code, 'ROTATION_OPERATOR_RECOVERY_REQUIRED');
+      assert.deepEqual(r.body.drift.integrity.map((i) => i.class), ['authority']);
+      const stored = store.coordinatorRotations.get(rot.rotationId);
+      assert.equal(stored.state, 'reconciling');
+      assert.deepEqual(stored.drift.integrity.map((i) => i.key), ['authority.coordinator-role']);
+    });
+  });
+
+  describe('A7a: the checkout is fingerprinted at prepare and must be unchanged at resume', () => {
+    it('prepare refuses a checkpoint whose head or ref is stale', async () => {
+      await serve();
+      channel();
+      let r = prepare({ checkpoint: checkpoint({ branch: { head: 'b'.repeat(40), ref: 'main', ownedDirt: [] } }) });
+      assert.equal(r.body.code, 'ROTATION_CHECKPOINT_STALE');
+      r = prepare({ checkpoint: checkpoint({ branch: { head: HEAD, ref: 'other', ownedDirt: [] } }) });
+      assert.equal(r.body.code, 'ROTATION_CHECKPOINT_STALE');
+      assert.equal(prepare({ checkpoint: checkpoint({ branch: { head: HEAD, ref: 'refs/heads/main', ownedDirt: [] } }) }).status, 201);
+    });
+
+    it('prepare refuses dirt the checkpoint does not declare, and accepts it declared', async () => {
+      await serve();
+      channel();
+      checkout.fingerprint.dirty = ['lib/a.js', 'notes/new.md'];
+      let r = prepare({ checkpoint: checkpoint({ branch: { head: HEAD, ref: 'main', ownedDirt: ['lib/a.js'] } }) });
+      assert.equal(r.status, 409);
+      assert.equal(r.body.code, 'ROTATION_UNDECLARED_DIRT');
+      assert.deepEqual(r.body.undeclared, ['notes/new.md']);
+      r = prepare({ checkpoint: checkpoint({ branch: { head: HEAD, ref: 'main', ownedDirt: ['lib/a.js', 'notes/new.md'] } }) });
+      assert.equal(r.status, 201);
+    });
+
+    it('prepare refuses an unfingerprintable checkout or an important ignored file it cannot hash', async () => {
+      await serve();
+      channel();
+      checkout = { ok: false, reason: 'status-unreadable' };
+      assert.equal(prepare().body.code, 'ROTATION_CHECKOUT_UNAVAILABLE');
+      checkout = { ok: true, fingerprint: { ...cleanCheckout(), importantIgnored: { '.env': 'unavailable:not-ignored' } } };
+      const r = prepare({ checkpoint: checkpoint({ branch: { head: HEAD, ref: 'main', ownedDirt: [], importantIgnored: ['.env'] } }) });
+      assert.equal(r.body.code, 'ROTATION_IGNORED_FILE_UNAVAILABLE');
+    });
+
+    it('any content change to the checkout during absence is a hard blocker, persisted as typed drift', async () => {
+      const rot = await toReconciling();
+      workloadReceipt();
+      checkout.fingerprint.trackedDiffDigest = 'e'.repeat(64);
+      checkout.fingerprint.untracked = { 'scratch.txt': 'sha256:abc' };
+      const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, receipt: receipt(rot) };
+      const r = rotation.resume({ access: access(), body }, deps());
+      assert.equal(r.status, 409);
+      assert.equal(r.body.code, 'ROTATION_OPERATOR_RECOVERY_REQUIRED');
+      assert.deepEqual(r.body.drift.integrity.map((i) => i.key).sort(), ['checkout.trackedDiffDigest', 'checkout.untracked:scratch.txt']);
+      assert.ok(r.body.drift.integrity.every((i) => i.class === 'checkout-integrity' && i.before && i.after));
+      // Even a receipt that "acknowledges" it cannot resume.
+      const acked = rotation.resume({ access: access(), body: { ...body, receipt: receipt(rot, { drift: [{ key: 'checkout.trackedDiffDigest', disposition: 'accepted' }] }) } }, deps());
+      assert.equal(acked.body.code, 'ROTATION_OPERATOR_RECOVERY_REQUIRED');
+      assert.equal(rotation.sendFenceRefusal(project.id, { to: 'x', message: 'dispatch' }).status, 409);
+    });
+
+    it('a checkout that cannot be observed at resume keeps the fence up as unavailable evidence', async () => {
+      const rot = await toReconciling();
+      workloadReceipt();
+      checkout = { ok: false, reason: 'diff-unreadable' };
+      const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, receipt: receipt(rot) };
+      const r = rotation.resume({ access: access(), body }, deps());
+      assert.equal(r.body.code, 'ROTATION_EVIDENCE_UNAVAILABLE');
+      assert.deepEqual(store.coordinatorRotations.get(rot.rotationId).drift.unavailable, ['checkout: diff-unreadable']);
+    });
+  });
+
   describe('schema v51 migration', () => {
     it('upgrades a v50 store: the table and its one-open-rotation index appear, and the version advances', () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-rotation-mig-'));
@@ -657,6 +780,7 @@ describe('coordinator context rotation (#2032)', () => {
         const dbPath = path.join(dir, 'tangleclaw.db');
         const db = new DatabaseSync(dbPath);
         db.exec('DROP TABLE coordinator_rotations');
+        db.exec('DROP TABLE coordinator_roles');
         db.exec('DELETE FROM schema_version WHERE version >= 51');
         db.exec('INSERT INTO schema_version (version) VALUES (50)');
         db.close();
@@ -670,6 +794,8 @@ describe('coordinator context rotation (#2032)', () => {
           const index = after.prepare("SELECT sql FROM sqlite_master WHERE name = 'idx_coordinator_rotations_open'").get();
           assert.match(index.sql, /UNIQUE/);
           assert.match(index.sql, /WHERE state IN/);
+          const roles = after.prepare("SELECT sql FROM sqlite_master WHERE name = 'idx_coordinator_roles_active'").get();
+          assert.match(roles.sql, /UNIQUE/);
         } finally {
           after.close();
         }
@@ -683,8 +809,9 @@ describe('coordinator context rotation (#2032)', () => {
     it('the index allows one open rotation per project, but any number of finished ones', () => {
       const row = (id, state) => store.getDb().prepare(
         'INSERT INTO coordinator_rotations (rotation_id, attempt_key, project_id, session_id, launch_id, engine_id, channel_id, sequence_id, '
-        + "state, generation, prior_thread_id, checkpoint_schema, checkpoint_digest, checkpoint_json, inbox_ids_json, created_at, updated_at) "
-        + "VALUES (?, ?, 77, 1, 'l', 'codex', 1, 1, ?, 1, 't', 1, ?, '{}', '[]', 'x', 'x')"
+        + "state, generation, prior_thread_id, checkpoint_schema, checkpoint_digest, checkpoint_json, inbox_ids_json, "
+        + "role_id, authority_version, checkout_json, created_at, updated_at) "
+        + "VALUES (?, ?, 77, 1, 'l', 'codex', 1, 1, ?, 1, 't', 1, ?, '{}', '[]', 'r', 1, '{}', 'x', 'x')"
       ).run(id, `key-${id}-000`, state, 'd'.repeat(64));
       row('a', 'active');
       row('b', 'abandoned');

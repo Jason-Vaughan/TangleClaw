@@ -53,6 +53,12 @@ The Architect dispatched this as an emergency (message e2f2d7c2, the plan at Tan
 
 **Decisions to confirm.** Schema v51 is also claimed by #1971 and #1966, so whichever lands second renumbers. "Dispatch" is taken as new outbound Medusa sends, with replies allowed. The inbox high-water mark is the set of message ids present at prepare. Old and new contexts share one pane and one launch, so generation is enforced where it is carried (resume); marking mail handled and closing an exchange are not generation-bound. GitHub reconciliation is asserted in the receipt, not queried by the server.
 
+**Architect rulings A1–A13 (after the E1–E3 checkpoint).** The replacement Architect ruled most of the first cut insufficient. Two are built in this entry:
+- **A6a.** An operator-granted, versioned `coordinator_roles` contract is now the only authority to prepare. A role or version change during absence is non-acceptable authority drift.
+- **A7a.** A content fingerprint of the checkout is taken at prepare, which refuses undeclared dirt. It is re-observed at resume, where any difference is non-acceptable integrity drift. The old receipt-asserted `git.head` and `github.checkedAt` fields were removed.
+
+Still to build: epoch binding via the forwarded Codex thread id plus a one-time resume nonce (A11/A12), trusted GitHub re-observation with the two drift classes (A10), the readiness verdict (A8), and E4 relaunch parity with the operator read surface (A13).
+
 **Tests.** Rotation tests cover prepare, the fence, the rebind and resume, including every rejection, crash-retry at the rebind and the re-entry send, concurrent passes and old-thread reappearance. There are also route-binding, verb, send-fence route and wake-gate tests. The v50 migration test compared against a literal `50`; it now reads `CURRENT_SCHEMA_VERSION`, as the store asks, so it still means "advances to HEAD". The four prime golden fixtures changed only by the new `rotation` verb in the generated verb list, regenerated with `UPDATE_PRIME_GOLDEN=1`. The other wake and watchdog tests now stub the new seam so none reads an ambient store.
 
 ## 2026-09-28 — Session-rule mutations are gated on a verified caller (#2013)

@@ -1528,7 +1528,8 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     store.coordinatorRotations.insert({
       rotationId: 'rot_send_fence', attemptKey: 'send-fence-0001', projectId: project.id, sessionId: active.id,
       launchId: 'l', engineId: 'codex', channelId: 1, sequenceId: 1, generation: 1, priorThreadId: 't',
-      checkpointSchema: 1, checkpointDigest: 'd'.repeat(64), checkpoint: {}, inboxIds: [], now
+      checkpointSchema: 1, checkpointDigest: 'd'.repeat(64), checkpoint: {}, inboxIds: [],
+      roleId: 'role_x', authorityVersion: 1, checkout: {}, now
     });
     try {
       const fenced = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'live-ws', message: 'go build #9' });
