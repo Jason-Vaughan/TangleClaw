@@ -348,7 +348,8 @@ actions.
     - with `--execute`, a directory that isn't empty: a new guest gets a new, empty share. It is a place
       for inputs and evidence, never for trusted code.
 - **`guest-setup.sh`** runs inside the guest, as the admin, from a checkout of the pinned release
-  candidate that the workload user can read (such as under `/Users/Shared`).
+  candidate that the workload user can read and nobody else can write (such as `/opt/tangleclaw-soak`;
+  see the trust check below).
   - **The guest TangleClaw runs as the workload user, never as the admin.** Its sessions are the
     workload, and a session with sudo could turn pf off.
   - A fresh guest therefore goes in three steps:
@@ -360,9 +361,9 @@ actions.
 
   Every mode first:
   - **checks the checkout can be trusted** (every mode, `--verify-workload` included), before
-    `guest.conf` is even read. The admin sources `guest.conf`, loads the pf profile, installs the stub engine and runs
-    `soak.js`, so anyone who could change those files could run code as the admin or rewrite the
-    firewall. The files checked are:
+    `guest.conf` is even read. The admin sources `guest.conf`, loads the pf profile and installs the
+    stub engine; setup runs `soak.js` as the workload user. Anyone who could change those files could
+    run code as the admin or the workload, or rewrite the firewall. The files checked are:
     - `guest-setup.sh`, `guest.conf` and `pf/soak-deny.conf`;
     - `scripts/soak.js` and every `lib/soak/*.js`;
     - the stub-engine files;
@@ -454,9 +455,9 @@ The guest is attested from two planes, because neither can see everything.
   - that something is listening on port 22, the SSH management path;
   - that the TangleClaw on `SOAK_TC_PORT` is exactly one process, running as the workload user and
     executing `node`. The proof starts from the listening socket. `lsof` resolves exactly one pid, whose
-    uid must match from both `lsof` and `ps`. Exactly one of its `lsof` text entries may be a node
-    binary, and it must canonicalize to the same path as `ps` reports. Nothing the process says about
-    itself (its argv) is trusted;
+    uid must match from both `lsof` and `ps`. Its executable comes from `lsof`'s text entries, the
+    kernel's view of what the process has mapped: exactly one may be a node binary, and it is recorded
+    canonicalized. `ps`'s command name isn't used, because on macOS it is the process's own `argv[0]`;
   - that the workload account is still what setup made: a regular uid (501 or above), its own home
     owned by it, in neither `admin` nor `wheel`, and with no sudo rights. Sudo rights are judged by the
     exit status of `sudo -l -U <user> <command>`, for a shell, `pfctl` and a no-op. Two positive controls
@@ -483,6 +484,12 @@ at finalization. It binds them to the run and fails closed on a mismatch or a st
 changes the boot identity, so no time survives one.
 
 **Known limits.**
+- **The admin's own `node` and `PATH` are trusted as given.** The admin runs `node` from its `PATH` to
+  encode each attestation and to canonicalize paths. The runbook must install node where only root or
+  the admin can write it, and run setup with a `PATH` of such directories.
+- **The IPv6 probe check refuses known reserved blocks, not every unallocated address.** An address such
+  as `4000::1` passes as public. The dry run's positive control (the probes must answer with pf
+  disabled) catches a probe that could never have answered.
 - **Host-side restriction is not used yet.** `tart run` uses tart's default network, and the boundary is
   pf inside the guest, attested as above. Tart's softnet options could add a second layer; they are not
   used until an operator checks them against the installed tart.

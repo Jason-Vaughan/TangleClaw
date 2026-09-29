@@ -26,8 +26,9 @@
 #
 # Each verifier prints exactly one JSON line on stdout (schema
 # tc.soak-guest-attest/v1), with "ok" true or false, the boot identity and the
-# sha256 of this script and of the pf profile. The soak runner joins the two at admission, at every
-# evidence sample and at finalization. A reboot changes the boot identity.
+# sha256 of this script, the pf profile and guest.conf. The soak runner (a
+# later chunk) is to join the two at admission, at every evidence sample and at
+# finalization; a reboot changes the boot identity.
 #
 # Setup, in order, stopping at the first failure:
 #   1. create (or confirm) the workload user: not an admin, no sudo;
@@ -388,16 +389,16 @@ check_tc_owner() {
   [ "$uids" = "$want" ] || refuse "the TangleClaw on port $SOAK_TC_PORT runs as uid $(tr '\n' ' ' <<< "$uids")not $user ($want): its sessions would not be the confined workload"
   ps_uid="$(bounded ps -o uid= -p "$pids" 2>/dev/null | tr -d '[:space:]' || true)"
   [ "$ps_uid" = "$want" ] || refuse "ps reports pid $pids as uid '$ps_uid', not $user ($want)"
-  # The executable, from two kernel sources that must agree after
-  # canonicalization: lsof's text entries (the program, then its mapped
-  # libraries) and ps. Exactly one text entry may be a node binary.
-  local txt node_txt ps_exe
+  # The executable, from the kernel's view of the process's mapped text: lsof
+  # lists the program and its libraries, and exactly one entry may be a node
+  # binary. Not ps's comm, which on macOS is the process's own argv[0] (a bare
+  # "node" when started from PATH) and so is the process's word, not the
+  # kernel's.
+  local txt node_txt
   txt="$( { bounded sudo -n lsof -nP -a -p "$pids" -d txt -Fn 2>/dev/null || true; } | sed -n 's/^n//p')"
   node_txt="$(grep -E '(^|/)node$' <<< "$txt" || true)"
   [ -n "$node_txt" ] && [ "$(grep -c . <<< "$node_txt")" -eq 1 ] || refuse "pid $pids on port $SOAK_TC_PORT maps $(grep -c . <<< "$node_txt") node executables: its executable is not established"
-  ps_exe="$(bounded sudo -n ps -o comm= -p "$pids" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)"
   tc_exe="$(canonical "$node_txt")" || refuse "cannot canonicalize the TangleClaw executable $node_txt"
-  [ -n "$ps_exe" ] && [ "$(canonical "$ps_exe" 2>/dev/null || true)" = "$tc_exe" ] || refuse "ps reports pid $pids executing '$ps_exe', not $tc_exe: the executable is not established"
   tc_uid="$want"; tc_pid="$pids"
 }
 

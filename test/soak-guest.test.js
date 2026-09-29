@@ -585,6 +585,14 @@ describe('soak guest: admin verifier', () => {
     assert.ok(f.calls().some((c) => c.includes('pfctl -n -v -D host_addr=192.168.64.1 -D dhcp_server=192.168.64.2 -D guest_if=en0 -f ')));
   });
 
+  it('accepts a TangleClaw started as a bare `node` from PATH: its argv[0] is not the executable evidence', () => {
+    const f = guestFakes(tmp, { ps: 'case "$*" in *uid=*) echo "  502";; *comm=*) echo node;; esac' });
+    const r = setup(['--verify-admin'], f, tmp);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.json[0].tangleclaw.executable, fs.realpathSync(NODE));
+    assert.ok(!f.calls().some((c) => c.includes('comm=')), 'ps comm must not be consulted');
+  });
+
   it('encodes the line with a real JSON encoder, so a reason carrying quotes and newlines still parses', () => {
     const f = guestFakes(tmp, { pfctl: `case "$*" in "-s info") echo "Status: Enabled";; "-s rules") printf 'pass out all "quoted"\\n'; cat "$RULES";; *"-n -v"*) cat "$RULES";; esac` });
     const r = setup(['--verify-admin'], f, tmp, { RULES: path.join(tmp, 'rules.txt') });
@@ -640,7 +648,6 @@ describe('soak guest: admin verifier', () => {
     'the TangleClaw process is not node': [{ lsof: 'case "$*" in *-iTCP:3102*) printf "p4242\\nu502\\n";; *"-d txt"*) printf "p4242\\nn/usr/bin/python3\\n";; esac' }, {}, /maps 0 node executables/],
     'the lease has no lease time': [{ ipconfig: 'case "$*" in "getifaddr en0") echo 192.168.64.5;; "getpacket en0") printf "server_identifier (ip): 192.168.64.2\\n";; esac' }, {}, /must report lease_time/],
     'the TangleClaw process maps two node executables': [{ lsof: `case "$*" in *-iTCP:3102*) printf "p4242\\nu502\\n";; *"-d txt"*) printf "p4242\\nn${NODE}\\nn/opt/other/bin/node\\n";; esac` }, {}, /maps 2 node executables/],
-    'ps names a different executable': [{ ps: 'case "$*" in *uid=*) echo "  502";; *comm=*) echo /opt/other/bin/node;; esac' }, {}, /the executable is not established/],
     'the workload account became an admin after setup': [{ dseditgroup: 'case "$*" in *" admin") exit 0;; *) exit 1;; esac' }, {}, /member of admin/],
     'the workload account gained sudo after setup': [{ sudo: '[ "$1" = "-n" ] && shift\nif [ "$1" = "-l" ]; then exit 0; fi\n[ "${FAKE_USER:-admin}" = admin ] || exit 1\nexec "$@"' }, {}, /has sudo rights \(\/bin\/sh is permitted\)/],
     'sudo -l hangs for the workload account': [{ sudo: '[ "$1" = "-n" ] && shift\nif [ "$1" = "-l" ]; then [ "$3" = admin ] && exit 0; sleep 30; fi\n[ "${FAKE_USER:-admin}" = admin ] || exit 1\nexec "$@"' }, {}, /sudo -l for soakrun hung/],

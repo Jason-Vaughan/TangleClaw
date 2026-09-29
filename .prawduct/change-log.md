@@ -129,7 +129,7 @@ The same commit carries the Architect's further A44 acceptance conditions:
 
 In PM scoped slot 4, the first run exposed a real bug in the new validator: node's `BlockList` matches an IPv4 address against the IPv4-mapped IPv6 subnet, so a shared list refused every IPv4 probe. The fix uses one list per family. `::2` then showed that `::/128` was too narrow, so the whole reserved `::/8` block is refused. The final run passed 137/137, and a mutation check dropping IPv6 probe validation turned 8 tests red.
 
-**Evidence at `99a72892`.** The full declared suite ran in the PM's exclusive window (16:08Z): 14769 tests, 0 fail, 1 ledgered skip. That closes W1, which the earlier paragraphs record as still pending. PR #2044 was opened at this head.
+**Evidence at `99a72892`.** The full declared suite ran in the PM's exclusive window (16:08Z): 0 fail, 1 ledgered skip (totals in the recorded evidence, `prawduct-hook test-status`). That closes W1, which the earlier paragraphs record as still pending. PR #2044 was opened at this head.
 
 **The Rule #124 independent review blocked it (Architect A71).** The follow-up commit fixes:
 - B1 (blocking): in every mode, before guest.conf is read, every admin-executed input and every ancestor up to / must be a plain file or directory, with no symlink or ambiguous path. Each must be owned by root or the admin, with no group or other write, and with no exception (Architect A73 vetoed a sticky-directory one). The checkout therefore lives under a dedicated root- or admin-owned hierarchy such as `/opt/tangleclaw-soak`. The workload must also be unable to write any of them, proven after a positive control. This runs in setup, `--bootstrap-user` and every `--verify-admin`, and guest.conf's sha256 joins both planes' attestations. host-provision.sh checks its own checkout the same way.
@@ -145,6 +145,7 @@ In PM scoped slot 4, the first run exposed a real bug in the new validator: node
 - The base run of the two soak files at 17:03Z passed 165/165 on the unmutated tree.
 - Seven mutation checks each turned red, each under its own receipt (17:11Z to 17:38Z): M11 group/other-write, M12 owner, M13 workload write proof, M14 write proof in `--verify-admin`, M15 treating exit 2 as a denial, M16 a share inside `$HOME`, M17 a non-empty share.
 - Earlier runs under the 16:45Z receipt are non-certifying, and a chained mutation run there was quarantined (Architect ruling).
+- The full-range Critic at `50337eea` found one blocking issue: the README still suggested `/Users/Shared` for the checkout, which B1 refuses. It also found a real defect: the executable check compared against `ps -o comm`, which on macOS is the process's own `argv[0]` and would have refused a TangleClaw started as plain `node`. The follow-on commit fixes both. The executable now comes from lsof's kernel text entries alone, and the README records that the admin's own node and PATH are trusted as given.
 - Those runs did find a real bug: `trust_path` declared a local named `mode`, and bash's dynamic scoping let `refuse` read it, so trust refusals printed no JSON line. The local is now `bits`.
 
 ## 2026-09-28 — Every rule is named "Rule #<id>" from its DB id (#2029)
