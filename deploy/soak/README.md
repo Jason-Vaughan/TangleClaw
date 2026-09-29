@@ -484,9 +484,12 @@ at finalization. It binds them to the run and fails closed on a mismatch or a st
 changes the boot identity, so no time survives one.
 
 **Known limits.**
-- **The admin's own `node` and `PATH` are trusted as given.** The admin runs `node` from its `PATH` to
-  encode each attestation and to canonicalize paths. The runbook must install node where only root or
-  the admin can write it, and run setup with a `PATH` of such directories.
+- **The admin's own `node` and `PATH` are trusted as given.** The admin runs helpers found on its
+  `PATH`: `node` to encode each attestation and canonicalize paths, and `shasum`, `stat`, `lsof`, `ps`,
+  `pfctl` and `sudo` for the checks themselves. **No workload-writable directory may appear on the
+  admin's `PATH`.** A directory the workload can write would let it replace any of those helpers and
+  run code as the admin. The runbook must install node where only root or the admin can write it, and
+  run setup and every `--verify-admin` with a `PATH` made only of such directories.
 - **The IPv6 probe check refuses known reserved blocks, not every unallocated address.** An address such
   as `4000::1` passes as public. The dry run's positive control (the probes must answer with pf
   disabled) catches a probe that could never have answered.

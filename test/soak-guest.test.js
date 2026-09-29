@@ -177,8 +177,9 @@ describe('soak guest: host-provision.sh', () => {
   });
 
   const hostTrust = {
-    'host-provision.sh is group-writable': [() => HOST_PROVISION, '501 664 Regular File', /host-provision\.sh is writable by group or others/],
-    'guest.conf is a symlink': [() => path.join(GUEST, 'guest.conf'), '501 755 Symbolic Link', /guest\.conf is a 'Symbolic Link'/],
+    // Owner = this runner's own uid, so only the property under test is wrong (CI is not uid 501).
+    'host-provision.sh is group-writable': [() => HOST_PROVISION, `${process.getuid()} 664 Regular File`, /host-provision\.sh is writable by group or others/],
+    'guest.conf is a symlink': [() => path.join(GUEST, 'guest.conf'), `${process.getuid()} 755 Symbolic Link`, /guest\.conf is a 'Symbolic Link'/],
     'an ancestor is owned by someone else': [() => path.dirname(GUEST), '777 755 Directory', /is owned by uid 777/],
     'the share is owned by someone else': [() => fs.realpathSync(share), '0 755', /is owned by uid 0, not you/],
     'the share is group-writable': [() => fs.realpathSync(share), `${process.getuid()} 775`, /is writable by group or others \(mode 775\)/]
