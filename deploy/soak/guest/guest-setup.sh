@@ -37,11 +37,14 @@
 #   5. attach each repo as a project through the guest TangleClaw's own API.
 # Before step 2 it checks that the TangleClaw on SOAK_TC_PORT runs as the
 # workload user.
-# Every step is safe to repeat. The TangleClaw checkout must be readable by the
-# workload user (for example under /Users/Shared).
+# Every step is safe to repeat. The TangleClaw checkout lives in a dedicated
+# root- or admin-owned 0755 hierarchy such as /opt/tangleclaw-soak: readable
+# by the workload user, writable by nobody but its owner.
 #
 # Every mode refuses to run anywhere but a macOS VM with no live TangleClaw
-# pane, and validates its inputs before pf sees them.
+# pane, and validates its inputs before pf sees them. Every admin-side mode
+# first checks that the checkout it runs from can be trusted (see "Checkout
+# trust" below).
 #
 # Exit codes: 0 done, 2 usage, 3 refused (a verifier's JSON line says why),
 # any other non-zero: the failing setup step's own code.
@@ -113,6 +116,82 @@ refuse() {
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../../.." && pwd)"
+
+# --- Checkout trust (the admin plane) ---
+# The admin runs this script with sudo, sources guest.conf, loads the pf
+# profile and installs the stub engine. If the workload, or anyone but root
+# and this admin, could change any of those files or the directories above
+# them, they could run code as the admin or rewrite the firewall. So before
+# guest.conf is read, every input and every ancestor through / must be a plain
+# file or directory (no symlink, no path that resolves elsewhere), owned by
+# root or the admin, and writable by neither group nor others. There is no
+# exception, so the checkout lives in a dedicated root- or admin-owned 0755
+# hierarchy such as /opt/tangleclaw-soak, never under /Users/Shared.
+#
+# This runs in every mode, before guest.conf is read. On the admin side the
+# admin is whoever runs this. On the workload side the admin is the checkout's
+# owner, which must not be the workload itself: a checkout the workload owns
+# is one it can change.
+admin_name="$(id -un)"
+if [ "$mode" = 'workload' ]; then
+  admin_uid="$(stat -f %u "$repo" 2>/dev/null || true)"
+  [[ "$admin_uid" =~ ^[0-9]+$ ]] || refuse "cannot read the owner of $repo: the checkout is not trusted"
+  [ "$admin_uid" != "$(id -u)" ] || refuse "the checkout $repo is owned by the user running the workload verifier (uid $admin_uid): run it as the workload user, which must not own the checkout it could then change"
+else
+  admin_uid="$(id -u)"
+fi
+trusted_inputs=("$here/guest-setup.sh" "$here/guest.conf" "$here/pf/soak-deny.conf" "$repo/scripts/soak.js")
+for f in "$repo"/lib/soak/*.js; do trusted_inputs+=("$f"); done
+trusted_inputs+=("$repo/deploy/soak/stub-engine/soak-stub.js" "$repo/deploy/soak/stub-engine/soak-stub.json")
+trusted_dirs=()   # every ancestor of a trusted input, through /
+trust_path() {
+  # (No local named "mode": bash scopes dynamically, so refuse would read it.)
+  local meta uid perm type bits
+  meta="$(stat -f '%u %Lp %HT' "$1" 2>/dev/null)" || refuse "cannot stat $1: the checkout is not trusted"
+  read -r uid perm type <<< "$meta"
+  [[ "$uid" =~ ^[0-9]+$ ]] && [[ "$perm" =~ ^[0-7]{3,4}$ ]] || refuse "cannot read the owner and mode of $1: the checkout is not trusted"
+  case "$2:$type" in
+    file:'Regular File'|dir:Directory) ;;
+    *) refuse "$1 is a '$type', not a plain ${2}: the checkout is not trusted" ;;
+  esac
+  [ "$uid" = 0 ] || [ "$uid" = "$admin_uid" ] || refuse "$1 is owned by uid $uid, not root or the invoking admin ($admin_uid)"
+  bits=$((8#$perm))
+  [ $((bits & 8#022)) -eq 0 ] || refuse "$1 is writable by group or others (mode $perm): the checkout is not trusted"
+}
+check_checkout_trust() {
+  local f dir phys d seen=' '
+  for f in "${trusted_inputs[@]}"; do
+    dir="$(dirname "$f")"
+    phys="$(cd "$dir" 2>/dev/null && pwd -P)" || refuse "cannot resolve $dir"
+    [ "$phys" = "$dir" ] || refuse "$f is reached through a symlink ($dir resolves to $phys): the path is ambiguous"
+    trust_path "$f" file
+    d="$dir"
+    while :; do
+      case "$seen" in *" $d "*) ;; *)
+        seen="$seen$d "
+        trust_path "$d" dir
+        trusted_dirs+=("$d") ;;
+      esac
+      [ "$d" = / ] && break
+      d="$(dirname "$d")"
+    done
+  done
+}
+# Once the workload identity is known: the workload must not be able to write
+# any trusted file or closed ancestor. A positive control first, so a sudo -u
+# that fails for another reason cannot pass as "cannot write".
+check_workload_cannot_write() {
+  local p
+  sudo -n -u "$user" test -r "$here/guest-setup.sh" >/dev/null 2>&1 \
+    || refuse "cannot run a check as $user (sudo -u failed its positive control), so its write access is not established"
+  for p in "${trusted_inputs[@]}" "${trusted_dirs[@]}"; do
+    if sudo -n -u "$user" test -w "$p" >/dev/null 2>&1; then
+      refuse "$user can write $p: the checkout is not protected from the workload"
+    fi
+  done
+}
+check_checkout_trust
+
 # shellcheck source=guest.conf
 . "$here/guest.conf"
 
@@ -199,10 +278,11 @@ boot_time="$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/^{ sec = \([0-9][0-
 [ -n "$boot_session" ] && [ -n "$boot_time" ] || refuse "cannot read the boot identity (kern.bootsessionuuid, kern.boottime)"
 sha_of() { shasum -a 256 "$1" | cut -d' ' -f1; }
 script_sha="$(sha_of "$here/guest-setup.sh")"
+conf_sha="$(sha_of "$here/guest.conf")"
 profile_sha="$(sha_of "$here/pf/soak-deny.conf")"
 now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 # What every successful line carries after its schema, mode and verdict.
-common_json=("time=s:$now" "boot.session=s:$boot_session" "boot.time=n:$boot_time" "artifact.scriptSha256=s:$script_sha" "artifact.profileSha256=s:$profile_sha")
+common_json=("time=s:$now" "boot.session=s:$boot_session" "boot.time=n:$boot_time" "artifact.scriptSha256=s:$script_sha" "artifact.profileSha256=s:$profile_sha" "artifact.guestConfSha256=s:$conf_sha")
 if [ "$mode" = 'admin' ] || [ "$mode" = 'workload' ]; then
   command -v node >/dev/null 2>&1 || refuse "node is missing, so no attestation can be encoded"
 fi
@@ -341,11 +421,24 @@ check_workload_identity() {
   # <user> <command>` exits 0 only when the policy permits that command. A
   # shell, pfctl and a no-op cover general, pf-specific and blanket grants.
   local c rc
+  # Two positive controls first, or a "no" for the workload could be sudo
+  # failing (expired credentials, a broken policy) rather than a refusal: the
+  # admin can run a command with sudo right now, and the same policy query says
+  # yes for the admin. Then only exit status 1 counts as the policy's "no";
+  # anything else is unknown and refused.
+  bounded sudo -n true >/dev/null 2>&1 \
+    || refuse "sudo does not run for $admin_name right now, so no answer about $user's rights can be trusted"
+  bounded sudo -n -l -U "$admin_name" /usr/bin/true >/dev/null 2>&1 \
+    || refuse "sudo -l does not confirm $admin_name's own rights, so its answer for $user would prove nothing"
   for c in /bin/sh /sbin/pfctl /usr/bin/true; do
     rc=0
     bounded sudo -n -l -U "$user" "$c" >/dev/null 2>&1 || rc=$?
-    [ "$rc" -ne 0 ] || refuse "$user has sudo rights ($c is permitted); the workload must have none"
-    [ "$rc" -ne 124 ] || refuse "sudo -l for $user hung: its rights are not established"
+    case "$rc" in
+      1) ;;
+      0) refuse "$user has sudo rights ($c is permitted); the workload must have none" ;;
+      124) refuse "sudo -l for $user hung: its rights are not established" ;;
+      *) refuse "sudo -l for $user exited $rc for $c: its rights are not established" ;;
+    esac
   done
 }
 
@@ -353,6 +446,7 @@ check_workload_identity() {
 verify_admin() {
   bounded sudo -n true >/dev/null 2>&1 || refuse "the admin verifier needs non-interactive sudo"
   check_workload_identity
+  check_workload_cannot_write
   local info rules expected addr
   info="$(bounded sudo -n pfctl -s info 2>/dev/null)" || refuse "cannot read pf status"
   grep -q '^Status: Enabled' <<< "$info" || refuse "pf is not enabled"
@@ -380,7 +474,8 @@ $rules"
     "pf.enabled=b:true" "pf.expectedRulesSha256=s:$expected_sha" "pf.activeRulesSha256=s:$active_sha" "pf.rulesMatch=b:true" "pf.rules=n:$(grep -c . <<< "$rules")" \
     "interface.name=s:$SOAK_GUEST_IF" "interface.address=s:$addr" "host=s:$SOAK_HOST_ADDR" \
     "${lease_fields[@]}" \
-    "management.ssh=s:listening" "tangleclaw.port=n:$SOAK_TC_PORT" "tangleclaw.user=s:$user" "tangleclaw.uid=n:$tc_uid" "tangleclaw.pid=n:$tc_pid" "tangleclaw.executable=s:$tc_exe"
+    "management.ssh=s:listening" "tangleclaw.port=n:$SOAK_TC_PORT" "tangleclaw.user=s:$user" "tangleclaw.uid=n:$tc_uid" "tangleclaw.pid=n:$tc_pid" "tangleclaw.executable=s:$tc_exe" \
+    "trust.files=n:${#trusted_inputs[@]}" "trust.dirs=n:${#trusted_dirs[@]}" "trust.workloadCannotWrite=b:true"
 }
 
 # --- The workload plane ---
@@ -389,7 +484,7 @@ verify_workload() {
   me="$(id -un)"
   [ "$me" = "$user" ] || refuse "the workload verifier must run as $user, not $me"
   uid="$(id -u)"
-  [[ "$uid" =~ ^[0-9]+$ ]] && [ "$uid" -ge 500 ] || refuse "workload uid $uid is a system or root uid"
+  [[ "$uid" =~ ^[0-9]+$ ]] && [ "$uid" -ge 501 ] || refuse "workload uid $uid is a system or root uid"
   groups="$(id -Gn)"
   for g in $groups; do
     case "$g" in admin|wheel) refuse "$user is in the $g group" ;; esac
@@ -447,19 +542,22 @@ else
   echo "$user created"
 fi
 check_workload_identity
+check_workload_cannot_write
 if [ "$mode" = 'bootstrap' ]; then
   echo "workload user $user is ready. Next: start the pinned TangleClaw as $user on 127.0.0.1:$SOAK_TC_PORT, then run guest-setup.sh"
   exit 0
 fi
 as_user test -r "$here/guest-setup.sh" && as_user test -r "$repo/scripts/soak.js" \
-  || refuse "the checkout at $repo is not readable by $user; put it where the workload can read it, such as /Users/Shared"
+  || refuse "the checkout at $repo is not readable by $user; give it mode 0755 in a dedicated hierarchy such as /opt/tangleclaw-soak"
 
 check_tc_owner
 echo "TangleClaw on port $SOAK_TC_PORT runs as $user"
 
 echo "== 2/5 default-deny network"
 sudo -n pfctl "${pf_macros[@]}" -f "$here/pf/soak-deny.conf" -E
-admin_json="$(verify_admin)"
+# The admin verifier runs as its own --verify-admin process, so a failure's
+# ok:false line is printed rather than lost inside a command substitution.
+admin_json="$(bash "$here/guest-setup.sh" --verify-admin)" || { echo "$admin_json"; refuse "the admin verifier failed"; }
 echo "$admin_json"
 workload_json="$(as_user bash "$here/guest-setup.sh" --verify-workload)" || { echo "$workload_json"; refuse "the workload verifier failed"; }
 echo "$workload_json"

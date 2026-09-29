@@ -84,14 +84,30 @@ describe('soak guest: files', () => {
 
 describe('soak guest: host-provision.sh', () => {
   let tmp;
+  let home;
   let share;
   let f;
 
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'soak-guest-'));
+    // HOME and the share are siblings: a share inside HOME is refused.
+    home = path.join(tmp, 'home');
+    fs.mkdirSync(path.join(home, '.ssh'), { recursive: true });
     share = path.join(tmp, 'share');
     fs.mkdirSync(share);
     f = fakes(tmp, { tart: '' });
+    // stat, as the host-side trust check asks it: everything is the operator's
+    // and closed, unless FAKE_BAD_PATH names a path to report as FAKE_BAD_META.
+    fs.writeFileSync(path.join(f.bin, 'stat'), [
+      '#!/bin/sh',
+      'p="$3"',
+      'if [ -n "$FAKE_BAD_PATH" ] && [ "$p" = "$FAKE_BAD_PATH" ]; then echo "$FAKE_BAD_META"; exit 0; fi',
+      'u=$(id -u)',
+      'case "$2" in',
+      '  "%u %Lp") echo "$u 755";;',
+      '  *) if [ -d "$p" ]; then echo "$u 755 Directory"; else echo "$u 644 Regular File"; fi;;',
+      'esac'
+    ].join('\n'), { mode: 0o755 });
   });
 
   afterEach(() => {
@@ -99,7 +115,7 @@ describe('soak guest: host-provision.sh', () => {
   });
 
   it('prints the tart commands and runs nothing by default', () => {
-    const r = runScript(HOST_PROVISION, [], f.bin, { HOME: tmp, SOAK_SHARE_DIR: share, SOAK_OPERATOR_APPROVED: '1' });
+    const r = runScript(HOST_PROVISION, [], f.bin, { HOME: home, SOAK_SHARE_DIR: share, SOAK_OPERATOR_APPROVED: '1' });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /dry run: nothing executed/);
     assert.match(r.stdout, /^tart clone /m);
@@ -108,14 +124,14 @@ describe('soak guest: host-provision.sh', () => {
   });
 
   it('refuses --execute without operator approval, running nothing', () => {
-    const r = runScript(HOST_PROVISION, ['--execute'], f.bin, { HOME: tmp, SOAK_SHARE_DIR: share });
+    const r = runScript(HOST_PROVISION, ['--execute'], f.bin, { HOME: home, SOAK_SHARE_DIR: share });
     assert.equal(r.status, 3);
     assert.match(r.stderr, /SOAK_OPERATOR_APPROVED=1/);
     assert.deepEqual(f.calls(), []);
   });
 
   it('with --execute and approval, clones, sets and runs the named VM', () => {
-    const r = runScript(HOST_PROVISION, ['--execute'], f.bin, { HOME: tmp, SOAK_SHARE_DIR: share, SOAK_OPERATOR_APPROVED: '1', SOAK_VM_NAME: 'vm-t' });
+    const r = runScript(HOST_PROVISION, ['--execute'], f.bin, { HOME: home, SOAK_SHARE_DIR: share, SOAK_OPERATOR_APPROVED: '1', SOAK_VM_NAME: 'vm-t' });
     assert.equal(r.status, 0, r.stderr);
     const calls = f.calls();
     assert.equal(calls[0], 'tart list --quiet');
@@ -126,20 +142,21 @@ describe('soak guest: host-provision.sh', () => {
 
   it('refuses a VM name that already exists instead of reusing it', () => {
     f = fakes(tmp, { tart: 'vm-t\n' });
-    const r = runScript(HOST_PROVISION, ['--execute'], f.bin, { HOME: tmp, SOAK_SHARE_DIR: share, SOAK_OPERATOR_APPROVED: '1', SOAK_VM_NAME: 'vm-t' });
+    const r = runScript(HOST_PROVISION, ['--execute'], f.bin, { HOME: home, SOAK_SHARE_DIR: share, SOAK_OPERATOR_APPROVED: '1', SOAK_VM_NAME: 'vm-t' });
     assert.equal(r.status, 3);
     assert.match(r.stderr, /already exists/);
     assert.deepEqual(f.calls(), ['tart list --quiet']);
   });
 
-  it('refuses to share $HOME, anything containing it, /, a relative path or a missing directory', () => {
-    fs.symlinkSync(tmp, path.join(share, 'to-home'));
+  it('refuses to share $HOME, anything containing it, anything inside it, /, a relative path or a missing directory', () => {
+    fs.symlinkSync(home, path.join(share, 'to-home'));
     const cases = [
-      tmp, `${tmp}/`, `${tmp}/.`, `${share}/..`, path.dirname(tmp),
-      path.join(share, 'to-home'), '/', 'relative/share', path.join(tmp, 'missing')
+      home, `${home}/`, `${home}/.`, `${home}/.ssh/..`, tmp, path.dirname(tmp),
+      path.join(share, 'to-home'), '/', 'relative/share', path.join(tmp, 'missing'),
+      path.join(home, '.ssh')
     ];
     for (const dir of cases) {
-      const r = runScript(HOST_PROVISION, [], f.bin, { HOME: tmp, SOAK_SHARE_DIR: dir });
+      const r = runScript(HOST_PROVISION, [], f.bin, { HOME: home, SOAK_SHARE_DIR: dir });
       assert.equal(r.status, 3, `${dir}: ${r.stdout}`);
       assert.match(r.stderr, /^refused: /m, dir);
     }
@@ -150,13 +167,37 @@ describe('soak guest: host-provision.sh', () => {
     const real = path.join(tmp, 'real-share');
     fs.mkdirSync(real);
     fs.symlinkSync(real, path.join(tmp, 'link-share'));
-    const r = runScript(HOST_PROVISION, [], f.bin, { HOME: tmp, SOAK_SHARE_DIR: path.join(tmp, 'link-share') });
+    const r = runScript(HOST_PROVISION, [], f.bin, { HOME: home, SOAK_SHARE_DIR: path.join(tmp, 'link-share') });
     assert.equal(r.status, 0, r.stderr);
     assert.ok(r.stdout.includes(`--dir=soak:${fs.realpathSync(real)}`), r.stdout);
   });
 
   it('exits 2 on an unknown argument', () => {
-    assert.equal(runScript(HOST_PROVISION, ['--force'], f.bin, { HOME: tmp, SOAK_SHARE_DIR: share }).status, 2);
+    assert.equal(runScript(HOST_PROVISION, ['--force'], f.bin, { HOME: home, SOAK_SHARE_DIR: share }).status, 2);
+  });
+
+  const hostTrust = {
+    'host-provision.sh is group-writable': [() => HOST_PROVISION, '501 664 Regular File', /host-provision\.sh is writable by group or others/],
+    'guest.conf is a symlink': [() => path.join(GUEST, 'guest.conf'), '501 755 Symbolic Link', /guest\.conf is a 'Symbolic Link'/],
+    'an ancestor is owned by someone else': [() => path.dirname(GUEST), '777 755 Directory', /is owned by uid 777/],
+    'the share is owned by someone else': [() => fs.realpathSync(share), '0 755', /is owned by uid 0, not you/],
+    'the share is group-writable': [() => fs.realpathSync(share), `${process.getuid()} 775`, /is writable by group or others \(mode 775\)/]
+  };
+  for (const [label, [target, meta, reason]] of Object.entries(hostTrust)) {
+    it(`refuses (exit 3, no tart) when ${label}`, () => {
+      const r = runScript(HOST_PROVISION, [], f.bin, { HOME: home, SOAK_SHARE_DIR: share, FAKE_BAD_PATH: target(), FAKE_BAD_META: meta });
+      assert.equal(r.status, 3, r.stderr);
+      assert.match(r.stderr, reason);
+      assert.deepEqual(f.calls(), []);
+    });
+  }
+
+  it('refuses --execute into a share that is not empty', () => {
+    fs.writeFileSync(path.join(share, 'leftover'), 'x');
+    const r = runScript(HOST_PROVISION, ['--execute'], f.bin, { HOME: home, SOAK_SHARE_DIR: share, SOAK_OPERATOR_APPROVED: '1' });
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /is not empty/);
+    assert.ok(!f.calls().some((c) => c.startsWith('tart clone')));
   });
 });
 
@@ -214,7 +255,8 @@ function guestFakes(dir, over = {}) {
     sudo: [
       '[ "$1" = "-v" ] && exit 0',
       '[ "$1" = "-n" ] && shift',
-      'if [ "$1" = "-l" ]; then echo "User $3 is not allowed to run sudo on guest."; exit 1; fi',
+      // sudo -l -U <user> <cmd>: the admin may; anyone else may not.
+      'if [ "$1" = "-l" ]; then [ "$3" = admin ] && exit 0; echo "User $3 is not allowed to run sudo on guest."; exit 1; fi',
       'if [ "$1" = "-u" ]; then u="$2"; shift 2; [ "$1" = "-H" ] && shift; FAKE_USER="$u"; export FAKE_USER; exec "$@"; fi',
       '[ "${FAKE_USER:-admin}" = admin ] || exit 1',
       'exec "$@"'
@@ -247,7 +289,27 @@ function guestFakes(dir, over = {}) {
       'esac'
     ].join('\n'),
     ps: `case "$*" in *uid=*) echo "  502";; *comm=*) echo "${NODE}";; esac`,
-    stat: 'echo 502',
+    // stat answers in the forms the script asks for: the workload home's owner
+    // (%u), or owner/mode/type for the checkout trust check. FAKE_BAD_PATH and
+    // FAKE_BAD_META make one path report something else.
+    stat: [
+      'p="$3"',
+      'if [ -n "$FAKE_BAD_PATH" ] && [ "$p" = "$FAKE_BAD_PATH" ]; then echo "$FAKE_BAD_META"; exit 0; fi',
+      'case "$2" in',
+      '  %u) if [ "$p" = /Users/soakrun ]; then echo 502; else echo 501; fi;;',
+      '  *) if [ -d "$p" ]; then echo "501 755 Directory"; else echo "501 644 Regular File"; fi;;',
+      'esac'
+    ].join('\n'),
+    // test as the workload: nothing is writable unless FAKE_WRITABLE names it,
+    // and FAKE_SUDO_U_BROKEN makes the positive control (-r) fail too.
+    test: [
+      'if [ "${FAKE_USER:-admin}" = soakrun ]; then',
+      '  [ -n "$FAKE_SUDO_U_BROKEN" ] && exit 1',
+      '  if [ "$1" = "-w" ]; then [ -n "$FAKE_WRITABLE" ] && [ "$2" = "$FAKE_WRITABLE" ] && exit 0; exit 1; fi',
+      'fi',
+      // The shell's own test builtin: its path differs between macOS and Linux.
+      'test "$@"; exit $?'
+    ].join('\n'),
     dscl: 'echo "NFSHomeDirectory: /Users/soakrun"',
     sysadminctl: 'exit 0',
     openssl: 'echo 0123456789abcdef',
@@ -363,7 +425,7 @@ describe('soak guest: guest-setup.sh setup', () => {
   });
 
   it('refuses a workload user with sudo rights', () => {
-    const f = guestFakes(tmp, { sudo: '[ "$1" = "-v" ] && exit 0\n[ "$1" = "-n" ] && shift\nif [ "$1" = "-l" ]; then case "$4" in /sbin/pfctl) echo "/sbin/pfctl"; exit 0;; *) exit 1;; esac; fi\nexec "$@"' });
+    const f = guestFakes(tmp, { sudo: '[ "$1" = "-v" ] && exit 0\n[ "$1" = "-n" ] && shift\nif [ "$1" = "-l" ]; then [ "$3" = admin ] && exit 0; case "$4" in /sbin/pfctl) echo "/sbin/pfctl"; exit 0;; *) exit 1;; esac; fi\nexec "$@"' });
     const r = setup([], f, tmp, { FAKE_USER_EXISTS: '1' });
     assert.equal(r.status, 3);
     assert.match(r.stderr, /has sudo rights/);
@@ -424,7 +486,7 @@ describe('soak guest: guest-setup.sh setup', () => {
   });
 
   it('refuses an existing account with a system uid or a foreign home, without adopting it', () => {
-    let f = guestFakes(tmp, { id: 'case "$*" in "-u soakrun") echo 300;; *) exit 0;; esac' });
+    let f = guestFakes(tmp, { id: 'case "$*" in "-u soakrun") echo 300;; -u) echo 501;; -un) echo admin;; *) exit 0;; esac' });
     let r = setup(['--bootstrap-user'], f, tmp, { FAKE_USER_EXISTS: '1' });
     assert.equal(r.status, 3);
     assert.match(r.stderr, /system or unknown uid/);
@@ -512,7 +574,13 @@ describe('soak guest: admin verifier', () => {
     assert.deepEqual(j.management, { ssh: 'listening' });
     assert.deepEqual(j.tangleclaw, { port: 3102, user: 'soakrun', uid: 502, pid: 4242, executable: fs.realpathSync(NODE) });
     assert.deepEqual(j.boot, { session: '11111111-2222-3333-4444-555555555555', time: 1790000000 });
-    assert.deepEqual(j.artifact, { scriptSha256: sha256(fs.readFileSync(GUEST_SETUP)), profileSha256: sha256(fs.readFileSync(path.join(GUEST, 'pf', 'soak-deny.conf'))) });
+    assert.deepEqual(j.artifact, {
+      scriptSha256: sha256(fs.readFileSync(GUEST_SETUP)),
+      profileSha256: sha256(fs.readFileSync(path.join(GUEST, 'pf', 'soak-deny.conf'))),
+      guestConfSha256: sha256(fs.readFileSync(path.join(GUEST, 'guest.conf')))
+    });
+    assert.equal(j.trust.workloadCannotWrite, true);
+    assert.ok(j.trust.files >= 8 && j.trust.dirs >= 5, JSON.stringify(j.trust));
     assert.ok(!f.calls().some((c) => / -E$/.test(c)), 'a verifier must never load pf');
     assert.ok(f.calls().some((c) => c.includes('pfctl -n -v -D host_addr=192.168.64.1 -D dhcp_server=192.168.64.2 -D guest_if=en0 -f ')));
   });
@@ -543,7 +611,7 @@ describe('soak guest: admin verifier', () => {
   });
 
   const failures = {
-    'sudo is unavailable': [{}, { FAKE_USER: 'soakrun' }, /needs non-interactive sudo/],
+    'sudo is unavailable': [{ sudo: '[ "$1" = "-n" ] && shift\n[ "$1" = true ] && exit 1\nif [ "$1" = "-l" ]; then [ "$3" = admin ] && exit 0; exit 1; fi\n[ "${FAKE_USER:-admin}" = admin ] || exit 1\nexec "$@"' }, {}, /needs non-interactive sudo/],
     'pf is disabled': [{ pfctl: 'case "$*" in "-s info") echo "Status: Disabled";; esac' }, {}, /pf is not enabled/],
     'an extra rule is loaded': [{ pfctl: `case "$*" in "-s info") echo "Status: Enabled";; "-s rules") printf "pass out all\\n"; cat "${'${RULES}'}";; *"-n -v"*) cat "${'${RULES}'}";; "-s Interfaces -v") echo "lo0 (skip)";; esac` }, {}, /not exactly the soak profile/],
     'pfctl parses a different rule count': [{ pfctl: 'case "$*" in "-s info") echo "Status: Enabled";; *"-n -v"*) echo "block drop all";; esac' }, {}, /unexpected number of rules/],
@@ -575,8 +643,8 @@ describe('soak guest: admin verifier', () => {
     'ps names a different executable': [{ ps: 'case "$*" in *uid=*) echo "  502";; *comm=*) echo /opt/other/bin/node;; esac' }, {}, /the executable is not established/],
     'the workload account became an admin after setup': [{ dseditgroup: 'case "$*" in *" admin") exit 0;; *) exit 1;; esac' }, {}, /member of admin/],
     'the workload account gained sudo after setup': [{ sudo: '[ "$1" = "-n" ] && shift\nif [ "$1" = "-l" ]; then exit 0; fi\n[ "${FAKE_USER:-admin}" = admin ] || exit 1\nexec "$@"' }, {}, /has sudo rights \(\/bin\/sh is permitted\)/],
-    'sudo -l hangs for the workload account': [{ sudo: '[ "$1" = "-n" ] && shift\nif [ "$1" = "-l" ]; then sleep 30; fi\n[ "${FAKE_USER:-admin}" = admin ] || exit 1\nexec "$@"' }, {}, /sudo -l for soakrun hung/],
-    'the workload home is owned by someone else': [{ stat: 'echo 0' }, {}, /is not owned by soakrun/],
+    'sudo -l hangs for the workload account': [{ sudo: '[ "$1" = "-n" ] && shift\nif [ "$1" = "-l" ]; then [ "$3" = admin ] && exit 0; sleep 30; fi\n[ "${FAKE_USER:-admin}" = admin ] || exit 1\nexec "$@"' }, {}, /sudo -l for soakrun hung/],
+    'the workload home is owned by someone else': [{ stat: 'case "$2" in %u) if [ "$3" = /Users/soakrun ]; then echo 0; else echo 501; fi;; *) if [ -d "$3" ]; then echo "501 755 Directory"; else echo "501 644 Regular File"; fi;; esac' }, {}, /is not owned by soakrun/],
     'SSH is not listening': [{ netstat: 'echo "tcp4 0 0 127.0.0.1.3102 *.* LISTEN"' }, {}, /SSH management path is down/],
     'the guest TangleClaw runs as the admin': [{ lsof: 'printf "p4242\\nu501\\n"' }, {}, /runs as uid 501 not soakrun/],
     'nothing listens on the TangleClaw port': [{ lsof: 'exit 1' }, {}, /nothing is listening on port 3102/],
@@ -592,6 +660,120 @@ describe('soak guest: admin verifier', () => {
       assert.match(r.json[0].reason, reason);
     });
   }
+});
+
+const REPO = path.join(__dirname, '..');
+
+describe('soak guest: checkout trust (B1)', () => {
+  let tmp;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'soak-guest-trust-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const refusals = {
+    'guest.conf is group-writable': [{ FAKE_BAD_PATH: path.join(GUEST, 'guest.conf'), FAKE_BAD_META: '501 664 Regular File' }, /guest\.conf is writable by group or others/],
+    'the pf profile is a symlink': [{ FAKE_BAD_PATH: path.join(GUEST, 'pf', 'soak-deny.conf'), FAKE_BAD_META: '501 755 Symbolic Link' }, /soak-deny\.conf is a 'Symbolic Link'/],
+    'scripts/soak.js is owned by another user': [{ FAKE_BAD_PATH: path.join(REPO, 'scripts', 'soak.js'), FAKE_BAD_META: '777 644 Regular File' }, /soak\.js is owned by uid 777/],
+    'a lib/soak module is world-writable': [{ FAKE_BAD_PATH: path.join(REPO, 'lib', 'soak', 'repos.js'), FAKE_BAD_META: '501 646 Regular File' }, /repos\.js is writable by group or others/],
+    'the stub engine is owned by another user': [{ FAKE_BAD_PATH: path.join(REPO, 'deploy', 'soak', 'stub-engine', 'soak-stub.js'), FAKE_BAD_META: '502 755 Regular File' }, /soak-stub\.js is owned by uid 502/],
+    'an ancestor of the checkout is owned by another user': [{ FAKE_BAD_PATH: path.dirname(REPO), FAKE_BAD_META: '777 755 Directory' }, /is owned by uid 777/],
+    'an ancestor is world-writable without the sticky bit': [{ FAKE_BAD_PATH: path.dirname(REPO), FAKE_BAD_META: '0 777 Directory' }, /writable by group or others \(mode 777\)/],
+    'stat cannot be read': [{ FAKE_BAD_PATH: path.join(GUEST, 'guest.conf'), FAKE_BAD_META: 'garbage' }, /cannot read the owner and mode/],
+    'the workload can write a trusted file': [{ FAKE_WRITABLE: path.join(GUEST, 'guest.conf') }, /soakrun can write .*guest\.conf/],
+    'the workload can write a closed ancestor': [{ FAKE_WRITABLE: path.join(REPO, 'deploy', 'soak') }, /soakrun can write .*deploy\/soak/],
+    'sudo -u fails its positive control': [{ FAKE_SUDO_U_BROKEN: '1' }, /sudo -u failed its positive control/]
+  };
+  for (const [label, [env, reason]] of Object.entries(refusals)) {
+    it(`--verify-admin refuses (ok:false) when ${label}`, () => {
+      const f = guestFakes(tmp);
+      const r = setup(['--verify-admin'], f, tmp, env);
+      assert.equal(r.status, 3, `${label}: ${r.stderr}`);
+      assert.equal(r.json.length, 1);
+      assert.equal(r.json[0].ok, false);
+      assert.match(r.json[0].reason, reason);
+    });
+  }
+
+  it('refuses even a root-owned sticky ancestor such as /Users/Shared (A73: no exception)', () => {
+    const f = guestFakes(tmp);
+    const r = setup(['--verify-admin'], f, tmp, { FAKE_BAD_PATH: path.dirname(REPO), FAKE_BAD_META: '0 1777 Directory' });
+    assert.equal(r.status, 3);
+    assert.match(r.json[0].reason, /writable by group or others \(mode 1777\)/);
+  });
+
+  it('checks the checkout in workload mode too, before guest.conf is read', () => {
+    const f = guestFakes(tmp);
+    const r = setup(['--verify-workload'], f, tmp, { FAKE_USER: 'soakrun', FAKE_BAD_PATH: path.join(GUEST, 'guest.conf'), FAKE_BAD_META: '501 666 Regular File' });
+    assert.equal(r.status, 3);
+    assert.match(r.json[0].reason, /guest\.conf is writable by group or others/);
+  });
+
+  it('refuses a checkout the workload user owns, in workload mode', () => {
+    const f = guestFakes(tmp);
+    const r = setup(['--verify-workload'], f, tmp, { FAKE_USER: 'soakrun', FAKE_BAD_PATH: REPO, FAKE_BAD_META: '502' });
+    assert.equal(r.status, 3);
+    assert.match(r.json[0].reason, /which must not own the checkout/);
+  });
+
+  it('refuses when the admin cannot run sudo right now (A4 control 1)', () => {
+    const f = guestFakes(tmp, { sudo: '[ "$1" = "-n" ] && shift\nif [ "$1" = "-l" ]; then [ "$3" = admin ] && exit 0; exit 1; fi\n[ "$1" = true ] && exit 1\n[ "${FAKE_USER:-admin}" = admin ] || exit 1\nexec "$@"' });
+    const r = setup(['--verify-admin'], f, tmp);
+    assert.equal(r.status, 3);
+    assert.match(r.json[0].reason, /non-interactive sudo|does not run for admin/);
+  });
+
+  it('treats a workload sudo -l exit other than 1 as unknown, not denial (A4)', () => {
+    const f = guestFakes(tmp, { sudo: '[ "$1" = "-n" ] && shift\nif [ "$1" = "-l" ]; then [ "$3" = admin ] && exit 0; exit 2; fi\n[ "${FAKE_USER:-admin}" = admin ] || exit 1\nexec "$@"' });
+    const r = setup(['--verify-admin'], f, tmp);
+    assert.equal(r.status, 3);
+    assert.match(r.json[0].reason, /sudo -l for soakrun exited 2/);
+  });
+
+  it('refuses before guest.conf is read, in setup too, and never loads pf', () => {
+    const f = guestFakes(tmp);
+    const r = setup([], f, tmp, { FAKE_BAD_PATH: path.join(GUEST, 'guest.conf'), FAKE_BAD_META: '501 666 Regular File' });
+    assert.equal(r.status, 3);
+    assert.ok(!f.calls().some((c) => /\] (sudo|pfctl|sysadminctl|ipconfig) /.test(c)), f.calls().join('\n'));
+  });
+
+  it('refuses a checkout reached through a symlinked path', () => {
+    const f = guestFakes(tmp);
+    const link = path.join(tmp, 'link-to-repo');
+    fs.symlinkSync(REPO, link);
+    const r = runScript(path.join(link, 'deploy', 'soak', 'guest', 'guest-setup.sh'), ['--verify-admin'], f.bin, { HOME: tmp, SOAK_PROBE_TIMEOUT: '2', SOAK_DHCP_SERVER: '192.168.64.2' });
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /reached through a symlink/);
+  });
+
+  it('setup refuses when the workload can write the checkout, before loading pf', () => {
+    const f = guestFakes(tmp);
+    const r = setup([], f, tmp, { FAKE_WRITABLE: path.join(GUEST, 'guest-setup.sh') });
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /soakrun can write/);
+    assert.ok(!f.calls().some((c) => /pfctl -D/.test(c)));
+  });
+
+  it('setup prints the admin verifier\'s ok:false line when it fails (A1)', () => {
+    const f = guestFakes(tmp, { pfctl: 'case "$*" in "-s info") echo "Status: Disabled";; esac' });
+    const r = setup([], f, tmp);
+    assert.equal(r.status, 3);
+    const admin = r.json.find((j) => j.mode === 'admin');
+    assert.ok(admin, r.stdout);
+    assert.equal(admin.ok, false);
+    assert.match(admin.reason, /pf is not enabled/);
+  });
+
+  it('refuses when sudo -l cannot confirm the admin\'s own rights (A4 positive control)', () => {
+    const f = guestFakes(tmp, { sudo: '[ "$1" = "-v" ] && exit 0\n[ "$1" = "-n" ] && shift\nif [ "$1" = "-l" ]; then exit 1; fi\n[ "${FAKE_USER:-admin}" = admin ] || exit 1\nexec "$@"' });
+    const r = setup(['--verify-admin'], f, tmp);
+    assert.equal(r.status, 3);
+    assert.match(r.json[0].reason, /does not confirm admin's own rights/);
+  });
 });
 
 describe('soak guest: workload verifier', () => {
@@ -614,7 +796,7 @@ describe('soak guest: workload verifier', () => {
     assert.equal(j.ok, true);
     assert.deepEqual(j.identity, { user: 'soakrun', uid: 502, groups: 'staff everyone localaccounts' });
     assert.deepEqual(j.refused, { sudo: true, pfctl: true });
-    assert.deepEqual(Object.keys(j.artifact), ['scriptSha256', 'profileSha256']);
+    assert.deepEqual(Object.keys(j.artifact), ['scriptSha256', 'profileSha256', 'guestConfSha256']);
     assert.deepEqual(j.probes, { tcp4: '1.1.1.1', tcp6: '2606:4700:4700::1111', udpDns: '1.1.1.1' });
     assert.ok(!f.calls().some((c) => c.includes('getpacket')), 'the workload plane has no use for the lease');
     assert.deepEqual(j.egress, { tcp4: 'denied', tcp6: 'denied', udpDns: 'denied' });
@@ -627,8 +809,9 @@ describe('soak guest: workload verifier', () => {
   });
 
   const failures = {
-    'it runs as the admin instead': [{}, { FAKE_USER: 'admin' }, /must run as soakrun/],
+    'it runs as the admin instead': [{}, { FAKE_USER: 'admin' }, /must run as soakrun|run it as the workload user/],
     'the workload is in the admin group': [{ id: 'case "$*" in -un) echo soakrun;; -u) echo 502;; -Gn) echo "staff admin";; esac' }, {}, /in the admin group/],
+    'the workload has uid 500, below the regular-account floor': [{ id: 'case "$*" in -un) echo soakrun;; -u) echo 500;; -Gn) echo staff;; esac' }, {}, /system or root uid/],
     'the workload has a system uid': [{ id: 'case "$*" in -un) echo soakrun;; -u) echo 0;; -Gn) echo staff;; esac' }, {}, /system or root uid/],
     'sudo works for the workload': [{ sudo: 'exit 0' }, {}, /sudo works/],
     'pfctl works for the workload': [{ pfctl: 'echo "Status: Enabled"' }, {}, /pfctl works/],

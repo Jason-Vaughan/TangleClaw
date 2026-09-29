@@ -328,15 +328,25 @@ actions.
       from the lease alone is refused, and it is never assumed to be the SSH host.
   - There is no DNS, no IPv6 beyond loopback, no egress and no route to production.
 - **`host-provision.sh`** runs on the host.
+  - Before it reads `guest.conf`, it checks that it can trust its own checkout. `host-provision.sh`,
+    `guest.conf` and every directory above them must be plain (no symlink or ambiguous path), owned by
+    root or the operator, and not writable by group or others.
   - By default it only prints the `tart clone`, `tart set` and `tart run` commands.
   - It runs them only with **both** `--execute` and `SOAK_OPERATOR_APPROVED=1`. That is a safety
     interlock, not authority: creating a VM stays the operator's decision.
   - It refuses to reuse an existing VM of the same name: a certification starts from a pristine guest,
     and deleting one is the operator's call.
   - The shared directory is the only host path the guest sees, read-write, so it must be a dedicated
-    one. The script compares real paths, following symlinks and `..`. It refuses `/`, `$HOME`, any
-    directory that contains `$HOME` (such as `/Users`), a relative path, and a directory that does not
-    exist.
+    one, `/Users/Shared/tc-soak-share` by default. The script compares real paths, following symlinks
+    and `..`. It refuses:
+    - `/` and `$HOME`;
+    - any directory that contains `$HOME` (such as `/Users`);
+    - any directory inside `$HOME` (such as `~/.ssh`);
+    - a relative path;
+    - a directory that does not exist;
+    - a directory not owned by the operator, or writable by group or others;
+    - with `--execute`, a directory that isn't empty: a new guest gets a new, empty share. It is a place
+      for inputs and evidence, never for trusted code.
 - **`guest-setup.sh`** runs inside the guest, as the admin, from a checkout of the pinned release
   candidate that the workload user can read (such as under `/Users/Shared`).
   - **The guest TangleClaw runs as the workload user, never as the admin.** Its sessions are the
@@ -349,6 +359,30 @@ actions.
     against the workload user's uid.
 
   Every mode first:
+  - **checks the checkout can be trusted** (every mode, `--verify-workload` included), before
+    `guest.conf` is even read. The admin sources `guest.conf`, loads the pf profile, installs the stub engine and runs
+    `soak.js`, so anyone who could change those files could run code as the admin or rewrite the
+    firewall. The files checked are:
+    - `guest-setup.sh`, `guest.conf` and `pf/soak-deny.conf`;
+    - `scripts/soak.js` and every `lib/soak/*.js`;
+    - the stub-engine files;
+    - every directory above them, up to `/`.
+
+    Each must be:
+    - a plain file or directory: no symlink, and no path that resolves somewhere else;
+    - owned by root or the invoking admin;
+    - writable by neither group nor others.
+
+    There is no exception, not even a root-owned sticky directory like `/Users/Shared`. On the workload
+    side, the checkout's owner stands in for the admin, and must not be the workload itself.
+
+    Once the workload user is known, setup and every admin attestation also run a check as that user,
+    which must fail to write any of those files or directories. A positive control first shows that
+    checks run as that user work at all. `--bootstrap-user` repeats the check after creating the
+    account.
+
+    **So put the checkout in a dedicated hierarchy owned by root or the admin, mode 0755, such as
+    `/opt/tangleclaw-soak`.** The workload can read it and nobody else can write it;
   - refuses to run where `TANGLECLAW_API` is set (a live pane), outside macOS, or on a machine that is
     not a VM (`kern.hv_vmm_present`);
   - validates its inputs, so nothing ambiguous reaches pfctl, sudo or a URL: the interface name, the
@@ -370,7 +404,9 @@ actions.
      name whose identity conflicts: a system uid (below 501), a home other than `/Users/<user>`,
      membership of `admin` or `wheel`, or any sudo rights. It never adopts, changes or demotes such an
      account; fix one by hand.
-  2. **Loads the pf profile and attests both planes** (below). Either verifier failing stops setup.
+  2. **Loads the pf profile and attests both planes** (below). The admin verifier runs as its own
+     `--verify-admin` process, so its line, `ok: false` included, is always printed. Either verifier
+     failing stops setup.
   3. **Installs** `soak-stub` on `PATH`, and its engine profile for the workload user.
   4. **Creates the synthetic repos** as the workload user (`soak.js repos`), under its home.
   5. **Attaches each project** through the guest TangleClaw's own API. With the guest's auth gate down,
@@ -421,8 +457,14 @@ The guest is attested from two planes, because neither can see everything.
     uid must match from both `lsof` and `ps`. Exactly one of its `lsof` text entries may be a node
     binary, and it must canonicalize to the same path as `ps` reports. Nothing the process says about
     itself (its argv) is trusted;
-  - that the workload account is still what setup made: a regular uid, its own home owned by it, in
-    neither `admin` nor `wheel`, and with no sudo rights.
+  - that the workload account is still what setup made: a regular uid (501 or above), its own home
+    owned by it, in neither `admin` nor `wheel`, and with no sudo rights. Sudo rights are judged by the
+    exit status of `sudo -l -U <user> <command>`, for a shell, `pfctl` and a no-op. Two positive controls
+    come first: the admin can run `sudo -n true` right now, and the same query says yes for the admin.
+    After that, only exit status 1 counts as the policy's "no". A 0 means the workload has sudo, and a
+    hang or any other status means unknown. Either is refused;
+  - the checkout trust above, and that the workload can't write any of it. `artifact.guestConfSha256`
+    records exactly which settings were attested.
 
   It never loads pf.
 - **`guest-setup.sh --verify-workload`** runs as the workload user and proves what that user can and
@@ -446,9 +488,21 @@ changes the boot identity, so no time survives one.
   used until an operator checks them against the installed tart.
 - **pf rules do not survive a guest reboot.** A reboot invalidates the run anyway. Re-provision, run
   setup again and restart the clock.
-- **The DHCP allowance is a best effort at keeping the management path**, not a proof. The dry run must
-  show that the address, and SSH, survive a lease renewal. If they don't, the fallback is a static
+- **The DHCP allowance is itself a small channel out.** Any local process that can bind UDP source port
+  68 (macOS allows that without root) can send to `255.255.255.255:67` and to the DHCP server's port
+  67. That traffic stays on the tart vmnet segment and reaches only the host's DHCP service. It is the
+  price of keeping the address, and the SSH path, through a 72-hour run. A static address would remove
+  it, if the dry run shows one is workable.
+- **The DHCP allowance is a best effort at keeping the management path**, not a proof. It depends on
+  macOS's DHCP client renewing with the configured server over the allowed ports, and on the
+  `ipconfig` output forms the verifier parses (`getpacket`, and `getsummary`'s `LeaseStartTime`).
+  Neither has been seen on a real guest yet; the verifier fails closed when either differs. The dry run
+  must show that the address, and SSH, survive a lease renewal. If they don't, the fallback is a static
   address or an independently proven tart console path.
+- **Egress denial needs a positive control in the dry run.** A probe that fails proves isolation only if
+  the same probe succeeds when egress is open. The dry run must therefore run the workload verifier's
+  probes once with pf disabled and see them answer, before trusting their denial with pf loaded. The
+  verifier can't do this itself, because it must never touch pf.
 
 The dry run and the certifying run then drive the guest's own TangleClaw from inside the guest, with
 `run --no-live-install`.

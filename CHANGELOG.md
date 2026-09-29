@@ -64,15 +64,31 @@ All notable changes to TangleClaw are documented in this file.
     - The seed includes the project's `.tangleclaw/project.json` naming the `soak-stub` engine, and a `CHANGELOG.md`, so attaching the project to TangleClaw adds nothing to its work tree.
   - **`deploy/soak/guest/` holds the guest as files.**
     - `guest.conf`: the pinned VM settings. Holds no secrets.
-    - `pf/soak-deny.conf`: a default-deny network profile. Loopback is open. The only other traffic allowed is SSH in from the host, and DHCP (port 68 to 67) with the DHCP server named in the guest's lease or config, both on the guest interface only. The DHCP server is never assumed to be the host.
-    - `host-provision.sh`: prints the tart commands. Creating a VM is an operator-only host action, so it runs them only with `--execute` and `SOAK_OPERATOR_APPROVED=1`, and it refuses to reuse an existing VM. It also refuses to share `/`, `$HOME`, or any directory that contains `$HOME`, comparing real paths so `..` or a symlink can't slip one through.
+    - `pf/soak-deny.conf`: a default-deny network profile.
+      - Loopback is open.
+      - SSH in from the host is allowed, and so is DHCP (port 68 to 67) with the configured DHCP server, which must match the guest's lease. It is never assumed to be the host.
+      - Both are allowed on the guest interface only. Nothing else goes in or out.
+    - `host-provision.sh`: prints the tart commands.
+      - Creating a VM is an operator-only host action, so it runs them only with both `--execute` and `SOAK_OPERATOR_APPROVED=1`.
+      - It refuses to reuse an existing VM.
+      - It first checks that its own checkout can be trusted: `host-provision.sh`, `guest.conf` and every directory above them.
+      - It shares one dedicated directory, `/Users/Shared/tc-soak-share` by default. The share must be owned by the operator, closed to group and others, and empty when a guest is created. It refuses `/`, `$HOME`, anything containing `$HOME`, or anything inside it, comparing real paths so `..` or a symlink can't slip one through.
     - `guest-setup.sh`: run inside the guest.
-      - It creates a dedicated workload user with no admin rights and no sudo, and refuses one that has either. `--bootstrap-user` does only that, so a fresh guest can start TangleClaw as that user before the rest of setup. Setup and the admin verifier refuse a TangleClaw running as anyone else, because its sessions are the workload.
-      - It loads the pf profile and attests the guest from two planes, each as one JSON line (`tc.soak-guest-attest/v1`) with the boot identity:
-        - `--verify-admin` checks that pf is enabled with exactly the profile's rules, compared with pfctl's own parse of the profile. It reports the expected and active rules' sha256 and whether they match, the interface, the DHCP server and lease timings, and the SSH management path. The DHCP server must be configured and must match the lease; a server read from the lease alone is refused. The lease's start, expiry, renewal and rebinding are recorded as epochs, and the attestation fails when any is missing, inconsistent or expired, or when less lease remains than the time to the next attestation. Renewal must come strictly before rebinding, which must come strictly before the lease ends. The TangleClaw process is bound to the workload user by kernel evidence: one listening pid, its uid, and a canonical node executable. Every admin attestation re-checks that the workload account has no admin rights or sudo and owns its home. Each line is built with a real JSON encoder. The script's and the profile's sha256 are reported separately.
-        - `--verify-workload` runs as the workload user and proves that sudo and pfctl are refused to it, that loopback works, and that nothing outside answers over IPv4, IPv6 or DNS over UDP.
-      - Every input is validated before pfctl sees it, and the egress probes must be well-formed public addresses (judged by node's IP parser and a block list of reserved ranges), which are recorded in the attestation. Every probe has a timeout; a hang is a failure.
-      - Then it installs the stub engine, creates the repos as the workload user and attaches them through the guest's own TangleClaw.
+      - **Checkout trust comes first.** In every mode, before its config is read, it checks every file the admin sources, loads, installs or runs, and every directory above them up to `/`:
+        - each must be a plain file or directory, with no symlink or ambiguous path;
+        - each must be owned by root or the admin, and not writable by group or others, with no exception;
+        - once the workload user is known, a check run as that user must fail to write any of them.
+        - So the checkout lives in a dedicated root- or admin-owned hierarchy such as `/opt/tangleclaw-soak`.
+      - It creates a dedicated workload user with no admin rights and no sudo, and refuses an existing account that has either or whose identity conflicts. `--bootstrap-user` does only that, so a fresh guest can start TangleClaw as that user before the rest of setup.
+      - It attests the guest from two planes. Each prints one JSON line (`tc.soak-guest-attest/v1`) built by a real JSON encoder, carrying the boot identity and the sha256 of the script, the pf profile and `guest.conf`:
+        - `--verify-admin` repeats the trust check and the workload account's identity checks, with sudo judged strictly by exit status after two positive controls (the admin's sudo works; the same policy query says yes for the admin). It then checks:
+          - pf is enabled with exactly the profile's rules, compared with pfctl's own parse, reporting both digests;
+          - the guest interface and the SSH management path;
+          - the TangleClaw process, bound to the workload user by kernel evidence: one listening pid, its uid, and a canonical node executable;
+          - the DHCP lease, normalized to epochs. It fails when the lease is missing, inconsistent or expired, when renewal does not come strictly before rebinding and rebinding before expiry, or when less lease remains than the next sample interval plus a margin.
+        - `--verify-workload` runs as the workload user and proves that sudo and pfctl are refused to it, that loopback works, and that nothing outside answers over IPv4, IPv6 or DNS over UDP. The probes target well-formed public addresses, judged by node's IP parser and a block list, and are recorded.
+      - Every input is validated before pfctl sees it, and every probe has a timeout; a hang is a failure.
+      - Then it installs the stub engine, creates the repos as the workload user, and attaches them through the guest's own TangleClaw, which must run as the workload user.
       - It refuses to run outside a macOS VM or in a live TangleClaw pane.
   - **Not in this chunk:** installing and starting the pinned release candidate inside the guest (the operator runbook, a later chunk). Also the runner's side of attestation: running both verifiers at admission, at every sample and at finalization, and restarting the clock after a reboot. Also the dry run, and everything else the Chunk 2A entry lists.
 
