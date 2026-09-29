@@ -92,10 +92,13 @@ refuse() {
   echo "refused: $*" >&2
   if [ "$mode" = 'admin' ] || [ "$mode" = 'workload' ]; then
     if command -v node >/dev/null 2>&1; then
-      emit_json "schema=s:$SCHEMA" "mode=s:$mode" "ok=b:false" "reason=s:$*" ${fail_extra[@]+"${fail_extra[@]}"}
+      emit_json "schema=s:$SCHEMA" "mode=s:$mode" "ok=b:false" "code=s:REFUSED" "reason=s:$*" ${fail_extra[@]+"${fail_extra[@]}"}
     else
-      # No encoder: a fixed line, with nothing interpolated but the mode, which is one of two literals.
-      printf '{"schema":"%s","mode":"%s","ok":false,"reason":"node is missing, so no attestation can be encoded"}\n' "$SCHEMA" "$mode"
+      # No encoder: one fixed line per mode, with nothing interpolated at all.
+      case "$mode" in
+        admin) printf '%s\n' '{"schema":"tc.soak-guest-attest/v1","mode":"admin","ok":false,"code":"ENCODER_MISSING","reason":"node is missing, so no attestation can be encoded"}' ;;
+        workload) printf '%s\n' '{"schema":"tc.soak-guest-attest/v1","mode":"workload","ok":false,"code":"ENCODER_MISSING","reason":"node is missing, so no attestation can be encoded"}' ;;
+      esac
     fi
   fi
   exit 3
@@ -130,6 +133,10 @@ valid_ipv4() {
 valid_ipv4 "$SOAK_HOST_ADDR" || refuse "SOAK_HOST_ADDR is not an IPv4 address: $SOAK_HOST_ADDR"
 [[ "$user" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]] && [ "$user" != 'root' ] || refuse "SOAK_WORKLOAD_USER is not a safe user name: $user"
 [[ "$SOAK_TC_PORT" =~ ^[0-9]{1,5}$ ]] || refuse "SOAK_TC_PORT is not a port: $SOAK_TC_PORT"
+[[ "$SOAK_SAMPLE_INTERVAL" =~ ^[1-9][0-9]{0,4}$ ]] || refuse "SOAK_SAMPLE_INTERVAL must be 1-99999 seconds: $SOAK_SAMPLE_INTERVAL"
+[[ "$SOAK_SAFETY_MARGIN" =~ ^[0-9]{1,5}$ ]] || refuse "SOAK_SAFETY_MARGIN must be 0-99999 seconds: $SOAK_SAFETY_MARGIN"
+# The lease must outlast the next sample interval plus the declared margin.
+attest_window=$((SOAK_SAMPLE_INTERVAL + SOAK_SAFETY_MARGIN))
 [[ "$SOAK_PROJECTS" =~ ^soak-[a-z0-9-]+(,soak-[a-z0-9-]+)*$ ]] || refuse "SOAK_PROJECTS must be comma-separated soak-* names: $SOAK_PROJECTS"
 # An egress probe proves denial only if the address would answer were egress
 # open. A loopback, private, link-local or otherwise unroutable address fails
@@ -212,15 +219,20 @@ lease_unique() {
   [ "$n" -le 1 ] || refuse "the DHCP lease has $1 $n times"
 }
 lease_value() { sed -n "s/^$1 ([a-z0-9]*): *//p" <<< "$lease"; }
-lease_seconds_field() {
-  local name="$1" key="$2" v
-  lease_unique "$name"
-  v="$(lease_value "$name")"
-  if [ -z "$v" ]; then lease_fields+=("dhcp.$key=z:"); return; fi
-  [[ "$v" =~ ^0x[0-9a-fA-F]{1,8}$ ]] || refuse "the DHCP lease's $name is malformed: $v"
-  lease_fields+=("dhcp.$key=n:$((16#${v#0x}))")
+# Set variable $2 to lease field $1 in seconds, or to empty when the lease
+# omits it. Called directly, so its refusals reach stdout.
+lease_num() {
+  local v
+  lease_unique "$1"
+  v="$(lease_value "$1")"
+  if [ -n "$v" ]; then
+    [[ "$v" =~ ^0x[0-9a-fA-F]{1,8}$ ]] || refuse "the DHCP lease's $1 is malformed: $v"
+    v=$((16#${v#0x}))
+  fi
+  printf -v "$2" '%s' "$v"
 }
 if [ "$mode" = 'admin' ] || [ "$mode" = 'setup' ]; then
+  command -v node >/dev/null 2>&1 || refuse "node is missing"
   lease="$(bounded ipconfig getpacket "$SOAK_GUEST_IF" 2>/dev/null || true)"
   [ -n "$lease" ] || refuse "$SOAK_GUEST_IF has no DHCP lease to attest (ipconfig getpacket)"
   lease_unique server_identifier
@@ -230,38 +242,113 @@ if [ "$mode" = 'admin' ] || [ "$mode" = 'setup' ]; then
   valid_ipv4 "$SOAK_DHCP_SERVER" || refuse "SOAK_DHCP_SERVER is not an IPv4 address: $SOAK_DHCP_SERVER"
   [ "$SOAK_DHCP_SERVER" = "$lease_server" ] || refuse "the lease's DHCP server is $lease_server, not the configured $SOAK_DHCP_SERVER"
   dhcp_server="$SOAK_DHCP_SERVER"
-  lease_fields+=("dhcp.server=s:$dhcp_server" "dhcp.leaseServer=s:$lease_server")
-  [ "$(grep -c '^lease_time ' <<< "$lease" || true)" -eq 1 ] || refuse "the DHCP lease has no single lease_time"
-  lease_seconds_field lease_time leaseSeconds
-  lease_seconds_field renewal_t1_time_value renewSeconds
-  lease_seconds_field rebinding_t2_time_value rebindSeconds
-  # When the lease began, if the system says: its expiry and renewal follow
-  # from it and the durations above. Null when ipconfig does not report it.
-  lease_start="$(bounded ipconfig getsummary "$SOAK_GUEST_IF" 2>/dev/null | sed -n 's/^[[:space:]]*LeaseStartTime[[:space:]]*:[[:space:]]*//p' || true)"
-  [ "$(grep -c . <<< "$lease_start" || true)" -le 1 ] || refuse "ipconfig reports LeaseStartTime more than once"
-  if [ -n "$lease_start" ]; then lease_fields+=("dhcp.leaseStart=s:$lease_start"); else lease_fields+=("dhcp.leaseStart=z:"); fi
-  lease_fields+=("dhcp.observedAt=s:$now")
+
+  # The lease's timing, normalized to epoch seconds. Every part is required to
+  # be present, consistent and live, because a lease that lapses mid-run takes
+  # the management path with it. Each is checked directly, never inside $(...),
+  # so a refusal reaches stdout.
+  lease_num lease_time lease_s
+  lease_num renewal_t1_time_value renew_s
+  lease_num rebinding_t2_time_value rebind_s
+  # Strictly 0 < renewal < rebinding < lease; all three are required, and
+  # equality fails.
+  [ -n "$lease_s" ] && [ -n "$renew_s" ] && [ -n "$rebind_s" ] \
+    || refuse "the DHCP lease must report lease_time, renewal_t1_time_value and rebinding_t2_time_value"
+  [ "$renew_s" -gt 0 ] && [ "$renew_s" -lt "$rebind_s" ] && [ "$rebind_s" -lt "$lease_s" ] \
+    || refuse "the lease's timing is inconsistent: renewal $renew_s s, rebinding $rebind_s s, lease $lease_s s must satisfy 0 < renewal < rebinding < lease"
+
+  # When the lease began, as the system reports it, parsed strictly. Anything
+  # else, or the field reported twice, is refused.
+  lease_start_raw="$(bounded ipconfig getsummary "$SOAK_GUEST_IF" 2>/dev/null | sed -n 's/^[[:space:]]*LeaseStartTime[[:space:]]*:[[:space:]]*//p' || true)"
+  [ -n "$lease_start_raw" ] || refuse "ipconfig does not report when the lease started (LeaseStartTime), so its expiry cannot be attested"
+  [ "$(grep -c . <<< "$lease_start_raw")" -eq 1 ] || refuse "ipconfig reports LeaseStartTime more than once"
+  lease_start="$(node -e '
+    const m = /^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d) ([+-]\d\d)(\d\d)$/.exec(process.argv[1]);
+    const t = m ? Date.parse(m[1] + "T" + m[2] + m[3] + ":" + m[4]) : NaN;
+    if (!Number.isFinite(t)) process.exit(1);
+    process.stdout.write(String(Math.floor(t / 1000)));
+  ' "$lease_start_raw")" || refuse "LeaseStartTime is not in the expected form (YYYY-MM-DD HH:MM:SS +ZZZZ): $lease_start_raw"
+  now_epoch="$(date -u +%s)"
+  # Not before 2000, and not ahead of this clock by more than a minute.
+  [ "$lease_start" -ge 946684800 ] && [ "$lease_start" -le $((now_epoch + 60)) ] || refuse "the lease start $lease_start_raw is out of range"
+  lease_expiry=$((lease_start + lease_s))
+  [ "$lease_expiry" -gt "$now_epoch" ] || refuse "the DHCP lease expired at $lease_expiry (now $now_epoch)"
+  [ $((lease_expiry - now_epoch)) -ge "$attest_window" ] || refuse "the DHCP lease has $((lease_expiry - now_epoch)) s left, less than the next sample interval plus margin ($attest_window s)"
+  lease_fields=("dhcp.server=s:$dhcp_server" "dhcp.leaseServer=s:$lease_server"
+    "dhcp.leaseSeconds=n:$lease_s" "dhcp.leaseStartRaw=s:$lease_start_raw"
+    "dhcp.leaseStartEpoch=n:$lease_start" "dhcp.leaseExpiryEpoch=n:$lease_expiry"
+    "dhcp.renewEpoch=n:$((lease_start + renew_s))" "dhcp.rebindEpoch=n:$((lease_start + rebind_s))"
+    "dhcp.observedEpoch=n:$now_epoch" "dhcp.remainingSeconds=n:$((lease_expiry - now_epoch))"
+    "dhcp.requiredSeconds=n:$attest_window" "dhcp.sampleIntervalSeconds=n:$SOAK_SAMPLE_INTERVAL" "dhcp.safetyMarginSeconds=n:$SOAK_SAFETY_MARGIN")
 fi
 
 pf_macros=(-D "host_addr=$SOAK_HOST_ADDR" -D "dhcp_server=$dhcp_server" -D "guest_if=$SOAK_GUEST_IF")
 
-# The uid the TangleClaw listening on SOAK_TC_PORT runs as, which must be the
-# workload user's. Seeing another user's process needs sudo, so this is the
-# admin plane's check. Sets tc_uid.
-tc_uid=''
+# The TangleClaw listening on SOAK_TC_PORT must be one process, running as the
+# workload user, executing node. Every fact comes from the kernel, through
+# lsof and ps, never from anything the process says about itself. Seeing
+# another user's process needs sudo, so this is the admin plane's check. Sets
+# tc_uid, tc_pid and tc_exe.
+tc_uid=''; tc_pid=''; tc_exe=''
+# A path with every symlink resolved, by node's fs.realpathSync.
+canonical() { node -e 'process.stdout.write(require("fs").realpathSync(process.argv[1]))' "$1" 2>/dev/null; }
 check_tc_owner() {
-  local want uids
+  local want listen pids uids ps_uid
   want="$(id -u "$user" 2>/dev/null)" || refuse "no workload user $user; run guest-setup.sh --bootstrap-user first"
   # lsof exits non-zero when nothing listens; that is the empty answer below.
-  uids="$( { bounded sudo -n lsof -nP -iTCP:"$SOAK_TC_PORT" -sTCP:LISTEN -Fu 2>/dev/null || true; } | sed -n 's/^u//p' | sort -u)"
-  [ -n "$uids" ] || refuse "nothing is listening on port $SOAK_TC_PORT: start the pinned TangleClaw as $user first"
+  listen="$( { bounded sudo -n lsof -nP -iTCP:"$SOAK_TC_PORT" -sTCP:LISTEN -Fpu 2>/dev/null || true; } )"
+  pids="$(sed -n 's/^p//p' <<< "$listen" | sort -u)"
+  uids="$(sed -n 's/^u//p' <<< "$listen" | sort -u)"
+  [ -n "$pids" ] || refuse "nothing is listening on port $SOAK_TC_PORT: start the pinned TangleClaw as $user first"
+  [ "$(grep -c . <<< "$pids")" -eq 1 ] || refuse "more than one process listens on port $SOAK_TC_PORT ($(tr '\n' ' ' <<< "$pids")): which one is TangleClaw is ambiguous"
   [ "$uids" = "$want" ] || refuse "the TangleClaw on port $SOAK_TC_PORT runs as uid $(tr '\n' ' ' <<< "$uids")not $user ($want): its sessions would not be the confined workload"
-  tc_uid="$want"
+  ps_uid="$(bounded ps -o uid= -p "$pids" 2>/dev/null | tr -d '[:space:]' || true)"
+  [ "$ps_uid" = "$want" ] || refuse "ps reports pid $pids as uid '$ps_uid', not $user ($want)"
+  # The executable, from two kernel sources that must agree after
+  # canonicalization: lsof's text entries (the program, then its mapped
+  # libraries) and ps. Exactly one text entry may be a node binary.
+  local txt node_txt ps_exe
+  txt="$( { bounded sudo -n lsof -nP -a -p "$pids" -d txt -Fn 2>/dev/null || true; } | sed -n 's/^n//p')"
+  node_txt="$(grep -E '(^|/)node$' <<< "$txt" || true)"
+  [ -n "$node_txt" ] && [ "$(grep -c . <<< "$node_txt")" -eq 1 ] || refuse "pid $pids on port $SOAK_TC_PORT maps $(grep -c . <<< "$node_txt") node executables: its executable is not established"
+  ps_exe="$(bounded sudo -n ps -o comm= -p "$pids" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)"
+  tc_exe="$(canonical "$node_txt")" || refuse "cannot canonicalize the TangleClaw executable $node_txt"
+  [ -n "$ps_exe" ] && [ "$(canonical "$ps_exe" 2>/dev/null || true)" = "$tc_exe" ] || refuse "ps reports pid $pids executing '$ps_exe', not $tc_exe: the executable is not established"
+  tc_uid="$want"; tc_pid="$pids"
+}
+
+# The workload account must be the one this script makes: a regular uid, its
+# own home owned by it, in neither admin nor wheel, with no sudo rights. An
+# existing account that differs is someone else's; it is refused, never
+# adopted or changed. Setup and every admin attestation run this.
+check_workload_identity() {
+  local wl_uid wl_home g
+  wl_uid="$(id -u "$user" 2>/dev/null || true)"
+  [[ "$wl_uid" =~ ^[0-9]+$ ]] && [ "$wl_uid" -ge 501 ] || refuse "$user has uid '$wl_uid', a system or unknown uid: not a workload account this script made"
+  wl_home="$(dscl . -read "/Users/$user" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory: *//p')"
+  [ "$wl_home" = "/Users/$user" ] || refuse "$user's home is '$wl_home', not /Users/$user: not a workload account this script made"
+  [ "$(stat -f %u "$wl_home" 2>/dev/null || true)" = "$wl_uid" ] || refuse "$wl_home is not owned by $user ($wl_uid)"
+  for g in admin wheel; do
+    if dseditgroup -o checkmember -m "$user" "$g" >/dev/null 2>&1; then
+      refuse "$user is a member of $g; the workload must not be an admin (fix it by hand, this script never demotes an account)"
+    fi
+  done
+  # Judged by exit status, not by sudo's (localized) wording: `sudo -l -U
+  # <user> <command>` exits 0 only when the policy permits that command. A
+  # shell, pfctl and a no-op cover general, pf-specific and blanket grants.
+  local c rc
+  for c in /bin/sh /sbin/pfctl /usr/bin/true; do
+    rc=0
+    bounded sudo -n -l -U "$user" "$c" >/dev/null 2>&1 || rc=$?
+    [ "$rc" -ne 0 ] || refuse "$user has sudo rights ($c is permitted); the workload must have none"
+    [ "$rc" -ne 124 ] || refuse "sudo -l for $user hung: its rights are not established"
+  done
 }
 
 # --- The admin plane ---
 verify_admin() {
   bounded sudo -n true >/dev/null 2>&1 || refuse "the admin verifier needs non-interactive sudo"
+  check_workload_identity
   local info rules expected addr
   info="$(bounded sudo -n pfctl -s info 2>/dev/null)" || refuse "cannot read pf status"
   grep -q '^Status: Enabled' <<< "$info" || refuse "pf is not enabled"
@@ -289,7 +376,7 @@ $rules"
     "pf.enabled=b:true" "pf.expectedRulesSha256=s:$expected_sha" "pf.activeRulesSha256=s:$active_sha" "pf.rulesMatch=b:true" "pf.rules=n:$(grep -c . <<< "$rules")" \
     "interface.name=s:$SOAK_GUEST_IF" "interface.address=s:$addr" "host=s:$SOAK_HOST_ADDR" \
     "${lease_fields[@]}" \
-    "management.ssh=s:listening" "tangleclaw.port=n:$SOAK_TC_PORT" "tangleclaw.user=s:$user" "tangleclaw.uid=n:$tc_uid"
+    "management.ssh=s:listening" "tangleclaw.port=n:$SOAK_TC_PORT" "tangleclaw.user=s:$user" "tangleclaw.uid=n:$tc_uid" "tangleclaw.pid=n:$tc_pid" "tangleclaw.executable=s:$tc_exe"
 }
 
 # --- The workload plane ---
@@ -355,12 +442,7 @@ else
     -password "$(openssl rand -hex 32)" >/dev/null 2>&1 || refuse "could not create $user"
   echo "$user created"
 fi
-for g in admin wheel; do
-  if dseditgroup -o checkmember -m "$user" "$g" >/dev/null 2>&1; then
-    refuse "$user is a member of $g; the workload must not be an admin (fix it by hand, this script never demotes an account)"
-  fi
-done
-sudo -n -l -U "$user" 2>/dev/null | grep -q 'not allowed to run sudo' || refuse "$user has sudo rights; the workload must have none"
+check_workload_identity
 if [ "$mode" = 'bootstrap' ]; then
   echo "workload user $user is ready. Next: start the pinned TangleClaw as $user on 127.0.0.1:$SOAK_TC_PORT, then run guest-setup.sh"
   exit 0

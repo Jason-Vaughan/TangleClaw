@@ -97,11 +97,30 @@ The existing soak tests are unchanged.
 - W2: the guest TangleClaw must run as the workload user. `--bootstrap-user` makes that order workable on a fresh guest, and setup and the admin verifier refuse a TangleClaw listening as any other uid (`lsof`).
 - W3: the egress probe addresses must be public literals, and are recorded in the workload attestation.
 
+The focused run in PM scoped slot 2 found two real bugs, both fixed before `6d122ba0`:
+- the admin attestation emitted during setup carried mode "setup" instead of "admin";
+- under `pipefail`, `lsof` exiting non-zero when nothing listened ended the script with exit 1, instead of a refusal.
+
+The rerun passed 107/107. Three mutation checks (dropping the TangleClaw-owner check, the DHCP config-equals-lease check, or the workload sudo refusal) each turned the tests red.
+
 The same commit carries the Architect's further A44 acceptance conditions:
 - Each attestation line is built by a real JSON encoder (`JSON.stringify` via node), with a fixed fallback line if node is missing.
 - A duplicate or malformed `ipconfig` lease field is refused.
 - The admin evidence records the lease, renewal and rebinding durations, the lease start (null where `ipconfig getsummary` does not report it) and when it was observed.
 - The DHCP server must be configured and must match the lease's single server identifier. A lease-only identity stays refused until the dry run proves it is the host-controlled service.
+
+**A48 (Architect), in the sixth commit.**
+- The fallback line is fixed per mode, with `code: ENCODER_MISSING` and no interpolation. Encoded refusals carry `code: REFUSED`.
+- The DHCP timing is normalized to epochs: start, expiry, renew, rebind, observed and remaining. It fails closed when the start is missing, duplicated, unparseable or out of range, when the lease has expired, when T1 < T2 < lease is violated, or when less than `SOAK_ATTEST_WINDOW` remains.
+- The TangleClaw is bound as exactly one listening pid, whose uid comes from both lsof and ps and whose executable comes from lsof's txt entry, which must be node.
+- `--bootstrap-user` refuses an existing account with a system uid or a foreign home.
+- This also covers the Critic's O-3 lease tests (duplicate renewal field, malformed rebinding value, LeaseStartTime reported twice).
+
+**A50 (Architect), in the same commit.**
+- The timing is strictly 0 < T1 < T2 < lease, with all three required; equality fails.
+- The window is `SOAK_SAMPLE_INTERVAL` + `SOAK_SAFETY_MARGIN`, both bounded and recorded.
+- The executable is exactly one node text entry from lsof, canonicalized (realpath), and must equal ps's canonicalized comm. Multiple node entries fail closed.
+- The workload identity checks (uid, home and its owner, no admin or wheel, no sudo) now also run in every admin attestation, not only at setup.
 
 ## 2026-09-28 — Every rule is named "Rule #<id>" from its DB id (#2029)
 

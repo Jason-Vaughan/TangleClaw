@@ -362,8 +362,10 @@ actions.
 
   Setup then, stopping at the first failure:
   1. **Creates or confirms the workload user** (`SOAK_WORKLOAD_USER`, default `soakrun`). It is a
-     standard account with a random password nobody keeps. It refuses an account that is in `admin` or
-     `wheel`, or that has any sudo rights. It never demotes an existing account; fix one by hand.
+     standard account with a random password nobody keeps. It refuses an existing account with that
+     name whose identity conflicts: a system uid (below 501), a home other than `/Users/<user>`,
+     membership of `admin` or `wheel`, or any sudo rights. It never adopts, changes or demotes such an
+     account; fix one by hand.
   2. **Loads the pf profile and attests both planes** (below). Either verifier failing stops setup.
   3. **Installs** `soak-stub` on `PATH`, and its engine profile for the workload user.
   4. **Creates the synthetic repos** as the workload user (`soak.js repos`), under its home.
@@ -377,7 +379,8 @@ actions.
 
 The guest is attested from two planes, because neither can see everything. Each verifier prints exactly
 one JSON line, built by a real encoder (node's `JSON.stringify`) rather than by pasting strings together
-(schema `tc.soak-guest-attest/v1`) with `ok` true or false, the boot identity
+(schema `tc.soak-guest-attest/v1`). A refusal carries `code: "REFUSED"` and a `reason`. If node itself is
+missing, a fixed line with `code: "ENCODER_MISSING"` is printed, with nothing interpolated. with `ok` true or false, the boot identity
 (`kern.bootsessionuuid` and the boot time), the time, and the artifact version: `scriptSha256` and
 `profileSha256`, the sha256 of `guest-setup.sh` and of the pf profile, reported separately. Any failure or ambiguity is `ok: false` with a `reason`, and
 exit 3.
@@ -392,11 +395,27 @@ exit 3.
   - the sha256 of the expected rules and of the active rules, and whether they match (a mismatch is
     also reported this way, with `ok: false`);
   - the guest interface and its IPv4 address, and the host's address;
-  - the DHCP server pf allows and the lease's own server, the lease, renewal and rebinding durations,
-    the lease's start time when `ipconfig getsummary` reports it (else null), and when it was observed.
-    A lease field that appears twice or does not parse is refused;
+  - the DHCP server pf allows and the lease's own server, which must match;
+  - the lease's timing, normalized to epoch seconds: start, expiry, renewal and rebinding, the raw start
+    as reported, when it was observed, and how many seconds remain. It fails closed when:
+    - `ipconfig getsummary` doesn't report `LeaseStartTime` exactly once, in the form
+      `YYYY-MM-DD HH:MM:SS +ZZZZ`;
+    - the start is before 2000 or in the future;
+    - the lease has expired;
+    - the lease doesn't report all three of lease, renewal and rebinding times, or they don't satisfy
+      0 < renewal < rebinding < lease strictly (equality fails);
+    - a lease field appears twice or doesn't parse;
+    - less lease remains than the next sample interval plus a declared margin (`SOAK_SAMPLE_INTERVAL`,
+      default 600 s, plus `SOAK_SAFETY_MARGIN`, default 300 s), so a lease can't lapse unseen. All three
+      numbers are in the line;
   - that something is listening on port 22, the SSH management path;
-  - that the TangleClaw on `SOAK_TC_PORT` runs as the workload user (its port, user and uid).
+  - that the TangleClaw on `SOAK_TC_PORT` is exactly one process, running as the workload user and
+    executing `node`. The proof starts from the listening socket. `lsof` resolves exactly one pid, whose
+    uid must match from both `lsof` and `ps`. Exactly one of its `lsof` text entries may be a node
+    binary, and it must canonicalize to the same path as `ps` reports. Nothing the process says about
+    itself (its argv) is trusted;
+  - that the workload account is still what setup made: a regular uid, its own home owned by it, in
+    neither `admin` nor `wheel`, and with no sudo rights.
 
   It never loads pf.
 - **`guest-setup.sh --verify-workload`** runs as the workload user and proves what that user can and

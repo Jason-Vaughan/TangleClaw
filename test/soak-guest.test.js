@@ -161,6 +161,12 @@ describe('soak guest: host-provision.sh', () => {
 });
 
 
+/** A real node binary, so the executable check can canonicalize the path it is given. */
+const NODE = process.execPath;
+
+/** A lease's three timing fields (1 day, renew at 12 h, rebind at 21 h), for printf. */
+const TIMING = 'lease_time (uint32): 0x15180\\nrenewal_t1_time_value (uint32): 0xa8c0\\nrebinding_t2_time_value (uint32): 0x12750';
+
 /** The rules pfctl reports for the profile, in its normalized form (fake). */
 const PF_RULES = [
   'block drop all',
@@ -169,6 +175,15 @@ const PF_RULES = [
   'pass out quick on en0 inet proto udp from any port = 68 to 192.168.64.2 port = 67 keep state',
   'pass in quick on en0 inet proto udp from 192.168.64.2 port = 67 to any port = 68 keep state'
 ].join('\n') + '\n';
+
+/**
+ * A LeaseStartTime string, as the fake ipconfig reports it, some seconds ago.
+ * @param {number} seconds - How long ago the lease started
+ * @returns {string} `YYYY-MM-DD HH:MM:SS +0000`
+ */
+function leaseStartAgo(seconds) {
+  return new Date(Date.now() - seconds * 1000).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' +0000');
+}
 
 /**
  * Fake system commands for guest-setup.sh inside a "VM". `FAKE_USER` in the
@@ -181,6 +196,7 @@ const PF_RULES = [
  * @returns {{bin: string, calls: () => string[]}} Fakes
  */
 function guestFakes(dir, over = {}) {
+  const leaseStart = leaseStartAgo(3600);
   const bin = path.join(dir, 'bin');
   const log = path.join(dir, 'calls.log');
   fs.mkdirSync(bin, { recursive: true });
@@ -198,7 +214,7 @@ function guestFakes(dir, over = {}) {
     sudo: [
       '[ "$1" = "-v" ] && exit 0',
       '[ "$1" = "-n" ] && shift',
-      'if [ "$1" = "-l" ]; then echo "User $3 is not allowed to run sudo on guest."; exit 0; fi',
+      'if [ "$1" = "-l" ]; then echo "User $3 is not allowed to run sudo on guest."; exit 1; fi',
       'if [ "$1" = "-u" ]; then u="$2"; shift 2; [ "$1" = "-H" ] && shift; FAKE_USER="$u"; export FAKE_USER; exec "$@"; fi',
       '[ "${FAKE_USER:-admin}" = admin ] || exit 1',
       'exec "$@"'
@@ -223,8 +239,16 @@ function guestFakes(dir, over = {}) {
       'esac'
     ].join('\n'),
     dseditgroup: 'exit 1',
-    // The guest TangleClaw listening on 3102 runs as soakrun (uid 502).
-    lsof: 'printf "p4242\\nu502\\n"',
+    // The guest TangleClaw listening on 3102 is pid 4242, uid 502 (soakrun), executing node.
+    lsof: [
+      'case "$*" in',
+      '  *-iTCP:3102*) printf "p4242\\nu502\\nf12\\n";;',
+      `  *"-d txt"*) printf "p4242\\nftxt\\nn${NODE}\\nftxt\\nn/usr/lib/dyld\\n";;`,
+      'esac'
+    ].join('\n'),
+    ps: `case "$*" in *uid=*) echo "  502";; *comm=*) echo "${NODE}";; esac`,
+    stat: 'echo 502',
+    dscl: 'echo "NFSHomeDirectory: /Users/soakrun"',
     sysadminctl: 'exit 0',
     openssl: 'echo 0123456789abcdef',
     install: 'exit 0',
@@ -238,7 +262,7 @@ function guestFakes(dir, over = {}) {
       'case "$*" in',
       '  "getifaddr en0") echo 192.168.64.5;;',
       '  "getpacket en0") printf "op = BOOTREPLY\\nyiaddr = 192.168.64.5\\nserver_identifier (ip): 192.168.64.2\\nlease_time (uint32): 0x15180\\nrenewal_t1_time_value (uint32): 0xa8c0\\nrebinding_t2_time_value (uint32): 0x12750\\n";;',
-      '  "getsummary en0") printf "<dictionary> {\\n  LeaseStartTime : 2026-09-29 00:00:00 +0000\\n}\\n";;',
+      `  "getsummary en0") printf "<dictionary> {\\n  LeaseStartTime : ${leaseStart}\\n}\\n";;`,
       '  *) exit 1;;',
       'esac'
     ].join('\n'),
@@ -302,7 +326,7 @@ describe('soak guest: guest-setup.sh setup', () => {
     const idx = (re) => calls.findIndex((c) => re.test(c));
     const order = [
       /^\[admin\] sysadminctl -addUser soakrun .*-password 0123456789abcdef$/,
-      /^\[admin\] lsof -nP -iTCP:3102 -sTCP:LISTEN -Fu$/,
+      /^\[admin\] lsof -nP -iTCP:3102 -sTCP:LISTEN -Fpu$/,
       /^\[admin\] pfctl -D host_addr=192\.168\.64\.1 -D dhcp_server=192\.168\.64\.2 -D guest_if=en0 -f .*soak-deny\.conf -E$/,
       /^\[admin\] pfctl -s rules$/,
       /^\[soakrun\] ping6 -c 1 ::1$/,
@@ -339,7 +363,7 @@ describe('soak guest: guest-setup.sh setup', () => {
   });
 
   it('refuses a workload user with sudo rights', () => {
-    const f = guestFakes(tmp, { sudo: '[ "$1" = "-v" ] && exit 0\n[ "$1" = "-n" ] && shift\nif [ "$1" = "-l" ]; then echo "User soakrun may run the following commands"; exit 0; fi\nexec "$@"' });
+    const f = guestFakes(tmp, { sudo: '[ "$1" = "-v" ] && exit 0\n[ "$1" = "-n" ] && shift\nif [ "$1" = "-l" ]; then case "$4" in /sbin/pfctl) echo "/sbin/pfctl"; exit 0;; *) exit 1;; esac; fi\nexec "$@"' });
     const r = setup([], f, tmp, { FAKE_USER_EXISTS: '1' });
     assert.equal(r.status, 3);
     assert.match(r.stderr, /has sudo rights/);
@@ -390,6 +414,19 @@ describe('soak guest: guest-setup.sh setup', () => {
     assert.ok(!f.calls().some((c) => /pfctl -D/.test(c)));
   });
 
+  it('refuses an existing account with a system uid or a foreign home, without adopting it', () => {
+    let f = guestFakes(tmp, { id: 'case "$*" in "-u soakrun") echo 300;; *) exit 0;; esac' });
+    let r = setup(['--bootstrap-user'], f, tmp, { FAKE_USER_EXISTS: '1' });
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /system or unknown uid/);
+    fs.rmSync(path.join(tmp, 'calls.log'));
+    f = guestFakes(tmp, { dscl: 'echo "NFSHomeDirectory: /var/empty"' });
+    r = setup(['--bootstrap-user'], f, tmp, { FAKE_USER_EXISTS: '1' });
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /home is '\/var\/empty'/);
+    assert.ok(!f.calls().some((c) => /sysadminctl|dseditgroup -o edit/.test(c)));
+  });
+
   it('refuses setup when TangleClaw listens as both the workload user and another', () => {
     const f = guestFakes(tmp, { lsof: 'printf "p1\\nu502\\np2\\nu501\\n"' });
     assert.equal(setup([], f, tmp).status, 3);
@@ -414,6 +451,23 @@ describe('soak guest: guest-setup.sh setup', () => {
   });
 });
 
+/**
+ * A fake ipconfig whose lease holds the given extra fields and whose summary
+ * holds the given lines, with the usual address and DHCP server.
+ * @param {string} packetExtra - Extra getpacket lines (\\n-separated, for printf)
+ * @param {string} summary - getsummary lines (\\n-separated, for printf), or ''
+ * @returns {string} Shell body
+ */
+function packetWith(packetExtra, summary) {
+  return [
+    'case "$*" in',
+    '  "getifaddr en0") echo 192.168.64.5;;',
+    `  "getpacket en0") printf "server_identifier (ip): 192.168.64.2\\n${packetExtra}\\n";;`,
+    `  "getsummary en0") printf "<dictionary> {\\n${summary}\\n}\\n";;`,
+    'esac'
+  ].join('\n');
+}
+
 describe('soak guest: admin verifier', () => {
   let tmp;
 
@@ -437,11 +491,17 @@ describe('soak guest: admin verifier', () => {
     assert.deepEqual(j.pf, { enabled: true, expectedRulesSha256: sha256(PF_RULES), activeRulesSha256: sha256(PF_RULES), rulesMatch: true, rules: 5 });
     assert.deepEqual(j.interface, { name: 'en0', address: '192.168.64.5' });
     assert.equal(j.host, '192.168.64.1');
-    const { observedAt, ...dhcp } = j.dhcp;
-    assert.deepEqual(dhcp, { server: '192.168.64.2', leaseServer: '192.168.64.2', leaseSeconds: 86400, renewSeconds: 43200, rebindSeconds: 75600, leaseStart: '2026-09-29 00:00:00 +0000' });
-    assert.match(observedAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+    const { observedEpoch, remainingSeconds, leaseStartRaw, ...dhcp } = j.dhcp;
+    const start = Math.floor(Date.parse(leaseStartRaw.replace(' ', 'T').replace(' +0000', 'Z')) / 1000);
+    assert.deepEqual(dhcp, {
+      server: '192.168.64.2', leaseServer: '192.168.64.2', leaseSeconds: 86400,
+      leaseStartEpoch: start, leaseExpiryEpoch: start + 86400, renewEpoch: start + 43200, rebindEpoch: start + 75600,
+      requiredSeconds: 900, sampleIntervalSeconds: 600, safetyMarginSeconds: 300
+    });
+    assert.ok(Math.abs(Date.now() / 1000 - observedEpoch) < 60);
+    assert.equal(remainingSeconds, start + 86400 - observedEpoch);
     assert.deepEqual(j.management, { ssh: 'listening' });
-    assert.deepEqual(j.tangleclaw, { port: 3102, user: 'soakrun', uid: 502 });
+    assert.deepEqual(j.tangleclaw, { port: 3102, user: 'soakrun', uid: 502, pid: 4242, executable: fs.realpathSync(NODE) });
     assert.deepEqual(j.boot, { session: '11111111-2222-3333-4444-555555555555', time: 1790000000 });
     assert.deepEqual(j.artifact, { scriptSha256: sha256(fs.readFileSync(GUEST_SETUP)), profileSha256: sha256(fs.readFileSync(path.join(GUEST, 'pf', 'soak-deny.conf'))) });
     assert.ok(!f.calls().some((c) => / -E$/.test(c)), 'a verifier must never load pf');
@@ -459,7 +519,7 @@ describe('soak guest: admin verifier', () => {
     const f = guestFakes(tmp, { node: null });
     const r = setup(['--verify-admin'], f, tmp);
     assert.equal(r.status, 3);
-    assert.deepEqual(r.json, [{ schema: 'tc.soak-guest-attest/v1', mode: 'admin', ok: false, reason: 'node is missing, so no attestation can be encoded' }]);
+    assert.deepEqual(r.json, [{ schema: 'tc.soak-guest-attest/v1', mode: 'admin', ok: false, code: 'ENCODER_MISSING', reason: 'node is missing, so no attestation can be encoded' }]);
   });
 
   it('reports both ruleset digests and rulesMatch false when the loaded rules differ', () => {
@@ -479,14 +539,35 @@ describe('soak guest: admin verifier', () => {
     'an extra rule is loaded': [{ pfctl: `case "$*" in "-s info") echo "Status: Enabled";; "-s rules") printf "pass out all\\n"; cat "${'${RULES}'}";; *"-n -v"*) cat "${'${RULES}'}";; "-s Interfaces -v") echo "lo0 (skip)";; esac` }, {}, /not exactly the soak profile/],
     'pfctl parses a different rule count': [{ pfctl: 'case "$*" in "-s info") echo "Status: Enabled";; *"-n -v"*) echo "block drop all";; esac' }, {}, /unexpected number of rules/],
     'lo0 is not skipped': [{ pfctl: `case "$*" in "-s info") echo "Status: Enabled";; "-s rules"|*"-n -v"*) cat "${'${RULES}'}";; "-s Interfaces -v") echo "lo0";; esac` }, {}, /not skipping lo0/],
-    'the guest interface has no address': [{ ipconfig: 'case "$*" in "getpacket en0") printf "server_identifier (ip): 192.168.64.2\\nlease_time (uint32): 0x15180\\n";; *) exit 1;; esac' }, {}, /no IPv4 address/],
+    'the guest interface has no address': [{ ipconfig: packetWith(TIMING, `LeaseStartTime : ${leaseStartAgo(60)}`).replace('echo 192.168.64.5', 'exit 1') }, {}, /no IPv4 address/],
     'the guest has no DHCP lease': [{ ipconfig: 'case "$*" in "getifaddr en0") echo 192.168.64.5;; *) exit 1;; esac' }, {}, /has no DHCP lease/],
     'the DHCP server comes from the lease alone': [{}, { SOAK_DHCP_SERVER: '' }, /a lease alone is not trusted/],
     'the configured DHCP server differs from the lease': [{}, { SOAK_DHCP_SERVER: '192.168.64.9' }, /lease's DHCP server is 192\.168\.64\.2, not the configured 192\.168\.64\.9/],
     'the configured DHCP server is not an address': [{}, { SOAK_DHCP_SERVER: '192.168.64.2 port 53' }, /not an IPv4 address/],
     'the lease names two DHCP servers': [{ ipconfig: 'case "$*" in "getifaddr en0") echo 192.168.64.5;; "getpacket en0") printf "server_identifier (ip): 192.168.64.2\\nserver_identifier (ip): 192.168.64.7\\nlease_time (uint32): 0x15180\\n";; esac' }, {}, /server_identifier 2 times/],
     'the lease time is malformed': [{ ipconfig: 'case "$*" in "getifaddr en0") echo 192.168.64.5;; "getpacket en0") printf "server_identifier (ip): 192.168.64.2\\nlease_time (uint32): forever\\n";; esac' }, {}, /lease_time is malformed/],
-    'the lease has no lease time': [{ ipconfig: 'case "$*" in "getifaddr en0") echo 192.168.64.5;; "getpacket en0") printf "server_identifier (ip): 192.168.64.2\\n";; esac' }, {}, /no single lease_time/],
+    'the lease is not reported to have started': [{ ipconfig: packetWith(TIMING, '') }, {}, /does not report when the lease started/],
+    'the lease start is unparseable': [{ ipconfig: packetWith(TIMING, 'LeaseStartTime : yesterday') }, {}, /not in the expected form/],
+    'the lease start is reported twice': [{ ipconfig: packetWith(TIMING, `LeaseStartTime : ${leaseStartAgo(60)}\\nLeaseStartTime : ${leaseStartAgo(60)}`) }, {}, /more than once/],
+    'the lease start is in the future': [{ ipconfig: packetWith(TIMING, `LeaseStartTime : ${leaseStartAgo(-3600)}`) }, {}, /out of range/],
+    'the lease has expired': [{ ipconfig: packetWith(TIMING, `LeaseStartTime : ${leaseStartAgo(2 * 86400)}`) }, {}, /lease expired/],
+    'less lease remains than the next attestation window': [{ ipconfig: packetWith(TIMING, `LeaseStartTime : ${leaseStartAgo(86400 - 300)}`) }, {}, /less than the next sample interval plus margin \(900 s\)/],
+    'renewal comes after rebinding': [{ ipconfig: packetWith('lease_time (uint32): 0x15180\\nrenewal_t1_time_value (uint32): 0x12750\\nrebinding_t2_time_value (uint32): 0xa8c0', `LeaseStartTime : ${leaseStartAgo(60)}`) }, {}, /timing is inconsistent/],
+    'renewal equals rebinding': [{ ipconfig: packetWith('lease_time (uint32): 0x15180\\nrenewal_t1_time_value (uint32): 0xa8c0\\nrebinding_t2_time_value (uint32): 0xa8c0', `LeaseStartTime : ${leaseStartAgo(60)}`) }, {}, /timing is inconsistent/],
+    'rebinding reaches the lease end': [{ ipconfig: packetWith('lease_time (uint32): 0x15180\\nrenewal_t1_time_value (uint32): 0xa8c0\\nrebinding_t2_time_value (uint32): 0x15180', `LeaseStartTime : ${leaseStartAgo(60)}`) }, {}, /timing is inconsistent/],
+    'the lease omits its renewal time': [{ ipconfig: packetWith('lease_time (uint32): 0x15180\\nrebinding_t2_time_value (uint32): 0x12750', `LeaseStartTime : ${leaseStartAgo(60)}`) }, {}, /must report lease_time, renewal_t1_time_value and rebinding_t2_time_value/],
+    'the renewal field appears twice': [{ ipconfig: packetWith('lease_time (uint32): 0x15180\\nrenewal_t1_time_value (uint32): 0xa8c0\\nrenewal_t1_time_value (uint32): 0xa8c0', `LeaseStartTime : ${leaseStartAgo(60)}`) }, {}, /renewal_t1_time_value 2 times/],
+    'the rebinding value is malformed': [{ ipconfig: packetWith('lease_time (uint32): 0x15180\\nrebinding_t2_time_value (uint32): soon', `LeaseStartTime : ${leaseStartAgo(60)}`) }, {}, /rebinding_t2_time_value is malformed/],
+    'more than one process listens on the TangleClaw port': [{ lsof: 'printf "p1\\nu502\\np2\\nu502\\n"' }, {}, /more than one process/],
+    'ps disagrees about the TangleClaw uid': [{ ps: 'echo "  501"' }, {}, /ps reports pid 4242 as uid '501'/],
+    'the TangleClaw process is not node': [{ lsof: 'case "$*" in *-iTCP:3102*) printf "p4242\\nu502\\n";; *"-d txt"*) printf "p4242\\nn/usr/bin/python3\\n";; esac' }, {}, /maps 0 node executables/],
+    'the lease has no lease time': [{ ipconfig: 'case "$*" in "getifaddr en0") echo 192.168.64.5;; "getpacket en0") printf "server_identifier (ip): 192.168.64.2\\n";; esac' }, {}, /must report lease_time/],
+    'the TangleClaw process maps two node executables': [{ lsof: `case "$*" in *-iTCP:3102*) printf "p4242\\nu502\\n";; *"-d txt"*) printf "p4242\\nn${NODE}\\nn/opt/other/bin/node\\n";; esac` }, {}, /maps 2 node executables/],
+    'ps names a different executable': [{ ps: 'case "$*" in *uid=*) echo "  502";; *comm=*) echo /opt/other/bin/node;; esac' }, {}, /the executable is not established/],
+    'the workload account became an admin after setup': [{ dseditgroup: 'case "$*" in *" admin") exit 0;; *) exit 1;; esac' }, {}, /member of admin/],
+    'the workload account gained sudo after setup': [{ sudo: '[ "$1" = "-n" ] && shift\nif [ "$1" = "-l" ]; then exit 0; fi\n[ "${FAKE_USER:-admin}" = admin ] || exit 1\nexec "$@"' }, {}, /has sudo rights \(\/bin\/sh is permitted\)/],
+    'sudo -l hangs for the workload account': [{ sudo: '[ "$1" = "-n" ] && shift\nif [ "$1" = "-l" ]; then sleep 30; fi\n[ "${FAKE_USER:-admin}" = admin ] || exit 1\nexec "$@"' }, {}, /sudo -l for soakrun hung/],
+    'the workload home is owned by someone else': [{ stat: 'echo 0' }, {}, /is not owned by soakrun/],
     'SSH is not listening': [{ netstat: 'echo "tcp4 0 0 127.0.0.1.3102 *.* LISTEN"' }, {}, /SSH management path is down/],
     'the guest TangleClaw runs as the admin': [{ lsof: 'printf "p4242\\nu501\\n"' }, {}, /runs as uid 501 not soakrun/],
     'nothing listens on the TangleClaw port': [{ lsof: 'exit 1' }, {}, /nothing is listening on port 3102/],
