@@ -890,6 +890,158 @@ describe('coordinator context rotation (#2032)', () => {
     });
   });
 
+  describe('E4/A13: full relaunch parity through an explicit claim', () => {
+    const SUCCESSOR_THREAD = '01a0e89b-0000-7000-8000-00000000beef';
+    let successor = null;
+    let launches = 0;
+
+    afterEach(() => {
+      // Leave the fixture session active for the next test.
+      if (successor) {
+        try { store.sessions.wrap(successor.id, 'test'); } catch { /* already ended */ }
+        successor = null;
+      }
+      store.getDb().prepare("UPDATE sessions SET status = 'active' WHERE id = ?").run(session.id);
+    });
+
+    /**
+     * The launch seam: starts a successor session with a launch sequence, and
+     * opens its startup-control channel on the fake app-server, as a real
+     * Codex launch would.
+     * @param {object} [opts] - `noChannel` to launch one without a channel.
+     * @returns {function(string): object}
+     */
+    const launcher = (opts = {}) => () => {
+      launches += 1;
+      successor = store.sessions.start({
+        projectId: project.id, engineId: 'codex', tmuxSession: `tc-rotation-successor-${launches}`, primePrompt: '',
+        launchSequence: { launchId: `launch-successor-${launches}-${launchN}`, pageBudget: 10000, applicability: 'not-applicable',
+          notApplicableReason: 'test', preflight: {}, sourceManifest: {}, steps: [] }
+      });
+      if (!opts.noChannel) {
+        store.startupControlChannels.open({
+          sessionId: successor.id, sequenceId: store.launchSequences.getBySession(successor.id).id, engineId: 'codex', adapter: 'codex',
+          adapterState: { pid: 4242, birth: 'Wed Sep 23 18:00:04 2026', socketPath: '/x/requested.sock', resolvedSocketPath: server.sockPath,
+            engineVersion: '0.156.1', threadId: null, serverVersion: null }
+        });
+      }
+      return { session: successor, error: null };
+    };
+    const relaunchDeps = (opts) => ({ ...deps(), launch: launcher(opts), driveOpts: { attempts: 5, deps: deps() } });
+    const operator = { kind: 'operator' };
+    const endOld = () => store.sessions.wrap(session.id, 'relaunching');
+
+    it('a relaunch rotation types nothing into the ending session, and lets only that session end itself', async () => {
+      await serve();
+      channel();
+      const rot = (await prepare({ mode: 'relaunch' })).body.rotation;
+      assert.equal(rot.mode, 'relaunch');
+      const r = await rotation.drive(rot.rotationId, { attempts: 3, deps: deps() });
+      assert.equal(r.state, 'fenced');
+      assert.equal(typed.length, 0);
+      assert.equal(rotation.gate({ projectId: project.id, access: access(), threadId: PRIOR, action: 'wrap' }), null);
+      assert.equal(rotation.gate({ projectId: project.id, access: access(), threadId: NEXT, action: 'wrap' }).body.code, 'COORDINATOR_FENCED');
+      assert.equal(rotation.gate({ projectId: project.id, access: access(), threadId: PRIOR, action: 'medusa-send' }).body.code, 'COORDINATOR_FENCED');
+      assert.match(rotation.view(r).nextCommand, /rotation\/relaunch/);
+    });
+
+    it('only the operator claims, and not while the old session is still active', async () => {
+      await serve();
+      channel();
+      const rot = (await prepare({ mode: 'relaunch' })).body.rotation;
+      assert.equal(rotation.claimRelaunch({ caller: { kind: 'project' }, body: { rotationId: rot.rotationId } }, relaunchDeps()).status, 403);
+      const before = launches;
+      const early = rotation.claimRelaunch({ caller: operator, body: { rotationId: rot.rotationId } }, relaunchDeps());
+      assert.equal(early.body.code, 'ROTATION_SESSION_STILL_ACTIVE');
+      assert.equal(launches, before, 'no launch was attempted');
+      const clearRot = rotation.claimRelaunch({ caller: operator, body: { rotationId: 'rot_none' } }, relaunchDeps());
+      assert.equal(clearRot.status, 404);
+    });
+
+    it('the claim binds exactly the successor it launched; that launch resumes, the old one cannot act', async () => {
+      await serve();
+      channel();
+      const rot = (await prepare({ mode: 'relaunch' })).body.rotation;
+      endOld();
+      server.state.threads = new Map([[SUCCESSOR_THREAD, { status: { type: 'idle' } }]]);
+      const claimed = rotation.claimRelaunch({ caller: operator, body: { rotationId: rot.rotationId } }, relaunchDeps());
+      assert.equal(claimed.status, 200, JSON.stringify(claimed.body));
+      assert.equal(claimed.body.rotation.sessionId, successor.id);
+      const r = await rotation.drive(rot.rotationId, { attempts: 5, deps: deps() });
+      assert.equal(r.state, 'reconciling', JSON.stringify(r));
+      assert.equal(r.replacementThreadId, SUCCESSOR_THREAD);
+      assert.equal(store.startupControlChannels.getOpenBySession(successor.id).adapterState.threadId, SUCCESSOR_THREAD);
+      const text = server.calls('turn/start').at(-1).params.input[0].text;
+      assert.match(text, /relaunched successor/);
+      assert.match(text, /tc start next/);
+
+      const successorAccess = { kind: 'project', projectId: project.id, sessionId: successor.id, launchId: r.launchId };
+      assert.equal(rotation.gate({ projectId: project.id, access: access(), threadId: PRIOR, action: 'workload-set' }).body.code, 'COORDINATOR_EPOCH_MISMATCH');
+      assert.equal(rotation.gate({ projectId: project.id, access: successorAccess, threadId: SUCCESSOR_THREAD, action: 'workload-set' }), null);
+
+      const nowMs = Date.now() + 1000;
+      store.workloadReceipts.append({
+        project_id: project.id, session_id: successor.id, launch_id: r.launchId, assignment_id: null, state: 'working', clearance: 'do-not-clear',
+        summary: 'reconciling', wait_kind: null, wait_detail: null, refs_json: '[]', branch: null, head_sha: null, source: 'tc-cli',
+        received_at: new Date(nowMs).toISOString()
+      }, { minIntervalMs: 0, nowMs });
+      const nonceNow = /Resume nonce[^`]*`([^`]+)`/.exec(text)[1];
+      const body = { rotationId: r.rotationId, attemptKey: r.attemptKey, generation: r.generation, resumeNonce: nonceNow, receipt: receipt(rotation.view(r)) };
+      assert.equal((await rotation.resume({ access: access(), threadId: SUCCESSOR_THREAD, body }, deps())).body.code, 'ROTATION_NOT_YOURS');
+      const done = await rotation.resume({ access: successorAccess, threadId: SUCCESSOR_THREAD, body }, deps());
+      assert.equal(done.status, 200, JSON.stringify(done.body));
+    });
+
+    it('an ordinary launch nobody claimed stays fenced, and blocks the claim until it ends', async () => {
+      await serve();
+      channel();
+      const rot = (await prepare({ mode: 'relaunch' })).body.rotation;
+      endOld();
+      launcher()();
+      const unclaimed = { kind: 'project', projectId: project.id, sessionId: successor.id, launchId: store.launchSequences.getBySession(successor.id).launchId };
+      assert.equal(rotation.gate({ projectId: project.id, access: unclaimed, threadId: SUCCESSOR_THREAD, action: 'medusa-send' }).body.code, 'COORDINATOR_FENCED');
+      assert.equal(rotation.claimRelaunch({ caller: operator, body: { rotationId: rot.rotationId } }, relaunchDeps()).body.code, 'ROTATION_SESSION_STILL_ACTIVE');
+    });
+
+    it('a successor that cannot be bound stays unclaimed, with the reason on the rotation', async () => {
+      await serve();
+      channel();
+      const rot = (await prepare({ mode: 'relaunch' })).body.rotation;
+      endOld();
+      const r = rotation.claimRelaunch({ caller: operator, body: { rotationId: rot.rotationId } }, relaunchDeps({ noChannel: true }));
+      assert.equal(r.body.code, 'ROTATION_RELAUNCH_UNBINDABLE');
+      const stored = store.coordinatorRotations.get(rot.rotationId);
+      assert.equal(stored.state, 'fenced');
+      assert.equal(stored.failureCode, 'relaunch-unbindable');
+      assert.match(rotation.view(stored).nextCommand, /abandon/);
+    });
+
+    it('a clear rotation is not claimable, and a bad mode is refused', async () => {
+      await serve();
+      channel();
+      assert.equal((await prepare({ mode: 'sideways' })).body.code, 'ROTATION_BAD_MODE');
+      const rot = (await prepare()).body.rotation;
+      assert.equal(rotation.claimRelaunch({ caller: operator, body: { rotationId: rot.rotationId } }, relaunchDeps()).body.code, 'ROTATION_NOT_RELAUNCH');
+    });
+  });
+
+  describe('A13: exactly one next command for each state', () => {
+    it('names the blocker and the command for whoever holds the rotation', () => {
+      const base = { rotationId: 'rot_x', state: 'fenced', mode: 'clear', failureCode: null, failureDetail: null, drift: null, readiness: null };
+      assert.equal(rotation.nextStep(base).nextCommand, 'tc rotation advance');
+      assert.match(rotation.nextStep({ ...base, failureCode: 'replacement-ambiguous', failureDetail: '2' }).nextCommand, /abandon/);
+      assert.match(rotation.nextStep({ ...base, mode: 'relaunch' }).nextCommand, /rotation\/relaunch/);
+      const rec = { ...base, state: 'reconciling', readiness: { verdict: 'not-ready', reason: 'publish workload' },
+        drift: { integrity: [], unavailable: [], trusted: [{ key: 'github:o/r#pr1' }] } };
+      const step = rotation.nextStep(rec);
+      assert.equal(step.nextCommand, 'tc rotation resume --receipt <file>');
+      assert.match(step.blocker, /github:o\/r#pr1/);
+      assert.match(step.blocker, /publish workload/);
+      assert.match(rotation.nextStep({ ...rec, drift: { integrity: [{ key: 'checkout.head' }], unavailable: [], trusted: [] } }).nextCommand, /abandon/);
+      assert.deepEqual(rotation.nextStep({ ...base, state: 'active' }), { blocker: null, nextCommand: null });
+    });
+  });
+
   describe('A6a: the coordinator role is an operator grant, not a claim', () => {
     it('a project with no active role cannot prepare, whatever its checkpoint says it is', async () => {
       await serve();

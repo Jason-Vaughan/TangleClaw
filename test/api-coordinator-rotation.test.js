@@ -100,6 +100,17 @@ describe('API — coordinator rotation routes (#2032)', () => {
     });
   }
 
+  for (const [method, url, body] of [
+    ['POST', '/api/tc/rotation/relaunch', { rotationId: 'rot_x' }],
+    ['GET', '/api/rotations', null]
+  ]) {
+    it(`${method} ${url} is the operator's alone (A13)`, async () => {
+      const { status, data } = await req(url, method, body, { 'x-tangleclaw-project-id': '1', 'x-tangleclaw-launch-id': 'forged' });
+      assert.equal(status, 403);
+      assert.equal(data.code, 'OPERATOR_ONLY');
+    });
+  }
+
   it('abandon refuses a project caller: it is the operator\'s exit', async () => {
     const { status, data } = await req('/api/tc/rotation/abandon', 'POST', { rotationId: 'rot_x', reason: 'x' },
       { 'x-tangleclaw-project-id': '1', 'x-tangleclaw-launch-id': 'forged' });

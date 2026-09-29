@@ -4866,9 +4866,16 @@ route('GET', '/api/tc/rotation', (req, res) => {
   const access = _rotationAccess(req, res);
   if (!access) return;
   const open = coordinatorRotation.openRotation(access.projectId);
+  const channel = store.startupControlChannels.getOpenBySession(access.sessionId);
+  const channelThread = channel && channel.adapterState ? channel.adapterState.threadId || null : null;
+  const forwardedThread = _engineThread(req);
   return jsonResponse(res, 200, {
     rotation: coordinatorRotation.view(open, { checkpoint: true }),
-    generation: store.coordinatorRotations.currentGeneration(access.projectId)
+    generation: store.coordinatorRotations.currentGeneration(access.projectId),
+    // Read-only binding evidence for the caller's own launch: the thread tc
+    // forwarded beside the one its control channel records. The live-Codex
+    // integration check reads it (scripts/rotation-live-check.js).
+    binding: { forwardedThread, channelThread, matches: !!forwardedThread && forwardedThread === channelThread }
   });
 });
 
@@ -4893,6 +4900,30 @@ route('POST', '/api/tc/rotation/resume', async (req, res, _params, body) => {
   const result = await coordinatorRotation.resume({ access, body, threadId: _engineThread(req) });
   return jsonResponse(res, result.status, result.body);
 }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
+
+// POST /api/tc/rotation/relaunch — `{rotationId}`: the operator's explicit
+// relaunch transition for a `relaunch` rotation. Launches the successor and
+// binds exactly that session and launch to the rotation; nothing else is ever
+// claimed. Operator only.
+route('POST', '/api/tc/rotation/relaunch', (req, res, _params, body) => {
+  const result = coordinatorRotation.claimRelaunch({ caller: resolveControlCaller(req), body });
+  return jsonResponse(res, result.status, result.body);
+});
+
+// GET /api/rotations — the operator's read surface for coordinator rotations
+// (ruling A13): each recent rotation's state, blocker, checkpoint digest,
+// receipt verdict and the one command that moves it. Operator only.
+route('GET', '/api/rotations', (req, res) => {
+  const caller = resolveControlCaller(req);
+  if (caller.kind !== 'operator') return errorResponse(res, 403, 'Only the operator reads every coordinator rotation.', 'OPERATOR_ONLY');
+  const rows = store.coordinatorRotations.listRecent(50);
+  return jsonResponse(res, 200, {
+    rotations: rows.map((r) => {
+      const project = store.projects.get(r.projectId);
+      return { project: project ? project.name : null, ...coordinatorRotation.view(r) };
+    })
+  });
+});
 
 // POST /api/tc/rotation/abandon — `{rotationId, reason}`: the operator ends a
 // rotation that cannot finish, lifting the fence. Operator only.
@@ -5352,7 +5383,7 @@ route('GET', '/api/tc/sessions', (_req, res) => {
  */
 function _composedLane(session, projectName) {
   try {
-    return workloadFleet.laneFor(session, { observer: activityObserver, projectName });
+    return { ...workloadFleet.laneFor(session, { observer: activityObserver, projectName }), ..._laneRotation(session) };
   } catch (err) { // prawduct:allow prawduct/broad-except -- one lane's store failure must not take the fleet roster down; it composes UNKNOWN, fail-closed, and is logged
     log.warn('workload composition failed for a lane', { sessionId: session.id, error: err.message });
     return {
@@ -5361,6 +5392,26 @@ function _composedLane(session, projectName) {
       composed: { availability: 'UNKNOWN', clearance: 'unknown', reasons: ['compose-failed'] }
     };
   }
+}
+
+/**
+ * A lane's coordinator rotation, for the fleet read (#2032, ruling A13):
+ * present while one is open, with its state, blocker, digest, receipt verdict
+ * and the one next command, so a coordinator reading `tc sessions` sees a
+ * rotating peer as exactly that.
+ * @param {object} session - The session row.
+ * @returns {{rotation?: object}}
+ */
+function _laneRotation(session) {
+  const open = coordinatorRotation.openRotation(session.projectId);
+  if (!open) return {};
+  const v = coordinatorRotation.view(open);
+  return {
+    rotation: {
+      rotationId: v.rotationId, state: v.state, mode: v.mode, generation: v.generation, checkpointDigest: v.checkpointDigest,
+      receiptVerdict: v.receiptVerdict, blocker: v.blocker, nextCommand: v.nextCommand
+    }
+  };
 }
 
 // GET /api/checkouts — the fleet's checkouts in one answer (#1678, #993): one

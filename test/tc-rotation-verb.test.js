@@ -10,7 +10,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { VERB_ROSTER, receiptVerbLabel, renderRotation } = require('../lib/tc-verbs');
+const { VERB_ROSTER, receiptVerbLabel, renderRotation, renderLaneLine } = require('../lib/tc-verbs');
 
 const verb = VERB_ROSTER.find((v) => v.id === 'rotation');
 
@@ -85,6 +85,13 @@ describe('tc rotation (#2032)', () => {
     const bad = fakeCtx(['resume', '--receipt', '/bad.json'], { '/bad.json': 'not json' });
     assert.match((await verb.run(bad.ctx)).stderr, /not JSON/);
     assert.equal(bad.calls.length, 0);
+  });
+
+  it('a rotating lane says so in tc sessions, with its blocker and next command (A13)', () => {
+    const lane = { composed: { availability: 'WORKING', clearance: 'do-not-clear' }, workload: {}, engine: {},
+      rotation: { state: 'reconciling', generation: 2, blocker: 'waiting for the receipt', nextCommand: 'tc rotation resume --receipt <file>' } };
+    assert.match(renderLaneLine(lane), /ROTATING \(reconciling, generation 2\): waiting for the receipt — next: tc rotation resume/);
+    assert.doesNotMatch(renderLaneLine({ ...lane, rotation: undefined }), /ROTATING/);
   });
 
   it('show gives a reconciling context its checkpoint, the messages to handle and a receipt template carrying the digest', () => {

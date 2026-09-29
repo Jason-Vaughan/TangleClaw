@@ -56,6 +56,27 @@ A step that cannot proceed does not change the state. It records a typed `failur
 and the next pass retries it, so a retry always continues the same attempt. Nothing mints a second
 authority. The database allows one open rotation per project, enforced by a partial unique index.
 
+## Clear in place or relaunch
+
+`prepare` takes `mode`: `clear` (the default) or `relaunch`.
+
+- **`clear`.** The server types `/clear` into the running session once its turn ends, then binds the
+  replacement thread the clear produced. This is described below.
+- **`relaunch`.** The coordinator ends its whole session instead: a wrap, or the operator ending it.
+  The rotation types nothing into the pane.
+  - **While it is `fenced`.** The fence persists across the session's end. The ending session may
+    still wrap itself, from its own thread and launch. That is the only action allowed.
+  - **Claim.** Once the old session has ended, the operator makes the **relaunch claim**:
+    `POST /api/tc/rotation/relaunch {rotationId}`. The server launches the successor session and, in
+    one compare-and-set, binds the rotation to exactly that new session, launch and control channel.
+  - **Rebind.** The replacement is the thread the successor's channel records, or the successor
+    app-server's sole root thread when none is recorded yet. The re-entry turn tells the successor to
+    finish its own launch sequence first.
+  - **Unclaimed launches.** A launch the claim did not make, such as an ordinary launch from the
+    dashboard, is never bound. It stays fenced, and it must end before the claim can run.
+  - **Unbindable successor.** A successor with no rebindable channel is not claimed. It is recorded as
+    `relaunch-unbindable`, and the next command is the operator's abandon.
+
 ## The replacement thread
 
 After `/clear`, the replacement is the **one** root thread in the project directory that was not
@@ -212,6 +233,36 @@ A refusal is `409 ROTATION_EVIDENCE_MISSING`. It lists each failed fact under `m
 fence stays up. A receipt of the wrong shape is `400 ROTATION_RECEIPT_INCOMPLETE`. A receipt for
 another attempt or generation is `409 ROTATION_STALE_GENERATION`.
 
+## The operator surface
+
+`GET /api/rotations` (operator only) lists the recent rotations. `tc rotation show` gives a
+coordinator its own rotation, and `tc sessions` (`GET /api/tc/sessions`) adds a `rotation` block to
+every lane that is rotating. Each of them shows:
+- the state and mode;
+- the checkpoint digest;
+- the receipt verdict (`accepted`, or the persisted readiness verdict);
+- the **blocker** in words;
+- **exactly one next command** for whoever holds the rotation. That is `tc rotation advance` while
+  the server is still working, `tc rotation resume --receipt <file>` while reconciling, the relaunch
+  claim for a fenced relaunch, or the operator's abandon when integrity drift or a failure the driver
+  cannot get past is in the way.
+
+A dashboard view is deferred under the operator UI freeze (ruling A24).
+
+## Live-Codex integration check
+
+The unit tests run against a fake app-server. Before merge, an independent executor runs
+`scripts/rotation-live-check.js` inside a real Codex coordinator pane, at the exact head under
+review. The coordinator's shell runs the three phases:
+- **`pre`** checks that `CODEX_THREAD_ID` is exported and equals the thread the control channel
+  records. `GET /api/tc/rotation` reports both under `binding`.
+- **`prepare <checkpoint.json>`** starts a managed clear. End the turn afterwards.
+- **`post`**, run in the replacement context, checks four things: this is a different thread, the
+  rotation bound exactly it, the channel records it, and the bound replacement may publish workload
+  while reconciling.
+
+Each phase prints `PASS` or `FAIL` lines and exits non-zero on any failure.
+
 ## Commands and routes
 
 Every route except abandon is bound to the caller's own verified launch. An unbound, forged or
@@ -223,6 +274,8 @@ foreign caller is refused with `403 ROTATION_BINDING_REQUIRED`.
 | `tc rotation show` | `GET /api/tc/rotation` | The open rotation, with its checkpoint, inbox interval and receipt template. |
 | `tc rotation advance` | `POST /api/tc/rotation/advance` | Retry the server's side after fixing what blocked it. |
 | `tc rotation resume --receipt <file>` | `POST /api/tc/rotation/resume` | Submit the receipt. `tc` fills in the rotation id, attempt key and generation from the server. |
+| — | `POST /api/tc/rotation/relaunch` `{rotationId}` | The operator's relaunch claim: launch the successor and bind exactly it. |
+| — | `GET /api/rotations` | The operator's read surface. |
 | — | `POST /api/tc/rotation/abandon` `{rotationId, reason}` | The operator ends a rotation that cannot finish. |
 
 After a restart, the server resumes the driver for every rotation still `fenced` or `rebinding`.
@@ -238,8 +291,8 @@ reason. Claude keeps its own re-entry path: the SessionStart hook's re-entry pre
 
 - **Codex only.** The engine thread comes from Codex's `CODEX_THREAD_ID`. The source was inspected;
   a live Codex-pane integration check is still an open acceptance item.
-- **Full wrap-and-relaunch parity, and a dashboard view of rotation state, are not built yet.** They
-  are #2032's E4 slice.
+- **No dashboard view.** It is deferred under the operator UI freeze. The API and `tc` read surfaces
+  are the emergency operator surface.
 
 Implementation: `lib/coordinator-rotation.js`, `lib/startup-control-codex.js` (`rotationThreads`,
 `rebindThread`, `deliverTurn`) and the `coordinator_rotations` table (schema v51). Tests:
