@@ -68,7 +68,8 @@ All notable changes to TangleClaw are documented in this file.
   - **It retires only a session with nothing left to decide:**
     - The lane must compose `AVAILABLE`: a current `complete` + `safe-to-clear` receipt, and the engine at rest. A self caller attests being at rest with that receipt, since its own pane is running the request. The composition is checked again at the commit point.
     - It must have no unresolved Medusa obligation: mail sent to it acknowledged, and answered where a reply is required, and replies it is owed received.
-    - It must have no work of its own since launch: no changed paths, no change to a file already dirty at launch, and no commits a freshly fetched remote lacks.
+    - It must work in the project's registered checkout: a session whose pane is in a linked worktree, or whose pane cannot be read, is refused.
+    - It must have no work of its own since launch: no changed paths, no change to a file already dirty at launch, no commits a freshly fetched remote lacks (on HEAD or any local branch), and nothing stashed.
     - It must not be held or stopped, and no wrap may be running.
   - **Anything else refuses with nothing changed** and a code naming the one blocker (`NOT_CLEAR`, `EXCHANGES_OPEN`, `OWNED_WORK_PRESENT`, `WORK_STATE_UNKNOWN`, `WRAP_IN_PROGRESS`, `SESSION_CHANGED`, `FINALIZE_STAGE_FAILED`). `tc` exits 3.
   - **Success means it finished.** If publishing or teardown is interrupted, the answer is `FINALIZE_INCOMPLETE` with what is left, and repeating the request (`tc finalize --session <id>`) finishes the same attempt without staging another.

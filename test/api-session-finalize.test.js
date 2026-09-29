@@ -75,9 +75,15 @@ function send(server, method, urlPath, body, headers = {}) {
  * @param {string[]} args
  * @returns {string} stdout
  */
-function git(cwd, args) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+function git(cwd, args, env = {}) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } });
 }
+
+/** Commit dates for fixture history that predates the session, as real history does. */
+const BEFORE_LAUNCH = (() => {
+  const at = new Date(Date.now() - 3600 * 1000).toISOString();
+  return { GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at };
+})();
 
 /**
  * `git status` without TangleClaw's own machine state (the handoff files it
@@ -117,7 +123,7 @@ describe('POST /api/sessions/:project/finalize (#2027)', () => {
     fs.writeFileSync(path.join(dir, 'tracked.txt'), 'committed\n');
     fs.writeFileSync(path.join(dir, 'operator-wip.txt'), 'original\n');
     git(dir, ['add', '.']);
-    git(dir, ['commit', '-q', '-m', 'init']);
+    git(dir, ['commit', '-q', '-m', 'init'], BEFORE_LAUNCH);
     // The operator's half-finished edit, present before the session launched.
     fs.writeFileSync(path.join(dir, 'operator-wip.txt'), 'operator edit, not committed\n');
     // Written well before the launch, as an operator's edit is.
@@ -779,6 +785,24 @@ describe('POST /api/sessions/:project/finalize (#2027)', () => {
     assert.equal(launchPreflightContext.evaluate(lane.project, { workspaceId: null }).verdict, 'ok');
   });
 
+  it('when nobody can repeat a self-finalize whose publish failed, the next launch\'s preflight publishes it (RM03 W3)', async () => {
+    const lane = launched('w3-orphaned');
+    await receipt(lane);
+    const origPublish = handoffPublish.publishHandoff;
+    handoffPublish.publishHandoff = () => ({ published: false, reason: 'simulated interruption', supersededId: null, supersededById: null });
+    let first;
+    try {
+      first = await finalize(lane, lane.headers);
+    } finally {
+      handoffPublish.publishHandoff = origPublish;
+    }
+    assert.equal(first.data.code, 'FINALIZE_INCOMPLETE');
+    // No repeat request: the pane that could send one is gone.
+    const pre = launchPreflightContext.evaluate(lane.project, { workspaceId: null });
+    assert.equal(pre.verdict, 'ok', JSON.stringify(pre.reasons));
+    assert.equal(store.handoffs.get(first.data.publication.id).state, 'published', 'the launch repaired it');
+  });
+
   it('a teardown step that fails is reported, not claimed; a repeat finishes it', async () => {
     const lane = launched('teardown-retry');
     await receipt(lane);
@@ -964,11 +988,13 @@ describe('POST /api/sessions/:project/finalize (#2027)', () => {
   it('a repeat after a relaunch never touches the new session\'s pane, which reuses the project\'s pane name', async () => {
     const live = new Set();
     const killed = [];
-    const orig = { hasSession: tmux.hasSession, killSession: tmux.killSession };
+    const orig = { hasSession: tmux.hasSession, killSession: tmux.killSession, paneCurrentPath: tmux.paneCurrentPath };
     tmux.hasSession = (name) => live.has(name);
     tmux.killSession = (name) => { killed.push(name); live.delete(name); };
     try {
       const lane = launched('pane-reuse');
+      // The pane sits in the registered checkout, as a normal launch's does.
+      tmux.paneCurrentPath = () => lane.dir;
       const pane = `tc-${lane.project.name}`;
       // Rebind the lane's session with a pane, as a real launch does.
       store.sessions.kill(lane.sessionId, 'test: rebind with a pane');
@@ -992,6 +1018,120 @@ describe('POST /api/sessions/:project/finalize (#2027)', () => {
     } finally {
       tmux.hasSession = orig.hasSession;
       tmux.killSession = orig.killSession;
+      tmux.paneCurrentPath = orig.paneCurrentPath;
     }
+  });
+
+  describe('where the session works, and what it left outside HEAD (RM03 B1, W1, W2)', () => {
+    /**
+     * Run a test with a stubbed pane directory.
+     * @param {string|null} dir - What the pane reports, or null for unreadable
+     * @param {() => Promise<void>} fn
+     */
+    async function withPane(dir, fn) {
+      const orig = tmux.paneCurrentPath;
+      tmux.paneCurrentPath = () => dir;
+      try { await fn(); } finally { tmux.paneCurrentPath = orig; }
+    }
+
+    it('a session whose pane is in a linked worktree with work there is refused, not retired', async () => {
+      const lane = launched('b1-worktree');
+      store.sessions.kill(lane.sessionId, 'test: relaunch with a pane');
+      const withPaneLane = { ...lane, ...bind(lane.project, lane.dir, `tc-${lane.project.name}`) };
+      const wt = path.join(tmpDir, `${lane.project.name}-wt`);
+      git(lane.dir, ['worktree', 'add', '-q', '-b', 'feat/y', wt]);
+      fs.writeFileSync(path.join(wt, 'tracked.txt'), 'uncommitted work in the worktree\n');
+      await receipt(withPaneLane);
+      await withPane(wt, async () => {
+        const r = await finalize(withPaneLane, withPaneLane.headers);
+        assert.equal(r.status, 409, JSON.stringify(r.data));
+        assert.equal(r.data.code, 'WORK_STATE_UNKNOWN');
+        assert.equal(r.data.workTree, fs.realpathSync(wt));
+      });
+      assert.equal(store.sessions.get(withPaneLane.sessionId).status, 'active');
+      assert.equal(fs.readFileSync(path.join(wt, 'tracked.txt'), 'utf8'), 'uncommitted work in the worktree\n');
+    });
+
+    it('a pane whose directory cannot be read is refused: it may be working anywhere', async () => {
+      const lane = launched('b1-unreadable-pane');
+      store.sessions.kill(lane.sessionId, 'test: relaunch with a pane');
+      const withPaneLane = { ...lane, ...bind(lane.project, lane.dir, `tc-${lane.project.name}`) };
+      await receipt(withPaneLane);
+      await withPane(null, async () => {
+        const r = await finalize(withPaneLane, withPaneLane.headers);
+        assert.equal(r.data.code, 'WORK_STATE_UNKNOWN', JSON.stringify(r.data));
+      });
+    });
+
+    it('a pane in the registered checkout is judged there as before', async () => {
+      const lane = launched('b1-registered');
+      store.sessions.kill(lane.sessionId, 'test: relaunch with a pane');
+      const withPaneLane = { ...lane, ...bind(lane.project, lane.dir, `tc-${lane.project.name}`) };
+      await receipt(withPaneLane);
+      await withPane(lane.dir, async () => {
+        const r = await finalize(withPaneLane, withPaneLane.headers);
+        assert.equal(r.status, 200, JSON.stringify(r.data));
+      });
+    });
+
+    it('a commit since launch on another local branch, with HEAD moved back, is owned work (W1)', async () => {
+      const lane = launched('w1-branch');
+      await receipt(lane);
+      git(lane.dir, ['checkout', '-q', '-b', 'side']);
+      fs.writeFileSync(path.join(lane.dir, 'side.txt'), 'x\n');
+      git(lane.dir, ['add', 'side.txt']);
+      git(lane.dir, ['commit', '-q', '-m', 'work on a side branch']);
+      git(lane.dir, ['checkout', '-q', 'main']);
+      const r = await finalize(lane, lane.headers);
+      assert.equal(r.status, 409, JSON.stringify(r.data));
+      assert.equal(r.data.code, 'OWNED_WORK_PRESENT');
+      assert.equal(r.data.unpushedOnBranches, 1);
+    });
+
+    it('work stashed since launch is owned work (W1)', async () => {
+      const lane = launched('w1-stash');
+      await receipt(lane);
+      fs.writeFileSync(path.join(lane.dir, 'tracked.txt'), 'stash me\n');
+      git(lane.dir, ['stash', 'push', '-q', '--', 'tracked.txt']);
+      const r = await finalize(lane, lane.headers);
+      assert.equal(r.status, 409, JSON.stringify(r.data));
+      assert.equal(r.data.code, 'OWNED_WORK_PRESENT');
+      assert.equal(r.data.stashes, 1);
+    });
+
+    it('a local branch whose unpushed commits predate the launch is not this session\'s work', async () => {
+      const lane = launched('w1-old-branch', (dir) => {
+        git(dir, ['checkout', '-q', '-b', 'operator-branch']);
+        fs.writeFileSync(path.join(dir, 'old.txt'), 'x\n');
+        git(dir, ['add', 'old.txt']);
+        git(dir, ['commit', '-q', '-m', 'operator work'], BEFORE_LAUNCH);
+        git(dir, ['checkout', '-q', 'main']);
+      });
+      await receipt(lane);
+      const r = await finalize(lane, lane.headers);
+      assert.equal(r.status, 200, JSON.stringify(r.data));
+    });
+
+    it('mail that arrives while the checkout is read is caught at the commit point (W2)', async () => {
+      const lane = launched('w2-late-mail');
+      await receipt(lane);
+      sessionFinalize._internal.workspaceId = () => 'ws-late';
+      const origProbe = sessionFinalize._internal.probe;
+      let id = null;
+      sessionFinalize._internal.probe = async (project, session, opts) => {
+        const answer = await origProbe(project, session, opts);
+        id = exchange({ recipient_workspace_id: 'ws-late', reply_required: true, priority: 'blocking' });
+        return answer;
+      };
+      try {
+        const r = await finalize(lane, lane.headers);
+        assert.equal(r.status, 409, JSON.stringify(r.data));
+        assert.equal(r.data.code, 'EXCHANGES_OPEN');
+        assert.deepEqual(r.data.unacknowledged, [id]);
+        assert.equal(store.sessions.get(lane.sessionId).status, 'active');
+      } finally {
+        sessionFinalize._internal.probe = origProbe;
+      }
+    });
   });
 });

@@ -56,7 +56,7 @@ POST /api/sessions/:project/finalize
 The request must carry a verified launch binding (`x-tangleclaw-project-id` and
 `x-tangleclaw-launch-id`, which `tc` sends). `sessionId` is required: it is the
 session the caller observed, so a relaunch between observing and asking can never
-retire the wrong one. `reason` is 1–500 characters.
+retire the wrong one. `reason` is 1–500 characters, collapsed to one line: it is written into the next session's handoff.
 
 `200` answers `{ ok: true, alreadyFinalized, mode: "self"|"delegated", session: {id, projectId, status, endedAt, wrapSummary}, publication: {id, digest, state, reason}, teardown: {steps, surviving} }`.
 
@@ -67,6 +67,11 @@ retire the wrong one. `reason` is 1–500 characters.
 | The session itself (verified launch of the target project) | Only its own session. |
 | A principal in the target's open control assignment's `authority.lifecycle` | Only the session that assignment is bound to. |
 | Anyone else: a peer outside the matrix, another project, the operator, the Master, an unbound request | Nothing (`403 FINALIZE_UNAUTHORIZED`). |
+
+A coordinator in the middle of a managed context rotation (#2032) is fenced
+like any other coordinator mutation. This covers both finalizing its own lane
+(a wrap) and retiring another lane under lifecycle authority (a control
+mutation).
 
 The operator is deliberately not a caller. The operator already has the wrap
 drawer and kill, and when the auth gate is open an operator-shaped request can be
@@ -89,7 +94,7 @@ nothing is changed.
 | 8 | No wrap run is live | `409 WRAP_IN_PROGRESS` |
 | 9 | The lane composes `AVAILABLE` (see below) | `409 NOT_CLEAR`, with the verdict, the reasons and the receipt's stale reason |
 | 10 | The lane is drained (see below) | `409 EXCHANGES_OPEN`, naming the `unacknowledged`, `unanswered` and `awaitingReply` exchanges |
-| 11 | No work of the session's own (see below) | `409 OWNED_WORK_PRESENT` (new paths, `changedSinceLaunch`, unpushed count), or `409 WORK_STATE_UNKNOWN` |
+| 11 | No work of the session's own (see below) | `409 OWNED_WORK_PRESENT` (new paths, `changedSinceLaunch`, `unpushed`, `unpushedOnBranches`, `stashes`), or `409 WORK_STATE_UNKNOWN` |
 | 12 | The final handoff can be staged | `503 FINALIZE_STAGE_FAILED`; the session stays active |
 
 **Clear to retire.** This uses the same composition that `tc sessions` shows coordinators ([fleet workload](fleet-workload.md)):
@@ -116,6 +121,13 @@ facts rather than from the inbox:
 - **Mail it sent that needs no reply** is not an obligation. It may still be in
   flight, and it is counted in the audit.
 
+**Where it works.** The session's pane directory is read first. If the pane is
+in a linked worktree of the repository (`git worktree add ...`), its work lives
+in a tree the launch baseline never recorded. If the pane's directory cannot be
+read, the session might be working anywhere. Either way it cannot be shown to
+have left nothing, so the request refuses `WORK_STATE_UNKNOWN`. Only a session
+working in the registered checkout is judged further.
+
 **No work of its own.** The remote-tracking refs are refreshed first
 (`git fetch --all --prune`); if that fails, the request refuses, because a stale
 ref can hold a commit the remote no longer has. Then the checkout is compared
@@ -128,7 +140,11 @@ with the session's launch baseline:
   change, whatever its file time. A changed byte, a new symlink target, a mode
   change, a removal or a revert is a change. A launch baseline recorded before
   fingerprints existed cannot be verified and refuses;
-- no commit exists that no remote-tracking ref has.
+- no commit made since launch on HEAD exists that no remote-tracking ref has;
+- no commit made since the session started exists on any other local branch
+  without a remote-tracking ref, and nothing was stashed since then. Commits on
+  a local branch from before the launch are not the session's. These two are
+  judged by commit time, because the baseline records only HEAD.
 
 Paths TangleClaw provably owns are judged the way the wrap judges them
 (`wrap-steps/_tc-owned-paths`): machine state, and a maintenance change such as
@@ -142,9 +158,10 @@ they are.
 
 ## What finalizing does
 
-1. **Re-check.** The HOLD/STOP gate, the wrap-run check and the lane
-   composition run again, synchronously with the staging and the write, so
-   nothing that arrived while the checkout was being read can slip in.
+1. **Re-check.** The HOLD/STOP gate, the wrap-run check, the lane composition
+   and the Medusa obligations run again, synchronously with the staging and
+   the write, so nothing that arrived while the checkout was being read can
+   slip in. That includes a message that needs a reply.
 2. **Stage the final handoff.** A `tc.handoff/1` `final` document is staged
    through the same code the wrap uses (`handoff-stage#stageAttempt`). It
    records:
@@ -197,8 +214,18 @@ the handoff is published and nothing the session held survives. Otherwise the
 answer is `409 FINALIZE_INCOMPLETE`, with the `publication` (id, digest, state)
 and the `teardown` (steps, surviving). Repeating the same request finishes the
 same attempt: it publishes it and releases whatever survives. It never stages
-another. A publication the next launch finds eligible but unpublished is also
-repaired by that launch's preflight.
+another.
+
+**Who finishes one nobody can repeat.** When a session finalized itself, its
+pane is gone, and the operator is not a caller of this route. Two existing
+paths finish what is left:
+- The next launch's preflight publishes an eligible, unpublished final handoff
+  itself, and that launch reads `ok`.
+- A pane that outlived its session is an orphan. The operator's kill
+  (`DELETE /api/sessions/:project`) removes an orphaned pane when the project
+  has no active session.
+
+A coordinator with lifecycle authority can also repeat the request.
 
 It never commits, stages, resets, checks out or discards anything in the
 project's git checkout. It opens no drawer. The full wrap pipeline is unchanged

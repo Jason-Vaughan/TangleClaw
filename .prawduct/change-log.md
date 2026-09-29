@@ -182,6 +182,14 @@ Before committing, eleven mutations were applied to `lib/session-finalize.js` on
   - Scrubbing the released 3.27.0 CHANGELOG entry broke the release-lock guard, which requires locked sections to match their published Release pages. By Architect ruling (a) that edit was reverted and the guard kept.
   - `test/wrap-drawer-triggers.test.js` sweeps every git-tracked file except released CHANGELOG sections, and a test pins that the exemption stops at `[Unreleased]`.
   - Two dir-scanner timeouts in that run reproduced on the committed base in a clean worktree at host load ~27, so they are recorded as environmental.
+- **Independent review by RM03 at e5d41eec: NOT GREEN.** The branch was held until #2032 merged, then rebuilt on `f0713c66` as one squashed change (the reviewed tip is kept at `keep/2027-e5d41eec`).
+  - **Conflicts:** CHANGELOG, `tc-verbs` and the fixtures. Both verbs are kept, and the fixtures were regenerated.
+  - **Rotation fence (#2032):** the coordinator epoch gate fences the finalize route, as `wrap` on the target lane and `control-mutate` for a coordinator acting on another lane. The rotation suite's exemption for the removed wrap-sentinel route is dropped.
+  - **B1:** the work tree is resolved before the probe. A linked worktree, or a pane that cannot be read, refuses `WORK_STATE_UNKNOWN`.
+  - **W1:** strict mode also counts commits since start on any local branch that no remote has, and stashes since start. Both are judged by commit time. The fixtures now date their setup history before launch, as real history is.
+  - **W2:** obligations are re-checked at the commit point.
+  - **W3:** the finisher is named. The next launch's preflight publishes an eligible final, the operator's kill reconciles an orphaned pane, and a test pins the preflight path.
+  - **Notes:** N2, the reason is collapsed to one line; N6, the archive prose is repaired. N1, N3, N4, N5 and N7 are accepted and recorded in the dispositions.
 - **Second cumulative review (R-1–R-9):**
   - A repeat after a relaunch no longer kills the new session's pane, which reuses the project's pane name (R-1).
   - Only the lane's own verified-launch acknowledgement discharges incoming mail (R-2).
