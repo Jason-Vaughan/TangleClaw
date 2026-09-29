@@ -114,6 +114,12 @@ The same commit carries the Architect's further A44 acceptance conditions:
 - The DHCP timing is normalized to epochs: start, expiry, renew, rebind, observed and remaining. It fails closed when the start is missing, duplicated, unparseable or out of range, when the lease has expired, when T1 < T2 < lease is violated, or when less than `SOAK_ATTEST_WINDOW` remains.
 - The TangleClaw is bound as exactly one listening pid, whose uid comes from both lsof and ps and whose executable comes from lsof's txt entry, which must be node.
 - `--bootstrap-user` refuses an existing account with a system uid or a foreign home.
+
+**The cumulative Critic at `7e59dba8`** found 0 blocking, 2 warnings and 1 note. W1 (full-suite evidence) waits for the PM's window. The next commit fixes W2 and the note:
+- W2: `public_ipv6` accepted malformed literals such as `2606::4700::1`, which `nc` fails to parse, so a denial would have been "proven" without testing pf. Probe literals are now judged by node's `net.isIP` and a `net.BlockList` of reserved ranges. That also refuses the IPv4 documentation and benchmark ranges (the earlier O-2).
+- The note: a split sentence in the README's attestation section.
+
+In PM scoped slot 4, the first run exposed a real bug in the new validator: node's `BlockList` matches an IPv4 address against the IPv4-mapped IPv6 subnet, so a shared list refused every IPv4 probe. The fix uses one list per family. `::2` then showed that `::/128` was too narrow, so the whole reserved `::/8` block is refused. The final run passed 137/137, and a mutation check dropping IPv6 probe validation turned 8 tests red.
 - This also covers the Critic's O-3 lease tests (duplicate renewal field, malformed rebinding value, LeaseStartTime reported twice).
 
 **A50 (Architect), in the same commit.**

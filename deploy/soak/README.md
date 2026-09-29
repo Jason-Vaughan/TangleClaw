@@ -353,12 +353,16 @@ actions.
     not a VM (`kern.hv_vmm_present`);
   - validates its inputs, so nothing ambiguous reaches pfctl, sudo or a URL: the interface name, the
     host's IPv4 address, the workload user name, the port, the project names and the probe timeout.
-    The egress probe addresses must be public literals, because an unroutable address would fail for
-    reasons that have nothing to do with pf, and "prove" nothing. For IPv4 that refuses loopback,
-    private, link-local, CGNAT, multicast and reserved addresses. For IPv6 it refuses loopback,
-    link-local, unique-local, multicast, IPv4-mapped and documentation addresses. The IPv4
-    documentation and benchmark ranges are not refused yet, but the probed addresses are recorded in
-    the attestation, so an override is visible.
+    The egress probe addresses must be public literals, because a malformed or unroutable address would
+    fail for reasons that have nothing to do with pf, and "prove" nothing. node's own parser
+    (`net.isIP`) and a block list judge them, not a pattern. The block list refuses:
+    - for IPv4: loopback, private, link-local, CGNAT, documentation, benchmark, multicast and reserved
+      addresses;
+    - for IPv6: the reserved `::/8` block (which holds unspecified, loopback, IPv4-mapped and NAT64
+      addresses), discard, IETF protocol, documentation, unique-local, link-local and multicast
+      addresses.
+
+    The probed addresses are also recorded in the attestation.
 
   Setup then, stopping at the first failure:
   1. **Creates or confirms the workload user** (`SOAK_WORKLOAD_USER`, default `soakrun`). It is a
@@ -377,13 +381,16 @@ actions.
 
 ### Attestation
 
-The guest is attested from two planes, because neither can see everything. Each verifier prints exactly
-one JSON line, built by a real encoder (node's `JSON.stringify`) rather than by pasting strings together
-(schema `tc.soak-guest-attest/v1`). A refusal carries `code: "REFUSED"` and a `reason`. If node itself is
-missing, a fixed line with `code: "ENCODER_MISSING"` is printed, with nothing interpolated. with `ok` true or false, the boot identity
-(`kern.bootsessionuuid` and the boot time), the time, and the artifact version: `scriptSha256` and
-`profileSha256`, the sha256 of `guest-setup.sh` and of the pf profile, reported separately. Any failure or ambiguity is `ok: false` with a `reason`, and
-exit 3.
+The guest is attested from two planes, because neither can see everything.
+
+- Each verifier prints exactly one JSON line (schema `tc.soak-guest-attest/v1`), built by a real encoder
+  (node's `JSON.stringify`) rather than by pasting strings together.
+- A successful line carries `ok: true`, the boot identity (`kern.bootsessionuuid` and the boot time), the
+  time, and the artifact version: `scriptSha256` and `profileSha256`, the sha256 of `guest-setup.sh` and
+  of the pf profile, reported separately.
+- Any failure or ambiguity is `ok: false` with `code: "REFUSED"` and a `reason`, and exit 3.
+- If node itself is missing, a fixed line with `code: "ENCODER_MISSING"` is printed, with nothing
+  interpolated.
 
 - **`guest-setup.sh --verify-admin`** runs as the admin, with sudo, and inspects pf itself:
   - pf must report `Enabled`;

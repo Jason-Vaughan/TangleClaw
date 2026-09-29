@@ -139,30 +139,34 @@ valid_ipv4 "$SOAK_HOST_ADDR" || refuse "SOAK_HOST_ADDR is not an IPv4 address: $
 attest_window=$((SOAK_SAMPLE_INTERVAL + SOAK_SAFETY_MARGIN))
 [[ "$SOAK_PROJECTS" =~ ^soak-[a-z0-9-]+(,soak-[a-z0-9-]+)*$ ]] || refuse "SOAK_PROJECTS must be comma-separated soak-* names: $SOAK_PROJECTS"
 # An egress probe proves denial only if the address would answer were egress
-# open. A loopback, private, link-local or otherwise unroutable address fails
-# for reasons that have nothing to do with pf, so it is refused.
-public_ipv4() {
-  valid_ipv4 "$1" || return 1
-  local a b
-  IFS=. read -r a b _ _ <<< "$1"
-  a=$((10#$a)); b=$((10#$b))
-  [ "$a" -eq 0 ] || [ "$a" -eq 10 ] || [ "$a" -eq 127 ] || [ "$a" -ge 224 ] && return 1
-  [ "$a" -eq 169 ] && [ "$b" -eq 254 ] && return 1
-  [ "$a" -eq 172 ] && [ "$b" -ge 16 ] && [ "$b" -le 31 ] && return 1
-  [ "$a" -eq 192 ] && [ "$b" -eq 168 ] && return 1
-  [ "$a" -eq 100 ] && [ "$b" -ge 64 ] && [ "$b" -le 127 ] && return 1
-  return 0
+# open. A malformed address, or one that is loopback, private, link-local,
+# CGNAT, documentation, benchmark, multicast or otherwise reserved, makes the
+# probe fail for reasons that have nothing to do with pf, so it is refused.
+# node's own parser (net.isIP) and block list judge it, not a pattern.
+command -v node >/dev/null 2>&1 || refuse "node is missing"
+public_ip() {
+  node -e '
+    const net = require("net");
+    const [family, addr] = process.argv.slice(1);
+    if (net.isIP(addr) !== Number(family)) process.exit(1);
+    // One list per family: a BlockList matches an IPv4 address against an
+    // IPv4-mapped IPv6 subnet, so ::ffff:0:0/96 in a shared list would block
+    // every IPv4 address.
+    const v4 = [["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8], ["169.254.0.0", 16],
+      ["172.16.0.0", 12], ["192.0.0.0", 24], ["192.0.2.0", 24], ["192.168.0.0", 16], ["198.18.0.0", 15],
+      ["198.51.100.0", 24], ["203.0.113.0", 24], ["224.0.0.0", 4], ["240.0.0.0", 4]];
+    // ::/8 is reserved, and holds loopback, IPv4-mapped and NAT64 addresses.
+    const v6 = [["::", 8], ["100::", 64], ["2001::", 23],
+      ["2001:db8::", 32], ["fc00::", 7], ["fe80::", 10], ["ff00::", 8]];
+    const type = family === "4" ? "ipv4" : "ipv6";
+    const bl = new net.BlockList();
+    for (const [a, p] of (family === "4" ? v4 : v6)) bl.addSubnet(a, p, type);
+    process.exit(bl.check(addr, type) ? 1 : 0);
+  ' "$1" "$2" 2>/dev/null
 }
-public_ipv6() {
-  local v
-  v="$(tr '[:upper:]' '[:lower:]' <<< "$1")"
-  [[ "$v" =~ ^[0-9a-f:]+$ ]] && [[ "$v" == *:*:* ]] || return 1
-  case "$v" in ::|::1|::ffff:*|fe[89ab]*|fc*|fd*|ff*|2001:db8:*) return 1 ;; esac
-  return 0
-}
-public_ipv4 "$SOAK_EGRESS_PROBE_ADDR" || refuse "SOAK_EGRESS_PROBE_ADDR must be a public IPv4 literal: $SOAK_EGRESS_PROBE_ADDR"
-public_ipv4 "$SOAK_DNS_PROBE_ADDR" || refuse "SOAK_DNS_PROBE_ADDR must be a public IPv4 literal: $SOAK_DNS_PROBE_ADDR"
-public_ipv6 "$SOAK_EGRESS_PROBE_ADDR6" || refuse "SOAK_EGRESS_PROBE_ADDR6 must be a public IPv6 literal: $SOAK_EGRESS_PROBE_ADDR6"
+public_ip 4 "$SOAK_EGRESS_PROBE_ADDR" || refuse "SOAK_EGRESS_PROBE_ADDR must be a public IPv4 literal: $SOAK_EGRESS_PROBE_ADDR"
+public_ip 4 "$SOAK_DNS_PROBE_ADDR" || refuse "SOAK_DNS_PROBE_ADDR must be a public IPv4 literal: $SOAK_DNS_PROBE_ADDR"
+public_ip 6 "$SOAK_EGRESS_PROBE_ADDR6" || refuse "SOAK_EGRESS_PROBE_ADDR6 must be a public IPv6 literal: $SOAK_EGRESS_PROBE_ADDR6"
 
 # Run a command, killing it after $t seconds. A probe that hangs returns 124,
 # which every caller treats as a failure, never as an answer.

@@ -385,7 +385,15 @@ describe('soak guest: guest-setup.sh setup', () => {
     'a loopback IPv6 probe': { SOAK_EGRESS_PROBE_ADDR6: '::1' },
     'a link-local IPv6 probe': { SOAK_EGRESS_PROBE_ADDR6: 'fe80::1' },
     'a unique-local IPv6 probe': { SOAK_EGRESS_PROBE_ADDR6: 'FD00::1' },
-    'a documentation IPv6 probe': { SOAK_EGRESS_PROBE_ADDR6: '2001:db8::1' }
+    'a documentation IPv6 probe': { SOAK_EGRESS_PROBE_ADDR6: '2001:db8::1' },
+    'a malformed IPv6 probe with too few groups': { SOAK_EGRESS_PROBE_ADDR6: '1:2:3' },
+    'a malformed IPv6 probe with two ::': { SOAK_EGRESS_PROBE_ADDR6: '2606::4700::1' },
+    'an unspecified-range IPv6 probe': { SOAK_EGRESS_PROBE_ADDR6: '::2' },
+    'an IPv4 address given as the IPv6 probe': { SOAK_EGRESS_PROBE_ADDR6: '1.1.1.1' },
+    'an IPv4 documentation probe': { SOAK_EGRESS_PROBE_ADDR: '192.0.2.1' },
+    'an IPv4 documentation DNS probe': { SOAK_DNS_PROBE_ADDR: '203.0.113.9' },
+    'an IPv4 benchmark probe': { SOAK_EGRESS_PROBE_ADDR: '198.18.0.1' },
+    'an IPv4 probe with a leading-zero octet': { SOAK_EGRESS_PROBE_ADDR: '01.1.1.1' }
   };
   for (const [label, env] of Object.entries(badInputs)) {
     it(`refuses ${label} before any sudo, user or pf action`, () => {
@@ -403,7 +411,8 @@ describe('soak guest: guest-setup.sh setup', () => {
     assert.match(r.stdout, /start the pinned TangleClaw as soakrun/);
     const calls = f.calls();
     assert.ok(calls.some((c) => c.includes('sysadminctl -addUser soakrun')));
-    assert.ok(!calls.some((c) => /\] (pfctl|lsof|install|node|curl|ipconfig) /.test(c)), calls.join('\n'));
+    // node runs to validate the probe literals; soak.js (the workload) must not.
+    assert.ok(!calls.some((c) => /\] (pfctl|lsof|install|curl|ipconfig) |\] node .*soak\.js/.test(c)), calls.join('\n'));
   });
 
   it('refuses setup before loading pf when the guest TangleClaw runs as the admin', () => {
