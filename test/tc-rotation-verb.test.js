@@ -66,11 +66,12 @@ describe('tc rotation (#2032)', () => {
   });
 
   it('resume reads the rotation back and sends its own identity with the receipt', async () => {
-    const f = fakeCtx(['resume', '--receipt', '/tmp/r.json'], { '/tmp/r.json': '{"schema":1}' });
+    const f = fakeCtx(['resume', '--receipt', '/tmp/r.json'], { '/tmp/r.json': '{"schema":1,"resumeNonce":"n-1"}' });
     const out = await verb.run(f.ctx);
     assert.equal(out.code, 0);
     assert.deepEqual(f.calls.map((c) => `${c.method} ${c.path}`), ['GET /api/tc/rotation', 'POST /api/tc/rotation/resume']);
-    assert.deepEqual(f.calls[1].body, { rotationId: 'rot_abc', attemptKey: 'ck-1234567890', generation: 2, receipt: { schema: 1 } });
+    assert.deepEqual(f.calls[1].body, { rotationId: 'rot_abc', attemptKey: 'ck-1234567890', generation: 2, resumeNonce: 'n-1', receipt: { schema: 1 } },
+      'the nonce travels beside the receipt, never inside it');
   });
 
   it('refuses a malformed invocation, a missing file and a non-JSON file before any request', async () => {
@@ -96,5 +97,40 @@ describe('tc rotation (#2032)', () => {
     assert.match(renderRotation({ rotation: null, generation: 3 }), /No coordinator rotation is in progress .*generation 3/);
     assert.match(renderRotation({ rotation: { ...ROTATION, state: 'rebinding', failure: { code: 'prior-thread-busy', detail: 'waiting' } } }),
       /waiting on: prior-thread-busy/);
+  });
+});
+
+describe('bin/tc forwards the engine thread (#2032, ruling A11)', () => {
+  const http = require('node:http');
+  const path = require('node:path');
+  const { execFile } = require('node:child_process');
+
+  /**
+   * Run bin/tc against a server that records request headers.
+   * @param {object} env - Extra environment.
+   * @returns {Promise<object[]>} The headers of each request received.
+   */
+  async function headersSeen(env) {
+    const seen = [];
+    const server = http.createServer((req, res) => {
+      seen.push(req.headers);
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ rotation: null, generation: 0 }));
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const base = { PATH: process.env.PATH, HOME: process.env.HOME, TANGLECLAW_API: `http://127.0.0.1:${server.address().port}` };
+      await new Promise((resolve) => execFile(path.join(__dirname, '..', 'bin', 'tc'), ['rotation', 'show'], { env: { ...base, ...env } }, () => resolve()));
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+    return seen;
+  }
+
+  it('sends CODEX_THREAD_ID as x-tangleclaw-engine-thread, and nothing when it is unset', async () => {
+    const withThread = await headersSeen({ CODEX_THREAD_ID: '01a0-thread' });
+    assert.equal(withThread[0]['x-tangleclaw-engine-thread'], '01a0-thread');
+    const without = await headersSeen({});
+    assert.equal(without[0]['x-tangleclaw-engine-thread'], undefined);
   });
 });

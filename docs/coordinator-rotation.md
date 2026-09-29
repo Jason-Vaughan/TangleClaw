@@ -81,17 +81,43 @@ thread.
 The re-entry turn carries a digest of the rotation and generation as its client id. It is read back
 from the thread before it is ever sent again, so a crash after sending never produces a duplicate.
 
-## The fence
+## The fence and the epoch
 
-While a project has an open rotation:
+Once a project has rotated, its coordinator-authority mutations are judged by the **epoch gate**
+(`lib/coordinator-rotation.js#gate`). The gated mutations are:
+- Medusa send (replies included), acknowledge (`/read`) and exchange close;
+- `tc workload set`;
+- session-rule writes;
+- control create, hold, release, stop, close and ack;
+- starting, completing or handing back a wrap (which is where a handoff is published and the session
+  finalized).
 
-- **Medusa `send` from the project** is refused with `409 COORDINATOR_FENCED`, unless it is a reply
-  (`inReplyTo`). The replacement may need to answer a verification question while it reconciles.
-- **The Medusa wake** does not nudge the session. Its skip reason is `coordinator-rotating`. Mail
-  keeps arriving and queues. Once the rotation is active, a newer inbox edge is nudged once, like any
-  other.
+| Latest rotation | What the gate allows |
+|---|---|
+| none, or `abandoned` | Everything, as before: the project is not judged. |
+| `fenced` or `rebinding` | Nothing: no replacement is bound yet. Refused with `409 COORDINATOR_FENCED`. |
+| `reconciling` | Only from the bound replacement: `tc workload set`, the control ack, and replies to, acks of, or closes of the messages and exchanges the checkpoint recorded. Anything else is `COORDINATOR_FENCED`. |
+| `active` | Everything, but only from the bound replacement. |
 
-Workers are not stopped. The fence holds only the coordinator's new boundary-crossing dispatch.
+"The bound replacement" is one exact combination: the replacement thread, the session and the launch
+the rotation bound. `tc` forwards the thread automatically: it reads the `CODEX_THREAD_ID` that Codex
+sets in every tool shell and sends it as `x-tangleclaw-engine-thread`.
+- **Nothing to carry.** No secret rides in argv, shell history or an environment the model manages.
+- **Refused callers.** A stale thread, another pane, a subagent's thread, or a caller with no launch
+  binding is refused with `409 COORDINATOR_EPOCH_MISMATCH`.
+- **How long it binds.** The binding holds until a governed next rotation replaces it, or until the
+  operator abandons the latest rotation.
+- **The operator.** The operator is never gated.
+
+The Medusa wake also holds while a rotation is open. Its skip reason is `coordinator-rotating`. Once
+the rotation is active, a newer inbox edge is nudged once, like any other.
+
+## The resume nonce
+
+The re-entry turn carries a **one-time resume nonce**. It is minted only when the turn is actually
+sent, and the server stores only its hash. The replacement puts the nonce in its receipt file as
+`resumeNonce`, and `tc rotation resume` sends it beside the receipt, never inside it. Resume needs
+the nonce and the bound thread. An accepted resume spends the nonce.
 
 ## Checkpoint (schema 1)
 
@@ -191,10 +217,8 @@ reason. Claude keeps its own re-entry path: the SessionStart hook's re-entry pre
 
 ## Known limits
 
-- **Old and new contexts share one pane and one launch.** Once the old context is cleared it no
-  longer exists, and the server cannot tell a request replayed from it apart from the replacement's
-  own. Generation is therefore enforced on the calls that carry it (resume, and through it the fence
-  release). Marking mail handled and closing an exchange are not generation-bound.
+- **Codex only.** The engine thread comes from Codex's `CODEX_THREAD_ID`. The source was inspected;
+  a live Codex-pane integration check is still an open acceptance item.
 - **Full wrap-and-relaunch parity, and a dashboard view of rotation state, are not built yet.** They
   are #2032's E4 slice.
 

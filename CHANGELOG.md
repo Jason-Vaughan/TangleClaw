@@ -7,13 +7,18 @@ All notable changes to TangleClaw are documented in this file.
 ### Added
 
 - **A Codex coordinator can clear its context without coming back unoriented** (#2032). Before this, a `/clear`ed Codex Architect or ProjectManager stayed bound to its old thread. Its mail stopped waking it, and nothing held it back from dispatching before it had rechecked anything. A managed rotation makes the clear a recorded transition:
-  - **Prepare.** `tc rotation prepare --checkpoint <file>` stores a structured checkpoint and records the inbox messages waiting at that moment. It also holds the project's new Medusa dispatch. Replies still go out, and the wake does not type into the pane.
+  - **Prepare.** `tc rotation prepare --checkpoint <file>` stores a structured checkpoint and records the inbox messages waiting at that moment. It also holds every coordinator action, and the wake does not type into the pane.
   - **Clear and rebind.** Once the coordinator's turn ends, TangleClaw types `/clear` and binds the one new thread it can prove belongs to the coordinator. Zero or several candidates bind nothing. Neither does a thread that stayed loaded, belongs to a subagent or runs in another directory. Each case is reported with a reason. The new thread then gets a re-entry instruction, never twice.
   - **Who may rotate.** Only a project the operator has granted a coordinator role (`POST /api/coordinator-roles`) can start a rotation. A role named in the checkpoint is not authority.
   - **Checkout integrity.** When the rotation starts, TangleClaw fingerprints the coordinator's checkout: its head and ref, the whole tracked diff, and every untracked file. It also covers any ignored file the checkpoint declares important. A checkpoint that leaves dirt undeclared is refused.
   - **Resume.** The replacement reads the checkpoint back with `tc rotation show`, reconciles it and submits a receipt with `tc rotation resume`. The hold lifts only when TangleClaw's own checks agree: the checkpoint digest, the recorded messages handled, the control generation and a fresh workload receipt.
     - A receipt that fails those checks is refused, with each missing fact named.
     - A change to the coordinator's role or to its checkout's content is different: no receipt can accept it. The rotation stays held until the operator recovers it.
+  - **Bound to the new thread.** Once a coordinator has rotated, its mutations are accepted only from the thread, session and launch the rotation bound. That covers Medusa sends, acknowledgements and exchange closes, workload, session-rule writes, control commands, and wrap and handoff.
+    - `tc` forwards the Codex thread id automatically, so there is nothing to carry by hand.
+    - The old thread, another pane, or an unbound caller is refused.
+    - While reconciling, only workload, the control ack, and answers within the checkpoint's own messages go through.
+    - Resume also needs a one-time nonce that only the re-entry instruction carries and that the server stores hashed.
   - **Safety.** Every step can be retried or resumed after a restart without repeating itself. Only the operator can abandon a rotation.
   - **Unchanged.** Ordinary wake observation still never replaces a recorded thread.
   - **Other engines.** A managed rotation is refused for them, with the reason. Claude keeps its SessionStart re-entry.

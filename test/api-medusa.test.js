@@ -1523,7 +1523,7 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     assert.notEqual(bridge.received[0].from, 'system');
   });
 
-  it('a project in managed context rotation sends no new dispatch until it resumes; replies still go (#2032)', async () => {
+  it('a project in managed context rotation sends and acknowledges nothing until a replacement is bound (#2032)', async () => {
     const now = new Date().toISOString();
     store.coordinatorRotations.insert({
       rotationId: 'rot_send_fence', attemptKey: 'send-fence-0001', projectId: project.id, sessionId: active.id,
@@ -1537,7 +1537,9 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
       assert.equal(fenced.data.code, 'COORDINATOR_FENCED');
       assert.equal(bridge.received.length, 0, 'nothing reached the Bridge');
       const reply = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'live-ws', message: 'yes', inReplyTo: 'msg-1' });
-      assert.notEqual(reply.data.code, 'COORDINATOR_FENCED');
+      assert.equal(reply.data.code, 'COORDINATOR_FENCED', 'before a replacement is bound, even a reply is held');
+      const ack = await req('/api/sessions/sender/medusa/read', 'POST', { ids: ['msg-1'] });
+      assert.equal(ack.data.code, 'COORDINATOR_FENCED', 'and so is acknowledging mail');
       store.coordinatorRotations.updateIf('rot_send_fence', 'fenced', { state: 'abandoned' }, { now });
       const lifted = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'live-ws', message: 'go build #9' });
       assert.equal(lifted.status, 200);

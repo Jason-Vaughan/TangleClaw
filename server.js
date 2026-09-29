@@ -4768,6 +4768,7 @@ route('POST', '/api/tc/start/ready', (req, res, _params, body) => {
 // that launch (`lib/workload.js`). An assertion, never evidence, and it grants
 // nothing.
 route('POST', '/api/tc/workload', (req, res, _params, body) => {
+  if (coordinatorGateRefused(req, res, _callerProjectId(req), 'workload-set')) return;
   const result = workload.record({ req, body });
   return jsonResponse(res, result.status, result.body);
 });
@@ -4807,6 +4808,46 @@ function _rotationAccess(req, res) {
   errorResponse(res, 403, 'A coordinator rotation is prepared, read and resumed only by the session\'s own verified launch '
     + `(x-tangleclaw-project-id and x-tangleclaw-launch-id). This caller is ${why}.`, 'ROTATION_BINDING_REQUIRED', { reason: why });
   return null;
+}
+
+/**
+ * The engine thread a request says it came from — the header `tc` forwards
+ * from `CODEX_THREAD_ID` — or null.
+ * @param {object} req - The request.
+ * @returns {string|null}
+ */
+function _engineThread(req) {
+  const v = req.headers && req.headers['x-tangleclaw-engine-thread'];
+  return typeof v === 'string' && v ? v : null;
+}
+
+/**
+ * Apply the coordinator epoch gate (#2032, rulings A2/A11/A12) to a
+ * coordinator-authority mutation, writing the refusal to `res`.
+ * @param {object} req - The request.
+ * @param {object} res - The response.
+ * @param {number|null} projectId - The coordinator project the mutation acts for.
+ * @param {string} action - The gated action.
+ * @param {object} [extra] - `inReplyTo`, `messageIds` or `exchangeId`.
+ * @returns {boolean} True when refused.
+ */
+function coordinatorGateRefused(req, res, projectId, action, extra = {}) {
+  const refusal = coordinatorRotation.gate({
+    projectId, access: sharedDocsAccess.resolveAccess(req), threadId: _engineThread(req), action, ...extra
+  });
+  if (!refusal) return false;
+  jsonResponse(res, refusal.status, refusal.body);
+  return true;
+}
+
+/**
+ * The project a caller acts for, when it is a verified project launch.
+ * @param {object} req - The request.
+ * @returns {number|null}
+ */
+function _callerProjectId(req) {
+  const access = sharedDocsAccess.resolveAccess(req);
+  return access.kind === sharedDocsAccess.KINDS.PROJECT ? access.projectId : null;
 }
 
 // POST /api/tc/rotation/prepare — `{attemptKey, checkpoint}`: begin a rotation
@@ -4849,7 +4890,7 @@ route('POST', '/api/tc/rotation/advance', async (req, res) => {
 route('POST', '/api/tc/rotation/resume', (req, res, _params, body) => {
   const access = _rotationAccess(req, res);
   if (!access) return;
-  const result = coordinatorRotation.resume({ access, body });
+  const result = coordinatorRotation.resume({ access, body, threadId: _engineThread(req) });
   return jsonResponse(res, result.status, result.body);
 }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
 
@@ -5505,6 +5546,9 @@ function sessionRuleCaller(req, res, target) {
 
 // POST /api/session-rules — create { content, projectId, createdBy?, kind? }
 route('POST', '/api/session-rules', (req, res, _params, body) => {
+  // #2032: a coordinator bound to a rotation epoch writes rules only from its
+  // bound replacement thread, and none while it reconciles.
+  if (coordinatorGateRefused(req, res, _callerProjectId(req), 'session-rule-write')) return;
   const caller = sessionRuleCaller(req, res, {
     projectId: body ? body.projectId : undefined,
     kind: body ? body.kind : undefined,
@@ -5559,6 +5603,9 @@ function refuseUnconfirmedBaselineEdit(rule, confirmed) {
 
 // PUT /api/session-rules/:id — update { content?, enabled?, confirmBaselineEdit? }
 route('PUT', '/api/session-rules/:id', (req, res, params, body) => {
+  // #2032: a coordinator bound to a rotation epoch writes rules only from its
+  // bound replacement thread, and none while it reconciles.
+  if (coordinatorGateRefused(req, res, _callerProjectId(req), 'session-rule-write')) return;
   if (!body || typeof body !== 'object') {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
@@ -5595,6 +5642,9 @@ route('PUT', '/api/session-rules/:id', (req, res, params, body) => {
 // DELETE /api/session-rules/:id — ?confirm=true required for shipped Master
 // baseline rules (see refuseUnconfirmedBaselineEdit)
 route('DELETE', '/api/session-rules/:id', (req, res, params) => {
+  // #2032: a coordinator bound to a rotation epoch writes rules only from its
+  // bound replacement thread, and none while it reconciles.
+  if (coordinatorGateRefused(req, res, _callerProjectId(req), 'session-rule-write')) return;
   // A bound session may withdraw an AI proposal in its project, and nothing else.
   const caller = sessionRuleCaller(req, res, {
     ruleId: Number(params.id),
@@ -5628,6 +5678,9 @@ route('DELETE', '/api/session-rules/:id', (req, res, params) => {
 
 // POST /api/session-rules/promote — promote a learning into a rule (operator-confirmed)
 route('POST', '/api/session-rules/promote', (req, res, _params, body) => {
+  // #2032: a coordinator bound to a rotation epoch writes rules only from its
+  // bound replacement thread, and none while it reconciles.
+  if (coordinatorGateRefused(req, res, _callerProjectId(req), 'session-rule-write')) return;
   // This route mints a LIVE rule from AI-authored text, so it is the
   // operator's, exactly as approval is: the operator as the caller, then the
   // password. The password alone is no gate on an install that has none set.
@@ -5675,6 +5728,9 @@ route('POST', '/api/session-rules/promote', (req, res, _params, body) => {
 // rejection is RECORDED rather than deleted: the wrap proposes from recurring
 // learnings, so a deleted decision would simply be re-proposed at the next wrap.
 route('PUT', '/api/session-rules/:id/status', (req, res, params, body) => {
+  // #2032: a coordinator bound to a rotation epoch writes rules only from its
+  // bound replacement thread, and none while it reconciles.
+  if (coordinatorGateRefused(req, res, _callerProjectId(req), 'session-rule-write')) return;
   if (!body || typeof body.status !== 'string') {
     return errorResponse(res, 400, 'status is required', 'BAD_REQUEST');
   }
@@ -5784,6 +5840,9 @@ route('GET', '/api/session-rules/:id/versions', (_req, res, params) => {
 // or restoring a disabled snapshot) — the gate predicates must stay symmetric
 // across every path that can alter a rule, or the confirm is bypassable.
 route('POST', '/api/session-rules/:id/restore', (req, res, params, body) => {
+  // #2032: a coordinator bound to a rotation epoch writes rules only from its
+  // bound replacement thread, and none while it reconciles.
+  if (coordinatorGateRefused(req, res, _callerProjectId(req), 'session-rule-write')) return;
   if (!body || body.versionNo === undefined) {
     return errorResponse(res, 400, 'versionNo is required', 'BAD_REQUEST');
   }
@@ -7352,6 +7411,8 @@ function registerMedusaRoutes(prefix, resolve) {
     const r = resolve(params);
     if (r.error) return errorResponse(res, r.error.status, r.error.message, r.error.code);
     const sessionId = r.target ? r.target.sessionId : null;
+    if (coordinatorGateRefused(req, res, targetProjectId(r.target), 'medusa-ack',
+      { messageIds: body && Array.isArray(body.ids) ? body.ids : null })) return;
     if (sessionId != null) {
       const ids = body && Array.isArray(body.ids) ? body.ids : null;
       if (ids) medusa.markHandled(sessionId, ids);
@@ -7459,10 +7520,10 @@ function registerMedusaRoutes(prefix, resolve) {
     if (refused(res, r, 'send from')) return;
     if (outboundRefused(res, r.target)) return;
     const senderProjectId = targetProjectId(r.target);
-    // #2032: a coordinator in managed context rotation sends no new dispatch
-    // until its resume receipt is accepted; replies still go through.
-    const fenced = coordinatorRotation.sendFenceRefusal(senderProjectId, body);
-    if (fenced) return jsonResponse(res, fenced.status, fenced.body);
+    // #2032: a coordinator bound to a rotation epoch sends only from its bound
+    // replacement thread, and while reconciling only replies within its
+    // checkpoint's interval.
+    if (coordinatorGateRefused(req, res, senderProjectId, 'medusa-send', { inReplyTo: body && body.inReplyTo })) return;
     const out = await medusaSend.sendTracked({
       sessionId: r.target.sessionId, senderProjectId, caller: exchangeCaller(req, senderProjectId), body
     });
@@ -7494,6 +7555,7 @@ function registerMedusaRoutes(prefix, resolve) {
   route('POST', `${prefix}/exchanges/:exchangeId/close`, (req, res, params) => {
     const r = resolve(params);
     if (refused(res, r, 'close an exchange for')) return;
+    if (coordinatorGateRefused(req, res, targetProjectId(r.target), 'exchange-close', { exchangeId: params.exchangeId })) return;
     const row = store.medusaExchanges.get(params.exchangeId);
     if (!row) return errorResponse(res, 404, 'No exchange has that id', 'EXCHANGE_NOT_FOUND');
     const caller = exchangeCaller(req, targetProjectId(r.target));
@@ -7616,10 +7678,14 @@ medusa.setArrivalObserver(({ sessionKey, workspaceId, message }) => {
  * @param {string} method - HTTP method
  * @param {string} pattern - Route pattern
  * @param {(req: object, params: object, body: object) => {status: number, body: object, notify: (object|null)}} fn - Handler
+ * @param {string|null} [gatedAction] - The coordinator epoch gate action this route is (#2032), or null
  * @returns {void}
  */
-function controlRoute(method, pattern, fn) {
+function controlRoute(method, pattern, fn, gatedAction = null) {
   route(method, pattern, (req, res, params, body) => {
+    // #2032: a coordinator bound to a rotation epoch issues control only from
+    // its bound replacement thread; while reconciling, only the ack.
+    if (gatedAction && coordinatorGateRefused(req, res, _callerProjectId(req), gatedAction)) return;
     let out;
     try {
       out = fn(req, params, body);
@@ -7636,14 +7702,14 @@ function controlRoute(method, pattern, fn) {
 }
 
 controlRoute('GET', '/api/control/assignments', (req) => controlApi.listOpen(req));
-controlRoute('POST', '/api/control/assignments', (req, _params, body) => controlApi.createAssignment(req, body));
+controlRoute('POST', '/api/control/assignments', (req, _params, body) => controlApi.createAssignment(req, body), 'control-mutate');
 controlRoute('GET', '/api/control/assignments/:id', (req, params) => controlApi.getStatus(req, params));
-controlRoute('POST', '/api/control/assignments/:id/hold', (req, params, body) => controlApi.holdAssignment(req, params, body));
-controlRoute('POST', '/api/control/assignments/:id/release', (req, params, body) => controlApi.releaseAssignment(req, params, body));
-controlRoute('POST', '/api/control/assignments/:id/stop', (req, params, body) => controlApi.stopAssignment(req, params, body));
-controlRoute('POST', '/api/control/assignments/:id/close', (req, params, body) => controlApi.closeAssignment(req, params, body));
-controlRoute('POST', '/api/control/assignments/:id/ack', (req, params, body) => controlApi.ackAssignment(req, params, body));
-controlRoute('POST', '/api/control/assignments/:id/exchange-closed', (req, params, body) => controlApi.closeExchange(req, params, body));
+controlRoute('POST', '/api/control/assignments/:id/hold', (req, params, body) => controlApi.holdAssignment(req, params, body), 'control-mutate');
+controlRoute('POST', '/api/control/assignments/:id/release', (req, params, body) => controlApi.releaseAssignment(req, params, body), 'control-mutate');
+controlRoute('POST', '/api/control/assignments/:id/stop', (req, params, body) => controlApi.stopAssignment(req, params, body), 'control-mutate');
+controlRoute('POST', '/api/control/assignments/:id/close', (req, params, body) => controlApi.closeAssignment(req, params, body), 'control-mutate');
+controlRoute('POST', '/api/control/assignments/:id/ack', (req, params, body) => controlApi.ackAssignment(req, params, body), 'control-ack');
+controlRoute('POST', '/api/control/assignments/:id/exchange-closed', (req, params, body) => controlApi.closeExchange(req, params, body), 'control-mutate');
 controlRoute('GET', '/api/control/mine', (req) => controlApi.mine(req));
 controlRoute('GET', '/api/control/check', (req) => controlApi.check(parseQuery(reqUrl(req).search)));
 // The Master's mount (#996). Deliberately the SAME family rather than a subset:
@@ -8014,6 +8080,10 @@ route('POST', '/api/sessions/:project/command', (_req, res, params, body) => {
 // the retry's response finally came back. Every refusal below is still
 // synchronous and claims nothing.
 route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => {
+  // #2032: starting a wrap publishes a handoff and finalizes the session — a
+  // coordinator-authority action the rotation epoch binds.
+  const wrapProject = store.projects.getByName(params.project);
+  if (wrapProject && coordinatorGateRefused(_req, res, wrapProject.id, 'wrap')) return;
   // Operator kill switch (incident 2026-07-16: wrap content steps re-fired
   // repeatedly into the session). Checked before anything else — while set,
   // no wrap can start regardless of caller. Re-enable via
@@ -8383,6 +8453,8 @@ route('GET', '/api/sessions/:project/wrap/stream/:runId', (req, res, params) => 
 // were noticed. A 3800-character handback of multibyte text is ~11 KB, which the
 // 10 KB default refused before the handler's own cap could answer.
 route('POST', '/api/sessions/:project/wrap/handback', (_req, res, params, body) => {
+  const handbackProject = store.projects.getByName(params.project);
+  if (handbackProject && coordinatorGateRefused(_req, res, handbackProject.id, 'wrap')) return;
   const started = wrapHandback.start(params.project, body);
   if (!started.ok) return errorResponse(res, started.status, started.error, started.code);
   const project = encodeURIComponent(params.project);
@@ -8479,6 +8551,8 @@ route('GET', '/api/sessions/:project/wrap/pr-status', async (req, res, params) =
 
 // POST /api/sessions/:project/wrap/complete — Manual wrap completion
 route('POST', '/api/sessions/:project/wrap/complete', (_req, res, params, body) => {
+  const completeProject = store.projects.getByName(params.project);
+  if (completeProject && coordinatorGateRefused(_req, res, completeProject.id, 'wrap')) return;
   const result = sessions.completeWrap(params.project, body ? body.summary : undefined, body ? body.sessionId : undefined);
   if (result.error) {
     if (result.error.includes('not found') || result.error.includes('No active')) {

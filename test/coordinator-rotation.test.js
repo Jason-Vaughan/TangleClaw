@@ -182,7 +182,7 @@ describe('coordinator context rotation (#2032)', () => {
     return rotation.grantRole({ caller: { kind: 'operator' }, body: { projectId: project.id, role: 'architect' } }).body.role;
   }
 
-  const access = () => ({ projectId: project.id, sessionId: session.id, launchId });
+  const access = () => ({ kind: 'project', projectId: project.id, sessionId: session.id, launchId });
   const threadOf = () => store.startupControlChannels.getOpenBySession(session.id).adapterState.threadId;
   const observe = () => codex.observeActivity(store.startupControlChannels.getOpenBySession(session.id), project, OURS);
 
@@ -243,6 +243,17 @@ describe('coordinator context rotation (#2032)', () => {
       nextAction: 'resume the release queue',
       ...over
     };
+  }
+
+  /**
+   * The resume nonce the last re-entry turn carried, read from what the fake
+   * app-server received — the only place it exists in plaintext.
+   * @returns {string}
+   */
+  function nonce() {
+    const starts = server.calls('turn/start');
+    const text = starts[starts.length - 1].params.input[0].text;
+    return /Resume nonce[^`]*`([^`]+)`/.exec(text)[1];
   }
 
   /**
@@ -309,11 +320,15 @@ describe('coordinator context rotation (#2032)', () => {
       assert.deepEqual(rot.inboxIds, ['m-1', 'm-2']);
       assert.equal(rot.checkpointDigest, require('node:crypto').createHash('sha256').update(rotation.canonicalJson(checkpoint())).digest('hex'));
 
-      const refused = rotation.sendFenceRefusal(project.id, { to: 'x', message: 'go build #1' });
+      const refused = rotation.gate({ projectId: project.id, access: access(), threadId: PRIOR, action: 'medusa-send' });
       assert.equal(refused.status, 409);
       assert.equal(refused.body.code, 'COORDINATOR_FENCED');
-      assert.equal(rotation.sendFenceRefusal(project.id, { to: 'x', message: 'yes', inReplyTo: 'msg-9' }), null);
-      assert.equal(rotation.sendFenceRefusal(project.id + 1, { to: 'x', message: 'other project' }), null);
+      for (const action of rotation.GATED_ACTIONS) {
+        assert.equal(rotation.gate({ projectId: project.id, access: access(), threadId: PRIOR, action, inReplyTo: 'm-1', messageIds: ['m-1'] }).body.code,
+          'COORDINATOR_FENCED', `${action} is held until a replacement is bound`);
+      }
+      assert.equal(rotation.gate({ projectId: project.id + 1, access: access(), threadId: null, action: 'medusa-send' }), null, 'another project is not judged');
+      assert.equal(rotation.gate({ projectId: project.id, access: { kind: 'operator' }, threadId: null, action: 'control-mutate' }), null, 'the operator is never gated');
     });
 
     it('the digest does not depend on key order', () => {
@@ -492,10 +507,12 @@ describe('coordinator context rotation (#2032)', () => {
       await serve({ [NEXT]: { status: { type: 'idle' } } });
       channel({ threadId: NEXT });
       const ch = store.startupControlChannels.getOpenBySession(session.id);
-      const turn = { threadId: NEXT, text: 'rotate', clientId: 'c'.repeat(64) };
+      let minted = 0;
+      const turn = { threadId: NEXT, text: () => { minted += 1; return `rotate ${minted}`; }, clientId: 'c'.repeat(64) };
       assert.deepEqual(await codex.deliverTurn(ch, project, turn, OURS), { status: 'sent' });
       assert.deepEqual(await codex.deliverTurn(ch, project, turn, OURS), { status: 'already' });
       assert.equal(server.calls('turn/start').length, 1);
+      assert.equal(minted, 1, 'the text (and its one-time secret) is produced only for a turn that is sent');
     });
 
     it('a crash after the re-entry turn was sent but before the rotation recorded it does not send it twice', async () => {
@@ -542,19 +559,19 @@ describe('coordinator context rotation (#2032)', () => {
     it('a complete, checked receipt makes the rotation active and lifts the fence; a replay is idempotent', async () => {
       const rot = await toReconciling();
       workloadReceipt();
-      const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, receipt: receipt(rot) };
-      const r = rotation.resume({ access: access(), body }, deps());
+      const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) };
+      const r = rotation.resume({ access: access(), threadId: NEXT, body }, deps());
       assert.equal(r.status, 200, JSON.stringify(r.body));
       assert.equal(r.body.rotation.state, 'active');
       assert.equal(r.body.rotation.fenced, false);
       assert.equal(rotation.openRotation(project.id), null);
-      assert.equal(rotation.sendFenceRefusal(project.id, { to: 'x', message: 'dispatch' }), null);
+      assert.equal(rotation.gate({ projectId: project.id, access: access(), threadId: NEXT, action: 'medusa-send' }), null);
       assert.equal(store.coordinatorRotations.currentGeneration(project.id), 1);
 
-      const replay = rotation.resume({ access: access(), body }, deps());
+      const replay = rotation.resume({ access: access(), threadId: NEXT, body }, deps());
       assert.equal(replay.status, 200);
       assert.equal(replay.body.replayed, true);
-      const changed = rotation.resume({ access: access(), body: { ...body, receipt: receipt(rot, { nextAction: 'other' }) } }, deps());
+      const changed = rotation.resume({ access: access(), threadId: NEXT, body: { ...body, receipt: receipt(rot, { nextAction: 'other' }) } }, deps());
       assert.equal(changed.status, 409);
       assert.equal(changed.body.code, 'ROTATION_ALREADY_ACTIVE');
     });
@@ -562,22 +579,22 @@ describe('coordinator context rotation (#2032)', () => {
     it('missing evidence keeps the fence up and names each gap: undrained inbox, no workload receipt, wrong checkpoint', async () => {
       inbox = [{ id: 'left-behind' }];
       const rot = await toReconciling();
-      const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, receipt: receipt(rot, { checkpointDigest: '0'.repeat(64) }) };
-      const r = rotation.resume({ access: access(), body }, deps());
+      const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot, { checkpointDigest: '0'.repeat(64) }) };
+      const r = rotation.resume({ access: access(), threadId: NEXT, body }, deps());
       assert.equal(r.status, 409);
       assert.equal(r.body.code, 'ROTATION_EVIDENCE_MISSING');
       assert.deepEqual(r.body.missing.map((m) => m.fact).sort(), ['checkpoint', 'medusa', 'workload']);
       assert.match(r.body.error, /left-behind/);
       assert.equal(store.coordinatorRotations.get(rot.rotationId).state, 'reconciling');
-      assert.equal(rotation.sendFenceRefusal(project.id, { to: 'x', message: 'dispatch' }).status, 409);
+      assert.equal(rotation.gate({ projectId: project.id, access: access(), threadId: NEXT, action: 'medusa-send' }).status, 409);
     });
 
     it('messages that arrived after prepare stay queued and do not block the resume', async () => {
       const rot = await toReconciling();
       inbox = [{ id: 'arrived-during-absence' }];
       workloadReceipt();
-      const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, receipt: receipt(rot) };
-      assert.equal(rotation.resume({ access: access(), body }, deps()).status, 200);
+      const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) };
+      assert.equal(rotation.resume({ access: access(), threadId: NEXT, body }, deps()).status, 200);
     });
 
     it('the control generation must match the lane\'s', async () => {
@@ -587,12 +604,12 @@ describe('coordinator context rotation (#2032)', () => {
       const realControl = store.control.getOpenForProject;
       store.control.getOpenForProject = () => lane;
       try {
-        const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, receipt: receipt(rot) };
-        let r = rotation.resume({ access: access(), body }, deps());
+        const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) };
+        let r = rotation.resume({ access: access(), threadId: NEXT, body }, deps());
         assert.equal(r.status, 409);
         assert.deepEqual(r.body.missing.map((m) => m.fact), ['control']);
         body.receipt.reconciled.control.stateGeneration = 3;
-        r = rotation.resume({ access: access(), body }, deps());
+        r = rotation.resume({ access: access(), threadId: NEXT, body }, deps());
         assert.equal(r.status, 200);
       } finally {
         store.control.getOpenForProject = realControl;
@@ -603,26 +620,26 @@ describe('coordinator context rotation (#2032)', () => {
       await serve();
       channel();
       const early = prepare().body.rotation;
-      const earlyBody = { rotationId: early.rotationId, attemptKey: early.attemptKey, generation: early.generation, receipt: receipt(early) };
-      assert.equal(rotation.resume({ access: access(), body: earlyBody }, deps()).body.code, 'ROTATION_NOT_RECONCILING');
+      const earlyBody = { rotationId: early.rotationId, attemptKey: early.attemptKey, generation: early.generation, resumeNonce: 'none', receipt: receipt(early) };
+      assert.equal(rotation.resume({ access: access(), threadId: NEXT, body: earlyBody }, deps()).body.code, 'ROTATION_NOT_RECONCILING');
       await rotation.drive(early.rotationId, { attempts: 5, deps: deps() });
       const rot = rotation.view(store.coordinatorRotations.get(early.rotationId));
-      const base = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, receipt: receipt(rot) };
+      const base = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) };
 
-      let r = rotation.resume({ access: access(), body: { ...base, receipt: { schema: 1 } } }, deps());
+      let r = rotation.resume({ access: access(), threadId: NEXT, body: { ...base, receipt: { schema: 1 } } }, deps());
       assert.equal(r.status, 400);
       assert.equal(r.body.code, 'ROTATION_RECEIPT_INCOMPLETE');
       assert.ok(r.body.missing.includes('reconciled'));
-      r = rotation.resume({ access: access(), body: { ...base, receipt: receipt(rot, { restored: [] }) } }, deps());
+      r = rotation.resume({ access: access(), threadId: NEXT, body: { ...base, receipt: receipt(rot, { restored: [] }) } }, deps());
       assert.equal(r.status, 400);
 
-      r = rotation.resume({ access: access(), body: { ...base, generation: rot.generation - 1 } }, deps());
+      r = rotation.resume({ access: access(), threadId: NEXT, body: { ...base, generation: rot.generation - 1 } }, deps());
       assert.equal(r.body.code, 'ROTATION_STALE_GENERATION');
-      r = rotation.resume({ access: access(), body: { ...base, attemptKey: 'attempt-other' } }, deps());
+      r = rotation.resume({ access: access(), threadId: NEXT, body: { ...base, attemptKey: 'attempt-other' } }, deps());
       assert.equal(r.body.code, 'ROTATION_STALE_GENERATION');
-      r = rotation.resume({ access: { ...access(), launchId: 'other-launch' }, body: base }, deps());
+      r = rotation.resume({ access: { ...access(), launchId: 'other-launch' }, threadId: NEXT, body: base }, deps());
       assert.equal(r.status, 403);
-      r = rotation.resume({ access: { ...access(), projectId: project.id + 1 }, body: base }, deps());
+      r = rotation.resume({ access: { ...access(), projectId: project.id + 1 }, threadId: NEXT, body: base }, deps());
       assert.equal(r.status, 404);
       assert.equal(store.coordinatorRotations.get(rot.rotationId).state, 'reconciling');
     });
@@ -630,15 +647,15 @@ describe('coordinator context rotation (#2032)', () => {
     it('the next rotation takes the next generation, and the old one\'s receipt cannot resume it', async () => {
       const rot = await toReconciling();
       workloadReceipt();
-      const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, receipt: receipt(rot) };
-      assert.equal(rotation.resume({ access: access(), body }, deps()).status, 200);
+      const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) };
+      assert.equal(rotation.resume({ access: access(), threadId: NEXT, body }, deps()).status, 200);
       // The replacement is now the prior thread of the next rotation.
       server.state.threads = new Map([[NEXT, { status: { type: 'idle' } }]]);
       const second = prepare();
       assert.equal(second.status, 201);
       assert.equal(second.body.rotation.generation, 2);
       assert.equal(second.body.rotation.priorThreadId, NEXT);
-      const stale = rotation.resume({ access: access(), body: { ...body, rotationId: second.body.rotation.rotationId } }, deps());
+      const stale = rotation.resume({ access: access(), threadId: NEXT, body: { ...body, rotationId: second.body.rotation.rotationId } }, deps());
       assert.equal(stale.body.code, 'ROTATION_STALE_GENERATION');
     });
 
@@ -654,6 +671,81 @@ describe('coordinator context rotation (#2032)', () => {
       assert.equal(rotation.openRotation(project.id), null);
       assert.equal(threadOf(), PRIOR);
       assert.equal(prepare().body.rotation.generation, 2, 'an abandoned generation is never reused');
+    });
+  });
+
+  describe('A11/A12: the epoch gate and the one-time resume nonce', () => {
+    const judge = (action, over = {}, extra = {}) => rotation.gate({
+      projectId: project.id, access: { ...access(), ...over.access }, threadId: 'threadId' in over ? over.threadId : NEXT, action, ...extra
+    });
+
+    it('while reconciling, the bound replacement may publish workload, ack control, and answer only its checkpoint\'s interval', async () => {
+      inbox = [{ id: 'm-old' }];
+      await toReconciling();
+      assert.equal(judge('workload-set'), null);
+      assert.equal(judge('control-ack'), null);
+      assert.equal(judge('medusa-send', {}, { inReplyTo: 'm-old' }), null);
+      assert.equal(judge('medusa-ack', {}, { messageIds: ['m-old'] }), null);
+      assert.equal(judge('exchange-close', {}, { exchangeId: 'mx_1' }), null, 'mx_1 is in the checkpoint\'s exchanges');
+      for (const [action, extra] of [
+        ['medusa-send', {}], ['medusa-send', { inReplyTo: 'm-new' }], ['medusa-ack', { messageIds: ['m-old', 'm-new'] }],
+        ['exchange-close', { exchangeId: 'mx_other' }], ['wrap', {}], ['session-rule-write', {}], ['control-mutate', {}]
+      ]) {
+        assert.equal(judge(action, {}, extra).body.code, 'COORDINATOR_FENCED', `${action} ${JSON.stringify(extra)} waits for the resume`);
+      }
+    });
+
+    it('a stale thread, another launch, another session, an unbound caller or no thread header is refused as an epoch mismatch', async () => {
+      await toReconciling();
+      for (const over of [{ threadId: PRIOR }, { threadId: null }, { threadId: '' }, { access: { launchId: 'other' } },
+        { access: { sessionId: 999 } }, { access: { kind: 'unbound' } }]) {
+        assert.equal(judge('workload-set', over).body.code, 'COORDINATOR_EPOCH_MISMATCH', JSON.stringify(over));
+      }
+    });
+
+    it('after resume every gated action needs the current epoch binding; the old thread is refused for all of them', async () => {
+      const rot = await toReconciling();
+      workloadReceipt();
+      const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) };
+      assert.equal(rotation.resume({ access: access(), threadId: NEXT, body }, deps()).status, 200);
+      for (const action of rotation.GATED_ACTIONS) {
+        assert.equal(judge(action), null, `${action} from the bound replacement`);
+        assert.equal(judge(action, { threadId: PRIOR }).body.code, 'COORDINATOR_EPOCH_MISMATCH', `${action} from the old thread`);
+      }
+    });
+
+    it('resume needs the bound thread and the one-time nonce, and the nonce cannot be used twice', async () => {
+      const rot = await toReconciling();
+      workloadReceipt();
+      const good = nonce();
+      const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: good, receipt: receipt(rot) };
+      assert.equal(rotation.resume({ access: access(), threadId: PRIOR, body }, deps()).body.code, 'COORDINATOR_EPOCH_MISMATCH');
+      assert.equal(rotation.resume({ access: access(), threadId: null, body }, deps()).body.code, 'COORDINATOR_EPOCH_MISMATCH');
+      assert.equal(rotation.resume({ access: access(), threadId: NEXT, body: { ...body, resumeNonce: 'guess' } }, deps()).body.code, 'ROTATION_NONCE_INVALID');
+      assert.equal(rotation.resume({ access: access(), threadId: NEXT, body: { ...body, resumeNonce: undefined } }, deps()).body.code, 'ROTATION_NONCE_INVALID');
+      assert.equal(rotation.resume({ access: access(), threadId: NEXT, body }, deps()).status, 200);
+      const stored = store.coordinatorRotations.get(rot.rotationId);
+      assert.equal(stored.resumeNonceHash, null, 'spent');
+      assert.ok(!JSON.stringify(stored).includes(good), 'the nonce is never stored in plaintext');
+    });
+
+    it('the nonce exists only in the re-entry turn: the stored rotation holds its hash', async () => {
+      const rot = await toReconciling();
+      const stored = store.coordinatorRotations.get(rot.rotationId);
+      assert.match(stored.resumeNonceHash, /^[0-9a-f]{64}$/);
+      assert.ok(!JSON.stringify(stored).includes(nonce()));
+      assert.ok(!JSON.stringify(rotation.view(stored, { checkpoint: true })).includes(nonce()));
+    });
+
+    it('an abandoned latest rotation releases the binding: the project is judged as before', async () => {
+      const rot = await toReconciling();
+      rotation.abandon({ caller: { kind: 'operator' }, body: { rotationId: rot.rotationId, reason: 'relaunched by hand' } });
+      assert.equal(judge('medusa-send', { threadId: 'anything' }), null);
+    });
+
+    it('a project that never rotated is not judged', () => {
+      assert.equal(rotation.gate({ projectId: 424242, access: { kind: 'unbound' }, threadId: null, action: 'wrap' }), null);
+      assert.throws(() => rotation.gate({ projectId: 1, access: null, threadId: null, action: 'bogus' }), /not a gated action/);
     });
   });
 
@@ -696,8 +788,8 @@ describe('coordinator context rotation (#2032)', () => {
       const rot = await toReconciling();
       workloadReceipt();
       grant();
-      const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, receipt: receipt(rot) };
-      const r = rotation.resume({ access: access(), body }, deps());
+      const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) };
+      const r = rotation.resume({ access: access(), threadId: NEXT, body }, deps());
       assert.equal(r.status, 409);
       assert.equal(r.body.code, 'ROTATION_OPERATOR_RECOVERY_REQUIRED');
       assert.deepEqual(r.body.drift.integrity.map((i) => i.class), ['authority']);
@@ -745,24 +837,24 @@ describe('coordinator context rotation (#2032)', () => {
       workloadReceipt();
       checkout.fingerprint.trackedDiffDigest = 'e'.repeat(64);
       checkout.fingerprint.untracked = { 'scratch.txt': 'sha256:abc' };
-      const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, receipt: receipt(rot) };
-      const r = rotation.resume({ access: access(), body }, deps());
+      const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) };
+      const r = rotation.resume({ access: access(), threadId: NEXT, body }, deps());
       assert.equal(r.status, 409);
       assert.equal(r.body.code, 'ROTATION_OPERATOR_RECOVERY_REQUIRED');
       assert.deepEqual(r.body.drift.integrity.map((i) => i.key).sort(), ['checkout.trackedDiffDigest', 'checkout.untracked:scratch.txt']);
       assert.ok(r.body.drift.integrity.every((i) => i.class === 'checkout-integrity' && i.before && i.after));
       // Even a receipt that "acknowledges" it cannot resume.
-      const acked = rotation.resume({ access: access(), body: { ...body, receipt: receipt(rot, { drift: [{ key: 'checkout.trackedDiffDigest', disposition: 'accepted' }] }) } }, deps());
+      const acked = rotation.resume({ access: access(), threadId: NEXT, body: { ...body, receipt: receipt(rot, { drift: [{ key: 'checkout.trackedDiffDigest', disposition: 'accepted' }] }) } }, deps());
       assert.equal(acked.body.code, 'ROTATION_OPERATOR_RECOVERY_REQUIRED');
-      assert.equal(rotation.sendFenceRefusal(project.id, { to: 'x', message: 'dispatch' }).status, 409);
+      assert.equal(rotation.gate({ projectId: project.id, access: access(), threadId: NEXT, action: 'medusa-send' }).status, 409);
     });
 
     it('a checkout that cannot be observed at resume keeps the fence up as unavailable evidence', async () => {
       const rot = await toReconciling();
       workloadReceipt();
       checkout = { ok: false, reason: 'diff-unreadable' };
-      const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, receipt: receipt(rot) };
-      const r = rotation.resume({ access: access(), body }, deps());
+      const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) };
+      const r = rotation.resume({ access: access(), threadId: NEXT, body }, deps());
       assert.equal(r.body.code, 'ROTATION_EVIDENCE_UNAVAILABLE');
       assert.deepEqual(store.coordinatorRotations.get(rot.rotationId).drift.unavailable, ['checkout: diff-unreadable']);
     });
