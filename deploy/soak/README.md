@@ -353,9 +353,12 @@ actions.
     not a VM (`kern.hv_vmm_present`);
   - validates its inputs, so nothing ambiguous reaches pfctl, sudo or a URL: the interface name, the
     host's IPv4 address, the workload user name, the port, the project names and the probe timeout.
-    The egress probe addresses must be public literals, because a loopback, private, link-local, CGNAT
-    or documentation address would fail for reasons that have nothing to do with pf, and "prove"
-    nothing.
+    The egress probe addresses must be public literals, because an unroutable address would fail for
+    reasons that have nothing to do with pf, and "prove" nothing. For IPv4 that refuses loopback,
+    private, link-local, CGNAT, multicast and reserved addresses. For IPv6 it refuses loopback,
+    link-local, unique-local, multicast, IPv4-mapped and documentation addresses. The IPv4
+    documentation and benchmark ranges are not refused yet, but the probed addresses are recorded in
+    the attestation, so an override is visible.
 
   Setup then, stopping at the first failure:
   1. **Creates or confirms the workload user** (`SOAK_WORKLOAD_USER`, default `soakrun`). It is a
