@@ -52,6 +52,7 @@ function checkpoint(over = {}) {
     branch: { head: HEAD, ref: 'main', ownedDirt: [], status: 'clean' },
     nextActions: ['review #2029 at its exact head'],
     note: 'Wrapping for a controlled relaunch.',
+    github: [],
     ...over
   };
 }
@@ -71,6 +72,25 @@ describe('coordinator context rotation (#2032)', () => {
   let typed;
   /** What typing `/clear` does to the fake server's threads. */
   let onClear;
+  /** What the GitHub seam observes: fact key → observation, or a string when unreadable. */
+  let githubState;
+  /**
+   * The GitHub seam: observes each fact from `githubState`.
+   * @param {object[]} facts - Checkpoint facts.
+   * @returns {{observations: object[], unavailable: string[]}}
+   */
+  function githubSeam(facts) {
+    const githubFacts = require('../lib/github-facts');
+    const observations = [];
+    const unavailable = [];
+    for (const f of facts) {
+      const key = githubFacts.factKey(f);
+      const o = githubState[key];
+      if (typeof o === 'string' || !o) unavailable.push(`${key}: ${o || 'unknown'}`);
+      else observations.push({ key, fact: { repo: f.repo, kind: f.kind, number: f.number }, observed: o, digest: JSON.stringify(o) });
+    }
+    return { observations, unavailable };
+  }
   /** What the checkout fingerprint seam observes. */
   let checkout;
   /** A clean checkout on main at HEAD. */
@@ -107,6 +127,7 @@ describe('coordinator context rotation (#2032)', () => {
     inbox = [];
     typed = [];
     checkout = { ok: true, fingerprint: cleanCheckout() };
+    githubState = {};
     launchId = `launch-architect-${++launchN}`;
     onClear = () => {
       // Codex /clear: the old thread unloads, one new root thread appears.
@@ -190,6 +211,7 @@ describe('coordinator context rotation (#2032)', () => {
   const deps = () => ({
     adapterDeps: OURS,
     messages: () => inbox.slice(),
+    github: async (facts) => githubSeam(facts),
     fingerprint: () => (checkout.ok ? { ok: true, fingerprint: JSON.parse(JSON.stringify(checkout.fingerprint)) } : checkout),
     inject: (_name, command, opts) => {
       typed.push({ command, opts });
@@ -202,9 +224,9 @@ describe('coordinator context rotation (#2032)', () => {
   /**
    * Prepare a rotation with a fresh attempt key.
    * @param {object} [body] - Body overrides.
-   * @returns {{status: number, body: object}}
+   * @returns {Promise<{status: number, body: object}>}
    */
-  function prepare(body = {}) {
+  async function prepare(body = {}) {
     keyN += 1;
     return rotation.prepare({ access: access(), body: { attemptKey: `attempt-${String(keyN).padStart(6, '0')}`, checkpoint: checkpoint(), ...body } }, deps());
   }
@@ -263,7 +285,7 @@ describe('coordinator context rotation (#2032)', () => {
   async function toReconciling() {
     await serve();
     channel();
-    const p = prepare();
+    const p = await prepare();
     assert.equal(p.status, 201, JSON.stringify(p.body));
     const r = await rotation.drive(p.body.rotation.rotationId, { attempts: 5, deps: deps() });
     assert.equal(r.state, 'reconciling', JSON.stringify(r));
@@ -283,7 +305,7 @@ describe('coordinator context rotation (#2032)', () => {
     it('an open rotation does not change that: observation still never rebinds', async () => {
       await serve();
       channel();
-      assert.equal(prepare().status, 201);
+      assert.equal((await prepare()).status, 201);
       onClear();
       assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-not-loaded' });
       assert.equal(threadOf(), PRIOR);
@@ -296,21 +318,21 @@ describe('coordinator context rotation (#2032)', () => {
       channel();
       const { note, branch, ...partial } = checkpoint();
       assert.ok(note && branch);
-      const r = prepare({ checkpoint: { ...partial, schema: 2 } });
+      const r = await prepare({ checkpoint: { ...partial, schema: 2 } });
       assert.equal(r.status, 400);
       assert.equal(r.body.code, 'ROTATION_CHECKPOINT_INCOMPLETE');
       assert.ok(r.body.missing.includes('note'));
       assert.ok(r.body.missing.includes('branch'));
       assert.ok(r.body.missing.some((m) => m.startsWith('schema')));
       assert.equal(rotation.openRotation(project.id), null);
-      assert.equal(prepare({ checkpoint: 'prose summary' }).status, 400);
+      assert.equal((await prepare({ checkpoint: 'prose summary' })).status, 400);
     });
 
     it('prepare records the checkpoint digest, the inbox interval and the next generation, and fences new dispatch but not replies', async () => {
       await serve();
       channel();
       inbox = [{ id: 'm-1' }, { id: 'm-2' }];
-      const r = prepare();
+      const r = await prepare();
       assert.equal(r.status, 201);
       const rot = r.body.rotation;
       assert.equal(rot.state, 'fenced');
@@ -341,18 +363,18 @@ describe('coordinator context rotation (#2032)', () => {
       await serve();
       channel();
       const body = { attemptKey: 'replay-key-0001', checkpoint: checkpoint() };
-      const first = rotation.prepare({ access: access(), body }, deps());
-      const again = rotation.prepare({ access: access(), body: { ...body, checkpoint: Object.fromEntries(Object.entries(checkpoint()).reverse()) } }, deps());
+      const first = await rotation.prepare({ access: access(), body }, deps());
+      const again = await rotation.prepare({ access: access(), body: { ...body, checkpoint: Object.fromEntries(Object.entries(checkpoint()).reverse()) } }, deps());
       assert.equal(first.status, 201);
       assert.equal(again.status, 200);
       assert.equal(again.body.replayed, true);
       assert.equal(again.body.rotation.rotationId, first.body.rotation.rotationId);
 
-      const reused = rotation.prepare({ access: access(), body: { ...body, checkpoint: checkpoint({ note: 'different' }) } }, deps());
+      const reused = await rotation.prepare({ access: access(), body: { ...body, checkpoint: checkpoint({ note: 'different' }) } }, deps());
       assert.equal(reused.status, 409);
       assert.equal(reused.body.code, 'ROTATION_ATTEMPT_KEY_REUSED');
 
-      const second = prepare();
+      const second = await prepare();
       assert.equal(second.status, 409);
       assert.equal(second.body.code, 'ROTATION_IN_PROGRESS');
       assert.equal(store.getDb().prepare('SELECT COUNT(*) n FROM coordinator_rotations').get().n, 1);
@@ -360,11 +382,11 @@ describe('coordinator context rotation (#2032)', () => {
 
     it('a session with no rebindable channel, or no recorded thread, is refused before anything is recorded', async () => {
       await serve();
-      let r = prepare();
+      let r = await prepare();
       assert.equal(r.status, 409);
       assert.equal(r.body.code, 'ROTATION_ENGINE_UNSUPPORTED');
       channel({ threadId: null });
-      r = prepare();
+      r = await prepare();
       assert.equal(r.status, 409);
       assert.equal(r.body.code, 'ROTATION_THREAD_UNBOUND');
       assert.equal(store.getDb().prepare('SELECT COUNT(*) n FROM coordinator_rotations').get().n, 0);
@@ -375,7 +397,7 @@ describe('coordinator context rotation (#2032)', () => {
     it('happy path: /clear is typed once, the one replacement is bound, the re-entry turn is delivered once, and observation answers for the new thread', async () => {
       await serve();
       channel();
-      const p = prepare();
+      const p = await prepare();
       const r = await rotation.drive(p.body.rotation.rotationId, { attempts: 5, deps: deps() });
       assert.equal(r.state, 'reconciling');
       assert.equal(r.replacementThreadId, NEXT);
@@ -399,7 +421,7 @@ describe('coordinator context rotation (#2032)', () => {
     it('a pass still waiting on the same thing does not rewrite the row', async () => {
       await serve({ [PRIOR]: { status: { type: 'active', activeFlags: [] } } });
       channel();
-      const id = prepare().body.rotation.rotationId;
+      const id = (await prepare()).body.rotation.rotationId;
       const first = await rotation.advance(id, { ...deps(), now: () => '2026-09-29T00:00:01.000Z' });
       const again = await rotation.advance(id, { ...deps(), now: () => '2026-09-29T00:00:09.000Z' });
       assert.equal(first.failureCode, 'prior-thread-busy');
@@ -409,7 +431,7 @@ describe('coordinator context rotation (#2032)', () => {
     it('waits for the coordinator\'s turn to finish before clearing', async () => {
       await serve({ [PRIOR]: { status: { type: 'active', activeFlags: [] } } });
       channel();
-      const id = prepare().body.rotation.rotationId;
+      const id = (await prepare()).body.rotation.rotationId;
       let r = await rotation.advance(id, deps());
       assert.equal(r.state, 'fenced');
       assert.equal(r.failureCode, 'prior-thread-busy');
@@ -424,7 +446,7 @@ describe('coordinator context rotation (#2032)', () => {
       await serve();
       channel();
       onClear = () => {};
-      const r = await rotation.drive(prepare().body.rotation.rotationId, { attempts: 10, deps: deps() });
+      const r = await rotation.drive((await prepare()).body.rotation.rotationId, { attempts: 10, deps: deps() });
       assert.equal(r.state, 'rebinding');
       assert.equal(r.failureCode, 'clear-not-applied');
       assert.equal(typed.length, rotation.MAX_CLEAR_ATTEMPTS);
@@ -439,7 +461,7 @@ describe('coordinator context rotation (#2032)', () => {
         server.state.threads.set(NEXT, { status: { type: 'idle' } });
         server.state.threads.set('another-new', { status: { type: 'idle' } });
       };
-      const r = await rotation.drive(prepare().body.rotation.rotationId, { attempts: 3, deps: deps() });
+      const r = await rotation.drive((await prepare()).body.rotation.rotationId, { attempts: 3, deps: deps() });
       assert.equal(r.state, 'rebinding');
       assert.equal(r.failureCode, 'replacement-ambiguous');
       assert.equal(threadOf(), PRIOR);
@@ -450,7 +472,7 @@ describe('coordinator context rotation (#2032)', () => {
       await serve();
       channel();
       onClear = () => { server.state.threads.delete(PRIOR); };
-      const r = await rotation.drive(prepare().body.rotation.rotationId, { attempts: 3, deps: deps() });
+      const r = await rotation.drive((await prepare()).body.rotation.rotationId, { attempts: 3, deps: deps() });
       assert.equal(r.failureCode, 'replacement-not-loaded');
       assert.equal(threadOf(), PRIOR);
     });
@@ -459,7 +481,7 @@ describe('coordinator context rotation (#2032)', () => {
       await serve();
       channel();
       onClear = () => { server.state.threads.set(NEXT, { status: { type: 'idle' } }); };
-      const r = await rotation.drive(prepare().body.rotation.rotationId, { attempts: 3, deps: deps() });
+      const r = await rotation.drive((await prepare()).body.rotation.rotationId, { attempts: 3, deps: deps() });
       assert.equal(r.failureCode, 'prior-thread-still-loaded');
       assert.equal(threadOf(), PRIOR);
     });
@@ -473,7 +495,7 @@ describe('coordinator context rotation (#2032)', () => {
         server.state.threads.set('elsewhere', { status: { type: 'idle' }, cwd: '/elsewhere' });
         server.state.threads.set(NEXT, { status: { type: 'idle' } });
       };
-      const r = await rotation.drive(prepare().body.rotation.rotationId, { attempts: 5, deps: deps() });
+      const r = await rotation.drive((await prepare()).body.rotation.rotationId, { attempts: 5, deps: deps() });
       assert.equal(r.state, 'reconciling');
       assert.equal(r.replacementThreadId, NEXT);
     });
@@ -481,7 +503,7 @@ describe('coordinator context rotation (#2032)', () => {
     it('a channel that changed under the rotation binds nothing', async () => {
       await serve();
       channel();
-      const id = prepare().body.rotation.rotationId;
+      const id = (await prepare()).body.rotation.rotationId;
       store.getDb().prepare("UPDATE startup_control_channels SET state = 'closed'").run();
       channel({}, { sequenceId: 101 });
       const r = await rotation.advance(id, deps());
@@ -493,7 +515,7 @@ describe('coordinator context rotation (#2032)', () => {
     it('a crash after the channel was rebound but before the rotation recorded it converges on the same thread', async () => {
       await serve();
       channel();
-      const id = prepare().body.rotation.rotationId;
+      const id = (await prepare()).body.rotation.rotationId;
       await rotation.advance(id, deps());
       assert.equal(store.coordinatorRotations.get(id).state, 'rebinding');
       codex.rebindThread(store.startupControlChannels.getOpenBySession(session.id), { priorThreadId: PRIOR, replacementThreadId: NEXT });
@@ -527,7 +549,7 @@ describe('coordinator context rotation (#2032)', () => {
     it('concurrent passes type /clear once and bind once', async () => {
       await serve();
       channel();
-      const id = prepare().body.rotation.rotationId;
+      const id = (await prepare()).body.rotation.rotationId;
       await Promise.all([rotation.advance(id, deps()), rotation.advance(id, deps()), rotation.advance(id, deps())]);
       assert.equal(typed.length, 1);
       const joined = [rotation.drive(id, { attempts: 5, deps: deps() }), rotation.drive(id, { attempts: 5, deps: deps() })];
@@ -560,7 +582,7 @@ describe('coordinator context rotation (#2032)', () => {
       const rot = await toReconciling();
       workloadReceipt();
       const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) };
-      const r = rotation.resume({ access: access(), threadId: NEXT, body }, deps());
+      const r = await rotation.resume({ access: access(), threadId: NEXT, body }, deps());
       assert.equal(r.status, 200, JSON.stringify(r.body));
       assert.equal(r.body.rotation.state, 'active');
       assert.equal(r.body.rotation.fenced, false);
@@ -568,22 +590,22 @@ describe('coordinator context rotation (#2032)', () => {
       assert.equal(rotation.gate({ projectId: project.id, access: access(), threadId: NEXT, action: 'medusa-send' }), null);
       assert.equal(store.coordinatorRotations.currentGeneration(project.id), 1);
 
-      const replay = rotation.resume({ access: access(), threadId: NEXT, body }, deps());
+      const replay = await rotation.resume({ access: access(), threadId: NEXT, body }, deps());
       assert.equal(replay.status, 200);
       assert.equal(replay.body.replayed, true);
-      const changed = rotation.resume({ access: access(), threadId: NEXT, body: { ...body, receipt: receipt(rot, { nextAction: 'other' }) } }, deps());
+      const changed = await rotation.resume({ access: access(), threadId: NEXT, body: { ...body, receipt: receipt(rot, { nextAction: 'other' }) } }, deps());
       assert.equal(changed.status, 409);
       assert.equal(changed.body.code, 'ROTATION_ALREADY_ACTIVE');
     });
 
-    it('missing evidence keeps the fence up and names each gap: undrained inbox, no workload receipt, wrong checkpoint', async () => {
+    it('missing evidence keeps the fence up and names each gap: undrained inbox, no ready workload receipt, wrong checkpoint', async () => {
       inbox = [{ id: 'left-behind' }];
       const rot = await toReconciling();
       const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot, { checkpointDigest: '0'.repeat(64) }) };
-      const r = rotation.resume({ access: access(), threadId: NEXT, body }, deps());
+      const r = await rotation.resume({ access: access(), threadId: NEXT, body }, deps());
       assert.equal(r.status, 409);
       assert.equal(r.body.code, 'ROTATION_EVIDENCE_MISSING');
-      assert.deepEqual(r.body.missing.map((m) => m.fact).sort(), ['checkpoint', 'medusa', 'workload']);
+      assert.deepEqual(r.body.missing.map((m) => m.fact).sort(), ['checkpoint', 'medusa', 'readiness']);
       assert.match(r.body.error, /left-behind/);
       assert.equal(store.coordinatorRotations.get(rot.rotationId).state, 'reconciling');
       assert.equal(rotation.gate({ projectId: project.id, access: access(), threadId: NEXT, action: 'medusa-send' }).status, 409);
@@ -594,7 +616,7 @@ describe('coordinator context rotation (#2032)', () => {
       inbox = [{ id: 'arrived-during-absence' }];
       workloadReceipt();
       const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) };
-      assert.equal(rotation.resume({ access: access(), threadId: NEXT, body }, deps()).status, 200);
+      assert.equal((await rotation.resume({ access: access(), threadId: NEXT, body }, deps())).status, 200);
     });
 
     it('the control generation must match the lane\'s', async () => {
@@ -605,11 +627,11 @@ describe('coordinator context rotation (#2032)', () => {
       store.control.getOpenForProject = () => lane;
       try {
         const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) };
-        let r = rotation.resume({ access: access(), threadId: NEXT, body }, deps());
+        let r = await rotation.resume({ access: access(), threadId: NEXT, body }, deps());
         assert.equal(r.status, 409);
         assert.deepEqual(r.body.missing.map((m) => m.fact), ['control']);
         body.receipt.reconciled.control.stateGeneration = 3;
-        r = rotation.resume({ access: access(), threadId: NEXT, body }, deps());
+        r = await rotation.resume({ access: access(), threadId: NEXT, body }, deps());
         assert.equal(r.status, 200);
       } finally {
         store.control.getOpenForProject = realControl;
@@ -619,27 +641,27 @@ describe('coordinator context rotation (#2032)', () => {
     it('an incomplete receipt, a stale generation or attempt, another launch, or a rotation not yet reconciling are refused', async () => {
       await serve();
       channel();
-      const early = prepare().body.rotation;
+      const early = (await prepare()).body.rotation;
       const earlyBody = { rotationId: early.rotationId, attemptKey: early.attemptKey, generation: early.generation, resumeNonce: 'none', receipt: receipt(early) };
-      assert.equal(rotation.resume({ access: access(), threadId: NEXT, body: earlyBody }, deps()).body.code, 'ROTATION_NOT_RECONCILING');
+      assert.equal((await rotation.resume({ access: access(), threadId: NEXT, body: earlyBody }, deps())).body.code, 'ROTATION_NOT_RECONCILING');
       await rotation.drive(early.rotationId, { attempts: 5, deps: deps() });
       const rot = rotation.view(store.coordinatorRotations.get(early.rotationId));
       const base = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) };
 
-      let r = rotation.resume({ access: access(), threadId: NEXT, body: { ...base, receipt: { schema: 1 } } }, deps());
+      let r = await rotation.resume({ access: access(), threadId: NEXT, body: { ...base, receipt: { schema: 1 } } }, deps());
       assert.equal(r.status, 400);
       assert.equal(r.body.code, 'ROTATION_RECEIPT_INCOMPLETE');
       assert.ok(r.body.missing.includes('reconciled'));
-      r = rotation.resume({ access: access(), threadId: NEXT, body: { ...base, receipt: receipt(rot, { restored: [] }) } }, deps());
+      r = await rotation.resume({ access: access(), threadId: NEXT, body: { ...base, receipt: receipt(rot, { restored: [] }) } }, deps());
       assert.equal(r.status, 400);
 
-      r = rotation.resume({ access: access(), threadId: NEXT, body: { ...base, generation: rot.generation - 1 } }, deps());
+      r = await rotation.resume({ access: access(), threadId: NEXT, body: { ...base, generation: rot.generation - 1 } }, deps());
       assert.equal(r.body.code, 'ROTATION_STALE_GENERATION');
-      r = rotation.resume({ access: access(), threadId: NEXT, body: { ...base, attemptKey: 'attempt-other' } }, deps());
+      r = await rotation.resume({ access: access(), threadId: NEXT, body: { ...base, attemptKey: 'attempt-other' } }, deps());
       assert.equal(r.body.code, 'ROTATION_STALE_GENERATION');
-      r = rotation.resume({ access: { ...access(), launchId: 'other-launch' }, threadId: NEXT, body: base }, deps());
+      r = await rotation.resume({ access: { ...access(), launchId: 'other-launch' }, threadId: NEXT, body: base }, deps());
       assert.equal(r.status, 403);
-      r = rotation.resume({ access: { ...access(), projectId: project.id + 1 }, threadId: NEXT, body: base }, deps());
+      r = await rotation.resume({ access: { ...access(), projectId: project.id + 1 }, threadId: NEXT, body: base }, deps());
       assert.equal(r.status, 404);
       assert.equal(store.coordinatorRotations.get(rot.rotationId).state, 'reconciling');
     });
@@ -648,21 +670,21 @@ describe('coordinator context rotation (#2032)', () => {
       const rot = await toReconciling();
       workloadReceipt();
       const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) };
-      assert.equal(rotation.resume({ access: access(), threadId: NEXT, body }, deps()).status, 200);
+      assert.equal((await rotation.resume({ access: access(), threadId: NEXT, body }, deps())).status, 200);
       // The replacement is now the prior thread of the next rotation.
       server.state.threads = new Map([[NEXT, { status: { type: 'idle' } }]]);
-      const second = prepare();
+      const second = await prepare();
       assert.equal(second.status, 201);
       assert.equal(second.body.rotation.generation, 2);
       assert.equal(second.body.rotation.priorThreadId, NEXT);
-      const stale = rotation.resume({ access: access(), threadId: NEXT, body: { ...body, rotationId: second.body.rotation.rotationId } }, deps());
+      const stale = await rotation.resume({ access: access(), threadId: NEXT, body: { ...body, rotationId: second.body.rotation.rotationId } }, deps());
       assert.equal(stale.body.code, 'ROTATION_STALE_GENERATION');
     });
 
     it('only the operator can abandon a rotation, and abandoning lifts the fence without touching the channel', async () => {
       await serve();
       channel();
-      const rot = prepare().body.rotation;
+      const rot = (await prepare()).body.rotation;
       assert.equal(rotation.abandon({ caller: { kind: 'project' }, body: { rotationId: rot.rotationId, reason: 'x' } }).status, 403);
       assert.equal(rotation.abandon({ caller: { kind: 'operator' }, body: { rotationId: rot.rotationId } }).status, 400);
       const r = rotation.abandon({ caller: { kind: 'operator' }, body: { rotationId: rot.rotationId, reason: 'coordinator relaunched by hand' } });
@@ -670,7 +692,7 @@ describe('coordinator context rotation (#2032)', () => {
       assert.equal(r.body.rotation.state, 'abandoned');
       assert.equal(rotation.openRotation(project.id), null);
       assert.equal(threadOf(), PRIOR);
-      assert.equal(prepare().body.rotation.generation, 2, 'an abandoned generation is never reused');
+      assert.equal((await prepare()).body.rotation.generation, 2, 'an abandoned generation is never reused');
     });
   });
 
@@ -707,7 +729,7 @@ describe('coordinator context rotation (#2032)', () => {
       const rot = await toReconciling();
       workloadReceipt();
       const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) };
-      assert.equal(rotation.resume({ access: access(), threadId: NEXT, body }, deps()).status, 200);
+      assert.equal((await rotation.resume({ access: access(), threadId: NEXT, body }, deps())).status, 200);
       for (const action of rotation.GATED_ACTIONS) {
         assert.equal(judge(action), null, `${action} from the bound replacement`);
         assert.equal(judge(action, { threadId: PRIOR }).body.code, 'COORDINATOR_EPOCH_MISMATCH', `${action} from the old thread`);
@@ -719,11 +741,11 @@ describe('coordinator context rotation (#2032)', () => {
       workloadReceipt();
       const good = nonce();
       const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: good, receipt: receipt(rot) };
-      assert.equal(rotation.resume({ access: access(), threadId: PRIOR, body }, deps()).body.code, 'COORDINATOR_EPOCH_MISMATCH');
-      assert.equal(rotation.resume({ access: access(), threadId: null, body }, deps()).body.code, 'COORDINATOR_EPOCH_MISMATCH');
-      assert.equal(rotation.resume({ access: access(), threadId: NEXT, body: { ...body, resumeNonce: 'guess' } }, deps()).body.code, 'ROTATION_NONCE_INVALID');
-      assert.equal(rotation.resume({ access: access(), threadId: NEXT, body: { ...body, resumeNonce: undefined } }, deps()).body.code, 'ROTATION_NONCE_INVALID');
-      assert.equal(rotation.resume({ access: access(), threadId: NEXT, body }, deps()).status, 200);
+      assert.equal((await rotation.resume({ access: access(), threadId: PRIOR, body }, deps())).body.code, 'COORDINATOR_EPOCH_MISMATCH');
+      assert.equal((await rotation.resume({ access: access(), threadId: null, body }, deps())).body.code, 'COORDINATOR_EPOCH_MISMATCH');
+      assert.equal((await rotation.resume({ access: access(), threadId: NEXT, body: { ...body, resumeNonce: 'guess' } }, deps())).body.code, 'ROTATION_NONCE_INVALID');
+      assert.equal((await rotation.resume({ access: access(), threadId: NEXT, body: { ...body, resumeNonce: undefined } }, deps())).body.code, 'ROTATION_NONCE_INVALID');
+      assert.equal((await rotation.resume({ access: access(), threadId: NEXT, body }, deps())).status, 200);
       const stored = store.coordinatorRotations.get(rot.rotationId);
       assert.equal(stored.resumeNonceHash, null, 'spent');
       assert.ok(!JSON.stringify(stored).includes(good), 'the nonce is never stored in plaintext');
@@ -749,12 +771,131 @@ describe('coordinator context rotation (#2032)', () => {
     });
   });
 
+  describe('A10: GitHub facts are re-observed by the server, and drift must be disposed of', () => {
+    const PR = { repo: 'Jason-Vaughan/TangleClaw', kind: 'pr', number: 1966, state: 'open', headSha: 'c'.repeat(40) };
+    const KEY = 'github:Jason-Vaughan/TangleClaw#pr1966';
+    const withFacts = () => checkpoint({ github: [PR] });
+    const reconcileWithFacts = async () => {
+      githubState = { [KEY]: { state: 'open', merged: false, headSha: 'c'.repeat(40) } };
+      await serve();
+      channel();
+      const p = await prepare({ checkpoint: withFacts() });
+      assert.equal(p.status, 201, JSON.stringify(p.body));
+      const r = await rotation.drive(p.body.rotation.rotationId, { attempts: 5, deps: deps() });
+      return rotation.view(r);
+    };
+    const bodyFor = (rot, over = {}) => ({ rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot, over) });
+
+    it('prepare refuses a fact GitHub cannot answer, or one the checkpoint declares wrongly', async () => {
+      await serve();
+      channel();
+      githubState = { [KEY]: 'HTTP 502' };
+      assert.equal((await prepare({ checkpoint: withFacts() })).body.code, 'ROTATION_EVIDENCE_UNAVAILABLE');
+      githubState = { [KEY]: { state: 'closed', merged: true, headSha: 'c'.repeat(40) } };
+      const stale = await prepare({ checkpoint: withFacts() });
+      assert.equal(stale.body.code, 'ROTATION_CHECKPOINT_STALE');
+      assert.deepEqual(stale.body.stale, [KEY]);
+    });
+
+    it('a malformed github list is an incomplete checkpoint', async () => {
+      await serve();
+      channel();
+      for (const github of [undefined, 'x', [{ repo: 'nope', kind: 'pr', number: 1, state: 'open' }], [PR, PR]]) {
+        assert.equal((await prepare({ checkpoint: checkpoint({ github }) })).body.code, 'ROTATION_CHECKPOINT_INCOMPLETE', JSON.stringify(github));
+      }
+    });
+
+    it('a fact that changed during absence keeps the fence up until the receipt disposes of it', async () => {
+      const rot = await reconcileWithFacts();
+      workloadReceipt();
+      githubState = { [KEY]: { state: 'closed', merged: true, headSha: 'c'.repeat(40) } };
+      let r = await rotation.resume({ access: access(), threadId: NEXT, body: bodyFor(rot) }, deps());
+      assert.equal(r.status, 409);
+      assert.equal(r.body.code, 'ROTATION_DRIFT_UNACKNOWLEDGED');
+      assert.deepEqual(r.body.unacknowledged, [KEY]);
+      const stored = store.coordinatorRotations.get(rot.rotationId);
+      assert.deepEqual(stored.drift.trusted.map((t) => [t.class, t.key, t.afterObserved.merged]), [['github', KEY, true]]);
+      assert.ok(stored.drift.trusted[0].before !== stored.drift.trusted[0].after);
+
+      r = await rotation.resume({ access: access(), threadId: NEXT, body: bodyFor(rot, { drift: [{ key: KEY, disposition: 'bogus' }] }) }, deps());
+      assert.equal(r.body.code, 'ROTATION_RECEIPT_INCOMPLETE');
+      r = await rotation.resume({ access: access(), threadId: NEXT, body: bodyFor(rot, { drift: [{ key: KEY, disposition: 'accepted', note: '#1966 merged' }] }) }, deps());
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const done = store.coordinatorRotations.get(rot.rotationId);
+      assert.deepEqual(done.drift.dispositions, [{ key: KEY, disposition: 'accepted', note: '#1966 merged' }]);
+      assert.deepEqual(done.drift.trusted.map((t) => t.key), [KEY], 'the observation is kept beside its disposition');
+    });
+
+    it('GitHub unreadable at resume keeps the fence up', async () => {
+      const rot = await reconcileWithFacts();
+      workloadReceipt();
+      githubState = { [KEY]: 'timed out' };
+      const r = await rotation.resume({ access: access(), threadId: NEXT, body: bodyFor(rot) }, deps());
+      assert.equal(r.body.code, 'ROTATION_EVIDENCE_UNAVAILABLE');
+      assert.match(store.coordinatorRotations.get(rot.rotationId).drift.unavailable[0], /timed out/);
+    });
+
+    it('an unchanged fact needs no disposition', async () => {
+      const rot = await reconcileWithFacts();
+      workloadReceipt();
+      assert.equal((await rotation.resume({ access: access(), threadId: NEXT, body: bodyFor(rot) }, deps())).status, 200);
+    });
+  });
+
+  describe('A8: the readiness verdict', () => {
+    /**
+     * A receipt from this launch.
+     * @param {string} state - Workload state.
+     * @param {string} clearance - Clearance.
+     * @param {number} [offsetMs=1000] - Received this far from now.
+     */
+    const receiptOf = (state, clearance, offsetMs = 1000) => {
+      const nowMs = Date.now() + offsetMs;
+      store.workloadReceipts.append({
+        project_id: project.id, session_id: session.id, launch_id: launchId, assignment_id: null, state, clearance,
+        summary: 'reconciling', wait_kind: state === 'waiting-external' ? 'peer' : null, wait_detail: null, refs_json: '[]',
+        branch: null, head_sha: null, source: 'tc-cli', received_at: new Date(nowMs).toISOString()
+      }, { minIntervalMs: 0, nowMs });
+    };
+    const attempt = async (rot) => rotation.resume({ access: access(), threadId: NEXT,
+      body: { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) } }, deps());
+
+    it('complete or safe-to-clear is not a coordinator resuming authority; the verdict is persisted', async () => {
+      const rot = await toReconciling();
+      receiptOf('complete', 'safe-to-clear', 1000);
+      const r = await attempt(rot);
+      assert.equal(r.status, 409);
+      assert.deepEqual(r.body.missing.map((m) => m.fact), ['readiness']);
+      assert.equal(store.coordinatorRotations.get(rot.rotationId).readiness.verdict, 'not-ready');
+      receiptOf('working', 'safe-to-clear', 2000);
+      assert.match((await attempt(rot)).body.error, /do-not-clear/);
+    });
+
+    it('a receipt from before the re-entry turn does not count', async () => {
+      receiptOf('working', 'do-not-clear', -60000);
+      const rot = await toReconciling();
+      const r = await attempt(rot);
+      assert.equal(r.body.code, 'ROTATION_EVIDENCE_MISSING');
+      assert.match(r.body.error, /predates the re-entry turn/);
+    });
+
+    it('waiting-external with do-not-clear is ready, and the ready verdict is stored with the active rotation', async () => {
+      const rot = await toReconciling();
+      receiptOf('waiting-external', 'do-not-clear');
+      const r = await attempt(rot);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const stored = store.coordinatorRotations.get(rot.rotationId).readiness;
+      assert.equal(stored.verdict, 'ready');
+      assert.equal(stored.state, 'waiting-external');
+    });
+  });
+
   describe('A6a: the coordinator role is an operator grant, not a claim', () => {
     it('a project with no active role cannot prepare, whatever its checkpoint says it is', async () => {
       await serve();
       channel();
       store.getDb().prepare('DELETE FROM coordinator_roles').run();
-      const r = prepare({ checkpoint: checkpoint({ role: 'architect' }) });
+      const r = await prepare({ checkpoint: checkpoint({ role: 'architect' }) });
       assert.equal(r.status, 403);
       assert.equal(r.body.code, 'ROTATION_NOT_COORDINATOR');
       assert.equal(rotation.openRotation(project.id), null);
@@ -764,7 +905,7 @@ describe('coordinator context rotation (#2032)', () => {
       await serve();
       channel();
       const role = store.coordinatorRoles.getActiveForProject(project.id);
-      const r = prepare();
+      const r = await prepare();
       assert.deepEqual(r.body.rotation.role, { roleId: role.roleId, authorityVersion: role.authorityVersion });
     });
 
@@ -789,7 +930,7 @@ describe('coordinator context rotation (#2032)', () => {
       workloadReceipt();
       grant();
       const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) };
-      const r = rotation.resume({ access: access(), threadId: NEXT, body }, deps());
+      const r = await rotation.resume({ access: access(), threadId: NEXT, body }, deps());
       assert.equal(r.status, 409);
       assert.equal(r.body.code, 'ROTATION_OPERATOR_RECOVERY_REQUIRED');
       assert.deepEqual(r.body.drift.integrity.map((i) => i.class), ['authority']);
@@ -803,22 +944,22 @@ describe('coordinator context rotation (#2032)', () => {
     it('prepare refuses a checkpoint whose head or ref is stale', async () => {
       await serve();
       channel();
-      let r = prepare({ checkpoint: checkpoint({ branch: { head: 'b'.repeat(40), ref: 'main', ownedDirt: [] } }) });
+      let r = await prepare({ checkpoint: checkpoint({ branch: { head: 'b'.repeat(40), ref: 'main', ownedDirt: [] } }) });
       assert.equal(r.body.code, 'ROTATION_CHECKPOINT_STALE');
-      r = prepare({ checkpoint: checkpoint({ branch: { head: HEAD, ref: 'other', ownedDirt: [] } }) });
+      r = await prepare({ checkpoint: checkpoint({ branch: { head: HEAD, ref: 'other', ownedDirt: [] } }) });
       assert.equal(r.body.code, 'ROTATION_CHECKPOINT_STALE');
-      assert.equal(prepare({ checkpoint: checkpoint({ branch: { head: HEAD, ref: 'refs/heads/main', ownedDirt: [] } }) }).status, 201);
+      assert.equal((await prepare({ checkpoint: checkpoint({ branch: { head: HEAD, ref: 'refs/heads/main', ownedDirt: [] } }) })).status, 201);
     });
 
     it('prepare refuses dirt the checkpoint does not declare, and accepts it declared', async () => {
       await serve();
       channel();
       checkout.fingerprint.dirty = ['lib/a.js', 'notes/new.md'];
-      let r = prepare({ checkpoint: checkpoint({ branch: { head: HEAD, ref: 'main', ownedDirt: ['lib/a.js'] } }) });
+      let r = await prepare({ checkpoint: checkpoint({ branch: { head: HEAD, ref: 'main', ownedDirt: ['lib/a.js'] } }) });
       assert.equal(r.status, 409);
       assert.equal(r.body.code, 'ROTATION_UNDECLARED_DIRT');
       assert.deepEqual(r.body.undeclared, ['notes/new.md']);
-      r = prepare({ checkpoint: checkpoint({ branch: { head: HEAD, ref: 'main', ownedDirt: ['lib/a.js', 'notes/new.md'] } }) });
+      r = await prepare({ checkpoint: checkpoint({ branch: { head: HEAD, ref: 'main', ownedDirt: ['lib/a.js', 'notes/new.md'] } }) });
       assert.equal(r.status, 201);
     });
 
@@ -826,9 +967,9 @@ describe('coordinator context rotation (#2032)', () => {
       await serve();
       channel();
       checkout = { ok: false, reason: 'status-unreadable' };
-      assert.equal(prepare().body.code, 'ROTATION_CHECKOUT_UNAVAILABLE');
+      assert.equal((await prepare()).body.code, 'ROTATION_CHECKOUT_UNAVAILABLE');
       checkout = { ok: true, fingerprint: { ...cleanCheckout(), importantIgnored: { '.env': 'unavailable:not-ignored' } } };
-      const r = prepare({ checkpoint: checkpoint({ branch: { head: HEAD, ref: 'main', ownedDirt: [], importantIgnored: ['.env'] } }) });
+      const r = await prepare({ checkpoint: checkpoint({ branch: { head: HEAD, ref: 'main', ownedDirt: [], importantIgnored: ['.env'] } }) });
       assert.equal(r.body.code, 'ROTATION_IGNORED_FILE_UNAVAILABLE');
     });
 
@@ -838,13 +979,13 @@ describe('coordinator context rotation (#2032)', () => {
       checkout.fingerprint.trackedDiffDigest = 'e'.repeat(64);
       checkout.fingerprint.untracked = { 'scratch.txt': 'sha256:abc' };
       const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) };
-      const r = rotation.resume({ access: access(), threadId: NEXT, body }, deps());
+      const r = await rotation.resume({ access: access(), threadId: NEXT, body }, deps());
       assert.equal(r.status, 409);
       assert.equal(r.body.code, 'ROTATION_OPERATOR_RECOVERY_REQUIRED');
       assert.deepEqual(r.body.drift.integrity.map((i) => i.key).sort(), ['checkout.trackedDiffDigest', 'checkout.untracked:scratch.txt']);
       assert.ok(r.body.drift.integrity.every((i) => i.class === 'checkout-integrity' && i.before && i.after));
       // Even a receipt that "acknowledges" it cannot resume.
-      const acked = rotation.resume({ access: access(), threadId: NEXT, body: { ...body, receipt: receipt(rot, { drift: [{ key: 'checkout.trackedDiffDigest', disposition: 'accepted' }] }) } }, deps());
+      const acked = await rotation.resume({ access: access(), threadId: NEXT, body: { ...body, receipt: receipt(rot, { drift: [{ key: 'checkout.trackedDiffDigest', disposition: 'accepted' }] }) } }, deps());
       assert.equal(acked.body.code, 'ROTATION_OPERATOR_RECOVERY_REQUIRED');
       assert.equal(rotation.gate({ projectId: project.id, access: access(), threadId: NEXT, action: 'medusa-send' }).status, 409);
     });
@@ -854,7 +995,7 @@ describe('coordinator context rotation (#2032)', () => {
       workloadReceipt();
       checkout = { ok: false, reason: 'diff-unreadable' };
       const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) };
-      const r = rotation.resume({ access: access(), threadId: NEXT, body }, deps());
+      const r = await rotation.resume({ access: access(), threadId: NEXT, body }, deps());
       assert.equal(r.body.code, 'ROTATION_EVIDENCE_UNAVAILABLE');
       assert.deepEqual(store.coordinatorRotations.get(rot.rotationId).drift.unavailable, ['checkout: diff-unreadable']);
     });
@@ -902,8 +1043,8 @@ describe('coordinator context rotation (#2032)', () => {
       const row = (id, state) => store.getDb().prepare(
         'INSERT INTO coordinator_rotations (rotation_id, attempt_key, project_id, session_id, launch_id, engine_id, channel_id, sequence_id, '
         + "state, generation, prior_thread_id, checkpoint_schema, checkpoint_digest, checkpoint_json, inbox_ids_json, "
-        + "role_id, authority_version, checkout_json, created_at, updated_at) "
-        + "VALUES (?, ?, 77, 1, 'l', 'codex', 1, 1, ?, 1, 't', 1, ?, '{}', '[]', 'r', 1, '{}', 'x', 'x')"
+        + "role_id, authority_version, checkout_json, github_json, created_at, updated_at) "
+        + "VALUES (?, ?, 77, 1, 'l', 'codex', 1, 1, ?, 1, 't', 1, ?, '{}', '[]', 'r', 1, '{}', '[]', 'x', 'x')"
       ).run(id, `key-${id}-000`, state, 'd'.repeat(64));
       row('a', 'active');
       row('b', 'abandoned');

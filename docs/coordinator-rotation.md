@@ -133,7 +133,8 @@ than as "nothing there":
   "exchanges": [{ "id": "mx_…", "with": "tangleclaw-projectmanager" }],
   "branch": { "head": "<sha>", "ref": "main", "ownedDirt": ["lib/x.js"], "importantIgnored": [".env"] },
   "nextActions": ["…"],
-  "note": "where it ended"
+  "note": "where it ended",
+  "github": [{ "repo": "owner/name", "kind": "pr", "number": 1966, "state": "open", "headSha": "<sha>", "merged": false }]
 }
 ```
 
@@ -147,6 +148,10 @@ than as "nothing there":
   The fingerprint hashes the whole tracked diff against HEAD, every untracked file (directories are
   expanded) and each declared important ignored file. It never reads an ignored dependency or build
   cache.
+- **GitHub.** `github` lists each issue or PR the coordinator's plan depends on, or `[]` when there
+  are none, up to 100 facts. At prepare the server reads each one itself through `gh`, using
+  `lib/github-facts.js`. A fact it cannot read, or one the checkpoint declares wrongly, refuses the
+  prepare.
 - **Digest:** the server takes the SHA-256 of the canonical JSON (keys sorted), so key order does not
   matter.
 - **Size:** the checkpoint may be at most 60,000 bytes.
@@ -162,7 +167,8 @@ than as "nothing there":
   "schema": 1,
   "checkpointDigest": "<from show>",
   "restored": ["each checkpoint fact confirmed"],
-  "drift": ["each fact that had changed, and how"],
+  "resumeNonce": "<from the re-entry instruction>",
+  "drift": [{ "key": "github:owner/name#pr1966", "disposition": "accepted", "note": "merged while away" }],
   "reconciled": {
     "control": { "stateGeneration": 3 },
     "medusa": { "handled": ["<message ids>"] }
@@ -179,6 +185,17 @@ receipt accepts integrity drift. The replacement must therefore not commit or ed
 before it resumes. A checkout that cannot be observed is refused with
 `409 ROTATION_EVIDENCE_UNAVAILABLE`.
 
+The server then re-reads the checkpoint's GitHub facts. This is **trusted drift**: GitHub may
+legitimately change while a coordinator is away, for example when a PR merges.
+- **Stored.** Each changed fact is stored with a stable key and before and after digests, next to the
+  observation itself.
+- **Disposed of by the receipt.** Every changed fact must appear in `receipt.drift` with a disposition
+  (`accepted`, `superseded` or `follow-up`), and the receipt's `nextAction` must be updated. An
+  undisposed item is refused with `409 ROTATION_DRIFT_UNACKNOWLEDGED`, naming the keys.
+- **Unreadable.** A fact that can't be read is `ROTATION_EVIDENCE_UNAVAILABLE`.
+
+Observations and dispositions are persisted on the rotation whether the resume is accepted or not.
+
 After that, the server accepts the receipt only when every check it can make itself agrees. The
 checks are:
 
@@ -187,7 +204,9 @@ checks are:
   and does not block);
 - `control.stateGeneration` is the lane's current control generation, or `null` when there is no
   assignment;
-- the launch has published a workload receipt since the rotation began.
+- the **readiness verdict** (ruling A8): the replacement's newest `tc workload set` receipt was
+  published after the re-entry turn, is still current, and says `working` or `waiting-external` with
+  `do-not-clear`. The verdict is persisted on the rotation either way.
 
 A refusal is `409 ROTATION_EVIDENCE_MISSING`. It lists each failed fact under `missing`, and the
 fence stays up. A receipt of the wrong shape is `400 ROTATION_RECEIPT_INCOMPLETE`. A receipt for

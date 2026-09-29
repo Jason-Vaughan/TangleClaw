@@ -59,7 +59,14 @@ The Architect dispatched this as an emergency (message e2f2d7c2, the plan at Tan
 
 - **A11/A12.** The epoch gate now judges every listed coordinator-authority mutation, including control, session-rule, wrap and workload routes and the Medusa send, ack and close routes. It accepts them only from the bound replacement thread, session and launch. `tc` forwards `CODEX_THREAD_ID` as `x-tangleclaw-engine-thread`. Reconciling allows only workload, the control ack and interval-scoped replies, acks and closes. Resume needs a one-time nonce, minted lazily when the re-entry turn is actually sent and stored hashed. The adapter's `deliverTurn` now decides "already sent" by client id alone, because each send's text carries a fresh secret.
 
-Still to build: trusted GitHub re-observation with the two drift classes (A10), the readiness verdict (A8), and E4 relaunch parity with the operator read surface (A13).
+- **A10.** The checkpoint enumerates GitHub facts, which `lib/github-facts.js` reads through `gh` at prepare (unreadable or wrongly declared facts refuse the prepare) and at resume. There are two drift classes:
+  - Trusted GitHub drift (key plus before/after digests) must be disposed of in `receipt.drift` (`accepted`/`superseded`/`follow-up`).
+  - Authority and checkout-integrity drift can never be accepted.
+
+  Unavailable evidence blocks. Observations and dispositions are persisted on every resume attempt.
+- **A8.** A readiness verdict: a workload receipt published after the re-entry turn, current, `working`/`waiting-external` and `do-not-clear`. It is persisted either way. Prepare and resume are now async.
+
+Still to build: E4 relaunch parity with the operator read surface (A13).
 
 **Tests.** Rotation tests cover prepare, the fence, the rebind and resume, including every rejection, crash-retry at the rebind and the re-entry send, concurrent passes and old-thread reappearance. There are also route-binding, verb, send-fence route and wake-gate tests. The v50 migration test compared against a literal `50`; it now reads `CURRENT_SCHEMA_VERSION`, as the store asks, so it still means "advances to HEAD". The four prime golden fixtures changed only by the new `rotation` verb in the generated verb list, regenerated with `UPDATE_PRIME_GOLDEN=1`. The other wake and watchdog tests now stub the new seam so none reads an ambient store.
 

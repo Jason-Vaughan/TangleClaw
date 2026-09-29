@@ -4852,10 +4852,10 @@ function _callerProjectId(req) {
 
 // POST /api/tc/rotation/prepare — `{attemptKey, checkpoint}`: begin a rotation
 // of the caller's own session and start the server's side of it.
-route('POST', '/api/tc/rotation/prepare', (req, res, _params, body) => {
+route('POST', '/api/tc/rotation/prepare', async (req, res, _params, body) => {
   const access = _rotationAccess(req, res);
   if (!access) return;
-  const result = coordinatorRotation.prepare({ access, body });
+  const result = await coordinatorRotation.prepare({ access, body });
   if (result.status === 201 || result.status === 200) coordinatorRotation.drive(result.body.rotation.rotationId);
   return jsonResponse(res, result.status, result.body);
 }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
@@ -4887,10 +4887,10 @@ route('POST', '/api/tc/rotation/advance', async (req, res) => {
 // POST /api/tc/rotation/resume — `{rotationId, attemptKey, generation, receipt}`:
 // the replacement context's proof. Accepted only when every fact the server can
 // observe agrees; that acceptance is what lifts the fence.
-route('POST', '/api/tc/rotation/resume', (req, res, _params, body) => {
+route('POST', '/api/tc/rotation/resume', async (req, res, _params, body) => {
   const access = _rotationAccess(req, res);
   if (!access) return;
-  const result = coordinatorRotation.resume({ access, body, threadId: _engineThread(req) });
+  const result = await coordinatorRotation.resume({ access, body, threadId: _engineThread(req) });
   return jsonResponse(res, result.status, result.body);
 }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
 

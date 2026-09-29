@@ -94,6 +94,12 @@ describe('tc rotation (#2032)', () => {
     assert.match(text, /"role": "architect"/);
     assert.match(text, new RegExp(`"checkpointDigest": "${'d'.repeat(64)}"`));
     assert.match(text, /tc rotation resume --receipt/);
+    const drifted = renderRotation({ rotation: { ...ROTATION, drift: { integrity: [], unavailable: [], trusted: [{ key: 'github:o/r#pr5' }] },
+      readiness: { verdict: 'not-ready', reason: 'No workload receipt has been published.' } } });
+    assert.match(drifted, /drift to dispose of in the receipt: github:o\/r#pr5/);
+    assert.match(drifted, /readiness: No workload receipt/);
+    assert.match(renderRotation({ rotation: { ...ROTATION, drift: { integrity: [{ key: 'checkout.head' }], unavailable: [], trusted: [] } } }),
+      /integrity drift \(operator recovery required\): checkout.head/);
     assert.match(renderRotation({ rotation: null, generation: 3 }), /No coordinator rotation is in progress .*generation 3/);
     assert.match(renderRotation({ rotation: { ...ROTATION, state: 'rebinding', failure: { code: 'prior-thread-busy', detail: 'waiting' } } }),
       /waiting on: prior-thread-busy/);

@@ -12,7 +12,10 @@ All notable changes to TangleClaw are documented in this file.
   - **Who may rotate.** Only a project the operator has granted a coordinator role (`POST /api/coordinator-roles`) can start a rotation. A role named in the checkpoint is not authority.
   - **Checkout integrity.** When the rotation starts, TangleClaw fingerprints the coordinator's checkout: its head and ref, the whole tracked diff, and every untracked file. It also covers any ignored file the checkpoint declares important. A checkpoint that leaves dirt undeclared is refused.
   - **Resume.** The replacement reads the checkpoint back with `tc rotation show`, reconciles it and submits a receipt with `tc rotation resume`. The hold lifts only when TangleClaw's own checks agree: the checkpoint digest, the recorded messages handled, the control generation and a fresh workload receipt.
-    - A receipt that fails those checks is refused, with each missing fact named.
+    - The checkpoint lists the GitHub issues and PRs the coordinator's plan depends on. TangleClaw reads each one itself through `gh` when the rotation starts and again at resume.
+    - A fact that changed in between, such as a PR that merged, must be disposed of in the receipt (accepted, superseded or follow-up) before the hold lifts. A fact that can't be read keeps it held.
+    - The replacement's workload must say it is working or waiting on something external, and not safe to clear.
+    - A receipt that fails these checks is refused, with each missing fact named.
     - A change to the coordinator's role or to its checkout's content is different: no receipt can accept it. The rotation stays held until the operator recovers it.
   - **Bound to the new thread.** Once a coordinator has rotated, its mutations are accepted only from the thread, session and launch the rotation bound. That covers Medusa sends, acknowledgements and exchange closes, workload, session-rule writes, control commands, and wrap and handoff.
     - `tc` forwards the Codex thread id automatically, so there is nothing to carry by hand.
