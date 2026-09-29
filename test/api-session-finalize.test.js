@@ -1074,6 +1074,90 @@ describe('POST /api/sessions/:project/finalize (#2027)', () => {
       });
     });
 
+    it('a linked worktree made since launch with uncommitted work is refused even while the pane shows the registered checkout', async () => {
+      const lane = launched('wt-hidden');
+      store.sessions.kill(lane.sessionId, 'test: relaunch with a pane');
+      const withPaneLane = { ...lane, ...bind(lane.project, lane.dir, `tc-${lane.project.name}`) };
+      await receipt(withPaneLane);
+      // The engine's process, and so the pane, stays in the launch directory.
+      const wt = fs.realpathSync(tmpDir) + `/${lane.project.name}-hidden-wt`;
+      git(lane.dir, ['worktree', 'add', '-q', '-b', 'feat/hidden', wt]);
+      fs.writeFileSync(path.join(wt, 'untracked-work.txt'), 'x\n');
+      await withPane(lane.dir, async () => {
+        const r = await finalize(withPaneLane, withPaneLane.headers);
+        assert.equal(r.status, 409, JSON.stringify(r.data));
+        assert.equal(r.data.code, 'OWNED_WORK_PRESENT');
+        assert.deepEqual(r.data.changedWorktrees, [wt]);
+      });
+      assert.equal(store.sessions.get(withPaneLane.sessionId).status, 'active');
+    });
+
+    it('a clean worktree made since launch is not work; its commits are counted with the branches', async () => {
+      const lane = launched('wt-clean-new');
+      await receipt(lane);
+      const wt = fs.realpathSync(tmpDir) + `/${lane.project.name}-clean-wt`;
+      git(lane.dir, ['worktree', 'add', '-q', '-b', 'feat/clean', wt]);
+      const ok = await finalize(lane, lane.headers);
+      assert.equal(ok.status, 200, JSON.stringify(ok.data));
+    });
+
+    it('the operator\'s worktree that was dirty at launch is preserved while unchanged, and refuses once changed', async () => {
+      const mk = (prefix) => launched(prefix, (dir) => {
+        const wt = `${dir}-op-wt`;
+        git(dir, ['worktree', 'add', '-q', '-b', `op-${prefix}`, wt]);
+        fs.writeFileSync(path.join(wt, 'operator-draft.txt'), 'draft\n');
+      });
+      const same = mk('wt-op-same');
+      await receipt(same);
+      const ok = await finalize(same, same.headers);
+      assert.equal(ok.status, 200, JSON.stringify(ok.data));
+
+      const touched = mk('wt-op-touched');
+      await receipt(touched);
+      const wt = fs.realpathSync(`${touched.dir}-op-wt`);
+      fs.writeFileSync(path.join(wt, 'operator-draft.txt'), 'draft, edited by the session\n');
+      const r = await finalize(touched, touched.headers);
+      assert.equal(r.data.code, 'OWNED_WORK_PRESENT', JSON.stringify(r.data));
+      assert.deepEqual(r.data.changedWorktrees, [wt]);
+    });
+
+    it('a baseline without the worktree record refuses when any linked worktree exists', async () => {
+      const lane = launched('wt-legacy');
+      store.sessions.kill(lane.sessionId, 'test: older build');
+      const captured = launchBaseline.capture(lane.dir);
+      delete captured.dirty.worktrees;
+      const launchId = launchSequence.mintLaunchId();
+      const snapshot = launchSequence.buildSnapshot({
+        launchId, project: lane.project, engineProfile: store.engines.get('claude'),
+        applicability: { applicable: false, reason: 'test binding' }, rendered: null, rules: []
+      });
+      const session = store.sessions.start({ projectId: lane.project.id, engineId: 'claude', launchSequence: snapshot, launchBaseline: captured });
+      const legacy = { project: lane.project, dir: lane.dir, sessionId: session.id, headers: { 'x-tangleclaw-project-id': String(lane.project.id), 'x-tangleclaw-launch-id': launchId } };
+      git(lane.dir, ['worktree', 'add', '-q', '-b', 'feat/legacy', `${lane.dir}-legacy-wt`]);
+      await receipt(legacy);
+      const r = await finalize(legacy, legacy.headers);
+      assert.equal(r.data.code, 'WORK_STATE_UNKNOWN', JSON.stringify(r.data));
+      assert.match(r.data.reason, /predates the worktree record/);
+    });
+
+    it('a webui session is not finalized headlessly', async () => {
+      const lane = launched('webui');
+      store.sessions.kill(lane.sessionId, 'test: relaunch as webui');
+      const launchId = launchSequence.mintLaunchId();
+      const snapshot = launchSequence.buildSnapshot({
+        launchId, project: lane.project, engineProfile: store.engines.get('claude'),
+        applicability: { applicable: false, reason: 'test binding' }, rendered: null, rules: []
+      });
+      const session = store.sessions.start({ projectId: lane.project.id, engineId: 'claude', launchSequence: snapshot,
+        launchBaseline: launchBaseline.capture(lane.dir), sessionMode: 'webui' });
+      const web = { project: lane.project, sessionId: session.id, headers: { 'x-tangleclaw-project-id': String(lane.project.id), 'x-tangleclaw-launch-id': launchId } };
+      await receipt(web);
+      const r = await finalize(web, web.headers);
+      assert.equal(r.status, 409, JSON.stringify(r.data));
+      assert.equal(r.data.code, 'FINALIZE_UNSUPPORTED');
+      assert.equal(store.sessions.get(session.id).status, 'active');
+    });
+
     it('a commit since launch on another local branch, with HEAD moved back, is owned work (W1)', async () => {
       const lane = launched('w1-branch');
       await receipt(lane);

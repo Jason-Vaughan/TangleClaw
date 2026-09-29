@@ -90,12 +90,14 @@ nothing is changed.
 | 4 | The named session belongs to the project | `404 SESSION_NOT_FOUND` |
 | 5 | The named session is the one the caller's authority covers: its own session for self, the assignment's bound session for a coordinator | `403 FINALIZE_UNAUTHORIZED` if that other session is live, `409 SESSION_CHANGED` if it has ended |
 | 6 | The named session is still active. If this path already ended it, the answer is the idempotent `200 {alreadyFinalized: true}`; a session the wrap ended, or one killed or crashed, is not reported as finalized | `409 SESSION_CHANGED` |
-| 7 | The lane is not held or stopped (the control gate) | `423` with the gate's code |
-| 8 | No wrap run is live | `409 WRAP_IN_PROGRESS` |
-| 9 | The lane composes `AVAILABLE` (see below) | `409 NOT_CLEAR`, with the verdict, the reasons and the receipt's stale reason |
-| 10 | The lane is drained (see below) | `409 EXCHANGES_OPEN`, naming the `unacknowledged`, `unanswered` and `awaitingReply` exchanges |
-| 11 | No work of the session's own (see below) | `409 OWNED_WORK_PRESENT` (new paths, `changedSinceLaunch`, `unpushed`, `unpushedOnBranches`, `stashes`), or `409 WORK_STATE_UNKNOWN` |
-| 12 | The final handoff can be staged | `503 FINALIZE_STAGE_FAILED`; the session stays active |
+| 7 | The session is not a webui (gateway) session, whose tunnel the shared teardown does not release | `409 FINALIZE_UNSUPPORTED` |
+| 8 | The lane is not held or stopped (the control gate) | `423` with the gate's code |
+| 9 | No wrap run is live | `409 WRAP_IN_PROGRESS` |
+| 10 | The lane composes `AVAILABLE` (see below) | `409 NOT_CLEAR`, with the verdict, the reasons and the receipt's stale reason |
+| 11 | The lane is drained (see below) | `409 EXCHANGES_OPEN`, naming the `unacknowledged`, `unanswered` and `awaitingReply` exchanges |
+| 12 | The pane is not in a linked worktree, and its directory can be read (see below) | `409 WORK_STATE_UNKNOWN` |
+| 13 | No work of the session's own (see below) | `409 OWNED_WORK_PRESENT` (new paths, `changedSinceLaunch`, `changedWorktrees`, `unpushed`, `unpushedOnBranches`, `stashes`), or `409 WORK_STATE_UNKNOWN` |
+| 14 | The final handoff can be staged and bound | `503 FINALIZE_STAGE_FAILED`; the session stays active |
 
 **Clear to retire.** This uses the same composition that `tc sessions` shows coordinators ([fleet workload](fleet-workload.md)):
 - a current `complete` + `safe-to-clear` receipt;
@@ -121,12 +123,11 @@ facts rather than from the inbox:
 - **Mail it sent that needs no reply** is not an obligation. It may still be in
   flight, and it is counted in the audit.
 
-**Where it works.** The session's pane directory is read first. If the pane is
-in a linked worktree of the repository (`git worktree add ...`), its work lives
-in a tree the launch baseline never recorded. If the pane's directory cannot be
-read, the session might be working anywhere. Either way it cannot be shown to
-have left nothing, so the request refuses `WORK_STATE_UNKNOWN`. Only a session
-working in the registered checkout is judged further.
+**Where it works.** A pane in a linked worktree, or a pane whose directory
+cannot be read, refuses `WORK_STATE_UNKNOWN`. But the pane is not relied on to
+find a session's work. An engine's own process usually stays in the launch
+directory even after its shell moves into a new `git worktree`. So the
+owned-work check below reads every linked worktree of the repository itself.
 
 **No work of its own.** The remote-tracking refs are refreshed first
 (`git fetch --all --prune`); if that fails, the request refuses, because a stale
@@ -141,6 +142,12 @@ with the session's launch baseline:
   change, a removal or a revert is a change. A launch baseline recorded before
   fingerprints existed cannot be verified and refuses;
 - no commit made since launch on HEAD exists that no remote-tracking ref has;
+- no linked worktree holds work that is not the operator's: the launch recorded
+  every linked worktree with a digest of its status and of each dirty path's
+  identity. A worktree created since launch that holds uncommitted or untracked
+  files, or a pre-existing one whose digest changed, is the session's work. A
+  clean new worktree is not; its commits are counted below. A launch baseline
+  without the worktree record refuses whenever any linked worktree exists;
 - no commit made since the session started exists on any other local branch
   without a remote-tracking ref, and nothing was stashed since then. Commits on
   a local branch from before the launch are not the session's. These two are
@@ -150,6 +157,13 @@ Paths TangleClaw provably owns are judged the way the wrap judges them
 (`wrap-steps/_tc-owned-paths`): machine state, and a maintenance change such as
 the engine config's generated block rewritten at launch. They are not the
 session's work.
+
+**Squash-merged work.** After a squash merge (with `--delete-branch`), the
+session's own commits exist on no remote ref, because the merge made a new
+commit instead. Finalize reads them as unpushed and refuses, and the session
+goes through the full wrap. That is the fail-closed choice the Architect ruled
+for (A3): a commit is judged by whether a remote has it, never by whether its
+content landed somewhere else.
 
 If the comparison cannot be made (no baseline, another repository at the path,
 `git` failing, a path that cannot be read), the request refuses. Files that were
