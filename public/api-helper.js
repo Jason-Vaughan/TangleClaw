@@ -82,8 +82,8 @@
    *
    * Applied inside `api()` rather than at each call site, because `api()` is
    * the one choke-point every dashboard fetch already goes through — including
-   * the genuinely bodyless writes (`medusa/toggle`,
-   * `wrap-sentinel/ack`) that do not go via `apiMutate`. A per-call-site header
+   * the genuinely bodyless writes (`medusa/toggle`) that do not go via
+   * `apiMutate`. A per-call-site header
    * would be a rule to remember on every future write, and the one that got
    * forgotten would fail only on a gated install.
    *

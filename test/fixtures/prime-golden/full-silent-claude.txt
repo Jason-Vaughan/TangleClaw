@@ -68,7 +68,7 @@ A feature→file map is maintained at `FEATURES.md` (project root): 1 curated en
 A structural "where things live" map is maintained at `PROJECT-MAP.md` (project root). Consult it FIRST when locating where code, features, or shared docs live — before grep or filesystem search.
 
 ## Wrapping this session
-When the user signals they want to wrap up (e.g. types "wrap", "let's wrap up", "end the session"), confirm first if it is ambiguous, then emit the marker `TANGLECLAW_WRAP` on a line by itself. TangleClaw watches for that bare token and opens the wrap drawer — it does NOT auto-commit or kill the session, so nothing is lost; the operator still reviews and confirms the wrap.
+When the user wants to wrap up, tell them to use the Wrap button in the session view: the full wrap reviews and commits the session's work. If the work is already complete, committed and pushed, and nothing is left to answer, the session can retire itself with `tc finalize --reason "<why>"` after `tc workload set complete --clearance safe-to-clear`. Nothing you print opens the wrap drawer.
 
 ### Medusa consumer contract (from `<BASE>/golden-contract.md`)
 The public protocol reference — read it to understand envelopes, delivery semantics, and how non-TC consumers participate. Remember: inside this TC-managed session you interact via the TangleClaw API above, not by opening your own registration.

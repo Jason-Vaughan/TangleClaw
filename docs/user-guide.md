@@ -845,6 +845,26 @@ A branch that a worktree still holds always reads `preserve`. To retire both, ch
 
 This is a check and a rule. It runs from a TangleClaw-launched pane, because `tc` needs `TANGLECLAW_API`. Nothing yet stops a raw `git branch -D`, `reset --hard` or `worktree remove --force` typed in a shell, and TangleClaw does not retire merged branches or worktrees for you (#1267).
 
+### Retiring a Finished Session Headlessly
+
+A session with nothing left to decide can retire itself with no wrap drawer (#2027):
+
+```
+tc workload set complete --clearance safe-to-clear --summary "<what was finished>"
+tc finalize --reason "<why>"
+```
+
+When a session finalizes itself, its pane closes during the request. The coordinator can confirm the outcome by repeating the request with `--project` and `--session`. If the pane survived, it can confirm the outcome itself with `tc finalize --session <id> --reason "<why>"`. A coordinator named in the target assignment's `authority.lifecycle` can do the same for the session that assignment is bound to, with `tc finalize --project <name> --session <id> --reason "<why>"`. The session is recorded `wrapped` and audited, and its Medusa workspace, startup channel and pane are torn down. Nothing in the checkout is committed, staged, reset or discarded, and a final handoff is published so the next launch starts cleanly.
+
+It refuses, with nothing changed and exit 3, whenever there is still something to decide. (Exit 3 with `FINALIZE_INCOMPLETE` is different: the session is finalized, and repeating the command finishes the publishing or teardown that was left.)
+- the receipt is not a current `complete` + `safe-to-clear`, or a delegated target's engine is not at rest;
+- something addressed to the session is still open, or it is waiting on a reply;
+- files changed since launch, or it made commits no remote has;
+- the lane is held or stopped;
+- a wrap is running.
+
+Use the full wrap for those. Files that were already uncommitted when the session launched are left exactly as they were. The whole contract is in [session-finalize.md](session-finalize.md).
+
 ### Update Blocked by Local Changes
 
 **Update now** never moves a checkout that has uncommitted changes someone may

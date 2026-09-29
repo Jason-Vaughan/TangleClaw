@@ -58,7 +58,7 @@ describe('launch-baseline.capture', () => {
     const b = launchBaseline.capture(dir);
     assert.equal(b.sha, git(dir, 'rev-parse', 'HEAD'));
     assert.equal(b.toplevel, dir);
-    assert.deepEqual(b.dirty, { paths: [], truncated: false });
+    assert.deepEqual(b.dirty, { paths: [], truncated: false, fingerprintVersion: launchBaseline.FINGERPRINT_VERSION, fingerprints: {} });
   });
 
   it('lists modified, deleted, and untracked files — each untracked file, not its directory', () => {
@@ -117,6 +117,70 @@ describe('launch-baseline.capture', () => {
     const b = launchBaseline.capture(dir, { exec });
     assert.equal(b.dirty.truncated, true);
     assert.equal(b.dirty.paths.length, launchBaseline.MAX_DIRTY_PATHS);
+    assert.equal(b.dirty.fingerprints, undefined, 'a partial set is never fingerprinted as if complete');
+  });
+});
+
+describe('launch-baseline identity fingerprints (#2027)', () => {
+  const dirs = [];
+  after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
+
+  it('fingerprints every dirty path at launch: file bytes and mode, deletion, symlink target', () => {
+    const dir = makeRepo(); dirs.push(dir);
+    fs.writeFileSync(path.join(dir, 'a.txt'), 'changed\n');
+    fs.rmSync(path.join(dir, 'dir', 'b.txt'));
+    fs.symlinkSync('a.txt', path.join(dir, 'link'));
+    const b = launchBaseline.capture(dir);
+    assert.match(b.dirty.fingerprints['a.txt'], /^file:644:[0-9a-f]{64}$/);
+    assert.equal(b.dirty.fingerprints['dir/b.txt'], 'absent');
+    assert.match(b.dirty.fingerprints.link, /^symlink:[0-9a-f]{64}$/);
+  });
+
+  it('the same bytes and mode give the same fingerprint whatever the file time; any identity change gives another', () => {
+    const dir = makeRepo(); dirs.push(dir);
+    const file = path.join(dir, 'a.txt');
+    fs.writeFileSync(file, 'one\n');
+    const first = launchBaseline.fingerprint(dir, 'a.txt');
+    fs.writeFileSync(file, 'one\n');
+    const future = new Date(Date.now() + 3600 * 1000);
+    fs.utimesSync(file, future, future);
+    assert.equal(launchBaseline.fingerprint(dir, 'a.txt'), first, 'an identical rewrite is the same identity');
+    fs.writeFileSync(file, 'two\n');
+    assert.notEqual(launchBaseline.fingerprint(dir, 'a.txt'), first, 'a content change is another');
+    fs.writeFileSync(file, 'one\n');
+    fs.chmodSync(file, 0o755);
+    assert.notEqual(launchBaseline.fingerprint(dir, 'a.txt'), first, 'an executable-bit change is another');
+    fs.symlinkSync('x', path.join(dir, 'l1'));
+    const link = launchBaseline.fingerprint(dir, 'l1');
+    fs.rmSync(path.join(dir, 'l1'));
+    fs.symlinkSync('y', path.join(dir, 'l1'));
+    assert.notEqual(launchBaseline.fingerprint(dir, 'l1'), link, 'a symlink target change is another');
+  });
+
+  it('what cannot be established is null, never a value that could compare equal', () => {
+    const dir = makeRepo(); dirs.push(dir);
+    fs.mkdirSync(path.join(dir, 'd'));
+    assert.equal(launchBaseline.fingerprint(dir, 'd'), null, 'a directory has no file identity');
+    fs.writeFileSync(path.join(dir, 'big.bin'), Buffer.alloc(32));
+    assert.equal(launchBaseline.fingerprint(dir, 'big.bin', 16), null, 'a file over the cap is not read');
+  });
+
+  it('the stored row keeps the fingerprints, and a row written before them reads without any', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fp-store-')); dirs.push(tmp);
+    store._setBasePath(tmp);
+    store.init();
+    try {
+      const project = store.projects.create({ name: 'fp-store', path: tmp, engine: 'claude' });
+      const withFp = store.sessions.start({ projectId: project.id, engineId: 'claude',
+        launchBaseline: { sha: 'a'.repeat(40), toplevel: tmp, dirty: { paths: ['x'], truncated: false, fingerprintVersion: 1, fingerprints: { x: 'absent' } } } });
+      assert.deepEqual(store.sessions.getLaunchBaseline(withFp.id).dirty.fingerprints, { x: 'absent' });
+      store.sessions.kill(withFp.id, 'test');
+      const legacy = store.sessions.start({ projectId: project.id, engineId: 'claude',
+        launchBaseline: { sha: 'b'.repeat(40), toplevel: tmp, dirty: { paths: ['x'], truncated: false } } });
+      assert.equal(store.sessions.getLaunchBaseline(legacy.id).dirty.fingerprints, undefined);
+    } finally {
+      store.close();
+    }
   });
 });
 

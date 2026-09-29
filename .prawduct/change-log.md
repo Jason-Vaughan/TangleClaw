@@ -135,6 +135,80 @@ Also fixed:
   - **Fix.** `GET /api/tc/rotation` now also returns `latest`, and `post` accepts a rotation that is already active and bound to this thread.
 
 **Tests.** Rotation tests cover prepare, the fence, the rebind and resume, including every rejection, crash-retry at the rebind and the re-entry send, concurrent passes and old-thread reappearance. They also cover the epoch gate per state and caller, the nonce, the role contract, integrity and GitHub drift, readiness, the relaunch claim and the next command. Separate tests cover the checkout fingerprint against real git repos, the GitHub reader, route binding, the verb and `bin/tc` header forwarding, the send-fence route, the wake gate and the live-check script's own verdicts. The v50 migration test compared against a literal `50`; it now reads `CURRENT_SCHEMA_VERSION`, as the store asks, so it still means "advances to HEAD". The four prime golden fixtures changed only by the new `rotation` verb in the generated verb list, regenerated with `UPDATE_PRIME_GOLDEN=1`. The other wake and watchdog tests now stub the new seam so none reads an ambient store.
+## 2026-09-28 — A finished session can retire itself headlessly: `tc finalize` (#2027)
+
+<!-- prawduct: type=feature | scope=v5.30-self-wrap -->
+
+Chunk 01 (the plan's only chunk). The PM dispatched this over Medusa as a v5.30 release blocker, under RM-LEASE TC-RM01 generation 2. Plan: `.prawduct/artifacts/build-plan-2027.md`, sent to the PM and the Architect at the plan checkpoint with four vetoable assumptions. The Architect's rulings on them (A1–A5), and a mandatory AC addition (removing the legacy pane-text wrap sentinel), arrived before the first commit, but I did not read them until after it: I read my inbox only when woken, not at the checkpoint. The first commit therefore did not satisfy A2, A5 or the sentinel removal. They, and ruling A7 on the Critic's W4, are built on top of it in the same chunk.
+
+**The change.** `POST /api/sessions/:project/finalize` with `{sessionId, reason}`, and `tc finalize`. `lib/session-finalize.js` decides and `sessions.finalizeSession` performs. The callers are the session itself (a verified launch, its own session only) or a principal in the target assignment's `authority.lifecycle`, for the bound session only. The order of refusals, each with nothing changed:
+- caller and authority → `403`;
+- session binding → `SESSION_CHANGED`, with an idempotent `200` when the session already ended `wrapped`;
+- the HOLD/STOP gate;
+- a live or requested wrap → `WRAP_IN_PROGRESS`;
+- the composed lane must be `AVAILABLE` → `NOT_CLEAR`;
+- drained → `EXCHANGES_OPEN`;
+- the `session-leftovers` probe against the launch baseline → `OWNED_WORK_PRESENT` / `WORK_STATE_UNKNOWN`.
+
+Then a synchronous re-check, `active → wrapped`, a `session.finalized` audit event, and the teardown now shared with `completeWrap` (`_releaseWrappedSession`, extracted rather than copied; each end path still calls `_teardownMedusa` itself, and `test/api-medusa.test.js`'s every-end-path probe now includes `finalizeSession`). There is no git write anywhere on the path. New store read: `medusaExchanges.listOpenForSenderSession`. `session-leftovers` exports its probe.
+
+**Decisions** (the plan's assumptions):
+- A self caller's current `complete` + `safe-to-clear` receipt stands in for the observer's at-rest, because its own pane is running the request. Every other composition rule still applies.
+- "Drained" means nothing open inbound and no sent exchange awaiting a reply. Sent messages that need no reply may stay in flight, and are counted.
+- Unpushed commits since launch are owned work.
+- The operator is not a caller.
+- The wrap-run registry is not claimed for the finalize. That would make the dashboard show a running wrap, which is a drawer path. The race is closed by re-checking synchronously with the write instead.
+
+**Tests.** `test/api-session-finalize.test.js` runs real `git` checkouts with launch baselines. It covers:
+- self success, with the dirty-at-launch file byte-identical, HEAD, status and index unchanged, no wrap sentinel, and the audit contents (no launch id);
+- idempotent repeat from the ended launch, and an ended launch refused on another session;
+- stale id (`SESSION_CHANGED`) and unknown id (`404`);
+- an unbound caller, the operator and malformed bodies;
+- a cross-project caller, and a hold-only principal;
+- delegated success and repeat, and a delegated busy engine;
+- no receipt, a working receipt and a do-not-clear receipt;
+- a held lane (`423`), a live wrap run, and a wrap begun mid-probe caught by the late re-check;
+- inbound open, a sent exchange awaiting a reply, and a no-reply send allowed;
+- a changed file, an unpushed commit, and no baseline.
+
+Before committing, eleven mutations were applied to `lib/session-finalize.js` one at a time. Each guard turned the file red, with one exception: the self-session match, which holds by the store's one-active-session invariant and is kept so that a broken invariant fails closed. That pass found two guards with no reaching test, and both now have one: an ended launch naming a later wrapped session, and an assignment bound to a session that has since relaunched. `test/api-medusa.test.js`'s every-end-path teardown probe now includes `finalizeSession`. `test/tc-finalize-verb.test.js` covers verb parsing, routing, refusal rendering (exit 3) and fault propagation. The prime golden fixtures and `CLAUDE.md`'s generated verb list gained `finalize`.
+
+**Amended by the Architect rulings (A1–A5, A7, A8, R-SENT), the Critic's W1–W3, and the second cumulative review's R-1–R-9, in the same chunk:**
+- **W1:** `tc finalize --session <id>` confirms a session that is no longer active.
+- **W2:** the idempotent answer is given only within the caller's authority and only for a session this path ended. That is recognised by its bound `finalize-` handoff attempt, never by summary text (R-5); `requireBound` rolls the end back if the attempt cannot bind.
+- **W3:** `control-state#hasLifecycleAuthority` is shared with assignment close, so an unreadable matrix answers 503 here too.
+- **History scrub** (PM dispatch, relaying an Architect ruling whose direct message never reached this session):
+  - The marker is replaced in the archived change-log.
+  - Scrubbing the released 3.27.0 CHANGELOG entry broke the release-lock guard, which requires locked sections to match their published Release pages. By Architect ruling (a) that edit was reverted and the guard kept.
+  - `test/wrap-drawer-triggers.test.js` sweeps every git-tracked file except released CHANGELOG sections, and a test pins that the exemption stops at `[Unreleased]`.
+  - Two dir-scanner timeouts in that run reproduced on the committed base in a clean worktree at host load ~27, so they are recorded as environmental.
+- **Second cumulative review (R-1–R-9):**
+  - A repeat after a relaunch no longer kills the new session's pane, which reuses the project's pane name (R-1).
+  - Only the lane's own verified-launch acknowledgement discharges incoming mail (R-2).
+  - Strict fingerprinting is asynchronous and byte-budgeted, and the budget has a test. The ownership judge is the wrap's own synchronous one, which is accepted and documented (R-4).
+  - Every outcome is logged (R-8).
+  - Docs and this entry were corrected (R-3, R-9).
+- **A1:** the lane is composed again inside the synchronous commit-point re-check.
+- **A2:** "drained" is read from exchange facts. Mail to the lane must be acknowledged by the lane (not by the dashboard's `operator-ui`), and answered where a reply is required. Mail the lane sent that requires a reply must have been answered. Its own no-reply sends are counted.
+- **A3/A8:** `session-leftovers.probe` gained a strict mode.
+  - It fetches first, and a failed fetch means unknown.
+  - It requires the launch baseline's identity fingerprints. A8 superseded my first, mtime-based cut: `launch-baseline` now fingerprints each launch-dirty path (kind, SHA-256 of the bytes or the symlink target, and the executable bit), with per-file and total byte caps. Strict mode compares the same fingerprint, reading asynchronously within the same budget. An identical rewrite is preserved; any identity change is a delta; a legacy or unfingerprinted baseline is unknown.
+  - It excludes TangleClaw-owned paths via `_tc-owned-paths#judge`, as the wrap does. Without that, the launch-time managed-block rewrite made every session read as owning work.
+- **A7:** `handoff-stage#stageAttempt` was extracted from the wrap step, and the wrap now calls it too (handoff and wrap suites green, unchanged).
+  - Finalize stages a minimal `final` document: principal, reason, receipt, branch/head, and `nextAction: null`.
+  - The attempt is bound eligible in the same `sessions.wrap` transaction and published afterwards.
+  - Pre-transition leftovers are abandoned first.
+- **A5:** `sessions#finishFinalization` publishes and tears down, reads each resource back from its live source, and records a `session.finalize-teardown` event.
+  - `FINALIZE_INCOMPLETE` is returned until both are done, and a repeat finishes the same attempt.
+  - A concurrent second request reports the one finalization.
+- **R-SENT:** removed the pane-text wrap marker, the prime instruction to print it, the `wrap-requested` flag, its status field, its acknowledge route and the dashboard auto-open.
+  - The pane read survives as `lib/engine-error-monitor.js`, because engine-error detection (#261) rides it.
+  - The workload composition no longer has a wrap-request staleness rule (ADR 0020 §4 amended in place).
+  - The tests that asserted the removed trigger and its staleness rule were removed with the feature they tested. Their surviving intents (engine-error scanning, prime-cap survival of the wrap directive, wrap-run supersession) were kept and retargeted.
+  - `test/wrap-drawer-triggers.test.js` pins the two explicit drawer openers and sweeps every shipped source for the marker. A planted marker and a planted auto-open both turned it red.
+  - Released CHANGELOG history and an archived change-log still quote the marker. It is inert now that nothing reads pane text for it, and rewriting released notes would alter history.
+
+**Docs.** New `docs/session-finalize.md`. Also updated: `docs/control-state.md` (authority table), `docs/user-guide.md`, FEATURES, CHANGELOG (Added) and the `docs/releases/v5.30-status.md` scorecard row.
 
 ## 2026-09-29 — Never certify a soak log whose lock ownership could not be verified (#2025 remediation, #2020 Chunk 2A)
 

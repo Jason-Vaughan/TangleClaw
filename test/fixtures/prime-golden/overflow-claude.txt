@@ -37,7 +37,7 @@ _(6 active learnings omitted here to fit the prime size budget — they remain a
 _(Omitted here to fit the prime size budget — it is recorded on the project's last session.)_
 
 ## Wrapping this session
-When the user signals they want to wrap up (e.g. types "wrap", "let's wrap up", "end the session"), confirm first if it is ambiguous, then emit the marker `TANGLECLAW_WRAP` on a line by itself. TangleClaw watches for that bare token and opens the wrap drawer — it does NOT auto-commit or kill the session, so nothing is lost; the operator still reviews and confirms the wrap.
+When the user wants to wrap up, tell them to use the Wrap button in the session view: the full wrap reviews and commits the session's work. If the work is already complete, committed and pushed, and nothing is left to answer, the session can retire itself with `tc finalize --reason "<why>"` after `tc workload set complete --clearance safe-to-clear`. Nothing you print opens the wrap drawer.
 
 
 _(This prime exceeds the 10000-character budget of the channel carrying it. Nothing was cut, but the consumer may truncate it — if this text ends mid-sentence, that is why. The complete text is on disk at <BASE>/projects/golden-overflow/.tangleclaw/session-prime.md.)_

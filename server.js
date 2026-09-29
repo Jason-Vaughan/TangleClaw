@@ -274,6 +274,7 @@ const workload = require('./lib/workload');
 const coordinatorRotation = require('./lib/coordinator-rotation');
 const { workloadSentence } = require('./lib/ecosystem-primer');
 const workloadFleet = require('./lib/workload-fleet');
+const sessionFinalize = require('./lib/session-finalize');
 // The one live fleet activity observer (#1912, ADR 0020 §5): started with the
 // other monitors, read by the fleet surfaces, never captured from on a request.
 const activityObserver = require('./lib/activity-observer').createObserver();
@@ -318,7 +319,7 @@ const adminCredential = require('./lib/admin-credential');
 const ttydWatcher = require('./lib/ttyd-watcher');
 const ttydAttach = require('./lib/ttyd-attach');
 const ttydBind = require('./lib/ttyd-bind');
-const wrapSentinel = require('./lib/wrap-sentinel');
+const engineErrorMonitor = require('./lib/engine-error-monitor');
 const { WRAP_STREAM_EVENTS } = require('./public/wrap-stream-events');
 const medusaWake = require('./lib/medusa-wake');
 const launchUnready = require('./lib/launch-unready');
@@ -7142,9 +7143,6 @@ route('GET', '/api/sessions/:project/status', (_req, res, params) => {
   if (!status) {
     return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
   }
-  // CC-7 Slice C — surface a pending typed-wrap request so the session view's
-  // status poll can open the wrap drawer (trigger parity with the Wrap button).
-  status.wrapRequested = wrapSentinel.isWrapRequested(params.project);
   jsonResponse(res, 200, status);
 });
 
@@ -8107,14 +8105,6 @@ route('POST', '/api/sessions/:project/startup-prompt/fire', async (req, res, par
   jsonResponse(res, result.status, result.body);
 });
 
-// POST /api/sessions/:project/wrap-sentinel/ack — Clear a pending typed-wrap
-// request once the session view has opened the wrap drawer, so the poll won't
-// reopen it (CC-7 Slice C). Idempotent: acking with nothing pending is a no-op.
-route('POST', '/api/sessions/:project/wrap-sentinel/ack', (_req, res, params) => {
-  const cleared = wrapSentinel.ackWrapRequest(params.project);
-  jsonResponse(res, 200, { ok: true, project: params.project, cleared });
-});
-
 // POST /api/sessions/:project/command — Inject command
 route('POST', '/api/sessions/:project/command', (_req, res, params, body) => {
   // #2032: typing into a coordinator's pane can hand it new work, so a
@@ -8662,6 +8652,27 @@ route('POST', '/api/sessions/:project/wrap/complete', (_req, res, params, body) 
     session: result.session
   });
 }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
+
+// POST /api/sessions/:project/finalize — Governed headless finalization (#2027).
+// A reconciled, clean, drained session is retired by itself or by the principal
+// its assignment names in `authority.lifecycle`, with no drawer, no wrap
+// pipeline and no git. Every precondition and the order they are checked in live
+// in `lib/session-finalize.js`; `tc finalize` is the client. Unlike
+// `/wrap/complete`, the caller must be a verified launch and must name the
+// session, and a repeat after success answers the same outcome again.
+route('POST', '/api/sessions/:project/finalize', async (req, res, params, body) => {
+  // The coordinator epoch fence (#2032): ending a lane is a wrap of that lane,
+  // and a coordinator exercising lifecycle authority over another lane is
+  // exercising control authority, so a rotating coordinator is fenced as both.
+  const finalizeProject = store.projects.getByName(params.project);
+  if (finalizeProject && coordinatorGateRefused(req, res, finalizeProject.id, 'wrap')) return;
+  const finalizeCaller = _callerProjectId(req);
+  if (finalizeCaller !== null && (!finalizeProject || finalizeCaller !== finalizeProject.id)
+      && coordinatorGateRefused(req, res, finalizeCaller, 'control-mutate')) return;
+  const result = await sessionFinalize.finalize({ req, projectName: params.project, body, observer: activityObserver });
+  if (!result.ok) return errorResponse(res, result.status, result.message, result.code, result.details);
+  return jsonResponse(res, result.status, result.body);
+});
 
 // GET /api/sessions/:project/peek — Peek at terminal output
 route('GET', '/api/sessions/:project/peek', (req, res, params) => {
@@ -10607,7 +10618,7 @@ async function handleRequest(req, res) {
     // header, and they keep working exactly as written.
     //
     // Keyed on a body being PRESENT, not on the method. The dashboard sends
-    // genuine bodyless writes (`medusa/toggle` and `wrap-sentinel/ack` go
+    // genuine bodyless writes (`medusa/toggle` goes
     // through `api()` with no body and no
     // Content-Type), and refusing those would break the operator's own UI to
     // close nothing — a request with no body carries no forged payload. The
@@ -12131,10 +12142,9 @@ if (require.main === module) {
     // that die out from under an open Web UI so they self-heal without a
     // manual re-launch.
     tunnelMonitor.start();
-    // Start the typed-wrap sentinel monitor (CC-7 Slice C) — watches live
-    // sessions for the `TANGLECLAW_WRAP` marker and raises a per-project flag
-    // that the session view's status poll turns into an opened wrap drawer.
-    wrapSentinel.start();
+    // Start the engine-error monitor (#261): reads each live tmux pane's tail
+    // for the engine's own API errors. It reads nothing as a wrap request (#2027).
+    engineErrorMonitor.start();
     // Start the Medusa wake-nudge monitor (MED-2K9P v2 T2) — idle-gated inbox
     // watcher that types a fixed nudge into an opted-in (`medusaWake`) session
     // when fresh inbound mail is waiting and the pane is at a bare prompt.
@@ -12210,7 +12220,7 @@ if (require.main === module) {
     sidecar.stopAllPolling();
     ttydWatcher.stop();
     tunnelMonitor.stop();
-    wrapSentinel.stop();
+    engineErrorMonitor.stop();
     medusaWake.stop();
     activityObserver.stop();
     medusaWatchdog.stop();

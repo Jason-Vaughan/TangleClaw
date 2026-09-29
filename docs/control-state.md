@@ -102,6 +102,7 @@ active. None of these is a principal:
 | RELEASE a hold | Operator (any named hold); the hold's own issuer; or a principal the matrix delegates (`releaseDelegations`). **Never the target.** The PM and the Architect cannot clear each other's holds by role |
 | STOP | Operator or anyone in `authority.stop` (never the target) |
 | Close | Operator or anyone in `authority.lifecycle` |
+| Finalize the bound session headlessly (`tc finalize`, #2027) | The target session itself, or anyone in `authority.lifecycle`, never the operator. Only once the lane composes `AVAILABLE`, has no unresolved Medusa obligation and holds no work of its own. See [session-finalize.md](session-finalize.md) |
 | Acknowledge | The target's currently bound launch, for the current generation only |
 
 **Operator proof tier.** An operator-only command needs one of these:

@@ -1100,11 +1100,16 @@ describe('Medusa teardown is wired into EVERY session-end path (MED-2K9P Chunk 0
     return src.slice(start, next === -1 ? undefined : next);
   }
 
-  for (const fn of ['killSession', '_completePipelineWrap', 'completeWrap']) {
+  for (const fn of ['killSession', '_completePipelineWrap', 'completeWrap', 'finishFinalization']) {
     it(`${fn} tears down Medusa`, () => {
       assert.match(fnBody(sessionsSrc, fn), /_teardownMedusa\(/, `${fn} must call _teardownMedusa`);
     });
   }
+
+  it('governed finalization reaches its teardown on every path that records the end', () => {
+    assert.match(fnBody(sessionsSrc, 'finalizeSession'), /finishFinalization\(/,
+      'finalizeSession must hand the finalized session to finishFinalization');
+  });
 
   // The three `markCrashed` sites end a session just as finally as a wrap or a
   // kill does, and they are anchored individually rather than by the function

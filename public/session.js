@@ -2144,19 +2144,6 @@ async function pollStatus() {
   // healthy path, which is what hides the banner again.
   renderEngineErrorBanner(data.lastEngineError);
 
-  // CC-7 Slice C — typed-wrap trigger parity. The server's wrap-sentinel monitor
-  // saw the AI emit `TANGLECLAW_WRAP` (the user typed "wrap"), so open the same
-  // wrap drawer the Wrap button opens. Ack the server flag first so a slow open
-  // or a dropped poll can't reopen it, and latch client-side so we open at most
-  // once per page load even if the ack races the next poll. No auto-kill — the
-  // drawer is the operator's review/confirm surface.
-  if (data.wrapRequested && !sessionState.wrapSentinelHandled
-      && !sessionState.wrapDrawerOpen && !sessionState.wrapping && !sessionState.ended) {
-    sessionState.wrapSentinelHandled = true;
-    api(`/api/sessions/${encodeURIComponent(projectName)}/wrap-sentinel/ack`, { method: 'POST' });
-    openWrapModal();
-  }
-
   // Handle wrapping state
   if (data.wrapping && !sessionState.wrapping) {
     showWrappingState();
@@ -2274,7 +2261,7 @@ function startPolling() {
       if (!_pageVisible) return; // skip while hidden, visibilitychange will restart
       // The chain re-arms BELOW this call, so anything `pollTick` throws stops
       // this session polling for the life of the page — session status,
-      // wrap-sentinel and ended detection, and the update beacon all stop with
+      // ended detection, and the update beacon all stop with
       // it, silently and with the page still looking alive. That makes this a
       // supervisor boundary rather than an error to swallow: report it and keep
       // the chain running.

@@ -19,7 +19,7 @@ const NOW = Date.parse('2026-09-26T21:00:00.000Z');
 const at = (msAgo) => new Date(NOW - msAgo).toISOString();
 const receipt = (state, clearance, msAgo = 60 * 1000, extra = {}) => ({ state, clearance, receivedAt: at(msAgo), summary: 's', ...extra });
 const eng = (activity) => ({ activity });
-const live = { sessionActive: true, launchLive: true, controlEvents: [], wrapStartedAtMs: null, wrapRequested: false, nowMs: NOW };
+const live = { sessionActive: true, launchLive: true, controlEvents: [], wrapStartedAtMs: null, nowMs: NOW };
 
 describe('receipt currency (ADR 0020 §4)', () => {
   it('a fresh receipt on the live launch of an active session is current', () => {
@@ -47,9 +47,8 @@ describe('receipt currency (ADR 0020 §4)', () => {
     assert.equal(EXPIRY_MS.complete, 120 * 60 * 1000, 'complete expires too: no assertion is trusted forever');
   });
 
-  it('a pending wrap request, or a wrap of this session started after the receipt, supersedes it', () => {
+  it('a wrap of this session started after the receipt supersedes it', () => {
     const r = receipt('complete', 'safe-to-clear', 60 * 1000);
-    assert.equal(receiptCurrency(r, { ...live, wrapRequested: true }).staleReason, 'wrap-requested');
     assert.equal(receiptCurrency(r, { ...live, wrapStartedAtMs: NOW - 30 * 1000 }).staleReason, 'wrap-started');
     assert.equal(receiptCurrency(r, { ...live, wrapStartedAtMs: NOW - 120 * 1000 }).current, true, 'an earlier wrap does not');
   });
@@ -201,7 +200,6 @@ describe('the #1912 acceptance cases', () => {
     for (const patch of [
       { controlEvents: [{ kind: 'hold', createdAt: later }] },
       { launchLive: false },
-      { wrapRequested: true },
       { wrapStartedAtMs: NOW - 1000 },
       { sessionActive: false }
     ]) {

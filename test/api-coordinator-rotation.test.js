@@ -239,8 +239,7 @@ describe('API — every gated route answers the epoch gate (#2032)', () => {
     'POST /api/sessions/:project': 'launching a session: during a relaunch rotation an unclaimed launch stays fenced by the gate itself; only the claim binds',
     'DELETE /api/sessions/:project': 'ending a session is how a relaunch rotation begins; it dispatches nothing',
     'POST /api/sessions/:project/launch/recovery-clear': 'the operator clears a launch-recovery requirement; no coordinator authority is exercised',
-    'POST /api/sessions/:project/wrap/cancel': 'stops a wrap before its commit step; it publishes and finalizes nothing',
-    'POST /api/sessions/:project/wrap-sentinel/ack': 'drawer bookkeeping for a typed wrap request; it dispatches nothing'
+    'POST /api/sessions/:project/wrap/cancel': 'stops a wrap before its commit step; it publishes and finalizes nothing'
   };
   const FAMILIES = [/^\/api\/sessions\/:project\/medusa\//, /^\/api\/control\/assignments/, /^\/api\/session-rules/,
     /^\/api\/sessions\/:project(\/|$)/, /^\/api\/tc\/workload$/];
@@ -269,6 +268,13 @@ describe('API — every gated route answers the epoch gate (#2032)', () => {
       assert.equal(data.code, 'COORDINATOR_FENCED');
     });
   }
+
+  it('a rotating coordinator cannot finalize another lane under lifecycle authority (#2027)', async () => {
+    const url = `/api/sessions/${encodeURIComponent(other.name)}/finalize`;
+    const { status, data } = await req(url, 'POST', { sessionId: 1, reason: 'retire' }, coordinatorHeaders());
+    assert.equal(status, 409, JSON.stringify(data));
+    assert.equal(data.code, 'COORDINATOR_FENCED');
+  });
 
   it('the caller-keyed routes judge the caller: another project\'s launch is not fenced by this rotation', async () => {
     const headers = { 'x-tangleclaw-cli': 'tc', 'x-tangleclaw-verb': 'test',
