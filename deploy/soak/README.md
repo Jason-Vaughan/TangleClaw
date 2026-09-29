@@ -323,8 +323,9 @@ actions.
     - DHCP, client port 68 to server port 67 only, so the guest keeps its address, and with it the
       management path, for a 72-hour run. Broadcast is allowed for DISCOVER, REQUEST and REBIND.
       Unicast RENEW goes only to the DHCP server (`$dhcp_server`), and replies come in only from it.
-      That server is `SOAK_DHCP_SERVER` or, when that is empty, the server identifier from the guest's
-      current lease. It is never assumed to be the SSH host.
+      That server is `SOAK_DHCP_SERVER`, which must be set to the host-controlled service the dry run
+      proved, and must match the single server identifier in the guest's current lease. A server read
+      from the lease alone is refused, and it is never assumed to be the SSH host.
   - There is no DNS, no IPv6 beyond loopback, no egress and no route to production.
 - **`host-provision.sh`** runs on the host.
   - By default it only prints the `tart clone`, `tart set` and `tart run` commands.
@@ -337,12 +338,24 @@ actions.
     directory that contains `$HOME` (such as `/Users`), a relative path, and a directory that does not
     exist.
 - **`guest-setup.sh`** runs inside the guest, as the admin, from a checkout of the pinned release
-  candidate that the workload user can read (such as under `/Users/Shared`), once that TangleClaw is
-  answering on loopback. Every mode first:
+  candidate that the workload user can read (such as under `/Users/Shared`).
+  - **The guest TangleClaw runs as the workload user, never as the admin.** Its sessions are the
+    workload, and a session with sudo could turn pf off.
+  - A fresh guest therefore goes in three steps:
+    1. `guest-setup.sh --bootstrap-user` creates or confirms the workload user and stops.
+    2. Start the pinned TangleClaw as that user on `127.0.0.1:SOAK_TC_PORT`. That is the runbook's step.
+    3. `guest-setup.sh` sets up the rest.
+  - Setup and the admin verifier refuse a TangleClaw listening as anyone else, checked with `lsof`
+    against the workload user's uid.
+
+  Every mode first:
   - refuses to run where `TANGLECLAW_API` is set (a live pane), outside macOS, or on a machine that is
     not a VM (`kern.hv_vmm_present`);
   - validates its inputs, so nothing ambiguous reaches pfctl, sudo or a URL: the interface name, the
     host's IPv4 address, the workload user name, the port, the project names and the probe timeout.
+    The egress probe addresses must be public literals, because a loopback, private, link-local, CGNAT
+    or documentation address would fail for reasons that have nothing to do with pf, and "prove"
+    nothing.
 
   Setup then, stopping at the first failure:
   1. **Creates or confirms the workload user** (`SOAK_WORKLOAD_USER`, default `soakrun`). It is a
@@ -360,7 +373,8 @@ actions.
 ### Attestation
 
 The guest is attested from two planes, because neither can see everything. Each verifier prints exactly
-one JSON line (schema `tc.soak-guest-attest/v1`) with `ok` true or false, the boot identity
+one JSON line, built by a real encoder (node's `JSON.stringify`) rather than by pasting strings together
+(schema `tc.soak-guest-attest/v1`) with `ok` true or false, the boot identity
 (`kern.bootsessionuuid` and the boot time), the time, and the artifact version: `scriptSha256` and
 `profileSha256`, the sha256 of `guest-setup.sh` and of the pf profile, reported separately. Any failure or ambiguity is `ok: false` with a `reason`, and
 exit 3.
@@ -375,8 +389,11 @@ exit 3.
   - the sha256 of the expected rules and of the active rules, and whether they match (a mismatch is
     also reported this way, with `ok: false`);
   - the guest interface and its IPv4 address, and the host's address;
-  - the DHCP server pf allows, whether it came from config or from the lease, and the lease's duration;
-  - that something is listening on port 22, the SSH management path.
+  - the DHCP server pf allows and the lease's own server, the lease, renewal and rebinding durations,
+    the lease's start time when `ipconfig getsummary` reports it (else null), and when it was observed.
+    A lease field that appears twice or does not parse is refused;
+  - that something is listening on port 22, the SSH management path;
+  - that the TangleClaw on `SOAK_TC_PORT` runs as the workload user (its port, user and uid).
 
   It never loads pf.
 - **`guest-setup.sh --verify-workload`** runs as the workload user and proves what that user can and
@@ -385,7 +402,8 @@ exit 3.
   - `sudo` and `pfctl` must both be refused to it. A hang doesn't count as a refusal.
   - Loopback must answer on `127.0.0.1` and `::1`, and so must the guest TangleClaw's `/api/health`.
   - Nothing outside may answer: TCP to a literal IPv4 and a literal IPv6 address, and a DNS query over
-    UDP sent straight to a resolver's address. None of it depends on DNS.
+    UDP sent straight to a resolver's address. None of it depends on DNS. The addresses probed are in
+    the JSON line (`probes`), so the evidence shows what was tested.
 - **Every probe is killed after `SOAK_PROBE_TIMEOUT` seconds** (default 10). A probe that hangs is a
   failure, never a pass, including an egress probe, where a hang proves nothing.
 

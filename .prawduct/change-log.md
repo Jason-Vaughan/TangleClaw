@@ -91,7 +91,17 @@ The existing soak tests are unchanged.
 - All inputs are validated before `pfctl -D`, and every probe has a watchdog.
 - Two JSON verifiers, `--verify-admin` and `--verify-workload`, carry the boot identity and separate `scriptSha256` and `profileSha256`. The admin verifier compares the loaded ruleset with pfctl's own parse and fingerprints it. The workload verifier proves sudo and pfctl are refused and that there is no egress, and never inspects pf.
 - They replace `--verify-network`. The runner's joining of the two is left to its own chunk.
-- During the PM's quiet window no tests of any kind were run. Suite evidence waits for a PM-issued window.
+- No tests ran during RM01's quiet window. In the PM's scoped slot, the two soak test files passed 87/87 on this commit's tree. Full-suite evidence waits for a PM-issued window.
+
+**The Critic at `8e139bf6`** found 0 blocking and 3 warnings. W1 (no suite evidence) closes with the full-suite window. The fourth commit fixes the other two:
+- W2: the guest TangleClaw must run as the workload user. `--bootstrap-user` makes that order workable on a fresh guest, and setup and the admin verifier refuse a TangleClaw listening as any other uid (`lsof`).
+- W3: the egress probe addresses must be public literals, and are recorded in the workload attestation.
+
+The same commit carries the Architect's further A44 acceptance conditions:
+- Each attestation line is built by a real JSON encoder (`JSON.stringify` via node), with a fixed fallback line if node is missing.
+- A duplicate or malformed `ipconfig` lease field is refused.
+- The admin evidence records the lease, renewal and rebinding durations, the lease start (null where `ipconfig getsummary` does not report it) and when it was observed.
+- The DHCP server must be configured and must match the lease's single server identifier. A lease-only identity stays refused until the dry run proves it is the host-controlled service.
 
 ## 2026-09-28 — Every rule is named "Rule #<id>" from its DB id (#2029)
 

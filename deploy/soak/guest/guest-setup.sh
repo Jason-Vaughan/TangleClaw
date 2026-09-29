@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 # Prepare and attest the inside of the soak guest (#2020).
 #
+#   guest-setup.sh --bootstrap-user   create (or confirm) the workload user only
 #   guest-setup.sh                    set the guest up (admin, with sudo)
 #   guest-setup.sh --verify-admin     attest the admin plane (admin, with sudo)
 #   guest-setup.sh --verify-workload  attest the workload plane (as the workload user)
+#
+# The guest TangleClaw must run as the workload user, never as the admin: its
+# sessions are the workload, and a session with sudo could switch pf off. So a
+# fresh guest goes: --bootstrap-user, then start the pinned TangleClaw as that
+# user on loopback (the runbook's step), then setup. Setup and the admin
+# verifier refuse a TangleClaw listening as anyone else.
 #
 # The guest is attested from two planes, because neither can see everything:
 #
@@ -28,6 +35,8 @@
 #   3. install the stub engine on PATH and its profile for the workload user;
 #   4. create the synthetic repos as the workload user (soak.js repos);
 #   5. attach each repo as a project through the guest TangleClaw's own API.
+# Before step 2 it checks that the TangleClaw on SOAK_TC_PORT runs as the
+# workload user.
 # Every step is safe to repeat. The TangleClaw checkout must be readable by the
 # workload user (for example under /Users/Shared).
 #
@@ -40,24 +49,54 @@ set -euo pipefail
 
 SCHEMA='tc.soak-guest-attest/v1'
 mode='setup'
+usage='usage: guest-setup.sh [--bootstrap-user | --verify-admin | --verify-workload]'
 case "${1:-}" in
   '') ;;
+  --bootstrap-user) mode='bootstrap' ;;
   --verify-admin) mode='admin' ;;
   --verify-workload) mode='workload' ;;
-  *) echo "usage: guest-setup.sh [--verify-admin | --verify-workload]" >&2; exit 2 ;;
+  *) echo "$usage" >&2; exit 2 ;;
 esac
-[ "$#" -le 1 ] || { echo "usage: guest-setup.sh [--verify-admin | --verify-workload]" >&2; exit 2; }
+[ "$#" -le 1 ] || { echo "$usage" >&2; exit 2; }
 
-# A JSON string, escaped for the characters these values can carry.
-jstr() { local s="${1//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/\\n}"; printf '"%s"' "$s"; }
+# Print one JSON line, built by a real encoder (node's JSON.stringify), from
+# `path=type:value` arguments. Types: s string, n number, b boolean, z null.
+# A dotted path nests; members appear in argument order.
+emit_json() {
+  node -e '
+    const out = {};
+    for (const arg of process.argv.slice(1)) {
+      const eq = arg.indexOf("=");
+      const key = arg.slice(0, eq);
+      const type = arg[eq + 1];
+      const raw = arg.slice(eq + 3);
+      let value;
+      if (type === "s") value = raw;
+      else if (type === "n") { value = Number(raw); if (raw === "" || !Number.isFinite(value)) throw new Error("not a number: " + key); }
+      else if (type === "b") value = raw === "true";
+      else if (type === "z") value = null;
+      else throw new Error("unknown type for " + key);
+      const parts = key.split(".");
+      let o = out;
+      for (const p of parts.slice(0, -1)) o = (o[p] = o[p] || {});
+      o[parts[parts.length - 1]] = value;
+    }
+    process.stdout.write(JSON.stringify(out) + "\n");
+  ' "$@"
+}
 
-# Extra JSON members a failure carries, set just before a refusal that has
-# evidence worth keeping (such as both ruleset digests).
-fail_extra=''
+# Extra members a failure carries, as emit_json arguments, set just before a
+# refusal that has evidence worth keeping (such as both ruleset digests).
+fail_extra=()
 refuse() {
   echo "refused: $*" >&2
-  if [ "$mode" != 'setup' ]; then
-    printf '{"schema":%s,"mode":%s,"ok":false,"reason":%s%s}\n' "$(jstr "$SCHEMA")" "$(jstr "$mode")" "$(jstr "$*")" "$fail_extra"
+  if [ "$mode" = 'admin' ] || [ "$mode" = 'workload' ]; then
+    if command -v node >/dev/null 2>&1; then
+      emit_json "schema=s:$SCHEMA" "mode=s:$mode" "ok=b:false" "reason=s:$*" ${fail_extra[@]+"${fail_extra[@]}"}
+    else
+      # No encoder: a fixed line, with nothing interpolated but the mode, which is one of two literals.
+      printf '{"schema":"%s","mode":"%s","ok":false,"reason":"node is missing, so no attestation can be encoded"}\n' "$SCHEMA" "$mode"
+    fi
   fi
   exit 3
 }
@@ -92,6 +131,31 @@ valid_ipv4 "$SOAK_HOST_ADDR" || refuse "SOAK_HOST_ADDR is not an IPv4 address: $
 [[ "$user" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]] && [ "$user" != 'root' ] || refuse "SOAK_WORKLOAD_USER is not a safe user name: $user"
 [[ "$SOAK_TC_PORT" =~ ^[0-9]{1,5}$ ]] || refuse "SOAK_TC_PORT is not a port: $SOAK_TC_PORT"
 [[ "$SOAK_PROJECTS" =~ ^soak-[a-z0-9-]+(,soak-[a-z0-9-]+)*$ ]] || refuse "SOAK_PROJECTS must be comma-separated soak-* names: $SOAK_PROJECTS"
+# An egress probe proves denial only if the address would answer were egress
+# open. A loopback, private, link-local or otherwise unroutable address fails
+# for reasons that have nothing to do with pf, so it is refused.
+public_ipv4() {
+  valid_ipv4 "$1" || return 1
+  local a b
+  IFS=. read -r a b _ _ <<< "$1"
+  a=$((10#$a)); b=$((10#$b))
+  [ "$a" -eq 0 ] || [ "$a" -eq 10 ] || [ "$a" -eq 127 ] || [ "$a" -ge 224 ] && return 1
+  [ "$a" -eq 169 ] && [ "$b" -eq 254 ] && return 1
+  [ "$a" -eq 172 ] && [ "$b" -ge 16 ] && [ "$b" -le 31 ] && return 1
+  [ "$a" -eq 192 ] && [ "$b" -eq 168 ] && return 1
+  [ "$a" -eq 100 ] && [ "$b" -ge 64 ] && [ "$b" -le 127 ] && return 1
+  return 0
+}
+public_ipv6() {
+  local v
+  v="$(tr '[:upper:]' '[:lower:]' <<< "$1")"
+  [[ "$v" =~ ^[0-9a-f:]+$ ]] && [[ "$v" == *:*:* ]] || return 1
+  case "$v" in ::|::1|::ffff:*|fe[89ab]*|fc*|fd*|ff*|2001:db8:*) return 1 ;; esac
+  return 0
+}
+public_ipv4 "$SOAK_EGRESS_PROBE_ADDR" || refuse "SOAK_EGRESS_PROBE_ADDR must be a public IPv4 literal: $SOAK_EGRESS_PROBE_ADDR"
+public_ipv4 "$SOAK_DNS_PROBE_ADDR" || refuse "SOAK_DNS_PROBE_ADDR must be a public IPv4 literal: $SOAK_DNS_PROBE_ADDR"
+public_ipv6 "$SOAK_EGRESS_PROBE_ADDR6" || refuse "SOAK_EGRESS_PROBE_ADDR6 must be a public IPv6 literal: $SOAK_EGRESS_PROBE_ADDR6"
 
 # Run a command, killing it after $t seconds. A probe that hangs returns 124,
 # which every caller treats as a failure, never as an answer.
@@ -125,27 +189,80 @@ boot_time="$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/^{ sec = \([0-9][0-
 sha_of() { shasum -a 256 "$1" | cut -d' ' -f1; }
 script_sha="$(sha_of "$here/guest-setup.sh")"
 profile_sha="$(sha_of "$here/pf/soak-deny.conf")"
-artifact_json="{\"scriptSha256\":$(jstr "$script_sha"),\"profileSha256\":$(jstr "$profile_sha")}"
 now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# What every successful line carries after its schema, mode and verdict.
+common_json=("time=s:$now" "boot.session=s:$boot_session" "boot.time=n:$boot_time" "artifact.scriptSha256=s:$script_sha" "artifact.profileSha256=s:$profile_sha")
+if [ "$mode" = 'admin' ] || [ "$mode" = 'workload' ]; then
+  command -v node >/dev/null 2>&1 || refuse "node is missing, so no attestation can be encoded"
+fi
 
-# The DHCP server pf allows: configured, or the server identifier of the
-# guest's current lease. Only the admin plane needs it.
+# The DHCP server pf allows. It must be configured (SOAK_DHCP_SERVER) and must
+# match the one server identifier in the guest's current lease: a server taken
+# from the lease alone stays refused until the dry run has shown it is the
+# host-controlled service. Only the admin plane needs it. A lease field that
+# appears twice or does not parse is refused, never guessed at.
 lease=''
-dhcp_server="$SOAK_DHCP_SERVER"
-if [ "$mode" != 'workload' ]; then
+dhcp_server=''
+lease_fields=()
+# Refuse a field that appears more than once. Called directly, never inside
+# $(...), so a refusal's line reaches stdout.
+lease_unique() {
+  local n
+  n="$(grep -c "^$1 " <<< "$lease" || true)"
+  [ "$n" -le 1 ] || refuse "the DHCP lease has $1 $n times"
+}
+lease_value() { sed -n "s/^$1 ([a-z0-9]*): *//p" <<< "$lease"; }
+lease_seconds_field() {
+  local name="$1" key="$2" v
+  lease_unique "$name"
+  v="$(lease_value "$name")"
+  if [ -z "$v" ]; then lease_fields+=("dhcp.$key=z:"); return; fi
+  [[ "$v" =~ ^0x[0-9a-fA-F]{1,8}$ ]] || refuse "the DHCP lease's $name is malformed: $v"
+  lease_fields+=("dhcp.$key=n:$((16#${v#0x}))")
+}
+if [ "$mode" = 'admin' ] || [ "$mode" = 'setup' ]; then
   lease="$(bounded ipconfig getpacket "$SOAK_GUEST_IF" 2>/dev/null || true)"
-  if [ -z "$dhcp_server" ]; then
-    dhcp_server="$(sed -n 's/^server_identifier (ip): *\([0-9.]*\)$/\1/p' <<< "$lease" | head -n 1)"
-  fi
-  valid_ipv4 "$dhcp_server" || refuse "no valid DHCP server: set SOAK_DHCP_SERVER, or give $SOAK_GUEST_IF a DHCP lease first (got '$dhcp_server')"
+  [ -n "$lease" ] || refuse "$SOAK_GUEST_IF has no DHCP lease to attest (ipconfig getpacket)"
+  lease_unique server_identifier
+  lease_server="$(lease_value server_identifier)"
+  valid_ipv4 "$lease_server" || refuse "the DHCP lease's server_identifier is missing or malformed: '$lease_server'"
+  [ -n "$SOAK_DHCP_SERVER" ] || refuse "set SOAK_DHCP_SERVER to the host-controlled DHCP server proven in the dry run (this lease names $lease_server); a lease alone is not trusted"
+  valid_ipv4 "$SOAK_DHCP_SERVER" || refuse "SOAK_DHCP_SERVER is not an IPv4 address: $SOAK_DHCP_SERVER"
+  [ "$SOAK_DHCP_SERVER" = "$lease_server" ] || refuse "the lease's DHCP server is $lease_server, not the configured $SOAK_DHCP_SERVER"
+  dhcp_server="$SOAK_DHCP_SERVER"
+  lease_fields+=("dhcp.server=s:$dhcp_server" "dhcp.leaseServer=s:$lease_server")
+  [ "$(grep -c '^lease_time ' <<< "$lease" || true)" -eq 1 ] || refuse "the DHCP lease has no single lease_time"
+  lease_seconds_field lease_time leaseSeconds
+  lease_seconds_field renewal_t1_time_value renewSeconds
+  lease_seconds_field rebinding_t2_time_value rebindSeconds
+  # When the lease began, if the system says: its expiry and renewal follow
+  # from it and the durations above. Null when ipconfig does not report it.
+  lease_start="$(bounded ipconfig getsummary "$SOAK_GUEST_IF" 2>/dev/null | sed -n 's/^[[:space:]]*LeaseStartTime[[:space:]]*:[[:space:]]*//p' || true)"
+  [ "$(grep -c . <<< "$lease_start" || true)" -le 1 ] || refuse "ipconfig reports LeaseStartTime more than once"
+  if [ -n "$lease_start" ]; then lease_fields+=("dhcp.leaseStart=s:$lease_start"); else lease_fields+=("dhcp.leaseStart=z:"); fi
+  lease_fields+=("dhcp.observedAt=s:$now")
 fi
 
 pf_macros=(-D "host_addr=$SOAK_HOST_ADDR" -D "dhcp_server=$dhcp_server" -D "guest_if=$SOAK_GUEST_IF")
 
+# The uid the TangleClaw listening on SOAK_TC_PORT runs as, which must be the
+# workload user's. Seeing another user's process needs sudo, so this is the
+# admin plane's check. Sets tc_uid.
+tc_uid=''
+check_tc_owner() {
+  local want uids
+  want="$(id -u "$user" 2>/dev/null)" || refuse "no workload user $user; run guest-setup.sh --bootstrap-user first"
+  # lsof exits non-zero when nothing listens; that is the empty answer below.
+  uids="$( { bounded sudo -n lsof -nP -iTCP:"$SOAK_TC_PORT" -sTCP:LISTEN -Fu 2>/dev/null || true; } | sed -n 's/^u//p' | sort -u)"
+  [ -n "$uids" ] || refuse "nothing is listening on port $SOAK_TC_PORT: start the pinned TangleClaw as $user first"
+  [ "$uids" = "$want" ] || refuse "the TangleClaw on port $SOAK_TC_PORT runs as uid $(tr '\n' ' ' <<< "$uids")not $user ($want): its sessions would not be the confined workload"
+  tc_uid="$want"
+}
+
 # --- The admin plane ---
 verify_admin() {
   bounded sudo -n true >/dev/null 2>&1 || refuse "the admin verifier needs non-interactive sudo"
-  local info rules expected addr lease_hex lease_seconds
+  local info rules expected addr
   info="$(bounded sudo -n pfctl -s info 2>/dev/null)" || refuse "cannot read pf status"
   grep -q '^Status: Enabled' <<< "$info" || refuse "pf is not enabled"
   # pfctl's own parse of the profile, so the comparison assumes no output format.
@@ -158,7 +275,7 @@ verify_admin() {
   expected_sha="$(printf '%s\n' "$expected" | shasum -a 256 | cut -d' ' -f1)"
   active_sha="$(printf '%s\n' "$rules" | shasum -a 256 | cut -d' ' -f1)"
   if [ "$rules" != "$expected" ]; then
-    fail_extra=",\"pf\":{\"expectedRulesSha256\":$(jstr "$expected_sha"),\"activeRulesSha256\":$(jstr "$active_sha"),\"rulesMatch\":false}"
+    fail_extra=("pf.expectedRulesSha256=s:$expected_sha" "pf.activeRulesSha256=s:$active_sha" "pf.rulesMatch=b:false")
     refuse "pf's loaded rules are not exactly the soak profile:
 $rules"
   fi
@@ -167,13 +284,12 @@ $rules"
   addr="$(bounded ipconfig getifaddr "$SOAK_GUEST_IF" 2>/dev/null || true)"
   valid_ipv4 "$addr" || refuse "$SOAK_GUEST_IF has no IPv4 address"
   bounded netstat -an -p tcp 2>/dev/null | grep -Eq '[.:]22[[:space:]].*LISTEN' || refuse "nothing is listening on port 22: the SSH management path is down"
-  # The lease pf is keeping alive: its duration, when the guest has one.
-  lease_hex="$(sed -n 's/^lease_time (uint32): *0x\([0-9a-fA-F]*\)$/\1/p' <<< "$lease" | head -n 1)"
-  lease_seconds='null'
-  [ -z "$lease_hex" ] || lease_seconds="$((16#$lease_hex))"
-  printf '{"schema":%s,"mode":"admin","ok":true,"time":%s,"boot":{"session":%s,"time":%s},"artifact":%s,"pf":{"enabled":true,"expectedRulesSha256":%s,"activeRulesSha256":%s,"rulesMatch":true,"rules":%s},"interface":{"name":%s,"address":%s},"host":%s,"dhcp":{"server":%s,"source":%s,"leaseSeconds":%s},"management":{"ssh":"listening"}}\n' \
-    "$(jstr "$SCHEMA")" "$(jstr "$now")" "$(jstr "$boot_session")" "$boot_time" "$artifact_json" "$(jstr "$expected_sha")" "$(jstr "$active_sha")" "$(grep -c . <<< "$rules")" \
-    "$(jstr "$SOAK_GUEST_IF")" "$(jstr "$addr")" "$(jstr "$SOAK_HOST_ADDR")" "$(jstr "$dhcp_server")" "$(jstr "$([ -n "$SOAK_DHCP_SERVER" ] && echo config || echo lease)")" "$lease_seconds"
+  check_tc_owner
+  emit_json "schema=s:$SCHEMA" "mode=s:admin" "ok=b:true" "${common_json[@]}" \
+    "pf.enabled=b:true" "pf.expectedRulesSha256=s:$expected_sha" "pf.activeRulesSha256=s:$active_sha" "pf.rulesMatch=b:true" "pf.rules=n:$(grep -c . <<< "$rules")" \
+    "interface.name=s:$SOAK_GUEST_IF" "interface.address=s:$addr" "host=s:$SOAK_HOST_ADDR" \
+    "${lease_fields[@]}" \
+    "management.ssh=s:listening" "tangleclaw.port=n:$SOAK_TC_PORT" "tangleclaw.user=s:$user" "tangleclaw.uid=n:$tc_uid"
 }
 
 # --- The workload plane ---
@@ -210,8 +326,12 @@ verify_workload() {
   must_be_denied "TCP to [$SOAK_EGRESS_PROBE_ADDR6]:443 (IPv6)" nc -6 -z -G 3 "$SOAK_EGRESS_PROBE_ADDR6" 443
   must_be_denied "a DNS query to $SOAK_DNS_PROBE_ADDR over UDP" dig "@$SOAK_DNS_PROBE_ADDR" +time=2 +tries=1 +short tangleclaw.invalid
 
-  printf '{"schema":%s,"mode":"workload","ok":true,"time":%s,"boot":{"session":%s,"time":%s},"artifact":%s,"identity":{"user":%s,"uid":%s,"groups":%s},"refused":["sudo","pfctl"],"loopback":{"ipv4":true,"ipv6":true,"api":true},"egress":{"tcp4":"denied","tcp6":"denied","udpDns":"denied"}}\n' \
-    "$(jstr "$SCHEMA")" "$(jstr "$now")" "$(jstr "$boot_session")" "$boot_time" "$artifact_json" "$(jstr "$me")" "$uid" "$(jstr "$groups")"
+  emit_json "schema=s:$SCHEMA" "mode=s:workload" "ok=b:true" "${common_json[@]}" \
+    "identity.user=s:$me" "identity.uid=n:$uid" "identity.groups=s:$groups" \
+    "refused.sudo=b:true" "refused.pfctl=b:true" \
+    "loopback.ipv4=b:true" "loopback.ipv6=b:true" "loopback.api=b:true" \
+    "egress.tcp4=s:denied" "egress.tcp6=s:denied" "egress.udpDns=s:denied" \
+    "probes.tcp4=s:$SOAK_EGRESS_PROBE_ADDR" "probes.tcp6=s:$SOAK_EGRESS_PROBE_ADDR6" "probes.udpDns=s:$SOAK_DNS_PROBE_ADDR"
 }
 
 if [ "$mode" = 'admin' ]; then verify_admin; exit 0; fi
@@ -241,8 +361,15 @@ for g in admin wheel; do
   fi
 done
 sudo -n -l -U "$user" 2>/dev/null | grep -q 'not allowed to run sudo' || refuse "$user has sudo rights; the workload must have none"
+if [ "$mode" = 'bootstrap' ]; then
+  echo "workload user $user is ready. Next: start the pinned TangleClaw as $user on 127.0.0.1:$SOAK_TC_PORT, then run guest-setup.sh"
+  exit 0
+fi
 as_user test -r "$here/guest-setup.sh" && as_user test -r "$repo/scripts/soak.js" \
   || refuse "the checkout at $repo is not readable by $user; put it where the workload can read it, such as /Users/Shared"
+
+check_tc_owner
+echo "TangleClaw on port $SOAK_TC_PORT runs as $user"
 
 echo "== 2/5 default-deny network"
 sudo -n pfctl "${pf_macros[@]}" -f "$here/pf/soak-deny.conf" -E

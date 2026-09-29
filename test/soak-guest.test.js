@@ -217,23 +217,28 @@ function guestFakes(dir, over = {}) {
       'case "$*" in',
       '  -un) echo "$u";;',
       '  -u) if [ "$u" = admin ]; then echo 501; else echo 502; fi;;',
+      '  "-u soakrun") echo 502;;',
       '  -Gn) if [ "$u" = admin ]; then echo "staff admin"; else echo "staff everyone localaccounts"; fi;;',
       '  *) [ -n "$FAKE_USER_EXISTS" ] && exit 0; exit 1;;',
       'esac'
     ].join('\n'),
     dseditgroup: 'exit 1',
+    // The guest TangleClaw listening on 3102 runs as soakrun (uid 502).
+    lsof: 'printf "p4242\\nu502\\n"',
     sysadminctl: 'exit 0',
     openssl: 'echo 0123456789abcdef',
     install: 'exit 0',
     mkdir: 'exit 0',
-    node: 'exit 0',
+    // The attestation encoder runs on the real node; `soak.js repos` is only logged.
+    node: `[ "$1" = "-e" ] && exec "${process.execPath}" "$@"\nexit 0`,
     ifconfig: 'exit 0',
     // The lease names a DHCP server that is not the SSH host, so nothing can
     // pass by assuming the two are the same.
     ipconfig: [
       'case "$*" in',
       '  "getifaddr en0") echo 192.168.64.5;;',
-      '  "getpacket en0") printf "op = BOOTREPLY\\nyiaddr = 192.168.64.5\\nserver_identifier (ip): 192.168.64.2\\nlease_time (uint32): 0x15180\\n";;',
+      '  "getpacket en0") printf "op = BOOTREPLY\\nyiaddr = 192.168.64.5\\nserver_identifier (ip): 192.168.64.2\\nlease_time (uint32): 0x15180\\nrenewal_t1_time_value (uint32): 0xa8c0\\nrebinding_t2_time_value (uint32): 0x12750\\n";;',
+      '  "getsummary en0") printf "<dictionary> {\\n  LeaseStartTime : 2026-09-29 00:00:00 +0000\\n}\\n";;',
       '  *) exit 1;;',
       'esac'
     ].join('\n'),
@@ -251,6 +256,7 @@ function guestFakes(dir, over = {}) {
     ...over
   };
   for (const [name, body] of Object.entries(bodies)) {
+    if (body === null) continue; // leave the command missing
     fs.writeFileSync(path.join(bin, name), `#!/bin/sh\necho "[\${FAKE_USER:-admin}] ${name} $*" >> "${log}"\n${body}\n`, { mode: 0o755 });
   }
   return { bin, calls: () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n') : []) };
@@ -265,7 +271,7 @@ function guestFakes(dir, over = {}) {
  * @returns {{status: number, stdout: string, stderr: string, json: object[]}} Result, with stdout's JSON lines parsed
  */
 function setup(args, f, home, env = {}) {
-  const r = runScript(GUEST_SETUP, args, f.bin, { HOME: home, SOAK_PROBE_TIMEOUT: '2', ...env });
+  const r = runScript(GUEST_SETUP, args, f.bin, { HOME: home, SOAK_PROBE_TIMEOUT: '2', SOAK_DHCP_SERVER: '192.168.64.2', ...env });
   const json = r.stdout.split('\n').filter((l) => l.startsWith('{')).map((l) => JSON.parse(l));
   return { ...r, json };
 }
@@ -296,6 +302,7 @@ describe('soak guest: guest-setup.sh setup', () => {
     const idx = (re) => calls.findIndex((c) => re.test(c));
     const order = [
       /^\[admin\] sysadminctl -addUser soakrun .*-password 0123456789abcdef$/,
+      /^\[admin\] lsof -nP -iTCP:3102 -sTCP:LISTEN -Fu$/,
       /^\[admin\] pfctl -D host_addr=192\.168\.64\.1 -D dhcp_server=192\.168\.64\.2 -D guest_if=en0 -f .*soak-deny\.conf -E$/,
       /^\[admin\] pfctl -s rules$/,
       /^\[soakrun\] ping6 -c 1 ::1$/,
@@ -345,7 +352,16 @@ describe('soak guest: guest-setup.sh setup', () => {
     'a host address with trailing text': { SOAK_HOST_ADDR: '192.168.64.1 -f x' },
     'root as the workload user': { SOAK_WORKLOAD_USER: 'root' },
     'a non-synthetic project': { SOAK_PROJECTS: 'soak-a,prod' },
-    'a zero probe timeout': { SOAK_PROBE_TIMEOUT: '0' }
+    'a zero probe timeout': { SOAK_PROBE_TIMEOUT: '0' },
+    'a loopback IPv4 egress probe': { SOAK_EGRESS_PROBE_ADDR: '127.0.0.2' },
+    'a private IPv4 egress probe': { SOAK_EGRESS_PROBE_ADDR: '10.1.2.3' },
+    'a CGNAT IPv4 egress probe': { SOAK_EGRESS_PROBE_ADDR: '100.64.0.1' },
+    'a link-local DNS probe': { SOAK_DNS_PROBE_ADDR: '169.254.1.1' },
+    'a private DNS probe': { SOAK_DNS_PROBE_ADDR: '192.168.64.1' },
+    'a loopback IPv6 probe': { SOAK_EGRESS_PROBE_ADDR6: '::1' },
+    'a link-local IPv6 probe': { SOAK_EGRESS_PROBE_ADDR6: 'fe80::1' },
+    'a unique-local IPv6 probe': { SOAK_EGRESS_PROBE_ADDR6: 'FD00::1' },
+    'a documentation IPv6 probe': { SOAK_EGRESS_PROBE_ADDR6: '2001:db8::1' }
   };
   for (const [label, env] of Object.entries(badInputs)) {
     it(`refuses ${label} before any sudo, user or pf action`, () => {
@@ -355,6 +371,29 @@ describe('soak guest: guest-setup.sh setup', () => {
       assert.ok(!f.calls().some((c) => /\] (sudo|pfctl|sysadminctl)/.test(c)), f.calls().join('\n'));
     });
   }
+
+  it('--bootstrap-user creates the workload user and stops, before pf, the owner check or any workload', () => {
+    const f = guestFakes(tmp);
+    const r = setup(['--bootstrap-user'], f, tmp);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /start the pinned TangleClaw as soakrun/);
+    const calls = f.calls();
+    assert.ok(calls.some((c) => c.includes('sysadminctl -addUser soakrun')));
+    assert.ok(!calls.some((c) => /\] (pfctl|lsof|install|node|curl|ipconfig) /.test(c)), calls.join('\n'));
+  });
+
+  it('refuses setup before loading pf when the guest TangleClaw runs as the admin', () => {
+    const f = guestFakes(tmp, { lsof: 'printf "p4242\\nu501\\n"' });
+    const r = setup([], f, tmp);
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /not soakrun/);
+    assert.ok(!f.calls().some((c) => /pfctl -D/.test(c)));
+  });
+
+  it('refuses setup when TangleClaw listens as both the workload user and another', () => {
+    const f = guestFakes(tmp, { lsof: 'printf "p1\\nu502\\np2\\nu501\\n"' });
+    assert.equal(setup([], f, tmp).status, 3);
+  });
 
   it('skips a project the guest already has, and refuses when the auth gate is up', () => {
     let f = guestFakes(tmp, { curl: 'case "$*" in *http_code*) printf 200;; esac' });
@@ -398,22 +437,29 @@ describe('soak guest: admin verifier', () => {
     assert.deepEqual(j.pf, { enabled: true, expectedRulesSha256: sha256(PF_RULES), activeRulesSha256: sha256(PF_RULES), rulesMatch: true, rules: 5 });
     assert.deepEqual(j.interface, { name: 'en0', address: '192.168.64.5' });
     assert.equal(j.host, '192.168.64.1');
-    assert.deepEqual(j.dhcp, { server: '192.168.64.2', source: 'lease', leaseSeconds: 86400 });
+    const { observedAt, ...dhcp } = j.dhcp;
+    assert.deepEqual(dhcp, { server: '192.168.64.2', leaseServer: '192.168.64.2', leaseSeconds: 86400, renewSeconds: 43200, rebindSeconds: 75600, leaseStart: '2026-09-29 00:00:00 +0000' });
+    assert.match(observedAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
     assert.deepEqual(j.management, { ssh: 'listening' });
+    assert.deepEqual(j.tangleclaw, { port: 3102, user: 'soakrun', uid: 502 });
     assert.deepEqual(j.boot, { session: '11111111-2222-3333-4444-555555555555', time: 1790000000 });
     assert.deepEqual(j.artifact, { scriptSha256: sha256(fs.readFileSync(GUEST_SETUP)), profileSha256: sha256(fs.readFileSync(path.join(GUEST, 'pf', 'soak-deny.conf'))) });
     assert.ok(!f.calls().some((c) => / -E$/.test(c)), 'a verifier must never load pf');
     assert.ok(f.calls().some((c) => c.includes('pfctl -n -v -D host_addr=192.168.64.1 -D dhcp_server=192.168.64.2 -D guest_if=en0 -f ')));
   });
 
-  it('uses a configured DHCP server over the lease, and says so', () => {
-    const rules = path.join(tmp, 'rules.txt');
-    const f = guestFakes(tmp);
-    fs.writeFileSync(rules, PF_RULES.replaceAll('192.168.64.2', '192.168.64.9'));
-    const r = setup(['--verify-admin'], f, tmp, { SOAK_DHCP_SERVER: '192.168.64.9' });
-    assert.equal(r.status, 0, r.stderr);
-    assert.equal(r.json[0].dhcp.server, '192.168.64.9');
-    assert.equal(r.json[0].dhcp.source, 'config');
+  it('encodes the line with a real JSON encoder, so a reason carrying quotes and newlines still parses', () => {
+    const f = guestFakes(tmp, { pfctl: `case "$*" in "-s info") echo "Status: Enabled";; "-s rules") printf 'pass out all "quoted"\\n'; cat "$RULES";; *"-n -v"*) cat "$RULES";; esac` });
+    const r = setup(['--verify-admin'], f, tmp, { RULES: path.join(tmp, 'rules.txt') });
+    assert.equal(r.status, 3);
+    assert.match(r.json[0].reason, /pass out all "quoted"\nblock drop all/);
+  });
+
+  it('with no encoder available, still prints a fixed, valid failure line', () => {
+    const f = guestFakes(tmp, { node: null });
+    const r = setup(['--verify-admin'], f, tmp);
+    assert.equal(r.status, 3);
+    assert.deepEqual(r.json, [{ schema: 'tc.soak-guest-attest/v1', mode: 'admin', ok: false, reason: 'node is missing, so no attestation can be encoded' }]);
   });
 
   it('reports both ruleset digests and rulesMatch false when the loaded rules differ', () => {
@@ -433,10 +479,17 @@ describe('soak guest: admin verifier', () => {
     'an extra rule is loaded': [{ pfctl: `case "$*" in "-s info") echo "Status: Enabled";; "-s rules") printf "pass out all\\n"; cat "${'${RULES}'}";; *"-n -v"*) cat "${'${RULES}'}";; "-s Interfaces -v") echo "lo0 (skip)";; esac` }, {}, /not exactly the soak profile/],
     'pfctl parses a different rule count': [{ pfctl: 'case "$*" in "-s info") echo "Status: Enabled";; *"-n -v"*) echo "block drop all";; esac' }, {}, /unexpected number of rules/],
     'lo0 is not skipped': [{ pfctl: `case "$*" in "-s info") echo "Status: Enabled";; "-s rules"|*"-n -v"*) cat "${'${RULES}'}";; "-s Interfaces -v") echo "lo0";; esac` }, {}, /not skipping lo0/],
-    'the guest interface has no address': [{ ipconfig: 'case "$*" in "getpacket en0") echo "server_identifier (ip): 192.168.64.2";; *) exit 1;; esac' }, {}, /no IPv4 address/],
-    'there is no DHCP lease and none is configured': [{ ipconfig: 'case "$*" in "getifaddr en0") echo 192.168.64.5;; *) exit 1;; esac' }, {}, /no valid DHCP server/],
-    'the configured DHCP server is not an address': [{}, { SOAK_DHCP_SERVER: '192.168.64.2 port 53' }, /no valid DHCP server/],
+    'the guest interface has no address': [{ ipconfig: 'case "$*" in "getpacket en0") printf "server_identifier (ip): 192.168.64.2\\nlease_time (uint32): 0x15180\\n";; *) exit 1;; esac' }, {}, /no IPv4 address/],
+    'the guest has no DHCP lease': [{ ipconfig: 'case "$*" in "getifaddr en0") echo 192.168.64.5;; *) exit 1;; esac' }, {}, /has no DHCP lease/],
+    'the DHCP server comes from the lease alone': [{}, { SOAK_DHCP_SERVER: '' }, /a lease alone is not trusted/],
+    'the configured DHCP server differs from the lease': [{}, { SOAK_DHCP_SERVER: '192.168.64.9' }, /lease's DHCP server is 192\.168\.64\.2, not the configured 192\.168\.64\.9/],
+    'the configured DHCP server is not an address': [{}, { SOAK_DHCP_SERVER: '192.168.64.2 port 53' }, /not an IPv4 address/],
+    'the lease names two DHCP servers': [{ ipconfig: 'case "$*" in "getifaddr en0") echo 192.168.64.5;; "getpacket en0") printf "server_identifier (ip): 192.168.64.2\\nserver_identifier (ip): 192.168.64.7\\nlease_time (uint32): 0x15180\\n";; esac' }, {}, /server_identifier 2 times/],
+    'the lease time is malformed': [{ ipconfig: 'case "$*" in "getifaddr en0") echo 192.168.64.5;; "getpacket en0") printf "server_identifier (ip): 192.168.64.2\\nlease_time (uint32): forever\\n";; esac' }, {}, /lease_time is malformed/],
+    'the lease has no lease time': [{ ipconfig: 'case "$*" in "getifaddr en0") echo 192.168.64.5;; "getpacket en0") printf "server_identifier (ip): 192.168.64.2\\n";; esac' }, {}, /no single lease_time/],
     'SSH is not listening': [{ netstat: 'echo "tcp4 0 0 127.0.0.1.3102 *.* LISTEN"' }, {}, /SSH management path is down/],
+    'the guest TangleClaw runs as the admin': [{ lsof: 'printf "p4242\\nu501\\n"' }, {}, /runs as uid 501 not soakrun/],
+    'nothing listens on the TangleClaw port': [{ lsof: 'exit 1' }, {}, /nothing is listening on port 3102/],
     'the boot identity is unreadable': [{ sysctl: 'case "$*" in "-n kern.hv_vmm_present") echo 1;; esac' }, {}, /boot identity/]
   };
   for (const [label, [over, env, reason]] of Object.entries(failures)) {
@@ -470,8 +523,9 @@ describe('soak guest: workload verifier', () => {
     assert.equal(j.mode, 'workload');
     assert.equal(j.ok, true);
     assert.deepEqual(j.identity, { user: 'soakrun', uid: 502, groups: 'staff everyone localaccounts' });
-    assert.deepEqual(j.refused, ['sudo', 'pfctl']);
+    assert.deepEqual(j.refused, { sudo: true, pfctl: true });
     assert.deepEqual(Object.keys(j.artifact), ['scriptSha256', 'profileSha256']);
+    assert.deepEqual(j.probes, { tcp4: '1.1.1.1', tcp6: '2606:4700:4700::1111', udpDns: '1.1.1.1' });
     assert.ok(!f.calls().some((c) => c.includes('getpacket')), 'the workload plane has no use for the lease');
     assert.deepEqual(j.egress, { tcp4: 'denied', tcp6: 'denied', udpDns: 'denied' });
     assert.equal(j.boot.session, '11111111-2222-3333-4444-555555555555');
@@ -517,7 +571,8 @@ describe('soak guest: guest-setup.sh guards', () => {
 
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'soak-guest-guard-'));
-    f = fakes(tmp, { sudo: '', pfctl: '', sysctl: '0', uname: 'Darwin', node: '', curl: '' });
+    // No node here: a refusal this early prints the fixed fallback line.
+    f = fakes(tmp, { sudo: '', pfctl: '', sysctl: '0', uname: 'Darwin', curl: '' });
   });
 
   afterEach(() => {
