@@ -662,7 +662,7 @@ describe('schema v50 migration (ADR 0020 §2)', () => {
 
       const after = new DatabaseSync(dbPath);
       try {
-        assert.equal(after.prepare('SELECT MAX(version) v FROM schema_version').get().v, 50);
+        assert.equal(after.prepare('SELECT MAX(version) v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
         const sql = after.prepare("SELECT sql FROM sqlite_master WHERE name = 'workload_receipts'").get().sql;
         assert.match(sql, /UNIQUE \(launch_id, seq\)/);
         const triggers = after.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'workload_receipts%'")
