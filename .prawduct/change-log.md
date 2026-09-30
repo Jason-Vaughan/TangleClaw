@@ -54,10 +54,11 @@ Chunk 3 of 3, stacked on Chunk 2. PM Option B (Medusa ff69a0a1). Every path is i
   - Leases the two ports (`ownerKind: external`, `reach: loopback`), writes a KeepAlive LaunchAgent to the workload user's `~/Library/LaunchAgents`, then runs `launchctl bootout` and `bootstrap` in `gui/<uid>`.
   - Polls `/health`.
   - Refuses on a lease conflict, a load failure or no answer, and never prints `guest ready` after refusing.
-  - Validates that `SOAK_MEDUSA_HTTP_PORT` and `SOAK_MEDUSA_WS_PORT` are adjacent. They default to 3009 and 3010 in `guest.conf`, which the candidate finds with no configuration change.
+  - The hub always takes 3009 and 3010, the candidate's own defaults (`MEDUSA_BRIDGE_HTTP_URL` and the next port), and they are not settings. A configurable port was reviewed out: the candidate would never find a hub moved elsewhere.
+  - A failed lease names the registry's code and error.
 - Tests:
   - `test/soak-medusa-stub.test.js` (new) drives TangleClaw's real `MedusaListener` over a real socket: two listeners listening, a direct send delivered by its id and acknowledged, queued redelivery on re-register and none after an ack, 404/400, health and workspaces, loopback-only binding, argument parsing, the RFC 6455 accept key, masked frames of every length form across chunk boundaries, and refusal of unmasked frames.
-  - `test/soak-guest.test.js`: step 6's order and calls, the LaunchAgent's contents, three refusals, and the adjacent-port check. Two existing fakes also answer the lease and health calls; their assertions are unchanged.
+  - `test/soak-guest.test.js`: step 6's order and calls, the LaunchAgent's contents, three refusals (the lease refusal naming the registry's reason), and an environment port override that has no effect. Two existing fakes also answer the lease and health calls; their assertions are unchanged.
 - Docs:
   - README: target prerequisites, setup step 6, and a new "The stub hub" section.
   - Install runbook: the `guest ready` line.

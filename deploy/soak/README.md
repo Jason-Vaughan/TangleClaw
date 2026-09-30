@@ -655,8 +655,9 @@ actions.
        launchd-run server reading without a prompt nobody can answer.
      - **A later run finds setup finished and checks it.** Setup then refuses unless the guest's config
        says `setupComplete: true` and `projectsDir` is `SOAK_PROJECTS_ROOT`.
-  6. **Starts the stub Medusa hub.** It leases `SOAK_MEDUSA_HTTP_PORT` and `SOAK_MEDUSA_WS_PORT`
-     (default 3009 and 3010, which must be adjacent) in the guest TangleClaw's port registry. It writes
+  6. **Starts the stub Medusa hub.** It leases ports 3009 and 3010 in the guest TangleClaw's port
+     registry. These are the candidate's own defaults, where it looks for its hub, so they are not
+     settings; a port another service holds is refused, with the registry's reason. It writes
      a LaunchAgent into the workload user's `~/Library/LaunchAgents` and loads it into that user's GUI
      session, replacing one an earlier run loaded. Then it waits for the hub's `/health` on loopback.
      It refuses if a port is leased to something else, if launchd will not load the agent, or if the

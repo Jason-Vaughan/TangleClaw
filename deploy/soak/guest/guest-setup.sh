@@ -273,9 +273,6 @@ valid_ipv4() {
 valid_ipv4 "$SOAK_HOST_ADDR" || refuse "SOAK_HOST_ADDR is not an IPv4 address: $SOAK_HOST_ADDR"
 [[ "$user" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]] && [ "$user" != 'root' ] || refuse "SOAK_WORKLOAD_USER is not a safe user name: $user"
 [[ "$SOAK_TC_PORT" =~ ^[0-9]{1,5}$ ]] || refuse "SOAK_TC_PORT is not a port: $SOAK_TC_PORT"
-[[ "$SOAK_MEDUSA_HTTP_PORT" =~ ^[0-9]{1,5}$ ]] && [[ "$SOAK_MEDUSA_WS_PORT" =~ ^[0-9]{1,5}$ ]] \
-  && [ "$SOAK_MEDUSA_WS_PORT" -eq $((SOAK_MEDUSA_HTTP_PORT + 1)) ] \
-  || refuse "SOAK_MEDUSA_HTTP_PORT and SOAK_MEDUSA_WS_PORT must be ports, the second one above the first (the candidate derives it that way): $SOAK_MEDUSA_HTTP_PORT, $SOAK_MEDUSA_WS_PORT"
 [[ "$SOAK_SAMPLE_INTERVAL" =~ ^[1-9][0-9]{0,4}$ ]] || refuse "SOAK_SAMPLE_INTERVAL must be 1-99999 seconds: $SOAK_SAMPLE_INTERVAL"
 [[ "$SOAK_SAFETY_MARGIN" =~ ^[0-9]{1,5}$ ]] || refuse "SOAK_SAFETY_MARGIN must be 0-99999 seconds: $SOAK_SAFETY_MARGIN"
 # The lease must outlast the next sample interval plus the declared margin.
@@ -813,17 +810,32 @@ echo "== 6/6 switchboard stub hub"
 # dies during a run and loads it again at login after a restart. Its ports are
 # leased in the guest TangleClaw's registry before it binds them.
 hub_label='com.tangleclaw.soak-medusa-stub'
+# The candidate's own defaults: it looks for its hub at MEDUSA_BRIDGE_HTTP_URL,
+# http://localhost:3009 unless its environment says otherwise, and derives the
+# WebSocket as the next port. The install sets neither, so the hub takes exactly
+# these. They are not settings: a hub anywhere else would be one the candidate
+# never finds. If another service holds them, setup refuses.
+hub_http_port=3009
+hub_ws_port=3010
 hub_home="/Users/$user"
 hub_plist="$hub_home/Library/LaunchAgents/$hub_label.plist"
 hub_node="$(as_user /bin/sh -c 'command -v node')" || refuse "node is not on $user's PATH"
 case "$hub_node$repo" in *[\<\>\&\"\']*) refuse "the node path or checkout path holds a character the LaunchAgent cannot carry" ;; esac
-for spec in "$SOAK_MEDUSA_HTTP_PORT:http" "$SOAK_MEDUSA_WS_PORT:websocket"; do
+for spec in "$hub_http_port:http" "$hub_ws_port:websocket"; do
   port="${spec%%:*}"
   lease_body="$(node -e 'process.stdout.write(JSON.stringify({ port: Number(process.argv[1]), host: "localhost", project: "soak-medusa-stub", service: `medusa-stub-${process.argv[2]}`, permanent: true, reach: "loopback", ownerKind: "external" }))' "$port" "${spec#*:}")"
-  status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time "$t" -X POST \
+  # The reply names why a lease failed (who holds the port, or what was wrong
+  # with the request), so it is kept rather than discarded.
+  lease_out="$(mktemp)"
+  status="$(curl -sS -o "$lease_out" -w '%{http_code}' --max-time "$t" -X POST \
     -H 'content-type: application/json' -H 'x-tangleclaw-client: dashboard' \
     -d "$lease_body" "$api/api/ports/lease" || true)"
-  [ "$status" = "201" ] || [ "$status" = "200" ] || refuse "leasing port $port for the stub hub answered $status: another service may hold it"
+  lease_reply="$(cat "$lease_out" 2>/dev/null || true)"
+  rm -f "$lease_out"
+  lease_why="$(node -e '
+    try { const r = JSON.parse(process.argv[1]); if (r && r.code) process.stdout.write(`: ${r.code}: ${r.error || ""}`); } catch {}
+  ' "$lease_reply")"
+  [ "$status" = "201" ] || [ "$status" = "200" ] || refuse "leasing port $port for the stub hub answered $status$lease_why"
 done
 as_user mkdir -p "$hub_home/Library/LaunchAgents" "$hub_home/Library/Logs"
 hub_tmp="$(mktemp)"
@@ -837,8 +849,8 @@ cat > "$hub_tmp" <<PLIST
   <array>
     <string>$hub_node</string>
     <string>$repo/deploy/soak/medusa-stub/medusa-stub.js</string>
-    <string>--http-port</string><string>$SOAK_MEDUSA_HTTP_PORT</string>
-    <string>--ws-port</string><string>$SOAK_MEDUSA_WS_PORT</string>
+    <string>--http-port</string><string>$hub_http_port</string>
+    <string>--ws-port</string><string>$hub_ws_port</string>
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -857,9 +869,9 @@ sudo -n launchctl bootstrap "gui/$wl_uid" "$hub_plist" \
   || refuse "launchd would not load the stub hub in $user's GUI session (is $user logged in? see install step 8)"
 hub_up=''
 for _ in $(seq 1 "$t"); do
-  if curl -sS --max-time "$t" "http://127.0.0.1:$SOAK_MEDUSA_HTTP_PORT/health" 2>/dev/null | grep -q '"status":"hissing"'; then hub_up=1; break; fi
+  if curl -sS --max-time "$t" "http://127.0.0.1:$hub_http_port/health" 2>/dev/null | grep -q '"status":"hissing"'; then hub_up=1; break; fi
   sleep 1
 done
-[ -n "$hub_up" ] || refuse "the stub hub did not answer on 127.0.0.1:$SOAK_MEDUSA_HTTP_PORT within $t s (see $hub_home/Library/Logs/soak-medusa-stub.log)"
+[ -n "$hub_up" ] || refuse "the stub hub did not answer on 127.0.0.1:$hub_http_port within $t s (see $hub_home/Library/Logs/soak-medusa-stub.log)"
 
-echo "guest ready: workload user $user, default-deny network attested on both planes, stub engine, projects $SOAK_PROJECTS, stub hub on $SOAK_MEDUSA_HTTP_PORT/$SOAK_MEDUSA_WS_PORT"
+echo "guest ready: workload user $user, default-deny network attested on both planes, stub engine, projects $SOAK_PROJECTS, stub hub on $hub_http_port/$hub_ws_port"

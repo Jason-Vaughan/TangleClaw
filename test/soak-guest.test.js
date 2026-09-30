@@ -658,8 +658,11 @@ describe('soak guest: guest-setup.sh setup', () => {
   for (const [label, over, reason] of [
     ['its port is leased to another service', { curl: [
       'case "$*" in', '  *api/setup/complete*) printf 200;;', '  *api/projects/attach*) printf 201;;',
-      '  *api/ports/lease*) printf 409;;', '  *http_code*) printf 404;;', `  *api/config) printf '%s' '${SETUP_DONE}';;`, 'esac'
-    ].join('\n') }, /leasing port 3009 for the stub hub answered 409/],
+      '  *api/ports/lease*)',
+      '    out=""; prev=""; for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done',
+      `    printf '%s' '${JSON.stringify({ error: 'Port 3009 on localhost is leased by "other-project"', code: 'PORT_CONFLICT' })}' > "$out"; printf 409;;`,
+      '  *http_code*) printf 404;;', `  *api/config) printf '%s' '${SETUP_DONE}';;`, 'esac'
+    ].join('\n') }, /leasing port 3009 for the stub hub answered 409: PORT_CONFLICT: Port 3009 on localhost is leased by "other-project"/],
     ['launchd will not load it', { launchctl: 'case "$1" in bootstrap) exit 5;; esac' }, /launchd would not load the stub hub/],
     ['it never answers', { curl: [
       'case "$*" in', '  *api/setup/complete*) printf 200;;', '  *api/projects/attach*) printf 201;;',
@@ -674,10 +677,12 @@ describe('soak guest: guest-setup.sh setup', () => {
     });
   }
 
-  it('refuses stub hub ports the candidate could not find: the WebSocket port must follow the HTTP port', () => {
-    const r = setup([], guestFakes(tmp), tmp, { SOAK_MEDUSA_WS_PORT: '3011' });
-    assert.equal(r.status, 3);
-    assert.match(r.stderr, /SOAK_MEDUSA_WS_PORT must be ports, the second one above the first/);
+  it('always leases the candidate\'s own hub ports, whatever the environment says, since the candidate looks nowhere else', () => {
+    const f = guestFakes(tmp);
+    const r = setup([], f, tmp, { SOAK_MEDUSA_HTTP_PORT: '4009', SOAK_MEDUSA_WS_PORT: '4010' });
+    assert.equal(r.status, 0, r.stderr);
+    const leases = f.calls().filter((c) => c.includes('api/ports/lease'));
+    assert.deepEqual(leases.map((c) => (c.match(/"port":(\d+)/) || [])[1]), ['3009', '3010']);
   });
 
   it('skips a project the guest already has, and refuses when the auth gate is up', () => {
