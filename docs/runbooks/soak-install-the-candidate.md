@@ -37,6 +37,7 @@ On the host, from a TangleClaw checkout:
    - `SOAK_TART_DISPLAY=vnc` gives the guest a real framebuffer (reached over VNC, no host window)
      instead of none. Browser events need a page the guest actually draws. A page that is never drawn
      records `PAGE_HIDDEN`, so choose the display before the dry run and keep it for the certifying run.
+     Record the choice: step 11b restarts the guest and must be given the same display.
    → If it refuses: it names the setting it rejected. Fix that in the environment and run it again.
 
 3. Create and start the VM:
@@ -140,9 +141,12 @@ As the admin again:
 
 11b. Close the host side (Architect ruling A7). softnet then drops everything the guest sends except
     replies to connections the host opens, so SSH from the host keeps working.
-    - On the host: `SOAK_OPERATOR_APPROVED=1 bash deploy/soak/guest/host-provision.sh --closure --execute`
-      → Expected: `tart stop`, then a `tart run` carrying `--net-softnet --net-softnet-block=0.0.0.0/0
-      --net-softnet-allow=in @host` and the same share. Preview it first without `--execute`.
+    - On the host, with the display chosen in step 2:
+      `SOAK_TART_DISPLAY=<no-graphics or vnc, as in step 2> SOAK_OPERATOR_APPROVED=1 bash deploy/soak/guest/host-provision.sh --closure --execute`
+      → Expected: `tart stop`, then a `tart run` carrying the same display flag as step 3,
+      `--net-softnet --net-softnet-block=0.0.0.0/0 --net-softnet-allow=in @host` and the same share.
+      Preview it first without `--execute`. The soak's counted boot is this one, so a display that
+      differs from step 3's changes what every browser event sees.
     - The guest's address can change on this boot, and `tart ip` can report the previous one. Find the
       address from the host's ARP table for the softnet bridge, and SSH to it as the admin.
     - Repeat step 11's DHCP check on this boot. The lease's server is softnet's own now, so export that

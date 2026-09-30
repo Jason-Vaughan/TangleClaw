@@ -47,7 +47,8 @@
 #   2. load the default-deny pf profile, then run both verifiers;
 #   3. install the stub engine on PATH and its profile for the workload user;
 #   4. create the synthetic repos as the workload user (soak.js repos);
-#   5. attach each repo as a project through the guest TangleClaw's own API.
+#   5. finish the guest TangleClaw's first-run setup (no login, the soak's
+#      projects root), then attach each repo as a project through its own API.
 # Before step 2 it checks that the TangleClaw on SOAK_TC_PORT runs as the
 # workload user.
 # Every step is safe to repeat. The TangleClaw checkout lives in a dedicated
