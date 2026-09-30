@@ -35,6 +35,21 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-30 — #2020: derive DHCP renewal and rebinding times for a Tart lease that omits both
+
+<!-- prawduct: type=fix | scope=2020-dhcp-timing -->
+
+PM dispatch (Route A, operator's blanket approval). The Architect released Builder2 from standby for this chunk only. Branch `fix/2020-dhcp-timing-derivation` from `origin/main` `75c499f1`.
+
+**Why.** Tart's vmnet DHCP server sends a lease with `lease_time` but no `renewal_t1_time_value` or `rebinding_t2_time_value`. The admin verifier required all three, so it could never attest a Tart guest.
+
+**What.**
+- `deploy/soak/guest/guest-setup.sh`: when both timers are absent, T1 = floor(lease/2) and T2 = floor(lease*7/8) (RFC 2131 4.4.5). A lease with only one timer is still refused, and the message names which one it reports. The new field `dhcp.timingSource` is `lease` or `derived-rfc2131`. The server identity, start/expiry, strict ordering and remaining-window checks all apply to derived times, unchanged.
+- `test/soak-guest.test.js`: explicit timings (`timingSource: 'lease'`); both absent, the Tart shape; rounding down; partial absence refused either way round; missing `lease_time`; leases too short for ordered derived timers; a duplicate `lease_time`; a malformed timer; expiry; and the remaining window.
+- Docs: the README explains the derivation and that a derived time is not evidence of renewal. New install-runbook step 12 observes SSH and the address surviving a real renewal on the dry run. Static addressing is the fallback only if that fails. Step 11 now has the host confirm the lease's server before `SOAK_DHCP_SERVER` is exported: no step set it, so setup could not succeed as written.
+
+**Test contract changed, not weakened.** The admin-line `deepEqual` gains `timingSource: 'lease'`. The existing partial-absence test now also requires the refusal to name the timer the lease reports.
+
 ## 2026-09-29 — #2020 Chunk 3: fault and browser executors, integrity sampling, evidence bundle, operator runbooks
 
 <!-- prawduct: type=feature | scope=2020-chunk-3 -->
