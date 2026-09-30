@@ -35,6 +35,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-30 — #2020 Chunk 4: the soak certification judge, bound into rc-cert's host finalization and certification of record
+<!-- prawduct: type=feature | scope=v5.30-soak-certification-judge -->
+
+Lease Rule #147 (RM-LEASE TC-RM01 generation 4, sha256 `3b1f0c1f…d727086`). PM dispatch `a57a2f0f`. Branch `feat/2020-chunk4-soak-judge` from `origin/main` `5361254e`. Contract: Architect A4 (binding, fail-closed, ownership, no certified record without a passing bound judgement), A5 (explicit `candidateSha`) and A6 (rulings on the plan's Q1–Q4, plus a duration rule).
+
+**Why.** Chunk 3 produced an evidence bundle that nothing read. A host-attested run could become a certification of record (`host-publish` record `certified: true`) without anyone judging the soak it was meant to certify.
+
+**What.**
+- **Bundle (A5, additive).** `buildBundle({candidateSha})` and `soak bundle --candidate-sha` are required. The value must be the full 40-character lowercase hex SHA, and it is recorded as the manifest's top-level `candidateSha`. No existing field changed.
+- **Judge.** `lib/soak/judge.js#judgeBundle` judges one bundle for one run's identity (candidate SHA, run id, manifest digest and window). It re-derives everything from the files and returns a `tc.soak-judgement/v1` with closed reason codes and a binding of every digest it vouches for.
+- **rc-cert gate.** `host-checks#finalize({soakJudgement})` records the judgement in the finalization and adds `SOAK_JUDGEMENT_MISSING`/`FAILED`/`UNBOUND`. `host-publish#certifiedFrom` also requires `host-checks#soakJudgementBound`. `rc-cert host-finalize` requires `--soak-bundle` and takes `--soak-acceptance`.
+- **Docs.** `deploy/soak/README.md` ("Judging the bundle"; the status note no longer lists the judge as not built), the bundle runbook's steps 7 and 8, ADR 0021 point 14 (point 12's definition of certified is updated), FEATURES and CHANGELOG.
+
+**Decisions.**
+- Release certification does not depend on the soak. They share the schema name `tc.soak-judgement/v1` (pinned by a test), as `attest-bridge` already does for the isolation schemas, and `scripts/rc-cert.js` is where they meet. So the "passed and bound" check lives with the consumer (`host-checks#soakJudgementBound`), not in the judge.
+- `certifiedFrom` checks the binding itself as well as trusting `ok`, so a finalization written before this change, or without a judgement, never certifies. No certification of record exists yet, so no record is invalidated.
+- Every scheduled event is a required test (A6.4, rejecting my Q4 default that event failures should not count): failed, skipped, missing, duplicate, unknown and miscounted events each fail the judgement.
+- A sample that failed or could not measure is not evidence, and is tolerated only while coverage holds (A6.2). An intermediate version failed any `sample-failed`, following the bundle runbook's step 8; A6.2 superseded it. Step 8 stays a stricter operator quick-read, and now says the verdict is the host's.
+- The schedule must be `certifying` and exactly 72 hours (A6.5). The elapsed-time half of A6.5 is open with the Architect (`d922e6e8`): the driver writes `end` right after the last event, so `completedAt - start >= durationMs` would fail every real log.
+- A run with no valid host-minted run id is not judged (`host-finalize` passes no judgement), because there is no identity to bind to. It already fails `NOT_HOST_ATTESTED`/`RUN_NOT_MINTED`.
+- Rulings A6.1–A6.3 approved the gate's placement (host path only), the coverage rule (tightened to at least two evidentiary samples) and the time window (inclusive, fail-closed). Plan: `.tangleclaw/plans/2020-final-soak-judge.md`.
+
+**Test contract extended, not weakened.** The existing finalize and relay tests now pass a bound judgement (`fx.soakJudgement`), the input a finalization now requires. Their assertions are unchanged. The `certifiedFrom` truth table gained five failing rows. In the CLI test, `host-finalize` gets an injected judge and checks the run identity it hands over.
+
 ## 2026-09-29 — #2020 Chunk 3: fault and browser executors, integrity sampling, evidence bundle, operator runbooks
 
 <!-- prawduct: type=feature | scope=2020-chunk-3 -->

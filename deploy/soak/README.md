@@ -8,16 +8,13 @@ It judges nothing. Whether the release candidate passes is decided by the releas
 judge (`rc-cert`) and the soak's own acceptance gates. This tool only produces the conditions and
 records what happened.
 
-> **Status: Chunks 1, 2 and 3.** This directory has the schedule, the runner and an executor for every
+> **Status: Chunks 1 to 4.** This directory has the schedule, the runner and an executor for every
 > kind in the catalogue (`api`, `engine`, `browser` and `fault`), the stub engine, the guest definition
-> (`guest/`), the generator for the synthetic `soak-*` repos, the integrity sampler and the evidence
-> bundle. The operator procedure is two runbooks:
+> (`guest/`), the generator for the synthetic `soak-*` repos, the integrity sampler, the evidence
+> bundle, and the certification judge that reads a bundle and gates the host's certification of
+> record on it. The operator procedure is two runbooks:
 > [install and start the pinned candidate](../../docs/runbooks/soak-install-the-candidate.md), and
 > [run, sample and bundle the soak](../../docs/runbooks/soak-run-sample-and-bundle.md).
->
-> Not built yet: the certification judge that reads a bundle (Chunk 4 of #2020, with the link to
-> rc-cert). Until it exists, nothing but `run`'s exit 5 acts on a log's ownership-unverified
-> disposition.
 >
 > The server and ttyd run as launchd agents in the workload user's GUI session. Per Architect ruling A1,
 > that user gets a login secret generated inside the guest and never exposed, and the guest logs it in
@@ -133,7 +130,9 @@ The guest has no route to GitHub, so a certifying run in it uses the judge's hos
 (ADR 0021 points 10 to 12): the host mints the run id (`rc-cert host-mint`), answers every
 sample's required checks (`rc-cert host-checks --watch`), finalizes the run against its own ledger
 (`rc-cert host-finalize`), and relays the guest's local `metrics` branch to the public remote
-(`rc-cert host-publish`). The guest runs `rc-cert start --checks-source host-attested --run-id
+(`rc-cert host-publish`). The host's finalization also judges the soak's evidence bundle (see
+[Judging the bundle](#judging-the-bundle)), so a run is a certification of record only when the soak
+passed too. The guest runs `rc-cert start --checks-source host-attested --run-id
 <id> --exchange <dir> --metrics-remote <local bare repo> --isolation-producer <guest-setup.sh> …`,
 and every sample also attests the guest's network isolation (ADR 0021 point 13): the runner calls `guest-setup.sh --verify-network` with the sample's binding. That runs both raw verifiers afresh and prints, through `lib/soak/attest-bridge.js`, one bound `{admin, workload}` pair, or a bound `{breach}` envelope when a verifier positively measured an unsafe fact (exit 3 with `code: BREACH`), or nothing when it could not measure. The raw `--verify-admin` and `--verify-workload` modes stay for direct diagnostics. The transport between host and
 guest (Chunk 1) mirrors the exchange directory and brings the guest's `metrics` repository to
@@ -265,8 +264,8 @@ TANGLECLAW_SERVICE_TOKEN=… node scripts/soak.js run --schedule soak-certifying
       `certification` disposition: `automaticPassAllowed: false`, `defaultDisposition: "fail-reset"`.
       The Operator may accept the log instead, but only its exact evidence: the disposition names
       the log's path, size and sha256, and `acceptanceMatches` holds only for an acceptance of
-      exactly those. These fields are what the certification judge will read, and nothing reads
-      them yet: the judge is not built (see the status note at the top).
+      exactly those. These fields are what the certification judge reads (see
+      [Judging the bundle](#judging-the-bundle)).
     - A resume that fails before its `resume` record is durable (a wrong `--schedule`, a damaged
       log, a failed write) releases nothing and closes nothing. It reports `recoveryPending`, and
       leaves the lock and segment as a crash would, so the next run can only resume through the same
@@ -396,7 +395,7 @@ node scripts/soak.js sample --home ~/.tangleclaw --api http://127.0.0.1:3102 --o
 ## Evidence bundle
 
 ```sh
-node scripts/soak.js bundle --out <new dir> --schedule s.json --log s.ndjson [--samples samples.ndjson] \
+node scripts/soak.js bundle --out <new dir> --candidate-sha <40-hex> --schedule s.json --log s.ndjson [--samples samples.ndjson] \
   [--attestations a.json,b.json] [--home ~/.tangleclaw --no-live-install]
 ```
 
@@ -408,6 +407,10 @@ node scripts/soak.js bundle --out <new dir> --schedule s.json --log s.ndjson [--
 - **With `--home` it also snapshots `tangleclaw.db`** (`VACUUM INTO`, one consistent read) to
   `db/tangleclaw.db`, and runs `integrity_check` on the copy. `--home` is admitted like the faults,
   so the snapshot is only taken in the guest.
+- **`--candidate-sha` names the release candidate the soak ran** and is required. It is the full
+  40-character SHA the operator pinned, never read from a checkout or from the certification run, and
+  the manifest records it as its top-level `candidateSha`. An abbreviated, uppercase or malformed SHA
+  is refused.
 - **`manifest.json` (`tc.soak-evidence/v1`) binds every file by size and sha256.** The command prints
   the manifest's own sha256. Its `summary` holds:
   - the schedule's validity and digest;
@@ -423,7 +426,55 @@ node scripts/soak.js bundle --out <new dir> --schedule s.json --log s.ndjson [--
   - an existing `--out`;
   - a missing or symlinked input;
   - two attestations with the same file name;
-  - a schedule that is not JSON.
+  - a schedule that is not JSON;
+  - a missing or malformed `--candidate-sha`.
+
+## Judging the bundle
+
+The certification judge (`lib/soak/judge.js`) reads one bundle and decides, for one host-attested
+certification run, whether the soak passed. The host runs it when it finalizes the run:
+
+```sh
+rc-cert host-finalize --sha <40> --host-base <abs> --soak-bundle <abs bundle dir> [--soak-acceptance <abs json>]
+```
+
+- **It trusts nothing the manifest's summary says.** It re-hashes every file the manifest lists and
+  refuses a file the bundle holds that the manifest does not list. It re-validates the schedule,
+  re-reads the log with the driver, re-reads the samples and runs `integrity_check` on the database
+  snapshot again. Where the summary states something it re-derives, the two must agree.
+- **It is bound to exactly one run.** The bundle's `candidateSha` must be the run's candidate, and the
+  soak's log, from its start to its `end` record, must lie inside the run's own window. The judgement
+  (`tc.soak-judgement/v1`) names every digest it vouches for: the bundle manifest's sha256, the
+  schedule digest and the log's size and sha256, with the run's candidate SHA, run id and manifest
+  digest.
+- **It fails closed.** Each of these is a reason, and a judgement with any reason has not passed:
+  - a missing or malformed manifest, a listed file that is missing, a symlink or of other bytes, and an
+    unlisted file;
+  - a candidate SHA that is absent, malformed or another candidate's;
+  - a schedule that is invalid, not `certifying`, or not 72 hours long;
+  - a log the driver refuses, that never ended, that is torn, or that belongs to another schedule;
+  - any scheduled event that did not succeed: one that failed, was skipped (`SKIPPED_STALE` included)
+    or is missing, one logged twice or not in the schedule, and an `end` record counting other events
+    than the schedule holds. A fault succeeds only when it was injected and its recovery checks passed;
+  - a soak outside the run's window;
+  - samples that are missing, torn, have no interval, or do not cover the log: at least two evidentiary
+    samples, the first within one sampling interval of its start, the last within one of its end, and
+    no two consecutive ones more than two intervals apart. A sample that failed, whose database check
+    could not run, or whose server liveness is unknown is not evidence, and is tolerated only while the
+    coverage still holds;
+  - data corruption in any sample, or a database snapshot that is missing or not `ok`;
+  - a server that is not alive with `/api/health` 200 at the last evidentiary sample.
+- **Every scheduled event is a required test**, and the samples must also show the server alive and
+  healthy at the end. Neither stands in for the other.
+- **An ownership-unverified log is `fail-reset`** unless `--soak-acceptance` names the Operator's
+  acceptance of exactly that log: a JSON object with the `logPath`, `logBytes` and `logSha256` from
+  the manifest's `summary.log.certification.operatorAcceptance.evidence`, plus `actor` and `at` (epoch
+  ms). The bundled log must still have those bytes.
+- **The host records the judgement in the run's finalization**, and the finalization is `ok` only when
+  the judgement passed and is bound to that run (`SOAK_JUDGEMENT_MISSING`, `SOAK_JUDGEMENT_FAILED`,
+  `SOAK_JUDGEMENT_UNBOUND` otherwise). The relay (`rc-cert host-publish`) certifies a run only when
+  its finalization holds such a judgement, and its record binds the finalization's bytes, so it
+  binds the soak evidence too.
 
 ## The stub engine
 

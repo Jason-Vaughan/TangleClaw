@@ -167,7 +167,8 @@ to be able to trust it. That creates two problems:
    exact commit, fast-forward only and never forced; and the remote is read back, which must name
    that commit and hold the candidate's admission and scorecard byte for byte. Only then does the
    host write its record, and the record says a run is certified only for a `passed` scorecard
-   judged by canonical thresholds with an `ok` finalization. Only the host process ever names the
+   judged by canonical thresholds with an `ok` finalization that holds a passing soak judgement
+   bound to that run (point 14). Only the host process ever names the
    public remote, so no credential enters the guest, and GitHub's availability decides when a
    result is published, never how much time a run earned.
 
@@ -215,6 +216,23 @@ to be able to trust it. That creates two problems:
    or ruleset other than the admission's (`BOOT_CHANGED`, `ISOLATION_CHANGED`). The digests of
    both planes travel with each sample, and the host's finalization requires them, from the
    admitted boot, on the admission sample and on every sample that earned time.
+
+14. **No certification of record without a passing soak judgement bound to the run** (#2020,
+   Architect rulings A4, A5 and A6). `rc-cert host-finalize` takes the soak's evidence bundle
+   (`--soak-bundle`) and runs the soak's certification judge (`lib/soak/judge.js`) on it for that
+   run's candidate SHA, run id, manifest digest and window. The judge re-derives everything from
+   the bundle's files and fails closed. Every scheduled event of the certifying 72-hour schedule
+   must have run once and succeeded, and the integrity samples must cover the whole log with no
+   corruption and a healthy server at the end. The bundle must name the candidate it ran as an explicit
+   full SHA, which the operator states and nothing infers, and which must equal the run's. An
+   ownership-unverified soak log fails and resets unless the Operator accepted exactly its bytes.
+   The judgement is recorded in the finalization, which is `ok` only when it passed and is bound
+   to the run. `certifiedFrom` checks the same binding again, so a finalization written without a
+   judgement never certifies. The relay record binds the finalization's sha256, so it binds the
+   judgement and, through its digests, the soak evidence. The judge lives with the soak and
+   release certification does not depend on it: they share only the schema name
+   `tc.soak-judgement/v1`, and `rc-cert` is where the two meet. This gate is the host-attested
+   path's; a local run's `passed` scorecard is unchanged.
 
 ## Consequences
 

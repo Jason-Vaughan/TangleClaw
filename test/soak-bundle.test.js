@@ -14,6 +14,8 @@ const sched = require('../lib/soak/schedule');
 const integrity = require('../lib/soak/integrity');
 
 const MIN = 60 * 1000;
+/** The pinned candidate every bundle here names. */
+const CAND = 'a'.repeat(40);
 
 let dir;
 beforeEach(() => { dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'soak-bundle-'))); });
@@ -59,7 +61,7 @@ describe('soak bundle — a finished run', () => {
     fs.writeFileSync(attest, '{"ok":true}\n');
     const out = path.join(dir, 'evidence');
 
-    const r = bundle.buildBundle({ out, schedule: run.schedulePath, log: run.logPath, samples, attestations: [attest], now: () => 42 });
+    const r = bundle.buildBundle({ candidateSha: CAND, out, schedule: run.schedulePath, log: run.logPath, samples, attestations: [attest], now: () => 42 });
     assert.equal(fs.statSync(out).mode & 0o777, 0o700);
     const manifest = JSON.parse(fs.readFileSync(r.manifest, 'utf8'));
     assert.equal(manifest.schema, bundle.MANIFEST_SCHEMA);
@@ -95,7 +97,7 @@ describe('soak bundle — a finished run', () => {
     db.exec('CREATE TABLE t (v INTEGER); INSERT INTO t VALUES (7);');
     db.close();
     const out = path.join(dir, 'evidence');
-    const r = bundle.buildBundle({ out, schedule: run.schedulePath, log: run.logPath, home });
+    const r = bundle.buildBundle({ candidateSha: CAND, out, schedule: run.schedulePath, log: run.logPath, home });
     const snap = path.join(out, 'db', 'tangleclaw.db');
     const copy = new DatabaseSync(snap, { readOnly: true });
     assert.deepEqual(copy.prepare('SELECT v FROM t').all().map((x) => x.v), [7]);
@@ -112,7 +114,7 @@ describe('soak bundle — a run that is not evidence', () => {
     const run = await finishedRun();
     fs.writeFileSync(driver.lockLostPath(run.logPath), 'damaged sidecar');
     const out = path.join(dir, 'evidence');
-    const r = bundle.buildBundle({ out, schedule: run.schedulePath, log: run.logPath });
+    const r = bundle.buildBundle({ candidateSha: CAND, out, schedule: run.schedulePath, log: run.logPath });
     assert.equal(r.summary.log.readable, false);
     assert.equal(r.summary.log.refusal.code, driver.REFUSAL.LOG_LOCK_LOST_INVALID);
     assert.ok(fs.existsSync(path.join(out, 'soak-log.ndjson.lock-lost')));
@@ -122,7 +124,7 @@ describe('soak bundle — a run that is not evidence', () => {
     const run = await finishedRun();
     const other = sched.buildSchedule({ seed: 'other', phase: 'certifying', durationMs: 10 * MIN, loadMeanMs: MIN, classes: ['api'] });
     fs.writeFileSync(run.schedulePath, JSON.stringify(other));
-    const r = bundle.buildBundle({ out: path.join(dir, 'e'), schedule: run.schedulePath, log: run.logPath });
+    const r = bundle.buildBundle({ candidateSha: CAND, out: path.join(dir, 'e'), schedule: run.schedulePath, log: run.logPath });
     assert.equal(r.summary.log.scheduleMatches, false);
   });
 
@@ -130,7 +132,7 @@ describe('soak bundle — a run that is not evidence', () => {
     const run = await finishedRun();
     const samples = path.join(dir, 'samples.ndjson');
     fs.writeFileSync(samples, '{"type":"header"}\nnot json\n');
-    const r = bundle.buildBundle({ out: path.join(dir, 'e'), schedule: run.schedulePath, log: run.logPath, samples });
+    const r = bundle.buildBundle({ candidateSha: CAND, out: path.join(dir, 'e'), schedule: run.schedulePath, log: run.logPath, samples });
     assert.match(r.summary.samples.unreadable, /line 2/);
     assert.ok(fs.existsSync(path.join(dir, 'e', 'samples.ndjson')));
   });
@@ -146,7 +148,7 @@ describe('soak bundle — sample coverage', () => {
     integrity.appendSample(samples, { type: 'sample-failed', seq: 1, at: 2000, error: 'EIO' });
     integrity.appendSample(samples, ok(2, 9000, null));
     integrity.appendSample(samples, ok(3, 10000, false));
-    const r = bundle.buildBundle({ out: path.join(dir, 'e'), schedule: run.schedulePath, log: run.logPath, samples });
+    const r = bundle.buildBundle({ candidateSha: CAND, out: path.join(dir, 'e'), schedule: run.schedulePath, log: run.logPath, samples });
     const s = r.summary.samples;
     assert.deepEqual([s.count, s.failed, s.firstAt, s.lastAt, s.largestGapMs], [3, 1, 1000, 10000, 7000]);
     assert.deepEqual([s.processDown, s.processUnknown], [1, 1]);
@@ -158,7 +160,7 @@ describe('soak bundle — sample coverage', () => {
     const target = path.join(dir, 'elsewhere');
     fs.writeFileSync(target, 'x');
     fs.symlinkSync(target, driver.segmentPath(run.logPath));
-    const r = bundle.buildBundle({ out: path.join(dir, 'e'), schedule: run.schedulePath, log: run.logPath });
+    const r = bundle.buildBundle({ candidateSha: CAND, out: path.join(dir, 'e'), schedule: run.schedulePath, log: run.logPath });
     assert.deepEqual(r.summary.log.sidecarsNotCopied, [path.basename(driver.segmentPath(run.logPath))]);
     assert.equal(fs.existsSync(path.join(dir, 'e', 'soak-log.ndjson.segment')), false);
   });
@@ -169,29 +171,50 @@ describe('soak bundle — refusals', () => {
     const run = await finishedRun();
     const out = path.join(dir, 'evidence');
     fs.mkdirSync(out);
-    assert.throws(() => bundle.buildBundle({ out, schedule: run.schedulePath, log: run.logPath }), (e) => e.code === 'BUNDLE_REFUSED');
+    assert.throws(() => bundle.buildBundle({ candidateSha: CAND, out, schedule: run.schedulePath, log: run.logPath }), (e) => e.code === 'BUNDLE_REFUSED');
     assert.deepEqual(fs.readdirSync(out), []);
   });
 
   it('refuses a relative output, a missing input, a symlinked input, and clashing attestation names', async () => {
     const run = await finishedRun();
     const out = path.join(dir, 'evidence');
-    assert.throws(() => bundle.buildBundle({ out: 'rel', schedule: run.schedulePath, log: run.logPath }), (e) => e.code === 'BUNDLE_REFUSED');
-    assert.throws(() => bundle.buildBundle({ out, schedule: run.schedulePath, log: path.join(dir, 'nope') }), /does not exist/);
+    assert.throws(() => bundle.buildBundle({ candidateSha: CAND, out: 'rel', schedule: run.schedulePath, log: run.logPath }), (e) => e.code === 'BUNDLE_REFUSED');
+    assert.throws(() => bundle.buildBundle({ candidateSha: CAND, out, schedule: run.schedulePath, log: path.join(dir, 'nope') }), /does not exist/);
     const link = path.join(dir, 'link.ndjson');
     fs.symlinkSync(run.logPath, link);
-    assert.throws(() => bundle.buildBundle({ out, schedule: run.schedulePath, log: link }), /not a regular file/);
+    assert.throws(() => bundle.buildBundle({ candidateSha: CAND, out, schedule: run.schedulePath, log: link }), /not a regular file/);
     fs.mkdirSync(path.join(dir, 'a'));
     fs.mkdirSync(path.join(dir, 'b'));
     fs.writeFileSync(path.join(dir, 'a', 'x.json'), '1');
     fs.writeFileSync(path.join(dir, 'b', 'x.json'), '2');
-    assert.throws(() => bundle.buildBundle({ out, schedule: run.schedulePath, log: run.logPath, attestations: [path.join(dir, 'a', 'x.json'), path.join(dir, 'b', 'x.json')] }), /share a file name/);
+    assert.throws(() => bundle.buildBundle({ candidateSha: CAND, out, schedule: run.schedulePath, log: run.logPath, attestations: [path.join(dir, 'a', 'x.json'), path.join(dir, 'b', 'x.json')] }), /share a file name/);
     assert.equal(fs.existsSync(out), false, 'a refusal writes nothing');
+  });
+
+  it('refuses a candidate SHA that is absent, abbreviated, uppercase or not hex, and writes nothing', async () => {
+    const run = await finishedRun();
+    const out = path.join(dir, 'evidence');
+    for (const candidateSha of [undefined, null, '', 'a'.repeat(7), 'a'.repeat(39), 'a'.repeat(41), 'A'.repeat(40), 'g'.repeat(40), ` ${'a'.repeat(40)}`, 42]) {
+      assert.throws(() => bundle.buildBundle({ candidateSha, out, schedule: run.schedulePath, log: run.logPath }),
+        (e) => e.code === 'BUNDLE_REFUSED' && /candidate-sha/.test(e.message), `candidateSha ${JSON.stringify(candidateSha)}`);
+      assert.equal(fs.existsSync(out), false, 'a refusal writes nothing');
+    }
+  });
+
+  it('records the candidate as a top-level manifest binding, beside the existing fields', async () => {
+    const run = await finishedRun();
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const r = bundle.buildBundle({ candidateSha: sha, out: path.join(dir, 'e'), schedule: run.schedulePath, log: run.logPath, now: () => 7 });
+    const m = JSON.parse(fs.readFileSync(r.manifest, 'utf8'));
+    assert.equal(m.candidateSha, sha);
+    assert.deepEqual(Object.keys(m), ['schema', 'candidateSha', 'createdAt', 'files', 'summary']);
+    assert.equal(m.schema, bundle.MANIFEST_SCHEMA);
+    assert.equal(m.createdAt, 7);
   });
 
   it('refuses a schedule that is not JSON', async () => {
     const run = await finishedRun();
     fs.writeFileSync(run.schedulePath, 'nope');
-    assert.throws(() => bundle.buildBundle({ out: path.join(dir, 'e'), schedule: run.schedulePath, log: run.logPath }), /not JSON/);
+    assert.throws(() => bundle.buildBundle({ candidateSha: CAND, out: path.join(dir, 'e'), schedule: run.schedulePath, log: run.logPath }), /not JSON/);
   });
 });

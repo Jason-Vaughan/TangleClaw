@@ -57,10 +57,11 @@ The guest printed `guest ready: …` and you are starting a dry run, a destructi
    → Expected: a line such as `{"taken":433,"lastSeq":432}`.
 
 7. Bundle the evidence into a new directory:
-   `node scripts/soak.js bundle --out "/Volumes/My Shared Files/soak/evidence-$SOAK_SHA" --schedule ~/soak/schedule.json --log ~/soak/soak.ndjson --samples ~/soak/samples.ndjson --attestations <the attestation files, comma-separated> --home ~/.tangleclaw --no-live-install`
+   `node scripts/soak.js bundle --out "/Volumes/My Shared Files/soak/evidence-$SOAK_SHA" --candidate-sha "$SOAK_SHA" --schedule ~/soak/schedule.json --log ~/soak/soak.ndjson --samples ~/soak/samples.ndjson --attestations <the attestation files, comma-separated> --home ~/.tangleclaw --no-live-install`
    → Expected: one JSON line with `"manifestSha256"`. Record it with the run's evidence.
    → If it prints `BUNDLE_REFUSED`: it names the input. An existing `--out` is refused, so pick a new
-   directory; never delete an earlier bundle.
+   directory; never delete an earlier bundle. `--candidate-sha` must be the full 40-character SHA you
+   pinned in the install runbook; the certification judge refuses a bundle that names any other.
 
 8. Read the bundle's summary:
    `node -p "const s = require('/Volumes/My Shared Files/soak/evidence-$SOAK_SHA/manifest.json').summary; JSON.stringify({log: [s.log.readable, s.log.ended, s.log.scheduleMatches], samples: [s.samples.failed, s.samples.largestGapMs <= 2 * s.samples.intervalMs, Math.round((s.samples.lastAt - s.samples.firstAt) / 3600000)], corrupt: s.samples.db.corrupt, snapshot: s.dbSnapshot.state})"`
@@ -69,6 +70,10 @@ The guest printed `guest ready: …` and you are starting a dry run, a destructi
    check proves the sampler ran the whole time, never more than two of its own intervals apart.
    → Anything else: the run does not pass as it stands. Keep the bundle, and report the summary on
    #2020. The acceptance gates' default is fail and reset.
+   → This is a quick read of the summary, not the verdict. The verdict is the host's: the
+   certification judge re-derives all of it from the bundle's files when the host finalizes the run
+   (`rc-cert host-finalize --soak-bundle`, see "Judging the bundle" in
+   [`deploy/soak/README.md`](../../deploy/soak/README.md)).
 
 9. Tear the guest down once the bundle is safe on the host. As the admin:
    `sudo defaults delete /Library/Preferences/com.apple.loginwindow autoLoginUser; sudo rm -f /etc/kcpassword`

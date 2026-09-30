@@ -14,7 +14,7 @@
  *   soak repos    --root <dir> --origins <dir> [--projects a,b,c]
  *   soak sample   --home <dir> --api <url> --out <file> --no-live-install
  *                 [--interval-ms <n>] [--count <n>] [--full-every <n>]
- *   soak bundle   --out <dir> --schedule <file> --log <file> [--samples <file>]
+ *   soak bundle   --out <dir> --candidate-sha <40-hex> --schedule <file> --log <file> [--samples <file>]
  *                 [--attestations <file,file>] [--home <dir> --no-live-install]
  *
  * `sample` appends integrity and resource samples of the guest TangleClaw
@@ -83,7 +83,7 @@ const USAGE = [
   '       soak repos    --root <dir> --origins <dir> [--projects a,b,c]',
   '       soak sample   --home <dir> --api <url> --out <file> --no-live-install',
   '                     [--interval-ms <n>] [--count <n>] [--full-every <n>]',
-  '       soak bundle   --out <dir> --schedule <file> --log <file> [--samples <file>]',
+  '       soak bundle   --out <dir> --candidate-sha <40-hex> --schedule <file> --log <file> [--samples <file>]',
   '                     [--attestations <file,file>] [--home <dir> --no-live-install]'
 ].join('\n');
 
@@ -382,14 +382,14 @@ async function cmdSample(flags, io, deps) {
  * @returns {Promise<number>} Exit code: 0 written, 3 refused
  */
 async function cmdBundle(flags, io, deps) {
-  expectFlags(flags, ['out', 'schedule', 'log'], ['samples', 'attestations', 'home', 'no-live-install']);
+  expectFlags(flags, ['out', 'candidate-sha', 'schedule', 'log'], ['samples', 'attestations', 'home', 'no-live-install']);
   const noLiveInstall = noLiveInstallFlag(flags, deps);
   if (noLiveInstall && flags.home === undefined) throw new UsageError('--no-live-install is only for a bundle with --home');
   let home;
   if (flags.home !== undefined) home = (await localLib.admitGuestReader({ noLiveInstall, home: flags.home }, deps.local)).home;
   const attestations = flags.attestations === undefined ? [] : flags.attestations.split(',').map((x) => x.trim()).filter(Boolean);
   try {
-    const r = bundleLib.buildBundle({ out: flags.out, schedule: flags.schedule, log: flags.log, samples: flags.samples, home, attestations, now: deps.clock.now });
+    const r = bundleLib.buildBundle({ out: flags.out, candidateSha: flags['candidate-sha'], schedule: flags.schedule, log: flags.log, samples: flags.samples, home, attestations, now: deps.clock.now });
     io.stdout.write(`${JSON.stringify({ out: r.out, manifest: r.manifest, manifestSha256: r.manifestSha256 })}\n`);
     return 0;
   } catch (err) {
