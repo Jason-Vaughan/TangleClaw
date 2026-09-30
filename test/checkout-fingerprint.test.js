@@ -129,6 +129,25 @@ describe('checkout fingerprint (#2032 A7a)', () => {
     assert.deepEqual(await fp.fingerprint(dir, {}, { git: slowGit, deadlineMs: 50 }), { ok: false, reason: 'deadline' });
   });
 
+  it('reports a timeout as the deadline even when the timer fires before the clock reaches it', async () => {
+    // Node can fire a timer a fraction of a millisecond early; this one fires
+    // 20 ms early, so time is still left when the call is ended. Each git call
+    // the deadline can end must still read as the deadline, not a git failure.
+    const realSetTimeout = globalThis.setTimeout;
+    const stalls = ['rev-parse --show-toplevel', 'rev-parse --verify', 'symbolic-ref', 'status', 'diff', 'check-ignore'];
+    const results = [];
+    globalThis.setTimeout = (fn, ms, ...rest) => realSetTimeout(fn, Math.max(0, (ms || 0) - 20), ...rest);
+    try {
+      for (const stall of stalls) {
+        const git = (d, args, o) => (args.join(' ').startsWith(stall) ? new Promise(() => {}) : fp._seams.git(d, args, o));
+        results.push([stall, await fp.fingerprint(dir, { importantIgnored: ['.env'] }, { git, deadlineMs: 300 })]);
+      }
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
+    for (const [stall, r] of results) assert.deepEqual(r, { ok: false, reason: 'deadline' }, `stalled at ${stall}`);
+  });
+
   it('checks every declared ignored path in one batched git call', async () => {
     fs.writeFileSync(path.join(dir, '.env'), 'x');
     const calls = [];
