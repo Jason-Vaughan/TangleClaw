@@ -623,13 +623,27 @@ The guest is attested from two planes, because neither can see everything.
   - the guest interface and its IPv4 address, and the host's address;
   - the DHCP server pf allows and the lease's own server, which must match;
   - the lease's timing, normalized to epoch seconds: start, expiry, renewal and rebinding, the raw start
-    as reported, when it was observed, and how many seconds remain. It fails closed when:
+    as reported, when it was observed, and how many seconds remain. `dhcp.timingSource` says where the
+    renewal and rebinding times came from:
+    - `lease`: the lease reported both `renewal_t1_time_value` and `rebinding_t2_time_value`.
+    - `derived-rfc2131`: the lease reported neither, only `lease_time`, which is what Tart's vmnet DHCP
+      server sends. They are then RFC 2131's defaults (section 4.4.5), the timers a conforming client
+      uses when the server sends none: renewal at half the lease, rebinding at seven-eighths of it,
+      each rounded down to a whole second. A derived time is only what a conforming client should do,
+      not proof that this guest's client does it. The dry run has to show the renewal really happens
+      (see the DHCP limit under **Known limits** below).
+
+    It fails closed when:
     - `ipconfig getsummary` doesn't report `LeaseStartTime` exactly once, in the form
       `YYYY-MM-DD HH:MM:SS +ZZZZ`;
     - the start is before 2000 or in the future;
     - the lease has expired;
-    - the lease doesn't report all three of lease, renewal and rebinding times, or they don't satisfy
-      0 < renewal < rebinding < lease strictly (equality fails);
+    - the lease doesn't report `lease_time`;
+    - the lease reports one of the renewal and rebinding times but not the other. Neither shape above
+      covers that, so nothing is derived;
+    - the renewal, rebinding and lease times, whether reported or derived, don't satisfy
+      0 < renewal < rebinding < lease strictly (equality fails). A lease too short to derive distinct
+      whole-second timers fails here;
     - a lease field appears twice or doesn't parse;
     - less lease remains than the next sample interval plus a declared margin (`SOAK_SAMPLE_INTERVAL`,
       default 600 s, plus `SOAK_SAFETY_MARGIN`, default 300 s), so a lease can't lapse unseen. All three
@@ -689,8 +703,12 @@ changes the boot identity, so no time survives one.
   macOS's DHCP client renewing with the configured server over the allowed ports, and on the
   `ipconfig` output forms the verifier parses (`getpacket`, and `getsummary`'s `LeaseStartTime`).
   Neither has been seen on a real guest yet; the verifier fails closed when either differs. The dry run
-  must show that the address, and SSH, survive a lease renewal. If they don't, the fallback is a static
-  address or an independently proven tart console path.
+  must show that the address, and SSH, survive a real lease renewal. That applies especially when the
+  timing is `derived-rfc2131`: the verifier then attests when a renewal *should* happen, never that one
+  did. The observation is step 12 of
+  [Install and start the pinned candidate](../../docs/runbooks/soak-install-the-candidate.md). Only if
+  the renewal actually fails there is the fallback used: a static address or an independently proven
+  tart console path. A derived timing, on its own, is not a reason to fall back.
 - **Egress denial needs a positive control in the dry run.** A probe that fails proves isolation only if
   the same probe succeeds when egress is open. The dry run must therefore run the workload verifier's
   probes once with pf disabled and see them answer, before trusting their denial with pf loaded. The

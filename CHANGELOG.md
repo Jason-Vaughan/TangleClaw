@@ -373,6 +373,11 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Changed
 
+- **The soak guest accepts a DHCP lease that reports only its lease time, as Tart's vmnet server sends it, and derives its renewal and rebinding times** (#2020). The admin verifier used to refuse such a lease outright, so a Tart guest could never be attested.
+  - Only when the lease omits BOTH `renewal_t1_time_value` and `rebinding_t2_time_value` does `guest-setup.sh` use RFC 2131's defaults: renewal at half of `lease_time` and rebinding at seven-eighths, rounded down. A lease that reports only one of the two is still refused.
+  - The attestation says which applied: `dhcp.timingSource` is `lease` or `derived-rfc2131`. The existing checks are unchanged and apply to derived times too: the server identity, the lease start and expiry, strict `0 < renewal < rebinding < lease` ordering, and the remaining-time window.
+  - A derived time is not evidence that a renewal happens. The install runbook gains a dry-run step (step 12): SSH to the guest, and the guest's address, must survive a real renewal. A static address stays the fallback only if that renewal actually fails.
+
 - **Every rule is shown as `Rule #<id>`, from its database id** (#2029). Operators could not tell rules apart: every surface showed only the authored text, so the only number visible was whatever the author typed, and it could be missing or wrong (rule #117 could open with "RULE #94"). The label now comes from the rule's id on:
   - the Project Rules and Global rules lists;
   - the Approve, Reject, Delete, toggle and history controls, and their status lines and confirmations;

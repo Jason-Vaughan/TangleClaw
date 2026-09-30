@@ -16,7 +16,7 @@ a certification starts from a pristine guest.
 
 - **Everything the guest needs comes from the network before step 11.** Step 11 loads the default-deny
   profile, and after that the guest cannot reach GitHub or Homebrew.
-- **Unverified until the first dry run:** steps 4, 8, 9 and 10 have not yet been run in a real guest.
+- **Unverified until the first dry run:** steps 4, 8, 9, 10 and 12 have not yet been run in a real guest.
   Record what each one printed with the run's evidence.
 - **The workload user gets a login secret, inside the guest only** (Architect ruling A1 on #2020).
   launchd runs the server and ttyd in that user's GUI session, which needs a login. The secret is
@@ -100,6 +100,27 @@ As the admin again:
     `guest ready: workload user soakrun, default-deny network attested on both planes, stub engine, projects soak-a,soak-b,soak-c`.
     → If the first exits 0: the probes cannot detect egress, so their later denial proves nothing.
     Stop and report it on #2020.
+
+12. **Dry run only:** watch the guest survive a real DHCP lease renewal. The admin attestation's
+    renewal time is `dhcp.renewEpoch`, and `dhcp.timingSource` says whether the lease reported it
+    (`lease`) or the verifier derived it from `lease_time` (`derived-rfc2131`). A derived time is not
+    evidence that a renewal happens. Only this step is.
+    First, as the admin, record the lease:
+    `bash deploy/soak/guest/guest-setup.sh --verify-admin | tee ~/lease-before.json`
+    Keep the guest running until the clock is past `dhcp.renewEpoch`, and a sample interval beyond it.
+    On a one-day lease that is about 12 hours, so plan the dry run long enough. Then, from the host,
+    SSH to the guest's address as the admin, and run the same command again:
+    `bash deploy/soak/guest/guest-setup.sh --verify-admin | tee ~/lease-after.json`
+    → Expected: the SSH login works; the second command exits 0; `interface.address` is the same in
+    both files; and `dhcp.leaseStartEpoch` in the second is later than it was in the first, because the
+    lease was renewed.
+    → If SSH fails, the address changed, or the lease start did not move: the renewal did not happen
+    through pf. Record both files and report it on #2020. The certifying run then uses the fallback in
+    [`deploy/soak/README.md`](../../deploy/soak/README.md) (**Known limits**, the DHCP allowance): a static
+    address or an independently proven tart console path. Don't fall back without this evidence.
+    - **Unverified until the first dry run:** that `LeaseStartTime` moves on renewal. If it doesn't,
+      record what `ipconfig getsummary` reports before and after, and report it on #2020 rather than
+      judging the renewal by it.
 
 ## If it fails
 

@@ -392,10 +392,24 @@ if [ "$mode" = 'admin' ] || [ "$mode" = 'setup' ]; then
   lease_num lease_time lease_s
   lease_num renewal_t1_time_value renew_s
   lease_num rebinding_t2_time_value rebind_s
-  # Strictly 0 < renewal < rebinding < lease; all three are required, and
+  # A lease that omits BOTH timers gets RFC 2131's defaults (4.4.5): renew at
+  # half the lease, rebind at seven-eighths of it, rounded down: the timers a
+  # conforming client uses when the server sends none. Tart's vmnet DHCP
+  # server sends leases of that shape. A lease that carries only one timer does not match
+  # either shape, so it is refused rather than half derived. The source is
+  # attested, so evidence shows which timings the server actually sent.
+  [ -n "$lease_s" ] || refuse "the DHCP lease must report lease_time, renewal_t1_time_value and rebinding_t2_time_value"
+  if [ -n "$renew_s" ] && [ -n "$rebind_s" ]; then
+    timing_source='lease'
+  elif [ -z "$renew_s" ] && [ -z "$rebind_s" ]; then
+    renew_s=$((lease_s / 2))
+    rebind_s=$((lease_s * 7 / 8))
+    timing_source='derived-rfc2131'
+  else
+    refuse "the DHCP lease must report lease_time, renewal_t1_time_value and rebinding_t2_time_value, or omit both timers to have them derived; it reports only $([ -n "$renew_s" ] && echo renewal_t1_time_value || echo rebinding_t2_time_value)"
+  fi
+  # Strictly 0 < renewal < rebinding < lease, whether reported or derived;
   # equality fails.
-  [ -n "$lease_s" ] && [ -n "$renew_s" ] && [ -n "$rebind_s" ] \
-    || refuse "the DHCP lease must report lease_time, renewal_t1_time_value and rebinding_t2_time_value"
   [ "$renew_s" -gt 0 ] && [ "$renew_s" -lt "$rebind_s" ] && [ "$rebind_s" -lt "$lease_s" ] \
     || refuse "the lease's timing is inconsistent: renewal $renew_s s, rebinding $rebind_s s, lease $lease_s s must satisfy 0 < renewal < rebinding < lease"
 
@@ -420,6 +434,7 @@ if [ "$mode" = 'admin' ] || [ "$mode" = 'setup' ]; then
     "dhcp.leaseSeconds=n:$lease_s" "dhcp.leaseStartRaw=s:$lease_start_raw"
     "dhcp.leaseStartEpoch=n:$lease_start" "dhcp.leaseExpiryEpoch=n:$lease_expiry"
     "dhcp.renewEpoch=n:$((lease_start + renew_s))" "dhcp.rebindEpoch=n:$((lease_start + rebind_s))"
+    "dhcp.timingSource=s:$timing_source"
     "dhcp.observedEpoch=n:$now_epoch" "dhcp.remainingSeconds=n:$((lease_expiry - now_epoch))"
     "dhcp.requiredSeconds=n:$attest_window" "dhcp.sampleIntervalSeconds=n:$SOAK_SAMPLE_INTERVAL" "dhcp.safetyMarginSeconds=n:$SOAK_SAFETY_MARGIN")
 fi

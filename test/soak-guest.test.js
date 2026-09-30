@@ -570,7 +570,7 @@ describe('soak guest: admin verifier', () => {
     assert.deepEqual(dhcp, {
       server: '192.168.64.2', leaseServer: '192.168.64.2', leaseSeconds: 86400,
       leaseStartEpoch: start, leaseExpiryEpoch: start + 86400, renewEpoch: start + 43200, rebindEpoch: start + 75600,
-      requiredSeconds: 900, sampleIntervalSeconds: 600, safetyMarginSeconds: 300
+      timingSource: 'lease', requiredSeconds: 900, sampleIntervalSeconds: 600, safetyMarginSeconds: 300
     });
     assert.ok(Math.abs(Date.now() / 1000 - observedEpoch) < 60);
     assert.equal(remainingSeconds, start + 86400 - observedEpoch);
@@ -586,6 +586,38 @@ describe('soak guest: admin verifier', () => {
     assert.ok(j.trust.files >= 8 && j.trust.dirs >= 5, JSON.stringify(j.trust));
     assert.ok(!f.calls().some((c) => / -E$/.test(c)), 'a verifier must never load pf');
     assert.ok(f.calls().some((c) => c.includes('pfctl -n -v -D host_addr=192.168.64.1 -D dhcp_server=192.168.64.2 -D guest_if=en0 -f ')));
+  });
+
+  /**
+   * The admin line's DHCP timing for a lease that reports only lease_time.
+   * @param {string} leaseTime - The lease_time field value, e.g. `0x15180`
+   * @returns {{j: Object, start: number}} The attestation and its lease start epoch
+   */
+  function derivedTiming(leaseTime) {
+    const f = guestFakes(tmp, { ipconfig: packetWith(`lease_time (uint32): ${leaseTime}`, `LeaseStartTime : ${leaseStartAgo(3600)}`) });
+    const r = setup(['--verify-admin'], f, tmp);
+    assert.equal(r.status, 0, r.stderr);
+    const [j] = r.json;
+    assert.equal(j.ok, true);
+    return { j, start: j.dhcp.leaseStartEpoch };
+  }
+
+  it('derives RFC 2131 renewal and rebinding times when the lease omits both timers, and says so', () => {
+    const { j, start } = derivedTiming('0x15180');
+    assert.equal(j.dhcp.leaseSeconds, 86400);
+    assert.equal(j.dhcp.renewEpoch, start + 43200);
+    assert.equal(j.dhcp.rebindEpoch, start + 75600);
+    assert.equal(j.dhcp.leaseExpiryEpoch, start + 86400);
+    assert.equal(j.dhcp.timingSource, 'derived-rfc2131');
+    assert.equal(j.dhcp.remainingSeconds, start + 86400 - j.dhcp.observedEpoch);
+  });
+
+  it('rounds derived timers down, so they never reach past the fractions of the lease', () => {
+    // 7201 s: half is 3600.5 and seven-eighths is 6300.875.
+    const { j, start } = derivedTiming('0x1c21');
+    assert.equal(j.dhcp.renewEpoch, start + 3600);
+    assert.equal(j.dhcp.rebindEpoch, start + 6300);
+    assert.equal(j.dhcp.timingSource, 'derived-rfc2131');
   });
 
   it('accepts a TangleClaw started as a bare `node` from PATH: its argv[0] is not the executable evidence', () => {
@@ -645,12 +677,20 @@ describe('soak guest: admin verifier', () => {
     'renewal comes after rebinding': [{ ipconfig: packetWith('lease_time (uint32): 0x15180\\nrenewal_t1_time_value (uint32): 0x12750\\nrebinding_t2_time_value (uint32): 0xa8c0', `LeaseStartTime : ${leaseStartAgo(60)}`) }, {}, /timing is inconsistent/],
     'renewal equals rebinding': [{ ipconfig: packetWith('lease_time (uint32): 0x15180\\nrenewal_t1_time_value (uint32): 0xa8c0\\nrebinding_t2_time_value (uint32): 0xa8c0', `LeaseStartTime : ${leaseStartAgo(60)}`) }, {}, /timing is inconsistent/],
     'rebinding reaches the lease end': [{ ipconfig: packetWith('lease_time (uint32): 0x15180\\nrenewal_t1_time_value (uint32): 0xa8c0\\nrebinding_t2_time_value (uint32): 0x15180', `LeaseStartTime : ${leaseStartAgo(60)}`) }, {}, /timing is inconsistent/],
-    'the lease omits its renewal time': [{ ipconfig: packetWith('lease_time (uint32): 0x15180\\nrebinding_t2_time_value (uint32): 0x12750', `LeaseStartTime : ${leaseStartAgo(60)}`) }, {}, /must report lease_time, renewal_t1_time_value and rebinding_t2_time_value/],
+    'the lease omits its renewal time': [{ ipconfig: packetWith('lease_time (uint32): 0x15180\\nrebinding_t2_time_value (uint32): 0x12750', `LeaseStartTime : ${leaseStartAgo(60)}`) }, {}, /must report lease_time, renewal_t1_time_value and rebinding_t2_time_value.*it reports only rebinding_t2_time_value/],
     'the renewal field appears twice': [{ ipconfig: packetWith('lease_time (uint32): 0x15180\\nrenewal_t1_time_value (uint32): 0xa8c0\\nrenewal_t1_time_value (uint32): 0xa8c0', `LeaseStartTime : ${leaseStartAgo(60)}`) }, {}, /renewal_t1_time_value 2 times/],
     'the rebinding value is malformed': [{ ipconfig: packetWith('lease_time (uint32): 0x15180\\nrebinding_t2_time_value (uint32): soon', `LeaseStartTime : ${leaseStartAgo(60)}`) }, {}, /rebinding_t2_time_value is malformed/],
     'more than one process listens on the TangleClaw port': [{ lsof: 'printf "p1\\nu502\\np2\\nu502\\n"' }, {}, /more than one process/],
     'ps disagrees about the TangleClaw uid': [{ ps: 'echo "  501"' }, {}, /ps reports pid 4242 as uid '501'/],
     'the TangleClaw process is not node': [{ lsof: 'case "$*" in *-iTCP:3102*) printf "p4242\\nu502\\n";; *"-d txt"*) printf "p4242\\nn/usr/bin/python3\\n";; esac' }, {}, /maps 0 node executables/],
+    'the lease omits its rebinding time': [{ ipconfig: packetWith('lease_time (uint32): 0x15180\\nrenewal_t1_time_value (uint32): 0xa8c0', `LeaseStartTime : ${leaseStartAgo(60)}`) }, {}, /or omit both timers to have them derived; it reports only renewal_t1_time_value/],
+    'the lease omits both timers and its lease time': [{ ipconfig: packetWith('', `LeaseStartTime : ${leaseStartAgo(60)}`) }, {}, /must report lease_time/],
+    'a lease with no timers is too short to derive ordered ones': [{ ipconfig: packetWith('lease_time (uint32): 0x1', `LeaseStartTime : ${leaseStartAgo(0)}`) }, {}, /timing is inconsistent: renewal 0 s, rebinding 0 s, lease 1 s/],
+    'derived timers from a two-second lease coincide': [{ ipconfig: packetWith('lease_time (uint32): 0x2', `LeaseStartTime : ${leaseStartAgo(0)}`) }, {}, /timing is inconsistent: renewal 1 s, rebinding 1 s, lease 2 s/],
+    'a lease with no timers reports its lease time twice': [{ ipconfig: packetWith('lease_time (uint32): 0x15180\\nlease_time (uint32): 0x15180', `LeaseStartTime : ${leaseStartAgo(60)}`) }, {}, /lease_time 2 times/],
+    'a lease with no timers has a malformed renewal field': [{ ipconfig: packetWith('lease_time (uint32): 0x15180\\nrenewal_t1_time_value (uint32): later', `LeaseStartTime : ${leaseStartAgo(60)}`) }, {}, /renewal_t1_time_value is malformed/],
+    'a lease with no timers has expired': [{ ipconfig: packetWith('lease_time (uint32): 0x15180', `LeaseStartTime : ${leaseStartAgo(2 * 86400)}`) }, {}, /lease expired/],
+    'a lease with no timers has less left than the next attestation window': [() => ({ ipconfig: packetWith('lease_time (uint32): 0x15180', `LeaseStartTime : ${leaseStartAgo(86400 - 300)}`) }), {}, /less than the next sample interval plus margin \(900 s\)/],
     'the lease has no lease time': [{ ipconfig: 'case "$*" in "getifaddr en0") echo 192.168.64.5;; "getpacket en0") printf "server_identifier (ip): 192.168.64.2\\n";; esac' }, {}, /must report lease_time/],
     'the TangleClaw process maps two node executables': [{ lsof: `case "$*" in *-iTCP:3102*) printf "p4242\\nu502\\n";; *"-d txt"*) printf "p4242\\nn${NODE}\\nn/opt/other/bin/node\\n";; esac` }, {}, /maps 2 node executables/],
     'the workload account became an admin after setup': [{ dseditgroup: 'case "$*" in *" admin") exit 0;; *) exit 1;; esac' }, {}, /member of admin/],
