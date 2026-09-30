@@ -1783,3 +1783,79 @@ describe('soak driver — ownership that cannot be verified', () => {
     });
   });
 });
+
+describe('soak driver — the run lasts until the schedule\'s horizon', () => {
+  const logLines = () => fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const lastEventAt = (s) => T0 + s.events[s.events.length - 1].atMs;
+
+  it('waits after the last event until start + durationMs, and only then writes end', async () => {
+    const s = apiSchedule();
+    const clock = fakeClock(T0);
+    let endSeenBeforeHorizon = false;
+    const sleep = clock.sleep;
+    // Every sleep of the tail looks at the log first: end must not be there yet.
+    clock.sleep = async (ms) => {
+      if (clock.now() < T0 + s.params.durationMs && logLines().some((r) => r.type === 'end')) endSeenBeforeHorizon = true;
+      await sleep(ms);
+    };
+    const result = await driver.runSchedule({ schedule: s, executors: recordingExecutors([]), ctx: {}, logPath, clock });
+    assert.equal(result.status, 'completed');
+    assert.ok(lastEventAt(s) < T0 + s.params.durationMs, 'the last event comes before the horizon');
+    const end = logLines().at(-1);
+    assert.equal(end.type, 'end');
+    assert.equal(end.completedAt, T0 + s.params.durationMs, 'end is written at the horizon, not after the last event');
+    assert.equal(endSeenBeforeHorizon, false, 'end was never on record before the horizon');
+    assert.ok(driver.readLog(logPath).ended);
+  });
+
+  it('writes end at once when execution already carried the run past the horizon', async () => {
+    const s = apiSchedule();
+    const clock = fakeClock(T0);
+    const executors = {};
+    let calls = 0;
+    for (const [kind, fn] of Object.entries(recordingExecutors([]))) {
+      // The last event runs long, past the horizon.
+      executors[kind] = async (...a) => { if (++calls === s.events.length) clock.advance(s.params.durationMs); return fn(...a); };
+    }
+    await driver.runSchedule({ schedule: s, executors, ctx: {}, logPath, clock });
+    const recs = logLines();
+    const lastEvent = recs.filter((r) => r.type === 'event').at(-1);
+    assert.ok(lastEvent.startedAt + lastEvent.durationMs > T0 + s.params.durationMs, 'the overrun happened');
+    assert.equal(recs.at(-1).completedAt, lastEvent.startedAt + lastEvent.durationMs, 'no extra wait after an overrun');
+  });
+
+  it('honours a stop during the tail wait, and a resume waits out the rest without re-running any event', async () => {
+    const s = apiSchedule();
+    const clock = fakeClock(T0);
+    const ran = [];
+    const tailStart = () => logLines().filter((r) => r.type === 'event').length === s.events.length;
+    const result = await driver.runSchedule({ schedule: s, executors: recordingExecutors(ran), ctx: {}, logPath, clock, stopPollMs: 1000, shouldStop: tailStart });
+    assert.equal(result.status, 'stopped');
+    assert.ok(clock.now() < T0 + s.params.durationMs, 'stopped inside the tail');
+    assert.ok(!logLines().some((r) => r.type === 'end'), 'a stopped run writes no end');
+    assert.equal(logLines().at(-1).type, 'stop');
+    const again = await driver.runSchedule({ schedule: s, executors: recordingExecutors(ran), ctx: {}, logPath, clock });
+    assert.equal(again.status, 'completed');
+    assert.equal(ran.length, s.events.length, 'no event ran twice');
+    assert.equal(logLines().at(-1).completedAt, T0 + s.params.durationMs);
+  });
+
+  it('stops with LOCK_LOST when the lock is taken over during the tail wait, and writes no end', async () => {
+    const s = apiSchedule();
+    const clock = fakeClock(T0);
+    const sleep = clock.sleep;
+    let taken = false;
+    clock.sleep = async (ms) => {
+      if (!taken && logLines().filter((r) => r.type === 'event').length === s.events.length) {
+        taken = true;
+        fs.writeFileSync(`${logPath}.lock`, JSON.stringify({ pid: 4242, host: 'intruder' }));
+      }
+      await sleep(ms);
+    };
+    await assert.rejects(driver.runSchedule({ schedule: s, executors: recordingExecutors([]), ctx: {}, logPath, clock }), (err) => err.code === 'LOCK_LOST');
+    assert.equal(taken, true, 'the lock was taken during the tail');
+    assert.ok(clock.now() < T0 + s.params.durationMs, 'the loss was found inside the tail, not at the end');
+    assert.ok(!logLines().some((r) => r.type === 'end'), 'no end');
+    assert.throws(() => driver.readLog(logPath), (err) => err.code === 'LOG_LOCK_LOST', 'the loss is recorded, so the log is never evidence');
+  });
+});

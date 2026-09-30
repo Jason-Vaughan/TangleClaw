@@ -9,11 +9,12 @@ All notable changes to TangleClaw are documented in this file.
 - **A soak's evidence now decides whether a release candidate is certified** (#2020 Chunk 4, part of #1949). Before this, a host-attested certification run could be certified of record without anything having read the soak's evidence bundle.
   - **The certification judge.** `lib/soak/judge.js` reads one evidence bundle for one certification run and fails closed.
     - It trusts nothing the manifest's summary says. It re-hashes every listed file, refuses unlisted ones, re-validates the schedule, re-reads the log with the driver, re-reads the samples and re-checks the database snapshot.
-    - Every scheduled event is a required test: one that failed, was skipped or is missing fails the soak, and a fault passes only when it was injected and recovered. The schedule must be the certifying 72-hour one.
+    - Every scheduled event is a required test: one that failed, was skipped or is missing fails the soak, and a fault passes only when it was injected and recovered. The schedule must be the certifying 72-hour one, and the log must span all of it.
     - The soak also fails on data corruption, on a server that is not alive and healthy at the last sample, and on samples that do not cover the whole log.
     - An ownership-unverified log fails and resets unless the Operator accepted exactly its bytes.
     - The full list of reasons is in `deploy/soak/README.md` ("Judging the bundle").
   - **Bound to one run.** A bundle must name the candidate the soak ran, and its log must lie inside the run's own window. The judgement records the run's candidate SHA, run id and manifest digest with the digests of the bundle manifest, schedule and log.
+  - **A soak run lasts its full duration.** `soak run` now waits after the last event until the schedule's horizon before writing `end`, so the log proves the whole 72 hours. A stop and a lost lock are still caught during that wait.
   - **The bundle names its candidate.** `soak bundle` now requires `--candidate-sha <40-hex>`, the SHA the operator pinned, and records it as the manifest's top-level `candidateSha`. Nothing infers it from a checkout or from the certification run.
   - **The host gates on it.** `rc-cert host-finalize` now requires `--soak-bundle <dir>` and takes `--soak-acceptance <file>` for an Operator's acceptance. It records the judgement in the finalization, which is `ok` only when the soak passed and is bound to the run (`SOAK_JUDGEMENT_MISSING`, `SOAK_JUDGEMENT_FAILED`, `SOAK_JUDGEMENT_UNBOUND`). `rc-cert host-publish` certifies a run only when its finalization holds such a judgement.
   - **Reference:** `deploy/soak/README.md`, the bundle runbook's step 7, and ADR 0021 point 14.

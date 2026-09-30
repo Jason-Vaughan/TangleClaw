@@ -54,14 +54,16 @@ async function finishedRun(opts = {}) {
   }
   let t = T0;
   const clock = { now: () => t, sleep: async (ms) => { t += ms; } };
+  // A coarse stop poll keeps the wait to the schedule's horizon cheap here.
+  const stopPollMs = HOUR;
   if (opts.reclaimed) {
     const events = () => fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8').split('\n').filter((l) => l.includes('"type":"event"')).length : 0;
-    await driver.runSchedule({ schedule, executors, ctx: {}, logPath, clock, shouldStop: () => events() >= 2 });
+    await driver.runSchedule({ schedule, executors, ctx: {}, logPath, clock, stopPollMs, shouldStop: () => events() >= 2 });
     const owner = { pid: require('node:child_process').spawnSync(process.execPath, ['-e', '0']).pid, host: os.hostname() };
     driver.openSegment(logPath, owner, t);
     fs.writeFileSync(`${logPath}.lock`, JSON.stringify(owner));
   }
-  const result = await driver.runSchedule({ schedule, executors, ctx: {}, logPath, clock });
+  const result = await driver.runSchedule({ schedule, executors, ctx: {}, logPath, clock, stopPollMs });
   assert.equal(result.status, opts.reclaimed ? 'completed-ownership-unverified' : 'completed');
   const lines = fs.readFileSync(logPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   return { schedule, schedulePath, logPath, startedAt: lines[0].startEpochMs, completedAt: lines.at(-1).completedAt };
@@ -111,7 +113,7 @@ async function passingBundle(opts = {}) {
   const out = path.join(dir, 'evidence');
   bundle.buildBundle({ candidateSha: opts.candidateSha || CAND, out, schedule: soak.schedulePath, log: soak.logPath, samples, home: opts.db === false ? undefined : home() });
   const run = { candidateSha: CAND, runId: 'a'.repeat(32), manifestDigest: 'b'.repeat(64), startedAt: soak.startedAt - MIN, updatedAt: soak.completedAt + MIN };
-  assert.ok(soak.completedAt - soak.startedAt > soak.schedule.params.durationMs - 3 * HOUR, 'the fixture ran most of its schedule');
+  assert.ok(soak.completedAt - soak.startedAt >= soak.schedule.params.durationMs, 'the fixture ran to its horizon');
   return { out, run, soak };
 }
 
@@ -355,7 +357,17 @@ describe('soak judge — every scheduled event is a required test (A6.4)', () =>
   });
 });
 
-describe('soak judge — the certifying 72-hour schedule (A6.5)', () => {
+describe('soak judge — the certifying 72-hour schedule (A6.5, A7)', () => {
+  it('fails a log whose end came before the schedule\'s horizon', async () => {
+    const { out, run, soak } = await passingBundle();
+    const lines = fs.readFileSync(path.join(out, 'soak-log.ndjson'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const lastEvent = lines.filter((x) => x.type === 'event').at(-1);
+    lines.at(-1).completedAt = lastEvent.startedAt + lastEvent.durationMs;
+    forge(out, 'soak-log.ndjson', `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    assert.deepEqual(judge.judgeBundle({ bundleDir: out, run }).reasons,
+      [{ code: 'RUN_TOO_SHORT', ranMs: lines.at(-1).completedAt - soak.startedAt, durationMs: 72 * HOUR }]);
+  });
+
   it('fails a certifying schedule of any other length', async () => {
     const { out, run } = await passingBundle({ durationMs: 12 * HOUR });
     assert.deepEqual(judge.judgeBundle({ bundleDir: out, run }).reasons, [{ code: 'SCHEDULE_DURATION', durationMs: 12 * HOUR, required: judge.CERTIFYING_DURATION_MS }]);
@@ -430,8 +442,9 @@ describe('soak judge — samples and database', () => {
     lines.at(-1).process = { pid: 1, alive: null, reason: 'ps timed out' };
     forge(out, 'samples.ndjson', `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
     // Unknown liveness is not evidence: recovery is judged at the last sample
-    // that is, and the unknown one does not count towards coverage either.
-    assert.deepEqual(codes(judge.judgeBundle({ bundleDir: out, run })), ['COVERAGE', 'SERVER_NOT_RECOVERED']);
+    // that is, which found the server down. That sample is one interval
+    // before the log's end, so coverage still holds.
+    assert.deepEqual(codes(judge.judgeBundle({ bundleDir: out, run })), ['SERVER_NOT_RECOVERED']);
   });
 
   it('fails failed samples once they leave a gap longer than two intervals', async () => {

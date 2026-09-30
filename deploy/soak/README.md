@@ -145,6 +145,11 @@ TANGLECLAW_SERVICE_TOKEN=… node scripts/soak.js run --schedule soak-certifying
   --api http://<guest-ip>:<port> --log soak-certifying.ndjson
 ```
 
+- **A run lasts until its schedule's horizon.** After the last event it waits, in the same run, until
+  the log's start plus the schedule's `durationMs`, and only then writes `end`. The log's span is the
+  certification judge's evidence that the soak ran its full duration. A stop is still honoured within
+  one poll during that wait, and a lost lock is still found there, before `end`. A run that its events
+  already carried past the horizon writes `end` at once.
 - **`--api` is required and has no fallback.** The load writes port leases and sessions, so before
   any load `run` refuses the TangleClaw named by this pane's own `TANGLECLAW_API`
   (`LIVE_INSTALL_TARGET`) in three ways:
@@ -456,7 +461,8 @@ rc-cert host-finalize --sha <40> --host-base <abs> --soak-bundle <abs bundle dir
   - any scheduled event that did not succeed: one that failed, was skipped (`SKIPPED_STALE` included)
     or is missing, one logged twice or not in the schedule, and an `end` record counting other events
     than the schedule holds. A fault succeeds only when it was injected and its recovery checks passed;
-  - a soak outside the run's window;
+  - a soak outside the run's window, or one whose `end` came before its start plus the schedule's
+    duration (`RUN_TOO_SHORT`);
   - samples that are missing, torn, have no interval, or do not cover the log: at least two evidentiary
     samples, the first within one sampling interval of its start, the last within one of its end, and
     no two consecutive ones more than two intervals apart. A sample that failed, whose database check

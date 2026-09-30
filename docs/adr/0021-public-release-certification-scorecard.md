@@ -218,11 +218,12 @@ to be able to trust it. That creates two problems:
    admitted boot, on the admission sample and on every sample that earned time.
 
 14. **No certification of record without a passing soak judgement bound to the run** (#2020,
-   Architect rulings A4, A5 and A6). `rc-cert host-finalize` takes the soak's evidence bundle
+   Architect rulings A4 to A7). `rc-cert host-finalize` takes the soak's evidence bundle
    (`--soak-bundle`) and runs the soak's certification judge (`lib/soak/judge.js`) on it for that
    run's candidate SHA, run id, manifest digest and window. The judge re-derives everything from
    the bundle's files and fails closed. Every scheduled event of the certifying 72-hour schedule
-   must have run once and succeeded, and the integrity samples must cover the whole log with no
+   must have run once and succeeded, the log must span the full schedule (the soak driver writes
+   `end` only at its horizon), and the integrity samples must cover the whole log with no
    corruption and a healthy server at the end. The bundle must name the candidate it ran as an explicit
    full SHA, which the operator states and nothing infers, and which must equal the run's. An
    ownership-unverified soak log fails and resets unless the Operator accepted exactly its bytes.
