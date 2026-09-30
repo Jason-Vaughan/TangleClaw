@@ -39,7 +39,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- prawduct: type=fix | scope=2020-lease-start-form -->
 
-PM dispatch after the TC-RM09 dry-run gate failed on the candidate: `LeaseStartTime is not in the expected form (YYYY-MM-DD HH:MM:SS +ZZZZ): 09/30/2026 14:24:26`. Branch `fix/2020-lease-start-mdy` from `origin/main` `aea0c4f8`.
+PM dispatch. The TC-RM09 dry run was BLOCKED - TESTBED/TOOLING COMPATIBILITY; this is not a candidate failure (Architect rulings A3/A4). The verifier refused the real macOS 26.3 guest with `LeaseStartTime is not in the expected form (YYYY-MM-DD HH:MM:SS +ZZZZ): 09/30/2026 14:24:26`. Branch `fix/2020-lease-start-mdy` from `origin/main` `aea0c4f8`.
 
 **Why.** macOS 26.3's `ipconfig getsummary` prints `MM/DD/YYYY HH:MM:SS`, with no zone. The verifier accepted only the zoned ISO-like form, so no real guest could be attested.
 
