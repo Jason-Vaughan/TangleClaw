@@ -35,6 +35,23 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-30 — #2020: read macOS 26's zoneless LeaseStartTime form
+
+<!-- prawduct: type=fix | scope=2020-lease-start-form -->
+
+PM dispatch after the TC-RM09 dry-run gate failed on the candidate: `LeaseStartTime is not in the expected form (YYYY-MM-DD HH:MM:SS +ZZZZ): 09/30/2026 14:24:26`. Branch `fix/2020-lease-start-mdy` from `origin/main` `aea0c4f8`.
+
+**Why.** macOS 26.3's `ipconfig getsummary` prints `MM/DD/YYYY HH:MM:SS`, with no zone. The verifier accepted only the zoned ISO-like form, so no real guest could be attested.
+
+**What.**
+- `deploy/soak/guest/guest-setup.sh`: the zoneless form is parsed as the guest's local time. The date and time must round-trip through the local calendar, which refuses an impossible day, day-first input and a DST gap. The zoned form is unchanged. Two new attested fields, `dhcp.leaseStartForm` and `dhcp.leaseStartUtcOffsetMinutes`, record the reading.
+- `test/soak-guest.test.js`: the zoneless form under UTC, America/Los_Angeles and Asia/Kolkata (epoch and offset exact); a zoned +0530 start read by its own offset in a different guest zone; refusals for an impossible day, day-first, a DST gap, mixed forms, missing seconds, a future start and expiry.
+- Docs: the README describes both forms and the zone assumption. Install-runbook step 12 checks that a zoneless start falls inside the renewal window.
+
+**Decision.** A zoneless time is read in the guest's zone because that is the zone `ipconfig` formats in. It can't be proven from the string alone, so the offset is attested, and the dry run's renewal observation is the check.
+
+**Test contract changed, not weakened.** The admin-line `deepEqual` gains `leaseStartForm: 'zoned'` and `leaseStartUtcOffsetMinutes: 0`.
+
 ## 2026-09-30 — #2020: derive DHCP renewal and rebinding times for a Tart lease that omits both
 
 <!-- prawduct: type=fix | scope=2020-dhcp-timing -->

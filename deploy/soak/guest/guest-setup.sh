@@ -414,16 +414,34 @@ if [ "$mode" = 'admin' ] || [ "$mode" = 'setup' ]; then
     || refuse "the lease's timing is inconsistent: renewal $renew_s s, rebinding $rebind_s s, lease $lease_s s must satisfy 0 < renewal < rebinding < lease"
 
   # When the lease began, as the system reports it, parsed strictly. Anything
-  # else, or the field reported twice, is refused.
+  # else, or the field reported twice, is refused. ipconfig prints one of two
+  # forms: `YYYY-MM-DD HH:MM:SS +ZZZZ`, which carries its zone, or, on macOS
+  # 26, `MM/DD/YYYY HH:MM:SS`, which does not and is read as the guest's local
+  # time, the zone ipconfig formats in. A zoneless date must name a real
+  # calendar day and a local time that exists (no DST gap). The form and the
+  # UTC offset used are attested, so the evidence shows the reading.
   lease_start_raw="$(bounded ipconfig getsummary "$SOAK_GUEST_IF" 2>/dev/null | sed -n 's/^[[:space:]]*LeaseStartTime[[:space:]]*:[[:space:]]*//p' || true)"
   [ -n "$lease_start_raw" ] || refuse "ipconfig does not report when the lease started (LeaseStartTime), so its expiry cannot be attested"
   [ "$(grep -c . <<< "$lease_start_raw")" -eq 1 ] || refuse "ipconfig reports LeaseStartTime more than once"
-  lease_start="$(node -e '
-    const m = /^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d) ([+-]\d\d)(\d\d)$/.exec(process.argv[1]);
-    const t = m ? Date.parse(m[1] + "T" + m[2] + m[3] + ":" + m[4]) : NaN;
-    if (!Number.isFinite(t)) process.exit(1);
-    process.stdout.write(String(Math.floor(t / 1000)));
-  ' "$lease_start_raw")" || refuse "LeaseStartTime is not in the expected form (YYYY-MM-DD HH:MM:SS +ZZZZ): $lease_start_raw"
+  lease_start_parsed="$(node -e '
+    const raw = process.argv[1];
+    let t = NaN, form = "", offset = NaN;
+    let m = /^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d) ([+-])(\d\d)(\d\d)$/.exec(raw);
+    if (m) {
+      t = Date.parse(m[1] + "T" + m[2] + m[3] + m[4] + ":" + m[5]);
+      form = "zoned";
+      offset = (m[3] === "-" ? -1 : 1) * (Number(m[4]) * 60 + Number(m[5]));
+    } else if ((m = /^(\d\d)\/(\d\d)\/(\d{4}) (\d\d):(\d\d):(\d\d)$/.exec(raw))) {
+      const [mo, d, y, h, mi, s] = m.slice(1).map(Number);
+      const local = new Date(y, mo - 1, d, h, mi, s);
+      const same = local.getFullYear() === y && local.getMonth() === mo - 1 && local.getDate() === d
+        && local.getHours() === h && local.getMinutes() === mi && local.getSeconds() === s;
+      if (same) { t = local.getTime(); form = "local"; offset = -local.getTimezoneOffset(); }
+    }
+    if (!Number.isFinite(t) || !Number.isFinite(offset)) process.exit(1);
+    process.stdout.write(Math.floor(t / 1000) + " " + form + " " + offset);
+  ' "$lease_start_raw")" || refuse "LeaseStartTime is not in the expected form (YYYY-MM-DD HH:MM:SS +ZZZZ, or MM/DD/YYYY HH:MM:SS in the guest's local time): $lease_start_raw"
+  read -r lease_start lease_start_form lease_start_offset <<< "$lease_start_parsed"
   now_epoch="$(date -u +%s)"
   # Not before 2000, and not ahead of this clock by more than a minute.
   [ "$lease_start" -ge 946684800 ] && [ "$lease_start" -le $((now_epoch + 60)) ] || refuse "the lease start $lease_start_raw is out of range"
@@ -432,6 +450,7 @@ if [ "$mode" = 'admin' ] || [ "$mode" = 'setup' ]; then
   [ $((lease_expiry - now_epoch)) -ge "$attest_window" ] || refuse "the DHCP lease has $((lease_expiry - now_epoch)) s left, less than the next sample interval plus margin ($attest_window s)"
   lease_fields=("dhcp.server=s:$dhcp_server" "dhcp.leaseServer=s:$lease_server"
     "dhcp.leaseSeconds=n:$lease_s" "dhcp.leaseStartRaw=s:$lease_start_raw"
+    "dhcp.leaseStartForm=s:$lease_start_form" "dhcp.leaseStartUtcOffsetMinutes=n:$lease_start_offset"
     "dhcp.leaseStartEpoch=n:$lease_start" "dhcp.leaseExpiryEpoch=n:$lease_expiry"
     "dhcp.renewEpoch=n:$((lease_start + renew_s))" "dhcp.rebindEpoch=n:$((lease_start + rebind_s))"
     "dhcp.timingSource=s:$timing_source"

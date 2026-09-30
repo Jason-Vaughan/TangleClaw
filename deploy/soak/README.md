@@ -634,8 +634,17 @@ The guest is attested from two planes, because neither can see everything.
       (see the DHCP limit under **Known limits** below).
 
     It fails closed when:
-    - `ipconfig getsummary` doesn't report `LeaseStartTime` exactly once, in the form
-      `YYYY-MM-DD HH:MM:SS +ZZZZ`;
+    - `ipconfig getsummary` doesn't report `LeaseStartTime` exactly once, in one of two forms:
+      - `YYYY-MM-DD HH:MM:SS +ZZZZ`, which carries its own zone;
+      - `MM/DD/YYYY HH:MM:SS`, which macOS 26 prints with no zone. This form is read as the guest's local
+        time, the zone `ipconfig` formats in. It must name a real calendar day, and a local time that
+        exists: a time inside a daylight-saving gap is refused. In the repeated hour when the clocks go
+        back, the reading may be either occurrence, an hour apart.
+
+      `dhcp.leaseStartForm` (`zoned` or `local`) and `dhcp.leaseStartUtcOffsetMinutes` record which form
+      was read and the offset used, so the evidence shows how the start was interpreted. A guest whose
+      zone disagrees with the one `ipconfig` used would shift the start by the difference. The dry run
+      checks the reading against the renewal (step 12 of the install runbook);
     - the start is before 2000 or in the future;
     - the lease has expired;
     - the lease doesn't report `lease_time`;

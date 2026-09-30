@@ -228,6 +228,22 @@ function leaseStartAgo(seconds) {
 }
 
 /**
+ * A LeaseStartTime in macOS 26's zoneless `MM/DD/YYYY HH:MM:SS` form: the wall
+ * time some seconds ago in the given IANA zone.
+ * @param {number} seconds - How long ago the lease started
+ * @param {string} zone - IANA zone the wall time is written in
+ * @returns {{raw: string, epoch: number, offset: number}} The string, its whole-second epoch, and the zone's UTC offset in minutes then
+ */
+function mdyStartAgo(seconds, zone) {
+  const epoch = Math.floor(Date.now() / 1000) - seconds;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: zone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit'
+  }).formatToParts(new Date(epoch * 1000)).map((p) => [p.type, p.value]));
+  const wallAsUtc = Date.UTC(+parts.year, parts.month - 1, +parts.day, +parts.hour, +parts.minute, +parts.second) / 1000;
+  return { raw: `${parts.month}/${parts.day}/${parts.year} ${parts.hour}:${parts.minute}:${parts.second}`, epoch, offset: (wallAsUtc - epoch) / 60 };
+}
+
+/**
  * Fake system commands for guest-setup.sh inside a "VM". `FAKE_USER` in the
  * environment is who is running (default the admin); `sudo -u` switches it,
  * and only the admin may use sudo or pfctl. Each command logs its call, with
@@ -569,6 +585,7 @@ describe('soak guest: admin verifier', () => {
     const start = Math.floor(Date.parse(leaseStartRaw.replace(' ', 'T').replace(' +0000', 'Z')) / 1000);
     assert.deepEqual(dhcp, {
       server: '192.168.64.2', leaseServer: '192.168.64.2', leaseSeconds: 86400,
+      leaseStartForm: 'zoned', leaseStartUtcOffsetMinutes: 0,
       leaseStartEpoch: start, leaseExpiryEpoch: start + 86400, renewEpoch: start + 43200, rebindEpoch: start + 75600,
       timingSource: 'lease', requiredSeconds: 900, sampleIntervalSeconds: 600, safetyMarginSeconds: 300
     });
@@ -620,6 +637,34 @@ describe('soak guest: admin verifier', () => {
     assert.equal(j.dhcp.timingSource, 'derived-rfc2131');
   });
 
+  for (const zone of ['UTC', 'America/Los_Angeles', 'Asia/Kolkata']) {
+    it(`reads macOS 26's zoneless MM/DD/YYYY LeaseStartTime as the guest's local time (${zone}), and attests the reading`, () => {
+      const start = mdyStartAgo(3600, zone);
+      const f = guestFakes(tmp, { ipconfig: packetWith(TIMING, `LeaseStartTime : ${start.raw}`) });
+      const r = setup(['--verify-admin'], f, tmp, { TZ: zone });
+      assert.equal(r.status, 0, r.stderr);
+      const { dhcp } = r.json[0];
+      assert.equal(dhcp.leaseStartRaw, start.raw);
+      assert.equal(dhcp.leaseStartForm, 'local');
+      assert.equal(dhcp.leaseStartUtcOffsetMinutes, start.offset);
+      assert.equal(dhcp.leaseStartEpoch, start.epoch);
+      assert.equal(dhcp.leaseExpiryEpoch, start.epoch + 86400);
+      assert.equal(dhcp.renewEpoch, start.epoch + 43200);
+    });
+  }
+
+  it('attests a zoned LeaseStartTime by its own offset, whatever the guest zone', () => {
+    const epoch = Math.floor(Date.now() / 1000) - 3600;
+    // The same instant written at +05:30.
+    const shifted = new Date((epoch + 330 * 60) * 1000).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' +0530');
+    const f = guestFakes(tmp, { ipconfig: packetWith(TIMING, `LeaseStartTime : ${shifted}`) });
+    const r = setup(['--verify-admin'], f, tmp, { TZ: 'America/Los_Angeles' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.json[0].dhcp.leaseStartForm, 'zoned');
+    assert.equal(r.json[0].dhcp.leaseStartUtcOffsetMinutes, 330);
+    assert.equal(r.json[0].dhcp.leaseStartEpoch, epoch);
+  });
+
   it('accepts a TangleClaw started as a bare `node` from PATH: its argv[0] is not the executable evidence', () => {
     const f = guestFakes(tmp, { ps: 'case "$*" in *uid=*) echo "  502";; *comm=*) echo node;; esac' });
     const r = setup(['--verify-admin'], f, tmp);
@@ -668,6 +713,13 @@ describe('soak guest: admin verifier', () => {
     'the lease time is malformed': [{ ipconfig: 'case "$*" in "getifaddr en0") echo 192.168.64.5;; "getpacket en0") printf "server_identifier (ip): 192.168.64.2\\nlease_time (uint32): forever\\n";; esac' }, {}, /lease_time is malformed/],
     'the lease is not reported to have started': [{ ipconfig: packetWith(TIMING, '') }, {}, /does not report when the lease started/],
     'the lease start is unparseable': [{ ipconfig: packetWith(TIMING, 'LeaseStartTime : yesterday') }, {}, /not in the expected form/],
+    'a zoneless lease start names a day the month does not have': [{ ipconfig: packetWith(TIMING, 'LeaseStartTime : 02/30/2026 10:00:00') }, { TZ: 'UTC' }, /not in the expected form/],
+    'a zoneless lease start puts the day first': [{ ipconfig: packetWith(TIMING, 'LeaseStartTime : 30/09/2026 10:00:00') }, { TZ: 'UTC' }, /not in the expected form/],
+    'a zoneless lease start falls in a DST gap': [{ ipconfig: packetWith(TIMING, 'LeaseStartTime : 03/08/2026 02:30:00') }, { TZ: 'America/Los_Angeles' }, /not in the expected form/],
+    'a lease start mixes the two forms': [{ ipconfig: packetWith(TIMING, 'LeaseStartTime : 09/30/2026 10:00:00 +0000') }, { TZ: 'UTC' }, /not in the expected form/],
+    'a zoneless lease start drops its seconds': [{ ipconfig: packetWith(TIMING, 'LeaseStartTime : 09/30/2026 10:00') }, { TZ: 'UTC' }, /not in the expected form/],
+    'a zoneless lease start is in the future': [() => ({ ipconfig: packetWith(TIMING, `LeaseStartTime : ${mdyStartAgo(-3600, 'UTC').raw}`) }), { TZ: 'UTC' }, /out of range/],
+    'a zoneless lease has expired': [() => ({ ipconfig: packetWith(TIMING, `LeaseStartTime : ${mdyStartAgo(2 * 86400, 'UTC').raw}`) }), { TZ: 'UTC' }, /lease expired/],
     'the lease start is reported twice': [{ ipconfig: packetWith(TIMING, `LeaseStartTime : ${leaseStartAgo(60)}\\nLeaseStartTime : ${leaseStartAgo(60)}`) }, {}, /more than once/],
     'the lease start is in the future': [{ ipconfig: packetWith(TIMING, `LeaseStartTime : ${leaseStartAgo(-3600)}`) }, {}, /out of range/],
     'the lease has expired': [{ ipconfig: packetWith(TIMING, `LeaseStartTime : ${leaseStartAgo(2 * 86400)}`) }, {}, /lease expired/],
