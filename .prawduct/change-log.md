@@ -35,6 +35,19 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-30 — #2020: dry-run attempt-2 fix, stub hub plist written by the workload
+
+<!-- prawduct: type=fix | scope=2068-hub-plist-tmp -->
+
+PM dispatch (Medusa 0df005cc) after TC-RM09's attempt-2 on baa143db failed at guest-setup step 6. Covered by the Architect's standing testbed self-heal authorization (Rule #153).
+
+**Why.** `mktemp` with no template ignores TMPDIR on macOS and creates the file in the admin's 0700 DARWIN_USER_TEMP_DIR. The `as_user install` from it then failed as soakrun with exit 71, on every real guest.
+
+**What.**
+- `deploy/soak/guest/guest-setup.sh`: the workload writes the plist from stdin (`as_user tee`), then runs `as_user chmod 0644`. There is no admin temp file now.
+- `test/soak-guest.test.js`: the fakes model macOS mktemp's private directory. A new test fails if a workload-user command is handed a path from it, and it fails against the old script.
+- `docs/runbooks/soak-install-the-candidate.md` step 11: the 600 s NAT DHCP lease against the 900 s default check, and the interval and margin to set for NAT-phase setup only.
+
 ## 2026-09-30 — #2020: dry-run attempt-1 tooling fixes, Chunk 3 (Medusa stub hub)
 
 <!-- prawduct: type=fix | scope=2020-dryrun-a1-tooling -->
