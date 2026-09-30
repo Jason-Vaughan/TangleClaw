@@ -385,12 +385,15 @@ describe('medusa-wake — engine activity from the native channel (#1628)', () =
 });
 
 describe('medusa-wake — assessSessionIdle takes the engine\'s answer as an input (#1628)', () => {
-  it('engineIdle lifts only the at-rest marker', () => {
-    const lifted = wake.assessSessionIdle({ lines: CX_CLIPPED_PANE, profile: CODEX, engineIdle: true, ticksRequired: 1 });
+  it('engineIdle lifts only a declared at-rest marker', () => {
+    // Current Codex has no reliable idle marker; exercise the generic gate
+    // with a profile that declares one, as Codex did when #1628 landed.
+    const withIdleMarker = { ...CODEX, idleMarker: 'Ready' };
+    const lifted = wake.assessSessionIdle({ lines: CX_CLIPPED_PANE, profile: withIdleMarker, engineIdle: true, ticksRequired: 1 });
     assert.equal(lifted.idle, true);
-    const held = wake.assessSessionIdle({ lines: CX_CLIPPED_PANE, profile: CODEX, ticksRequired: 1 });
+    const held = wake.assessSessionIdle({ lines: CX_CLIPPED_PANE, profile: withIdleMarker, ticksRequired: 1 });
     assert.deepEqual([held.idle, held.reason], [false, 'not-at-rest']);
-    const busy = wake.assessSessionIdle({ lines: CX_BUSY_PANE, profile: CODEX, engineIdle: true, ticksRequired: 1 });
+    const busy = wake.assessSessionIdle({ lines: CX_BUSY_PANE, profile: withIdleMarker, engineIdle: true, ticksRequired: 1 });
     assert.deepEqual([busy.idle, busy.reason], [false, 'turn-in-flight']);
   });
 

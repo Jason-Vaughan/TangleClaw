@@ -562,6 +562,37 @@ describe('the table is derived when it is READ, not when the module is required'
   });
 });
 
+describe('Codex 0.159 wake regression — the old Ready marker disappeared', () => {
+  const idle = [
+    '  Worked for 56s',
+    '› Ask Codex to do anything',
+    '  GPT-6-Sol high · project',
+    '  ← for agents · ? for shortcuts'
+  ];
+  const busy = [
+    '• Working (9m 03s • esc to interrupt)',
+    '› Ask Codex to do anything',
+    '  GPT-6-Sol medium · project',
+    '  ← for agents · ? for shortcuts'
+  ];
+
+  it('wakes a settled empty composer without the obsolete marker, but refuses a busy turn', () => {
+    const profile = wake.ENGINE_WAKE_PROFILES.codex;
+    assert.equal(profile.idleMarker, null, '0.159 has no positive Ready marker');
+    const digest = wake._paneDigest(idle, profile);
+    const ready = wake.assessSessionIdle({ lines: idle, profile, prevDigest: digest, idleTicks: 1 });
+    assert.equal(ready.idle, true);
+    assert.deepEqual(wake._assessPane(busy, profile, null), { idle: false, reason: 'turn-in-flight' },
+      'the composer and footer remain visible while Codex works');
+  });
+
+  it('refuses typed input and a dialog even when the obsolete marker is gone', () => {
+    const profile = wake.ENGINE_WAKE_PROFILES.codex;
+    assert.equal(wake._assessPane(['› repair this', '  ← for agents · ? for shortcuts'], profile, null).idle, false);
+    assert.equal(wake._assessPane(['› 1. Yes, continue', '  ← for agents · ? for shortcuts'], profile, null).idle, false);
+  });
+});
+
 describe('an engine that animates decoration at rest is still readable as idle (#1344)', () => {
   // codex paints a braille shimmer across and above its composer, forever, in
   // any session with history. It broke BOTH idle gates, so both are pinned.

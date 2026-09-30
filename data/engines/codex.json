@@ -74,12 +74,12 @@
       "placeholderSgr": [
         2
       ],
-      "idleMarker": "· Ready ·",
+      "idleMarker": null,
       "decorativePattern": "[⠀-⣿]",
       "evidence": {
         "busyMarker": {
-          "verifiedOn": "2026-09-16",
-          "source": "Live capture of a working codex pane (codex-cli 0.154.0, gpt-6-astra): the status row renders `• Working (23s • esc to interrupt)`. `esc to interrupt` is the stable half of that line; the elapsed seconds change every tick. NOT sufficient alone here — codex keeps its composer drawn mid-turn, which is why `idleMarker` is also set. Key bindings are user-configurable, so a rebound interrupt key would change this string; that is a known limit of every marker in this block, not a defect of this one."
+          "verifiedOn": "2026-09-30",
+          "source": "Live capture of a working codex-cli 0.159.0 CTO pane: `• Working (9m 03s • esc to interrupt)` while the empty composer and shortcut footer remain drawn. The stable `esc to interrupt` portion blocks wake during a visible turn; a settled transcript and bare empty composer are also required. A quiet tool call without this marker remains a pane-only detection limit."
         },
         "promptPattern": {
           "verifiedOn": "2026-09-16",
@@ -98,8 +98,8 @@
           "source": "Live capture: the placeholder is emitted as `\\u001b[2mAsk Codex to do anything`, i.e. SGR 2 (dim), the same attribute Claude uses. The braille shimmer is NOT outside this field merely because it carries only a truecolor foreground. `_cells` applies SGR sub-parameters as attributes, so `\\u001b[38;2;R;G;Bm` records 38, 2 and R — the 2 from the truecolor selector is indistinguishable from a real dim attribute, and a probe confirms `sgr.has(2)` is true for such a cell. The shimmer is therefore handled by `decorativePattern`, which names it explicitly, rather than by this field happening to catch it."
         },
         "idleMarker": {
-          "verifiedOn": "2026-09-16",
-          "source": "Measured from outside the pane over 50 samples at 1.5s intervals against a live codex session: the status row reads `· Ready ·` at rest and `· Working ·` during a turn — present in 45/45 at-rest samples, absent in 5/5 working samples, zero overlap. Required because codex keeps its composer drawn during a turn, so the composer-empty read alone would call a working pane idle. The separators are part of the declared marker on purpose: the gate matches with `includes()` over the whole captured tail, so a bare `Ready` would also be satisfied by ordinary transcript text such as a tool line reading `Ready in 1.2s`, which is not an at-rest signal at all. `· Ready ·` is the status row's own rendering and was confirmed present on the live pane. Known limit, NOT measured: a cold pane that has not yet drawn its status row has no idle marker, and declaring one puts codex on the readiness-gated prime paste (`lib/sessions.js#_awaitPaneReady`). Every sample here was taken on a warm session; a freshly launched codex pane did render the status row with `Ready` in it during startup captures, but the gate's cold-start timing was not measured."
+          "verifiedOn": "2026-09-30",
+          "source": "The `· Ready ·` status row measured on codex-cli 0.154.0 is absent from live 0.159.0 idle Builder 1 and IT B panes. The idle Builder 1 pane shows `Worked for 56s`, an empty composer, and the shortcut footer; the busy CTO pane shows `Working (... esc to interrupt)` with that same composer and footer. Neither `Worked for` nor the shortcut footer is a safe whole-tail positive marker: prior transcript can retain an old completion row and the footer persists while busy. Null makes the existing busy-marker, empty-composer, settled-transcript streak the wake gate. Cold launch readiness then honestly falls back to an unverified fixed-delay paste."
         },
         "decorativePattern": {
           "verifiedOn": "2026-09-16",

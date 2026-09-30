@@ -263,8 +263,11 @@ test('unknown — every silence names itself', async (t) => {
     // produces it too. Rendering that to the operator as "the engine is
     // working" is absence-read-as-presence surviving in the reason string after
     // being removed from the logic.
-    const composer = '› \u001b[2mAsk Codex to do anything\u001b[0m';
-    const r = await run([{ lines: ['scrolled transcript', composer], cursor: { x: 2, y: 1, line: composer } }], 'NONCE-x');
+    // Codex 0.159 no longer has a positive at-rest marker. Antigravity still
+    // declares one, so it exercises this general missing-marker branch.
+    const composer = '> ';
+    const r = await run([{ lines: ['scrolled transcript', composer], cursor: { x: 2, y: 1, line: composer } }],
+      'NONCE-x', { engine: 'antigravity' });
     assert.equal(r.outcome, 'unknown');
     assert.match(r.reason, /not evidence of work/);
     assert.doesNotMatch(r.reason, /the engine is working/);
