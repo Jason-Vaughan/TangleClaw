@@ -826,3 +826,19 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/tailnet-cutover.test.js` — #1905 Chunk 2: the apply's six refusals, strict health (a 503, a degraded 200, an unreadable body, an error, or the wrong certificate all fail), the retry loop, and a rollback that is `rolledBack` only when every part is proven, with each injected failure reported as a typed residual and recovery. Also the cutover's `--tailnet-host` argument, result fields and ordering, and parity across the cert, allowlist, link and Caddy site before prepare, after prepare, after apply and after a rollback.
 - `test/wrap-upstream-provenance.test.js` — #1868: wrap advice that knows what upstream already holds, driven against real repositories with a real bare origin — a stale session checkout offering its own merged plan, and a carrier identical to upstream, are not presented as new work.
 - `test/store-medusa-exchange-migration.test.js` — #1839: schema v49's Medusa exchange tables exist on a fresh install at the current version and arrive on a v48 store through the migration; the postcondition refuses to stamp the version over tables that cannot keep an append-only record.
+
+## TODO (auto-stubbed 2026-09-29)
+
+- **TBD** — touched in this session: `docs/adr/0020-session-workload-receipts.md`. <!-- describe -->
+- **TBD** — touched in this session: `docs/releases/v5.30-status.md`. <!-- describe -->
+- **TBD** — touched in this session: `lib/bridge-context.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/bridge-context.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/engine-error-monitor.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `deploy/soak/guest/guest-setup.sh`. <!-- describe -->
+- **TBD** — touched in this session: `deploy/soak/guest/host-provision.sh`. <!-- describe -->
+- **TBD** — touched in this session: `lib/soak/repos.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/soak-guest.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/soak-repos.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/soak/attest-bridge.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/_release-certification-fixtures.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/soak-attest-bridge.test.js`. <!-- describe -->
