@@ -126,9 +126,10 @@ As the admin again:
     → Expected: the SSH login works; the second command exits 0; `interface.address` is the same in
     both files; and `dhcp.leaseStartEpoch` in the second is later than it was in the first, because the
     lease was renewed.
-    → If `dhcp.leaseStartForm` is `local` and either command refuses with `the lease start … is out of
-    range`, the problem is how the zoneless start was read, not the renewal: the start came out later
-    than now. Report both outputs, `date` and `ipconfig getsummary en0` on #2020, and don't fall back
+    → If either command refuses with `the lease start <start> is out of range` and `<start>` has the
+    zoneless `MM/DD/YYYY HH:MM:SS` form (a refusal prints no `dhcp` fields, so read the form from the
+    start it quotes), the problem is how the zoneless start was read, not the renewal: the start came
+    out later than now. Report both outputs, `date` and `ipconfig getsummary en0` on #2020, and don't fall back
     because of it. A start read too early is not detectable here. It is the safe direction, because the
     lease then looks as if it expires sooner.
     → If either command's line names a refusal other than the lease (for example `set SOAK_DHCP_SERVER`):

@@ -644,8 +644,10 @@ The guest is attested from two planes, because neither can see everything.
       `dhcp.leaseStartForm` (`zoned` or `local`) and `dhcp.leaseStartUtcOffsetMinutes` record which form
       was read and the offset used, so the evidence shows how the start was interpreted. A guest whose
       zone disagrees with the one `ipconfig` used would shift the start by the difference:
-      - a start read too late is caught, because it lands in the future and is refused as out of range
-        (step 12 of the install runbook says how to report it);
+      - a start read too late is caught only when the error is larger than the lease's age plus a
+        minute: the start then lands in the future and is refused as out of range. Right after a renewal
+        (the second reading in step 12 of the install runbook) the lease is young, so a whole-hour error
+        shows there. On an older lease it may not;
       - a start read too early is not caught. That direction is safe: the lease looks as if it expires
         sooner than it does;
     - the start is before 2000 or in the future;
