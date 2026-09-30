@@ -1,6 +1,6 @@
 # Operator channel
 
-Status: experimental. Schema v52 (v51 added the channel; v52 added its notifications).
+Status: experimental. One schema migration creates the channel's storage (ADR 0022).
 
 The operator channel lets a local chat helper, such as the Discord bridge, talk to one TangleClaw project on the operator's behalf:
 
@@ -122,17 +122,24 @@ The schema is closed: a type, a key, the project the event concerns (none for `f
 ## Storage
 
 - `operator_channel_inbound`: one row per message, unique by the helper's message id. States: `pending`, `sent`, `send_unknown`, `failed`.
-- `operator_channel_outbound`: one row per received message, unique by Hub id. States: `unverified`, `relayable`, `delivered`, `quarantined`.
-  - v52 added `kind` (`reply` or `notification`), `notify_type`, `idem_key` (unique when set) and `project_id`.
-  - A notification is stored as `relayable` from the start, under a synthetic id `notify/<key>`. The `/` is outside the Hub's id rule, and the channel refuses an arrival whose id breaks that rule, so no received message can take a notification's id.
+- `operator_channel_outbound`: one row per item for the helper. States: `unverified`, `relayable`, `delivered`, `quarantined`. Each row has a `kind`, and each kind has its own key:
+  - a `reply` is a message the channel received, unique by its Hub id (`hub_id`);
+  - a `notification` is one TangleClaw raised. It has no Hub id (`hub_id` is NULL), is unique by its idempotency key (`idem_key`), and carries its `notify_type` and, when it concerns one, its `project_id`. It is stored as `relayable` from the start.
+  - A row CHECK keeps the two keys apart, so no received message can collide with a notification or suppress it, whatever its id. The channel still refuses an arrival whose id breaks the Hub's id rule, because such an id did not come from the Hub.
 - `operator_channel_notify_state`: small key/value state the notifier needs to survive a restart, such as where a `fleet-idle` spell stands.
 
 Text is kept only until it is handed on. Nothing prunes the rows yet: each reply and each notification (an escalation, a lane entering `blocked`, an idle episode) leaves one small row whose text is cleared once it is posted.
 
+One migration creates all three tables, the notification columns and the key index in their final shape. Its postcondition, checked again at every startup, refuses a table in any other shape rather than run over it.
+
+### A private database from the abandoned branches
+
+Before #2031, the operator-channel branches carried two migrations of their own. They never shipped in a release, and TangleClaw has no upgrade path from them: it neither identifies such a database nor repairs it. Its outbound table has a NOT NULL `hub_id` and may lack the notification columns, so the storage check above refuses to start on it, naming what is wrong. **Recreate that database, or restore it from a backup taken before those branches ran.** An install that only ever ran released versions is unaffected.
+
 ## Rolling back
 
-Schema v52 is purely additive: a v51 server ignores the notification columns and the state table, and a notification waiting at rollback is listed to a v51 helper as an ordinary reply without its `kind`. v51 was additive over v50 in the same way. A v50 server:
-- ignores the two channel tables;
+The channel's migration is purely additive over the version before it. The server before it:
+- ignores the channel's tables;
 - runs no listener and no pump, so nothing is sent or relayed while rolled back;
 - **does not know the `operatorChannel` config key, so its `GET /api/config` returns `operatorChannel.tokenHash` unredacted.** The hash cannot be used as the token, but no route is meant to return it.
 

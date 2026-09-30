@@ -35,6 +35,39 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-30 — Fold the operator channel's two stack migrations into one final schema (#2031)
+
+<!-- prawduct: type=fix | scope=oc-schema-fold-2031 -->
+
+TC-RM18 Chunk 2, dispatched by the Architect under Rule #154 (ruling A6). Not committed; not merged.
+
+**Why:** the stack's operator channel took schema v51 (mail) and v52 (notifications), but `main`'s v51
+is now the coordinator rotation tables (#2032), so both numbers collide. Notifications were also
+stored under a synthetic `hub_id = 'notify/<key>'`, which made every Hub-id path carry a special
+case. The two migrations never shipped, so they fold into one.
+
+**What:**
+- `lib/store.js`: one `_migrateOperatorChannel` step, still at the stack-local slot v51. It creates
+  the mail tables, the notification columns, the `idem_key` partial unique index and
+  `operator_channel_notify_state` in their final shape. `hub_id` is a nullable UNIQUE column. A row
+  CHECK keeps a reply on `hub_id` and a notification on `idem_key` + `notify_type` with no Hub id.
+  The postcondition runs at boot as well as during migration, and it refuses an old-shaped table
+  with a message pointing at the recovery docs.
+- Inserts use `ON CONFLICT(<key>) DO NOTHING` instead of `INSERT OR IGNORE`. OR IGNORE also
+  swallows CHECK failures, and a nullable `hub_id` would have turned those failures into silent
+  drops.
+- `lib/operator-channel.js`: the Hub-id arrival refusal stays as a general rule. Its comment no
+  longer depends on `notify/`.
+- ADR 0022 records the decision and the A1–A5 routing extension boundary, which is text only and
+  was not built. `docs/operator-channel.md`, `CHANGELOG.md` and `FEATURES.md` are updated.
+
+**Requirement change (tests):** `test/operator-channel-notify.test.js` asserted
+`hub_id = 'notify/<key>'` and a v51→v52 in-place upgrade. #2031 retires both. The id assertion now
+expects `hub_id IS NULL`, and the upgrade test is removed because no v51→v52 step exists any more.
+The v50 upgrade and the refusal of a wrong shape are covered in
+`test/store-operator-channel-migration.test.js`. No test was weakened: the spoof-arrival tests keep
+their assertions and gain collision cases.
+
 ## 2026-09-28 — C1.5: merge C1 (#1966) to carry main and the relay fix forward (#1799)
 
 <!-- prawduct: type=chore | scope=c15-notify-emitter-1799 -->

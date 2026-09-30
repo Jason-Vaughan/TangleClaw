@@ -558,6 +558,35 @@ describe('API — operator channel', () => {
       assert.equal(row.text, null);
     });
 
+    it('lists and settles a reply and a notification keyed by the same string as two items', async () => {
+      bringTargetOnline();
+      const body = msg();
+      await call(server, 'POST', '/api/operator-channel/inbound', body, helper());
+      await operatorChannel.pump();
+      const inHub = store.operatorChannel.getInboundByExternalId(body.message.id).hub_id;
+      const reply = await call(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/medusa/send`,
+        { to: channelWs, message: 'on it', inReplyTo: inHub }, targetBinding.headers);
+      assert.equal(reply.status, 200, JSON.stringify(reply.data));
+      deliverToChannel(reply.data.id, targetWs, 'on it');
+      // A notification whose key is spelled exactly like the reply's Hub id.
+      const n = store.operatorChannel.insertNotification({
+        type: 'work-blocked', key: reply.data.id, projectId: null, text: 'TangleClaw: a project reports its work is blocked.', at: new Date(clock).toISOString()
+      });
+      assert.equal(n.inserted, true);
+
+      const out = await call(server, 'GET', '/api/operator-channel/outbound', null, helper());
+      assert.equal(out.status, 200);
+      assert.deepEqual(out.data.replies.map((i) => i.kind).sort(), ['notification', 'reply']);
+      for (const item of out.data.replies) {
+        const ack = await call(server, 'POST', `/api/operator-channel/outbound/${item.id}/ack`, { postedId: `55555555555555555${item.id}` }, helper());
+        assert.equal(ack.status, 200, JSON.stringify(ack.data));
+        assert.equal(ack.data.duplicate, false);
+      }
+      const empty = await call(server, 'GET', '/api/operator-channel/outbound', null, helper());
+      assert.equal(empty.data.replies.length, 0);
+      assert.equal(store.operatorChannel.getOutbound(n.row.id).hub_id, null);
+    });
+
     it('quarantines mail no TangleClaw send made, once its grace period passes', async () => {
       deliverToChannel('hub-rogue', 'rogue-0000abcd', 'placed straight on the Bridge');
       let out = await call(server, 'GET', '/api/operator-channel/outbound', null, helper());

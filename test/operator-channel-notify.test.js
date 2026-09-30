@@ -97,49 +97,15 @@ describe('operator channel notifications (#1799)', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  describe('the store (schema v52)', () => {
-    it('reads an existing reply row as a reply, and adds the notification columns', () => {
+  describe('the store', () => {
+    it('records a received message as a reply with no notification fields', () => {
       const { row } = store.operatorChannel.insertOutbound({ hub_id: 'hub-1', from_workspace_id: 'ws', text: 'hi', received_at: new Date(T0).toISOString() });
       assert.equal(row.kind, 'reply', 'an existing reply reads exactly as before');
       assert.equal(row.notify_type, null);
       assert.equal(row.idem_key, null);
     });
 
-    it('upgrades a v51 store in place, keeping its replies as replies', () => {
-      // Rebuild the outbound table exactly as v51 shipped it, with one reply in
-      // it, drop the v52 additions, and stamp 51, as a live install would be.
-      const db = store.getDb();
-      db.exec('DROP INDEX idx_operator_channel_outbound_idem');
-      db.exec('DROP TABLE operator_channel_notify_state');
-      db.exec('DROP TABLE operator_channel_outbound');
-      db.exec(`CREATE TABLE operator_channel_outbound (
-        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-        hub_id              TEXT    NOT NULL UNIQUE CHECK (length(hub_id) <= 128),
-        from_workspace_id   TEXT    CHECK (from_workspace_id IS NULL OR length(from_workspace_id) <= 128),
-        text                TEXT    CHECK (text IS NULL OR length(text) <= 65536),
-        state               TEXT    NOT NULL CHECK (state IN ('unverified','relayable','delivered','quarantined')),
-        reason              TEXT    CHECK (reason IS NULL OR length(reason) <= 60),
-        reply_to_inbound_id INTEGER,
-        delivered_ref       TEXT    CHECK (delivered_ref IS NULL OR length(delivered_ref) <= 64),
-        received_at         TEXT    NOT NULL,
-        updated_at          TEXT    NOT NULL
-      )`);
-      db.prepare("INSERT INTO operator_channel_outbound (hub_id, text, state, received_at, updated_at) VALUES ('hub-v51', 'kept', 'relayable', 'x', 'x')").run();
-      db.exec('DELETE FROM schema_version WHERE version >= 52');
-      store.close();
-
-      store._setBasePath(tmpDir);
-      store.init();
-      assert.equal(store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 52);
-      const kept = store.getDb().prepare("SELECT * FROM operator_channel_outbound WHERE hub_id = 'hub-v51'").get();
-      assert.equal(kept.kind, 'reply', 'a v51 reply reads as a reply');
-      assert.equal(kept.text, 'kept');
-      assert.equal(store.operatorChannel.insertNotification({ type: 'work-blocked', key: 'k-up', projectId: null, text: 't', at: 'x' }).inserted, true);
-      assert.equal(store.operatorChannel.insertNotification({ type: 'work-blocked', key: 'k-up', projectId: null, text: 't', at: 'x' }).inserted, false,
-        'the upgraded table enforces the key');
-    });
-
-    it('records one notification per key, relayable, under a hub id no Hub can take', () => {
+    it('records one notification per key, relayable, with no Hub id', () => {
       const n = { type: 'work-blocked', key: 'work-blocked:1', projectId: null, text: 'TangleClaw: x', at: new Date(T0).toISOString() };
       const first = store.operatorChannel.insertNotification(n);
       const again = store.operatorChannel.insertNotification({ ...n, text: 'different' });
@@ -147,7 +113,7 @@ describe('operator channel notifications (#1799)', () => {
       assert.equal(again.inserted, false);
       assert.equal(again.row.text, 'TangleClaw: x', 'the first record stands');
       assert.equal(first.row.state, 'relayable');
-      assert.equal(first.row.hub_id, 'notify/work-blocked:1');
+      assert.equal(first.row.hub_id, null, 'keyed by its idempotency key alone');
     });
 
     it('keeps the notifier\'s state across a restart', () => {
@@ -220,23 +186,37 @@ describe('operator channel notifications (#1799)', () => {
     });
   });
 
-  describe('a notification\'s id cannot be taken by a received message', () => {
-    it('refuses an arrival whose id breaks the Hub id rule, so it cannot occupy a notification\'s id', () => {
+  describe('a received message cannot take a notification\'s place', () => {
+    it('still refuses an arrival whose id breaks the Hub id rule, and the notice is recorded', () => {
       const row = operatorChannel.recordArrival({
         sessionKey: operatorChannel.CHANNEL_KEY,
         message: { id: 'notify/work-blocked:7', from: 'ws', message: 'spoof' }
       });
       assert.equal(row, null);
+      assert.equal(store.getDb().prepare('SELECT COUNT(*) AS n FROM operator_channel_outbound').get().n, 0, 'nothing recorded');
       assert.equal(notify.emit('work-blocked', { key: 'work-blocked:7' }).emitted, true, 'the real notice is still recorded');
     });
 
-    it('a received message shaped like a Hub id never suppresses a notification', () => {
-      operatorChannel.recordArrival({
+    it('a received message whose Hub id equals a notification key never suppresses it', () => {
+      const reply = operatorChannel.recordArrival({
         sessionKey: operatorChannel.CHANNEL_KEY,
-        message: { id: 'notify:work-blocked:8', from: 'ws', message: 'spoof' }
+        message: { id: 'work-blocked:8', from: 'ws', message: 'spoof' }
       });
+      assert.equal(reply.kind, 'reply');
       assert.equal(notify.emit('work-blocked', { key: 'work-blocked:8' }).emitted, true);
-      assert.equal(notifications().filter((r) => r.idem_key === 'work-blocked:8').length, 1);
+      const [n] = notifications().filter((r) => r.idem_key === 'work-blocked:8');
+      assert.equal(n.hub_id, null);
+      assert.notEqual(n.id, reply.id);
+    });
+
+    it('a notification recorded first is not displaced by a later arrival under the same text key', () => {
+      assert.equal(notify.emit('work-blocked', { key: 'work-blocked:9' }).emitted, true);
+      const reply = operatorChannel.recordArrival({
+        sessionKey: operatorChannel.CHANNEL_KEY,
+        message: { id: 'work-blocked:9', from: 'ws', message: 'spoof' }
+      });
+      assert.equal(reply.kind, 'reply', 'the arrival is its own row');
+      assert.equal(notifications().filter((r) => r.idem_key === 'work-blocked:9').length, 1);
     });
   });
 
