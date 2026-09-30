@@ -39,13 +39,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- prawduct: type=fix | scope=2020-dryrun-a1-tooling -->
 
-Chunk 1 of `.prawduct/artifacts/build-plan.md`. PM dispatch (Medusa 7e0a4059), Architect-authorised under the self-healing loop. TC-RM09's attempt 1 at candidate aebd6960 was BLOCKED - TESTBED/TOOLING; the candidate verdict was NOT EVALUATED. Every change is inside the Rule #153 (b) allowlist.
+Chunk 1 of 3 (seed and guest setup; then runbooks and provisioning; then a Medusa stub hub). PM dispatch (Medusa 7e0a4059), Architect-authorised under the self-healing loop. TC-RM09's attempt 1 at candidate aebd6960 was BLOCKED - TESTBED/TOOLING; the candidate verdict was NOT EVALUATED. Every change is inside the Rule #153 (b) allowlist.
 
 **Why.** Four event families failed on every attempt. The diagnosis, from the guest server log and a host reproduction, found each to be a test-bed gap. The README had listed several of them as target prerequisites "as Chunk 1 prepares it", but nothing ever prepared them. Separately, the judge sidecar's every publish after the first failed scorecard validation.
 
 **What.**
 - `lib/soak/repos.js`: the seed adds `.tangleclaw/plans/soak-plan.md`, `.tangleclaw/memories/MEMORY.md`, and `medusaEnabled`/`wrapAutoPrEnabled`/`releaseMode` in `project.json`.
-- `deploy/soak/guest/guest-setup.sh`: creates `SOAK_BIN_DIR`. Step 5 finishes first-run setup through `POST /api/setup/complete` with `noLogin` and `projectsDir`, reads the config back, and refuses on a mismatch. A 401/403 is refused as the auth gate being up, the same as attach.
+- `deploy/soak/guest/guest-setup.sh`: creates `SOAK_BIN_DIR`. Step 5 finishes first-run setup through `POST /api/setup/complete` with `noLogin` and `projectsDir`, reads the config back, and refuses on a mismatch. A 401/403 is refused as the auth gate being up, the same as attach. A refused setup call names the server's code and message (for example `ENGINE_REQUIRED`), which appear only in the reply body.
 - `lib/release-certification/runner.js`: the monotonic clock reads whole ms. `state-machine.js`: `monoAt` must be a count, as `wallAt` already is.
 - Tests:
   - `test/soak-repos-attach.test.js` (new) seeds, attaches and runs the startup sync through the real candidate code. It asserts a clean tree, the listed plan and the kept project config. All three assertions failed before the fix, including the exact `?? .tangleclaw/memories/MEMORY.md` from the guest.
@@ -62,7 +62,7 @@ Chunk 1 of `.prawduct/artifacts/build-plan.md`. PM dispatch (Medusa 7e0a4059), A
 - `monoAt` validation tightens from finite to a whole-ms count.
 
 **Not in this chunk.**
-- The Medusa hub in an offline guest needs a PM/Architect decision.
+- The Medusa hub in an offline guest: the PM chose a minimal loopback stub hub under `deploy/soak/`, which is Chunk 3.
 - Chunk 2: runbook and provisioning items (c)–(h), the terminal's hidden page, and distinct browser codes.
 - The `~/Documents` probe is the candidate's Full Disk Access detector (`lib/system-health.js`), which is app code outside the allowlist, so it is reported rather than changed.
 
