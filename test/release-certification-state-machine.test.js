@@ -258,6 +258,15 @@ describe('interval accrual', () => {
     refuses(() => sm.reduce(state, manifest(), sample(MIN, obs(), { mono: 500 })), REFUSAL.INVALID_SAMPLE);
   });
 
+  it('refuses a fractional monotonic reading, at admission and after it', () => {
+    // Qualified time is summed from monotonic deltas, and the scorecard
+    // publishes it as a whole-ms count; a fractional reading would be
+    // accepted here and refused only at publish.
+    refuses(() => sm.admit(manifest(), sample(0, obs(), { mono: 0.25 })), REFUSAL.INVALID_SAMPLE);
+    const { state } = sm.admit(manifest(), sample(0, obs(), { mono: 500 }));
+    refuses(() => sm.reduce(state, manifest(), sample(MIN, obs(), { mono: 500 + MIN + 0.5 })), REFUSAL.INVALID_SAMPLE);
+  });
+
   it('returns to running after the next pair of healthy samples, keeping earned time', () => {
     const { state, events } = run(manifest(), [
       sample(1 * MIN),

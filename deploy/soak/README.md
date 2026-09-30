@@ -104,12 +104,15 @@ node scripts/soak.js validate --schedule soak-certifying.json
 
 ### Prerequisites on the target
 
-These kinds need a target prepared as Chunk 1 prepares it (`guest/guest-setup.sh`):
+These kinds need a target prepared as `guest/guest-setup.sh` prepares it:
 - **A Medusa hub** running with `A2A_SECRET`, reachable at the TangleClaw process's
-  `MEDUSA_BRIDGE_HTTP_URL`. Without it no listener reaches `listening`.
+  `MEDUSA_BRIDGE_HTTP_URL`. Without it no listener reaches `listening`. **Setup does not provide one
+  yet**, so `engine.session.medusa-cycle` records `NOT_LISTENING` on a guest until it does.
 - **Each `soak-*` project's `.tangleclaw/project.json`** has `medusaEnabled: true`,
   `wrapAutoPrEnabled: false` and `releaseMode: "off"`, and the project has a
-  `.tangleclaw/plans/soak-plan.md`.
+  `.tangleclaw/plans/soak-plan.md`. The seed commit carries all of these (see
+  [The synthetic repos](#the-synthetic-repos)).
+- **First-run setup is finished** (setup step 5), or the dashboard shows the setup wizard.
 - **The driver runs on the guest's loopback**, so the front-door gate treats it as a machine
   client.
 
@@ -450,6 +453,13 @@ node scripts/soak.js repos --root ~/Projects --origins ~/soak-origins [--project
   target TangleClaw's `projectsDir`.
 - **The names follow the schedule's rules** (`soak-…`, at most 20, no repeats), and the default set is
   the schedule's own, so the repos and the load agree.
+- **The seed commit already holds what the candidate would otherwise add or the load would miss:**
+  - `.tangleclaw/project.json`, naming the stub engine, joining the switchboard, and wrapping with no
+    pull request and no release. An attach keeps it.
+  - `.tangleclaw/plans/soak-plan.md`, the plan `api.plans.read` looks for.
+  - `.tangleclaw/memories/MEMORY.md` and `CHANGELOG.md`. The candidate writes each only when it is
+    missing, so committing them keeps the work tree clean. A file the session did not make would
+    otherwise stop every `engine.session.wrap-cycle` at `session-files`.
 - **Each repo's seed commit has the same SHA on every machine and every run.**
   - It is built from a fixed tree, author, date and message. The operator's git config, `GIT_*`
     environment and hooks are all kept out.
@@ -590,11 +600,20 @@ actions.
   2. **Loads the pf profile and attests both planes** (below). The admin verifier runs as its own
      `--verify-admin` process, so its line, `ok: false` included, is always printed. Either verifier
      failing stops setup.
-  3. **Installs** `soak-stub` on `PATH`, and its engine profile for the workload user.
+  3. **Installs** `soak-stub` on `PATH`, and its engine profile for the workload user. It creates the
+     install directory (`SOAK_BIN_DIR`, default `/usr/local/bin`) first: a macOS 26 base image has none.
   4. **Creates the synthetic repos** as the workload user (`soak.js repos`), under its home.
-  5. **Attaches each project** through the guest TangleClaw's own API. With the guest's auth gate down,
-     it uses the dashboard client header. With the gate up, it refuses and tells you to attach from the
-     dashboard. It never reads or writes a token.
+  5. **Finishes the guest TangleClaw's first-run setup, then attaches each project** through its own
+     API. With the guest's auth gate down, it uses the dashboard client header. With the gate up, it
+     refuses and tells you to finish setup and attach from the dashboard. It never reads or writes a
+     token.
+     - **Setup is finished the way the wizard's last step finishes it** (`POST /api/setup/complete`),
+       with the choice of no login and `projectsDir` set to `SOAK_PROJECTS_ROOT`. Until setup finishes,
+       the dashboard shows the wizard instead of the stats `browser.dashboard.load` waits for. The
+       install's default `projectsDir` is under `~/Documents`, which macOS privacy protection stops a
+       launchd-run server reading without a prompt nobody can answer.
+     - **A later run finds setup finished and checks it.** Setup then refuses unless the guest's config
+       says `setupComplete: true` and `projectsDir` is `SOAK_PROJECTS_ROOT`.
 
   Every step is safe to repeat.
 

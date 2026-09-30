@@ -732,6 +732,8 @@ workload_json="$(as_user bash "$here/guest-setup.sh" --verify-workload)" || { ec
 echo "$workload_json"
 
 echo "== 3/5 stub engine"
+# A macOS 26 base image has no /usr/local/bin, the default install target.
+sudo -n install -d -o root -g wheel -m 0755 "$SOAK_BIN_DIR"
 sudo -n install -m 0755 "$repo/deploy/soak/stub-engine/soak-stub.js" "$SOAK_BIN_DIR/soak-stub"
 as_user mkdir -p "/Users/$user/.tangleclaw/engines"
 as_user install -m 0644 "$repo/deploy/soak/stub-engine/soak-stub.json" "/Users/$user/.tangleclaw/engines/soak-stub.json"
@@ -740,10 +742,40 @@ echo "== 4/5 synthetic repos"
 as_user node "$repo/scripts/soak.js" repos --root "$SOAK_PROJECTS_ROOT" --origins "$SOAK_ORIGINS_ROOT" --projects "$SOAK_PROJECTS" \
   || refuse "soak.js repos failed (see above)"
 
-echo "== 5/5 attach projects"
+echo "== 5/5 finish setup, attach projects"
 # With the guest's auth gate down, the dashboard client header is how the
 # operator's own tools reach operator routes. With the gate up, attach through
 # the dashboard instead.
+#
+# A fresh install opens on its first-run wizard, which covers the dashboard
+# until setup finishes, and keeps the default projects directory under
+# ~/Documents, which macOS privacy protection stops a launchd server reading
+# without a prompt nobody can answer. So setup is finished here, once, the way
+# the wizard's last step finishes it: with the choice of no login (the server
+# binds loopback only and pf admits nothing but SSH from the host) and the
+# soak's projects root. A later run finds it finished and only checks it.
+setup_body="$(node -e 'process.stdout.write(JSON.stringify({ noLogin: true, projectsDir: process.argv[1] }))' "$SOAK_PROJECTS_ROOT")"
+status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time "$t" -X POST \
+  -H 'content-type: application/json' -H 'x-tangleclaw-client: dashboard' \
+  -d "$setup_body" "$api/api/setup/complete" || true)"
+case "$status" in
+  200) echo "setup finished: no login, projects in $SOAK_PROJECTS_ROOT" ;;
+  409) echo "setup already finished" ;;
+  401|403) refuse "finishing setup answered $status: the guest's auth gate is up; finish setup and attach the soak-* projects from the dashboard" ;;
+  *) refuse "finishing the guest's first-run setup answered $status" ;;
+esac
+config_json="$(curl -sS --max-time "$t" -H 'x-tangleclaw-client: dashboard' "$api/api/config" || true)"
+node -e '
+  const path = require("path");
+  let c;
+  try { c = JSON.parse(process.argv[1]); } catch { console.error("the guest config did not parse"); process.exit(1); }
+  if (c.setupComplete !== true) { console.error("setup is not complete"); process.exit(1); }
+  if (typeof c.projectsDir !== "string" || path.resolve(c.projectsDir) !== path.resolve(process.argv[2])) {
+    console.error(`projectsDir is ${JSON.stringify(c.projectsDir)}, not ${process.argv[2]}`);
+    process.exit(1);
+  }
+' "$config_json" "$SOAK_PROJECTS_ROOT" || refuse "the guest's TangleClaw is not set up for the soak (see above)"
+
 IFS=',' read -r -a projects <<< "$SOAK_PROJECTS"
 for name in "${projects[@]}"; do
   status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time "$t" "$api/api/projects/$name" || true)"

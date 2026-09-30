@@ -263,6 +263,20 @@ describe('runner', () => {
     assert.equal(runnerLib.worktreeId(wt), crypto.createHash('sha256').update(fs.realpathSync(wt)).digest('hex'));
   });
 
+  it('earns whole-ms qualified time on the real clocks, so its scorecard validates', async () => {
+    const f = fakes([healthy()]);
+    const r = runnerLib.createRunner({ publication: fakePub(), base: path.join(tmp, 'v1'), candidateSha: SHA, probes: f.probes });
+    await r.start(SPEC);
+    await new Promise((resolve) => setTimeout(resolve, 7));
+    const state = await r.tick();
+    assert.equal(state.state, STATES.RUNNING);
+    assert.ok(state.qualifiedMs > 0, `qualifiedMs ${state.qualifiedMs}`);
+    assert.ok(Number.isInteger(state.qualifiedMs), `qualifiedMs ${state.qualifiedMs} is not whole ms`);
+    const { manifest } = store.readRun(path.join(tmp, 'v1'), SHA);
+    const sc = require('../lib/release-certification/scorecard');
+    assert.deepEqual(sc.validateScorecard(sc.scorecard(state, manifest, Date.now(), 1)), []);
+  });
+
   it('logs transitions, and extends across a runner restart', async () => {
     const base = path.join(tmp, 'v1');
     const log = [];

@@ -239,6 +239,9 @@ function mdyStartAgo(seconds) {
   return { raw: `${iso.slice(5, 7)}/${iso.slice(8, 10)}/${iso.slice(0, 4)} ${iso.slice(11, 19)}`, epoch };
 }
 
+/** The guest config once setup has finished for the soak's default projects root. */
+const SETUP_DONE = JSON.stringify({ setupComplete: true, projectsDir: '/Users/soakrun/Projects' });
+
 /**
  * Fake system commands for guest-setup.sh inside a "VM". `FAKE_USER` in the
  * environment is who is running (default the admin); `sudo -u` switches it,
@@ -351,8 +354,10 @@ function guestFakes(dir, over = {}) {
     dig: 'exit 9',
     curl: [
       'case "$*" in',
+      '  *api/setup/complete*) printf 200;;',
       '  *api/projects/attach*) printf 201;;',
       '  *http_code*) printf 404;;',
+      `  *api/config) printf '%s' '${SETUP_DONE}';;`,
       'esac'
     ].join('\n'),
     ...over
@@ -410,8 +415,12 @@ describe('soak guest: guest-setup.sh setup', () => {
       /^\[admin\] pfctl -s rules$/,
       /^\[soakrun\] ping6 -c 1 ::1$/,
       /^\[soakrun\] dig @1\.1\.1\.1 /,
+      /^\[admin\] install -d -o root -g wheel -m 0755 \/usr\/local\/bin$/,
       /^\[admin\] install -m 0755 .*soak-stub\.js .*\/soak-stub$/,
-      /^\[soakrun\] node .*scripts\/soak\.js repos --root \/Users\/soakrun\/Projects --origins \/Users\/soakrun\/soak-origins --projects soak-a,soak-b,soak-c$/
+      /^\[soakrun\] node .*scripts\/soak\.js repos --root \/Users\/soakrun\/Projects --origins \/Users\/soakrun\/soak-origins --projects soak-a,soak-b,soak-c$/,
+      /^\[admin\] curl .*-d \{"noLogin":true,"projectsDir":"\/Users\/soakrun\/Projects"\} http:\/\/127\.0\.0\.1:3102\/api\/setup\/complete$/,
+      /^\[admin\] curl .*http:\/\/127\.0\.0\.1:3102\/api\/config$/,
+      /^\[admin\] curl .*\{"name":"soak-a"\} http:\/\/127\.0\.0\.1:3102\/api\/projects\/attach$/
     ];
     let last = -1;
     for (const re of order) {
@@ -523,13 +532,49 @@ describe('soak guest: guest-setup.sh setup', () => {
     assert.equal(setup([], f, tmp).status, 3);
   });
 
+  it('finishes setup once: a second run accepts the finished setup and still checks it', () => {
+    const f = guestFakes(tmp, { curl: [
+      'case "$*" in',
+      '  *api/setup/complete*) printf 409;;',
+      '  *api/projects/attach*) printf 201;;',
+      '  *http_code*) printf 404;;',
+      `  *api/config) printf '%s' '${SETUP_DONE}';;`,
+      'esac'
+    ].join('\n') });
+    const r = setup([], f, tmp);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /setup already finished/);
+  });
+
+  for (const [label, complete, config, reason] of [
+    ['setup cannot be finished', 400, SETUP_DONE, /first-run setup answered 400/],
+    ['setup reports finished but is not', 409, JSON.stringify({ setupComplete: false, projectsDir: '/Users/soakrun/Projects' }), /setup is not complete/],
+    ['the projects directory is the TCC-protected default', 409, JSON.stringify({ setupComplete: true, projectsDir: '~/Documents/Projects' }), /projectsDir is "~\/Documents\/Projects", not \/Users\/soakrun\/Projects/],
+    ['the config cannot be read', 200, '', /did not parse/]
+  ]) {
+    it(`refuses before attaching anything when ${label}`, () => {
+      const f = guestFakes(tmp, { curl: [
+        'case "$*" in',
+        `  *api/setup/complete*) printf ${complete};;`,
+        '  *api/projects/attach*) printf 201;;',
+        '  *http_code*) printf 404;;',
+        `  *api/config) printf '%s' '${config}';;`,
+        'esac'
+      ].join('\n') });
+      const r = setup([], f, tmp);
+      assert.equal(r.status, 3, r.stdout);
+      assert.match(r.stderr, reason);
+      assert.equal(f.calls().filter((c) => c.includes('api/projects/attach')).length, 0);
+    });
+  }
+
   it('skips a project the guest already has, and refuses when the auth gate is up', () => {
-    let f = guestFakes(tmp, { curl: 'case "$*" in *http_code*) printf 200;; esac' });
+    let f = guestFakes(tmp, { curl: `case "$*" in *http_code*) printf 200;; *api/config) printf '%s' '${SETUP_DONE}';; esac` });
     let r = setup([], f, tmp);
     assert.equal(r.status, 0, r.stderr);
     assert.equal(f.calls().filter((c) => c.includes('api/projects/attach')).length, 0);
     fs.rmSync(path.join(tmp, 'calls.log'));
-    f = guestFakes(tmp, { curl: 'case "$*" in *api/projects/attach*) printf 401;; *http_code*) printf 404;; esac' });
+    f = guestFakes(tmp, { curl: 'case "$*" in *api/setup/complete*|*api/projects/attach*) printf 401;; *http_code*) printf 404;; esac' });
     r = setup([], f, tmp);
     assert.equal(r.status, 3);
     assert.match(r.stderr, /auth gate is up/);

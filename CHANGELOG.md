@@ -516,6 +516,16 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **The soak's seeded projects and guest setup now give the load the target it expects** (#2020). The first dry run of a real macOS 26.3 guest was blocked by test-bed gaps, not by the candidate. Each of these failed on every attempt:
+  - **`api.plans.read` (`NOT_LISTED`):** nothing created the plan it looks for. The seed commit now includes `.tangleclaw/plans/soak-plan.md`.
+  - **`engine.session.wrap-cycle` (`WRAP_BLOCKED` at `session-files`):** the candidate's startup sync added an untracked `.tangleclaw/memories/MEMORY.md`, and the wrap correctly refused a file the session did not make. The seed commit now includes it.
+  - **`engine.session.medusa-cycle` (`NOT_LISTENING`):** the seeded `project.json` named only the engine, so no project joined the switchboard. It now also sets `medusaEnabled: true`, `wrapAutoPrEnabled: false` and `releaseMode: "off"`. **This is not enough on its own:** the guest still has no Medusa hub, so the cycle keeps failing until one is provided.
+  - **`browser.dashboard.load` (`NOT_RENDERED`):** a fresh install opens on its setup wizard, which hides the stats the event waits for. Guest setup now finishes first-run setup the way the wizard's last step does: no login, and `projectsDir` set to the soak's projects root. That also moves `projectsDir` off its default under `~/Documents`, where macOS privacy protection blocked the launchd-run server. A later run checks both settings and refuses if either is wrong.
+  - Guest setup creates its install directory (default `/usr/local/bin`), which a macOS 26 base image does not have.
+  - The seed's SHA changes, so a guest seeded before this change refuses its repos (`SEED_MISMATCH`). Seed a fresh guest.
+
+- **A release-certification run no longer fails every publish after its first** (#2020). The runner read its monotonic clock as fractional milliseconds (`performance.now()`), so qualified time became fractional, and the scorecard, which publishes it as a whole-ms count, was refused as `INVALID_SAMPLE`. The clock now reads whole milliseconds. A sample with a fractional monotonic reading is refused when it arrives, instead of passing until the next publish fails.
+
 - **A checkout fingerprint that runs out of time now says so, even when Node fires its timer early** (#2061). The fingerprint races each git call against its deadline, then told a timeout from a git failure by re-reading the clock. A Node timer can fire a fraction of a millisecond before the clock reaches the deadline, so an occasional timeout was reported as a git failure such as `not-a-git-checkout`. That made `test/checkout-fingerprint.test.js` flaky (about 0.1–0.3% of runs) and could put the wrong reason in a rotation refusal. Every such result already failed closed. A call the deadline ends now resolves to a distinct marker, and the reason is taken from that marker rather than from the clock.
 
 - **The soak guest's setup and admin verifier work on a real macOS 26.3 guest** (#2020). They refused the guest, which blocked the dry run as a test-bed compatibility problem, not a candidate failure. The changes follow RM09's real-guest census:

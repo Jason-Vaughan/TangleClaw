@@ -35,6 +35,37 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-30 — #2020: dry-run attempt-1 tooling fixes, Chunk 1 (seed, guest setup, rc-cert clock)
+
+<!-- prawduct: type=fix | scope=2020-dryrun-a1-tooling -->
+
+Chunk 1 of `.prawduct/artifacts/build-plan.md`. PM dispatch (Medusa 7e0a4059), Architect-authorised under the self-healing loop. TC-RM09's attempt 1 at candidate aebd6960 was BLOCKED - TESTBED/TOOLING; the candidate verdict was NOT EVALUATED. Every change is inside the Rule #153 (b) allowlist.
+
+**Why.** Four event families failed on every attempt. The diagnosis, from the guest server log and a host reproduction, found each to be a test-bed gap. The README had listed several of them as target prerequisites "as Chunk 1 prepares it", but nothing ever prepared them. Separately, the judge sidecar's every publish after the first failed scorecard validation.
+
+**What.**
+- `lib/soak/repos.js`: the seed adds `.tangleclaw/plans/soak-plan.md`, `.tangleclaw/memories/MEMORY.md`, and `medusaEnabled`/`wrapAutoPrEnabled`/`releaseMode` in `project.json`.
+- `deploy/soak/guest/guest-setup.sh`: creates `SOAK_BIN_DIR`. Step 5 finishes first-run setup through `POST /api/setup/complete` with `noLogin` and `projectsDir`, reads the config back, and refuses on a mismatch. A 401/403 is refused as the auth gate being up, the same as attach.
+- `lib/release-certification/runner.js`: the monotonic clock reads whole ms. `state-machine.js`: `monoAt` must be a count, as `wallAt` already is.
+- Tests:
+  - `test/soak-repos-attach.test.js` (new) seeds, attaches and runs the startup sync through the real candidate code. It asserts a clean tree, the listed plan and the kept project config. All three assertions failed before the fix, including the exact `?? .tangleclaw/memories/MEMORY.md` from the guest.
+  - `test/soak-guest.test.js`: step order, setup finished, 409 accepted and checked, and four refusals, each before any attach.
+  - Release-certification: the runner earns whole-ms time on the real clocks and its scorecard validates (failed before with `qualifiedMs 99.739`), and the state machine refuses fractional readings.
+- Docs: README setup steps, target prerequisites and seed contents.
+
+**Decision.**
+- Setup is finished through the wizard's Finish route, not Skip. Skip (`PATCH /api/config`) refuses `ADMIN_REQUIRED` on a loginless install. Finish with `noLogin` is allowed on a loopback-only direct install, and it records the opt-out.
+- The monotonic clock is floored per reading, not per delta, so the summed error stays under 1 ms.
+
+**Test contract changed, not weakened.**
+- The two existing guest-setup fakes now answer the setup call too: a config for the "already attached" case, and 401 for the auth-gate case, as a gated server would. Their assertions are unchanged.
+- `monoAt` validation tightens from finite to a whole-ms count.
+
+**Not in this chunk.**
+- The Medusa hub in an offline guest needs a PM/Architect decision.
+- Chunk 2: runbook and provisioning items (c)–(h), the terminal's hidden page, and distinct browser codes.
+- The `~/Documents` probe is the candidate's Full Disk Access detector (`lib/system-health.js`), which is app code outside the allowlist, so it is reported rather than changed.
+
 ## 2026-09-30 — #2020: macOS 26.3 soak-tooling compatibility (RM09 census)
 
 <!-- prawduct: type=fix | scope=2020-lease-start-form -->
