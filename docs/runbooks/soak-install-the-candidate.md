@@ -92,9 +92,18 @@ As the admin again:
 > **Proceed only if:** steps 9 and 10 passed. **Abort if:** anything is missing. Aborting costs
 > nothing; after step 11 it costs a new guest.
 
-11. Run the egress positive control, then set the guest up:
-    `sudo -u soakrun -H bash deploy/soak/guest/guest-setup.sh --verify-workload`, then
-    `bash deploy/soak/guest/guest-setup.sh`
+11. Name the DHCP server pf will allow, then run the egress positive control, then set the guest up.
+    - Setup and every admin verification refuse without `SOAK_DHCP_SERVER`. A server read from the
+      lease alone is not trusted, so the host has to confirm it. In the guest,
+      `ipconfig getpacket en0 | grep server_identifier` prints the lease's server. On the host,
+      `ifconfig | grep "inet <that address> "` must print exactly one line, which shows the host owns
+      the address. Then, in the guest's shell:
+      `export SOAK_DHCP_SERVER=<that address>`
+      → If the host doesn't own that address: stop and report both outputs on #2020.
+      **Unverified until the first dry run:** that the host's vmnet bridge carries the lease's server
+      address.
+    - `cd /opt/tangleclaw-soak && sudo -u soakrun -H bash deploy/soak/guest/guest-setup.sh --verify-workload`, then
+      `bash deploy/soak/guest/guest-setup.sh`
     → Expected: the first exits 3 and its line names `egress-permitted`. pf is not loaded yet, so the
     probes can answer, which proves they can detect egress. The second ends with
     `guest ready: workload user soakrun, default-deny network attested on both planes, stub engine, projects soak-a,soak-b,soak-c`.
@@ -105,15 +114,15 @@ As the admin again:
     renewal time is `dhcp.renewEpoch`, and `dhcp.timingSource` says whether the lease reported it
     (`lease`) or the verifier derived it from `lease_time` (`derived-rfc2131`). A derived time is not
     evidence that a renewal happens. Only this step is.
-    Both commands below run from the checkout, with the same `SOAK_DHCP_SERVER` that step 11's setup
-    used. A new SSH login starts in the home directory and doesn't inherit that variable. Without
-    either, the verifier refuses for that reason alone, and that refusal says nothing about renewal.
+    Both commands below run from the checkout, with the `SOAK_DHCP_SERVER` exported in step 11. A new
+    SSH login starts in the home directory and doesn't inherit that variable. Without either, the
+    verifier refuses for that reason alone, and that refusal says nothing about renewal.
     First, as the admin, record the lease:
-    `cd /opt/tangleclaw-soak && SOAK_DHCP_SERVER=<step 11's server> bash deploy/soak/guest/guest-setup.sh --verify-admin | tee ~/lease-before.json`
+    `cd /opt/tangleclaw-soak && SOAK_DHCP_SERVER=<the address exported in step 11> bash deploy/soak/guest/guest-setup.sh --verify-admin | tee ~/lease-before.json`
     Keep the guest running until the clock is past `dhcp.renewEpoch`, and a sample interval beyond it.
     On a one-day lease that is about 12 hours, so plan the dry run long enough. Then, from the host,
     SSH to the guest's address as the admin, and run the same command again:
-    `cd /opt/tangleclaw-soak && SOAK_DHCP_SERVER=<step 11's server> bash deploy/soak/guest/guest-setup.sh --verify-admin | tee ~/lease-after.json`
+    `cd /opt/tangleclaw-soak && SOAK_DHCP_SERVER=<the address exported in step 11> bash deploy/soak/guest/guest-setup.sh --verify-admin | tee ~/lease-after.json`
     → Expected: the SSH login works; the second command exits 0; `interface.address` is the same in
     both files; and `dhcp.leaseStartEpoch` in the second is later than it was in the first, because the
     lease was renewed.
