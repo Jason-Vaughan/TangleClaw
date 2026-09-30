@@ -53,7 +53,7 @@ PM dispatch. The TC-RM09 dry run was BLOCKED - TESTBED/TOOLING COMPATIBILITY; th
   - Setup uses `sudo true` instead of `sudo -v`, and `createhomedir` for a workload user `sysadminctl` created without a home.
   - Tests use the census shapes: a `0xe10` lease with no T1/T2, both clocks zoneless and printed in the caller's zone, the census `pfctl -s info` line and the ALTQ banner.
 - Docs: the README describes both clock forms, the `TZ=UTC` call, the expiry cross-check and the `dseditgroup` statuses. Runbook step 11 runs setup under `nohup` into `~/setup.log`, because the SSH session that loads pf hangs.
-- Not in this PR (reported to the PM): F5/F6. The workload positive control stops at the first probe that answers, so it can't positive-control each plane separately. That changes verifier behaviour and is not a format fix.
+- Not in this PR, filed as #2064: F5/F6. The workload positive control stops at the first probe that answers, so it can't positive-control each plane separately. That changes verifier behaviour and is not a format fix.
 
 **Decision.** An earlier revision on this branch read the zoneless form as the guest's local time and documented a zone-error branch in runbook step 12. RM09's census showed `ipconfig` formats in its caller's zone, so pinning the caller to UTC removes the assumption entirely, and that branch is gone.
 

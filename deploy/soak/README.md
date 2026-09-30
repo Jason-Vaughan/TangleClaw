@@ -714,8 +714,10 @@ changes the boot identity, so no time survives one.
   it, if the dry run shows one is workable.
 - **The DHCP allowance is a best effort at keeping the management path**, not a proof. It depends on
   macOS's DHCP client renewing with the configured server over the allowed ports, and on the
-  `ipconfig` output forms the verifier parses (`getpacket`, and `getsummary`'s `LeaseStartTime`).
-  Neither has been seen on a real guest yet; the verifier fails closed when either differs. The dry run
+  `ipconfig` output forms the verifier parses (`getpacket`, and `getsummary`'s `LeaseStartTime` and
+  `LeaseExpirationTime`). A census of a real macOS 26.3 guest has confirmed both forms. It also watched
+  a renewal keep the address and accept a new SSH session under this pf profile, although no attested
+  run has observed one yet. The verifier fails closed when a form differs. The dry run
   must show that the address, and SSH, survive a real lease renewal. That applies especially when the
   timing is `derived-rfc2131`: the verifier then attests when a renewal *should* happen, never that one
   did. The observation is step 12 of
