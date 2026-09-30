@@ -141,14 +141,19 @@ As the admin again:
 
 11b. Close the host side (Architect ruling A7). softnet then drops everything the guest sends except
     replies to connections the host opens, so SSH from the host keeps working.
-    - On the host, with the display chosen in step 2:
-      `SOAK_TART_DISPLAY=<no-graphics or vnc, as in step 2> SOAK_OPERATOR_APPROVED=1 bash deploy/soak/guest/host-provision.sh --closure --execute`
+    - On the host, preview the closure first, with the display chosen in step 2:
+      `SOAK_TART_DISPLAY=<no-graphics or vnc, as in step 2> bash deploy/soak/guest/host-provision.sh --closure`
       → Expected: `tart stop`, then a `tart run` carrying the same display flag as step 3,
       `--net-softnet --net-softnet-block=0.0.0.0/0 --net-softnet-allow=in @host` and the same share.
-      Preview it first without `--execute`. The soak's counted boot is this one, so a display that
-      differs from step 3's changes what every browser event sees.
-    - The guest's address can change on this boot, and `tart ip` can report the previous one. Find the
-      address from the host's ARP table for the softnet bridge, and SSH to it as the admin.
+      Nothing runs. The soak's counted boot is the next one, so a display that differs from step 3's
+      changes what every browser event sees.
+    - Then run it:
+      `SOAK_TART_DISPLAY=<the same display> SOAK_OPERATOR_APPROVED=1 bash deploy/soak/guest/host-provision.sh --closure --execute`
+    - The guest's address can change on this boot, and `tart ip` can report the previous one. On the
+      host, find the softnet bridge (`ifconfig | grep -B3 'inet 172\.'` names it, for example
+      `bridge100`) and read the guest's address from its ARP table: `arp -an -i <bridge>`. SSH to that
+      address as the admin. **Unverified until the dry run:** the bridge's name and address range.
+      Record what these printed.
     - Repeat step 11's DHCP check on this boot. The lease's server is softnet's own now, so export that
       `SOAK_DHCP_SERVER`. Then run setup again:
       `cd /opt/tangleclaw-soak && nohup bash deploy/soak/guest/guest-setup.sh > ~/setup-closure.log 2>&1; echo "exit $?" >> ~/setup-closure.log`

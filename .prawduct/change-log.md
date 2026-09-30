@@ -61,7 +61,7 @@ Chunk 3 of 3, stacked on Chunk 2. PM Option B (Medusa ff69a0a1). Every path is i
   - `test/soak-guest.test.js`: step 6's order and calls, the LaunchAgent's contents, three refusals (the lease refusal naming the registry's reason), and an environment port override that has no effect. Two existing fakes also answer the lease and health calls; their assertions are unchanged.
 - Docs:
   - README: target prerequisites, setup step 6, and a new "The stub hub" section.
-  - Install runbook: the `guest ready` line.
+  - Install runbook: the `guest ready` line. Carried in from Chunk 2's reviews: step 11b now previews the closure before running it, and gives the commands for finding the guest's new address (softnet bridge, then its ARP table), marked unverified until the dry run.
 
 **Decision.**
 - The hub runs as a LaunchAgent rather than under `nohup`. launchd restarts it if it dies during a 72-hour run, and loads it again at login after the closure restart.
