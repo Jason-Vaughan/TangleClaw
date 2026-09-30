@@ -1,0 +1,31 @@
+{
+  "id": "soak-stub",
+  "name": "Soak stub engine",
+  "command": "soak-stub",
+  "interactionModel": "session",
+  "configFormat": {
+    "filename": ".soak-stub.conf",
+    "syntax": "text",
+    "generator": "none"
+  },
+  "commands": [],
+  "detection": {
+    "strategy": "which",
+    "target": "soak-stub"
+  },
+  "launch": {
+    "shellCommand": "soak-stub",
+    "args": [],
+    "env": {},
+    "startupDelay": 500
+  },
+  "persistent": null,
+  "capabilities": {
+    "launchSequence": { "supported": false },
+    "supportsSlashCommands": false,
+    "supportsPrimePrompt": false,
+    "supportsConfigFile": false,
+    "supportsCoAuthor": false
+  },
+  "statusPage": null
+}

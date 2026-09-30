@@ -408,7 +408,7 @@ describe('#931 the update read inherits the status chain, not a second timer', (
 
   it('a throwing tick cannot end polling for the life of the page', () => {
     // The chain re-arms BELOW `await pollTick()`, so an unguarded throw there
-    // stops session status, wrap-sentinel detection, ended detection and the
+    // stops session status, ended detection and the
     // beacon — all at once, silently, with the page still looking alive.
     //
     // Reachable since the update read began calling a global published by a

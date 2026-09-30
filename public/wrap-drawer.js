@@ -468,7 +468,14 @@
         // silent-loop problem #569 was filed about.
         const n = output.count;
         if (typeof n !== 'number' || n <= 0) return null;
-        let text = `${n} rule${n === 1 ? '' : 's'} proposed — awaiting your review`;
+        let text = `${n} rule${n === 1 ? '' : 's'} proposed`;
+        // #2029: name them by DB id so the operator can tell which ones to
+        // look at; `tcRuleLabel` is api-helper.js's, loaded first on the page.
+        const ids = Array.isArray(output.proposed)
+          ? output.proposed.map((p) => p && p.ruleId).filter((id) => Number.isInteger(id) && id > 0)
+          : [];
+        if (ids.length > 0) text += ` (${ids.map((id) => global.tcRuleLabel(id)).join(', ')})`;
+        text += ' — awaiting your review';
         // The provisional backlog rides along so the loop's queue is visible
         // even in sessions that DID propose — "2 proposed, 3 more building
         // recurrence" is the loop's whole state in one line (#569 proposal 3).

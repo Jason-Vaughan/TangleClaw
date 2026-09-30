@@ -35,6 +35,34 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-30 — Merge main into the #2031 fold and move the operator channel to schema v52
+
+<!-- prawduct: type=chore | scope=oc-schema-fold-2031 -->
+
+TC-RM18 Chunk 3, dispatched by the Architect (Medusa 26258b60) under Rule #154. `main` @ `aebd6960`
+is merged with a true merge commit, with no rebase and no force-push. Not pushed.
+
+**Why:** `main` took schema v51 for the coordinator rotation tables (#2032). Under ruling A17 the
+operator channel lands after it. The fold branch was also 109 commits behind `main`, and that stale
+base was why `test/projects.test.js` failed (Critic R-1).
+
+**What:**
+- Conflicts in `lib/store.js` and `server.js` both come from two independent additions, so both
+  sides are kept. `_createTables` builds main's rotation tables, then the channel's storage. The
+  migration dispatch is main's `< 51` rotation step, then the channel's `< 52` step.
+  `CURRENT_SCHEMA_VERSION = 52`. `server.js` keeps main's `_laneRotation` and `_routePatterns`
+  beside the channel's `_fleetAvailabilities`. `CHANGELOG.md` keeps both `[Unreleased]` blocks.
+- The rollback target in `CHANGELOG.md` is now a v51 server, which is still one that does not
+  know `operatorChannel` and so still exposes `tokenHash`. The Storage bullet names v52 (Chunk 2
+  observation O-1). ADR 0022 point 8 states v52 as fact instead of a future renumber.
+
+**Tests (renumber, not weakened):**
+- `test/store-operator-channel-migration.test.js` rewinds to v51, the version before the channel,
+  instead of v50. The assertions are otherwise the same.
+- `test/coordinator-rotation.test.js` (#2032, from `main`) pinned `CURRENT_SCHEMA_VERSION === 51`
+  and a fresh stamp of `[51]`. Both pins stay exact, now at 52 and at `[CURRENT_SCHEMA_VERSION]`.
+  The upgrade test still starts from v50 and still proves the rotation tables and indexes appear.
+
 ## 2026-09-30 — Fold the operator channel's two stack migrations into one final schema (#2031)
 
 <!-- prawduct: type=fix | scope=oc-schema-fold-2031 -->
@@ -175,96 +203,82 @@ Discord Operator Bridge, Chunk 1: the server half. The TangleClaw-Architect auth
 Each has negative tests: spoofed dashboard callers on an open and an armed gate, a send addressed elsewhere, and bidi, zero-width, line-separator, soft-hyphen and BOM text. N5 is recorded as non-blocking per the Architect. N6 (cancellation and retention) carries into C2 planning.
 
 ## 2026-09-28 — Session-rule mutations are gated on a verified caller (#2013)
+## 2026-09-30 — #2020: macOS 26.3 soak-tooling compatibility (RM09 census)
 
-<!-- prawduct: type=bugfix | scope=2013-session-rules-authz -->
+<!-- prawduct: type=fix | scope=2020-lease-start-form -->
 
-The PM dispatched this over Medusa as a v5.30 security blocker (Architect A13). `POST /api/session-rules` checked nothing about its caller and recorded a body with no `createdBy` as the operator's, so any local process could add an ACTIVE rule to any project. Update, delete, status change (an active rule moved out of `active`), restore and promote had the same hole, and every route wrote `changedBy` from the body.
+PM dispatch. The TC-RM09 dry run was BLOCKED - TESTBED/TOOLING COMPATIBILITY; this is not a candidate failure (Architect rulings A3/A4). The verifier refused the real macOS 26.3 guest with `LeaseStartTime is not in the expected form (YYYY-MM-DD HH:MM:SS +ZZZZ): 09/30/2026 14:24:26`. Branch `fix/2020-lease-start-mdy` from `origin/main` `aea0c4f8`.
 
-**The change.** `server.js#sessionRuleCaller` decides for every rule-mutation route, on the #1752 caller model. The operator may do anything; a session bound to the project may propose rules for it and revise, withdraw or decline an AI proposal in that project while it is still proposed; everyone else is refused. Approval and promote need the operator caller before the password, which is open when none is set. `POST /api/master/rules/restore-defaults` is operator-only (#2017), and so is `PUT /api/learnings/:id/tier` (#2018). Attribution comes from the caller.
+**Why.** macOS 26.3's `ipconfig getsummary` prints `MM/DD/YYYY HH:MM:SS`, with no zone. The verifier accepted only the zoned ISO-like form, so no real guest could be attested.
 
-**Tests.** `test/api-session-rules-authz.test.js` covers every route against every caller class, asserting each refusal changes nothing, and reads the mutation-route roster from `server.js`'s registrations so a future route is swept in. The mutation pass took out each gate one at a time, 16 in all, and a test caught every one. Two were missed on the first pass and got tests: an approved AI-authored rule, and a session restoring its own proposal. Existing route tests now name their operator caller; no assertion changed.
+**What.**
+- `deploy/soak/guest/guest-setup.sh`: `ipconfig getsummary` runs with `TZ=UTC`. RM09's real-guest census showed the zoneless form is printed in the caller's zone: the same instant printed 14:36:09 by default and 07:36:09 under `TZ=America/Los_Angeles`. The zoneless form is then read as UTC, and must round-trip through the UTC calendar, so an impossible day or time and day-first input are refused. The zoned form is unchanged. Two new attested fields, `dhcp.leaseStartForm` (`zoned` or `utc`) and `dhcp.leaseStartUtcOffsetMinutes`, record the reading.
+- `test/soak-guest.test.js`: the zoneless form read as UTC whatever the admin's `TZ` (UTC, America/Los_Angeles, Asia/Kolkata), with a fake `ipconfig` that prints the start only when called under `TZ=UTC`; a zoned +0530 start read by its own offset; refusals for an impossible day, an hour of 24, day-first input, mixed forms, missing seconds, a future start and expiry.
+- Census-driven (RM09 census `0a5217e6…`, real macOS 26.3 guest):
+  - `LeaseExpirationTime`, when reported, must equal the start plus `lease_time`, and is attested as `dhcp.leaseExpiryRaw`.
+  - `dseditgroup` exit 67 means "not a member"; any status other than 0 or 67 is refused as unknown. Before, it counted as "not a member".
+  - `pfctl`'s ALTQ banner is dropped from the rules output.
+  - Setup uses `sudo true` instead of `sudo -v`, and `createhomedir` for a workload user `sysadminctl` created without a home.
+  - Tests use the census shapes: a `0xe10` lease with no T1/T2, both clocks zoneless and printed in the caller's zone, the census `pfctl -s info` line and the ALTQ banner.
+- Docs: the README describes both clock forms, the `TZ=UTC` call, the expiry cross-check and the `dseditgroup` statuses. Runbook step 11 runs setup under `nohup` into `~/setup.log`, because the SSH session that loads pf hangs.
+- Not in this PR, filed as #2064: F5/F6. The workload positive control stops at the first probe that answers, so it can't positive-control each plane separately. That changes verifier behaviour and is not a format fix.
 
-**Consumers.** The session prime told agents to POST with no launch headers; it now names them and stays inside its 2800-char budget. The `tc rules` and `tc capabilities` hints, `docs/session-rules-self-improvement.md`, the fleet runbook (whose step 10 relied on the hole), FEATURES and CHANGELOG (Security) are updated too.
+**Decision.** An earlier revision on this branch read the zoneless form as the guest's local time and documented a zone-error branch in runbook step 12. RM09's census showed `ipconfig` formats in its caller's zone, so pinning the caller to UTC removes the assumption entirely, and that branch is gone.
 
-**Review.** The first Critic round found promote still ungated (2 blocking), which I had excluded as "already password-gated" in the same plan that had just disproved that premise for approval. Fixed together with restore-defaults. verify-resolutions: 0 findings. The PM then dispatched #2018 into this PR: `PUT /api/learnings/:id/tier` (an active learning reaches the prime) is now operator-only, and the route sweep covers `/api/learnings`. A census of the rule and learning write routes went to the PM and the Architect. On the Architect's ruling, changing or resetting the global rules document is operator-only too: a Builder may draft or propose its text, and the operator applies it.
+**Test contract changed, not weakened.** The admin-line `deepEqual` gains `leaseStartForm: 'zoned'` and `leaseStartUtcOffsetMinutes: 0`.
 
-## 2026-09-28 — ID-less roadmap Topic Buckets render as cards (#2006)
+## 2026-09-30 — #2020: derive DHCP renewal and rebinding times for a Tart lease that omits both
 
-<!-- prawduct: type=bugfix | scope=bucket-cards-2006 -->
+<!-- prawduct: type=fix | scope=2020-dhcp-timing -->
 
-The PM dispatched this over Medusa as an authorized drain exception. The shared Roadmap Board's three topic buckets (`kind: "bucket"`, no `train`) rendered as raw block text, because #1942 exempted only `unconfigured` from the train-identity requirement. The emergency hotfix in the PM and Builder1 checkouts was not used.
+PM dispatch (Route A, operator's blanket approval). The Architect released Builder2 from standby for this chunk only. Branch `fix/2020-dhcp-timing-derivation` from `origin/main` `75c499f1`.
 
-**The change.** `lib/plan-train-card.js` adds `ID_LESS_KINDS` (`bucket`, `unconfigured`). A kind in it must carry no `train`: an ID-less bucket renders as **Topic Bucket: <title>**, and a bucket that supplies an identity is refused. Train and pilot still require an identity, unchanged.
+**Why.** Tart's vmnet DHCP server sends a lease with `lease_time` but no `renewal_t1_time_value` or `rebinding_t2_time_value`. The admin verifier required all three, so it could never attest a Tart guest.
 
-**Tests.** The #1942 bucket cases that passed string identities encoded the old contract, so they were replaced. The pilot naming and markup cases keep their coverage under `kind: "pilot"`. A new `ID-less Topic Buckets (#2006)` suite covers the collapsible card, the exact label, refusal of four identity forms, the three live bucket shapes with no `block-error`, and unchanged train/pilot/unconfigured validation. Four of its five tests were red on the unfixed parser, and the unchanged-validation test was green on both, as intended. The real shared roadmap (read-only) renders 13 cards, 0 block errors and 3 Topic Buckets.
+**What.**
+- `deploy/soak/guest/guest-setup.sh`: when both timers are absent, T1 = floor(lease/2) and T2 = floor(lease*7/8) (RFC 2131 4.4.5). A lease with only one timer is still refused, and the message names which one it reports. The new field `dhcp.timingSource` is `lease` or `derived-rfc2131`. The server identity, start/expiry, strict ordering and remaining-window checks all apply to derived times, unchanged.
+- `test/soak-guest.test.js`: explicit timings (`timingSource: 'lease'`); both absent, the Tart shape; rounding down; partial absence refused either way round; missing `lease_time`; leases too short for ordered derived timers; a duplicate `lease_time`; a malformed timer; expiry; and the remaining window.
+- Docs: the README explains the derivation and that a derived time is not evidence of renewal. New install-runbook step 12 observes SSH and the address surviving a real renewal on the dry run. Static addressing is the fallback only if that fails. Step 11 now has the host confirm the lease's server before `SOAK_DHCP_SERVER` is exported: no step set it, so setup could not succeed as written.
 
-**Docs.** CHANGELOG (Fixed), `docs/user-guide.md` (the `kind` rule) and FEATURES (served plan docs). No roadmap data was touched and no train was renumbered.
+**Test contract changed, not weakened.** The admin-line `deepEqual` gains `timingSource: 'lease'`. The existing partial-absence test now also requires the refusal to name the timer the lease reports.
 
-## 2026-09-28 — Opening the dashboard inbox panel is a pure observation (#1987)
+## 2026-09-29 — #2020 Chunk 3: fault and browser executors, integrity sampling, evidence bundle, operator runbooks
 
-<!-- prawduct: type=bugfix | scope=inbox-panel-observational-1987 -->
+<!-- prawduct: type=feature | scope=2020-chunk-3 -->
 
-The PM dispatched this over Medusa (Definition Ready v5.31). B5 echoed the Architect addendum, then flagged a conflict inside it before writing code: the selected bodyless badge clear zeroes `unread`, and the wake monitor reads that as "inbox read" (`lib/medusa-wake.js`), so an operator viewing the panel would cancel the agent's nudge. The Architect ratified option B, a panel that makes no `/read` call at all, and amended the acceptance criteria on the issue.
+Lease Rule #142 (RM-LEASE TC-RM08 generation 3). PM dispatch `fe7c8a9d`. Branch `feat/2020-chunk3-soak-runbook-executors` from `origin/main` `a5253de6`.
 
-**The change.** `openInbox()` in `public/api-helper.js` now fetches and renders only. No other frontend path posts `/read`. Every comment and doc describing the old behaviour was corrected: the CSRF notes in `public/api-helper.js`, `server.js` and two tests; the `recordAcknowledged` JSDoc; the CSS and test comments about the badge "self-hiding on read"; and one test title. The review caught the copies outside the first commit. Server semantics and UI are unchanged.
+**Why.** The schedule already drew `browser` and `fault` events, but `run` refused them (`NO_EXECUTOR`). Nothing sampled the guest database or the server process, nothing gathered a run into one evidence set, and no procedure installed the pinned candidate in the guest. The Architect ruling on #2020 requires all of it before the dry run.
 
-**Tests.** The #785 acknowledge-on-display tests (ack by id, bodyless fallback, badge hidden) encoded the behaviour the ruling reverses, so they were replaced with the ruled contract:
-- no `/read` of either form for id-bearing, id-less or empty inboxes;
-- the unread count and badge are unchanged, with the fake `/read` answering `unread: 0` so a regression is caught;
-- a post-fetch arrival still counts.
+**What.**
+- **3a: local control and faults.** `lib/soak/local.js` admits a schedule with any fault or browser kind only inside the guest: `--no-live-install`, `kern.hv_vmm_present` = 1, a loopback IP `--api`, and an owned `--home` with its `tangleclaw.db`. Otherwise it refuses with `LOCAL_CONTROL_REFUSED` before any load. `lib/soak/faults.js` implements the six faults (the table is in `deploy/soak/README.md`).
+- **3b: browser events.** `lib/soak/webdriver.js` is a minimal W3C client, and `lib/soak/browser.js` implements the dashboard load and the terminal attach. The attach is proven by the server's `pty-activity` counter on the same instance.
+- **3c: sampling and the bundle.** `lib/soak/integrity.js` backs `soak sample`: database check verdicts, RSS and descriptors, disk, and health. `lib/soak/bundle.js` backs `soak bundle`: copies, a `VACUUM INTO` snapshot checked with `integrity_check`, and a sha256 manifest. Both are admitted by `local.admitGuestReader`.
+- **3d: runbooks and docs.** `docs/runbooks/soak-install-the-candidate.md` and `docs/runbooks/soak-run-sample-and-bundle.md`. `deploy/soak/README.md`, CHANGELOG and FEATURES are updated too.
 
-The rendering assertions (escaping, newest first, the close button, toggling) are kept. All new tests were red before the fix.
+**Decisions.**
+- The server restart goes through `POST /api/server/restart`, and is never forced past a wrap.
+- The tmux kill targets only the session the harness's own launch named (`=<name>`).
+- The ttyd restart reuses `lib/ttyd-watcher.js`'s kickstart form, and refuses outside the destructive phase.
+- Disk ballast leaves 2 GiB free, is capped at 64 GiB, and is swept at the start of the next disk fault.
+- `lib/soak/` stays self-contained, so the guest's checkout trust check (`lib/soak/*.js`) still covers everything the soak runs. That is why the pidfile is parsed locally.
 
-**Evidence.** The targeted ring is green (851 tests: every medusa* suite, the api/master Medusa suites and the frontend guards). The full suite was not run, under the Pilot Envelope.
+**Test contract changed, not weakened.** `test/soak-cli.test.js` expected `NO_EXECUTOR` for a full schedule. Every kind now has an executor, and the new guard is what stops a full schedule outside the guest. The test now expects `LOCAL_CONTROL_REFUSED` with no request sent and no log written. A new test pins an executor for every catalogue kind.
 
-**PR review (Architect gate at 00f03041).** 1 blocking, promoted from Reviewer1's warning. The panel's `GET …/messages` still recorded a `read` fact as `operator-ui`. That ended awaiting-read and wake re-arms, nulled `rearmTrigger`, moved the projection to `read` and blocked a retract, so viewing still acted for the agent. Fixed in `recordRead`, which now records nothing for `operator-ui`, covering both the project and Master mounts. The agent's read (`recipient`) and an unverified read are unchanged. Paired integration tests cover both sides: an operator view preserves awaiting-read, the due re-arm, the projection, the pending unread and retractability; an agent read still makes every transition. The existing test that asserted an `operator-ui` read now asserts that none is recorded, per the ruling. The operator-view test fails without the fix. The Critic then found the same gap when the operator is unproven: under a fallback or unreadable gate the dashboard resolves as an unbound caller and recorded an `unverified-reader` read. `GET …/messages` now records no read for a browser-shaped request that is not the agent's verified launch. A test under a real fallback gate fails without that change and passes with it, and a plain curl still records its read. Docs corrected in `docs/medusa-delivery.md`, `CHANGELOG.md`, the `server.js` route comment and the `recordRead` JSDoc.
+**Ruling A1.** The workload user had no GUI login session (it was created with a password nobody keeps). But the product restarts the server and ttyd through launchd `gui/<uid>`. The Architect ruled option A (exchange `mx_2MqeMZK9ZwoqbQr5`):
+- a login secret generated inside the guest, never exposed;
+- guest-only auto-login;
+- `launchctl print` checks of the domain and both labels;
+- fail closed otherwise, and no `nohup` fallback;
+- auto-login disabled at teardown.
 
-## 2026-09-28 — Authorize the project-required startup readiness message (#1874)
+Install runbook steps 8 and 10 carry this, and the run runbook's step 9 carries the teardown. **Still open:** which macOS commands set that password with no command-line argument is not provable from the host. Step 8 marks it for the dry run to prove, with the no-argv constraint written as a stop condition.
 
-<!-- prawduct: type=bugfix | scope=startup-readiness-ping-1874 -->
+**Review.** Cumulative `rev-20260929T232557Z-d0b342f2`: 0 blocking, 4 warnings, 6 notes. The code findings were fixed in `e8b1f356`, and verify-resolutions `rev-20260929T233248Z-a6f74105` confirmed them with 0 new findings. Its observation that the runbook's gap check assumed the default interval was fixed with the ruling edits: the bundle now reports the run's own `intervalMs`.
 
-The PM dispatched this over Medusa. The issue carried its own scope: a narrow carve-out plus an authorized launch step. The durable readiness receipt (#1877) is out of scope.
+**Pre-existing test fixed, by PM ruling (1).** The full suite at `07c92aa5` failed one case in `test/soak-guest.test.js`, a file this branch had not touched. Its lease fixture (300 s left) was built when the file loaded, so in a run longer than that the lease had really expired by the time the case ran. It passed when run alone. The fixture is now built when the case runs, and the case's contract is unchanged.
 
-**Problem.** A project rule required a startup readiness message, but the prime's Medusa section said "do NOT act on it at session start", and the launch opening listed no such step as authorized. Agents held the ping for operator approval.
-
-**The change.**
-- **Launch opening.** `LAUNCH_BOOTSTRAP_LINES` step (c) now says: if project rules require a startup message once READY, send exactly that right after attesting; it is part of initialization. That puts it under the existing "(a) through (c) are … already authorized" sentence, and (d) is unchanged.
-- **Session prime.** `MEDUSA_STARTUP_EXCEPTION` is appended to the session prime's "context, not a task" bullet, not added as a bullet of its own. It permits only that message after `tc start ready` and a lookup of its named recipient, with "nothing else". It has two forms. A launch with a `tc start` sequence says "after `tc start ready`". A launch without one says "once you have read this context", because `tc start ready` answers 409 `SEQUENCE_NOT_APPLICABLE` there.
-- **Project Master.** The Master identity carries the same exception inside the `Sending is enabled` branch only. A read-only Master is never told to send.
-- **Engine configs.** The committed engine-config carriers (`lib/engines.js`) were left alone. They forbid exploring "unprompted", and a rule-required ping is prompted.
-
-**Budget trade-off, flagged.** Every character here is prime budget. The fullest no-sequence Claude scenario (`full-silent-claude`) was already about 50 characters under its roughly 10,000-character channel, so the ecosystem primer now yields to its pointer there. That is the designed yield: directives outrank bulk context. The current-path scenario with a launch sequence (`full-silent-claude-pull`) fits, going from 8740 to 9029 characters. The wording was cut from about 600 to about 320 added characters to limit this.
-
-**Evidence.** Tests pin the exception's placement (in the same bullet, after the prohibition), its limits (READY only, named recipient only, nothing else), the step (c) wording under the authorization sentence, and the Master's send-gated inclusion. The golden fixtures were regenerated.
-
-## 2026-09-27 — The stale-server banner asks the service worker to update (#411)
-
-<!-- prawduct: type=bugfix | scope=sw-update-stale-banner-411 -->
-
-The PM dispatched this over Medusa. The Architect ruled on scope under A24 (the operator UI freeze): item 1 only, invisible corrective behaviour, and no skew banner or hint. Plan: `.tangleclaw/plans/411-sw-update-on-stale-banner.md` (local, not tracked).
-
-**Finding.** Most of #411's mechanism was already closed before the June incident. `landing.js` has been network-first since #273. `pollServerBackAndReload` reloads only after it observes a new `startedAt`. `sw-register.js` checks for updates on load and on visibility, and reloads once on a guarded `controllerchange` (#380). What remained was a foreground tab that never triggered the visibility check.
-
-**The change.** `sw-register.js#requestServiceWorkerUpdate` calls `update()` on the page's existing registration and never throws. It is exposed as the `tcRequestServiceWorkerUpdate` global. `landing.js#renderStaleServerBanner` calls it once each time the banner goes from hidden to shown, not on every 60 s poll while it stays up. Nothing visible changes.
-
-**Not claimed.** The June "restart did nothing, uptime kept counting" symptom was the server process not recycling. It is separate, unattributed without a live repro, and not addressed here. The user guide says so and names what to capture.
-
-**Evidence.** The tests run against a mock `ServiceWorkerContainer` and a stub DOM; no live-browser check was run. They show the banner requests exactly one update per appearance, and none on repeated polls. They also show that a check which finds a new worker drives the existing controllerchange path to reload exactly once, that an absent hook renders an identical banner, and that `sw-register.js` loads before `landing.js`.
-
-## 2026-09-27 — `tc branch check`: prove a local branch is safe to retire (#1878)
-
-<!-- prawduct: type=feature | scope=branch-retire-safety-1878 -->
-
-The PM dispatched this over Medusa. The Architect ruled on scope first (1+2+3 with nine binding refinements) because TangleClaw had no checkout-normalization code to fix. In the incident, a Builder ran `git branch -D` by hand on a PM "resync" instruction and lost an unpushed wrap commit to all but the reflog. Plan: `.tangleclaw/plans/1878-branch-retire-safety.md` (local, not tracked). `Refs #1878`: the issue stays open until the rule is approved and every acceptance case passes.
-
-**The change.**
-- **Oracle.** `lib/branch-retire-safety.js#assess` returns exactly `safe | preserve | unknown`, with stable reason codes. Every error or ambiguity is `unknown`. Remote refs count only after a fresh `fetch --prune` of the branch's upstream remote, or of the only remote; two remotes with no upstream is `REMOTE_AMBIGUOUS`. Reachability runs `rev-list <oid> --not --exclude=<name> --branches --tags --remotes=<remote>`. A worktree that holds the branch, is detached at its tip, is mid-rebase of it or is missing from disk blocks `safe`, as does dirt in such a tree. An empty worktree list is `unknown`. The OID is re-resolved at the end. The oracle never deletes, resets or removes anything.
-- **Verb.** `tc branch check <name> [--json] [--repo]` runs in the pane's own checkout and exits 0 only for `safe`, 3 for `preserve` and 4 for `unknown`.
-- **Global rule** (`data/global-rules.md` plus its CLAUDE.md mirror). Check immediately before branch deletion, `reset --hard`, worktree removal or checkout normalization, and delete only on `safe`. A held worktree is retired by an explicit sequence: a clean check including `--ignored`, plain `git worktree remove` (never `--force`), then a re-check. Before a reset, pin the tip under a named branch. Retire one branch at a time. The rule states plainly that no shell interlock exists yet. Global rules have no `proposed` status, so the Architect ruled that the PR merge is the approval gate, with no auto-merge.
-
-**Review.** The cumulative Critic had 0 blocking. Two verify-resolutions passes closed its findings: the first rule text made `reset --hard` and worktree removal permanently un-`safe` (a silent total ban, whose `--force` workaround loses the untracked plan); the check's advice contradicted the rule; an empty worktree list read as clean; and plain `worktree remove` deletes gitignored files. The one accepted item is that `tc` needs `TANGLECLAW_API` even for this local check.
-
-**Evidence.** The real-git tests reproduce every acceptance case the issue lists, plus the rule's own worktree sequence. Full suite on a5da892d: 0 failed, 1 ledgered skip. The prime golden fixtures changed only by the roster-derived `branch` verb name.
+**Verification.** Unit and integration tests use fakes for HTTP, WebDriver, launchctl, tmux and statfs, and a real SQLite database and real files. Nothing was run in a real guest: the runbooks mark those steps unverified until the first dry run.
 
 ## 2026-08-20 — #990: forensic review of the ungoverned Antigravity window fixes 8 confirmed bugs
 

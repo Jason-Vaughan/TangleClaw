@@ -46,6 +46,7 @@ function healthyLeak(overrides) {
     pool: { exhausted: false, used: 40, cap: 511, ratio: 0.078 },
     orphans: 1,
     transient: 0,
+    orphanGate: false,
     orphanThreshold: 20,
     ptyThresholdRatio: 0.85,
     wedgeAgeMs: 30 * 1000,
@@ -99,6 +100,7 @@ describe('lib/system-health (#345)', () => {
       await systemHealth._settleTtyd();
       assert.equal(c.state, 'clear');
       assert.match(c.detail, /not applicable on linux/);
+      assert.equal(c.applicable, false, 'said as a value, so certification can refuse without reading detail');
       assert.equal(measured, false, 'no launchctl/ps on a platform that has neither');
     });
 
@@ -218,10 +220,28 @@ describe('lib/system-health (#345)', () => {
         pid: 4242,
         generation: '4242@Fri Sep 25 11:28:54 2026',
         sampledAt: '2026-09-25T18:40:00.000Z',
+        wedged: 1,
+        orphanGate: false,
+        pool: { used: 40, cap: 511 },
         binary: null,
         managed: null
       });
       assert.deepEqual(c.lastReceipt, receipt);
+    });
+
+    // Release-candidate certification (#1949) judges the wedged count, the
+    // orphan gate and pool use from this reading, so they travel as values a
+    // machine can compare, and unmeasured stays null rather than becoming 0.
+    it('carries the wedged count, orphan gate and pool use as values', async () => {
+      const c = await ttydVerdict({ measureLeak: async () => healthyLeak({ orphans: 0, orphanGate: false }) });
+      assert.equal(c.reading.wedged, 0);
+      assert.equal(c.reading.orphanGate, false);
+      assert.deepEqual(c.reading.pool, { used: 40, cap: 511 });
+      systemHealth._reset();
+      const blind = await ttydVerdict({ measureLeak: async () => healthyLeak({ orphans: null, orphanGate: null, pool: null }) });
+      assert.equal(blind.reading.wedged, null);
+      assert.equal(blind.reading.orphanGate, null);
+      assert.equal(blind.reading.pool, null);
     });
 
     // #1245, ADR 0018: the fix lives in the owned runtime. A machine still on

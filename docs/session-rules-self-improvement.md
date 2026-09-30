@@ -42,6 +42,26 @@ machine-specific — TangleClaw's SessionStart hooks live in the ignored
   prime, the Project Master, or the wrap's own prompts. Keeping the two separate is what
   makes a REJECTED rule distinguishable from an unreviewed one; collapse them and the wrap
   re-proposes declined rules at every wrap that sees the same learning.
+- **A rule is named `Rule #<id>` everywhere** (#2029). Every surface derives the label from
+  `session_rules.id`, never from the text: the Project Rules and Global rules lists, their
+  Approve / Reject / Delete / toggle controls and status lines, the wrap drawer's proposal
+  rows and summary, the `rule-proposal` step's detail, `tc rules`, the startup rules
+  delivered to a session (inline, over the hook channel and in the launch step), the wrap
+  rules in the wrap prompt, the Hard rules in the Project Master's instructions, the
+  delivery ledger, and the operator-only refusal message. The Master's shipped baseline,
+  used only when no Hard rule is stored, has no id and renders as written. Every rule object from the API
+  carries `label` (`"Rule #<id>"`). The authored text is displayed after the label; when it
+  opens with a `RULE #<id> — ` prefix naming the **same** rule, that prefix is dropped from
+  the display so the label is not doubled. Exactly one such prefix is dropped. A prefix naming a
+  **different** id stays visible and is flagged: a *text says #<n>* badge on the lists and the
+  wrap drawer, and `text says #<n>, not this rule` in `tc rules`
+  (`lib/rule-label.js#authoredIdMismatch`). A number later in the text is a reference, not a claim,
+  and is not flagged. Stored text is never changed, and approval still compares
+  the stored text (#1053). Rules: `lib/rule-label.js` for the server, mirrored by
+  `public/api-helper.js#tcRuleLabel` / `#tcDisplayRuleText` for the pages
+  (`test/rule-label-drift.test.js` holds them together). A "superseded" rule is not a
+  stored state; it is an active rule the operator disabled when its replacement was
+  approved, and it is labelled like any other.
 
 ## Learnings ingestion (the DB writer, #466)
 

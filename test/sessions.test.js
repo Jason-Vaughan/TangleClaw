@@ -11,6 +11,9 @@ setLevel('error');
 
 const store = require('../lib/store');
 const medusa = require('../lib/medusa');
+
+/** The closing sentence of the prime's wrap directive: present whenever the directive is. */
+const WRAP_DIRECTIVE_TAIL = 'Nothing you print opens the wrap drawer.';
 const { installTmuxGuard, removeTmuxGuard, reapFixtureSessions } = require('./_tmux-guard');
 
 describe('sessions', () => {
@@ -268,20 +271,17 @@ describe('sessions', () => {
       }
     });
 
-    it('injects the typed-wrap sentinel instruction WITHOUT tripping its own monitor (CC-7 Slice C)', () => {
-      const wrapSentinel = require('../lib/wrap-sentinel');
+    it('tells the AI how a session ends, and never names the retired pane-text wrap marker (#2027)', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
       const prompt = sessions.generatePrimePrompt(project, engine);
 
-      assert.ok(prompt.includes('## Wrapping this session'), 'prime should tell the AI how to trigger a wrap');
-      assert.ok(prompt.includes(wrapSentinel.SENTINEL_TOKEN), 'prime should name the marker token');
-      // The whole point of the backtick/period phrasing: the instruction itself
-      // must NEVER look like a bare emission, or every session would self-wrap.
-      assert.equal(
-        wrapSentinel._hasSentinel(prompt), false,
-        'the prime instruction must not match the sentinel monitor (no self-trigger)'
-      );
+      assert.ok(prompt.includes('## Wrapping this session'), 'prime should say how a session ends');
+      assert.ok(prompt.includes('Wrap button'), 'the full wrap starts from the explicit Wrap button');
+      assert.ok(prompt.includes('tc finalize --reason'), 'the governed headless path is named');
+      assert.ok(prompt.includes(WRAP_DIRECTIVE_TAIL), 'the prime says printed text opens nothing');
+      assert.equal(prompt.includes(['TANGLECLAW', 'WRAP'].join('_')), false,
+        'no instruction to print a marker: pane text is not a request channel');
     });
 
     it('injects the session-ownership identity block (#347 Slice 3)', () => {
@@ -528,7 +528,6 @@ describe('sessions', () => {
       });
 
       it('#557 regression: directive sections survive the prime cap — the contract yields, honestly', () => {
-        const wrapSentinel = require('../lib/wrap-sentinel');
         // An oversized contract: alone it exceeds the prime's token cap
         // several times over. Pre-fix, the
         // blind tail truncation cut the Resume wait-guard and the wrap
@@ -558,7 +557,7 @@ describe('sessions', () => {
         assert.ok(prompt.includes('## Resume'), 'Resume block survives the cap');
         assert.ok(prompt.includes('MUST NOT start the work'), 'the wait-for-confirmation guard survives the cap');
         assert.ok(prompt.includes('## Wrapping this session'), 'wrap instructions survive the cap');
-        assert.ok(prompt.includes(wrapSentinel.SENTINEL_TOKEN), 'the wrap sentinel token survives the cap');
+        assert.ok(prompt.includes(WRAP_DIRECTIVE_TAIL), 'the wrap directive survives the cap');
         assert.ok(prompt.includes('`prime-test-cafe0123`'), 'the workspace identity survives the cap');
         // The contract yields — trimmed with an honest note, never a blind slice.
         assert.ok(
@@ -652,7 +651,7 @@ describe('sessions', () => {
 
       it('no blind tail slice remains in the prime assembler', () => {
         // Structural guard. The slice was the mechanism that silently removed
-        // the wrap-sentinel directive in production; behavior tests prove it is
+        // the wrap directive in production; behavior tests prove it is
         // not reached today, this proves it cannot be reintroduced quietly.
         const src = fs.readFileSync(require.resolve('../lib/sessions.js'), 'utf8');
         assert.equal(src.includes('[Prime prompt truncated]'), false,
@@ -1216,8 +1215,6 @@ describe('sessions', () => {
         // directives must never yield to it.
         const huge = '# Feature Index\n\n' + ('- entry padding word '.repeat(2000)) + '\n';
         fs.writeFileSync(featuresPath, huge);
-
-        const wrapSentinel = require('../lib/wrap-sentinel');
         const engine = store.engines.get('claude');
         const prompt = sessions.generatePrimePrompt(fiProject, engine);
 
@@ -1228,12 +1225,12 @@ describe('sessions', () => {
 
         // The load-bearing assertion. Measuring only that the prompt got SHORT
         // ENOUGH treats truncation itself as success — which is how an oversized
-        // Feature Index silently ate the wrap-sentinel directive in production
+        // Feature Index silently ate the wrap directive in production
         // while this test stayed green. What matters is what SURVIVED.
         assert.ok(prompt.includes('## Wrapping this session'),
           'the wrap instructions survive a Feature Index that overflows the budget');
-        assert.ok(prompt.includes(wrapSentinel.SENTINEL_TOKEN),
-          'the wrap sentinel token survives a Feature Index that overflows the budget');
+        assert.ok(prompt.includes(WRAP_DIRECTIVE_TAIL),
+          'the wrap directive survives a Feature Index that overflows the budget');
 
         // A blind tail slice is never an acceptable way to meet the budget: its
         // failure mode is a prime the reader cannot tell is incomplete.
@@ -1258,8 +1255,6 @@ describe('sessions', () => {
           content: 'padding learning '.repeat(60),
           tier: 'active'
         });
-
-        const wrapSentinel = require('../lib/wrap-sentinel');
         const base = store.engines.get('claude');
         // A budget deliberately too small for the learnings block but large
         // enough for the directives, so the yield is the only way to fit.
@@ -1280,7 +1275,7 @@ describe('sessions', () => {
           'the omission is announced, not silent');
         assert.ok(prompt.includes('## Active Learnings'),
           'the heading stays so the reader knows something was dropped');
-        assert.ok(prompt.includes(wrapSentinel.SENTINEL_TOKEN),
+        assert.ok(prompt.includes(WRAP_DIRECTIVE_TAIL),
           'directives are never what yields');
         assert.equal(prompt.includes('[Prime prompt truncated]'), false,
           'yielding replaces slicing entirely');
@@ -1468,8 +1463,6 @@ describe('sessions', () => {
           silentPrime: true,
           featureIndexEnabled: false
         });
-
-        const wrapSentinel = require('../lib/wrap-sentinel');
         const base = store.engines.get('claude');
         // Smaller than the directive core can possibly be. Nothing may be cut:
         // a slice here would drop whichever directive sorted last, which is the
@@ -1480,8 +1473,8 @@ describe('sessions', () => {
         };
         const prompt = sessions.generatePrimePrompt(fiProject, impossible);
 
-        assert.ok(prompt.includes(wrapSentinel.SENTINEL_TOKEN),
-          'the wrap sentinel survives even an impossible budget');
+        assert.ok(prompt.includes(WRAP_DIRECTIVE_TAIL),
+          'the wrap directive survives even an impossible budget');
         assert.ok(prompt.includes('## Wrapping this session'),
           'the wrap instructions survive even an impossible budget');
         assert.ok(prompt.includes('budget of the channel'),

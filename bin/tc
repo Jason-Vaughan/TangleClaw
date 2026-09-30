@@ -69,6 +69,11 @@ async function main() {
   // so `tc start` never has to guess which session is asking.
   if (process.env.TANGLECLAW_LAUNCH_ID) headers['x-tangleclaw-launch-id'] = process.env.TANGLECLAW_LAUNCH_ID;
   if (process.env.TANGLECLAW_ROLE) headers['x-tangleclaw-role'] = process.env.TANGLECLAW_ROLE;
+  // #2032: which engine thread is asking. Codex sets CODEX_THREAD_ID in every
+  // tool shell; a coordinator bound to a rotation epoch is answered only for
+  // its bound replacement thread. Forwarded, never typed: no secret rides in
+  // argv or in an environment the model manages.
+  if (process.env.CODEX_THREAD_ID) headers['x-tangleclaw-engine-thread'] = process.env.CODEX_THREAD_ID;
 
   /**
    * Perform one JSON API request; failures throw with the server's own words.

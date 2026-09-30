@@ -920,3 +920,22 @@ describe('version-based staleness (independent of git)', () => {
     }
   });
 });
+
+// #1949: release certification proves the server runs the worktree it
+// certifies by comparing digests of the two real paths, so the API never
+// has to disclose a path.
+describe('getCheckoutId (#1949)', () => {
+  const crypto = require('node:crypto');
+  const fsMod = require('node:fs');
+
+  it('is the sha256 of the real path of the checkout the server runs from', () => {
+    const expected = crypto.createHash('sha256').update(fsMod.realpathSync(serverInfo.getRepoRoot())).digest('hex');
+    assert.equal(serverInfo.getCheckoutId(), expected);
+    assert.match(serverInfo.getCheckoutId(), /^[0-9a-f]{64}$/);
+  });
+
+  it('is served on GET /api/server-info', () => {
+    const src = fsMod.readFileSync(require('node:path').join(__dirname, '..', 'server.js'), 'utf8');
+    assert.match(src, /info\.checkoutId = serverInfo\.getCheckoutId\(\)/);
+  });
+});

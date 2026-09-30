@@ -73,7 +73,7 @@ describe('launch step contents (car 21.2)', () => {
     }
   });
 
-  it('step 1 carries identity, the global rules and the wrap sentinel', () => {
+  it('step 1 carries identity, the global rules and the wrap directive', () => {
     const { identity } = render();
     assert.match(identity, /# Session Start — steps-project/);
     assert.match(identity, /## Session Ownership/);

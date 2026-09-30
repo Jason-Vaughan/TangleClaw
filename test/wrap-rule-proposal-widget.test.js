@@ -24,6 +24,7 @@ const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const helperGlobals = require('./_api-helper-globals')();
 
 /**
  * Slice out a top-level function body by brace-matching from its declaration.
@@ -135,7 +136,7 @@ describe('#569 rule-proposal review widget (wrap drawer)', () => {
 
     it('an empty edited rule cannot be approved', () => {
       const body = functionBody(session, 'async function resolveRuleProposal(');
-      assert.ok(/Rule text can’t be empty/.test(body));
+      assert.ok(/’s text can’t be empty/.test(body));
     });
   });
 
@@ -172,8 +173,9 @@ describe('#569 rule-proposal review widget (wrap drawer)', () => {
       };
       const src = functionBody(session, 'async function resolveRuleProposal(');
       // eslint-disable-next-line no-new-func
-      const fn = new Function('apiMutate', 'api', 'currentWrapPassword',
-        `return async function resolveRuleProposal(proposal, decision, els) ${src};`)(apiMutate, api, null);
+      // tcRuleLabel is the real one api-helper.js publishes before session.js runs (#2029).
+      const fn = new Function('apiMutate', 'api', 'currentWrapPassword', 'tcRuleLabel',
+        `return async function resolveRuleProposal(proposal, decision, els) ${src};`)(apiMutate, api, null, helperGlobals.tcRuleLabel);
       const classes = new Set();
       const els = {
         row: { classList: { add: (c) => classes.add(c) } },

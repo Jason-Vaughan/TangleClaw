@@ -59,10 +59,8 @@ already a consequence of that exception.
    - TangleClaw does not try to identify or repair such a database. Its old-shaped outbound table
      fails the startup postcondition.
    - The operator guide says to recreate it, or restore it from a backup.
-8. **The number is stack-local until the restack.** On this branch the migration keeps the stack's
-   first slot (v51). Under A17 and ruling A6 it becomes v52 when the stack lands after `main`'s v51.
-   The function names carry no version number, so the renumber changes only `CURRENT_SCHEMA_VERSION`
-   and the one dispatch line.
+8. **The migration is v52, after `main`'s v51** (A17, ruling A6). The function names carry no
+   version number, so the version lives only in `CURRENT_SCHEMA_VERSION` and the one dispatch line.
 
 ## Consequences
 

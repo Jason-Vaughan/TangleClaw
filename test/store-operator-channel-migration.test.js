@@ -3,7 +3,7 @@
 // One migration creates the operator channel's storage in its final shape
 // (#2031): both mail tables, the notification columns, the notification key
 // index and the notifier's state table. A fresh install gets it at the current
-// version; a v50 store gains it through the migration and keeps its older rows,
+// version; a v51 store gains it through the migration and keeps its older rows,
 // and the migration refuses to advance over a table in any other shape. Each
 // direction refuses a second row for the same message, which is what makes a
 // replayed delivery harmless. A notification has no Hub id and is keyed by its
@@ -63,16 +63,16 @@ function freshStore(label) {
 }
 
 /**
- * Turn the open store back into a v50 one: drop the channel tables and the newer stamp.
+ * Turn the open store back into a v51 one (the version before the channel's): drop the channel tables and the newer stamp.
  * @returns {void}
  */
-function rewindToV50() {
+function rewindToV51() {
   const db = store.getDb();
   db.exec('DROP TABLE operator_channel_inbound');
   db.exec('DROP TABLE operator_channel_outbound');
   db.exec('DROP TABLE operator_channel_notify_state');
-  db.exec('DELETE FROM schema_version WHERE version >= 51');
-  db.exec('INSERT INTO schema_version (version) VALUES (50)');
+  db.exec('DELETE FROM schema_version WHERE version >= 52');
+  db.exec('INSERT INTO schema_version (version) VALUES (51)');
   store.close();
 }
 
@@ -132,18 +132,18 @@ describe('store: operator channel schema (#2031 fold)', () => {
     const have = objects();
     for (const name of CHANNEL_OBJECTS) assert.ok(have.has(name), `missing ${name}`);
     assertFoldedShape();
-    assert.ok(store.CURRENT_SCHEMA_VERSION >= 51);
+    assert.ok(store.CURRENT_SCHEMA_VERSION >= 52);
     assert.equal(store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
   });
 
-  it('a v50 store migrates to the current version with the channel tables, and keeps its exchange rows', () => {
-    freshStore('v50');
+  it('a v51 store migrates to the current version with the channel tables, and keeps its exchange rows', () => {
+    freshStore('v51');
     store.medusaExchanges.insert({
       exchange_id: 'mx_keep', request_id: 'r-keep', hub_id: 'hub-keep', origin: 'send', tracking: 'tracked',
       recipient_workspace_id: 'ws', priority: 'normal', reply_required: false,
       created_at: '2026-09-27T00:00:00.000Z', state: 'stored'
     });
-    rewindToV50();
+    rewindToV51();
 
     store._setBasePath(tmpDir);
     store.init();
@@ -154,19 +154,19 @@ describe('store: operator channel schema (#2031 fold)', () => {
     assert.equal(store.medusaExchanges.get('mx_keep').state, 'stored');
   });
 
-  it('refuses to advance past v50 when an outbound table in another shape is already there', () => {
+  it('refuses to advance past v51 when an outbound table in another shape is already there', () => {
     freshStore('wrong-shape');
-    rewindToV50();
+    rewindToV51();
     store._setBasePath(tmpDir);
     store.init();
-    // Put the abandoned stack's outbound table back under a v50 stamp: the
+    // Put the abandoned stack's outbound table back under a v51 stamp: the
     // migration's IF NOT EXISTS leaves it alone, so only the postcondition can
     // catch that the storage is not in its final shape.
     const db = store.getDb();
     db.exec('DROP INDEX idx_operator_channel_outbound_idem');
     db.exec('DROP TABLE operator_channel_outbound');
     db.exec(STACK_V51_OUTBOUND);
-    db.exec('DELETE FROM schema_version WHERE version >= 51');
+    db.exec('DELETE FROM schema_version WHERE version >= 52');
     store.close();
 
     store._setBasePath(tmpDir);
@@ -175,7 +175,7 @@ describe('store: operator channel schema (#2031 fold)', () => {
     const { DatabaseSync } = require('node:sqlite');
     const raw = new DatabaseSync(path.join(tmpDir, 'tangleclaw.db'));
     try {
-      assert.equal(raw.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 50, 'the version did not advance');
+      assert.equal(raw.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 51, 'the version did not advance');
     } finally {
       raw.close();
     }

@@ -181,7 +181,9 @@ A receipt is **current** only while all of these hold:
    inferred from message text or from mail arriving:
    - **Control lifecycle:** a hold, release, stop, rebind or close on the lane's assignment
      (`control_events`).
-   - **Wrap lifecycle:** a wrap requested or started for the session.
+   - **Wrap lifecycle:** a wrap started for the session. (A typed wrap request read from pane text
+     was a second trigger until #2027 removed pane-text wrap requests; nothing now requests a wrap
+     except the explicit Wrap button, which starts one.)
    - **Typed dispatch (a dependency):** a durable assignment-dispatch event, typed as a dispatch,
      bound to this lane's launch and to its assignment.
      - That event does not exist today. Ordinary Medusa deliveries are *not* dispatches: an

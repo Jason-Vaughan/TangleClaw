@@ -12,6 +12,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const continuity = require('../lib/continuity');
+const helperGlobals = require('./_api-helper-globals')();
 
 describe('Project Rules modal (CC-6, #381)', () => {
   let ui, css;
@@ -64,7 +65,9 @@ describe('Project Rules modal (CC-6, #381)', () => {
     });
 
     it('escapes rule content to prevent XSS', () => {
-      assert.match(ui, /esc\(rule\.content\)/);
+      // #2029: the content is shown minus a same-id authored prefix, and still escaped.
+      assert.match(ui, /esc\(tcStripSameIdPrefix\(rule\.id, rule\.content\)\.trim\(\)\)/);
+      assert.doesNotMatch(ui, /\$\{rule\.content\}/);
     });
   });
 
@@ -208,7 +211,11 @@ describe('Project Rules modal (CC-6, #381)', () => {
         _setProjectRulesStatus: (msg, ok) => statuses.push({ msg, ok }),
         refreshProjectRulesList: async (pid, kind) => { refreshes.push({ pid, kind }); return true; },
         refreshAfterProjectRuleMutation: async () => {},
-        projectRulesTargetId: 3
+        projectRulesTargetId: 3,
+        // The real label helpers api-helper.js publishes before ui.js runs (#2029).
+        tcRuleLabel: helperGlobals.tcRuleLabel,
+        tcStripSameIdPrefix: helperGlobals.tcStripSameIdPrefix,
+        tcRuleMismatchBadge: helperGlobals.tcRuleMismatchBadge
       };
       const names = Object.keys(deps);
       // eslint-disable-next-line no-new-func

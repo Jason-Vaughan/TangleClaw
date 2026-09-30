@@ -1,0 +1,61 @@
+name: Scorecard verify
+
+# Verify the `metrics` branch that release-candidate certification publishes
+# to (#1949, ADR 0021): every commit, oldest first, must be one the publisher
+# could have made. That means allowlisted paths only, admissions never
+# rewritten, scorecards bound to their admission's manifest digest with a
+# rising publishSeq, terminal states never changing, and transition logs only
+# appended to. That is what makes a published admission's digest binding. The
+# same verifier is exported for release promotion (#1949 C04) to run before it
+# promotes.
+#
+# Why a schedule and not `on: push` to metrics: GitHub runs a push-triggered
+# workflow from the workflow file IN the pushed commit. `metrics` is a
+# data-only branch whose allowlist forbids .github/, so an on-push check would
+# never run, and one living on `metrics` could be edited by whoever pushes
+# there. This file lives on main, which is protected, and re-verifies the
+# whole history on every run. The owner-configured ruleset on `metrics`
+# (no force-push, no deletion) is what keeps that history from being replaced.
+
+on:
+  schedule:
+    # Every 30 minutes, off the hour.
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scorecard-verify
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          # Matches the production runtime and the test workflow.
+          node-version: 22
+
+      - name: Fetch the whole metrics history
+        # Only the remote saying the branch does not exist (ls-remote exit 2)
+        # passes as "nothing published yet". A network or auth failure fails
+        # the run: a check that could not read the branch has not verified it.
+        run: |
+          if git ls-remote --exit-code --heads origin metrics > /dev/null; then
+            git fetch --no-tags origin '+refs/heads/metrics:refs/remotes/origin/metrics'
+          else
+            status=$?
+            if [ "$status" -eq 2 ]; then
+              echo 'no metrics branch yet: nothing to verify'
+            else
+              exit "$status"
+            fi
+          fi
+
+      - name: Verify every commit
+        run: node scripts/scorecard-verify.js --ref origin/metrics

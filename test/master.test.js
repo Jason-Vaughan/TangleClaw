@@ -1363,10 +1363,11 @@ describe('master Hard rules — seeding, fail-safe, restore', () => {
 
   it('buildMasterClaudeMd renders live rules, and falls back to the baseline at zero enabled rules', () => {
     const withRules = master.buildMasterClaudeMd({ serverPort: 3101 }, {
-      rules: [{ content: 'Custom rule one.' }, { content: 'Custom rule two.' }]
+      // Store rows always carry their id; the Master names each rule by it (#2029).
+      rules: [{ id: 21, content: 'Custom rule one.' }, { id: 22, content: 'Custom rule two.' }]
     });
-    assert.match(withRules, /- Custom rule one\./);
-    assert.match(withRules, /- Custom rule two\./);
+    assert.match(withRules, /- Rule #21 — Custom rule one\./);
+    assert.match(withRules, /- Rule #22 — Custom rule two\./);
     assert.doesNotMatch(withRules, /Use only GET endpoints/, 'custom rules REPLACE the baseline');
 
     // Zero enabled rules → the boundary cannot be emptied: baseline renders.
@@ -1543,11 +1544,11 @@ describe('the identity states the access level (#755 chunk 2)', () => {
     // The rules are the operator's text, versioned and restorable; the level is
     // generated. Rewriting rules to track a setting would either destroy an edit
     // or leave it contradicting the live posture.
-    const edited = [{ content: 'My own rule, do not rewrite me.' }];
+    const edited = [{ id: 31, content: 'My own rule, do not rewrite me.' }];
     const before = master.buildMasterClaudeMd(STRUCT, { rules: edited, accessLevel: 'read-only', enforcement: 'structural' });
     const after = master.buildMasterClaudeMd(STRUCT, { rules: edited, accessLevel: 'write', enforcement: 'structural' });
     for (const md of [before, after]) {
-      assert.match(md, /- My own rule, do not rewrite me\./);
+      assert.match(md, /- Rule #31 — My own rule, do not rewrite me\./);
       assert.doesNotMatch(md, /Do not edit files outside this directory/,
         'custom rules REPLACE the baseline, at every level');
     }

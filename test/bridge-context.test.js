@@ -1,8 +1,8 @@
 'use strict';
 
-// Tests for lib/bridge-context.js (CC-7) — the shared ClawBridge sidecar
-// resolver extracted from ai-content + wrap-sentinel. The store-backed happy
-// path is covered transitively by both consumers' suites; here we pin the
+// Tests for lib/bridge-context.js (CC-7) — the ClawBridge sidecar resolver
+// used by ai-content. The store-backed happy path is covered transitively by
+// its consumer's suite; here we pin the
 // store-free guard branches (which return before touching the store).
 
 const { describe, it } = require('node:test');

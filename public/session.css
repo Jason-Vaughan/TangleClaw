@@ -2739,6 +2739,17 @@ html[data-tc-keyboard] body {
   min-height: 48px;
 }
 /* ── Session Rules self-improvement (D1b) ── */
+/* #2029: the rule's text claims a number that is not its own. */
+.session-rule-badge--mismatch {
+  background: rgba(255, 179, 0, 0.18);
+  color: var(--warning);
+}
+/* #2029: a rule's DB-id label ("Rule #120") — the name every surface shares. */
+.session-rule-label {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .session-rule-badge {
   display: inline-block;
   font-size: 9px;

@@ -275,6 +275,7 @@ describe('medusa-watchdog (#1839)', () => {
       wake._internal.getProject = () => ({ id: 20, name: 'builder', path: '/tmp/builder' });
       wake._internal.loadProjectConfig = () => ({ medusaWake: true });
       wake._internal.wrapRunning = () => false;
+      wake._internal.rotationOpen = () => false;
       wake._internal.getStatus = () => world.status;
       wake._internal.getMessages = () => world.inbox;
       wake._internal.capturePane = () => ({ lines: world.pane });
@@ -458,6 +459,7 @@ describe('medusa-watchdog (#1839)', () => {
       wake._internal.getProject = () => ({ id: 20, name: 'builder', path: '/tmp/builder' });
       wake._internal.loadProjectConfig = () => ({ medusaWake: true });
       wake._internal.wrapRunning = () => false;
+      wake._internal.rotationOpen = () => false;
       wake._internal.getStatus = () => ({ state: 'listening', workspaceId: 'builder-ws', unread: 1, lastError: null });
       wake._internal.getMessages = () => [{ id: 'hub-1', from: 'pm-ws', message: 'x' }];
       wake._internal.capturePane = () => ({ lines: CX_CLIPPED_PANE });

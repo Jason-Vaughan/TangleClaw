@@ -1,8 +1,8 @@
 'use strict';
 
 /*
- * #261 — the parts that only exist once the pieces are wired: the wrap
- * sentinel's tick feeds `lib/engine-errors.js`, and the recorded error reaches
+ * #261 — the parts that only exist once the pieces are wired: the engine-error
+ * monitor's tick feeds `lib/engine-errors.js`, and the recorded error reaches
  * the session status payload and the project's `session` object. The parser
  * and the clear rule are pinned in test/engine-errors.test.js; these pin that
  * they are what the server actually asks.
@@ -20,7 +20,7 @@ setLevel('error');
 const store = require('../lib/store');
 const tmux = require('../lib/tmux');
 const engineErrors = require('../lib/engine-errors');
-const ws = require('../lib/wrap-sentinel');
+const ws = require('../lib/engine-error-monitor');
 
 const CODEX_400 = '{"type":"error","status":400,"error":{"type":"invalid_request_error",'
   + '"message":"The requested model is not supported under the current authentication mode."}}';
@@ -30,14 +30,12 @@ function tmuxSession(id, engineId = 'codex') {
   return { id, projectId: id * 10, sessionMode: 'tmux', tmuxSession: `tc-${id}`, engineId };
 }
 
-describe('#261 the wrap sentinel tick feeds engine-error detection', () => {
+describe('#261 the engine-error monitor tick feeds engine-error detection', () => {
   let saved;
   const codex = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));
   beforeEach(() => {
     ws.stop();
     saved = { ...ws._internal };
-    ws._internal.getProjectName = (pid) => `proj-${pid}`;
-    ws._internal.now = () => 1000;
     ws._internal.getEngineProfile = (id) => (id === 'codex' ? codex : null);
   });
   afterEach(() => { Object.assign(ws._internal, saved); ws.stop(); });
@@ -62,19 +60,12 @@ describe('#261 the wrap sentinel tick feeds engine-error detection', () => {
     assert.equal(engineErrors.get(1), null, 'a capture without the line clears it');
   });
 
-  it('keeps scanning a session that already asked to wrap — a wrapping engine can still be failing', async () => {
+  it('finds an error line among any other pane text, the legacy wrap marker included', async () => {
     const s = tmuxSession(2);
     ws._internal.listLiveAll = () => [s];
-    let pane = ['idle'];
-    ws._internal.capturePane = () => ({ lines: pane });
-    await ws._internal.tick(); // baseline
-    pane = ['done', ws.SENTINEL_TOKEN];
-    await ws._internal.tick(); // flags the wrap
-    assert.equal(ws.isWrapRequested('proj-20'), true);
-    pane = ['done', ws.SENTINEL_TOKEN, CODEX_400];
+    ws._internal.capturePane = () => ({ lines: ['done', ['TANGLECLAW', 'WRAP'].join('_'), CODEX_400] });
     await ws._internal.tick();
-    assert.equal(engineErrors.get(2) && engineErrors.get(2).status, 400,
-      'the one-nudge latch must not stop error detection');
+    assert.equal(engineErrors.get(2) && engineErrors.get(2).status, 400);
   });
 
   it('an empty capture from a wedged tmux neither clears the error nor re-stamps it (#894 shape)', async () => {
@@ -90,7 +81,7 @@ describe('#261 the wrap sentinel tick feeds engine-error detection', () => {
     assert.deepEqual(engineErrors.get(5), first, 'no reading must not read as no error');
   });
 
-  it('reads each engine profile once per tick, and a profile that will not load leaves the wrap scan running', async () => {
+  it('reads each engine profile once per tick, and a profile that will not load leaves the other scans running', async () => {
     const a = tmuxSession(6);
     const b = tmuxSession(7);
     const broken = tmuxSession(8, 'broken');
@@ -106,9 +97,10 @@ describe('#261 the wrap sentinel tick feeds engine-error detection', () => {
     await ws._internal.tick();
     assert.equal(reads, 2, 'one read per distinct engine per tick, not per session');
     assert.ok(engineErrors.get(6) && engineErrors.get(7));
-    brokenPane = ['done', ws.SENTINEL_TOKEN];
+    assert.equal(engineErrors.get(8), null, 'no profile, no patterns: nothing is recorded for the broken engine');
+    brokenPane = ['done'];
     await ws._internal.tick();
-    assert.equal(ws.isWrapRequested('proj-80'), true, 'a malformed profile must not cost the session its typed-wrap trigger');
+    assert.ok(engineErrors.get(6) && engineErrors.get(7), 'the next tick still scans every session');
   });
 
   it('an engine with no patterns records nothing, and an ended session is forgotten on prune', async () => {

@@ -161,7 +161,10 @@ A row that begins **Could not check** means the measurement itself failed (ttyd 
 launchd, `~/Documents` absent, git unreadable) and says why. That is deliberately not hidden: a
 check that could not run has not said the machine is healthy. The same verdicts are available
 as JSON from `GET /api/system/health`, each condition in one of three states — `fired`, `clear`,
-or `unknown` with a reason.
+or `unknown` with a reason. The ttyd row's `reading` also carries the counts as values —
+`wedged` (confirmed wedged children), `orphanGate` and `pool` (`{used, cap}`) — each `null` when it
+could not be measured, so a program can compare them without reading the `detail` text. Off macOS
+the row also carries `applicable: false`.
 
 ### PortHub Lease Import Banner
 
@@ -172,6 +175,10 @@ If TangleClaw detects an existing PortHub installation with active leases that h
 Sessions report what they are doing with `tc workload set`, and TangleClaw combines that with what each session's terminal is observed doing into one verdict per session. You see it with `tc sessions` from any launched pane, or `GET /api/tc/sessions`: `AVAILABLE`, `WORKING`, `WAITING`, `BLOCKED`, `COMPLETE_NOT_CLEAR`, `HELD`, `STOPPED` or `UNKNOWN`. A session that has not reported reads as unknown, never available.
 
 You can narrow a session's verdict (hold it at unknown, or mark it not safe to clear) through `POST /api/tc/workload/narrowing`. See [Fleet workload](fleet-workload.md). A dashboard view is deferred under the current operator UI freeze.
+
+### Coordinator Context Rotation
+
+A Codex coordinator (Architect or ProjectManager) that needs to clear its context runs `tc rotation prepare --checkpoint <file>` instead of a bare `/clear`. TangleClaw then holds the coordinator's new dispatch, clears it once its turn ends, and binds the new thread. It tells that thread to reconcile the checkpoint and submit a receipt with `tc rotation resume`. Dispatch resumes only when the receipt checks out. If a rotation cannot finish, the operator ends it with `POST /api/tc/rotation/abandon`. See [Coordinator context rotation](coordinator-rotation.md).
 
 ### Ports Panel
 
@@ -840,6 +847,26 @@ Each reason carries a stable code (for example `UNIQUE_COMMITS`, `CHECKED_OUT`, 
 A branch that a worktree still holds always reads `preserve`. To retire both, check that the tree holds nothing you need (`git -C <tree> status --porcelain --untracked-files=all --ignored`). The `--ignored` matters, because `worktree remove` deletes gitignored files such as a local plan or an `.env` without refusing. Then remove it with plain `git worktree remove <tree>`, never `--force`: git refuses a tree that has changes or untracked files. When a worktree holds the branch, the check's own next-step line spells this out. Only then check the branch. Before a `git reset --hard`, make sure the tree is clean (the same status check, since a reset discards uncommitted changes and pinning does not save them), then pin the current tip under a named branch (`git branch keep/<branch>-<date>`) so no commit is dropped. Check and retire one branch at a time: two branches that each hold the only other copy of a commit both look safe until one of them is gone.
 
 This is a check and a rule. It runs from a TangleClaw-launched pane, because `tc` needs `TANGLECLAW_API`. Nothing yet stops a raw `git branch -D`, `reset --hard` or `worktree remove --force` typed in a shell, and TangleClaw does not retire merged branches or worktrees for you (#1267).
+
+### Retiring a Finished Session Headlessly
+
+A session with nothing left to decide can retire itself with no wrap drawer (#2027):
+
+```
+tc workload set complete --clearance safe-to-clear --summary "<what was finished>"
+tc finalize --reason "<why>"
+```
+
+When a session finalizes itself, its pane closes during the request. The coordinator can confirm the outcome by repeating the request with `--project` and `--session`. If the pane survived, it can confirm the outcome itself with `tc finalize --session <id> --reason "<why>"`. A coordinator named in the target assignment's `authority.lifecycle` can do the same for the session that assignment is bound to, with `tc finalize --project <name> --session <id> --reason "<why>"`. The session is recorded `wrapped` and audited, and its Medusa workspace, startup channel and pane are torn down. Nothing in the checkout is committed, staged, reset or discarded, and a final handoff is published so the next launch starts cleanly.
+
+It refuses, with nothing changed and exit 3, whenever there is still something to decide. (Exit 3 with `FINALIZE_INCOMPLETE` is different: the session is finalized, and repeating the command finishes the publishing or teardown that was left.)
+- the receipt is not a current `complete` + `safe-to-clear`, or a delegated target's engine is not at rest;
+- something addressed to the session is still open, or it is waiting on a reply;
+- files changed since launch, or it made commits no remote has;
+- the lane is held or stopped;
+- a wrap is running.
+
+Use the full wrap for those. Files that were already uncommitted when the session launched are left exactly as they were. The whole contract is in [session-finalize.md](session-finalize.md).
 
 ### Update Blocked by Local Changes
 

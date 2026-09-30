@@ -184,6 +184,7 @@ describe('#1839 exit: an unreadable blocking message escalates, then clears once
     wake._internal.listLiveAll = () => liveReal().map((s) => (s.id === bBuilder.sessionId ? liveBuilder : s));
     wake._internal.loadProjectConfig = () => ({ medusaWake: true });
     wake._internal.wrapRunning = () => false;
+    wake._internal.rotationOpen = () => false;
     wake._internal.capturePane = () => ({ lines: DRAFT_PANE });
     wake._internal.cursorInfo = () => DRAFT_CURSOR;
     wake._internal.masterWakeRecord = () => null;
