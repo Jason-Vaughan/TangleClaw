@@ -8,6 +8,9 @@ const path = require('node:path');
 
 const cli = require('../scripts/soak');
 
+/** The pinned candidate every bundle here names. */
+const CAND = 'a'.repeat(40);
+
 /**
  * A writable that collects what is written.
  * @returns {{write: (s: string) => void, text: () => string}} Sink
@@ -616,7 +619,7 @@ describe('soak CLI — sample and bundle', () => {
     assert.equal((await run(['run', '--schedule', schedulePath, '--api', 'http://192.168.64.7:3102', '--log', log, '--no-live-install'], { fetch, clock: instantClock() })).code, 0);
     const g = guest();
     const out = path.join(dir, 'evidence');
-    const r = await run(['bundle', '--out', out, '--schedule', schedulePath, '--log', log, '--home', g.home, '--no-live-install'], { clock: instantClock(), local: g.local });
+    const r = await run(['bundle', '--candidate-sha', CAND, '--out', out, '--schedule', schedulePath, '--log', log, '--home', g.home, '--no-live-install'], { clock: instantClock(), local: g.local });
     assert.equal(r.code, 0, r.err);
     const res = JSON.parse(r.out);
     assert.equal(res.manifest, path.join(out, 'manifest.json'));
@@ -630,13 +633,13 @@ describe('soak CLI — sample and bundle', () => {
     const log = path.join(dir, 'soak.ndjson');
     const fetch = async () => ({ status: 200, text: async () => '{}' });
     await run(['run', '--schedule', schedulePath, '--api', 'http://192.168.64.7:3102', '--log', log, '--no-live-install'], { fetch, clock: instantClock() });
-    const plain = await run(['bundle', '--out', path.join(dir, 'e1'), '--schedule', schedulePath, '--log', log], { clock: instantClock() });
+    const plain = await run(['bundle', '--candidate-sha', CAND, '--out', path.join(dir, 'e1'), '--schedule', schedulePath, '--log', log], { clock: instantClock() });
     assert.equal(plain.code, 0, plain.err);
     const g = guest('0');
-    const refused = await run(['bundle', '--out', path.join(dir, 'e2'), '--schedule', schedulePath, '--log', log, '--home', g.home, '--no-live-install'], { clock: instantClock(), local: g.local });
+    const refused = await run(['bundle', '--candidate-sha', CAND, '--out', path.join(dir, 'e2'), '--schedule', schedulePath, '--log', log, '--home', g.home, '--no-live-install'], { clock: instantClock(), local: g.local });
     assert.equal(refused.code, 3);
     assert.equal(fs.existsSync(path.join(dir, 'e2')), false);
-    const stray = await run(['bundle', '--out', path.join(dir, 'e3'), '--schedule', schedulePath, '--log', log, '--no-live-install'], { clock: instantClock() });
+    const stray = await run(['bundle', '--candidate-sha', CAND, '--out', path.join(dir, 'e3'), '--schedule', schedulePath, '--log', log, '--no-live-install'], { clock: instantClock() });
     assert.equal(stray.code, 2);
   });
 
@@ -644,8 +647,18 @@ describe('soak CLI — sample and bundle', () => {
     const schedulePath = await planApi();
     fs.mkdirSync(path.join(dir, 'exists'));
     fs.writeFileSync(path.join(dir, 'l'), '');
-    const r = await run(['bundle', '--out', path.join(dir, 'exists'), '--schedule', schedulePath, '--log', path.join(dir, 'l')], { clock: instantClock() });
+    const r = await run(['bundle', '--candidate-sha', CAND, '--out', path.join(dir, 'exists'), '--schedule', schedulePath, '--log', path.join(dir, 'l')], { clock: instantClock() });
     assert.equal(r.code, 3);
     assert.equal(JSON.parse(r.err.trim()).code, 'BUNDLE_REFUSED');
+  });
+  it('needs --candidate-sha (exit 2 when absent) and refuses one that is not a full SHA (exit 3)', async () => {
+    const schedulePath = await planApi();
+    fs.writeFileSync(path.join(dir, 'l'), '');
+    const absent = await run(['bundle', '--out', path.join(dir, 'e1'), '--schedule', schedulePath, '--log', path.join(dir, 'l')], { clock: instantClock() });
+    assert.equal(absent.code, 2);
+    const short = await run(['bundle', '--candidate-sha', 'abc1234', '--out', path.join(dir, 'e2'), '--schedule', schedulePath, '--log', path.join(dir, 'l')], { clock: instantClock() });
+    assert.equal(short.code, 3);
+    assert.equal(JSON.parse(short.err.trim()).code, 'BUNDLE_REFUSED');
+    assert.equal(fs.existsSync(path.join(dir, 'e2')), false);
   });
 });

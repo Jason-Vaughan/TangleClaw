@@ -108,4 +108,24 @@ function sample(t, obs = observations(), extra = {}) {
   return { wallAt: T0 + t, monoAt: t, runnerInstance: 'r1', observations: obs, ...extra };
 }
 
-module.exports = { SHA, WTID, GEN, MIN, T0, RUN_ID, BOOT_ID, RULESET, ISOLATED, manifest, guestManifest, isolationPair, observations, sample };
+/**
+ * A soak judgement (`tc.soak-judgement/v1`) that passed and is bound to one
+ * run, as the soak judge would record it for a sound evidence bundle. A host
+ * finalization is `ok`, and a relayed run certified, only with one of these.
+ * @param {object} m - The run's manifest
+ * @param {string} digest - The manifest's digest as stored
+ * @param {object} [over] - Fields to override on the judgement
+ * @returns {object} The judgement
+ */
+function soakJudgement(m, digest, over = {}) {
+  return {
+    schema: 'tc.soak-judgement/v1', passed: true, reasons: [],
+    binding: {
+      candidateSha: m.candidateSha, runId: m.runId, manifestDigest: digest, bundleManifestSha256: '1'.repeat(64), bundleCandidateSha: m.candidateSha,
+      scheduleDigest: '2'.repeat(64), logBytes: 10, logSha256: '3'.repeat(64), soakStartedAt: T0, soakCompletedAt: T0 + MIN, ownershipVerified: true, operatorAcceptance: null
+    },
+    ...over
+  };
+}
+
+module.exports = { SHA, WTID, GEN, MIN, T0, RUN_ID, BOOT_ID, RULESET, ISOLATED, manifest, guestManifest, isolationPair, observations, sample, soakJudgement };

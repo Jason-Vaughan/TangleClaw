@@ -40,6 +40,7 @@ const publisherLib = require('../lib/release-certification/publisher');
 const publicationLib = require('../lib/release-certification/publication');
 const hostChecks = require('../lib/release-certification/host-checks');
 const hostPublish = require('../lib/release-certification/host-publish');
+const soakJudge = require('../lib/soak/judge');
 const isolationLib = require('../lib/release-certification/isolation');
 const { RUN_ID_RE } = require('../lib/release-certification/formats');
 const { REFUSAL, CertificationError } = require('../lib/release-certification/codes');
@@ -55,7 +56,7 @@ const USAGE = [
   '       rc-cert list',
   'host:  rc-cert host-mint     --sha <40> --repo owner/name --required-check <name>... --host-base <abs>',
   '       rc-cert host-checks   --sha <40> --exchange <abs> --host-base <abs> [--watch --interval <ms>]',
-  '       rc-cert host-finalize --sha <40> --host-base <abs> [--base <abs>]',
+  '       rc-cert host-finalize --sha <40> --host-base <abs> --soak-bundle <abs> [--soak-acceptance <abs json>] [--base <abs>]',
   '       rc-cert host-publish  --sha <40> --guest-metrics <abs> --remote <url> --host-base <abs>',
   'common: [--base <abs>] [--api <url>] [--ca <file>]; a gated API reads its token from TANGLECLAW_SERVICE_TOKEN'
 ].join('\n');
@@ -486,24 +487,66 @@ async function cmdHostChecks(c) {
 }
 
 /**
+ * Read the Operator's acceptance of an ownership-unverified soak log.
+ * @param {string|undefined} file - `--soak-acceptance`, an absolute path to a JSON object
+ * @returns {object|null} The acceptance, or null when none was given
+ */
+function _soakAcceptance(file) {
+  if (file === undefined) return null;
+  let text;
+  try {
+    text = fs.readFileSync(_absolute(file, '--soak-acceptance'), 'utf8');
+  } catch (err) {
+    if (err.code !== 'ENOENT' && err.code !== 'EISDIR') throw err;
+    throw new UsageError(`--soak-acceptance ${file} is not a readable file`);
+  }
+  return _jsonObject(text, '--soak-acceptance');
+}
+
+/**
+ * Judge the soak's evidence bundle for this run. A run with no host-minted
+ * run id has no identity to bind a judgement to, so it gets none, and its
+ * finalization fails for that as well as for not being host-attested.
+ * @param {object} c - Command context
+ * @param {object} manifest - The run's manifest
+ * @param {object} state - The run's committed state
+ * @returns {object|null} The judgement
+ */
+function _judgeSoak(c, manifest, state) {
+  const bundleDir = _absolute(_need(c.flags, 'soak-bundle'), '--soak-bundle');
+  const acceptance = _soakAcceptance(c.flags['soak-acceptance']);
+  if (typeof manifest.runId !== 'string' || !RUN_ID_RE.test(manifest.runId)) return null;
+  const judgeBundle = c.deps.judgeSoak || soakJudge.judgeBundle;
+  return judgeBundle({
+    bundleDir,
+    run: { candidateSha: manifest.candidateSha, runId: manifest.runId, manifestDigest: state.manifestDigest, startedAt: state.startedAt, updatedAt: state.updatedAt },
+    acceptance
+  });
+}
+
+/**
  * `host-finalize`: join a finished host-attested run's exported evidence
- * against the host's ledger and read the checks once more. Exit 0 when the
- * run's checks were vouched for throughout, 3 otherwise.
+ * against the host's ledger, read the checks once more, and judge the soak's
+ * evidence bundle for this exact run. Exit 0 when the run's checks were
+ * vouched for throughout and the soak passed, 3 otherwise.
  * @param {object} c - Command context
  * @returns {Promise<number>} Exit code
  */
 async function cmdHostFinalize(c) {
   const sha = _need(c.flags, 'sha');
+  const hostBase = _absolute(_need(c.flags, 'host-base'), '--host-base');
   const { manifest, state } = store.readRun(c.base, sha);
+  const soakJudgement = _judgeSoak(c, manifest, state);
   const outcome = await hostChecks.finalize({
-    hostBase: _absolute(_need(c.flags, 'host-base'), '--host-base'),
+    hostBase,
     manifest,
     manifestDigest: state.manifestDigest,
     state,
     samples: store.readSamples(c.base, sha),
-    observe: c.deps.observeGithub || ((ctx) => probesLib.observeGithub(ctx))
+    observe: c.deps.observeGithub || ((ctx) => probesLib.observeGithub(ctx)),
+    soakJudgement
   });
-  c.out.write(`${JSON.stringify(outcome)}\n`);
+  c.out.write(`${JSON.stringify({ ...outcome, soak: soakJudgement })}\n`);
   return outcome.ok ? 0 : 3;
 }
 

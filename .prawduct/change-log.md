@@ -35,6 +35,40 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-30 — #2020 Chunk 4: the soak certification judge, bound into rc-cert's host finalization and certification of record
+<!-- prawduct: type=feature | scope=v5.30-soak-certification-judge -->
+
+Lease Rule #147 (RM-LEASE TC-RM01 generation 4, sha256 `3b1f0c1f…d727086`), then Rule #148 (generation 5, sha256 `cb394fca…949f4167`), which added the driver change. PM dispatches `a57a2f0f` and `52010b83`. Branch `feat/2020-chunk4-soak-judge` from `origin/main` `5361254e`. Contract: Architect A4 (binding, fail-closed, ownership, no certified record without a passing bound judgement), A5 (explicit `candidateSha`), A6 (rulings on the plan's Q1–Q4, plus a duration rule), A7 (the driver's tail wait) and A8 (the tail wait needs a lease amendment).
+
+**Why.** Chunk 3 produced an evidence bundle that nothing read. A host-attested run could become a certification of record (`host-publish` record `certified: true`) without anyone judging the soak it was meant to certify.
+
+**What.**
+- **Bundle (A5, additive).** `buildBundle({candidateSha})` and `soak bundle --candidate-sha` are required. The value must be the full 40-character lowercase hex SHA, and it is recorded as the manifest's top-level `candidateSha`. No existing field changed.
+- **Judge.** `lib/soak/judge.js#judgeBundle` judges one bundle for one run's identity (candidate SHA, run id, manifest digest and window). It re-derives everything from the files and returns a `tc.soak-judgement/v1` with closed reason codes and a binding of every digest it vouches for.
+- **rc-cert gate.** `host-checks#finalize({soakJudgement})` records the judgement in the finalization and adds `SOAK_JUDGEMENT_MISSING`/`FAILED`/`UNBOUND`. `host-publish#certifiedFrom` also requires `host-checks#soakJudgementBound`. `rc-cert host-finalize` requires `--soak-bundle` and takes `--soak-acceptance`.
+- **Docs.** `deploy/soak/README.md` ("Judging the bundle"; the status note no longer lists the judge as not built), the bundle runbook's steps 7 and 8, ADR 0021 point 14 (point 12's definition of certified is updated), FEATURES and CHANGELOG.
+
+**Decisions.**
+- Release certification does not depend on the soak. They share the schema name `tc.soak-judgement/v1` (pinned by a test), as `attest-bridge` already does for the isolation schemas, and `scripts/rc-cert.js` is where they meet. So the "passed and bound" check lives with the consumer (`host-checks#soakJudgementBound`), not in the judge.
+- `certifiedFrom` checks the binding itself as well as trusting `ok`, so a finalization written before this change, or without a judgement, never certifies. No certification of record exists yet, so no record is invalidated.
+- Every scheduled event is a required test (A6.4, rejecting my Q4 default that event failures should not count): failed, skipped, missing, duplicate, unknown and miscounted events each fail the judgement.
+- A sample that failed or could not measure is not evidence, and is tolerated only while coverage holds (A6.2). An intermediate version failed any `sample-failed`, following the bundle runbook's step 8; A6.2 superseded it. Step 8 stays a stricter operator quick-read, and now says the verdict is the host's.
+- The schedule must be `certifying` and exactly 72 hours (A6.5), and the log must span it (`RUN_TOO_SHORT`).
+- **The driver waits out the horizon (A7, Rule #148).** It used to write `end` right after the last event, and every event's `atMs` is below `durationMs`, so no real log could prove 72 hours. I proposed judging against the last event's time; the Architect rejected that because the final random gap is unbounded. After the last event, `runSchedule` now waits in stop-poll slices until `startEpochMs + durationMs`, checking the stop request and lock ownership each slice. An overrun ends at once.
+  - Rule #147 allowed only the bundle touch, so the operator had the lease amended first ("Amend the lease first"). The change was made only after #148 was ACTIVE, and the gen 4 work was checkpointed at `184d48c0`.
+  - New driver tests cover the wait to the horizon (with `end` never on record before it), no wait after an overrun, a stop and resume in the tail, and a lock lost in the tail.
+- A run with no valid host-minted run id is not judged (`host-finalize` passes no judgement), because there is no identity to bind to. It already fails `NOT_HOST_ATTESTED`/`RUN_NOT_MINTED`.
+- Rulings A6.1–A6.3 approved the gate's placement (host path only), the coverage rule (tightened to at least two evidentiary samples) and the time window (inclusive, fail-closed). Plan: `.tangleclaw/plans/2020-final-soak-judge.md`.
+
+**Review.** Cumulative `rev-20260930T022330Z-3423165d` at `868c3579`: 0 blocking, 5 warnings, 4 notes. Fixed in the next commit:
+- the judge counted a record the driver had sealed after a crash (a torn write that lost only its newline) and run again. It now drops sealed regions by their byte offset, instead of changing the driver, which Rule #148 does not allow;
+- a bundle missing its log or schedule, or with a directory in their place, and a samples line that is JSON but not a record, crashed the judge instead of giving a reason;
+- samples with no time counted towards coverage, and their order was never checked;
+- the end-of-soak order (the soak ends, another certification sample, bundle, `host-finalize`, then `accept`) was not written down, and the README still said the soak judges nothing.
+Each new test failed against `868c3579`.
+
+**Test contract extended, not weakened.** The existing finalize and relay tests now pass a bound judgement (`fx.soakJudgement`), the input a finalization now requires. Their assertions are unchanged. The `certifiedFrom` truth table gained five failing rows. In the CLI test, `host-finalize` gets an injected judge and checks the run identity it hands over.
+
 ## 2026-09-29 — #2020 Chunk 3: fault and browser executors, integrity sampling, evidence bundle, operator runbooks
 
 <!-- prawduct: type=feature | scope=2020-chunk-3 -->
