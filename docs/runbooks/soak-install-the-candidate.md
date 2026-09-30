@@ -105,15 +105,20 @@ As the admin again:
     renewal time is `dhcp.renewEpoch`, and `dhcp.timingSource` says whether the lease reported it
     (`lease`) or the verifier derived it from `lease_time` (`derived-rfc2131`). A derived time is not
     evidence that a renewal happens. Only this step is.
+    Both commands below run from the checkout, with the same `SOAK_DHCP_SERVER` that step 11's setup
+    used. A new SSH login starts in the home directory and doesn't inherit that variable. Without
+    either, the verifier refuses for that reason alone, and that refusal says nothing about renewal.
     First, as the admin, record the lease:
-    `bash deploy/soak/guest/guest-setup.sh --verify-admin | tee ~/lease-before.json`
+    `cd /opt/tangleclaw-soak && SOAK_DHCP_SERVER=<step 11's server> bash deploy/soak/guest/guest-setup.sh --verify-admin | tee ~/lease-before.json`
     Keep the guest running until the clock is past `dhcp.renewEpoch`, and a sample interval beyond it.
     On a one-day lease that is about 12 hours, so plan the dry run long enough. Then, from the host,
     SSH to the guest's address as the admin, and run the same command again:
-    `bash deploy/soak/guest/guest-setup.sh --verify-admin | tee ~/lease-after.json`
+    `cd /opt/tangleclaw-soak && SOAK_DHCP_SERVER=<step 11's server> bash deploy/soak/guest/guest-setup.sh --verify-admin | tee ~/lease-after.json`
     → Expected: the SSH login works; the second command exits 0; `interface.address` is the same in
     both files; and `dhcp.leaseStartEpoch` in the second is later than it was in the first, because the
     lease was renewed.
+    → If either command's line names a refusal other than the lease (for example `set SOAK_DHCP_SERVER`):
+    fix the invocation and run it again. That is not a renewal result.
     → If SSH fails, the address changed, or the lease start did not move: the renewal did not happen
     through pf. Record both files and report it on #2020. The certifying run then uses the fallback in
     [`deploy/soak/README.md`](../../deploy/soak/README.md) (**Known limits**, the DHCP allowance): a static

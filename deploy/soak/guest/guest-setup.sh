@@ -385,9 +385,9 @@ if [ "$mode" = 'admin' ] || [ "$mode" = 'setup' ]; then
   [ "$SOAK_DHCP_SERVER" = "$lease_server" ] || refuse "the lease's DHCP server is $lease_server, not the configured $SOAK_DHCP_SERVER"
   dhcp_server="$SOAK_DHCP_SERVER"
 
-  # The lease's timing, normalized to epoch seconds. Every part is required to
-  # be present, consistent and live, because a lease that lapses mid-run takes
-  # the management path with it. Each is checked directly, never inside $(...),
+  # The lease's timing, normalized to epoch seconds. It must be present (the
+  # timers may be derived, below), consistent and live, because a lease that
+  # lapses mid-run takes the management path with it. Each is checked directly, never inside $(...),
   # so a refusal reaches stdout.
   lease_num lease_time lease_s
   lease_num renewal_t1_time_value renew_s
@@ -398,7 +398,7 @@ if [ "$mode" = 'admin' ] || [ "$mode" = 'setup' ]; then
   # server sends leases of that shape. A lease that carries only one timer does not match
   # either shape, so it is refused rather than half derived. The source is
   # attested, so evidence shows which timings the server actually sent.
-  [ -n "$lease_s" ] || refuse "the DHCP lease must report lease_time, renewal_t1_time_value and rebinding_t2_time_value"
+  [ -n "$lease_s" ] || refuse "the DHCP lease must report lease_time"
   if [ -n "$renew_s" ] && [ -n "$rebind_s" ]; then
     timing_source='lease'
   elif [ -z "$renew_s" ] && [ -z "$rebind_s" ]; then
