@@ -34,6 +34,9 @@ On the host, from a TangleClaw checkout:
 2. Preview the VM:
    `bash deploy/soak/guest/host-provision.sh`
    → Expected: the `tart clone`, `tart set` and `tart run` commands it would run, and nothing else.
+   - `SOAK_TART_DISPLAY=vnc` gives the guest a real framebuffer (reached over VNC, no host window)
+     instead of none. Browser events need a page the guest actually draws. A page that is never drawn
+     records `PAGE_HIDDEN`, so choose the display before the dry run and keep it for the certifying run.
    → If it refuses: it names the setting it rejected. Fix that in the environment and run it again.
 
 3. Create and start the VM:
@@ -49,9 +52,12 @@ In the guest, as its admin user over SSH:
 5. Check out the pin into a root-owned tree that the workload user can read and nobody else can write:
    `sudo git clone --no-checkout https://github.com/Jason-Vaughan/TangleClaw.git /opt/tangleclaw-soak && sudo git -C /opt/tangleclaw-soak checkout --detach "$SOAK_SHA"`
 
-6. Confirm the checkout:
-   `sudo git -C /opt/tangleclaw-soak rev-parse HEAD; stat -f '%Su %Lp' /opt/tangleclaw-soak`
+6. Confirm the checkout, and let the admin's git read it:
+   `git config --global --add safe.directory /opt/tangleclaw-soak; sudo git -C /opt/tangleclaw-soak rev-parse HEAD; stat -f '%Su %Lp' /opt/tangleclaw-soak`
    → Expected: exactly `$SOAK_SHA`, then `root 755`.
+   - The tree is root-owned, so without `safe.directory` the admin's git refuses it as dubious
+     ownership. The release-certification judge runs as the admin and probes this worktree, and it
+     reports `PROBE_UNKNOWN` until git will read it. `soakrun` gets the same setting in step 9.
    → If not: delete `/opt/tangleclaw-soak` and go back to step 5.
 
 7. Create the workload user:
@@ -92,7 +98,15 @@ As the admin again:
 > **Proceed only if:** steps 9 and 10 passed. **Abort if:** anything is missing. Aborting costs
 > nothing; after step 11 it costs a new guest.
 
-11. Name the DHCP server pf will allow, then run the egress positive control, then set the guest up.
+11. Let `soakrun` drive Safari, name the DHCP server pf will allow, run the egress positive control,
+    then set the guest up.
+    - `sudo safaridriver --enable && sudo dseditgroup -o edit -a soakrun -t user _webdeveloper`, then
+      `dseditgroup -o checkmember -m soakrun _webdeveloper`
+      → Expected: `yes soakrun is a member of _webdeveloper`.
+      `safaridriver --enable` alone does not authorize a user who is not an admin: macOS allows
+      WebDriver to an admin or a member of `_webdeveloper`. Do this before setup, because setup
+      attests the workload user's groups, and the judge treats a later change as a different workload.
+      `_webdeveloper` is neither `admin` nor `wheel`, so the workload verifier still accepts `soakrun`.
     - Setup and every admin verification refuse without `SOAK_DHCP_SERVER`. A server read from the
       lease alone is not trusted, so the host has to confirm it. In the guest,
       `ipconfig getpacket en0 | grep server_identifier` prints the lease's server. On the host,
@@ -118,32 +132,43 @@ As the admin again:
     - The setup caches the admin's sudo credentials with `sudo true`. It doesn't use `sudo -v`, which
       asks for a password on macOS 26 even under a `NOPASSWD` rule. When setup creates `soakrun` over
       SSH, `sysadminctl` doesn't make its home directory, so setup runs `createhomedir` for it.
+    - Setup also finishes the candidate's first-run setup (no login, `projectsDir` set to the soak's
+      projects root) before it attaches the projects. On a refusal it names the server's reason.
 
-12. **Dry run only:** watch the guest survive a real DHCP lease renewal. The admin attestation's
-    renewal time is `dhcp.renewEpoch`, and `dhcp.timingSource` says whether the lease reported it
-    (`lease`) or the verifier derived it from `lease_time` (`derived-rfc2131`). A derived time is not
-    evidence that a renewal happens. Only this step is.
-    Both commands below run from the checkout, with the `SOAK_DHCP_SERVER` exported in step 11. A new
-    SSH login starts in the home directory and doesn't inherit that variable. Without either, the
-    verifier refuses for that reason alone, and that refusal says nothing about renewal.
-    First, as the admin, record the lease:
-    `cd /opt/tangleclaw-soak && SOAK_DHCP_SERVER=<the address exported in step 11> bash deploy/soak/guest/guest-setup.sh --verify-admin | tee ~/lease-before.json`
-    Keep the guest running until the clock is past `dhcp.renewEpoch`, and a sample interval beyond it.
-    On a one-day lease that is about 12 hours, so plan the dry run long enough. Then, from the host,
-    SSH to the guest's address as the admin, and run the same command again:
-    `cd /opt/tangleclaw-soak && SOAK_DHCP_SERVER=<the address exported in step 11> bash deploy/soak/guest/guest-setup.sh --verify-admin | tee ~/lease-after.json`
-    → Expected: the SSH login works; the second command exits 0; `interface.address` is the same in
-    both files; and `dhcp.leaseStartEpoch` in the second is later than it was in the first, because the
-    lease was renewed.
-    → If either command's line names a refusal other than the lease (for example `set SOAK_DHCP_SERVER`):
-    fix the invocation and run it again. That is not a renewal result.
-    → If SSH fails, the address changed, or the lease start did not move: the renewal did not happen
-    through pf. Record both files and report it on #2020. The certifying run then uses the fallback in
-    [`deploy/soak/README.md`](../../deploy/soak/README.md) (**Known limits**, the DHCP allowance): a static
-    address or an independently proven tart console path. Don't fall back without this evidence.
-    - **Unverified until the first dry run:** that `LeaseStartTime` moves on renewal. If it doesn't,
-      record what `ipconfig getsummary` reports before and after, and report it on #2020 rather than
-      judging the renewal by it.
+> ⚠️ **Step 11b restarts the guest.** pf does not survive a restart, so setup runs again after it.
+> **Proceed only if:** step 11's `~/setup.log` ends in `guest ready` and `exit 0`.
+
+11b. Close the host side (Architect ruling A7). softnet then drops everything the guest sends except
+    replies to connections the host opens, so SSH from the host keeps working.
+    - On the host: `SOAK_OPERATOR_APPROVED=1 bash deploy/soak/guest/host-provision.sh --closure --execute`
+      → Expected: `tart stop`, then a `tart run` carrying `--net-softnet --net-softnet-block=0.0.0.0/0
+      --net-softnet-allow=in @host` and the same share. Preview it first without `--execute`.
+    - The guest's address can change on this boot, and `tart ip` can report the previous one. Find the
+      address from the host's ARP table for the softnet bridge, and SSH to it as the admin.
+    - Repeat step 11's DHCP check on this boot. The lease's server is softnet's own now, so export that
+      `SOAK_DHCP_SERVER`. Then run setup again:
+      `cd /opt/tangleclaw-soak && nohup bash deploy/soak/guest/guest-setup.sh > ~/setup-closure.log 2>&1; echo "exit $?" >> ~/setup-closure.log`
+      → Expected: the same last two lines as step 11. Setup is safe to repeat: it reloads pf, attests
+      both planes and finds setup and the projects already done.
+    - The boot identity has changed, so only attestations from this boot count. No soak time counts
+      before it.
+
+12. **Dry run only:** show that the guest keeps its address and SSH under the closure (Architect ruling
+    A8). softnet's DHCP lease does not expire, so no renewal happens and none is waited for. What the
+    dry run proves instead is that nothing about the management path changes over the run.
+    Both commands run from the checkout, with this boot's `SOAK_DHCP_SERVER` exported. A new SSH login
+    starts in the home directory and doesn't inherit that variable, and the verifier then refuses for
+    that reason alone.
+    At the start of the dry run, as the admin, record the lease:
+    `cd /opt/tangleclaw-soak && SOAK_DHCP_SERVER=<this boot's server> bash deploy/soak/guest/guest-setup.sh --verify-admin | tee ~/lease-before.json`
+    At the end of the dry run, SSH from the host to the same address as the admin and run it again:
+    `cd /opt/tangleclaw-soak && SOAK_DHCP_SERVER=<this boot's server> bash deploy/soak/guest/guest-setup.sh --verify-admin | tee ~/lease-after.json`
+    → Expected: the SSH login works; the second command exits 0; `interface.address`, `dhcp.leaseSeconds`
+    and `dhcp.leaseStartEpoch` are the same in both files; and the boot identity is unchanged.
+    → If either command names a refusal other than the lease (for example `set SOAK_DHCP_SERVER`): fix
+    the invocation and run it again. That is not a result.
+    → If SSH fails, the address changed, or the lease changed: record both files and report on #2020.
+    The management path is not stable under the closure, and a certifying run must not start.
 
 ## If it fails
 

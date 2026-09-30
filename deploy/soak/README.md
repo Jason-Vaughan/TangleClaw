@@ -367,6 +367,11 @@ The header's `guard.local` records the home, the WebDriver and the uid a run was
 - **Browser events need the front-door gate off.** A browser is not a machine client, and the soak holds
   no login, so with the gate on the dashboard never renders (`NOT_RENDERED`). Each event ends its
   WebDriver session whatever failed, because Safari runs one at a time.
+- **A render that times out says why, where the page can tell.** The event then reads the page's
+  state and records `SETUP_WIZARD` when the first-run setup wizard covers it (the target was never set
+  up), `PAGE_HIDDEN` when the page is not visible (no display, or a locked or sleeping screen), and
+  `NOT_RENDERED` otherwise. The page's `visibility` is kept with the outcome. A hidden page never
+  runs work it defers to an animation frame, which is how the session page sets its terminal.
 
 ## Integrity samples
 
@@ -528,6 +533,14 @@ actions.
     interlock, not authority: creating a VM stays the operator's decision.
   - It refuses to reuse an existing VM of the same name: a certification starts from a pristine guest,
     and deleting one is the operator's call.
+  - `SOAK_TART_DISPLAY` picks the guest's screen: `no-graphics` (the default, no display at all) or
+    `vnc` (a real framebuffer reached over VNC, with no host window). Anything else is refused.
+  - **`--closure` is the host-side isolation layer** (Architect ruling A7). It stops the named guest,
+    which must already exist, and runs it again with its share under softnet:
+    `--net-softnet --net-softnet-block=0.0.0.0/0 --net-softnet-allow=in @host`. softnet then drops
+    everything the guest sends, except replies to connections the host opens, so SSH from the host
+    still works. It never creates a guest, and it keeps the share's contents. It needs the same
+    `--execute` and `SOAK_OPERATOR_APPROVED=1`.
   - The shared directory is the only host path the guest sees, read-write, so it must be a dedicated
     one, `/Users/Shared/tc-soak-share` by default. The script compares real paths, following symlinks
     and `..`. It refuses:
@@ -649,8 +662,8 @@ The guest is attested from two planes, because neither can see everything.
       server sends. They are then RFC 2131's defaults (section 4.4.5), the timers a conforming client
       uses when the server sends none: renewal at half the lease, rebinding at seven-eighths of it,
       each rounded down to a whole second. A derived time is only what a conforming client should do,
-      not proof that this guest's client does it. The dry run has to show the renewal really happens
-      (see the DHCP limit under **Known limits** below).
+      not proof that this guest's client does it. Under the closure no renewal is due, and the dry run
+      checks the lease stays the same instead (see the DHCP limits under **Known limits** below).
 
     It fails closed when:
     - `ipconfig getsummary` doesn't report `LeaseStartTime` exactly once, in one of two forms:
@@ -721,28 +734,37 @@ changes the boot identity, so no time survives one.
 - **The IPv6 probe check refuses known reserved blocks, not every unallocated address.** An address such
   as `4000::1` passes as public. The dry run's positive control (the probes must answer with pf
   disabled) catches a probe that could never have answered.
-- **Host-side restriction is not used yet.** `tart run` uses tart's default network, and the boundary is
-  pf inside the guest, attested as above. Tart's softnet options could add a second layer; they are not
-  used until an operator checks them against the installed tart.
-- **pf rules do not survive a guest reboot.** A reboot invalidates the run anyway. Re-provision, run
-  setup again and restart the clock.
+- **Two layers, and only one is attested.** pf inside the guest is the boundary the verifiers attest.
+  softnet on the host (`host-provision.sh --closure`, install step 11b) is a second layer beneath it,
+  which a compromised guest cannot turn off. No verifier inspects softnet, so the evidence records the
+  closure command and relies on the guest's own denial probes.
+- **pf rules do not survive a guest reboot.** Before T+0 that is expected: the closure restarts the
+  guest, and setup runs again on the new boot (install step 11b). After T+0, a reboot invalidates the
+  run: the boot identity changes, so no time survives one.
+- **Screen Sharing (TCP 5900) may be on in the base image.** It is not exposed: pf drops everything
+  inbound except SSH from the host, and the verifiers check pf's rules, not the guest's listeners.
 - **The DHCP allowance is itself a small channel out.** Any local process that can bind UDP source port
   68 (macOS allows that without root) can send to `255.255.255.255:67` and to the DHCP server's port
   67. That traffic stays on the tart vmnet segment and reaches only the host's DHCP service. It is the
   price of keeping the address, and the SSH path, through a 72-hour run. A static address would remove
   it, if the dry run shows one is workable.
+- **Under the closure, softnet's DHCP lease does not expire** (Architect ruling A8). No renewal happens,
+  so the dry run checks that the address, the lease and SSH stay the same from start to end (install
+  step 12) instead of waiting for a renewal. The allowance below still stands for tart's default
+  network.
 - **The DHCP allowance is a best effort at keeping the management path**, not a proof. It depends on
   macOS's DHCP client renewing with the configured server over the allowed ports, and on the
   `ipconfig` output forms the verifier parses (`getpacket`, and `getsummary`'s `LeaseStartTime` and
   `LeaseExpirationTime`). A census of a real macOS 26.3 guest has confirmed both forms. It also watched
   a renewal keep the address and accept a new SSH session under this pf profile, although no attested
-  run has observed one yet. The verifier fails closed when a form differs. The dry run
-  must show that the address, and SSH, survive a real lease renewal. That applies especially when the
-  timing is `derived-rfc2131`: the verifier then attests when a renewal *should* happen, never that one
-  did. The observation is step 12 of
-  [Install and start the pinned candidate](../../docs/runbooks/soak-install-the-candidate.md). Only if
-  the renewal actually fails there is the fallback used: a static address or an independently proven
-  tart console path. A derived timing, on its own, is not a reason to fall back.
+  run has observed one yet. The verifier fails closed when a form differs. On tart's
+  default network, a dry run would have to show the address and SSH surviving a real lease renewal,
+  especially when the timing is `derived-rfc2131`: the verifier then attests when a renewal *should*
+  happen, never that one did. The soak runs under the closure instead, where the lease never expires,
+  and step 12 of [Install and start the pinned candidate](../../docs/runbooks/soak-install-the-candidate.md)
+  checks that the address, the lease and SSH stay the same. If they do not, the fallback is a static
+  address or an independently proven tart console path. A derived timing, on its own, is not a reason
+  to fall back.
 - **Egress denial needs a positive control in the dry run.** A probe that fails proves isolation only if
   the same probe succeeds when egress is open. The dry run must therefore run the workload verifier's
   probes once with pf disabled and see them answer, before trusting their denial with pf loaded. The

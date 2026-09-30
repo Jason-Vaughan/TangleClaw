@@ -172,8 +172,52 @@ describe('soak guest: host-provision.sh', () => {
     assert.ok(r.stdout.includes(`--dir=soak:${fs.realpathSync(real)}`), r.stdout);
   });
 
-  it('exits 2 on an unknown argument', () => {
-    assert.equal(runScript(HOST_PROVISION, ['--force'], f.bin, { HOME: home, SOAK_SHARE_DIR: share }).status, 2);
+  it('exits 2 on an unknown or repeated argument', () => {
+    for (const args of [['--force'], ['--execute', '--execute'], ['--closure', '--closure']]) {
+      assert.equal(runScript(HOST_PROVISION, args, f.bin, { HOME: home, SOAK_SHARE_DIR: share }).status, 2, args.join(' '));
+    }
+  });
+
+  it('runs the guest with a VNC framebuffer when SOAK_TART_DISPLAY=vnc, and refuses any other display', () => {
+    let r = runScript(HOST_PROVISION, [], f.bin, { HOME: home, SOAK_SHARE_DIR: share, SOAK_TART_DISPLAY: 'vnc' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^tart run tc-soak-guest --vnc --dir=soak:/m);
+    r = runScript(HOST_PROVISION, [], f.bin, { HOME: home, SOAK_SHARE_DIR: share, SOAK_TART_DISPLAY: 'graphics' });
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /SOAK_TART_DISPLAY must be no-graphics or vnc/);
+    assert.deepEqual(f.calls(), []);
+  });
+
+  it('--closure prints the stop and the softnet run, closed to all but inbound from the host, and runs nothing', () => {
+    const r = runScript(HOST_PROVISION, ['--closure'], f.bin, { HOME: home, SOAK_SHARE_DIR: share });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^tart stop tc-soak-guest$/m);
+    assert.ok(r.stdout.includes(`tart run tc-soak-guest --no-graphics --net-softnet --net-softnet-block=0.0.0.0/0 --net-softnet-allow=in\\ @host --dir=soak:${fs.realpathSync(share)}`), r.stdout);
+    assert.doesNotMatch(r.stdout, /tart clone|tart set/);
+    assert.deepEqual(f.calls(), []);
+  });
+
+  it('--closure --execute restarts the existing guest under softnet, keeping its non-empty share', () => {
+    f = fakes(tmp, { tart: 'vm-t\n' });
+    fs.writeFileSync(path.join(share, 'evidence'), 'x');
+    const r = runScript(HOST_PROVISION, ['--closure', '--execute'], f.bin, { HOME: home, SOAK_SHARE_DIR: share, SOAK_OPERATOR_APPROVED: '1', SOAK_VM_NAME: 'vm-t' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(f.calls(), [
+      'tart list --quiet',
+      'tart stop vm-t',
+      `tart run vm-t --no-graphics --net-softnet --net-softnet-block=0.0.0.0/0 --net-softnet-allow=in @host --dir=soak:${fs.realpathSync(share)}`
+    ]);
+  });
+
+  it('--closure --execute refuses without approval, and refuses a VM that does not exist, stopping nothing', () => {
+    let r = runScript(HOST_PROVISION, ['--execute', '--closure'], f.bin, { HOME: home, SOAK_SHARE_DIR: share, SOAK_VM_NAME: 'vm-t' });
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /SOAK_OPERATOR_APPROVED=1/);
+    assert.deepEqual(f.calls(), []);
+    r = runScript(HOST_PROVISION, ['--closure', '--execute'], f.bin, { HOME: home, SOAK_SHARE_DIR: share, SOAK_OPERATOR_APPROVED: '1', SOAK_VM_NAME: 'vm-t' });
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /no VM named vm-t exists/);
+    assert.deepEqual(f.calls(), ['tart list --quiet']);
   });
 
   const hostTrust = {

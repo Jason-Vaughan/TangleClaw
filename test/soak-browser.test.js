@@ -10,6 +10,7 @@ const sched = require('../lib/soak/schedule');
 
 const B = browser.BROWSER_EXECUTORS;
 const O = browser.BROWSER_OUTCOME;
+const B_PAGE_STATE = browser.PAGE_STATE_PROBE;
 const API = 'http://127.0.0.1:3102';
 const WD = 'http://127.0.0.1:4444';
 
@@ -95,6 +96,29 @@ describe('soak browser — dashboard load', () => {
     assert.equal(f.calls.filter((c) => c.method === 'DELETE').length, 1);
   });
 
+  it('says the setup wizard covered the dashboard, rather than that it never rendered', async () => {
+    const f = fake({ api: () => ({ status: 200, body: {} }), wd: driver({ scripts: (s) => (s === B_PAGE_STATE ? { visibility: 'visible', wizard: true } : '--') }) });
+    const r = await B['browser.dashboard.load'](ctx(f.fetch));
+    assert.deepEqual([r.code, r.step, r.visibility], [O.SETUP_WIZARD, 'render', 'visible']);
+    assert.equal(f.calls.filter((c) => c.method === 'DELETE').length, 1);
+  });
+
+  it('says the page was hidden, so its scripts were never drawn', async () => {
+    const f = fake({ api: () => ({ status: 200, body: {} }), wd: driver({ scripts: (s) => (s === B_PAGE_STATE ? { visibility: 'hidden', wizard: false } : '--') }) });
+    const r = await B['browser.dashboard.load'](ctx(f.fetch));
+    assert.deepEqual([r.code, r.step, r.visibility], [O.PAGE_HIDDEN, 'render', 'hidden']);
+  });
+
+  it('keeps NOT_RENDERED for a visible page with no wizard, and when the page state cannot be read', async () => {
+    let f = fake({ api: () => ({ status: 200, body: {} }), wd: driver({ scripts: (s) => (s === B_PAGE_STATE ? { visibility: 'visible', wizard: false } : '--') }) });
+    let r = await B['browser.dashboard.load'](ctx(f.fetch));
+    assert.deepEqual([r.code, r.visibility], [O.NOT_RENDERED, 'visible']);
+    f = fake({ api: () => ({ status: 200, body: {} }), wd: driver({ scripts: (s) => (s === B_PAGE_STATE ? 'not an object' : '--') }) });
+    r = await B['browser.dashboard.load'](ctx(f.fetch));
+    assert.equal(r.code, O.NOT_RENDERED);
+    assert.equal('visibility' in r, false);
+  });
+
   it('records a WebDriver that will not start a session', async () => {
     const f = fake({ api: () => ({ status: 200, body: {} }), wd: driver({ newSession: { status: 500, body: { value: { error: 'session not created', message: 'Could not create a session' } } } }) });
     const r = await B['browser.dashboard.load'](ctx(f.fetch));
@@ -164,6 +188,13 @@ describe('soak browser — terminal attach', () => {
     const f = fake({ api: api(), wd: driver({ scripts: () => null }) });
     const r = await B['browser.terminal.attach'](ctx(f.fetch), { project: 'soak-a' });
     assert.deepEqual([r.code, r.step], [O.NOT_RENDERED, 'frame']);
+  });
+
+  it('says the session page was hidden when its frame never got a src', async () => {
+    const f = fake({ api: api(), wd: driver({ scripts: (s) => (s === B_PAGE_STATE ? { visibility: 'hidden', wizard: false } : null) }) });
+    const r = await B['browser.terminal.attach'](ctx(f.fetch), { project: 'soak-a' });
+    assert.deepEqual([r.code, r.step, r.visibility], [O.PAGE_HIDDEN, 'frame', 'hidden']);
+    assert.equal(r.cleanupFailed, false);
   });
 
   it('never touches a session on another engine', async () => {

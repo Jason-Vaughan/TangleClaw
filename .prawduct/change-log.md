@@ -35,6 +35,38 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-30 — #2020: dry-run attempt-1 tooling fixes, Chunk 2 (provisioning, runbooks, browser codes)
+
+<!-- prawduct: type=fix | scope=2020-dryrun-a1-tooling -->
+
+Chunk 2 of 3, stacked on Chunk 1 (#2066). Same PM dispatch. Every path is inside the Rule #153 (b) allowlist.
+
+**Why.** TC-RM09 applied the rest of attempt 1's test-bed findings as guest-only workarounds. Each needs to live in the tracked provisioning and runbooks, or attempt 2 reproduces them. Architect rulings A7 (softnet with `allow in @host`) and A8 (softnet's lease is infinite) were not yet in the scripts or the docs.
+
+**What.**
+- `deploy/soak/guest/host-provision.sh`:
+  - `--closure [--execute]` runs `tart stop`, then `tart run` with `--net-softnet --net-softnet-block=0.0.0.0/0 --net-softnet-allow=in @host` and the same share. It requires the VM to exist and does not require an empty share.
+  - `SOAK_TART_DISPLAY` (`no-graphics`|`vnc`, validated).
+  - Arguments parse in any order; a repeated flag is a usage error.
+- `lib/soak/browser.js`: a render wait that times out without a WebDriver error runs `PAGE_STATE_PROBE` and records `SETUP_WIZARD`, `PAGE_HIDDEN` or `NOT_RENDERED`, with the page's `visibility`. When the page state is unreadable it records a plain `NOT_RENDERED`.
+- Runbooks:
+  - install step 6: admin `safe.directory`
+  - install step 11: `_webdeveloper` before setup
+  - install step 11b (new): closure, then setup again
+  - install step 12: stability under A8
+  - run step 3: authorization failure explained
+  - run step 3b (new): the judge
+- README: the closure and display settings, both isolation layers, a pre-T+0 restart, Screen Sharing and the new browser codes.
+- Tests:
+  - `test/soak-browser.test.js`: `SETUP_WIZARD` and `PAGE_HIDDEN` on the dashboard, `PAGE_HIDDEN` at the terminal frame, and `NOT_RENDERED` kept for a visible page and for an unreadable state. The four new tests failed before the change.
+  - `test/soak-guest.test.js`: the closure's dry-run print; its execute path with a non-empty share; refusals with no approval or a missing VM; the VNC display and a bad display refused; repeated arguments.
+
+**Decision.**
+- `_webdeveloper` membership is a visible operator step in the runbook, not something setup grants. It widens the workload user's rights, so it stays an operator action. The workload verifier already accepts it, and the attested groups record it.
+- The judge step points to the README's exact commands rather than copying flags that have not been run end to end.
+
+**Not in this chunk.** The Medusa stub hub is Chunk 3. The terminal's display in the guest is RM09's environment remediation (display awake, `--vnc`, a visibility probe); `PAGE_HIDDEN` records it if it recurs.
+
 ## 2026-09-30 — #2020: dry-run attempt-1 tooling fixes, Chunk 1 (seed, guest setup, rc-cert clock)
 
 <!-- prawduct: type=fix | scope=2020-dryrun-a1-tooling -->

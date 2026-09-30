@@ -20,8 +20,8 @@ The guest printed `guest ready: …` and you are starting a dry run, a destructi
   on that user's tmux, database and launchd jobs, and Safari needs that session.
 - **Keep the run's files together**, for example in `/Users/soakrun/soak/`. The evidence goes to the
   shared directory, `/Volumes/My Shared Files/soak/`.
-- **Unverified until the first dry run:** step 3 (safaridriver as `soakrun`) has not yet been run in a
-  real guest.
+- **`soakrun` must already be in `_webdeveloper`** (install runbook, step 11). Without it
+  `safaridriver` refuses a user who is not an admin, and every browser event fails.
 
 ## Steps
 
@@ -36,8 +36,21 @@ The guest printed `guest ready: …` and you are starting a dry run, a destructi
 
 3. Start the WebDriver, and check it answers:
    `safaridriver -p 4444 &` then `curl -s http://127.0.0.1:4444/status`
-   → Expected: `"ready":true`. If `safaridriver` refuses, the admin runs `sudo safaridriver --enable`
-   once, and you try again.
+   → Expected: `"ready":true`.
+   → If `safaridriver` refuses with an authorization error: `soakrun` is not in `_webdeveloper`. Stop:
+   adding it now changes the attested workload identity, so go back to install step 11 on a fresh guest.
+
+3b. Start the release-certification judge beside the run, before step 5. A dry run runs it too: the
+    dry run proves the judge, the relay and their attestations work before any certifying run relies
+    on them.
+    - The host mints the run id and answers the required checks. The guest's role runs as the admin,
+      from `/opt/tangleclaw-soak`, with `--checks-source host-attested` and this checkout as its
+      worktree. The commands and every flag are in "Certifying in a guest" in
+      [`deploy/soak/README.md`](../../deploy/soak/README.md).
+    → Expected, before step 5: a minted run id, the host's `host-checks --watch` and the relay
+    running, the guest's judge running with that run id, and at least one sample carrying a bound
+    isolation attestation. Otherwise do not start step 5: the run's instrumentation is incomplete, and
+    no soak time counts.
 
 4. Start the integrity sampler in its own terminal:
    `node scripts/soak.js sample --home ~/.tangleclaw --api http://127.0.0.1:3102 --out ~/soak/samples.ndjson --no-live-install`
