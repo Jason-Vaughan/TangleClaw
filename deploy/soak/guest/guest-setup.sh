@@ -416,11 +416,12 @@ if [ "$mode" = 'admin' ] || [ "$mode" = 'setup' ]; then
   # When the lease began, as the system reports it, parsed strictly. Anything
   # else, or the field reported twice, is refused. ipconfig prints one of two
   # forms: `YYYY-MM-DD HH:MM:SS +ZZZZ`, which carries its zone, or, on macOS
-  # 26, `MM/DD/YYYY HH:MM:SS`, which does not and is read as the guest's local
-  # time, the zone ipconfig formats in. A zoneless date must name a real
-  # calendar day and a local time that exists (no DST gap). The form and the
+  # 26, `MM/DD/YYYY HH:MM:SS`, which does not. The zoneless form is printed in
+  # the calling process's time zone, so ipconfig runs with TZ=UTC and that
+  # form is read as UTC: nothing then depends on the admin's shell or the
+  # guest's zone. It must name a real calendar day and time. The form and the
   # UTC offset used are attested, so the evidence shows the reading.
-  lease_start_raw="$(bounded ipconfig getsummary "$SOAK_GUEST_IF" 2>/dev/null | sed -n 's/^[[:space:]]*LeaseStartTime[[:space:]]*:[[:space:]]*//p' || true)"
+  lease_start_raw="$(TZ=UTC bounded ipconfig getsummary "$SOAK_GUEST_IF" 2>/dev/null | sed -n 's/^[[:space:]]*LeaseStartTime[[:space:]]*:[[:space:]]*//p' || true)"
   [ -n "$lease_start_raw" ] || refuse "ipconfig does not report when the lease started (LeaseStartTime), so its expiry cannot be attested"
   [ "$(grep -c . <<< "$lease_start_raw")" -eq 1 ] || refuse "ipconfig reports LeaseStartTime more than once"
   lease_start_parsed="$(node -e '
@@ -433,14 +434,14 @@ if [ "$mode" = 'admin' ] || [ "$mode" = 'setup' ]; then
       offset = (m[3] === "-" ? -1 : 1) * (Number(m[4]) * 60 + Number(m[5]));
     } else if ((m = /^(\d\d)\/(\d\d)\/(\d{4}) (\d\d):(\d\d):(\d\d)$/.exec(raw))) {
       const [mo, d, y, h, mi, s] = m.slice(1).map(Number);
-      const local = new Date(y, mo - 1, d, h, mi, s);
-      const same = local.getFullYear() === y && local.getMonth() === mo - 1 && local.getDate() === d
-        && local.getHours() === h && local.getMinutes() === mi && local.getSeconds() === s;
-      if (same) { t = local.getTime(); form = "local"; offset = -local.getTimezoneOffset(); }
+      const utc = new Date(Date.UTC(y, mo - 1, d, h, mi, s));
+      const same = utc.getUTCFullYear() === y && utc.getUTCMonth() === mo - 1 && utc.getUTCDate() === d
+        && utc.getUTCHours() === h && utc.getUTCMinutes() === mi && utc.getUTCSeconds() === s;
+      if (same) { t = utc.getTime(); form = "utc"; offset = 0; }
     }
     if (!Number.isFinite(t) || !Number.isFinite(offset)) process.exit(1);
     process.stdout.write(Math.floor(t / 1000) + " " + form + " " + offset);
-  ' "$lease_start_raw")" || refuse "LeaseStartTime is not in the expected form (YYYY-MM-DD HH:MM:SS +ZZZZ, or MM/DD/YYYY HH:MM:SS in the guest's local time): $lease_start_raw"
+  ' "$lease_start_raw")" || refuse "LeaseStartTime is not in the expected form (YYYY-MM-DD HH:MM:SS +ZZZZ, or MM/DD/YYYY HH:MM:SS as printed under TZ=UTC): $lease_start_raw"
   read -r lease_start lease_start_form lease_start_offset <<< "$lease_start_parsed"
   now_epoch="$(date -u +%s)"
   # Not before 2000, and not ahead of this clock by more than a minute.

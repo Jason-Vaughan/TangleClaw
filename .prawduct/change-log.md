@@ -44,11 +44,11 @@ PM dispatch. The TC-RM09 dry run was BLOCKED - TESTBED/TOOLING COMPATIBILITY; th
 **Why.** macOS 26.3's `ipconfig getsummary` prints `MM/DD/YYYY HH:MM:SS`, with no zone. The verifier accepted only the zoned ISO-like form, so no real guest could be attested.
 
 **What.**
-- `deploy/soak/guest/guest-setup.sh`: the zoneless form is parsed as the guest's local time. The date and time must round-trip through the local calendar, which refuses an impossible day, day-first input and a DST gap. The zoned form is unchanged. Two new attested fields, `dhcp.leaseStartForm` and `dhcp.leaseStartUtcOffsetMinutes`, record the reading.
-- `test/soak-guest.test.js`: the zoneless form under UTC, America/Los_Angeles and Asia/Kolkata (epoch and offset exact); a zoned +0530 start read by its own offset in a different guest zone; refusals for an impossible day, day-first, a DST gap, mixed forms, missing seconds, a future start and expiry.
-- Docs: the README describes both forms, the zone assumption, and which direction of zone error is caught. Install-runbook step 12 routes an out-of-range refusal on a zoneless start to a report, not to the static-address fallback.
+- `deploy/soak/guest/guest-setup.sh`: `ipconfig getsummary` runs with `TZ=UTC`. RM09's real-guest census showed the zoneless form is printed in the caller's zone: the same instant printed 14:36:09 by default and 07:36:09 under `TZ=America/Los_Angeles`. The zoneless form is then read as UTC, and must round-trip through the UTC calendar, so an impossible day or time and day-first input are refused. The zoned form is unchanged. Two new attested fields, `dhcp.leaseStartForm` (`zoned` or `utc`) and `dhcp.leaseStartUtcOffsetMinutes`, record the reading.
+- `test/soak-guest.test.js`: the zoneless form read as UTC whatever the admin's `TZ` (UTC, America/Los_Angeles, Asia/Kolkata), with a fake `ipconfig` that prints the start only when called under `TZ=UTC`; a zoned +0530 start read by its own offset; refusals for an impossible day, an hour of 24, day-first input, mixed forms, missing seconds, a future start and expiry.
+- Docs: the README describes both forms and the `TZ=UTC` call.
 
-**Decision.** A zoneless time is read in the guest's zone because that is the zone `ipconfig` formats in. It can't be proven from the string alone, so the offset is attested. A wrong reading that puts the start in the future is refused as out of range. That only happens when the error is larger than the lease's age plus a minute, as it is right after the renewal step 12 observes, and runbook step 12 says to report that as a zone problem, not a renewal failure. A reading that puts the start too early can't be detected, and it is the safe direction.
+**Decision.** An earlier revision on this branch read the zoneless form as the guest's local time and documented a zone-error branch in runbook step 12. RM09's census showed `ipconfig` formats in its caller's zone, so pinning the caller to UTC removes the assumption entirely, and that branch is gone.
 
 **Test contract changed, not weakened.** The admin-line `deepEqual` gains `leaseStartForm: 'zoned'` and `leaseStartUtcOffsetMinutes: 0`.
 
