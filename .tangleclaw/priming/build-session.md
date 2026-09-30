@@ -2,9 +2,9 @@
 
 ## Current build chunk
 
-**Active:** Chunk 01 — `tc start review` (read-only re-read). Type: feature
+**Active:** Chunk 3a — Local-control guard and fault executors
 
-**On deck:** Chunk 02 — Re-entry through SessionStart `clear` / `compact`. Type: fix
+**On deck:** Chunk 3b — Browser executors
 
-Plan: `.tangleclaw/plans/1761-clear-drops-context.md`
+Plan: `.tangleclaw/plans/2020-chunk3-soak.md`
 <!-- TANGLECLAW:PRIMING-ROLL:END -->
