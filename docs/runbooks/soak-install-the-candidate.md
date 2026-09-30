@@ -117,6 +117,15 @@ As the admin again:
       → If the host doesn't own that address: stop and report both outputs on #2020.
       **Unverified until the first dry run:** that the host's vmnet bridge carries the lease's server
       address.
+    - Check the NAT lease length before setup: `ipconfig getpacket en0 | grep lease_time`. Setup
+      refuses a lease with less left than `SOAK_SAMPLE_INTERVAL` plus `SOAK_SAFETY_MARGIN`, 900 s
+      by default. The habitat's NAT DHCP has leased 600 s (`0x258`), which can never pass that check.
+      When the lease is shorter than 900 s, run this step's setup with smaller values in the same
+      shell, for example `export SOAK_SAMPLE_INTERVAL=240 SOAK_SAFETY_MARGIN=60`, and record them in
+      `deviations.log`. Setup attests the values it used (`dhcp.sampleIntervalSeconds`,
+      `dhcp.safetyMarginSeconds`). No samples run under NAT, so the override covers setup only. Unset
+      both before the softnet boot.
+      → If the lease is shorter than the smaller values allow: stop and report `lease_time` on #2020.
     - `cd /opt/tangleclaw-soak && sudo -u soakrun -H bash deploy/soak/guest/guest-setup.sh --verify-workload`, then
       `nohup bash deploy/soak/guest/guest-setup.sh > ~/setup.log 2>&1; echo "exit $?" >> ~/setup.log`
     → Expected: the first exits 3 and its line names `egress-permitted`. pf is not loaded yet, so the

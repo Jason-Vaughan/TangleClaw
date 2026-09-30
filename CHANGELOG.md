@@ -516,6 +516,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **Soak guest setup can install the stub hub on a real macOS guest** (#2020). Setup failed at its last step with `install: … Permission denied` (exit 71). It wrote the hub's LaunchAgent plist to a `mktemp` file and then installed it as the workload user. macOS `mktemp` ignores `TMPDIR` and creates the file in the admin's own 0700 temp directory, which the workload user cannot enter. Now the workload user writes the plist itself from stdin. A new test fails if any workload-user command is handed a file from the admin's private temp directory. The install runbook now covers the habitat's 600 s NAT DHCP lease, which can never pass setup's default 900 s lease check, and the interval and margin to set for NAT-phase setup.
 - **The soak's seeded projects and guest setup now give the load the target it expects** (#2020). The first dry run of a real macOS 26.3 guest was blocked by test-bed gaps, not by the candidate. Each of these failed on every attempt:
   - **`api.plans.read` (`NOT_LISTED`):** nothing created the plan it looks for. The seed commit now includes `.tangleclaw/plans/soak-plan.md`.
   - **`engine.session.wrap-cycle` (`WRAP_BLOCKED` at `session-files`):** the candidate's startup sync added an untracked `.tangleclaw/memories/MEMORY.md`, and the wrap correctly refused a file the session did not make. The seed commit now includes it.

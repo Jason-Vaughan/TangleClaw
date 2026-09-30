@@ -381,6 +381,11 @@ function guestFakes(dir, over = {}) {
     openssl: 'echo 0123456789abcdef',
     install: 'exit 0',
     mkdir: 'exit 0',
+    tee: 'cat > /dev/null',
+    chmod: 'exit 0',
+    // macOS mktemp ignores TMPDIR and answers from the admin's own 0700
+    // per-user temp directory, which no other user can traverse.
+    mktemp: `d="${path.join(dir, 'admin-private')}"; /bin/mkdir -p "$d"; /bin/chmod 700 "$d"; exec /usr/bin/mktemp "$d/tmp.XXXXXX"`,
     // The attestation encoder runs on the real node; `soak.js repos` is only logged.
     node: `[ "$1" = "-e" ] && exec "${process.execPath}" "$@"\nexit 0`,
     ifconfig: 'exit 0',
@@ -643,7 +648,7 @@ describe('soak guest: guest-setup.sh setup', () => {
 
   it('loads the stub hub as a LaunchAgent that runs this checkout\'s hub on the configured ports, restarting it if it dies', () => {
     const out = path.join(tmp, 'hub.plist');
-    const f = guestFakes(tmp, { install: `case "$*" in *.plist) cp "$3" "${out}";; esac` });
+    const f = guestFakes(tmp, { tee: `case "$*" in *.plist) cat > "${out}";; *) cat > /dev/null;; esac` });
     const r = setup([], f, tmp);
     assert.equal(r.status, 0, r.stderr);
     const plist = fs.readFileSync(out, 'utf8');
@@ -653,6 +658,18 @@ describe('soak guest: guest-setup.sh setup', () => {
     assert.match(plist, /<string>--ws-port<\/string><string>3010<\/string>/);
     assert.match(plist, /<key>KeepAlive<\/key><true\/>/);
     assert.match(r.stdout, /guest ready: .*stub hub on 3009\/3010/);
+  });
+
+  it('writes the stub hub plist as the workload user, never from a file only the admin can reach', () => {
+    const f = guestFakes(tmp);
+    const r = setup([], f, tmp);
+    assert.equal(r.status, 0, r.stderr);
+    const calls = f.calls();
+    const plist = '/Users/soakrun/Library/LaunchAgents/com.tangleclaw.soak-medusa-stub.plist';
+    assert.ok(calls.includes(`[soakrun] tee ${plist}`), calls.join('\n'));
+    assert.ok(calls.includes(`[soakrun] chmod 0644 ${plist}`), calls.join('\n'));
+    const leaked = calls.filter((c) => c.startsWith('[soakrun] ') && c.includes(path.join(tmp, 'admin-private')));
+    assert.deepEqual(leaked, []);
   });
 
   for (const [label, over, reason] of [

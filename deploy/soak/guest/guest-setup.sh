@@ -838,8 +838,10 @@ for spec in "$hub_http_port:http" "$hub_ws_port:websocket"; do
   [ "$status" = "201" ] || [ "$status" = "200" ] || refuse "leasing port $port for the stub hub answered $status$lease_why"
 done
 as_user mkdir -p "$hub_home/Library/LaunchAgents" "$hub_home/Library/Logs"
-hub_tmp="$(mktemp)"
-cat > "$hub_tmp" <<PLIST
+# The workload writes its own plist from stdin. A temp file would not work:
+# macOS mktemp ignores TMPDIR and puts it in the admin's 0700 per-user temp
+# directory, which the workload cannot traverse.
+as_user tee "$hub_plist" >/dev/null <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -859,9 +861,7 @@ cat > "$hub_tmp" <<PLIST
 </dict>
 </plist>
 PLIST
-chmod 0644 "$hub_tmp"
-as_user install -m 0644 "$hub_tmp" "$hub_plist"
-rm -f "$hub_tmp"
+as_user chmod 0644 "$hub_plist"
 wl_uid="$(id -u "$user")"
 # Replace a hub an earlier run loaded, so this run's checkout is the one serving.
 sudo -n launchctl bootout "gui/$wl_uid/$hub_label" >/dev/null 2>&1 || true
