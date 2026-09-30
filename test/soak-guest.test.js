@@ -568,6 +568,22 @@ describe('soak guest: guest-setup.sh setup', () => {
     });
   }
 
+  it('names the cause the server gives when it refuses to finish setup', () => {
+    const reply = JSON.stringify({ error: 'No AI engine is installed', code: 'ENGINE_REQUIRED' });
+    const f = guestFakes(tmp, { curl: [
+      'case "$*" in',
+      '  *api/setup/complete*)',
+      '    out=""; prev=""; for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done',
+      `    printf '%s' '${reply}' > "$out"; printf 400;;`,
+      '  *api/projects/attach*) printf 201;;',
+      '  *http_code*) printf 404;;',
+      'esac'
+    ].join('\n') });
+    const r = setup([], f, tmp);
+    assert.equal(r.status, 3, r.stdout);
+    assert.match(r.stderr, /first-run setup answered 400: ENGINE_REQUIRED: No AI engine is installed/);
+  });
+
   it('skips a project the guest already has, and refuses when the auth gate is up', () => {
     let f = guestFakes(tmp, { curl: `case "$*" in *http_code*) printf 200;; *api/config) printf '%s' '${SETUP_DONE}';; esac` });
     let r = setup([], f, tmp);

@@ -755,14 +755,22 @@ echo "== 5/5 finish setup, attach projects"
 # binds loopback only and pf admits nothing but SSH from the host) and the
 # soak's projects root. A later run finds it finished and only checks it.
 setup_body="$(node -e 'process.stdout.write(JSON.stringify({ noLogin: true, projectsDir: process.argv[1] }))' "$SOAK_PROJECTS_ROOT")"
-status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time "$t" -X POST \
+# The reply body is kept: a refusal names its cause (ENGINE_REQUIRED,
+# OPT_OUT_REFUSED, ...) only there, and the server does not log it.
+setup_out="$(mktemp)"
+status="$(curl -sS -o "$setup_out" -w '%{http_code}' --max-time "$t" -X POST \
   -H 'content-type: application/json' -H 'x-tangleclaw-client: dashboard' \
   -d "$setup_body" "$api/api/setup/complete" || true)"
+setup_reply="$(cat "$setup_out" 2>/dev/null || true)"
+rm -f "$setup_out"
+setup_why="$(node -e '
+  try { const r = JSON.parse(process.argv[1]); if (r && r.code) process.stdout.write(`: ${r.code}: ${r.error || ""}`); } catch {}
+' "$setup_reply")"
 case "$status" in
   200) echo "setup finished: no login, projects in $SOAK_PROJECTS_ROOT" ;;
   409) echo "setup already finished" ;;
   401|403) refuse "finishing setup answered $status: the guest's auth gate is up; finish setup and attach the soak-* projects from the dashboard" ;;
-  *) refuse "finishing the guest's first-run setup answered $status" ;;
+  *) refuse "finishing the guest's first-run setup answered $status$setup_why" ;;
 esac
 config_json="$(curl -sS --max-time "$t" -H 'x-tangleclaw-client: dashboard' "$api/api/config" || true)"
 node -e '
