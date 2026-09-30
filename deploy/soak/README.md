@@ -105,9 +105,10 @@ node scripts/soak.js validate --schedule soak-certifying.json
 ### Prerequisites on the target
 
 These kinds need a target prepared as `guest/guest-setup.sh` prepares it:
-- **A Medusa hub** running with `A2A_SECRET`, reachable at the TangleClaw process's
-  `MEDUSA_BRIDGE_HTTP_URL`. Without it no listener reaches `listening`. **Setup does not provide one
-  yet**, so `engine.session.medusa-cycle` records `NOT_LISTENING` on a guest until it does.
+- **A Medusa hub** reachable at the TangleClaw process's `MEDUSA_BRIDGE_HTTP_URL` (default
+  `http://localhost:3009`, with the WebSocket on the next port). Without it no listener reaches
+  `listening`. The guest is offline, so setup provides the stub hub (setup step 6, and
+  [The stub hub](#the-stub-hub)).
 - **Each `soak-*` project's `.tangleclaw/project.json`** has `medusaEnabled: true`,
   `wrapAutoPrEnabled: false` and `releaseMode: "off"`, and the project has a
   `.tangleclaw/plans/soak-plan.md`. The seed commit carries all of these (see
@@ -433,6 +434,33 @@ node scripts/soak.js bundle --out <new dir> --schedule s.json --log s.ndjson [--
   - two attestations with the same file name;
   - a schedule that is not JSON.
 
+## The stub hub
+
+The guest has no network, so no real Medusa hub can run in it. Without a hub, no session's switchboard
+listener ever reaches `listening`. `deploy/soak/medusa-stub/medusa-stub.js` is a hub that speaks only the
+part of the protocol the candidate uses, so `engine.session.medusa-cycle` exercises the candidate's own
+listener, send route, inbox and read path from end to end. **It certifies TangleClaw's side of the
+switchboard, not Medusa.**
+
+- **Loopback only, by construction.** It binds `127.0.0.1` and `::1`, because `localhost` can resolve to
+  either, and it refuses to bind anything else.
+- **What it serves:**
+  - HTTP: `POST /messages/direct`, `GET /workspaces` and `GET /health`.
+  - WebSocket: `register`, answered with `registered`; heartbeats; `new_message` pushes; and `ack`,
+    answered with `ack_response`.
+- **Message ids and delivery:**
+  - One id names a message everywhere: the send's answer, the pushed envelope and the message itself.
+    That id is what the cycle's delivery check matches.
+  - A message stays queued until its recipient acknowledges it. A workspace that registers again is sent
+    everything still queued. A workspace that never registered answers 404.
+- **It needs no credentials,** because the candidate sends none. Nothing persists: a restart forgets
+  every queue.
+- **It uses Node built-ins only.** Node 22 has no WebSocket server, so the handshake and framing (RFC
+  6455) are written out in the script. Client frames must be masked, and fragmented frames are refused.
+- **Setup runs it as a LaunchAgent** in the workload user's GUI session (setup step 6), so launchd
+  restarts it if it dies during a run and loads it again at login. It logs to
+  `~/Library/Logs/soak-medusa-stub.log`.
+
 ## The stub engine
 
 The guest has no network access and holds no vendor credentials, so the `engine` load uses
@@ -627,6 +655,12 @@ actions.
        launchd-run server reading without a prompt nobody can answer.
      - **A later run finds setup finished and checks it.** Setup then refuses unless the guest's config
        says `setupComplete: true` and `projectsDir` is `SOAK_PROJECTS_ROOT`.
+  6. **Starts the stub Medusa hub.** It leases `SOAK_MEDUSA_HTTP_PORT` and `SOAK_MEDUSA_WS_PORT`
+     (default 3009 and 3010, which must be adjacent) in the guest TangleClaw's port registry. It writes
+     a LaunchAgent into the workload user's `~/Library/LaunchAgents` and loads it into that user's GUI
+     session, replacing one an earlier run loaded. Then it waits for the hub's `/health` on loopback.
+     It refuses if a port is leased to something else, if launchd will not load the agent, or if the
+     hub never answers.
 
   Every step is safe to repeat.
 

@@ -524,6 +524,10 @@ All notable changes to TangleClaw are documented in this file.
   - Guest setup creates its install directory (default `/usr/local/bin`), which a macOS 26 base image does not have.
   - The seed's SHA changes, so a guest seeded before this change refuses its repos (`SEED_MISMATCH`). Seed a fresh guest.
 
+- **The soak guest now has a switchboard hub, so `engine.session.medusa-cycle` can pass** (#2020). The guest is offline, so no Medusa hub could run there, and every Medusa cycle in the first dry run ended `NOT_LISTENING`.
+  - `deploy/soak/medusa-stub/medusa-stub.js` is a loopback-only stub hub. It speaks only the part of the hub protocol the candidate uses, so the cycle exercises the candidate's own listener, send route, inbox and read path. It certifies TangleClaw's side of the switchboard, not Medusa.
+  - Guest setup gains step 6. It leases the hub's ports (3009 and 3010) in the guest TangleClaw's port registry, loads the hub as a LaunchAgent in the workload user's session, and waits for it to answer. It refuses if a port is taken, launchd will not load the agent, or the hub never answers.
+
 - **The soak's provisioning and runbooks match a real macOS 26.3 guest under softnet** (#2020). These are the rest of the first dry run's test-bed findings:
   - **`host-provision.sh --closure`** stops the soak guest and runs it again under softnet (Architect ruling A7). softnet blocks everything the guest sends except replies to connections the host opens, so SSH from the host still works. Before, the script had no softnet mode, and the README said softnet was not used. It never creates a guest, and it keeps the share.
   - **`SOAK_TART_DISPLAY`** chooses `no-graphics` (the default) or `vnc`, so the guest can draw the pages browser events load.

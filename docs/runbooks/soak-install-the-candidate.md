@@ -122,7 +122,7 @@ As the admin again:
     → Expected: the first exits 3 and its line names `egress-permitted`. pf is not loaded yet, so the
     probes can answer, which proves they can detect egress. The second writes to `~/setup.log`, whose last
     two lines are
-    `guest ready: workload user soakrun, default-deny network attested on both planes, stub engine, projects soak-a,soak-b,soak-c`
+    `guest ready: workload user soakrun, default-deny network attested on both planes, stub engine, projects soak-a,soak-b,soak-c, stub hub on 3009/3010`
     and `exit 0`.
     → If the first exits 0: the probes cannot detect egress, so their later denial proves nothing.
     Stop and report it on #2020.

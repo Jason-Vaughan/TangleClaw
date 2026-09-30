@@ -286,6 +286,9 @@ function mdyStartAgo(seconds) {
 /** The guest config once setup has finished for the soak's default projects root. */
 const SETUP_DONE = JSON.stringify({ setupComplete: true, projectsDir: '/Users/soakrun/Projects' });
 
+/** The stub hub's health answer, as TangleClaw reads it. */
+const HUB_UP = JSON.stringify({ status: 'hissing', version: 'soak-stub' });
+
 /**
  * Fake system commands for guest-setup.sh inside a "VM". `FAKE_USER` in the
  * environment is who is running (default the admin); `sudo -u` switches it,
@@ -400,10 +403,13 @@ function guestFakes(dir, over = {}) {
       'case "$*" in',
       '  *api/setup/complete*) printf 200;;',
       '  *api/projects/attach*) printf 201;;',
+      '  *api/ports/lease*) printf 201;;',
       '  *http_code*) printf 404;;',
       `  *api/config) printf '%s' '${SETUP_DONE}';;`,
+      `  *:3009/health) printf '%s' '${HUB_UP}';;`,
       'esac'
     ].join('\n'),
+    launchctl: 'exit 0',
     ...over
   };
   for (const [name, body] of Object.entries(bodies)) {
@@ -464,7 +470,12 @@ describe('soak guest: guest-setup.sh setup', () => {
       /^\[soakrun\] node .*scripts\/soak\.js repos --root \/Users\/soakrun\/Projects --origins \/Users\/soakrun\/soak-origins --projects soak-a,soak-b,soak-c$/,
       /^\[admin\] curl .*-d \{"noLogin":true,"projectsDir":"\/Users\/soakrun\/Projects"\} http:\/\/127\.0\.0\.1:3102\/api\/setup\/complete$/,
       /^\[admin\] curl .*http:\/\/127\.0\.0\.1:3102\/api\/config$/,
-      /^\[admin\] curl .*\{"name":"soak-a"\} http:\/\/127\.0\.0\.1:3102\/api\/projects\/attach$/
+      /^\[admin\] curl .*\{"name":"soak-a"\} http:\/\/127\.0\.0\.1:3102\/api\/projects\/attach$/,
+      /^\[admin\] curl .*"port":3009,.*"project":"soak-medusa-stub".*"reach":"loopback".*http:\/\/127\.0\.0\.1:3102\/api\/ports\/lease$/,
+      /^\[admin\] curl .*"port":3010,.*http:\/\/127\.0\.0\.1:3102\/api\/ports\/lease$/,
+      /^\[admin\] launchctl bootout gui\/502\/com\.tangleclaw\.soak-medusa-stub$/,
+      /^\[admin\] launchctl bootstrap gui\/502 \/Users\/soakrun\/Library\/LaunchAgents\/com\.tangleclaw\.soak-medusa-stub\.plist$/,
+      /^\[admin\] curl .*http:\/\/127\.0\.0\.1:3009\/health$/
     ];
     let last = -1;
     for (const re of order) {
@@ -581,8 +592,10 @@ describe('soak guest: guest-setup.sh setup', () => {
       'case "$*" in',
       '  *api/setup/complete*) printf 409;;',
       '  *api/projects/attach*) printf 201;;',
+      '  *api/ports/lease*) printf 200;;',
       '  *http_code*) printf 404;;',
       `  *api/config) printf '%s' '${SETUP_DONE}';;`,
+      `  *:3009/health) printf '%s' '${HUB_UP}';;`,
       'esac'
     ].join('\n') });
     const r = setup([], f, tmp);
@@ -628,8 +641,47 @@ describe('soak guest: guest-setup.sh setup', () => {
     assert.match(r.stderr, /first-run setup answered 400: ENGINE_REQUIRED: No AI engine is installed/);
   });
 
+  it('loads the stub hub as a LaunchAgent that runs this checkout\'s hub on the configured ports, restarting it if it dies', () => {
+    const out = path.join(tmp, 'hub.plist');
+    const f = guestFakes(tmp, { install: `case "$*" in *.plist) cp "$3" "${out}";; esac` });
+    const r = setup([], f, tmp);
+    assert.equal(r.status, 0, r.stderr);
+    const plist = fs.readFileSync(out, 'utf8');
+    assert.match(plist, /<key>Label<\/key><string>com\.tangleclaw\.soak-medusa-stub<\/string>/);
+    assert.match(plist, /<string>[^<]*\/deploy\/soak\/medusa-stub\/medusa-stub\.js<\/string>/);
+    assert.match(plist, /<string>--http-port<\/string><string>3009<\/string>/);
+    assert.match(plist, /<string>--ws-port<\/string><string>3010<\/string>/);
+    assert.match(plist, /<key>KeepAlive<\/key><true\/>/);
+    assert.match(r.stdout, /guest ready: .*stub hub on 3009\/3010/);
+  });
+
+  for (const [label, over, reason] of [
+    ['its port is leased to another service', { curl: [
+      'case "$*" in', '  *api/setup/complete*) printf 200;;', '  *api/projects/attach*) printf 201;;',
+      '  *api/ports/lease*) printf 409;;', '  *http_code*) printf 404;;', `  *api/config) printf '%s' '${SETUP_DONE}';;`, 'esac'
+    ].join('\n') }, /leasing port 3009 for the stub hub answered 409/],
+    ['launchd will not load it', { launchctl: 'case "$1" in bootstrap) exit 5;; esac' }, /launchd would not load the stub hub/],
+    ['it never answers', { curl: [
+      'case "$*" in', '  *api/setup/complete*) printf 200;;', '  *api/projects/attach*) printf 201;;',
+      '  *api/ports/lease*) printf 201;;', '  *http_code*) printf 404;;', `  *api/config) printf '%s' '${SETUP_DONE}';;`, '  *:3009/health) exit 7;;', 'esac'
+    ].join('\n') }, /stub hub did not answer on 127\.0\.0\.1:3009/]
+  ]) {
+    it(`refuses, without claiming the guest is ready, when the stub hub ${label}`, () => {
+      const r = setup([], guestFakes(tmp, over), tmp);
+      assert.equal(r.status, 3, r.stdout);
+      assert.match(r.stderr, reason);
+      assert.doesNotMatch(r.stdout, /guest ready/);
+    });
+  }
+
+  it('refuses stub hub ports the candidate could not find: the WebSocket port must follow the HTTP port', () => {
+    const r = setup([], guestFakes(tmp), tmp, { SOAK_MEDUSA_WS_PORT: '3011' });
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /SOAK_MEDUSA_WS_PORT must be ports, the second one above the first/);
+  });
+
   it('skips a project the guest already has, and refuses when the auth gate is up', () => {
-    let f = guestFakes(tmp, { curl: `case "$*" in *http_code*) printf 200;; *api/config) printf '%s' '${SETUP_DONE}';; esac` });
+    let f = guestFakes(tmp, { curl: `case "$*" in *http_code*) printf 200;; *api/config) printf '%s' '${SETUP_DONE}';; *:3009/health) printf '%s' '${HUB_UP}';; esac` });
     let r = setup([], f, tmp);
     assert.equal(r.status, 0, r.stderr);
     assert.equal(f.calls().filter((c) => c.includes('api/projects/attach')).length, 0);

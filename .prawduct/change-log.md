@@ -35,6 +35,37 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-30 — #2020: dry-run attempt-1 tooling fixes, Chunk 3 (Medusa stub hub)
+
+<!-- prawduct: type=fix | scope=2020-dryrun-a1-tooling -->
+
+Chunk 3 of 3, stacked on Chunk 2. PM Option B (Medusa ff69a0a1). Every path is inside the Rule #153 (b) allowlist.
+
+**Why.** Every `engine.session.medusa-cycle` in attempt 1 ended `NOT_LISTENING`. Chunk 1 opted the soak projects in. With no hub in the offline guest, though, a listener can never reach `listening`.
+
+**What.**
+- `deploy/soak/medusa-stub/medusa-stub.js` (new) uses Node built-ins only.
+  - HTTP serves `POST /messages/direct` (404 for a workspace that never registered, 400 for a malformed send), `GET /workspaces` and `GET /health` (`status: "hissing"`).
+  - A hand-written RFC 6455 server handles `register`→`registered`, heartbeat→`heartbeat_ack`, `new_message` pushes and `ack`→`ack_response`, and answers ping with pong and close with close.
+  - Queue: a message stays queued until acknowledged, and is sent again when its workspace registers again.
+  - One id is used in the send response, `messageId` and `message.id`.
+  - It binds loopback only and refuses any other host.
+- `deploy/soak/guest/guest-setup.sh` step 6:
+  - Leases the two ports (`ownerKind: external`, `reach: loopback`), writes a KeepAlive LaunchAgent to the workload user's `~/Library/LaunchAgents`, then runs `launchctl bootout` and `bootstrap` in `gui/<uid>`.
+  - Polls `/health`.
+  - Refuses on a lease conflict, a load failure or no answer, and never prints `guest ready` after refusing.
+  - Validates that `SOAK_MEDUSA_HTTP_PORT` and `SOAK_MEDUSA_WS_PORT` are adjacent. They default to 3009 and 3010 in `guest.conf`, which the candidate finds with no configuration change.
+- Tests:
+  - `test/soak-medusa-stub.test.js` (new) drives TangleClaw's real `MedusaListener` over a real socket: two listeners listening, a direct send delivered by its id and acknowledged, queued redelivery on re-register and none after an ack, 404/400, health and workspaces, loopback-only binding, argument parsing, the RFC 6455 accept key, masked frames of every length form across chunk boundaries, and refusal of unmasked frames.
+  - `test/soak-guest.test.js`: step 6's order and calls, the LaunchAgent's contents, three refusals, and the adjacent-port check. Two existing fakes also answer the lease and health calls; their assertions are unchanged.
+- Docs:
+  - README: target prerequisites, setup step 6, and a new "The stub hub" section.
+  - Install runbook: the `guest ready` line.
+
+**Decision.**
+- The hub runs as a LaunchAgent rather than under `nohup`. launchd restarts it if it dies during a 72-hour run, and loads it again at login after the closure restart.
+- It binds both loopbacks rather than changing the candidate's `MEDUSA_BRIDGE_HTTP_URL`, so the candidate's install is unchanged.
+
 ## 2026-09-30 — #2020: dry-run attempt-1 tooling fixes, Chunk 2 (provisioning, runbooks, browser codes)
 
 <!-- prawduct: type=fix | scope=2020-dryrun-a1-tooling -->
