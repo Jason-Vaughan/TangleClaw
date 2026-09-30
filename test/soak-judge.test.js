@@ -39,7 +39,7 @@ function sha(p) {
  * Run a 72-hour certifying api schedule to completion from T0 on a fake
  * clock, every event succeeding. An hourly load mean keeps it to about 70
  * events.
- * @param {object} [opts] - `{phase, durationMs, seed, outcome, reclaimed}`: the schedule's phase, length and seed; `outcome(n)` gives the n-th event's result; `reclaimed` leaves the run crashed after two events, its lock and open segment naming a dead owner, and resumes it, which the driver records as ownership-unverified
+ * @param {object} [opts] - `{phase, durationMs, seed, outcome, reclaimed, tornEvent}`: the schedule's phase, length and seed; `outcome(n)` gives the n-th event's result; `reclaimed` leaves the run crashed after two events, its lock and open segment naming a dead owner, and resumes it, which the driver records as ownership-unverified; `tornEvent` also makes that crash lose only the second event's final newline, so the resume seals a whole record and runs the event again
  * @returns {Promise<{schedule: object, schedulePath: string, logPath: string, startedAt: number, completedAt: number}>} The run
  */
 async function finishedRun(opts = {}) {
@@ -59,6 +59,14 @@ async function finishedRun(opts = {}) {
   if (opts.reclaimed) {
     const events = () => fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8').split('\n').filter((l) => l.includes('"type":"event"')).length : 0;
     await driver.runSchedule({ schedule, executors, ctx: {}, logPath, clock, stopPollMs, shouldStop: () => events() >= 2 });
+    if (opts.tornEvent) {
+      // A crash, not a stop: no stop record, and the last event's write lost
+      // only its newline.
+      const lines = fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean);
+      assert.equal(JSON.parse(lines.at(-1)).type, 'stop');
+      fs.writeFileSync(logPath, lines.slice(0, -1).join('\n'));
+      fs.rmSync(driver.segmentPath(logPath), { force: true });
+    }
     const owner = { pid: require('node:child_process').spawnSync(process.execPath, ['-e', '0']).pid, host: os.hostname() };
     driver.openSegment(logPath, owner, t);
     fs.writeFileSync(`${logPath}.lock`, JSON.stringify(owner));
@@ -225,6 +233,26 @@ describe('soak judge — the bundle itself (fail closed)', () => {
   });
 });
 
+describe('soak judge — a damaged bundle is a reason, never a crash', () => {
+  it('refuses a bundle whose manifest does not list the log or the schedule, even with a directory in its place', async () => {
+    for (const rel of ['soak-log.ndjson', 'schedule.json']) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.mkdirSync(dir);
+      const { out, run } = await passingBundle();
+      fs.rmSync(path.join(out, rel));
+      fs.mkdirSync(path.join(out, rel));
+      editManifest(out, (m) => { m.files = m.files.filter((f) => f.path !== rel); });
+      assert.deepEqual(judge.judgeBundle({ bundleDir: out, run }).reasons, [{ code: 'FILE_MISSING', file: rel }], rel);
+    }
+  });
+
+  it('refuses samples with a line that is JSON but not a record', async () => {
+    const { out, run } = await passingBundle();
+    forge(out, 'samples.ndjson', `${fs.readFileSync(path.join(out, 'samples.ndjson'), 'utf8')}null\n`);
+    assert.deepEqual(codes(judge.judgeBundle({ bundleDir: out, run })), ['SAMPLES_UNREADABLE']);
+  });
+});
+
 describe('soak judge — the candidate (A5)', () => {
   it('refuses a bundle naming another candidate', async () => {
     const { out, run } = await passingBundle({ candidateSha: OTHER });
@@ -374,6 +402,18 @@ describe('soak judge — the certifying 72-hour schedule (A6.5, A7)', () => {
   });
 });
 
+describe('soak judge — a log that survived a crash', () => {
+  it('does not count a sealed record the driver ran again', async () => {
+    const { out, run } = await passingBundle({ reclaimed: true, tornEvent: true });
+    const lines = fs.readFileSync(path.join(out, 'soak-log.ndjson'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    const indexes = lines.filter((x) => x.type === 'event').map((x) => x.index);
+    assert.ok(indexes.length > new Set(indexes).size, 'the fixture really logged one event twice, the first copy sealed');
+    assert.ok(lines.some((x) => x.type === 'torn-tail-sealed'));
+    const e = JSON.parse(fs.readFileSync(path.join(out, 'manifest.json'), 'utf8')).summary.log.certification.operatorAcceptance.evidence;
+    assert.deepEqual(codes(judge.judgeBundle({ bundleDir: out, run, acceptance: { ...e, actor: 'operator', at: T0 } })), []);
+  });
+});
+
 describe('soak judge — ownership (A4c)', () => {
   it('fails and resets an ownership-unverified log with no acceptance', async () => {
     const { out, run } = await passingBundle({ reclaimed: true });
@@ -450,6 +490,15 @@ describe('soak judge — samples and database', () => {
   it('fails failed samples once they leave a gap longer than two intervals', async () => {
     const { out, run } = await passingBundle({ edit: (x, i) => (i >= 3 && i <= 5 ? { type: 'sample-failed', seq: x.seq, at: x.at, error: 'EIO' } : x) });
     assert.deepEqual(judge.judgeBundle({ bundleDir: out, run }).reasons, [{ code: 'COVERAGE', detail: 'gap', afterSampleSeq: 2 }]);
+  });
+
+  it('does not count a sample with no time, and fails samples out of order', async () => {
+    const untimed = await passingBundle({ edit: (x, i) => (i > 0 && i < 400 ? { ...x, at: null } : x) });
+    assert.deepEqual(judge.judgeBundle({ bundleDir: untimed.out, run: untimed.run }).reasons.map((r) => r.detail), ['gap']);
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir);
+    const swapped = await passingBundle({ edit: (x, i) => (i === 5 ? { ...x, at: x.at - 2 * SAMPLE_MS } : x) });
+    assert.deepEqual(judge.judgeBundle({ bundleDir: swapped.out, run: swapped.run }).reasons.map((r) => r.detail), ['out-of-order']);
   });
 
   it('needs at least two evidentiary samples', async () => {

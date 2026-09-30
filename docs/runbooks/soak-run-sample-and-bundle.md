@@ -73,7 +73,9 @@ The guest printed `guest ready: …` and you are starting a dry run, a destructi
    → This is a quick read of the summary, not the verdict. The verdict is the host's: the
    certification judge re-derives all of it from the bundle's files when the host finalizes the run
    (`rc-cert host-finalize --soak-bundle`, see "Judging the bundle" in
-   [`deploy/soak/README.md`](../../deploy/soak/README.md)).
+   [`deploy/soak/README.md`](../../deploy/soak/README.md)). Keep `rc-cert run` sampling until the
+   host has finalized: the certification run must not be accepted before then, or the soak's end can
+   fall outside its window.
 
 9. Tear the guest down once the bundle is safe on the host. As the admin:
    `sudo defaults delete /Library/Preferences/com.apple.loginwindow autoLoginUser; sudo rm -f /etc/kcpassword`

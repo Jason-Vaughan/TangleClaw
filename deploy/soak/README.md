@@ -4,9 +4,10 @@ The load side of the 72-hour release-candidate soak (#2020, part of #1949). It b
 **deterministic** schedule of load and faults, then runs it against a TangleClaw server inside
 an isolated test guest. Every outcome goes to an append-only log.
 
-It judges nothing. Whether the release candidate passes is decided by the release-certification
-judge (`rc-cert`) and the soak's own acceptance gates. This tool only produces the conditions and
-records what happened.
+The load itself judges nothing: it produces the conditions and records what happened. Whether the
+release candidate passes is decided by the release-certification run (`rc-cert`) and by the soak's
+certification judge, which reads the soak's evidence bundle (see
+[Judging the bundle](#judging-the-bundle)).
 
 > **Status: Chunks 1 to 4.** This directory has the schedule, the runner and an executor for every
 > kind in the catalogue (`api`, `engine`, `browser` and `fault`), the stub engine, the guest definition
@@ -476,6 +477,15 @@ rc-cert host-finalize --sha <40> --host-base <abs> --soak-bundle <abs bundle dir
   acceptance of exactly that log: a JSON object with the `logPath`, `logBytes` and `logSha256` from
   the manifest's `summary.log.certification.operatorAcceptance.evidence`, plus `actor` and `at` (epoch
   ms). The bundled log must still have those bytes.
+- **Finish a certifying run in this order**, or a sound soak fails `OUTSIDE_RUN_WINDOW`. The soak's
+  log must lie inside the certification run's window, and that window ends at the run's last sample.
+  1. Let the soak's `run` exit and write `end`.
+  2. Keep `rc-cert run` sampling until it has taken at least one sample after that. It keeps sampling,
+     every `--interval` (at most two minutes), until the run is accepted, cancelled or failed.
+  3. Bundle the evidence and bring the bundle to the host.
+  4. Run `rc-cert host-finalize --soak-bundle`.
+  5. Only then `rc-cert accept` the run, and relay it with `rc-cert host-publish`. An accepted run
+     takes no more samples, so accepting first can leave the soak's end outside the window.
 - **The host records the judgement in the run's finalization**, and the finalization is `ok` only when
   the judgement passed and is bound to that run (`SOAK_JUDGEMENT_MISSING`, `SOAK_JUDGEMENT_FAILED`,
   `SOAK_JUDGEMENT_UNBOUND` otherwise). The relay (`rc-cert host-publish`) certifies a run only when

@@ -60,6 +60,13 @@ Lease Rule #147 (RM-LEASE TC-RM01 generation 4, sha256 `3b1f0c1f…d727086`), th
 - A run with no valid host-minted run id is not judged (`host-finalize` passes no judgement), because there is no identity to bind to. It already fails `NOT_HOST_ATTESTED`/`RUN_NOT_MINTED`.
 - Rulings A6.1–A6.3 approved the gate's placement (host path only), the coverage rule (tightened to at least two evidentiary samples) and the time window (inclusive, fail-closed). Plan: `.tangleclaw/plans/2020-final-soak-judge.md`.
 
+**Review.** Cumulative `rev-20260930T022330Z-3423165d` at `868c3579`: 0 blocking, 5 warnings, 4 notes. Fixed in the next commit:
+- the judge counted a record the driver had sealed after a crash (a torn write that lost only its newline) and run again. It now drops sealed regions by their byte offset, instead of changing the driver, which Rule #148 does not allow;
+- a bundle missing its log or schedule, or with a directory in their place, and a samples line that is JSON but not a record, crashed the judge instead of giving a reason;
+- samples with no time counted towards coverage, and their order was never checked;
+- the end-of-soak order (the soak ends, another certification sample, bundle, `host-finalize`, then `accept`) was not written down, and the README still said the soak judges nothing.
+Each new test failed against `868c3579`.
+
 **Test contract extended, not weakened.** The existing finalize and relay tests now pass a bound judgement (`fx.soakJudgement`), the input a finalization now requires. Their assertions are unchanged. The `certifiedFrom` truth table gained five failing rows. In the CLI test, `host-finalize` gets an injected judge and checks the run identity it hands over.
 
 ## 2026-09-29 — #2020 Chunk 3: fault and browser executors, integrity sampling, evidence bundle, operator runbooks
