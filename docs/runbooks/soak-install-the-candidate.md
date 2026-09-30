@@ -103,12 +103,21 @@ As the admin again:
       **Unverified until the first dry run:** that the host's vmnet bridge carries the lease's server
       address.
     - `cd /opt/tangleclaw-soak && sudo -u soakrun -H bash deploy/soak/guest/guest-setup.sh --verify-workload`, then
-      `bash deploy/soak/guest/guest-setup.sh`
+      `nohup bash deploy/soak/guest/guest-setup.sh > ~/setup.log 2>&1; echo "exit $?" >> ~/setup.log`
     → Expected: the first exits 3 and its line names `egress-permitted`. pf is not loaded yet, so the
-    probes can answer, which proves they can detect egress. The second ends with
-    `guest ready: workload user soakrun, default-deny network attested on both planes, stub engine, projects soak-a,soak-b,soak-c`.
+    probes can answer, which proves they can detect egress. The second writes to `~/setup.log`, whose last
+    two lines are
+    `guest ready: workload user soakrun, default-deny network attested on both planes, stub engine, projects soak-a,soak-b,soak-c`
+    and `exit 0`.
     → If the first exits 0: the probes cannot detect egress, so their later denial proves nothing.
     Stop and report it on #2020.
+    → If the SSH session running setup stops responding once pf loads: that is expected. pf keeps no
+    state for a connection opened before it loaded, so the session that ran `pfctl -E` hangs, while new
+    SSH sessions are accepted. That is why setup writes to a log under `nohup`: open a new session and
+    read `~/setup.log`.
+    - The setup caches the admin's sudo credentials with `sudo true`. It doesn't use `sudo -v`, which
+      asks for a password on macOS 26 even under a `NOPASSWD` rule. When setup creates `soakrun` over
+      SSH, `sysadminctl` doesn't make its home directory, so setup runs `createhomedir` for it.
 
 12. **Dry run only:** watch the guest survive a real DHCP lease renewal. The admin attestation's
     renewal time is `dhcp.renewEpoch`, and `dhcp.timingSource` says whether the lease reported it

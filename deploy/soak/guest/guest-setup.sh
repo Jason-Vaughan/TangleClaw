@@ -373,6 +373,31 @@ lease_num() {
   fi
   printf -v "$2" '%s' "$v"
 }
+# One of ipconfig's lease clock strings as "<epoch> <form> <utc offset in
+# minutes>", or a non-zero exit when it is neither form or names no real time.
+# `YYYY-MM-DD HH:MM:SS +ZZZZ` carries its zone. macOS 26 prints
+# `MM/DD/YYYY HH:MM:SS` with none, in the calling process's zone, so ipconfig
+# is called under TZ=UTC and that form is read as UTC.
+lease_clock() {
+  node -e '
+    const raw = process.argv[1];
+    let t = NaN, form = "", offset = NaN;
+    let m = /^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d) ([+-])(\d\d)(\d\d)$/.exec(raw);
+    if (m) {
+      t = Date.parse(m[1] + "T" + m[2] + m[3] + m[4] + ":" + m[5]);
+      form = "zoned";
+      offset = (m[3] === "-" ? -1 : 1) * (Number(m[4]) * 60 + Number(m[5]));
+    } else if ((m = /^(\d\d)\/(\d\d)\/(\d{4}) (\d\d):(\d\d):(\d\d)$/.exec(raw))) {
+      const [mo, d, y, h, mi, s] = m.slice(1).map(Number);
+      const utc = new Date(Date.UTC(y, mo - 1, d, h, mi, s));
+      const same = utc.getUTCFullYear() === y && utc.getUTCMonth() === mo - 1 && utc.getUTCDate() === d
+        && utc.getUTCHours() === h && utc.getUTCMinutes() === mi && utc.getUTCSeconds() === s;
+      if (same) { t = utc.getTime(); form = "utc"; offset = 0; }
+    }
+    if (!Number.isFinite(t) || !Number.isFinite(offset)) process.exit(1);
+    process.stdout.write(Math.floor(t / 1000) + " " + form + " " + offset);
+  ' "$1"
+}
 if [ "$mode" = 'admin' ] || [ "$mode" = 'setup' ]; then
   command -v node >/dev/null 2>&1 || refuse "node is missing"
   lease="$(bounded ipconfig getpacket "$SOAK_GUEST_IF" 2>/dev/null || true)"
@@ -421,38 +446,37 @@ if [ "$mode" = 'admin' ] || [ "$mode" = 'setup' ]; then
   # form is read as UTC: nothing then depends on the admin's shell or the
   # guest's zone. It must name a real calendar day and time. The form and the
   # UTC offset used are attested, so the evidence shows the reading.
-  lease_start_raw="$(TZ=UTC bounded ipconfig getsummary "$SOAK_GUEST_IF" 2>/dev/null | sed -n 's/^[[:space:]]*LeaseStartTime[[:space:]]*:[[:space:]]*//p' || true)"
+  summary="$(TZ=UTC bounded ipconfig getsummary "$SOAK_GUEST_IF" 2>/dev/null || true)"
+  summary_field() { sed -n "s/^[[:space:]]*$1[[:space:]]*:[[:space:]]*//p" <<< "$summary"; }
+  lease_start_raw="$(summary_field LeaseStartTime)"
   [ -n "$lease_start_raw" ] || refuse "ipconfig does not report when the lease started (LeaseStartTime), so its expiry cannot be attested"
   [ "$(grep -c . <<< "$lease_start_raw")" -eq 1 ] || refuse "ipconfig reports LeaseStartTime more than once"
-  lease_start_parsed="$(node -e '
-    const raw = process.argv[1];
-    let t = NaN, form = "", offset = NaN;
-    let m = /^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d) ([+-])(\d\d)(\d\d)$/.exec(raw);
-    if (m) {
-      t = Date.parse(m[1] + "T" + m[2] + m[3] + m[4] + ":" + m[5]);
-      form = "zoned";
-      offset = (m[3] === "-" ? -1 : 1) * (Number(m[4]) * 60 + Number(m[5]));
-    } else if ((m = /^(\d\d)\/(\d\d)\/(\d{4}) (\d\d):(\d\d):(\d\d)$/.exec(raw))) {
-      const [mo, d, y, h, mi, s] = m.slice(1).map(Number);
-      const utc = new Date(Date.UTC(y, mo - 1, d, h, mi, s));
-      const same = utc.getUTCFullYear() === y && utc.getUTCMonth() === mo - 1 && utc.getUTCDate() === d
-        && utc.getUTCHours() === h && utc.getUTCMinutes() === mi && utc.getUTCSeconds() === s;
-      if (same) { t = utc.getTime(); form = "utc"; offset = 0; }
-    }
-    if (!Number.isFinite(t) || !Number.isFinite(offset)) process.exit(1);
-    process.stdout.write(Math.floor(t / 1000) + " " + form + " " + offset);
-  ' "$lease_start_raw")" || refuse "LeaseStartTime is not in the expected form (YYYY-MM-DD HH:MM:SS +ZZZZ, or MM/DD/YYYY HH:MM:SS as printed under TZ=UTC): $lease_start_raw"
+  lease_start_parsed="$(lease_clock "$lease_start_raw")" \
+    || refuse "LeaseStartTime is not in the expected form (YYYY-MM-DD HH:MM:SS +ZZZZ, or MM/DD/YYYY HH:MM:SS as printed under TZ=UTC): $lease_start_raw"
   read -r lease_start lease_start_form lease_start_offset <<< "$lease_start_parsed"
   now_epoch="$(date -u +%s)"
   # Not before 2000, and not ahead of this clock by more than a minute.
   [ "$lease_start" -ge 946684800 ] && [ "$lease_start" -le $((now_epoch + 60)) ] || refuse "the lease start $lease_start_raw is out of range"
   lease_expiry=$((lease_start + lease_s))
+  # ipconfig's own expiry, where it reports one, must be the start plus the
+  # lease time; a disagreement means one of the two readings is wrong.
+  lease_expiry_raw="$(summary_field LeaseExpirationTime)"
+  lease_expiry_field="dhcp.leaseExpiryRaw=z:"
+  if [ -n "$lease_expiry_raw" ]; then
+    [ "$(grep -c . <<< "$lease_expiry_raw")" -eq 1 ] || refuse "ipconfig reports LeaseExpirationTime more than once"
+    lease_expiry_parsed="$(lease_clock "$lease_expiry_raw")" \
+      || refuse "LeaseExpirationTime is not in the expected form (YYYY-MM-DD HH:MM:SS +ZZZZ, or MM/DD/YYYY HH:MM:SS as printed under TZ=UTC): $lease_expiry_raw"
+    read -r reported_expiry _ <<< "$lease_expiry_parsed"
+    [ "$reported_expiry" = "$lease_expiry" ] \
+      || refuse "ipconfig's LeaseExpirationTime $lease_expiry_raw ($reported_expiry) disagrees with LeaseStartTime plus lease_time ($lease_expiry)"
+    lease_expiry_field="dhcp.leaseExpiryRaw=s:$lease_expiry_raw"
+  fi
   [ "$lease_expiry" -gt "$now_epoch" ] || refuse "the DHCP lease expired at $lease_expiry (now $now_epoch)"
   [ $((lease_expiry - now_epoch)) -ge "$attest_window" ] || refuse "the DHCP lease has $((lease_expiry - now_epoch)) s left, less than the next sample interval plus margin ($attest_window s)"
   lease_fields=("dhcp.server=s:$dhcp_server" "dhcp.leaseServer=s:$lease_server"
     "dhcp.leaseSeconds=n:$lease_s" "dhcp.leaseStartRaw=s:$lease_start_raw"
     "dhcp.leaseStartForm=s:$lease_start_form" "dhcp.leaseStartUtcOffsetMinutes=n:$lease_start_offset"
-    "dhcp.leaseStartEpoch=n:$lease_start" "dhcp.leaseExpiryEpoch=n:$lease_expiry"
+    "dhcp.leaseStartEpoch=n:$lease_start" "dhcp.leaseExpiryEpoch=n:$lease_expiry" "$lease_expiry_field"
     "dhcp.renewEpoch=n:$((lease_start + renew_s))" "dhcp.rebindEpoch=n:$((lease_start + rebind_s))"
     "dhcp.timingSource=s:$timing_source"
     "dhcp.observedEpoch=n:$now_epoch" "dhcp.remainingSeconds=n:$((lease_expiry - now_epoch))"
@@ -499,21 +523,27 @@ check_tc_owner() {
 # existing account that differs is someone else's; it is refused, never
 # adopted or changed. Setup and every admin attestation run this.
 check_workload_identity() {
-  local wl_uid wl_home g
+  local wl_uid wl_home g rc
   wl_uid="$(id -u "$user" 2>/dev/null || true)"
   [[ "$wl_uid" =~ ^[0-9]+$ ]] && [ "$wl_uid" -ge 501 ] || refuse "$user has uid '$wl_uid', a system or unknown uid: not a workload account this script made"
   wl_home="$(dscl . -read "/Users/$user" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory: *//p')"
   [ "$wl_home" = "/Users/$user" ] || refuse "$user's home is '$wl_home', not /Users/$user: not a workload account this script made"
   [ "$(stat -f %u "$wl_home" 2>/dev/null || true)" = "$wl_uid" ] || refuse "$wl_home is not owned by $user ($wl_uid)"
+  # dseditgroup exits 0 for a member and 67 for a non-member; any other status
+  # is an answer it could not give, so membership stays unknown and is refused.
   for g in admin wheel; do
-    if dseditgroup -o checkmember -m "$user" "$g" >/dev/null 2>&1; then
-      breach privileged-workload "$user is a member of $g; the workload must not be an admin (fix it by hand, this script never demotes an account)"
-    fi
+    rc=0
+    dseditgroup -o checkmember -m "$user" "$g" >/dev/null 2>&1 || rc=$?
+    case "$rc" in
+      0) breach privileged-workload "$user is a member of $g; the workload must not be an admin (fix it by hand, this script never demotes an account)" ;;
+      67) ;;
+      *) refuse "dseditgroup exited $rc checking whether $user is in $g: its membership is not established" ;;
+    esac
   done
   # Judged by exit status, not by sudo's (localized) wording: `sudo -l -U
   # <user> <command>` exits 0 only when the policy permits that command. A
   # shell, pfctl and a no-op cover general, pf-specific and blanket grants.
-  local c rc
+  local c
   # Two positive controls first, or a "no" for the workload could be sudo
   # failing (expired credentials, a broken policy) rather than a refusal: the
   # admin can run a command with sudo right now, and the same policy query says
@@ -551,7 +581,9 @@ verify_admin() {
     || refuse "pfctl cannot parse the soak profile"
   [ "$(grep -c . <<< "$expected")" -eq "$(grep -cE '^(block|pass) ' "$here/pf/soak-deny.conf")" ] \
     || refuse "pfctl's parse of the profile has an unexpected number of rules"
-  rules="$(bounded sudo -n pfctl -s rules 2>/dev/null | sed '/^[[:space:]]*$/d')" || refuse "cannot read pf's loaded rules"
+  # pfctl warns that the kernel has no ALTQ support in two fixed lines. They go
+  # to stderr, but they are never rules, so they are dropped here too.
+  rules="$(bounded sudo -n pfctl -s rules 2>/dev/null | sed -e '/^[[:space:]]*$/d' -e '/^No ALTQ support in kernel$/d' -e '/^ALTQ related functions disabled$/d')" || refuse "cannot read pf's loaded rules"
   local expected_sha active_sha
   expected_sha="$(printf '%s\n' "$expected" | shasum -a 256 | cut -d' ' -f1)"
   active_sha="$(printf '%s\n' "$rules" | shasum -a 256 | cut -d' ' -f1)"
@@ -655,7 +687,10 @@ if [ "$mode" = 'workload' ]; then verify_workload; exit 0; fi
 if [ "$mode" = 'network' ]; then verify_network; exit 0; fi
 
 # --- Setup (admin, with sudo) ---
-sudo -v
+# `sudo true`, not `sudo -v`: on macOS 26 `-v` asks for a password even under a
+# NOPASSWD rule unless verifypw allows it. Either way this caches credentials
+# for the `sudo -n` calls that follow.
+sudo true || refuse "setup needs sudo for $admin_name"
 # The workload user's commands get exactly these settings, since sudo resets
 # the environment.
 soak_env=()
@@ -670,6 +705,9 @@ else
   # admin reaches it only through sudo -u.
   sudo -n sysadminctl -addUser "$user" -fullName "TangleClaw soak workload" -home "/Users/$user" \
     -password "$(openssl rand -hex 32)" >/dev/null 2>&1 || refuse "could not create $user"
+  # sysadminctl run over SSH records the home but does not create it.
+  [ -d "/Users/$user" ] || sudo -n createhomedir -c -u "$user" >/dev/null 2>&1 \
+    || refuse "could not create $user's home directory"
   echo "$user created"
 fi
 check_workload_identity

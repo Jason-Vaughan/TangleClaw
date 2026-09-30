@@ -643,6 +643,10 @@ The guest is attested from two planes, because neither can see everything.
 
       `dhcp.leaseStartForm` (`zoned` or `utc`) and `dhcp.leaseStartUtcOffsetMinutes` record which form
       was read and the offset used, so the evidence shows how the start was interpreted;
+    - `ipconfig getsummary` reports `LeaseExpirationTime` (in either form) and it isn't exactly
+      `LeaseStartTime` plus `lease_time`, or it reports it twice or in neither form. On a real macOS 26.3
+      guest the two agree. The raw value is attested as `dhcp.leaseExpiryRaw`, which is `null` when the
+      summary has no expiry line;
     - the start is before 2000 or in the future;
     - the lease has expired;
     - the lease doesn't report `lease_time`;
@@ -662,7 +666,9 @@ The guest is attested from two planes, because neither can see everything.
     kernel's view of what the process has mapped: exactly one may be a node binary, and it is recorded
     canonicalized. `ps`'s command name isn't used, because on macOS it is the process's own `argv[0]`;
   - that the workload account is still what setup made: a regular uid (501 or above), its own home
-    owned by it, in neither `admin` nor `wheel`, and with no sudo rights. Sudo rights are judged by the
+    owned by it, in neither `admin` nor `wheel`, and with no sudo rights. Group membership is judged
+    by `dseditgroup -o checkmember`'s exit status: 0 is a member, 67 is not, and any other status leaves
+    membership unknown and is refused. Sudo rights are judged by the
     exit status of `sudo -l -U <user> <command>`, for a shell, `pfctl` and a no-op. Two positive controls
     come first: the admin can run `sudo -n true` right now, and the same query says yes for the admin.
     After that, only exit status 1 counts as the policy's "no". A 0 means the workload has sudo, and a

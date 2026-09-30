@@ -266,7 +266,6 @@ function guestFakes(dir, over = {}) {
       'esac'
     ].join('\n'),
     sudo: [
-      '[ "$1" = "-v" ] && exit 0',
       '[ "$1" = "-n" ] && shift',
       // sudo -l -U <user> <cmd>: the admin may; anyone else may not.
       'if [ "$1" = "-l" ]; then [ "$3" = admin ] && exit 0; echo "User $3 is not allowed to run sudo on guest."; exit 1; fi',
@@ -295,7 +294,8 @@ function guestFakes(dir, over = {}) {
       '  *) [ -n "$FAKE_USER_EXISTS" ] && exit 0; exit 1;;',
       'esac'
     ].join('\n'),
-    dseditgroup: 'exit 1',
+    // dseditgroup -o checkmember exits 67 for a non-member (macOS 26.3, real guest).
+    dseditgroup: 'exit 67',
     // The guest TangleClaw listening on 3102 is pid 4242, uid 502 (soakrun), executing node.
     lsof: [
       'case "$*" in',
@@ -327,6 +327,7 @@ function guestFakes(dir, over = {}) {
     ].join('\n'),
     dscl: 'echo "NFSHomeDirectory: /Users/soakrun"',
     sysadminctl: 'exit 0',
+    createhomedir: 'exit 0',
     openssl: 'echo 0123456789abcdef',
     install: 'exit 0',
     mkdir: 'exit 0',
@@ -403,6 +404,7 @@ describe('soak guest: guest-setup.sh setup', () => {
     const idx = (re) => calls.findIndex((c) => re.test(c));
     const order = [
       /^\[admin\] sysadminctl -addUser soakrun .*-password 0123456789abcdef$/,
+      /^\[admin\] createhomedir -c -u soakrun$/,
       /^\[admin\] lsof -nP -iTCP:3102 -sTCP:LISTEN -Fpu$/,
       /^\[admin\] pfctl -D host_addr=192\.168\.64\.1 -D dhcp_server=192\.168\.64\.2 -D guest_if=en0 -f .*soak-deny\.conf -E$/,
       /^\[admin\] pfctl -s rules$/,
@@ -432,7 +434,7 @@ describe('soak guest: guest-setup.sh setup', () => {
   });
 
   it('refuses a workload user in the admin group, before touching pf, and never demotes it', () => {
-    const f = guestFakes(tmp, { dseditgroup: 'case "$*" in *" admin") exit 0;; *) exit 1;; esac' });
+    const f = guestFakes(tmp, { dseditgroup: 'case "$*" in *" admin") exit 0;; *) exit 67;; esac' });
     const r = setup([], f, tmp, { FAKE_USER_EXISTS: '1' });
     assert.equal(r.status, 3);
     assert.match(r.stderr, /member of admin/);
@@ -488,6 +490,9 @@ describe('soak guest: guest-setup.sh setup', () => {
     assert.match(r.stdout, /start the pinned TangleClaw as soakrun/);
     const calls = f.calls();
     assert.ok(calls.some((c) => c.includes('sysadminctl -addUser soakrun')));
+    assert.ok(calls.some((c) => c === '[admin] createhomedir -c -u soakrun'), 'sysadminctl over SSH makes no home, so setup creates it');
+    assert.ok(calls.some((c) => c === '[admin] sudo true'), 'credentials are cached with sudo true');
+    assert.ok(!calls.some((c) => c.startsWith('[admin] sudo -v')), 'sudo -v wants a password on macOS 26 even under NOPASSWD');
     // node runs to validate the probe literals; soak.js (the workload) must not.
     assert.ok(!calls.some((c) => /\] (pfctl|lsof|install|curl|ipconfig) |\] node .*soak\.js/.test(c)), calls.join('\n'));
   });
@@ -582,7 +587,7 @@ describe('soak guest: admin verifier', () => {
     assert.deepEqual(dhcp, {
       server: '192.168.64.2', leaseServer: '192.168.64.2', leaseSeconds: 86400,
       leaseStartForm: 'zoned', leaseStartUtcOffsetMinutes: 0,
-      leaseStartEpoch: start, leaseExpiryEpoch: start + 86400, renewEpoch: start + 43200, rebindEpoch: start + 75600,
+      leaseStartEpoch: start, leaseExpiryEpoch: start + 86400, leaseExpiryRaw: null, renewEpoch: start + 43200, rebindEpoch: start + 75600,
       timingSource: 'lease', requiredSeconds: 900, sampleIntervalSeconds: 600, safetyMarginSeconds: 300
     });
     assert.ok(Math.abs(Date.now() / 1000 - observedEpoch) < 60);
@@ -653,6 +658,41 @@ describe('soak guest: admin verifier', () => {
     });
   }
 
+  it('attests the macOS 26.3 real-guest shape: lease_time alone, and zoneless start and expiry that agree', () => {
+    // The census guest's lease: 3600 s, no T1/T2, server 192.168.64.2 here as
+    // in every fixture. ipconfig prints both clocks in its caller's zone.
+    const start = mdyStartAgo(600);
+    const expiry = mdyStartAgo(600 - 3600);
+    const ipconfig = packetWith('lease_time (uint32): 0xe10', `LeaseExpirationTime : ${expiry.raw}\\nLeaseStartTime : ${start.raw}`)
+      .replace('"getsummary en0")', '"getsummary en0") [ "$TZ" = UTC ] || { echo "LeaseStartTime : wrong zone"; exit 0; };');
+    const f = guestFakes(tmp, { ipconfig });
+    const r = setup(['--verify-admin'], f, tmp, { TZ: 'America/Los_Angeles', SOAK_SAMPLE_INTERVAL: '600', SOAK_SAFETY_MARGIN: '300' });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    const { dhcp } = r.json[0];
+    assert.equal(dhcp.leaseSeconds, 3600);
+    assert.equal(dhcp.timingSource, 'derived-rfc2131');
+    assert.equal(dhcp.leaseStartForm, 'utc');
+    assert.equal(dhcp.leaseStartEpoch, start.epoch);
+    assert.equal(dhcp.leaseExpiryEpoch, expiry.epoch);
+    assert.equal(dhcp.leaseExpiryRaw, expiry.raw);
+    assert.equal(dhcp.renewEpoch, start.epoch + 1800);
+    assert.equal(dhcp.rebindEpoch, start.epoch + 3150);
+  });
+
+  it('attests a lease whose summary has no expiry line with leaseExpiryRaw null', () => {
+    const f = guestFakes(tmp);
+    const r = setup(['--verify-admin'], f, tmp);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.json[0].dhcp.leaseExpiryRaw, null);
+  });
+
+  it('ignores pfctl\'s ALTQ banner even if it reaches stdout: it is never a rule', () => {
+    const f = guestFakes(tmp, { pfctl: `case "$*" in "-s info") echo "Status: Enabled for 0 days 00:03:33           Debug: Urgent";; "-s rules") printf "No ALTQ support in kernel\\nALTQ related functions disabled\\n"; cat "$RULES";; *"-n -v"*) cat "$RULES";; "-s Interfaces -v") printf "en0\\nlo0 (skip)\\n";; esac` });
+    const r = setup(['--verify-admin'], f, tmp, { RULES: path.join(tmp, 'rules.txt') });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.equal(r.json[0].pf.rulesMatch, true);
+  });
+
   it('attests a zoned LeaseStartTime by its own offset, whatever the guest zone', () => {
     const epoch = Math.floor(Date.now() / 1000) - 3600;
     // The same instant written at +05:30.
@@ -720,6 +760,10 @@ describe('soak guest: admin verifier', () => {
     'a zoneless lease start drops its seconds': [{ ipconfig: packetWith(TIMING, 'LeaseStartTime : 09/30/2026 10:00') }, {}, /not in the expected form/],
     'a zoneless lease start is in the future': [() => ({ ipconfig: packetWith(TIMING, `LeaseStartTime : ${mdyStartAgo(-3600).raw}`) }), {}, /out of range/],
     'a zoneless lease has expired': [() => ({ ipconfig: packetWith(TIMING, `LeaseStartTime : ${mdyStartAgo(2 * 86400).raw}`) }), {}, /lease expired/],
+    'dseditgroup cannot answer for the workload account': [{ dseditgroup: 'exit 64' }, {}, /dseditgroup exited 64 checking whether soakrun is in admin: its membership is not established/],
+    'ipconfig reports an expiry that disagrees with start plus lease time': [() => ({ ipconfig: packetWith(TIMING, `LeaseStartTime : ${mdyStartAgo(3600).raw}\\nLeaseExpirationTime : ${mdyStartAgo(3600 - 86400 + 60).raw}`) }), {}, /LeaseExpirationTime .* disagrees with LeaseStartTime plus lease_time/],
+    'ipconfig reports a malformed expiry': [() => ({ ipconfig: packetWith(TIMING, `LeaseStartTime : ${mdyStartAgo(3600).raw}\\nLeaseExpirationTime : tomorrow`) }), {}, /LeaseExpirationTime is not in the expected form/],
+    'ipconfig reports the expiry twice': [() => ({ ipconfig: packetWith(TIMING, `LeaseStartTime : ${mdyStartAgo(3600).raw}\\nLeaseExpirationTime : ${mdyStartAgo(3600 - 86400).raw}\\nLeaseExpirationTime : ${mdyStartAgo(3600 - 86400).raw}`) }), {}, /LeaseExpirationTime more than once/],
     'the lease start is reported twice': [{ ipconfig: packetWith(TIMING, `LeaseStartTime : ${leaseStartAgo(60)}\\nLeaseStartTime : ${leaseStartAgo(60)}`) }, {}, /more than once/],
     'the lease start is in the future': [{ ipconfig: packetWith(TIMING, `LeaseStartTime : ${leaseStartAgo(-3600)}`) }, {}, /out of range/],
     'the lease has expired': [{ ipconfig: packetWith(TIMING, `LeaseStartTime : ${leaseStartAgo(2 * 86400)}`) }, {}, /lease expired/],
@@ -745,7 +789,7 @@ describe('soak guest: admin verifier', () => {
     'a lease with no timers has less left than the next attestation window': [() => ({ ipconfig: packetWith('lease_time (uint32): 0x15180', `LeaseStartTime : ${leaseStartAgo(86400 - 300)}`) }), {}, /less than the next sample interval plus margin \(900 s\)/],
     'the lease has no lease time': [{ ipconfig: 'case "$*" in "getifaddr en0") echo 192.168.64.5;; "getpacket en0") printf "server_identifier (ip): 192.168.64.2\\n";; esac' }, {}, /must report lease_time/],
     'the TangleClaw process maps two node executables': [{ lsof: `case "$*" in *-iTCP:3102*) printf "p4242\\nu502\\n";; *"-d txt"*) printf "p4242\\nn${NODE}\\nn/opt/other/bin/node\\n";; esac` }, {}, /maps 2 node executables/],
-    'the workload account became an admin after setup': [{ dseditgroup: 'case "$*" in *" admin") exit 0;; *) exit 1;; esac' }, {}, /member of admin/],
+    'the workload account became an admin after setup': [{ dseditgroup: 'case "$*" in *" admin") exit 0;; *) exit 67;; esac' }, {}, /member of admin/],
     'the workload account gained sudo after setup': [{ sudo: '[ "$1" = "-n" ] && shift\nif [ "$1" = "-l" ]; then exit 0; fi\n[ "${FAKE_USER:-admin}" = admin ] || exit 1\nexec "$@"' }, {}, /has sudo rights \(\/bin\/sh is permitted\)/],
     'sudo -l hangs for the workload account': [{ sudo: '[ "$1" = "-n" ] && shift\nif [ "$1" = "-l" ]; then [ "$3" = admin ] && exit 0; sleep 30; fi\n[ "${FAKE_USER:-admin}" = admin ] || exit 1\nexec "$@"' }, {}, /sudo -l for soakrun hung/],
     'the workload home is owned by someone else': [{ stat: 'case "$2" in %u) if [ "$3" = /Users/soakrun ]; then echo 0; else echo 501; fi;; *) if [ -d "$3" ]; then echo "501 755 Directory"; else echo "501 644 Regular File"; fi;; esac' }, {}, /is not owned by soakrun/],

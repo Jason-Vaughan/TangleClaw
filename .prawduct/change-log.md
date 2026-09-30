@@ -35,7 +35,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
-## 2026-09-30 — #2020: read macOS 26's zoneless LeaseStartTime form
+## 2026-09-30 — #2020: macOS 26.3 soak-tooling compatibility (RM09 census)
 
 <!-- prawduct: type=fix | scope=2020-lease-start-form -->
 
@@ -46,7 +46,14 @@ PM dispatch. The TC-RM09 dry run was BLOCKED - TESTBED/TOOLING COMPATIBILITY; th
 **What.**
 - `deploy/soak/guest/guest-setup.sh`: `ipconfig getsummary` runs with `TZ=UTC`. RM09's real-guest census showed the zoneless form is printed in the caller's zone: the same instant printed 14:36:09 by default and 07:36:09 under `TZ=America/Los_Angeles`. The zoneless form is then read as UTC, and must round-trip through the UTC calendar, so an impossible day or time and day-first input are refused. The zoned form is unchanged. Two new attested fields, `dhcp.leaseStartForm` (`zoned` or `utc`) and `dhcp.leaseStartUtcOffsetMinutes`, record the reading.
 - `test/soak-guest.test.js`: the zoneless form read as UTC whatever the admin's `TZ` (UTC, America/Los_Angeles, Asia/Kolkata), with a fake `ipconfig` that prints the start only when called under `TZ=UTC`; a zoned +0530 start read by its own offset; refusals for an impossible day, an hour of 24, day-first input, mixed forms, missing seconds, a future start and expiry.
-- Docs: the README describes both forms and the `TZ=UTC` call.
+- Census-driven (RM09 census `0a5217e6…`, real macOS 26.3 guest):
+  - `LeaseExpirationTime`, when reported, must equal the start plus `lease_time`, and is attested as `dhcp.leaseExpiryRaw`.
+  - `dseditgroup` exit 67 means "not a member"; any status other than 0 or 67 is refused as unknown. Before, it counted as "not a member".
+  - `pfctl`'s ALTQ banner is dropped from the rules output.
+  - Setup uses `sudo true` instead of `sudo -v`, and `createhomedir` for a workload user `sysadminctl` created without a home.
+  - Tests use the census shapes: a `0xe10` lease with no T1/T2, both clocks zoneless and printed in the caller's zone, the census `pfctl -s info` line and the ALTQ banner.
+- Docs: the README describes both clock forms, the `TZ=UTC` call, the expiry cross-check and the `dseditgroup` statuses. Runbook step 11 runs setup under `nohup` into `~/setup.log`, because the SSH session that loads pf hangs.
+- Not in this PR (reported to the PM): F5/F6. The workload positive control stops at the first probe that answers, so it can't positive-control each plane separately. That changes verifier behaviour and is not a format fix.
 
 **Decision.** An earlier revision on this branch read the zoneless form as the guest's local time and documented a zone-error branch in runbook step 12. RM09's census showed `ipconfig` formats in its caller's zone, so pinning the caller to UTC removes the assumption entirely, and that branch is gone.
 
