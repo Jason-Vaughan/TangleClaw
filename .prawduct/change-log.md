@@ -46,9 +46,9 @@ PM dispatch after the TC-RM09 dry-run gate failed on the candidate: `LeaseStartT
 **What.**
 - `deploy/soak/guest/guest-setup.sh`: the zoneless form is parsed as the guest's local time. The date and time must round-trip through the local calendar, which refuses an impossible day, day-first input and a DST gap. The zoned form is unchanged. Two new attested fields, `dhcp.leaseStartForm` and `dhcp.leaseStartUtcOffsetMinutes`, record the reading.
 - `test/soak-guest.test.js`: the zoneless form under UTC, America/Los_Angeles and Asia/Kolkata (epoch and offset exact); a zoned +0530 start read by its own offset in a different guest zone; refusals for an impossible day, day-first, a DST gap, mixed forms, missing seconds, a future start and expiry.
-- Docs: the README describes both forms and the zone assumption. Install-runbook step 12 checks that a zoneless start falls inside the renewal window.
+- Docs: the README describes both forms, the zone assumption, and which direction of zone error is caught. Install-runbook step 12 routes an out-of-range refusal on a zoneless start to a report, not to the static-address fallback.
 
-**Decision.** A zoneless time is read in the guest's zone because that is the zone `ipconfig` formats in. It can't be proven from the string alone, so the offset is attested, and the dry run's renewal observation is the check.
+**Decision.** A zoneless time is read in the guest's zone because that is the zone `ipconfig` formats in. It can't be proven from the string alone, so the offset is attested. A wrong reading that puts the start in the future is refused as out of range, and runbook step 12 says to report that as a zone problem, not a renewal failure. A reading that puts the start too early can't be detected, and it is the safe direction.
 
 **Test contract changed, not weakened.** The admin-line `deepEqual` gains `leaseStartForm: 'zoned'` and `leaseStartUtcOffsetMinutes: 0`.
 

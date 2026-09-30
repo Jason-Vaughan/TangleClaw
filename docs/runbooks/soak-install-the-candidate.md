@@ -125,10 +125,12 @@ As the admin again:
     `cd /opt/tangleclaw-soak && SOAK_DHCP_SERVER=<the address exported in step 11> bash deploy/soak/guest/guest-setup.sh --verify-admin | tee ~/lease-after.json`
     → Expected: the SSH login works; the second command exits 0; `interface.address` is the same in
     both files; and `dhcp.leaseStartEpoch` in the second is later than it was in the first, because the
-    lease was renewed. When `dhcp.leaseStartForm` is `local`, the start carried no zone and was read in
-    the guest's zone. In that case `dhcp.leaseStartEpoch` in the second file must also fall between the
-    `dhcp.renewEpoch` of the first and the `dhcp.observedEpoch` of the second. A start outside that
-    window means the zone reading is wrong: report both files on #2020.
+    lease was renewed.
+    → If `dhcp.leaseStartForm` is `local` and either command refuses with `the lease start … is out of
+    range`, the problem is how the zoneless start was read, not the renewal: the start came out later
+    than now. Report both outputs, `date` and `ipconfig getsummary en0` on #2020, and don't fall back
+    because of it. A start read too early is not detectable here. It is the safe direction, because the
+    lease then looks as if it expires sooner.
     → If either command's line names a refusal other than the lease (for example `set SOAK_DHCP_SERVER`):
     fix the invocation and run it again. That is not a renewal result.
     → If SSH fails, the address changed, or the lease start did not move: the renewal did not happen

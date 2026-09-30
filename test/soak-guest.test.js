@@ -639,7 +639,10 @@ describe('soak guest: admin verifier', () => {
 
   for (const zone of ['UTC', 'America/Los_Angeles', 'Asia/Kolkata']) {
     it(`reads macOS 26's zoneless MM/DD/YYYY LeaseStartTime as the guest's local time (${zone}), and attests the reading`, () => {
-      const start = mdyStartAgo(3600, zone);
+      // A wall time in a repeated DST hour names two instants; start where the
+      // offset is steady for an hour either side, so it names one.
+      const steady = (s) => mdyStartAgo(s - 3600, zone).offset === mdyStartAgo(s + 3600, zone).offset;
+      const start = mdyStartAgo([3600, 4 * 3600].find(steady), zone);
       const f = guestFakes(tmp, { ipconfig: packetWith(TIMING, `LeaseStartTime : ${start.raw}`) });
       const r = setup(['--verify-admin'], f, tmp, { TZ: zone });
       assert.equal(r.status, 0, r.stderr);
