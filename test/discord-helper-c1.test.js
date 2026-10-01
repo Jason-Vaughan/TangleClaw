@@ -123,9 +123,11 @@ function fakeDiscord() {
   const byNonce = new Map();
   let next = 5000000000000000;
   return {
-    messages, reactions, down: false,
+    messages, reactions, down: false, reject: false,
     async createMessage(channelId, m) {
       if (this.down) throw new DiscordError(0, null, 'no');
+      // Discord's answer to content it will not take.
+      if (this.reject) throw new DiscordError(400, 50035);
       if (byNonce.has(m.nonce)) return { id: byNonce.get(m.nonce) };
       const id = String(next++);
       byNonce.set(m.nonce, id);
@@ -317,8 +319,45 @@ describe('discord helper against the real operator channel', () => {
     assert.equal(discord.messages.length, 1, 'posted once');
   });
 
+  it('discards a notification Discord rejects, once the operator says so: recorded as discarded, never delivered, its text gone', async () => {
+    const emitted = notify.onOperatorAlerted({ exchange_id: `mx_${seq}`, recipient_project_id: target.id });
+    assert.equal(emitted.emitted, true, JSON.stringify(emitted));
+    const text = store.operatorChannel.getOutbound(emitted.id).text;
+    assert.ok(text && text.length > 0, 'precondition: the item has text to drop');
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'state-'));
+    const state = openState(path.join(dir, 'state.json'));
+    const lines = [];
+    const out = createOutbound({ c1, rest: discord, state, channelId: ALLOW.channelId, log: (code, fields) => lines.push({ code, ...fields }) });
+
+    discord.reject = true;
+    assert.equal(await out.tick(), 'ok');
+    assert.equal(state.get(emitted.id).state, 'rejected');
+    assert.equal(store.operatorChannel.getOutbound(emitted.id).state, 'relayable', 'held by the helper, still waiting on TangleClaw');
+    discord.reject = false;
+
+    // The operator, with the helper stopped, discards it; the helper's next poll carries that to TangleClaw.
+    out.settleHeld(emitted.id, { discard: true });
+    assert.equal(await out.tick(), 'ok');
+    const row = store.operatorChannel.getOutbound(emitted.id);
+    assert.equal(row.state, 'discarded');
+    assert.equal(row.reason, 'rejected-by-chat');
+    assert.equal(row.text, null);
+    assert.equal(row.delivered_ref, null);
+    assert.equal(state.get(emitted.id), undefined);
+    assert.equal(discord.messages.length, 0, 'nothing of it was posted');
+    assert.ok(!(await c1.listOutbound()).some((i) => i.id === emitted.id), 'it is no longer listed');
+    assert.deepEqual(lines.map((l) => l.code), ['outbound-rejected', 'outbound-discarded']);
+    assert.doesNotMatch(JSON.stringify(lines), new RegExp(text.slice(0, 20).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'the log never carries its text');
+
+    // The same discard again is answered from the record; a claim that it posted is refused.
+    assert.deepEqual((await c1.discard(emitted.id, 'rejected-by-chat')).body, { id: emitted.id, state: 'discarded', reason: 'rejected-by-chat', duplicate: true });
+    await assert.rejects(c1.ack(emitted.id, '444444444444444444'), (err) => err.status === 409 && err.refusalCode === 'NOT_RELAYABLE');
+    await assert.rejects(c1.discard(emitted.id, 'rejected-by-chat-partly-posted'), (err) => err.status === 409 && err.refusalCode === 'DISCARD_REASON_MISMATCH');
+    assert.equal(store.operatorChannel.getOutbound(emitted.id).state, 'discarded');
+  });
+
   it('the channel token reaches nothing but the channel routes', async () => {
-    assert.deepEqual(Object.keys(c1).sort(), ['ack', 'listOutbound', 'sendInbound']);
+    assert.deepEqual(Object.keys(c1).sort(), ['ack', 'discard', 'listOutbound', 'sendInbound']);
     for (const p of ['/api/projects', '/api/config', '/api/operator-channel/status']) {
       const res = await call(server, 'GET', p, null, { Authorization: `Bearer ${token}` });
       assert.equal(res.status, 403, p);

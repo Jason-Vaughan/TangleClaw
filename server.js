@@ -7838,12 +7838,12 @@ registerMedusaRoutes('/api/master/medusa', resolveMasterMedusaTarget);
 // ── Operator channel: a chat helper's line to one project (docs/operator-channel.md) ──
 //
 // Two kinds of caller. The helper (the Discord bridge) presents the channel's
-// own token on three routes; the perimeter refuses that token everywhere else.
+// own token on four routes; the perimeter refuses that token everywhere else.
 // The operator configures the channel and mints the token; an agent session
 // cannot, and neither can a local script.
 
 /** The only paths an operator channel token may reach. */
-const OPERATOR_CHANNEL_HELPER_PATH = /^\/api\/operator-channel\/(inbound|outbound|outbound\/[^/]+\/ack)$/;
+const OPERATOR_CHANNEL_HELPER_PATH = /^\/api\/operator-channel\/(inbound|outbound|outbound\/[^/]+\/(ack|discard))$/;
 
 /**
  * Answer a channel refusal, or rethrow anything else.
@@ -7914,6 +7914,19 @@ route('POST', '/api/operator-channel/outbound/:id/ack', (req, res, params, body)
   try {
     operatorChannel.authorizeHelper(req);
     const out = operatorChannel.acknowledge(/^\d+$/.test(params.id) ? Number(params.id) : NaN, body);
+    jsonResponse(res, out.status, out.body);
+  } catch (err) {
+    channelRefusal(res, err);
+  }
+});
+
+// POST /api/operator-channel/outbound/:id/discard — the operator discarded an
+// item the chat refused to post: `{reason}`, one of the channel's closed
+// reasons. Its text is dropped and it is recorded as discarded, never delivered.
+route('POST', '/api/operator-channel/outbound/:id/discard', (req, res, params, body) => {
+  try {
+    operatorChannel.authorizeHelper(req);
+    const out = operatorChannel.discard(/^\d+$/.test(params.id) ? Number(params.id) : NaN, body);
     jsonResponse(res, out.status, out.body);
   } catch (err) {
     channelRefusal(res, err);
@@ -10904,7 +10917,7 @@ async function handleRequest(req, res) {
   req.tcGateState = gateState;
   req.tcGateActive = !authGate.standsDown(gateState);
 
-  // An operator channel token is good for the channel helper's three routes and
+  // An operator channel token is good for the channel helper's four routes and
   // nothing else. The helper that holds it relays a chat service, so nothing it
   // sends may reach a route that would read it as the operator — refused here,
   // at the perimeter, rather than in each operator check it could otherwise meet.

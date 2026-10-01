@@ -108,6 +108,59 @@ instead of rewriting it:
   inbound reply and thread references, an outbound `source_project_id`, and a pin table. Each is a
   new nullable column or a new table, so none of them needs this migration reopened.
 
+## Amendment (2026-10-01): a `discarded` state, in a second migration
+
+**Status:** Accepted by Architect ruling for #1799 (Medusa `c666e145`).
+
+### Context
+
+The Discord helper holds an item Discord refuses outright (HTTP 400) as `rejected`. Such an item was
+not posted and would be refused again, so it needs an exit that is true. The outbound table's `state`
+CHECK admitted `unverified`, `relayable`, `delivered` and `quarantined`. Acknowledging the item would
+record it `delivered` under a Discord id that is not its own.
+
+### Decision
+
+1. **`operator_channel_outbound.state` gains `discarded`.** It is the operator's disposition for an
+   item TangleClaw was willing to hand on and the chat refused. The `reason` column carries one of two
+   closed values, `rejected-by-chat` or `rejected-by-chat-partly-posted`. The row's text is cleared and
+   `delivered_ref` stays NULL.
+2. **`quarantined` is not reused.** It means TangleClaw itself judged a received message unfit to
+   hand on: a provenance and security isolation. An operator's intentional disposition is a
+   different fact, and the status counts keep the two apart.
+3. **A second migration, v53, rebuilds the table.** SQLite cannot alter a CHECK in place. Inside one
+   `BEGIN IMMEDIATE` the migration:
+   - creates the table in its final shape under a temporary name;
+   - copies every row by column name, and refuses to go on unless the counts match;
+   - carries the AUTOINCREMENT high-water mark over, so an id is never reused. The helper's durable
+     record and its Discord nonces are keyed by outbound id;
+   - drops the old table, renames the new one, and recreates the state index and the notification
+     key index;
+   - proves the whole postcondition before the version advances.
+4. **The shape v52 creates is the final shape too.** The table DDL is shared, so a fresh install and
+   a store migrating from v51 get `discarded` at once, and the v53 step finds nothing to rebuild.
+   Only a store already stamped v52 is rebuilt.
+5. **Every startup checks the new state as well,** after the migrations have run, so a store one
+   version back is rebuilt and not refused, and a store stamped current that cannot hold a
+   `discarded` row is refused at start.
+6. **One helper route is added:** `POST /api/operator-channel/outbound/:id/discard`. The channel
+   token's scope is the four helper routes.
+
+### Why a second version, when Decision 8 and the first alternative below kept the fold to one
+
+The fold's reason for one version was that both of the stack's migrations were unshipped and no
+database held their shape. That no longer holds for v52: the folded shape was accepted and pushed as
+a candidate, so a store stamped v52 can exist. Changing v52's DDL in place would leave such a store
+at the current version with a CHECK that refuses `discarded`.
+
+### Consequences
+
+- A rollback of one version needs no step. The rebuilt table has the same columns and keys, the
+  older server's storage check passes, and it never lists or moves a `discarded` row.
+- The HTTP API gains one route and one refusal code set. `GET /api/operator-channel/outbound` is
+  unchanged.
+- The numbering rule of Decision 8 applies to v53 as it does to v52.
+
 ## Alternatives considered
 
 - **Keep two migrations, renumbered to v52 and v53.** Rejected. It spends two versions on unshipped

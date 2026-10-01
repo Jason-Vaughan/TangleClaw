@@ -35,6 +35,90 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-01 — Discord helper: a held reply can be settled completely and truthfully; the operator channel gains a `discarded` state (#1799)
+
+<!-- prawduct: type=feature | scope=discord-helper-1799 -->
+
+TC-RM18 Chunk 7, dispatched by the Architect (Medusa 3d478545) under Rule #154, on
+`feat/1799-discord-helper-on-2031-fold` from `f72f10ad`. Not committed until the Architect authorizes the
+frozen diff; not pushed. It resolves observations O-3 and O-14 of Critic `rev-20261001T005003Z-4bdc34d4`,
+and carries the lock temp-file test accepted at Chunk 6's verify (`rev-20261001T014543Z-0cbacc54`).
+
+**Why:** two held states had no settlement that was both complete and true.
+- A reply posted in several Discord messages and held at part 2 or later could only be ended early
+  (`--posted` acknowledged it and never posted the later parts) or have its doubtful part posted again.
+  `--posted` also acknowledged it with whatever id was typed, not the first part's.
+- A reply Discord rejected (400) could only be acknowledged under an id that was not its own, or reposted
+  and rejected again. Held items stay at the head of TangleClaw's oldest-first listing, so they accumulated.
+
+**Ruling (Architect, Medusa c666e145), asked before any server code was written:** a distinct durable state
+`discarded` with a v53 table-rebuild migration and an ADR 0022 amendment; `quarantined` is provenance and
+security isolation and is not reused; the fourth helper route and the strict settlement matrix confirmed;
+closed reasons only; idempotent only for the same reason.
+
+**What:**
+- `outbound.js`:
+  - An entry records `total`, the number of parts the item splits into.
+  - `settleHeld` (was `settleUncertain`) applies a strict matrix. `uncertain` takes `{postedId}` or
+    `{repost}`; `rejected` takes only `{discard}`; anything else is a `SettleError` and changes nothing.
+  - `{postedId}` appends the id to the parts recorded. On the last part the entry becomes `posted` with the
+    FIRST part's id; otherwise it returns to `posting` and the next poll posts from the next part. An id
+    already recorded for an earlier part is refused.
+  - `{discard}` makes the entry `discarding`, with the reason `rejected-by-chat` or
+    `rejected-by-chat-partly-posted`. The next poll calls the discard route before listing.
+  - A 400 answering a retry made while an earlier attempt is still in doubt holds the item `uncertain`,
+    not `rejected`. [DECISION] `rejected` must mean "Discord did not post it", because that is what a
+    discard records.
+  - The relay posts only from `posting` and `posted`. An entry in any other state, including one it does
+    not know, is skipped.
+  - A discard TangleClaw has nothing left to make (404 `NOT_FOUND`, or 409) drops the entry and logs
+    `outbound-discard-unneeded`, so the log says what became of it.
+  - A discard TangleClaw could not be asked about (no answer, 401, 429, 5xx) ends the poll and is retried.
+    A refusal about the one request (403 or 400 from a server older than the helper) returns the entry to
+    `rejected` and the poll goes on. [DECISION] One item must not stall every reply behind it.
+- `c1-client.js`: a fourth method and path, `discard`. `log.js`: `outbound-discarded`,
+  `outbound-discard-failed`, `outbound-discard-unneeded`.
+- `cli.js`: `settle --discard`; exactly one finding per call; output that names the part confirmed and what
+  the helper does next; refusals that name the settlement that fits; `status` shows the part a multi-part
+  reply is held at. An error `settle` did not expect, or a refusal it has no words for, is rethrown, not
+  reported as a bad id.
+- `store.js`: `operator_channel_outbound.state` admits `discarded`. The v53 migration rebuilds the table in
+  one transaction: rows copied by name and counted, the AUTOINCREMENT mark carried over, both indexes
+  recreated, the postcondition proven before the version advances. The table DDL is shared, so a fresh
+  install and a v51 store get the final shape directly. Every boot checks the state is admitted, after the
+  migrations. `discardOutbound` moves only a `relayable` row, clears its text and leaves `delivered_ref`.
+- `operator-channel.js`: `DISCARD_REASONS` and `discard`. The update decides and the answer is read from
+  the row: 200, 200 `duplicate` for the same reason, `409 DISCARD_REASON_MISMATCH`, `409 NOT_RELAYABLE`,
+  `404`, `400 BAD_DISCARD`.
+- `server.js`: `POST /api/operator-channel/outbound/:id/discard`; the token scope pattern admits exactly
+  the four helper routes.
+- Docs: `docs/discord-helper.md` ("Settling a held reply", the three codes), `docs/operator-channel.md`
+  (the route, "Discarding", storage and rollback), ADR 0022 amendment, `CHANGELOG.md`, `FEATURES.md`.
+
+**Boundary investigation.** The discard route's only consumer is `c1-client.js`. The outbound `state`
+column is read by `lib/operator-channel.js` and `lib/store.js` only; no dashboard file reads it.
+`acknowledge` already answers any state but `relayable` and `delivered` with `409 NOT_RELAYABLE`, which now
+covers `discarded` (tested). A server one version back passes its own storage check on the rebuilt table
+and refuses the discard route for the channel token; the helper then holds the item `rejected` again.
+
+**Deliberate correction to earlier behaviour.** `settle --posted` and `--repost` were accepted for a
+`rejected` reply. They are now refused. One existing test asserted the old behaviour (a `--repost` of a
+rejected reply ending in an acknowledgement); it now asserts the rejected record, and the refusal and the
+discard path are tested beside it. One CLI fixture gained `total: 1`, which every entry the relay writes
+now carries. No other test changed its expectation.
+
+**Tests:** new cases in `test/discord-helper.test.js` (settlement matrix, multi-part continuation in both
+directions, final-part completion, discard and each of its failures, the 400-in-doubt hold),
+`test/discord-helper-cli.test.js` (settle output and refusals, `status`, the discard reaching TangleClaw,
+the carried lock temp-file test), `test/discord-helper-c1.test.js` (a rejected notification discarded
+through the real routes and store), `test/api-operator-channel.test.js` (the route, its closed reasons,
+idempotency, refusals, and the four-route token scope with near-miss paths), and
+`test/store-operator-channel-migration.test.js` (the rebuild). The mutants run against them, and what each
+changed, are listed in the chunk's evidence package.
+
+**Not verified here:** nothing has touched Discord. The live round trip on the operator's Mac is still
+owed (`docs/discord-helper.md`, "Verification on the operator's Mac").
+
 ## 2026-10-01 — Discord helper: failed writes, unexpected poll failures and a malformed base URL are answered by closed code (#1799)
 
 <!-- prawduct: type=bugfix | scope=discord-helper-1799 -->
@@ -80,9 +164,10 @@ part once.
 
 **Tests (none weakened):** new cases in `test/discord-helper.test.js` (state, outbound) and
 `test/discord-helper-cli.test.js` (configure, run, verify, status, settle). The write failure is injected
-by a directory where the write's temp file goes, so it works on any host and as any user. One mutant per
-new behaviour was run against these tests, and each turns a test red (the list is in the chunk's evidence
-package).
+by a directory where the write's temp file goes, so it works on any host and as any user. Mutants of the
+new behaviour were run against these tests, and each one run turns a test red (the list is in the chunk's
+evidence package). One behaviour had no mutant at the time: the lock's temp file moving inside the block
+that removes it. Its test and mutant arrived with the next chunk (the 2026-10-01 settlement entry above).
 
 ## 2026-09-30 — Discord helper on the folded operator channel: candidate restack of #2003 (#1799, #2031)
 

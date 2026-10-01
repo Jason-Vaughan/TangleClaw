@@ -13,7 +13,7 @@ It talks to Discord over Discord's API and Gateway only. The Discord desktop app
 
 - **Conversation, never authority.** A Discord message is delivered to the project stamped as conversation. It cannot approve a merge, a release, a deletion or any other privileged action, whatever it says, and the helper attaches no meaning to it.
 - **One operator, one server, one channel.** Messages from anyone else, from another server or channel, from a bot (itself included) or from a webhook are ignored. They are ignored by their ids, before their text is read, so nothing of theirs reaches TangleClaw, a log or a reply.
-- **Only the channel's three routes.** The helper holds the channel's `ocsk_` token, which TangleClaw refuses on every other route. It has no dashboard session and no service token.
+- **Only the channel's four helper routes.** The helper holds the channel's `ocsk_` token, which TangleClaw refuses on every other route. It has no dashboard session and no service token.
 - **Text only.** Attachments, voice and slash commands are not relayed.
 - **✅ means TangleClaw has the message, not that the project read it.** TangleClaw delivers it when the project's session is next live. If that delivery later fails, or its outcome is lost, TangleClaw says so with a "Message not delivered" notification posted as a reply to that message (see Notifications the operator sees). That message is the one to send again. `GET /api/operator-channel/status` also counts messages by state (`failed`, `send_unknown`).
 - **Messages sent while the helper is down are not caught up.** The Gateway does not replay them. Send those messages again once `status` shows the Gateway `ready`. Replies and notifications are different: they wait on TangleClaw's side, so nothing is lost while the helper or Discord is down.
@@ -84,20 +84,49 @@ A reply or notification is acknowledged to TangleClaw only after Discord has pos
 - **The helper restarts after posting but before acknowledging:** it acknowledges the same reply, and posts nothing again.
 - **A post's outcome is unknown** (a timeout, or a crash mid-post): the helper retries with the same nonce for up to 2 minutes, and Discord returns the message it already made rather than a second one.
 - **Past that, a retry could duplicate the reply,** so the reply is held as `uncertain`. It is never reposted or acknowledged by itself. `status` lists it.
-- **Discord rejects a reply's content** (HTTP 400): the reply is held as `rejected`, and the replies after it keep moving.
-
-To settle a held reply, stop the helper (`launchctl bootout gui/$(id -u)/com.tangleclaw.discord-helper`), look in the channel, then run one of:
-
-```sh
-bin/tc-discord-helper settle <id> --posted <discord message id>   # it did post: acknowledge it with that id
-bin/tc-discord-helper settle <id> --repost                         # it did not: post it on the next run
-```
-
-Then start the helper again with `bin/tc-discord-helper install-launchd`.
+- **Discord rejects a reply's content** (HTTP 400): the reply is held as `rejected`, and the replies after it keep moving. `rejected` means Discord did not post it. If the 400 answers a retry of an attempt whose outcome is still unknown, the reply is held as `uncertain` instead, because it may have posted.
 
 If the helper cannot write its record, it posts nothing it could not record first, logs `state-write-failed` and tries again later. Nothing is lost or posted twice: the replies wait on TangleClaw.
 
-A reply longer than Discord's 2000 characters is posted as up to 5 messages, in order. Anything past that is cut, with a note saying how many characters were left out.
+A reply longer than Discord's 2000 characters is posted as up to 5 messages (parts), in order. Anything past that is cut, with a note saying how many characters were left out. The reply is acknowledged to TangleClaw with its first part's id.
+
+## Settling a held reply
+
+A held reply stays held until you settle it. `status` lists each one with its state and, for a reply posted in parts, the part it stopped at:
+
+```
+reply 12: uncertain, part 2 of 3 (settle it: see docs/discord-helper.md)
+reply 15: rejected (settle it: see docs/discord-helper.md)
+```
+
+Stop the helper first (`launchctl bootout gui/$(id -u)/com.tangleclaw.discord-helper`), look in the channel, then run the one command that matches what you see. Each held state takes only the settlements that are true of it, and `settle` refuses the others without changing anything.
+
+| Held as | What you see in the channel | Command | What happens |
+|---|---|---|---|
+| `uncertain` | The part did post. | `settle <id> --posted <discord message id>` | The id is recorded for that part. The helper posts the parts after it, if any, then acknowledges the reply. |
+| `uncertain` | The part did not post. | `settle <id> --repost` | The helper posts that part again, then the parts after it. |
+| `rejected` | Nothing: Discord refused it. | `settle <id> --discard` | The helper tells TangleClaw, which drops the reply's text and records it as discarded. It is never recorded as delivered. |
+
+```sh
+bin/tc-discord-helper settle <id> --posted <discord message id>
+bin/tc-discord-helper settle <id> --repost
+bin/tc-discord-helper settle <id> --discard
+```
+
+Then start the helper again with `bin/tc-discord-helper install-launchd`. The settlement takes effect on its next poll.
+
+**A reply posted in parts.** "The part" is the one `status` names: with `part 2 of 3`, part 1 posted and is recorded, and part 2 is the one in doubt.
+- `--posted` takes the Discord id of that one part, not of the first. The parts already recorded keep their ids, and an id already recorded for an earlier part is refused. If it was the last part, the reply is complete.
+- `--repost` never posts the earlier parts again.
+- Whichever you choose, the reply is acknowledged with its first part's id once every part has posted.
+
+**A rejected reply.** `--posted` and `--repost` are refused for it: Discord said it did not post, and the same content would be refused again.
+- `--discard` is the only settlement. TangleClaw records the reply as `discarded` with the reason `rejected-by-chat`.
+- If earlier parts of it did post, the reason is `rejected-by-chat-partly-posted`. Those parts stay in the channel, and the parts from the rejected one on are never posted.
+- The project is not told. If the reply mattered, ask the project to send it again in a form Discord accepts.
+- `--discard` is refused for an `uncertain` reply, because it may have posted.
+
+`settle` run a second time for a reply already settled says it is not held, and changes nothing.
 
 ## Notifications the operator sees
 
@@ -140,7 +169,10 @@ When TangleClaw refuses a message, the helper replies to it in fixed words and a
 | `lock-failed` | The lock file `~/.tangleclaw/discord-helper/helper.pid` could not be taken or written, for the same reasons. The helper exits with status 78, and `settle` changes nothing. Fix the directory, then start the helper or run `settle` again. |
 | `helper-already-running` | Another helper is running. With `pid: -1`, the lock file `~/.tangleclaw/discord-helper/helper.pid` is unreadable instead: the helper never leaves one like that, so something else damaged it. Check that no helper is running (`pgrep -fl tc-discord-helper`), then delete the file. |
 | `gateway-fatal` | Discord refused the connection for a reason a retry cannot fix. The close code is in the log and in `status`: 4004 is a bad bot token (run `set-secret bot`), and 4014 means Message Content Intent is off (step 1). The helper keeps posting replies, but reads nothing until it is restarted. |
-| `outbound-uncertain`, `outbound-rejected` | A reply is held; see "How a reply is delivered, and when it is held". |
+| `outbound-uncertain`, `outbound-rejected` | A reply is held; see "Settling a held reply". |
+| `outbound-discarded` | TangleClaw recorded a reply you discarded. Nothing to do. |
+| `outbound-discard-unneeded` | TangleClaw had nothing left to discard for a reply you discarded: it holds no such item (`status` 404), or the item is no longer waiting (409: already delivered, or already discarded under the other reason). The helper forgets the reply. Nothing to do; `GET /api/operator-channel/status` counts items by state. |
+| `outbound-discard-failed` | TangleClaw could not be told about a discard. The line gives the HTTP status (`0` for no answer). With no answer, a `401`, a `429` or a `5xx`, the helper tries again with backoff and relays nothing meanwhile. With any other status (a `403` or a `400`), TangleClaw did not accept the request, usually because the server is older than the helper: the reply is held as `rejected` again and the rest keep moving. Restart TangleClaw on the current version, then run `settle <id> --discard` again. |
 | `outbound-pass-failed` | A poll for replies ended on a failure the helper did not expect. The line gives the failure's type (`error`) and never its message. The helper retries with backoff; if the code repeats, it is a defect to report, with the log lines around it. |
 | `outbound-poll-failed`, `inbound-transport-failed` | TangleClaw could not be reached. |
 | `outbound-post-failed` | Discord refused a post or could not be reached; it is retried with backoff. |

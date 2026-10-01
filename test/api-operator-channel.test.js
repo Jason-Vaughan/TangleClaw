@@ -646,6 +646,142 @@ describe('API — operator channel', () => {
     });
   });
 
+  describe('discarding an item the chat refused', () => {
+    const TEXT = 'TangleClaw: a project reports its work is blocked.';
+
+    /**
+     * A notification waiting for the helper.
+     * @returns {object} Its outbound row
+     */
+    const waiting = () => {
+      seq += 1;
+      return store.operatorChannel.insertNotification({ type: 'work-blocked', key: `discard-${seq}`, projectId: null, text: TEXT, at: new Date(clock).toISOString() }).row;
+    };
+    const discard = (id, body, headers = helper()) => call(server, 'POST', `/api/operator-channel/outbound/${id}/discard`, body, headers);
+
+    it('records a reply as discarded under the reason given, drops its text, and never as delivered', async () => {
+      bringTargetOnline();
+      const body = msg();
+      await call(server, 'POST', '/api/operator-channel/inbound', body, helper());
+      await operatorChannel.pump();
+      const inHub = store.operatorChannel.getInboundByExternalId(body.message.id).hub_id;
+      const reply = await call(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/medusa/send`,
+        { to: channelWs, message: 'a reply the chat will refuse', inReplyTo: inHub }, targetBinding.headers);
+      assert.equal(reply.status, 200, JSON.stringify(reply.data));
+      deliverToChannel(reply.data.id, targetWs, 'a reply the chat will refuse');
+      const listed = await call(server, 'GET', '/api/operator-channel/outbound', null, helper());
+      const r = listed.data.replies.find((i) => i.text === 'a reply the chat will refuse');
+      assert.ok(r, 'precondition: the reply is waiting');
+
+      clock += 1000;
+      const res = await discard(r.id, { reason: 'rejected-by-chat' });
+      assert.equal(res.status, 200, JSON.stringify(res.data));
+      assert.deepEqual(res.data, { id: r.id, state: 'discarded', reason: 'rejected-by-chat', duplicate: false });
+      const row = store.operatorChannel.getOutbound(r.id);
+      assert.equal(row.state, 'discarded');
+      assert.equal(row.reason, 'rejected-by-chat');
+      assert.equal(row.text, null, 'the text is dropped');
+      assert.equal(row.delivered_ref, null, 'nothing was posted, so there is no posted reference');
+      assert.equal(row.updated_at, new Date(clock).toISOString());
+      assert.equal(row.kind, 'reply');
+      assert.equal(row.hub_id, reply.data.id, 'the record of which message it was is kept');
+
+      const after = await call(server, 'GET', '/api/operator-channel/outbound', null, helper());
+      assert.ok(!after.data.replies.some((i) => i.id === r.id), 'it has left the relay queue');
+      const status = await call(server, 'GET', '/api/operator-channel/status', null, op);
+      assert.ok(status.data.counts.outbound.discarded >= 1, 'the operator sees it counted as discarded');
+      assert.doesNotMatch(JSON.stringify(status.data), /the chat will refuse/);
+
+      // It cannot be turned into a delivery afterwards.
+      const ack = await call(server, 'POST', `/api/operator-channel/outbound/${r.id}/ack`, { postedId: '444444444444444444' }, helper());
+      assert.equal(ack.status, 409);
+      assert.equal(ack.data.code, 'NOT_RELAYABLE');
+      assert.equal(store.operatorChannel.getOutbound(r.id).state, 'discarded');
+      assert.equal(store.operatorChannel.getOutbound(r.id).delivered_ref, null);
+    });
+
+    it('answers the same discard again from its record, and refuses another reason for it', async () => {
+      const row = waiting();
+      const first = await discard(row.id, { reason: 'rejected-by-chat-partly-posted' });
+      assert.deepEqual(first.data, { id: row.id, state: 'discarded', reason: 'rejected-by-chat-partly-posted', duplicate: false });
+      const recorded = store.operatorChannel.getOutbound(row.id);
+      clock += 5000;
+      for (let i = 0; i < 2; i++) {
+        const again = await discard(row.id, { reason: 'rejected-by-chat-partly-posted' });
+        assert.equal(again.status, 200);
+        assert.deepEqual(again.data, { id: row.id, state: 'discarded', reason: 'rejected-by-chat-partly-posted', duplicate: true });
+      }
+      const other = await discard(row.id, { reason: 'rejected-by-chat' });
+      assert.equal(other.status, 409);
+      assert.equal(other.data.code, 'DISCARD_REASON_MISMATCH');
+      assert.deepEqual(store.operatorChannel.getOutbound(row.id), recorded, 'the first record stands, untouched');
+    });
+
+    it('accepts exactly the documented reasons', async () => {
+      assert.deepEqual([...operatorChannel.DISCARD_REASONS], ['rejected-by-chat', 'rejected-by-chat-partly-posted']);
+      assert.ok(Object.isFrozen(operatorChannel.DISCARD_REASONS));
+      const row = waiting();
+      for (const body of [null, {}, { reason: 'because' }, { reason: 42 }, { reason: 'delivered' }, { reason: 'Rejected-By-Chat' },
+        { reason: ['rejected-by-chat'] }, { postedId: '444444444444444444' }]) {
+        const res = await discard(row.id, body);
+        assert.equal(res.status, 400, JSON.stringify(body));
+        assert.equal(res.data.code, 'BAD_DISCARD', JSON.stringify(body));
+      }
+      const still = store.operatorChannel.getOutbound(row.id);
+      assert.equal(still.state, 'relayable', 'a refused discard moves nothing');
+      assert.equal(still.text, TEXT);
+      for (const reason of operatorChannel.DISCARD_REASONS) {
+        const each = waiting();
+        const res = await discard(each.id, { reason });
+        assert.equal(res.status, 200, reason);
+        assert.equal(store.operatorChannel.getOutbound(each.id).reason, reason);
+      }
+    });
+
+    it('refuses a discard for an item that is not waiting', async () => {
+      for (const id of ['999999', 'abc', '1.5', '-1']) {
+        const res = await discard(id, { reason: 'rejected-by-chat' });
+        assert.equal(res.status, 404, id);
+        assert.equal(res.data.code, 'NOT_FOUND', id);
+      }
+
+      // Already posted: it stays delivered, with the reference it was posted under.
+      const posted = waiting();
+      await call(server, 'POST', `/api/operator-channel/outbound/${posted.id}/ack`, { postedId: '444444444444444444' }, helper());
+      const afterAck = await discard(posted.id, { reason: 'rejected-by-chat' });
+      assert.equal(afterAck.status, 409);
+      assert.equal(afterAck.data.code, 'NOT_RELAYABLE');
+      const delivered = store.operatorChannel.getOutbound(posted.id);
+      assert.equal(delivered.state, 'delivered');
+      assert.equal(delivered.delivered_ref, '444444444444444444');
+      assert.equal(delivered.reason, null);
+
+      // Not yet judged, and judged unfit: neither was ever the helper's to discard.
+      deliverToChannel('hub-undecided', 'rogue-0000abcd', 'placed straight on the Bridge');
+      const undecided = store.getDb().prepare("SELECT * FROM operator_channel_outbound WHERE hub_id = 'hub-undecided'").get();
+      assert.equal(undecided.state, 'unverified', 'precondition');
+      assert.equal((await discard(undecided.id, { reason: 'rejected-by-chat' })).data.code, 'NOT_RELAYABLE');
+      assert.equal(store.operatorChannel.getOutbound(undecided.id).state, 'unverified');
+      assert.equal(store.operatorChannel.getOutbound(undecided.id).text, 'placed straight on the Bridge');
+      clock += operatorChannel.QUARANTINE_AFTER_MS + 1000;
+      await call(server, 'GET', '/api/operator-channel/outbound', null, helper());
+      const quarantined = await discard(undecided.id, { reason: 'rejected-by-chat' });
+      assert.equal(quarantined.status, 409);
+      assert.equal(quarantined.data.code, 'NOT_RELAYABLE');
+      const kept = store.operatorChannel.getOutbound(undecided.id);
+      assert.equal(kept.state, 'quarantined');
+      assert.equal(kept.reason, 'no-tracked-send', 'a quarantine keeps its own reason');
+    });
+
+    it('is the helper\'s alone: no token, a stale token and the operator\'s own session are all refused', async () => {
+      const row = waiting();
+      assert.equal((await discard(row.id, { reason: 'rejected-by-chat' }, {})).status, 401);
+      assert.equal((await discard(row.id, { reason: 'rejected-by-chat' }, helper('ocsk_not-the-token'))).status, 401);
+      assert.equal((await discard(row.id, { reason: 'rejected-by-chat' }, op)).status, 401);
+      assert.equal(store.operatorChannel.getOutbound(row.id).state, 'relayable');
+    });
+  });
+
   describe('fences', () => {
     it('refuses the helper routes without a valid token, and an old token after rotation', async () => {
       const none = await call(server, 'POST', '/api/operator-channel/inbound', msg());
@@ -664,6 +800,34 @@ describe('API — operator channel', () => {
         const r = await call(server, method, p, null, { ...op, ...helper(), 'x-tangleclaw-client': 'dashboard' });
         assert.equal(r.status, 403, `${method} ${p}`);
         assert.equal(r.data.code, 'CHANNEL_TOKEN_SCOPE', `${method} ${p}`);
+      }
+    });
+
+    it('accepts a channel token on exactly the four helper routes', async () => {
+      // Each of the four reaches its handler, which then judges the (empty) request on its merits.
+      for (const [method, p, status, code] of [
+        ['POST', '/api/operator-channel/inbound', 400, 'BAD_MESSAGE'],
+        ['GET', '/api/operator-channel/outbound', 200, undefined],
+        ['POST', '/api/operator-channel/outbound/999999/ack', 400, 'BAD_ACK'],
+        ['POST', '/api/operator-channel/outbound/999999/discard', 400, 'BAD_DISCARD']
+      ]) {
+        const r = await call(server, method, p, method === 'GET' ? null : {}, helper());
+        assert.equal(r.status, status, `${method} ${p}`);
+        assert.equal(r.data.code, code, `${method} ${p}`);
+      }
+      // Anything beside them, however close, is refused at the perimeter, whatever the method.
+      for (const p of [
+        '/api/operator-channel/outbound/1', '/api/operator-channel/outbound/1/', '/api/operator-channel/outbound/1/discarded',
+        '/api/operator-channel/outbound/1/discard/again', '/api/operator-channel/outbound/1/2/discard',
+        '/api/operator-channel/outbound//discard', '/api/operator-channel/outbound/1/ack/x', '/api/operator-channel/outbound/1/requeue',
+        '/api/operator-channel/discard', '/api/operator-channel/inbound/1', '/api/operator-channel/status',
+        '/api/operator-channel/config', '/api/operator-channel/token', '/api/operator-channel'
+      ]) {
+        for (const method of ['GET', 'POST']) {
+          const r = await call(server, method, p, method === 'GET' ? null : {}, helper());
+          assert.equal(r.status, 403, `${method} ${p}`);
+          assert.equal(r.data.code, 'CHANNEL_TOKEN_SCOPE', `${method} ${p}`);
+        }
       }
     });
 

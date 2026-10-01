@@ -1,6 +1,6 @@
 # Operator channel
 
-Status: experimental. One schema migration creates the channel's storage (ADR 0022).
+Status: experimental. One schema migration creates the channel's storage, and a second adds the `discarded` state (ADR 0022 and its amendment).
 
 The operator channel lets a local chat helper, such as the Discord bridge, talk to one TangleClaw project on the operator's behalf:
 
@@ -30,7 +30,7 @@ This page covers TangleClaw's side. The Discord helper (the Gateway client, wher
 - **Minting:** the operator mints the helper's token with `POST /api/operator-channel/token`. It starts with `ocsk_`, is shown once, and only its SHA-256 is stored. Minting again revokes the previous token at once.
 - **A signed-in session is required.** Minting the token and changing the settings need an operator signed in to TangleClaw's own login. The dashboard's headers on an open gate are not enough, because any local process can send them. On an install whose gate is open or in fallback behind Caddy, these two routes refuse everyone (`403 OPERATOR_VERIFICATION_REQUIRED`), so the channel cannot be set up until the gate is armed. Reading the status needs only what any operator read needs.
 - **Changes are logged.** Rotating the token logs one info line (never the token). Changing the settings logs one info line naming each field the request set and its new value: `enabled`, `targetProject` and the allowlisted author, space and channel ids. None of them is secret.
-- **Scope:** the token is good for exactly three routes, listed below. **A request carrying an `ocsk_` token is refused on every other route** with `403 CHANNEL_TOKEN_SCOPE`, even if it also carries dashboard headers or a signed-in session. The helper relays a third-party chat, so nothing it sends may be read as the operator.
+- **Scope:** the token is good for exactly four routes, listed below. **A request carrying an `ocsk_` token is refused on every other route** with `403 CHANNEL_TOKEN_SCOPE`, even if it also carries dashboard headers or a signed-in session. The helper relays a third-party chat, so nothing it sends may be read as the operator.
 
 ## Routes
 
@@ -41,6 +41,7 @@ The helper calls these with `Authorization: Bearer <token>`:
 | `POST /api/operator-channel/inbound` | Hands over one message: `{message: {id, authorId, spaceId, channelId}, text}`. Returns `202` for a new message and `200` for an id already accepted, which changes nothing. Delivery is asynchronous. |
 | `GET /api/operator-channel/outbound` | What is waiting to be posted: `{replies: [{id, kind, type, text, inReplyTo: {messageId} or null, receivedAt}]}`. `kind` is `reply` for a project's reply and `notification` for a server notification, whose `type` names the event (see Notifications); `type` is `null` for a reply. |
 | `POST /api/operator-channel/outbound/:id/ack` | The helper posted a reply or notification: `{postedId}`. Its text is then dropped. A second ack is answered from the record. |
+| `POST /api/operator-channel/outbound/:id/discard` | The operator discarded an item the chat refused to post: `{reason}`. Its text is then dropped and it is recorded as `discarded`, never as delivered. See Discarding. |
 
 Only the operator may call these. An agent session, a local script, and a request carrying a channel token are refused:
 
@@ -107,9 +108,29 @@ The target project replies through its own switchboard route, with its launch he
 
 Every one of these is acknowledged to the Hub once it is recorded, so the Hub does not redeliver it.
 
+## Discarding
+
+A chat can refuse an item outright: Discord answers 400 to content it will not take. Such an item was not posted, so it cannot be acknowledged, and it would be refused again if posted again. The helper holds it until the operator discards it ([discord-helper.md](discord-helper.md), "Settling a held reply"), and then calls `POST /api/operator-channel/outbound/:id/discard`.
+
+- **The body is `{reason}`,** one of two closed values:
+  - `rejected-by-chat`: nothing of the item was posted;
+  - `rejected-by-chat-partly-posted`: the item was posted in parts, and the parts before the refused one did post.
+- **What it records.** The row moves from `relayable` to `discarded` with that reason. Its text is dropped. It gets no posted reference, because nothing was delivered. It leaves the list `GET /outbound` returns.
+- **Answers:**
+  - `200 {id, state: "discarded", reason, duplicate: false}` when the item moved;
+  - `200` with `duplicate: true` for the same discard again, answered from the record;
+  - `409 DISCARD_REASON_MISMATCH` for an item already discarded under the other reason;
+  - `409 NOT_RELAYABLE` for an item in any other state (delivered, quarantined or not yet judged), which is left as it is;
+  - `404 NOT_FOUND` for an id no item has;
+  - `400 BAD_DISCARD` for any other reason, or none.
+- **`discarded` is not `quarantined`.** A quarantine is TangleClaw's own judgement that a received message must not be handed on. A discard is the operator's decision about an item TangleClaw was willing to hand on and the chat refused.
+- **An acknowledgement cannot follow a discard:** `POST .../ack` answers `409 NOT_RELAYABLE`.
+- **It is logged** as one info line with the item's id and the reason, and nothing else.
+- **The sender is not told.** A discarded reply's project learns nothing from TangleClaw. A discarded notification is not raised again, because its key is already recorded.
+
 ## Notifications
 
-TangleClaw also tells the operator when it needs attention, through the same outbound queue. A notification is listed by `GET /outbound` with `kind: 'notification'` and settled by the same acknowledgement, only after the helper has posted it. No route is added, and the channel token reaches nothing new.
+TangleClaw also tells the operator when it needs attention, through the same outbound queue. A notification is listed by `GET /outbound` with `kind: 'notification'` and settled by the same acknowledgement, only after the helper has posted it, or by the same discard if the chat refuses it. Notifications have no route of their own.
 
 Four events are emitted. Each has one source, and each is emitted once per idempotency key:
 
@@ -133,15 +154,24 @@ A notice is recorded just after its message settles, in a separate write. A cras
 ## Storage
 
 - `operator_channel_inbound`: one row per message, unique by the helper's message id. States: `pending`, `sent`, `send_unknown`, `failed`.
-- `operator_channel_outbound`: one row per item for the helper. States: `unverified`, `relayable`, `delivered`, `quarantined`. Each row has a `kind`, and each kind has its own key:
+- `operator_channel_outbound`: one row per item for the helper. States: `unverified`, `relayable`, `delivered`, `quarantined`, `discarded`. A row's `reason` says why it was quarantined or discarded. Each row has a `kind`, and each kind has its own key:
   - a `reply` is a message the channel received, unique by its Hub id (`hub_id`);
   - a `notification` is one TangleClaw raised. It has no Hub id (`hub_id` is NULL), is unique by its idempotency key (`idem_key`), and carries its `notify_type`, when it concerns one its `project_id`, and when it concerns one operator message that message's row in `reply_to_inbound_id`. It is stored as `relayable` from the start.
   - A row CHECK keeps the two keys apart, so no received message can collide with a notification or suppress it, whatever its id. The channel still refuses an arrival whose id breaks the Hub's id rule, because such an id did not come from the Hub.
 - `operator_channel_notify_state`: small key/value state the notifier needs to survive a restart, such as where a `fleet-idle` spell stands.
 
-Text is kept only until it is handed on. Nothing prunes the rows yet: each reply and each notification (an escalation, a lane entering `blocked`, an idle episode, an undelivered message) leaves one small row whose text is cleared once it is posted.
+Text is kept only until it is handed on. Nothing prunes the rows yet: each reply and each notification (an escalation, a lane entering `blocked`, an idle episode, an undelivered message) leaves one small row whose text is cleared once it is posted, quarantined or discarded.
 
-One migration creates all three tables, the notification columns and the key index in their final shape. Its postcondition, checked again at every startup, refuses a table or a key index in any other shape rather than run over it.
+Two migrations build this storage:
+
+- **Schema v52** creates all three tables, the notification columns and the key index. Its postcondition, checked again at every startup, refuses a table or a key index in any other shape rather than run over it.
+- **Schema v53** adds the `discarded` state. SQLite cannot change a column's CHECK in place, so the outbound table is rebuilt in one transaction:
+  - every row is copied under its own id, and the copy is counted;
+  - the table's constraints and both of its indexes are recreated;
+  - the id counter is carried over, so no later item is given an id an earlier one held. The helper's own record is keyed by that id;
+  - if anything fails, the transaction rolls back: the old table and the schema version stand, and TangleClaw does not start.
+
+  A fresh install, and a store migrating from before v52, gets the final table directly. Every startup also checks that the table can hold a `discarded` row.
 
 ### A private database from the abandoned branches
 
@@ -149,7 +179,9 @@ Before #2031, the operator-channel branches carried two migrations of their own.
 
 ## Rolling back
 
-The channel's migration is purely additive over the version before it. The server before it:
+Rolling back one version, to a server that has the channel but not the `discarded` state, needs no step: the rebuilt outbound table has the same columns and keys, so that server's own storage check passes. It leaves `discarded` rows alone and refuses the discard route for the channel token (`403 CHANNEL_TOKEN_SCOPE`), and the helper then holds the item as `rejected` again.
+
+Over the version before the channel existed, the channel's migrations only add. The server before them:
 - ignores the channel's tables;
 - runs no listener and no pump, so nothing is sent or relayed while rolled back;
 - **does not know the `operatorChannel` config key, so its `GET /api/config` returns `operatorChannel.tokenHash` unredacted.** The hash cannot be used as the token, but no route is meant to return it.

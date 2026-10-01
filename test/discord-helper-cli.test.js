@@ -232,6 +232,27 @@ describe('tc-discord-helper', () => {
       assert.equal(fetchCalls.length, 0, 'Discord and TangleClaw were never contacted');
     });
 
+    it('leaves no private pid file behind when writing it fails part-way', async () => {
+      await configure();
+      withSecrets();
+      const mine = `${p().pid}.4242.tmp`;
+      const realWrite = fs.writeFileSync;
+      fs.writeFileSync = (file, ...rest) => {
+        if (file !== mine) return realWrite(file, ...rest);
+        // A full disk: the file is created, and then the write fails.
+        realWrite(file, '');
+        throw Object.assign(new Error('ENOSPC: no space left'), { code: 'ENOSPC' });
+      };
+      try {
+        assert.equal(await cli.main(['run'], deps), 78);
+      } finally {
+        fs.writeFileSync = realWrite;
+      }
+      assert.deepEqual(errLines.map((l) => JSON.parse(l).code), ['lock-failed']);
+      assert.deepEqual(fs.readdirSync(p().dir), [], 'the part-written pid file is removed, so restarts do not pile them up');
+      assert.equal(stopFn, null, 'it never started');
+    });
+
     it('refuses to start when its record cannot be written, by closed code, and releases the lock', async () => {
       await configure();
       withSecrets();
@@ -387,7 +408,7 @@ describe('tc-discord-helper', () => {
   describe('settle', () => {
     it('refuses while the helper runs, and settles a held reply once it is stopped', async () => {
       const st = openState(p().state);
-      st.set(3, { state: 'uncertain', since: 1, parts: [] });
+      st.set(3, { state: 'uncertain', since: 1, parts: [], total: 1 });
       fs.writeFileSync(p().pid, '777');
       liveOthers.add(777);
       assert.equal(await cli.main(['settle', '3', '--posted', '900000000000000009'], deps), 1);
@@ -396,8 +417,137 @@ describe('tc-discord-helper', () => {
       assert.equal(await cli.main(['settle', '3', '--posted', '900000000000000009'], deps), 0);
       assert.deepEqual(openState(p().state).get(3), { state: 'posted', postedId: '900000000000000009' });
       assert.equal(fs.existsSync(p().pid), false, 'settle took the lock and released it');
+      assert.equal(outLines.at(-1), 'Reply 3 is now posted; the helper acknowledges it when it next runs.');
       assert.equal(await cli.main(['settle', '3', '--repost'], deps), 1, 'no longer held');
+      assert.equal(outLines.at(-1), 'Reply 3 is not held; nothing to settle.');
       assert.equal(await cli.main(['settle', 'x'], deps), 1);
+    });
+
+    it('takes exactly one finding, and prints usage for none or two', async () => {
+      const st = openState(p().state);
+      st.set(3, { state: 'uncertain', since: 1, parts: [], total: 1 });
+      const before = fs.readFileSync(p().state, 'utf8');
+      for (const args of [[], ['--posted', '900000000000000009', '--repost'], ['--repost', '--discard'], ['--posted', '900000000000000009', '--discard'], ['--posted'], ['--discard', 'yes']]) {
+        outLines.length = 0;
+        assert.equal(await cli.main(['settle', '3', ...args], deps), 1, args.join(' '));
+        assert.match(outLines[0], /^usage: tc-discord-helper/, args.join(' '));
+      }
+      assert.match(cli.USAGE, /settle <outbound-id> --posted <discord-message-id> \| --repost \| --discard/);
+      assert.equal(fs.readFileSync(p().state, 'utf8'), before, 'nothing was settled');
+    });
+
+    it('tells the operator which part was confirmed and what the helper does next', async () => {
+      const st = openState(p().state);
+      st.set(3, { state: 'uncertain', since: 1, parts: ['800000000000000001'], total: 3 });
+      st.set(4, { state: 'uncertain', since: 1, parts: ['800000000000000002'], total: 2 });
+      st.set(5, { state: 'uncertain', since: 1, parts: ['800000000000000003'], total: 3 });
+      st.set(6, { state: 'uncertain', since: 1, parts: [] });
+      st.set(7, { state: 'uncertain', since: 1, parts: [], total: 1 });
+
+      assert.equal(await cli.main(['status'], deps), 0);
+      assert.ok(outLines.includes('reply 3: uncertain, part 2 of 3 (settle it: see docs/discord-helper.md)'), outLines.join('\n'));
+      assert.ok(outLines.includes('reply 7: uncertain (settle it: see docs/discord-helper.md)'));
+
+      assert.equal(await cli.main(['settle', '3', '--posted', '900000000000000009'], deps), 0);
+      assert.equal(outLines.at(-1), 'Reply 3: part 2 of 3 is recorded as posted; the helper posts the parts after it when it next runs.');
+      assert.deepEqual(openState(p().state).get(3), { state: 'posting', since: null, parts: ['800000000000000001', '900000000000000009'], total: 3 });
+
+      assert.equal(await cli.main(['settle', '4', '--posted', '900000000000000010'], deps), 0);
+      assert.equal(outLines.at(-1), 'Reply 4: part 2 of 2 is recorded as posted, which completes it; the helper acknowledges it when it next runs.');
+      assert.deepEqual(openState(p().state).get(4), { state: 'posted', postedId: '800000000000000002' }, 'acknowledged with the first part, not the id typed');
+
+      assert.equal(await cli.main(['settle', '5', '--repost'], deps), 0);
+      assert.equal(outLines.at(-1), 'Reply 5 is now posting; the helper posts part 2 of 3 again, then any parts after it, when it next runs.');
+      assert.deepEqual(openState(p().state).get(5), { state: 'posting', since: null, parts: ['800000000000000003'], total: 3 });
+
+      assert.equal(await cli.main(['settle', '6', '--posted', '900000000000000011'], deps), 0);
+      assert.equal(outLines.at(-1), 'Reply 6: that message is recorded as posted; the helper posts any part after it, then acknowledges the reply, when it next runs.');
+
+      assert.equal(await cli.main(['settle', '7', '--repost'], deps), 0);
+      assert.equal(outLines.at(-1), 'Reply 7 is now posting; the helper posts it again when it next runs.');
+
+      // The same confirmation again: nothing is held any more, and nothing is recorded twice.
+      assert.equal(await cli.main(['settle', '3', '--posted', '900000000000000009'], deps), 1);
+      assert.equal(outLines.at(-1), 'Reply 3 is not held; nothing to settle.');
+      assert.deepEqual(openState(p().state).get(3).parts, ['800000000000000001', '900000000000000009']);
+    });
+
+    it('discards a rejected reply, and only a rejected one', async () => {
+      const st = openState(p().state);
+      st.set(3, { state: 'rejected', since: null, parts: [], total: 1 });
+      st.set(4, { state: 'rejected', since: null, parts: ['800000000000000001'], total: 3 });
+      st.set(5, { state: 'uncertain', since: 1, parts: ['800000000000000002'], total: 2 });
+      const before = fs.readFileSync(p().state, 'utf8');
+
+      assert.equal(await cli.main(['status'], deps), 0);
+      assert.ok(outLines.includes('reply 3: rejected (settle it: see docs/discord-helper.md)'), outLines.join('\n'));
+      assert.ok(outLines.includes('reply 4: rejected, part 2 of 3 (settle it: see docs/discord-helper.md)'));
+
+      // Discord said it did not post: it cannot be confirmed as posted, and posting it again is refused again.
+      for (const args of [['--posted', '900000000000000009'], ['--repost']]) {
+        assert.equal(await cli.main(['settle', '3', ...args], deps), 1);
+        assert.equal(outLines.at(-1), 'Reply 3 is held as rejected: Discord refused it, so it did not post, and posting it again would be refused again. To drop it: settle 3 --discard. Nothing was settled.');
+      }
+      // It may have posted: discarding it would record that it did not.
+      assert.equal(await cli.main(['settle', '5', '--discard'], deps), 1);
+      assert.equal(outLines.at(-1), 'Reply 5 is held as uncertain: it may have posted. Look in the channel, then use --posted <discord-message-id> or --repost. Nothing was settled.');
+      assert.equal(await cli.main(['settle', '5', '--posted', '800000000000000002'], deps), 1);
+      assert.equal(outLines.at(-1), 'That Discord message id is already recorded for an earlier part of reply 5. Nothing was settled.');
+      assert.equal(await cli.main(['settle', '5', '--posted', 'abc'], deps), 1);
+      assert.equal(outLines.at(-1), 'A Discord message id is digits only. Nothing was settled.');
+      // A refusal this command has no words for is not passed off as a bad id.
+      const { SettleError } = require('../lib/discord-helper/outbound');
+      const realTest = RegExp.prototype.test;
+      RegExp.prototype.test = function (v) { if (this.source === '^\\d{1,32}$') throw new SettleError('some-later-refusal'); return realTest.call(this, v); };
+      try {
+        await assert.rejects(cli.main(['settle', '5', '--posted', '900000000000000009'], deps), (err) => err instanceof SettleError && err.code === 'some-later-refusal');
+      } finally {
+        RegExp.prototype.test = realTest;
+      }
+      assert.doesNotMatch(outLines.at(-1), /^Reply 5 is now|recorded as posted/);
+      assert.equal(fs.readFileSync(p().state, 'utf8'), before, 'every refusal left the record as it was');
+
+      assert.equal(await cli.main(['settle', '3', '--discard'], deps), 0);
+      assert.equal(outLines.at(-1), 'Reply 3 is set to be discarded; when the helper next runs, TangleClaw drops its text and records it as discarded, not as delivered.');
+      assert.deepEqual(openState(p().state).get(3), { state: 'discarding', since: null, parts: [], total: 1, reason: 'rejected-by-chat' });
+      assert.equal(await cli.main(['settle', '4', '--discard'], deps), 0);
+      assert.equal(outLines.at(-1), 'Reply 4 is set to be discarded; when the helper next runs, TangleClaw drops its text and records it as discarded, not as delivered. Its first 1 part(s) did post and stay in the channel.');
+      assert.deepEqual(openState(p().state).get(4), { state: 'discarding', since: null, parts: ['800000000000000001'], total: 3, reason: 'rejected-by-chat-partly-posted' });
+
+      assert.equal(await cli.main(['status'], deps), 0);
+      assert.ok(outLines.includes('reply 3: discarding (the helper tells TangleClaw when it next runs)'));
+      assert.equal(await cli.main(['settle', '3', '--discard'], deps), 1, 'a second discard finds nothing held');
+      assert.equal(outLines.at(-1), 'Reply 3 is not held; nothing to settle.');
+      assert.equal(fs.existsSync(p().pid), false, 'every settle released the lock');
+    });
+
+    it('does not pass off a failure it did not expect as a bad id, and still releases the lock', async () => {
+      const st = openState(p().state);
+      // A record no helper writes: its parts are not a list.
+      st.set(3, { state: 'uncertain', since: 1, parts: 5, total: 2 });
+      await assert.rejects(cli.main(['settle', '3', '--posted', '900000000000000009'], deps), TypeError);
+      assert.ok(!outLines.some((l) => /digits only|is now|recorded as posted/.test(l)), 'nothing claims a settlement or blames the id');
+      assert.equal(fs.existsSync(p().pid), false, 'the lock is released');
+      assert.deepEqual(openState(p().state).get(3), { state: 'uncertain', since: 1, parts: 5, total: 2 }, 'the record is as it was');
+    });
+
+    it('tells TangleClaw about a discard when the helper next runs, and posts nothing for it', async () => {
+      await configure();
+      withSecrets();
+      const st = openState(p().state);
+      st.set(3, { state: 'rejected', since: null, parts: [], total: 1 });
+      assert.equal(await cli.main(['settle', '3', '--discard'], deps), 0);
+      const running = cli.main(['run'], deps);
+      await new Promise((r) => setTimeout(r, 20));
+      stopFn();
+      assert.equal(await running, 0);
+      const call = fetchCalls.find((c) => c.url.endsWith('/discard'));
+      assert.deepEqual({ url: call.url, method: call.method, body: JSON.parse(call.body) },
+        { url: 'http://127.0.0.1:3102/api/operator-channel/outbound/3/discard', method: 'POST', body: { reason: 'rejected-by-chat' } });
+      assert.ok(!fetchCalls.some((c) => c.url.includes('/channels/')), 'nothing was posted to Discord');
+      assert.ok(!fetchCalls.some((c) => c.url.endsWith('/ack')), 'and nothing acknowledged as posted');
+      assert.ok(errLines.some((l) => JSON.parse(l).code === 'outbound-discarded'));
+      assert.deepEqual(openState(p().state).entries(), []);
     });
 
     it('settles nothing, and says so, when the record or the lock cannot be written', async () => {

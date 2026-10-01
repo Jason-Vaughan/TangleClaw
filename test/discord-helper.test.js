@@ -255,26 +255,31 @@ describe('discord helper state', () => {
 });
 
 describe('discord helper C1 client', () => {
-  it('has exactly three methods and builds only the channel paths', () => {
+  it('has exactly four methods and builds only the channel paths', () => {
     const c1 = createC1Client({ baseUrl: 'http://127.0.0.1:3102/some/path', token: CHANNEL_TOKEN, fetch: fakeFetch([{ status: 200, body: {} }]) });
-    assert.deepEqual(Object.keys(c1).sort(), ['ack', 'listOutbound', 'sendInbound']);
+    assert.deepEqual(Object.keys(c1).sort(), ['ack', 'discard', 'listOutbound', 'sendInbound']);
     assert.ok(Object.isFrozen(PATHS));
+    assert.deepEqual(Object.keys(PATHS).sort(), ['ack', 'discard', 'inbound', 'outbound']);
     assert.equal(PATHS.ack('../../api/projects'), '/api/operator-channel/outbound/NaN/ack');
+    assert.equal(PATHS.discard('../../api/projects'), '/api/operator-channel/outbound/NaN/discard');
   });
 
   it('sends the token only as a bearer header, to the origin alone', async () => {
-    const f = fakeFetch([{ status: 202, body: { inbound: {} } }, { status: 200, body: { replies: [{ id: 1 }] } }, { status: 200, body: {} }]);
+    const f = fakeFetch([{ status: 202, body: { inbound: {} } }, { status: 200, body: { replies: [{ id: 1 }] } }, { status: 200, body: {} }, { status: 200, body: {} }, { status: 200, body: {} }]);
     const c1 = createC1Client({ baseUrl: 'http://127.0.0.1:3102/ignored', token: CHANNEL_TOKEN, fetch: f });
     await c1.sendInbound({ id: '1', authorId: '2', spaceId: '3', channelId: '4' }, 'hi');
     assert.deepEqual(await c1.listOutbound(), [{ id: 1 }]);
     await c1.ack(1, '55');
+    await c1.discard(2, 'rejected-by-chat');
     assert.deepEqual(f.calls.map((c) => `${c.method} ${c.url}`), [
       'POST http://127.0.0.1:3102/api/operator-channel/inbound',
       'GET http://127.0.0.1:3102/api/operator-channel/outbound',
-      'POST http://127.0.0.1:3102/api/operator-channel/outbound/1/ack'
+      'POST http://127.0.0.1:3102/api/operator-channel/outbound/1/ack',
+      'POST http://127.0.0.1:3102/api/operator-channel/outbound/2/discard'
     ]);
     for (const c of f.calls) assert.equal(c.headers.Authorization, `Bearer ${CHANNEL_TOKEN}`);
     assert.deepEqual(f.calls[2].body, { postedId: '55' });
+    assert.deepEqual(f.calls[3].body, { reason: 'rejected-by-chat' }, 'a discard carries a reason and no posted id');
   });
 
   it('types refusals and transport failures without the token in the error', async () => {
@@ -529,8 +534,17 @@ describe('discord helper outbound', () => {
    */
   function fakeC1(items) {
     const acks = [];
+    const discards = [];
     return {
-      items, acks, down: false, ackDown: false,
+      items, acks, discards, down: false, ackDown: false, discardFail: null,
+      async discard(id, reason) {
+        if (this.discardFail) throw this.discardFail;
+        const i = this.items.findIndex((x) => x.id === id);
+        if (i < 0) throw new C1Error(404, 'NOT_FOUND');
+        discards.push({ id, reason });
+        this.items.splice(i, 1);
+        return { status: 200, body: {} };
+      },
       async listOutbound() { if (this.down) throw new C1Error(0, null); return this.items.map((i) => ({ ...i })); },
       async ack(id, postedId) {
         if (this.ackDown) throw new C1Error(0, null);
@@ -674,10 +688,10 @@ describe('discord helper outbound', () => {
     state.set(1, { state: 'uncertain', since: clock, parts: [] });
     state.set(2, { state: 'uncertain', since: clock, parts: [] });
     const { out } = relay(c1, d);
-    assert.throws(() => out.settleUncertain(3, { repost: true }), /not-held/);
-    assert.throws(() => out.settleUncertain(1, { postedId: 'not an id' }), /bad-settlement/);
-    out.settleUncertain(1, { postedId: '123456' });
-    out.settleUncertain(2, { repost: true });
+    assert.throws(() => out.settleHeld(3, { repost: true }), /not-held/);
+    assert.throws(() => out.settleHeld(1, { postedId: 'not an id' }), /bad-id/);
+    out.settleHeld(1, { postedId: '123456' });
+    out.settleHeld(2, { repost: true });
     await out.tick();
     assert.deepEqual(c1.acks, [{ id: 1, postedId: '123456' }, { id: 2, postedId: d.messages[0].id }]);
     assert.equal(d.messages.length, 1);
@@ -694,9 +708,306 @@ describe('discord helper outbound', () => {
     assert.equal(d.attempts, 2, 'item 1 was tried once and never again');
     assert.deepEqual(c1.acks.map((a) => a.id), [2]);
     assert.ok(logs.codes().includes('outbound-rejected'));
-    out.settleUncertain(1, { repost: true });
-    await out.tick();
-    assert.deepEqual(c1.acks.map((a) => a.id), [2, 1]);
+    assert.deepEqual(state.get(1), { state: 'rejected', since: null, parts: [], total: 1 }, 'Discord did not post it, so nothing is in doubt');
+  });
+
+  describe('settling a held reply', () => {
+    const three = 'x'.repeat(outbound.DISCORD_MAX * 2 + 10);
+    const two = 'y'.repeat(outbound.DISCORD_MAX + 10);
+
+    /**
+     * Run the relay until one part of item 1 is held: every call to Discord
+     * succeeds except the `failAt`-th, which fails as `failure` says.
+     * @param {object} c1 - Fake channel
+     * @param {object} d - Fake Discord
+     * @param {number} failAt - Which post fails, counting from 1
+     * @param {{status: number, sent: string, landFirst?: boolean}} failure - How
+     * @returns {Promise<void>}
+     */
+    async function holdAt(c1, d, failAt, failure) {
+      const real = d.createMessage.bind(d);
+      let n = 0;
+      d.createMessage = async (ch, m) => {
+        n += 1;
+        if (n !== failAt) return real(ch, m);
+        d.attempts += 1;
+        if (failure.landFirst) d.land(ch, m);
+        throw new DiscordError(failure.status, null, failure.sent);
+      };
+      await relay(c1, d).out.tick();
+      d.createMessage = real;
+      if (failure.status !== 400) {
+        clock += outbound.NONCE_WINDOW_MS + 1;
+        await relay(c1, d).out.tick();
+      }
+    }
+
+    it('records a confirmed middle part and posts exactly the parts after it, acknowledging with the first part\'s id', async () => {
+      const c1 = fakeC1([item(1, three)]);
+      const d = fakeDiscord();
+      await holdAt(c1, d, 2, { status: 0, sent: 'unknown', landFirst: true });
+      assert.equal(d.messages.length, 2, 'precondition: part 2 did land, and the helper does not know');
+      assert.deepEqual(state.get(1), { state: 'uncertain', since: state.get(1).since, parts: [d.messages[0].id], total: 3 });
+
+      const { out } = relay(c1, d);
+      const r = out.settleHeld(1, { postedId: d.messages[1].id });
+      assert.deepEqual(r, { outboundId: 1, state: 'posting', partsPosted: 2, total: 3 });
+      assert.deepEqual(state.get(1), { state: 'posting', since: null, parts: [d.messages[0].id, d.messages[1].id], total: 3 },
+        'the earlier part keeps its id and the confirmed one joins it');
+      const before = d.attempts;
+      assert.equal(await out.tick(), 'ok');
+      assert.equal(d.attempts, before + 1, 'only the missing part is posted');
+      assert.equal(d.messages.length, 3);
+      assert.equal(d.messages.map((m) => m.content).join(''), three, 'every part, once, in order');
+      assert.deepEqual(c1.acks, [{ id: 1, postedId: d.messages[0].id }], 'acknowledged with the first part, not the one the operator typed');
+      assert.deepEqual(state.entries(), []);
+      assert.equal(await out.tick(), 'ok');
+      assert.equal(d.messages.length, 3, 'and nothing more on a later poll');
+    });
+
+    it('posts a middle part again, and the parts after it, when the operator says it did not post', async () => {
+      const c1 = fakeC1([item(1, three)]);
+      const d = fakeDiscord();
+      await holdAt(c1, d, 2, { status: 0, sent: 'unknown' });
+      assert.equal(d.messages.length, 1, 'precondition: part 2 did not land');
+      const { out } = relay(c1, d);
+      assert.deepEqual(out.settleHeld(1, { repost: true }), { outboundId: 1, state: 'posting', partsPosted: 1, total: 3 });
+      assert.deepEqual(state.get(1), { state: 'posting', since: null, parts: [d.messages[0].id], total: 3 });
+      assert.equal(await out.tick(), 'ok');
+      assert.equal(d.messages.length, 3, 'part 1 is not posted again; parts 2 and 3 are posted once each');
+      assert.equal(d.messages.map((m) => m.content).join(''), three);
+      assert.deepEqual(c1.acks, [{ id: 1, postedId: d.messages[0].id }]);
+    });
+
+    it('completes the reply when the confirmed part is the last, and acknowledges with the first part\'s id even off the listing\'s page', async () => {
+      const c1 = fakeC1([item(1, two)]);
+      const d = fakeDiscord();
+      await holdAt(c1, d, 2, { status: 504, sent: 'unknown', landFirst: true });
+      assert.equal(state.get(1).state, 'uncertain');
+      const { out } = relay(c1, d);
+      assert.deepEqual(out.settleHeld(1, { postedId: d.messages[1].id }), { outboundId: 1, state: 'posted', partsPosted: 2, total: 2 });
+      assert.deepEqual(state.get(1), { state: 'posted', postedId: d.messages[0].id });
+      const list = c1.listOutbound;
+      c1.listOutbound = async function () { return (await list.call(this)).filter((i) => i.id !== 1); };
+      const before = d.attempts;
+      assert.equal(await out.tick(), 'ok');
+      assert.equal(d.attempts, before, 'nothing is posted');
+      assert.deepEqual(c1.acks, [{ id: 1, postedId: d.messages[0].id }]);
+    });
+
+    it('settles a single-message reply as before: confirmed, it is acknowledged with that id; not posted, it is posted once', async () => {
+      const c1 = fakeC1([item(1), item(2)]);
+      const d = fakeDiscord();
+      state.set(1, { state: 'uncertain', since: clock, parts: [], total: 1 });
+      state.set(2, { state: 'uncertain', since: clock, parts: [], total: 1 });
+      const { out } = relay(c1, d);
+      assert.deepEqual(out.settleHeld(1, { postedId: '123456' }), { outboundId: 1, state: 'posted', partsPosted: 1, total: 1 });
+      assert.deepEqual(state.get(1), { state: 'posted', postedId: '123456' });
+      assert.deepEqual(out.settleHeld(2, { repost: true }), { outboundId: 2, state: 'posting', partsPosted: 0, total: 1 });
+      assert.equal(await out.tick(), 'ok');
+      assert.deepEqual(c1.acks, [{ id: 1, postedId: '123456' }, { id: 2, postedId: d.messages[0].id }]);
+      assert.equal(d.attempts, 1, 'only the one the operator said did not post');
+    });
+
+    it('lets the relay find what is left for an entry that records no part count', async () => {
+      const c1 = fakeC1([item(1, three)]);
+      const d = fakeDiscord();
+      const first = d.land(ALLOW.channelId, { content: 'part one', nonce: 'earlier' }).id;
+      state.set(1, { state: 'uncertain', since: clock, parts: [first] });
+      const { out } = relay(c1, d);
+      assert.deepEqual(out.settleHeld(1, { postedId: '777' }), { outboundId: 1, state: 'posting', partsPosted: 2, total: null });
+      assert.deepEqual(state.get(1), { state: 'posting', since: null, parts: [first, '777'] });
+      assert.equal(await out.tick(), 'ok');
+      assert.equal(d.attempts, 1, 'the third part, and only it');
+      assert.deepEqual(c1.acks, [{ id: 1, postedId: first }]);
+    });
+
+    it('refuses a settlement that does not fit, and changes nothing', async () => {
+      const c1 = fakeC1([item(1), item(2), item(3)]);
+      state.set(1, { state: 'uncertain', since: clock, parts: ['41', '42'], total: 4 });
+      state.set(2, { state: 'rejected', since: null, parts: [], total: 1 });
+      state.set(3, { state: 'posting', since: null, parts: [], total: 1 });
+      const snapshot = JSON.stringify(state.entries());
+      const { out } = relay(c1, fakeDiscord());
+      const refused = (id, how, code, held = null) => assert.throws(() => out.settleHeld(id, how),
+        (err) => err instanceof outbound.SettleError && err.code === code && err.held === held, `${id} ${JSON.stringify(how)}`);
+      refused(1, { discard: true }, 'wrong-state', 'uncertain');
+      refused(1, { postedId: '42' }, 'duplicate-part');
+      refused(1, { postedId: '41' }, 'duplicate-part');
+      refused(1, { postedId: 'm-43' }, 'bad-id');
+      refused(1, { postedId: '' }, 'bad-id');
+      refused(1, { postedId: '43', repost: true }, 'bad-settlement');
+      refused(1, {}, 'bad-settlement');
+      refused(1, undefined, 'bad-settlement');
+      refused(2, { postedId: '900' }, 'wrong-state', 'rejected');
+      refused(2, { repost: true }, 'wrong-state', 'rejected');
+      refused(2, { discard: true, repost: true }, 'bad-settlement');
+      refused(3, { repost: true }, 'not-held');
+      refused(4, { discard: true }, 'not-held');
+      assert.equal(JSON.stringify(state.entries()), snapshot);
+    });
+
+    it('answers a settlement made twice the same way each time: the second finds nothing held', async () => {
+      const c1 = fakeC1([item(1, three), item(2)]);
+      state.set(1, { state: 'uncertain', since: clock, parts: ['41'], total: 3 });
+      state.set(2, { state: 'rejected', since: null, parts: [], total: 1 });
+      const { out } = relay(c1, fakeDiscord());
+      out.settleHeld(1, { postedId: '42' });
+      out.settleHeld(2, { discard: true });
+      const snapshot = JSON.stringify(state.entries());
+      for (let i = 0; i < 2; i++) {
+        assert.throws(() => out.settleHeld(1, { postedId: '42' }), (err) => err.code === 'not-held');
+        assert.throws(() => out.settleHeld(2, { discard: true }), (err) => err.code === 'not-held');
+      }
+      assert.equal(JSON.stringify(state.entries()), snapshot, 'the confirmed part is recorded once, not twice');
+    });
+
+    it('discards a rejected reply through TangleClaw, with no post, no acknowledgement and no Discord id', async () => {
+      const c1 = fakeC1([item(1, 'Discord will not take this'), item(2)]);
+      const d = fakeDiscord();
+      await holdAt(c1, d, 1, { status: 400, sent: 'no' });
+      assert.deepEqual(state.get(1), { state: 'rejected', since: null, parts: [], total: 1 });
+      const { out, logs } = relay(c1, d);
+      assert.deepEqual(out.settleHeld(1, { discard: true }), { outboundId: 1, state: 'discarding', partsPosted: 0, total: 1 });
+      assert.deepEqual(state.get(1), { state: 'discarding', since: null, parts: [], total: 1, reason: 'rejected-by-chat' });
+      // A restart between the settlement and the poll: the record carries it.
+      state = openState(path.join(dir, 'state.json'));
+      const after = relay(c1, d, logs);
+      const before = d.attempts;
+      assert.equal(await after.out.tick(), 'ok');
+      assert.deepEqual(c1.discards, [{ id: 1, reason: 'rejected-by-chat' }]);
+      assert.deepEqual(c1.acks.map((a) => a.id), [2], 'the rejected reply is never acknowledged as posted');
+      assert.equal(d.attempts, before, 'and never posted again');
+      assert.deepEqual(state.entries(), []);
+      const rec = logs.lines.map((l) => JSON.parse(l)).find((x) => x.code === 'outbound-discarded');
+      assert.deepEqual({ code: rec.code, outboundId: rec.outboundId }, { code: 'outbound-discarded', outboundId: 1 });
+      assert.doesNotMatch(logs.lines.join('\n'), /will not take this/, 'the log never carries the reply');
+      assert.equal(await after.out.tick(), 'ok');
+      assert.equal(c1.discards.length, 1, 'discarded once');
+    });
+
+    it('says so when the parts before a rejected one did post', async () => {
+      const c1 = fakeC1([item(1, three)]);
+      const d = fakeDiscord();
+      await holdAt(c1, d, 2, { status: 400, sent: 'no' });
+      assert.deepEqual(state.get(1), { state: 'rejected', since: null, parts: [d.messages[0].id], total: 3 });
+      const { out } = relay(c1, d);
+      assert.deepEqual(out.settleHeld(1, { discard: true }), { outboundId: 1, state: 'discarding', partsPosted: 1, total: 3 });
+      assert.equal(state.get(1).reason, 'rejected-by-chat-partly-posted');
+      assert.equal(await out.tick(), 'ok');
+      assert.deepEqual(c1.discards, [{ id: 1, reason: 'rejected-by-chat-partly-posted' }]);
+      assert.equal(c1.acks.length, 0);
+      assert.equal(d.messages.length, 1, 'the later parts are never posted');
+    });
+
+    it('sends only the reasons TangleClaw accepts', () => {
+      assert.deepEqual(Object.values(outbound.DISCARD_REASON).sort(), [...require('../lib/operator-channel').DISCARD_REASONS].sort());
+    });
+
+    it('keeps a discard it could not make, retries it, and holds up nothing else once it is made', async () => {
+      const c1 = fakeC1([item(1), item(2)]);
+      const d = fakeDiscord();
+      state.set(1, { state: 'rejected', since: null, parts: [], total: 1 });
+      const { out, logs } = relay(c1, d);
+      out.settleHeld(1, { discard: true });
+      for (const failure of [new C1Error(0, null), new C1Error(503, 'CHANNEL_DISABLED'), new C1Error(401, 'UNAUTHORIZED'), new C1Error(429, null)]) {
+        c1.discardFail = failure;
+        assert.equal(await out.tick(), 'failed', `${failure.status} concerns every call: the poll ends and backs off`);
+        assert.equal(state.get(1).state, 'discarding', `still to be discarded after a ${failure.status}`);
+      }
+      assert.deepEqual(logs.codes(), Array(4).fill('outbound-discard-failed'), 'one line per failed poll, under its own code only');
+      assert.deepEqual(logs.lines.map((l) => JSON.parse(l).status), [0, 503, 401, 429]);
+      assert.equal(d.attempts, 0);
+      c1.discardFail = null;
+      assert.equal(await out.tick(), 'ok');
+      assert.deepEqual(c1.discards, [{ id: 1, reason: 'rejected-by-chat' }]);
+      assert.deepEqual(c1.acks.map((a) => a.id), [2]);
+    });
+
+    it('forgets a discard TangleClaw has nothing left to make', async () => {
+      for (const gone of [new C1Error(404, 'NOT_FOUND'), new C1Error(409, 'NOT_RELAYABLE'), new C1Error(409, 'DISCARD_REASON_MISMATCH')]) {
+        const c1 = fakeC1([item(2)]);
+        const d = fakeDiscord();
+        state.set(1, { state: 'discarding', since: null, parts: [], total: 1, reason: 'rejected-by-chat' });
+        c1.discardFail = gone;
+        const { out, logs } = relay(c1, d);
+        assert.equal(await out.tick(), 'ok');
+        assert.equal(state.get(1), undefined, `${gone.status} ${gone.refusalCode}`);
+        const said = logs.lines.map((l) => JSON.parse(l)).filter((r) => r.code.startsWith('outbound-discard'));
+        assert.deepEqual(said.map((r) => ({ code: r.code, outboundId: r.outboundId, status: r.status })),
+          [{ code: 'outbound-discard-unneeded', outboundId: 1, status: gone.status }], 'the log says what became of it, once');
+        assert.deepEqual(c1.acks.map((a) => a.id), [2], 'the rest keep moving');
+      }
+    });
+
+    it('holds the reply as rejected again when TangleClaw does not understand the discard, and keeps relaying the rest', async () => {
+      // A TangleClaw older than the helper refuses the route for the channel token (403), or has no such
+      // route at all (a 404 that is not about the item); one that does not know the reason answers 400.
+      for (const refusal of [new C1Error(403, 'CHANNEL_TOKEN_SCOPE'), new C1Error(404, null), new C1Error(400, 'BAD_DISCARD')]) {
+        const c1 = fakeC1([item(1), item(2)]);
+        const d = fakeDiscord();
+        state.set(1, { state: 'discarding', since: null, parts: ['41'], total: 2, reason: 'rejected-by-chat-partly-posted' });
+        c1.discardFail = refusal;
+        const { out, logs } = relay(c1, d);
+        assert.equal(await out.tick(), 'ok');
+        assert.deepEqual(state.get(1), { state: 'rejected', since: null, parts: ['41'], total: 2 }, `${refusal.status}: still true of it, and nothing of it lost`);
+        assert.ok(logs.codes().includes('outbound-discard-failed'));
+        assert.deepEqual(c1.acks.map((a) => a.id), [2]);
+        assert.equal(d.attempts, 1, 'the held reply is not posted');
+        state.remove(1);
+      }
+    });
+
+    it('holds a reply as uncertain, not rejected, when Discord refuses a retry of an attempt still in doubt', async () => {
+      const c1 = fakeC1([item(1)]);
+      const d = fakeDiscord();
+      // 1: times out, and whether it landed is unknown. 2: inside the nonce window, Discord answers 400.
+      d.fail = { status: 0, sent: 'unknown', landFirst: true, once: true };
+      await relay(c1, d).out.tick();
+      clock += 30 * 1000;
+      d.fail = { status: 400, sent: 'no', once: true };
+      const { out, logs } = relay(c1, d);
+      assert.equal(await out.tick(), 'ok');
+      assert.equal(state.get(1).state, 'uncertain', 'the first attempt may have posted, so "rejected" would not be true');
+      assert.notEqual(state.get(1).since, null);
+      assert.deepEqual(logs.codes(), ['outbound-uncertain']);
+      assert.throws(() => out.settleHeld(1, { discard: true }), (err) => err.code === 'wrong-state');
+      // The operator looks, finds it, and says so: it is acknowledged, never discarded.
+      out.settleHeld(1, { postedId: d.messages[0].id });
+      assert.equal(await out.tick(), 'ok');
+      assert.deepEqual(c1.acks, [{ id: 1, postedId: d.messages[0].id }]);
+      assert.equal(c1.discards.length, 0);
+    });
+
+    it('reaches rejected, and then a discard, once a clean attempt is refused', async () => {
+      const c1 = fakeC1([item(1)]);
+      const d = fakeDiscord();
+      d.fail = { status: 0, sent: 'unknown', once: true };
+      await relay(c1, d).out.tick();
+      clock += 30 * 1000;
+      d.fail = { status: 400, sent: 'no' };
+      const { out } = relay(c1, d);
+      await out.tick();
+      assert.equal(state.get(1).state, 'uncertain');
+      out.settleHeld(1, { repost: true });
+      assert.equal(await out.tick(), 'ok');
+      assert.deepEqual(state.get(1), { state: 'rejected', since: null, parts: [], total: 1 });
+      out.settleHeld(1, { discard: true });
+      assert.equal(await out.tick(), 'ok');
+      assert.deepEqual(c1.discards, [{ id: 1, reason: 'rejected-by-chat' }]);
+      assert.equal(d.messages.length, 0, 'nothing of it was ever posted');
+    });
+
+    it('never posts over an entry in a state it does not post from', async () => {
+      const c1 = fakeC1([item(1), item(2)]);
+      const d = fakeDiscord();
+      state.set(1, { state: 'some-later-state', parts: [] });
+      const { out } = relay(c1, d);
+      assert.equal(await out.tick(), 'ok');
+      assert.deepEqual(d.messages.map((m) => m.content), ['reply 2']);
+      assert.deepEqual(c1.acks.map((a) => a.id), [2]);
+      assert.equal(state.get(1).state, 'some-later-state');
+    });
   });
 
   for (const status of [401, 403, 404, 429]) {
@@ -929,6 +1240,25 @@ describe('discord helper outbound', () => {
       assert.deepEqual(openState(file()).entries(), []);
     });
 
+    it('after a discard: asks TangleClaw again rather than posting, and then forgets the reply', async () => {
+      const c1 = fakeC1([item(1)]);
+      const d = fakeDiscord();
+      state.set(1, { state: 'discarding', since: null, parts: [], total: 1, reason: 'rejected-by-chat' });
+      const { out, logs } = relay(c1, d);
+      const discard = c1.discard.bind(c1);
+      let mend;
+      c1.discard = async (id, reason) => { const r = await discard(id, reason); mend = breakWrites(file()); return r; };
+      assert.equal(await out.tick(), 'failed');
+      assert.deepEqual(logs.codes(), ['state-write-failed']);
+      assert.equal(state.get(1).state, 'discarding', 'still known as to be discarded');
+      c1.discard = discard;
+      mend();
+      assert.equal(await out.tick(), 'ok', 'TangleClaw no longer holds it, which settles it');
+      assert.equal(d.attempts, 0, 'never posted');
+      assert.deepEqual(state.entries(), []);
+      assert.deepEqual(openState(file()).entries(), []);
+    });
+
     it('while setting a reply aside: neither holds nor posts it until the record takes it', async () => {
       const c1 = fakeC1([item(1)]);
       const d = fakeDiscord();
@@ -987,6 +1317,13 @@ describe('discord helper outbound', () => {
     const ack = relay(c1, fakeDiscord());
     assert.equal(await ack.out.tick(), 'failed');
     assert.deepEqual(ack.logs.codes(), ['outbound-posted', 'outbound-ack-failed']);
+
+    const gone = fakeC1([]);
+    gone.discardFail = new C1Error(0, null);
+    state.set(7, { state: 'discarding', since: null, parts: [], total: 1, reason: 'rejected-by-chat' });
+    const discard = relay(gone, fakeDiscord());
+    assert.equal(await discard.out.tick(), 'failed');
+    assert.deepEqual(discard.logs.codes(), ['outbound-discard-failed']);
   });
 
   it('backs off exponentially on failure, capped, and returns to the interval on success', async () => {
