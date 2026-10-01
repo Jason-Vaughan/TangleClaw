@@ -35,6 +35,55 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-01 — Discord helper: failed writes, unexpected poll failures and a malformed base URL are answered by closed code (#1799)
+
+<!-- prawduct: type=bugfix | scope=discord-helper-1799 -->
+
+TC-RM18 Chunk 6, dispatched by the Architect (Medusa 4d06319a) under Rule #154, on
+`feat/1799-discord-helper-on-2031-fold` from `dc8a876d`. Not committed until the Architect authorizes the
+diff; not pushed. It resolves four observations of Critic `rev-20261001T005003Z-4bdc34d4` (O-1 with O-12,
+O-2, O-10, O-16). Settling a multi-part or rejected reply (O-3, O-14) is left for the next chunk.
+
+**Why:** the helper could fail without saying why. A write of its record or its lock that failed, or any
+unexpected error inside a poll, reached no log code. A base URL that `configure` accepted could make `run`
+and `verify` throw, so launchd restarted the helper every 30 seconds with only "unexpected TypeError" in
+the log.
+
+**What:**
+- `state.js` is the one owner of the record's writes. Any failure is a `StateWriteError`
+  (`state-write-failed`). A `set` or `remove` is adopted in memory only after it is on disk, so a failed
+  write changes nothing in either place.
+- `outbound.js` stamps an attempt's `since` on a copy and adopts it once written. A write that fails before
+  a post therefore leaves no false doubt behind: without this, a disk-full spell longer than the nonce
+  window held a reply as `uncertain` that had never left the helper.
+- The poll's last catch now ends every failure in one closed code. The three expected failures are logged
+  where they happen and rethrown as a marker; a failed write logs `state-write-failed`; anything else logs
+  `outbound-pass-failed` with the error's type name and nothing of its message.
+- `cli.js`: `run` answers a lock or record it cannot write with `lock-failed` or `state-write-failed` and
+  exits 78 before contacting anyone. `settle` says nothing was settled (it used to print "A Discord
+  message id is digits only" for a failed write).
+- `loadConfig` parses the base URL. It must be `http:` or `https:` with a host and no user name or
+  password. It is the one validator, so `configure` refuses the value and `run`, `verify` and `status`
+  answer `config-invalid`. [DECISION] Refusing credentials goes one step past "malformed": the client uses
+  the URL's origin only, so they would be silently ignored, and `status` prints the value.
+- `docs/discord-helper.md` names the start command after a stop (`install-launchd`), cites the real
+  heading for held replies, and explains the three new codes.
+- `acquireLock` writes its private pid file inside the block that removes it, so a write that fails
+  part-way leaves no file behind on each restart.
+- The chunk B entry below no longer cites VRF-003, a runbook id no file holds; it points at the guide's
+  verification section.
+
+**No duplicate post under a failed write.** Tests inject the failure at each write of the record: before a
+post, after a post (same process, and after a restart inside and past the nonce window), part-way through
+a split reply, after the acknowledgement, and while setting a reply aside. In each, Discord receives each
+part once.
+
+**Tests (none weakened):** new cases in `test/discord-helper.test.js` (state, outbound) and
+`test/discord-helper-cli.test.js` (configure, run, verify, status, settle). The write failure is injected
+by a directory where the write's temp file goes, so it works on any host and as any user. One mutant per
+new behaviour was run against these tests, and each turns a test red (the list is in the chunk's evidence
+package).
+
 ## 2026-09-30 — Discord helper on the folded operator channel: candidate restack of #2003 (#1799, #2031)
 
 <!-- prawduct: type=feature | scope=discord-helper-1799 -->
@@ -202,7 +251,7 @@ C2 chunk B, completing C2 (chunk C was folded into A, because C1.5 carries notif
   - `settle`: refused while the helper runs.
   - `install-launchd` / `uninstall-launchd`.
 - `deploy/com.tangleclaw.discord-helper.plist` holds paths and a label only, with ThrottleInterval 30. A token Discord refuses stops the Gateway without ending the process, so KeepAlive restarts cannot spend the identify budget.
-- `docs/discord-helper.md` is the operator guide: the Developer Portal intent, the ids, secrets, verify, launchd, held replies, refusals and log codes. The docs that point to it were updated: operator-channel.md, FEATURES.md, PROJECT-MAP.md and CHANGELOG. VRF-003 is queued for the live round trip on the operator's Mac.
+- `docs/discord-helper.md` is the operator guide: the Developer Portal intent, the ids, secrets, verify, launchd, held replies, refusals and log codes. The docs that point to it were updated: operator-channel.md, FEATURES.md, PROJECT-MAP.md and CHANGELOG. The live round trip on the operator's Mac is still owed; what it must check is listed in that guide's "Verification on the operator's Mac" section. (Corrected 2026-10-01: this sentence cited a runbook id, VRF-003, that no file in the repository holds.)
 
 **Review fixes riding this commit.**
 - From verify `rev-20260928T023958Z-f385749f`: O-1, pruning now happens only on an EMPTY listing, which is complete whatever the server's page size; O-3, `StateError` is consumed at start-up.

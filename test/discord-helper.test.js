@@ -15,7 +15,7 @@ const { EventEmitter } = require('node:events');
 
 const { createLog, safeFields, CODES } = require('../lib/discord-helper/log');
 const secrets = require('../lib/discord-helper/secrets');
-const { openState, nonceFor, StateError } = require('../lib/discord-helper/state');
+const { openState, nonceFor, StateError, StateWriteError } = require('../lib/discord-helper/state');
 const { createC1Client, PATHS, C1Error } = require('../lib/discord-helper/c1-client');
 const { createDiscordRest, DiscordError } = require('../lib/discord-helper/discord-rest');
 const gateway = require('../lib/discord-helper/gateway');
@@ -54,6 +54,18 @@ function fakeFetch(answers) {
   };
   fn.calls = calls;
   return fn;
+}
+
+/**
+ * Make every write of a state file fail, as a full disk would, on any host and
+ * as any user: a directory sits where the write's temp file goes.
+ * @param {string} file - The state file
+ * @returns {function(): void} Lets writes succeed again
+ */
+function breakWrites(file) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.mkdirSync(tmp, { recursive: true });
+  return () => fs.rmSync(tmp, { recursive: true, force: true });
 }
 
 /**
@@ -205,6 +217,32 @@ describe('discord helper state', () => {
       assert.throws(() => openState(file), (err) => err instanceof StateError && err.code === 'state-unreadable');
       assert.equal(fs.readFileSync(file, 'utf8'), bad, 'the file is left as it was');
     }
+  });
+
+  it('answers a failed write with one closed code, and changes nothing on disk or in memory', () => {
+    const file = path.join(dir, 'state.json');
+    const st = openState(file);
+    st.set(1, { state: 'posting', since: null, parts: [] });
+    const before = fs.readFileSync(file, 'utf8');
+    const mend = breakWrites(file);
+    const closed = (err) => err instanceof StateWriteError && err.code === 'state-write-failed' && err.message === 'state-write-failed';
+    assert.throws(() => st.set(1, { state: 'posted', postedId: '5' }), closed);
+    assert.throws(() => st.set(2, { state: 'posting', since: 7, parts: [] }), closed);
+    assert.throws(() => st.remove(1), closed);
+    assert.equal(fs.readFileSync(file, 'utf8'), before, 'the file is as it was');
+    assert.deepEqual(st.entries(), [[1, { state: 'posting', since: null, parts: [] }]], 'and so is what the helper holds');
+    mend();
+    st.set(2, { state: 'posted', postedId: '5' });
+    assert.deepEqual(openState(file).entries(), [[1, { state: 'posting', since: null, parts: [] }], [2, { state: 'posted', postedId: '5' }]]);
+    assert.deepEqual(fs.readdirSync(dir), ['state.json'], 'no temp file is left behind');
+  });
+
+  it('answers a record it cannot create with the same closed code', () => {
+    const file = path.join(dir, 'state.json');
+    const mend = breakWrites(file);
+    assert.throws(() => openState(file), (err) => err instanceof StateWriteError);
+    assert.equal(fs.existsSync(file), false);
+    mend();
   });
 
   it('keeps each nonce within Discord\'s 25 characters and distinct per part', () => {
@@ -769,6 +807,186 @@ describe('discord helper outbound', () => {
       assert.equal(shown + said, total);
       assert.ok(Array.from(parts.at(-1)).length <= outbound.DISCORD_MAX);
     }
+  });
+
+  describe('when the record cannot be written', () => {
+    const file = () => path.join(dir, 'state.json');
+    const only = (logs, code) => assert.deepEqual(logs.codes().filter((c) => !['outbound-posted', 'outbound-acked'].includes(c)), [code]);
+
+    it('before a post: posts nothing, says why, and does not hold the reply once writes work again', async () => {
+      const c1 = fakeC1([item(1), item(2)]);
+      const d = fakeDiscord();
+      const { out, logs } = relay(c1, d);
+      const mend = breakWrites(file());
+      assert.equal(await out.tick(), 'failed');
+      assert.equal(await out.tick(), 'failed');
+      assert.deepEqual(logs.codes(), ['state-write-failed', 'state-write-failed'], 'one line per failed poll, and no other code');
+      assert.equal(d.attempts, 0, 'a post that could not be recorded first is not made');
+      assert.equal(c1.acks.length, 0);
+      assert.deepEqual(state.entries(), [], 'no attempt is remembered, because none was made');
+      mend();
+      // Longer than the nonce window: an entry wrongly left "in doubt" would now be held as uncertain.
+      clock += outbound.NONCE_WINDOW_MS + 1;
+      assert.equal(await out.tick(), 'ok');
+      assert.deepEqual(d.messages.map((m) => m.content), ['reply 1', 'reply 2']);
+      assert.deepEqual(c1.acks.map((a) => a.id), [1, 2]);
+      assert.deepEqual(state.entries(), []);
+    });
+
+    it('before a retry of a reply Discord definitely did not take: leaves no doubt behind', async () => {
+      const c1 = fakeC1([item(1)]);
+      const d = fakeDiscord();
+      d.fail = { status: 0, sent: 'no', once: true };
+      const { out } = relay(c1, d);
+      assert.equal(await out.tick(), 'failed');
+      assert.equal(state.get(1).since, null, 'precondition: an entry exists and nothing is in doubt');
+      const mend = breakWrites(file());
+      assert.equal(await out.tick(), 'failed');
+      assert.equal(state.get(1).since, null, 'an attempt that was never made opens no doubt');
+      mend();
+      clock += outbound.NONCE_WINDOW_MS + 1;
+      assert.equal(await out.tick(), 'ok');
+      assert.equal(d.messages.length, 1);
+      assert.deepEqual(c1.acks.map((a) => a.id), [1]);
+    });
+
+    it('after a post: the same helper never posts it again', async () => {
+      const c1 = fakeC1([item(1)]);
+      const d = fakeDiscord();
+      const { out, logs } = relay(c1, d);
+      let mend;
+      const land = d.land.bind(d);
+      d.land = (ch, m) => { const posted = land(ch, m); mend = breakWrites(file()); return posted; };
+      assert.equal(await out.tick(), 'failed');
+      only(logs, 'state-write-failed');
+      assert.equal(d.messages.length, 1, 'the post landed');
+      assert.equal(c1.acks.length, 0, 'and is not acknowledged before it is recorded');
+      d.land = land;
+      mend();
+      clock += outbound.NONCE_WINDOW_MS + 1;
+      assert.equal(await out.tick(), 'ok');
+      assert.equal(d.attempts, 1, 'Discord was asked once');
+      assert.deepEqual(c1.acks, [{ id: 1, postedId: d.messages[0].id }]);
+    });
+
+    it('after a post, then a restart: the same nonce inside the window, held as uncertain past it, never a second message', async () => {
+      for (const [wait, expectAcks, expectState] of [[30 * 1000, 1, undefined], [outbound.NONCE_WINDOW_MS + 1, 0, 'uncertain']]) {
+        fs.rmSync(file(), { force: true });
+        state = openState(file());
+        const c1 = fakeC1([item(1)]);
+        const d = fakeDiscord();
+        const land = d.land.bind(d);
+        let mend;
+        d.land = (ch, m) => { const posted = land(ch, m); mend = breakWrites(file()); return posted; };
+        assert.equal(await relay(c1, d).out.tick(), 'failed');
+        d.land = land;
+        mend();
+        // Restart: the record on disk says an attempt began and names no posted part.
+        state = openState(file());
+        assert.deepEqual(state.get(1).parts, []);
+        clock += wait;
+        await relay(c1, d).out.tick();
+        assert.equal(d.messages.length, 1, 'one message, whatever the wait');
+        assert.equal(c1.acks.length, expectAcks);
+        assert.equal(state.get(1) && state.get(1).state, expectState);
+      }
+    });
+
+    it('part-way through a split reply: resumes at the next part, with each part posted once', async () => {
+      const long = 'x'.repeat(outbound.DISCORD_MAX * 2 + 10);
+      const c1 = fakeC1([item(1, long)]);
+      const d = fakeDiscord();
+      const { out, logs } = relay(c1, d);
+      const land = d.land.bind(d);
+      let mend;
+      let n = 0;
+      d.land = (ch, m) => { const posted = land(ch, m); n += 1; if (n === 2) mend = breakWrites(file()); return posted; };
+      assert.equal(await out.tick(), 'failed');
+      only(logs, 'state-write-failed');
+      assert.equal(d.messages.length, 2);
+      mend();
+      assert.equal(await out.tick(), 'ok');
+      assert.equal(d.messages.length, 3, 'each part posted exactly once');
+      assert.equal(d.attempts, 3);
+      assert.deepEqual(c1.acks, [{ id: 1, postedId: d.messages[0].id }]);
+    });
+
+    it('after the acknowledgement: acknowledges again rather than posting again, and then forgets the reply', async () => {
+      const c1 = fakeC1([item(1)]);
+      const d = fakeDiscord();
+      const { out, logs } = relay(c1, d);
+      const ack = c1.ack.bind(c1);
+      let mend;
+      c1.ack = async (id, postedId) => { const r = await ack(id, postedId); mend = breakWrites(file()); return r; };
+      assert.equal(await out.tick(), 'failed');
+      assert.deepEqual(logs.codes(), ['outbound-posted', 'state-write-failed']);
+      assert.equal(state.get(1).state, 'posted', 'still known as posted');
+      c1.ack = ack;
+      mend();
+      assert.equal(await out.tick(), 'ok');
+      assert.equal(d.attempts, 1, 'posted once');
+      assert.deepEqual(state.entries(), []);
+      assert.deepEqual(openState(file()).entries(), []);
+    });
+
+    it('while setting a reply aside: neither holds nor posts it until the record takes it', async () => {
+      const c1 = fakeC1([item(1)]);
+      const d = fakeDiscord();
+      d.fail = { status: 502, sent: 'unknown', once: true };
+      const { out, logs } = relay(c1, d);
+      assert.equal(await out.tick(), 'failed');
+      clock += outbound.NONCE_WINDOW_MS + 1;
+      const mend = breakWrites(file());
+      assert.equal(await out.tick(), 'failed');
+      assert.deepEqual(logs.codes(), ['outbound-post-failed', 'state-write-failed']);
+      assert.equal(state.get(1).state, 'posting');
+      mend();
+      assert.equal(await out.tick(), 'ok');
+      assert.equal(state.get(1).state, 'uncertain');
+      assert.equal(d.attempts, 1, 'the doubtful post is never repeated');
+      assert.equal(c1.acks.length, 0);
+    });
+  });
+
+  it('logs a failure it did not expect by its type alone, once, and backs off', async () => {
+    const c1 = fakeC1([]);
+    const secret = 'the reply text nobody may log';
+    c1.listOutbound = async () => [{ id: 1, kind: 'reply', get text() { throw new TypeError(secret); }, inReplyTo: null }];
+    const d = fakeDiscord();
+    const { out, logs } = relay(c1, d);
+    assert.equal(await out.tick(), 'failed');
+    assert.equal(logs.lines.length, 1);
+    const rec = JSON.parse(logs.lines[0]);
+    assert.deepEqual({ code: rec.code, error: rec.error }, { code: 'outbound-pass-failed', error: 'TypeError' });
+    assert.doesNotMatch(logs.lines[0], /nobody may log/);
+    assert.equal(d.attempts, 0);
+
+    // Something thrown that is not an error at all still gets the code, with no type to give.
+    c1.listOutbound = async () => [{ id: 1, kind: 'reply', get text() { throw `${CHANNEL_TOKEN}`; }, inReplyTo: null }]; // eslint-disable-line no-throw-literal
+    const odd = relay(c1, d);
+    assert.equal(await odd.out.tick(), 'failed');
+    assert.deepEqual(odd.logs.codes(), ['outbound-pass-failed']);
+    assert.doesNotMatch(odd.logs.lines[0], /ocsk_/);
+  });
+
+  it('logs each failure it does expect under its own code only', async () => {
+    const down = fakeC1([]);
+    down.down = true;
+    const poll = relay(down, fakeDiscord());
+    assert.equal(await poll.out.tick(), 'failed');
+    assert.deepEqual(poll.logs.codes(), ['outbound-poll-failed']);
+
+    const d = fakeDiscord();
+    d.fail = { status: 503, sent: 'unknown' };
+    const post = relay(fakeC1([item(1)]), d);
+    assert.equal(await post.out.tick(), 'failed');
+    assert.deepEqual(post.logs.codes(), ['outbound-post-failed']);
+
+    const c1 = fakeC1([item(2)]);
+    c1.ackDown = true;
+    const ack = relay(c1, fakeDiscord());
+    assert.equal(await ack.out.tick(), 'failed');
+    assert.deepEqual(ack.logs.codes(), ['outbound-posted', 'outbound-ack-failed']);
   });
 
   it('backs off exponentially on failure, capped, and returns to the interval on success', async () => {

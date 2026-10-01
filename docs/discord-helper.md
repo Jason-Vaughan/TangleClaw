@@ -38,7 +38,7 @@ bin/tc-discord-helper configure --base-url http://127.0.0.1:3102 \
   --author <your user id> --guild <server id> --channel <channel id>
 ```
 
-This writes `~/.tangleclaw/discord-helper.json` (owner-only). It holds no secret. `--poll-seconds` (5-300, default 15) sets how often replies are collected.
+This writes `~/.tangleclaw/discord-helper.json` (owner-only). It holds no secret. `--base-url` must be an `http://` or `https://` URL with a host, and no user name or password: the helper signs in with the channel token only. `--poll-seconds` (5-300, default 15) sets how often replies are collected. A value that does not pass is refused and nothing is written.
 
 ### 3. The two secrets, in the Keychain
 
@@ -71,7 +71,9 @@ Then do a round trip: write in the channel. Expect a ✅ reaction once TangleCla
 
 - **`bin/tc-discord-helper status`** shows the config, whether each secret is present (never its value), whether the helper is running, the Gateway's state, the last poll of TangleClaw, and any reply held for you. It never shows a secret or a message's text.
 - **The log** is `~/.tangleclaw/logs/discord-helper.log`. It holds one JSON line per event: a timestamp, a closed code, and ids or numbers. It never holds message text, tokens, headers or Discord's raw responses.
-- **Stopping:** `launchctl bootout gui/$(id -u)/com.tangleclaw.discord-helper`. **Removing:** `bin/tc-discord-helper uninstall-launchd`, which keeps the Keychain items and `~/.tangleclaw/discord-helper/`. To remove the secrets too, run `security delete-generic-password -s tangleclaw-discord-helper -a discord-bot-token` (and `-a operator-channel-token`).
+- **Stopping:** `launchctl bootout gui/$(id -u)/com.tangleclaw.discord-helper`. This unloads the job, so launchd stops restarting the helper. The job file stays in place, and launchd loads it again at your next login.
+- **Starting it again:** `bin/tc-discord-helper install-launchd`. It writes the same job and loads it, and the helper starts at once. Use it to start the helper after a stop without logging out.
+- **Removing:** `bin/tc-discord-helper uninstall-launchd`, which keeps the Keychain items and `~/.tangleclaw/discord-helper/`. To remove the secrets too, run `security delete-generic-password -s tangleclaw-discord-helper -a discord-bot-token` (and `-a operator-channel-token`).
 - **Only one helper runs.** A second one refuses to start, because two would post every reply twice.
 
 ## How a reply is delivered, and when it is held
@@ -84,14 +86,18 @@ A reply or notification is acknowledged to TangleClaw only after Discord has pos
 - **Past that, a retry could duplicate the reply,** so the reply is held as `uncertain`. It is never reposted or acknowledged by itself. `status` lists it.
 - **Discord rejects a reply's content** (HTTP 400): the reply is held as `rejected`, and the replies after it keep moving.
 
-To settle a held reply, stop the helper, look in the channel, then run one of:
+To settle a held reply, stop the helper (`launchctl bootout gui/$(id -u)/com.tangleclaw.discord-helper`), look in the channel, then run one of:
 
 ```sh
 bin/tc-discord-helper settle <id> --posted <discord message id>   # it did post: acknowledge it with that id
 bin/tc-discord-helper settle <id> --repost                         # it did not: post it on the next run
 ```
 
-Then start the helper again. A reply longer than Discord's 2000 characters is posted as up to 5 messages, in order. Anything past that is cut, with a note saying how many characters were left out.
+Then start the helper again with `bin/tc-discord-helper install-launchd`.
+
+If the helper cannot write its record, it posts nothing it could not record first, logs `state-write-failed` and tries again later. Nothing is lost or posted twice: the replies wait on TangleClaw.
+
+A reply longer than Discord's 2000 characters is posted as up to 5 messages, in order. Anything past that is cut, with a note saying how many characters were left out.
 
 ## Notifications the operator sees
 
@@ -127,12 +133,15 @@ When TangleClaw refuses a message, the helper replies to it in fixed words and a
 
 | Code | Meaning and what to do |
 |---|---|
-| `config-missing`, `config-invalid` | Run `configure`. |
+| `config-missing`, `config-invalid` | Run `configure`. `config-invalid` includes a base URL that is not a usable `http://` or `https://` address. The helper exits with status 78 and contacts nothing. |
 | `secret-missing`, `secret-read-failed` | Run `set-secret` for the named secret. `secret-read-failed` can also mean the login Keychain is locked. |
 | `state-unreadable` | `~/.tangleclaw/discord-helper/state.json` is damaged. The helper will not start without it, because forgetting a reply in flight could post it twice. Look at it, and move it aside only once you have checked the channel for the replies it names. |
+| `state-write-failed` | `~/.tangleclaw/discord-helper/state.json` could not be written: a full disk, or a directory the helper may not write to. At start the helper exits with status 78. While running it keeps polling with backoff, and posts nothing it could not record first. Free space or fix the permissions on `~/.tangleclaw/discord-helper/`; the helper carries on by itself. From `settle`, nothing was settled: run `settle` again. |
+| `lock-failed` | The lock file `~/.tangleclaw/discord-helper/helper.pid` could not be taken or written, for the same reasons. The helper exits with status 78, and `settle` changes nothing. Fix the directory, then start the helper or run `settle` again. |
 | `helper-already-running` | Another helper is running. With `pid: -1`, the lock file `~/.tangleclaw/discord-helper/helper.pid` is unreadable instead: the helper never leaves one like that, so something else damaged it. Check that no helper is running (`pgrep -fl tc-discord-helper`), then delete the file. |
 | `gateway-fatal` | Discord refused the connection for a reason a retry cannot fix. The close code is in the log and in `status`: 4004 is a bad bot token (run `set-secret bot`), and 4014 means Message Content Intent is off (step 1). The helper keeps posting replies, but reads nothing until it is restarted. |
-| `outbound-uncertain`, `outbound-rejected` | A reply is held; see "When it is held". |
+| `outbound-uncertain`, `outbound-rejected` | A reply is held; see "How a reply is delivered, and when it is held". |
+| `outbound-pass-failed` | A poll for replies ended on a failure the helper did not expect. The line gives the failure's type (`error`) and never its message. The helper retries with backoff; if the code repeats, it is a defect to report, with the log lines around it. |
 | `outbound-poll-failed`, `inbound-transport-failed` | TangleClaw could not be reached. |
 | `outbound-post-failed` | Discord refused a post or could not be reached; it is retried with backoff. |
 | `discord-rate-limited` | Discord asked the helper to wait (at most 30 seconds are honoured); the call is retried once, then counts as a failure. |
@@ -145,6 +154,7 @@ The full code list is in `lib/discord-helper/log.js`.
 The automated tests cover every rule on this page against fakes and the real channel routes (`test/discord-helper*.test.js`). These checks need the operator's own Mac and Discord account:
 
 - the Keychain items, the launchd install, restart and backoff;
+- a stop with `launchctl bootout`, then a start with `install-launchd`, and that the helper starts again at the next login after a stop;
 - a live `operator-needed` notification;
 - one two-way conversation;
 - the Discord desktop app being absent.

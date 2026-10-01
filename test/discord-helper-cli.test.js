@@ -20,6 +20,9 @@ const REPO = path.resolve(__dirname, '..');
 const BOT_TOKEN = 'test.bot-token-secret-value.not-a-real-token-0123456789abcdef';
 const CHANNEL_TOKEN = `ocsk_${'Q'.repeat(43)}`;
 const IDS = { author: '111111111111111111', guild: '222222222222222222', channel: '333333333333333333' };
+// Each passes a check for an `http(s)://` prefix. The first four are not URLs at
+// all; the last is one, with credentials the helper would print and never use.
+const MALFORMED_URLS = ['http://', 'https://', 'http://exa mple:3102', 'http://:3102', 'https://operator:hunter2@tangleclaw.example'];
 
 /**
  * A stdin stream holding `text`.
@@ -106,6 +109,22 @@ describe('tc-discord-helper', () => {
       }
       assert.deepEqual(fs.readdirSync(path.join(home, '.tangleclaw')), [], 'no check file is left behind');
     });
+
+    it('writes nothing for a base URL that starts like one and is not one', async () => {
+      for (const url of MALFORMED_URLS) {
+        assert.equal(await cli.main(['configure', '--base-url', url, '--author', IDS.author, '--guild', IDS.guild, '--channel', IDS.channel], deps), 1, url);
+        assert.equal(fs.existsSync(p().config), false, url);
+      }
+      assert.match(outLines.at(-1), /^Not written: --base-url must be an http:\/\/ or https:\/\/ URL with a host/);
+      assert.doesNotMatch(outLines.join('\n'), /hunter2/, 'a refused value is not echoed');
+    });
+
+    it('accepts every form of address the client can use', async () => {
+      for (const url of ['http://127.0.0.1:3102', 'https://tangleclaw.example', 'http://[::1]:3102', 'http://localhost:3102/']) {
+        assert.equal(await cli.main(['configure', '--base-url', url, '--author', IDS.author, '--guild', IDS.guild, '--channel', IDS.channel], deps), 0, url);
+        assert.equal(cli.loadConfig(p().config).baseUrl, url);
+      }
+    });
   });
 
   describe('set-secret', () => {
@@ -171,6 +190,60 @@ describe('tc-discord-helper', () => {
       assert.equal(await cli.main(['run'], deps), 78);
       assert.equal(JSON.parse(errLines.at(-1)).code, 'state-unreadable');
       assert.equal(fs.readFileSync(p().state, 'utf8'), '{torn', 'the record is left for the operator to inspect');
+      assert.equal(fetchCalls.length, 0, 'Discord and TangleClaw were never contacted');
+    });
+
+    it('answers a malformed base URL as config-invalid in run, verify and status, before anything else happens', async () => {
+      withSecrets();
+      for (const url of MALFORMED_URLS) {
+        // As a config written by hand, or by a helper from before the address was parsed.
+        fs.mkdirSync(path.dirname(p().config), { recursive: true });
+        fs.writeFileSync(p().config, JSON.stringify({ baseUrl: url, allow: { authorId: IDS.author, guildId: IDS.guild, channelId: IDS.channel }, pollSeconds: 15 }));
+        errLines.length = 0;
+        outLines.length = 0;
+        stopFn = null;
+        // Were the address accepted, the helper would start and run until stopped: stop it, and fail on the code.
+        const running = cli.main(['run'], deps);
+        const early = await Promise.race([running, new Promise((r) => setTimeout(() => r('still running'), 50))]);
+        if (stopFn) { stopFn(); await running; }
+        assert.equal(early, 78, url);
+        assert.deepEqual(errLines.map((l) => JSON.parse(l).code), ['config-invalid'], url);
+        assert.equal(await cli.main(['verify'], deps), 78, url);
+        assert.equal(outLines.at(-1), 'Cannot verify: config-invalid', url);
+        assert.equal(await cli.main(['status'], deps), 0, url);
+        assert.ok(outLines.includes('config: config-invalid'), url);
+        assert.doesNotMatch(outLines.join('\n'), /hunter2/, 'status does not print an address it refused');
+      }
+      assert.equal(fs.existsSync(p().dir), false, 'no lock, record or status was written');
+      assert.equal(fetchCalls.length, 0, 'Discord and TangleClaw were never contacted');
+    });
+
+    it('refuses to start when its lock cannot be written, by closed code', async () => {
+      await configure();
+      withSecrets();
+      fs.mkdirSync(`${p().pid}.4242.tmp`, { recursive: true });
+      assert.equal(await cli.main(['run'], deps), 78);
+      assert.deepEqual(errLines.map((l) => JSON.parse(l).code), ['lock-failed']);
+      assert.equal(fs.existsSync(p().pid), false, 'no lock is left claiming a helper runs');
+      fs.rmSync(`${p().pid}.4242.tmp`, { recursive: true });
+      assert.deepEqual(fs.readdirSync(p().dir), [], 'and nothing else is left behind');
+      assert.equal(fs.existsSync(p().state), false, 'the record is not opened without the lock');
+      assert.equal(stopFn, null, 'it never started');
+      assert.equal(fetchCalls.length, 0, 'Discord and TangleClaw were never contacted');
+    });
+
+    it('refuses to start when its record cannot be written, by closed code, and releases the lock', async () => {
+      await configure();
+      withSecrets();
+      const st = openState(p().state);
+      st.set(3, { state: 'posting', since: 1, parts: [] });
+      const before = fs.readFileSync(p().state, 'utf8');
+      fs.mkdirSync(`${p().state}.${process.pid}.tmp`);
+      assert.equal(await cli.main(['run'], deps), 78);
+      assert.deepEqual(errLines.map((l) => JSON.parse(l).code), ['state-write-failed']);
+      assert.equal(fs.readFileSync(p().state, 'utf8'), before, 'the record is as it was');
+      assert.equal(fs.existsSync(p().pid), false);
+      assert.equal(stopFn, null, 'it never started');
       assert.equal(fetchCalls.length, 0, 'Discord and TangleClaw were never contacted');
     });
 
@@ -325,6 +398,44 @@ describe('tc-discord-helper', () => {
       assert.equal(fs.existsSync(p().pid), false, 'settle took the lock and released it');
       assert.equal(await cli.main(['settle', '3', '--repost'], deps), 1, 'no longer held');
       assert.equal(await cli.main(['settle', 'x'], deps), 1);
+    });
+
+    it('settles nothing, and says so, when the record or the lock cannot be written', async () => {
+      const st = openState(p().state);
+      st.set(3, { state: 'uncertain', since: 1, parts: [] });
+      const before = fs.readFileSync(p().state, 'utf8');
+
+      // The record opens (it is read), and the settlement's own write is the one that fails.
+      const realRename = fs.renameSync;
+      let renames = 0;
+      fs.renameSync = (from, to) => { if (to === p().state && ++renames === 2) throw Object.assign(new Error('ENOSPC: no space left'), { code: 'ENOSPC' }); return realRename(from, to); };
+      try {
+        assert.equal(await cli.main(['settle', '3', '--posted', '900000000000000009'], deps), 2);
+      } finally {
+        fs.renameSync = realRename;
+      }
+      assert.equal(renames, 2, 'precondition: the second write of the record is the settlement');
+      assert.match(outLines.at(-1), /^Cannot write the record \(state-write-failed\).* Nothing was settled\.$/);
+      assert.equal(JSON.parse(errLines.at(-1)).code, 'state-write-failed');
+      assert.equal(fs.readFileSync(p().state, 'utf8'), before, 'the reply is still held');
+      assert.equal(fs.existsSync(p().pid), false, 'the lock is released');
+
+      // The record cannot be written at all.
+      fs.mkdirSync(`${p().state}.${process.pid}.tmp`);
+      assert.equal(await cli.main(['settle', '3', '--repost'], deps), 2);
+      assert.match(outLines.at(-1), /^Cannot write the record \(state-write-failed\)/);
+      fs.rmSync(`${p().state}.${process.pid}.tmp`, { recursive: true });
+      assert.equal(fs.existsSync(p().pid), false, 'the lock is released');
+
+      // The lock cannot be written.
+      fs.mkdirSync(`${p().pid}.4242.tmp`);
+      assert.equal(await cli.main(['settle', '3', '--repost'], deps), 2);
+      assert.match(outLines.at(-1), /^Cannot take the helper's lock \(lock-failed\).* Nothing was settled\.$/);
+      assert.equal(JSON.parse(errLines.at(-1)).code, 'lock-failed');
+      fs.rmSync(`${p().pid}.4242.tmp`, { recursive: true });
+      assert.equal(fs.readFileSync(p().state, 'utf8'), before, 'nothing was settled');
+
+      assert.equal(await cli.main(['settle', '3', '--repost'], deps), 0, 'and it settles once both can be written');
     });
   });
 
