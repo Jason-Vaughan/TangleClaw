@@ -35,6 +35,47 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-30 — Harden the operator channel: arrivals, inserts, boot check, failure notices, settings log
+
+<!-- prawduct: type=bugfix | scope=oc-schema-fold-2031 -->
+
+TC-RM18 Chunk 4, dispatched by the Architect (Medusa 92b79e63) under Rule #154, from `47c684c6`.
+Not committed until the Architect authorizes the diff; not pushed.
+
+**Why:** the cumulative Critic over the fold and main merge left warnings and notes that the Architect
+ruled must be fixed before the stack moves. The one defect a user could hit is that an arrival with a
+sender id longer than 128 characters made the outbound insert throw before the Hub copy was acked, so
+the Hub redelivered it on every reconnect and it was never recorded.
+
+**What:**
+- `recordArrival` keeps such an arrival quarantined (`sender-too-long`) without its sender id or text,
+  then acks it. Root cause: the ON CONFLICT insert correctly stopped swallowing the column CHECK, but
+  nothing bounded a value the Bridge lets any caller choose.
+- `insertInbound` uses `ON CONFLICT(external_id) DO NOTHING`, so ADR 0022 decision 4 holds for every
+  channel insert.
+- The per-boot storage step runs the whole postcondition, the partial unique `idem_key` index
+  included. The migration no longer repeats the check separately.
+- New notification `message-undelivered`, raised when an operator message settles `failed` or
+  `send_unknown`, keyed by the inbound row and linked through `reply_to_inbound_id`, so `GET /outbound`
+  names the operator's message in `inReplyTo`. The C2 helper at `fff88346` already posts unknown types
+  generically and threads anything with `inReplyTo`, so it needs no change.
+- `updateSettings` logs the fields a request set and their new non-secret values at info.
+- `listRelayable` drops the dead `row.kind || 'reply'` fallback and the older-helper sentence.
+- ADR 0022: Accepted under the Architect's ruling; decision 4 covers inbound and the bounded sender;
+  decision 5 says "in full"; decision 8 names where the number is actually written.
+
+**Tests (none weakened):**
+- New: a 129-character sender is recorded, quarantined and acked, and 128 is kept (API, through the
+  real arrival observer); an inbound CHECK or NOT NULL failure throws; a mis-shaped key index (plain or
+  whole-table unique) refuses to open at the current version; a notification links its message;
+  failed and `send_unknown` each raise one notice, a retrying refusal none; the settings log line.
+- Changed: `test/coordinator-rotation.test.js` asserts `CURRENT_SCHEMA_VERSION >= 51` instead of
+  `=== 52`. The rotation test proves its own migration, and the ordering is carried by the dispatch and
+  the table assertions. The notification vocabulary test lists the four emitted types, still exactly.
+  The wrong-shape migration test's comment now says the boot check refuses it.
+
+**Deferred (Architect):** retention and the `created_at` rate-limit index (W4/R-6).
+
 ## 2026-09-30 — Merge main into the #2031 fold and move the operator channel to schema v52
 
 <!-- prawduct: type=chore | scope=oc-schema-fold-2031 -->

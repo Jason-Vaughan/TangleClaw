@@ -128,8 +128,8 @@ describe('operator channel notifications (#1799)', () => {
   });
 
   describe('the closed vocabulary', () => {
-    it('emits only the three events with a source, and refuses the two deferred ones', () => {
-      assert.deepEqual(Object.keys(notify.EMITTED).sort(), ['fleet-idle', 'operator-needed', 'work-blocked']);
+    it('emits only the four events with a source, and refuses the two deferred ones', () => {
+      assert.deepEqual(Object.keys(notify.EMITTED).sort(), ['fleet-idle', 'message-undelivered', 'operator-needed', 'work-blocked']);
       for (const t of notify.DEFERRED) {
         assert.deepEqual(notify.emit(t, { key: `${t}:1` }), { emitted: false, reason: 'deferred-type' });
       }
@@ -144,6 +144,26 @@ describe('operator channel notifications (#1799)', () => {
       assert.equal(row.text, 'TangleClaw: builder-one reports its work is blocked.');
       assert.equal(row.notify_type, 'work-blocked');
       assert.equal(row.project_id, p.id);
+    });
+
+    it('reports an undelivered message once, tied to it, and says which outcome it had', () => {
+      const p = mkProject('builder-two');
+      const failed = { id: 41, target_project_id: p.id, state: 'failed' };
+      assert.equal(notify.onInboundUndelivered(failed).emitted, true);
+      assert.equal(notify.onInboundUndelivered(failed).reason, 'duplicate');
+      assert.equal(notify.onInboundUndelivered({ id: 42, target_project_id: p.id, state: 'send_unknown' }).emitted, true);
+      for (const state of ['pending', 'sent']) {
+        assert.equal(notify.onInboundUndelivered({ id: 43, target_project_id: p.id, state }), null, state);
+      }
+      const rows = notifications();
+      assert.equal(rows.length, 2);
+      const byInbound = new Map(rows.map((r) => [r.reply_to_inbound_id, r]));
+      assert.equal(byInbound.get(41).text,
+        'TangleClaw: this message could not be delivered to builder-two and will not be retried. Send it again if it needs an answer.');
+      assert.equal(byInbound.get(42).text,
+        'TangleClaw: this message to builder-two may not have reached it, and will not be sent again. Send it again if it needs an answer.');
+      assert.equal(byInbound.get(41).idem_key, 'message-undelivered:41');
+      assert.equal(byInbound.get(41).project_id, p.id);
     });
 
     it('records nothing while the channel is off, so turning it on sends no backlog', () => {

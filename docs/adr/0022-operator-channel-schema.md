@@ -1,7 +1,7 @@
 # ADR 0022: The operator channel's storage is one migration, and a notification has no Hub id
 
-**Status:** Proposed (2026-09-30). The scope was authorized by Architect ruling A6 for #2031, and
-the ADR is awaiting independent review and Architect acceptance.
+**Status:** Accepted (2026-09-30) by Architect ruling for #2031 (Medusa dispatch `92b79e63`), after
+independent Critic review of the fold. The scope was authorized by Architect ruling A6.
 **Source issue:** #2031, the operator-channel v51/v52 schema blocker on the Discord stack (#1966,
 #2001, #2003).
 **Builds on:** `docs/operator-channel.md`; Architect ruling A17 (open PRs do not reserve migration
@@ -38,10 +38,16 @@ already a consequence of that exception.
    - A `notification` has an `idem_key` and a `notify_type`, and no `hub_id`.
    - A received message is therefore never stored under a notification's key, whatever its id, and
      cannot suppress one.
-4. **Inserts name their conflict target** (`ON CONFLICT(hub_id)` / `ON CONFLICT(idem_key) WHERE
-   idem_key IS NOT NULL`, then `DO NOTHING`). `INSERT OR IGNORE` is not used, because it also
-   swallows CHECK and NOT NULL failures, and a nullable key would turn those into silent drops.
-5. **The postcondition is the shape, and it is checked at every startup as well as at migration.**
+4. **Every channel insert names its conflict target** (`ON CONFLICT(external_id)` inbound,
+   `ON CONFLICT(hub_id)` / `ON CONFLICT(idem_key) WHERE idem_key IS NOT NULL` outbound, then
+   `DO NOTHING`). `INSERT OR IGNORE` is not used, because it also swallows CHECK and NOT NULL
+   failures, and a nullable key would turn those into silent drops.
+   - A value the columns would refuse from outside TangleClaw's own validation is handled before
+     the insert, not left to throw. The Medusa Bridge accepts any `from`, so an arrival whose
+     sender id exceeds the column bound is kept quarantined without it; a throw there would leave
+     the Hub copy un-acked and redelivered forever.
+5. **The postcondition is the shape, and it is checked in full at every startup as well as at
+   migration.**
    `IF NOT EXISTS` leaves an existing table alone, so without this check a table in another shape
    would survive under the new code. The postcondition requires:
    - the unique keys;
@@ -60,7 +66,10 @@ already a consequence of that exception.
      fails the startup postcondition.
    - The operator guide says to recreate it, or restore it from a backup.
 8. **The migration is v52, after `main`'s v51** (A17, ruling A6). The function names carry no
-   version number, so the version lives only in `CURRENT_SCHEMA_VERSION` and the one dispatch line.
+   version number. The number is written where the code needs it: `CURRENT_SCHEMA_VERSION`, the
+   dispatch line with its log message, and this migration's own test, which rewinds a store to the
+   version before it. The CHANGELOG and docs state it too. No other feature's test pins it. A
+   renumber searches the tree for the old number rather than trusting a list of sites.
 
 ## Consequences
 
@@ -71,6 +80,8 @@ already a consequence of that exception.
 - A developer database that ran the abandoned branches must be recreated or restored. This is
   documented, not automated.
 - The startup postcondition costs a few `sqlite_master` and `PRAGMA` reads per boot.
+- A later notification about one operator message (`message-undelivered`) reuses the existing
+  `reply_to_inbound_id` column, so `inReplyTo` names that message. No column was added for it.
 
 ## Forward extension boundary (not built)
 

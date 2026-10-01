@@ -367,6 +367,20 @@ describe('API — operator channel', () => {
       assert.equal(hub.received.length, 1, 'the Hub was asked once, and only once');
     });
 
+    it('tells the helper, as a reply to the operator\'s own message, that a message may not have arrived', async () => {
+      bringTargetOnline();
+      hub.setMode('drop');
+      const body = msg();
+      await call(server, 'POST', '/api/operator-channel/inbound', body, helper());
+      await operatorChannel.pump();
+      const out = await call(server, 'GET', '/api/operator-channel/outbound', null, helper());
+      const notices = out.data.replies.filter((r) => r.type === 'message-undelivered');
+      assert.equal(notices.length, 1, JSON.stringify(out.data.replies));
+      assert.equal(notices[0].kind, 'notification');
+      assert.deepEqual(notices[0].inReplyTo, { messageId: body.message.id });
+      assert.match(notices[0].text, /may not have reached/);
+    });
+
     it('retries a refused send under a fresh request id, since a refusal is known not to be on the Hub', async () => {
       bringTargetOnline();
       hub.setMode('refuse');
@@ -606,6 +620,22 @@ describe('API — operator channel', () => {
       assert.equal(row.reason, 'too-long');
       assert.equal(row.text, null);
       assert.ok(channelSocket.sent.some((f) => f.includes('hub-huge')), 'the Hub copy is acknowledged, so it is not redelivered');
+    });
+
+    it('keeps an arrival whose sender id is longer than a workspace id as a quarantined record, and acknowledges it', async () => {
+      deliverToChannel('hub-longfrom', 'w'.repeat(129), 'from a sender no send here could have');
+      const row = store.getDb().prepare("SELECT * FROM operator_channel_outbound WHERE hub_id = 'hub-longfrom'").get();
+      assert.ok(row, 'the arrival is recorded, not lost to a refused insert');
+      assert.equal(row.state, 'quarantined');
+      assert.equal(row.reason, 'sender-too-long');
+      assert.equal(row.from_workspace_id, null);
+      assert.equal(row.text, null);
+      assert.ok(channelSocket.sent.some((f) => f.includes('hub-longfrom')), 'the Hub copy is acknowledged, so it is not redelivered');
+
+      deliverToChannel('hub-edgefrom', 'w'.repeat(128), 'a sender id at the bound');
+      const edge = store.getDb().prepare("SELECT * FROM operator_channel_outbound WHERE hub_id = 'hub-edgefrom'").get();
+      assert.equal(edge.from_workspace_id, 'w'.repeat(128));
+      assert.equal(edge.state, 'unverified', 'a sender id at the bound is judged like any other');
     });
 
     it('refuses an ack for a reply that is not waiting', async () => {

@@ -9,7 +9,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { setLevel } = require('../lib/logger');
+const logger = require('../lib/logger');
+const { setLevel } = logger;
 
 setLevel('error');
 
@@ -107,6 +108,68 @@ describe('operator channel: delivery outcomes', () => {
     const after = store.operatorChannel.getInbound(row.id);
     assert.equal(after.state, 'failed');
     assert.match(after.last_error, /EXCHANGE_MALFORMED/);
+  });
+
+  /**
+   * The undelivered-message notices recorded for one inbound row.
+   * @param {number} inboundId - Inbound row id
+   * @returns {object[]}
+   */
+  const undeliveredNotices = (inboundId) => store.getDb().prepare(
+    "SELECT * FROM operator_channel_outbound WHERE kind = 'notification' AND notify_type = 'message-undelivered' AND reply_to_inbound_id = ?"
+  ).all(inboundId);
+
+  it('tells the operator once, tied to their message, when a message fails', async () => {
+    const row = queue();
+    answers.push({ status: 400, body: { code: 'EXCHANGE_MALFORMED', error: 'to must be a workspace id' } });
+    await operatorChannel.pump();
+    const notices = undeliveredNotices(row.id);
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0].state, 'relayable');
+    assert.equal(notices[0].idem_key, `message-undelivered:${row.id}`);
+    assert.match(notices[0].text, /could not be delivered/);
+    const listed = operatorChannel.listRelayable().find((i) => i.id === notices[0].id);
+    assert.deepEqual(listed.inReplyTo, { messageId: row.external_id }, 'the helper can post it as a reply to the operator\'s message');
+    assert.equal(listed.type, 'message-undelivered');
+    await operatorChannel.pump();
+    assert.equal(undeliveredNotices(row.id).length, 1, 'a failed message is reported once');
+  });
+
+  it('tells the operator when a message\'s Hub outcome is unknown, and not while it is only retrying', async () => {
+    const row = queue();
+    answers.push({ status: 502, body: { code: 'SEND_REJECTED', error: 'not found' } });
+    await operatorChannel.pump();
+    assert.equal(store.operatorChannel.getInbound(row.id).state, 'pending');
+    assert.equal(undeliveredNotices(row.id).length, 0, 'a refusal that will be retried is not reported');
+    answers.push({ status: 409, body: { code: 'SEND_ALREADY_ATTEMPTED', details: { exchangeId: 'mx_u' } } });
+    await operatorChannel.pump();
+    const notices = undeliveredNotices(row.id);
+    assert.equal(notices.length, 1);
+    assert.match(notices[0].text, /may not have reached it/);
+  });
+
+  it('logs a settings change with its non-secret values, and never the token', () => {
+    const lines = [];
+    logger.setLevel('info');
+    logger.setConsoleStream({ write: (line) => lines.push(line) });
+    // Turned off, so the change starts no listener; the suite's own setting is put back after.
+    try {
+      operatorChannel.updateSettings({ enabled: false, allowlist: { authorId: 'u1', spaceId: 'g1', channelId: 'c1' } });
+      operatorChannel.rotateToken();
+    } finally {
+      logger.setConsoleStream(null);
+      logger.setLevel('error');
+      const config = store.config.load();
+      config.operatorChannel = { enabled: true };
+      store.config.save(config);
+    }
+    const changed = lines.filter((l) => l.includes('Operator channel settings changed'));
+    assert.equal(changed.length, 1);
+    assert.match(changed[0], /enabled=false/);
+    assert.match(changed[0], /"authorId":"u1"/);
+    assert.match(changed[0], /"channelId":"c1"/);
+    assert.doesNotMatch(changed[0], /targetProject/, 'only the fields the request set are named');
+    assert.ok(!lines.some((l) => /ocsk_|tokenHash/.test(l)), 'no token or hash reaches the log');
   });
 
   it('waits without spending an attempt while the channel listener is down', async () => {

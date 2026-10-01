@@ -29,6 +29,7 @@ This page covers TangleClaw's side. The helper itself (the Discord Gateway clien
 
 - **Minting:** the operator mints the helper's token with `POST /api/operator-channel/token`. It starts with `ocsk_`, is shown once, and only its SHA-256 is stored. Minting again revokes the previous token at once.
 - **A signed-in session is required.** Minting the token and changing the settings need an operator signed in to TangleClaw's own login. The dashboard's headers on an open gate are not enough, because any local process can send them. On an install whose gate is open or in fallback behind Caddy, these two routes refuse everyone (`403 OPERATOR_VERIFICATION_REQUIRED`), so the channel cannot be set up until the gate is armed. Reading the status needs only what any operator read needs.
+- **Changes are logged.** Rotating the token logs one info line (never the token). Changing the settings logs one info line naming each field the request set and its new value: `enabled`, `targetProject` and the allowlisted author, space and channel ids. None of them is secret.
 - **Scope:** the token is good for exactly three routes, listed below. **A request carrying an `ocsk_` token is refused on every other route** with `403 CHANNEL_TOKEN_SCOPE`, even if it also carries dashboard headers or a signed-in session. The helper relays a third-party chat, so nothing it sends may be read as the operator.
 
 ## Routes
@@ -90,6 +91,8 @@ A delivery pump runs when a message is accepted, every 30 seconds, and at boot. 
 
 A message's text is dropped once it is `sent` or `send_unknown`.
 
+A message that ends `failed` or `send_unknown` raises a `message-undelivered` notification (see Notifications), tied to that message, so the operator learns which message did not arrive instead of waiting for a reply that will not come.
+
 ## Replies
 
 The target project replies through its own switchboard route, with its launch headers (`tc message send` sends them), sending to the channel's workspace id with `inReplyTo` set to the message it answers. That works because the channel's message was a tracked send addressed to the project. The reply comes back to the helper with the chat message id it answers. A message sent without `inReplyTo` comes back as a reply to nothing.
@@ -99,38 +102,46 @@ The target project replies through its own switchboard route, with its launch he
 - a send not made under a project's own launch is quarantined at once (`sender-not-verified`). The send route names its sender from the project in its URL, so this check is what keeps an unbound local caller, another project's launch, or the operator from speaking as the target in the chat;
 - mail sent by another project, or a send its sender addressed to another workspace, is quarantined at once;
 - mail that no TangleClaw send made is quarantined after ten minutes;
-- a message longer than 64 KiB, which no switchboard route accepts, is kept only as a quarantined record.
+- a message longer than 64 KiB, which no switchboard route accepts, is kept only as a quarantined record;
+- a message whose sender id is longer than 128 characters, which no workspace TangleClaw records can have, is kept only as a quarantined record (`sender-too-long`), without its sender id or text.
+
+Every one of these is acknowledged to the Hub once it is recorded, so the Hub does not redeliver it.
 
 ## Notifications
 
 TangleClaw also tells the operator when it needs attention, through the same outbound queue. A notification is listed by `GET /outbound` with `kind: 'notification'` and settled by the same acknowledgement, only after the helper has posted it. No route is added, and the channel token reaches nothing new.
 
-Three events are emitted. Each has one source, and each is emitted once per idempotency key:
+Four events are emitted. Each has one source, and each is emitted once per idempotency key:
 
 | `type` | Raised when | Key |
 |---|---|---|
 | `operator-needed` | The Medusa watchdog escalates an exchange to the operator rung (`lib/medusa-watchdog.js`). | the exchange id |
 | `work-blocked` | A lane's workload receipt enters `blocked`. A repeated `blocked` is not a new event. | the receipt id |
 | `fleet-idle` | Every live session's composed lane is `AVAILABLE` or `COMPLETE_NOT_CLEAR`, judged on the channel's 30-second pump. It is emitted once per idle episode; the episode ends when any lane leaves idle, and it survives a restart. | the episode's start |
+| `message-undelivered` | An operator message settles `failed` (the Hub refused it for good) or `send_unknown` (the Hub may or may not have it; it is not sent again). Its `inReplyTo` names the operator's message, and the text says which of the two happened. | the inbound row id |
 
 `release-action-needed` and `certification-state-changed` are reserved names. Neither is emitted until its trigger is defined.
 
-The schema is closed: a type, a key, the project the event concerns (none for `fleet-idle`), a timestamp, and text rendered on the server from a fixed template. The template takes only the project's name from the store and a lane count, so no agent or chat text reaches a notification. The text passes the channel's display-safety rule; a project name that fails it is left out ("a project") and the omission is logged, so the operator is still told.
+The schema is closed: a type, a key, the project the event concerns (none for `fleet-idle`), for `message-undelivered` the operator message it concerns, a timestamp, and text rendered on the server from a fixed template. The template takes only the project's name from the store and integers (a lane count, or whether the outcome is unknown), so no agent or chat text reaches a notification. The text passes the channel's display-safety rule; a project name that fails it is left out ("a project") and the omission is logged, so the operator is still told.
 
 **Notifications are recorded only while the channel is on.** Turning it on does not deliver a backlog of stale alerts.
+
+**What the Discord helper does with them (#2003, as of its head `fff88346`).** It posts every listed notification, whatever its `type`, under a title from its own table; a type it does not know, such as `message-undelivered`, is posted under the generic title "Notification". It posts any item whose `inReplyTo` is set as a Discord reply to that message, notifications included, so a `message-undelivered` notice appears threaded under the operator's own message. No helper change is needed for it to work; a dedicated title can be added when the helper is restacked.
+
+A notice is recorded just after its message settles, in a separate write. A crash between the two loses that one notice; the message's state and the status counts still show it.
 
 ## Storage
 
 - `operator_channel_inbound`: one row per message, unique by the helper's message id. States: `pending`, `sent`, `send_unknown`, `failed`.
 - `operator_channel_outbound`: one row per item for the helper. States: `unverified`, `relayable`, `delivered`, `quarantined`. Each row has a `kind`, and each kind has its own key:
   - a `reply` is a message the channel received, unique by its Hub id (`hub_id`);
-  - a `notification` is one TangleClaw raised. It has no Hub id (`hub_id` is NULL), is unique by its idempotency key (`idem_key`), and carries its `notify_type` and, when it concerns one, its `project_id`. It is stored as `relayable` from the start.
+  - a `notification` is one TangleClaw raised. It has no Hub id (`hub_id` is NULL), is unique by its idempotency key (`idem_key`), and carries its `notify_type`, when it concerns one its `project_id`, and when it concerns one operator message that message's row in `reply_to_inbound_id`. It is stored as `relayable` from the start.
   - A row CHECK keeps the two keys apart, so no received message can collide with a notification or suppress it, whatever its id. The channel still refuses an arrival whose id breaks the Hub's id rule, because such an id did not come from the Hub.
 - `operator_channel_notify_state`: small key/value state the notifier needs to survive a restart, such as where a `fleet-idle` spell stands.
 
-Text is kept only until it is handed on. Nothing prunes the rows yet: each reply and each notification (an escalation, a lane entering `blocked`, an idle episode) leaves one small row whose text is cleared once it is posted.
+Text is kept only until it is handed on. Nothing prunes the rows yet: each reply and each notification (an escalation, a lane entering `blocked`, an idle episode, an undelivered message) leaves one small row whose text is cleared once it is posted.
 
-One migration creates all three tables, the notification columns and the key index in their final shape. Its postcondition, checked again at every startup, refuses a table in any other shape rather than run over it.
+One migration creates all three tables, the notification columns and the key index in their final shape. Its postcondition, checked again at every startup, refuses a table or a key index in any other shape rather than run over it.
 
 ### A private database from the abandoned branches
 

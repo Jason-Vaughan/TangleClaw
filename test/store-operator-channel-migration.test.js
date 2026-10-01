@@ -4,7 +4,7 @@
 // (#2031): both mail tables, the notification columns, the notification key
 // index and the notifier's state table. A fresh install gets it at the current
 // version; a v51 store gains it through the migration and keeps its older rows,
-// and the migration refuses to advance over a table in any other shape. Each
+// and every boot refuses storage in any other shape, the key index included. Each
 // direction refuses a second row for the same message, which is what makes a
 // replayed delivery harmless. A notification has no Hub id and is keyed by its
 // idempotency key, so no received message can collide with one.
@@ -159,9 +159,9 @@ describe('store: operator channel schema (#2031 fold)', () => {
     rewindToV51();
     store._setBasePath(tmpDir);
     store.init();
-    // Put the abandoned stack's outbound table back under a v51 stamp: the
-    // migration's IF NOT EXISTS leaves it alone, so only the postcondition can
-    // catch that the storage is not in its final shape.
+    // Put the abandoned stack's outbound table back under a v51 stamp: IF NOT
+    // EXISTS leaves it alone, so the storage check, which runs on every boot
+    // before any migration, is what refuses it.
     const db = store.getDb();
     db.exec('DROP INDEX idx_operator_channel_outbound_idem');
     db.exec('DROP TABLE operator_channel_outbound');
@@ -181,6 +181,24 @@ describe('store: operator channel schema (#2031 fold)', () => {
     }
   });
 
+  it('refuses to open a store whose notification key index is in another shape, at the current version', () => {
+    for (const [label, ddl] of [
+      ['plain', 'CREATE INDEX idx_operator_channel_outbound_idem ON operator_channel_outbound(idem_key)'],
+      ['whole', 'CREATE UNIQUE INDEX idx_operator_channel_outbound_idem ON operator_channel_outbound(idem_key)']
+    ]) {
+      freshStore(`idx-${label}`);
+      const db = store.getDb();
+      db.exec('DROP INDEX idx_operator_channel_outbound_idem');
+      db.exec(ddl);
+      store.close();
+      store._setBasePath(tmpDir);
+      assert.throws(() => store.init(), /no partial unique index on the notification key/, `${label} index accepted`);
+      store.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      tmpDir = null;
+    }
+  });
+
   it('records one inbound row per message id, and answers a replay with the first row', () => {
     freshStore('inbound');
     const first = store.operatorChannel.insertInbound(inbound('m1'));
@@ -189,6 +207,14 @@ describe('store: operator channel schema (#2031 fold)', () => {
     assert.equal(again.inserted, false);
     assert.equal(again.row.id, first.row.id);
     assert.equal(again.row.text, 'hello');
+  });
+
+  it('refuses an inbound row a CHECK or NOT NULL rejects rather than dropping it silently', () => {
+    freshStore('inbound-check');
+    assert.throws(() => store.operatorChannel.insertInbound({ ...inbound('m1'), author_id: 'a'.repeat(65) }), /CHECK constraint failed/);
+    assert.throws(() => store.operatorChannel.insertInbound({ ...inbound('m2'), channel_id: null }), /NOT NULL constraint failed/);
+    assert.equal(store.operatorChannel.getInboundByExternalId('m1'), null);
+    assert.equal(store.operatorChannel.getInboundByExternalId('m2'), null);
   });
 
   it('records one outbound row per Hub id', () => {
@@ -238,6 +264,15 @@ describe('store: operator channel schema (#2031 fold)', () => {
     assert.equal(again.row.text, 'TangleClaw: x', 'the first record stands');
     assert.equal(other.inserted, true, 'many notifications share a NULL hub_id');
     assert.equal(other.row.hub_id, null);
+  });
+
+  it('links a notification to the operator message it concerns, and leaves others unlinked', () => {
+    freshStore('notify-link');
+    const m = store.operatorChannel.insertInbound(inbound('m1')).row;
+    const linked = store.operatorChannel.insertNotification({ ...notice('k-linked'), replyToInboundId: m.id });
+    const plain = store.operatorChannel.insertNotification(notice('k-plain'));
+    assert.equal(linked.row.reply_to_inbound_id, m.id);
+    assert.equal(plain.row.reply_to_inbound_id, null);
   });
 
   it('a received message cannot collide with or suppress a notification, whatever its id', () => {

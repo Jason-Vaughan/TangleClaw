@@ -1593,7 +1593,7 @@ describe('coordinator context rotation (#2032)', () => {
         const after = new DatabaseSync(dbPath);
         try {
           assert.equal(after.prepare('SELECT MAX(version) v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
-          assert.equal(store.CURRENT_SCHEMA_VERSION, 52, 'v51 is this migration: #2032 lands first, and the operator channel (#2031) takes v52 after it (ruling A17)');
+          assert.ok(store.CURRENT_SCHEMA_VERSION >= 51, 'the current schema includes this migration');
           const index = after.prepare("SELECT sql FROM sqlite_master WHERE name = 'idx_coordinator_rotations_open'").get();
           assert.match(index.sql, /UNIQUE/);
           assert.match(index.sql, /WHERE state IN/);
