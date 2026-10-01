@@ -11,7 +11,7 @@ The operator channel lets a local chat helper, such as the Discord bridge, talk 
 
 Messages are kept durably in both directions. A message written while the project is offline, or between two of its sessions, is delivered when a session is next live. No message is delivered twice.
 
-This page covers TangleClaw's side. The helper itself (the Discord Gateway client, where its token is kept, and the launchd job) is documented with the helper.
+This page covers TangleClaw's side. The Discord helper (the Gateway client, where its tokens are kept, and the launchd job) is documented in [discord-helper.md](discord-helper.md).
 
 ## What the channel is, and is not
 
@@ -126,7 +126,7 @@ The schema is closed: a type, a key, the project the event concerns (none for `f
 
 **Notifications are recorded only while the channel is on.** Turning it on does not deliver a backlog of stale alerts.
 
-**What the Discord helper does with them (#2003, as of its head `fff88346`).** It posts every listed notification, whatever its `type`, under a title from its own table; a type it does not know, such as `message-undelivered`, is posted under the generic title "Notification". It posts any item whose `inReplyTo` is set as a Discord reply to that message, notifications included, so a `message-undelivered` notice appears threaded under the operator's own message. No helper change is needed for it to work; a dedicated title can be added when the helper is restacked.
+**What the Discord helper does with them.** It posts every listed notification, whatever its `type`, under a title from its own table ([discord-helper.md](discord-helper.md)); a type it does not know is still posted, under the generic title "Notification". It posts any item whose `inReplyTo` is set as a Discord reply to that message, notifications included, so a `message-undelivered` notice appears under the operator's own message.
 
 A notice is recorded just after its message settles, in a separate write. A crash between the two loses that one notice; the message's state and the status counts still show it.
 

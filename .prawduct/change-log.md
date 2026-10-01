@@ -35,6 +35,36 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-09-30 — Discord helper on the folded operator channel: candidate restack of #2003 (#1799, #2031)
+
+<!-- prawduct: type=feature | scope=discord-helper-1799 -->
+
+TC-RM18 Chunk 5, dispatched by the Architect (Medusa 180f0ac2) under Rule #154. A local candidate on
+the new branch `feat/1799-discord-helper-on-2031-fold`, from `da3efde8`. Not committed until the
+Architect authorizes the diff; not pushed. No existing stack branch or PR was touched.
+
+**Why:** #2003 (the Discord helper) sat on `198acf21`, an old #2001 head, and had never been built or
+tested against the folded schema-v52 operator channel. Nothing proved the two halves work together.
+
+**What:**
+- The #2003 delta (`198acf21..fff88346`, eight commits) is brought onto `da3efde8` by one three-way
+  merge. Every helper code and test file arrives byte-identical to `fff88346`.
+- Conflicts were documentation only, and both sides are kept: `CHANGELOG.md` (the helper's bullet is
+  added; the fold's notifications bullet stands), `FEATURES.md` (the helper's entry is added; the
+  fold's operator-channel entry stands), and the September change-log archive (the fold's copy stands:
+  the #1956 entry stays in the live log where the fold has it, so it is not also archived).
+- The helper titles the fold's `message-undelivered` notification "Message not delivered". Without the
+  entry it posted under the generic "Notification".
+- `docs/discord-helper.md` no longer says the helper is never told when a delivery fails; it lists the
+  notification titles. `docs/operator-channel.md` drops its note about a title to add later.
+
+**Tests (none weakened):**
+- New, in `test/discord-helper-c1.test.js` (the helper's real modules against the real channel routes):
+  every type in `operator-channel-notify.js#EMITTED` has a helper title; and a Discord message whose Hub
+  outcome is lost settles `send_unknown`, and the helper posts the notice once, titled, as a reply to
+  that Discord message.
+- With the title removed, both new tests fail.
+
 ## 2026-09-30 — Harden the operator channel: arrivals, inserts, boot check, failure notices, settings log
 
 <!-- prawduct: type=bugfix | scope=oc-schema-fold-2031 -->
@@ -154,6 +184,73 @@ sentence and C1's launch-proof wording. Against C1, the result differs only by C
 change. The rest merged cleanly, including `lib/operator-channel.js`. Notification rows are stored
 `relayable` under `notify/<key>` and never pass through `resolveOutbound`, so the new sender check
 leaves them alone. The schema stays at C1.5's v52.
+## 2026-09-28 — The Discord helper's command, launchd job and guide (#1799, C2 chunk B)
+
+<!-- prawduct: type=feature | scope=discord-helper-1799 -->
+
+C2 chunk B, completing C2 (chunk C was folded into A, because C1.5 carries notifications).
+
+**Problem.** Chunk A's modules had no caller: nothing could configure, run, check or install the helper.
+
+**The change.**
+- `bin/tc-discord-helper` is a thin launcher over `lib/discord-helper/cli.js`, whose dependencies are injected. Commands:
+  - `configure`: the non-secret config at `~/.tangleclaw/discord-helper.json`.
+  - `set-secret`: reads the token with echo off on a terminal, stores it through `security -i`, and reads it back as proof.
+  - `verify`: proves both tokens and posts one test notification.
+  - `run`: pid lock (two helpers would double-post), status snapshot, stop on SIGTERM/SIGINT. It exits 78 by closed code for no config, an unreadable record or a missing secret, before contacting anyone.
+  - `status`: reads the record with `peekState`, never writing it, so it cannot write back a copy older than the live helper's.
+  - `settle`: refused while the helper runs.
+  - `install-launchd` / `uninstall-launchd`.
+- `deploy/com.tangleclaw.discord-helper.plist` holds paths and a label only, with ThrottleInterval 30. A token Discord refuses stops the Gateway without ending the process, so KeepAlive restarts cannot spend the identify budget.
+- `docs/discord-helper.md` is the operator guide: the Developer Portal intent, the ids, secrets, verify, launchd, held replies, refusals and log codes. The docs that point to it were updated: operator-channel.md, FEATURES.md, PROJECT-MAP.md and CHANGELOG. VRF-003 is queued for the live round trip on the operator's Mac.
+
+**Review fixes riding this commit.**
+- From verify `rev-20260928T023958Z-f385749f`: O-1, pruning now happens only on an EMPTY listing, which is complete whatever the server's page size; O-3, `StateError` is consumed at start-up.
+- From cumulative `rev-20260928T025418Z-c82fad91` (0 blocking, 3 warnings, 11 notes; it covered HEAD 7f39395f, not this tree):
+  - R-1/R-5: inbound hand-overs are serialized through one queue, so a retried message is never overtaken.
+  - R-4: fixed by the empty-listing rule.
+  - R-2: `outbound-queue-held` is logged when every listed reply is held.
+  - R-3: the secret is read back after storing.
+  - R-6: refusal keys now match the server's codes (`MESSAGE_TOO_LONG`, `EMPTY_MESSAGE`, `BAD_MESSAGE`).
+  - R-7: a notification's title no longer repeats "TangleClaw:".
+  - R-8: the `listOutbound` JSDoc is corrected.
+  - R-10: a 429 wait is logged as `discord-rate-limited`.
+  - R-9/R-11: the docs and the caller are added here.
+  - R-12 (operator-channel row retention, C1's code) is accepted and routed to the PM. R-13 and R-14 are informational.
+
+**Follow-up from verify `rev-20260928T030041Z-3a1dca3e`** (0 findings). O-1 (a restated suite count) is accepted. O-2: the one-helper lock is now exclusive. Following verify `rev-20260928T031015Z-07457490`, the pid is written to a private file and hard-linked into place, so the lock never exists empty, and an unreadable lock is treated as held. Two `run`s started at once cannot both post. One race remains, stated in `acquireLock`: two starts that find the same stale lock (after a crash) at the same moment. launchd runs one job per label, so it needs two starts by hand. O-3: `status` checks a snapshot's shape before reading it, and the launcher reports an unexpected failure by its type alone. Tests cover each: two simultaneous helpers, and a `{}` snapshot. The lock mutant (`w` for `wx`) turns the file red.
+
+**History rewrite and the review after it.** GitHub push protection refused the first push because the fake test bot token had the shape of a real Discord token. The unpushed branch was rewritten with filter-branch, changing only that constant (now plainly fake) in two test files.
+
+The fresh cumulative `rev-20260928T032547Z-04e82142` then found 1 blocking issue, fixed here: R-1. A definite failure after a doubtful attempt cleared the doubt, so a later retry could post twice. Now only the attempt that opened the doubt may clear it; a test covers timeout, then network down, then recovery.
+
+The rest of that review:
+- R-3: INVALID_SESSION now uses the shared backoff, with a 1-5 s floor, rather than retrying every few seconds.
+- R-2 and R-4: `run` takes the lock before opening the record, and `settle` takes and releases the same lock.
+- R-6 (the ✅ does not confirm delivery): documented, accepted, and routed to the PM as a C1 follow-up.
+- R-5, R-7, R-8, R-9: accepted.
+- Five mutants, one per fix, each fail a test cleanly.
+
+**Evidence.** `test/discord-helper-cli.test.js` covers every command, with a sweep that finds neither secret in any file the commands wrote or anything they printed. The three helper test files are green. The real binary's `usage` and `status` were run on this host: `status` reads the Keychain and writes nothing. Four new guard mutations (queue, queue tail, held log, read-back) each turned a test red. The full suite was recorded green at the chunk B boundary before these review fixes (7816 passed, 0 failed, 1 skipped); it is re-run on the final tree before the PR (recorded on that tree; see test-status).
+
+## 2026-09-28 — The Discord helper's relay modules (#1799, C2 chunk A)
+
+<!-- prawduct: type=feature | scope=discord-helper-1799 -->
+
+C2 chunk A, resumed on the PM's go (Medusa df246926) after C1.5. The parked WIP (log, secrets, state, C1 client, Discord REST) was rebased onto C1.5 @198acf21, and the rest was built. Plan: `.tangleclaw/plans/1799-discord-helper.md` (local, not tracked); its "Decisions made while building chunk A" section records every departure from the design.
+
+**Problem.** C1 and C1.5 give the operator a chat-agnostic channel with no chat client. Nothing yet connects Discord to it.
+
+**The change.** Modules under `lib/discord-helper/`, with no new dependency and not yet runnable (the CLI and launchd job are chunk B):
+- `gateway.js`: HELLO/heartbeat/IDENTIFY with GUILDS, GUILD_MESSAGES and MESSAGE_CONTENT only. A zombie connection is detected by a missing ACK and closed with 4000 so the session survives. It resumes on `resume_gateway_url`, identifies afresh after 4007/4009 or a non-resumable INVALID_SESSION, and stops for good on 4004/4010-4014. Reconnect uses capped jittered backoff. The Gateway URL is fetched from `GET /gateway/bot` and cached.
+- `inbound.js`: an id-only allowlist filter that runs before `content` is read (a test tripwires the getter). A message is relayed verbatim under its Discord id and gets a ✅ reaction on 202/200. A refusal is answered in fixed words, with a nonce derived from the message id so it is posted once. An unreachable TangleClaw is retried three times, then the operator is told.
+- `outbound.js`: bounded poll with capped backoff, and single-flight. Each item is acked only with Discord's returned id. The durable record and the nonce make a crash mid-post safe inside a 2-minute window. Past it the item is `uncertain`; a Discord 400 makes it `rejected`. Both are held for the operator and never retried, so one bad item cannot block the queue. A long item is split into up to 5 parts, each nonce'd and recorded as it lands. Notifications are titled by `type`.
+- `secrets.js`: stores through `security -i` on stdin (probed live on this Mac with a throwaway item, then deleted). The prompt-on-`-w` design was dropped, because a prompt may read the terminal rather than stdin. A value is limited to token characters, so it cannot inject a second command. The call has a timeout.
+- `log.js`: fields are capped at 32 characters and `ocsk_` values are refused, so neither secret fits. `state.js`: an unreadable record stops start-up with `state-unreadable` rather than being silently replaced.
+
+**Review.** Critic `rev-20260928T023538Z-e04e0fa7` found 0 blocking and 5 observations. O-1 (suite evidence predates the files) is accepted: the suite runs at the chunk B boundary. O-2 to O-5 (store via prompt, corrupt state, stale `posting` entries, the cut count) were fixed in this commit, along with a head-of-line block I found myself: a Discord 400 on one item stalled every later one.
+
+**Evidence.** `test/discord-helper.test.js` (unit) and `test/discord-helper-c1.test.js` (the helper's real modules against the real channel routes: one inbound row per Discord id, nothing recorded for other authors, guilds or channels, a merge request delivered stamped, a notification held through an outage then posted and acked once, and the token refused off-channel) are green. 16 guard mutations were run; 15 turned a test red, and the 16th is equivalent (a redundant parse guard).
 
 ## 2026-09-28 — The operator channel sends server notifications (#1799)
 
