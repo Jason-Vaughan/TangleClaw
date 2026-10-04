@@ -2008,7 +2008,7 @@ function openLaunchModeModal(name, engine, continuityMode = null, project = null
     html += `
       <label class="launch-mode-option">
         <input type="radio" name="launchMode" value="${esc(key)}" ${checked}
-               onchange="selectedLaunchMode='${esc(key)}'; updateLaunchModeWarning()">
+               onchange="selectedLaunchMode=${jsArg(key)}; updateLaunchModeWarning()">
         <div class="launch-mode-info">
           <span class="launch-mode-label">${esc(mode.label)}</span>
           <span class="launch-mode-desc">${esc(mode.description || '')}</span>

@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The setup wizard's project checkbox works for a project name with an apostrophe** (#1902). #1384 fixed the inline handlers in `ui.js`. The same broken form (`fn('${esc(v)}')`, whose apostrophe the HTML parser turns back into a quote that ends the string) was still in `setup.js`, `session.js`, `landing.js` and `history-drawer.js`. Every inline handler in `public/*.js` now takes its values through `jsArg`, and the scan test covers every page script. `session.html` does not load `landing.js`, so `session.js` carries its own `jsArg`, held identical by a test until #1605 gives the encoders one owner.
+
 ## [5.30.0] - 2026-10-04
 
 ### Added

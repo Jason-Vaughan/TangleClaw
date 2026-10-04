@@ -85,7 +85,7 @@ function load(answers = {}) {
       return Object.prototype.hasOwnProperty.call(answers, url) ? answers[url] : null;
     }
   });
-  const fns = ['esc', 'closeBannerPopovers', 'syncBannerExpanded', 'toggleMoreMenu', 'onMoreMenuClick',
+  const fns = ['esc', 'jsArg', 'closeBannerPopovers', 'syncBannerExpanded', 'toggleMoreMenu', 'onMoreMenuClick',
     'clickHitsSelector', 'renderBannerGroups', 'groupPopoverHtml', 'toggleGroupsPopover', 'toggleCommandBar',
     'toggleGroupPopover', 'onGroupPillKey', 'applyWebuiMode'];
   vm.runInContext(`let bannerGroupNames = {};\n${fns.map((f) => extract(SESSION_SRC, f)).join('\n')}\n`
@@ -196,7 +196,7 @@ describe('two or more groups share one pill (#1472)', () => {
     ctx.renderBannerGroups([]);
     assert.equal(els.bannerGroups.innerHTML, '');
     ctx.renderBannerGroups([groups[0]]);
-    assert.match(els.bannerGroups.innerHTML, /class="group-pill"[^>]*data-tooltip="Project group"[^>]*onclick="toggleGroupPopover\(this, 'g1'\)"[^>]*>Backend</);
+    assert.match(els.bannerGroups.innerHTML, /class="group-pill"[^>]*data-tooltip="Project group"[^>]*onclick="toggleGroupPopover\(this, &quot;g1&quot;\)"[^>]*>Backend</);
     assert.equal((els.bannerGroups.innerHTML.match(/class="group-pill"/g) || []).length, 1);
   });
 
@@ -252,7 +252,7 @@ describe('two or more groups share one pill (#1472)', () => {
     ctx.renderBannerGroups(groups);
     assert.match(els.bannerGroups.innerHTML, /role="button" tabindex="0" onclick="toggleGroupsPopover\(this\)" onkeydown="onGroupPillKey\(event\)"/);
     ctx.renderBannerGroups([groups[0]]);
-    assert.match(els.bannerGroups.innerHTML, /role="button" tabindex="0" onclick="toggleGroupPopover\(this, 'g1'\)" onkeydown="onGroupPillKey\(event\)"/);
+    assert.match(els.bannerGroups.innerHTML, /role="button" tabindex="0" onclick="toggleGroupPopover\(this, &quot;g1&quot;\)" onkeydown="onGroupPillKey\(event\)"/);
 
     const press = (key, fromInside = false) => {
       let opened = 0;

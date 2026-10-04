@@ -674,7 +674,7 @@ function renderDetectProjects(body) {
       html += `
         <label class="setup-project-item">
           <input type="checkbox" ${checked}
-                 onchange="wizardToggleProject('${esc(p.name)}', this.checked)">
+                 onchange="wizardToggleProject(${jsArg(p.name)}, this.checked)">
           <div class="setup-project-info">
             <span class="setup-project-name">${esc(p.name)}</span>
             ${buildGitMeta(p.git)}
@@ -873,7 +873,7 @@ function _engineInstallOptionsHtml(list) {
       ? `<div class="setup-engine-install-cmd">
           <code>${esc(command)}</code>
           <button class="btn btn-small" type="button"
-                  onclick="wizardCopyInstall(${esc(JSON.stringify(command))})">Copy</button>
+                  onclick="wizardCopyInstall(${jsArg(command)})">Copy</button>
         </div>`
       : '';
     // rel="noopener" because target=_blank otherwise hands the opened page a
@@ -983,7 +983,7 @@ function _mkcertHelpHtml(probeFailed) {
     ${probeFailed ? '' : `<div class="setup-engine-install-cmd">
       <code>${esc(command)}</code>
       <button class="btn btn-small" type="button"
-              onclick="wizardCopyInstall(${esc(JSON.stringify(command))})">Copy</button>
+              onclick="wizardCopyInstall(${jsArg(command)})">Copy</button>
     </div>
     <a class="setup-engine-install-docs" href="https://github.com/FiloSottile/mkcert"
        target="_blank" rel="noopener noreferrer">Install instructions &rarr;</a>`}
@@ -1990,7 +1990,7 @@ function _renderProvisionScreen() {
   const p = wizard.provision || {};
   const url = p.url || '';
   const signIn = url
-    ? `<button class="btn btn-primary setup-btn" onclick="window.location.href='${esc(url)}'">Open ${esc(url)}</button>`
+    ? `<button class="btn btn-primary setup-btn" onclick="window.location.href=${jsArg(url)}">Open ${esc(url)}</button>`
     : '';
 
   if (p.phase === 'working') {
@@ -2206,7 +2206,7 @@ function _showRestartOverlay(redirectUrl, warnings, via) {
 function _renderRestartOverlay(redirectUrl, warnings, state, via) {
   const body = document.getElementById('setupBody');
   if (!body) return;
-  const go = `<button class="btn btn-primary setup-btn" onclick="window.location.href='${esc(redirectUrl)}'">Open ${esc(redirectUrl)}</button>`;
+  const go = `<button class="btn btn-primary setup-btn" onclick="window.location.href=${jsArg(redirectUrl)}">Open ${esc(redirectUrl)}</button>`;
   const panel = {
     waiting: `
         <div class="spinner"></div>
