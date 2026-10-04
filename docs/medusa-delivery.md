@@ -165,6 +165,23 @@ the escalation that follows.
 The exception recovers from a lost Enter. It does not prevent one: why the Enter
 after the paste is sometimes lost has not been established.
 
+**One slow pane does not hold up the rest of the scan (#2086).** Reading a
+pane is synchronous tmux work, so the monitor limits it:
+
+- **A tick stops reading panes** once it has spent 4 seconds on them, or met
+  one read that took 2.5 seconds or more. Sessions it did not reach report
+  `scan-deferred` and are read on a later tick, longest-waiting first.
+- **A pane whose read was slow is left alone** for 10 seconds, then 30, then
+  60 (`pane-read-backoff`). One ordinary read ends that.
+- **Sessions seen at rest on the last tick are read first**, so the two
+  observations a nudge needs are always on consecutive ticks.
+- **A deferred or backed-off tick is not an observation.** The idle streak ends
+  there, and a nudge needs two fresh at-rest observations.
+
+Each of these only delays a wake. None of them types anything, and a session
+held this way still passes every gate on the tick that reads it. The scan and
+its measurements are in [medusa-wake-measurements.md](medusa-wake-measurements.md).
+
 **Elapsed time alone never re-arms and never spends the budget.** A nudge
 with no trigger stays unconfirmed and escalates by age instead. Re-arms back
 off (2, 4, then 8 minutes) up to 3 times. The count and the next eligible time

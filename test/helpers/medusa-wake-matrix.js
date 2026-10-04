@@ -24,7 +24,15 @@
 
 const { performance } = require('node:perf_hooks');
 const wake = require('../../lib/medusa-wake');
-const { IDLE_PANE, BUSY_PANE, TYPING_PANE } = require('../_wake-fixtures');
+const {
+  IDLE_PANE, BUSY_PANE, TYPING_PANE, AG_IDLE_PANE, AG_BUSY_PANE, AG_TYPING_PANE
+} = require('../_wake-fixtures');
+
+/** The at-rest, busy and drafting panes of each pane-judged engine the fleet can hold. */
+const PANES = Object.freeze({
+  claude: { idle: IDLE_PANE, busy: BUSY_PANE, draft: TYPING_PANE },
+  antigravity: { idle: AG_IDLE_PANE, busy: AG_BUSY_PANE, draft: AG_TYPING_PANE }
+});
 
 /** Session states the matrix mixes, in the order a fleet is filled. */
 const FILLER_STATES = Object.freeze(['no-mail', 'busy', 'draft', 'unprofiled', 'listener-off', 'ended']);
@@ -34,9 +42,11 @@ const FILLER_STATES = Object.freeze(['no-mail', 'busy', 'draft', 'unprofiled', '
  *
  * The two tmux figures are the median of a measurement, taken 2026-10-04 on
  * the development host against a throwaway tmux server: one `tmux` command
- * costs about 18.5 ms, nearly all of it process start. A pane capture is one
- * command and a cursor probe is two. The other figures are small round
- * estimates for in-process lookups and are not measured.
+ * costs about 18.5 ms, nearly all of it process start. `lib/tmux.js` runs four
+ * commands for a pane capture (a liveness probe, an alternate-screen check
+ * that probes again and asks, and the capture) and three for a cursor probe.
+ * The other figures are small round estimates for in-process lookups and are
+ * not measured.
  */
 const DEFAULT_COSTS = Object.freeze({
   getProject: 0.05,
@@ -45,14 +55,14 @@ const DEFAULT_COSTS = Object.freeze({
   loadProjectConfig: 0.5,
   getStatus: 0.02,
   getMessages: 0.02,
-  capturePane: 18.5,
-  cursorInfo: 37,
+  capturePane: 74,
+  cursorInfo: 55.5,
   injectCommand: 250,
   durable: 0.2
 });
 
-/** The same model with the tmux figures at the 95th percentile of that measurement. */
-const P95_COSTS = Object.freeze({ ...DEFAULT_COSTS, capturePane: 63, cursorInfo: 85 });
+/** The same model with every tmux command at the 95th percentile of that measurement (63 ms and 42 ms). */
+const P95_COSTS = Object.freeze({ ...DEFAULT_COSTS, capturePane: 252, cursorInfo: 126 });
 
 /** The interval the monitor ticks on in production. */
 const INTERVAL_MS = 5000;
@@ -61,10 +71,16 @@ const INTERVAL_MS = 5000;
  * One synthetic session and what its seams answer.
  * @param {number} id - Session id
  * @param {string} state - One of `idle-mail`, `slow`, `throwing` or a `FILLER_STATES` value
+ * @param {object} [opts]
+ * @param {'claude'|'antigravity'} [opts.engine='claude'] - The session's engine
+ * @param {number} [opts.slowReads=Infinity] - For a `slow` session, how many pane reads
+ *   are slow before the pane answers normally, at rest
  * @returns {object}
  */
-function makeSession(id, state) {
+function makeSession(id, state, opts = {}) {
   const hasMail = state !== 'no-mail';
+  const engine = opts.engine || 'claude';
+  const panes = PANES[engine];
   return {
     state,
     record: {
@@ -72,7 +88,7 @@ function makeSession(id, state) {
       projectId: id,
       sessionMode: 'tmux',
       tmuxSession: `syn-${id}`,
-      engineId: state === 'unprofiled' ? 'no-such-engine' : 'claude',
+      engineId: state === 'unprofiled' ? 'no-such-engine' : engine,
       ...(state === 'ended' ? { status: 'ended' } : {})
     },
     project: { id, name: `syn-proj-${id}`, path: `/nonexistent/syn-proj-${id}` },
@@ -83,7 +99,8 @@ function makeSession(id, state) {
       lastError: null
     },
     inbox: hasMail ? [{ id: `m-${id}-1`, from: 'peer', message: 'hello' }] : [],
-    pane: state === 'busy' ? BUSY_PANE : state === 'draft' ? TYPING_PANE : IDLE_PANE
+    pane: state === 'busy' ? panes.busy : state === 'draft' ? panes.draft : panes.idle,
+    slowReadsLeft: state === 'slow' ? (opts.slowReads ?? Infinity) : 0
   };
 }
 
@@ -94,6 +111,8 @@ function makeSession(id, state) {
  * @param {'first'|'last'} [opts.eligibleAt='last'] - Where the eligible recipient sits in scan order
  * @param {string[]} [opts.lead=[]] - States placed first in scan order (`slow`, `throwing`)
  * @param {string[]} [opts.fillers] - States the rest of the fleet cycles through
+ * @param {'claude'|'antigravity'} [opts.engine] - Every session's engine
+ * @param {number} [opts.slowReads] - How many reads of a `slow` session are slow
  * @returns {object[]} Sessions in scan order
  */
 function buildFleet(opts) {
@@ -103,7 +122,7 @@ function buildFleet(opts) {
   const states = lead.slice(0, Math.max(0, opts.size - 1));
   for (let i = 0; i < fillers; i++) states.push(cycle[i % cycle.length]);
   if (opts.eligibleAt === 'first') states.unshift('idle-mail'); else states.push('idle-mail');
-  return states.map((state, i) => makeSession(i + 1, state));
+  return states.map((state, i) => makeSession(i + 1, state, { engine: opts.engine, slowReads: opts.slowReads }));
 }
 
 /**
@@ -136,6 +155,7 @@ function install(fleet, opts = {}) {
     facts: [],
     attempted: new Set(),
     scans: [],
+    paneReads: [],
     restore: () => { wake.stop(); Object.assign(wake._internal, saved); }
   };
   // In real mode every cost also holds the thread for a scaled-down real
@@ -171,7 +191,18 @@ function install(fleet, opts = {}) {
   s.getMessages = (sessionId) => { spend(costs.getMessages); return byId.get(sessionId).inbox; };
   s.capturePane = (tmuxName) => {
     const x = byTmux.get(tmuxName);
-    if (x.state === 'slow') { spend(slowMs); throw new Error('synthetic: tmux timed out'); }
+    world.paneReads.push({ sessionId: x.record.id, at: world.clockMs });
+    if (x.slowReadsLeft > 0) {
+      x.slowReadsLeft -= 1;
+      spend(slowMs);
+      throw new Error('synthetic: tmux timed out');
+    }
+    // A read that is slow and still answers, as a loaded tmux server gives.
+    if (x.slowAnswersLeft > 0) {
+      x.slowAnswersLeft -= 1;
+      spend(slowMs);
+      return { lines: x.pane };
+    }
     spend(costs.capturePane);
     // Recorded at the moment the pane is read: the first point at which the
     // monitor has looked at this recipient's live state for this mail.
@@ -264,7 +295,10 @@ function runCell(opts) {
       wakeMs: nudges.length ? nudges[0].at : null,
       nudgesToEligible: nudges.length,
       nudgesToOthers: wrongly.length,
-      verdicts: last ? last.order.map((o) => o.result) : [],
+      // Each session's verdict on the last tick, in ROSTER order. The scan
+      // order is the monitor's to choose, so a verdict is looked up by session
+      // and never read off by position.
+      verdicts: last ? fleet.map((x) => (last.order.find((o) => o.id === x.record.id) || { result: null }).result) : [],
       states: fleet.map((x) => x.state),
       injected: world.injected.map((n) => ({ sessionId: n.sessionId, at: n.at })),
       ledger: world.recorded.map((r) => `${r.sessionId}|${r.outcome}|${r.skipReason || ''}`)

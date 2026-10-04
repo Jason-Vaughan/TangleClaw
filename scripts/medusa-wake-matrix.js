@@ -95,7 +95,8 @@ out.push('\n### A pane read that times out (5 s) is scanned first\n');
 out.push(table(HEAD, [
   ...[2, 5, 10, 20, 30].map((size) => row('one hung pane', cell({ size, lead: ['slow'] }))),
   row('two hung panes', cell({ size: 30, lead: ['slow', 'slow'], maxTicks: 20 })),
-  row('three hung panes', cell({ size: 30, lead: ['slow', 'slow', 'slow'], maxTicks: 20 }))
+  row('three hung panes', cell({ size: 30, lead: ['slow', 'slow', 'slow'], maxTicks: 20 })),
+  row('ten hung panes', cell({ size: 30, lead: new Array(10).fill('slow'), maxTicks: 40 }))
 ]));
 
 out.push('\n### A scan that throws is scanned first\n');
