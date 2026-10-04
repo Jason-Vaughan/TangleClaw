@@ -8,6 +8,12 @@ All notable changes to TangleClaw are documented in this file.
 
 - **The setup wizard's project checkbox works for a project name with an apostrophe** (#1902). #1384 fixed the inline handlers in `ui.js`. The same broken form (`fn('${esc(v)}')`, whose apostrophe the HTML parser turns back into a quote that ends the string) was still in `setup.js`, `session.js`, `landing.js` and `history-drawer.js`. Every inline handler in `public/*.js` now takes its values through `jsArg`, and the scan test covers every page script. `session.html` does not load `landing.js`, so `session.js` carries its own `jsArg`, held identical by a test until #1605 gives the encoders one owner.
 
+### Internal
+
+- **The Discord operator bridge has an architectural record, and the interim Discord procedure is documented apart from it** (#2031, #2040). Documentation only; no code or schema changes.
+  - **ADR 0023** records the Architect's ruling of 2026-10-04: the permanent bridge is Master-mediated. The Discord helper delivers to a Master gateway, Master resolves the destination and routes a correlated Medusa message to the target session, and the reply returns the same way. Master coordinates routing and transport and is never authority. It also records the contract review D1 to D7: Master is the Project Master session backed by a durable server-side gateway, the default destination is Master itself, and an unavailable Master queues a message instead of falling back to the Architect. The re-review R1 to R6 is recorded too: a generation-bound `master` principal scoped to bridge routing, a structured `tc bridge` surface, Master releasing every answer, one pending notice after 5 minutes, operator-only global aliases, and a bridge that is off until the operator enables it. The ADR is accepted for architecture only. That does not activate cutover, authorizes no implementation merge, and assigns no schema number.
+  - **`docs/discord-operator-notifications.md`** separates the interim procedure in force today (the Architect is the sole Discord sender, under Rule #145) from the future Master-mediated path, and says the first is retired at cutover and not merged into the second. Cutover needs Rule #145 replaced with the operator's approval and a verified live round trip.
+
 ## [5.30.0] - 2026-10-04
 
 ### Added
