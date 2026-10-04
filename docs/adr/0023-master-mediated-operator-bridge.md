@@ -1,12 +1,24 @@
 # ADR 0023: The Discord operator bridge is Master-mediated — a durable gateway carries the message, the Master session routes it, and neither is authority
 
-**Status:** Proposed. The Decision section records the Architect's rulings and is not open. The
-"Contract still to be defined" section is this ADR's own proposal and is not ruled. Nothing here
-authorizes DDL, schema or router code.
-**Rulings recorded:** the initial ruling of 2026-10-04, in the body of #2031, and the contract
-review D1 to D7 of the same day, in
-[this comment on #2031](https://github.com/Jason-Vaughan/TangleClaw/issues/2031#issuecomment-5977128818).
-That comment is canonical. Where this ADR and the comment differ, the comment wins.
+**Status:** Accepted for architecture only (2026-10-04, Architect contract re-review). That
+acceptance has three limits:
+
+- **It does not activate cutover.** The interim procedure stays in force (Decision 10).
+- **It does not authorize merging an implementation.** Implementation needs its own exact-head
+  security review and live-verification gates.
+- **It assigns no schema number** and contains no DDL or router code.
+
+The "Records that carry the decision" section is this ADR's own proposal. It is not ruled.
+**Rulings recorded:**
+
+- the initial ruling of 2026-10-04, in the body of #2031;
+- the contract review D1 to D7, in
+  [this comment on #2031](https://github.com/Jason-Vaughan/TangleClaw/issues/2031#issuecomment-5977128818),
+  which is canonical for them;
+- the contract re-review R1 to R6 and its retention rule, relayed by the ProjectManager from the
+  Architect. When this ADR was written they were not yet recorded on #2031.
+
+Where this ADR and a recorded ruling differ, the ruling wins.
 **Source issue:** #2031, the schema and Master-router reconciliation gate for the Discord stack.
 **Related:** #1956 (server-side channel), #1799 (notifications and helper), #2040 (the interim
 procedure, documented in [`docs/discord-operator-notifications.md`](../discord-operator-notifications.md)),
@@ -15,7 +27,8 @@ procedure, documented in [`docs/discord-operator-notifications.md`](../discord-o
 [`docs/medusa-delivery.md`](../medusa-delivery.md).
 **Supersedes:** the direct-`targetProject` routing design of PRs #1966, #2001 and #2003.
 
-**On the labels and the number.** Rulings here are cited as D1 to D7. An earlier draft of this ADR
+**On the labels and the number.** The contract review is cited as D1 to D7 and the re-review as
+R1 to R6. The initial ruling carries no letter. An earlier draft of this ADR
 used A-labels. They were dropped because an abandoned draft ADR on two unmerged branches uses A1
 to A5 for different, earlier rulings (D5). That draft is numbered 0022. `main` has no ADR 0022 and
 will not get that one: the gap between 0021 and 0023 is deliberate provenance, not a missing file.
@@ -60,18 +73,21 @@ operator's Rule #145: the Architect is the only Discord sender.
 ### 1. The path (initial ruling)
 
 ```
-Discord ──▶ helper ──▶ Master gateway ──▶ Master session ──▶ target session
-                            ▲    │         (routing policy)        │
-                            │    └── mechanical routes ────────────┤
-Discord ◀── helper ◀── Master gateway ◀────────────────────────────┘
+inbound    Discord ──▶ helper ──▶ gateway ──▶ Master session ──▶ target session
+                                     │        (decides the route)        ▲
+                                     └────── mechanical routes ──────────┘
+
+outbound   target session ──▶ gateway ──▶ Master session ──▶ gateway ──▶ helper ──▶ Discord
+                              (reply held)  (releases it)
 ```
 
 1. The **helper** authenticates to Discord, applies the allowlist, and durably delivers the
    operator's inbound conversation to the **Master gateway**.
 2. **Master resolves the destination**: the one the operator explicitly addressed, or the default.
 3. A **correlated, tracked Medusa message** goes to the target session.
-4. The **correlated reply** comes back.
-5. The **operator-notification and filter policy** is applied.
+4. The **correlated reply** comes back to the gateway.
+5. The **operator-notification and filter policy** is applied. Master releases the answer
+   (Decision 16).
 6. The result returns **through the helper** to the original Discord context.
 
 ### 2. "Master" is two parts with distinct responsibilities (D1)
@@ -200,10 +216,88 @@ merged into the new path. #2040 owns its documentation.
 built for this design → #2040's interim procedure is retired at cutover. #2005 and #2037 are
 related follow-ups and are not held by this gate.
 
-## Contract still to be defined (not ruled — for review)
+### 14. The Master principal (R1)
 
-The rulings fix responsibilities. This section proposes the records and rules that would carry
-them. It contains no DDL and claims no version number.
+- **A first-class logical `master` principal.**
+- **Its credential is generation-bound**, minted on `ensure`, and scoped only to bridge-routing
+  operations.
+- **The server holds verification material only.**
+- **The credential is injected at launch.** It never appears in a command's arguments, in a log,
+  in a tracked file, or in the writable Master home.
+- **It is rotated or revoked on restart and on kill.**
+- **Every decision records a distinct verified proof** (for example `master-launch`) and the
+  Master generation.
+- **This is a narrow slice of #966.** It is not a general fleet-mutation token, and it is not
+  gated on finishing #966.
+
+### 15. How Master hands a decision to the gateway (R2)
+
+A structured `tc bridge` surface, backed by scoped server routes. Free-form Medusa prose is not
+the surface, and the gateway never parses model prose as a routing command.
+
+The initial operations:
+
+- list and read pending routes;
+- route or delegate, naming the route id, the expected version and the exact destination;
+- answer, or release an outbound item;
+- submit a receipt-bound candidate notification;
+- close a route.
+
+Every write is idempotent, version-checked and audited.
+
+### 16. Master answers the operator (R3)
+
+- **A target's verified, correlated reply lands durably at the gateway** and waits there for
+  Master's editorial release.
+- **Master is the party that answers the operator**, using the target's reply as its source.
+  Nothing from a target goes straight to the helper or to Discord.
+- **If Master is unavailable, the reply stays queued** and Master is ensured or woken.
+- **When Master is itself the target, it answers through the same release path.**
+
+### 17. The escalation cap (R4)
+
+- **The helper acknowledges at once** that the message was durably received.
+- **After 5 minutes with no final answer:** at most one pending notice to Discord, and one wake
+  or notice to Master.
+- **It never climbs** to the `blocking`, `critical` or operator-authority rungs.
+- **A terminal delivery failure may produce one immediate failure notice.**
+- **Nothing repeats.** The route stays open until Decision 7's close condition.
+
+This is policy local to a route. It does not change the Medusa watchdog's global defaults.
+
+### 18. Pins and aliases (R5)
+
+- **Persistent global aliases and pins are the operator's alone**, managed through an
+  authenticated local UI or CLI, and never through Discord.
+- **Exact project names and ids come mechanically from the registry.**
+- **Master may create or change only a conversation-scoped pin**, as an audited routing decision
+  under its routing capability.
+- **Master cannot create a global alias,** and cannot treat Discord text as authorization to
+  change policy.
+
+### 19. Consent to start Master (R6)
+
+- **The bridge is disabled by default.**
+- **The operator's explicit local enable, or cutover, of the bridge is the consent.** After it,
+  an allowlisted inbound Discord message may idempotently ensure and wake Master.
+- **Before enablement, an inbound message cannot launch Master.**
+- **Ensure attempts are rate-limited and backed off.** They are never a restart loop.
+
+ADR 0008's principle that the operator consents to launching Master is kept. The consent moves
+from a click per open to the bridge opt-in.
+
+### 20. Retention (re-review)
+
+- **Route message and reply bodies are kept only while needed** for delivery or review. They are
+  cleared after confirmed Discord delivery or close.
+- **What remains is bounded:** audit metadata, digests and state.
+- **Failures have a bounded retention policy too.**
+- **No secret and no body appears in routine logs.**
+
+## Records that carry the decision (proposed, not ruled)
+
+The rulings fix responsibilities and behavior. This section proposes the records that would carry
+them, for the implementation's own review. It contains no DDL and claims no version number.
 
 ### P1. One route record per operator message
 
@@ -213,7 +307,11 @@ A route is the gateway's record of one inbound operator message. It holds:
 - how it was resolved: by reply inheritance, pin, exact alias, default, or by the Master session;
 - the resolved destination, once there is one;
 - the Hub id of each tracked Medusa message sent for it;
+- a version, checked on every write (Decision 15);
 - its delivery state.
+
+Bodies are held apart from this record so that they can be cleared (Decision 20) while the record
+stays.
 
 Proposed states, as a closed vocabulary:
 
@@ -223,7 +321,9 @@ Proposed states, as a closed vocabulary:
 | `awaiting-master` | Needs the Master session's decision (Decision 3) |
 | `queued-master-unavailable` | Master could not be ensured or woken (Decision 4) |
 | `routed` | A tracked message is with the destination |
-| `replied` | A correlated reply or failure has been relayed |
+| `reply-held` | The destination's reply is at the gateway, awaiting Master's release (Decision 16) |
+| `released` | Master's answer is waiting for the helper |
+| `replied` | The answer or a failure has been confirmed posted |
 | `closed` | Closed under Decision 7 |
 
 A resolved destination is fixed on the route. A later change to pins, aliases or the default does
@@ -237,7 +337,7 @@ correlation mechanism is added.
 - **To the session:** the route stores the exchange's Hub id.
 - **From the session:** a reply is a Medusa message whose `inReplyTo` names that Hub id.
   `inReplyTo` already requires a verified launch of the right project, so a project's reply is
-  provably from the destination the route named.
+  provably from the destination the route named. It is held, not posted (Decision 16).
 - **A message with no matching route is not a reply.** It can reach Discord only through the
   candidate lane of Decision 8.
 - **Delivery failures are facts on the same exchange.** `send_unknown`, `undeliverable` and
@@ -247,19 +347,16 @@ correlation mechanism is added.
 Sends for a route are `normal` priority. Priority grants nothing, and a Discord message must not
 be able to claim `blocking` or `critical`.
 
-### P3. The Master principal
+### P3. What the Master principal touches
 
-Decision 5 rules out the two shortcuts. What the principal has to provide:
+Decision 14 fixes the principal. Two existing records have to learn about it:
 
-- **A proof the server verifies**, recorded on every exchange and route decision Master makes. The
-  exchange record's `sender_proof` vocabulary has no value for Master today.
-- **One capability, scoped to routing**: read a route awaiting it, resolve it to a destination,
-  answer it, submit an outbound item for the candidate lane, close a route. Nothing else.
-- **No widening of ADR 0008's boundary.** The capability gives Master no file-write tier and no
-  general mutation of TangleClaw's API.
-
-ADR 0008 names #966, a scoped API token for Master, as successor work. Whether this principal is
-that token or a separate binding is an open question (R1).
+- **The exchange record's `sender_proof` vocabulary** has no value for Master today. It gains
+  one, and the Master generation is recorded beside it.
+- **ADR 0008** describes Master's API boundary as instructional. A verified, scoped credential
+  changes that for bridge routing only, and ADR 0008 needs an amendment when the principal is
+  built. The capability gives Master no file-write tier and no general mutation of TangleClaw's
+  API.
 
 ### P4. The policy has two gates
 
@@ -281,32 +378,15 @@ Against the schema `main` actually has:
   `hub_id` is nullable and no synthetic id exists. Every insert names its conflict target. The
   whole shape is verified at every startup. This is #2031's original requirement, written fresh.
 - **The migration takes the next free number when it lands.** An open PR does not reserve one.
-- **Routing adds** the route record of P1, the record of pins and aliases, and the Master
-  binding of P3.
+- **Routing adds** the route record of P1, separately clearable bodies, conversation-scoped
+  pins, operator-managed global aliases and pins, the Master principal's verification material,
+  and the audit of every `tc bridge` write.
 
 ### P6. Relation to #2037
 
 #2037 wants a blocked session's structured question routed to whoever may answer it. The gateway
 is a plausible transport for showing such a question in Discord. Under Decision 6 it cannot carry
 an answer to a reserved action. This ADR adds nothing for #2037 and neither blocks the other.
-
-## Open after the contract review
-
-- **R1. What is the Master principal, concretely?** A token as in #966, a launch-like binding
-  minted at `ensure`, or something else. It must survive Master's restart without becoming a
-  stable id anyone can claim.
-- **R2. How does the Master session hand a decision to the gateway?** The surface of the routing
-  capability: a `tc` verb, a route, or Medusa messages to the gateway.
-- **R3. When Master delegates, who answers the operator?** Either the target session's reply
-  returns to the gateway directly, or it returns to Master, which relays it. The first is one hop
-  shorter. The second keeps Master the only editor of what the operator reads.
-- **R4. What is the escalation cap?** Decision 7 allows one pending or failure notice. The
-  interval before it, and what "capped" means for the watchdog's existing ladder, are not set.
-- **R5. Who may create a pin or an alias?** Decision 3 makes them Master-owned policy. Whether the
-  operator can set one from Discord, and how that is recorded, is not set.
-- **R6. What does "ensure and wake" cost on an idle install?** ADR 0008 launches Master on first
-  open so that the operator's click is the consent. An inbound Discord message would now launch
-  it too.
 
 ## Alternatives considered
 
@@ -319,6 +399,10 @@ an answer to a reserved action. This ADR adds nothing for #2037 and neither bloc
 - **The Architect as router or as fallback.** The interim shape under Rule #145. D1 and D2 reject
   it for the permanent design: it spends Architect turns on transport, and delivery stops
   whenever the Architect is busy or clearing.
+- **A target's reply goes straight back to the gateway and out.** One hop shorter. R3 rejects it:
+  Master is the only editor of what the operator reads.
+- **Master routes by writing Medusa prose to the gateway.** R2 rejects it: the gateway would have
+  to parse a model's prose as a command.
 - **Sessions post to Discord themselves.** Rejected by every version of this design: the token
   would be reachable from every session, and nothing would apply one policy.
 
@@ -327,11 +411,12 @@ an answer to a reserved action. This ADR adds nothing for #2037 and neither bloc
 - The operator can address more than one project from one Discord conversation, and an
   unaddressed message has somewhere sensible to go.
 - A message is never lost to an unavailable Master. It can wait, and the operator is told so.
-- Master gains its first verified identity and its first capability on TangleClaw's API. That
-  changes ADR 0008's posture, which today is instructional on the API side, and it needs its own
-  amendment there when the principal is built.
-- An inbound Discord message can launch the Master session on an install where nobody has opened
-  it.
+- Master gains its first verified identity and its first capability on TangleClaw's API, as a
+  narrow slice of #966. ADR 0008 needs an amendment when it is built.
+- Once the operator has enabled the bridge, an inbound Discord message can launch the Master
+  session without a further click.
+- Every answer costs a Master turn, including one a target session wrote. A busy or unavailable
+  Master delays answers; it does not lose them.
 - The closed stack's code is not a base. Its storage decisions and its safety properties are
   reimplemented; its routing is not.
 - The interim procedure remains the only Discord path until both cutover conditions hold, and it

@@ -1,6 +1,7 @@
 # Discord operator notifications
 
-Status: **interim procedure in force.** The permanent transport is designed and not built.
+Status: **interim procedure in force.** The permanent transport's architecture is accepted and
+nothing of it is built. Accepting the architecture did not activate cutover.
 
 There are two ways an operational message reaches the operator's Discord. They are sequential,
 not parallel: the first is retired when the second goes live.
@@ -96,8 +97,13 @@ nonce.
    gateway. Anything else waits for the Project Master session to decide. Nothing is guessed.
 3. An unaddressed message goes to Master itself, which answers it or delegates it.
 4. A correlated, tracked Medusa message goes to the target session, and its correlated reply
-   comes back.
-5. The result returns through the helper to the original Discord conversation.
+   comes back to the gateway and is held there.
+5. Master releases the answer, using that reply as its source. Nothing from a target session
+   goes straight to Discord.
+6. The answer returns through the helper to the original Discord conversation.
+
+The helper acknowledges a message as soon as it is durably received. If there is no final answer
+after 5 minutes, the operator gets at most one pending notice. Nothing repeats.
 
 If Master is unavailable the message is kept and the operator is told it is queued. It does not
 fall back to the Architect.
@@ -123,6 +129,9 @@ Discord confirms the post, display safety, a scoped token, the conversation-is-n
 fence, and no channel or user id in a tracked document.
 
 ## Cutover
+
+The bridge is disabled by default. The operator enables it locally, and that enablement is also
+the consent for an inbound Discord message to start the Master session.
 
 Cutover happens only when both of these are true:
 
