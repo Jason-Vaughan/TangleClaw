@@ -7,8 +7,8 @@ All notable changes to TangleClaw are documented in this file.
 ### Internal
 
 - **The Discord operator bridge has an architectural record, and the interim Discord procedure is documented apart from it** (#2031, #2040). Documentation only; no code or schema changes.
-  - **ADR 0023** records the Architect's ruling of 2026-10-04: the permanent bridge is Master-mediated. The Discord helper delivers to a Master gateway, Master resolves the destination and routes a correlated Medusa message to the target session, and the reply returns the same way. Master coordinates routing and transport and is never authority. The ADR is proposed for contract review. Its routing, correlation and storage contract is a proposal with seven open questions, and it authorizes no schema code.
-  - **`docs/discord-operator-notifications.md`** separates the interim procedure in force today (the Architect is the sole Discord sender, under Rule #145) from the future Master-mediated path, and says the first is retired at cutover and not merged into the second.
+  - **ADR 0023** records the Architect's ruling of 2026-10-04: the permanent bridge is Master-mediated. The Discord helper delivers to a Master gateway, Master resolves the destination and routes a correlated Medusa message to the target session, and the reply returns the same way. Master coordinates routing and transport and is never authority. It also records the contract review D1 to D7: Master is the Project Master session backed by a durable server-side gateway, the default destination is Master itself, and an unavailable Master queues a message instead of falling back to the Architect. The ADR stays proposed. Its record, correlation and storage contract is a proposal with six open questions, and it authorizes no schema code.
+  - **`docs/discord-operator-notifications.md`** separates the interim procedure in force today (the Architect is the sole Discord sender, under Rule #145) from the future Master-mediated path, and says the first is retired at cutover and not merged into the second. Cutover needs Rule #145 replaced with the operator's approval and a verified live round trip.
 
 ## [5.30.0] - 2026-10-04
 

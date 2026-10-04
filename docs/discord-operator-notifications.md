@@ -8,7 +8,8 @@ not parallel: the first is retired when the second goes live.
 | | Interim (in force now) | Future (not built) |
 |---|---|---|
 | What it is | The Architect session posts to Discord by hand | The Master-mediated bridge |
-| Governed by | The operator's Rule #145 | [ADR 0023](adr/0023-master-mediated-operator-bridge.md), once accepted |
+| Governed by | The operator's Rule #145 | [ADR 0023](adr/0023-master-mediated-operator-bridge.md), and the rule that replaces Rule #145 |
+| Who decides what is sent | The Architect | The Project Master session |
 | Who posts | The Architect, and nobody else | The Discord helper, a local process |
 | Direction | Outbound only | Both ways |
 | Tracked in | #2040 | #2031, #1956, #1799 |
@@ -87,32 +88,55 @@ nonce.
 
 ## Future path — the Master-mediated bridge
 
-[ADR 0023](adr/0023-master-mediated-operator-bridge.md) records the ruling and the proposed
-contract. In outline:
+[ADR 0023](adr/0023-master-mediated-operator-bridge.md) records the rulings. In outline:
 
 1. The Discord helper authenticates, applies the allowlist, and durably delivers the operator's
-   message to the Master gateway.
-2. Master resolves the destination: the one the operator addressed, or the default.
-3. Master sends a correlated, tracked Medusa message to the target session.
-4. The session's correlated reply returns to Master.
-5. Master applies the operator-notification and filter policy.
-6. The result returns through the helper to the original Discord conversation.
+   message to the Master gateway, which is server code.
+2. The destination is resolved. A reply, a pin, an exact alias or the default is applied by the
+   gateway. Anything else waits for the Project Master session to decide. Nothing is guessed.
+3. An unaddressed message goes to Master itself, which answers it or delegates it.
+4. A correlated, tracked Medusa message goes to the target session, and its correlated reply
+   comes back.
+5. The result returns through the helper to the original Discord conversation.
 
-Master coordinates routing and transport. It is never authority, and Discord still cannot
-approve a reserved action.
+If Master is unavailable the message is kept and the operator is told it is queued. It does not
+fall back to the Architect.
 
-What carries over unchanged from the interim path: secrets only in the Keychain, exact
-allowlists, stable ids and nonces, acknowledgement only after Discord confirms the post, display
-safety, a scoped token, and the conversation-is-not-authority fence.
+Neither the gateway nor the Master session is authority, and Discord still cannot approve a
+reserved action.
+
+### What a session with news for the operator will do then
+
+Much the same as today, with Master in the Architect's place. A verified session submits a
+candidate `milestone` or `operator-action-required` item to Master, with its facts and receipts.
+Only Master validates it, consolidates it and turns it into something the gateway may send. No
+project session posts to Discord directly.
+
+Besides those items, only three other things reach Discord: a reply to something the operator
+wrote, a delivery failure, and the typed server notifications `operator-needed`, `work-blocked`
+and `fleet-idle`.
+
+### What carries over unchanged
+
+Secrets only in the Keychain, exact allowlists, stable ids and nonces, acknowledgement only after
+Discord confirms the post, display safety, a scoped token, the conversation-is-not-authority
+fence, and no channel or user id in a tracked document.
 
 ## Cutover
 
-- **The interim procedure is retired, not merged into the new path.** At cutover this page's
-  interim section is removed or marked historical.
-- **Rule #145 needs its own update at that point.** Its text names PR #2003 as the moment the
-  transport is replaced, and that PR was closed as superseded on 2026-10-04. It also says the
-  Architect remains the sole filter and sender after the transport changes, which the
-  Master-mediated design has to be reconciled with (ADR 0023, Q4). Rules are changed through the
-  rule store by the operator, not by editing this page.
-- **Until cutover, nothing here changes who may post.** A helper that exists on a branch is not
-  a live transport.
+Cutover happens only when both of these are true:
+
+1. **Rule #145 has been replaced, with the operator's approval.** Rules are changed through the
+   rule store, not by editing this page. Until then Rule #145's text stays as it is and stays in
+   force, including its references to PR #2003, which was closed as superseded on 2026-10-04.
+2. **The new transport has passed a live round trip and its security verification.**
+
+At cutover:
+
+- **The interim procedure is retired, not merged into the new path.** This page's interim section
+  is removed or marked historical.
+- **The Architect leaves the routine delivery path** and keeps architectural and governance
+  oversight. Master becomes the sole filter and router, and the helper the sole Discord sender.
+
+Until cutover, nothing here changes who may post. A helper that exists on a branch is not a live
+transport.
