@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Internal
+
+- **Docs: say which hosts the plain-HTTP port redirects** (#575). `docs/configuration-reference.md` said `caddyHttpPort` redirects to the HTTPS site. Only the `caddyTailnetHost` name is redirected. Any other host on that port is served by the `caddyRemoteHttp` catch-all without a redirect, which is how a phone can stay on `:8080`. The reference and `deploy/INGRESS.md` now say so and name the address to bookmark. No behaviour change.
+
 ## [5.30.0] - 2026-10-04
 
 ### Added
