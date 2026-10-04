@@ -148,12 +148,21 @@ The `basic_auth` credential is canonical in **config** (`basicAuthUser` +
   certificate and the Host allowlist even when this key is unset, but it never
   creates this site: that stays your decision, because it needs a gate (#1905).
   With this key set, the generator also emits `http://<name> { redir … }`, so
-  the tailnet name on the plain-HTTP port is redirected to the HTTPS port.
-  **Only that name is redirected.** Any other host on the plain-HTTP port is
-  served by the catch-all above without a redirect, and a visit that starts
-  there stays there: the Tailscale IP, the short name, `.local`. The
-  landing-to-session hop is origin-relative. Point bookmarks and home-screen
-  icons at `https://<name>:<caddyHttpsPort>` (#575).
+  the tailnet name on the plain-HTTP port (`caddyHttpPort`, `8080` by default)
+  is redirected to the HTTPS port (`caddyHttpsPort`, `8443` by default).
+  **Only that name is redirected**, because setting this key also turns off
+  Caddy's automatic HTTP-to-HTTPS redirects. What any other host gets on the
+  plain-HTTP port depends on `caddyRemoteHttp`:
+  - **`caddyRemoteHttp` enabled:** the catch-all above serves it over plain
+    HTTP without a redirect, and a visit that starts there stays there (the
+    Tailscale IP, the short name, `.local`), because the landing-to-session
+    hop is origin-relative.
+  - **`caddyRemoteHttp` off (the default):** there is no catch-all, so no
+    other host is served on the plain-HTTP port at all.
+
+  With neither key set, Caddy's automatic redirect applies to every name it
+  serves. Point bookmarks and home-screen icons at
+  `https://<name>:<caddyHttpsPort>` (#575).
   If this key differs from the detected name, the key keeps serving and the
   detected name is refused until reconciled. In direct mode, `POST
   /api/setup/generate-cert {"reconcileTailnet": true}` moves the key and the
