@@ -15,8 +15,9 @@ The "Records that carry the decision" section is this ADR's own proposal. It is 
 - the contract review D1 to D7, in
   [this comment on #2031](https://github.com/Jason-Vaughan/TangleClaw/issues/2031#issuecomment-5977128818),
   which is canonical for them;
-- the contract re-review R1 to R6 and its retention rule, relayed by the ProjectManager from the
-  Architect. When this ADR was written they were not yet recorded on #2031.
+- the contract re-review R1 to R6 and its retention rule, in
+  [this comment on #2031](https://github.com/Jason-Vaughan/TangleClaw/issues/2031#issuecomment-5977193728),
+  which is canonical for them.
 
 Where this ADR and a recorded ruling differ, the ruling wins.
 **Source issue:** #2031, the schema and Master-router reconciliation gate for the Discord stack.
