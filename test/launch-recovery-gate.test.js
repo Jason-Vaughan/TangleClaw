@@ -248,6 +248,31 @@ describe('launch recovery gate (Train 21, #1587)', () => {
     });
   });
 
+  // #1937: `tc start status` and the unready nudge describe the gate rather
+  // than re-deciding it, so the status block carries the gate's own answer.
+  describe('the status block reports the gate\'s decision', () => {
+    it('is true only while the gate is withholding the task step', () => {
+      const operator = launchInRecovery('operator');
+      assert.equal(launchSequence.status(operator.id).body.status.taskWithheld, false,
+        'the earlier steps are served in recovery, so nothing is withheld yet');
+      assert.equal(launchSequence.taskStepWithheld(store.launchSequences.getBySession(operator.session.id)), false);
+      ackThroughState(operator.id);
+      assert.equal(launchSequence.status(operator.id).body.status.taskWithheld, true);
+      assert.equal(launchSequence.taskStepWithheld(store.launchSequences.getBySession(operator.session.id)), true);
+      store.launchSequences.clearRecovery(operator.sequence.id, {
+        sessionId: operator.sequence.sessionId, recoveryRevision: 1, clearance: 'operator-verified', clearedBy: 'jason'
+      });
+      assert.equal(launchSequence.status(operator.id).body.status.taskWithheld, false, 'a cleared recovery withholds nothing');
+    });
+
+    it('is false for an advisory launch at its task step', () => {
+      const advisory = launchInRecovery('advisory');
+      ackThroughState(advisory.id);
+      assert.equal(launchSequence.status(advisory.id).body.status.taskWithheld, false,
+        'an advisory task step is served behind a warning, not withheld');
+    });
+  });
+
   describe('the step-4 gate in advisory mode', () => {
     it('serves the task step with a recovery notice, and the frozen digest', () => {
       const { id, sequence } = launchInRecovery('advisory');

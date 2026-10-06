@@ -193,6 +193,19 @@ acknowledge a step nothing will ever serve it. It also precedes the reconciliati
 `operator` mode no text satisfies the gate; an attestation that reconciled its way through would
 record a consent nobody gave.
 
+#### R3a — the operator chooses the recovery mode (Architect, 2026-09-27, #1937)
+
+The mode decides whether a session may clear its own recovery, so the choice is not the session's to
+make. `PATCH /api/projects/:name` refuses the whole request, before anything is looked up or written,
+with `403 OPERATOR_ONLY` whenever a non-operator caller names `launchSequence.recoveryMode`, even at
+its current value. The operator's path is unchanged, the project's other settings are not affected, and
+each launch still freezes the mode it started with.
+
+The refusal guards the API path, not the value: the setting is stored in the project's own
+`.tangleclaw/project.json`, which that project's session can write, so it is not a hard security
+boundary. The Architect ruled (2026-09-27) that moving operator-authority settings out of the
+session's reach is a broader configuration-authority change, tracked as #1982.
+
 ### #1650 — a preflight that could not run must not grant READY
 
 The evaluation-failure ruling (closed 2026-09-20) fixes a verdict inversion: a preflight that failed

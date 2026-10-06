@@ -368,6 +368,34 @@ describe('tc start (car 21.3)', () => {
       'a launch that owes none is not told about a gate it will never meet');
   });
 
+  it('does not tell a session to `tc start next` into a step the operator is withholding (#1937)', () => {
+    const steps = ['identity', 'governance', 'state', 'task'].map((id, index) => ({
+      index, id, pageCount: 1, pagesServed: [0], servedAt: 'x', ackedAt: index < 3 ? 'x' : null
+    }));
+    /**
+     * Render a four-step status at the task step.
+     * @param {object} status - The status block to render
+     * @returns {string} The printed page
+     */
+    const render = (status) => tcVerbs.renderStartStatus({
+      sequence: 'present', sessionId: 7, sequenceId: 3, revision: 1, applicability: 'applicable',
+      preflight: { verdict: 'crash-recovery' }, pageBudget: 19332, toolOutput: null, pending: null,
+      renderContext: 'recorded', status, steps
+    });
+    // `taskWithheld` is the server gate's own answer; the page reads it rather
+    // than re-deciding from recovery, mode and cursor.
+    const withheld = render({ cursor: 3, ready: false, recovery: 'required', recoveryMode: 'operator', recoveryRevision: 2, unready: true, taskWithheld: true });
+    assert.doesNotMatch(withheld, /Run `tc start next` to continue/);
+    assert.doesNotMatch(withheld, /advisory/, 'the page describes the gate; it does not advertise another mode');
+    const advisory = render({ cursor: 3, ready: false, recovery: 'required', recoveryMode: 'advisory', recoveryRevision: 2, unready: true, taskWithheld: false });
+    assert.match(advisory, /Run `tc start next` to continue/, 'an advisory task step is served, so it is still pointed at');
+    const early = render({ cursor: 1, ready: false, recovery: 'required', recoveryMode: 'operator', recoveryRevision: 2, unready: true, taskWithheld: false });
+    assert.match(early, /Run `tc start next` to continue/, 'the steps before the task step are still served in recovery');
+    const older = render({ cursor: 3, ready: false, recovery: 'required', recoveryMode: 'operator', recoveryRevision: 2, unready: true });
+    assert.match(older, /Run `tc start next` to continue/,
+      'a server that predates the field is not second-guessed: `tc start next` itself says withheld');
+  });
+
   it('prints the missing render context, because a re-render can then be thinner', () => {
     // The status payload and the printed page are two halves of one
     // disclosure; delete either and a session loses the only warning it gets

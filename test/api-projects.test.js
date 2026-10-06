@@ -586,6 +586,65 @@ describe('api-projects', () => {
         const { status } = await request('PATCH', '/api/projects/gate-a', { name: 'gate-a', tags: ['same'] }, a.headers);
         assert.equal(status, 200);
       });
+
+      // #1937, Architect ruling: the recovery mode decides whether a session may
+      // clear its own launch gate, so a session choosing it would be loosening
+      // its own gate. Presence of the field is what is refused, not a change of
+      // value, and the WHOLE request is refused before anything is written.
+      describe('the recovery mode is the operator\'s (#1937)', () => {
+        /**
+         * The project's stored launch settings, read from its config file.
+         * @param {string} name - Project name
+         * @returns {object} The `launchSequence` block, or `{}`
+         */
+        const launchSettings = (name) => {
+          const row = store.projects.getByName(name);
+          return store.projectConfig.load(row.path).launchSequence || {};
+        };
+
+        it('refuses a project setting its own recovery mode, and writes nothing else in the request', async () => {
+          const before = store.projects.getByName('gate-a').tags;
+          const { status, data } = await request('PATCH', '/api/projects/gate-a',
+            { tags: ['smuggled'], launchSequence: { recoveryMode: 'advisory' } }, a.headers);
+          assert.equal(status, 403);
+          assert.equal(data.code, 'OPERATOR_ONLY');
+          assert.notEqual(launchSettings('gate-a').recoveryMode, 'advisory');
+          assert.deepEqual(store.projects.getByName('gate-a').tags, before, 'the rest of a refused request is not applied');
+        });
+
+        it('refuses it even when the value is the one already stored', async () => {
+          for (const recoveryMode of ['operator', null]) {
+            const { status, data } = await request('PATCH', '/api/projects/gate-a',
+              { launchSequence: { recoveryMode } }, a.headers);
+            assert.equal(status, 403, JSON.stringify(recoveryMode));
+            assert.equal(data.code, 'OPERATOR_ONLY');
+          }
+        });
+
+        it('refuses an unbound caller with OPERATOR_ONLY, as a rename is', async () => {
+          const { status, data } = await request('PATCH', '/api/projects/gate-a', { launchSequence: { recoveryMode: 'advisory' } });
+          assert.equal(status, 403);
+          assert.equal(data.code, 'OPERATOR_ONLY');
+        });
+
+        it('still lets a project change its other launch settings', async () => {
+          const { status } = await request('PATCH', '/api/projects/gate-a',
+            { launchSequence: { unreadyWindowMinutes: 20 } }, a.headers);
+          assert.equal(status, 200);
+          assert.equal(launchSettings('gate-a').unreadyWindowMinutes, 20);
+        });
+
+        it('lets the operator choose it, and keeps the project\'s other launch settings', async () => {
+          const { status } = await request('PATCH', '/api/projects/gate-a',
+            { launchSequence: { recoveryMode: 'advisory' } }, asOperator());
+          assert.equal(status, 200);
+          assert.equal(launchSettings('gate-a').recoveryMode, 'advisory');
+          assert.equal(launchSettings('gate-a').unreadyWindowMinutes, 20, 'PATCH merges the launch block');
+          const back = await request('PATCH', '/api/projects/gate-a', { launchSequence: { recoveryMode: 'operator' } }, asOperator());
+          assert.equal(back.status, 200);
+          assert.equal(launchSettings('gate-a').recoveryMode, 'operator');
+        });
+      });
     });
 
     describe('actions and stranded wraps', () => {

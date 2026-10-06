@@ -4604,7 +4604,17 @@ route('GET', '/api/launch-sequences', (req, res) => {
       ...(readsStartupControl ? { startupControl: _startupControlForLaunch(sequence, access) } : {})
     };
   });
-  return jsonResponse(res, 200, { sequences });
+  // #1937: each row carries the mode its launch FROZE; this is the project's
+  // CURRENT setting beside them, so a reader can tell a launch that started in
+  // operator mode from a project that is operator now (the setting applies from
+  // the next launch). No dashboard control reads it while the A24 freeze
+  // stands. `null` for a project this install does not have: no mode is not
+  // the default mode.
+  const projectRow = store.projects.get(projectId);
+  const projectRecoveryMode = projectRow
+    ? projectConfig.resolveRecoveryMode(store.projectConfig.load(projectRow.path)).mode
+    : null;
+  return jsonResponse(res, 200, { sequences, projectRecoveryMode });
 });
 
 /**
@@ -6938,13 +6948,23 @@ route('POST', '/api/projects/:name/migrate-to-plugin', async (req, res, params) 
 // PATCH /api/projects/:name
 route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
   // A project's own session may change its settings; only the operator may
-  // change another project's, or rename one (#1752). A rename moves the
+  // change another project's, rename one (#1752), or choose its launch recovery
+  // mode (#1937, below). A rename moves the
   // project's directory and changes the identity every live binding was
   // issued against, so it is more than that project's configuration.
   const renaming = body && typeof body === 'object' && body.name !== undefined && body.name !== params.name;
-  const admitted = renaming
-    ? operatorProjectCaller(req, res, 'rename a project')
-    : ownProjectCaller(req, res, params.name, projects.getProjectRow);
+  // The recovery mode decides whether a session may clear its own launch gate,
+  // so a session choosing it would be loosening its own gate (ADR 0017 R3a).
+  // Refused on PRESENCE, not on a change of value, and before anything is
+  // looked up or written, so no part of a request that names it is applied.
+  // This guards the API only: the stored value is in the project's checkout.
+  const launchBlock = body && typeof body === 'object' ? body.launchSequence : undefined;
+  const choosingRecoveryMode = Boolean(launchBlock) && typeof launchBlock === 'object'
+    && Object.prototype.hasOwnProperty.call(launchBlock, 'recoveryMode');
+  let admitted;
+  if (renaming) admitted = operatorProjectCaller(req, res, 'rename a project');
+  else if (choosingRecoveryMode) admitted = operatorProjectCaller(req, res, 'choose a project\'s launch recovery mode');
+  else admitted = ownProjectCaller(req, res, params.name, projects.getProjectRow);
   if (!admitted) return;
   if (!body || typeof body !== 'object') {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');

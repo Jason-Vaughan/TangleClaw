@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-06 — #1937: a held launch is not asked for what the gate refuses; the operator chooses the recovery mode
+
+<!-- prawduct: type=bugfix | scope=1937-recovery-gate-salvage -->
+
+Chunk 01 of the #1937 plan: the three pieces salvaged from PR #1986, which is to be closed in favour of this work.
+
+- **What.** `lib/launch-sequence.js#taskStepWithheld` is the recovery gate's own answer, carried on the status block as `taskWithheld`. The unready nudge (`lib/launch-unready.js#nudgeLine`) and `tc start status` (`lib/tc-verbs.js#renderStartStatus`) read it. `GET /api/launch-sequences` adds `projectRecoveryMode`. `PATCH /api/projects/:name` is operator-only when the body names `launchSequence.recoveryMode`.
+- **Not carried from #1986.** Its `ADVISORY_RECOVERY_HINT`, which told readers how to opt in to advisory mode, and every test assertion on that wording. The default recovery mode is about to change (operator ruling 2026-10-06), so the hint would have described an opt-in that is going away. Two tests now assert the opposite: the withheld nudge and status page do not mention advisory mode.
+- **Unchanged.** The default mode, the gate's ordering, and what advisory mode does.
+- **Tests.** Ported with the code: the gate's answer across operator, cleared and advisory launches; the nudge unit and end-to-end through the monitor; the status page with and without the field (an older server sends none); the GET before and after a setting change; the PATCH refusal for a session at a new value, at the current value, and beside another key, with the file unchanged each time.
+- **Mutations.** Six, one per guard or call-site argument, each turned a test red: the PATCH branch disabled; the presence check weakened to a change-of-value check; `projectRecoveryMode` hard-coded; the monitor's `taskWithheld` argument forced false; the status page's condition removed; `taskStepWithheld` widened to advisory.
+
 ## 2026-10-04 — #1949: soak certification judge, successor to #2056
 
 <!-- prawduct: type=feature | scope=1949-soak-judge -->

@@ -377,7 +377,11 @@ a well-formed artifact exist:*
 and only a person clears it, from the project's Launch readiness panel. In `advisory` the task step
 is served behind a warning and the session clears its own recovery by attesting with a written
 reconciliation, recorded as `agent-reconciled`. An unrecognised value reads as `operator`, so a typo
-can never be why a damaged handoff went unnoticed.
+can never be why a damaged handoff went unnoticed. While the task step is withheld, the unready nudge and
+`tc start status` say the launch is waiting on the operator and stop pointing at `tc start next` and
+`tc start ready`, which would both refuse (#1937). The mode is the operator's choice (ADR 0017 R3a): a
+session that names it in `PATCH /api/projects/:name` is refused `403 OPERATOR_ONLY`. That guards the API;
+the stored value lives in the project's own `.tangleclaw/project.json`.
 
 **The handoff preflight is what produces that verdict.** At launch TangleClaw reads the handoff the
 previous session published and returns an ordered verdict — `ok` only for a current, eligible

@@ -4,6 +4,18 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`GET /api/launch-sequences` reports the project's current recovery mode** (#1937). Each launch in the list carries the mode it froze when it started. The response now also has `projectRecoveryMode`, the project's setting as it stands, so a reader can tell a launch that started in operator mode from a project that is in operator mode now. A change to the setting applies from the next launch. It is `null` for a project this install does not have.
+
+### Security
+
+- **Only the operator can choose a project's launch recovery mode through the API** (#1937, ADR 0017 R3a). `PATCH /api/projects/:name` used to let a project's own session set `launchSequence.recoveryMode`, the setting that decides whether that session may clear its own recovery gate. A request from anyone but the operator that names the key, even at its current value, is now refused `403 OPERATOR_ONLY`, and nothing else in that request is applied. The project's other settings are unaffected. This guards the API. The value is still stored in the project's own `.tangleclaw/project.json`, which that project's session can edit; #1982 tracks moving it out of reach.
+
+### Fixed
+
+- **A session held by the operator-mode recovery gate is no longer told to run commands that refuse it** (#1937). After a crash, an operator-mode launch withholds its task step and refuses READY until the operator clears recovery. A session parked there was still nudged to attest with `tc start ready`, and `tc start status` still ended with "Run `tc start next` to continue", which only answered "withheld" again. The nudge now says the launch is waiting on the operator and that nothing the session can run opens it, and `tc start status` drops the pointer while the step is withheld. Both read the gate's own answer (`taskWithheld` in the status block) instead of working it out again. Before the task step, the nudge is unchanged: those steps are still served.
+
 ### Internal
 
 - **The Feature Index lists two panel tests it had missed** (#1906, #1768). `FEATURES.md` now has entries for `test/panel-toggle-rows.test.js` and `test/port-owner-kind-panel.test.js`, both of which have been in the suite since those issues shipped. The entries were written in a session's working copy and never committed; they are carried over here, with the first brought up to date for the focus test added since (#1946).
