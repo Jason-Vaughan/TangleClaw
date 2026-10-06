@@ -206,6 +206,15 @@ The refusal guards the API path, not the value: the setting is stored in the pro
 boundary. The Architect ruled (2026-09-27) that moving operator-authority settings out of the
 session's reach is a broader configuration-authority change, tracked as #1982.
 
+**Amended 2026-10-06 (#1937, Architect A94).** The operator's decision now has a record of its own in
+the server store (`project_recovery_state`, schema v55), written only by the operator's `PATCH` and
+read by the launch beside the file. The record outranks the file. A pin on record cannot be loosened
+by any edit to `project.json`, and a value written into the file by hand creates no pin. The paragraph
+above still describes a project with no decision on record: there the file decides, and a session can
+still write it. One direction stays open to the file by design: an unrecognised value reads as
+`operator`, so a session can make its own gate stricter and cannot make it looser. This is the first
+operator-authority setting moved out of the session's reach; the rest remain #1982.
+
 ### #1650 — a preflight that could not run must not grant READY
 
 The evaluation-failure ruling (closed 2026-09-20) fixes a verdict inversion: a preflight that failed

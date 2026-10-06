@@ -35,6 +35,19 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-06 — #1937: the operator's recovery-mode decision is recorded in the store (schema v55)
+
+<!-- prawduct: type=feature | scope=1937-recovery-state-store -->
+
+Chunk 02 of the #1937 plan (revision 6, sections 4.3 and 4.4), on PM dispatch (Medusa `3b2004a1`).
+
+- **What.** Table `project_recovery_state` and the v54→v55 migration (`lib/store.js`), with `store.projectRecoveryState` (`get`, `recordDecision`, `claimInheritedNotice`). `lib/project-config.js#resolveRecoveryMode` takes the decision as a second argument and answers with a source and, where the file disagrees with a decision on record, a discrepancy. `lib/sessions.js#_resolveLaunchRecoveryMode` reads the decision once per launch. `lib/projects.js#updateProject` writes the store before any other write of a request that names the mode, and the file after. `lib/launch-sequence.js#projectRecoveryNow` is the one live read behind `GET /api/launch-sequences` and `tc start status`.
+- **Unchanged.** The default mode is still `operator`. A project with no decision on record resolves exactly as before. The gate, its ordering and what each mode does are not touched.
+- **Built and not yet reachable.** The resolver's `inherited` row is keyed on the shipped default, so it cannot be reached while the default is `operator`, and nothing claims the notice marker in production. The claim, its transaction with the launch insert and its rollback are tested by setting the default for the duration of a block. The notice text is chunk 4's.
+- **Departures from the plan, each recorded in the chunk's build plan.** A launch that cannot read the decision takes `operator`; the plan did not name that case. With no decision on record a recognised file value keeps the source word `launchSequence`; plan 4.3's table calls the advisory case `default`, which describes the world after the default flips. Plan 4.4's test of a launch-level claim on a row "pinned once, then unpinned, never noticed" cannot occur since revision 6 made an unpin a recorded decision: that project resolves `chosen` and claims nothing. The claim statement is tested against such a row at the store level.
+- **Contract change in an existing test.** `test/store-bridge-migration.test.js` pinned the store's schema version at 54 in three assertions. The bridge's own version is still asserted as exactly 54; the store's is now asserted against `store.CURRENT_SCHEMA_VERSION`.
+- **Carried from chunk 1's review.** The operator-path PATCH test sets its own state; `taskStepWithheld`'s JSDoc no longer claims every describer reads it; the A24 comment sentence on the GET is gone; the API reference has rows for the two routes.
+
 ## 2026-10-06 — #1937: a held launch is not asked for what the gate refuses; the operator chooses the recovery mode
 
 <!-- prawduct: type=bugfix | scope=1937-recovery-gate-salvage -->

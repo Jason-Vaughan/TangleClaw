@@ -6,11 +6,20 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **The operator's choice of a project's launch recovery mode is now recorded by the server** (#1937). Until now the mode lived only in the project's `.tangleclaw/project.json`, which the project's own session can edit, and nothing recorded who had chosen it. An operator `PATCH /api/projects/:name` naming `launchSequence.recoveryMode` now records the decision in the server store as well.
+  - Choosing `operator` pins the project. Choosing `advisory` lifts the pin, and is recorded as a decision too.
+  - `GET /api/launch-sequences` and `tc start status` say why the project is in its current mode (`projectRecoverySource`), report the operator's last decision (`projectRecoveryDecision`), and say when the project's file disagrees with it (`projectRecoveryDiscrepancy`). The same disagreement is logged when the project launches.
+  - The `PATCH` answer carries `recoveryMode`, with `fileWritten: false` and a `RECOVERY_FILE_NOT_WRITTEN` warning when the decision was saved and `project.json` could not be written. The decision still applies in that case. If the decision itself cannot be saved the answer is `500 RECOVERY_DECISION_NOT_SAVED` and nothing in the request is applied.
+  - The default mode is still `operator`, and a project with no decision on record behaves as before: its file decides.
+  - A pin belongs to this install and does not travel with a clone of the project.
+  - **Downgrade:** an older TangleClaw reads only `project.json`. The `PATCH` writes the chosen value there too, so a downgraded server sees the operator's last choice wherever that file write succeeded.
+  - **Upgrade:** the store moves to schema v55, which adds one table and changes no existing data.
 - **`GET /api/launch-sequences` reports the project's current recovery mode** (#1937). Each launch in the list carries the mode it froze when it started. The response now also has `projectRecoveryMode`, the project's setting as it stands, so a reader can tell a launch that started in operator mode from a project that is in operator mode now. A change to the setting applies from the next launch. It is `null` for a project this install does not have.
 
 ### Security
 
-- **Only the operator can choose a project's launch recovery mode through the API** (#1937, ADR 0017 R3a). `PATCH /api/projects/:name` used to let a project's own session set `launchSequence.recoveryMode`, the setting that decides whether that session may clear its own recovery gate. A request from anyone but the operator that names the key, even at its current value, is now refused `403 OPERATOR_ONLY`, and nothing else in that request is applied. The project's other settings are unaffected. This guards the API. The value is still stored in the project's own `.tangleclaw/project.json`, which that project's session can edit; #1982 tracks moving it out of reach.
+- **A project's session can no longer loosen an operator's recovery-mode pin by editing its own project file** (#1937, ADR 0017 R3a). Once the operator has pinned a project to `operator` recovery, deleting the setting from `.tangleclaw/project.json`, writing `advisory` or writing an unrecognised value all leave its launches in operator mode. A launch that cannot read the operator's decision also takes operator mode. This covers projects the operator has pinned through the API since this change. A project with no decision on record is still decided by its file, which its session can write (#1982).
+- **Only the operator can choose a project's launch recovery mode through the API** (#1937, ADR 0017 R3a). `PATCH /api/projects/:name` used to let a project's own session set `launchSequence.recoveryMode`, the setting that decides whether that session may clear its own recovery gate. A request from anyone but the operator that names the key, even at its current value, is now refused `403 OPERATOR_ONLY`, and nothing else in that request is applied. The project's other settings are unaffected. This guards the API; the entry above covers the copy of the value in the project's own `.tangleclaw/project.json`.
 
 ### Fixed
 

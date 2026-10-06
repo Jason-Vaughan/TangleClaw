@@ -77,10 +77,12 @@ describe('store: operator bridge schema (v52 to v54, #2031)', () => {
 
   it('a fresh install has every bridge object in its checked shape', () => {
     freshStore('fresh');
-    // This file owns the exact number: v52 created the bridge's storage, v53
-    // reshaped two tables, and v54 added the helper's fetch leases.
-    assert.equal(store.CURRENT_SCHEMA_VERSION, 54);
+    // This file owns the bridge's exact number: v52 created its storage, v53
+    // reshaped two tables, and v54 added the helper's fetch leases. The store
+    // as a whole moves on without the bridge (v55 is the recovery state table),
+    // so the store's version is held only to be no older than the bridge's.
     assert.equal(bridgeSchema.BRIDGE_SCHEMA_VERSION, 54);
+    assert.ok(store.CURRENT_SCHEMA_VERSION >= bridgeSchema.BRIDGE_SCHEMA_VERSION);
     assert.deepEqual(bridgeSchema.bridgeSchemaProblems(store.getDb()), []);
     const have = bridgeObjects();
     for (const object of bridgeSchema.BRIDGE_SCHEMA_OBJECTS) assert.ok(have.has(object.name), `missing ${object.name}`);
@@ -308,7 +310,7 @@ describe('store: operator bridge schema (v52 to v54, #2031)', () => {
       assert.equal(hasConversationIndex(), false, `${label}: the upgrade dropped it`);
       assert.deepEqual([...bridgeObjects()], fresh, `${label}: exactly the shape of a fresh store`);
       assert.equal(store.getDb().prepare('SELECT COUNT(*) AS n FROM bridge_routes').get().n, 1, `${label}: its routes are kept`);
-      assert.equal(store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 54);
+      assert.equal(store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
       assert.deepEqual(bridgeSchema.bridgeSchemaProblems(store.getDb()), []);
       // The version that made it still required nothing of it, and its own check still passes.
       assert.deepEqual(bridgeSchema.bridgeSchemaProblems(store.getDb(), null, 52), []);
@@ -415,7 +417,7 @@ describe('store: operator bridge schema (v52 to v54, #2031)', () => {
     const db = store.getDb();
     assert.deepEqual(db.prepare('SELECT token_id, status FROM bridge_helper_tokens ORDER BY token_id').all().map((r) => [r.token_id, r.status]),
       [['t-live', 'active'], ['t-old', 'revoked']]);
-    assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 54);
+    assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
     assert.throws(() => db.exec("UPDATE bridge_helper_tokens SET status = 'revoked' WHERE token_id = 't-live'"), /CHECK/,
       'a token can no longer be revoked without recording when');
   });

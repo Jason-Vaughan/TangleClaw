@@ -322,6 +322,46 @@ describe('tc start (car 21.3)', () => {
     assert.doesNotMatch(tcVerbs.renderStartStatus(base), /Handoff consumed/, 'an older server that sends no field prints nothing');
   });
 
+  it('reports a project file that disagrees with the recovery mode on record, in the resolver\'s own words (#1937)', () => {
+    /**
+     * Render a status whose current-mode block is the variable under test.
+     * @param {object} [projectRecovery] - The block, or undefined for a server that sends none
+     * @returns {string} The printed page
+     */
+    const render = (projectRecovery) => tcVerbs.renderStartStatus({
+      sequence: 'present',
+      sessionId: 7,
+      sequenceId: 3,
+      revision: 1,
+      applicability: 'applicable',
+      preflight: { verdict: 'ok' },
+      pageBudget: 19332,
+      status: { cursor: 0, ready: false, recovery: 'none', recoveryMode: 'operator', recoveryRevision: 1, unready: false },
+      ...(projectRecovery ? { projectRecovery } : {}),
+      steps: [{ index: 0, id: 'identity', pageCount: 1, pagesServed: [], servedAt: null, ackedAt: null }]
+    });
+    const pinned = render({
+      projectRecoveryMode: 'operator',
+      projectRecoverySource: 'pinned',
+      projectRecoveryDiscrepancy: 'the operator pinned this project to operator-cleared recovery, and project.json holds recoveryMode "advisory"; the pin decides'
+    });
+    assert.match(pinned, /Recovery mode discrepancy: the operator pinned this project/);
+    assert.match(pinned, /now operator \(pinned\)/);
+    assert.match(pinned, /this launch keeps the mode it started with/);
+
+    const invalid = render({
+      projectRecoveryMode: 'operator',
+      projectRecoverySource: 'invalid',
+      projectRecoveryDiscrepancy: 'project.json holds an unrecognised recoveryMode "Advisory"; recovery stays operator-cleared'
+    });
+    assert.match(invalid, /now operator \(invalid\)/);
+    assert.doesNotMatch(invalid, /pinned/, 'a project held by an unrecognised value is not described as pinned');
+
+    const agreeing = render({ projectRecoveryMode: 'operator', projectRecoverySource: 'pinned', projectRecoveryDiscrepancy: null });
+    assert.doesNotMatch(agreeing, /discrepancy/i, 'nothing is said when the file and the record agree');
+    assert.doesNotMatch(render(), /discrepancy/i, 'an older server that sends no block prints nothing');
+  });
+
   it('tells a session in recovery what is blocking it, and who can open it', () => {
     // A session in OPERATOR recovery has just been told by `tc start next` that
     // its task step is withheld, and `status` is where it looks to find out

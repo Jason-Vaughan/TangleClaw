@@ -4607,14 +4607,10 @@ route('GET', '/api/launch-sequences', (req, res) => {
   // #1937: each row carries the mode its launch FROZE; this is the project's
   // CURRENT setting beside them, so a reader can tell a launch that started in
   // operator mode from a project that is operator now (the setting applies from
-  // the next launch). No dashboard control reads it while the A24 freeze
-  // stands. `null` for a project this install does not have: no mode is not
-  // the default mode.
-  const projectRow = store.projects.get(projectId);
-  const projectRecoveryMode = projectRow
-    ? projectConfig.resolveRecoveryMode(store.projectConfig.load(projectRow.path)).mode
-    : null;
-  return jsonResponse(res, 200, { sequences, projectRecoveryMode });
+  // the next launch). It is a live read, separate from any launch's frozen
+  // one. Every field is `null` for a project this install does not have: no
+  // mode is not the default mode.
+  return jsonResponse(res, 200, { sequences, ...launchSequence.projectRecoveryNow(projectId) });
 });
 
 /**
@@ -6957,7 +6953,8 @@ route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
   // so a session choosing it would be loosening its own gate (ADR 0017 R3a).
   // Refused on PRESENCE, not on a change of value, and before anything is
   // looked up or written, so no part of a request that names it is applied.
-  // This guards the API only: the stored value is in the project's checkout.
+  // The operator's decision is recorded in the server store, which outranks
+  // the copy of the value in the project's checkout.
   const launchBlock = body && typeof body === 'object' ? body.launchSequence : undefined;
   const choosingRecoveryMode = Boolean(launchBlock) && typeof launchBlock === 'object'
     && Object.prototype.hasOwnProperty.call(launchBlock, 'recoveryMode');
@@ -6970,10 +6967,20 @@ route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
 
-  const result = await projects.updateProject(params.name, body);
+  // The verified caller kind goes with the decision into the store. It is
+  // read here, after the operator guard above admitted the request, so the
+  // only kind that can arrive is one that guard accepts.
+  const result = await projects.updateProject(params.name, body, choosingRecoveryMode
+    ? { recoveryDecisionBy: sharedDocsAccess.resolveAccess(req).kind }
+    : {});
 
   if (result.errors.length > 0 && !result.project) {
     const firstError = result.errors[0];
+    // The store write of the recovery mode failed: a server fault, not a
+    // verdict on the request, and nothing was applied.
+    if (result.code === projects.RECOVERY_DECISION_NOT_SAVED) {
+      return errorResponse(res, 500, result.errors.join(' '), projects.RECOVERY_DECISION_NOT_SAVED);
+    }
     if (firstError.includes('not found')) {
       return errorResponse(res, 404, firstError, 'NOT_FOUND');
     }
@@ -7004,6 +7011,11 @@ route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
   if (warnings.length > 0) {
     response.warnings = warnings;
   }
+  // Present only when the request chose the recovery mode (#1937). It is the
+  // store's answer, with `fileWritten: false` when project.json could not be
+  // written behind it, so a caller never has to parse the warning to learn
+  // which half landed.
+  if (result.recoveryMode) response.recoveryMode = result.recoveryMode;
 
   jsonResponse(res, 200, response);
 });

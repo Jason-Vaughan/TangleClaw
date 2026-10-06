@@ -380,8 +380,13 @@ reconciliation, recorded as `agent-reconciled`. An unrecognised value reads as `
 can never be why a damaged handoff went unnoticed. While the task step is withheld, the unready nudge and
 `tc start status` say the launch is waiting on the operator and stop pointing at `tc start next` and
 `tc start ready`, which would both refuse (#1937). The mode is the operator's choice (ADR 0017 R3a): a
-session that names it in `PATCH /api/projects/:name` is refused `403 OPERATOR_ONLY`. That guards the API;
-the stored value lives in the project's own `.tangleclaw/project.json`.
+session that names it in `PATCH /api/projects/:name` is refused `403 OPERATOR_ONLY`. The operator's
+decision is recorded in the server store, which outranks the project's `.tangleclaw/project.json`
+(#1937): once the operator has pinned a project to `operator`, no edit to that file loosens it, and a
+file that disagrees with the decision on record is reported in the server log at launch, on
+`GET /api/launch-sequences` and in `tc start status`. A launch reads the decision once and freezes the
+mode it resolves to. If the decision cannot be read, the launch takes `operator`. With no decision on
+record the file's value decides.
 
 **The handoff preflight is what produces that verdict.** At launch TangleClaw reads the handoff the
 previous session published and returns an ordered verdict — `ok` only for a current, eligible
