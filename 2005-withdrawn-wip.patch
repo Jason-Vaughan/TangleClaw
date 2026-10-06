@@ -1,0 +1,318 @@
+diff --git a/.prawduct/change-log.md b/.prawduct/change-log.md
+index 5d798081..f0838d17 100644
+--- a/.prawduct/change-log.md
++++ b/.prawduct/change-log.md
+@@ -35,6 +35,25 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
+ 
+ <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
+ 
++## 2026-10-05 — A bridge delivery failure and its notice are one write (#2005)
++
++<!-- prawduct: type=bugfix | scope=2005-delivery-failure-notice -->
++
++PM dispatch (Medusa 025881ed), admitted into v5.31 as one bounded pre-freeze PR.
++
++**Why.** #2005 was written against the #1799 design and says a message that failed or went `send_unknown` on the Hub is never reported back. Since #2103 the gateway does queue a failure notice for both, but as a second write after the route's own, guarded by `applied && !replayed`. A server that stopped between the two left the route already failed, so no later pass or restart ever queued the notice: the silent terminal failure the issue describes, in a narrower window.
++
++**What.**
++- `lib/bridge-gateway.js`: `_returnToMaster` and `_markUnconfirmed` return the notice as the decision's `outbound`, which `bridgeStore.applyRouteWrite` queues inside the route's transaction. The idempotency keys and the notice text are unchanged.
++- `test/bridge-gateway.test.js`: both terminal Hub states and the unknown outcome, each with the server stopping as the notice is queued; no second notice across passes, a restart or after it is posted; correlation to the operator's message; no operator words or credential in the item, the row or the audit; nothing declared while a send is still on its way.
++- `docs/operator-bridge.md`, `CHANGELOG.md`.
++
++**Not in it.** `_launchFailed` still queues its notice by a separate write. A failed launch is not a Hub delivery state, so it is outside the dispatch; flagged to the PM.
++
++**Root cause.** The route write and the notice were made atomic nowhere, although the store already offered it; five of the eight new tests pass on the old code, which is how narrow the window was.
++
++**Classification:** bugfix
++
+ ## 2026-10-04 — #1949: soak certification judge, successor to #2056
+ 
+ <!-- prawduct: type=feature | scope=1949-soak-judge -->
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index f63567ac..6e9d45ad 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -51,6 +51,10 @@ All notable changes to TangleClaw are documented in this file.
+ 
+ ### Fixed
+ 
++- **A delivery failure on the operator bridge can no longer be lost when the server stops as it is recorded** (#2005). When a message the operator sent could not be delivered (the Hub refused it, its recipient retired, or nobody could tell whether it arrived), the gateway recorded the failure on the route and then queued the operator's notice as a second, separate write. A server that stopped between the two left a route that had already failed and an operator who was never told, because no later pass or restart makes that write again. The notice is now queued by the same transaction that records the failure, so there is either both or neither, and a pass after a restart does both.
++  - This covers a routed send whose exchange ends `undeliverable` or `recipient_retired`, a send whose outcome is unknown (`send-unconfirmed`), and every other reason a route is handed back to the Master.
++  - The notice is unchanged: one per failure, fixed server text with none of the operator's words, posted in reply to the message it is about. It reports a failure and approves or decides nothing.
++  - A failed launch's notice is still queued by a separate write (`_launchFailed`); it is outside this change.
+ - **A server restart no longer nudges a session again for mail it already fetched** (#2086). The wake monitor keeps its "already nudged" mark in memory, and after a restart it asks the exchange record instead. The record answered by counting messages still waiting to be read. The Hub redelivers mail that was never marked handled, so a message the recipient had fetched came back as unread with nothing waiting to be read, and every restart typed another nudge, outside the re-arm budget. The record is now asked about each message in the inbox by its own id, and a message the recipient has read or acknowledged counts as theirs whether or not it was ever nudged. New mail and mail with no exchange record are still nudged.
+ - **A release can no longer leave a tag with no Release because its notes are too long** (#2080). v5.30.0's notes were about 191,000 characters, GitHub refused them at its 125,000-character limit, and the tag was already pushed. Before any tag, push or release, `release.yml` now measures the exact UTF-8 bytes of the notes and stops, with a message saying what to do, when they are empty or over 120,000 bytes. The notes are never truncated: shorten the version's `CHANGELOG.md` section and release again, as `docs/release-process.md` describes. A new test also fails a pull request that takes `[Unreleased]` past 110,000 bytes, so the problem shows up at merge time and not at the release.
+ - **Folding a Ports, Groups or OpenClaw row keeps keyboard focus on its toggle** (#1946). Each toggle re-rendered its whole panel, which replaced the pressed button, so focus fell back to the page and a screen reader lost its place. A toggle now flips its own `aria-expanded`, arrow and content in place; a group opened this way still loads its details. The panels' 30-second polling re-renders put focus back on the same toggle, found by a new `data-fold-key`.
+diff --git a/docs/operator-bridge.md b/docs/operator-bridge.md
+index bb14e0bc..a89d5e8e 100644
+--- a/docs/operator-bridge.md
++++ b/docs/operator-bridge.md
+@@ -280,6 +280,10 @@ default does not rewrite it, and a destination the Master has fixed on a route d
+ - **The target has no live session, or the send is refused before it leaves:** the route goes
+   back to the Master to route again, and the operator gets one failure notice.
+ - **The exchange later fails** (undeliverable, recipient retired): the same.
++- **The notice and the failure are one write.** The failure notice is queued by the same
++  transaction that records the failure on the route, so a server that stops at that moment leaves
++  either both or neither, and the next pass does both. A failure is never recorded without its
++  notice, and never told twice.
+ - **Nobody knows whether it arrived:** see "Sending exactly once". It is not sent again.
+ - **The Master is not running:** the gateway starts it, at most once per backoff window (15
+   seconds, doubling to 10 minutes). If it cannot, the route is queued. Nothing falls back to
+diff --git a/lib/bridge-gateway.js b/lib/bridge-gateway.js
+index 021cbba8..cba95a8a 100644
+--- a/lib/bridge-gateway.js
++++ b/lib/bridge-gateway.js
+@@ -340,6 +340,21 @@ function _notice(routeId, what, text) {
+   });
+ }
+ 
++/**
++ * A delivery-failure notice as part of a route write: queued by the same
++ * transaction that records the failure, so the two cannot come apart. A
++ * server that stops between them would otherwise leave a route that has
++ * already failed and an operator who is never told, because no later pass
++ * makes that write again.
++ * @param {string} routeId - Route id.
++ * @param {string} what - Which notice: part of the idempotency key.
++ * @param {string} text - What to post.
++ * @returns {{idemKey: string, kind: string, sourceLabel: string, text: string, digest: string}} A decision's `outbound`.
++ */
++function _noticeWith(routeId, what, text) {
++  return { idemKey: `route:${routeId}:${what}`, kind: 'failure', sourceLabel: 'TangleClaw', text, digest: bridgeStore.digest(text) };
++}
++
+ /**
+  * Give a route its one status notice, if it has not had one. A route gets a
+  * single such notice in its life, whichever reason comes first: that Master
+@@ -797,11 +812,12 @@ function _markUnconfirmed(route, cause = 'outcome-unknown') {
+   const result = _stepCurrent('send-unconfirmed', route.routeId, (current) => (
+     current.state !== 'accepted' || current.failureCode === SEND_UNCONFIRMED
+       ? { refuse: 'not-applicable' }
+-      : { set: { failure_code: SEND_UNCONFIRMED }, detail: { cause } }
++      : {
++        set: { failure_code: SEND_UNCONFIRMED },
++        outbound: _noticeWith(route.routeId, 'send-unconfirmed', UNCONFIRMED_NOTICE[cause]),
++        detail: { cause }
++      }
+   ));
+-  if (result.outcome === 'applied' && !result.replayed) {
+-    _notice(route.routeId, 'send-unconfirmed', UNCONFIRMED_NOTICE[cause]);
+-  }
+   return result.route || route;
+ }
+ 
+@@ -857,12 +873,13 @@ async function _returnToMaster(route, code, words) {
+         state: 'awaiting-master', failure_code: code, resolved_by: null, destination_kind: null,
+         destination_project_id: null, destination_workspace_id: null, resolved_generation: null
+       },
++      // Keyed on the version this write makes, so each failure of a message
++      // that is routed again has a notice of its own.
++      outbound: _noticeWith(route.routeId, `failure:${code}:v${current.version + 1}`,
++        `Your message ${words}. It is waiting for the Project Master to route it.`),
+       detail: { code }
+     };
+   });
+-  if (result.outcome === 'applied' && !result.replayed) {
+-    _notice(route.routeId, `failure:${code}:v${result.route.version}`, `Your message ${words}. It is waiting for the Project Master to route it.`);
+-  }
+   return result.route || route;
+ }
+ 
+diff --git a/test/bridge-gateway.test.js b/test/bridge-gateway.test.js
+index 137823c2..747dde06 100644
+--- a/test/bridge-gateway.test.js
++++ b/test/bridge-gateway.test.js
+@@ -1448,6 +1448,193 @@ describe('bridge gateway (#2031)', () => {
+     });
+   });
+ 
++  describe('a terminal delivery failure tells the operator exactly once (#2005)', () => {
++    const BODY = 'the launch code is hunter2-SECRET';
++
++    /**
++     * The failure notices stored for a route, oldest first.
++     * @param {string} routeId - Route id.
++     * @returns {{idemKey: string, text: string, state: string}[]}
++     */
++    function failureNotices(routeId) {
++      return store.getDb().prepare(
++        "SELECT idem_key AS idemKey, text, state FROM bridge_outbound WHERE route_id = ? AND kind = 'failure' ORDER BY outbound_id"
++      ).all(routeId);
++    }
++
++    /**
++     * Run something with the server stopping at the first failure notice it
++     * would queue, as a crash at that write would.
++     * @param {() => Promise<*>} during - What runs while the stop is armed.
++     * @returns {Promise<number>} How many writes were stopped.
++     */
++    async function stoppingAtTheNotice(during) {
++      const realEnqueue = bridgeStore.outbound.enqueue;
++      let stopped = 0;
++      bridgeStore.outbound.enqueue = (item) => {
++        if (item.kind === 'failure' && stopped === 0) {
++          stopped += 1;
++          throw new Error('the server stopped here');
++        }
++        return realEnqueue.call(bridgeStore.outbound, item);
++      };
++      try {
++        await during();
++      } catch {
++        // The stop itself: what matters is what the store holds afterwards.
++      } finally {
++        bridgeStore.outbound.enqueue = realEnqueue;
++      }
++      return stopped;
++    }
++
++    /**
++     * A message routed to a live project and on the Hub.
++     * @returns {Promise<{routeId: string, alpha: object}>}
++     */
++    async function routedToAlpha() {
++      const alpha = liveProject('Alpha');
++      const routeId = (await operatorSays('m1', `@alpha ${BODY}`)).body.routeId;
++      assert.equal(bridgeStore.routes.get(routeId).state, 'routed');
++      return { routeId, alpha };
++    }
++
++    /** How each terminal Hub failure of a routed send comes about. */
++    const ENDS = {
++      undeliverable: () => store.getDb().prepare("UPDATE medusa_exchanges SET state = 'undeliverable' WHERE hub_id = ? AND origin = 'send'")
++        .run(hub.fromGateway()[0].hubId),
++      recipient_retired: (alpha) => exchanges.markRecipientRetired(alpha.workspaceId)
++    };
++
++    for (const state of Object.keys(ENDS)) {
++      const code = `exchange-${state.replace(/_/g, '-')}`;
++
++      it(`a routed send that ends ${state} is told once, though the server stops as the notice is queued`, async () => {
++        const { routeId, alpha } = await routedToAlpha();
++        ENDS[state](alpha);
++        assert.equal(await stoppingAtTheNotice(() => gateway.tick()), 1, 'the stop was reached');
++
++        gateway._reset();
++        for (let i = 0; i < 3; i++) await gateway.tick();
++        const route = bridgeStore.routes.get(routeId);
++        assert.deepEqual([route.state, route.failureCode], ['awaiting-master', code]);
++        const notices = failureNotices(routeId);
++        assert.equal(notices.length, 1, 'the operator is told, and told once');
++        assert.equal(notices[0].idemKey, `route:${routeId}:failure:${code}:v${route.version}`, 'the notice is the terminal write\'s own');
++        assert.equal(bridgeStore.audit.forRoute(routeId).filter((a) => a.op === 'target-failed' && a.outcome === 'applied').length, 1);
++      });
++
++      it(`a routed send that ends ${state} is not told again by later passes, a restart, or once it has been posted`, async () => {
++        const { routeId, alpha } = await routedToAlpha();
++        ENDS[state](alpha);
++        await gateway.tick();
++        assert.equal(failureNotices(routeId).length, 1);
++
++        const claimed = helperClaims().body.items.filter((i) => i.kind === 'failure');
++        assert.equal(claimed.length, 1);
++        assert.equal(helperAcks(claimed[0], 'posted-1').status, 200);
++        for (let i = 0; i < 3; i++) {
++          gateway._reset();
++          later(10 * 60 * 1000);
++          await gateway.tick();
++        }
++        assert.equal(failureNotices(routeId).length, 1, 'still the one notice');
++        assert.equal(waitingForHelper().filter((i) => i.kind === 'failure').length, 0, 'and nothing more waits to be posted');
++      });
++    }
++
++    it('a send whose outcome is unknown is told once, though the server stops as the notice is queued', async () => {
++      liveProject('Alpha');
++      hub.failSend = 'unknown';
++      const routeId = (await operatorWrites('m1', `@alpha ${BODY}`)).body.routeId;
++      assert.equal(await stoppingAtTheNotice(() => masterTakesSuggestion(routeId, { at: clock })), 1, 'the stop was reached');
++      hub.failSend = null;
++      assert.equal(store.medusaExchanges.getByRequestId(`bridge:${routeId}:send1`).state, 'send_unknown');
++
++      gateway._reset();
++      for (let i = 0; i < 3; i++) { later(10 * 60 * 1000); await gateway.tick(); }
++      const route = bridgeStore.routes.get(routeId);
++      assert.deepEqual([route.state, route.failureCode], ['accepted', 'send-unconfirmed']);
++      assert.deepEqual(failureNotices(routeId).map((n) => n.idemKey), [`route:${routeId}:send-unconfirmed`], 'the operator is told, and told once');
++      assert.equal(bridgeStore.audit.forRoute(routeId).filter((a) => a.op === 'send-unconfirmed' && a.outcome === 'applied').length, 1);
++      assert.equal(hub.fromGateway().length, 0, 'and the message is not sent again');
++    });
++
++    it('a send whose outcome is unknown is not told again by later passes, a restart, or once it has been posted', async () => {
++      liveProject('Alpha');
++      hub.failSend = 'unknown';
++      const routeId = (await operatorSays('m1', `@alpha ${BODY}`)).body.routeId;
++      hub.failSend = null;
++      assert.equal(failureNotices(routeId).length, 1);
++
++      const claimed = helperClaims().body.items.filter((i) => i.kind === 'failure');
++      assert.equal(helperAcks(claimed[0], 'posted-1').status, 200);
++      for (let i = 0; i < 3; i++) {
++        gateway._reset();
++        later(10 * 60 * 1000);
++        await gateway.tick();
++      }
++      assert.equal(failureNotices(routeId).length, 1, 'still the one notice');
++      assert.equal(waitingForHelper().filter((i) => i.kind === 'failure').length, 0, 'and nothing more waits to be posted');
++    });
++
++    it('hands the helper a notice that names the operator\'s message, and carries neither its words nor a credential', async () => {
++      const token = gateway.mintHelperToken();
++      const { routeId, alpha } = await routedToAlpha();
++      ENDS.undeliverable(alpha);
++      await gateway.tick();
++      hub.failSend = 'unknown';
++      const unsure = (await operatorSays('m2', `@alpha ${BODY}`)).body.routeId;
++      hub.failSend = null;
++
++      const items = helperClaims().body.items.filter((i) => i.kind === 'failure');
++      assert.deepEqual(items.map((i) => i.inReplyTo), [
++        { externalId: 'm1', channelId: ALLOWED.channelId, threadId: null },
++        { externalId: 'm2', channelId: ALLOWED.channelId, threadId: null }
++      ], 'each is correlated to the message it is about');
++      assert.deepEqual(items.map((i) => i.sourceLabel), ['TangleClaw', 'TangleClaw'], 'and comes from the server, not from a session');
++      const stored = store.getDb().prepare("SELECT * FROM bridge_outbound WHERE route_id IN (?, ?) AND kind = 'failure'").all(routeId, unsure);
++      const audited = [routeId, unsure].flatMap((id) => bridgeStore.audit.forRoute(id).filter((a) => ['target-failed', 'send-unconfirmed'].includes(a.op)));
++      for (const shown of [JSON.stringify(items), JSON.stringify(stored), JSON.stringify(audited)]) {
++        assert.ok(!shown.includes('hunter2-SECRET') && !shown.includes(BODY), 'none of the operator\'s words');
++        assert.ok(!shown.includes(token.token), 'not the helper\'s token');
++        assert.doesNotMatch(shown, /\b(?:bht|mbk)_[A-Za-z0-9_-]{8,}/, 'nothing shaped like a credential');
++      }
++      assert.ok(stored.every((row) => row.released_generation === null && row.candidate_id === null && row.question_id === null),
++        'a notice reports a failure: no generation released it, and it asks and approves nothing');
++    });
++
++    it('says nothing of failure while a send is still on its way', async () => {
++      // On the Hub and unread: delivered, and no more is known yet.
++      const { routeId } = await routedToAlpha();
++      for (let i = 0; i < 3; i++) { later(60 * 1000); await gateway.tick(); }
++      assert.equal(bridgeStore.routes.get(routeId).state, 'routed');
++      assert.equal(failureNotices(routeId).length, 0);
++
++      // In flight: the exchange exists, pending, with no Hub id yet.
++      bridgeStore.routes.accept({ routeId: 'rt_flight', externalId: 'm9', ...ALLOWED, text: '@alpha hello', digest: bridgeStore.digest('@alpha hello'), at: clock });
++      await handedOverAndRouted('rt_flight', { advance: false });
++      const medusa = require('../lib/medusa');
++      const realSend = medusa.sendMessage;
++      let release;
++      medusa.sendMessage = async (args) => {
++        args.beforeHub({ from: 'operator-bridge-ws' });
++        await new Promise((resolve) => { release = resolve; });
++        throw Object.assign(new Error('the server stopped waiting'), { httpStatus: 502, code: 'BRIDGE_UNREACHABLE' });
++      };
++      const first = gateway.advance('rt_flight');
++      await new Promise((resolve) => setImmediate(resolve));
++      medusa.sendMessage = realSend;
++      gateway._reset();
++      later(gateway.SEND_PENDING_MS - 1000);
++      await gateway.tick();
++      assert.equal(store.medusaExchanges.getByRequestId('bridge:rt_flight:send1').state, 'send_pending');
++      assert.equal(failureNotices('rt_flight').length, 0, 'still inside the wait: nothing is declared');
++      release();
++      await first;
++    });
++  });
++
+   describe('the helper', () => {
+     it('verifies only the active token, and a new one revokes the old', () => {
+       const first = gateway.mintHelperToken();
