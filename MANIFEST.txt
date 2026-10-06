@@ -1,0 +1,14 @@
+written=2026-10-06T15:10:37Z
+worktree=/Users/jasonvaughan/Documents/Projects/TangleClaw-Pilot-B3
+branch=fix/1836-codex-fullauto-network
+head=7f47768797839cd4674085ddd51fb708096dcb3d
+head_tree=623a1ca6d579a7a8c40248d49983c4d7bea3f13b
+head_parent=d603f51c9e005bc063792b0b8200357d48de8370
+archive_ref=refs/heads/archive/pilot-b3/1836-session-wrap-7f477687 on https://github.com/Jason-Vaughan/TangleClaw.git
+archive_ref_sha_on_remote=7f47768797839cd4674085ddd51fb708096dcb3d
+origin_main_when_written=eda5e1b948c0c4129d5938c79fac6a41eb4ff2e9
+dirty_files=CLAUDE.md FEATURES.md
+root-dirty.patch sha256=3a8f67d8f5810c8ca1a56d15d05e96932c4c987057ee58b31be21f1c42acbaaa bytes=4152 (git diff, byte for byte)
+CLAUDE.md.working-copy sha256=0cae12e4c1335e216e38872866591eb4587511374fe8b467364065e9e2d5fbc0 bytes=34412
+FEATURES.md.working-copy sha256=26483d8ae66ef5de50936cb27ad14b26c6f311cde827510417dd8c251e4e4553 bytes=313670
+7f477687-session-wrap.patch sha256=d721dae3965aba6b32cfe17403e7ccaab17f8b1f111e37041c2d54978ba3f16f bytes=2211 (git format-patch -1 of the archived commit)

@@ -1,0 +1,49 @@
+From 7f47768797839cd4674085ddd51fb708096dcb3d Mon Sep 17 00:00:00 2001
+From: Jason-Vaughan <95194903+Jason-Vaughan@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 21:49:29 -0700
+Subject: [PATCH] Session wrap on fix/1836-codex-fullauto-network
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- AI content (changelog-update): captured
+- AI content (learnings-capture): captured
+- Priming rolled to Chunk 2 — Live verification
+- Feature Index: graduated 2 entries
+- AI content (memory-update): captured fields [summary, nextSteps, learnings, delta, openThreads, decisions, pointers]
+- Session files (changed since this session launched): .tangleclaw/priming/build-session.md, PROJECT-MAP.md
+---
+ .tangleclaw/priming/build-session.md | 6 +++---
+ PROJECT-MAP.md                       | 2 +-
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/.tangleclaw/priming/build-session.md b/.tangleclaw/priming/build-session.md
+index ca053b6e..7c1047c7 100644
+--- a/.tangleclaw/priming/build-session.md
++++ b/.tangleclaw/priming/build-session.md
+@@ -2,9 +2,9 @@
+ 
+ ## Current build chunk
+ 
+-**Active:** Chunk 01 — `tc start review` (read-only re-read). Type: feature
++**Active:** Chunk 2 — Live verification
+ 
+-**On deck:** Chunk 02 — Re-entry through SessionStart `clear` / `compact`. Type: fix
++**On deck:** Chunk 2 — evidence, Stage A (2026-09-27, codex-cli 0.156.1, real TUI)
+ 
+-Plan: `.tangleclaw/plans/1761-clear-drops-context.md`
++Plan: `.tangleclaw/plans/1836-codex-fullauto-loopback.md`
+ <!-- TANGLECLAW:PRIMING-ROLL:END -->
+diff --git a/PROJECT-MAP.md b/PROJECT-MAP.md
+index 0105e21f..9ac63c85 100644
+--- a/PROJECT-MAP.md
++++ b/PROJECT-MAP.md
+@@ -23,4 +23,4 @@ to file paths — this maps the layout itself.
+ 
+ ## Shared directories / doc groups
+ 
+-_This project belongs to 4 shared-doc groups. Membership is machine-local state, not project structure, so it is not published here — see the TangleClaw UI for this install's groups._
++_This project belongs to 1 shared-doc group. Membership is machine-local state, not project structure, so it is not published here — see the TangleClaw UI for this install's groups._
+-- 
+2.50.1 (Apple Git-155)
+

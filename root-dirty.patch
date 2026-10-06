@@ -1,0 +1,23 @@
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 5ad86dcd..b0bb9e54 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -215,7 +215,7 @@ Critic findings.
+ 
+ **TangleClaw API base URL**: read it from the `TANGLECLAW_API` environment variable your launch exported (`tc whoami` prints it too). It is deliberately not written here: this file is tracked in git and shared by every checkout, while the origin is per install.
+ 
+-- **Run `tc capabilities` BEFORE concluding a capability is missing — never improvise one.** `tc` is normally on PATH in a launched pane (verbs: `whoami`, `capabilities`, `sessions`, `message`, `control`, `start`, `workload`, `freshness`, `ports`, `docs`, `rules`, `learnings`) and reports absence honestly; a capability assumed not checked is how sessions fabricate outcomes. If `tc` is missing, check `TANGLECLAW_API`; a renamed install can break PATH. Use the API with verified launch identity. If context is missing or inconsistent, report it and stop identity-dependent actions — absence of both is unavailable context, not proof of being unmanaged. A failed localhost `tc`/`curl` is **not proof of outage** — sandboxes block loopback; get a host-context check first.
++- **Run `tc capabilities` BEFORE concluding a capability is missing — never improvise one.** `tc` is normally on PATH in a launched pane (verbs: `whoami`, `capabilities`, `sessions`, `message`, `control`, `start`, `workload`, `rotation`, `finalize`, `freshness`, `branch`, `ports`, `docs`, `rules`, `learnings`) and reports absence honestly; a capability assumed not checked is how sessions fabricate outcomes. If `tc` is missing, check `TANGLECLAW_API`; a renamed install can break PATH. Use the API with verified launch identity. If context is missing or inconsistent, report it and stop identity-dependent actions — absence of both is unavailable context, not proof of being unmanaged. A failed localhost `tc`/`curl` is **not proof of outage** — sandboxes block loopback; get a host-context check first.
+ 
+ - **Plans are served at a shareable URL.** .tangleclaw/plans/ are served at a shareable URL: GET /api/projects/<projectId>/plans lists each one with the link to hand the operator (tc capabilities shows it with your project id) — hand back that link, never a local file path.
+ 
+diff --git a/FEATURES.md b/FEATURES.md
+index bb7c6cc1..bd59df1f 100644
+--- a/FEATURES.md
++++ b/FEATURES.md
+@@ -781,3 +781,5 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals 
+ - `test/tailnet-cutover.test.js` — #1905 Chunk 2: the apply's six refusals, strict health (a 503, a degraded 200, an unreadable body, an error, or the wrong certificate all fail), the retry loop, and a rollback that is `rolledBack` only when every part is proven, with each injected failure reported as a typed residual and recovery. Also the cutover's `--tailnet-host` argument, result fields and ordering, and parity across the cert, allowlist, link and Caddy site before prepare, after prepare, after apply and after a rollback.
+ - `test/wrap-upstream-provenance.test.js` — #1868: wrap advice that knows what upstream already holds, driven against real repositories with a real bare origin — a stale session checkout offering its own merged plan, and a carrier identical to upstream, are not presented as new work.
+ - `test/store-medusa-exchange-migration.test.js` — #1839: schema v49's Medusa exchange tables exist on a fresh install at the current version and arrive on a v48 store through the migration; the postcondition refuses to stamp the version over tables that cannot keep an append-only record.
++- `test/panel-toggle-rows.test.js` — #1906: the ports, groups and OpenClaw panels render each row's toggle as a native button holding only the arrow, name and passive metadata, with every action control beside it rather than nested inside, checked by walking the rendered HTML as a tree.
++- `test/port-owner-kind-panel.test.js` — #1768/#1915: against the real server, the ports panel badges an owner marked "Not a project", its rendered undo button sets the owner back to project and redraws, and a refused undo leaves the badge and says why.
