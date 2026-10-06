@@ -161,6 +161,9 @@ byte, but nothing merges them back.
    → "neither the snapshot's … nor one v5.31.0 leaves", or "could not read the store's schema":
    the store is untouched and the server is stopped. Start nothing: v5.31.0 would migrate the
    store when it starts. Tell the Architect the schema it printed.
+   A schema above 54 means a build later than v5.31.0 has opened the store. This procedure
+   does not apply to it, on purpose: the snapshot is from before v5.31.0, and restoring it
+   would drop everything that later build wrote as well.
    → It stops at `checkout`: the server is stopped, the store is untouched, and git says why.
    Put that right and paste it again.
    → It stops after the `quarantine:` line: go to step 3. Do not paste this block again: it

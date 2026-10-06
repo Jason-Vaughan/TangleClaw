@@ -14,6 +14,7 @@ All notable changes to TangleClaw are documented in this file.
   - A pin belongs to this install and does not travel with a clone of the project.
   - **Downgrade:** an older TangleClaw reads only `project.json`. The `PATCH` writes the chosen value there too, so a downgraded server sees the operator's last choice wherever that file write succeeded.
   - **Upgrade:** the store moves to schema v55, which adds one table and changes no existing data.
+  - **If you activated the operator bridge on v5.31.0:** the procedure that puts back the build from before the bridge accepts a store only up to schema 54, and that does not change. Once this release opens your store, that procedure refuses it and changes nothing. This is deliberate: its snapshot predates v5.31.0, and restoring it would also drop everything written since. If you might still need that rollback, do it before updating. The activation runbook now tells an installer to stop when the newest release is later than v5.31.0.
 - **`GET /api/launch-sequences` reports the project's current recovery mode** (#1937). Each launch in the list carries the mode it froze when it started. The response now also has `projectRecoveryMode`, the project's setting as it stands, so a reader can tell a launch that started in operator mode from a project that is in operator mode now. A change to the setting applies from the next launch. It is `null` for a project this install does not have.
 
 ### Security

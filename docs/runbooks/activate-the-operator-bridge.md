@@ -102,6 +102,13 @@ If any step's expected result does not appear, stop and go to
 2. **Operator:** in the dashboard's update notice, read what it offers.
    → Expected: `v5.31.0 or newer — update available`. Any other version number: stop.
    The notice names a floor. What is actually installed is proved in step 3a.
+   **Release executor:** before the Operator presses anything, open the repository's Releases
+   page and read which release is marked Latest.
+   → Expected: v5.31.0.
+   → Any later release: stop, and tell the Architect. The update installs the newest release,
+   not the floor. This runbook and its put-back procedure are written for v5.31.0 alone: a
+   later build migrates the store past schema 54, and the put-back procedure refuses that
+   store. Going back from a later build is a separate procedure that has not been written.
 
 3. **Operator:** press **Update now**, and confirm "Update TangleClaw to v5.31.0 or newer and
    restart?"
@@ -179,6 +186,9 @@ If any step's expected result does not appear, stop and go to
    → Expected: `recorded: to_tag=v5.31.0` and `recorded: to_commit=<40 characters>`.
    → "the checkout is at … not v5.31.0", or git saying no tag matches exactly: the update did
    not install v5.31.0. Stop, and roll back.
+   If the tag it names is later than v5.31.0, stop and tell the Architect before rolling
+   anything back: that build may already have migrated the store past schema 54, where the
+   put-back procedure refuses it and changes nothing.
    From here `tc_helper` and `tc_install` run the helper and the installer of the receipt's
    checkout by their whole path, and only while that checkout is at the recorded commit and is
    the one the server's job runs from. In a terminal where the first block was not pasted they

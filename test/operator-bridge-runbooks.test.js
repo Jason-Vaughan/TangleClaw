@@ -150,8 +150,12 @@ describe('the operator bridge runbooks (#2031)', () => {
       }
       // What is deleted, anywhere: the receipt's own draft, and the restore's own probe copy. Nothing of the store's.
       assert.deepEqual([SNAPSHOT, FUNCTIONS, PROVE, RESTORE_BLOCK, FINISH_BLOCK].join('\n').match(/^.*\brm\b.*$/gm), ['rm "$DRAFT"', 'rm -r "$PROBE"']);
-      // The schema the restore expects of a migrated store is the one this build migrates to.
-      assert.match(read('lib/store.js'), /const CURRENT_SCHEMA_VERSION = 54;/);
+      // 54 is the schema v5.31.0 migrates a store to, and these runbooks are that
+      // release's cutover and nothing later's. It is a fixed fact about a shipped
+      // release, so it is written here as a literal and never read from the
+      // store's current version: a later schema must not widen what the restore
+      // accepts, because the snapshot it puts back predates everything a later
+      // build wrote.
       assert.ok(RESTORE_BLOCK.includes('[ "$LIVE" -gt "$SCHEMA" ] && [ "$LIVE" -le 54 ] ||') && SNAPSHOT.includes('[ "$SCHEMA" -lt 54 ]'));
     });
 
@@ -621,7 +625,7 @@ describe('the operator bridge runbooks (#2031)', () => {
         assert.equal(run(RESTORE_BLOCK, good).status, 0, 'pasted again, it ends as it would have');
         assert.deepEqual(returnedLine(), ['returned_without_restore=T1']);
         // A schema that is neither the snapshot's nor one v5.31.0 leaves: stopped, nothing changed, nothing started.
-        for (const [schema, why] of [[51, 'older than the snapshot'], [55, 'newer than this build makes'], ['NULL', 'not readable']]) {
+        for (const [schema, why] of [[51, 'older than the snapshot'], [55, 'newer than v5.31.0 makes'], ['NULL', 'not readable']]) {
           before = fresh(schema);
           const odd = run(RESTORE_BLOCK, good);
           assert.notEqual(odd.status, 0, why);
@@ -747,6 +751,13 @@ describe('the operator bridge runbooks (#2031)', () => {
       assert.match(text, /the install has already been restarted on v5\.31\.0 without the snapshot in step 1\. Stop/);
       assert.match(text, /"the new build has already opened this store": this is not a pre-update snapshot\. Stop\./);
       assert.match(text, /Expected: `v5\.31\.0 or newer — update available`\. Any other version number: stop\./);
+      // The notice names a floor and the update installs the newest release, so
+      // the stop for a later release has to come before the button is pressed:
+      // after it, the store is already migrated.
+      assert.ok(at('read which release is marked Latest') < at('press **Update now**'), 'the newest release is checked before the update is started');
+      assert.match(text, /Any later release: stop, and tell the Architect\. The update installs the newest release, not the floor\./);
+      assert.match(text, /a later build migrates the store past schema 54, and the put-back procedure refuses that store\./);
+      assert.match(flat(RESTORE), /A schema above 54 means a build later than v5\.31\.0 has opened the store\. This procedure does not apply to it, on purpose/);
       assert.match(text, /confirm "Update TangleClaw to v5\.31\.0 or newer and restart\?"/);
       const beacon = read('public/update-beacon.js');
       assert.ok(beacon.includes("' or newer — update available'") && beacon.includes('or newer and restart?'));
