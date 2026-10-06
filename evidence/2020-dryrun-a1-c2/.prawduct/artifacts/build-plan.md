@@ -1,0 +1,1 @@
+/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder2/.claude/worktrees/2020-dryrun-a1/.prawduct/artifacts/build-plan.md

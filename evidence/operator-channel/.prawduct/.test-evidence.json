@@ -1,0 +1,41 @@
+{
+  "changes_referenced": [],
+  "changes_unchecked": [
+    ".prawduct/change-log.md",
+    "CHANGELOG.md",
+    "FEATURES.md",
+    "docs/configuration-reference.md",
+    "docs/operator-channel.md",
+    "lib/operator-channel.js",
+    "lib/store.js",
+    "server.js",
+    "test/api-operator-channel.test.js",
+    "test/operator-channel.test.js",
+    "test/store-operator-channel-migration.test.js",
+    "test/workload-receipts.test.js"
+  ],
+  "changes_unjudged": [
+    ".prawduct/change-log.md",
+    "CHANGELOG.md",
+    "FEATURES.md",
+    "docs/configuration-reference.md",
+    "docs/operator-channel.md",
+    "lib/operator-channel.js",
+    "lib/store.js",
+    "server.js",
+    "test/api-operator-channel.test.js",
+    "test/operator-channel.test.js",
+    "test/store-operator-channel-migration.test.js",
+    "test/workload-receipts.test.js"
+  ],
+  "command": "--from-junit .prawduct/.test-report.xml",
+  "coverage_level": "referenced",
+  "duration_seconds": 687.74,
+  "evidence_tree": "5f95bd0d320fa60004479bda3509cf16debf789c",
+  "failed": 0,
+  "passed": 7690,
+  "skipped": 1,
+  "tests_executed": [],
+  "timestamp": "2026-09-27T19:47:44Z",
+  "verifier": "test-reference-verify (floor: symbol-grep)"
+}

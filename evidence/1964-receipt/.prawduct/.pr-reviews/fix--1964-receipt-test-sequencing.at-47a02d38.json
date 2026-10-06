@@ -1,0 +1,26 @@
+{
+  "timestamp": "2026-10-04T06:07:04Z",
+  "branch": "fix/1964-receipt-test-sequencing",
+  "base": "origin/main",
+  "pr_number": 2084,
+  "mode": "pr",
+  "model": "claude-opus-5-5",
+  "duration_seconds": 120,
+  "commit_reviewed": "47a02d38f68b0c707bf5d61de6163cd3a755a052",
+  "commits_reviewed": 1,
+  "files_reviewed": [
+    ".prawduct/change-log.md",
+    "CHANGELOG.md",
+    "test/startup-control-codex.test.js"
+  ],
+  "findings": [
+    {
+      "goal": "Governance Bookkeeping Is Coherent",
+      "severity": "note",
+      "file": ".prawduct/change-log.md",
+      "line": 38,
+      "summary": "Backlog reconciliation unavailable \u2014 this repo sets no `backlog_service_repo:`, so there is no cache scope to resolve the cited ids against; R-1 and R-2 are NOT answered for 1964, 1958, 1969, 1955, 1978. A sync cannot help until a scope is configured. Read by hand: the only closure the branch claims is the commit's `Fixes #1964`; the base is the default branch (`main`), so that keyword is live at merge and the close is owed then, not missed now. #1958, #1969, #1955 and #1978 are mentions only. PR #1969 is the branch this one re-lands \u2014 closing it as superseded is a merge-time step nothing in this diff performs. Worth accepting; nothing to fix in the bundle."
+    }
+  ],
+  "summary": "0 blocking, 0 warning, 1 note. Payload project dir and HEAD (47a02d38) match the dispatch prompt; base origin/main matches. One commit, three files, a single test-only change: the fake app-server's notifications move from 20/80 ms timers to the first thread/turns/list after turn/start. The change-log entry, the CHANGELOG.md [Unreleased] Internal line and the commit message all describe exactly that, and the diff carries nothing else. Tag line is type=bugfix | scope=codex-receipt-test-1964: a scope unique to this entry, no release=, no retired chunks=/status= key. No version bump, so nothing to reconcile there. Test evidence is current (tree-valid, exit 0). No debug code, stray files, placeholders or secrets; the new test comment carries no review ids or history. Three payload sections were degraded and are unanswered rather than passed: `work` (no stated scope \u2014 scope was judged from the commit and the change-log entry, which agree with the diff), `build_plan` (no plan resolves for this branch, so the Status-box and dangling-pointer checks have no subject; a planless single-issue scope is what the change-log header prescribes for this kind of fix), and `backlog` (the note above). The Critic record on disk is an inner-stage chunk review of aa24f20d, read as history only."
+}

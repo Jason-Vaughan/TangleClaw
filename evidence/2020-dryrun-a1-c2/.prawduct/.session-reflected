@@ -1,0 +1,7 @@
+## 2026-09-30 — #2020 attempt-1 tooling fixes, Chunk 2
+
+Expected: Chunk 2 would be doc-heavy with small code changes, and would review cleanly.
+Actual: the Critic blocked on the build plan's format. Chunks written as bold bullets are invisible to the deliverable check, so Chunk 2 went ungraded. It also caught a real operational trap: the closure restarts the guest from a new shell, and the display choice would silently revert to no-graphics on the boot that actually counts.
+Root cause: (1) I wrote the plan freehand under time pressure instead of from the template, so its structure could not be checked. (2) The display setting was a new environment knob with a default, and I did not trace it through the second command that consumes it (the closure). That is a single-knob, two-consumer gap.
+What changed: the plan now follows the template (frontmatter scope, ### Chunk NN, Status). Step 11b names the display, and guest.conf says why the default stays.
+Surprise: the verifier already accepts softnet's infinite lease numerically, so ruling A8 needed only a documentation change.

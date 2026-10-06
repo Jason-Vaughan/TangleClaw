@@ -1,0 +1,6 @@
+## #2068 follow-up: stub hub plist written by the workload (fix/2068-hub-plist-tmp, cd77c863)
+Expected: #2068's guest-setup would install the stub hub plist on a real macOS 26.3 guest, as it did under the test fakes.
+Actual: the real guest failed with exit 71. The plist was built in a plain `mktemp` file, which macOS puts in the admin's 0700 DARWIN_USER_TEMP_DIR regardless of TMPDIR, and `as_user install` could not read it.
+Root cause: the test fakes stubbed `install` as a no-op and let the real `mktemp` run, so nothing modelled "a file the admin creates is readable by the workload user". The cross-user file handoff was never under test. Fix: the workload writes the file itself (tee from stdin). The fakes now model mktemp's private directory, and a test forbids any workload-user command from being handed a path in it. That test fails against the old script.
+Delivered: the fix, the regression test, and a runbook note on the 600 s NAT DHCP lease vs the 900 s default check. Critic (inner): 0 findings, 1 observation (test evidence missing; the suite ran afterwards).
+Surprise: soak-guest.test.js is slow (about 15 s per setup test). A piped `node --test | grep` looks hung because output is buffered until exit.

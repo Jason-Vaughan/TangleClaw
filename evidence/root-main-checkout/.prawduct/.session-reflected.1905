@@ -1,0 +1,27 @@
+
+## 2026-09-26 — #1905 MagicDNS host inventory (PM dispatch, R45/R46)
+Expected: a narrow fix, adding the detected MagicDNS name to cert generation. Actual: the root cause was a split source. Links came from the tailscale probe, while the cert, the allowlist and Caddy all read caddyTailnetHost, and that key is null by default and can't be set through the API. R46's single inventory was the right shape.
+
+Root cause of the product defect: two independent answers to one question ("the tailnet name"), with no shared owner. The design surprise: the Caddy generator throws on an ungated tailnet site, so a detected name can't be auto-persisted to the Caddy site without breaking cutover, gate-fallback and the drift baseline. I recorded that as a decision instead of forcing it.
+
+The Critic caught two real defects of my own:
+- A negative probe was memoized for the process lifetime, so it went stale at boot.
+- reconcileTailnet with an explicit hosts list could move the config without the cert.
+Both come from the same blind spot: I tested the happy transitions, not "which state persists after a failure" or "which input combinations bypass the atomic unit". Lesson: when memoizing a probe, decide separately how long a positive result and a negative one stay valid. When an operation is meant to be atomic, enumerate every input combination that can still split it.
+
+Suite: the dir-scanner deadline tests flaked under load (#1884) and pass 3/3 in isolation. That run was recorded degraded, and a clean run is re-running on the merged tree.
+
+## 2026-09-26 — Missed veto on #1905
+Expected: a PM or Architect ruling would reach me through a wake nudge while I worked. Actual: the Architect veto (A17–A20) and the PM hold sat unread for about 25 minutes. During that time I committed the Critic fixes and merged main. Nothing was pushed.
+Root cause: I only read the inbox when a nudge arrived and never polled at my own boundaries. The fix: check the inbox at every commit, push and PR boundary (saved as a feedback memory). The work itself was redirected, not lost. The inventory, normalization and probe code conforms to the rulings.
+
+## 2026-09-26 — #1905 Chunk 1 shipped to PR #1919 (CI green on 82d6d11e)
+Expected: once the Architect approved it, the rework would go straight through. Actual: two self-inflicted defects surfaced first.
+- My CHANGELOG insertion matched the first `### Changed\n\n` in the file. `[Unreleased]` writes its heading without a blank line, so the entry landed in the released 5.29.0 section, and the release-lock tests caught it.
+- My change-log rewrite sliced by entry headings. The merge had put another team's Train 2 entry inside that slice, so the rewrite deleted it; the Critic caught that.
+Root cause, shared: editing records by pattern or position without checking which section, or whose entry, the match fell in. Lesson: after any scripted edit to a shared record, diff against the base and confirm that every hunk sits in the intended section and removes nothing from the base.
+
+## 2026-09-26 — #1905 Chunk 2 shipped to PR #1920 (CI green on 101213ad)
+Expected: extending the cutover transaction would be mostly plumbing. Actual: the Critic found the dangerous edge I missed. Nothing stopped `--tailnet-host` on a direct install, so a failed move could report a clean rollback while the ingress stayed switched to caddy. It also found that my rollback wiring was only tested by a source-order check and a parity test that could not fail.
+Root cause: I scoped the rollback to "what this apply owns" without asking what ELSE the same run changes (ingressMode). And I tested the logic module thoroughly but left its caller untested, because the caller touched launchd. Lesson: when a transaction piggybacks on a larger operation, first refuse the preconditions under which the larger operation does more than the transaction can undo. Make the orchestrator's effects injectable up front, so the wiring gets a driven test and not a source grep.
+Also: two scripted test-file edits cut the wrong span (block boundaries found by string search), and a weak Chunk 1 test was exposed by a mutation. The pass-count check and the mutation runs caught all three.

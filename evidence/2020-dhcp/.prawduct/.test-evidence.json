@@ -1,0 +1,27 @@
+{
+  "changes_referenced": [],
+  "changes_unchecked": [
+    "CHANGELOG.md",
+    "deploy/soak/README.md",
+    "deploy/soak/guest/guest-setup.sh",
+    "docs/runbooks/soak-install-the-candidate.md",
+    "test/soak-guest.test.js"
+  ],
+  "changes_unjudged": [
+    "CHANGELOG.md",
+    "deploy/soak/README.md",
+    "deploy/soak/guest/guest-setup.sh",
+    "docs/runbooks/soak-install-the-candidate.md",
+    "test/soak-guest.test.js"
+  ],
+  "command": "--from-junit /private/tmp/claude-501/-Users-jasonvaughan-Documents-Projects-TangleClaw-Builder2/0eb09012-fbca-4365-86a1-ec232279e25e/scratchpad/suite2.xml",
+  "coverage_level": "referenced",
+  "duration_seconds": 807.07,
+  "evidence_tree": "2c7d11882ee39841bda603e4e2f9a76520596d8c",
+  "failed": 0,
+  "passed": 8495,
+  "skipped": 1,
+  "tests_executed": [],
+  "timestamp": "2026-09-30T13:12:33Z",
+  "verifier": "test-reference-verify (floor: symbol-grep)"
+}

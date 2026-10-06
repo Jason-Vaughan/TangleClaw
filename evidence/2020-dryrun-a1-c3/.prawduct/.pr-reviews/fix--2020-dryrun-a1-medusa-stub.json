@@ -1,0 +1,45 @@
+{
+  "timestamp": "2026-09-30T21:00:00Z",
+  "branch": "fix/2020-dryrun-a1-medusa-stub",
+  "base": "origin/main",
+  "pr_number": 2068,
+  "mode": "pr",
+  "model": "claude-opus-5-5",
+  "duration_seconds": 180,
+  "commit_reviewed": "6b427ceb513cffb0690dbe0c329a0fb08a7df021",
+  "commits_reviewed": 3,
+  "files_reviewed": [
+    ".prawduct/change-log.md",
+    "CHANGELOG.md",
+    "deploy/soak/README.md",
+    "deploy/soak/guest/guest-setup.sh",
+    "deploy/soak/medusa-stub/medusa-stub.js",
+    "docs/runbooks/soak-install-the-candidate.md",
+    "test/soak-guest.test.js",
+    "test/soak-medusa-stub.test.js"
+  ],
+  "findings": [
+    {
+      "goal": "Governance Bookkeeping Is Coherent",
+      "severity": "warning",
+      "file": ".prawduct/artifacts/build-plan.md",
+      "line": 85,
+      "summary": "Build-plan Status still reads '- [ ] Chunk 03: Medusa stub hub' although this bundle delivers every Chunk 03 deliverable (stub under deploy/soak/medusa-stub/, guest-setup step 6 with port leases, README/runbook, test/soak-medusa-stub.test.js driving the real listener). It is the last box, so leaving it open keeps the plan reading as in-flight to the next briefing and the Stop gates. Cheap fix: the plan is untracked (not in git ls-files), so ticking it costs no commit and re-opens no coverage. Its own Done-when is 'PR open with a clean review', so tick it as '- [x] Chunk 03: Medusa stub hub (PR #N)' once the PR is created, matching Chunks 01/02."
+    },
+    {
+      "goal": "Governance Bookkeeping Is Coherent",
+      "severity": "warning",
+      "file": ".prawduct/.test-evidence.json",
+      "line": null,
+      "summary": "test-status is stale (exit 1): the saved evidence has 1 failing test, 'uses a scanner the background poll cannot kill underneath it', in test/projects.test.js. That matches the caller's account of known flake #1993 in code this PR does not touch (no test/projects.test.js or lib/ path is in the diff). The full-suite run in progress on this tree clears this if it passes. If it fails only on that test again, accepting is reasonable: cite #1993 in the PR body rather than leaving the evidence unexplained."
+    },
+    {
+      "goal": "Governance Bookkeeping Is Coherent",
+      "severity": "note",
+      "file": ".prawduct/change-log.md",
+      "line": 38,
+      "summary": "Backlog reconciliation unavailable: this repo sets no `backlog_service_repo:`, so the payload could not resolve #2020 or #153. R-2 was run by hand over the three commits and the change-log entry, and neither contains a closes:/closed-by:/Fixes/Resolves claim, so no closure is claimed and nothing is inconsistent. #2020 (the soak) correctly stays open after this chunk."
+    }
+  ],
+  "summary": "0 blocking, 2 warnings, 1 note. Tree check: the payload's project dir and HEAD 6b427ceb match the prompt, and the base origin/main (1b6cc73d, equal to the merge-base) matches resolve-base. Scope is clean: all 8 paths are inside the Rule #153 (b) allowlist, there is no version.json, and the hub binds loopback only (127.0.0.1/::1, and it refuses other hosts). The change-log entry and CHANGELOG describe everything the diffstat ships, including the carried-in runbook 11b fix. The scope= tag matches the plan's scope, no release= is set, and there are no secrets, debug code or stray files. The work section of the payload was degraded (no work_in_progress), so scope was judged against the build plan's Chunk 03 section, which the diff matches. Both warnings are cheap: tick the untracked plan box once the PR exists, and let the pending suite run refresh the test evidence (or cite flake #1993)."
+}

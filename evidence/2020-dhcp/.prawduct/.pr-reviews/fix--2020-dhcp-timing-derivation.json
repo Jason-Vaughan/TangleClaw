@@ -1,0 +1,30 @@
+{
+  "timestamp": "2026-09-30T13:14:08Z",
+  "branch": "fix/2020-dhcp-timing-derivation",
+  "base": "origin/main",
+  "pr_number": 2060,
+  "mode": "pr",
+  "model": "claude-opus-5-5",
+  "duration_seconds": 180,
+  "commit_reviewed": "1b060218c0b41dace9c2cb4e0f2eb1f22ead90cc",
+  "commits_reviewed": 5,
+  "files_reviewed": [
+    ".prawduct/change-log-archive/2026-09.md",
+    ".prawduct/change-log.md",
+    "CHANGELOG.md",
+    "deploy/soak/README.md",
+    "deploy/soak/guest/guest-setup.sh",
+    "docs/runbooks/soak-install-the-candidate.md",
+    "test/soak-guest.test.js"
+  ],
+  "findings": [
+    {
+      "goal": "Governance Bookkeeping Is Coherent",
+      "severity": "note",
+      "file": ".prawduct/change-log.md",
+      "line": 38,
+      "summary": "Backlog reconciliation unavailable: this repo sets no `backlog_service_repo:`, so there is no cache scope to resolve the cited ids against, and R-1/R-2 are not answered for #2020. `backlog sync --repo <scope>` cannot help without a configured scope. By hand: every commit on the branch cites #2020 only as `Refs #2020`, and neither the change-log entry nor CHANGELOG.md claims a close. #2020 is the soak epic, which this fix contributes to but does not finish. So no closure is claimed and none is owed at merge. Accept; nothing to fix."
+    }
+  ],
+  "summary": "0 blocking, 0 warnings, 1 note. The payload's base (origin/main), project dir and HEAD 1b060218 match the dispatch prompt. merge-base is origin/main 75c499f1, the same fork point the entry names. The scope is one coherent fix: Tart DHCP T1/T2 derivation in guest-setup.sh, its tests, and the README/runbook steps 11-12 it needs. It also includes one archive commit that moves change-log history verbatim; the sorted-line comparison differs only by two blank separator lines. The change-log entry (scope=2020-dhcp-timing, type=fix, no release=, no retired keys) and the CHANGELOG [Unreleased] > Changed entry both describe everything the diff ships. The work and build_plan sections are degraded: no work_in_progress and no plan for this branch, so there were no Status boxes to check, and scope was judged from the commits and the change-log entry. Test evidence is current (tree-valid, exit 0). No secrets, debug code or stray files. The only finding is the backlog NOTE, and it needs no fix. PR is ready to create."
+}

@@ -1,0 +1,33 @@
+## #1964 re-land: Codex receipt test sequenced off its read-back (fix/1964-receipt-test-sequencing, 47a02d38, PR #2084)
+Expected: PR #1969's test-only fix would re-apply to current main and stay deterministic.
+Actual: it did. The file had moved under #1955/#1978, so the hunk was re-applied by hand; old shape with 0/1 ms timers failed 6/10 on `one read-back`, new shape 30/30 under load, suite green.
+Root cause: no defect in this cycle. The original flake's cause was a test that sequenced a fake server on wall-clock timers instead of on the event it depended on.
+Delivered: the fix plus a `turnStarted` guard #1969 lacked, CHANGELOG and change-log entries. Critic (inner): 0 findings, 1 observation (no suite on record yet; run afterwards). PR reviewer: 0 blocking, 1 note.
+Surprise: the full suite took about 20 minutes on this host at load 14-17, nearly all of it in soak-guest.test.js; a dot reporter that goes quiet looks like a hang but is not.
+
+## #575 docs re-land (docs/575-http-port-redirect-hosts, 90d72ebb, PR #2082)
+Expected: PR #1989's two doc hunks would still be true of current main.
+Actual: they were; lib/caddy.js had changed since, so the claims were re-read against it (redirect only under `if (tailnetHost)`, catch-all has no redir) and against landing.js (origin-relative session hop) before re-applying.
+Root cause: no defect. Doc-only, gates skipped per check-pr-doc-only.
+
+## #1902 re-land: inline handlers through jsArg (fix/1902-inline-handler-jsarg-main, 0f2ba9e7, PR #2087)
+Expected: PR #1965's diff would apply to current main and the suite would be green first time.
+Actual: the diff applied cleanly and the widened scan found no new old-form sites, but the first full-suite run had 11 failures in one unrelated group (test/api-medusa.test.js, every request 400). A re-run was green.
+Root cause: not found. Not this diff (page scripts only); not reproducible alone (194/194) or under 6-way concurrency on unchanged code (30/30). Reported to the PM as unexplained, not as harmless.
+Delivered: the fix, tests, changelog entries. Critic: 0 findings, 7 observations. PR reviewer: 0 blocking, 1 note.
+Surprise: static tracing of the 400 cost several tool calls and found nothing; re-running and looping the file was the faster discriminator and should have come first.
+
+## #2082 correction after independent review
+Expected: re-verifying #1989's claims against current lib/caddy.js was enough.
+Actual: an independent reviewer found the docs stated the plain-HTTP catch-all unconditionally; it exists only when caddyRemoteHttp is on (default off).
+Root cause: I confirmed each block the docs named was emitted where claimed, but did not ask under which configuration each block exists at all. I checked the claim's sentences, not its preconditions. Fixed in 3dd2b78d with all four key combinations stated.
+
+## #1946 re-land: panel fold toggles keep focus (fix/1946-panel-toggle-focus-main, 9305d9ef, PR #2090)
+Expected: PR #1972's diff would apply on top of #1902 and reach a PR in one pass.
+Actual: the diff applied cleanly, but the head moved twice after first review (two merges of main for CHANGELOG conflicts), the one complete local full suite had 2 unrelated timing failures, and the local gate was finally satisfied with exact-head CI counts rather than a local run.
+Root cause: no defect in the change. Two process causes: every sibling PR writes to the same empty [Unreleased] block, so each merge re-conflicts the others; and the local suite is not reliable on this host at fleet load (#1993, #2088).
+Delivered: the fix, plus `preventScroll` on the poll-time focus restore that #1972 lacked (Critic observation, fixed before first commit, with a test that fails without it). Critic: 0 code findings across four passes; the one blocking finding was red local evidence, resolved by exact-head CI. Deferred and tracked: #2091, #2092.
+Surprise: I quoted a mutation count (14) measured before adding a test; the Critic caught it. A number measured before the last edit is stale; re-measure at the head that ships.
+
+## Lane close (2026-10-04 08:30Z)
+Expected: four stale PRs re-landed as four fresh PRs. Actual: all four merged (#2082, #2087, #2084, #2090), three issues closed, #575 left open by ruling. Root cause of the rework along the way: no product defect; one doc-accuracy miss of mine on #2082 (checked that code paths existed, not when), repeated CHANGELOG conflicts between siblings, and an unreliable local suite under fleet load.

@@ -1,0 +1,6 @@
+
+## 2026-09-30 #2020 DHCP T1/T2 derivation (Builder2, PM dispatch, Architect-released)
+Expected: a small change to guest-setup.sh (derive RFC 2131 T1/T2 when both timers are absent), with tests and docs, and a clean Critic review.
+Actual: the code and tests came out as expected, with 53/53 admin-verifier tests passing and a green full suite. The Critic raised one real defect in the docs: runbook step 12 as written would refuse over a fresh SSH login (wrong cwd, no SOAK_DHCP_SERVER), and the step read any refusal as a failed renewal, which is the trigger for the static-address fallback.
+Root cause: I wrote the runbook command as if it ran in the same shell as step 11, without tracing the environment a new SSH login actually gets. Fixed in 50adc46c. Other runbook steps have the same gap (no step exports SOAK_DHCP_SERVER at all); it is flagged to the PM, not fixed here.
+Lesson: a runbook step that runs in a new login must spell out its cwd and every variable it needs, and its failure branch must tell an invocation error apart from the outcome being measured.

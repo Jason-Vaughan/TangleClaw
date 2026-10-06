@@ -1,0 +1,6 @@
+## #1964 re-land: Codex receipt test sequenced off its read-back (fix/1964-receipt-test-sequencing, 47a02d38, PR #2084)
+Expected: PR #1969's test-only fix would re-apply to current main and stay deterministic.
+Actual: it did. The file had moved under #1955/#1978, so the hunk was re-applied by hand; old shape with 0/1 ms timers failed 6/10 on `one read-back`, new shape 30/30 under load, suite green.
+Root cause: no defect in this cycle. The original flake's cause was a test that sequenced a fake server on wall-clock timers instead of on the event it depended on.
+Delivered: the fix plus a `turnStarted` guard #1969 lacked, CHANGELOG and change-log entries. Critic (inner): 0 findings, 1 observation (no suite on record yet; run afterwards). PR reviewer: 0 blocking, 1 note.
+Surprise: the full suite took about 20 minutes on this host at load 14-17, nearly all of it in soak-guest.test.js; a dot reporter that goes quiet looks like a hang but is not.

@@ -1,0 +1,51 @@
+{
+  "timestamp": "2026-09-27T18:50:28Z",
+  "duration_seconds": 240,
+  "mode": "verify-resolutions (delta review, prior findings only)",
+  "mode_chosen_by": "explicit-args",
+  "stage": "inner",
+  "model": "claude-opus-5-5",
+  "commit_reviewed": "15e68ef77fe0d1f11d6496c6548840671f06a7f8",
+  "base_reviewed": null,
+  "files_reviewed": [
+    "CHANGELOG.md",
+    "FEATURES.md",
+    "docs/configuration-reference.md",
+    "docs/operator-channel.md",
+    "lib/operator-channel.js",
+    "lib/store.js",
+    "server.js",
+    "test/api-operator-channel.test.js",
+    "test/operator-channel.test.js",
+    "test/store-operator-channel-migration.test.js",
+    "test/workload-receipts.test.js"
+  ],
+  "findings": [],
+  "observations": [
+    {
+      "oid": "O-1",
+      "goal": "Nothing Is Broken",
+      "summary": "Head tree 422322ab has no test evidence",
+      "recommendation": "Instance. prawduct-hook test-status exits 1 (stale): .test-evidence.json vouches for tree bbb6b5da (dc283f49), not the remediation commit 15e68ef7. The new verified-session gate, not-addressed-to-channel and unsafe-text quarantines, UNSAFE_TEXT inbound refusal, and the suite-wide switch of test/api-operator-channel.test.js to an armed gate with a signed-in operator have not been shown to pass. Run the canonical suite and record evidence before the PR merges; this is the boundary's check, and no fix commit is wanted for it."
+    },
+    {
+      "oid": "O-2",
+      "goal": "Nothing Is Missing",
+      "summary": "Emoji with a variation selector or ZWJ are refused inbound and quarantined outbound",
+      "recommendation": "Instance. isSafeChannelText delegates to workload.isSafeText, whose UNSAFE_TEXT refuses \\p{Cf} and \\p{Default_Ignorable_Code_Point}. That set includes U+FE0F and U+200D, which common chat emoji carry (a red heart, a thumbs-up with a skin tone, or any ZWJ sequence). An operator message containing one gets 400 UNSAFE_TEXT, and an agent reply containing one is quarantined as unsafe-text with its text dropped, which the operator never sees. test/operator-channel.test.js pins 'e\\uFE0F' as unsafe, so this is deliberate under A29/A30. If it is intended, ACCEPT it and say so in docs/operator-channel.md. Otherwise, ask the Architect whether emoji presentation selectors and ZWJ may be allowed in chat text, as line breaks and tabs already are.",
+      "files": [
+        "lib/operator-channel.js"
+      ]
+    },
+    {
+      "oid": "O-3",
+      "goal": "Nothing Is Broken",
+      "summary": "Refusal assertion widened from 403 to 401-or-403",
+      "recommendation": "Instance. In 'lets only a signed-in operator configure the channel or mint its token', the assertion moved from status === 403 to 401 || 403. The reason is that the suite now runs with the gate armed, where an unauthenticated caller is stopped at the login gate with 401 before the route runs. It still asserts a refusal, and the open-gate case is pinned exactly by the new OPERATOR_VERIFICATION_REQUIRED test, so this does not weaken the test. Pinning each caller's expected code would make a future change in which layer refuses show up in the tests. ACCEPT is the default."
+    }
+  ],
+  "summary": "0 blocking, 0 warning, 0 note across 1 reviewer(s). Changes ready to proceed.",
+  "fact_id": "rev-20260927T184915Z-a9b9e8cd",
+  "next_action": "This review COVERS your working tree as it stands, and your tree is clean, so there is nothing left to pay for \u2014 and the next edit after it, judgeable or not, opens a NEW delta that needs its own `/prawduct:critic verify-resolutions`. Recommended: stop here; fix anything further only if it is worth a round of its own. 0 blocking, 0 findings \u2014 THE REVIEW IS OVER and nothing in THIS review requires another round. 3 item(s) were demoted to observations, and each can be answered on the record instead of fixed: `prawduct-hook disposition rev-20260927T184915Z-a9b9e8cd <oid> --accept \"<reason>\"` (the ids are in `.critic-findings.json` under `observations`), which needs no review and moves no tree. The BRANCH was covered too, at the HEAD this review saw: composed review evidence spanned 5 commit(s) since origin/main with no blocking findings outstanding \u2014 work you had not committed yet is not in that span. Re-derive with `prawduct-hook check-cumulative-critic` if the branch has moved since. (A review being over is not a work cycle being over \u2014 a plan mid-flight still owes its final/cumulative at the end of it.) If you do choose to fix some, batch them into ONE commit \u2014 and re-cover with ONE `/prawduct:critic verify-resolutions` ONLY if that commit touched judgeable files. AFTER committing, you no longer have to judge that either: dispatch asks the same predicate and exits 3 (`no review needed`, under a second, no session state written) rather than spending a reviewer on a free interval \u2014 so asking costs nothing, and a refusal is the answer, not a reason to retry in another mode. Do NOT start another round to 'close coverage' before committing, and do not infer that you need one from gate output printed before your fix \u2014 commit, then re-run the gate and let it answer. If this branch has more judgeable work coming, there is a third route: carry the fix into the NEXT chunk's commit. That is NOT the deferral warned against above \u2014 deferring to a later ROUND buys a second round; riding a commit that is being made anyway buys none. Write it where that chunk will meet it (the build plan or `.prawduct/.handoff-notes.md`), or it is not a deferral, it is a drop. What one more round costs here is unavailable (only 1 timed verify-resolutions round(s) recorded \u2014 too few to quote as this repo's price) \u2014 that is a missing number, not a small one.",
+  "likely_duplicate_groups": []
+}

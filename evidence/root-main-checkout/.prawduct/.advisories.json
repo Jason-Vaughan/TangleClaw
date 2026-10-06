@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "advisories": [
+    {
+      "id": "backlog-backlog-service-migration-required-v1-e5f7a5",
+      "state": "resolved",
+      "resolved_at": "2026-09-19T02:19:33Z",
+      "resolved_by": "sync"
+    },
+    {
+      "id": "backlog-external-backlog-detected-v1-683343",
+      "feature": "backlog",
+      "type": "external-backlog-detected",
+      "probe_version": 1,
+      "triggered_at": "2026-09-18T21:44:43Z",
+      "triggered_by_sync_version": "3.5.0",
+      "trigger_summary": "External backlog file(s) not yet imported: ROADMAP.md",
+      "evidence": [
+        "ROADMAP.md"
+      ],
+      "recommended_action": "/prawduct:backlog import ROADMAP.md",
+      "owner_action": "Say go and the items in these files are folded into the tracked backlog \u2014 a committed file, so you will see a diff to review before anything is staged. Tell me instead if one of them is deliberately kept separate: I will leave it alone, though the reminder stays until it is imported or removed.",
+      "prerequisite_of": [],
+      "alternative_actions": [],
+      "priority": "info",
+      "state": "active",
+      "superseded_by": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "resolved_at": null,
+      "resolved_by": null
+    },
+    {
+      "id": "backlog-backlog-overdue-grooming-v1-a1091d",
+      "state": "resolved",
+      "resolved_at": "2026-09-19T02:19:33Z",
+      "resolved_by": "sync"
+    },
+    {
+      "id": "governance-oversized-change-log-v1-f73c28",
+      "state": "resolved",
+      "resolved_at": "2026-09-27T15:08:51Z",
+      "resolved_by": "sync"
+    },
+    {
+      "id": "structural-coverage-discovery-not-captured-v1-0001f3",
+      "feature": "structural-coverage",
+      "type": "discovery-not-captured",
+      "probe_version": 1,
+      "triggered_at": "2026-09-19T02:19:33Z",
+      "triggered_by_sync_version": "3.5.0",
+      "trigger_summary": "DISCOVERY NOT CAPTURED: .prawduct/project-state.yaml does not record this product's structural characteristics (none present in classification.structural), but this repo has product work (code and/or docs/). Structural characteristics decide which strategy-class artifacts the product needs, so until they're captured governance can't calibrate rigor and the coverage chain stays blind. Discovery RECONCILES existing material \u2014 it backfills the characteristics rather than starting over.",
+      "evidence": [
+        "product-definition work present but no structural characteristic recorded"
+      ],
+      "recommended_action": "/prawduct:methodology discovery",
+      "owner_action": "Spend a few minutes telling me what this product is and who it serves. I can read the code and docs already here and draft the answers, but you are the one who can confirm or correct them \u2014 and nothing gets recorded as fact until you have.",
+      "prerequisite_of": [],
+      "alternative_actions": [],
+      "priority": "warn",
+      "state": "active",
+      "superseded_by": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "resolved_at": null,
+      "resolved_by": null
+    },
+    {
+      "id": "gitignore-contract-drift-v1-48f9dd",
+      "state": "resolved",
+      "resolved_at": "2026-09-26T14:16:57Z",
+      "resolved_by": "sync"
+    },
+    {
+      "id": "review-depth-risk-surfaces-undeclared-v1-dec907",
+      "feature": "review-depth",
+      "type": "risk-surfaces-undeclared",
+      "probe_version": 1,
+      "triggered_at": "2026-09-24T05:10:20Z",
+      "triggered_by_sync_version": "3.6.0",
+      "trigger_summary": "WHERE WOULD A MISSED DEFECT COST YOU MOST? This repo has code under review but has never said where its risk concentrates \u2014 auth, payments, a migration that rewrites data, a contract others build against, the safety interlock \u2014 so every change is reviewed at the depth its size suggests, and a two-line change to your riskiest code gets the cheap review because it is small. Name those paths under `risk_surfaces:` in .prawduct/project-state.yaml and a change touching them gets the deeper review at any size. `risk_surfaces: []` is the opt-out \u2014 write it only if there is genuinely no such place; it turns the check off, and this reminder with it. The discovery guide's \"Surface Risk Surfaces\" section has the question and the capture format.",
+      "evidence": [
+        "this repo has source code and .prawduct/project-state.yaml carries no `risk_surfaces:` key, so it has never said where a missed defect would cost it most",
+        "review depth is decided by the size of each change alone until it does: a small change to the riskiest code gets the cheaper review because it is small"
+      ],
+      "recommended_action": "/prawduct:methodology discovery",
+      "owner_action": "Answer one question: where would a missed defect cost you most? I will turn the answer into path patterns for you to confirm before anything is recorded \u2014 or say there is no such place, and I will record the opt-out instead.",
+      "prerequisite_of": [],
+      "alternative_actions": [],
+      "priority": "warn",
+      "state": "active",
+      "superseded_by": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "resolved_at": null,
+      "resolved_by": null
+    }
+  ]
+}

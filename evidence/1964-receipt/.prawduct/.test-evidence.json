@@ -1,0 +1,23 @@
+{
+  "changes_referenced": [],
+  "changes_unchecked": [
+    ".prawduct/change-log.md",
+    "CHANGELOG.md",
+    "test/startup-control-codex.test.js"
+  ],
+  "changes_unjudged": [
+    ".prawduct/change-log.md",
+    "CHANGELOG.md",
+    "test/startup-control-codex.test.js"
+  ],
+  "command": "--from-junit /private/tmp/claude-501/-Users-jasonvaughan-Documents-Projects-TangleClaw-Builder2/c07ac941-57fe-4452-8528-1bf962cfa9f5/scratchpad/1964-junit.xml",
+  "coverage_level": "referenced",
+  "duration_seconds": 487.8,
+  "evidence_tree": "e59a3d3569fc033ae7c1bfc24c83ba6233931723",
+  "failed": 0,
+  "passed": 8498,
+  "skipped": 1,
+  "tests_executed": [],
+  "timestamp": "2026-10-04T06:06:30Z",
+  "verifier": "test-reference-verify (floor: symbol-grep)"
+}

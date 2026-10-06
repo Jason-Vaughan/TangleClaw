@@ -1,0 +1,27 @@
+{
+  "changes_referenced": [],
+  "changes_unchecked": [
+    ".prawduct/change-log.md",
+    "CHANGELOG.md",
+    "deploy/soak/guest/guest-setup.sh",
+    "docs/runbooks/soak-install-the-candidate.md",
+    "test/soak-guest.test.js"
+  ],
+  "changes_unjudged": [
+    ".prawduct/change-log.md",
+    "CHANGELOG.md",
+    "deploy/soak/guest/guest-setup.sh",
+    "docs/runbooks/soak-install-the-candidate.md",
+    "test/soak-guest.test.js"
+  ],
+  "command": "--from-counts passed=491 failed=0 skipped=0",
+  "coverage_level": "referenced",
+  "degraded": "Scoped run: the 7 test files that exercise guest-setup.sh (soak-guest, release-certification-*, soak-attest-bridge), 491/491 green on cd77c863. The full suite is left to CI on the PR.",
+  "duration_seconds": 792.0,
+  "failed": 0,
+  "passed": 491,
+  "skipped": 0,
+  "tests_executed": [],
+  "timestamp": "2026-09-30T22:57:43Z",
+  "verifier": "test-reference-verify (floor: symbol-grep)"
+}

@@ -1,0 +1,90 @@
+{
+  "timestamp": "2026-10-04T06:02:52Z",
+  "duration_seconds": 420,
+  "mode": "final (full review, ready for push)",
+  "mode_chosen_by": "rule-3 final: no build plan, session diff has 13 changed files (medium+ work \u2014 full review warranted)",
+  "stage": "inner",
+  "model": "claude-opus-5-5",
+  "commit_reviewed": "aa24f20d5aaabf8ff2e2d13d4c18f3fad2ec08b6",
+  "base_reviewed": null,
+  "files_reviewed": [
+    "CHANGELOG.md",
+    "public/history-drawer.js",
+    "public/landing.js",
+    "public/session.js",
+    "public/setup.js",
+    "test/_page-globals.js",
+    "test/inline-handler-args.test.js",
+    "test/launch-mode-picker.test.js",
+    "test/session-header-cleanup.test.js",
+    "test/setup-wizard-engines.test.js",
+    "test/setup-wizard-git-unknown.test.js",
+    "test/setup-wizard-https.test.js",
+    "test/setup-wizard-login-gate.test.js"
+  ],
+  "findings": [],
+  "observations": [
+    {
+      "oid": "O-1",
+      "goal": "Nothing Is Broken",
+      "summary": "Test evidence is stale: the suite is owed before this lands",
+      "recommendation": "`prawduct-hook test-status` exited 1 with `stale: no .test-evidence.json on disk`. Run the full suite and record the evidence before the commit lands; this review read the tests but could not confirm they pass. `prawduct-hook verify-coverage` exited 0 (`skipped: coverage_required is false`). Scope: none (mandated check, no defect in the diff)."
+    },
+    {
+      "oid": "O-2",
+      "goal": "Nothing Is Missing",
+      "summary": "No recorded browser check of the apostrophe case",
+      "recommendation": "The change is user-visible (the wizard checkbox for a project named O'Brien, the redirect buttons, the group pill) and the change-log entry records tests only. The vm round trips decode the attribute by a hand-written `decodeAttr`, not a real HTML parser, so one manual click-through of the wizard checkbox with an apostrophe project name would close the gap. Scope: instance.",
+      "files": [
+        "public/setup.js",
+        "public/session.js"
+      ]
+    },
+    {
+      "oid": "O-3",
+      "goal": "Nothing Is Broken",
+      "summary": "Two history-drawer handlers are pinned by spelling, not by what they receive",
+      "recommendation": "`runTranscriptSearch(...)` and the `onkeydown` `openHistorySession(...)` handler are asserted only by `line.includes('${jsArg(safeSid(')`; only the `onclick` handler is run. Risk is low because `safeSid` already limits the value to `[A-Za-z0-9_-]`, so nothing here ships broken. If wanted, run both through `runSourceHandler` as the other sites are. Scope: instance.",
+      "files": [
+        "test/inline-handler-args.test.js"
+      ]
+    },
+    {
+      "oid": "O-4",
+      "goal": "The Design Is Sound",
+      "summary": "New shared brace-matching helper is exported but nothing imports it, beside an identical local copy in the same change",
+      "recommendation": "Scope: class. test/_page-globals.js adds and exports `liftDeclaration`, but no test imports it (only `LANDING_JSARG_SRC` is consumed); test/inline-handler-args.test.js, also in this change, keeps its own byte-equivalent `liftFunction`, and roughly thirty other test files carry the same helper under `liftFunction` or `extract`. It broke because each harness grew its own copy before a shared test module existed. Within this change, either drop the unused export or have inline-handler-args.test.js import it in place of its local copy. The wider class (search `function liftFunction(` and `function extract(` under test/) closes only by one owner every harness imports; that is outside this diff and is the builder's call to file or leave.",
+      "files": [
+        "test/_page-globals.js",
+        "test/inline-handler-args.test.js"
+      ]
+    },
+    {
+      "oid": "O-5",
+      "goal": "Decisions Were Deliberate",
+      "summary": "Learnings Cross-Check: no learnings corpus in this tree, so nothing to check against",
+      "recommendation": "`.claude/rules/learnings/` does not exist in the worktree and `prawduct-hook learnings-files --for-diff` printed an empty list, so the cross-check had no rules to read. Nothing to action in this diff; `/prawduct:doctor` is the vehicle if the corpus is expected here."
+    },
+    {
+      "oid": "O-6",
+      "goal": "Decisions Were Deliberate",
+      "summary": "Backlog Reconciliation: #1384 is still open in the cache and this work completes its class; #1605 and #1902 do not resolve in the cache",
+      "recommendation": "Cache read succeeded (Jason-Vaughan/TangleClaw, confirmed 2026-09-30, 3 days old). (1) Backlog item appears resolved: #1384 'ui: single-quoted onclick args break on an apostrophe'. The records say #1384 already fixed ui.js and this diff carries the fix to every other page script, yet the cache lists it open. Verify against the live tracker (the cache may simply be stale), then call `/prawduct:backlog update 1384 status=shipped closed-by=inline-handler-jsarg-1902` when the backlog skill's 'When to mark shipped' rule says. (2) C-B4: `cache-query resolve` reports both 1902 (the issue this work closes) and 1605 (the follow-up that the session.js JSDoc, CHANGELOG.md and a test comment all defer the duplicate encoder to) as unresolved. The cache predates this work, so either may have been filed since; confirm #1605 is an OPEN issue describing 'one owner for the encoders', because three places in this diff rely on it to retire the duplicate. (3) `affecting` returns #1377 (enforce node:assert/strict) for test/inline-handler-args.test.js; the file already requires node:assert/strict and so does the new test/_page-globals.js consumer set, so nothing here regresses it.",
+      "files": [
+        "public/session.js",
+        "CHANGELOG.md",
+        "test/inline-handler-args.test.js"
+      ]
+    },
+    {
+      "oid": "O-7",
+      "goal": "The System Can Be Understood",
+      "summary": "Records Pass: covered .prawduct/change-log.md; no bar cleared",
+      "recommendation": "Oracle set covered: `.prawduct/change-log.md` (the one entry added, 2026-10-04, #1902). Its checkable claims match the staged tree: the seven converted sites and two `esc(JSON.stringify(...))` sites are in the diff as described; `session.html` does not load `landing.js` and `index.html` loads `landing.js` before `ui.js`, `history-drawer.js` and `setup.js`; the three reworded assertions are the ones named. Two claims cannot be confirmed by reading and were taken as stated, not verified: 'the cache guard reports no cache-first asset changed' and 'mutation-checked: 10 of the new tests fail against current main'. Neither is contradicted by the tree. No action."
+    }
+  ],
+  "summary": "0 blocking, 0 warning, 0 note across 3 reviewer(s). Changes ready to proceed.",
+  "fact_id": "rev-20261004T060112Z-42698545",
+  "next_action": "AT REVIEW TIME you were already making a judgeable commit (12 uncommitted judgeable file(s)), so a fix batched into it bought NO extra round. Re-derive with `prawduct-hook cost-of-commit` if the tree has moved since. Recommended while that holds: fix what is worth fixing, accept the rest. 0 blocking, 0 findings \u2014 THE REVIEW IS OVER and nothing in THIS review requires another round. 7 item(s) were demoted to observations, and each can be answered on the record instead of fixed: `prawduct-hook disposition rev-20261004T060112Z-42698545 <oid> --accept \"<reason>\"` (the ids are in `.critic-findings.json` under `observations`), which needs no review and moves no tree. (Whether the PR gate is satisfied, and whether the work cycle still owes a final/cumulative, are separate questions about coverage \u2014 ask them by running the gate, not by reviewing again.) If you do choose to fix some, batch them into ONE commit \u2014 and re-cover with ONE `/prawduct:critic verify-resolutions` ONLY if that commit touched judgeable files. AFTER committing, you no longer have to judge that either: dispatch asks the same predicate and exits 3 (`no review needed`, under a second, no session state written) rather than spending a reviewer on a free interval \u2014 so asking costs nothing, and a refusal is the answer, not a reason to retry in another mode. Do NOT start another round to 'close coverage' before committing, and do not infer that you need one from gate output printed before your fix \u2014 commit, then re-run the gate and let it answer. If this branch has more judgeable work coming, there is a third route: carry the fix into the NEXT chunk's commit. That is NOT the deferral warned against above \u2014 deferring to a later ROUND buys a second round; riding a commit that is being made anyway buys none. Write it where that chunk will meet it (the build plan or `.prawduct/.handoff-notes.md`), or it is not a deferral, it is a drop. What one more round costs here is unavailable (this repo has no recorded review history yet) \u2014 that is a missing number, not a small one.",
+  "likely_duplicate_groups": []
+}

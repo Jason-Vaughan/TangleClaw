@@ -1,0 +1,34 @@
+# git stash list --format='%H %gd %ci %gs'
+5ce8bcf3e728160cddfbb621ba7de89e2f588a6e stash@{0} 2026-09-29 07:12:24 -0700 WIP on main: 41b09ea6 Merge pull request #1920 from Jason-Vaughan/fix/1905-tailnet-cutover
+
+# git cat-file -p 5ce8bcf3e728160cddfbb621ba7de89e2f588a6e   (stash commit)
+tree 613b985f898933c85d7ff3b7172620d4eebf5d59
+parent 41b09ea682996d5cf4624ba388cd4d295a1012cb
+parent 51c0778f0457b1d07ae03d5cf3143f3f26fd5d71
+author Jason-Vaughan <95194903+Jason-Vaughan@users.noreply.github.com> 1790691144 -0700
+committer Jason-Vaughan <95194903+Jason-Vaughan@users.noreply.github.com> 1790691144 -0700
+
+WIP on main: 41b09ea6 Merge pull request #1920 from Jason-Vaughan/fix/1905-tailnet-cutover
+# git cat-file -p 5ce8bcf3e728160cddfbb621ba7de89e2f588a6e^2   (index commit)
+tree c7619a14c397bf1067df0444c8a69f9fc227fa33
+parent 41b09ea682996d5cf4624ba388cd4d295a1012cb
+author Jason-Vaughan <95194903+Jason-Vaughan@users.noreply.github.com> 1790691144 -0700
+committer Jason-Vaughan <95194903+Jason-Vaughan@users.noreply.github.com> 1790691144 -0700
+
+index on main: 41b09ea6 Merge pull request #1920 from Jason-Vaughan/fix/1905-tailnet-cutover
+
+# git rev-parse 5ce8bcf3e728160cddfbb621ba7de89e2f588a6e^{tree} 5ce8bcf3e728160cddfbb621ba7de89e2f588a6e^1 5ce8bcf3e728160cddfbb621ba7de89e2f588a6e^2 5ce8bcf3e728160cddfbb621ba7de89e2f588a6e^2^{tree}
+613b985f898933c85d7ff3b7172620d4eebf5d59
+41b09ea682996d5cf4624ba388cd4d295a1012cb
+51c0778f0457b1d07ae03d5cf3143f3f26fd5d71
+c7619a14c397bf1067df0444c8a69f9fc227fa33
+
+# parents: 3 words (commit + parents); a third parent would hold untracked files
+
+# git stash show --stat
+ CLAUDE.md   |  4 +++-
+ FEATURES.md | 21 +++++++++++++--------
+ 2 files changed, 16 insertions(+), 9 deletions(-)
+
+# git reflog show refs/stash
+5ce8bcf3e728160cddfbb621ba7de89e2f588a6e stash@{0} 2026-09-29 07:12:24 -0700 WIP on main: 41b09ea6 Merge pull request #1920 from Jason-Vaughan/fix/1905-tailnet-cutover

@@ -1,0 +1,6 @@
+
+## 2026-09-30 #2020 macOS 26.3 compatibility, PR #2062 (Builder2)
+Expected: a narrow fix for the one LeaseStartTime form the PM reported, read as the guest's local time.
+Actual: that first version encoded a wrong assumption. RM09's real-guest census showed ipconfig formats the zoneless time in the caller's zone, so the right fix pins the caller to TZ=UTC. The census also exposed a fail-open in the dseditgroup check (any non-zero status counted as "not a member"), plus setup incompatibilities (sudo -v, missing home) and the pf-load SSH hang. Architect A2 widened the PR to all of them. CI stays red only because of the unrelated #2061 race.
+Root cause: I designed the timezone semantics from an assumption ("ipconfig prints the guest's local time") instead of from real-guest evidence. The Critic caught the untestable runbook check that assumption produced, and the census replaced the assumption itself.
+Lesson: for OS-output parsers, get verbatim real-host output (including env-variant runs such as TZ and LC_ALL) before choosing semantics, and make each exit status an explicit case, never "non-zero means no".

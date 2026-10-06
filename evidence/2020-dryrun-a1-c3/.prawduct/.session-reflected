@@ -1,0 +1,7 @@
+## 2026-09-30 — #2020 attempt-1 tooling fixes, Chunk 3 (stub Medusa hub)
+
+Expected: the hard part would be the RFC 6455 framing.
+Actual: the framing worked on the first run against the real listener. The Critic's substantive catch was a config knob, a configurable hub port, that the candidate never reads, so the guest could report ready while the switchboard stayed dead.
+Root cause: I added a setting by analogy with SOAK_TC_PORT without tracing where its consumer (the candidate's MEDUSA_BRIDGE_HTTP_URL, read from its own launchd env) gets the value. That is the same single-knob, two-consumer gap as Chunk 2's display setting: a knob is only safe if every consumer reads it.
+What changed: the hub ports are pinned to the candidate's defaults, with a test that an env override is ignored, and a failed lease names the registry's reason.
+Surprise: stacking chunks behind a squash-merging PM means every rebase moves the merge-base, and review coverage does not transfer across it. Each PR needed one more cumulative review. Next time, either target the stacked branch or budget one cumulative review per PR.

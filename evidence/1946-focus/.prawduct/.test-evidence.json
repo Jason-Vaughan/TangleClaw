@@ -1,0 +1,31 @@
+{
+  "changes_referenced": [],
+  "changes_unchecked": [
+    ".prawduct/change-log.md",
+    "CHANGELOG.md",
+    "public/landing.js",
+    "public/ui.js",
+    "test/inline-handler-args.test.js",
+    "test/panel-toggle-rows.test.js",
+    "test/port-owner-kind-panel.test.js"
+  ],
+  "changes_unjudged": [
+    ".prawduct/change-log.md",
+    "CHANGELOG.md",
+    "public/landing.js",
+    "public/ui.js",
+    "test/inline-handler-args.test.js",
+    "test/panel-toggle-rows.test.js",
+    "test/port-owner-kind-panel.test.js"
+  ],
+  "command": "--from-counts passed=15663 failed=0 skipped=18",
+  "coverage_level": "referenced",
+  "duration_seconds": 0.0,
+  "evidence_tree": "d10e2dd98838c31e118c182fe4f8a836ddcfdcf3",
+  "failed": 0,
+  "passed": 15663,
+  "skipped": 18,
+  "tests_executed": [],
+  "timestamp": "2026-10-04T08:20:14Z",
+  "verifier": "test-reference-verify (floor: symbol-grep)"
+}

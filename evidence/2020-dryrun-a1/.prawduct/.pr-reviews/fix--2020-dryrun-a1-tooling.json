@@ -1,0 +1,43 @@
+{
+  "timestamp": "2026-09-30T20:10:00Z",
+  "branch": "fix/2020-dryrun-a1-tooling",
+  "base": "origin/main",
+  "pr_number": 2066,
+  "mode": "pr",
+  "model": "claude-opus-5-5",
+  "duration_seconds": 240,
+  "commit_reviewed": "178435b8c6c761043137b540f716c2bdfa37a801",
+  "commits_reviewed": 2,
+  "files_reviewed": [
+    ".prawduct/change-log.md",
+    "CHANGELOG.md",
+    "deploy/soak/README.md",
+    "deploy/soak/guest/guest-setup.sh",
+    "lib/release-certification/runner.js",
+    "lib/release-certification/state-machine.js",
+    "lib/soak/repos.js",
+    "test/release-certification-runner.test.js",
+    "test/release-certification-state-machine.test.js",
+    "test/soak-guest.test.js",
+    "test/soak-repos-attach.test.js",
+    ".prawduct/artifacts/build-plan.md",
+    ".prawduct/.critic-findings.json"
+  ],
+  "findings": [
+    {
+      "goal": "The Record Matches What Ships",
+      "severity": "note",
+      "file": ".prawduct/change-log.md",
+      "line": 42,
+      "summary": "Change-log entry has three small drifts, all fixable in one edit. (1) It opens 'Chunk 1 of `.prawduct/artifacts/build-plan.md`', but that file is gitignored and not on origin/main (`git ls-files` is empty; it shows as `!!`), so once merged the pointer resolves for nobody, and will later point at whatever unrelated plan occupies that path. Delete the pointer or make it relational, e.g. 'Chunk 1 of 3 of the #2020 dry-run tooling dispatch'. (2) 'Not in this chunk' says the Medusa hub 'needs a PM/Architect decision'. The plan records that the PM already chose Option B (Medusa ff69a0a1, Chunk 3: stub hub), so the claim is superseded. Say it lands in Chunk 3. (The commit 5c419b47 body says the same, which is fine as history.) (3) The entry does not mention commit 178435b8's change: a refused POST /api/setup/complete now surfaces the server's code and message. Critic O-2 noted the same gap in CHANGELOG.md. Prose only, and no gate reads it. Worth accepting, or fixing in any commit already coming, since change-log.md is under .prawduct/ and should move no coverage (confirm with `prawduct-hook cost-of-commit .prawduct/change-log.md`)."
+    },
+    {
+      "goal": "Governance Bookkeeping Is Coherent",
+      "severity": "note",
+      "file": null,
+      "line": null,
+      "summary": "Backlog reconciliation unavailable: this repo sets no `backlog_service_repo:`, so there is no cache scope to resolve the cited ids (2020, 153) against. R-2 was run by hand over the inputs. Both commits say only 'Refs #2020', and the change-log entry claims no `closes:`/`closed-by:`, so no closure is claimed that could disagree with the backlog. #2020 correctly stays open, since Chunks 2 and 3 remain. A sync cannot fix this (it is a config gap, not a stale cache), so no action is needed for this PR."
+    }
+  ],
+  "summary": "0 blocking, 0 warnings, 2 notes. The payload's project dir and HEAD (178435b8) match the prompt, and its base (origin/main) matches the resolve-base answer. Scope is clean: every changed path is inside the Rule #153 (b) allowlist, version.json is untouched, and there is no app code. Every item in the plan's Chunk 1 (seed keys and files, SOAK_BIN_DIR, setup/complete with noLogin and projectsDir plus a read-back check, whole-ms mono clock) is in the diff, and nothing beyond it. The known Medusa-cycle failure is documented in the CHANGELOG and the README. Test evidence is current (tree-valid, exit 0), which supersedes Critic O-1. The seed SHA change carries its operator note (SEED_MISMATCH, seed a fresh guest). The Chunk 1 Status box is correctly unticked: its Done-when includes 'the PR is open', and the plan is gitignored local state. No secrets, debug code or stray files. Both notes are optional. PR is ready to create."
+}

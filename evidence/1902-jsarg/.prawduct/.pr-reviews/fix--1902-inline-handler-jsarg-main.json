@@ -1,0 +1,37 @@
+{
+  "timestamp": "2026-10-04T06:44:49Z",
+  "branch": "fix/1902-inline-handler-jsarg-main",
+  "base": "origin/main",
+  "pr_number": 2087,
+  "mode": "pr",
+  "model": "claude-opus-5-5",
+  "duration_seconds": 240,
+  "commit_reviewed": "0f2ba9e76141449fad1d01520c1fa959b8914282",
+  "commits_reviewed": 2,
+  "files_reviewed": [
+    ".prawduct/change-log.md",
+    "CHANGELOG.md",
+    "public/history-drawer.js",
+    "public/landing.js",
+    "public/session.js",
+    "public/setup.js",
+    "test/_page-globals.js",
+    "test/inline-handler-args.test.js",
+    "test/launch-mode-picker.test.js",
+    "test/session-header-cleanup.test.js",
+    "test/setup-wizard-engines.test.js",
+    "test/setup-wizard-git-unknown.test.js",
+    "test/setup-wizard-https.test.js",
+    "test/setup-wizard-login-gate.test.js"
+  ],
+  "findings": [
+    {
+      "goal": "Governance Bookkeeping Is Coherent",
+      "severity": "note",
+      "file": ".prawduct/change-log.md",
+      "line": 38,
+      "summary": "Backlog reconciliation unavailable \u2014 this repo sets no `backlog_service_repo:`, so there is no cache scope to resolve the cited ids against; run `prawduct-hook backlog sync --repo <scope>`. R-1 and R-2 are NOT answered for 1902, 1384, 1605, 1965, 2083, 39. Nothing to fix in the diff; accept. Two things for the operator at merge: the close of #1902 is owed at merge (`Fixes #1902` will fire, since the base is the default branch `main`), and #1605 should be confirmed as an open issue, because the session.js JSDoc, CHANGELOG.md and a test comment all defer the duplicate `jsArg` to it."
+    }
+  ],
+  "summary": "0 blocking, 0 warnings, 1 note. Payload project dir and HEAD (0f2ba9e7) match the dispatch prompt; base origin/main matches (merge-base 7b3bb3bd = origin/main tip). The bundle is one coherent change: one fix commit plus a merge of main whose docs do not appear in the three-dot diff. The change-log entry and CHANGELOG.md [Unreleased] entry both account for every file in the diffstat; scope= is the branch's own planless scope, no release= or retired key is present. Test evidence is current (tree-valid, exit 0). No debug code, stray files, secrets or persisted-format changes. Three payload sections were degraded and their checks are unanswered rather than passed: `work` (no stated scope \u2014 scope was judged from the commits and change-log entry instead), `build_plan` (no plan resolves for this branch, so the Status-box and dangling-pointer checks had no subject), and `backlog` (R-1/R-2 not run \u2014 see the note). The .critic-findings.json on disk is for an earlier commit (aa24f20d) and was read as history only."
+}

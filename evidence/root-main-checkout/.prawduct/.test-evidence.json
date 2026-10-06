@@ -1,0 +1,38 @@
+{
+  "changes_referenced": [],
+  "changes_unchecked": [
+    ".prawduct/change-log.md",
+    ".tangleclaw/plans/1621-stranded-wake-nudge.md",
+    "CHANGELOG.md",
+    "docs/medusa-delivery.md",
+    "lib/medusa-wake.js",
+    "lib/tmux.js",
+    "test/medusa-wake-stranded-nudge.test.js",
+    "test/tmux-draft-capture.test.js"
+  ],
+  "changes_unjudged": [
+    ".prawduct/change-log.md",
+    ".tangleclaw/plans/1621-stranded-wake-nudge.md",
+    "CHANGELOG.md",
+    "docs/medusa-delivery.md",
+    "lib/medusa-wake.js",
+    "lib/tmux.js",
+    "test/medusa-wake-stranded-nudge.test.js",
+    "test/tmux-draft-capture.test.js"
+  ],
+  "command": "--from-junit /private/tmp/claude-501/-Users-jasonvaughan-Documents-Projects-TangleClaw-Builder2/85095b55-f938-44ee-b886-d3e91f5f15b6/scratchpad/junit.xml",
+  "coverage_level": "referenced",
+  "degraded": "4 load-timing failures unrelated to this diff: 2 known dir-scanner flakes (#1884/#1658/#1205), plus sidecar 're-arms the loop' and system-health 'never awaits the measurement', both green twice in isolation on 253d0d5e; none import the changed modules",
+  "duration_seconds": 1407.25,
+  "evidence_tree": "a48cd8239190dfcd390e2541729dd46b5bda332b",
+  "failed": 2,
+  "failed_tests": [
+    "test::a request that never answers rejects as timed out AND kills the child",
+    "test::a kill does not take the NEXT request down with it"
+  ],
+  "passed": 7391,
+  "skipped": 1,
+  "tests_executed": [],
+  "timestamp": "2026-09-26T18:30:20Z",
+  "verifier": "test-reference-verify (floor: symbol-grep)"
+}

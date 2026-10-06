@@ -1,0 +1,51 @@
+{
+  "timestamp": "2026-09-26T17:28:29Z",
+  "duration_seconds": 180,
+  "mode": "verify-resolutions (delta review, prior findings only)",
+  "mode_chosen_by": "explicit-args",
+  "stage": "inner",
+  "model": "claude-opus-5-5",
+  "commit_reviewed": "53543e8c6032a9f4a4c78fef5dab45112410f5b4",
+  "base_reviewed": null,
+  "files_reviewed": [
+    ".tangleclaw/plans/1621-stranded-wake-nudge.md",
+    "CHANGELOG.md",
+    "docs/medusa-delivery.md",
+    "lib/medusa-wake.js",
+    "lib/tmux.js",
+    "test/medusa-wake-stranded-nudge.test.js",
+    "test/tmux-draft-capture.test.js"
+  ],
+  "findings": [],
+  "observations": [
+    {
+      "oid": "O-1",
+      "goal": "Nothing Is Broken",
+      "summary": "Test evidence still stale for this tree (prior R-1 not resolved)",
+      "recommendation": "instance -- `prawduct-hook test-status` still exits 1 (evidence 2026-09-19T05:25:03Z predates the session). Run the suite on 53543e8c and record evidence before the PR; this rides no commit and moves no tree. R-1 is left out of resolutions because the tree does not show it fixed.",
+      "files": [
+        "lib/tmux.js",
+        "test/tmux-draft-capture.test.js"
+      ]
+    },
+    {
+      "oid": "O-2",
+      "goal": "Nothing Is Unintended",
+      "summary": "sendKeys JSDoc does not state its new refusal",
+      "recommendation": "instance -- sendKeys now throws when a stranded nudge survives the clear, but its JSDoc names no @throws. Callers already treat it as throwing (it throws on a missing session, and sessions.injectCommand catches into {ok:false}), so nothing mis-acts; ACCEPT, or add the @throws line to a commit already being made.",
+      "files": [
+        "lib/tmux.js"
+      ]
+    },
+    {
+      "oid": "O-3",
+      "goal": "Nothing Is Missing",
+      "summary": "Live Claude-pane verification of the wrapped-nudge clear still not done",
+      "recommendation": "instance -- the plan records this openly and the post-clear re-read makes the outcome fail-safe (inject-failed, retried next tick, then the existing budget/escalation). A live check would only show whether the recovery actually succeeds on Claude rather than degrading to escalation; worth doing once at PR time, not a tree change."
+    }
+  ],
+  "summary": "0 blocking, 0 warning, 0 note across 1 reviewer(s). Changes ready to proceed.",
+  "fact_id": "rev-20260926T172747Z-77f346ab",
+  "next_action": "This review COVERS your working tree as it stands, and your tree is clean, so there is nothing left to pay for \u2014 and the next edit after it, judgeable or not, opens a NEW delta that needs its own `/prawduct:critic verify-resolutions`. Recommended: stop here; fix anything further only if it is worth a round of its own. 0 blocking, 0 findings \u2014 THE REVIEW IS OVER and nothing in THIS review requires another round. 3 item(s) were demoted to observations, and each can be answered on the record instead of fixed: `prawduct-hook disposition rev-20260926T172747Z-77f346ab <oid> --accept \"<reason>\"` (the ids are in `.critic-findings.json` under `observations`), which needs no review and moves no tree. The BRANCH was covered too, at the HEAD this review saw: composed review evidence spanned 2 commit(s) since origin/main with no blocking findings outstanding \u2014 work you had not committed yet is not in that span. Re-derive with `prawduct-hook check-cumulative-critic` if the branch has moved since. (A review being over is not a work cycle being over \u2014 a plan mid-flight still owes its final/cumulative at the end of it.) If you do choose to fix some, batch them into ONE commit \u2014 and re-cover with ONE `/prawduct:critic verify-resolutions` ONLY if that commit touched judgeable files. AFTER committing, you no longer have to judge that either: dispatch asks the same predicate and exits 3 (`no review needed`, under a second, no session state written) rather than spending a reviewer on a free interval \u2014 so asking costs nothing, and a refusal is the answer, not a reason to retry in another mode. Do NOT start another round to 'close coverage' before committing, and do not infer that you need one from gate output printed before your fix \u2014 commit, then re-run the gate and let it answer. If this branch has more judgeable work coming, there is a third route: carry the fix into the NEXT chunk's commit. That is NOT the deferral warned against above \u2014 deferring to a later ROUND buys a second round; riding a commit that is being made anyway buys none. Write it where that chunk will meet it (the build plan or `.prawduct/.handoff-notes.md`), or it is not a deferral, it is a drop. One more round costs about 4 min here (median of 29 recorded verify-resolutions rounds, as the reviewing models reported them; re-derive with `prawduct-hook review-stats`).",
+  "likely_duplicate_groups": []
+}

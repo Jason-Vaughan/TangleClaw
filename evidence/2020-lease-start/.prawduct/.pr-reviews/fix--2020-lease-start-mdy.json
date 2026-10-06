@@ -1,0 +1,36 @@
+{
+  "timestamp": "2026-09-30T15:52:00Z",
+  "branch": "fix/2020-lease-start-mdy",
+  "base": "origin/main",
+  "pr_number": 2062,
+  "mode": "pr",
+  "model": "claude-opus-5-5",
+  "duration_seconds": 300,
+  "commit_reviewed": "021e445addda2d8676570db9adc9c26ae6c8de03",
+  "commits_reviewed": 6,
+  "files_reviewed": [
+    ".prawduct/change-log.md",
+    "CHANGELOG.md",
+    "deploy/soak/README.md",
+    "deploy/soak/guest/guest-setup.sh",
+    "docs/runbooks/soak-install-the-candidate.md",
+    "test/soak-guest.test.js"
+  ],
+  "findings": [
+    {
+      "goal": "The Record Matches What Ships",
+      "severity": "note",
+      "file": "deploy/soak/README.md",
+      "line": 717,
+      "summary": "The README's Known limits bullet on the DHCP allowance still says the verifier parses only `getpacket` and `getsummary`'s `LeaseStartTime`, and that 'Neither has been seen on a real guest yet'. This bundle's own census contradicts both parts. The verifier now also parses `LeaseExpirationTime`, and RM09 observed both forms on a real macOS 26.3 guest. The fields section this bundle added (around line 647) even says 'On a real macOS 26.3 guest the two agree.' What has still not been observed is a real lease renewal. Remedy: delete the 'Neither has been seen on a real guest yet' claim, keep the renewal caveat that follows, and add `LeaseExpirationTime` to the parenthetical. This is prose that no gate reads, so it can ride along with the next #2020 commit. Accepting it as is also works."
+    },
+    {
+      "goal": "Governance Bookkeeping Is Coherent",
+      "severity": "note",
+      "file": ".prawduct/change-log.md",
+      "line": 55,
+      "summary": "Backlog reconciliation is unavailable: this repo sets no `backlog_service_repo:`, so no cache scope exists to resolve cited ids. If a scope exists, run `prawduct-hook backlog sync --repo <scope>`. As a result, R-1 is unanswered for #2020. I ran R-2 by hand and it found nothing to check: all six commits say only `Refs #2020`, and the change-log entry has no `closes:` or `closed-by:`. Related: the entry defers F5/F6 (the workload positive control stops at the first probe that answers, so no plane gets its own control) with only 'reported to the PM'. Neither `.prawduct/backlog.md` nor anything else in the diff records it. Write it down on #2020 or in the backlog so the deferral is not silently dropped. No fix commit is needed on this branch."
+    }
+  ],
+  "summary": "0 blocking, 0 warnings, 2 notes. The payload's base (origin/main), project dir and HEAD 021e445a match the dispatch prompt. The widened scope (Architect ruling A2) holds together: every change is a macOS 26.3 real-guest compatibility fix to the soak guest tooling under #2020. That covers the zoneless LeaseStartTime read under TZ=UTC, the LeaseExpirationTime cross-check, dseditgroup exit 67, the pfctl ALTQ banner, sudo true and createhomedir, and the runbook's nohup. The .prawduct change-log entry and the CHANGELOG [Unreleased] Fixed bullet both describe all six files. The commit narrative, including the reversal from a guest-local reading to a UTC reading, is explained in the entry's Decision paragraph and in commit 2d2f8449. The tags are well-formed: type=fix, a unique scope=2020-lease-start-form, no release=, no retired keys. No build plan claims this branch and there is no work_in_progress, so the Status-box checks had no subject. Test evidence is current (tree-valid, exit 0). No debug code, stray files, TODOs or secrets. PR is ready to create; both notes can be accepted or can ride along with the next #2020 commit."
+}

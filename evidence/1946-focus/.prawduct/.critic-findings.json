@@ -1,0 +1,60 @@
+{
+  "timestamp": "2026-10-04T08:21:34Z",
+  "duration_seconds": 300,
+  "mode": "verify-resolutions (delta review, prior findings only)",
+  "mode_chosen_by": "explicit-args",
+  "stage": "inner",
+  "model": "claude-opus-5-5",
+  "commit_reviewed": "9305d9efa36e430368d6c26bb58823e2d5dd570a",
+  "base_reviewed": null,
+  "files_reviewed": [
+    "CHANGELOG.md",
+    "public/landing.js",
+    "public/ui.js",
+    "test/inline-handler-args.test.js",
+    "test/panel-toggle-rows.test.js",
+    "test/port-owner-kind-panel.test.js",
+    ".github/workflows/release.yml",
+    "FEATURES.md",
+    "docs/medusa-delivery.md",
+    "docs/medusa-wake-measurements.md",
+    "docs/release-process.md",
+    "lib/medusa-wake.js",
+    "lib/medusa-watchdog.js",
+    "lib/tick-meter.js",
+    "scripts/medusa-wake-matrix.js",
+    "scripts/release-notes-gate.js",
+    "test/changelog-unreleased-size.test.js",
+    "test/helpers/medusa-wake-matrix.js",
+    "test/medusa-wake-matrix.test.js",
+    "test/medusa-watchdog-meter.test.js",
+    "test/release-notes-gate.test.js",
+    "test/release-workflow.test.js",
+    "test/tick-meter.test.js"
+  ],
+  "findings": [],
+  "observations": [
+    {
+      "oid": "O-1",
+      "goal": "Nothing Is Broken",
+      "summary": "The evidence counts are asserted from CI on Linux, not measured on this machine",
+      "recommendation": "Scope: instance. .prawduct/.test-evidence.json was written with `--from-counts passed=15663 failed=0 skipped=18` (duration 0, tests_executed empty), so it is a transcription of GitHub Actions run 37187987482, not a local run. This review read that run: headSha 9305d9ef, conclusion success, checked-out merge commit 2ccf5df4 whose tree is d10e2dd98838 (identical to this head's tree), TAP totals tests 15681 / pass 15663 / fail 0 / skipped 18, zero `not ok` lines, and `ok 5 - uses a scanner the background poll cannot kill underneath it`. The runner is Linux and the earlier failure was recorded on macOS, so the CI run does not show that the scanner test or the tmux test is stable on this machine; that stays with the issues the builder cited (#1993, #2088), which this review did not open. Accept: nothing in this branch's diff reaches either test."
+    },
+    {
+      "oid": "O-2",
+      "goal": "Nothing Is Missing",
+      "summary": "record-lint suite-total-claim at .prawduct/change-log.md:76 is a boundary value, not a suite total",
+      "recommendation": "Scope: none. The flagged text is `110,000 passes and 110,001 fails`, the byte boundary of the release-notes size test, in the #2080 entry that arrived with the merge of main. It is not this branch's prose and not a suite count. Accept; no edit wanted."
+    },
+    {
+      "oid": "O-3",
+      "goal": "Nothing Is Missing",
+      "summary": "The corrected '15 of the file's 28 tests' figure was not confirmed by this review",
+      "recommendation": "Scope: instance. test/panel-toggle-rows.test.js has 14 static it/test declarations, several inside loops over PANELS and CASES, so 28 generated tests is plausible but was not counted, and the 15-fail figure needs a run against main's ui.js that a review cannot do. Nothing reads the sentence. Accept; no edit wanted."
+    }
+  ],
+  "summary": "0 blocking, 0 warning, 0 note across 1 reviewer(s). Changes ready to proceed.",
+  "fact_id": "rev-20261004T082041Z-34edb1c3",
+  "next_action": "This review COVERS your working tree as it stands, and your tree is clean, so there is nothing left to pay for \u2014 and the next edit after it, judgeable or not, opens a NEW delta that needs its own `/prawduct:critic verify-resolutions`. Recommended: stop here; fix anything further only if it is worth a round of its own. 0 blocking, 0 findings \u2014 THE REVIEW IS OVER and nothing in THIS review requires another round. 3 item(s) were demoted to observations, and each can be answered on the record instead of fixed: `prawduct-hook disposition rev-20261004T082041Z-34edb1c3 <oid> --accept \"<reason>\"` (the ids are in `.critic-findings.json` under `observations`), which needs no review and moves no tree. The BRANCH was covered too (granted across a base advance rather than reviewed again), at the HEAD this review saw: composed review evidence spanned 4 commit(s) since origin/main with no blocking findings outstanding \u2014 work you had not committed yet is not in that span. Re-derive with `prawduct-hook check-cumulative-critic` if the branch has moved since. (A review being over is not a work cycle being over \u2014 a plan mid-flight still owes its final/cumulative at the end of it.) If you do choose to fix some, batch them into ONE commit \u2014 and re-cover with ONE `/prawduct:critic verify-resolutions` ONLY if that commit touched judgeable files. AFTER committing, you no longer have to judge that either: dispatch asks the same predicate and exits 3 (`no review needed`, under a second, no session state written) rather than spending a reviewer on a free interval \u2014 so asking costs nothing, and a refusal is the answer, not a reason to retry in another mode. Do NOT start another round to 'close coverage' before committing, and do not infer that you need one from gate output printed before your fix \u2014 commit, then re-run the gate and let it answer. If this branch has more judgeable work coming, there is a third route: carry the fix into the NEXT chunk's commit. That is NOT the deferral warned against above \u2014 deferring to a later ROUND buys a second round; riding a commit that is being made anyway buys none. Write it where that chunk will meet it (the build plan or `.prawduct/.handoff-notes.md`), or it is not a deferral, it is a drop. What one more round costs here is unavailable (only 1 timed verify-resolutions round(s) recorded \u2014 too few to quote as this repo's price) \u2014 that is a missing number, not a small one.",
+  "likely_duplicate_groups": []
+}

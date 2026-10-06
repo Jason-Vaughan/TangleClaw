@@ -1,0 +1,41 @@
+{
+  "timestamp": "2026-09-30T20:56:43Z",
+  "branch": "fix/2020-dryrun-a1-runbooks",
+  "base": "origin/main",
+  "pr_number": 2067,
+  "mode": "pr",
+  "model": "claude-opus-5-5",
+  "duration_seconds": 180,
+  "commit_reviewed": "0b06f0468e2b75ef66dec82ca0060ed2561aac93",
+  "commits_reviewed": 2,
+  "files_reviewed": [
+    ".prawduct/change-log.md",
+    "CHANGELOG.md",
+    "deploy/soak/README.md",
+    "deploy/soak/guest/guest-setup.sh",
+    "deploy/soak/guest/guest.conf",
+    "deploy/soak/guest/host-provision.sh",
+    "docs/runbooks/soak-install-the-candidate.md",
+    "docs/runbooks/soak-run-sample-and-bundle.md",
+    "lib/soak/browser.js",
+    "test/soak-browser.test.js",
+    "test/soak-guest.test.js"
+  ],
+  "findings": [
+    {
+      "goal": "Governance Bookkeeping Is Coherent",
+      "severity": "note",
+      "file": ".prawduct/change-log.md",
+      "line": 38,
+      "summary": "Backlog reconciliation unavailable: this repo sets no `backlog_service_repo:`, so there is no cache scope to resolve the cited ids (2020, 2066, 153) against; R-1 and R-2 are NOT answered. Run `prawduct-hook backlog sync --repo <scope>` once a scope exists. The change-log entry and commits carry no `closes:`/`closed-by:` claim, so R-2 has nothing obvious to catch here; #2020 is a multi-chunk umbrella and stays open by design."
+    },
+    {
+      "goal": "The Record Matches What Ships",
+      "severity": "note",
+      "file": "docs/runbooks/soak-install-the-candidate.md",
+      "line": 384,
+      "summary": "Step 11b gives the `--closure --execute` command first and says 'Preview it first without `--execute`' only after the Expected line. An operator following the steps in order restarts the soak guest before seeing the preview. Fix: list the preview (`host-provision.sh --closure`, no `--execute`) as its own bullet before the execute bullet, as steps 2 and 3 already do. This is small enough to include in Chunk 3's runbook edits (write it in the build plan's Chunk 03 deliverables), or accept it."
+    }
+  ],
+  "summary": "0 blocking, 0 warnings, 2 notes. Base origin/main and HEAD 0b06f046 match the payload and the prompt. Every changed path is inside the Rule #153 (b) allowlist. There is no version.json change and no application feature. The change-log and CHANGELOG entries cover the whole diffstat and match the Chunk 02 deliverables. The scope tag matches the plan. Test evidence is current (tree-valid). The build plan (.prawduct/artifacts/build-plan.md) is untracked and does not ship; its Chunk 02 box is correctly unticked until the PR is open, which is that chunk's 'done when', so tick it then. Plan item (d) said to 'let the workload verifier allow the group', but the diff does not touch the verifier; the change-log Decision explains that the verifier already accepts `_webdeveloper`. The payload's `work` section is degraded (no work_in_progress in project-state), so scope was judged from the commits and the build plan. Ready to create."
+}

@@ -1,0 +1,65 @@
+diff --git a/CLAUDE.md b/CLAUDE.md
+index d90af1b1..0a966bca 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -215,7 +215,7 @@ Critic findings.
+ 
+ **TangleClaw API base URL**: read it from the `TANGLECLAW_API` environment variable your launch exported (`tc whoami` prints it too). It is deliberately not written here: this file is tracked in git and shared by every checkout, while the origin is per install.
+ 
+-- **Run `tc capabilities` BEFORE concluding a capability is missing — never improvise one.** `tc` is normally on PATH in a launched pane (verbs: `whoami`, `capabilities`, `sessions`, `message`, `control`, `start`, `freshness`, `ports`, `docs`, `rules`, `learnings`) and reports absence honestly; a capability assumed not checked is how sessions fabricate outcomes. If `tc` is missing, check `TANGLECLAW_API`; a renamed install can break PATH. Use the API with verified launch identity. If context is missing or inconsistent, report it and stop identity-dependent actions — absence of both is unavailable context, not proof of being unmanaged. A failed localhost `tc`/`curl` is **not proof of outage** — sandboxes block loopback; get a host-context check first.
++- **Run `tc capabilities` BEFORE concluding a capability is missing — never improvise one.** `tc` is normally on PATH in a launched pane (verbs: `whoami`, `capabilities`, `sessions`, `message`, `control`, `start`, `workload`, `rotation`, `freshness`, `branch`, `ports`, `docs`, `rules`, `learnings`) and reports absence honestly; a capability assumed not checked is how sessions fabricate outcomes. If `tc` is missing, check `TANGLECLAW_API`; a renamed install can break PATH. Use the API with verified launch identity. If context is missing or inconsistent, report it and stop identity-dependent actions — absence of both is unavailable context, not proof of being unmanaged. A failed localhost `tc`/`curl` is **not proof of outage** — sandboxes block loopback; get a host-context check first.
+ 
+ - **Plans are served at a shareable URL.** .tangleclaw/plans/ are served at a shareable URL: GET /api/projects/<projectId>/plans lists each one with the link to hand the operator (tc capabilities shows it with your project id) — hand back that link, never a local file path.
+ 
+@@ -223,6 +223,8 @@ Critic findings.
+ 
+ - **Held or stopped?** A HOLD or STOP from your assignment's authorities is stored by TangleClaw and wins over any earlier go-ahead, even one you read later. `tc control status` shows your lane; acknowledge with `tc control ack <generation>`. While held, TangleClaw refuses its own governed mutations (wrap, commit, push, PR, restart); it cannot block shell `git`/`gh`, so honour the hold there too.
+ 
++- **Report your workload.** Report your workload with `tc workload set <working|waiting-external|blocked|complete> --clearance <safe-to-clear|do-not-clear|unknown> --summary "<one line>"` at dispatch acceptance, each task transition, the start of any external wait (`--wait ci|review|operator|peer|merge|other`), completion, before wrap and before exit, and again before it expires (30 min working, 120 min otherwise). Coordinators read it with `tc sessions`; a lane with no current receipt reads UNKNOWN, never available.
++
+ ## Medusa Switchboard
+ 
+ - TangleClaw runs your listener — do NOT open your own. Context, not a task: participate when a message arrives or when asked.
+diff --git a/FEATURES.md b/FEATURES.md
+index c2962907..f3574b62 100644
+--- a/FEATURES.md
++++ b/FEATURES.md
+@@ -340,6 +340,8 @@ fails any auto-stub section older than 14 days.
+ - **Host inventory** (#1905) — `lib/host-inventory.js`. The one answer to "what name does this machine serve on its overlay network". It holds one `normalizeHostName`, one overlay-DNS probe with a provider registry (Tailscale's `Self.DNSName` is the only entry), a process-wide observation that certificate generation refreshes, and `resolveTailnetHost`: the configured `caddyTailnetHost`, else the detected name, with drift and omission reported. `certHostUnion` (and through it the cert names and the served-Host allowlist) and the operator-link fallback all read it, so a link never names a host the server refuses. A detected name is never written into the Caddy site, because that site needs a gate. `POST /api/setup/generate-cert` reports the inventory. It always unions the mandatory names (`mandatoryCertHosts`), so `hosts` only adds and `removeHosts` cannot drop a canonical name. It reconciles drift only when asked and only with a gate: in direct mode `reconcileTailnet: true` moves the config and the certificate together; in caddy mode `"prepare"` mints a transition certificate and `ingress-cutover.js --tailnet-host` applies the move (see Caddy-mode tailnet move). The gate rule is `caddy.tailnetSiteGated`, which is pinned to the generator's. Tests: `test/host-inventory.test.js`.
+ - **Caddy-mode tailnet move** (#1905) — `lib/tailnet-cutover.js`. The apply phase of moving the canonical tailnet host in caddy mode. `validateTailnetApply` refuses a name that is invalid, not currently observed, unchanged, ungated, or not yet in the certificate (prepare adds it). `strictHealth` is healthy only on HTTP 200 with `status: "ok"`, and for the candidate name it also requires the served certificate to carry it. `verifyTailnetApply` retries until every check is healthy in the same round. `rollbackTailnetApply` restores the Caddyfile, `caddyTailnetHost` and the reload, verifies each, and reports `rolledBack: true` only when all three are proven. `scripts/ingress-cutover.js --tailnet-host` drives it. Tests: `test/tailnet-cutover.test.js`.
+ - **Per-caller project view** (#1739) — `lib/project-view.js`. Decides how much of a project row each caller of the projects API sees. The operator and the verified Project Master get every row whole, a bound project gets its own row whole, and everyone else gets an allowlisted public projection, so a field added later stays hidden by default. Tests: `test/project-view.test.js`.
++- **Medusa exchange tracking** (#1839) — `lib/medusa-exchanges.js`. One ordinary Medusa message to one recipient is an exchange; its facts (sent, arrived, wake, read, ack, reply, close) are append-only and the exchange row is a projection recomputed from them, so racing or out-of-order facts give the same answer. Terminal outcomes are decided inside one `BEGIN IMMEDIATE` transaction. The watchdog's re-arm and escalation rules read this projection.
++- **Tracked Medusa send** (#1839) — `lib/medusa-send.js`. The one path a switchboard send takes: validate the delivery metadata against what the caller can prove, record the intent, call the Hub, then bind its id or record what the Hub answered (undeliverable, or `send_unknown`, never re-sent). Returns `{status, body}` for the route to write.
+ 
+ ## Governance / Engines
+ 
+@@ -457,6 +459,9 @@ fails any auto-stub section older than 14 days.
+ - **Runbook: stand up a multi-agent development fleet** — the operator's tier-2 procedure for provisioning a fleet that develops TangleClaw itself, including the live cutover of `com.tangleclaw.server` (the only step with its own rollback). `docs/runbooks/stand-up-a-new-agent-fleet.md`.
+ - **Codex startupControl adapter** (#1825 B2/B3) — the one registered native-channel adapter: probes the exact Codex executable, starts one detached `codex app-server` per launch on a local unix socket (inheriting the pane's ambient env), rewrites the pane command with `--remote`, records the channel, reads readiness from the protocol, fires `turn/start` with the launch-payload digest, watches the turn to `accepted`/`applied` with a periodic read-back, reconciles indeterminate fires, recovers at boot and reaps ended channels — every process effect behind `_seams`. `lib/startup-control-codex.js`.
+ - **WebSocket client over a unix socket** (#1825 B2) — a dependency-free RFC 6455 client for Codex's app-server: handshake with the accept-key check, masked frames out, all length forms and fragmentation in, ping answered with pong, clean close. `lib/ws-unix-client.js`.
++- **Wrap upstream provenance** (#1868) — `lib/wrap-steps/_upstream-provenance.js`. Says whether each uncommitted file already landed on the upstream default branch, from git content alone: `capture` in `session-files` makes one bounded refresh and records the upstream commit, and `recheck` in the commit step compares against that same commit with no network call, so a stale checkout never re-offers merged work as new.
++- **Generated-file provenance ADR** (#1885) — `docs/adr/0019-generated-file-provenance.md`. Provenance lines on TangleClaw-generated files are opt-in, per-project and ownership-scoped. They describe origin and never imitate or move the `Generated by TangleClaw` ownership marker, which grants write authority.
++- **Session workload receipts ADR** (#1912) — `docs/adr/0020-session-workload-receipts.md`. A session's workload is a launch-bound receipt it asserts, composed fail-closed with what the engine is observed doing, so a coordinator can tell from one read which Builder lanes are free, waiting on CI, or unsafe to clear.
+ 
+ ## CLI / Tooling
+ 
+@@ -773,11 +778,11 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals 
+ - `test/ws-unix-client.test.js` — the unix-socket WebSocket client: handshake accept and refusal, masking, the 7/16/64-bit length forms, ping→pong, fragmented text, close.
+ - `test/host-inventory.test.js` — #1905: the probe on present, absent, malformed, daemon-stopped and invalid Tailscale output; trailing-dot and case normalization; configured, detected, drift and omission resolution; the certificate union stays additive; and the invariant that the cert names, the served-Host allowlist and the operator link name the same host.
+ - `test/tailnet-cutover.test.js` — #1905 Chunk 2: the apply's six refusals, strict health (a 503, a degraded 200, an unreadable body, an error, or the wrong certificate all fail), the retry loop, and a rollback that is `rolledBack` only when every part is proven, with each injected failure reported as a typed residual and recovery. Also the cutover's `--tailnet-host` argument, result fields and ordering, and parity across the cert, allowlist, link and Caddy site before prepare, after prepare, after apply and after a rollback.
+-
+-## TODO (auto-stubbed 2026-09-25)
+-
+-- **TBD** — touched in this session: `lib/wrap-steps/_upstream-provenance.js`. <!-- describe -->
+-- **TBD** — touched in this session: `test/wrap-upstream-provenance.test.js`. <!-- describe -->
+-- **TBD** — touched in this session: `lib/medusa-exchanges.js`. <!-- describe -->
+-- **TBD** — touched in this session: `lib/medusa-send.js`. <!-- describe -->
+-- **TBD** — touched in this session: `test/store-medusa-exchange-migration.test.js`. <!-- describe -->
++- `test/wrap-upstream-provenance.test.js` — #1868 against real repositories with a real bare origin: a stale session checkout's merged plan and an upstream-identical carrier are not offered as new work, and the commit step's recheck uses the recorded upstream commit.
++- `test/store-medusa-exchange-migration.test.js` — #1839 schema v49: a fresh install gets the Medusa exchange tables, a v48 store gains them by migration, and the postcondition refuses to stamp the version over tables that cannot keep an append-only record.
++- `test/medusa-wake-stranded-nudge.test.js` — #1621: `isOwnNudge` matches only a whole switchboard nudge plus its wake ref; the draft gate lets a stranded nudge be replaced (wrapped or single-row) but still refuses operator text, a borderless composer, a missing cursor or a busy turn; and the wake monitor injects a fresh nudge with a new nonce over the stranded one.
++- `test/prime-hook-output.test.js` — #1888: runs the real SessionStart prime hook and pins that its whole output (prime, wrap advisory, and the re-entry preamble on `/clear`) stays within the engine's cap for a maximum Medusa prime, and that the Node composition matches the script byte for byte.
++- `test/inline-handler-args.test.js` — #1384: the shipped `jsArg` encoder and every inline `public/ui.js` handler that takes a name, run as they ship, so a name carrying an apostrophe or quote still reaches its handler intact.
++- `test/port-owner-kind-panel.test.js` — #1768: the ports panel shows which lease owners are marked "Not a project" and can undo the mark.
++- `test/project-tags-shape.test.js` — #1375: a project whose stored tags are a string is normalized by the store on read, and the card formatter checks the shape itself against the production `esc`.
++- `test/session-header-cleanup.test.js` — #1472, #1474-#1476: the session header's ⋯ menu holds the command bar and Peek, two or more groups share one pill, and the settings gear asks for its emoji form.

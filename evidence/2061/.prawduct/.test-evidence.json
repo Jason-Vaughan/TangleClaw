@@ -1,0 +1,23 @@
+{
+  "changes_referenced": [],
+  "changes_unchecked": [
+    "CHANGELOG.md",
+    "lib/checkout-fingerprint.js",
+    "test/checkout-fingerprint.test.js"
+  ],
+  "changes_unjudged": [
+    "CHANGELOG.md",
+    "lib/checkout-fingerprint.js",
+    "test/checkout-fingerprint.test.js"
+  ],
+  "command": "--from-counts passed=187 failed=0 skipped=0",
+  "coverage_level": "referenced",
+  "degraded": "focused run: test/checkout-fingerprint.test.js + coordinator-rotation consumer tests at 620d914e; full suite runs in CI",
+  "duration_seconds": 0.0,
+  "failed": 0,
+  "passed": 187,
+  "skipped": 0,
+  "tests_executed": [],
+  "timestamp": "2026-09-30T15:58:39Z",
+  "verifier": "test-reference-verify (floor: symbol-grep)"
+}

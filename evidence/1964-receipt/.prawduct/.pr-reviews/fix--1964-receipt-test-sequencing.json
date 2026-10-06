@@ -1,0 +1,40 @@
+{
+  "timestamp": "2026-10-04T07:08:55Z",
+  "branch": "fix/1964-receipt-test-sequencing",
+  "base": "origin/main",
+  "pr_number": 2084,
+  "mode": "pr",
+  "model": "claude-opus-5-5",
+  "duration_seconds": 150,
+  "commit_reviewed": "40f7b7eb5848e12e9e4d9aa934f51a85dbf74b52",
+  "commits_reviewed": 4,
+  "files_reviewed": [
+    ".prawduct/change-log.md",
+    "CHANGELOG.md",
+    "test/startup-control-codex.test.js"
+  ],
+  "findings": [
+    {
+      "goal": "Governance Bookkeeping Is Coherent",
+      "severity": "warning",
+      "file": ".prawduct/.test-evidence.json",
+      "line": null,
+      "summary": "Test evidence does not cover the changeset I'm reviewing: `test-status` reports stale (exit 1) at head 40f7b7eb, reason \"no session marker to date the evidence against (2026-10-04T06:06:30Z), and it does not vouch for the current tree\". The base advanced through three merges of origin/main (b6f235cf, 480292b1, 40f7b7eb) after the recorded run, and the caller reports the local full-suite run on this merged tree is still in progress. The caller also reports GitHub CI green on this exact head (run 37184347066); I hold no grant to verify that and it does not change the `test-status` verdict, which is the only freshness signal this check reads. Remedy needs no commit: let the in-progress suite run finish and record it, or accept on the record citing the CI run for this head."
+    },
+    {
+      "goal": "Governance Bookkeeping Is Coherent",
+      "severity": "note",
+      "file": ".prawduct/project-state.yaml",
+      "line": null,
+      "summary": "Backlog reconciliation unavailable \u2014 this repo sets no `backlog_service_repo:`, so there is no cache scope to resolve the cited ids against; R-1 and R-2 are NOT answered for 1964, 2083, 575, 1958, 1969, 1955, 1978. Both checks skipped, not passed. Read by hand, neither the branch's own commit nor its change-log entry carries a `closes:` / `closed-by:` claim (#1964 is cited in titles only), so there is no closure claim for R-2 to contradict; the close of #1964 is owed at merge into `main` (the default branch). Accept."
+    },
+    {
+      "goal": "The Record Matches What Ships",
+      "severity": "note",
+      "file": ".prawduct/change-log.md",
+      "line": 48,
+      "summary": "The new entry's last line (**Evidence.** ...) is followed directly by the next entry's `## 2026-10-04 \u2014 Inline handlers ... (#1902)` heading at line 49 with no blank line between them; every other entry boundary has one. The payload still paired and bounded the entry correctly, so nothing reads it wrong today. Worth accepting, or let a one-line blank ride along with the next commit on this branch if one is being made anyway \u2014 not worth a commit of its own."
+    }
+  ],
+  "summary": "0 blocking, 1 warning, 2 notes. Exact-head re-review of 40f7b7eb5848e12e9e4d9aa934f51a85dbf74b52, read fresh; payload project dir, HEAD and base (origin/main at f97d54eb, which is also the merge-base) all agree with the dispatch prompt. (a) The branch's diff against origin/main is exactly the intended change in both three-dot and two-dot form: test/startup-control-codex.test.js (+16/-10), one CHANGELOG.md line under [Unreleased] > ### Internal, one 11-line .prawduct/change-log.md entry. The merges dropped nothing and duplicated nothing: zero lines of origin/main's CHANGELOG.md or .prawduct/change-log.md are absent from HEAD, each file gains exactly one #1964 entry, there is one [Unreleased] header, and the only repeated CHANGELOG line (the ADR 0011 bullet, twice) is repeated identically on origin/main and is not this branch's doing. (b) No conflict markers in the diff or in any of the three files at HEAD, and no unmerged index entries. The change-log entry and CHANGELOG line describe what the diff ships (test-only, assertions unchanged); tags are type=bugfix, scope=codex-receipt-test-1964, no release= and no retired key. Degraded payload sections, reported as unanswered rather than passed: `work` (no stated scope; scope judged from the commit and the change-log entry, and it is one coherent test-only fix), `build_plan` (no plan resolves for this branch, so the Status-box checks have no subject), `backlog` (see note). Code soundness is the Critic's layer and was not re-derived: the newest Critic fact on disk is an inner-stage chunk review at aa24f20d with 0 findings, which is history, not a verdict on this tree. The one warning is stale local test evidence and can be cleared without a commit."
+}

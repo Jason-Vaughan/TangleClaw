@@ -1,0 +1,8 @@
+## 2026-09-30 — #2020 attempt-1 tooling fixes, Chunk 1
+
+Expected: the four failing event families would split between tooling and candidate behaviour, with the dashboard failure possibly caused by denied egress or WebKit.
+Actual: all four were test-bed gaps, and none needed a candidate change. The README already listed three of them as "target prerequisites Chunk 1 prepares", but nothing ever prepared them.
+Root cause: the soak harness's target contract (the README's prerequisites) was written as prose and never enforced. The seed and guest-setup were built and tested against their own outputs, not against the state the executors read. The first real guest was therefore the first consumer that checked the contract.
+What changed: the new test/soak-repos-attach.test.js drives the real attach and startup sync over the seed and asserts the executors' preconditions. That turns the prose contract into a test at the producer/consumer boundary, and a regression there now fails in CI instead of in a 2-hour guest run.
+Critic: 0 blocking. It caught an opaque refusal: setup reported a bare status while the cause sat in the discarded body. Fixed in the next commit.
+Surprise: the wizard's Skip route refuses a loginless install (ADMIN_REQUIRED). Only Finish with noLogin works, and it also sets projectsDir, which closed setup item (b) for free.

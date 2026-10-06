@@ -1,0 +1,37 @@
+{
+  "timestamp": "2026-10-04T08:11:00Z",
+  "branch": "fix/1946-panel-toggle-focus-main",
+  "base": "origin/main",
+  "pr_number": 2090,
+  "mode": "pr",
+  "model": "claude-opus-5-5",
+  "duration_seconds": 240,
+  "commit_reviewed": "9305d9efa36e430368d6c26bb58823e2d5dd570a",
+  "commits_reviewed": 4,
+  "files_reviewed": [
+    ".prawduct/change-log.md",
+    "CHANGELOG.md",
+    "public/landing.js",
+    "public/ui.js",
+    "test/inline-handler-args.test.js",
+    "test/panel-toggle-rows.test.js",
+    "test/port-owner-kind-panel.test.js"
+  ],
+  "findings": [
+    {
+      "goal": "Governance Bookkeeping Is Coherent",
+      "severity": "warning",
+      "file": ".prawduct/.test-evidence.json",
+      "line": null,
+      "summary": "Test evidence does not cover the changeset I'm reviewing: `test-status` reports `stale (exit 1)`, reason `1 test(s) failing in saved evidence: test::uses a scanner the background poll cannot kill underneath it`. That is a red record, not a pass, and there is no green suite result for head 9305d9ef from any source yet. Per the dispatch (not verified by me; I do not run tests): one earlier full local run had 2 failures, both in files this diff does not touch (`test/projects.test.js`, attributed to #1993, and `test/tmux.test.js` >4KB payload, attributed to #2088); test-status names only the first. GitHub CI was green on the PREVIOUS head 097c78d6 (run 37187385908: 15602 pass, 0 fail, 18 skipped), but this head adds a merge of origin/main (424efee5) that brings in 19 files of main's code and tests, so that run does not vouch for this tree, and CI on 9305d9ef has started and not reported. No fix commit is wanted: wait for CI on exactly 9305d9ef, do not merge until it is green, and describe the local evidence in the PR as red with out-of-diff failures, not as passing."
+    },
+    {
+      "goal": "Governance Bookkeeping Is Coherent",
+      "severity": "note",
+      "file": ".prawduct/change-log.md",
+      "line": 38,
+      "summary": "Backlog reconciliation unavailable — this repo sets no `backlog_service_repo:`, so there is no cache scope to resolve the cited ids against; R-1 and R-2 are NOT answered for 1946, 2080, 2086, 1964, 1972, 1902, 1906 (`prawduct-hook backlog sync --repo <scope>` has no scope to run against until one is configured). Read by hand, the only closure claim on the branch is `Fixes #1946` in commit 4430be6f; the change-log entry carries no `closes:`/`closed-by:` tag. The PR base is the default branch (`main`), so that keyword fires on merge, and #1946 being open now would be correct state with the close owed at merge. Its actual status is unverified. Accept; nothing to change in this bundle."
+    }
+  ],
+  "summary": "0 blocking, 1 warning, 1 note. Fresh read of head 9305d9efa36e430368d6c26bb58823e2d5dd570a: the payload's project dir and HEAD match the dispatch, its base is origin/main as the dispatch says, and HEAD was unchanged at the end of the read; the worktree is clean. (a) Scope: origin/main (424efee5) is itself the merge-base, so the two-dot and three-dot diffs are identical and contain exactly the seven intended files (329 insertions, 17 deletions): public/ui.js, public/landing.js, the three test files, one CHANGELOG.md line under [Unreleased] > Fixed, and .prawduct/change-log.md. (b) Merge integrity: against origin/main CHANGELOG.md is +1/-0 and .prawduct/change-log.md is +25/-0 (the 24-line #1946 entry plus the one blank line 097c78d6 restores between the #1964 and #1902 entries), so nothing origin/main carries was dropped or altered; no change-log heading and no [Unreleased] bullet is duplicated. (c) No conflict markers in CHANGELOG.md, .prawduct/change-log.md, public/ or test/, and `git diff --check` is clean. The merge commit's one in-entry edit is as described (\"14 of the file's tests\" became \"15 of the file's 28 tests\") and is consistent with the file as read: 28 tests (10 from #1906, 18 new), of which the 3 adjacency tests would pass on main's markup and the other 15 need the new functions, attributes or loader calls; I did not run it. The record matches what ships: the entry and the CHANGELOG line account for all seven files, the scope tag is the branch's own with no `release=` or retired key, and the diff is one coherent fix with no debug code, stray files, TODOs, secrets or persisted-format change. NOT a suite pass: see the warning; CI on this head is pending. Unanswered checks, not passed ones: the payload's `work` and `build_plan` sections are degraded (no stated scope, no build plan), so scope was judged from the commits and the issue reference and the Status-box checks had no subject; `backlog` is degraded as noted. The Critic record on disk is the cumulative review at 097c78d6 (1 blocking on the red test evidence, 1 warning that no real-browser or screen-reader pass is recorded, 1 note); it was read as history, its dispositions are not visible to me, and it does not cover the merge commit. Outside this diff, as origin/main carries it: the #2080 change-log entry's last line runs straight into the #1964 heading with no blank line. `pr_number` is carried over from the earlier record; `duration_seconds` is an estimate."
+}

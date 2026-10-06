@@ -1,0 +1,37 @@
+# Project State — TangleClaw (Builder2 checkout)
+#
+# `.prawduct/*` is gitignored (see .gitignore), so this file does NOT travel with
+# a clone: every checkout of Jason-Vaughan/TangleClaw grows its own. This one was
+# created 2026-09-19 because this checkout had none at all, which left the backlog
+# probes reading `backlog_service_repo` as unset and re-proposing a migration that
+# already happened.
+#
+# It is deliberately MINIMAL — not a copy of the primary checkout's state file.
+# Only the facts this checkout was observed to be missing are recorded here; add a
+# key when something here actually needs it, not pre-emptively.
+
+# =============================================================================
+# BACKLOG BACKEND
+# =============================================================================
+
+# The live backlog is GitHub Issues in this same repo. Cutover happened 2026-08-20
+# (MG4) and is already recorded in the tracked audit trail:
+# .prawduct/artifacts/migration-scrub-decisions.md — so this line records an
+# existing fact, it does not perform or authorize a migration.
+#
+# `.prawduct/backlog.md` is FROZEN HISTORY from that date and is not live state.
+# Setting this key retires the markdown-era probes (legacy-backlog-format,
+# backlog-service-migration-required, legacy-section-schema, backlog-overdue-grooming),
+# whose shared premise — "the markdown file IS the live backlog" — stopped being
+# true at cutover.
+backlog_service_repo: Jason-Vaughan/TangleClaw
+
+# =============================================================================
+# TEST INVOCATION
+# =============================================================================
+
+# Canonical suite for `prawduct-hook test-evidence record`. Zero-dep `node --test`
+# project, no pytest — without this the hook falls back to a pytest path that
+# fails and never refreshes evidence.
+test_command: "node --test --test-reporter=junit --test-reporter-destination={junit_xml} test/*.test.js"
+tests_dirs: test

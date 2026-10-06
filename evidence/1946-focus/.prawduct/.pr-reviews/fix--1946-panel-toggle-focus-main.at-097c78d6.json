@@ -1,0 +1,37 @@
+{
+  "timestamp": "2026-10-04T08:05:00Z",
+  "branch": "fix/1946-panel-toggle-focus-main",
+  "base": "origin/main",
+  "pr_number": 2090,
+  "mode": "pr",
+  "model": "claude-opus-5-5",
+  "duration_seconds": 300,
+  "commit_reviewed": "097c78d6bd874f84acc9e597935d8d07aa3b838a",
+  "commits_reviewed": 3,
+  "files_reviewed": [
+    ".prawduct/change-log.md",
+    "CHANGELOG.md",
+    "public/landing.js",
+    "public/ui.js",
+    "test/inline-handler-args.test.js",
+    "test/panel-toggle-rows.test.js",
+    "test/port-owner-kind-panel.test.js"
+  ],
+  "findings": [
+    {
+      "goal": "Governance Bookkeeping Is Coherent",
+      "severity": "warning",
+      "file": ".prawduct/.test-evidence.json",
+      "line": null,
+      "summary": "Test evidence does not cover the changeset as green: `test-status` reports `stale (exit 1)`, reason `1 test(s) failing in saved evidence: test::uses a scanner the background poll cannot kill underneath it`. This is a RED record, not a pass. The dispatch says the one full local run on this tree had 2 failures, both in files this diff does not touch (`test/projects.test.js`, attributed to open issue #1993, and `test/tmux.test.js` >4KB payload, attributed to open issue #2088), and that each file passed alone 3 of 3; the payload's reason names only the first of the two, and I could confirm neither the second failure nor either issue's state (the backlog section is degraded, and I do not run tests). The coordinating Architect has ruled GitHub CI on the exact head 097c78d6 to be the suite gate, and that CI has NOT run yet. No fix commit is wanted for this finding: the remedy is to wait for CI on 097c78d6 and not merge until it is green, and to describe the local evidence in the PR body as red with two out-of-diff failures, not as passing."
+    },
+    {
+      "goal": "Governance Bookkeeping Is Coherent",
+      "severity": "note",
+      "file": ".prawduct/change-log.md",
+      "line": 38,
+      "summary": "Backlog reconciliation unavailable \u2014 this repo sets no `backlog_service_repo:`, so there is no cache scope to resolve the cited ids against; R-1 and R-2 are NOT answered for 1946, 1964, 1972, 1902, 1906 (a `prawduct-hook backlog sync --repo <scope>` cannot help until a scope is configured). R-2 run by hand over the inputs: the only closure claim on the branch is `Fixes #1946` in commit 4430be6f; the change-log entry carries no `closes:`/`closed-by:` tag. The PR base is the default branch (`main`), so that keyword will fire on merge, and #1946 being open now would be correct state with the close owed at merge. Its actual status is unverified. Accept; nothing to change in this bundle."
+    }
+  ],
+  "summary": "0 blocking, 1 warning, 1 note. Tree identity confirmed: payload project dir and HEAD (097c78d6bd874f84acc9e597935d8d07aa3b838a) match the dispatch, base origin/main matches, and HEAD was unchanged at the end of the read. Merge check clean: origin/main (a3e23f1e) is the merge-base, so it is fully contained; against it CHANGELOG.md is +1/-0 and .prawduct/change-log.md is +25/-0 (the 24-line #1946 entry plus the one blank line 097c78d6 restores after the #1964 entry), so no entry origin/main carries was dropped or duplicated in CHANGELOG `[Unreleased]` or the change log, and no conflict markers remain. The record matches what ships: the change-log entry and the CHANGELOG `Fixed` line account for all seven files, the scope tag is the branch's own with no `release=` or retired key, and the diff is one coherent fix with no debug code, stray files, TODOs, secrets or persisted-format change. NOT a suite pass: saved local evidence is red (2 failures outside the diff per the dispatch, 1 named by test-status) and GitHub CI on this head, the ruled gate, has not run. Unanswered checks, not passed ones: the payload's `work` and `build_plan` sections are degraded (no stated scope, no build plan), so scope was judged from the commits and issue reference alone and the Status-box checks had no subject; the `backlog` section is degraded as noted. The Critic record on disk is the superseded earlier review at f97d54eb and was read as history only; the cumulative review of this tree was still running. `timestamp` and `duration_seconds` are estimates (this reviewer has no clock)."
+}

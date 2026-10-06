@@ -1,0 +1,29 @@
+{
+  "changes_referenced": [],
+  "changes_unchecked": [
+    ".prawduct/change-log.md",
+    "CHANGELOG.md",
+    "deploy/soak/README.md",
+    "deploy/soak/guest/guest-setup.sh",
+    "docs/runbooks/soak-install-the-candidate.md",
+    "test/soak-guest.test.js"
+  ],
+  "changes_unjudged": [
+    ".prawduct/change-log.md",
+    "CHANGELOG.md",
+    "deploy/soak/README.md",
+    "deploy/soak/guest/guest-setup.sh",
+    "docs/runbooks/soak-install-the-candidate.md",
+    "test/soak-guest.test.js"
+  ],
+  "command": "--from-counts passed=15557 failed=0 skipped=1",
+  "coverage_level": "referenced",
+  "duration_seconds": 951.0,
+  "evidence_tree": "4b4d85fa94386c1152258292749bac6ca89ec5f2",
+  "failed": 0,
+  "passed": 15557,
+  "skipped": 1,
+  "tests_executed": [],
+  "timestamp": "2026-09-30T16:29:29Z",
+  "verifier": "test-reference-verify (floor: symbol-grep)"
+}
