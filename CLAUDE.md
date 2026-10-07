@@ -249,6 +249,7 @@ Critic findings.
 - The INITIATOR closes an exchange, so a message you do not answer leaves the sender blocked. Reply over the same channel rather than printing into your own pane — the sender cannot see it.
 - If you cannot continue without an answer, send with `"priority": "blocking"` (it needs your launch headers; `tc message send --priority blocking` sends them) so an unanswered message escalates instead of waiting silently. Answer one with `"inReplyTo": "<message-id>"`. A message that needs a reply stays open until you close it with `POST <base>/medusa/exchanges/<exchange-id>/close` (`tc message close`); one that needs none closes when its recipient acknowledges it.
 - The peer route returns the wake monitor's latest reason code for a peer on this host, with its `meaning` (`local: false` for one it cannot see).
+- Reply with `tc message send --in-reply-to <message-id> <workspace-id> "<reply>"` (a raw send carrying `inReplyTo` needs your launch headers, or it is refused), BEFORE you mark the message handled; `tc message owed` lists what you still owe. Never use `/clear` as an acknowledgement.
 
 ## Port Management (PortHub)
 
