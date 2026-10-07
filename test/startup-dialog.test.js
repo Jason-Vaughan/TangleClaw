@@ -183,6 +183,25 @@ describe('what an engine declares (#2128)', () => {
         assert.equal((await startupDialog.watch({ tmuxName: 't', engineProfile: VARIANT })).outcome, 'clear');
       });
 
+      it('a dialog that draws late, after blank and booting frames, is caught before the first send', async () => {
+        // The case an unwatched boot misses: a look at launch sees nothing,
+        // and the dialog arrives after it.
+        const frames = [[], ['  starting…'], ['  starting…'], TRUST_DIALOG];
+        startupDialog._internal.capturePane = async () => ({ lines: frames.length > 1 ? frames.shift() : frames[0], alternateScreen: false });
+        const seen = [];
+        const res = await startupDialog.watch({ tmuxName: 't', engineProfile: VARIANT, answerWindowMs: 4000, onDialog: (d) => seen.push(d.code) });
+        assert.deepEqual(seen, ['trust_required'], 'reported once, when it drew');
+        assert.equal(res.outcome, 'unanswered');
+        assert.notEqual(res.outcome, 'unprofiled');
+      });
+
+      it('a lookalike glyph is not borrowed across commands', () => {
+        const other = { id: 'codex-variant', command: 'codex', capabilities: {} };
+        startupDialog._internal.wakeProfiles = () => ({ claude: { promptGlyph: GLYPH }, codex: { promptGlyph: '›' } });
+        assert.equal(startupDialog.promptSignatureFor(other), null, 'no dialog is declared for that command, so there is nothing to resolve a glyph for');
+        assert.equal(startupDialog.promptSignatureFor({ id: 'x', command: 'claude-next', capabilities: {} }), null, 'a different command is a different program');
+      });
+
       it('its own measured signature wins over the program\'s', () => {
         startupDialog._internal.wakeProfiles = () => ({ claude: { promptGlyph: GLYPH }, 'claude-sonnet-reviewer': { promptGlyph: '›' } });
         assert.equal(startupDialog.promptSignatureFor(VARIANT).promptGlyph, '›');
