@@ -57,18 +57,21 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 | Finding | Severity | State | Detail |
 |---|---|---|---|
-| R-1 | warning | accepted | No live wrap was driven on an install: this checkout is the running server and restarting it is the operator's to authorize. The PR body states the live check is owed, and the #1927 branch stays held until it is done. |
+| R-1 | warning | waived | No live wrap was driven on an install: this checkout is the running server and restarting it is the operator's to authorize. The PR body states the live check is owed, and the #1927 branch stays held until it is done. |
 | R-2 | note | filed | `2160` |
 | R-3 | note | fixed-unreviewed | fixed in `docs/configuration-reference.md` |
-| R-4 | warning | fixed-unreviewed | fixed in `docs/configuration-reference.md` |
+| R-4 | warning | fixed | fixed in `docs/configuration-reference.md` |
 | R-5 | note | filed | `2160` |
 | R-6 | note | filed | `2160` |
-| R-7 | warning | filed | `2155` |
+| R-7 | warning | waived | `2155` |
 | R-8 | note | fixed-unreviewed | fixed in `docs/adr/0002-wrap-pipeline-contract.md` |
 | R-9 | note | accepted | Informational: the cross-check ran against the primary checkout's learnings and found nothing reintroduced. |
 | R-10 | note | accepted | Informational: #2154 is OPEN on GitHub; the backlog cache predates it. |
 
-**10 findings** (3 warning, 7 note) — accepted: 3, filed: 4, fixed-unreviewed: 3.
+**10 findings** (3 warning, 7 note) — accepted: 2, filed: 3, fixed: 1, fixed-unreviewed: 2, waived: 2.
+**3 answered twice** — recorded as both resolved and dispositioned; check which answer is current.
+
+**After the review, on the Architect's ruling on PR #2161.** R-2 was first filed under #2160, and the Architect ruled it belongs in this PR (the table above shows it as fixed): `test/wrap-secret-check.test.js` still carried a case titled for the reversed #1406 rule, built on a hand-made classification `classify` can no longer produce. It is rewritten on a classification `classify` returns, and split in two: a clean left file is still read and reports no match, and a flagged left file is still named in the report. The derived-lists refactor and the stale JSDoc stay in #2160.
 
 ## 2026-10-07 — #1937: advisory is the default recovery mode where the login is in force
 

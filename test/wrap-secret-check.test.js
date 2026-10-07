@@ -426,12 +426,39 @@ describe('check', () => {
     assert.deepEqual(res.undecided.map((f) => f.path), ['CLAUDE.md']);
   });
 
-  it('a Leave on a clean file of the session\'s own changes nothing', () => {
+  // Built by `classify`, not by hand: since #2154 a Leave takes the session's own
+  // file out of `owned` before this check sees it, and a hand-built
+  // `owned: ['a.js']` beside a Leave for `a.js` is a state it cannot produce.
+  const ownership = require('../lib/wrap-steps/_file-ownership');
+  const classifyIn = (repo, paths, decisions) => ownership.classify(
+    { snapshotApplies: true, baseline: { dirty: { paths: [], truncated: false } }, startedAtMs: 0, workToplevel: repo },
+    paths.map((p) => ({ path: p, deleted: false, indexRemoved: false, renamePair: null, newToRepo: false })),
+    { decisions }
+  );
+
+  it('a Leave on a clean file of the session\'s own keeps it out, and the check reports no match for it', () => {
     const repo = makeRepo();
     fs.writeFileSync(path.join(repo, 'a.js'), 'fine\n');
-    const res = secretCheck.check(repo, classification({ owned: ['a.js'], stageable: ['a.js'] }), { 'a.js': 'leave' });
-    assert.deepEqual(res.classified.stageable, ['a.js']);
+    fs.writeFileSync(path.join(repo, 'b.js'), 'also fine\n');
+    const decisions = { 'a.js': 'leave' };
+    const res = secretCheck.check(repo, classifyIn(repo, ['a.js', 'b.js'], decisions), decisions);
+    assert.deepEqual(res.classified.stageable, ['b.js']);
+    assert.deepEqual(res.classified.left, ['a.js']);
     assert.deepEqual(res.undecided, []);
+    assert.equal(res.report.scannedCount, 2, 'the left file is still read');
+    assert.deepEqual(res.report.flagged, []);
+    assert.deepEqual(res.report.left, [], 'left by the operator, but not as a secret match');
+  });
+
+  it('a Leave on a flagged file of the session\'s own keeps it out and the report still names the match', () => {
+    const repo = makeRepo();
+    fs.writeFileSync(path.join(repo, 'a.js'), `key = "${TOKEN}"\n`);
+    const decisions = { 'a.js': 'leave' };
+    const res = secretCheck.check(repo, classifyIn(repo, ['a.js'], decisions), decisions);
+    assert.deepEqual(res.classified.stageable, []);
+    assert.deepEqual(res.undecided, []);
+    assert.deepEqual(res.report.flagged, [{ path: 'a.js', rules: ['github-token'], decision: 'leave' }]);
+    assert.deepEqual(res.report.left, ['a.js']);
   });
 
   it('with no repo root nothing is read and nothing is held back', () => {
