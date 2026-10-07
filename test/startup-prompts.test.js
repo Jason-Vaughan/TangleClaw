@@ -108,7 +108,7 @@ describe('what a launch-time send is refused for (#2177)', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  const refusal = (pane, readiness) => sessions._startupTypingRefusal('t', codex, wakeProfile, readiness, () => ({ lines: [...pane.lines] }));
+  const refusal = (pane, readiness) => sessions._startupTypingRefusal('t', codex, wakeProfile, readiness.ready !== true, () => ({ lines: [...pane.lines] }));
 
   it('resolves the shipped Codex wake profile, so the composer is judged by the real pattern', () => {
     assert.ok(wakeProfile && wakeProfile.promptRe instanceof RegExp);
@@ -146,14 +146,24 @@ describe('what a launch-time send is refused for (#2177)', () => {
   });
 
   it('a pane that cannot be read is refused: nothing is typed on a guess', () => {
-    const r = sessions._startupTypingRefusal('t', codex, wakeProfile, { ready: true }, () => { throw new Error('no server running'); });
+    const r = sessions._startupTypingRefusal('t', codex, wakeProfile, false, () => { throw new Error('no server running'); });
     assert.equal(r.promptId, null);
     assert.match(r.reason, /could not be read, so nothing was typed.*no server running/);
   });
 
+  it('an empty capture is an unread pane, not an empty screen: tmux answers a failed read with no lines', () => {
+    for (const refuseUnrecognised of [true, false]) {
+      for (const cap of [{ lines: [] }, {}, null]) {
+        const r = sessions._startupTypingRefusal('t', codex, wakeProfile, refuseUnrecognised, () => cap);
+        assert.equal(r.promptId, null);
+        assert.match(r.reason, /could not be read, so nothing was typed.*came back empty/);
+      }
+    }
+  });
+
   it('an engine that declares no startup prompts is not asked, and its pane is not read', () => {
     let reads = 0;
-    const r = sessions._startupTypingRefusal('t', { id: 'aider', launch: {} }, null, { ready: false }, () => { reads++; return { lines: [] }; });
+    const r = sessions._startupTypingRefusal('t', { id: 'aider', launch: {} }, null, true, () => { reads++; return { lines: [] }; });
     assert.equal(r, null);
     assert.equal(reads, 0);
   });

@@ -207,7 +207,8 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
     });
 
     it('the prime is not pasted when the pane cannot be read', async () => {
-      tmux.capturePane = () => { throw new Error('no server running'); };
+      // What `tmux.capturePane` really answers when `tmux capture-pane` fails.
+      tmux.capturePane = () => ({ lines: [], alternateScreen: false });
       sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, DECLARING, 'the prime', null, false, { ...DELIVERY }, LEGACY);
       await settle();
 
@@ -228,7 +229,7 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
     });
 
     it('a preKey is withheld when the pane cannot be read', async () => {
-      tmux.capturePane = () => { throw new Error('no server running'); };
+      tmux.capturePane = () => ({ lines: [], alternateScreen: false });
       sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, DECLARING_WITH_PREKEYS, null, null, false, null, LEGACY);
       await new Promise((resolve) => setTimeout(resolve, 650));
       assert.deepEqual(rawKeys, []);
