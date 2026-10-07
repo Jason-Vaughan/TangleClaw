@@ -51,6 +51,25 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 **Answers per wrap.** The page's first request of a wrap carries no path answers and resets what it holds; the server keeps a run's options only for a Retry of that run. Pinned by an executed test of `confirmWrap`.
 
+**Review.** Cumulative Critic on `4378e25d6`: 0 blocking. The API reference row and the ADR's rejected alternative were fixed in a docs-only commit. No wrap was driven on a live install; that check is owed and the PR says so.
+
+**rev-20261007T154444Z-116f5137** — 2026-10-07T15:47:18Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | No live wrap was driven on an install: this checkout is the running server and restarting it is the operator's to authorize. The PR body states the live check is owed, and the #1927 branch stays held until it is done. |
+| R-2 | note | filed | `2160` |
+| R-3 | note | fixed-unreviewed | fixed in `docs/configuration-reference.md` |
+| R-4 | warning | fixed-unreviewed | fixed in `docs/configuration-reference.md` |
+| R-5 | note | filed | `2160` |
+| R-6 | note | filed | `2160` |
+| R-7 | warning | filed | `2155` |
+| R-8 | note | fixed-unreviewed | fixed in `docs/adr/0002-wrap-pipeline-contract.md` |
+| R-9 | note | accepted | Informational: the cross-check ran against the primary checkout's learnings and found nothing reintroduced. |
+| R-10 | note | accepted | Informational: #2154 is OPEN on GitHub; the backlog cache predates it. |
+
+**10 findings** (3 warning, 7 note) — accepted: 3, filed: 4, fixed-unreviewed: 3.
+
 ## 2026-10-07 — #1937: advisory is the default recovery mode where the login is in force
 
 <!-- prawduct: type=feature | scope=1937-default-flip -->

@@ -826,5 +826,11 @@ Architect ruling, message 44f1a715 (Q1 option a, Q2, Q3):
   holds, and the server keeps a run's options only for a Retry of that run. A stale Leave must not
   keep a later session's work out of its commit.
 
+**Alternative rejected:** binding a Leave only where `session-files` had asked about the path in this
+run. It kept the #1406 rule for a path never asked about, at the cost of passing the asked set from
+step to step, of still dropping an explicit answer silently on the other route, and of failing open
+when `session-files` did not run in the attempt.
+
 **Not established:** which route the #1927 wrap took. The server log for that window had rotated and
-no step records the answers a wrap ran with. The ruling closes both routes.
+no step records the answers a wrap ran with. The ruling closes both routes. Recording a wrap's
+answers is tracked as #2155.
