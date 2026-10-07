@@ -116,11 +116,32 @@ From a pane: `tc message send --priority blocking --reason awaiting-ruling <work
 - **A reply-required message stays open until a reply arrives.** An
   acknowledgement from the dashboard or an unverified caller never satisfies
   it, so a sender is never told the agent answered when it did not.
-- **Replying:** send with `inReplyTo`.
+- **Replying:** send with `inReplyTo`. A reply must carry the sender's
+  launch headers, or it is refused with `EXCHANGE_BINDING_REQUIRED`;
+  `tc message send --in-reply-to <message-id> <workspace-id> "<reply>"` sends
+  them. **Reply before acknowledging** (#1976). For a message that needs no
+  reply, the acknowledgement closes the exchange. For one that does, an
+  acknowledgement with no reply leaves the sender waiting. The wake nudge, the
+  prime and the engine config all state this order. The nudge and the
+  engine config also say never to use `/clear` as an acknowledgement.
+  The Project Master's nudge states the same order with its raw routes only
+  (`POST <base>/send`, then `POST <base>/read`): `tc message` needs a project
+  identity, which the Master does not have. Every nudge is built to stay
+  under 800 characters, wake reference included: Claude Code shows a longer
+  paste as `[Pasted text #N]`, and a nudge that collapses that way cannot be
+  recognised if its Enter is lost. The project nudge therefore names its API
+  base once, with `GET /messages`, `POST /send` and `POST /read` relative to
+  it, and is held to 750 characters for the longest name `validateName`
+  accepts. A name registered without that check (#2180) is not covered.
 - **Closing:** the original sender closes an exchange with
   `POST <base>/medusa/exchanges/<exchange-id>/close` (`tc message close`).
 - **Listing:** `GET <base>/medusa/exchanges?direction=sent|received&open=1`
-  lists them without bodies, and `tc message sent` shows the sender's open ones.
+  lists them without bodies. `tc message sent` shows the sender's open ones, and
+  `tc message owed` shows the recipient what it still owes: replies first, then
+  messages not yet handled. An `untracked` exchange (one this host cannot
+  supervise) is counted aloud but never listed as owed, because its state
+  cannot show whether it was handled. A send still in flight is not listed,
+  and a full 200-row page is reported as possibly incomplete.
 
 ## Wakes and re-arms
 

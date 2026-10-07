@@ -505,12 +505,16 @@ describe('medusa-wake — nudge injection', () => {
     assert.ok(!cmd.includes('EVIL'), 'inbound text must not reach the pane');
     assert.ok(!cmd.includes('\n'), 'nudge must be a single line');
     assert.match(cmd, /\[TangleClaw Switchboard\]/);
-    assert.match(cmd, /GET \/api\/sessions\/proj-a\/medusa\/messages/);
-    assert.match(cmd, /POST \/api\/sessions\/proj-a\/medusa\/read/);
+    // The project form names its verbs through `tc` and the API base once
+    // (#1976): every further mention of the base costs the encoded project
+    // name again against the composer's verbatim-paste limit.
+    assert.match(cmd, /tc message read/);
+    assert.match(cmd, /tc message ack <message-id>/);
+    assert.match(cmd, /API at \S+\/api\/sessions\/proj-a\/medusa: GET \/messages, POST \/send \(inReplyTo \+ launch headers\), POST \/read\./);
   });
 
-  it('URL-encodes the project name in the nudge paths', () => {
-    assert.match(wake._nudgeLine('My Proj', 2), /\/api\/sessions\/My%20Proj\/medusa\/messages/);
+  it('URL-encodes the project name in the nudge path', () => {
+    assert.match(wake._nudgeLine('My Proj', 2), /\/api\/sessions\/My%20Proj\/medusa: GET \/messages/);
   });
 
   it('watermark keys off the production row shape: inner `id` primary, envelope `messageId` honored, length fallback', () => {
@@ -964,10 +968,79 @@ describe('medusa-wake — the Project Master is scanned like any session (#996)'
     // never named the send path. The reply obligation lived only in the prime,
     // read at session start and subject to compaction, while the nudge is what
     // is actually in front of the model at the moment it acts.
+    // The reply path a project session is given is now `tc message send`, which
+    // carries its launch headers (#1976). The raw reply route stays, named once
+    // relative to the one API base, with what a raw reply must carry.
     const line = wake._nudgeLineFor('/api/sessions/p/medusa', 1, 'http://localhost:3102');
-    assert.match(line, /POST \/api\/sessions\/p\/medusa\/send/);
+    assert.match(line, /tc message send --in-reply-to <message-id> <sender-workspace-id> "<reply>"/);
+    assert.match(line, /API at http:\/\/localhost:3102\/api\/sessions\/p\/medusa: GET \/messages, POST \/send \(inReplyTo \+ launch headers\), POST \/read\./);
+    assert.equal(line.split('/api/sessions/p/medusa').length - 1, 1, 'the base is named once');
     assert.match(line, /initiator closes the exchange/);
     assert.ok(!line.includes('\n'), 'still one line');
+  });
+
+  it('names the reply path that works, before the ack (#1976)', () => {
+    // The nudge said mark handled, then reply with a raw POST /send. A raw send
+    // carrying inReplyTo without the launch headers is refused
+    // (EXCHANGE_BINDING_REQUIRED), and one sent without inReplyTo records no
+    // reply, so following the nudge left the initiator blocked either way.
+    const line = wake._nudgeLineFor('/api/sessions/p/medusa', 1, 'http://localhost:3102');
+    assert.match(line, /tc message send --in-reply-to <message-id>/);
+    assert.match(line, /launch headers/, 'the raw path names what it needs');
+    assert.match(line, /tc message ack <message-id>/);
+    assert.ok(line.indexOf('--in-reply-to') < line.indexOf('tc message ack'), 'reply comes before the ack');
+    assert.match(line, /tc message owed/);
+    assert.match(line, /Never use \/clear as an acknowledgement/);
+    assert.ok(!line.includes('\n'), 'still one line');
+  });
+
+  it('stays well under the composer\'s verbatim-paste limit for the longest valid project names (#1976)', () => {
+    // Claude Code shows a paste of up to COMPOSER_VERBATIM_MAX characters as
+    // typed and anything longer as `[Pasted text #N]`. A nudge whose Enter is
+    // lost is recognised by reading the composer back, so a collapsed nudge is
+    // never recognised and the session's wakes stop until the exchange
+    // escalates. The base carries the URL-encoded name, and a space encodes to
+    // three characters, so space-heavy names are the long ones.
+    const { validateName } = require('../lib/projects');
+    const wakeTransports = require('../lib/wake-transports');
+    const BOUND = 750;
+    assert.ok(BOUND <= wake.COMPOSER_VERBATIM_MAX - 50, 'the bound keeps a margin under the measured limit');
+    assert.equal(validateName('x'.repeat(65)).valid, false, 'no valid name is longer than 64');
+    const project = (name) => {
+      assert.equal(validateName(name).valid, true, `"${name.slice(0, 8)}…" must be a name the registry accepts`);
+      return `/api/sessions/${encodeURIComponent(name)}/medusa`;
+    };
+    const cases = [
+      ['a letter, 62 spaces, a letter', project(`a${' '.repeat(62)}b`), 999, 'https://localhost:3102'],
+      ['64 plain characters', project('x'.repeat(64)), 999, 'https://localhost:3102'],
+      ['64 spaces, the longest origin and count', project(' '.repeat(64)), 99999, 'https://localhost:65535'],
+      ['the Master', require('../lib/master').MASTER_MEDUSA_API_BASE, 99999, 'https://localhost:65535']
+    ];
+    for (const [label, base, unread, origin] of cases) {
+      const line = wakeTransports.withNonce(wake._nudgeLineFor(base, unread, origin), '0123456789ab');
+      assert.ok(line.length <= BOUND, `${label}: the whole nudge is ${line.length} characters, over ${BOUND}`);
+      assert.equal(wake.isOwnNudge(line), true, `${label}: still recognised as our own nudge`);
+    }
+  });
+
+  it('gives the Project Master only the raw routes: no tc message command (#1976)', () => {
+    // `tc message` resolves a project name and the Master has none, so every
+    // `tc message` command refuses in its pane. A Master nudge that named them
+    // would leave it only the raw ack, which is the ack-without-reply the
+    // project wording exists to stop.
+    const base = require('../lib/master').MASTER_MEDUSA_API_BASE;
+    const line = wake._nudgeLineFor(base, 2, 'http://localhost:3102');
+    assert.doesNotMatch(line, /tc message/, 'no tc message command reaches the Master');
+    assert.doesNotMatch(line, /launch headers|inReplyTo|in-reply-to/, 'nor the project-only reply carrier');
+    assert.match(line, /POST \/api\/master\/medusa\/send \{"to":"<sender-workspace-id>","message":"<reply>"\}/);
+    assert.match(line, /POST \/api\/master\/medusa\/read \{"ids":\[\.\.\.\]\}/);
+    assert.ok(line.indexOf('/medusa/send') < line.indexOf('/medusa/read'), 'reply comes before the ack');
+    assert.match(line, /BEFORE marking it handled/);
+    assert.match(line, /initiator closes the exchange/);
+    assert.match(line, /Never use \/clear as an acknowledgement/);
+    assert.ok(!line.includes('\n'), 'still one line');
+    // The base picks the form, so a project session never gets the Master's.
+    assert.match(wake._nudgeLineFor('/api/sessions/master/medusa', 2, 'http://localhost:3102'), /tc message send --in-reply-to/);
   });
 
   it('states the API origin outright instead of pointing at a guide (#1020)', () => {

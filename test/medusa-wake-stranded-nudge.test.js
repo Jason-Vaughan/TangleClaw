@@ -88,8 +88,24 @@ describe('isOwnNudge — the composer holds only the switchboard\'s nudge (#1621
     assert.equal(wake.isOwnNudge(`${line} (wake ref a1b2c3d4e5f6a1)`), false, 'a longer ref is not a nonce');
   });
 
-  it('refuses a nudge whose three paths disagree', () => {
-    const tampered = strandedNudge().replace('/api/sessions/proj-a/medusa/send', '/api/sessions/other/medusa/send');
+  it('refuses one form\'s wording carrying the other form\'s base', () => {
+    // Each form is matched only with its own kind of base: the monitor cannot
+    // produce the project wording for the Master, or the Master's for a project.
+    const project = wake._nudgeLineFor('/api/sessions/proj-a/medusa', 1, 'http://localhost:3102');
+    const master = wake._nudgeLineFor('/api/master/medusa', 1, 'http://localhost:3102');
+    assert.notEqual(project.replace(/\/api\/sessions\/proj-a\/medusa/g, ''), master.replace(/\/api\/master\/medusa/g, ''), 'the two forms differ');
+    const crossed = (line, from, to) => wakeTransports.withNonce(line.split(from).join(to), 'a1b2c3d4e5f6');
+    assert.equal(wake.isOwnNudge(crossed(project, '/api/sessions/proj-a/medusa', '/api/master/medusa')), false);
+    assert.equal(wake.isOwnNudge(crossed(master, '/api/master/medusa', '/api/sessions/proj-a/medusa')), false);
+  });
+
+  it('refuses a nudge whose paths disagree', () => {
+    // Only the Master's form names its base more than once; the project form
+    // names it once, to stay under the composer's verbatim-paste limit.
+    const master = wakeTransports.withNonce(wake._nudgeLineFor('/api/master/medusa', 1, 'http://localhost:3102'), 'a1b2c3d4e5f6');
+    assert.equal(wake.isOwnNudge(master), true);
+    const tampered = master.replace('/api/master/medusa/send', '/api/sessions/other/medusa/send');
+    assert.notEqual(tampered, master);
     assert.equal(wake.isOwnNudge(tampered), false);
   });
 
