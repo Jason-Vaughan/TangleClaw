@@ -66,6 +66,19 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 **Normal-launch latency, measured.** In a trusted scratch repo at load average 31 to 33, Claude Code drew nothing for 16.6 s and 21.2 s, and the watch called the prompt settled 0.6 s after it first appeared (three watched runs: 18.2 s, 19.5 s, 23.4 s). So the wait is the engine's own boot plus one settle tick; the old path pasted at 2 s into a pane that had drawn nothing. The watch reads through the non-blocking pane reader, because one synchronous read cost 120 to 170 ms at that load.
 
 **Found in the same log.** Those launches ran on `claude-sonnet-reviewer`, an operator-made profile for the `claude` command that exists only in `~/.tangleclaw/engines`. The bundled-profile sync never updates it, so a declaration read per profile would have left the reported launches unprotected. A profile with no list of its own now takes the dialogs declared for the command it runs.
+## 2026-10-07 — #2059: version-qualified Codex pane fixtures and pinned refusals
+
+<!-- prawduct: type=debt | scope=2059-codex-wake-fixtures -->
+
+#2059, first of three chunks under Architect ruling A104 (PM lease C1). Test-only: no file under `lib/` or `data/` changed.
+
+**What landed.** `test/fixtures/codex-panes/codex-<version>.json` for codex-cli 0.156.1, 0.159.0 and 0.161.0: whole panes read off a private tmux server (throwaway `CODEX_HOME`, fake key, neutral project path), trailing whitespace dropped and nothing else. One pane ran in a second folder: the 0.161.0 folder-trust prompt, because 0.161.0 showed no prompt in the non-git folder the rest used; the fixture says so in its `note`. `test/_wake-fixtures.js` loads them into `CODEX_FIXTURE_SETS` beside the hand-excerpted 0.155.1 set. `test/medusa-wake-codex-fixtures.test.js` adds them to the per-version matrix and adds two blocks: what refuses a pane when no channel has spoken, and which captured versions the profile's `verifiedVersions` gives a channel to.
+
+**Why whole panes.** The 0.155.1 set is three-row excerpts. The state #2059 turned on is one an excerpt would not have kept: the screen Codex opens with draws the empty composer before the folder-trust or update prompt replaces it. It was captured on all three versions, 0.156.1 included (about three seconds there, from one timed run).
+
+**The cell recorded as known unsafe (not a safety pass; Architect A108/A109).** `KNOWN_UNSAFE_IF_CHANNEL_IDLE` names the opening screen: with a fresh idle from the channel the pane gate types into it, because the at-rest marker is the only thing that refuses that screen and a fresh idle excuses exactly that marker. Whether the channel can answer idle while that screen is up is a question for a live channel probe, not a fixture, and it applies to the verified 0.156.1 as much as to the unverified versions. Reported to the PM and Architect; closing it belongs to the later chunks.
+
+**Not covered.** A real model turn (the busy panes are a fake key's first second before its 401), approval prompts, the 0.159+ agent views, and anything about the app-server protocol.
 ## 2026-09-27 — Sessions reply to Medusa messages in a way that works, and can list what they owe (#1976, Chunk 01)
 
 <!-- prawduct: type=bugfix | scope=medusa-owed-replies -->

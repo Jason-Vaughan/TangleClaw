@@ -18,10 +18,17 @@
  * channel's answers are TangleClaw's own normalized shape
  * (`lib/startup-control.js` `observeActivity`), not Codex wire bytes, so they
  * carry no Codex version: the app-server protocol is not proven here either.
+ *
+ * A captured version is not a supported one. The sets for 0.159.0 and 0.161.0
+ * exist to pin what the gate REFUSES on them (#2059); whether a session of
+ * such a version may be woken at all is decided by the engine profile's
+ * verified versions, which the last block here reads.
  */
 
 const { describe, it, beforeEach, afterEach, after } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const fixtures = require('./_wake-fixtures');
 const { setLevel } = require('../lib/logger');
 const { useThrowawayStore } = require('./_engine-store');
@@ -36,7 +43,7 @@ const wake = require('../lib/medusa-wake');
 const { CODEX_FIXTURE_SETS } = fixtures;
 
 /** The codex-cli versions with captured fixtures. Every other version is unproven. */
-const PROVEN_CLI_VERSIONS = ['0.155.1'];
+const PROVEN_CLI_VERSIONS = ['0.155.1', '0.156.1', '0.159.0', '0.161.0'];
 
 const PROVENANCE = ['live-capture', 'derived'];
 
@@ -76,8 +83,37 @@ const ON_FRESH_IDLE = {
   quotedProse: null,
   busy: 'pane-turn-in-flight',
   dialog: 'pane-no-prompt',
-  typing: 'pane-no-prompt'
+  typing: 'pane-no-prompt',
+  // A status line without the run-state item never draws the at-rest marker;
+  // the channel's idle answer is what stands in for it.
+  idleDefaultLayout: null,
+  idleRunState: null,
+  busyDefaultLayout: 'pane-turn-in-flight',
+  busyRunState: 'pane-turn-in-flight',
+  trustDialog: 'pane-no-prompt',
+  updateDialog: 'pane-no-prompt'
 };
+
+/**
+ * KNOWN UNSAFE IF THE CHANNEL ANSWERS IDLE. Live panes the pane gate does NOT
+ * refuse on a fresh idle from the channel, although nothing may be typed into
+ * them. An entry here records a hole, not a safety property, and a green test
+ * over it proves only that the hole is still there.
+ *
+ * Codex draws its empty composer on the screen it opens with, before the
+ * folder-trust or update prompt replaces it: no busy marker, a bare prompt, a
+ * still transcript. Only the missing at-rest marker refuses that screen, and a
+ * fresh idle from the channel excuses exactly that marker. So the one thing
+ * keeping a nudge out of it is the channel not answering idle while it is up.
+ * Nothing proves that it cannot, on any version here, the verified one
+ * included, and no fixture could: it is a question about a live channel.
+ *
+ * An empty composer cannot be the refusal either, because a usable session
+ * shows the same one. Closing this needs a positive sign that the TUI is
+ * ready. When that exists, the pane moves to `ON_FRESH_IDLE` with its hold
+ * and this list empties.
+ */
+const KNOWN_UNSAFE_IF_CHANNEL_IDLE = ['startScreen'];
 
 /**
  * Cells this file does not prove: a fresh idle from the channel against a pane
@@ -253,6 +289,17 @@ describe('the wake gate over every Codex engine state, per captured version (#20
         // A pane nobody observed cannot prove what the gate does with a real
         // one, so its fresh-idle cell is not asserted: see UNPROVEN_ON_FRESH_IDLE.
         if (pane.provenance !== 'live-capture') continue;
+        if (KNOWN_UNSAFE_IF_CHANNEL_IDLE.includes(paneName)) {
+          it(`KNOWN UNSAFE IF CHANNEL IDLE: ${paneName} pane, channel idle: the pane gate does not refuse it and a nudge is typed`, async () => {
+            const out = await judge(pane.lines, CHANNEL_ANSWERS.idle);
+            // `injected: 1` DOCUMENTS what the gate does today when handed an
+            // idle answer over this pane. It is not acceptance of that
+            // behaviour, and it is not evidence that a live channel can answer
+            // idle while Codex is still starting: the answer here is a stub.
+            assert.deepEqual(out, { injected: 1, held: null }, 'if this now holds, the hole is closed: move the pane to ON_FRESH_IDLE');
+          });
+          continue;
+        }
         const expected = ON_FRESH_IDLE[paneName];
         it(`${paneName} pane, channel idle: ${expected === null ? 'nudged once' : `held as ${expected}`}`, async () => {
           assert.ok(paneName in ON_FRESH_IDLE, 'a new live pane needs an expected outcome here');
@@ -262,4 +309,140 @@ describe('the wake gate over every Codex engine state, per captured version (#20
       }
     });
   }
+});
+
+/** Every live pane of every set, as `[version, name, lines]`. */
+const LIVE_PANES = CODEX_FIXTURE_SETS.flatMap((set) => Object.entries(set.panes)
+  .filter(([, pane]) => pane.provenance === 'live-capture')
+  .map(([name, pane]) => [set.cliVersion, name, pane.lines]));
+
+/**
+ * The pane gate's own verdict, with no channel involved.
+ * @param {string[]} lines - Pane lines
+ * @param {object} profile - Wake profile
+ * @returns {string} `idle`, or the refusal reason
+ */
+function paneVerdict(lines, profile) {
+  const verdict = wake._assessPane(lines, profile, null, false);
+  return verdict.idle ? 'idle' : verdict.reason;
+}
+
+describe('what refuses a Codex pane when no channel has spoken (#2059)', () => {
+  const shipped = () => wake.ENGINE_WAKE_PROFILES.codex;
+  /** The rule #2059 asked for: the same profile with no at-rest marker. */
+  const markerless = () => ({ ...shipped(), idleMarker: null });
+
+  it('the start screen is captured for every version it was seen on', () => {
+    const withStart = CODEX_FIXTURE_SETS.filter((set) => 'startScreen' in set.panes).map((set) => set.cliVersion);
+    assert.deepEqual(withStart, ['0.156.1', '0.159.0', '0.161.0']);
+  });
+
+  for (const [version, , lines] of LIVE_PANES.filter(([, name]) => name === 'startScreen')) {
+    it(`codex-cli ${version}: the start screen is not at rest under the shipped profile`, () => {
+      assert.equal(paneVerdict(lines, shipped()), 'not-at-rest');
+    });
+  }
+
+  it('the shipped Codex profile keeps a positive at-rest marker', () => {
+    assert.equal(typeof shipped().idleMarker, 'string');
+    assert.ok(shipped().idleMarker.length > 0);
+  });
+
+  /**
+   * What the pane gate would say of each live pane if no at-rest marker were
+   * required. Every live pane name has an entry, so a new pane cannot go
+   * unjudged. `idle` on `startScreen` is the case a markerless rule gets
+   * wrong; every other `idle` is a pane that really is at rest.
+   */
+  const WITHOUT_A_MARKER = {
+    idle: 'idle',
+    idleWithNeighbour: 'idle',
+    clippedStatusRow: 'idle',
+    quotedProse: 'idle',
+    idleDefaultLayout: 'idle',
+    idleRunState: 'idle',
+    startScreen: 'idle',
+    busy: 'turn-in-flight',
+    busyDefaultLayout: 'turn-in-flight',
+    busyRunState: 'turn-in-flight',
+    dialog: 'no-prompt',
+    trustDialog: 'no-prompt',
+    updateDialog: 'no-prompt',
+    typing: 'no-prompt'
+  };
+
+  for (const [version, name, lines] of LIVE_PANES) {
+    const expected = WITHOUT_A_MARKER[name];
+    it(`codex-cli ${version}: with no at-rest marker required, ${name} reads ${expected}`, () => {
+      assert.ok(name in WITHOUT_A_MARKER, 'a new live pane needs an expected verdict here');
+      assert.equal(paneVerdict(lines, markerless()), expected);
+      // A pane refused without the marker is refused with it too.
+      if (expected !== 'idle') assert.notEqual(paneVerdict(lines, shipped()), 'idle');
+    });
+  }
+
+  for (const [version, name, lines] of LIVE_PANES.filter(([, name]) => name === 'idleDefaultLayout')) {
+    it(`codex-cli ${version}: at rest with Codex's default status line is held as not-at-rest`, () => {
+      assert.equal(paneVerdict(lines, shipped()), 'not-at-rest', `${name} draws no run-state item`);
+    });
+  }
+
+  for (const [version, , lines] of LIVE_PANES.filter(([, name]) => name === 'idleRunState')) {
+    it(`codex-cli ${version}: at rest with the run-state item shown reads idle`, () => {
+      assert.equal(paneVerdict(lines, shipped()), 'idle');
+    });
+  }
+});
+
+describe('a captured Codex version is woken only if the profile verified it (#2059)', () => {
+  const startupControl = require('../lib/startup-control');
+  const profile = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));
+  const verified = profile.capabilities.startupControl.verifiedVersions;
+
+  /**
+   * Resolve the Codex startup channel as if `version` were installed.
+   * @param {string} version - codex-cli version
+   * @returns {{supported: boolean, reasonCode: (string|null)}}
+   */
+  function resolveAt(version) {
+    const adapters = { codex: { installedVersion: () => version, observeActivity: () => null } };
+    return startupControl.resolve(profile, adapters, 'codex');
+  }
+
+  it('the captured versions split into verified and not, and both kinds are present', () => {
+    const captured = CODEX_FIXTURE_SETS.map((set) => set.cliVersion);
+    assert.ok(captured.some((version) => verified.includes(version)), 'a verified version is captured');
+    assert.ok(captured.some((version) => !verified.includes(version)), 'an unverified version is captured');
+  });
+
+  for (const set of CODEX_FIXTURE_SETS) {
+    if (verified.includes(set.cliVersion)) {
+      it(`codex-cli ${set.cliVersion} is verified: its launch gets a channel`, () => {
+        const out = resolveAt(set.cliVersion);
+        assert.equal(out.supported, true);
+        assert.equal(out.reasonCode, null);
+      });
+      continue;
+    }
+    it(`codex-cli ${set.cliVersion} is not verified: its launch gets no channel`, () => {
+      const out = resolveAt(set.cliVersion);
+      assert.equal(out.supported, false);
+      assert.equal(out.reasonCode, 'version_unverified');
+    });
+
+    it(`codex-cli ${set.cliVersion}: an unverified version is still an engine judged by its channel`, () => {
+      const adapters = { codex: { installedVersion: () => set.cliVersion, observeActivity: () => null } };
+      assert.equal(startupControl.declaresObserver('codex', () => profile, adapters), true);
+    });
+  }
+
+  // What the gate then does with such a session is the `absent` row of the
+  // matrix above: held as engine-channel-absent on every pane of every set.
+});
+
+describe('the known-unsafe list is exactly the opening screen (#2059)', () => {
+  it('names nothing else, so a second hole cannot be added quietly', () => {
+    assert.deepEqual(KNOWN_UNSAFE_IF_CHANNEL_IDLE, ['startScreen']);
+    for (const name of KNOWN_UNSAFE_IF_CHANNEL_IDLE) assert.ok(!(name in ON_FRESH_IDLE), `${name} has no hold to mistake for a refusal`);
+  });
 });

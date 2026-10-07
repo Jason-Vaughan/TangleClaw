@@ -11,6 +11,9 @@
  * shape production never renders.
  */
 
+const fs = require('node:fs');
+const path = require('node:path');
+
 // ── Claude pane fixtures (from the 2026-07-11 live spike captures) ──
 
 /** An idle Claude Code pane: bare prompt, no busy marker. */
@@ -165,7 +168,32 @@ const CX_TYPING_PANE = [
  *
  * To cover another version, capture its panes live and add a set. Do not copy
  * a set under a new version number.
+ *
+ * The 0.155.1 set is rows excerpted by hand into the constants above. Later
+ * sets are whole panes, one JSON file per version under
+ * `test/fixtures/codex-panes/`: every visible row as tmux returned it, with
+ * trailing spaces and trailing empty rows dropped and nothing else changed.
+ * A whole pane keeps the rows an excerpt would have judged unimportant, which
+ * is where a release moves things (#2059: a start screen that draws an empty
+ * composer before any prompt).
  */
+
+/**
+ * Read one captured Codex fixture set and freeze it.
+ * @param {string} cliVersion - Exact codex-cli version the file is named for.
+ * @returns {object} The frozen set, shaped like the inline one.
+ */
+function loadCodexSet(cliVersion) {
+  const file = path.join(__dirname, 'fixtures', 'codex-panes', `codex-${cliVersion}.json`);
+  const set = JSON.parse(fs.readFileSync(file, 'utf8'));
+  for (const pane of Object.values(set.panes)) {
+    Object.freeze(pane.lines);
+    Object.freeze(pane);
+  }
+  Object.freeze(set.panes);
+  return Object.freeze(set);
+}
+
 const CODEX_FIXTURE_SETS = Object.freeze([
   Object.freeze({
     engine: 'codex',
@@ -181,7 +209,10 @@ const CODEX_FIXTURE_SETS = Object.freeze([
       dialog: Object.freeze({ lines: CX_DIALOG_PANE, provenance: 'live-capture' }),
       typing: Object.freeze({ lines: CX_TYPING_PANE, provenance: 'live-capture' })
     })
-  })
+  }),
+  loadCodexSet('0.156.1'),
+  loadCodexSet('0.159.0'),
+  loadCodexSet('0.161.0')
 ]);
 
 module.exports = {
