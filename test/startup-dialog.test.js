@@ -397,13 +397,13 @@ describe('the session keeps its blocker (#2128)', () => {
 
   describe('in the store', () => {
     it('schema: a fresh store has the column, and this is the version that added it', () => {
-      assert.ok(store.CURRENT_SCHEMA_VERSION >= 56);
+      assert.ok(store.CURRENT_SCHEMA_VERSION >= 57);
       const cols = store.getDb().prepare('PRAGMA table_info(sessions)').all().map((c) => c.name);
       assert.ok(cols.includes('launch_blocker'));
     });
 
     it('an upgraded store gains the column and keeps its sessions', () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-startup-dialog-v55-'));
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-startup-dialog-v56-'));
       try {
         store.close();
         store._setBasePath(dir);
@@ -414,7 +414,7 @@ describe('the session keeps its blocker (#2128)', () => {
         const db = new DatabaseSync(path.join(dir, 'tangleclaw.db'));
         db.exec('ALTER TABLE sessions DROP COLUMN launch_blocker');
         db.exec('DELETE FROM schema_version');
-        db.exec('INSERT INTO schema_version (version) VALUES (55)');
+        db.exec('INSERT INTO schema_version (version) VALUES (56)');
         db.close();
 
         store.init();

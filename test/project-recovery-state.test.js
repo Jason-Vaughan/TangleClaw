@@ -95,8 +95,7 @@ describe('v54→55: the project recovery state table (#1937)', () => {
     return fresh;
   }
 
-  it('is at or below the current schema version', () => {
-    // v55 is this table's version; later migrations move the constant on.
+  it('is at least the schema version this table arrived in', () => {
     assert.ok(store.CURRENT_SCHEMA_VERSION >= 55);
   });
 

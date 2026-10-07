@@ -90,13 +90,18 @@ describe('self-improvement loop (#569)', () => {
     });
 
     it('lets the operator approve and reject, recording each as a version', () => {
-      const rule = store.sessionRules.create({ content: 'a proposal', projectId: project.id, createdBy: 'ai' });
-      const approved = store.sessionRules.setStatus(rule.id, 'active', { expectedContent: 'a proposal' });
+      const toApprove = store.sessionRules.create({ content: 'a proposal to approve', projectId: project.id, createdBy: 'ai' });
+      const approved = store.sessionRules.setStatus(toApprove.id, 'active', { expectedContent: 'a proposal to approve' });
       assert.equal(approved.status, 'active');
-      const rejected = store.sessionRules.setStatus(rule.id, 'rejected');
+      assert.ok(store.sessionRules.listVersions(toApprove.id).length >= 2, 'create + approval must both be snapshotted');
+
+      // #1696: once active, a rule leaves force only by being retired — reject
+      // is a decision against a still-pending proposal, never a demotion of a
+      // governing rule, so this is a second, separate proposal.
+      const toReject = store.sessionRules.create({ content: 'a proposal to reject', projectId: project.id, createdBy: 'ai' });
+      const rejected = store.sessionRules.setStatus(toReject.id, 'rejected');
       assert.equal(rejected.status, 'rejected');
-      const versions = store.sessionRules.listVersions(rule.id);
-      assert.ok(versions.length >= 3, 'create + two decisions must all be snapshotted');
+      assert.ok(store.sessionRules.listVersions(toReject.id).length >= 2, 'create + rejection must both be snapshotted');
     });
 
     it('rejects an unknown status rather than storing it', () => {
@@ -242,10 +247,13 @@ describe('self-improvement loop (#569)', () => {
       assert.ok(!injected.includes('proposed master'));
     });
 
-    it('drops a rule out of injection the moment it is rejected', () => {
+    // #1696: an active rule leaves force only by being retired — rejection is
+    // a decision against a still-pending proposal, never a demotion of a
+    // governing rule (that transition is now INVALID_TRANSITION).
+    it('drops a rule out of injection the moment it is retired', () => {
       const rule = store.sessionRules.create({ content: 'was fine', projectId: project.id });
       assert.equal(store.sessionRules.listActiveForProject(project.id).length, 1);
-      store.sessionRules.setStatus(rule.id, 'rejected');
+      store.sessionRules.setStatus(rule.id, 'retired');
       assert.equal(store.sessionRules.listActiveForProject(project.id).length, 0);
     });
   });

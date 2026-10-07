@@ -1371,6 +1371,35 @@ html[data-tc-keyboard] body {
 .session-rule-decide .btn {
   min-height: 44px;
 }
+/* #1709: a replacement proposal's row says what approving it will do to the
+   rule it names — a different fact from the Proposed badge, so a separate
+   accent rather than reusing the badge's orange. */
+.session-rule-replaces {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  margin-top: 2px;
+}
+/* #1709: the Rules Graveyard — retired rules, closed by default. */
+.rules-graveyard {
+  margin-top: 10px;
+}
+.rules-graveyard summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted, #888);
+}
+.rules-graveyard .session-rule-item--retired {
+  margin-top: 6px;
+  opacity: 0.75;
+}
+.session-rule-retired-at {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  margin-top: 2px;
+}
 /* ── Project Rules section in Settings modal (CC-6, #381) ── */
 .project-rules-section {
   margin-top: 16px;

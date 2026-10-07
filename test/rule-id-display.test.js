@@ -6,10 +6,13 @@
 // store (the API's shape), the `tc rules` CLI, the startup delivery carriers,
 // the dashboard lists, the wrap drawer and every approval prompt.
 //
-// "Superseded" is not a stored state: session_rules knows proposed | active |
-// rejected plus `enabled`. A superseded rule is what the operator makes of one
-// — an active rule disabled once its replacement is approved — so the fixture
-// builds exactly that, with each rule's text naming the other's number.
+// "Superseded" here is deliberately NOT the real `retired` status (#1696,
+// #1709, covered by its own fixture in test/session-rule-lifecycle.test.js
+// and test/rule-id-display.test.js's dashboard describes below) — it is the
+// older, still-valid shape of an active rule an operator disabled by hand
+// once its replacement was approved, kept as a fixture because `enabled`
+// and `status` are orthogonal and both need their own id-labelling coverage.
+// Each rule's text names the other's number.
 
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -101,8 +104,17 @@ describe('Rule #<id> on every surface (#2029)', () => {
     store.sessionRules.update(disabled.id, { enabled: false });
     // The superseded rule carries the interim authored prefix naming itself;
     // its replacement's text names the superseded rule's number, not its own.
-    const superseded = create('placeholder');
-    store.sessionRules.update(superseded.id, { content: `RULE #${superseded.id} — RM-LEASE X generation 1` });
+    // #1696: an ACTIVE rule's content update defers to a replacement
+    // proposal rather than applying in place, so the self-referential text
+    // is set while still `proposed` (where an edit applies in place), then
+    // promoted — the only way left to land this exact fixture shape.
+    const supersededProposal = create('placeholder', { createdBy: 'ai' });
+    store.sessionRules.update(supersededProposal.id, {
+      content: `RULE #${supersededProposal.id} — RM-LEASE X generation 1`, changedBy: 'ai'
+    });
+    const superseded = store.sessionRules.setStatus(supersededProposal.id, 'active', {
+      changedBy: 'operator', expectedContent: `RULE #${supersededProposal.id} — RM-LEASE X generation 1`
+    });
     const replacement = create(`RM-LEASE X generation 2\nsupersedes: RULE #${superseded.id}`);
     store.sessionRules.update(superseded.id, { enabled: false });
     const rejected = create('Never write tests.', { createdBy: 'ai' });
@@ -119,7 +131,13 @@ describe('Rule #<id> on every surface (#2029)', () => {
     assert.equal(rules.active.status, 'active');
     assert.equal(rules.active.enabled, true);
     assert.equal(rules.disabled.enabled, false);
+    assert.equal(rules.superseded.status, 'active');
     assert.equal(rules.superseded.enabled, false);
+    // The point of this fixture: its stored text really does self-reference
+    // its own id. Assert it directly, so a future change to how `content` is
+    // set here cannot silently stop exercising the same-id-prefix-stripped
+    // property the tests below believe they are testing.
+    assert.equal(rules.superseded.content, `RULE #${rules.superseded.id} — RM-LEASE X generation 1`);
     assert.equal(rules.rejected.status, 'rejected');
   });
 
@@ -148,9 +166,11 @@ describe('Rule #<id> on every surface (#2029)', () => {
       const { renderRules } = require('../lib/tc-verbs')._internals || require('../lib/tc-verbs');
       const out = renderRules({ rules: Object.values(rules) });
       for (const s of STATES) assert.match(out, new RegExp(`Rule #${rules[s].id}\\b`), s);
-      // A same-id authored prefix is not doubled; the replacement keeps the
-      // other rule's number visible in its own text.
+      // A same-id authored prefix is stripped, not doubled: the label plus
+      // the text with its self-referential "RULE #N — " opening removed.
+      assert.match(out, new RegExp(`Rule #${rules.superseded.id} — RM-LEASE X generation 1`));
       assert.doesNotMatch(out, new RegExp(`Rule #${rules.superseded.id} — RULE #${rules.superseded.id}`));
+      // The replacement keeps the OTHER rule's number visible in its own text.
       assert.match(out, new RegExp(`Rule #${rules.replacement.id} — RM-LEASE X generation 2`));
       assert.doesNotMatch(out, /text says/);
     });
@@ -215,8 +235,11 @@ describe('Rule #<id> on every surface (#2029)', () => {
     /** Render the list for the given rules and return its HTML. */
     function render(list) {
       const el = { innerHTML: '' };
+      // #1709: renderProjectRulesList calls renderRulesGraveyard as a free
+      // variable — lift it first and pass it in as a dep.
+      const renderRulesGraveyard = lift(UI_SRC, 'function renderRulesGraveyard(', 'retired, byId', { esc, ...labelDeps });
       const renderProjectRulesList = lift(UI_SRC, 'function renderProjectRulesList(', 'kind, rules', {
-        document: { getElementById: () => el }, esc, projectRuleShownContent: new Map(), ...labelDeps
+        document: { getElementById: () => el }, esc, projectRuleShownContent: new Map(), renderRulesGraveyard, ...labelDeps
       });
       renderProjectRulesList('startup', list);
       return el.innerHTML;

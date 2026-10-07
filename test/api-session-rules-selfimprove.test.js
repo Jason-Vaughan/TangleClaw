@@ -100,7 +100,11 @@ describe('api/session-rules self-improvement (D1b)', () => {
   });
 
   it('lists versions and restores a prior version', async () => {
-    const created = (await request('POST', '/api/session-rules', { content: 'rev one', projectId: pid })).data;
+    // #1696: createdBy 'ai' with no operator approval lands 'proposed', where
+    // a content update still applies in place — what this test actually
+    // exercises is version history + restore, not the active-rule-approval
+    // wall (an active rule's update would instead file a replacement proposal).
+    const created = (await request('POST', '/api/session-rules', { content: 'rev one', projectId: pid, createdBy: 'ai' })).data;
     await request('PUT', `/api/session-rules/${created.id}`, { content: 'rev two' });
 
     const versions = (await request('GET', `/api/session-rules/${created.id}/versions`)).data.versions;
@@ -124,16 +128,21 @@ describe('api/session-rules self-improvement (D1b)', () => {
     let versions = (await request('GET', `/api/session-rules/${created.id}/versions`)).data.versions;
     assert.equal(versions[0].criticGate, 'not-required');
 
-    // Explicit attestation on an update flows through. The operator is the
-    // caller here, so the body's author claims are not what gets recorded.
-    await request('PUT', `/api/session-rules/${created.id}`, { content: 'gate two', createdBy: 'ai', changedBy: 'ai', criticGate: 'passed' });
-    versions = (await request('GET', `/api/session-rules/${created.id}/versions`)).data.versions;
+    // Explicit attestation on an update flows through. #1696: an ACTIVE
+    // rule's content change now defers to a replacement proposal instead of
+    // applying in place, so this uses a separate 'proposed' rule (createdBy
+    // 'ai', unapproved) to exercise the update/restore apply paths directly
+    // — the operator is still the HTTP caller here, so the body's author
+    // claims are not what gets recorded.
+    const proposal = (await request('POST', '/api/session-rules', { content: 'gate two v1', projectId: pid, createdBy: 'ai' })).data;
+    await request('PUT', `/api/session-rules/${proposal.id}`, { content: 'gate two v2', createdBy: 'ai', changedBy: 'ai', criticGate: 'passed' });
+    versions = (await request('GET', `/api/session-rules/${proposal.id}/versions`)).data.versions;
     assert.equal(versions[0].criticGate, 'passed');
 
     // Attestation flows through restore too.
-    const restored = await request('POST', `/api/session-rules/${created.id}/restore`, { versionNo: 1, changedBy: 'ai', criticGate: 'passed' });
+    const restored = await request('POST', `/api/session-rules/${proposal.id}/restore`, { versionNo: 1, changedBy: 'ai', criticGate: 'passed' });
     assert.equal(restored.status, 200);
-    versions = (await request('GET', `/api/session-rules/${created.id}/versions`)).data.versions;
+    versions = (await request('GET', `/api/session-rules/${proposal.id}/versions`)).data.versions;
     assert.equal(versions[0].criticGate, 'passed');
   });
 

@@ -4630,3 +4630,55 @@ describe('sessions', () => {
     });
   });
 });
+
+describe('private temp root in the pane environment (#1904)', () => {
+  const sessions = require('../lib/sessions');
+  const engineTempRoot = require('../lib/engine-temp-root');
+  const project = { id: 7 };
+
+  it('layers the root above the ambient floor and below the profile\'s own launch.env', () => {
+    const tempEnv = { CLAUDE_CODE_TMPDIR: '/private/root', TANGLECLAW_LAUNCH_ID: 'from-root' };
+    const env = sessions._paneEnvironment(project, { launch: { env: {} } }, 'launch-1', null, tempEnv);
+    assert.equal(env.CLAUDE_CODE_TMPDIR, '/private/root');
+    assert.equal(env.TANGLECLAW_LAUNCH_ID, 'from-root', 'the root layer sits above the floor');
+
+    const operator = sessions._paneEnvironment(project, { launch: { env: { CLAUDE_CODE_TMPDIR: '/operator/choice' } } }, 'launch-1', null, tempEnv);
+    assert.equal(operator.CLAUDE_CODE_TMPDIR, '/operator/choice', 'a profile that names the variable keeps it');
+  });
+
+  it('adds nothing when no root applies', () => {
+    const env = sessions._paneEnvironment(project, { launch: { env: {} } }, 'launch-1', null);
+    assert.equal(env.CLAUDE_CODE_TMPDIR, undefined);
+  });
+
+  it('resolves against the store\'s live base, so a relocated store never touches the real home', () => {
+    const seen = [];
+    const original = engineTempRoot.resolve;
+    engineTempRoot.resolve = (args) => { seen.push(args); return { state: 'not-declared', env: {} }; };
+    try {
+      sessions._privateTempRoot('claude', { capabilities: {} }, 'proj');
+    } finally {
+      engineTempRoot.resolve = original;
+    }
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].baseDir, store._getBasePath());
+    assert.equal(seen[0].engineId, 'claude');
+  });
+
+  it('summarizes each state for the launch result without leaking internals', () => {
+    assert.equal(sessions._privateTempRootSummary({ state: 'not-declared', env: {} }), null);
+    assert.deepEqual(sessions._privateTempRootSummary({ state: 'applied', dir: '/r', env: { X: '/r' } }), { state: 'applied', dir: '/r' });
+    assert.deepEqual(sessions._privateTempRootSummary({ state: 'operator-set', env: {}, source: 'TangleClaw environment' }),
+      { state: 'operator-set', source: 'TangleClaw environment' });
+    const refused = sessions._privateTempRootSummary({
+      state: 'refused', env: {},
+      failure: { path: '/a', problem: 'world-writable', uid: 0 },
+      remediation: 'fix /a',
+      defaultRoot: { path: '/private/tmp', failure: { problem: 'world-writable' }, remediation: 'sudo chmod +t /private/tmp' }
+    });
+    assert.deepEqual(refused, {
+      state: 'refused', refusedPath: '/a', problem: 'world-writable', remediation: 'fix /a',
+      defaultRoot: { path: '/private/tmp', usable: false, remediation: 'sudo chmod +t /private/tmp' }
+    });
+  });
+});

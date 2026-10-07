@@ -48,7 +48,10 @@ describe('sessionRules self-improvement (D1b)', () => {
     });
 
     it('appends a version on each update (newest first)', () => {
-      const rule = store.sessionRules.create({ content: 'v1 content', projectId: mkProject('sip-2') });
+      // #1696: `status: 'proposed'` so the content updates below apply in
+      // place — an active rule's content update would instead file a
+      // separate replacement proposal, irrelevant to version-numbering here.
+      const rule = store.sessionRules.create({ content: 'v1 content', projectId: mkProject('sip-2'), status: 'proposed' });
       store.sessionRules.update(rule.id, { content: 'v2 content' });
       store.sessionRules.update(rule.id, { content: 'v3 content', changedBy: 'ai' });
       const versions = store.sessionRules.listVersions(rule.id);
@@ -76,7 +79,10 @@ describe('sessionRules self-improvement (D1b)', () => {
 
   describe('restore (rollback)', () => {
     it('rolls content + enabled back to a prior version and records the restore', () => {
-      const rule = store.sessionRules.create({ content: 'original', projectId: mkProject('sip-5') });
+      // #1696: `status: 'proposed'` so the update and the rollback below
+      // both apply in place to this rule — an active rule's content change
+      // (by either door) would instead file a replacement proposal.
+      const rule = store.sessionRules.create({ content: 'original', projectId: mkProject('sip-5'), status: 'proposed' });
       store.sessionRules.update(rule.id, { content: 'risky autonomous edit' });
 
       const restored = store.sessionRules.restore(rule.id, 1);
@@ -103,7 +109,10 @@ describe('sessionRules self-improvement (D1b)', () => {
     });
 
     it('logs a session_rule.restored activity event', () => {
-      const rule = store.sessionRules.create({ content: 'x', projectId: mkProject('sip-8') });
+      // #1696: `status: 'proposed'` so the update below actually changes the
+      // content in place — an active rule's update would instead file a
+      // replacement proposal, leaving the restore below a same-to-same no-op.
+      const rule = store.sessionRules.create({ content: 'x', projectId: mkProject('sip-8'), status: 'proposed' });
       store.sessionRules.update(rule.id, { content: 'y' });
       store.sessionRules.restore(rule.id, 1);
       assert.equal(store.activity.query({ eventType: 'session_rule.restored' }).length, 1);

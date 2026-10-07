@@ -2410,7 +2410,7 @@ function renderProjectRulesSection(project) {
         <div class="session-rules-list" id="projLaunchSequencesList" aria-live="polite"></div>
       </div>
       <div id="projRulesPwGroup" class="form-group hidden">
-        <label class="form-label" for="projRulesPw">Delete password (required to approve a proposed rule)</label>
+        <label class="form-label" for="projRulesPw">Delete password (required to approve or retire a rule)</label>
         <input type="password" class="form-input" id="projRulesPw" autocomplete="current-password">
       </div>
       <div id="projectRulesStatus" class="rules-status hidden" role="status"></div>
@@ -3042,9 +3042,13 @@ function wireLaunchRecoveryClears(list) {
 }
 
 /**
- * Render one kind's rule list into its container.
+ * Render one kind's rule list into its container: the live rules (proposed
+ * and active), then the Rules Graveyard for retired ones (#1709). A retired
+ * rule is dead, not resting: it is kept for history and can be restored, but
+ * it must not sit in the live list looking like a rule someone switched off,
+ * because re-enabling it would be a regression rather than a restoration.
  * @param {string} kind - 'startup' | 'wrap'
- * @param {object[]} rules - Rules of this kind for the project
+ * @param {object[]} rules - Rules of this kind for the project (rejections already dropped)
  */
 function renderProjectRulesList(kind, rules) {
   const list = document.getElementById(`projRulesList-${kind}`);
@@ -3055,41 +3059,115 @@ function renderProjectRulesList(kind, rules) {
   for (const rule of rules) {
     if (rule.status === 'proposed') projectRuleShownContent.set(rule.id, rule.content);
   }
-  if (rules.length === 0) {
-    list.innerHTML = '<p class="session-rules-empty">No rules yet.</p>';
-    return;
-  }
-  list.innerHTML = rules.map((rule) => {
-    // #569: a proposed rule is in the review queue — it governs nothing yet,
-    // so its enabled-toggle is inert and disabled (checking it would read as
-    // "this is live"). The decision affordances here are Approve/Reject, NOT
-    // Delete: the drawer widget only renders the wrap that just ran, so this
-    // list is the durable decision surface — and deleting a proposed row
-    // would erase the recorded decision and re-arm re-proposal at the next
-    // wrap (the exact zombie the recorded `rejected` state exists to prevent).
-    const isProposed = rule.status === 'proposed';
-    // #2029: named from the DB id, never from the text, so two proposals can
-    // always be told apart — and the controls below say which rule they act on.
+  const byId = new Map(rules.map((r) => [r.id, r]));
+  const live = rules.filter((r) => r.status !== 'retired');
+  const retired = rules.filter((r) => r.status === 'retired');
+  const liveHtml = live.length === 0
+    ? '<p class="session-rules-empty">No rules yet.</p>'
+    : live.map((rule) => {
+      // #569: a proposed rule is in the review queue — it governs nothing yet,
+      // so its enabled-toggle is inert and disabled (checking it would read as
+      // "this is live"). The decision affordances here are Approve/Reject, NOT
+      // Delete: the drawer widget only renders the wrap that just ran, so this
+      // list is the durable decision surface — and deleting a proposed row
+      // would erase the recorded decision and re-arm re-proposal at the next
+      // wrap (the exact zombie the recorded `rejected` state exists to prevent).
+      const isProposed = rule.status === 'proposed';
+      // #2029: named from the DB id, never from the text, so two proposals can
+      // always be told apart — and the controls below say which rule they act on.
+      const label = tcRuleLabel(rule.id);
+      const badges = [
+        rule.createdBy === 'ai' ? '<span class="session-rule-badge" title="AI-authored">AI</span> ' : '',
+        isProposed ? '<span class="session-rule-badge session-rule-badge--proposed" title="Proposed by the wrap from a recurring learning — not governing sessions yet. Approve or reject it here, or in the wrap drawer right after the wrap that proposed it.">Proposed</span> ' : ''
+      ].join('');
+      // #1696: approving a replacement also retires the rule it replaces, so
+      // the row says so — approval and retirement are one decision, and the
+      // second half must not be invisible. It says so only when it is still
+      // true: a target already retired, or gone, will not be retired by this
+      // approval, and a row promising otherwise would be exactly the
+      // invisible second half the line exists to show.
+      const replacesTarget = isProposed && rule.replacesRuleId ? byId.get(rule.replacesRuleId) : null;
+      let replaces = '';
+      if (isProposed && rule.replacesRuleId) {
+        const targetLabel = tcRuleLabel(rule.replacesRuleId);
+        const isEdit = rule.replacementOrigin === 'edit' || rule.replacementOrigin === 'restore';
+        const what = rule.replacementOrigin === 'restore' ? 'Rollback' : 'Edit';
+        let text;
+        if (replacesTarget && replacesTarget.status !== 'active' && replacesTarget.supersededBy && replacesTarget.supersededBy !== rule.id) {
+          text = `Replaces ${targetLabel} (${esc(tcStripSameIdPrefix(replacesTarget.id, replacesTarget.content).trim())}), already replaced by ${tcRuleLabel(replacesTarget.supersededBy)} — it can no longer be approved`;
+        } else if (replacesTarget && replacesTarget.status === 'active') {
+          const targetText = esc(tcStripSameIdPrefix(replacesTarget.id, replacesTarget.content).trim());
+          text = isEdit ? `${what} of: ${targetText} — approving replaces it` : `Approving retires: ${targetText}`;
+        } else if (isEdit) {
+          text = replacesTarget
+            ? `${what} of ${targetLabel} (now ${esc(replacesTarget.status)}) — it can no longer be approved`
+            : `${what} of ${targetLabel}, which no longer exists — it can no longer be approved`;
+        } else if (replacesTarget) {
+          text = `Replaces ${targetLabel} (already ${esc(replacesTarget.status)}) — approving retires nothing`;
+        } else {
+          text = `Replaces ${targetLabel}, which no longer exists — approving retires nothing`;
+        }
+        replaces = ` <span class="session-rule-replaces">${text}</span>`;
+      }
+      // An edit or rollback of a rule that is gone, or already replaced by a
+      // DIFFERENT rule, can never be approved (the server refuses it closed),
+      // so offering Approve would only invite a 409 — #1696.
+      const supersededElsewhere = Boolean(replacesTarget && replacesTarget.status !== 'active'
+        && replacesTarget.supersededBy && replacesTarget.supersededBy !== rule.id);
+      const staleEdit = supersededElsewhere || (isProposed && rule.replacesRuleId
+        && (rule.replacementOrigin === 'edit' || rule.replacementOrigin === 'restore')
+        && !(replacesTarget && replacesTarget.status === 'active'));
+      const actions = isProposed
+        ? `<span class="session-rule-decide">
+             ${staleEdit ? '' : `<button class="btn btn-small btn-primary" data-action="approve-rule" data-rule-id="${rule.id}" aria-label="Approve ${label}" title="Approve ${label}">Approve</button>`}
+             <button class="btn btn-small" data-action="reject-rule" data-rule-id="${rule.id}" aria-label="Reject ${label}" title="Reject ${label}">Reject</button>
+           </span>`
+        : `<span class="session-rule-decide">
+             <button class="btn btn-small" data-action="retire-rule" data-rule-id="${rule.id}" aria-label="Retire ${label} — move it to the Rules Graveyard" title="Retire ${label}">Retire</button>
+             <button class="btn btn-small btn-danger session-rule-delete" data-action="delete-rule" data-rule-id="${rule.id}" aria-label="Delete ${label}" title="Delete ${label}">&times;</button>
+           </span>`;
+      return `
+      <div class="session-rule-item${rule.enabled ? '' : ' session-rule-disabled'}${isProposed ? ' session-rule-item--proposed' : ''}" data-rule-id="${rule.id}">
+        <label class="session-rule-toggle">
+          <input type="checkbox" data-action="toggle-rule" data-rule-id="${rule.id}" aria-label="Enable ${label}" ${rule.enabled && !isProposed ? 'checked' : ''} ${isProposed ? 'disabled' : ''}>
+        </label>
+        <span class="session-rule-content"><span class="session-rule-label">${esc(label)}</span> ${tcRuleMismatchBadge(rule)}${badges}${esc(tcStripSameIdPrefix(rule.id, rule.content).trim())}${replaces}</span>
+        ${actions}
+      </div>`;
+    }).join('');
+  list.innerHTML = liveHtml + renderRulesGraveyard(retired, byId);
+}
+
+/**
+ * The Rules Graveyard for one kind (#1709): retired rules, each with when it
+ * was retired, what replaced it where that is known, and Restore. A native
+ * disclosure, closed by default, so dead rules stay out of the way without a
+ * second surface to manage. Nothing when no rule has been retired.
+ * @param {object[]} retired - Retired rules of this kind
+ * @param {Map<number, object>} byId - Every fetched rule of this kind, by id
+ * @returns {string} HTML
+ */
+function renderRulesGraveyard(retired, byId) {
+  if (retired.length === 0) return '';
+  const rows = retired.map((rule) => {
     const label = tcRuleLabel(rule.id);
-    const badges = [
-      rule.createdBy === 'ai' ? '<span class="session-rule-badge" title="AI-authored">AI</span> ' : '',
-      isProposed ? '<span class="session-rule-badge session-rule-badge--proposed" title="Proposed by the wrap from a recurring learning — not governing sessions yet. Approve or reject it here, or in the wrap drawer right after the wrap that proposed it.">Proposed</span> ' : ''
-    ].join('');
-    const actions = isProposed
-      ? `<span class="session-rule-decide">
-           <button class="btn btn-small btn-primary" data-action="approve-rule" data-rule-id="${rule.id}" aria-label="Approve ${label}" title="Approve ${label}">Approve</button>
-           <button class="btn btn-small" data-action="reject-rule" data-rule-id="${rule.id}" aria-label="Reject ${label}" title="Reject ${label}">Reject</button>
-         </span>`
-      : `<button class="btn btn-small btn-danger session-rule-delete" data-action="delete-rule" data-rule-id="${rule.id}" aria-label="Delete ${label}" title="Delete ${label}">&times;</button>`;
+    const successor = rule.supersededBy ? byId.get(rule.supersededBy) : null;
+    const replacedBy = rule.supersededBy
+      ? ` <span class="session-rule-replaces">Replaced by: ${tcRuleLabel(rule.supersededBy)}${successor ? ` — ${esc(tcStripSameIdPrefix(successor.id, successor.content).trim())}` : ''}</span>`
+      : '';
+    const when = rule.retiredAt ? ` <span class="session-rule-retired-at">Retired ${esc(rule.retiredAt)}</span>` : '';
     return `
-    <div class="session-rule-item${rule.enabled ? '' : ' session-rule-disabled'}${isProposed ? ' session-rule-item--proposed' : ''}" data-rule-id="${rule.id}">
-      <label class="session-rule-toggle">
-        <input type="checkbox" data-action="toggle-rule" data-rule-id="${rule.id}" aria-label="Enable ${label}" ${rule.enabled && !isProposed ? 'checked' : ''} ${isProposed ? 'disabled' : ''}>
-      </label>
-      <span class="session-rule-content"><span class="session-rule-label">${esc(label)}</span> ${tcRuleMismatchBadge(rule)}${badges}${esc(tcStripSameIdPrefix(rule.id, rule.content).trim())}</span>
-      ${actions}
-    </div>`;
+      <div class="session-rule-item session-rule-item--retired" data-rule-id="${rule.id}">
+        <span class="session-rule-content"><span class="session-rule-label">${esc(label)}</span> ${tcRuleMismatchBadge(rule)}${esc(tcStripSameIdPrefix(rule.id, rule.content).trim())}${replacedBy}${when}</span>
+        <button class="btn btn-small" data-action="restore-rule" data-rule-id="${rule.id}" aria-label="Restore ${label} — it comes back switched off" title="Restore ${label}">Restore</button>
+      </div>`;
   }).join('');
+  return `
+    <details class="rules-graveyard">
+      <summary>Rules Graveyard (${retired.length})</summary>
+      <p class="form-hint">Retired rules never reach a session. Restore brings one back switched off, so it governs again only once you turn it on.</p>
+      ${rows}
+    </details>`;
 }
 
 /**
@@ -3162,7 +3240,17 @@ async function resolveProjectRuleProposal(id, status, kind) {
   const data = await apiMutate(`/api/session-rules/${id}/status`, 'PUT', body);
   if (!data) {
     const pwGroup = document.getElementById('projRulesPwGroup');
-    if (api.lastErrorCode === 'RULE_CONTENT_CHANGED') {
+    // #1696: approving a replacement proposal also retires the rule it
+    // replaces — these two refusals mean that second half cannot happen.
+    if (api.lastErrorCode === 'REPLACEMENT_SUPERSEDED') {
+      _setProjectRulesStatus(`${tcRuleLabel(id)} replaces a rule already replaced by `
+        + `${tcRuleLabel(api.lastBody && api.lastBody.supersededBy)} — nothing was approved`, false);
+      await refreshProjectRulesList(projectRulesTargetId, kind);
+    } else if (api.lastErrorCode === 'REPLACEMENT_TARGET_INACTIVE') {
+      _setProjectRulesStatus(`The rule ${tcRuleLabel(id)} would change is no longer active, `
+        + 'so it can no longer be approved — nothing was approved', false);
+      await refreshProjectRulesList(projectRulesTargetId, kind);
+    } else if (api.lastErrorCode === 'RULE_CONTENT_CHANGED') {
       // Redraw from the server so the row shows what the rule says now; the
       // next Approve is then a decision about that text.
       _setProjectRulesStatus(`${tcRuleLabel(id)}’s text changed after it was shown, so nothing was approved — `
@@ -3177,10 +3265,64 @@ async function resolveProjectRuleProposal(id, status, kind) {
     }
     return;
   }
+  // An approved replacement whose target was already gone retired nothing;
+  // say so rather than let the operator assume the old rule left force.
+  const skipped = status === 'active' && data.replacementSkipped;
   _setProjectRulesStatus(status === 'active'
-    ? `Approved ${tcRuleLabel(id)} — it now governs future sessions`
+    ? (skipped
+      ? `Approved ${tcRuleLabel(id)} — it now governs future sessions. Nothing was retired: ${skipped.reason}`
+      : `Approved ${tcRuleLabel(id)} — it now governs future sessions`)
     : `Rejected ${tcRuleLabel(id)} — recorded, so it won’t be proposed again`, true);
   await refreshAfterProjectRuleMutation(status === 'active' ? 'Approved' : 'Rejected', kind);
+}
+
+/**
+ * Retire an active rule (#1709): it stops governing sessions and moves to the
+ * Rules Graveyard. Confirmed first, because the rule leaves the main list, and
+ * password-gated server-side like approval (retiring takes a governing rule
+ * out of force; Architect ruling). The password field is revealed on a 403
+ * rather than asked for up-front, exactly as for Approve.
+ * @param {number} id - Rule id
+ * @param {string} kind - Rule kind (for the targeted re-render)
+ */
+async function retireProjectRule(id, kind) {
+  const label = tcRuleLabel(id);
+  if (!confirm(`Retire ${label}? It stops governing sessions and moves to the Rules Graveyard, where it can be restored.`)) return;
+  const body = { status: 'retired' };
+  const pwInput = document.getElementById('projRulesPw');
+  if (pwInput && pwInput.value) body.password = pwInput.value;
+  const data = await apiMutate(`/api/session-rules/${id}/status`, 'PUT', body);
+  if (!data) {
+    const pwGroup = document.getElementById('projRulesPwGroup');
+    if (api.lastErrorCode === 'FORBIDDEN' && pwGroup) {
+      pwGroup.classList.remove('hidden');
+      _setProjectRulesStatus(`Retiring ${label} needs the delete password — enter it above and tap Retire again`, false);
+      if (pwInput) pwInput.focus();
+      return;
+    }
+    _setProjectRulesStatus(`Retire ${label} failed${api.lastError ? `: ${api.lastError}` : ''}`, false);
+    return;
+  }
+  _setProjectRulesStatus(`Retired ${label} — moved to the Rules Graveyard`, true);
+  await refreshAfterProjectRuleMutation('Retired', kind);
+}
+
+/**
+ * Restore a retired rule from the Rules Graveyard (#1709). It comes back
+ * switched off, and the status line says so: a restore never makes a rule
+ * govern on its own.
+ * @param {number} id - Rule id
+ * @param {string} kind - Rule kind (for the targeted re-render)
+ */
+async function restoreProjectRule(id, kind) {
+  const label = tcRuleLabel(id);
+  const data = await apiMutate(`/api/session-rules/${id}/status`, 'PUT', { status: 'active' });
+  if (!data) {
+    _setProjectRulesStatus(`Restore ${label} failed${api.lastError ? `: ${api.lastError}` : ''}`, false);
+    return;
+  }
+  _setProjectRulesStatus(`Restored ${label}, switched off — turn it on to make it govern again`, true);
+  await refreshAfterProjectRuleMutation('Restored', kind);
 }
 
 /**
@@ -3204,6 +3346,10 @@ function handleProjectRulesEvent(e) {
     resolveProjectRuleProposal(Number(target.getAttribute('data-rule-id')), 'active', kind);
   } else if (action === 'reject-rule' && e.type === 'click') {
     resolveProjectRuleProposal(Number(target.getAttribute('data-rule-id')), 'rejected', kind);
+  } else if (action === 'retire-rule' && e.type === 'click') {
+    retireProjectRule(Number(target.getAttribute('data-rule-id')), kind);
+  } else if (action === 'restore-rule' && e.type === 'click') {
+    restoreProjectRule(Number(target.getAttribute('data-rule-id')), kind);
   }
 }
 

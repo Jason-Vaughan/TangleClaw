@@ -69,6 +69,9 @@ function build(api) {
     'async function refreshProjectRulesList(projectId, kind)',
     'async function refreshAfterProjectRuleMutation(verb, kind)',
     'function renderProjectRulesUnknown(kind, why)',
+    // #1709: renderProjectRulesList calls renderRulesGraveyard as a free
+    // variable — must be declared first so the slice below can resolve it.
+    'function renderRulesGraveyard(retired, byId)',
     'function renderProjectRulesList(kind, rules)'
   ];
   const source = decls.map((d) => d + functionBody(UI_SRC, d)).join('\n');
@@ -182,7 +185,9 @@ describe('#1054 — a failed Project Rules read renders as unknown', () => {
     assert.equal(calls.length, 2,
       'fetchProjectRules is declared once and called once (inside refreshProjectRulesList)');
     const handlers = UI_SRC.match(/refreshAfterProjectRuleMutation\(/g) || [];
-    assert.equal(handlers.length, 5,
-      'declared once and called by the four mutation handlers');
+    // #1709 added retireProjectRule/restoreProjectRule as two more mutation
+    // handlers, both re-reading through the same three-state refresh.
+    assert.equal(handlers.length, 7,
+      'declared once and called by the six mutation handlers');
   });
 });

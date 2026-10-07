@@ -11,6 +11,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { uniqueSessionName } = require('./_tmux-session-names');
 
 const observerMod = require('../lib/activity-observer');
 const { createObserver, ACTIVITY, TICK_BUDGET_MS, FRESH_MS, captureAsync } = observerMod;
@@ -275,7 +276,7 @@ describe('captureAsync against a real tmux pane', () => {
   try { execFileSync('tmux', ['-V'], { stdio: 'ignore' }); } catch { hasTmux = false; }
 
   it('captures a live pane asynchronously and refuses a missing one', { skip: hasTmux ? false : 'tmux not installed' }, async () => {
-    const name = `tc-observer-test-${process.pid}`;
+    const name = uniqueSessionName('observer');
     execFileSync('tmux', ['new-session', '-d', '-s', name, '-x', '80', '-y', '10', 'sh -c "echo observer-probe; sleep 30"']);
     try {
       let cap;

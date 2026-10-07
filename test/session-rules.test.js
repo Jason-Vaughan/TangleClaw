@@ -162,14 +162,34 @@ describe('sessionRules store API (#347/D1a)', () => {
       assert.equal(store.sessionRules.get(99999), null);
     });
 
-    it('updates content and enabled, bumps updated_at, logs an event', () => {
+    it('updates enabled in place, bumps updated_at, logs an event', () => {
       const pid = mkProject('proj-upd');
       const created = store.sessionRules.create({ content: 'before', projectId: pid });
-      const updated = store.sessionRules.update(created.id, { content: 'after', enabled: false });
-      assert.equal(updated.content, 'after');
+      const updated = store.sessionRules.update(created.id, { enabled: false });
+      assert.equal(updated.content, 'before');
       assert.equal(updated.enabled, false);
       const events = store.activity.query({ eventType: 'session_rule.updated' });
       assert.equal(events.length, 1);
+    });
+
+    // #1696: a content change to an ACTIVE project rule no longer rewrites it
+    // in place — it files a replacement proposal, and the rule keeps
+    // governing its approved text until that proposal is approved. This test
+    // moved from asserting the old in-place rewrite to asserting the new
+    // proposal contract (the rework the plan calls for, not a weakening).
+    it('a content change to an active rule files a replacement proposal instead of rewriting it', () => {
+      const pid = mkProject('proj-upd-proposal');
+      const created = store.sessionRules.create({ content: 'before', projectId: pid });
+      const result = store.sessionRules.update(created.id, { content: 'after', enabled: false });
+      assert.ok(result.replacementProposed, 'an edit of an active rule must file a proposal');
+      assert.equal(result.replacementProposed.content, 'after');
+      assert.equal(result.replacementProposed.status, 'proposed');
+      assert.equal(result.replacementProposed.replacesRuleId, created.id);
+      // The switch change in the same call DOES apply to the rule itself —
+      // only the text is deferred to approval.
+      assert.equal(result.enabled, false);
+      const unchanged = store.sessionRules.get(created.id);
+      assert.equal(unchanged.content, 'before', 'the active rule keeps governing its approved text');
     });
 
     it('rejects empty content on update', () => {
@@ -257,9 +277,13 @@ describe('sessionRules store API (#347/D1a)', () => {
     });
 
     it('kind survives a version restore (immutable)', () => {
+      // #1696: `createdBy: 'ai'` lands 'proposed', where a content update
+      // still applies in place — an active rule's update would instead file
+      // a replacement proposal, leaving this fixture's own v1 content
+      // unchanged and the restore below a no-op that proves nothing.
       const pid = mkProject('proj-restore');
-      const wrap = store.sessionRules.create({ content: 'v1', projectId: pid, kind: 'wrap' });
-      store.sessionRules.update(wrap.id, { content: 'v2' });
+      const wrap = store.sessionRules.create({ content: 'v1', projectId: pid, kind: 'wrap', createdBy: 'ai' });
+      store.sessionRules.update(wrap.id, { content: 'v2', changedBy: 'ai' });
       const restored = store.sessionRules.restore(wrap.id, 1);
       assert.equal(restored.kind, 'wrap');
       assert.equal(restored.content, 'v1');
@@ -302,8 +326,16 @@ describe('sessionRules store API (#347/D1a)', () => {
       // The whole safety guarantee: the four real writers must only ever emit
       // enum-valid ops. Drive all four through the API and confirm none throws
       // and the recorded history carries exactly the enum values.
+      //
+      // #1696: a content change to an ACTIVE project rule now files a
+      // replacement proposal instead of writing an 'update' snapshot onto
+      // the same rule, so this exercises the four ops on a still-`proposed`
+      // rule (createdBy: 'ai', unapproved) — there, update/restore still
+      // apply in place exactly as before, which is what this test is
+      // actually checking: that all four ops are producible and enum-valid.
       const pid = mkProject('proj-ops');
-      const rule = store.sessionRules.create({ content: 'v1', projectId: pid }); // op=create
+      const rule = store.sessionRules.create({ content: 'v1', projectId: pid, createdBy: 'ai' }); // op=create, status=proposed
+      assert.equal(rule.status, 'proposed');
       store.sessionRules.update(rule.id, { content: 'v2' });              // op=update
       store.sessionRules.restore(rule.id, 1);                            // op=restore
       store.sessionRules.delete(rule.id);                                // op=delete
@@ -363,8 +395,14 @@ describe('sessionRules store API (#347/D1a)', () => {
       // The mapping keys off THIS change's author (changed_by), not the rule's
       // original author — an operator-created rule updated by the AI with no
       // attestation must record 'unknown', not inherit 'not-required'.
+      //
+      // #1696: explicitly `status: 'proposed'` (still operator-authored) so
+      // the content update below applies in place — the point under test is
+      // the criticGate derivation, not the active-rule-approval contract,
+      // and an active rule's edit would be deferred into a separate
+      // proposal rather than writing a second version onto this one.
       const pid = mkProject('proj-gate-per-change');
-      const rule = store.sessionRules.create({ content: 'v1', projectId: pid }); // operator → not-required
+      const rule = store.sessionRules.create({ content: 'v1', projectId: pid, status: 'proposed' }); // operator → not-required
       store.sessionRules.update(rule.id, { content: 'v2', changedBy: 'ai' });
       const versions = store.sessionRules.listVersions(rule.id);
       assert.equal(versions[0].criticGate, 'unknown');   // the AI update
@@ -426,11 +464,18 @@ describe('sessionRules store API (#347/D1a)', () => {
       store._setSessionRuleVersionRetention(store.SESSION_RULE_VERSION_RETENTION);
     });
 
-    /** Drive a rule through `total` mutations (1 create + updates) and return it. */
+    /**
+     * Drive a rule through `total` mutations (1 create + updates) and return
+     * it. #1696: created `status: 'proposed'` (still operator-authored) so
+     * each `update()` below applies in place and actually versions THIS
+     * rule — an active rule's content update would instead file a separate
+     * replacement proposal, which is irrelevant to the pruning mechanics
+     * every test in this suite exercises.
+     */
     let churnSeq = 0;
     function churn(total) {
       const pid = mkProject(`proj-churn-${++churnSeq}`);
-      const rule = store.sessionRules.create({ content: 'v1', projectId: pid });
+      const rule = store.sessionRules.create({ content: 'v1', projectId: pid, status: 'proposed' });
       for (let i = 2; i <= total; i++) {
         store.sessionRules.update(rule.id, { content: `v${i}` });
       }

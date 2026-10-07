@@ -238,6 +238,20 @@ describe('tc verb roster (lib/tc-verbs)', () => {
       assert.match(out, /PROPOSED rows await operator approval/);
     });
 
+    it('rules: a RETIRED rule is marked dead, names its replacement where known, and the list says how to amend (#1709)', () => {
+      const out = renderRules({
+        rules: [
+          { id: 4, kind: 'startup', status: 'retired', enabled: 0, content: 'old policy', supersededBy: 5 },
+          { id: 6, kind: 'startup', status: 'retired', enabled: 0, content: 'orphan retirement', supersededBy: null }
+        ]
+      });
+      assert.match(out, /\[startup — RETIRED · replaced by Rule #5\] Rule #4 — old policy/);
+      assert.match(out, /\[startup — RETIRED · retired, no replacement recorded\] Rule #6 — orphan retirement/);
+      assert.match(out, /RETIRED rows govern nothing and their text is frozen until restored/);
+      assert.match(out, /replacesRuleId:<id>/);
+      assert.match(out, /createdBy left as `ai`/);
+    });
+
     it('inbox: reading is pure and says so — the ack instruction rides every non-empty read', () => {
       assert.match(renderInbox({ messages: [] }), /inbox is empty/);
       const out = renderInbox({ messages: [{ id: 'm1', from: 'ws-2', message: 'ping' }] });

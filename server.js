@@ -5728,6 +5728,17 @@ route('POST', '/api/session-rules', (req, res, _params, body) => {
   if (!body || typeof body.content !== 'string' || !body.content.trim()) {
     return errorResponse(res, 400, 'content (non-empty string) is required', 'BAD_REQUEST');
   }
+  // Architect ruling A88: an operator-authored create with `replacesRuleId`
+  // lands active by default (this route never requests another status), and
+  // the store retires its target in the same transaction — the same
+  // retirement the PUT .../status route requires the delete password for.
+  // A bound session's create always lands 'proposed' regardless of
+  // `replacesRuleId` (never retires anything immediately), so only the
+  // operator path can reach this side effect and only it is gated here.
+  if (caller.operator && body.replacesRuleId !== undefined && body.replacesRuleId !== null) {
+    const check = projects.checkDeletePassword(body.password);
+    if (!check.allowed) return errorResponse(res, 403, check.error, 'FORBIDDEN');
+  }
   try {
     const rule = store.sessionRules.create({
       content: body.content,
@@ -5740,7 +5751,11 @@ route('POST', '/api/session-rules', (req, res, _params, body) => {
       // CC-6 (#381): 'startup' (default) | 'wrap' | 'master'. Invalid → store throws BAD_REQUEST.
       kind: body.kind,
       // SR-7K2P: optional Critic-gate attestation. Invalid → store throws BAD_REQUEST.
-      criticGate: body.criticGate
+      criticGate: body.criticGate,
+      // #1696: the active rule (same project and kind) this one replaces,
+      // if any. Validated by the store (INVALID_REPLACES on refusal); never
+      // silently dropped the way it used to be.
+      replacesRuleId: body.replacesRuleId
     });
     jsonResponse(res, 201, rule);
   } catch (err) {
@@ -5751,6 +5766,11 @@ route('POST', '/api/session-rules', (req, res, _params, body) => {
     // 500 — the caller most likely passed the project's name, not its id.
     if (err.code === 'INVALID_PROJECT_ID') {
       return errorResponse(res, 400, err.message, 'INVALID_PROJECT_ID');
+    }
+    // #1696: replacesRuleId named a rule that cannot be replaced (wrong
+    // project/kind, not active, or already has a pending replacement).
+    if (err.code === 'INVALID_REPLACES') {
+      return errorResponse(res, 400, err.message, 'INVALID_REPLACES');
     }
     throw err;
   }
@@ -5796,13 +5816,26 @@ route('PUT', '/api/session-rules/:id', (req, res, params, body) => {
     }
     const { confirmBaselineEdit, changedBy: _claimedBy, ...updates } = body;
     const rule = store.sessionRules.update(Number(params.id), { ...updates, changedBy: caller.changedBy });
-    jsonResponse(res, 200, rule);
+    // #1696: a text change to an active, non-master rule files a replacement
+    // proposal instead of rewriting the rule — `rule` here is the ORIGINAL
+    // rule, unchanged, plus `replacementProposed`. 202 says so; the rule
+    // itself still answers 200 for every ordinary (non-deferred) update.
+    jsonResponse(res, rule.replacementProposed ? 202 : 200, rule);
   } catch (err) {
     if (err.code === 'NOT_FOUND') {
       return errorResponse(res, 404, err.message, 'NOT_FOUND');
     }
     if (err.code === 'BAD_REQUEST') {
       return errorResponse(res, 400, err.message, 'BAD_REQUEST');
+    }
+    // #1709: a retired rule's text is history — restore it first.
+    if (err.code === 'RULE_RETIRED') {
+      return errorResponse(res, 409, err.message, 'RULE_RETIRED');
+    }
+    // #1696: a second text change while one replacement is still pending —
+    // approve or reject that proposal before filing another.
+    if (err.code === 'REPLACEMENT_PENDING') {
+      return errorResponse(res, 409, err.message, 'REPLACEMENT_PENDING', { pendingReplacementId: err.pendingReplacementId });
     }
     throw err;
   }
@@ -5890,12 +5923,15 @@ route('POST', '/api/session-rules/promote', (req, res, _params, body) => {
   }
 }, { maxBodySize: 256 * 1024 });
 
-// PUT /api/session-rules/:id/status — resolve a proposal (#569).
-// Approve ('active') or decline ('rejected') a rule the wrap proposed. An
-// approval must carry `expectedContent`, the exact text the operator was
-// shown, and is refused (409) if the rule no longer holds it (#1053). A
-// rejection is RECORDED rather than deleted: the wrap proposes from recurring
-// learnings, so a deleted decision would simply be re-proposed at the next wrap.
+// PUT /api/session-rules/:id/status — the rule lifecycle's one door (#569,
+// #1696, #1709). Approve ('active') or decline ('rejected') a proposal;
+// retire an active rule ('retired') or restore a retired one ('active').
+// Which moves are allowed at all is the store's SESSION_RULE_TRANSITIONS
+// allow-list — a move it forbids is 400 INVALID_TRANSITION. An approval
+// must carry `expectedContent`, the exact text the operator was shown, and
+// is refused (409) if the rule no longer holds it (#1053). A rejection is
+// RECORDED rather than deleted: the wrap proposes from recurring learnings,
+// so a deleted decision would simply be re-proposed at the next wrap.
 route('PUT', '/api/session-rules/:id/status', (req, res, params, body) => {
   // #2032: a coordinator bound to a rotation epoch writes rules only from its
   // bound replacement thread, and none while it reconciles.
@@ -5903,27 +5939,50 @@ route('PUT', '/api/session-rules/:id/status', (req, res, params, body) => {
   if (!body || typeof body.status !== 'string') {
     return errorResponse(res, 400, 'status is required', 'BAD_REQUEST');
   }
-  // Declining an AI proposal in its project is the one status change a bound
-  // session may make. Approving, and moving a governing rule out of 'active', are the
-  // operator's: either one decides what every future session is told.
+  // Retiring takes a governing rule out of force for good — unlike
+  // switching it off, which the operator can undo in place — so it carries
+  // the same password gate as approval (Architect ruling on #1709).
+  // Checked BEFORE the caller is resolved and BEFORE the rule is read at
+  // all: a refused caller must not learn anything about the rule from this
+  // request, including whether it exists. This is a deliberate asymmetry
+  // from the 'active' branch below (which resolves the caller first,
+  // matching main's existing, already-shipped approval order) — the
+  // Architect's finding named the retirement password specifically.
+  if (body.status === 'retired') {
+    const check = projects.checkDeletePassword(body.password);
+    if (!check.allowed) return errorResponse(res, 403, check.error, 'FORBIDDEN');
+  }
+  // Declining an AI proposal in its project is the one status change a
+  // bound session may make — stated explicitly, not left to rely on
+  // `ownProposal`'s independent `status === 'proposed'` check to
+  // coincidentally also refuse a bound session's retire/restore attempt.
   const caller = sessionRuleCaller(req, res, {
     ruleId: Number(params.id),
-    proposalAction: body.status !== 'active',
-    action: body.status === 'active' ? 'approve a proposed rule' : 'change the status of a governing rule'
+    proposalAction: body.status === 'rejected',
+    action: body.status === 'active' ? 'approve or restore a session rule'
+      : body.status === 'retired' ? 'retire a governing rule'
+        : 'change the status of a governing rule'
   });
   if (!caller) return;
-  // Approving a proposal grants it authority over every future session, so on
-  // top of the operator caller it takes the password, like TangleClaw's other
-  // privileged operations (project delete, session kill, wrap).
+  // 'active' is either an ordinary approval (password required, exactly as
+  // before) or a restore from 'retired' (no password — it comes back
+  // disabled, so it never starts governing on the strength of one click).
+  // `caller.rule` is already resolved above, so this costs no second read.
+  let restoreOnly = false;
   if (body.status === 'active') {
-    const check = projects.checkDeletePassword(body ? body.password : undefined);
-    if (!check.allowed) return errorResponse(res, 403, check.error, 'FORBIDDEN');
+    if (caller.rule.status === 'retired') {
+      restoreOnly = true;
+    } else {
+      const check = projects.checkDeletePassword(body.password);
+      if (!check.allowed) return errorResponse(res, 403, check.error, 'FORBIDDEN');
+    }
   }
   try {
     const rule = store.sessionRules.setStatus(Number(params.id), body.status, {
       changedBy: caller.changedBy,
       changeReason: body.changeReason,
       criticGate: body.criticGate,
+      restoreOnly,
       // The text the operator was shown. Read only AFTER the password gate
       // above: a caller that cannot approve must not learn from a 409 whether
       // the text has changed, let alone what it now says.
@@ -5934,6 +5993,11 @@ route('PUT', '/api/session-rules/:id/status', (req, res, params, body) => {
     if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');
     if (err.code === 'BAD_REQUEST') return errorResponse(res, 400, err.message, 'BAD_REQUEST');
     if (err.code === 'FORBIDDEN') return errorResponse(res, 403, err.message, 'FORBIDDEN');
+    // #1709: the lifecycle forbids this exact move, or a password-free
+    // restore attempt landed on a rule that stopped being retired between
+    // this request's checks and its write.
+    if (err.code === 'INVALID_TRANSITION') return errorResponse(res, 400, err.message, 'INVALID_TRANSITION');
+    if (err.code === 'APPROVAL_REQUIRES_AUTHORITY') return errorResponse(res, 403, err.message, 'FORBIDDEN');
     if (err.code === 'EXPECTED_CONTENT_REQUIRED') {
       return errorResponse(res, 400, err.message, 'EXPECTED_CONTENT_REQUIRED');
     }
@@ -5941,6 +6005,16 @@ route('PUT', '/api/session-rules/:id/status', (req, res, params, body) => {
     // they would actually be approving, instead of a bare refusal.
     if (err.code === 'CONTENT_CHANGED') {
       return errorResponse(res, 409, err.message, 'RULE_CONTENT_CHANGED', { currentContent: err.currentContent });
+    }
+    // #1696: approving a replacement whose target is no longer the rule it
+    // was shown against — either a different replacement already won
+    // (SUPERSEDED), or this is an edit/rollback whose target rule is gone
+    // (TARGET_INACTIVE, which would otherwise resurrect edited text).
+    if (err.code === 'REPLACEMENT_SUPERSEDED') {
+      return errorResponse(res, 409, err.message, 'REPLACEMENT_SUPERSEDED', { targetId: err.targetId, supersededBy: err.supersededBy });
+    }
+    if (err.code === 'REPLACEMENT_TARGET_INACTIVE') {
+      return errorResponse(res, 409, err.message, 'REPLACEMENT_TARGET_INACTIVE', { targetId: err.targetId });
     }
     throw err;
   }
@@ -6047,10 +6121,20 @@ route('POST', '/api/session-rules/:id/restore', (req, res, params, body) => {
     }
     // SR-7K2P: optional Critic-gate attestation. Invalid → store throws BAD_REQUEST.
     const rule = store.sessionRules.restore(Number(params.id), Number(body.versionNo), { changedBy: caller.changedBy, criticGate: body.criticGate });
-    jsonResponse(res, 200, rule);
+    // #1696: a version rollback that changes an active, non-master rule's
+    // text files a replacement proposal instead of applying it — same 202
+    // contract as the PUT route above.
+    jsonResponse(res, rule.replacementProposed ? 202 : 200, rule);
   } catch (err) {
     if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');
     if (err.code === 'BAD_REQUEST') return errorResponse(res, 400, err.message, 'BAD_REQUEST');
+    // #1709: a retired rule's text is history — restore it (via PUT .../status) first.
+    if (err.code === 'RULE_RETIRED') return errorResponse(res, 409, err.message, 'RULE_RETIRED');
+    // #1696: a second text change while one replacement is still pending —
+    // approve or reject that proposal before filing another.
+    if (err.code === 'REPLACEMENT_PENDING') {
+      return errorResponse(res, 409, err.message, 'REPLACEMENT_PENDING', { pendingReplacementId: err.pendingReplacementId });
+    }
     throw err;
   }
 });
@@ -7253,7 +7337,10 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
     iframeUrl: null,
     ttydUrl: result.ttydUrl,
     // #1539: why the stranded-wrap check was skipped, or null when it ran.
-    strandedUnchecked: result.strandedUnchecked || null
+    strandedUnchecked: result.strandedUnchecked || null,
+    // #1904: whether the engine got its private socket root, and if not, which
+    // path failed and the hand-run fix. Null for an engine that declares none.
+    privateTempRoot: result.privateTempRoot || null
   });
 });
 

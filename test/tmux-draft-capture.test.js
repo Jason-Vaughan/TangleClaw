@@ -29,6 +29,7 @@ after(() => _store.cleanup());
 const tmux = require('../lib/tmux');
 const draftStore = require('../lib/draft-store');
 const { IDLE_PANE, DIALOG_PANE, AG_TYPING_PANE } = require('./_wake-fixtures');
+const { uniqueSessionName } = require('./_tmux-session-names');
 
 const NBSP = ' ';
 const CLAUDE_FOOTER = '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents';
@@ -168,7 +169,7 @@ describe('reading the draft through the engine\'s composer profile', () => {
 });
 
 describe('the clear: records what it read, and still clears when it could not read', () => {
-  const session = '__tc_test_draft_clear__';
+  const session = uniqueSessionName('draft_clear');
   const ATTEMPT = draftStore.sessionAttemptKey(9001);
 
   /**
@@ -414,7 +415,7 @@ describe('the draft store', () => {
   });
 
   it('a draft that cannot be kept is reported without its text, and the prompt is still cleared', () => {
-    const session = '__tc_test_draft_unkept__';
+    const session = uniqueSessionName('draft_unkept');
     try {
       tmux.createSession(session, { command: 'exec bash --norc --noprofile' });
       const typed = `❯${NBSP}secret-ish draft`;

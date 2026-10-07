@@ -20,6 +20,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const store = require('../lib/store');
+const projects = require('../lib/projects');
 const { createServer } = require('../server');
 const { setLevel } = require('../lib/logger');
 const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
@@ -201,6 +202,18 @@ describe('api/session-rules caller gate (#2013)', () => {
       assert.equal(res.data.status, 'active');
       assert.equal(res.data.createdBy, 'operator');
     });
+
+    it('proposing a second replacement of a rule with one already pending is refused 400 INVALID_REPLACES', async () => {
+      const governing = activeRule(own.id, 'http create pending-replace target');
+      const firstPending = (await request('POST', '/api/session-rules',
+        { content: 'first pending', projectId: own.id, replacesRuleId: governing.id }, asOwn)).data;
+      assert.equal(firstPending.status, 'proposed');
+      const res = await request('POST', '/api/session-rules',
+        { content: 'second pending', projectId: own.id, replacesRuleId: governing.id }, asOwn);
+      assert.equal(res.status, 400);
+      assert.equal(res.data.code, 'INVALID_REPLACES');
+      assert.equal(store.sessionRules.get(governing.id).status, 'active');
+    });
   });
 
   describe('PUT /api/session-rules/:id (content / enabled)', () => {
@@ -232,11 +245,33 @@ describe('api/session-rules caller gate (#2013)', () => {
       assert.equal(store.sessionRules.get(governing.id).content, governing.content);
     });
 
-    it('the operator can still edit it, and the history records the operator', async () => {
+    // #1696 (Architect ruling): a text change to an ACTIVE project rule goes
+    // through approval regardless of who makes it — even the operator's own
+    // edit files a replacement proposal rather than rewriting the rule in
+    // place, so the rule keeps governing its approved text until that
+    // proposal is approved. This test moved from asserting the old in-place
+    // rewrite to asserting the new proposal contract (202, not a weakening).
+    it('even the operator\'s edit files a replacement proposal instead of rewriting the rule', async () => {
       const res = await request('PUT', `/api/session-rules/${governing.id}`, { content: 'operator edit' }, asOperator);
-      assert.equal(res.status, 200);
-      assert.equal(store.sessionRules.get(governing.id).content, 'operator edit');
-      assert.equal(newestVersion(governing.id).changedBy, 'operator');
+      assert.equal(res.status, 202);
+      assert.ok(res.data.replacementProposed);
+      assert.equal(res.data.replacementProposed.content, 'operator edit');
+      assert.equal(res.data.replacementProposed.replacesRuleId, governing.id);
+      assert.equal(res.data.replacementProposed.replacementOrigin, 'edit');
+      assert.equal(newestVersion(res.data.replacementProposed.id).changedBy, 'operator');
+      // The original rule is untouched — still governing its approved text.
+      assert.equal(store.sessionRules.get(governing.id).content, governing.content);
+    });
+
+    it('editing an active rule that already has a pending replacement is refused REPLACEMENT_PENDING, not filed a second time', async () => {
+      const pending = store.sessionRules.create({
+        content: 'already-pending replacement text', projectId: own.id, createdBy: 'ai', replacesRuleId: governing.id
+      });
+      const res = await request('PUT', `/api/session-rules/${governing.id}`, { content: 'second edit attempt' }, asOperator);
+      assert.equal(res.status, 409);
+      assert.equal(res.data.code, 'REPLACEMENT_PENDING');
+      assert.equal(res.data.pendingReplacementId, pending.id);
+      assert.equal(store.sessionRules.get(governing.id).content, governing.content);
     });
 
     it('a bound session may revise its own project\'s AI proposal; history says ai even when the body claims operator', async () => {
@@ -382,12 +417,234 @@ describe('api/session-rules caller gate (#2013)', () => {
       assert.equal(store.sessionRules.get(proposal.id).status, 'proposed');
     });
 
-    it('the operator can still reject an active rule', async () => {
-      const governing = activeRule(own.id, 'operator rejects');
+    // #1709 (Architect ruling): an active rule is never rejected — that move
+    // used to make a governing rule vanish from the list and the Graveyard
+    // alike with no password. Retire is the only way a governing rule
+    // leaves force now; this test moved from asserting the old reject-while-
+    // active path to asserting it is refused, even for the operator.
+    it('even the operator cannot reject an active rule — retire is the only way out of force', async () => {
+      const governing = activeRule(own.id, 'operator tries to reject');
       const res = await request('PUT', `/api/session-rules/${governing.id}/status`, { status: 'rejected' }, asOperator);
+      assert.equal(res.status, 400);
+      assert.equal(res.data.code, 'INVALID_TRANSITION');
+      assert.equal(store.sessionRules.get(governing.id).status, 'active');
+    });
+  });
+
+  describe('PUT /api/session-rules/:id/status — retire and restore (#1709)', () => {
+    it('an unbound caller cannot retire — refused before any password or rule lookup', async () => {
+      const governing = activeRule(own.id, 'unbound retire target');
+      const res = await request('PUT', `/api/session-rules/${governing.id}/status`,
+        { status: 'retired', changedBy: 'operator' }, UNBOUND);
+      assert.equal(res.status, 403);
+      assert.equal(store.sessionRules.get(governing.id).status, 'active');
+    });
+
+    it('a bound session cannot retire its project\'s own governing rule', async () => {
+      const governing = activeRule(own.id, 'bound retire target');
+      const res = await request('PUT', `/api/session-rules/${governing.id}/status`, { status: 'retired' }, asOwn);
+      assert.equal(res.status, 403);
+      assert.equal(res.data.code, 'OPERATOR_ONLY');
+      assert.equal(store.sessionRules.get(governing.id).status, 'active');
+    });
+
+    it('the operator retires a governing rule, with no delete password configured', async () => {
+      const governing = activeRule(own.id, 'operator retires this');
+      const res = await request('PUT', `/api/session-rules/${governing.id}/status`, { status: 'retired' }, asOperator);
       assert.equal(res.status, 200);
-      assert.equal(store.sessionRules.get(governing.id).status, 'rejected');
-      assert.equal(newestVersion(governing.id).changedBy, 'operator');
+      assert.equal(res.data.status, 'retired');
+      assert.equal(store.sessionRules.get(governing.id).status, 'retired');
+    });
+
+    // The ordering fix from the Architect's review of the first draft: the
+    // retirement password is checked BEFORE the rule is read at all, so a
+    // wrong/absent password against a rule id that does not even exist
+    // still answers 403 — never 404, which would mean the lookup ran first
+    // and leaked the rule's non-existence to a caller the password already
+    // should have stopped.
+    //
+    // A second Architect finding on the first attempt at this proof: using
+    // UNBOUND with no delete password configured never actually exercises
+    // `checkDeletePassword` — `projects.checkDeletePassword` always answers
+    // `allowed: true` with no password set, so the 403 it observed came from
+    // `sessionRuleCaller`'s binding refusal instead, before the password gate
+    // ever ran. Reordering the route back to lookup-first would have left
+    // that test green. This block configures a REAL hashed password so the
+    // password check itself is what is on trial, as the OPERATOR — the one
+    // caller class that reaches the password gate at all.
+    describe('a real delete password gates retirement before the rule lookup, independent of sessionRuleCaller', () => {
+      const REAL_PASSWORD = 'retire-this-rule-for-real';
+      let savedPassword;
+
+      before(() => {
+        const config = store.config.load();
+        savedPassword = config.deletePassword;
+        config.deletePassword = projects.hashPassword(REAL_PASSWORD);
+        store.config.save(config);
+      });
+
+      after(() => {
+        const config = store.config.load();
+        config.deletePassword = savedPassword;
+        store.config.save(config);
+      });
+
+      it('a wrong or absent password answers IDENTICALLY for a nonexistent rule and an existing one — no existence leak', async () => {
+        const governing = activeRule(own.id, 'password-gated retire target (wrong/absent password)');
+
+        const wrongNonexistent = await request('PUT', '/api/session-rules/999999/status', { status: 'retired', password: 'wrong' }, asOperator);
+        const wrongExisting = await request('PUT', `/api/session-rules/${governing.id}/status`, { status: 'retired', password: 'wrong' }, asOperator);
+        assert.equal(wrongNonexistent.status, 403);
+        assert.equal(wrongExisting.status, 403);
+        assert.deepEqual(wrongNonexistent.data, wrongExisting.data,
+          'a wrong password must answer identically whether or not the rule exists');
+        assert.equal(store.sessionRules.get(governing.id).status, 'active', 'a wrong-password attempt must not touch the rule');
+
+        const absentNonexistent = await request('PUT', '/api/session-rules/999998/status', { status: 'retired' }, asOperator);
+        const absentExisting = await request('PUT', `/api/session-rules/${governing.id}/status`, { status: 'retired' }, asOperator);
+        assert.equal(absentNonexistent.status, 403);
+        assert.equal(absentExisting.status, 403);
+        assert.deepEqual(absentNonexistent.data, absentExisting.data,
+          'an absent password must answer identically whether or not the rule exists');
+        assert.equal(store.sessionRules.get(governing.id).status, 'active', 'an absent-password attempt must not touch the rule');
+      });
+
+      it('the correct password reaches the real outcome: 404 for a nonexistent rule, retirement for an existing one', async () => {
+        const governing = activeRule(own.id, 'password-gated retire target (correct password)');
+
+        const notFound = await request('PUT', '/api/session-rules/999999/status', { status: 'retired', password: REAL_PASSWORD }, asOperator);
+        assert.equal(notFound.status, 404);
+
+        const retired = await request('PUT', `/api/session-rules/${governing.id}/status`, { status: 'retired', password: REAL_PASSWORD }, asOperator);
+        assert.equal(retired.status, 200);
+        assert.equal(retired.data.status, 'retired');
+        assert.equal(store.sessionRules.get(governing.id).status, 'retired');
+      });
+
+      it('sessionRuleCaller still independently refuses bound callers even once the password gate passes', async () => {
+        const sameProjectTarget = activeRule(own.id, 'password-gated, bound same-project caller');
+        const sameProjectRes = await request('PUT', `/api/session-rules/${sameProjectTarget.id}/status`,
+          { status: 'retired', password: REAL_PASSWORD }, asOwn);
+        assert.equal(sameProjectRes.status, 403);
+        assert.equal(sameProjectRes.data.code, 'OPERATOR_ONLY');
+        assert.equal(store.sessionRules.get(sameProjectTarget.id).status, 'active');
+
+        const otherProjectTarget = activeRule(own.id, 'password-gated, bound other-project caller');
+        const otherProjectRes = await request('PUT', `/api/session-rules/${otherProjectTarget.id}/status`,
+          { status: 'retired', password: REAL_PASSWORD }, asOther);
+        assert.equal(otherProjectRes.status, 403);
+        assert.equal(otherProjectRes.data.code, 'OTHER_PROJECT');
+        assert.equal(store.sessionRules.get(otherProjectTarget.id).status, 'active');
+      });
+
+      // #1053/#2013: approval has carried this same password gate since
+      // before #1971 — caught with no HTTP-level test covering it when a
+      // mutation audit for this chunk flagged the gate as never actually
+      // exercised at the route.
+      it('approving a proposal with a wrong or absent password is refused FORBIDDEN, and nothing is approved', async () => {
+        const wrongPwProposal = proposedRule(own.id, 'approval password-gated (wrong password)');
+        const wrong = await request('PUT', `/api/session-rules/${wrongPwProposal.id}/status`,
+          { status: 'active', expectedContent: wrongPwProposal.content, password: 'wrong' }, asOperator);
+        assert.equal(wrong.status, 403);
+        assert.equal(wrong.data.code, 'FORBIDDEN');
+        assert.equal(store.sessionRules.get(wrongPwProposal.id).status, 'proposed');
+
+        const absentPwProposal = proposedRule(own.id, 'approval password-gated (absent password)');
+        const absent = await request('PUT', `/api/session-rules/${absentPwProposal.id}/status`,
+          { status: 'active', expectedContent: absentPwProposal.content }, asOperator);
+        assert.equal(absent.status, 403);
+        assert.equal(absent.data.code, 'FORBIDDEN');
+        assert.equal(store.sessionRules.get(absentPwProposal.id).status, 'proposed');
+      });
+
+      it('approving a proposal with the correct password succeeds', async () => {
+        const proposal = proposedRule(own.id, 'approval password-gated (correct password)');
+        const res = await request('PUT', `/api/session-rules/${proposal.id}/status`,
+          { status: 'active', expectedContent: proposal.content, password: REAL_PASSWORD }, asOperator);
+        assert.equal(res.status, 200);
+        assert.equal(res.data.status, 'active');
+        assert.equal(store.sessionRules.get(proposal.id).status, 'active');
+      });
+
+      // Architect ruling A88: an operator-authored POST /api/session-rules
+      // with replacesRuleId lands active by default (this route never
+      // requests another status) and retires its target in the SAME
+      // transaction as creation — a retirement that bypassed the password
+      // gate entirely until this fix, even though PUT .../status requires it
+      // for the exact same effect reached the other way.
+      it('creating an operator replacement with a wrong or absent password cannot retire the target', async () => {
+        const wrongPwTarget = activeRule(own.id, 'create-replace password-gated (wrong password)');
+        const wrong = await request('POST', '/api/session-rules',
+          { content: 'wrong-password amendment', projectId: own.id, replacesRuleId: wrongPwTarget.id, password: 'wrong' }, asOperator);
+        assert.equal(wrong.status, 403);
+        assert.equal(wrong.data.code, 'FORBIDDEN');
+        assert.equal(store.sessionRules.get(wrongPwTarget.id).status, 'active', 'the target must not be retired');
+        assert.equal(rulesOf(own.id).filter((r) => r.content === 'wrong-password amendment').length, 0, 'no replacement must have been created');
+
+        const absentPwTarget = activeRule(own.id, 'create-replace password-gated (absent password)');
+        const absent = await request('POST', '/api/session-rules',
+          { content: 'absent-password amendment', projectId: own.id, replacesRuleId: absentPwTarget.id }, asOperator);
+        assert.equal(absent.status, 403);
+        assert.equal(absent.data.code, 'FORBIDDEN');
+        assert.equal(store.sessionRules.get(absentPwTarget.id).status, 'active', 'the target must not be retired');
+      });
+
+      it('creating an operator replacement with the correct password retires the target', async () => {
+        const target = activeRule(own.id, 'create-replace password-gated (correct password)');
+        const res = await request('POST', '/api/session-rules',
+          { content: 'correct-password amendment', projectId: own.id, replacesRuleId: target.id, password: REAL_PASSWORD }, asOperator);
+        assert.equal(res.status, 201);
+        assert.equal(res.data.status, 'active');
+        assert.equal(store.sessionRules.get(target.id).status, 'retired');
+        assert.equal(store.sessionRules.get(target.id).supersededBy, res.data.id);
+      });
+
+      it('creating an operator rule with NO replacesRuleId still needs no password — only the retirement side effect is gated', async () => {
+        const res = await request('POST', '/api/session-rules',
+          { content: 'plain operator rule, no replacement', projectId: own.id }, asOperator);
+        assert.equal(res.status, 201);
+        assert.equal(res.data.status, 'active');
+      });
+    });
+
+    it('the operator restores a retired rule, with no password, and it comes back disabled', async () => {
+      const governing = activeRule(own.id, 'restore target');
+      await request('PUT', `/api/session-rules/${governing.id}/status`, { status: 'retired' }, asOperator);
+      const res = await request('PUT', `/api/session-rules/${governing.id}/status`, { status: 'active' }, asOperator);
+      assert.equal(res.status, 200);
+      assert.equal(res.data.status, 'active');
+      assert.equal(res.data.enabled, false);
+      assert.equal(store.sessionRules.get(governing.id).enabled, false);
+    });
+
+    it('a bound session cannot restore a retired rule', async () => {
+      const governing = activeRule(own.id, 'bound restore target');
+      await request('PUT', `/api/session-rules/${governing.id}/status`, { status: 'retired' }, asOperator);
+      const res = await request('PUT', `/api/session-rules/${governing.id}/status`, { status: 'active' }, asOwn);
+      assert.equal(res.status, 403);
+      assert.equal(store.sessionRules.get(governing.id).status, 'retired');
+    });
+
+    it('an unbound caller cannot restore a retired rule', async () => {
+      const governing = activeRule(own.id, 'unbound restore target');
+      await request('PUT', `/api/session-rules/${governing.id}/status`, { status: 'retired' }, asOperator);
+      const res = await request('PUT', `/api/session-rules/${governing.id}/status`, { status: 'active' }, UNBOUND);
+      assert.equal(res.status, 403);
+      assert.equal(store.sessionRules.get(governing.id).status, 'retired');
+    });
+
+    it('a Master rule cannot be retired through this route', async () => {
+      const masterRule = store.sessionRules.create({ content: 'a master hard rule', kind: 'master', createdBy: 'system' });
+      const res = await request('PUT', `/api/session-rules/${masterRule.id}/status`, { status: 'retired' }, asOperator);
+      assert.equal(res.status, 400);
+      assert.equal(res.data.code, 'INVALID_TRANSITION');
+    });
+
+    it('a proposed rule cannot be retired — only an active one has anything to retire', async () => {
+      const proposal = proposedRule(own.id, 'never approved, cannot retire');
+      const res = await request('PUT', `/api/session-rules/${proposal.id}/status`, { status: 'retired' }, asOperator);
+      assert.equal(res.status, 400);
+      assert.equal(res.data.code, 'INVALID_TRANSITION');
     });
   });
 
@@ -551,9 +808,26 @@ describe('api/session-rules caller gate (#2013)', () => {
   });
 
   describe('POST /api/session-rules/:id/restore', () => {
+    /**
+     * A governing (active) rule carrying TWO real versions in its history —
+     * built up while it was still `proposed` (#1696: a content change to an
+     * already-ACTIVE rule now files a replacement proposal instead of
+     * versioning in place, so this fixture accumulates its version history
+     * before approval, exactly as an AI proposal revised once before the
+     * operator approves it would).
+     * @param {number} projectId - Owning project
+     * @param {string} v1 - First version's text
+     * @param {string} v2 - Second version's text, the one approved into force
+     * @returns {object} The active rule, now governing `v2`
+     */
+    function activeRuleWithHistory(projectId, v1, v2) {
+      const proposal = store.sessionRules.create({ content: v1, projectId, createdBy: 'ai' });
+      store.sessionRules.update(proposal.id, { content: v2, changedBy: 'ai' });
+      return store.sessionRules.setStatus(proposal.id, 'active', { changedBy: 'operator', expectedContent: v2 });
+    }
+
     it('after approval, a bound session cannot restore an older text', async () => {
-      const governing = activeRule(own.id, 'original text');
-      store.sessionRules.update(governing.id, { content: 'approved text', changedBy: 'operator' });
+      const governing = activeRuleWithHistory(own.id, 'original text', 'approved text');
       const firstVersion = store.sessionRules.listVersions(governing.id).at(-1).versionNo;
       const res = await request('POST', `/api/session-rules/${governing.id}/restore`, { versionNo: firstVersion }, asOwn);
       assert.equal(res.status, 403);
@@ -562,8 +836,7 @@ describe('api/session-rules caller gate (#2013)', () => {
     });
 
     it('an unbound caller cannot restore', async () => {
-      const governing = activeRule(own.id, 'restore v1');
-      store.sessionRules.update(governing.id, { content: 'restore v2', changedBy: 'operator' });
+      const governing = activeRuleWithHistory(own.id, 'restore v1', 'restore v2');
       const firstVersion = store.sessionRules.listVersions(governing.id).at(-1).versionNo;
       const res = await request('POST', `/api/session-rules/${governing.id}/restore`,
         { versionNo: firstVersion, changedBy: 'operator' }, UNBOUND);
@@ -583,14 +856,44 @@ describe('api/session-rules caller gate (#2013)', () => {
     });
 
     it('the operator can restore, recorded as the operator even when the body says otherwise', async () => {
-      const governing = activeRule(own.id, 'op restore v1');
-      store.sessionRules.update(governing.id, { content: 'op restore v2', changedBy: 'operator' });
-      const firstVersion = store.sessionRules.listVersions(governing.id).at(-1).versionNo;
-      const res = await request('POST', `/api/session-rules/${governing.id}/restore`,
+      // #1696: a still-PROPOSED rule's restore applies in place (200) — the
+      // same roll back on an already-ACTIVE rule instead files a replacement
+      // proposal (202), covered separately below.
+      const proposal = proposedRule(own.id, 'op restore v1');
+      await request('PUT', `/api/session-rules/${proposal.id}`, { content: 'op restore v2' }, asOwn);
+      const firstVersion = store.sessionRules.listVersions(proposal.id).at(-1).versionNo;
+      const res = await request('POST', `/api/session-rules/${proposal.id}/restore`,
         { versionNo: firstVersion, changedBy: 'ai' }, asOperator);
       assert.equal(res.status, 200);
-      assert.equal(store.sessionRules.get(governing.id).content, 'op restore v1');
-      assert.equal(newestVersion(governing.id).changedBy, 'operator');
+      assert.equal(store.sessionRules.get(proposal.id).content, 'op restore v1');
+      assert.equal(newestVersion(proposal.id).changedBy, 'operator');
+    });
+
+    it('rolling an ACTIVE rule back to different text files a replacement proposal instead of rewriting it, origin "restore"', async () => {
+      const governing = activeRuleWithHistory(own.id, 'http restore origin v1', 'http restore origin v2');
+      const firstVersion = store.sessionRules.listVersions(governing.id).at(-1).versionNo;
+      const res = await request('POST', `/api/session-rules/${governing.id}/restore`, { versionNo: firstVersion }, asOperator);
+      assert.equal(res.status, 202);
+      assert.ok(res.data.replacementProposed);
+      assert.equal(res.data.replacementProposed.content, 'http restore origin v1');
+      assert.equal(res.data.replacementProposed.replacesRuleId, governing.id);
+      assert.equal(res.data.replacementProposed.replacementOrigin, 'restore');
+      assert.equal(newestVersion(res.data.replacementProposed.id).changedBy, 'operator');
+      // The original rule is untouched — still governing its approved text.
+      assert.equal(store.sessionRules.get(governing.id).content, 'http restore origin v2');
+    });
+
+    it('restoring an active rule to different text while a replacement is already pending is refused REPLACEMENT_PENDING', async () => {
+      const governing = activeRuleWithHistory(own.id, 'pending-restore v1', 'pending-restore v2');
+      const firstVersion = store.sessionRules.listVersions(governing.id).at(-1).versionNo;
+      const pending = store.sessionRules.create({
+        content: 'pending-restore v3', projectId: own.id, createdBy: 'ai', replacesRuleId: governing.id
+      });
+      const res = await request('POST', `/api/session-rules/${governing.id}/restore`, { versionNo: firstVersion }, asOperator);
+      assert.equal(res.status, 409);
+      assert.equal(res.data.code, 'REPLACEMENT_PENDING');
+      assert.equal(res.data.pendingReplacementId, pending.id);
+      assert.equal(store.sessionRules.get(governing.id).content, 'pending-restore v2');
     });
   });
 });

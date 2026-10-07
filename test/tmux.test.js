@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const tmux = require('../lib/tmux');
+const { uniqueSessionName } = require('./_tmux-session-names');
 
 describe('tmux — a timed-out command says so (#894)', () => {
   it('raises the timeout error instead of the raw exec failure', () => {
@@ -381,7 +382,7 @@ describe('tmux', () => {
   });
 
   describe('createSession - history-limit', () => {
-    const testSession = '__tc_test_histlimit__';
+    const testSession = uniqueSessionName('histlimit');
 
     it('should set history-limit to 50000 on new session', () => {
       try {
@@ -399,7 +400,7 @@ describe('tmux', () => {
   });
 
   describe('createSession - status bar', () => {
-    const testSession = '__tc_test_statusbar__';
+    const testSession = uniqueSessionName('statusbar');
 
     it('should set status-left to "TangleClaw" label', () => {
       try {
@@ -435,7 +436,7 @@ describe('tmux', () => {
   });
 
   describe('createSession - launch env injection', () => {
-    const testSession = '__tc_test_launchenv__';
+    const testSession = uniqueSessionName('launchenv');
 
     it('makes options.env visible to the spawned launch command (regression: #189 / Aider override)', () => {
       try {
@@ -450,7 +451,10 @@ describe('tmux', () => {
         const path = require('node:path');
         const { execSync } = require('node:child_process');
 
-        const envDumpPath = path.join(os.tmpdir(), `tc-launchenv-${Date.now()}.txt`);
+        // A directory of its own: a name built from the clock is shared by two
+        // runs that reach this line in the same millisecond.
+        const envDumpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-launchenv-'));
+        const envDumpPath = path.join(envDumpDir, 'env.txt');
         try {
           // `sh -c` writes the two env vars we care about, then keeps
           // the session alive so we have time to inspect before tmux
@@ -472,7 +476,7 @@ describe('tmux', () => {
           assert.match(dumped, /OPENAI_API_BASE=http:\/\/example\.test:4000/,
             `Launch command must inherit OPENAI_API_BASE from options.env. Got:\n${dumped}`);
         } finally {
-          try { fs.unlinkSync(envDumpPath); } catch (_) {}
+          fs.rmSync(envDumpDir, { recursive: true, force: true });
         }
       } finally {
         try { tmux.killSession(testSession); } catch (_) {}
@@ -491,7 +495,10 @@ describe('tmux', () => {
         // single quotes and escapes embedded quotes, so the value
         // reaches the child process byte-intact.
         const tricky = `a b'c$d;e"f`;
-        const envDumpPath = path.join(os.tmpdir(), `tc-launchenv-tricky-${Date.now()}.txt`);
+        // A directory of its own: a name built from the clock is shared by two
+        // runs that reach this line in the same millisecond.
+        const envDumpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-launchenv-tricky-'));
+        const envDumpPath = path.join(envDumpDir, 'env.txt');
         try {
           const command = `sh -c 'printf "TRICKY=%s\\n" "$TRICKY" > ${envDumpPath}; exec sleep 5'`;
           tmux.createSession(testSession, {
@@ -505,7 +512,7 @@ describe('tmux', () => {
           assert.equal(dumped.trim(), `TRICKY=${tricky}`,
             `Tricky env value must reach the child byte-intact. Got: ${dumped.trim()}`);
         } finally {
-          try { fs.unlinkSync(envDumpPath); } catch (_) {}
+          fs.rmSync(envDumpDir, { recursive: true, force: true });
         }
       } finally {
         try { tmux.killSession(testSession); } catch (_) {}
@@ -514,7 +521,7 @@ describe('tmux', () => {
   });
 
   describe('capturePane - full mode', () => {
-    const testSession = '__tc_test_fullcap__';
+    const testSession = uniqueSessionName('fullcap');
 
     it('should capture full scrollback with full option', () => {
       try {
@@ -558,7 +565,7 @@ describe('tmux', () => {
     });
 
     it('should return false for a normal bash session (not in alternate screen)', () => {
-      const testSession = '__tc_test_altscreen__';
+      const testSession = uniqueSessionName('altscreen');
       try {
         tmux.createSession(testSession, { command: 'exec bash' });
         assert.equal(tmux.isAlternateScreen(testSession), false);
@@ -569,7 +576,7 @@ describe('tmux', () => {
   });
 
   describe('capturePane - alternate screen handling', () => {
-    const testSession = '__tc_test_altcap__';
+    const testSession = uniqueSessionName('altcap');
 
     it('should return alternateScreen false for normal bash pane', () => {
       try {
@@ -603,7 +610,7 @@ describe('tmux', () => {
   });
 
   describe('sendKeys - behavioral', () => {
-    const testSession = '__tc_test_sendkeys__';
+    const testSession = uniqueSessionName('sendkeys');
     const { execSync } = require('node:child_process');
 
     function captureContent(session) {
@@ -762,7 +769,7 @@ describe('tmux', () => {
   });
 
   describe('sendRawKey', () => {
-    const testSession = '__tc_test_rawkey__';
+    const testSession = uniqueSessionName('rawkey');
     const { execSync } = require('node:child_process');
 
     it('should throw for non-existent session', () => {
@@ -794,7 +801,7 @@ describe('tmux', () => {
   });
 
   describe('killSession - success path', () => {
-    const testSession = '__tc_test_killsuccess__';
+    const testSession = uniqueSessionName('killsuccess');
 
     it('should return true and remove the session', () => {
       tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
@@ -816,7 +823,7 @@ describe('tmux', () => {
   // its longer-named neighbour. These tests pin the exact-match contract, so a
   // target that loses its `=` prefix goes red instead of eating a neighbour.
   describe('exact session-name targeting (no prefix fallback)', () => {
-    const base = '__tc_test_prefix__';
+    const base = uniqueSessionName('prefix');
     const longer = `${base}-neighbour`;
 
     const withNeighbour = (fn) => {
@@ -1108,7 +1115,7 @@ describe('tmux', () => {
 
 describe('tmux — reading back a session\'s launch environment (#1626)', () => {
   const { execFileSync } = require('node:child_process');
-  const name = `tc-read-env-1626-${process.pid}`;
+  const name = uniqueSessionName('read-env-1626');
 
   it('returns the value a session was created with, and nothing for an unset one', () => {
     // A REAL session, started with `-e` exactly as `createSession` does, because

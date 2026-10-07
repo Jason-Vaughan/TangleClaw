@@ -36,12 +36,16 @@ machine-specific — TangleClaw's SessionStart hooks live in the ignored
   constraint, so `create` will accept any string — pass a valid tier). Only `active`
   learnings are injected into a session prime, and only `active` ones are eligible to
   become rule proposals.
-- `session_rules.status` — `proposed` | `active` | `rejected` (#569). **Orthogonal to
-  `enabled`**: `enabled` is the operator's on/off switch for a rule they own, `status` is
-  how far the rule has got through review. Only `active` is ever injected — by the launch
-  prime, the Project Master, or the wrap's own prompts. Keeping the two separate is what
-  makes a REJECTED rule distinguishable from an unreviewed one; collapse them and the wrap
-  re-proposes declined rules at every wrap that sees the same learning.
+- `session_rules.status` — `proposed` | `active` | `rejected` | `retired` (#569, #1709).
+  **Orthogonal to `enabled`**: `enabled` is the operator's on/off switch for a rule they
+  own, `status` is how far the rule has got through review and force. Only `active` is
+  ever injected — by the launch prime, the Project Master, or the wrap's own prompts.
+  Keeping `status` separate from `enabled` is what makes a REJECTED rule distinguishable
+  from an unreviewed one; collapse them and the wrap re-proposes declined rules at every
+  wrap that sees the same learning. Status moves only along `SESSION_RULE_TRANSITIONS`
+  (below) — every other `(from, to)` pair is `400 INVALID_TRANSITION`.
+- `session_rules.replaces_rule_id`, `superseded_by`, `retired_at`, `replacement_origin` —
+  replacement/supersession provenance (#1696, #1709; see "Rule lifecycle" below).
 - **A rule is named `Rule #<id>` everywhere** (#2029). Every surface derives the label from
   `session_rules.id`, never from the text: the Project Rules and Global rules lists, their
   Approve / Reject / Delete / toggle controls and status lines, the wrap drawer's proposal
@@ -59,9 +63,106 @@ machine-specific — TangleClaw's SessionStart hooks live in the ignored
   and is not flagged. Stored text is never changed, and approval still compares
   the stored text (#1053). Rules: `lib/rule-label.js` for the server, mirrored by
   `public/api-helper.js#tcRuleLabel` / `#tcDisplayRuleText` for the pages
-  (`test/rule-label-drift.test.js` holds them together). A "superseded" rule is not a
-  stored state; it is an active rule the operator disabled when its replacement was
-  approved, and it is labelled like any other.
+  (`test/rule-label-drift.test.js` holds them together). A "superseded" rule **is** now
+  a stored state as of #1696/#1709 — `retired`, with `superseded_by` pointing at its
+  replacement where one exists — not, as before that work, an active rule the operator
+  merely disabled (see "Rule lifecycle" below). It is labelled like any other.
+
+## Rule lifecycle: retirement and replacement (#1696, #1709)
+
+An active project rule governs sessions until an operator takes it out of force — by
+**retiring** it directly, or by **replacing** it with an approved amendment. Neither
+path lets AI authorship unilaterally change what governs a session; both still require
+the operator's approval.
+
+### Status transitions
+
+`session_rules.status` moves only along this allow-list (`SESSION_RULE_TRANSITIONS` in
+`lib/store.js`, mirrored here — `test/session-rule-lifecycle.test.js` holds the two
+together so they cannot drift):
+
+```js
+const SESSION_RULE_TRANSITIONS = {
+  proposed: ['active', 'rejected'],
+  rejected: ['active'],
+  active: ['active', 'retired'],
+  retired: ['active']
+};
+```
+
+6 of the 16 possible `(from, to)` pairs are allowed; the other 10 are `400
+INVALID_TRANSITION`, including `active → rejected` (a governing rule is retired, never
+declined — only a still-pending proposal can be rejected) and creating a rule already
+`retired` (nothing can be born dead). `active → active` is the no-op approval path
+(`restoreOnly`) and `retired → active` is restore.
+
+### Retiring an active rule
+
+`PUT /api/session-rules/:id/status {status:'retired'}` — the operator only, and
+password-gated like approval (an Architect ruling: taking a governing rule out of force
+is the same weight of decision as putting one into force). **The password check runs
+BEFORE the rule is looked up**, so a wrong or absent password answers identically
+whether the target rule exists or not — a refused caller learns nothing about the rule,
+an asymmetry deliberately different from the approval path (which resolves the caller
+first, per main's existing precedent there).
+
+A retired rule's text is frozen: `PUT /api/session-rules/:id` and
+`POST /api/session-rules/:id/restore` both refuse a content change on a retired rule
+with `409 RULE_RETIRED` — restore it to `active` first. This closes the
+retire → edit → restore → switch-on hole: without it, a retired rule's text could be
+rewritten while retired and then reactivated with text no operator ever approved.
+
+### Restoring a retired rule
+
+`PUT /api/session-rules/:id/status {status:'active'}` on a `retired` rule — the
+operator only, no password required (restoring is the operator choosing to let
+something govern again, not taking anything out of force). **It always comes back
+`enabled: false`** — switched off, never automatically live — so turning it on is a
+separate, deliberate act.
+
+### Replacement and supersession
+
+A new rule may name the active rule it replaces: `replacesRuleId` on
+`POST /api/session-rules`, validated against the target (same project, same kind,
+still `active`, no other pending replacement already naming it — `400
+INVALID_REPLACES` otherwise). Approving a replacement **atomically** retires the rule
+it names, in the same transaction (`replaced: {id}` on the response), or reports
+`replacementSkipped: {id, reason}` when the target left force first (nothing to
+retire, but the replacement still lands active). An **operator**-authored create with
+`replacesRuleId` lands active immediately (this route never requests another status)
+and retires its target the same way — so it carries the same delete-password gate as
+retirement itself, checked before the target is looked up (Architect ruling A88; a
+bound session's create always lands `proposed` regardless of `replacesRuleId`, so it
+never reaches this side effect and is never asked for a password here).
+
+At most one pending replacement per rule, enforced at both doors into a text change:
+
+- A **second** replacement naming an already-pending target is `400 INVALID_REPLACES`
+  at creation.
+- An **edit or version rollback** of a rule that already has one pending is `409
+  REPLACEMENT_PENDING` — approve or reject the first one before filing another
+  (`pendingReplacementId` on the response names it).
+
+Approving a replacement whose target moved out of reach between proposal and decision
+is refused, not silently ignored:
+
+- `409 REPLACEMENT_SUPERSEDED` — the target was already replaced by a **different**
+  rule (two approved replacements of one rule would both govern).
+- `409 REPLACEMENT_TARGET_INACTIVE` — an edit or rollback (`replacement_origin`
+  `edit`/`restore`) whose target is no longer active; it has nothing left to change.
+
+### Active-rule text changes defer to a proposal (#1696)
+
+A content change to an **active, non-master** rule — through `PUT
+/api/session-rules/:id` or `POST /api/session-rules/:id/restore` — no longer rewrites
+it in place. It files a replacement proposal instead (`replacesRuleId` pointing at the
+rule, `replacementOrigin` `edit` or `restore`) and answers `202` with
+`replacementProposed`; the original rule is untouched and keeps governing its approved
+text until that proposal is approved. This applies even to the operator's own edit —
+authorship does not exempt a change to a governing rule from approval. A `proposed`
+rule (one not yet active) is unaffected: its content still changes in place, `200`, no
+proposal filed — it has nothing governing yet to protect. Master rules are outside this
+contract; they keep their own confirmed-baseline path.
 
 ## Learnings ingestion (the DB writer, #466)
 
@@ -86,14 +187,14 @@ and `GET /api/learnings` (#1121); a valid project with no rules returns `200 []`
 | Method & path | Purpose |
 |---|---|
 | `GET /api/session-rules?projectId=&kind=` | List rules |
-| `POST /api/session-rules` `{content, projectId, createdBy?}` | Create (projectId required). #2013: the operator creates an active rule; a session bound to the project creates a proposal (`createdBy` is recorded as `ai` whatever the body says); anyone else is refused |
-| `PUT /api/session-rules/:id` `{content?, enabled?}` | Update (snapshots a version). #2013: the operator only, except that a bound session may revise the text of its own project's still-proposed AI rule. `changedBy` is recorded from the caller, not the body |
+| `POST /api/session-rules` `{content, projectId, createdBy?, replacesRuleId?, password?}` | Create (projectId required). #2013: the operator creates an active rule; a session bound to the project creates a proposal (`createdBy` is recorded as `ai` whatever the body says); anyone else is refused. `replacesRuleId` names the active rule this one replaces (#1696) — `400 INVALID_REPLACES` if the target cannot be honoured. For a bound session it files a replacement **proposal**; for the **operator** it lands active and retires the target immediately, so it needs the delete `password` too, checked before the target is looked up (Architect ruling A88) |
+| `PUT /api/session-rules/:id` `{content?, enabled?}` | Update (snapshots a version). #2013: the operator only, except that a bound session may revise the text of its own project's still-proposed AI rule. `changedBy` is recorded from the caller, not the body. A content change to an **active, non-master** rule defers to a replacement proposal instead of applying in place — `202` with `replacementProposed` (#1696); a `retired` rule's content is frozen (`409 RULE_RETIRED`); a second change while one replacement is already pending is `409 REPLACEMENT_PENDING` |
 | `DELETE /api/session-rules/:id` | Delete (snapshots a tombstone). #2013: the operator only, except that a bound session may withdraw its own project's still-proposed AI rule |
 | `GET /api/session-rules/:id/versions` | Version history (newest first) |
-| `POST /api/session-rules/:id/restore` `{versionNo}` | Roll back to a prior version. #2013: the operator only |
+| `POST /api/session-rules/:id/restore` `{versionNo}` | Roll back to a prior version. #2013: the operator only. Same #1696 deferral as the PUT above when the rollback would change an active rule's text (`202`/`replacementProposed`), the same `409 RULE_RETIRED`/`REPLACEMENT_PENDING` refusals |
 | `POST /api/session-rules/promote` `{learningId, content?, projectId?}` | Promote a learning → rule (defaults to the learning's project). #2013: the operator as the caller, then the password |
 | `POST /api/session-rules/conflicts` `{content, projectId?}` | Non-authoritative conflict-candidate signal |
-| `PUT /api/session-rules/:id/status` `{status, expectedContent, changeReason?}` | #569 — approve (`active`) or decline (`rejected`) a proposal. #1053 — an approval must carry `expectedContent`, the exact stored text the operator was shown: without it, `400 EXPECTED_CONTENT_REQUIRED`; when the rule no longer holds that text, `409 RULE_CONTENT_CHANGED` carrying `currentContent`, and nothing changes. The password gate is checked first, so a caller without it learns nothing about the text. A rejection needs no `expectedContent` and is never compared. #2013: approving needs the operator as the caller as well as the password; a bound session may decline its own project's still-proposed AI rule, and moving an `active` rule out of `active` is the operator's |
+| `PUT /api/session-rules/:id/status` `{status, expectedContent?, password?, changeReason?}` | #569 — approve (`active`) or decline (`rejected`) a proposal; #1709 — retire (`active`→`retired`) or restore (`retired`→`active`) a governing rule. Any other `(from, to)` pair is `400 INVALID_TRANSITION`. #1053 — an approval must carry `expectedContent`, the exact stored text the operator was shown: without it, `400 EXPECTED_CONTENT_REQUIRED`; when the rule no longer holds that text, `409 RULE_CONTENT_CHANGED` carrying `currentContent`, and nothing changes. A rejection needs no `expectedContent` and is never compared, and neither does a restore. The password gate is checked first on both approval and retirement, so a caller without it learns nothing about the rule — for retirement specifically, before the rule is even looked up (see "Rule lifecycle" above). #2013: approving/retiring needs the operator as the caller as well as the password; restoring needs the operator, no password; a bound session may decline its own project's still-proposed AI rule, and every other status move is the operator's. Approving a replacement proposal may also answer `409 REPLACEMENT_SUPERSEDED` or `409 REPLACEMENT_TARGET_INACTIVE` (see "Rule lifecycle" above) |
 | `GET /api/learnings?projectId=&tier=` | #569 — list a project's learnings |
 | `PUT /api/learnings/:id/tier` `{tier}` | #569 — operator override of a learning's tier. #2018: the operator only, because an active learning is rendered into the project's session primes |
 
@@ -231,8 +332,10 @@ every one of these; without them it is refused.
 - New AI rule: `POST /api/session-rules {content, projectId}` — lands `proposed`, authored `ai`
 - Promote: `POST /api/session-rules/promote {learningId, ...}` — the operator, with the password
 - Edit: `PUT /api/session-rules/:id {content}` — a session only on a still-proposed AI rule in its project;
-  enabling, disabling and every edit to a governing rule are the operator's
-- Roll back: `POST /api/session-rules/:id/restore {versionNo}` — the operator
+  enabling, disabling and every edit to a governing rule are the operator's. An edit to a
+  governing (active) rule files a replacement proposal rather than applying in place (#1696)
+- Roll back: `POST /api/session-rules/:id/restore {versionNo}` — the operator; same deferral
+  as Edit above when rolling an active rule back to different text
 
 ## Rule kinds + the wrap-rule self-critique trigger (CC-6, #381)
 
