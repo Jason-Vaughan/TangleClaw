@@ -825,6 +825,16 @@ describe('the session keeps its blocker (#2128)', () => {
       assert.deepEqual(kicked, []);
     });
 
+    it('a launch send is withheld on a half-drawn dialog too, at the pre-key and at the paste', async () => {
+      const s = start();
+      watchAnswers('timeout');
+      tmux.capturePane = () => ({ lines: TRUST_DIALOG.slice(0, 13), alternateScreen: false });
+      launch(s, { profile: WITH_PREKEY });
+      await new Promise((resolve) => setTimeout(resolve, 1900));
+      assert.deepEqual(typed, []);
+      assert.equal(store.sessions.get(s.id).launchBlocker, null, 'a suspicion records no blocker');
+    });
+
     it('an engine that declares no dialogs is not watched at all', async () => {
       const s = start();
       let watched = 0;
@@ -944,6 +954,22 @@ describe('the session keeps its blocker (#2128)', () => {
           assert.match(refusal.why, /could not be read|neither that dialog nor the engine's prompt/);
         });
       }
+
+      it('when the check itself fails: the writer still withholds, because the blocker stands', () => {
+        const s = start();
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        const realCheck = startupDialog.check;
+        startupDialog.check = () => { throw new Error('profiles unreadable'); };
+        try {
+          const refusal = tmux._startupDialogOn(s.tmuxSession, 'claude');
+          assert.equal(refusal.code, 'trust_required');
+          assert.match(refusal.why, /could not be checked/);
+          store.sessions.clearLaunchBlocker(s.id);
+          assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude'), null, 'and with no blocker a failed check stops nothing');
+        } finally {
+          startupDialog.check = realCheck;
+        }
+      });
 
       it('the positive reading clears it and the send goes through', () => {
         const s = start();
