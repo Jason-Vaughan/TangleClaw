@@ -1039,6 +1039,7 @@ A model can be selected only when it is in `offered` **and** in the roster the i
 - `offeredWithAvailability(profile)` returns that state with every offered model, each with `available` and, when it is not, a `reason`. An unavailable model is still returned, so a UI can show it as unavailable instead of dropping it.
 - `checkSelection(profile, modelId)` returns `{ok: true}` or a refusal with a stable `code` and a `reason`: `MODEL_MALFORMED`, `MODELS_BLOCK_INVALID`, `ENGINE_HAS_NO_MODELS`, `MODEL_NOT_OFFERED` (which is also what another engine's model gets), `ROSTER_UNAVAILABLE`, `MODEL_UNAVAILABLE`.
 - `modelArgv(profile, modelId)` returns the flag and the quoted id for the launch command.
+- `selectionSummary(profile)` returns that state with `declared`: `absent` (the profile has no `models` key), `null` (the key is set to null) or `present`. `selectionState` reads the first two alike, as `none`. They are reported apart because a project can still hold a model chosen before a block was set to null, and the surface that explains it needs to say the offer was withdrawn, not that it never existed.
 
 Nothing here substitutes a model. A selection that cannot be confirmed is refused.
 
@@ -1050,7 +1051,30 @@ A profile whose `models` block is present but invalid is a fault, not an engine 
 
 **Which engines declare it.** Codex. Antigravity does not yet: no record has been measured that names the model of a completed turn and ties it to one launch, and offering a model TangleClaw could not confirm it launched would be worse than not offering one.
 
-**Status.** The block and the module are in place. Nothing reads them at save or launch yet, so no project setting, API field or launch command has changed (#2188 is being built in steps).
+### A project's stored model
+
+A project stores one model for its next launch as `model` in `.tangleclaw/project.json`, beside `engine`. `null` (the default) means no model is selected and the engine runs its own default.
+
+**Saving.** `PATCH /api/projects/:name` takes `model`: a model id, or `null` to clear it. A model is checked with `checkSelection` against the engine the project will have after the same request, so an engine and a model for it can be sent together. A refused model is a `400` whose message ends with the code in brackets, and nothing in that request is applied. That includes a roster that cannot be read: an unconfirmed model is never stored. Clearing is always accepted.
+
+Two things are deliberately not re-checked. A model sent at the value already stored, with the engine unchanged, is accepted as it is, so a settings save that carries every field does not fail over a roster that went stale since. And nothing re-validates a stored model in the background.
+
+**A model and an orchestration profile are mutually exclusive.** A profile supplies its own model at launch. Saving a model on a project bound to a profile is refused, naming the profile, and binding a profile to a project that has a model is refused (`MODEL_SELECTED`), naming the model. Clear one before setting the other.
+
+**Changing the engine clears the model**, unless the same request sends a model that is valid for the new engine. A model id means nothing to another engine's CLI. The response's `warnings` say the model was reset, name it and both engines, and say whether the new engine offers models, offers none, or has broken model settings. This is the same rule the default launch mode follows (#2189).
+
+**A stored model is never dropped silently.** If it stops being selectable after it was saved (the CLI no longer lists it, the roster cannot be read, the profile's `models` block was removed, set to null or broken), it stays in the config. The project payload reports it with the refusal:
+
+| Field | Meaning |
+|---|---|
+| `model` | The stored model id, or `null` |
+| `modelCheck` | `null` when no model is stored. Otherwise `{ok: true}`, or `{ok: false, code, reason}` with the same codes a save uses |
+
+`GET /api/projects` works each distinct engine and model out once per list, so a fleet on one model costs one roster read.
+
+**What an engine reports.** Every engine, in `GET /api/engines` and as a project's `engine`, carries `modelSelection`: `{declared, state, errors}`. `GET /api/engines` also carries `models`: the engine's offered models, each `{id, label, available, reason}`, read from the CLI's roster for that request. It is an empty list unless `state` is `ok`, which is why `state` has to be read with it: an empty list from a broken block is not an empty list from an engine that offers nothing. A project's own `engine` does not carry `models`, because that payload is built for every project on a polled list.
+
+**Status.** Saving, validating and reporting are in place. **No launch reads the stored model yet**, so a session still starts on the engine's own default, and every save that stores a model says so in its `warnings`. No settings page offers the field yet either; until one does it is reachable only through the API. The launch argument, the check that the session is running the model it was asked for, and the selectors arrive in later steps of #2188.
 
 ## Engine API error detection (`errorPatterns`)
 

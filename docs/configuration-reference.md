@@ -352,6 +352,7 @@ Stored in `<project>/.tangleclaw/project.json`. Created when a project is added 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `engine` | string\|null | `null` | Engine ID for this project |
+| `model` | string\|null | `null` | The exact model id the next launch asks the engine for (#2188). `null` passes no model, and the engine runs its own default. It belongs to `engine`: a save validates it against that engine's offered models and the installed CLI's roster, changing `engine` clears it unless the same update sends a model for the new engine, and it cannot be set on a project bound to an orchestration profile. **Not yet read at launch**, and a save that stores one says so. See [Model selection](engine-guide.md#model-selection-models) |
 | `rules.core` | object | all `true` | Core enforcement rules (not editable) |
 | `rules.extensions` | object | all `false` | Opt-in extension rules |
 | `ports` | object | `{}` | Registered port assignments |
@@ -634,7 +635,7 @@ TangleClaw's HTTP API lives under `/api/`; the tables below are the reference. A
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/engines` | GET | List engines with availability |
+| `/api/engines` | GET | List engines with availability. Each carries `modelSelection` (`{declared, state, errors}`: whether the engine offers model selection) and `models` (its offered models, each with `available` and a `reason` when it is not). See [Model selection](engine-guide.md#model-selection-models) |
 | `/api/engines/:id` | GET | Engine profile details |
 
 ### Projects

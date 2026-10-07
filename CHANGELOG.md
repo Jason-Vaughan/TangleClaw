@@ -38,6 +38,13 @@ All notable changes to TangleClaw are documented in this file.
 - **`tc message owed` lists what a session still owes on the switchboard** (#1976).
   - **What it shows:** replies owed first, each with its age and the exact `tc message send --in-reply-to …` command, then messages not yet handled. `tc message read` points to it.
   - **What it leaves out:** a send still in flight (no Hub id yet) is not listed. Neither is an exchange this host cannot supervise (`untracked`), which is counted aloud instead. When the route returns its full 200-row page, the output says older exchanges may be missing rather than claiming nothing is owed.
+- **A project can store a model for its engine, through the API** (#2188, in progress). `PATCH /api/projects/:name` takes `model`, an exact model id or `null`, and stores it in the project's `.tangleclaw/project.json` beside `engine`. **No launch reads it yet: a session still starts on the engine's own default, and every save that stores a model says so in its `warnings`.** No settings page offers it yet. Refs #2188.
+  - **What a save checks:** the model must be on the engine's allowlist and in the model list the installed CLI reports at that moment. Anything else is a `400` with a reason and a code (`MODEL_MALFORMED`, `MODEL_NOT_OFFERED`, `MODEL_UNAVAILABLE`, `ROSTER_UNAVAILABLE`, `ENGINE_HAS_NO_MODELS`, `MODELS_BLOCK_INVALID`), and nothing in that request is applied. A model list that cannot be read refuses the save. Only Codex offers models today.
+  - **Changing the engine clears the model**, unless the same request sends one valid for the new engine. The response says it was reset and names the model and both engines.
+  - **A model and an orchestration profile cannot both be set.** Each is refused while the other is in place, naming it.
+  - **A stored model is kept when it stops being selectable** (the CLI drops it, its list cannot be read, the engine's model settings are removed or broken). `GET /api/projects` and `GET /api/projects/:name` report `model` with `modelCheck`, which carries the refusal and its reason.
+  - `GET /api/engines` gives each engine `modelSelection` (whether it offers model selection, as `none`, `invalid` or `ok`, and whether its profile has no `models` setting or one set to null) and `models` (the offered models, each available or not, with the reason).
+  - **Downgrade:** an older TangleClaw ignores the `model` key in `project.json`. No database change.
 
 ### Changed
 

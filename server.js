@@ -6177,7 +6177,10 @@ route('GET', '/api/engines', async (req, res) => {
   // else wrote. Doing that on the event loop inside a route is the defect this
   // whole branch exists to remove.
   if (refresh) await engines.refreshDetectionPath();
-  let list = engines.listWithAvailability();
+  // `models: true`: this is the response a model selector is drawn from, so
+  // each engine carries its offered models with whether each can be selected
+  // now, read from the CLI's roster for this request.
+  let list = engines.listWithAvailability({ models: true });
   // Resolve the login PATH before answering "nothing found". The boot probe is
   // fire-and-forget, so a request landing before it settles would otherwise be
   // told detection could not look — reporting a race as a finding, which is the
@@ -6191,7 +6194,7 @@ route('GET', '/api/engines', async (req, res) => {
   // one. `?refresh=1` is that explicit ask, and it is a button press.
   if (!list.some((e) => e && e.available) && !engines.detectionProbeAttempted()) {
     await engines.refreshDetectionPath();
-    list = engines.listWithAvailability();
+    list = engines.listWithAvailability({ models: true });
   }
   // `detectionCertain: false` means no login shell answered, so detection saw
   // only the PATH launchd gives this service and "not installed" is not a
@@ -7132,6 +7135,8 @@ route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
     provenanceWatermark: result.project.provenanceWatermark,
     defaultLaunchMode: result.project.defaultLaunchMode,
     showLaunchModePicker: result.project.showLaunchModePicker,
+    model: result.project.model,
+    modelCheck: result.project.modelCheck,
     updatedAt: result.project.updatedAt
   };
 
