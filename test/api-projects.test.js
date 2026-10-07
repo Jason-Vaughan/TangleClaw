@@ -698,6 +698,77 @@ describe('api-projects', () => {
           assert.equal(launchSettings('gate-a').recoveryMode, 'advisory', 'the file was not touched');
         });
 
+        it('says the decision was saved when a later write in the same request throws', async () => {
+          const id = store.projects.getByName('gate-a').id;
+          await request('PATCH', '/api/projects/gate-a', { launchSequence: { recoveryMode: 'advisory' } }, asOperator());
+          const real = store.projectConfig.save;
+          // The first file write of this request is `wrapSections`, after the
+          // store has taken the decision.
+          store.projectConfig.save = () => { throw new Error('injected later failure'); };
+          let answer;
+          try {
+            answer = await request('PATCH', '/api/projects/gate-a',
+              { wrapSections: null, launchSequence: { recoveryMode: 'operator' } }, asOperator());
+          } finally {
+            store.projectConfig.save = real;
+          }
+          assert.equal(answer.status, 500);
+          assert.equal(answer.data.code, 'RECOVERY_DECISION_SAVED_UPDATE_FAILED');
+          assert.match(answer.data.error, /The recovery mode itself was saved as operator before this failed/);
+          assert.equal(answer.data.recoveryMode.mode, 'operator');
+          assert.equal(answer.data.recoveryMode.pinnedMode, 'operator');
+          assert.equal(store.projectRecoveryState.get(id).pinnedMode, 'operator', 'and it was');
+        });
+
+        /**
+         * A project with no session, so a rename of it reaches the move
+         * itself. `gate-a` has a live binding, and its rename is refused in
+         * validation before anything is written.
+         * @param {string} name - Project and directory name
+         * @returns {object} The project record
+         */
+        const idleProject = (name) => {
+          const dir = path.join(projectsDir, name);
+          fs.mkdirSync(dir, { recursive: true });
+          return store.projects.create({ name, path: dir, engine: 'claude' });
+        };
+
+        it('says the decision was saved when a rename in the same request will not move', async () => {
+          const project = idleProject('gate-rename-decided');
+          const realRename = fs.renameSync;
+          fs.renameSync = () => { throw new Error('injected rename failure'); };
+          let answer;
+          try {
+            answer = await request('PATCH', '/api/projects/gate-rename-decided',
+              { name: 'gate-rename-decided-moved', launchSequence: { recoveryMode: 'operator' } }, asOperator());
+          } finally {
+            fs.renameSync = realRename;
+          }
+          assert.equal(answer.status, 400);
+          assert.equal(answer.data.code, 'RECOVERY_DECISION_SAVED_UPDATE_FAILED');
+          assert.match(answer.data.error, /Failed to rename directory: injected rename failure\. The recovery mode itself was saved as operator/);
+          assert.equal(answer.data.recoveryMode.mode, 'operator');
+          assert.equal(answer.data.recoveryMode.pinnedMode, 'operator');
+          assert.ok(store.projects.getByName('gate-rename-decided'), 'the project keeps its name');
+          assert.equal(store.projectRecoveryState.get(project.id).pinnedMode, 'operator', 'and the pin was set');
+        });
+
+        it('a failed rename with no recovery mode in the request answers as it always did', async () => {
+          idleProject('gate-rename-plain');
+          const realRename = fs.renameSync;
+          fs.renameSync = () => { throw new Error('injected rename failure'); };
+          let answer;
+          try {
+            answer = await request('PATCH', '/api/projects/gate-rename-plain', { name: 'gate-rename-plain-moved' }, asOperator());
+          } finally {
+            fs.renameSync = realRename;
+          }
+          assert.equal(answer.status, 400);
+          assert.equal(answer.data.code, 'BAD_REQUEST');
+          assert.equal(answer.data.error, 'Failed to rename directory: injected rename failure', 'the move itself was reached');
+          assert.equal(answer.data.recoveryMode, undefined);
+        });
+
         it('answers 200 with a named warning when the decision is saved and the file is not', async () => {
           const id = store.projects.getByName('gate-a').id;
           const real = store.projectConfig.save;

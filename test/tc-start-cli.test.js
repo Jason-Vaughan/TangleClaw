@@ -352,7 +352,7 @@ describe('tc start (car 21.3)', () => {
     const invalid = render({
       projectRecoveryMode: 'operator',
       projectRecoverySource: 'invalid',
-      projectRecoveryDiscrepancy: 'project.json holds an unrecognised recoveryMode "Advisory"; recovery stays operator-cleared'
+      projectRecoveryDiscrepancy: 'the operator chose advisory recovery, and project.json holds an unrecognised recoveryMode "Advisory"; recovery stays operator-cleared until the file is corrected'
     });
     assert.match(invalid, /now operator \(invalid\)/);
     assert.doesNotMatch(invalid, /pinned/, 'a project held by an unrecognised value is not described as pinned');

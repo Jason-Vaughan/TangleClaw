@@ -167,15 +167,20 @@ describe('the recovery-mode resolver (#1937)', () => {
     assert.match(stale.discrepancy, /chose advisory/);
   });
 
-  it('an unrecognised value is operator and is never described as pinned', () => {
-    for (const pin of [null, noticeOnly, chosen]) {
+  it('an unrecognised value is operator, and is a discrepancy only against a decision on record', () => {
+    for (const pin of [null, noticeOnly]) {
       const got = resolve(file('Advisory'), pin);
       assert.equal(got.mode, 'operator');
       assert.equal(got.source, 'invalid');
       assert.match(got.warning, /not one of operator, advisory/);
-      assert.ok(got.discrepancy);
-      assert.doesNotMatch(got.discrepancy, /pinned/);
+      assert.equal(got.discrepancy, undefined, 'nobody decided anything, so there is nothing for the file to disagree with');
     }
+    const against = resolve(file('Advisory'), chosen);
+    assert.equal(against.mode, 'operator');
+    assert.equal(against.source, 'invalid', 'held by a bad value, never described as pinned');
+    assert.match(against.warning, /not one of operator, advisory/);
+    assert.match(against.discrepancy, /the operator chose advisory recovery, and project\.json holds an unrecognised/);
+    assert.doesNotMatch(against.discrepancy, /pinned/);
   });
 
   it('with no decision on record the file decides, and a notice-only row reads exactly like no row', () => {
@@ -543,6 +548,20 @@ describe('recovery state in the store and on the launch path (#1937)', () => {
       assert.equal(back.recoveryMode.pinnedMode, null);
       assert.equal(fileMode(project), 'advisory');
       assert.deepEqual(effective(project), { mode: 'advisory', source: 'chosen' });
+      // The row holds only the latest decision. The activity log is what says
+      // the project was pinned before the pin was lifted, and who did each.
+      const events = store.activity.query({ projectId: project.id, eventType: 'project.recovery-mode-decided' });
+      assert.deepEqual(events.map((e) => [e.detail.mode, e.detail.pinnedMode, e.detail.decidedBy]).sort(),
+        [['advisory', null, 'operator'], ['operator', 'operator', 'operator']]);
+    });
+
+    it('a decision that could not be saved, or was refused, leaves no decision event', async () => {
+      const project = makeProject();
+      await failing(store.projectRecoveryState, 'recordDecision', () => projects.updateProject(project.name,
+        { launchSequence: { recoveryMode: 'operator' } }, { recoveryDecisionBy: 'operator' }));
+      await projects.updateProject(project.name, { launchSequence: { recoveryMode: 'operator' } });
+      await projects.updateProject(project.name, { launchSequence: { unreadyWindowMinutes: 12 } });
+      assert.deepEqual(store.activity.query({ projectId: project.id, eventType: 'project.recovery-mode-decided' }), []);
     });
 
     it('the store write fails: an error, the file is not attempted, and nothing else in the request is applied', async () => {
@@ -643,14 +662,55 @@ describe('recovery state in the store and on the launch path (#1937)', () => {
         if (calls === 1) throw new Error('injected first-save failure');
         return realSave(...args);
       };
+      let thrown;
       try {
         await assert.rejects(projects.updateProject(project.name,
           { wrapSections: null, launchSequence: { recoveryMode: 'operator' } }, { recoveryDecisionBy: 'operator' }),
-        /injected first-save failure\. The recovery mode itself was saved as operator/);
+        (err) => { thrown = err; return /injected first-save failure\. The recovery mode itself was saved as operator/.test(err.message); });
       } finally {
         store.projectConfig.save = realSave;
       }
       assert.equal(effective(project).mode, 'operator');
+      // As a field too, for a caller that does not read sentences.
+      assert.equal(thrown.recoveryDecisionSaved.mode, 'operator');
+      assert.equal(thrown.recoveryDecisionSaved.pinnedMode, 'operator');
+      assert.equal(thrown.recoveryDecisionSaved.decidedBy, 'operator');
+      assert.match(thrown.recoveryDecisionSavedMessage, /saved as operator before this failed/);
+    });
+
+    it('a returned failure after the decision carries it too: a rename that will not move', async () => {
+      const project = makeProject();
+      const realRename = fs.renameSync;
+      fs.renameSync = () => { throw new Error('injected rename failure'); };
+      let result;
+      try {
+        result = await projects.updateProject(project.name,
+          { name: `${project.name}-moved`, launchSequence: { recoveryMode: 'operator' } }, { recoveryDecisionBy: 'operator' });
+      } finally {
+        fs.renameSync = realRename;
+      }
+      assert.equal(result.project, null);
+      assert.match(result.errors[0], /Failed to rename directory: injected rename failure/);
+      assert.equal(result.recoveryDecisionSaved.mode, 'operator');
+      assert.equal(result.recoveryDecisionSaved.pinnedMode, 'operator');
+      assert.match(result.recoveryDecisionSavedMessage, /saved as operator before this failed/);
+      assert.ok(store.projects.getByName(project.name), 'the project keeps its name');
+      assert.equal(effective(project).mode, 'operator', 'and the decision stands');
+    });
+
+    it('a failure with no decision in the request carries no such statement', async () => {
+      const project = makeProject();
+      const realRename = fs.renameSync;
+      fs.renameSync = () => { throw new Error('injected rename failure'); };
+      let result;
+      try {
+        result = await projects.updateProject(project.name, { name: `${project.name}-moved` });
+      } finally {
+        fs.renameSync = realRename;
+      }
+      assert.equal(result.project, null);
+      assert.equal(result.recoveryDecisionSaved, undefined);
+      assert.deepEqual(result.errors, ['Failed to rename directory: injected rename failure']);
     });
   });
 

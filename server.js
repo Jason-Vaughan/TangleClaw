@@ -6970,12 +6970,33 @@ route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
   // The verified caller kind goes with the decision into the store. It is
   // read here, after the operator guard above admitted the request, so the
   // only kind that can arrive is one that guard accepts.
-  const result = await projects.updateProject(params.name, body, choosingRecoveryMode
-    ? { recoveryDecisionBy: sharedDocsAccess.resolveAccess(req).kind }
-    : {});
+  let result;
+  try {
+    result = await projects.updateProject(params.name, body, choosingRecoveryMode
+      ? { recoveryDecisionBy: sharedDocsAccess.resolveAccess(req).kind }
+      : {});
+  } catch (err) {
+    // A failure thrown after the recovery decision reached the store. The
+    // dispatcher would answer a bare 500, and the operator would take the mode
+    // for unchanged while it applies from the next launch. Any other throw is
+    // the dispatcher's, as before.
+    if (!err.recoveryDecisionSaved) throw err;
+    log.error('A project update failed after its recovery-mode decision was saved', {
+      project: params.name, error: err.message
+    });
+    return errorResponse(res, 500, `The update failed. ${err.recoveryDecisionSavedMessage}`,
+      projects.RECOVERY_DECISION_SAVED_UPDATE_FAILED, { recoveryMode: err.recoveryDecisionSaved });
+  }
 
   if (result.errors.length > 0 && !result.project) {
     const firstError = result.errors[0];
+    // A returned failure after the recovery decision reached the store (a
+    // directory rename that would not move): the same statement, on the same
+    // field, with the status the failure always had.
+    if (result.recoveryDecisionSaved) {
+      return errorResponse(res, 400, `${firstError}. ${result.recoveryDecisionSavedMessage}`,
+        projects.RECOVERY_DECISION_SAVED_UPDATE_FAILED, { recoveryMode: result.recoveryDecisionSaved });
+    }
     // The store write of the recovery mode failed: a server fault, not a
     // verdict on the request, and nothing was applied.
     if (result.code === projects.RECOVERY_DECISION_NOT_SAVED) {
