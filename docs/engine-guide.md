@@ -492,10 +492,12 @@ under its cursor is "No, exit". A line ending in Enter typed into that screen en
 
 Every later text send TangleClaw makes into the pane is refused with the code while the dialog is
 up. The refusal is in `tmux.sendKeys`, where text sends converge, so it covers the command bar, a
-wake nudge, a coordinator's command, a wrap's content prompt and the Critic action. It is a floor
-for sends that name the session's engine, which a test requires of every caller in `lib/`; a caller
-that names none is not checked, and neither is a raw key (`tmux.sendRawKey`), which the launch
-guards itself before each pre-key.
+wake nudge, a coordinator's command, a wrap's content prompt and the Critic action. What it covers
+depends on what the send names. A send that names the session's engine, which a test requires of
+every caller in `lib/`, has the pane read against that engine's declared dialogs. A send that
+names none cannot be read that way and is refused only while a blocker is already recorded for
+the pane's session. A raw key (`tmux.sendRawKey`) is not checked there; the launch guards its own
+before each pre-key.
 
 The rule is that a send goes ahead only on positive evidence, or when nothing stands against it.
 One function states it (`withholdFor` in `lib/startup-dialog.js`) and both the injection path and
@@ -516,7 +518,9 @@ the pane writer ask it. Three things withhold a send:
 dialog text on screen (or anywhere, when there is none). A composer left on screen above a dialog
 that is being drawn is not evidence. A profile with no prompt glyph (no `wake` block) can show no
 positive evidence at all: it still sees a dialog by its markers and withholds, but a blocker
-recorded for it is never cleared by a pane read, only by the session ending.
+recorded for it is never cleared by a pane read. Every TangleClaw send to that session is then
+refused until the session ends, even after the operator answers the dialog, so the way out is to
+relaunch, or to give the profile a `wake` block. Bundled profiles and copies of them carry one.
 
 A dialog whose options have been reworded so that no declared marker matches is not seen at all.
 That is a limit of detection, not evidence of safety: the entry's evidence names the version it was
