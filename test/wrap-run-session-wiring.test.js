@@ -49,7 +49,7 @@ function functionSource(name) {
 }
 
 const WIRING = [
-  'wrapStartInFlight', 'postWrap', 'retryWrap', 'closeWrapDrawer',
+  'wrapStartInFlight', 'confirmWrap', 'postWrap', 'retryWrap', 'closeWrapDrawer',
   'wrapRunState', 'wrapStatusUrl', 'dispatchWrapRun', 'syncWrapRunEffects', 'paintWrapRun',
   'followedWrapRunKey', 'rememberFollowedWrapRun', 'recallFollowedWrapRun', 'restoreWrapRunOnLoad', 'adoptWrapRunChoices',
   '_probeWrapStatus', 'startWrapStream', 'stopWrapStream', 'scheduleWrapStatusPoll', 'cancelWrapStatusPoll',
@@ -141,6 +141,11 @@ function harness() {
     collapseWrapDrawer: record('collapseWrapDrawer'),
     expandWrapDrawer: record('expandWrapDrawer'),
     openWrapModal: record('openWrapModal'),
+    closeWrapModal: record('closeWrapModal'),
+    showWrapModalStranded: record('showWrapModalStranded'),
+    refreshWrapReleaseMode: async () => false,
+    wrapModalNeedsStrandedConfirm: () => false,
+    wrapModalStrandedItems: null,
     paintWrapButton: record('paintWrapButton'),
     paintHandback: record('paintHandback'),
     paintLiveTiming: record('paintLiveTiming'),
@@ -159,7 +164,7 @@ function harness() {
     'let wrapClockTimer = null;'
   ].join('\n');
   vm.runInContext(`${globals}\n${WIRING.map(functionSource).join('\n\n')}\n`
-    + 'this.__wiring = { postWrap, retryWrap, closeWrapDrawer, collapseWrapPopover, onWrapButtonClick, wrapClockTick, dispatchWrapRun, wrapRunState, restoreWrapRunOnLoad, getPassword: () => currentWrapPassword, setPassword: (p) => { currentWrapPassword = p; } };', sandbox);
+    + 'this.__wiring = { confirmWrap, postWrap, retryWrap, closeWrapDrawer, collapseWrapPopover, onWrapButtonClick, wrapClockTick, dispatchWrapRun, wrapRunState, restoreWrapRunOnLoad, getPassword: () => currentWrapPassword, setPassword: (p) => { currentWrapPassword = p; } };', sandbox);
   sandbox.api.lastError = null;
 
   return {
@@ -352,6 +357,26 @@ describe('wrap-run wiring in session.js — executed', () => {
     // is that realm's and a strict deep-equal against this realm's literal fails.
     assert.deepEqual(JSON.parse(JSON.stringify(h.last('apiMutate')[2].options.pathDecisions)),
       { 'earlier.js': 'include', 'shared.js': 'leave', 'notes.md': 'include' });
+  });
+
+  it('#2154 — a new wrap sends none of the Include / Leave answers left over from an earlier one', async () => {
+    // An earlier wrap blocked, the operator answered, and that wrap was abandoned.
+    // A Leave now binds any file it names, so one carried into the next wrap
+    // would keep that file out of a commit nobody answered about.
+    h.sandbox.wrapPathDecisions['notes.md'] = 'leave';
+    h.sandbox.wrapPathDecisionBasis['notes.md'] = 'upstream-owns';
+    h.sandbox.document.getElementById = () => ({
+      disabled: false, value: '', checked: false, textContent: '',
+      classList: { add() {}, remove() {}, contains: () => true },
+      querySelector: () => null, querySelectorAll: () => []
+    });
+    h.net.post = { ok: true, runId: RUN, status: 'wrapping' };
+    await h.w.confirmWrap();
+    const body = h.last('apiMutate')[2];
+    assert.ok(!body.options || !('pathDecisions' in body.options), 'the first POST of a wrap carries no path answers');
+    assert.ok(!body.options || !('pathDecisionBasis' in body.options));
+    assert.deepEqual(JSON.parse(JSON.stringify(h.sandbox.wrapPathDecisions)), {}, 'and a Retry of this wrap starts from none');
+    assert.deepEqual(JSON.parse(JSON.stringify(h.sandbox.wrapPathDecisionBasis)), {});
   });
 
   it('#1868 — Retry sends the upstream verdict each answer was given against, and keeps an earlier one beside its answer', async () => {

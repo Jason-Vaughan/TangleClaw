@@ -801,3 +801,30 @@ through the landing page between every wrap and the next session.
 
 **Alternative rejected:** relaunching automatically when a wrap ends. An unattended restart is a
 separate decision with its own gates (#1886), and a wrap is also how an operator stops for the day.
+
+## Amended 2026-10-07 — a Leave binds whatever a later step concludes about the file (#2154)
+
+Architect ruling, message 44f1a715 (Q1 option a, Q2, Q3):
+
+- **A Leave answer given in this wrap binds its exact path**, whether a later `classify` call reads
+  the path as foreign or as the session's own. The path stays out of what the wrap may stage, hand
+  to `git add` or commit, and the manifest names it under Keep local. This replaces the #1406 rule
+  that a decision is honored only for a path the same call counts as foreign. An Include is
+  unchanged: it admits a foreign path and is a no-op for the session's own.
+- **Why the old rule failed.** `session-files`, the changelog gate and `commit` each read ownership
+  from the live tree. Where no launch snapshot applies, a file is foreign when its change time
+  predates the session. A file answered Leave and then rewritten by anything other than a wrap step
+  had a fresh change time by the time `commit` ran, was read as the session's own, and was staged
+  (the wrap closed as PR #1927). The secret check already honored a Leave for the session's own
+  flagged file (#1513), so the two guards disagreed. They now agree.
+- **Precedence is unchanged.** Methodology-withheld, protected, already-upstream and TangleClaw state
+  paths are sorted out before any answer is read. TangleClaw maintenance is outside the operator's
+  file question and a Leave does not hold it back.
+- **A wrap step's later write stays local too.** If a step rewrites a path the operator left, the
+  rewrite stays uncommitted with it. A Leave is never turned into an Include.
+- **Answers are scoped to one wrap.** The page sends none on a wrap's first request and drops any it
+  holds, and the server keeps a run's options only for a Retry of that run. A stale Leave must not
+  keep a later session's work out of its commit.
+
+**Not established:** which route the #1927 wrap took. The server log for that window had rotated and
+no step records the answers a wrap ran with. The ruling closes both routes.

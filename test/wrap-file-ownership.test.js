@@ -282,12 +282,18 @@ describe('classify', () => {
     ...over
   });
 
-  it('a decision is honored only for a path it calls foreign — "leave" cannot drop the session\'s own file', () => {
-    const c = ownership.classify(scope(), [{ path: 'new.js', deleted: false }, { path: 'old.js', deleted: false }], {
-      decisions: { 'new.js': 'leave', 'old.js': 'include', 'elsewhere.js': 'include' }
+  // Until #2154 this case asserted the opposite: a Leave for the session's own
+  // file was ignored and the file committed. Each wrap step re-reads ownership,
+  // so that rule let a file answered Leave while foreign be staged once a later
+  // step read it as the session's. Architect ruling of 2026-10-07 (ADR 0002).
+  it('an Include is honored only for a path it calls foreign; a Leave keeps out the session\'s own file too', () => {
+    const c = ownership.classify(scope(), [{ path: 'new.js', deleted: false }, { path: 'kept.js', deleted: false }, { path: 'old.js', deleted: false }], {
+      decisions: { 'new.js': 'leave', 'kept.js': 'include', 'old.js': 'include', 'elsewhere.js': 'include' }
     });
-    assert.deepEqual(c.stageable.sort(), ['new.js', 'old.js']);
-    assert.deepEqual(c.left, []);
+    assert.deepEqual(c.stageable.sort(), ['kept.js', 'old.js']);
+    assert.deepEqual(c.included, ['old.js'], 'an Include for the session\'s own file admits nothing: it was already the session\'s');
+    assert.deepEqual(c.left, ['new.js']);
+    assert.deepEqual(c.leftSessionFiles, ['new.js']);
   });
 
   it('a withheld prefix is never staged and never asked about, whatever the decision (#1738)', () => {
@@ -1112,5 +1118,147 @@ describe('#1724: the wrap PR body names the files it proposes', () => {
   it('omits a line whose list is empty', () => {
     const lines = commitStep._buildBodyLines({ 'commit:session-files': { sessionFiles: ['a.js'], includedFiles: [] } });
     assert.deepEqual(lines, ['- Session files (changed since this session launched): a.js']);
+  });
+});
+
+describe('#2154: a file answered Leave is never committed by that wrap', () => {
+  const entry = (p, over = {}) => ({ path: p, deleted: false, indexRemoved: false, renamePair: null, newToRepo: false, ...over });
+  const noSnapshot = { snapshotApplies: false, startedAtMs: 1000, workToplevel: '/repo' };
+  const withSnapshot = { snapshotApplies: true, baseline: { dirty: { paths: [], truncated: false } }, startedAtMs: 1000, workToplevel: '/repo' };
+
+  it('the answer holds when the file\'s change time moves past the launch between two classifications', () => {
+    const decisions = { 'board.md': 'leave' };
+    const asked = ownership.classify(noSnapshot, [entry('board.md')], { mtimeMs: () => 500 });
+    assert.equal(asked.undecided[0].reason, 'predates-launch', 'fixture precondition: the operator is asked about it');
+    const before = ownership.classify(noSnapshot, [entry('board.md')], { decisions, mtimeMs: () => 500 });
+    assert.deepEqual(before.left, ['board.md']);
+    // Something other than a wrap step rewrote it: no `wrapWritten`, a fresh time.
+    const after = ownership.classify(noSnapshot, [entry('board.md')], { decisions, mtimeMs: () => 2000 });
+    assert.deepEqual(after.stageable, []);
+    assert.deepEqual(after.addable, []);
+    assert.deepEqual(after.left, ['board.md']);
+    assert.deepEqual(after.undecided, [], 'an answered file is not asked about again');
+  });
+
+  it('a Leave for a file changed since launch keeps it out and names it as the session\'s', () => {
+    const c = ownership.classify(withSnapshot, [entry('new.js'), entry('other.js')], { decisions: { 'new.js': 'leave' } });
+    assert.deepEqual(c.stageable, ['other.js']);
+    assert.deepEqual(c.owned, ['other.js']);
+    assert.deepEqual(c.left, ['new.js']);
+    assert.deepEqual(c.leftSessionFiles, ['new.js']);
+    assert.deepEqual(ownership.manifestOf(c, []).keepLocal, ['new.js']);
+  });
+
+  it('a rebuild after the secret check narrows the buckets keeps the left file out', () => {
+    const c = ownership.classify(withSnapshot, [entry('new.js'), entry('other.js')], { decisions: { 'new.js': 'leave' } });
+    const narrowed = ownership.reclassify(c, { owned: c.owned, included: c.included, tangleclawMaintenance: c.tangleclawMaintenance });
+    assert.deepEqual(narrowed.stageable, ['other.js']);
+    assert.deepEqual(narrowed.addable, ['other.js']);
+    assert.deepEqual(narrowed.left, ['new.js']);
+  });
+
+  it('a Leave holds back a wrap step\'s own write to a file that was clean at launch', () => {
+    const c = ownership.classify(withSnapshot, [entry('CHANGELOG.md'), entry('other.js')], {
+      wrapWritten: ['CHANGELOG.md'], decisions: { 'CHANGELOG.md': 'leave' }
+    });
+    assert.deepEqual(c.stageable, ['other.js']);
+    assert.deepEqual(c.left, ['CHANGELOG.md']);
+  });
+
+  it('an Include for a file changed since launch changes nothing: it is committed as the session\'s', () => {
+    const c = ownership.classify(withSnapshot, [entry('new.js')], { decisions: { 'new.js': 'include' } });
+    assert.deepEqual(c.owned, ['new.js']);
+    assert.deepEqual(c.included, []);
+    assert.deepEqual(c.left, []);
+  });
+
+  it('through real steps: asked, answered Leave, rewritten by something else, and the commit leaves it out', async () => {
+    const repo = makeRepo();
+    const wt = `${repo}-wt`;
+    dirs.push(wt);
+    git(repo, 'worktree', 'add', '-q', '-b', 'feat/keep-local', wt);
+    fs.writeFileSync(path.join(wt, 'shared.js'), 'generated before the session\n');
+    const old = new Date('2000-01-01T00:00:00Z');
+    fs.utimesSync(path.join(wt, 'shared.js'), old, old);
+    const scope = await wrapScope.resolve({ name: 'own', path: repo }, { id: 1, tmuxSession: 'own', startedAt: '2020-01-01 00:00:00' }, {
+      exec: asyncExec, paneCurrentPath: () => wt, getLaunchBaseline: () => launchBaseline.capture(repo)
+    });
+    assert.equal(scope.snapshotApplies, false, 'fixture precondition: ownership is judged by change time');
+    fs.writeFileSync(path.join(wt, 'feature.js'), 'session work\n');
+
+    const asked = await runStep(sessionFiles, repo, scope);
+    assert.equal(asked.status, 'blocked');
+    assert.deepEqual(asked.output.foreignPaths.map((f) => f.path), ['shared.js']);
+
+    const options = { pathDecisions: { 'shared.js': 'leave' } };
+    const settled = await runStep(sessionFiles, repo, scope, options);
+    assert.equal(settled.status, 'done', settled.blockers.join('; '));
+    assert.deepEqual(settled.output.manifest.keepLocal, ['shared.js']);
+
+    // A generator in another session refreshes the file while the wrap's content
+    // steps run. Its change time is now after the launch.
+    fs.writeFileSync(path.join(wt, 'shared.js'), 'regenerated mid-wrap\n');
+
+    const again = await runStep(sessionFiles, repo, scope, options);
+    assert.deepEqual(again.output.manifest.keepLocal, ['shared.js'], 'a retry still shows it kept local');
+    assert.ok(!again.output.manifest.commit.includes('shared.js'));
+
+    const r = await runStep(commitStep, repo, scope, options);
+    assert.equal(r.status, 'done', (r.blockers || []).join('; '));
+    assert.deepEqual(git(wt, 'show', '--name-only', '--format=', 'HEAD').split('\n'), ['feature.js']);
+    assert.deepEqual(r.output.manifest.keepLocal, ['shared.js']);
+    assert.ok(!r.output.message.includes('shared.js'), 'the commit body does not claim the file');
+    assert.equal(fs.readFileSync(path.join(wt, 'shared.js'), 'utf8'), 'regenerated mid-wrap\n', 'Leave discards nothing');
+    assert.match(execFileSync('git', ['status', '--porcelain'], { cwd: wt, encoding: 'utf8' }), /^ M shared\.js$/m);
+  });
+
+  it('when the only uncommitted file is the session\'s and it is left, the commit is skipped', async () => {
+    const repo = makeRepo();
+    const scope = await scopeFor(repo, launchBaseline.capture(repo));
+    fs.writeFileSync(path.join(repo, 'mine.js'), 'session work\n');
+    const head = git(repo, 'rev-parse', 'HEAD');
+    const r = await runStep(commitStep, repo, scope, { pathDecisions: { 'mine.js': 'leave' } });
+    assert.equal(r.status, 'skipped');
+    assert.match(r.output.reason, /every uncommitted file was left out/);
+    assert.deepEqual(r.output.left, ['mine.js']);
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+  });
+
+  it('a Leave on one half of the session\'s own rename stops the commit and says a decision can fix it', async () => {
+    const repo = makeRepo();
+    const scope = await scopeFor(repo, launchBaseline.capture(repo));
+    git(repo, 'mv', 'feature.js', 'moved.js');
+    const head = git(repo, 'rev-parse', 'HEAD');
+    const r = await runStep(commitStep, repo, scope, { pathDecisions: { 'moved.js': 'leave' } });
+    assert.equal(r.status, 'blocked');
+    assert.equal(r.output.splitRenames[0].reason, 'decision');
+    assert.match(r.output.remediation, /Decide the same way for both halves/);
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+  });
+
+  it('the changelog check does not ask for an entry covering a session file that is left', async () => {
+    const repo = makeRepo();
+    const scope = await scopeFor(repo, launchBaseline.capture(repo));
+    fs.writeFileSync(path.join(repo, 'mine.js'), 'session work\n');
+    const judged = coverage.evaluate(repo, ['CHANGELOG.md'], [], scope);
+    assert.deepEqual(judged.uncommittedWork, ['mine.js'], 'fixture precondition: unanswered, it is work the wrap will commit');
+    const left = coverage.evaluate(repo, ['CHANGELOG.md'], [], scope, { pathDecisions: { 'mine.js': 'leave' } });
+    assert.deepEqual(left.uncommittedWork, []);
+  });
+
+  it('a Leave does not hold back TangleClaw\'s own maintenance, which is never the operator\'s question', async () => {
+    const engines = require('../lib/engines');
+    const MD = engines._managedBlockMarkers('markdown');
+    const guide = (body) => `# Project\n\nOperator notes.\n\n${MD.begin}\n${body}\n${MD.end}\n`;
+    const repo = makeRepo();
+    fs.writeFileSync(path.join(repo, 'CLAUDE.md'), guide('guide v1'));
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'track the engine config');
+    fs.writeFileSync(path.join(repo, 'CLAUDE.md'), guide('guide v2'));
+    const scope = await scopeFor(repo, launchBaseline.capture(repo));
+    const r = await runStep(commitStep, repo, scope, { pathDecisions: { 'CLAUDE.md': 'leave' } });
+    assert.equal(r.status, 'done', (r.blockers || []).join('; '));
+    assert.deepEqual(r.output.tangleclawMaintenance, ['CLAUDE.md']);
+    assert.deepEqual(git(repo, 'show', '--name-only', '--format=', 'HEAD').split('\n'), ['CLAUDE.md']);
   });
 });
