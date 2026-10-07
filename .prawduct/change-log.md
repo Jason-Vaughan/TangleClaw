@@ -35,6 +35,24 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-07 — #2177: a Codex launch types nothing into a startup prompt
+
+<!-- prawduct: type=bugfix | scope=2177-prekey-containment -->
+
+#2177 containment, the first build chunk of the #2059 follow-on, as ruled in Architect A123 and dispatched by the PM.
+
+**The defect.** The Codex profile sent two `Enter` keys three seconds after launch on the keystroke path, without reading the pane. Codex's update prompt highlights "Update now" and its folder-trust prompt highlights "Trust and continue". In a guarded sandbox on codex-cli 0.156.1 the first key ran `npm install -g @openai/codex` and ended the pane; the update prompt was on screen at the key's due time in seven of eight runs.
+
+**Root cause.** A key was scheduled by elapsed time against a screen that depends on the host: whether a newer version is known, whether the folder is trusted, and how loaded the machine is. Nothing ever read which prompt the key would answer.
+
+**What landed.** `data/engines/codex.json` drops `launch.preKeys` and declares `launch.startupPrompts` (folder-trust, update) with evidence. `lib/startup-prompts.js` reads a capture and says whether a declared prompt, a bare composer, or neither is the live screen: a prompt is live when it lies below the last bare composer row, because Codex keeps its opening composer above a dialog and an answered dialog above the composer that replaced it. `lib/sessions.js` asks it immediately before each launch-time send. A declared prompt refuses the prime paste and any `preKeys`; an unrecognised screen on a pane never observed ready, or an unreadable pane, refuses them too. The refused paste is recorded `skipped` in the rule-delivery ledger with the prompt and what the operator should do, and the readiness wait logs the prompt when it is first seen.
+
+**Deliberate behaviour change.** A Codex launch in an untrusted folder now stops at the trust prompt. No path accepts folder trust; the Operator has given no policy for it.
+
+**A test expectation changed, on purpose.** `test/codex-launch-modes.test.js` asserted that the bundled Codex profile resolves to `['Enter', 'Enter']`. That was the behaviour being removed, so the assertion now uses a synthetic profile for the fallback rule it was really about, and a new test pins that bundled Codex sends no `preKeys` in any mode.
+
+**Not covered.** Dismissing the update prompt (later, after matching tests). The opening screen, which this reader calls a composer; telling it apart is the wake gate's pane refusals in the next chunk. Codex versions other than 0.156.1: the prompt wording is assumed unchanged, from earlier captures, and was not re-measured. A real `launchSession` against a live Codex was not run; the refusals are tested through `_deferEngineInit` with stubbed tmux and through the reader on whole live captures. The log line for a prompt first seen mid-wait is exercised only through `_awaitPaneReady`'s observer hook.
+
 ## 2026-10-07 — #2059: version-qualified Codex pane fixtures and pinned refusals
 
 <!-- prawduct: type=debt | scope=2059-codex-wake-fixtures -->

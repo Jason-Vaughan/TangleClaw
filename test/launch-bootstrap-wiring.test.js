@@ -51,6 +51,7 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
     real.sendRawKey = tmux.sendRawKey;
     real.hasSession = tmux.hasSession;
     real.probe = tmux.probeSession;
+    real.capture = tmux.capturePane;
     real.record = store.sessionRuleDeliveries.record;
   });
 
@@ -61,6 +62,7 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
     tmux.sendRawKey = real.sendRawKey;
     tmux.hasSession = real.hasSession;
     tmux.probeSession = real.probe;
+    tmux.capturePane = real.capture;
     store.sessionRuleDeliveries.record = real.record;
     store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -88,6 +90,7 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
     tmux.sendRawKey = real.sendRawKey;
     tmux.hasSession = real.hasSession;
     tmux.probeSession = real.probe;
+    tmux.capturePane = real.capture;
     store.sessionRuleDeliveries.record = real.record;
   });
 
@@ -171,5 +174,73 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
     sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, PROFILE, 'the prime', null, false, null, null);
     await settle();
     assert.deepEqual(bootstraps, []);
+  });
+
+  describe('an engine that declares startup prompts is never typed into while one is up (#2177)', () => {
+    const PROMPTS = [{ id: 'update', match: 'Update available', humanAction: 'Skip it with Escape.' }];
+    const DECLARING = Object.freeze({ name: 'Fake', capabilities: { supportsPrimePrompt: true }, launch: { startupDelay: 5, startupPrompts: PROMPTS } });
+    const DECLARING_WITH_PREKEYS = Object.freeze({ name: 'Fake', capabilities: { supportsPrimePrompt: true }, launch: { startupDelay: 5, preKeys: ['Enter', 'Enter'], preKeyDelay: 5, startupPrompts: PROMPTS } });
+    const UPDATE_PROMPT = ['> ', '  Update available · 1 → 2', '> 1. Update now', '  enter continue · esc skip'];
+    const LEGACY = { sessionId: 99, projectId: 3, hasSequence: true, startupDelivery: 'legacy' };
+
+    it('the prime is not pasted into a declared prompt, and the ledger says which prompt and what to do', async () => {
+      tmux.capturePane = () => ({ lines: UPDATE_PROMPT });
+      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, DECLARING, 'the prime', null, false, { ...DELIVERY }, LEGACY);
+      await settle();
+
+      assert.deepEqual(pastes, [], 'a paste ends in Enter, and Enter takes the prompt\'s default');
+      assert.equal(ledger.length, 1);
+      assert.equal(ledger[0].channel, 'prime-paste');
+      assert.equal(ledger[0].outcome, 'skipped');
+      assert.match(ledger[0].skipReason, /Fake is showing its update prompt, which TangleClaw does not answer/);
+      assert.match(ledger[0].skipReason, /Skip it with Escape\./);
+    });
+
+    it('the prime is not pasted blind into a screen the launch cannot recognise', async () => {
+      tmux.capturePane = () => ({ lines: ['Signing in…'] });
+      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, DECLARING, 'the prime', null, false, { ...DELIVERY }, LEGACY);
+      await settle();
+
+      assert.deepEqual(pastes, []);
+      assert.equal(ledger[0].outcome, 'skipped');
+      assert.match(ledger[0].skipReason, /never observed ready/);
+    });
+
+    it('the prime is not pasted when the pane cannot be read', async () => {
+      tmux.capturePane = () => { throw new Error('no server running'); };
+      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, DECLARING, 'the prime', null, false, { ...DELIVERY }, LEGACY);
+      await settle();
+
+      assert.deepEqual(pastes, []);
+      assert.match(ledger[0].skipReason, /could not be read, so nothing was typed/);
+    });
+
+    it('a preKey is withheld while a declared prompt is up, and sent once it is not', async () => {
+      tmux.capturePane = () => ({ lines: UPDATE_PROMPT });
+      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, DECLARING_WITH_PREKEYS, null, null, false, null, LEGACY);
+      await new Promise((resolve) => setTimeout(resolve, 650));
+      assert.deepEqual(rawKeys, [], 'no Enter reaches the update prompt');
+
+      tmux.capturePane = () => ({ lines: ['some other dialog'] });
+      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, DECLARING_WITH_PREKEYS, null, null, false, null, { ...LEGACY, sessionId: 98 });
+      await new Promise((resolve) => setTimeout(resolve, 650));
+      assert.deepEqual(rawKeys.map((k) => k.key), ['Enter', 'Enter'], 'a preKey still answers the screen its profile wrote it for');
+    });
+
+    it('a preKey is withheld when the pane cannot be read', async () => {
+      tmux.capturePane = () => { throw new Error('no server running'); };
+      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, DECLARING_WITH_PREKEYS, null, null, false, null, LEGACY);
+      await new Promise((resolve) => setTimeout(resolve, 650));
+      assert.deepEqual(rawKeys, []);
+    });
+
+    it('an engine that declares none keeps its paste without its pane being read', async () => {
+      let reads = 0;
+      tmux.capturePane = () => { reads++; return { lines: UPDATE_PROMPT }; };
+      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, PROFILE, 'the prime', null, false, { ...DELIVERY }, LEGACY);
+      await settle();
+      assert.equal(pastes.length, 1);
+      assert.equal(reads, 0);
+    });
   });
 });

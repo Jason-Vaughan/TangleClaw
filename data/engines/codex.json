@@ -22,12 +22,27 @@
     "shellCommand": "codex",
     "args": [],
     "env": {},
-    "preKeys": [
-      "Enter",
-      "Enter"
-    ],
-    "preKeyDelay": 3000,
-    "startupDelay": 2000
+    "startupDelay": 2000,
+    "startupPrompts": [
+      {
+        "id": "folder-trust",
+        "match": "Trust this folder\\?",
+        "humanAction": "Answer Codex's folder-trust prompt in the pane. TangleClaw does not accept folder trust on your behalf.",
+        "evidence": {
+          "verifiedOn": "2026-10-07",
+          "source": "Live captures of codex-cli 0.156.1 launched as `codex --no-daemon` in a folder its home did not trust (throwaway CODEX_HOME, private tmux server). The dialog reads `Trust this folder? Codex can read, edit, and run files here…`, with `› 1. Trust and continue` highlighted and `enter continue · esc quit` below. It was first drawn between 2.7 s and 3.8 s after the pane was created, below the opening composer row, which stays on screen above it."
+        }
+      },
+      {
+        "id": "update",
+        "match": "Update available · ",
+        "humanAction": "Answer Codex's update prompt in the pane (Escape skips it). TangleClaw does not answer it: its default is to upgrade the global Codex install.",
+        "evidence": {
+          "verifiedOn": "2026-10-07",
+          "source": "Live captures of codex-cli 0.156.1 with update checks at Codex's default and a home that had already learned of 0.161.0. The dialog reads `Update available · 0.156.1 → 0.161.0`, with `› 1. Update now (runs \u0060npm install -g @openai/codex\u0060)` highlighted and `enter continue · esc skip` below. First drawn between 0.4 s and 3.7 s after the pane was created, before the folder-trust prompt. An `Enter` sent to it in a sandbox ran the install and ended the pane (#2177). After it is skipped its rows stay in scrollback above the live composer, and a notice box reads `Update available!` without the middle dot, which this pattern does not match."
+        }
+      }
+    ]
   },
   "launchModes": {
     "default": {
