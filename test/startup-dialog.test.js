@@ -1173,6 +1173,68 @@ describe('the session keeps its blocker (#2128)', () => {
       assert.equal(res.startupDialog.code, 'trust_required', 'so the command route answers 409, not 500');
     });
 
+    describe('a trust_required raised somewhere else is not this blocker', () => {
+      // Live on 2026-10-07 (session 1363, Codex 0.156.1, a project directory
+      // renamed that day): the native startup fire was refused `trust_required`
+      // from Codex's own config, twice, while the pane showed Codex's ordinary
+      // prompt and no dialog. That refusal is a fire-row fact from another
+      // mechanism. The session's launch blocker is set only from what the pane
+      // shows, so a refusal like that one can neither store it nor make it stick.
+      const CODEX = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));
+      const CODEX_AT_REST = ['', '› Ask Codex to do anything', '', '  gpt-6-sol high · 100% left'];
+
+      it('a Codex session at its ordinary prompt has no blocker, takes its sends, and its pane is not even read for one', () => {
+        const s = store.sessions.start({ projectId: project.id, engineId: 'codex', tmuxSession: `t-codex-${counter}` });
+        const realGet = store.engines.get;
+        store.engines.get = (id) => (id === 'codex' ? CODEX : realGet(id));
+        let reads = 0;
+        tmux.capturePane = () => { reads += 1; return { lines: CODEX_AT_REST, alternateScreen: false }; };
+        tmux.probeSession = () => ({ answered: true, live: true, cause: null });
+        try {
+          assert.deepEqual(startupDialog.declared(CODEX), [], 'precondition: Codex declares no startup dialog here');
+          const res = sessions.injectCommand(project.name, 'tc start next', { sessionId: s.id });
+          assert.deepEqual(res, { ok: true, error: null });
+          assert.equal(tmux._startupDialogOn(s.tmuxSession, 'codex'), null);
+          assert.equal(store.sessions.get(s.id).launchBlocker, null);
+          assert.equal(reads, 0, 'no declaration, so no pane read was made on its account');
+          assert.equal(store.activity.query({ sessionId: s.id, eventType: 'session.launch_blocked' }).length, 0);
+        } finally {
+          store.engines.get = realGet;
+          store.sessions.kill(s.id, 'test cleanup');
+        }
+      });
+
+      it('nothing but a pane read can record the blocker: its only writers are the boot watch and the reconcile', () => {
+        const lib = path.join(__dirname, '..', 'lib');
+        const writers = [];
+        (function walk(dir) {
+          for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) { walk(full); continue; }
+            if (!entry.name.endsWith('.js') || full === path.join(lib, 'store.js')) continue;
+            const src = fs.readFileSync(full, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+            const n = (src.match(/\bsetLaunchBlocker\(/g) || []).length;
+            if (n) writers.push(`${path.relative(lib, full)}:${n}`);
+          }
+        })(lib);
+        assert.deepEqual(writers, ['sessions.js:2'],
+          'a new writer of the launch blocker must be one that has just read the dialog off the pane');
+        const sessionsSrc = fs.readFileSync(path.join(lib, 'sessions.js'), 'utf8');
+        // Both writers pass the dialog a pane read returned, never a code from elsewhere.
+        assert.match(sessionsSrc, /setLaunchBlocker\(session\.id, \{ \.\.\.seen\.dialog, engineId \}\)/);
+        assert.match(sessionsSrc, /setLaunchBlocker\(sessionId, \{ \.\.\.dialog, engineId \}\)/);
+      });
+
+      it('a blocker that was recorded for a pane now at its prompt is cleared by the next look: it cannot stick', () => {
+        const s = start();
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        pane = COMPOSER;
+        tmux.probeSession = () => ({ answered: true, live: true, cause: null });
+        assert.equal(sessions.getSessionStatus(project.name).launchBlocker, null, 'so the badge and banner have nothing to show');
+        assert.deepEqual(sessions.injectCommand(project.name, 'tc start next'), { ok: true, error: null });
+      });
+    });
+
     it('false positive: a session quoting the dialog still takes its input', () => {
       start();
       pane = QUOTING_SESSION;
