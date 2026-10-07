@@ -76,6 +76,25 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 **Normal-launch latency, measured.** In a trusted scratch repo at load average 31 to 33, Claude Code drew nothing for 16.6 s and 21.2 s, and the watch called the prompt settled 0.6 s after it first appeared (three watched runs: 18.2 s, 19.5 s, 23.4 s). So the wait is the engine's own boot plus one settle tick; the old path pasted at 2 s into a pane that had drawn nothing. The watch reads through the non-blocking pane reader, because one synchronous read cost 120 to 170 ms at that load.
 
 **Found in the same log.** Those launches ran on `claude-sonnet-reviewer`, an operator-made profile for the `claude` command that exists only in `~/.tangleclaw/engines`. The bundled-profile sync never updates it, so a declaration read per profile would have left the reported launches unprotected. A profile with no list of its own now takes the dialogs declared for the command it runs.
+## 2026-10-07 — #2049: one clear-one-launch function, the fleet read, and no clear for an ended session
+
+<!-- prawduct: type=feature | scope=2049-bulk-recovery-clear -->
+
+#2049 chunk 1 of the plan the Architect ruled on as A93, on the ProjectManager's lease (Medusa `ca422e7b`). Three parts, each its own commit, with the review's fixes in a commit after them. The batch write, its audit and migration, and the fleet panel are later chunks and are held.
+
+**The extraction.** `lib/launch-recovery-clear.js#clearOneLaunch` holds the single clear's checks, the compare-and-set and the `launch.recovery-cleared` activity row. The route keeps the operator proof, status codes, messages and log lines. `test/launch-recovery-clear.test.js` is unedited and passes, which is the evidence that nothing a caller sees changed.
+
+**The ended-session refusal.** The single clear now answers `409 SESSION_ENDED` for a launch whose session is not active. It applies only where the clear would otherwise have been written: an already-cleared launch, a moved revision and an advisory launch keep their answers, so the stale response is unchanged.
+
+**The fleet read.** `GET /api/launch/recovery-held`, served only while the login gate is `armed` and the request carries an operator's session; no CSRF proof, since it changes nothing. The Architect reviewed the field and source mapping before it was built (A96, yes with changes). What changed from the mapping as sent: the startup-fire part states the retention guarantee that actually holds (rows of an active session are exempt), an empty stranded-wrap read is marked `incomplete-history`, a throwing source sends a stable reason code and logs the error, the nudge is labelled a send attempt, and the session status is labelled as stored.
+
+**A requirement that arrived mid-build.** "Uncertain queued work" had no definition when the lease was written. The Architect defined it as reported evidence from identifiable durable sources, with unknown or unavailable where there is none (Architect commit `83192f9`). No source records pane input, so that part always says `unavailable`.
+
+**Review.** Two cumulative Critic reviews, on `29c7e9581` and then on the tree with main merged in: 0 blocking in both. From the first: the fleet read's no-login refusal was aligned with the reconciliation read's (`403 LOGIN_GATE_REQUIRED`) and the API reference row completed; the Launch readiness panel still offering Clear recovery for an ended session's launch is filed as #2178, a panel change outside this chunk. From the second, carried to the batch-write chunk: the rule for which launches an operator may clear is stated in the fleet list's SQL and in `clearOneLaunch`, and the two differ on archived projects.
+
+**Architect hold A133, fixed.** The fleet read had built its own four-field copy of the preflight record, dropping `requiresRecovery`, `requiresReconciliation` and `worktreeDirty` and turning an unparseable record into a null verdict with two false flags. A96 had asked for the stored evidence unchanged. It now sends the stored record as it is, and null when the store cannot parse it; tests pin the three fields, that `worktreeDirty` null stays null, and that an unknown field passes through.
+
+**Not verified.** No live request was made against the running install: this checkout's primary is the running server, and the route has no page yet.
 ## 2026-10-07 — #2188: the rules for which model an engine may be launched with
 
 <!-- prawduct: type=feature | scope=2188-engine-model-selection -->

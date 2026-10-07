@@ -269,6 +269,8 @@ const sessions = require('./lib/sessions');
 const projectConfig = require('./lib/project-config');
 const { protectedRootsFor } = require('./lib/tcc-folders');
 const launchSequence = require('./lib/launch-sequence');
+const launchRecoveryClear = require('./lib/launch-recovery-clear');
+const launchRecoveryHeld = require('./lib/launch-recovery-held');
 const recoveryDefault = require('./lib/recovery-default');
 const master = require('./lib/master');
 const sharedDocsAccess = require('./lib/shared-docs-access');
@@ -8207,10 +8209,15 @@ route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params,
     log.warn('Refused a recovery clear', { code: 'NOT_FOUND', project: params.project, reason: 'no such project' });
     return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
   }
-  const sequence = store.launchSequences.getBySession(sessionId);
-  // Project-scoped on purpose: the path names a project, and a sequence id from
-  // another one must not be clearable through it.
-  if (!sequence || sequence.id !== sequenceId || sequence.projectId !== project.id) {
+  // The checks and the write are `clearOneLaunch`'s, shared with every other
+  // route that offers this decision. Project-scoped on purpose: the path names
+  // a project, and a sequence id from another one must not be clearable
+  // through it.
+  const result = launchRecoveryClear.clearOneLaunch({
+    project, sessionId, sequenceId, recoveryRevision, clearance, clearedBy
+  });
+  const { outcome, sequence } = result;
+  if (outcome === launchRecoveryClear.OUTCOMES.NOT_FOUND) {
     // Logged like the rest, and for a sharper reason than tidiness: on an open
     // install a page-token holder can walk `sequenceId` values against another
     // project's launches, and every probe answers 404. Silent, that sweep leaves
@@ -8221,7 +8228,7 @@ route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params,
     return errorResponse(res, 404,
       'That launch sequence does not belong to this project, or no longer exists.', 'NOT_FOUND');
   }
-  if (sequence.recoveryMode === 'advisory') {
+  if (outcome === launchRecoveryClear.OUTCOMES.ADVISORY) {
     log.warn('Refused a recovery clear', {
       code: 'RECOVERY_MODE_ADVISORY', project: params.project, sequence: sequence.id
     });
@@ -8229,7 +8236,7 @@ route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params,
       'This launch clears recovery by reconciliation: the session writes one into its READY attestation. The '
       + 'two paths never cross, so there is nothing here for an operator to clear.', 'RECOVERY_MODE_ADVISORY');
   }
-  if (sequence.recovery !== 'required') {
+  if (outcome === launchRecoveryClear.OUTCOMES.NOT_REQUIRED) {
     log.warn('Refused a recovery clear', {
       code: 'STALE_RECOVERY', project: params.project, sequence: sequence.id, recovery: sequence.recovery
     });
@@ -8237,11 +8244,7 @@ route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params,
       `This launch's recovery is "${sequence.recovery}", not "required"; nothing was changed.`,
       'STALE_RECOVERY');
   }
-
-  const cleared = store.launchSequences.clearRecovery(sequence.id, {
-    sessionId, recoveryRevision, clearance, clearedBy
-  });
-  if (!cleared) {
+  if (outcome === launchRecoveryClear.OUTCOMES.BINDING_MOVED) {
     log.warn('Refused a recovery clear', {
       code: 'STALE_RECOVERY', project: params.project, sequence: sequence.id,
       asked: recoveryRevision, current: sequence.recoveryRevision
@@ -8254,12 +8257,21 @@ route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params,
       + `${sequence.recoveryRevision}. Re-read the launch and clear it again if it still needs one.`,
       'STALE_RECOVERY');
   }
-  store.activity.log({
-    projectId: project.id,
-    sessionId: cleared.sessionId,
-    eventType: 'launch.recovery-cleared',
-    detail: { sequenceId: cleared.id, clearance, clearedBy, recoveryRevision }
-  });
+  if (outcome === launchRecoveryClear.OUTCOMES.SESSION_ENDED) {
+    log.warn('Refused a recovery clear', {
+      code: 'SESSION_ENDED', project: params.project, sequence: sequence.id,
+      session: sequence.sessionId, sessionStatus: result.sessionStatus
+    });
+    return errorResponse(res, 409,
+      'That launch\'s session has ended, so there is no session left for a clear to let through; nothing was '
+      + 'changed. Re-read the project\'s launches: a new session has a launch of its own.',
+      'SESSION_ENDED');
+  }
+  if (outcome !== launchRecoveryClear.OUTCOMES.CLEARED) {
+    // An outcome this route has no answer for must never be reported as a clear.
+    throw new Error(`clearOneLaunch returned an outcome this route does not handle: ${outcome}`);
+  }
+  const cleared = sequence;
   log.info('Launch recovery cleared', {
     project: project.name, sequence: cleared.id, clearance, clearedBy
   });
@@ -8271,6 +8283,54 @@ route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params,
     recoveryClearance: cleared.recoveryClearance,
     recoveryClearedAt: cleared.recoveryClearedAt,
     recoveryClearedBy: cleared.recoveryClearedBy
+  });
+});
+
+// GET /api/launch/recovery-held — the signed-in operator reads every launch on
+// this install that is waiting on their clear (#2049).
+//
+// Served only while the login gate is `armed` and the request carries an
+// operator's session. It is the list an operator reviews before clearing
+// several launches, so it must never be served to a caller nobody proved: on
+// an install with no login the single clear still works and records itself as
+// unverified, but nothing there could show that the reader of a fleet-wide
+// list is the operator. Every other gate state refuses by its own branch, and
+// the gate state is decided before the session is looked at, as in
+// `_requireOperatorWrite`.
+//
+// A GET with no CSRF proof: it changes nothing, and a cross-site page cannot
+// read the answer.
+route('GET', '/api/launch/recovery-held', (req, res) => {
+  const gateState = req.tcGateState;
+  const refuse = (status, code, message, extra = {}) => {
+    log.warn('Refused a fleet recovery read', { code, gateState, ...extra });
+    return errorResponse(res, status, message, code);
+  };
+  if (gateState === authGate.GATE_STATES.FALLBACK) {
+    log.warn('Refused a fleet recovery read', { code: 'GATE_FALLBACK', gateState });
+    return _refuseDuringFallback(res, 'list the launches waiting on an operator');
+  }
+  if (gateState !== authGate.GATE_STATES.ARMED) {
+    if (authGate.isOpen(gateState)) {
+      // The status and code the reconciliation read gives the same condition,
+      // so a client handles "this needs a login" once for both operator reads.
+      return refuse(403, 'LOGIN_GATE_REQUIRED',
+        'This install has no login, so the launches waiting on an operator cannot be listed here: nothing would '
+        + 'establish that the reader is the operator. Turn the login on and sign in. Each project\'s Launch '
+        + 'readiness panel still shows its own launches.');
+    }
+    return refuse(409, 'GATE_STATE_UNSUPPORTED',
+      `The launches waiting on an operator cannot be listed while the login gate is "${gateState}". Resolve the `
+      + 'gate first.');
+  }
+  if (!req.tcSession) {
+    return refuse(401, 'UNAUTHENTICATED',
+      'Sign in to list the launches waiting on an operator: this install requires a login.');
+  }
+  jsonResponse(res, 200, {
+    gateState,
+    generatedAt: new Date().toISOString(),
+    launches: launchRecoveryHeld.listHeld()
   });
 });
 
