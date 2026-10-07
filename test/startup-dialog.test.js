@@ -920,6 +920,21 @@ describe('the session keeps its blocker (#2128)', () => {
       assert.equal(store.sessions.get(s.id).launchBlocker, null);
     });
 
+    it('a refusal the pane writer makes on its own second read keeps its name for the caller', () => {
+      // The dialog finishes drawing between injectCommand's read and the writer's.
+      start();
+      pane = COMPOSER;
+      tmux.sendKeys = () => {
+        const err = new Error('trust_required: nothing was typed into the session');
+        err.code = 'STARTUP_DIALOG';
+        err.startupDialog = { code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.' };
+        throw err;
+      };
+      const res = sessions.injectCommand(project.name, 'ls');
+      assert.equal(res.ok, false);
+      assert.equal(res.startupDialog.code, 'trust_required', 'so the command route answers 409, not 500');
+    });
+
     it('false positive: a session quoting the dialog still takes its input', () => {
       start();
       pane = QUOTING_SESSION;

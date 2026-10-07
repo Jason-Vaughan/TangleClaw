@@ -726,6 +726,51 @@ describe('startup session-rule delivery (#595)', () => {
       }
     });
 
+    it('a session that ended while its boot was watched leaves a skipped row, not a silent gap (#2128)', (t) => {
+      const tmux = require('../lib/tmux');
+      const enginesModule = require('../lib/engines');
+      const startupDialog = require('../lib/startup-dialog');
+      let created = false;
+      let pasted = 0;
+      let release;
+      stub(tmux, 'hasSession', () => created);
+      stub(tmux, 'probeSession', () => ({ live: created, answered: true, cause: null }));
+      stub(tmux, 'createSession', () => { created = true; return true; });
+      stub(tmux, 'killSession', () => true);
+      stub(tmux, 'sendKeys', () => { pasted += 1; return true; });
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      stub(startupDialog, 'watch', () => ({
+        then(next) {
+          release = () => next({ outcome: 'clear', meaning: startupDialog.OUTCOME_MEANINGS.clear, dialog: null, waitedMs: 5000 });
+          return { catch() {} };
+        }
+      }));
+
+      const launched = makeProject(`ended-${uid()}`);
+      store.sessionRules.create({ content: 'pasted directive', projectId: launched.id });
+      const projConfig = store.projectConfig.load(launched.path);
+      projConfig.silentPrime = false;
+      projConfig.launchSequence = { ...(projConfig.launchSequence || {}), pasteRules: 'paste' };
+      store.projectConfig.save(launched.path, projConfig);
+
+      try {
+        const result = sessions.launchSession(launched.name);
+        assert.equal(result.error, null);
+        store.sessions.kill(result.session.id, 'killed during its boot');
+        release();
+        t.mock.timers.tick(60_000);
+        assert.equal(pasted, 0);
+        const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0].outcome, 'skipped');
+        assert.match(rows[0].skipReason, /session ended while its boot was being watched/);
+      } finally {
+        for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
+        store.projects.delete(launched.id);
+      }
+    });
+
     it('gates the antigravity paste on the at-rest marker and records DELIVERED for an observed-ready pane', async (t) => {
       // The gated half of #999: antigravity has a positive at-rest marker, so
       // its paste waits for the marker over a settled transcript and may then

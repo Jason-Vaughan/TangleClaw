@@ -617,7 +617,6 @@ Each project maintains a session history showing:
 - Start time and duration
 - Engine used
 - Session status (wrapped, killed, crashed)
-- For a session that crashed at an engine's startup dialog nobody answered, which dialog it was
 - Wrap summary (if wrapped)
 
 For OpenClaw remote sessions, see the [OpenClaw Setup Guide](openclaw-setup.md).

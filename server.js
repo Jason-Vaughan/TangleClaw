@@ -8488,8 +8488,9 @@ route('POST', '/api/sessions/:project/command', (_req, res, params, body) => {
     return errorResponse(res, r.status, r.message, r.code, r.details);
   }
   if (!result.ok && result.startupDialog) {
-    // The pane is showing an engine startup dialog (#2128). Nothing failed:
-    // the send was withheld, and the caller needs to know which dialog.
+    // The send was withheld for an engine startup dialog (#2128): one on the
+    // pane, a recorded blocker not yet positively cleared, or a half-drawn
+    // frame. Nothing failed, and the caller needs to know which dialog.
     return errorResponse(res, 409, result.error, 'STARTUP_DIALOG', { startupDialog: result.startupDialog });
   }
   if (!result.ok) {
