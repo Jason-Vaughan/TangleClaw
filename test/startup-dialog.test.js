@@ -276,6 +276,110 @@ describe('one look before a send (#2128)', () => {
     assert.deepEqual(res.suspect, { code: 'trust_required', label: DIALOGS[0].label, meaning: DIALOGS[0].meaning });
   });
 
+  describe('a prompt is evidence only below the last marker', () => {
+    it('a stale composer ABOVE a half-drawn dialog is not clear: the minimal case', () => {
+      frames = [['❯', 'No, exit']];
+      const res = look();
+      assert.equal(res.clear, false);
+      assert.equal(res.dialog, null);
+      assert.equal(res.suspect.code, 'trust_required');
+    });
+
+    it('the same with a real composer row and a boxed prompt above the dialog being drawn', () => {
+      frames = [[...COMPOSER, ...TRUST_DIALOG.slice(0, 13)]];
+      const res = look();
+      assert.equal(res.clear, false);
+      assert.equal(res.suspect.code, 'trust_required');
+    });
+
+    it('a composer above the FULL dialog is still the dialog', () => {
+      frames = [[...COMPOSER, ...TRUST_DIALOG]];
+      assert.equal(look().dialog.code, 'trust_required');
+    });
+
+    it('a quoted dialog with the composer BELOW it is still clear', () => {
+      frames = [QUOTING_SESSION];
+      assert.equal(look().clear, true);
+      frames = [['⏺ it said "No, exit"', '', '❯\u00a0']];
+      assert.equal(look().clear, true);
+    });
+  });
+
+  describe('a first partial read is not lost when the re-read cannot see the pane', () => {
+    it('partial, then an empty re-read: still suspect, and unread', () => {
+      frames = [TRUST_DIALOG.slice(0, 13), []];
+      const res = look();
+      assert.equal(settles, 1);
+      assert.equal(res.suspect.code, 'trust_required');
+      assert.equal(res.clear, false);
+      assert.match(res.unread, /came back empty/);
+    });
+
+    it('partial, then a re-read that throws: still suspect', () => {
+      frames = [TRUST_DIALOG.slice(0, 13), new Error('tmux did not answer')];
+      const res = look();
+      assert.equal(res.suspect.code, 'trust_required');
+      assert.equal(res.unread, 'tmux did not answer');
+    });
+
+    it('partial, then a re-read that shows the prompt: the readable frame decides, and it is clear', () => {
+      frames = [TRUST_DIALOG.slice(0, 13), COMPOSER];
+      const res = look();
+      assert.equal(res.suspect, null);
+      assert.equal(res.clear, true);
+    });
+  });
+
+  it('a profile with no prompt glyph is never read as clear: it has no positive evidence to give', () => {
+    startupDialog._internal.wakeProfiles = () => ({});
+    frames = [COMPOSER];
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, unread: null });
+    frames = [TRUST_DIALOG];
+    assert.equal(look().dialog.code, 'trust_required', 'though it still sees the dialog by its markers');
+  });
+
+  describe('withholdFor: a send goes ahead only on positive evidence, or when nothing stands against it', () => {
+    const STORED = { code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it.' };
+    const seen = (over) => ({ declared: true, dialog: null, suspect: null, clear: false, unread: null, ...over });
+    const w = startupDialog.withholdFor;
+
+    it('a dialog on screen withholds, stored or not', () => {
+      assert.equal(w(seen({ dialog: STORED }), null).why, 'it is on screen');
+      assert.equal(w(seen({ dialog: STORED }), STORED).why, 'it is on screen');
+    });
+
+    it('a positive reading withholds nothing, stored or not', () => {
+      assert.equal(w(seen({ clear: true }), null), null);
+      assert.equal(w(seen({ clear: true }), STORED), null);
+    });
+
+    it('with a blocker stored, EVERY reading short of positive withholds', () => {
+      const short = {
+        'the check could not be made': null,
+        'the profile declares nothing now': seen({ declared: false }),
+        'no profile was found': { declared: false, dialog: null, suspect: null, clear: false, unread: null },
+        'the pane was unread': seen({ unread: 'tmux did not answer' }),
+        'the read was empty': seen({ unread: 'the pane read came back empty' }),
+        'neither dialog nor prompt': seen(),
+        'a suspect frame': seen({ suspect: STORED }),
+        'a suspect frame whose re-read was unread': seen({ suspect: STORED, unread: 'x' })
+      };
+      for (const [name, answer] of Object.entries(short)) {
+        const res = w(answer, STORED);
+        assert.equal(res && res.code, 'trust_required', name);
+      }
+    });
+
+    it('with none stored, only a suspect frame withholds', () => {
+      assert.equal(w(null, null), null);
+      assert.equal(w(seen({ declared: false }), null), null);
+      assert.equal(w(seen({ unread: 'x' }), null), null);
+      assert.equal(w(seen(), null), null);
+      assert.equal(w(seen({ suspect: STORED }), null).code, 'trust_required');
+      assert.equal(w(seen({ suspect: STORED, unread: 'x' }), null).code, 'trust_required', 'a first partial kept across an unread re-read');
+    });
+  });
+
   it('an empty read is unread, not clear', () => {
     frames = [[]];
     const res = look();
@@ -1016,6 +1120,75 @@ describe('the session keeps its blocker (#2128)', () => {
         assert.deepEqual(sessions.injectCommand(project.name, 'tc start next'), { ok: true, error: null });
         assert.equal(store.sessions.get(s.id).launchBlocker, null);
       });
+    });
+
+    describe('a stored blocker stands when its declaration is lost', () => {
+      // An operator's own profile can lose its declaration, or the lookup can
+      // find no profile at all. Neither is evidence the dialog was answered.
+      let realGet;
+      beforeEach(() => { realGet = store.engines.get; });
+      afterEach(() => { store.engines.get = realGet; });
+
+      const LOST = {
+        'the profile declares none now': () => ({ ...CLAUDE, capabilities: { ...CLAUDE.capabilities, startupDialogs: [] } }),
+        'no profile is found': () => null
+      };
+
+      for (const [when, get] of Object.entries(LOST)) {
+        it(`when ${when}: the API path, the wake and the pane writer all still refuse`, () => {
+          const s = start();
+          store.sessions.setLaunchBlocker(s.id, BLOCKER);
+          pane = COMPOSER;
+          store.engines.get = get;
+          const viaApi = sessions.injectCommand(project.name, 'tc start next');
+          assert.equal(viaApi.ok, false);
+          assert.match(viaApi.error, /^trust_required: .*declares no such dialog now/);
+          const viaWake = require('../lib/medusa-wake')._internal.injectCommand(project.name, 'you have mail', { sessionId: s.id, controlExempt: 'medusa-wake' });
+          assert.equal(viaWake.ok, false);
+          assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required');
+          assert.deepEqual(typed, []);
+          assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required', 'and the record is not cleared');
+        });
+      }
+
+      it('a send that names no engine is refused by the writer too while the blocker stands', () => {
+        const s = start();
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        assert.equal(tmux._startupDialogOn(s.tmuxSession, null).code, 'trust_required');
+        store.sessions.clearLaunchBlocker(s.id);
+        assert.equal(tmux._startupDialogOn(s.tmuxSession, null), null, 'and is an ordinary send with none stored');
+      });
+
+      it('a status read does not clear it either', () => {
+        const s = start();
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        tmux.probeSession = () => ({ answered: true, live: true, cause: null });
+        pane = COMPOSER;
+        store.engines.get = LOST['the profile declares none now'];
+        assert.equal(sessions.getSessionStatus(project.name).launchBlocker.code, 'trust_required');
+      });
+    });
+
+    it('a stale composer above a half-drawn dialog does not clear a stored blocker or let a send through', () => {
+      const s = start();
+      store.sessions.setLaunchBlocker(s.id, BLOCKER);
+      pane = ['❯', 'No, exit'];
+      const res = sessions.injectCommand(project.name, 'tc start next');
+      assert.equal(res.ok, false);
+      assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required');
+      assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required');
+      assert.deepEqual(typed, []);
+    });
+
+    it('a first partial read followed by an empty re-read withholds the send, with no blocker stored', () => {
+      const s = start();
+      const reads = [TRUST_DIALOG.slice(0, 13), []];
+      tmux.capturePane = () => ({ lines: reads.length > 1 ? reads.shift() : reads[0], alternateScreen: false });
+      const res = sessions.injectCommand(project.name, 'hello');
+      assert.equal(res.ok, false);
+      assert.match(res.error, /^trust_required: .*may still be drawing/);
+      assert.deepEqual(typed, []);
+      assert.equal(store.sessions.get(s.id).launchBlocker, null);
     });
 
     it('a half-drawn dialog withholds a send even with no blocker stored, and records none', () => {

@@ -497,14 +497,26 @@ for sends that name the session's engine, which a test requires of every caller 
 that names none is not checked, and neither is a raw key (`tmux.sendRawKey`), which the launch
 guards itself before each pre-key.
 
-Three things withhold a send, not one:
+The rule is that a send goes ahead only on positive evidence, or when nothing stands against it.
+One function states it (`withholdFor` in `lib/startup-dialog.js`) and both the injection path and
+the pane writer ask it. Three things withhold a send:
 
 - a declared dialog on the pane;
 - a blocker already recorded for the session that the read did not positively clear. The dialog
-  behind it may still be up on a pane that could not be read, came back empty, or shows neither
-  the dialog nor the prompt, so every send stays withheld until the prompt is seen;
+  behind it may still be up on a pane that could not be checked or read, came back empty, or shows
+  neither the dialog nor the prompt, so every send stays withheld until the prompt is seen. The
+  same holds if the engine's profile stops declaring the dialog, or no profile is found, while the
+  blocker stands: nothing can then confirm the pane clear, and the blocker stays until the session
+  ends or the declaration returns;
 - a frame that still carries a declared marker with no prompt beneath it after one re-read, which
-  may be the dialog half-drawn. That send is withheld; no blocker is recorded on a suspicion.
+  may be the dialog half-drawn. That send is withheld; no blocker is recorded on a suspicion. If
+  the re-read itself cannot see the pane, the first frame's marker goes on withholding.
+
+**What counts as positive evidence** is a row led by the engine's prompt glyph **below** any
+dialog text on screen (or anywhere, when there is none). A composer left on screen above a dialog
+that is being drawn is not evidence. A profile with no prompt glyph (no `wake` block) can show no
+positive evidence at all: it still sees a dialog by its markers and withholds, but a blocker
+recorded for it is never cleared by a pane read, only by the session ending.
 
 A dialog whose options have been reworded so that no declared marker matches is not seen at all.
 That is a limit of detection, not evidence of safety: the entry's evidence names the version it was
@@ -512,8 +524,8 @@ measured on, and the markers are updated when a new wording is captured.
 
 The stored blocker is a claim about the pane that the operator can make untrue at any moment by
 answering the dialog. So it is checked against the pane whenever the session's status is read and
-before every send. It is cleared only on a positive reading: the engine's prompt on screen and no
-dialog. A pane that could not be read, a read that came back empty, or a screen showing neither
+before every send. It is cleared only on a positive reading: the engine's prompt on screen, below
+any dialog text. A pane that could not be read, a read that came back empty, or a screen showing neither
 changes nothing, because "no dialog was matched" is not evidence that it was answered. A session
 whose status is read after the operator answers therefore does not have a later, unrelated death
 recorded as caused by the dialog. The project list serves the stored record without reading the
