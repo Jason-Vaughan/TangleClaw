@@ -180,4 +180,3 @@ describe('#2128 a live session waiting at an engine startup dialog', () => {
     assert.match(SESSION_SRC, /renderLaunchBlockerBanner\(data\.launchBlocker\)/, 'the status poll drives it');
   });
 });
-

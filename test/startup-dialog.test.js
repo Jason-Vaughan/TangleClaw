@@ -1893,4 +1893,3 @@ describe('the pane writer refuses a declared dialog (#2128)', () => {
     assert.deepEqual(unarmed, [], 'a typed send that does not name its engine is not checked for a startup dialog');
   });
 });
-
