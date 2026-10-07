@@ -185,6 +185,35 @@ describe('api-sessions', () => {
       assert.equal(res.status, 400);
       assert.ok(res.body.error.includes('maximum length'));
     });
+
+    it('returns 409 STARTUP_DIALOG, naming the dialog, while the pane shows one (#2128)', async () => {
+      const tmux = require('../lib/tmux');
+      const real = { hasSession: tmux.hasSession, capturePane: tmux.capturePane, sendKeys: tmux.sendKeys, probeSession: tmux.probeSession };
+      const project = store.projects.getByName('api-sess-test');
+      const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'api-sess-dialog' });
+      let typed = 0;
+      tmux.hasSession = () => true;
+      tmux.probeSession = () => ({ answered: true, live: true, cause: null });
+      tmux.sendKeys = () => { typed += 1; };
+      tmux.capturePane = () => ({
+        lines: [' Accessing workspace:', ' ❯ No, exit', '   Yes, I trust this folder', ' Enter to confirm · Esc to cancel'],
+        alternateScreen: false
+      });
+      try {
+        const res = await request(server, 'POST', '/api/sessions/api-sess-test/command', { command: 'ls' });
+        assert.equal(res.status, 409);
+        assert.equal(res.body.code, 'STARTUP_DIALOG');
+        assert.equal(res.body.startupDialog.code, 'trust_required');
+        assert.match(res.body.error, /^trust_required: /);
+        assert.equal(typed, 0);
+
+        const status = await request(server, 'GET', '/api/sessions/api-sess-test/status');
+        assert.equal(status.body.launchBlocker.code, 'trust_required');
+      } finally {
+        Object.assign(tmux, real);
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
   });
 
   describe('POST /api/sessions/:project/wrap', () => {

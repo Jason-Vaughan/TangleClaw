@@ -8400,6 +8400,11 @@ route('POST', '/api/sessions/:project/command', (_req, res, params, body) => {
     const r = result.controlRefusal;
     return errorResponse(res, r.status, r.message, r.code, r.details);
   }
+  if (!result.ok && result.startupDialog) {
+    // The pane is showing an engine startup dialog (#2128). Nothing failed:
+    // the send was withheld, and the caller needs to know which dialog.
+    return errorResponse(res, 409, result.error, 'STARTUP_DIALOG', { startupDialog: result.startupDialog });
+  }
   if (!result.ok) {
     if (result.error.includes('not found') || result.error.includes('No active')) {
       return errorResponse(res, 404, result.error, 'NOT_FOUND');

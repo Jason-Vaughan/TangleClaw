@@ -191,6 +191,7 @@ cache, so an engine you have just installed is never refused.
 | `toolOutput.maxChars` | **read** | How many characters of a tool result reach this engine's model intact, which is what a launch sequence pages `tc start` output against — see below |
 | `launchSequence` | **read** | Whether a session on this engine is served its context as an acknowledged `tc start` sequence — see below |
 | `readOnlyModeMarker` | **read** | How this engine's TUI says the session is in a read-only mode, so a wrap refuses instead of timing out — see below |
+| `startupDialogs` | **read** | The screens this engine can draw before its prompt, which a launch must see, leave untyped, and name as the session's blocker — see below |
 | `wake` | **read** | The live-probed pane signature that lets TangleClaw tell a busy pane from a resting one on this engine — see below |
 | `startupControl` | **read** | The native channel TangleClaw can fire the startup prompt through, with a receipt. Active only when it names a registered adapter — see below |
 | `awareness` | declared only | OpenClaw only. Its own `reason` text records why no context carrier can be placed on the remote side — a documented gap rather than an oversight |
@@ -455,6 +456,57 @@ shipped Claude value was probed on a live pane, not recalled.
 the check existed, and the step record says which engine declared no marker rather than implying a
 clean pane. A field that is present but missing `marker` or `modeLine` is a profile defect: it is
 treated as absent and logged at warn.
+
+#### `startupDialogs`
+
+Optional. An engine that can draw a screen before its prompt, one a launch must not type into,
+declares it:
+
+```json
+"startupDialogs": [
+  {
+    "code": "trust_required",
+    "label": "folder trust dialog",
+    "markers": ["Yes, I trust this folder", "No, exit"],
+    "meaning": "What the operator should do, in a sentence or two.",
+    "evidence": { "verifiedOn": "YYYY-MM-DD", "source": "…" }
+  }
+]
+```
+
+Claude Code asks whether to trust a folder the first time it opens a repository, and the option
+under its cursor is "No, exit". A line ending in Enter typed into that screen ends the session
+(#2128). So a launch on an engine that declares dialogs reads the pane before it types:
+
+- **A declared dialog is up.** Nothing is typed: no pre-key, no prime, no kickoff. The session
+  records a blocker under the entry's `code`, served as `launchBlocker` in session status and kept
+  on the session after it ends, so a pane that dies at the dialog leaves a `crashed` session that
+  says why. The launch keeps reading for 15 minutes; when the operator answers and the prompt
+  appears, the blocker is cleared and the launch sends its first turn.
+- **The prompt is up, with no dialog.** The launch types as usual, without waiting out the fixed
+  `startupDelay` as well.
+- **Neither is recognised within 60 seconds.** The launch proceeds exactly as it did before this
+  field existed. An unknown screen must never cost a healthy launch its first turn.
+
+Every later send into the pane through TangleClaw (the command bar, a wake nudge, a coordinator's
+command) makes the same check first and is refused with the code while the dialog is up.
+
+**TangleClaw never answers the dialog.** Accepting a trust prompt lets the folder's own hooks, MCP
+servers and permission rules run, which is the operator's decision. It also writes nothing to the
+engine's own state files.
+
+A dialog matches only when **every** marker is on screen and **no prompt row sits below it**. One
+marker alone can be another dialog's option. The second condition is what tells a dialog from a
+session whose transcript is quoting one: the quoting session has its composer underneath. Markers
+are matched on text with styling removed, because an engine may colour a dialog word by word.
+
+`code` is lower_snake_case and becomes the blocker's name; `label` and `meaning` are shown to the
+operator. An entry missing any of `code`, `label`, `meaning` or a non-empty `markers` list is
+ignored and logged at warn, never repaired. The watch tells a finished boot by the prompt glyph in
+the engine's `wake` block, so an engine that declares dialogs and no `wake` block is not watched.
+
+**Omit the field and the engine's pane is not watched at launch**: the launch behaves as it did
+before the field existed.
 
 #### `wake`
 

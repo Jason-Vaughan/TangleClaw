@@ -35,6 +35,26 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-07 — #2128: a launch sees an engine's startup dialog, types nothing into it, and names the cause
+
+<!-- prawduct: type=bugfix | scope=2128-startup-dialog -->
+
+#2128, single chunk, on the PM's dispatch (Medusa `17d6a6c9`) under Architect ruling A85 (Medusa `0693ed1e`). Design record and spike evidence: `.tangleclaw/plans/2128-folder-trust-prompt.md` in the Builder2 checkout.
+
+**Root cause.** The issue said Claude Code's folder trust dialog timed out and exited. A live capture on 2.1.283 showed otherwise: the dialog waits indefinitely, its default option is "No, exit", and Enter on it exits with code 1 within a second. The session died because TangleClaw typed a line ending in Enter into a screen it never looked at. The cause was then lost by construction: a death is noticed by a later status read, which records the fixed string `tmux session died` in the activity log only, after the pane that explained it is gone.
+
+**The ruling.** See and report, for every engine that declares a dialog; reject blind keys; write nothing to `~/.claude.json`; accepting trust on the operator's behalf is a separate later issue with per-project opt-in. This chunk is the seeing half only.
+
+**The change.** `capabilities.startupDialogs` in the engine profile; `lib/startup-dialog.js` (detect, a one-read check, a bounded watch); the watch runs ahead of a launch's pre-keys, paste and kickoff; `injectCommand` makes the same check before every later send; `sessions.launch_blocker` (schema v56) keeps the named blocker past the pane's death and `markCrashed` carries it as `cause`.
+
+**Two decisions taken while building.**
+- A dialog matches only when no prompt row sits below it. Without that, a session whose transcript quotes the dialog (this one did, while the fix was being written) would refuse its own wake nudges.
+- A boot window that recognises nothing lets the launch proceed as before. The alternative, withholding on any unknown screen, would turn every unrecognised engine update into a launch that never starts.
+
+**A behaviour that moved.** Claude's prime is now pasted when the watch sees its prompt, not a fixed 2 s after launch. Four delivery-ledger tests that drive a Claude launch on a mocked clock now state what the boot watch saw (`timeout`, the path a launch took before boot was watched); their assertions are unchanged. Two tests pinned the schema version at exactly 55 and now hold it to the constant.
+
+**Not pinned.** Which TangleClaw send delivered the fatal Enter in the reported launches. The 2 s blind paste arrived before the dialog drew on this host and was not consumed by it, and the idle-gated senders refuse a dialog. Every typed send is now behind one of the two checks, so the fix does not depend on the answer.
+
 ## 2026-10-07 — #2154: a Leave keeps a file out of the wrap commit whatever a later step concludes
 
 <!-- prawduct: type=bugfix | scope=2154-keep-local-leave -->

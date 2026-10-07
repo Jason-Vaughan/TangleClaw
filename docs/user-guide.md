@@ -617,6 +617,7 @@ Each project maintains a session history showing:
 - Start time and duration
 - Engine used
 - Session status (wrapped, killed, crashed)
+- For a session that crashed at an engine's startup dialog nobody answered, which dialog it was
 - Wrap summary (if wrapped)
 
 For OpenClaw remote sessions, see the [OpenClaw Setup Guide](openclaw-setup.md).
@@ -1155,6 +1156,23 @@ curl -s http://localhost:3100
 - Verify the selected engine is installed: check the engine badge on the landing page (shows "available" or "not found")
 - Check tmux is running: `tmux ls`
 - Check server logs for error details
+
+### A New Session Sits at "Do You Trust This Folder?"
+
+The first time Claude Code opens a repository it asks whether to trust the folder. TangleClaw sees
+that dialog and types nothing into it, because its default option is "No, exit" and one Enter would
+end the session. The session status shows the blocker `trust_required` while it waits.
+
+- Open the session and answer the dialog in the terminal. Choose "Yes, I trust this folder" only for
+  a folder whose contents you trust: accepting lets the folder's own hooks, MCP servers and
+  permission rules run. TangleClaw does not answer it for you.
+- If you answer within 15 minutes of the dialog appearing, the launch carries on by itself and
+  sends its first turn. After that the session still works; type to start it.
+- Commands sent to the session through TangleClaw are refused with `trust_required` until the
+  dialog is answered.
+- If the session ended at the dialog, the project card's last-session row says so, and so does
+  `lastSession.launchBlocker` in the session status. Launch again and answer the dialog.
+- Claude Code asks once per repository, so a later launch into the same folder is not affected.
 
 ### Chime Not Working on Mobile
 

@@ -952,11 +952,23 @@ function renderSessionHealthBadge(project) {
   const left = h.state === 'left-work';
   if (h.status !== 'crashed' && !left) return '';
   const what = sessionLeftoverSummary(h);
-  const ended = h.status === 'crashed' ? 'The last session crashed' : 'The last session was killed';
+  const ended = h.status === 'crashed' ? `The last session crashed${sessionEndCause(h)}` : 'The last session was killed';
   const title = `${ended}${left ? ` and left ${what} in the project folder (may be from another session)` : ''}. Open the card for details.`;
   const label = h.status === 'crashed' ? (left ? 'crashed · work left' : 'crashed') : 'killed · work left';
   const cls = h.status === 'crashed' ? 'badge-session-crashed' : 'badge-session-left';
   return `<span class="badge ${cls}" title="${esc(title)}">&#9888; ${label}</span>`;
+}
+
+/**
+ * " at its engine's folder trust dialog (trust_required)", for a session that
+ * ended while an engine startup dialog was unanswered (#2128); '' otherwise.
+ * @param {object} h - `project.sessionHealth`
+ * @returns {string}
+ */
+function sessionEndCause(h) {
+  const b = h && h.launchBlocker;
+  if (!b || !b.code) return '';
+  return ` at its engine's ${b.label || 'startup dialog'}, which nobody answered (${b.code})`;
 }
 
 /**
@@ -986,7 +998,7 @@ function renderSessionHealthDetail(project) {
     return `<div class="detail-row detail-row-warn">${label}<span class="detail-value">`
       + `<span class="detail-unknown">could not be read: ${esc(h.reason || 'no reason given')}</span></span></div>`;
   }
-  const ended = `${h.status}${h.endedAt ? ` ${strandedTime(h.endedAt)}` : ''}`;
+  const ended = `${h.status}${h.endedAt ? ` ${strandedTime(h.endedAt)}` : ''}${sessionEndCause(h)}`;
   let body;
   if (h.state === 'checking') {
     body = `${esc(ended)}; <span class="detail-unknown">checking the project folder…</span>`;
