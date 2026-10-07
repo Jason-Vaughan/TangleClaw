@@ -864,6 +864,13 @@ describe('the session keeps its blocker (#2128)', () => {
       const done = new Promise((resolve) => { launchFinished = resolve; });
       launch(s, opts);
       await done;
+      // The bootstrap is scheduled at the launch's base delay. The paste is
+      // scheduled at that delay PLUS the profile's startup delay whenever the
+      // boot watch saw no prompt, so it can still be pending here. A timer of
+      // that same length, set now, cannot expire before the paste's: timers
+      // fire in order of expiry, and this one was set later for no less time.
+      const startupDelay = ((opts && opts.profile) || PROFILE).launch.startupDelay || 1500;
+      await new Promise((resolve) => setTimeout(resolve, startupDelay + 2));
       await turns();
     };
 
@@ -940,9 +947,11 @@ describe('the session keeps its blocker (#2128)', () => {
       // the pre-key and the paste each look once more before they type.
       const s = start();
       watchAnswers('timeout');
-      tmux.capturePane = () => ({ lines: TRUST_DIALOG, alternateScreen: false });
+      let reads = 0;
+      tmux.capturePane = () => { reads += 1; return { lines: TRUST_DIALOG, alternateScreen: false }; };
       await launched(s, { profile: WITH_PREKEY });
       assert.deepEqual(typed, [], 'neither the pre-key nor the prime was typed');
+      assert.equal(reads >= 2, true, `both sends were reached and looked at the pane (reads: ${reads})`);
       assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required');
       assert.equal(store.activity.query({ sessionId: s.id, eventType: 'session.launch_blocked' }).length, 1, 'recorded once, not once per send');
     });
@@ -983,17 +992,31 @@ describe('the session keeps its blocker (#2128)', () => {
     it('a launch send is withheld on a half-drawn dialog too, at the pre-key and at the paste', async () => {
       const s = start();
       watchAnswers('timeout');
+      let looks = 0;
+      const realCheck = startupDialog.check;
+      startupDialog.check = (...args) => { looks += 1; return realCheck(...args); };
       tmux.capturePane = () => ({ lines: TRUST_DIALOG.slice(0, 13), alternateScreen: false });
-      await launched(s, { profile: WITH_PREKEY });
+      try {
+        await launched(s, { profile: WITH_PREKEY });
+      } finally {
+        startupDialog.check = realCheck;
+      }
       assert.deepEqual(typed, []);
+      assert.equal(looks, 2, 'the pre-key and the paste were both reached, and each looked');
       assert.equal(store.sessions.get(s.id).launchBlocker, null, 'a suspicion records no blocker');
     });
 
     describe('a send at the moment of typing, when the launch\'s session is not there to ask', () => {
       const PASTE = Object.freeze({ ...PROFILE });
 
-      it('the session ended after the watch let the launch through: the paste is withheld', async () => {
+      it('the session ended after the watch let the launch through: the paste is withheld, and the ledger says why', async () => {
         const s = start();
+        const rows = [];
+        const realRecord = store.sessionRuleDeliveries.record;
+        store.sessionRuleDeliveries.record = (entry) => { rows.push(entry); return entry; };
+        let attempts = 0;
+        const realCheck = startupDialog.check;
+        startupDialog.check = (...args) => { attempts += 1; return realCheck(...args); };
         startupDialog.watch = async () => {
           // The watch answers, the launch is scheduled, and the session is
           // killed before its paste timer fires.
@@ -1001,8 +1024,43 @@ describe('the session keeps its blocker (#2128)', () => {
           return { outcome: 'timeout', meaning: '', dialog: null, waitedMs: 0 };
         };
         const profile = { ...PASTE, launch: { ...PASTE.launch, startupDelay: 30 } };
-        await launched(s, { profile });
+        try {
+          const done = new Promise((resolve) => { launchFinished = resolve; });
+          sessions._deferEngineInit(
+            s.tmuxSession, project.name, 'claude', profile, 'the prime', null, false,
+            { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' },
+            { sessionId: s.id, projectId: project.id, hasSequence: true }
+          );
+          await done;
+          await new Promise((resolve) => setTimeout(resolve, 32));
+          await turns();
+        } finally {
+          store.sessionRuleDeliveries.record = realRecord;
+          startupDialog.check = realCheck;
+        }
         assert.deepEqual(typed, []);
+        // The paste was reached and refused, not merely not yet attempted: it
+        // wrote its row, and it never got as far as reading the pane.
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0].channel, 'prime-paste');
+        assert.equal(rows[0].outcome, 'skipped');
+        assert.match(rows[0].skipReason, /^session_ended: nothing was typed when the prime was due, because the launch's session had ended \(killed\)/);
+        assert.equal(attempts, 0);
+      });
+
+      it('a store that cannot say whether the session ended leaves the decision to the pane and its holder', () => {
+        const s = start();
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        const realGet = store.sessions.get;
+        store.sessions.get = () => { throw new Error('database is locked'); };
+        try {
+          tmux.capturePane = () => ({ lines: [], alternateScreen: false });
+          assert.equal(sessions._startupDialogAtSend(s.tmuxSession, CLAUDE, 'claude', project.name, { sessionId: s.id }).code, 'trust_required');
+          tmux.capturePane = () => ({ lines: COMPOSER, alternateScreen: false });
+          assert.equal(sessions._startupDialogAtSend(s.tmuxSession, CLAUDE, 'claude', project.name, { sessionId: s.id }), null);
+        } finally {
+          store.sessions.get = realGet;
+        }
       });
 
       it('an ended session\'s send is named as such, whatever the pane shows', () => {
