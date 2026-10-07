@@ -54,6 +54,58 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 **A test expectation changed, on purpose.** `test/codex-launch-modes.test.js` asserted that the bundled Codex profile resolves to `['Enter', 'Enter']`. That was the behaviour being removed, so the assertion now uses a synthetic profile for the fallback rule it was really about, and a new test pins that bundled Codex sends no `preKeys` in any mode.
 
 **Not covered.** Dismissing the update prompt (later, after matching tests). The opening screen, which this reader calls a composer; telling it apart is the wake gate's pane refusals in the next chunk. Codex versions other than 0.156.1: the prompt wording is assumed unchanged, from earlier captures, and was not re-measured. A real `launchSession` against a live Codex was not run; the refusals are tested through `_deferEngineInit` with stubbed tmux and through the reader on whole live captures. The log line for a prompt first seen mid-wait is exercised only through `_awaitPaneReady`'s observer hook.
+## 2026-10-07 — #2189: an engine change no longer carries the launch mode onto the new engine
+
+<!-- prawduct: type=bugfix | scope=2189-engine-change-mode-reset -->
+
+Dispatched by the PM as the prerequisite for #2188 (Architect ruling A122, item 5: the engine-change mode reset is required).
+
+**What landed.** `lib/projects.js#launchModeAfterUpdate` decides the default launch mode a project holds after an update: a mode named in the update, else `default` on an engine change, else the stored mode reconciled as before. The hidden-picker guard and the engine-change write both read it. The save's `warnings` name the reset. The dashboard settings modal shows `default` when its engine dropdown moves to another engine and always sends the mode with an engine change (`tcLaunchModeForEngine`, `tcLaunchModePatch` in `public/api-helper.js`).
+
+**A contract was reversed, deliberately.** Two tests from #731 pinned the old behaviour: "preserves bypass when switching to an engine that DOES honor it" and "demands re-confirmation when the new engine DOES honor the warned mode", which then kept Bypass. Both are rewritten to the new rule, not weakened: the first now asserts the reset in four switch directions among the engines sharing the key, the second that no confirmation is asked when the switch itself resets the mode, with a new sibling asserting that Bypass named for the new engine behind a hidden picker is still refused until confirmed. The reason is in the tests' comments: #731 itself noted the carried posture differs in blast radius, and that difference is the defect.
+
+**Why the server fix alone was not enough.** The modal carried the selected mode across the dropdown change when the new engine had the same key, then omitted it from the save because it equalled the stored value. With only the server reset, the modal would have shown Bypass while the server stored Interactive, and an operator who re-chose Bypass for the new engine would have had the choice dropped.
+
+**Added after the cumulative review.** A launch with `engineOverride` applied the stored default to the override engine whenever it honored the key, the same carry-over by another route (API callers only; no UI sends the field). `launchSession` now applies the stored default only to the project's own engine. The review also showed that no test told "reset every mode" from "reset only a warned one", since `bypassPermissions` is the only non-default key Claude, Codex, Antigravity and Aider share; a Claude to OpenClaw case on the warning-free `plan` now does, and the modal test derives its engine list from `data/engines/`.
+
+**Added after the Architect's exact-head review (A143).** The reset was reported only when the request left the mode out. The dashboard never does that: its mode control resets when the engine dropdown moves and the save sends the default by name, so a dashboard operator got no word after the save. The warning now follows the outcome (the project went in on a non-default mode and came out on the default across an engine change), and a mode the request chose for the new engine is not called a reset. The same review's CI run failed two tests in `test/wrap-intent-cancel.test.js`, whose harness runs the real `doSaveSettings` and did not supply the new `tcLaunchModePatch`; it now passes the real helper. I had not run that file: every file that evaluates `doSaveSettings` is now in the local run.
+
+**Not covered.** The Project Master's own `master.launchMode` follows the older keep-if-honored rule when its engine changes; that is a separate setting with its own store and was outside this issue. Filed as #2197. No live launch was run; the launch command is asserted from the stored mode through `_buildLaunchCommand`.
+
+## 2026-10-07 — #2049: one clear-one-launch function, the fleet read, and no clear for an ended session
+
+<!-- prawduct: type=feature | scope=2049-bulk-recovery-clear -->
+
+#2049 chunk 1 of the plan the Architect ruled on as A93, on the ProjectManager's lease (Medusa `ca422e7b`). Three parts, each its own commit, with the review's fixes in a commit after them. The batch write, its audit and migration, and the fleet panel are later chunks and are held.
+
+**The extraction.** `lib/launch-recovery-clear.js#clearOneLaunch` holds the single clear's checks, the compare-and-set and the `launch.recovery-cleared` activity row. The route keeps the operator proof, status codes, messages and log lines. `test/launch-recovery-clear.test.js` is unedited and passes, which is the evidence that nothing a caller sees changed.
+
+**The ended-session refusal.** The single clear now answers `409 SESSION_ENDED` for a launch whose session is not active. It applies only where the clear would otherwise have been written: an already-cleared launch, a moved revision and an advisory launch keep their answers, so the stale response is unchanged.
+
+**The fleet read.** `GET /api/launch/recovery-held`, served only while the login gate is `armed` and the request carries an operator's session; no CSRF proof, since it changes nothing. The Architect reviewed the field and source mapping before it was built (A96, yes with changes). What changed from the mapping as sent: the startup-fire part states the retention guarantee that actually holds (rows of an active session are exempt), an empty stranded-wrap read is marked `incomplete-history`, a throwing source sends a stable reason code and logs the error, the nudge is labelled a send attempt, and the session status is labelled as stored.
+
+**A requirement that arrived mid-build.** "Uncertain queued work" had no definition when the lease was written. The Architect defined it as reported evidence from identifiable durable sources, with unknown or unavailable where there is none (Architect commit `83192f9`). No source records pane input, so that part always says `unavailable`.
+
+**Review.** Two cumulative Critic reviews, on `29c7e9581` and then on the tree with main merged in: 0 blocking in both. From the first: the fleet read's no-login refusal was aligned with the reconciliation read's (`403 LOGIN_GATE_REQUIRED`) and the API reference row completed; the Launch readiness panel still offering Clear recovery for an ended session's launch is filed as #2178, a panel change outside this chunk. From the second, carried to the batch-write chunk: the rule for which launches an operator may clear is stated in the fleet list's SQL and in `clearOneLaunch`, and the two differ on archived projects.
+
+**Architect hold A133, fixed.** The fleet read had built its own four-field copy of the preflight record, dropping `requiresRecovery`, `requiresReconciliation` and `worktreeDirty` and turning an unparseable record into a null verdict with two false flags. A96 had asked for the stored evidence unchanged. It now sends the stored record as it is, and null when the store cannot parse it; tests pin the three fields, that `worktreeDirty` null stays null, and that an unknown field passes through.
+
+**Not verified.** No live request was made against the running install: this checkout's primary is the running server, and the route has no page yet.
+## 2026-10-07 — #2188: the rules for which model an engine may be launched with
+
+<!-- prawduct: type=feature | scope=2188-engine-model-selection -->
+
+#2188 chunk 02 (the design's numbering; chunk 01 was the two spikes). Design approved by the Architect (A124, A131); the design document is kept outside this repository, with the builder's local plans.
+
+**What landed.** `lib/engine-models.js`: `checkSelection`, `offeredWithAvailability`, `roster`, `modelArgv`, `validateModelsBlock`. A model is selectable when it is on the profile's allowlist and in the roster the installed CLI reports now. The Codex profile declares `gpt-5.6-sol` and `gpt-6-luna` with the `codex-models-cache` reader, and `validateProfile` checks any `models` block.
+
+**Added under Architect ruling A135.** The roster carries a freshness bound the original design did not have: `roster.maxAgeHours: 168` for Codex, provisional. A list older than that, one with no readable fetch time, and one dated more than five minutes into the future are all `ROSTER_UNAVAILABLE`. A `models` block that is present but invalid is logged and refused as `MODELS_BLOCK_INVALID`; it is never read as an engine with no model selection. `selectionState` gives every caller the three answers (none, invalid with the errors, ok), and `offeredWithAvailability` returns that state with its list, after the review showed that a boolean and an empty list made a broken block look like an absent one to everything but `checkSelection`. The entry also covers `docs/engine-guide.md` ("Model selection"), `FEATURES.md` and the `CHANGELOG.md` line under Internal.
+
+**No behaviour change.** Nothing calls the module at save or launch yet. `test/engine-models.test.js` asserts the Codex launch command is byte-identical with and without the block.
+
+**From the spikes (design section 9a).** `codex --remote unix://<socket> --model <id>` sets the thread's model on codex-cli 0.156.1, a turn completed on each offered id on this account, and the thread id names the rollout file. That is the evidence recorded in the profile. Antigravity stopped at its folder-trust prompt and was not answered, so it declares no block; the Architect deferred that turn (A131).
+
+**Found, not fixed.** The bundled OpenClaw profile fails `validateProfile` on `main` (no `detection`, no `configFormat` fields). It is a connection-backed template and nothing appears to validate it, so this is recorded here and left alone; the new test compares each profile with itself minus `models` so it does not vouch for it.
 
 ## 2026-10-07 — #2059: version-qualified Codex pane fixtures and pinned refusals
 

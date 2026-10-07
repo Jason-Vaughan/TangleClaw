@@ -4582,6 +4582,53 @@
   }
 
   /**
+   * The default launch mode the settings modal shows once its engine dropdown
+   * names `engineId`.
+   *
+   * A launch mode is a choice about one engine: `bypassPermissions` is a key
+   * three engines define and each means something different by it. So moving
+   * the dropdown to another engine shows that engine's warning-free `default`,
+   * never the previous engine's selection, and moving it back shows what the
+   * project has stored. The server applies the same rule on save
+   * (`launchModeAfterUpdate` in `lib/projects.js`); this keeps the modal from
+   * showing a mode the save is about to discard.
+   *
+   * @param {object|null} project - The project as the modal received it.
+   * @param {string} engineId - The engine dropdown's value now.
+   * @returns {string} A launch-mode key.
+   */
+  function tcLaunchModeForEngine(project, engineId) {
+    const storedEngine = project && project.engine ? project.engine.id : '';
+    if (engineId !== storedEngine) return 'default';
+    return (project && project.defaultLaunchMode) || 'default';
+  }
+
+  /**
+   * The `defaultLaunchMode` a settings save must send, or undefined to send
+   * none.
+   *
+   * With the engine unchanged the mode is sent only when the operator changed
+   * it, so a confirmed Bypass behind a hidden picker never re-trips the
+   * server's guard on an unrelated save. With the engine changed it is ALWAYS
+   * sent: a save that omits it tells the server no mode was chosen for the new
+   * engine, and the server resets to `default`. Omitting a mode the operator
+   * picked for the new engine, because its key happened to equal the old
+   * engine's stored one, would discard their choice in silence.
+   *
+   * @param {object|null} project - The project as stored.
+   * @param {string} engineId - The engine this save sends.
+   * @param {string|null|undefined} selectedMode - The mode dropdown's value, absent when it is not rendered.
+   * @returns {string|undefined}
+   */
+  function tcLaunchModePatch(project, engineId, selectedMode) {
+    if (typeof selectedMode !== 'string' || !selectedMode) return undefined;
+    const storedEngine = project && project.engine ? project.engine.id : '';
+    if (engineId !== storedEngine) return selectedMode;
+    const storedMode = (project && project.defaultLaunchMode) || 'default';
+    return selectedMode !== storedMode ? selectedMode : undefined;
+  }
+
+  /**
    * The preview hint under the provenance line field: the template with this
    * project's name and engine filled in. A hint only — the server neutralizes
    * unsafe values when it renders, and refuses a bad template on save.
@@ -4911,6 +4958,8 @@
   global.tcResolveEngineProfile = tcResolveEngineProfile;
   global.tcSettingDisposition = tcSettingDisposition;
   global.tcProvenancePatch = tcProvenancePatch;
+  global.tcLaunchModeForEngine = tcLaunchModeForEngine;
+  global.tcLaunchModePatch = tcLaunchModePatch;
   global.tcProvenancePreview = tcProvenancePreview;
   global.tcCreateProjectBody = tcCreateProjectBody;
   global.tcSettingDefaults = TC_SETTING_DEFAULTS;

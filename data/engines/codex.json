@@ -71,6 +71,31 @@
     }
   },
   "defaultLaunchMode": "default",
+  "models": {
+    "flag": "--model",
+    "offered": [
+      "gpt-5.6-sol",
+      "gpt-6-luna"
+    ],
+    "roster": {
+      "source": "codex-models-cache",
+      "maxAgeHours": 168
+    },
+    "evidence": {
+      "flag": {
+        "verifiedOn": "2026-10-07",
+        "source": "codex-cli 0.156.1 `--help` lists `-m, --model <MODEL>`. Measured on the product's own launch shape, a `--remote` client of a per-launch app-server started by this adapter: with the account's configured default at gpt-6-sol, `codex --remote unix://<socket> --model 'gpt-5.6-sol'` produced a thread whose `thread/read` model is gpt-5.6-sol, and the same with gpt-6-luna. The flag is not ignored on a remote client."
+      },
+      "offered": {
+        "verifiedOn": "2026-10-07",
+        "source": "One short turn on each id on this account, started over the protocol on the thread the pane opened: both completed (5 s and 8 s) and each rollout's `turn_context` names the requested model. This is evidence for this account on this date, which is why the roster is read again at every save and launch instead of trusting this list."
+      },
+      "roster": {
+        "verifiedOn": "2026-10-07",
+        "source": "`~/.codex/models_cache.json` (or `$CODEX_HOME`): `models[].slug` and `display_name`, with `fetched_at` rewritten when the CLI starts (observed moving from 21:25Z to 21:52Z across two launches the same day). It also lists entries with `visibility: hide` (gpt-reserve, codex-auto-review), which is why the offered list is an allowlist and not the roster. `maxAgeHours` of 168 is a judgment, not a measurement: long enough that a machine used weekly still validates, short enough that a list from a CLI nobody has started in a month is not called current."
+      }
+    }
+  },
   "persistent": null,
   "capabilities": {
     "launchSequence": {
