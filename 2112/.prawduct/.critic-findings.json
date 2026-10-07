@@ -1,0 +1,45 @@
+{
+  "timestamp": "2026-10-05T21:55:06Z",
+  "duration_seconds": 420,
+  "mode": "verify-resolutions (delta review, prior findings only)",
+  "mode_chosen_by": "explicit-args",
+  "stage": "inner",
+  "model": "claude-opus-5-5",
+  "commit_reviewed": "5632e7e8f65e51e1c2ef95206bd6e92958b3a497",
+  "base_reviewed": null,
+  "files_reviewed": [
+    "CHANGELOG.md",
+    "docs/operator-bridge.md",
+    "lib/bridge-gateway.js",
+    "lib/bridge-store.js",
+    "test/api-bridge-gateway.test.js"
+  ],
+  "findings": [],
+  "observations": [
+    {
+      "oid": "O-1",
+      "goal": "Nothing Is Broken",
+      "summary": "A thrown null, undefined or frozen value loses the failureNotWritten mark",
+      "recommendation": "Scope: instance. In _launchFailed (lib/bridge-gateway.js:958) Object.assign(err, {failureNotWritten: true}) works for an Error and for a thrown string or number (it is boxed and the boxed value is thrown, mark intact). For a thrown null or undefined, or a frozen object, Object.assign itself throws a TypeError that carries no mark, so the caller falls back to what it did before this delta: it ends the launch as launch-error in the same pass. Nothing in the store or node:sqlite throws such a value, and the fallback is the old behaviour, not a wedge or a lost notice. ACCEPT is the default; fixing it moves the tree and costs a round.",
+      "files": [
+        "lib/bridge-gateway.js"
+      ]
+    },
+    {
+      "oid": "O-2",
+      "goal": "Nothing Is Broken",
+      "summary": "No suite run is on record for this head",
+      "recommendation": "Scope: none. prawduct-hook test-status still exits 1 (stale: no .test-evidence.json on disk) at 5632e7e8, so prior finding R-1 could not be settled from the tree and is left out of resolutions. It is answered by the full-suite run at this head, recorded where the PR can cite it; that needs no commit and no review round."
+    },
+    {
+      "oid": "O-3",
+      "goal": "Nothing Is Unintended",
+      "summary": "CHANGELOG has no separate line for the same-pass change",
+      "recommendation": "Scope: none. The two fix commits change no CHANGELOG line. The existing #2112 entry already says that a write which does not land leaves the launch unsettled and the next pass does all of it, which is what these commits make true for the closed code as well; docs/operator-bridge.md line 438 on launch-error is still accurate. ACCEPT is the default; if a line is wanted it rides a commit already being made."
+    }
+  ],
+  "summary": "0 blocking, 0 warning, 0 note across 1 reviewer(s). Changes ready to proceed.",
+  "fact_id": "rev-20261005T215351Z-3be63018",
+  "next_action": "This review COVERS your working tree as it stands, and your tree is clean, so there is nothing left to pay for \u2014 and the next edit after it, judgeable or not, opens a NEW delta that needs its own `/prawduct:critic verify-resolutions`. Recommended: stop here; fix anything further only if it is worth a round of its own. 0 blocking, 0 findings \u2014 THE REVIEW IS OVER and nothing in THIS review requires another round. 3 item(s) were demoted to observations, and each can be answered on the record instead of fixed: `prawduct-hook disposition rev-20261005T215351Z-3be63018 <oid> --accept \"<reason>\"` (the ids are in `.critic-findings.json` under `observations`), which needs no review and moves no tree. The BRANCH was covered too, at the HEAD this review saw: composed review evidence spanned 3 commit(s) since origin/main with no blocking findings outstanding \u2014 work you had not committed yet is not in that span. Re-derive with `prawduct-hook check-cumulative-critic` if the branch has moved since. (A review being over is not a work cycle being over \u2014 a plan mid-flight still owes its final/cumulative at the end of it.) If you do choose to fix some, batch them into ONE commit \u2014 and re-cover with ONE `/prawduct:critic verify-resolutions` ONLY if that commit touched judgeable files. AFTER committing, you no longer have to judge that either: dispatch asks the same predicate and exits 3 (`no review needed`, under a second, no session state written) rather than spending a reviewer on a free interval \u2014 so asking costs nothing, and a refusal is the answer, not a reason to retry in another mode. Do NOT start another round to 'close coverage' before committing, and do not infer that you need one from gate output printed before your fix \u2014 commit, then re-run the gate and let it answer. If this branch has more judgeable work coming, there is a third route: carry the fix into the NEXT chunk's commit. That is NOT the deferral warned against above \u2014 deferring to a later ROUND buys a second round; riding a commit that is being made anyway buys none. Write it where that chunk will meet it (the build plan or `.prawduct/.handoff-notes.md`), or it is not a deferral, it is a drop. What one more round costs here is unavailable (no verify-resolutions round in this repo's history records how long it took) \u2014 that is a missing number, not a small one.",
+  "likely_duplicate_groups": []
+}

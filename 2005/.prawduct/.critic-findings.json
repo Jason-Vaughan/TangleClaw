@@ -1,0 +1,50 @@
+{
+  "timestamp": "2026-10-05T20:41:49Z",
+  "duration_seconds": 600,
+  "mode": "cumulative (bundle review, ready for merge)",
+  "mode_chosen_by": "rule-2 cumulative: branch is 2 commits ahead of origin/main, working tree clean, no fresh cumulative-mode record for current HEAD",
+  "stage": "boundary",
+  "model": "claude-opus-5-5",
+  "commit_reviewed": "6baff24c3640f68caf2ed66deec8816e77b3240b",
+  "base_reviewed": "3df4be4a0b4a5dd14d7719a8c3777123a0b6f98e",
+  "files_reviewed": [
+    "CHANGELOG.md",
+    "docs/operator-bridge.md",
+    "lib/bridge-gateway.js",
+    "test/bridge-gateway.test.js"
+  ],
+  "findings": [
+    {
+      "fid": "R-1",
+      "goal": "Nothing Is Broken",
+      "severity": "warning",
+      "summary": "No test run is on record for the rebased tree",
+      "recommendation": "Scope: instance. `prawduct-hook test-status` exits 1 in this worktree ('stale: no .test-evidence.json on disk'). The rebase put the branch on a base whose suite now contains test/assert-strict-guard.test.js, which reads every test file; by reading, test/bridge-gateway.test.js satisfies it (line 11 requires node:assert/strict, the diff adds no require), and range-diff shows both commits unchanged, but nothing recorded shows the suite passing on tree 95f32d5f. Run the full suite once in this worktree so the evidence meets the tree that will merge; no code change is implied.",
+      "fix_cost": "FIX cost unknown \u2014 this finding cites no file; assume it buys a review round."
+    },
+    {
+      "fid": "R-2",
+      "goal": "Nothing Is Missing",
+      "severity": "note",
+      "summary": "Backlog reconciliation unavailable",
+      "recommendation": "Scope: none. Backlog reconciliation unavailable: the backlog cache has not been built yet; run `prawduct-hook backlog sync --repo Jason-Vaughan/TangleClaw`. The walk was skipped, so no open item was checked against this change.",
+      "fix_cost": "FIX cost unknown \u2014 this finding cites no file; assume it buys a review round."
+    },
+    {
+      "fid": "R-3",
+      "goal": "Everything Is Coherent",
+      "severity": "note",
+      "summary": "The new paragraph in 'When something does not arrive' sits between two halves of one bullet list",
+      "recommendation": "Scope: instance. In docs/operator-bridge.md the paragraph 'The notice is part of the write it reports' follows the third bullet, and the 'The Master is not running' bullet follows it with no blank line. It renders as list, paragraph, list, and 'Each of these' reads correctly against the three bullets above it. Nothing reads this structure and no edit is required; moving the paragraph below the whole list would lose the reference to the first three bullets.",
+      "files": [
+        "docs/operator-bridge.md"
+      ],
+      "fix_cost": "FIX is free WHERE THIS FINDING POINTS \u2014 every file it cites is non-judgeable, so an edit confined to those moves no coverage and buys no round. If the real correction lands elsewhere, price the actual batch with `cost-of-commit` first."
+    }
+  ],
+  "observations": [],
+  "summary": "0 blocking, 1 warning, 2 note across 1 reviewer(s). Changes ready to proceed.",
+  "fact_id": "rev-20261005T204020Z-95d28244",
+  "next_action": "AT REVIEW TIME you were not making a judgeable commit (your tree was clean), so the first judgeable fix bought a whole review round. Re-derive with `prawduct-hook cost-of-commit` if the tree has moved since. Recommended while that holds: accept these unless a fix is worth that. 0 blocking \u2014 THE REVIEW IS OVER. The 1 warning + 2 note finding(s) gate NOTHING: no gate reads them, so nothing in THIS review requires another round. (Whether the PR gate is satisfied, and whether the work cycle still owes a final/cumulative, are separate questions about coverage \u2014 ask them by running the gate, not by reviewing again.) Disposition each finding instead of reflexively fixing it \u2014 accept is the default for anything nobody will realistically action: `prawduct-hook disposition rev-20261005T204020Z-95d28244 <fid|oid> --accept \"<reason>\"`, which needs no review and moves no tree. If you do choose to fix some, batch them into ONE commit \u2014 and re-cover with ONE `/prawduct:critic verify-resolutions` ONLY if that commit touched judgeable files. AFTER committing, you no longer have to judge that either: dispatch asks the same predicate and exits 3 (`no review needed`, under a second, no session state written) rather than spending a reviewer on a free interval \u2014 so asking costs nothing, and a refusal is the answer, not a reason to retry in another mode. Do NOT start another round to 'close coverage' before committing, and do not infer that you need one from gate output printed before your fix \u2014 commit, then re-run the gate and let it answer. If this branch has more judgeable work coming, there is a third route: carry the fix into the NEXT chunk's commit. That is NOT the deferral warned against above \u2014 deferring to a later ROUND buys a second round; riding a commit that is being made anyway buys none. Write it where that chunk will meet it (the build plan or `.prawduct/.handoff-notes.md`), or it is not a deferral, it is a drop. What one more round costs here is unavailable (only 1 timed verify-resolutions round(s) recorded \u2014 too few to quote as this repo's price) \u2014 that is a missing number, not a small one.",
+  "likely_duplicate_groups": []
+}

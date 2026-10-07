@@ -1,0 +1,14 @@
+1377/.prawduct/.critic-findings.json sha256=34ad538233b05e60728807dce1ce1ffeae77f594c69cf38a4f6af38a7a7e59b0 bytes=5942 branch=chore/1377-enforce-assert-strict tip=eb7de332bc26f2fdfb4f5fd9cb3f0691402ea37b
+1377/.prawduct/.governance-ledger.jsonl sha256=f5fbc48dfb92899a08f579119f684025fb06299d7ef151db358b3be882426bd4 bytes=14794 branch=chore/1377-enforce-assert-strict tip=eb7de332bc26f2fdfb4f5fd9cb3f0691402ea37b
+2005/.prawduct/.critic-findings.json sha256=fd69fa2af85e62b8077cad70a68cf4529c337bacf2318ddf3f514d489d79cb87 bytes=5409 branch=fix/2005-delivery-failure-notice tip=6baff24c3640f68caf2ed66deec8816e77b3240b
+2005/.prawduct/.governance-ledger.jsonl sha256=d6eecaa2e4e7afa633204daa1baff59cd0f12bbbd64441c0fbb2ef0030a0b1c2 bytes=18487 branch=fix/2005-delivery-failure-notice tip=6baff24c3640f68caf2ed66deec8816e77b3240b
+2031-discord-master/.prawduct/.critic-findings.json sha256=fce49622c4c7f1cd19f5a45a44f0bca9363612f7ff2e82f8083e3b9755749723 bytes=6261 branch=feat/2031-p2-bridge-gateway tip=83f4fd734c1ed90bb8ec0eafbaa0f489cd248609
+2031-discord-master/.prawduct/.governance-ledger.jsonl sha256=2635318b500f4ad65880f08e7451145020e4dfe89e330b9f46dd0cd731f94519 bytes=95008 branch=feat/2031-p2-bridge-gateway tip=83f4fd734c1ed90bb8ec0eafbaa0f489cd248609
+2031-p3/.prawduct/.critic-findings.json sha256=8bb46b18d783c31a2c1c65791da571d765d31ae94a81037c2c779c421799ada5 bytes=5393 branch=feat/2031-p3-bridge-candidates tip=79d2cc7d2015b8ebfa738d1e6ddb7fa2095c895e
+2031-p3/.prawduct/.governance-ledger.jsonl sha256=3582742c77c0fd01cedfc992b4629185120f7cb141f64195415156796b99dc30 bytes=63985 branch=feat/2031-p3-bridge-candidates tip=79d2cc7d2015b8ebfa738d1e6ddb7fa2095c895e
+2031-p4/.prawduct/.critic-findings.json sha256=970e4d832ec76068510ca7ab3a513f95a205fb2adee74508212eb08d4ff15e13 bytes=7019 branch=feat/2031-p4-bridge-helper tip=6e389358529cffa5b990c0045b7a96fa1b1457ac
+2031-p4/.prawduct/.governance-ledger.jsonl sha256=dd8b327f188530c452581adeed3e30493e8338a820fba22590f3c02567c5a8cb bytes=127237 branch=feat/2031-p4-bridge-helper tip=6e389358529cffa5b990c0045b7a96fa1b1457ac
+2031-p5/.prawduct/.critic-findings.json sha256=3361e149376ad0a5f563027c1c1ef8ff39f5b028597b997ec403abe9db8d755d bytes=8586 branch=feat/2031-p5-bridge-cutover tip=0134ffb12c533505422c2ee40fce0b6f9381ef52
+2031-p5/.prawduct/.governance-ledger.jsonl sha256=1585469288c378ddb4b7955148445b5bac9b4597655aae51dfc8397c330a8a4f bytes=674418 branch=feat/2031-p5-bridge-cutover tip=0134ffb12c533505422c2ee40fce0b6f9381ef52
+2112/.prawduct/.critic-findings.json sha256=875a82b28b0e231fc2372c3473c8e062994bb65bfc6ac73e4ebaa96e82480c62 bytes=5061 branch=fix/2112-launch-failure-atomic tip=5632e7e8f65e51e1c2ef95206bd6e92958b3a497
+2112/.prawduct/.governance-ledger.jsonl sha256=943a6074012ccc78b658e892337fa35b1d08c5ba86cfc25fa9eac057c210b5c7 bytes=14451 branch=fix/2112-launch-failure-atomic tip=5632e7e8f65e51e1c2ef95206bd6e92958b3a497

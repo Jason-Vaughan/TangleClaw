@@ -1,0 +1,69 @@
+{
+  "timestamp": "2026-10-04T09:44:49Z",
+  "duration_seconds": 420,
+  "mode": "verify-resolutions (delta review, prior findings only)",
+  "mode_chosen_by": "explicit-args",
+  "stage": "inner",
+  "model": "claude-opus-5-5",
+  "commit_reviewed": "83f4fd734c1ed90bb8ec0eafbaa0f489cd248609",
+  "base_reviewed": null,
+  "files_reviewed": [
+    "CHANGELOG.md",
+    "FEATURES.md",
+    "docs/adr/0023-master-mediated-operator-bridge.md",
+    "docs/operator-bridge.md",
+    "lib/bridge-api.js",
+    "lib/bridge-gateway.js",
+    "lib/bridge-schema.js",
+    "lib/bridge-store.js",
+    "lib/store.js",
+    "lib/tc-verbs.js",
+    "server.js",
+    "test/api-bridge-gateway.test.js",
+    "test/api-bridge.test.js",
+    "test/bridge-gateway.test.js",
+    "test/bridge-store.test.js",
+    "test/store-bridge-migration.test.js",
+    "test/_bridge-hub.js"
+  ],
+  "findings": [],
+  "observations": [
+    {
+      "oid": "O-1",
+      "goal": "Nothing Is Broken",
+      "summary": "A Hub id that cannot be stored appends one `send_unknown` fact per pass for as long as the route is open",
+      "recommendation": "Scope: instance. dispatch() keeps any string `sent.body.id` in the `hub-answer` audit row and calls bindHubId with it on every pass while the exchange has no hub_id. bindHubId returns markSendUnknown(exchangeId, 'hub-id-invalid') for an id that fails HUB_ID_RE, and `send_unknown` is not in ONCE_FACTS, so each 15-second pass appends another fact and reprojects the row until the Master answers or closes the route. The route outcome is correct (unconfirmed, not resent, Master told). It needs the Hub to answer 200 with an id outside `[A-Za-z0-9._:-]{1,128}`, and the branch has no test. A fix would be to not remember or retry an id that fails the same pattern. ACCEPT is reasonable; if fixed, ride a commit already owed.",
+      "files": [
+        "lib/bridge-gateway.js"
+      ]
+    },
+    {
+      "oid": "O-2",
+      "goal": "Nothing Is Broken",
+      "summary": "The gateway's own bind records the Hub status as `received` whatever the Hub said",
+      "recommendation": "Scope: instance. dispatch() passes `hubStatus: 'received'` to bindHubId; the Hub's real answer (`sent.body.status`, which may be `queued`) is available on the first pass and is not kept in the `hub-answer` row for later ones. The value becomes the `hub_accepted` fact's code. No reader of that code was found in lib/medusa-exchanges.js or lib/medusa-watchdog.js, so nothing acts on it. ACCEPT.",
+      "files": [
+        "lib/bridge-gateway.js"
+      ]
+    },
+    {
+      "oid": "O-3",
+      "goal": "Nothing Is Broken",
+      "summary": "The retired-recipient test sets the exchange state by a direct UPDATE",
+      "recommendation": "Scope: instance. 'a recipient that retires does not make an unconfirmed send sendable again' writes `state = 'recipient_retired'` on the row instead of calling markRecipientRetired, so it proves dispatch()'s branch on that state and not the producer that sets it. dispatch() reads only `exchange.state` and `hub_id` there, and no bind runs in that test, so the assertion holds for the real producer by reading. ACCEPT.",
+      "files": [
+        "test/bridge-gateway.test.js"
+      ]
+    },
+    {
+      "oid": "O-4",
+      "goal": "Nothing Is Broken",
+      "summary": "No test evidence on disk for the commit under review",
+      "recommendation": "Scope: none. `prawduct-hook test-status` exits 1 (`stale: no .test-evidence.json on disk`). The builder reports the full suite running detached in this worktree; none of the new tests was run or credited from here. It gates nothing at this stage; the boundary review will ask again."
+    }
+  ],
+  "summary": "0 blocking, 0 warning, 0 note across 1 reviewer(s). Changes ready to proceed.",
+  "fact_id": "rev-20261004T094324Z-91e10770",
+  "next_action": "This review COVERS your working tree as it stands, and your tree is clean, so there is nothing left to pay for \u2014 and the next edit after it, judgeable or not, opens a NEW delta that needs its own `/prawduct:critic verify-resolutions`. Recommended: stop here; fix anything further only if it is worth a round of its own. 0 blocking, 0 findings \u2014 THE REVIEW IS OVER and nothing in THIS review requires another round. 4 item(s) were demoted to observations, and each can be answered on the record instead of fixed: `prawduct-hook disposition rev-20261004T094324Z-91e10770 <oid> --accept \"<reason>\"` (the ids are in `.critic-findings.json` under `observations`), which needs no review and moves no tree. The BRANCH was covered too, at the HEAD this review saw: composed review evidence spanned 6 commit(s) since origin/main with no blocking findings outstanding \u2014 work you had not committed yet is not in that span. Re-derive with `prawduct-hook check-cumulative-critic` if the branch has moved since. (A review being over is not a work cycle being over \u2014 a plan mid-flight still owes its final/cumulative at the end of it.) If you do choose to fix some, batch them into ONE commit \u2014 and re-cover with ONE `/prawduct:critic verify-resolutions` ONLY if that commit touched judgeable files. AFTER committing, you no longer have to judge that either: dispatch asks the same predicate and exits 3 (`no review needed`, under a second, no session state written) rather than spending a reviewer on a free interval \u2014 so asking costs nothing, and a refusal is the answer, not a reason to retry in another mode. Do NOT start another round to 'close coverage' before committing, and do not infer that you need one from gate output printed before your fix \u2014 commit, then re-run the gate and let it answer. If this branch has more judgeable work coming, there is a third route: carry the fix into the NEXT chunk's commit. That is NOT the deferral warned against above \u2014 deferring to a later ROUND buys a second round; riding a commit that is being made anyway buys none. Write it where that chunk will meet it (the build plan or `.prawduct/.handoff-notes.md`), or it is not a deferral, it is a drop. What one more round costs here is unavailable (only 3 timed verify-resolutions round(s) recorded \u2014 too few to quote as this repo's price) \u2014 that is a missing number, not a small one.",
+  "likely_duplicate_groups": []
+}

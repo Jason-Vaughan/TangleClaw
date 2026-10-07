@@ -1,0 +1,66 @@
+{
+  "timestamp": "2026-10-04T10:35:31Z",
+  "duration_seconds": 300,
+  "mode": "verify-resolutions (delta review, prior findings only)",
+  "mode_chosen_by": "explicit-args",
+  "stage": "inner",
+  "model": "claude-opus-5-5",
+  "commit_reviewed": "79d2cc7d2015b8ebfa738d1e6ddb7fa2095c895e",
+  "base_reviewed": null,
+  "files_reviewed": [
+    "CHANGELOG.md",
+    "FEATURES.md",
+    "docs/adr/0023-master-mediated-operator-bridge.md",
+    "docs/operator-bridge.md",
+    "lib/bridge-api.js",
+    "lib/bridge-gateway.js",
+    "lib/bridge-notify.js",
+    "lib/bridge-schema.js",
+    "lib/bridge-store.js",
+    "lib/store.js",
+    "lib/tc-verbs.js",
+    "server.js",
+    "test/_bridge-hub.js",
+    "test/api-bridge-gateway.test.js",
+    "test/api-bridge.test.js",
+    "test/bridge-candidates.test.js",
+    "test/bridge-gateway.test.js",
+    "test/bridge-notify.test.js",
+    "test/bridge-store.test.js",
+    "test/ecosystem-primer.test.js",
+    "test/store-bridge-migration.test.js",
+    "test/bridge-retention.test.js"
+  ],
+  "findings": [],
+  "observations": [
+    {
+      "oid": "O-1",
+      "goal": "Nothing Is Unintended",
+      "summary": "The OUTBOUND_NOT_READY refusal in acknowledgeOutbound can no longer be reached",
+      "recommendation": "Scope: instance - lib/bridge-gateway.js line 960 follows the delivered and dropped branches, and the schema allows only ready, delivered and dropped (lib/bridge-schema.js line 215), so the 409 OUTBOUND_NOT_READY line has no state left to answer. docs/operator-bridge.md line 359 still lists that code. Harmless as a guard against a future state. ACCEPT is the default; no edit is wanted in this delta.",
+      "files": [
+        "lib/bridge-gateway.js",
+        "docs/operator-bridge.md"
+      ]
+    },
+    {
+      "oid": "O-2",
+      "goal": "Nothing Is Broken",
+      "summary": "The 410 is asserted at the gateway function, not through the HTTP route",
+      "recommendation": "Scope: instance - test/bridge-retention.test.js and test/bridge-gateway.test.js call gateway.acknowledgeOutbound directly and assert status 410 and code OUTBOUND_EXPIRED; no test in test/api-bridge-gateway.test.js posts a late acknowledgement over HTTP. The function returns the status and body the route sends, so the changed behaviour is tested. ACCEPT, or add one route-level case if a commit is coming anyway.",
+      "files": [
+        "test/api-bridge-gateway.test.js"
+      ]
+    },
+    {
+      "oid": "O-3",
+      "goal": "Nothing Is Broken",
+      "summary": "No test evidence on disk",
+      "recommendation": "Scope: none - prawduct-hook test-status reports 'stale: no .test-evidence.json on disk'. The suite was running detached in this worktree during the review and was not run here. Its result is owed before the boundary review."
+    }
+  ],
+  "summary": "0 blocking, 0 warning, 0 note across 1 reviewer(s). Changes ready to proceed.",
+  "fact_id": "rev-20261004T103443Z-007da126",
+  "next_action": "This review COVERS your working tree as it stands, and your tree is clean, so there is nothing left to pay for \u2014 and the next edit after it, judgeable or not, opens a NEW delta that needs its own `/prawduct:critic verify-resolutions`. Recommended: stop here; fix anything further only if it is worth a round of its own. 0 blocking, 0 findings \u2014 THE REVIEW IS OVER and nothing in THIS review requires another round. 3 item(s) were demoted to observations, and each can be answered on the record instead of fixed: `prawduct-hook disposition rev-20261004T103443Z-007da126 <oid> --accept \"<reason>\"` (the ids are in `.critic-findings.json` under `observations`), which needs no review and moves no tree. The BRANCH was covered too, at the HEAD this review saw: composed review evidence spanned 12 commit(s) since origin/main with no blocking findings outstanding \u2014 work you had not committed yet is not in that span. Re-derive with `prawduct-hook check-cumulative-critic` if the branch has moved since. (A review being over is not a work cycle being over \u2014 a plan mid-flight still owes its final/cumulative at the end of it.) If you do choose to fix some, batch them into ONE commit \u2014 and re-cover with ONE `/prawduct:critic verify-resolutions` ONLY if that commit touched judgeable files. AFTER committing, you no longer have to judge that either: dispatch asks the same predicate and exits 3 (`no review needed`, under a second, no session state written) rather than spending a reviewer on a free interval \u2014 so asking costs nothing, and a refusal is the answer, not a reason to retry in another mode. Do NOT start another round to 'close coverage' before committing, and do not infer that you need one from gate output printed before your fix \u2014 commit, then re-run the gate and let it answer. If this branch has more judgeable work coming, there is a third route: carry the fix into the NEXT chunk's commit. That is NOT the deferral warned against above \u2014 deferring to a later ROUND buys a second round; riding a commit that is being made anyway buys none. Write it where that chunk will meet it (the build plan or `.prawduct/.handoff-notes.md`), or it is not a deferral, it is a drop. What one more round costs here is unavailable (only 4 timed verify-resolutions round(s) recorded \u2014 too few to quote as this repo's price) \u2014 that is a missing number, not a small one.",
+  "likely_duplicate_groups": []
+}
