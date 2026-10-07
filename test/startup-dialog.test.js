@@ -218,6 +218,88 @@ describe('reading one pane (#2128)', () => {
   });
 });
 
+describe('one look before a send (#2128)', () => {
+  let frames;
+  let settles;
+
+  beforeEach(() => {
+    Object.assign(startupDialog._internal, REAL_SEAMS);
+    settles = 0;
+    startupDialog._internal.wakeProfiles = () => ({ claude: { promptGlyph: GLYPH } });
+    startupDialog._internal.settleSync = () => { settles += 1; };
+    startupDialog._internal.capturePaneSync = () => {
+      const frame = frames.length > 1 ? frames.shift() : frames[0];
+      if (frame instanceof Error) throw frame;
+      return { lines: frame, alternateScreen: false };
+    };
+  });
+
+  after(() => { Object.assign(startupDialog._internal, REAL_SEAMS); });
+
+  const look = () => startupDialog.check('t', CLAUDE);
+
+  it('the dialog is a dialog, and not clear', () => {
+    frames = [TRUST_DIALOG];
+    const res = look();
+    assert.equal(res.dialog.code, 'trust_required');
+    assert.equal(res.clear, false);
+    assert.equal(settles, 0);
+  });
+
+  it('the composer is clear', () => {
+    frames = [COMPOSER];
+    assert.deepEqual(look(), { declared: true, dialog: null, clear: true, unread: null });
+  });
+
+  it('a session quoting the dialog above its composer is clear: the prompt is the evidence', () => {
+    frames = [QUOTING_SESSION];
+    const res = look();
+    assert.equal(res.dialog, null);
+    assert.equal(res.clear, true);
+    assert.equal(settles, 0, 'and it is not mistaken for a half-drawn frame');
+  });
+
+  it('a half-drawn dialog is read once more, and the finished frame decides', () => {
+    frames = [TRUST_DIALOG.slice(0, 13), TRUST_DIALOG];
+    const res = look();
+    assert.equal(settles, 1);
+    assert.equal(res.dialog.code, 'trust_required');
+  });
+
+  it('a frame that stays half-drawn is neither a dialog nor clear', () => {
+    frames = [TRUST_DIALOG.slice(0, 13)];
+    const res = look();
+    assert.equal(settles, 1, 'one re-read, not a loop');
+    assert.equal(res.dialog, null);
+    assert.equal(res.clear, false);
+  });
+
+  it('an empty read is unread, not clear', () => {
+    frames = [[]];
+    const res = look();
+    assert.equal(res.clear, false);
+    assert.match(res.unread, /came back empty/);
+  });
+
+  it('a read that throws is unread, not clear', () => {
+    frames = [new Error('tmux did not answer')];
+    const res = look();
+    assert.equal(res.clear, false);
+    assert.equal(res.unread, 'tmux did not answer');
+  });
+
+  it('a screen with neither a dialog nor a prompt is not clear', () => {
+    frames = [['  Verifying your account…']];
+    assert.deepEqual(look(), { declared: true, dialog: null, clear: false, unread: null });
+  });
+
+  it('an engine that declares nothing is not read', () => {
+    frames = [new Error('must not be read')];
+    assert.deepEqual(startupDialog.check('t', { id: 'aider', command: 'aider', capabilities: { startupDialogs: [] } }),
+      { declared: false, dialog: null, clear: false, unread: null });
+  });
+});
+
 describe('the boot watch (#2128)', () => {
   let clock;
   let frames;
@@ -567,6 +649,24 @@ describe('the session keeps its blocker (#2128)', () => {
         assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required');
       });
 
+      it('an EMPTY read is not an answered dialog: tmux\'s reader returns no lines when a capture fails', () => {
+        const s = start();
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        tmux.capturePane = () => ({ lines: [], alternateScreen: false });
+        assert.equal(sessions.getSessionStatus(project.name).launchBlocker.code, 'trust_required');
+        tmux.capturePane = () => ({ lines: ['', '   ', ''], alternateScreen: false });
+        assert.equal(sessions.getSessionStatus(project.name).launchBlocker.code, 'trust_required');
+        assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required');
+      });
+
+      it('a screen showing neither a dialog nor the prompt clears nothing', () => {
+        const s = start();
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        tmux.capturePane = () => ({ lines: ['  Verifying your account…'], alternateScreen: false });
+        assert.equal(sessions.getSessionStatus(project.name).launchBlocker.code, 'trust_required');
+        assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required');
+      });
+
       it('a healthy session with no blocker is not read for one', () => {
         start();
         let reads = 0;
@@ -704,6 +804,24 @@ describe('the session keeps its blocker (#2128)', () => {
       await settle();
       assert.equal(watched, 1);
       startupDialog.reset();
+    });
+
+    it('a session that ended while its boot was watched types nothing into the pane that reused its name', async () => {
+      // Kill and relaunch inside the answer window: the old watch then reads
+      // the NEW session's pane, sees its prompt, and reports `answered`.
+      const s = start();
+      let release;
+      startupDialog.watch = (args) => new Promise((resolve) => {
+        args.onDialog(DIALOG);
+        release = () => resolve({ outcome: 'answered', meaning: '', dialog: DIALOG, waitedMs: 60_000 });
+      });
+      launch(s);
+      await settle();
+      store.sessions.kill(s.id, 'operator killed it at the dialog');
+      release();
+      await settle();
+      assert.deepEqual(typed, []);
+      assert.deepEqual(kicked, []);
     });
 
     it('an engine that declares no dialogs is not watched at all', async () => {

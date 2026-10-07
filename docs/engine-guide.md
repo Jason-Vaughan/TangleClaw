@@ -497,9 +497,12 @@ covered as long as it names the session's engine, which a test requires of every
 
 The stored blocker is a claim about the pane that the operator can make untrue at any moment by
 answering the dialog. So it is checked against the pane whenever the session's status is read and
-before every send: a dialog that is gone clears it, and a pane that could not be read changes
-nothing. A session's later, unrelated death is therefore not recorded as caused by a dialog that
-was answered. While it stands, the project card shows a "needs you" badge and the session page a
+before every send. It is cleared only on a positive reading: the engine's prompt on screen and no
+dialog. A pane that could not be read, a read that came back empty, or a screen showing neither
+changes nothing, because "no dialog was matched" is not evidence that it was answered. A session
+whose status is read after the operator answers therefore does not have a later, unrelated death
+recorded as caused by the dialog. The project list serves the stored record without reading the
+pane, so a card can lag until the session's status is next read. While it stands, the project card shows a "needs you" badge and the session page a
 banner.
 
 **TangleClaw never answers the dialog.** Accepting a trust prompt lets the folder's own hooks, MCP
