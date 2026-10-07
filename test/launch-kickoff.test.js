@@ -582,6 +582,9 @@ describe('a real launch builds the kickoff context (#1635)', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  const startupDialog = require('../lib/startup-dialog');
+  let realWatch;
+
   beforeEach(() => {
     calls = [];
     realKickoff = launchKickoff.kickoff;
@@ -589,10 +592,19 @@ describe('a real launch builds the kickoff context (#1635)', () => {
       calls.push(args);
       return Promise.resolve('sent');
     };
+    // A Claude launch reads its pane before it types (#2128), and this launch
+    // has no pane. The watch's answer is stated instead of waited for: it
+    // recognised nothing, which is the path a launch took before boot was
+    // watched, and the one these tests are about.
+    realWatch = startupDialog.watch;
+    startupDialog.watch = () => Promise.resolve({
+      outcome: 'timeout', meaning: startupDialog.OUTCOME_MEANINGS.timeout, dialog: null, waitedMs: 0
+    });
   });
 
   afterEach(() => {
     launchKickoff.kickoff = realKickoff;
+    startupDialog.watch = realWatch;
   });
 
   /** Let the deferred launch timers fire. */
