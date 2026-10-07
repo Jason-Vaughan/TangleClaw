@@ -520,7 +520,8 @@ that is being drawn is not evidence. A profile with no prompt glyph (no `wake` b
 positive evidence at all: it still sees a dialog by its markers and withholds, but a blocker
 recorded for it is never cleared by a pane read. Every TangleClaw send to that session is then
 refused until the session ends, even after the operator answers the dialog, so the way out is to
-relaunch, or to give the profile a `wake` block. Bundled profiles and copies of them carry one.
+relaunch, or to give the profile a `wake` block. The bundled Claude Code profile, the only one that
+declares a dialog, carries one, and so does a copy of it.
 
 A dialog whose options have been reworded so that no declared marker matches is not seen at all.
 That is a limit of detection, not evidence of safety: the entry's evidence names the version it was
