@@ -1092,6 +1092,25 @@ describe('dashboard card: last session badge and row (#1544)', () => {
       const killed = sb.badge({ name: 'p', sessionHealth: health({ state: 'left-work', newPathCount: 1, unpushed: 0, launchBlocker }) });
       assert.doesNotMatch(killed, /trust_required/);
     });
+
+    it('escapes the cause at both places it is inserted, in every state of the row (#2128)', () => {
+      const sb = sandboxFor();
+      const hostile = { code: '<img src=x onerror=1>', label: '"><script>alert(1)</script>', meaning: '<b>x</b>' };
+      const badge = sb.badge({ name: 'p', sessionHealth: health({ status: 'crashed', launchBlocker: hostile }) });
+      assert.doesNotMatch(badge, /<script|<img|onerror=1>/, 'the badge title carries no markup from the blocker');
+      assert.match(badge, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+      assert.match(badge, /&lt;img src=x onerror=1&gt;/);
+      for (const over of [
+        { state: 'checking' },
+        { state: 'unknown', reason: 'no git' },
+        { state: 'clean' },
+        { state: 'left-work', newPathCount: 1, unpushed: 0, newPaths: ['a.js'] }
+      ]) {
+        const row = sb.detail({ name: 'p', sessionHealth: health({ status: 'crashed', launchBlocker: hostile, ...over }) });
+        assert.doesNotMatch(row, /<script|<img/, `the row carries no markup from the blocker when ${over.state}`);
+        assert.match(row, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/, `and shows it escaped when ${over.state}`);
+      }
+    });
   });
 
   describe('Last session row', () => {

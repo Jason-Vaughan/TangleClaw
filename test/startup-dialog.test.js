@@ -538,6 +538,7 @@ describe('the session keeps its blocker (#2128)', () => {
   const realWatch = startupDialog.watch;
   let typed;
   let kicked;
+  let launchFinished;
   let counter = 0;
 
   before(() => {
@@ -562,7 +563,14 @@ describe('the session keeps its blocker (#2128)', () => {
     launchKickoff.kickoff = (args) => { kicked.push(args); return Promise.resolve('sent'); };
     // The bootstrap reads a real pane; it is not the subject here, and left
     // real it runs its reads inside the next test's window.
-    launchBootstrap.bootstrap = () => Promise.resolve({ code: 'legacy-recorded' });
+    // It is also the LAST thing a launch's deferred init schedules, after the
+    // pre-keys, the paste and the kickoff, so its call is the signal that the
+    // launch has finished: a test waits on that, never on a guessed delay.
+    launchFinished = null;
+    launchBootstrap.bootstrap = () => {
+      if (launchFinished) launchFinished();
+      return Promise.resolve({ code: 'legacy-recorded' });
+    };
   });
 
   afterEach(() => {
@@ -581,7 +589,10 @@ describe('the session keeps its blocker (#2128)', () => {
 
   const start = () => store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: `t-${counter}` });
   const BLOCKER = Object.freeze({ code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.', engineId: 'claude' });
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 40));
+  /** Let promise continuations and zero-delay timers that are already queued run. */
+  const turns = async (n = 4) => {
+    for (let i = 0; i < n; i++) await new Promise((resolve) => setImmediate(resolve));
+  };
 
   describe('in the store', () => {
     it('schema: a fresh store has the column, and this is the version that added it', () => {
@@ -631,6 +642,11 @@ describe('the session keeps its blocker (#2128)', () => {
         assert.ok(cols.includes('launch_blocker'));
         assert.equal(store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
         assert.equal(store.sessions.get(s.id).launchBlocker, null, 'a session from before has no blocker');
+        // The rebuild above dropped the table's three indexes with it. A real
+        // v56 store has them; init creates them if absent, so the upgraded
+        // store ends with the same indexes as a fresh one.
+        const indexes = store.getDb().prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'sessions' AND name LIKE 'idx_sessions_%'").all().map((r) => r.name).sort();
+        assert.deepEqual(indexes, ['idx_sessions_project', 'idx_sessions_started', 'idx_sessions_status']);
       } finally {
         store.close();
         store._setBasePath(base);
@@ -837,16 +853,34 @@ describe('the session keeps its blocker (#2128)', () => {
       { sessionId: s.id, projectId: project.id, hasSequence: true, startupDelivery }
     );
 
+    /**
+     * Launch, and wait for the launch itself to finish: every send it was
+     * going to make has been made or withheld by the time this resolves.
+     * @param {object} s - The session row
+     * @param {object} [opts] - As `launch`
+     * @returns {Promise<void>}
+     */
+    const launched = async (s, opts) => {
+      const done = new Promise((resolve) => { launchFinished = resolve; });
+      launch(s, opts);
+      await done;
+      await turns();
+    };
+
     beforeEach(() => {
       tmux.probeSession = () => ({ answered: true, live: true, cause: null });
       tmux.hasSession = () => true;
+      // The launch reads the pane before each send. Left to the real tmux,
+      // that read is as slow as the host makes it, and on a slow one a launch
+      // ran on into the next test. Each test states what the pane shows.
+      tmux.capturePane = () => ({ lines: COMPOSER, alternateScreen: false });
+      startupDialog._internal.settleSync = () => {};
     });
 
     it('an unanswered dialog: no pre-key, no paste, no kickoff, and the blocker is recorded', async () => {
       const s = start();
       watchAnswers('unanswered', DIALOG);
-      launch(s, { profile: WITH_PREKEY });
-      await new Promise((resolve) => setTimeout(resolve, 650));
+      await launched(s, { profile: WITH_PREKEY });
       assert.deepEqual(typed, [], 'nothing was typed');
       assert.deepEqual(kicked, [], 'and the kickoff was not asked to');
       const blocker = store.sessions.get(s.id).launchBlocker;
@@ -857,8 +891,7 @@ describe('the session keeps its blocker (#2128)', () => {
     it('a silently primed launch at a dialog is not kicked off either', async () => {
       const s = start();
       watchAnswers('unanswered', DIALOG);
-      launch(s, { silentPrime: true });
-      await settle();
+      await launched(s, { silentPrime: true });
       assert.deepEqual(typed, []);
       assert.deepEqual(kicked, []);
     });
@@ -866,8 +899,7 @@ describe('the session keeps its blocker (#2128)', () => {
     it('the pane dying behind the dialog leaves the blocker for the crash to carry', async () => {
       const s = start();
       watchAnswers('pane-gone', DIALOG);
-      launch(s);
-      await settle();
+      await launched(s);
       assert.deepEqual(typed, []);
       store.sessions.markCrashed(s.id, 'tmux session died');
       assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required');
@@ -876,8 +908,7 @@ describe('the session keeps its blocker (#2128)', () => {
     it('an answered dialog: the blocker is cleared and the launch types its first turn', async () => {
       const s = start();
       watchAnswers('answered', DIALOG);
-      launch(s);
-      await settle();
+      await launched(s);
       assert.equal(store.sessions.get(s.id).launchBlocker, null);
       assert.ok(typed.some((t) => t.text === 'the prime'), 'the prime was pasted');
       assert.equal(kicked.length, 1);
@@ -887,8 +918,7 @@ describe('the session keeps its blocker (#2128)', () => {
     it('no dialog: the launch types as it always did, and records nothing', async () => {
       const s = start();
       watchAnswers('clear');
-      launch(s, { profile: WITH_PREKEY });
-      await new Promise((resolve) => setTimeout(resolve, 650));
+      await launched(s, { profile: WITH_PREKEY });
       assert.ok(typed.some((t) => t.key === 'Enter'), 'the declared pre-key');
       assert.ok(typed.some((t) => t.text === 'the prime'));
       assert.equal(kicked.length, 1);
@@ -899,8 +929,7 @@ describe('the session keeps its blocker (#2128)', () => {
     it('timeout: an unrecognised screen does not cost the launch its prime', async () => {
       const s = start();
       watchAnswers('timeout');
-      launch(s);
-      await settle();
+      await launched(s);
       assert.ok(typed.some((t) => t.text === 'the prime'));
       assert.equal(kicked.length, 1);
       assert.equal(store.sessions.get(s.id).launchBlocker, null);
@@ -912,8 +941,7 @@ describe('the session keeps its blocker (#2128)', () => {
       const s = start();
       watchAnswers('timeout');
       tmux.capturePane = () => ({ lines: TRUST_DIALOG, alternateScreen: false });
-      launch(s, { profile: WITH_PREKEY });
-      await new Promise((resolve) => setTimeout(resolve, 650));
+      await launched(s, { profile: WITH_PREKEY });
       assert.deepEqual(typed, [], 'neither the pre-key nor the prime was typed');
       assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required');
       assert.equal(store.activity.query({ sessionId: s.id, eventType: 'session.launch_blocked' }).length, 1, 'recorded once, not once per send');
@@ -927,8 +955,7 @@ describe('the session keeps its blocker (#2128)', () => {
       startupDialog.watch = async () => { watched += 1; return { outcome: 'timeout', meaning: '', dialog: null, waitedMs: 0 }; };
       const variant = { ...PROFILE, id: 'claude-sonnet-reviewer', capabilities: { ...PROFILE.capabilities } };
       delete variant.capabilities.startupDialogs;
-      launch(s, { profile: variant });
-      await settle();
+      await launched(s, { profile: variant });
       assert.equal(watched, 1);
       startupDialog.reset();
     });
@@ -942,11 +969,13 @@ describe('the session keeps its blocker (#2128)', () => {
         args.onDialog(DIALOG);
         release = () => resolve({ outcome: 'answered', meaning: '', dialog: DIALOG, waitedMs: 60_000 });
       });
+      // This launch never finishes: its sends are dropped before any is
+      // scheduled, so there is no finish to wait on, only the watch's answer.
       launch(s);
-      await settle();
+      await turns();
       store.sessions.kill(s.id, 'operator killed it at the dialog');
       release();
-      await settle();
+      await turns();
       assert.deepEqual(typed, []);
       assert.deepEqual(kicked, []);
     });
@@ -955,18 +984,65 @@ describe('the session keeps its blocker (#2128)', () => {
       const s = start();
       watchAnswers('timeout');
       tmux.capturePane = () => ({ lines: TRUST_DIALOG.slice(0, 13), alternateScreen: false });
-      launch(s, { profile: WITH_PREKEY });
-      await new Promise((resolve) => setTimeout(resolve, 1900));
+      await launched(s, { profile: WITH_PREKEY });
       assert.deepEqual(typed, []);
       assert.equal(store.sessions.get(s.id).launchBlocker, null, 'a suspicion records no blocker');
+    });
+
+    describe('a send at the moment of typing, when the launch\'s session is not there to ask', () => {
+      const PASTE = Object.freeze({ ...PROFILE });
+
+      it('the session ended after the watch let the launch through: the paste is withheld', async () => {
+        const s = start();
+        startupDialog.watch = async () => {
+          // The watch answers, the launch is scheduled, and the session is
+          // killed before its paste timer fires.
+          setImmediate(() => store.sessions.kill(s.id, 'killed between the watch and the paste'));
+          return { outcome: 'timeout', meaning: '', dialog: null, waitedMs: 0 };
+        };
+        const profile = { ...PASTE, launch: { ...PASTE.launch, startupDelay: 30 } };
+        await launched(s, { profile });
+        assert.deepEqual(typed, []);
+      });
+
+      it('an ended session\'s send is named as such, whatever the pane shows', () => {
+        const s = start();
+        store.sessions.kill(s.id, 'ended');
+        const res = sessions._startupDialogAtSend(s.tmuxSession, CLAUDE, 'claude', project.name, { sessionId: s.id });
+        assert.equal(res.code, 'session_ended');
+        assert.match(res.why, /had ended \(killed\)/);
+      });
+
+      it('an id the store does not hold is not an ended session: the pane\'s holder is asked instead', () => {
+        const holder = start();
+        store.sessions.setLaunchBlocker(holder.id, BLOCKER);
+        tmux.capturePane = () => ({ lines: [], alternateScreen: false });
+        assert.equal(sessions._startupDialogAtSend(holder.tmuxSession, CLAUDE, 'claude', project.name, { sessionId: 987654 }).code, 'trust_required');
+        assert.equal(sessions._startupDialogAtSend('nobody-holds-this', CLAUDE, 'claude', project.name, { sessionId: 987654 }), null);
+      });
+
+      it('a caller launching no session still honours the blocker stored for that pane', () => {
+        const s = start();
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        tmux.capturePane = () => { throw new Error('tmux did not answer'); };
+        assert.equal(sessions._startupDialogAtSend(s.tmuxSession, CLAUDE, 'claude', project.name, null).code, 'trust_required');
+        const realCheck = startupDialog.check;
+        startupDialog.check = () => { throw new Error('profiles unreadable'); };
+        try {
+          assert.equal(sessions._startupDialogAtSend(s.tmuxSession, CLAUDE, 'claude', project.name, null).code, 'trust_required', 'and when the check itself throws');
+          store.sessions.clearLaunchBlocker(s.id);
+          assert.equal(sessions._startupDialogAtSend(s.tmuxSession, CLAUDE, 'claude', project.name, null), null, 'with none stored it is an ordinary send');
+        } finally {
+          startupDialog.check = realCheck;
+        }
+      });
     });
 
     it('an engine that declares no dialogs is not watched at all', async () => {
       const s = start();
       let watched = 0;
       startupDialog.watch = async () => { watched += 1; return { outcome: 'clear', dialog: null, waitedMs: 0 }; };
-      launch(s, { profile: { ...PROFILE, capabilities: { ...PROFILE.capabilities, startupDialogs: [] } } });
-      await settle();
+      await launched(s, { profile: { ...PROFILE, capabilities: { ...PROFILE.capabilities, startupDialogs: [] } } });
       assert.equal(watched, 0);
       assert.ok(typed.some((t) => t.text === 'the prime'));
     });
@@ -975,8 +1051,7 @@ describe('the session keeps its blocker (#2128)', () => {
       const s = start();
       let watched = 0;
       startupDialog.watch = async () => { watched += 1; return { outcome: 'clear', dialog: null, waitedMs: 0 }; };
-      launch(s, { startupDelivery: 'native' });
-      await settle();
+      await launched(s, { startupDelivery: 'native' });
       assert.equal(watched, 0);
       assert.deepEqual(typed, []);
     });
@@ -984,8 +1059,9 @@ describe('the session keeps its blocker (#2128)', () => {
     it('a watch that fails outright types nothing rather than typing blind', async () => {
       const s = start();
       startupDialog.watch = () => Promise.reject(new Error('defect'));
+      // Nothing is scheduled after a failed watch, so there is no finish to wait on.
       launch(s);
-      await settle();
+      await turns();
       assert.deepEqual(typed, []);
       assert.deepEqual(kicked, []);
     });
@@ -1109,6 +1185,41 @@ describe('the session keeps its blocker (#2128)', () => {
           assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude'), null, 'and with no blocker a failed check stops nothing');
         } finally {
           startupDialog.check = realCheck;
+        }
+      });
+
+      it('when the session\'s own check throws: the API path is refused and the record stands', () => {
+        const s = start();
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        const realCheck = startupDialog.check;
+        startupDialog.check = () => { throw new Error('profiles unreadable'); };
+        try {
+          const res = sessions.injectCommand(project.name, 'tc start next');
+          assert.equal(res.ok, false);
+          assert.match(res.error, /^trust_required: .*its pane could not be checked/);
+          assert.deepEqual(typed, []);
+          tmux.probeSession = () => ({ answered: true, live: true, cause: null });
+          assert.equal(sessions.getSessionStatus(project.name).launchBlocker.code, 'trust_required');
+        } finally {
+          startupDialog.check = realCheck;
+        }
+      });
+
+      it('when the STORE cannot be read: the writer decides on the pane alone, which is stated, not hidden', () => {
+        // Deliberately fail-open on the stored half only (see `_startupDialogOn`).
+        const s = start();
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        const realLookup = store.sessions.getActiveByTmuxSession;
+        store.sessions.getActiveByTmuxSession = () => { throw new Error('database is closed'); };
+        try {
+          tmux.capturePane = () => ({ lines: TRUST_DIALOG, alternateScreen: false });
+          assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required', 'a dialog on screen still withholds');
+          tmux.capturePane = () => ({ lines: TRUST_DIALOG.slice(0, 13), alternateScreen: false });
+          assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required', 'and so does a half-drawn one');
+          tmux.capturePane = () => ({ lines: [], alternateScreen: false });
+          assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude'), null, 'an unread pane with an unreadable store is the one case that is let through');
+        } finally {
+          store.sessions.getActiveByTmuxSession = realLookup;
         }
       });
 
