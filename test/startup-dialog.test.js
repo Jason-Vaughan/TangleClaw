@@ -248,7 +248,7 @@ describe('one look before a send (#2128)', () => {
 
   it('the composer is clear', () => {
     frames = [COMPOSER];
-    assert.deepEqual(look(), { declared: true, dialog: null, clear: true, unread: null });
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: true, unread: null });
   });
 
   it('a session quoting the dialog above its composer is clear: the prompt is the evidence', () => {
@@ -266,12 +266,13 @@ describe('one look before a send (#2128)', () => {
     assert.equal(res.dialog.code, 'trust_required');
   });
 
-  it('a frame that stays half-drawn is neither a dialog nor clear', () => {
+  it('a frame that stays half-drawn is neither a dialog nor clear, and is named as suspect', () => {
     frames = [TRUST_DIALOG.slice(0, 13)];
     const res = look();
     assert.equal(settles, 1, 'one re-read, not a loop');
     assert.equal(res.dialog, null);
     assert.equal(res.clear, false);
+    assert.deepEqual(res.suspect, { code: 'trust_required', label: DIALOGS[0].label, meaning: DIALOGS[0].meaning });
   });
 
   it('an empty read is unread, not clear', () => {
@@ -290,13 +291,13 @@ describe('one look before a send (#2128)', () => {
 
   it('a screen with neither a dialog nor a prompt is not clear', () => {
     frames = [['  Verifying your account…']];
-    assert.deepEqual(look(), { declared: true, dialog: null, clear: false, unread: null });
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, unread: null });
   });
 
   it('an engine that declares nothing is not read', () => {
     frames = [new Error('must not be read')];
     assert.deepEqual(startupDialog.check('t', { id: 'aider', command: 'aider', capabilities: { startupDialogs: [] } }),
-      { declared: false, dialog: null, clear: false, unread: null });
+      { declared: false, dialog: null, suspect: null, clear: false, unread: null });
   });
 });
 
@@ -868,7 +869,7 @@ describe('the session keeps its blocker (#2128)', () => {
       const res = sessions.injectCommand(project.name, 'tc start next');
       assert.equal(res.ok, false);
       assert.match(res.error, /^trust_required: /);
-      assert.match(res.error, /nothing was typed into it/);
+      assert.match(res.error, /nothing was typed into the session, because of its engine's folder trust dialog \(it is on screen\)/);
       assert.equal(res.startupDialog.code, 'trust_required');
       assert.deepEqual(typed, []);
       assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required');
@@ -894,10 +895,75 @@ describe('the session keeps its blocker (#2128)', () => {
       assert.equal(typed.length, 1);
     });
 
-    it('a pane that cannot be read refuses nothing', () => {
+    it('a pane that cannot be read refuses nothing when no blocker stands', () => {
       start();
       tmux.capturePane = () => { throw new Error('tmux did not answer'); };
       assert.equal(sessions.injectCommand(project.name, 'hello').ok, true);
+    });
+
+    describe('a stored blocker withholds every send until a positive prompt reading clears it', () => {
+      // The dialog may still be up on a pane this read could not vouch for,
+      // and one Enter into it ends the session.
+      const NOT_CLEAR = {
+        'the pane cannot be read': () => { throw new Error('tmux did not answer'); },
+        'the read comes back empty': () => ({ lines: [], alternateScreen: false }),
+        'the pane shows neither the dialog nor the prompt': () => ({ lines: ['  Verifying your account…'], alternateScreen: false }),
+        'the dialog is half-drawn': () => ({ lines: TRUST_DIALOG.slice(0, 13), alternateScreen: false })
+      };
+
+      for (const [when, capture] of Object.entries(NOT_CLEAR)) {
+        it(`when ${when}: a command over the API path is refused and the blocker stands`, () => {
+          const s = start();
+          store.sessions.setLaunchBlocker(s.id, BLOCKER);
+          tmux.capturePane = capture;
+          const res = sessions.injectCommand(project.name, 'tc start next');
+          assert.equal(res.ok, false);
+          assert.match(res.error, /^trust_required: nothing was typed into the session/);
+          assert.equal(res.startupDialog.code, 'trust_required');
+          assert.deepEqual(typed, []);
+          assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required');
+        });
+
+        it(`when ${when}: the switchboard wake is refused too`, () => {
+          const s = start();
+          store.sessions.setLaunchBlocker(s.id, BLOCKER);
+          tmux.capturePane = capture;
+          const res = require('../lib/medusa-wake')._internal.injectCommand(project.name, 'you have mail', { sessionId: s.id, controlExempt: 'medusa-wake' });
+          assert.equal(res.ok, false);
+          assert.match(res.error, /^trust_required: /);
+          assert.deepEqual(typed, []);
+        });
+
+        it(`when ${when}: the pane writer itself refuses a direct send`, () => {
+          const s = start();
+          store.sessions.setLaunchBlocker(s.id, BLOCKER);
+          tmux.capturePane = capture;
+          // The writer's own decision; a real pane is driven in the pane-writer block below.
+          const refusal = tmux._startupDialogOn(s.tmuxSession, 'claude');
+          assert.equal(refusal.code, 'trust_required');
+          assert.match(refusal.why, /could not be read|neither that dialog nor the engine's prompt/);
+        });
+      }
+
+      it('the positive reading clears it and the send goes through', () => {
+        const s = start();
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        tmux.capturePane = () => ({ lines: COMPOSER, alternateScreen: false });
+        assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude'), null, 'the writer sees the prompt');
+        assert.deepEqual(sessions.injectCommand(project.name, 'tc start next'), { ok: true, error: null });
+        assert.equal(store.sessions.get(s.id).launchBlocker, null);
+      });
+    });
+
+    it('a half-drawn dialog withholds a send even with no blocker stored, and records none', () => {
+      const s = start();
+      tmux.capturePane = () => ({ lines: TRUST_DIALOG.slice(0, 13), alternateScreen: false });
+      const res = sessions.injectCommand(project.name, 'hello');
+      assert.equal(res.ok, false);
+      assert.match(res.error, /^trust_required: .*part of it is on screen and it may still be drawing/);
+      assert.deepEqual(typed, []);
+      assert.equal(store.sessions.get(s.id).launchBlocker, null, 'a suspicion is not recorded as a dialog');
+      assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required', 'and the writer withholds it too');
     });
   });
 });
@@ -1041,12 +1107,12 @@ describe('the pane writer refuses a declared dialog (#2128)', () => {
       let asked = null;
       startupDialog.check = (session, profile) => {
         asked = { session, engine: profile && profile.id };
-        return { declared: true, dialog: { code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.' }, unread: null };
+        return { declared: true, dialog: { code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.' }, suspect: null, clear: false, unread: null };
       };
       assert.throws(() => tmux.sendKeys(PANE, 'SHOULD-NOT-PASTE', { enter: true, engineId: 'claude' }), (err) => {
         assert.equal(err.code, 'STARTUP_DIALOG');
         assert.equal(err.startupDialog.code, 'trust_required');
-        assert.match(err.message, /^trust_required: .*nothing was typed into it/);
+        assert.match(err.message, /^trust_required: nothing was typed into the session, because of its engine's folder trust dialog \(it is on screen\)/);
         return true;
       });
       assert.deepEqual(asked, { session: PANE, engine: 'claude' });
@@ -1056,10 +1122,32 @@ describe('the pane writer refuses a declared dialog (#2128)', () => {
     }
   });
 
+  it('a stored blocker the read did not clear stops a real send through the writer', () => {
+    const p = store.projects.create({ name: 'writer-proj', path: path.join(base, 'writer-proj'), engine: 'claude' });
+    try {
+      openPane();
+      const session = store.sessions.start({ projectId: p.id, engineId: 'claude', tmuxSession: PANE });
+      store.sessions.setLaunchBlocker(session.id, { code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.' });
+      startupDialog.check = () => ({ declared: true, dialog: null, suspect: null, clear: false, unread: 'the pane read came back empty' });
+      assert.throws(() => tmux.sendKeys(PANE, 'SHOULD-NOT-PASTE', { enter: true, engineId: 'claude' }), (err) => {
+        assert.equal(err.code, 'STARTUP_DIALOG');
+        assert.match(err.message, /^trust_required: .*its pane could not be read/);
+        return true;
+      });
+      assert.doesNotMatch(paneText(), /SHOULD-NOT-PASTE/);
+      // The same unread pane with no blocker standing is an ordinary send.
+      store.sessions.clearLaunchBlocker(session.id);
+      tmux.sendKeys(PANE, 'echo NOW-PASTED', { enter: false, engineId: 'claude' });
+      assert.match(paneText(), /NOW-PASTED/);
+    } finally {
+      try { tmux.killSession(PANE); } catch { /* already gone */ }
+    }
+  });
+
   it('with no dialog on the pane the send goes through', () => {
     try {
       openPane();
-      startupDialog.check = () => ({ declared: true, dialog: null, unread: null });
+      startupDialog.check = () => ({ declared: true, dialog: null, suspect: null, clear: true, unread: null });
       tmux.sendKeys(PANE, 'echo DID-PASTE', { enter: false, engineId: 'claude' });
       assert.match(paneText(), /DID-PASTE/);
     } finally {

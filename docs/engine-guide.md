@@ -490,10 +490,25 @@ under its cursor is "No, exit". A line ending in Enter typed into that screen en
   field existed, except that each send takes one last look at the pane and is withheld if a
   declared dialog is there. An unknown screen must never cost a healthy launch its first turn.
 
-Every later send TangleClaw makes into the pane is refused with the code while the dialog is up.
-The refusal is in `tmux.sendKeys`, the one function that types, so it covers the command bar, a wake
-nudge, a coordinator's command, a wrap's content prompt and the Critic action alike; a new sender is
-covered as long as it names the session's engine, which a test requires of every caller.
+Every later text send TangleClaw makes into the pane is refused with the code while the dialog is
+up. The refusal is in `tmux.sendKeys`, where text sends converge, so it covers the command bar, a
+wake nudge, a coordinator's command, a wrap's content prompt and the Critic action. It is a floor
+for sends that name the session's engine, which a test requires of every caller in `lib/`; a caller
+that names none is not checked, and neither is a raw key (`tmux.sendRawKey`), which the launch
+guards itself before each pre-key.
+
+Three things withhold a send, not one:
+
+- a declared dialog on the pane;
+- a blocker already recorded for the session that the read did not positively clear. The dialog
+  behind it may still be up on a pane that could not be read, came back empty, or shows neither
+  the dialog nor the prompt, so every send stays withheld until the prompt is seen;
+- a frame that still carries a declared marker with no prompt beneath it after one re-read, which
+  may be the dialog half-drawn. That send is withheld; no blocker is recorded on a suspicion.
+
+A dialog whose options have been reworded so that no declared marker matches is not seen at all.
+That is a limit of detection, not evidence of safety: the entry's evidence names the version it was
+measured on, and the markers are updated when a new wording is captured.
 
 The stored blocker is a claim about the pane that the operator can make untrue at any moment by
 answering the dialog. So it is checked against the pane whenever the session's status is read and
