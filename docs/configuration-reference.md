@@ -601,8 +601,10 @@ Omit `readOnlyModeMarker` and the wrap's read-only pre-check does nothing for th
 honest default — the step behaves as it did before the check existed). See
 `docs/engine-guide.md` → Capabilities for why locating and deciding are separate fields.
 
-Omit `startupDialogs` and the engine's pane is not watched at launch for a screen it must not type
-into (#2128); the launch behaves as it did before the field existed. See `docs/engine-guide.md` →
+Omit `startupDialogs` and the profile takes the dialogs declared by any installed profile with the
+same `command`; with none declared for that command either, the pane is not watched at launch for a
+screen it must not type into (#2128) and the launch behaves as it did before the field existed. Set
+it to `[]` to opt a profile out. See `docs/engine-guide.md` →
 Capabilities for what a declared dialog does to a launch.
 
 Omit `wake` and the engine is never idle-judged or nudged (skipped and logged, never woken against

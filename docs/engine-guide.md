@@ -485,8 +485,9 @@ under its cursor is "No, exit". A line ending in Enter typed into that screen en
   appears, the blocker is cleared and the launch sends its first turn.
 - **The prompt is up, with no dialog.** The launch types as usual, without waiting out the fixed
   `startupDelay` as well.
-- **Neither is recognised within 60 seconds.** The launch proceeds exactly as it did before this
-  field existed. An unknown screen must never cost a healthy launch its first turn.
+- **Neither is recognised within 45 seconds.** The launch proceeds exactly as it did before this
+  field existed, except that each send takes one last look at the pane and is withheld if a
+  declared dialog is there. An unknown screen must never cost a healthy launch its first turn.
 
 Every later send into the pane through TangleClaw (the command bar, a wake nudge, a coordinator's
 command) makes the same check first and is refused with the code while the dialog is up.
@@ -505,8 +506,15 @@ operator. An entry missing any of `code`, `label`, `meaning` or a non-empty `mar
 ignored and logged at warn, never repaired. The watch tells a finished boot by the prompt glyph in
 the engine's `wake` block, so an engine that declares dialogs and no `wake` block is not watched.
 
-**Omit the field and the engine's pane is not watched at launch**: the launch behaves as it did
-before the field existed.
+**A dialog belongs to the program, not the profile.** A profile with no `startupDialogs` of its own
+takes the dialogs declared by any installed profile that runs the same `command`. An operator's
+second profile for Claude Code (pinned to another model, say) is a copy made before this field
+existed, and the bundled-profile sync never touches it; without this it would launch into the same
+dialog unprotected. A profile's own list wins when it has one, and an empty list (`[]`) is how a
+profile says its program shows none.
+
+**With no declaration for the profile or its command, the pane is not watched at launch**: the
+launch behaves as it did before the field existed.
 
 #### `wake`
 

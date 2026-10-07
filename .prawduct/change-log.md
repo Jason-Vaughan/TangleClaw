@@ -53,7 +53,9 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 **A behaviour that moved.** Claude's prime is now pasted when the watch sees its prompt, not a fixed 2 s after launch. Four delivery-ledger tests that drive a Claude launch on a mocked clock now state what the boot watch saw (`timeout`, the path a launch took before boot was watched); their assertions are unchanged. Two tests pinned the schema version at exactly 55 and now hold it to the constant.
 
-**Not pinned.** Which TangleClaw send delivered the fatal Enter in the reported launches. The 2 s blind paste arrived before the dialog drew on this host and was not consumed by it, and the idle-gated senders refuse a dialog. Every typed send is now behind one of the two checks, so the fix does not depend on the answer.
+**The sender, proven from the server log.** Session 1352 (TC-RM14, 2026-10-06T05:22:30Z): the kickoff answered `not-silent`, so the prime was pasted; at +2.1 s the paste's prompt clear logged "Cleared a draft from the prompt before injecting ... rows=1 chars=8"; by +8.6 s tmux no longer had the session; the status read at +20 s marked it crashed. "No, exit" is eight characters. The blind paste read the dialog's selected option as an operator draft, cleared it, pasted, and its Enter confirmed the default. The "20 seconds" in the issue is when a status poll noticed, not when the pane died. Session 1353 repeats the signature. Tests pin both halves: the shared idle gate (kickoff, wake nudge, unready nudge) refuses the captured dialog, and `readComposerDraft` reads it as exactly that one-row, 8-character draft.
+
+**Found in the same log.** Those launches ran on `claude-sonnet-reviewer`, an operator-made profile for the `claude` command that exists only in `~/.tangleclaw/engines`. The bundled-profile sync never updates it, so a declaration read per profile would have left the reported launches unprotected. A profile with no list of its own now takes the dialogs declared for the command it runs.
 
 ## 2026-10-07 — #2154: a Leave keeps a file out of the wrap commit whatever a later step concludes
 

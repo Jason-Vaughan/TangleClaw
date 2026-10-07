@@ -109,6 +109,55 @@ describe('what an engine declares (#2128)', () => {
     assert.deepEqual(startupDialog.declared({ id: 'x', capabilities: { startupDialogs: 'trust' } }), []);
   });
 
+  describe('a profile with no list of its own takes its program\'s', () => {
+    // The first reported failures were on an operator-made second profile for
+    // Claude Code, which the bundled-profile sync never updates.
+    const VARIANT = Object.freeze({ id: 'claude-sonnet-reviewer', command: 'claude', capabilities: { supportsPrimePrompt: true } });
+
+    beforeEach(() => {
+      startupDialog.reset();
+      startupDialog._internal.engineProfiles = () => [
+        { id: 'aider', command: 'aider', capabilities: {} },
+        VARIANT,
+        CLAUDE
+      ];
+    });
+
+    afterEach(() => {
+      Object.assign(startupDialog._internal, REAL_SEAMS);
+      startupDialog.reset();
+    });
+
+    it('an operator\'s second profile for the same command is covered', () => {
+      assert.deepEqual(startupDialog.declared(VARIANT).map((d) => d.code), ['trust_required']);
+    });
+
+    it('a profile for another command is not', () => {
+      assert.deepEqual(startupDialog.declared({ id: 'aider', command: 'aider', capabilities: {} }), []);
+    });
+
+    it('an empty list of its own is a profile saying its program shows none', () => {
+      assert.deepEqual(startupDialog.declared({ ...VARIANT, capabilities: { startupDialogs: [] } }), []);
+    });
+
+    it('its own list wins over its program\'s', () => {
+      const own = [{ code: 'login_required', label: 'login screen', meaning: 'Sign in.', markers: ['Sign in to continue'] }];
+      assert.deepEqual(startupDialog.declared({ ...VARIANT, capabilities: { startupDialogs: own } }).map((d) => d.code), ['login_required']);
+    });
+
+    it('profiles that cannot be read leave a profile uncovered rather than failing the launch', () => {
+      startupDialog._internal.engineProfiles = () => { throw new Error('unparsable profile'); };
+      assert.deepEqual(startupDialog.declared(VARIANT), []);
+    });
+
+    it('a store with no profiles yet is not remembered as the answer', () => {
+      startupDialog._internal.engineProfiles = () => [];
+      assert.deepEqual(startupDialog.declared(VARIANT), []);
+      startupDialog._internal.engineProfiles = () => [CLAUDE];
+      assert.equal(startupDialog.declared(VARIANT).length, 1);
+    });
+  });
+
   it('drops a malformed entry rather than matching on a guess', () => {
     const profile = {
       id: 'x',
@@ -568,11 +617,38 @@ describe('the session keeps its blocker (#2128)', () => {
       assert.equal(store.sessions.get(s.id).launchBlocker, null);
     });
 
+    it('observation deadline: a dialog that draws after the window is still caught at the send', async () => {
+      // The watch gave up having recognised nothing, so the launch goes ahead;
+      // the pre-key and the paste each look once more before they type.
+      const s = start();
+      watchAnswers('timeout');
+      tmux.capturePane = () => ({ lines: TRUST_DIALOG, alternateScreen: false });
+      launch(s, { profile: WITH_PREKEY });
+      await new Promise((resolve) => setTimeout(resolve, 650));
+      assert.deepEqual(typed, [], 'neither the pre-key nor the prime was typed');
+      assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required');
+      assert.equal(store.activity.query({ sessionId: s.id, eventType: 'session.launch_blocked' }).length, 1, 'recorded once, not once per send');
+    });
+
+    it('an operator\'s own profile for the same program is watched too', async () => {
+      const s = start();
+      startupDialog.reset();
+      startupDialog._internal.engineProfiles = () => [CLAUDE];
+      let watched = 0;
+      startupDialog.watch = async () => { watched += 1; return { outcome: 'timeout', meaning: '', dialog: null, waitedMs: 0 }; };
+      const variant = { ...PROFILE, id: 'claude-sonnet-reviewer', capabilities: { ...PROFILE.capabilities } };
+      delete variant.capabilities.startupDialogs;
+      launch(s, { profile: variant });
+      await settle();
+      assert.equal(watched, 1);
+      startupDialog.reset();
+    });
+
     it('an engine that declares no dialogs is not watched at all', async () => {
       const s = start();
       let watched = 0;
       startupDialog.watch = async () => { watched += 1; return { outcome: 'clear', dialog: null, waitedMs: 0 }; };
-      launch(s, { profile: { ...PROFILE, capabilities: { ...PROFILE.capabilities, startupDialogs: undefined } } });
+      launch(s, { profile: { ...PROFILE, capabilities: { ...PROFILE.capabilities, startupDialogs: [] } } });
       await settle();
       assert.equal(watched, 0);
       assert.ok(typed.some((t) => t.text === 'the prime'));
@@ -643,5 +719,100 @@ describe('the session keeps its blocker (#2128)', () => {
       tmux.capturePane = () => { throw new Error('tmux did not answer'); };
       assert.equal(sessions.injectCommand(project.name, 'hello').ok, true);
     });
+  });
+});
+
+
+/**
+ * Which TangleClaw send ended the reported sessions.
+ *
+ * The server log of the first reported launch (session 1352, 2026-10-06) shows
+ * the prime paste clearing "a draft" of one row and 8 characters from the
+ * prompt 2.1 s after launch, and the pane gone 6.5 s later. These tests pin
+ * each launch-time sender against the captured dialog: the senders behind the
+ * shared idle gate refuse it, and the blind paste's prompt clear reads the
+ * dialog's selected option as exactly that draft before typing over it.
+ */
+describe('each launch-time sender, against the dialog (#2128)', () => {
+  const medusaWake = require('../lib/medusa-wake');
+  const WAKE = Object.freeze({
+    busyMarker: CLAUDE.capabilities.wake.busyMarker,
+    promptRe: new RegExp(CLAUDE.capabilities.wake.promptPattern),
+    promptGlyph: CLAUDE.capabilities.wake.promptGlyph,
+    promptPad: CLAUDE.capabilities.wake.promptPad,
+    placeholderSgr: CLAUDE.capabilities.wake.placeholderSgr,
+    idleMarker: CLAUDE.capabilities.wake.idleMarker
+  });
+  const SELECTED = TRUST_DIALOG.find((row) => row.includes('No,'));
+
+  it('the idle gate the kickoff, the wake nudge and the unready nudge share refuses the dialog', () => {
+    // Wherever the terminal cursor rests: unknown, on the selected option, or below the footer.
+    for (const cursor of [null, { x: 1, y: 12, line: SELECTED }, { x: 9, y: 12, line: SELECTED }, { x: 0, y: 16, line: '' }]) {
+      let state = {};
+      for (let tick = 0; tick < 4; tick++) {
+        state = medusaWake.assessSessionIdle({ lines: TRUST_DIALOG, profile: WAKE, cursor, prevDigest: state.digest, idleTicks: state.idleTicks });
+      }
+      assert.equal(state.idle, false, `cursor ${JSON.stringify(cursor && cursor.x)}`);
+      assert.ok(['no-prompt', 'composer-has-input'].includes(state.reason), state.reason);
+    }
+  });
+
+  it('the paste\'s prompt clear reads the selected option as a one-row, 8-character draft: the log\'s signature', () => {
+    // The reading does not depend on where along the row the cursor rests, only
+    // on its being past the glyph: just after it, or at the end of the text.
+    for (const x of [2, 11]) {
+      const draft = medusaWake.readComposerDraft(TRUST_DIALOG, { x, y: 12, line: SELECTED }, WAKE);
+      assert.equal(draft.state, 'draft', `cursor column ${x}`);
+      assert.equal(draft.text, 'No, exit');
+      assert.equal(draft.text.length, 8);
+      assert.equal(draft.rows, 1);
+    }
+  });
+
+  describe('every sender that injects is refused at the dialog', () => {
+    let base;
+    let project;
+    let session;
+    let typed;
+    const real = { hasSession: tmux.hasSession, capturePane: tmux.capturePane, sendKeys: tmux.sendKeys, probeSession: tmux.probeSession };
+
+    before(() => {
+      base = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-startup-dialog-senders-'));
+      store._setBasePath(base);
+      store.init();
+      startupDialog.reset();
+      project = store.projects.create({ name: 'sender-proj', path: path.join(base, 'sender-proj'), engine: 'claude' });
+      session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'sender-proj' });
+      tmux.hasSession = () => true;
+      tmux.probeSession = () => ({ answered: true, live: true, cause: null });
+      tmux.capturePane = () => ({ lines: TRUST_DIALOG, alternateScreen: false });
+      tmux.sendKeys = (name, text) => { typed.push(text); };
+    });
+
+    beforeEach(() => { typed = []; });
+
+    after(() => {
+      Object.assign(tmux, real);
+      try { store.close(); } catch { /* already closed */ }
+      fs.rmSync(base, { recursive: true, force: true });
+      startupDialog.reset();
+    });
+
+    const SENDERS = {
+      'the launch kickoff': () => launchKickoff._internal.inject('sender-proj', 'read your launch context', {}),
+      'the unready nudge': () => require('../lib/launch-unready')._internal.inject('sender-proj', 'run tc start next', {}),
+      'the switchboard wake': () => medusaWake._internal.injectCommand('sender-proj', 'you have mail', { sessionId: session.id, controlExempt: 'medusa-wake' }),
+      'the wrap hand-back': () => require('../lib/wrap-handback')._internal.inject('sender-proj', 'wrap finished', {}),
+      'a command sent over the API': () => sessions.injectCommand('sender-proj', 'ls')
+    };
+
+    for (const [name, send] of Object.entries(SENDERS)) {
+      it(`${name} types nothing and is told why`, () => {
+        const res = send();
+        assert.equal(res.ok, false);
+        assert.match(res.error, /^trust_required: /);
+        assert.deepEqual(typed, []);
+      });
+    }
   });
 });
