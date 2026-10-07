@@ -517,12 +517,29 @@ the pane writer ask it. Three things withhold a send:
 
 **What counts as positive evidence** is a row led by the engine's prompt glyph **below** any
 dialog text on screen (or anywhere, when there is none). A composer left on screen above a dialog
-that is being drawn is not evidence. A profile with no prompt glyph (no `wake` block) can show no
-positive evidence at all: it still sees a dialog by its markers and withholds, but a blocker
-recorded for it is never cleared by a pane read. Every TangleClaw send to that session is then
-refused until the session ends, even after the operator answers the dialog, so the way out is to
-relaunch, or to give the profile a `wake` block. The bundled Claude Code profile, the only one that
-declares a dialog, carries one, and so does a copy of it.
+that is being drawn is not evidence.
+
+**The prompt glyph is resolved for the program, like the dialog.** A profile's own measured `wake`
+block is used when it has one. A profile without one takes the glyph of the installed profile that
+declares the dialogs for the same `command`, which is measured, with evidence. So an operator's
+second Claude Code profile with no `wake` block is still watched through its boot and can be
+positively cleared. A glyph is never guessed.
+
+**With no measured glyph for the profile or its command, nothing can be read as a prompt**, and
+TangleClaw says so instead of typing:
+
+- the launch's own sends are withheld (`prompt_unverified` in the delivery ledger and the log),
+  because a finished boot cannot be told from a dialog. Start the session by typing in its pane, or
+  add a measured `wake` declaration to the profile;
+- a dialog is still seen by its markers and recorded as the blocker, but no pane read can clear it.
+  Sends to that session stay refused until it ends, and the refusal says why and what to do:
+  relaunch after approving the dialog, or add a measured `wake` declaration.
+
+**If the blocker record itself cannot be read** (the store lookup throws), it is not assumed
+absent. Only a positive prompt reading lets that send through; a dialog or part of one still
+withholds under its own name; anything else is refused as `launch_blocker_unreadable`, which says
+the record could not be read and claims no dialog. A lookup that succeeds and finds no session for
+the pane is a different fact, and an ordinary send. So is a process with no store open at all.
 
 A dialog whose options have been reworded so that no declared marker matches is not seen at all.
 That is a limit of detection, not evidence of safety: the entry's evidence names the version it was
@@ -550,7 +567,9 @@ are matched on text with styling removed, because an engine may colour a dialog 
 `code` is lower_snake_case and becomes the blocker's name; `label` and `meaning` are shown to the
 operator. An entry missing any of `code`, `label`, `meaning` or a non-empty `markers` list is
 ignored and logged at warn, never repaired. The watch tells a finished boot by the prompt glyph in
-the engine's `wake` block, so an engine that declares dialogs and no `wake` block is not watched.
+the engine's `wake` block, or failing that in the `wake` block of the profile that declares the
+dialogs for the same command. With neither, the boot is not watched and the launch types nothing
+(see above).
 
 **A dialog belongs to the program, not the profile.** A profile with no `startupDialogs` of its own
 takes the dialogs declared by any installed profile that runs the same `command`. An operator's

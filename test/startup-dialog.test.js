@@ -151,6 +151,54 @@ describe('what an engine declares (#2128)', () => {
       assert.deepEqual(startupDialog.declared(VARIANT), []);
     });
 
+    describe('and its program\'s measured prompt signature', () => {
+      // An operator's second profile often has no `wake` block of its own. The
+      // prompt, like the dialog, belongs to the program.
+      const pane = { lines: COMPOSER };
+      beforeEach(() => {
+        startupDialog._internal.wakeProfiles = () => ({ claude: { promptGlyph: GLYPH } });
+        startupDialog._internal.capturePaneSync = () => ({ lines: pane.lines, alternateScreen: false });
+        startupDialog._internal.capturePane = async () => ({ lines: pane.lines, alternateScreen: false });
+        startupDialog._internal.paneDigest = (lines) => lines.join('\n');
+        startupDialog._internal.settleSync = () => {};
+        let clock = 0;
+        startupDialog._internal.now = () => clock;
+        startupDialog._internal.sleep = async (ms) => { clock += ms; };
+      });
+
+      it('takes the declaring profile\'s glyph, so its pane can be read as clear', () => {
+        assert.equal(startupDialog.promptSignatureFor(VARIANT).promptGlyph, GLYPH);
+        pane.lines = COMPOSER;
+        const res = startupDialog.check('t', VARIANT);
+        assert.equal(res.promptKnown, true);
+        assert.equal(res.clear, true);
+      });
+
+      it('so its boot IS watched, to a dialog or to its prompt', async () => {
+        pane.lines = TRUST_DIALOG;
+        const blocked = await startupDialog.watch({ tmuxName: 't', engineProfile: VARIANT, answerWindowMs: 4000 });
+        assert.equal(blocked.outcome, 'unanswered');
+        assert.equal(blocked.dialog.code, 'trust_required');
+        pane.lines = COMPOSER;
+        assert.equal((await startupDialog.watch({ tmuxName: 't', engineProfile: VARIANT })).outcome, 'clear');
+      });
+
+      it('its own measured signature wins over the program\'s', () => {
+        startupDialog._internal.wakeProfiles = () => ({ claude: { promptGlyph: GLYPH }, 'claude-sonnet-reviewer': { promptGlyph: '›' } });
+        assert.equal(startupDialog.promptSignatureFor(VARIANT).promptGlyph, '›');
+      });
+
+      it('with no measured glyph for the profile or its command there is none, and nothing is guessed', async () => {
+        startupDialog._internal.wakeProfiles = () => ({});
+        assert.equal(startupDialog.promptSignatureFor(VARIANT), null);
+        pane.lines = COMPOSER;
+        const res = startupDialog.check('t', VARIANT);
+        assert.equal(res.promptKnown, false);
+        assert.equal(res.clear, false);
+        assert.equal((await startupDialog.watch({ tmuxName: 't', engineProfile: VARIANT })).outcome, 'unprofiled');
+      });
+    });
+
     it('a store with no profiles yet is not remembered as the answer', () => {
       startupDialog._internal.engineProfiles = () => [];
       assert.deepEqual(startupDialog.declared(VARIANT), []);
@@ -249,7 +297,7 @@ describe('one look before a send (#2128)', () => {
 
   it('the composer is clear', () => {
     frames = [COMPOSER];
-    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: true, unread: null });
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: true, unread: null, promptKnown: true });
   });
 
   it('a session quoting the dialog above its composer is clear: the prompt is the evidence', () => {
@@ -333,7 +381,7 @@ describe('one look before a send (#2128)', () => {
   it('a profile with no prompt glyph is never read as clear: it has no positive evidence to give', () => {
     startupDialog._internal.wakeProfiles = () => ({});
     frames = [COMPOSER];
-    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, unread: null });
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, unread: null, promptKnown: false });
     frames = [TRUST_DIALOG];
     assert.equal(look().dialog.code, 'trust_required', 'though it still sees the dialog by its markers');
   });
@@ -370,6 +418,32 @@ describe('one look before a send (#2128)', () => {
       }
     });
 
+    it('when the stored blocker could not be read, only a positive reading sends', () => {
+      const unknown = { storedUnknown: 'database is locked' };
+      assert.equal(w(seen({ clear: true }), null, unknown), null);
+      assert.equal(w(seen({ dialog: STORED }), null, unknown).code, 'trust_required');
+      assert.equal(w(seen({ suspect: STORED }), null, unknown).code, 'trust_required');
+      for (const [name, answer] of Object.entries({
+        'check not made': null,
+        'undeclared': seen({ declared: false }),
+        'unread': seen({ unread: 'x' }),
+        'neither': seen()
+      })) {
+        const res = w(answer, null, unknown);
+        assert.equal(res && res.code, 'launch_blocker_unreadable', name);
+        assert.equal(res.label, null, `${name}: names no dialog`);
+      }
+    });
+
+    it('a blocker that stands on a profile with no verified prompt signature says so, and says the way out', () => {
+      const res = w(seen({ promptKnown: false }), STORED);
+      assert.equal(res.code, 'trust_required');
+      assert.match(res.why, /no verified prompt signature, so TangleClaw cannot confirm the dialog was answered/);
+      assert.match(res.why, /relaunch the session after approving it, or add a measured wake declaration/);
+      assert.doesNotMatch(res.why, /shows neither/);
+      assert.match(w(seen({ promptKnown: true }), STORED).why, /shows neither that dialog nor the engine's prompt/);
+    });
+
     it('with none stored, only a suspect frame withholds', () => {
       assert.equal(w(null, null), null);
       assert.equal(w(seen({ declared: false }), null), null);
@@ -396,13 +470,13 @@ describe('one look before a send (#2128)', () => {
 
   it('a screen with neither a dialog nor a prompt is not clear', () => {
     frames = [['  Verifying your account…']];
-    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, unread: null });
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, unread: null, promptKnown: true });
   });
 
   it('an engine that declares nothing is not read', () => {
     frames = [new Error('must not be read')];
     assert.deepEqual(startupDialog.check('t', { id: 'aider', command: 'aider', capabilities: { startupDialogs: [] } }),
-      { declared: false, dialog: null, suspect: null, clear: false, unread: null });
+      { declared: false, dialog: null, suspect: null, clear: false, unread: null, promptKnown: false });
   });
 });
 
@@ -1048,6 +1122,19 @@ describe('the session keeps its blocker (#2128)', () => {
         assert.equal(attempts, 0);
       });
 
+      it('with no row to ask and a holder lookup that throws, only a positive reading sends', () => {
+        const realLookup = store.sessions.getActiveByTmuxSession;
+        store.sessions.getActiveByTmuxSession = () => { throw new Error('database is locked'); };
+        try {
+          tmux.capturePane = () => ({ lines: [], alternateScreen: false });
+          assert.equal(sessions._startupDialogAtSend('some-pane', CLAUDE, 'claude', project.name, null).code, 'launch_blocker_unreadable');
+          tmux.capturePane = () => ({ lines: COMPOSER, alternateScreen: false });
+          assert.equal(sessions._startupDialogAtSend('some-pane', CLAUDE, 'claude', project.name, null), null);
+        } finally {
+          store.sessions.getActiveByTmuxSession = realLookup;
+        }
+      });
+
       it('a store that cannot say whether the session ended leaves the decision to the pane and its holder', () => {
         const s = start();
         store.sessions.setLaunchBlocker(s.id, BLOCKER);
@@ -1094,6 +1181,34 @@ describe('the session keeps its blocker (#2128)', () => {
           startupDialog.check = realCheck;
         }
       });
+    });
+
+    it('dialogs declared but no prompt signature known: the launch types nothing, and the ledger names the remedy', async () => {
+      const s = start();
+      const rows = [];
+      const realRecord = store.sessionRuleDeliveries.record;
+      store.sessionRuleDeliveries.record = (entry) => { rows.push(entry); return entry; };
+      watchAnswers('unprofiled');
+      try {
+        const done = new Promise((resolve) => { launchFinished = resolve; });
+        sessions._deferEngineInit(
+          s.tmuxSession, project.name, 'claude', WITH_PREKEY, 'the prime', null, false,
+          { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' },
+          { sessionId: s.id, projectId: project.id, hasSequence: true }
+        );
+        await done;
+        await new Promise((resolve) => setTimeout(resolve, WITH_PREKEY.launch.startupDelay + 2));
+        await turns();
+      } finally {
+        store.sessionRuleDeliveries.record = realRecord;
+      }
+      assert.deepEqual(typed, [], 'no pre-key and no paste');
+      assert.deepEqual(kicked, []);
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].outcome, 'skipped');
+      assert.match(rows[0].skipReason, /^prompt_unverified: .*cannot tell a finished boot from a dialog and typed nothing/);
+      assert.match(rows[0].skipReason, /Add a measured wake declaration to the profile, or start the session by typing in its pane/);
+      assert.equal(store.sessions.get(s.id).launchBlocker, null, 'no dialog was seen, so none is recorded');
     });
 
     it('an engine that declares no dialogs is not watched at all', async () => {
@@ -1325,22 +1440,112 @@ describe('the session keeps its blocker (#2128)', () => {
         }
       });
 
-      it('when the STORE cannot be read: the writer decides on the pane alone, which is stated, not hidden', () => {
-        // Deliberately fail-open on the stored half only (see `_startupDialogOn`).
-        const s = start();
-        store.sessions.setLaunchBlocker(s.id, BLOCKER);
-        const realLookup = store.sessions.getActiveByTmuxSession;
-        store.sessions.getActiveByTmuxSession = () => { throw new Error('database is closed'); };
-        try {
+      describe('when the stored blocker cannot be READ, it is not assumed absent', () => {
+        // The record is the floor under the readings that fall short. A lookup
+        // that throws is "unknown", and only a positive prompt reading may
+        // then let a send through.
+        let realLookup;
+        beforeEach(() => {
+          realLookup = store.sessions.getActiveByTmuxSession;
+          store.sessions.getActiveByTmuxSession = () => { throw new Error('database is locked'); };
+        });
+        afterEach(() => { store.sessions.getActiveByTmuxSession = realLookup; });
+
+        it('an unreadable pane refuses, and says the record could not be read, not that a dialog was seen', () => {
+          const s = start();
+          for (const capture of [
+            () => { throw new Error('tmux did not answer'); },
+            () => ({ lines: [], alternateScreen: false })
+          ]) {
+            tmux.capturePane = capture;
+            const refusal = tmux._startupDialogOn(s.tmuxSession, 'claude');
+            assert.equal(refusal.code, 'launch_blocker_unreadable');
+            assert.equal(refusal.label, null);
+            assert.match(refusal.why, /could not read whether a launch blocker is recorded for this session \(database is locked\)/);
+            assert.doesNotMatch(startupDialog.refusalText(refusal), /trust|dialog/i, 'it claims no dialog');
+          }
+        });
+
+        it('an undecided pane (neither dialog nor prompt) refuses the same way', () => {
+          const s = start();
+          tmux.capturePane = () => ({ lines: ['  Verifying your account…'], alternateScreen: false });
+          assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'launch_blocker_unreadable');
+        });
+
+        it('a dialog, or part of one, still withholds under its own name', () => {
+          const s = start();
           tmux.capturePane = () => ({ lines: TRUST_DIALOG, alternateScreen: false });
-          assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required', 'a dialog on screen still withholds');
+          assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required');
           tmux.capturePane = () => ({ lines: TRUST_DIALOG.slice(0, 13), alternateScreen: false });
-          assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required', 'and so does a half-drawn one');
+          assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required');
+        });
+
+        it('only a positive prompt reading lets the send through', () => {
+          const s = start();
+          tmux.capturePane = () => ({ lines: COMPOSER, alternateScreen: false });
+          assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude'), null);
+          tmux.capturePane = () => ({ lines: QUOTING_SESSION, alternateScreen: false });
+          assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude'), null, 'a prompt below quoted dialog text is positive too');
+          tmux.capturePane = () => ({ lines: ['❯', 'No, exit'], alternateScreen: false });
+          assert.notEqual(tmux._startupDialogOn(s.tmuxSession, 'claude'), null, 'a prompt ABOVE a marker is not');
+        });
+
+        it('a send that names no engine, or an engine with no declared dialog, cannot be positively read, so it is refused', () => {
+          const s = start();
+          tmux.capturePane = () => ({ lines: COMPOSER, alternateScreen: false });
+          assert.equal(tmux._startupDialogOn(s.tmuxSession, null).code, 'launch_blocker_unreadable');
+          assert.equal(tmux._startupDialogOn(s.tmuxSession, 'aider').code, 'launch_blocker_unreadable');
+        });
+
+        it('the real writer throws STARTUP_DIALOG with that code and types nothing', () => {
+          const s = start();
           tmux.capturePane = () => ({ lines: [], alternateScreen: false });
-          assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude'), null, 'an unread pane with an unreadable store is the one case that is let through');
-        } finally {
-          store.sessions.getActiveByTmuxSession = realLookup;
-        }
+          tmux.sendKeys = realSendKeys;
+          const unreadablePane = uniqueSessionName('startup_dialog_unreadable');
+          tmux.hasSession = realHas;
+          tmux.createSession(unreadablePane, { command: 'exec bash --norc --noprofile' });
+          try {
+            assert.throws(() => tmux.sendKeys(unreadablePane, 'SHOULD-NOT-PASTE', { enter: true, engineId: 'claude' }), (err) => {
+              assert.equal(err.code, 'STARTUP_DIALOG');
+              assert.equal(err.startupDialog.code, 'launch_blocker_unreadable');
+              assert.match(err.message, /^launch_blocker_unreadable: nothing was typed into the session\. /);
+              return true;
+            });
+            tmux.capturePane = realCapture;
+            require('node:child_process').execSync('sleep 0.3');
+            assert.doesNotMatch(tmux.capturePane(unreadablePane, { full: true }).lines.join('\n'), /SHOULD-NOT-PASTE/);
+          } finally {
+            try { tmux.killSession(unreadablePane); } catch { /* already gone */ }
+          }
+          assert.ok(s.id);
+        });
+      });
+
+      describe('a lookup that SUCCEEDS and finds no session is a different fact: an ordinary send', () => {
+        it('no active row for the pane, and the pane unread: not refused', () => {
+          tmux.capturePane = () => ({ lines: [], alternateScreen: false });
+          assert.equal(store.sessions.getActiveByTmuxSession('nobody-holds-this-pane'), null, 'precondition: the lookup answers, with no row');
+          assert.equal(tmux._startupDialogOn('nobody-holds-this-pane', 'claude'), null);
+          assert.equal(tmux._startupDialogOn('nobody-holds-this-pane', null), null);
+        });
+
+        it('a process with no store open is its own explicit case, asked of the store, not inferred from a throw', () => {
+          const realGetDb = store.getDb;
+          const realLookup = store.sessions.getActiveByTmuxSession;
+          let asked = 0;
+          store.getDb = () => null;
+          store.sessions.getActiveByTmuxSession = () => { asked += 1; throw new Error('Store not initialized'); };
+          try {
+            tmux.capturePane = () => ({ lines: [], alternateScreen: false });
+            assert.equal(tmux._startupDialogOn('standalone-pane', 'claude'), null);
+            assert.equal(asked, 0, 'the lookup is not attempted, so nothing is inferred from its failure');
+            tmux.capturePane = () => ({ lines: TRUST_DIALOG, alternateScreen: false });
+            assert.equal(tmux._startupDialogOn('standalone-pane', 'claude').code, 'trust_required', 'and a dialog on screen still withholds there');
+          } finally {
+            store.getDb = realGetDb;
+            store.sessions.getActiveByTmuxSession = realLookup;
+          }
+        });
       });
 
       it('the positive reading clears it and the send goes through', () => {
