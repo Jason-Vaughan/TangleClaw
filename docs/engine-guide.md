@@ -1090,6 +1090,8 @@ You can change a project's engine at any time from the project settings on the l
 
 No data is lost when switching engines. Session history and learnings are engine-independent.
 
+One setting does not follow the project to the new engine: the **default launch mode** (#2189). A launch mode is a choice about one engine. Several engines name a mode `bypassPermissions`, and each means something different by it (Codex's removes the sandbox as well as the approvals), so a mode chosen for the old engine is not treated as chosen for the new one. Changing the engine resets the default launch mode to Interactive unless the same save chooses a mode for the new engine, and the save says when it did. Choosing Bypass for the new engine while the launch-mode picker is hidden asks for the confirmation again.
+
 The previous engine's config file does not stay behind as live canon (#858): if TangleClaw wrote it — a managed block between the `tangleclaw` markers, or a whole file carrying the generated header — it is marked with a dated inactive notice naming the live engine and its file. A hand-written file, and a plugin-owned `CLAUDE.md`, are left alone and the reason is logged. Switching back regenerates the file.
 
 ## Model Status Monitoring

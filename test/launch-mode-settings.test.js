@@ -41,11 +41,23 @@ describe('launch-mode settings', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  /** Create a claude-engine project and return its enriched record. */
-  function mkProject(name) {
+  /**
+   * Create a project and return its record.
+   * @param {string} name - Project name
+   * @param {string} [engine] - Engine id; Claude when omitted
+   * @returns {object}
+   */
+  function mkProject(name, engine = 'claude') {
     const projPath = path.join(projectsDir, name);
     fs.mkdirSync(projPath, { recursive: true });
-    store.projects.create({ name, path: projPath, engine: 'claude' });
+    store.projects.create({ name, path: projPath, engine });
+    // The config's engine is what the validators read first, so a project made
+    // on another engine has to say so there as well as on its row.
+    if (engine !== 'claude') {
+      const cfg = store.projectConfig.load(projPath);
+      cfg.engine = engine;
+      store.projectConfig.save(projPath, cfg);
+    }
     return store.projects.getByName(name);
   }
 
@@ -192,35 +204,164 @@ describe('launch-mode settings', () => {
       assert.equal(switched.project.defaultLaunchMode, 'default');
     });
 
-    it('preserves bypass when switching to an engine that DOES honor it (#731)', async () => {
-      // Codex gaining a bypass mode changed this case from "reset" to "keep".
-      // Recorded deliberately rather than left to be discovered: reconciliation
-      // only downgrades modes the target engine cannot honor, so an operator who
-      // confirmed a bypass posture keeps it across a switch — the same behavior
-      // Claude -> Antigravity has always had.
-      //
-      // Worth knowing when reading this: Codex's bypass is
-      // `--dangerously-bypass-approvals-and-sandbox`, which also removes the
-      // sandbox, where Claude's `--dangerously-skip-permissions` does not. The
-      // #622 invariant is about persisting an *unconfirmed* posture, and this
-      // one was confirmed, but the carried posture is not identical in blast
-      // radius to the one that was confirmed.
-      mkProject('lm-switch-bypass-kept');
-      await projects.updateProject('lm-switch-bypass-kept', {
-        defaultLaunchMode: 'bypassPermissions',
-        showLaunchModePicker: false,
-        confirmBypassHidden: true
-      });
+    // #2189 reversed what #731 recorded here. #731 kept a confirmed Bypass
+    // across a switch to any engine that defines the key, and noted in passing
+    // that the carried posture differs in blast radius. That difference is the
+    // defect: the operator confirmed one engine's flag and got another's. A
+    // launch mode is now a choice about one engine, so the three engines that
+    // share the key are each pinned in the direction an operator would switch.
+    for (const [from, to] of [['claude', 'codex'], ['codex', 'antigravity'], ['claude', 'antigravity'], ['antigravity', 'claude']]) {
+      it(`resets Bypass on a switch from ${from} to ${to}, which defines the same key (#2189)`, async () => {
+        const name = `lm-reset-${from}-${to}`;
+        mkProject(name, from);
+        const set = await projects.updateProject(name, {
+          defaultLaunchMode: 'bypassPermissions',
+          showLaunchModePicker: false,
+          confirmBypassHidden: true
+        });
+        assert.deepEqual(set.errors, []);
+        assert.equal(store.projectConfig.load(set.project.path).defaultLaunchMode, 'bypassPermissions');
 
-      const switched = await projects.updateProject('lm-switch-bypass-kept', { engine: 'codex' });
-      assert.deepEqual(switched.errors, []);
-      assert.equal(
-        store.projectConfig.load(switched.project.path).defaultLaunchMode,
-        'bypassPermissions'
-      );
+        // Exactly what the session page's settings modal sends.
+        const switched = await projects.updateProject(name, { engine: to });
+        assert.deepEqual(switched.errors, []);
+        assert.equal(switched.project.engine.id, to);
+        assert.equal(store.projectConfig.load(switched.project.path).defaultLaunchMode, 'default',
+          'the previous engine\'s Bypass must not become the new engine\'s default');
+        assert.equal(switched.project.defaultLaunchMode, 'default');
+        // The picker stays hidden, as the operator left it: over the
+        // warning-free default there is nothing for it to hide.
+        assert.equal(store.projectConfig.load(switched.project.path).showLaunchModePicker, false);
+      });
+    }
+
+    it('says in the save response that the mode was reset, naming both engines (#2189)', async () => {
+      mkProject('lm-reset-told', 'codex');
+      await projects.updateProject('lm-reset-told', { defaultLaunchMode: 'bypassPermissions' });
+      const switched = await projects.updateProject('lm-reset-told', { engine: 'antigravity' });
+      const told = (switched.warnings || []).filter((w) => /launch mode/i.test(w));
+      assert.equal(told.length, 1, `one sentence about the reset, got: ${JSON.stringify(switched.warnings)}`);
+      assert.match(told[0], /reset to Interactive/);
+      assert.match(told[0], /Bypass was chosen for Codex/);
+      assert.match(told[0], /does not carry to Antigravity/);
     });
 
-    it('preserves a stored mode the new engine still honors', async () => {
+    it('reports the reset for the dashboard\'s request, which names the default alongside the engine (#2189)', async () => {
+      // The settings modal resets its mode control when the engine dropdown
+      // moves and then sends what the control shows: engine AND the default
+      // mode, by name. The operator touched only the engine, so the answer to
+      // that request must say the mode was reset, exactly as it does for a
+      // request that leaves the mode out.
+      mkProject('lm-reset-dashboard', 'codex');
+      await projects.updateProject('lm-reset-dashboard', { defaultLaunchMode: 'bypassPermissions' });
+
+      const switched = await projects.updateProject('lm-reset-dashboard', { engine: 'antigravity', defaultLaunchMode: 'default' });
+      assert.deepEqual(switched.errors, []);
+      assert.equal(store.projectConfig.load(switched.project.path).defaultLaunchMode, 'default');
+      const told = (switched.warnings || []).filter((w) => /reset to Interactive/.test(w));
+      assert.equal(told.length, 1, `the dashboard-shaped save must report the reset, got: ${JSON.stringify(switched.warnings)}`);
+      assert.match(told[0], /Bypass was chosen for Codex/);
+      assert.match(told[0], /does not carry to Antigravity/);
+
+      // The engine-only request still reports it, once.
+      mkProject('lm-reset-engine-only', 'codex');
+      await projects.updateProject('lm-reset-engine-only', { defaultLaunchMode: 'bypassPermissions' });
+      const bare = await projects.updateProject('lm-reset-engine-only', { engine: 'antigravity' });
+      assert.equal((bare.warnings || []).filter((w) => /reset to Interactive/.test(w)).length, 1);
+    });
+
+    it('does not call a mode the request chose for the new engine a reset (#2189)', async () => {
+      // Bypass named again for the new engine, or a different non-default mode:
+      // both are choices, and "reset to Interactive" would be false of each.
+      mkProject('lm-chosen-same-key', 'codex');
+      await projects.updateProject('lm-chosen-same-key', { defaultLaunchMode: 'bypassPermissions' });
+      const same = await projects.updateProject('lm-chosen-same-key', { engine: 'antigravity', defaultLaunchMode: 'bypassPermissions' });
+      assert.deepEqual(same.errors, []);
+      assert.equal(store.projectConfig.load(same.project.path).defaultLaunchMode, 'bypassPermissions');
+      assert.deepEqual((same.warnings || []).filter((w) => /reset to/i.test(w)), []);
+
+      mkProject('lm-chosen-other-key', 'codex');
+      await projects.updateProject('lm-chosen-other-key', { defaultLaunchMode: 'bypassPermissions' });
+      const other = await projects.updateProject('lm-chosen-other-key', { engine: 'antigravity', defaultLaunchMode: 'sandbox' });
+      assert.equal(store.projectConfig.load(other.project.path).defaultLaunchMode, 'sandbox');
+      assert.deepEqual((other.warnings || []).filter((w) => /reset to/i.test(w)), []);
+
+      // And a project that was already on the default is told nothing even
+      // when the request names the default.
+      mkProject('lm-default-named');
+      const quiet = await projects.updateProject('lm-default-named', { engine: 'codex', defaultLaunchMode: 'default' });
+      assert.deepEqual((quiet.warnings || []).filter((w) => /reset to/i.test(w)), []);
+    });
+
+    it('resets a warning-free mode that both engines define: the rule is per engine, not per warning (#2189)', async () => {
+      // The case that tells "reset every mode" from "reset only a warned one".
+      // Claude and OpenClaw both define `plan`, and neither warns on it, so the
+      // old keep-if-honored rule kept it and a warning-only rule would too.
+      mkProject('lm-reset-warning-free');
+      await projects.updateProject('lm-reset-warning-free', { defaultLaunchMode: 'plan' });
+      const openclaw = store.engines.get('openclaw');
+      assert.ok(openclaw.launchModes.plan && !openclaw.launchModes.plan.warning,
+        'OpenClaw must define a warning-free plan mode, or this test separates nothing');
+      const switched = await projects.updateProject('lm-reset-warning-free', { engine: 'openclaw' });
+      assert.deepEqual(switched.errors, []);
+      assert.equal(store.projectConfig.load(switched.project.path).defaultLaunchMode, 'default');
+      assert.equal((switched.warnings || []).filter((w) => /launch mode/i.test(w)).length, 1);
+    });
+
+    it('says nothing about a reset when the project was already on the default mode (#2189)', async () => {
+      mkProject('lm-reset-quiet');
+      const switched = await projects.updateProject('lm-reset-quiet', { engine: 'codex' });
+      assert.deepEqual((switched.warnings || []).filter((w) => /launch mode/i.test(w)), [],
+        'a project already on the default mode is told nothing about a reset');
+    });
+
+    it('reports no reset for a project whose config records no mode at all (#2189)', async () => {
+      // A hand-edited or older config can lack the key. It holds the default,
+      // so an engine change resets nothing and must not say it did.
+      const made = mkProject('lm-reset-nokey');
+      const cfg = store.projectConfig.load(made.path);
+      delete cfg.defaultLaunchMode;
+      store.projectConfig.save(made.path, cfg);
+      const switched = await projects.updateProject('lm-reset-nokey', { engine: 'codex' });
+      assert.deepEqual(switched.errors, []);
+      assert.deepEqual((switched.warnings || []).filter((w) => /launch mode/i.test(w)), []);
+      assert.equal(store.projectConfig.load(switched.project.path).defaultLaunchMode, 'default');
+    });
+
+    it('keeps the mode when the engine sent is the one the project already has (#2189)', async () => {
+      // The dashboard's settings modal sends `engine` on every save. A save that
+      // names the current engine is not an engine change and must not cost the
+      // operator a posture they confirmed.
+      mkProject('lm-same-engine');
+      await projects.updateProject('lm-same-engine', { defaultLaunchMode: 'bypassPermissions' });
+      const saved = await projects.updateProject('lm-same-engine', { engine: 'claude', tags: ['x'] });
+      assert.deepEqual(saved.errors, []);
+      assert.equal(store.projectConfig.load(saved.project.path).defaultLaunchMode, 'bypassPermissions');
+      assert.deepEqual((saved.warnings || []).filter((w) => /launch mode/i.test(w)), []);
+    });
+
+    it('takes a mode named in the same update as the choice for the new engine (#2189)', async () => {
+      mkProject('lm-switch-named');
+      await projects.updateProject('lm-switch-named', { defaultLaunchMode: 'bypassPermissions' });
+      const switched = await projects.updateProject('lm-switch-named', { engine: 'codex', defaultLaunchMode: 'fullAuto' });
+      assert.deepEqual(switched.errors, []);
+      assert.equal(store.projectConfig.load(switched.project.path).defaultLaunchMode, 'fullAuto');
+      assert.deepEqual((switched.warnings || []).filter((w) => /reset to/i.test(w)), [],
+        'a mode the operator named was not reset, so no reset is reported');
+    });
+
+    it('refuses a named mode the new engine does not define, and switches nothing (#2189)', async () => {
+      mkProject('lm-switch-bad-mode');
+      await projects.updateProject('lm-switch-bad-mode', { defaultLaunchMode: 'bypassPermissions' });
+      const refused = await projects.updateProject('lm-switch-bad-mode', { engine: 'codex', defaultLaunchMode: 'acceptEdits' });
+      assert.equal(refused.project, null);
+      assert.match(refused.errors.join(' '), /not a launch mode of engine "codex"/);
+      const after = store.projects.getByName('lm-switch-bad-mode');
+      assert.equal(after.engineId, 'claude', 'a refused update must not have changed the engine');
+      assert.equal(store.projectConfig.load(after.path).defaultLaunchMode, 'bypassPermissions');
+    });
+
+    it('leaves a project on the default mode there across a switch', async () => {
       mkProject('lm-switch-keep');
       // 'default' is valid for every engine — a switch must not disturb it.
       const switched = await projects.updateProject('lm-switch-keep', { engine: 'codex' });
@@ -238,8 +379,6 @@ describe('launch-mode settings', () => {
       // Switching to aider reconciles bypassPermissions -> default, so the
       // hidden picker no longer sits over a warning mode: the guard must not
       // block this switch-to-safe, and no re-confirm should be demanded.
-      // (Was codex until #731 gave codex a real bypass mode — see the sibling
-      // test below, where the guard now correctly refuses that target.)
       const result = await projects.updateProject('lm-switch-hide', {
         engine: 'aider',
         showLaunchModePicker: false
@@ -250,12 +389,12 @@ describe('launch-mode settings', () => {
       assert.equal(cfg.showLaunchModePicker, false);
     });
 
-    it('demands re-confirmation when the new engine DOES honor the warned mode (#731)', async () => {
-      // The counterpart to the switch-to-safe case above. Codex honoring
-      // bypassPermissions means reconciliation no longer defuses this update, so
-      // hiding the picker would put a warned posture behind no warning — the
-      // #622 guard must ask again. Adding a mode to an engine widens what the
-      // guard has to catch; this pins that it does.
+    it('no longer asks for confirmation when the switch itself resets the warned mode (#2189)', async () => {
+      // #731 pinned the opposite: with Bypass carried onto Codex, hiding the
+      // picker in the same update put a warned posture behind no warning, so the
+      // guard asked again and then KEPT Bypass. Now the switch resets the mode,
+      // so there is no warned posture left to confirm, and asking would train
+      // the operator to confirm a sentence that is no longer true.
       mkProject('lm-switch-hide-warned');
       await projects.updateProject('lm-switch-hide-warned', {
         defaultLaunchMode: 'bypassPermissions',
@@ -263,24 +402,90 @@ describe('launch-mode settings', () => {
         confirmBypassHidden: true
       });
 
-      const blocked = await projects.updateProject('lm-switch-hide-warned', {
+      const switched = await projects.updateProject('lm-switch-hide-warned', {
         engine: 'codex',
         showLaunchModePicker: false
       });
-      assert.equal(blocked.project, null);
-      assert.match(blocked.errors.join(' '), /confirmBypassHidden/);
+      assert.deepEqual(switched.errors, []);
+      const cfg = store.projectConfig.load(switched.project.path);
+      assert.equal(cfg.defaultLaunchMode, 'default');
+      assert.equal(cfg.showLaunchModePicker, false);
+    });
 
-      // And it goes through once confirmed.
-      const confirmed = await projects.updateProject('lm-switch-hide-warned', {
-        engine: 'codex',
+    it('asks again when Bypass is NAMED for the new engine behind a hidden picker (#2189)', async () => {
+      // The guard's own job survives the reset. Choosing Bypass for the new
+      // engine is allowed, and behind a picker that is already hidden it needs
+      // the confirmation the operator gave for the OLD engine to be given again:
+      // the stored `showLaunchModePicker: false` must count, though this update
+      // does not send it.
+      mkProject('lm-switch-rechoose');
+      await projects.updateProject('lm-switch-rechoose', {
+        defaultLaunchMode: 'bypassPermissions',
         showLaunchModePicker: false,
         confirmBypassHidden: true
       });
+
+      const blocked = await projects.updateProject('lm-switch-rechoose', {
+        engine: 'antigravity',
+        defaultLaunchMode: 'bypassPermissions'
+      });
+      assert.equal(blocked.project, null);
+      assert.match(blocked.errors.join(' '), /confirmBypassHidden/);
+      const untouched = store.projects.getByName('lm-switch-rechoose');
+      assert.equal(untouched.engineId, 'claude', 'the refused update switched nothing');
+
+      const confirmed = await projects.updateProject('lm-switch-rechoose', {
+        engine: 'antigravity',
+        defaultLaunchMode: 'bypassPermissions',
+        confirmBypassHidden: true
+      });
       assert.deepEqual(confirmed.errors, []);
-      assert.equal(
-        store.projectConfig.load(confirmed.project.path).defaultLaunchMode,
-        'bypassPermissions'
-      );
+      assert.equal(store.projectConfig.load(confirmed.project.path).defaultLaunchMode, 'bypassPermissions');
+    });
+
+    it('the reset is what the next launch runs: no bypass flag on the new engine (#2189)', async () => {
+      // The reproduction in the issue, end to end: a Codex project on Bypass,
+      // switched to Antigravity, used to launch `agy --dangerously-skip-permissions`.
+      const sessions = require('../lib/sessions');
+      mkProject('lm-reset-launch', 'codex');
+      await projects.updateProject('lm-reset-launch', { defaultLaunchMode: 'bypassPermissions' });
+      const switched = await projects.updateProject('lm-reset-launch', { engine: 'antigravity' });
+      const stored = store.projectConfig.load(switched.project.path).defaultLaunchMode;
+      const cmd = sessions._buildLaunchCommand(
+        store.engines.get('antigravity'), store.projects.getByName('lm-reset-launch'), stored);
+      assert.equal(cmd, 'agy');
+    });
+  });
+
+  describe('launchModeAfterUpdate (#2189)', () => {
+    const claude = () => store.engines.get('claude');
+    const codex = () => store.engines.get('codex');
+    const onClaude = { engineId: 'claude' };
+
+    it('keeps the stored mode when the engine does not change', () => {
+      assert.equal(projects.launchModeAfterUpdate({}, onClaude, { defaultLaunchMode: 'plan' }, claude()), 'plan');
+      assert.equal(projects.launchModeAfterUpdate({ engine: 'claude' }, onClaude, { defaultLaunchMode: 'plan' }, claude()), 'plan');
+    });
+
+    it('returns default on an engine change with no mode named, whatever was stored', () => {
+      for (const stored of ['bypassPermissions', 'plan', 'default', '', undefined]) {
+        assert.equal(
+          projects.launchModeAfterUpdate({ engine: 'codex' }, onClaude, { defaultLaunchMode: stored }, codex()),
+          'default', `stored ${JSON.stringify(stored)}`);
+      }
+    });
+
+    it('returns a named mode the new engine honors, and default for one it does not', () => {
+      assert.equal(projects.launchModeAfterUpdate(
+        { engine: 'codex', defaultLaunchMode: 'bypassPermissions' }, onClaude, { defaultLaunchMode: 'plan' }, codex()),
+      'bypassPermissions');
+      assert.equal(projects.launchModeAfterUpdate(
+        { engine: 'codex', defaultLaunchMode: 'acceptEdits' }, onClaude, { defaultLaunchMode: 'plan' }, codex()),
+      'default');
+    });
+
+    it('still reconciles a stored mode the current engine no longer honors', () => {
+      assert.equal(projects.launchModeAfterUpdate({}, onClaude, { defaultLaunchMode: 'fullAuto' }, claude()), 'default');
     });
   });
 
@@ -346,6 +551,23 @@ describe('launch-mode settings', () => {
       store.projectConfig.save(project.path, projConfig);
 
       assert.equal(launchAndReadMode('lm-launch-default'), 'plan');
+    });
+
+    it('does not apply the stored default to a launch that overrides the engine (#2189)', () => {
+      // `engineOverride` runs a different CLI for one session. The stored mode
+      // was chosen for the project's own engine, and Codex defines the same
+      // `bypassPermissions` key with a wider meaning, so before this the
+      // override launched Codex with its own bypass flag.
+      const project = mkProject('lm-launch-override');
+      const projConfig = store.projectConfig.load(project.path);
+      projConfig.defaultLaunchMode = 'bypassPermissions';
+      store.projectConfig.save(project.path, projConfig);
+
+      assert.equal(launchAndReadMode('lm-launch-override', { engineOverride: 'codex' }), 'default');
+      // The project's own engine still gets its stored default.
+      assert.equal(launchAndReadMode('lm-launch-override'), 'bypassPermissions');
+      // And a mode named with the override launch is the caller's choice.
+      assert.equal(launchAndReadMode('lm-launch-override', { engineOverride: 'codex', launchMode: 'fullAuto' }), 'fullAuto');
     });
 
     it('an explicit caller choice beats the configured default', () => {

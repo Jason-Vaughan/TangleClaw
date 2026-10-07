@@ -1947,12 +1947,17 @@ function openSettings(name) {
     renderEvalAuditToggle(e.target.value,
       auditEl ? auditEl.checked : initialEvalAuditChecked,
       project.engine || null, project.evalAudit || null);
-    const modeEl = document.getElementById('settingsDefaultLaunchMode');
+    // The mode is not carried over from the control: it was a choice about the
+    // engine the dropdown just left. The picker toggle is, since it says how
+    // this project launches whichever engine runs.
     const showEl = document.getElementById('settingsShowLaunchPicker');
+    const storedMode = project.defaultLaunchMode || 'default';
+    const leavesStoredEngine = e.target.value !== (project.engine ? project.engine.id : '');
     renderLaunchModeSettings(
       e.target.value,
-      modeEl ? modeEl.value : (project.defaultLaunchMode || 'default'),
-      showEl ? showEl.checked : (project.showLaunchModePicker !== false)
+      tcLaunchModeForEngine(project, e.target.value),
+      showEl ? showEl.checked : (project.showLaunchModePicker !== false),
+      leavesStoredEngine && storedMode !== 'default' ? (project.engine || null) : null
     );
   });
 
@@ -2284,10 +2289,14 @@ function renderProjectMapToggle(engineId, preserveChecked, projectEngine, silent
  * path then skips both fields.
  *
  * @param {string} engineId - Engine id from the dropdown's current value
- * @param {string} preserveMode - The mode selection to carry over (or initial)
+ * @param {string} preserveMode - The mode to show selected
  * @param {boolean} preserveShow - The picker-visibility state to carry over
+ * @param {object|null} [resetFrom] - The engine whose non-default mode this
+ *   render dropped because the dropdown moved to another engine; null when
+ *   nothing was dropped. Named in a line under the control, so a selection
+ *   that changed without the operator touching it is explained where it sits.
  */
-function renderLaunchModeSettings(engineId, preserveMode, preserveShow) {
+function renderLaunchModeSettings(engineId, preserveMode, preserveShow, resetFrom = null) {
   const container = document.getElementById('settingsLaunchModeContainer');
   if (!container) return;
   const profile = (state.engines || []).find(e => e.id === engineId);
@@ -2311,6 +2320,7 @@ function renderLaunchModeSettings(engineId, preserveMode, preserveShow) {
       <label class="form-label" for="settingsDefaultLaunchMode">Default launch mode</label>
       <select class="form-select" id="settingsDefaultLaunchMode">${opts}</select>
       <div class="form-hint">The mode this project launches in when no mode is chosen at launch — API launches, and direct launches with the picker hidden.</div>
+      ${resetFrom ? `<div class="form-hint" id="settingsLaunchModeReset" role="status">Reset for this engine: the mode chosen for ${esc(resetFrom.name)} does not carry over. Choose one here if you want one.</div>` : ''}
     </div>
     <div class="form-group">
       <label class="gs-toggle-label">
@@ -3479,15 +3489,16 @@ async function doSaveSettings() {
   if (wrapSel !== undefined) {
     body.wrapSections = wrapSel;
   }
-  // Launch-mode posture — only sent when CHANGED from the project's stored
-  // values, so an already-confirmed bypass+hidden combination never re-trips
-  // the server's eyes-open guard on unrelated saves (tags, toggles, …).
+  // Launch-mode posture — sent when CHANGED from the project's stored values,
+  // so an already-confirmed bypass+hidden combination never re-trips the
+  // server's eyes-open guard on unrelated saves (tags, toggles, …). The mode is
+  // the exception when the engine changes: `tcLaunchModePatch` says why it is
+  // always sent then.
   const project2 = state.projects.find(p => p.name === settingsTarget);
   const launchModeEl = document.getElementById('settingsDefaultLaunchMode');
   const showPickerEl = document.getElementById('settingsShowLaunchPicker');
-  if (launchModeEl && project2 && launchModeEl.value !== (project2.defaultLaunchMode || 'default')) {
-    body.defaultLaunchMode = launchModeEl.value;
-  }
+  const modePatch = project2 ? tcLaunchModePatch(project2, body.engine, launchModeEl ? launchModeEl.value : null) : undefined;
+  if (modePatch !== undefined) body.defaultLaunchMode = modePatch;
   if (showPickerEl && project2 && showPickerEl.checked !== (project2.showLaunchModePicker !== false)) {
     body.showLaunchModePicker = showPickerEl.checked;
   }

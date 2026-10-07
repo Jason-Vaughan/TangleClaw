@@ -968,6 +968,9 @@ describe('settings modal save: the keep toggle (#1708)', () => {
       settingsTarget: project.name,
       async _submitSettings(body) { sent.push(body); },
       tcSettingDisposition: () => ({ applies: true }),
+      // The real helper, not a stub: the save asks it which launch mode to
+      // send, and a stand-in here would let the two drift apart unnoticed.
+      tcLaunchModePatch: require('./_api-helper-globals')().tcLaunchModePatch,
       collectWrapSectionsSelection: () => undefined,
       openBypassHiddenModal() {}
     };
