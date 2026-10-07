@@ -489,8 +489,17 @@ under its cursor is "No, exit". A line ending in Enter typed into that screen en
   field existed, except that each send takes one last look at the pane and is withheld if a
   declared dialog is there. An unknown screen must never cost a healthy launch its first turn.
 
-Every later send into the pane through TangleClaw (the command bar, a wake nudge, a coordinator's
-command) makes the same check first and is refused with the code while the dialog is up.
+Every later send TangleClaw makes into the pane is refused with the code while the dialog is up.
+The refusal is in `tmux.sendKeys`, the one function that types, so it covers the command bar, a wake
+nudge, a coordinator's command, a wrap's content prompt and the Critic action alike; a new sender is
+covered as long as it names the session's engine, which a test requires of every caller.
+
+The stored blocker is a claim about the pane that the operator can make untrue at any moment by
+answering the dialog. So it is checked against the pane whenever the session's status is read and
+before every send: a dialog that is gone clears it, and a pane that could not be read changes
+nothing. A session's later, unrelated death is therefore not recorded as caused by a dialog that
+was answered. While it stands, the project card shows a "needs you" badge and the session page a
+banner.
 
 **TangleClaw never answers the dialog.** Accepting a trust prompt lets the folder's own hooks, MCP
 servers and permission rules run, which is the operator's decision. It also writes nothing to the

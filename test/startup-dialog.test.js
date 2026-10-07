@@ -520,6 +520,68 @@ describe('the session keeps its blocker (#2128)', () => {
       assert.equal(sessions.getSessionStatus(project.name).lastSession.launchBlocker.code, 'trust_required');
     });
 
+    describe('the record is kept true to the pane by whoever reads it', () => {
+      // Nothing tells TangleClaw when the operator answers a dialog. The boot
+      // watch stops after its window, and a server restart ends it early.
+      beforeEach(() => {
+        tmux.hasSession = () => true;
+        tmux.probeSession = () => ({ answered: true, live: true, cause: null });
+      });
+
+      it('a status read clears a blocker whose dialog is gone, so a healthy session is not called blocked', () => {
+        const s = start();
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        tmux.capturePane = () => ({ lines: COMPOSER, alternateScreen: false });
+        const status = sessions.getSessionStatus(project.name);
+        assert.equal(status.active, true);
+        assert.equal(status.launchBlocker, null);
+        assert.equal(store.sessions.get(s.id).launchBlocker, null);
+      });
+
+      it('and a death long after is then not blamed on the dialog', () => {
+        const s = start();
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        tmux.capturePane = () => ({ lines: COMPOSER, alternateScreen: false });
+        sessions.getSessionStatus(project.name);
+        tmux.probeSession = () => ({ answered: true, live: false, cause: null });
+        const status = sessions.getSessionStatus(project.name);
+        assert.equal(status.lastSession.status, 'crashed');
+        assert.equal(status.lastSession.launchBlocker, null);
+        const [event] = store.activity.query({ sessionId: s.id, eventType: 'session.crashed' });
+        assert.equal(event.detail.cause, undefined);
+      });
+
+      it('a status read keeps a blocker whose dialog is still up', () => {
+        const s = start();
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        tmux.capturePane = () => ({ lines: TRUST_DIALOG, alternateScreen: false });
+        assert.equal(sessions.getSessionStatus(project.name).launchBlocker.code, 'trust_required');
+        assert.equal(store.activity.query({ sessionId: s.id, eventType: 'session.launch_blocked' }).length, 1, 'and does not record it again');
+      });
+
+      it('a pane that could not be read changes nothing: unread is not answered', () => {
+        const s = start();
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        tmux.capturePane = () => { throw new Error('tmux did not answer'); };
+        assert.equal(sessions.getSessionStatus(project.name).launchBlocker.code, 'trust_required');
+        assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required');
+      });
+
+      it('a healthy session with no blocker is not read for one', () => {
+        start();
+        let reads = 0;
+        const real = startupDialog.check;
+        startupDialog.check = (...args) => { reads += 1; return real(...args); };
+        try {
+          tmux.capturePane = () => ({ lines: COMPOSER, alternateScreen: false });
+          sessions.getSessionStatus(project.name);
+        } finally {
+          startupDialog.check = real;
+        }
+        assert.equal(reads, 0);
+      });
+    });
+
     it('the project list\'s last-session answer carries it too', () => {
       const s = start();
       store.sessions.setLaunchBlocker(s.id, BLOCKER);
@@ -816,3 +878,122 @@ describe('each launch-time sender, against the dialog (#2128)', () => {
     }
   });
 });
+
+/**
+ * The floor under every sender: the pane writer itself.
+ *
+ * The check a sender makes before typing only protects the senders that make
+ * it. Two that type a line ending in Enter did not (the wrap's content prompt
+ * and the /critic action), so the refusal also sits in `tmux.sendKeys`, where
+ * every typed send converges.
+ */
+describe('the pane writer refuses a declared dialog (#2128)', () => {
+  const realCheck = startupDialog.check;
+  let base;
+
+  before(() => {
+    base = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-startup-dialog-writer-'));
+    store._setBasePath(base);
+    store.init();
+  });
+
+  afterEach(() => { startupDialog.check = realCheck; });
+
+  after(() => {
+    startupDialog.check = realCheck;
+    try { store.close(); } catch { /* already closed */ }
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  // A real pane, as `test/tmux-draft-capture.test.js` uses: the writer asks tmux
+  // itself whether the session exists, so there is nothing to stub in its place.
+  const PANE = '__tc_test_startup_dialog_writer__';
+  const openPane = () => {
+    tmux.createSession(PANE, { command: 'exec bash --norc --noprofile' });
+    require('node:child_process').execSync('sleep 0.3');
+  };
+  const paneText = () => {
+    require('node:child_process').execSync('sleep 0.3');
+    return tmux.capturePane(PANE, { full: true }).lines.join('\n');
+  };
+
+  it('throws STARTUP_DIALOG, naming the dialog, and types nothing', () => {
+    try {
+      openPane();
+      let asked = null;
+      startupDialog.check = (session, profile) => {
+        asked = { session, engine: profile && profile.id };
+        return { declared: true, dialog: { code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.' }, unread: null };
+      };
+      assert.throws(() => tmux.sendKeys(PANE, 'SHOULD-NOT-PASTE', { enter: true, engineId: 'claude' }), (err) => {
+        assert.equal(err.code, 'STARTUP_DIALOG');
+        assert.equal(err.startupDialog.code, 'trust_required');
+        assert.match(err.message, /^trust_required: .*nothing was typed into it/);
+        return true;
+      });
+      assert.deepEqual(asked, { session: PANE, engine: 'claude' });
+      assert.doesNotMatch(paneText(), /SHOULD-NOT-PASTE/);
+    } finally {
+      try { tmux.killSession(PANE); } catch { /* already gone */ }
+    }
+  });
+
+  it('with no dialog on the pane the send goes through', () => {
+    try {
+      openPane();
+      startupDialog.check = () => ({ declared: true, dialog: null, unread: null });
+      tmux.sendKeys(PANE, 'echo DID-PASTE', { enter: false, engineId: 'claude' });
+      assert.match(paneText(), /DID-PASTE/);
+    } finally {
+      try { tmux.killSession(PANE); } catch { /* already gone */ }
+    }
+  });
+
+  it('a check that cannot be made does not stop a send', () => {
+    try {
+      openPane();
+      startupDialog.check = () => { throw new Error('profiles unreadable'); };
+      tmux.sendKeys(PANE, 'echo STILL-PASTED', { enter: false, engineId: 'claude' });
+      assert.match(paneText(), /STILL-PASTED/);
+    } finally {
+      try { tmux.killSession(PANE); } catch { /* already gone */ }
+    }
+  });
+
+  it('every caller of the pane writer names the session\'s engine, which is what arms the check', () => {
+    const lib = path.join(__dirname, '..', 'lib');
+    const files = [];
+    (function walk(dir) {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith('.js') && full !== path.join(lib, 'tmux.js')) files.push(full);
+      }
+    })(lib);
+    const unarmed = [];
+    let calls = 0;
+    for (const file of files) {
+      const src = fs.readFileSync(file, 'utf8');
+      const re = /\bsendKeys\(/g;
+      let m;
+      while ((m = re.exec(src)) !== null) {
+        const lineStart = src.lastIndexOf('\n', m.index) + 1;
+        const line = src.slice(lineStart, src.indexOf('\n', m.index));
+        // A comment, a declaration, or a seam that only forwards to the writer is not a call that types.
+        if (/^\s*(\/\/|\*)/.test(line) || /=>\s*require\(/.test(line) || /function\s+sendKeys/.test(line)) continue;
+        calls += 1;
+        // The call's own argument list, by bracket matching.
+        let depth = 0;
+        let end = m.index + m[0].length - 1;
+        for (let i = end; i < src.length; i++) {
+          if (src[i] === '(') depth += 1;
+          else if (src[i] === ')' && --depth === 0) { end = i; break; }
+        }
+        if (!/\bengineId\b/.test(src.slice(m.index, end))) unarmed.push(`${path.relative(lib, file)}: ${line.trim()}`);
+      }
+    }
+    assert.ok(calls >= 5, `expected to find the known senders, found ${calls}`);
+    assert.deepEqual(unarmed, [], 'a typed send that does not name its engine is not checked for a startup dialog');
+  });
+});
+

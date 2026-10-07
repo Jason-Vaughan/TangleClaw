@@ -247,6 +247,23 @@ function renderEngineErrorBadge(project) {
 }
 
 /**
+ * The card badge for a live session waiting at an engine startup dialog
+ * (#2128): Claude Code's "do you trust this folder?", say. TangleClaw types
+ * nothing into it, so until the operator answers it in the session the launch
+ * goes nowhere, and without this the card looks like a session at work.
+ * @param {object} project - Project data carrying an optional `session`.
+ * @returns {string} HTML for the badge, or '' when no dialog is recorded.
+ */
+function renderLaunchBlockerBadge(project) {
+  const session = project && project.session;
+  const b = session && session.active === true ? session.launchBlocker : null;
+  if (!b || !b.code) return '';
+  const label = b.label || 'startup dialog';
+  const tooltip = `Waiting at the engine's ${label} (${b.code}). Nothing has been typed into it. ${b.meaning || 'Open the session and answer it.'}`;
+  return `<span class="badge badge-engine-error" title="${esc(tooltip)}">&#9888; needs you: ${esc(label)}</span>`;
+}
+
+/**
  * The card's session status dot.
  *
  * Four outcomes where there used to be three. Each is a distinct SHAPE, not a
@@ -378,6 +395,7 @@ function renderCard(project) {
     : '';
 
   const engineErrorBadge = renderEngineErrorBadge(project);
+  const launchBlockerBadge = renderLaunchBlockerBadge(project);
 
   // Group badges
   const groupBadges = (project.groups || []).map(g =>
@@ -435,6 +453,7 @@ function renderCard(project) {
       ${gitBadge}
       ${engineBadge}
       ${engineErrorBadge}
+      ${launchBlockerBadge}
       ${groupBadges}
       ${auditBadge}
       ${driftBadge}
