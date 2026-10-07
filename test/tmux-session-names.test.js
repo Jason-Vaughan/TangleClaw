@@ -82,7 +82,7 @@ describe('no test creates a real tmux session under a fixed name (#1983)', () =>
 
   // The files that start a real tmux session. A new one belongs in this list;
   // the scan below is what finds it.
-  const REAL_SESSION_FILES = ['activity-observer.test.js', 'tmux-draft-capture.test.js', 'tmux-named-paste-buffer.test.js', 'tmux.test.js'];
+  const REAL_SESSION_FILES = ['activity-observer.test.js', 'startup-dialog.test.js', 'tmux-draft-capture.test.js', 'tmux-named-paste-buffer.test.js', 'tmux.test.js'];
 
   /**
    * Matches a call that starts a real session: the lib helper, or tmux itself

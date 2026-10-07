@@ -31,6 +31,7 @@ const store = require('../lib/store');
 const tmux = require('../lib/tmux');
 const sessions = require('../lib/sessions');
 const launchKickoff = require('../lib/launch-kickoff');
+const { uniqueSessionName } = require('./_tmux-session-names');
 const launchBootstrap = require('../lib/launch-bootstrap');
 const sessionLeftovers = require('../lib/session-leftovers');
 
@@ -495,7 +496,28 @@ describe('the session keeps its blocker (#2128)', () => {
         const s = store.sessions.start({ projectId: p.id, engineId: 'claude', tmuxSession: 'carried' });
         store.close();
         const db = new DatabaseSync(path.join(dir, 'tangleclaw.db'));
-        db.exec('ALTER TABLE sessions DROP COLUMN launch_blocker');
+        // Put `sessions` back to its v56 shape by rebuilding it from its own
+        // stored DDL with the one column line removed. Not `DROP COLUMN`: the
+        // column is the last one and its line carries a trailing SQL comment,
+        // and some SQLite builds rewrite that into DDL they then cannot parse.
+        const ddl = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sessions'").get().sql;
+        const v56Ddl = ddl
+          .split('\n')
+          .filter((line) => !/^\s*launch_blocker\b/.test(line))
+          .join('\n')
+          // The line above it ended with the comma that separated the two.
+          .replace(/(launch_dirty\s+TEXT),/, '$1')
+          .replace(/^CREATE TABLE\s+(IF NOT EXISTS\s+)?"?sessions"?/, 'CREATE TABLE sessions_v56');
+        assert.doesNotMatch(v56Ddl, /launch_blocker/, 'precondition: the rebuilt DDL has no such column');
+        const kept = db.prepare('PRAGMA table_info(sessions)').all().map((c) => c.name).filter((c) => c !== 'launch_blocker').join(', ');
+        db.exec('PRAGMA foreign_keys = OFF');
+        db.exec('PRAGMA legacy_alter_table = ON');
+        db.exec(v56Ddl);
+        db.exec(`INSERT INTO sessions_v56 (${kept}) SELECT ${kept} FROM sessions`);
+        db.exec('DROP TABLE sessions');
+        db.exec('ALTER TABLE sessions_v56 RENAME TO sessions');
+        assert.ok(!db.prepare('PRAGMA table_info(sessions)').all().some((c) => c.name === 'launch_blocker'),
+          'precondition: the v56 store has no launch_blocker column');
         db.exec('DELETE FROM schema_version');
         db.exec('INSERT INTO schema_version (version) VALUES (56)');
         db.close();
@@ -1117,7 +1139,7 @@ describe('the pane writer refuses a declared dialog (#2128)', () => {
 
   // A real pane, as `test/tmux-draft-capture.test.js` uses: the writer asks tmux
   // itself whether the session exists, so there is nothing to stub in its place.
-  const PANE = '__tc_test_startup_dialog_writer__';
+  const PANE = uniqueSessionName('startup_dialog_writer');
   const openPane = () => {
     tmux.createSession(PANE, { command: 'exec bash --norc --noprofile' });
     require('node:child_process').execSync('sleep 0.3');
