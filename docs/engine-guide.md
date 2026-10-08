@@ -761,12 +761,14 @@ about to run and allows exactly two forms: the probed executable attached with `
 the app-server this launch started from that same executable, on a server version the profile's
 `verifiedVersions` lists, or the probed executable with `--no-daemon` on a version verified to accept it.
 The flag must appear once and in its plain form: a repeated flag, both flags together, an `=` form, a
-`--daemon` flag, a bare `--` or any shell syntax in the arguments is refused, because which one Codex
+`--daemon` flag or a bare `--` is refused, and so is any argument that is not a plain word (letters, digits and `_ . , : = @ % + / -`, with `=` not first), because a shell may rewrite anything else and which flags Codex
 would follow is not known. Both run the executable by its full path, so the pane's shell cannot
 resolve a different Codex. Anything else is refused with `409 LAUNCH_ISOLATION_UNVERIFIED`, a `reasonCode`
 (`executable_unresolved`, `version_unknown`, `version_unverified`, `command_not_pinned`,
-`command_unparseable`, `command_unisolated`, `judgment_failed`, `no_judge`) and recovery text naming the
-verified versions. No pane, session row or bridge credential is created, and a per-launch server that was already
+`command_unparseable`, `command_unisolated`, `judgment_failed`, `no_judge`) and recovery text. The recovery is specific to the reason: a version reason names the verified versions and
+the command that installs one (`npm install -g @openai/codex@0.156.1`, which is also what the first-run
+wizard offers); an unresolvable executable says where to install Codex; a command reason says to remove
+custom launch arguments, since another Codex version would not help. No pane, session row or bridge credential is created, and a per-launch server that was already
 started is stopped. Codex 0.154.0 rejects `--no-daemon` and is not verified for the native channel, so it
 no longer launches; neither does any version not yet tested. There is no override. The check applies to a
 launch whose engine id, profile (its id, launch command or detection target), resolved executable or

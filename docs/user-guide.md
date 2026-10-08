@@ -1195,7 +1195,7 @@ curl -s http://localhost:3100
 - Verify the selected engine is installed: check the engine badge on the landing page (shows "available" or "not found")
 - Check tmux is running: `tmux ls`
 - Check server logs for error details
-- **A Codex session or Codex Project Master that answers "TangleClaw did not start the engine"** (`LAUNCH_ISOLATION_UNVERIFIED`): the installed Codex is a version TangleClaw has not verified it can keep off Codex's shared background process, or its version could not be read. The message names the executable, the version found and the versions to install (0.156.1 or 0.157.1). Nothing was started. Install one of those versions and launch again; there is no setting that bypasses the check. A Codex session that was already running before you upgraded TangleClaw is not affected by the check: end it and launch it again.
+- **A Codex session or Codex Project Master that answers "TangleClaw did not start the engine"** (`LAUNCH_ISOLATION_UNVERIFIED`): the installed Codex is a version TangleClaw has not verified it can keep off Codex's shared background process, or its version could not be read. The message names the executable, the version found and the versions to install (0.156.1 or 0.157.1). Nothing was started. Install one of those versions, for example with `npm install -g @openai/codex@0.156.1`, and launch again; there is no setting that bypasses the check. The same refusal can also come from the launch's configuration and not the version: the message then says so, and the remedy is to remove custom arguments from the Codex engine profile or launch mode. A Codex session that was already running before you upgraded TangleClaw is not affected by the check: end it and launch it again.
 
 ### Chime Not Working on Mobile
 

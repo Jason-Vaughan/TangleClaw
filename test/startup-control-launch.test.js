@@ -430,6 +430,19 @@ describe('startupControl at launch and teardown (codex)', () => {
       assert.equal(sessions._judgeLaunchIsolation('claude', { command: 'claude', enginePath: '/opt/fake/bin/claude', probe: null, native: null, engineProfile: store.engines.get('claude') }, {}).allowed, true);
     });
 
+    it('a launch only the profile identifies as Codex is judged by the Codex adapter, not blamed on the install', () => {
+      // Nothing the adapter can see by itself names Codex here; the launch site's reading reaches it.
+      const input = { command: 'wrapper --x', enginePath: '/opt/x/wrapper', probe: { version: '0.157.1', enginePath: '/opt/x/wrapper' }, native: null,
+        engineProfile: { id: 'x', launch: { shellCommand: 'wrapper' }, detection: { target: 'codex' } } };
+      const verdict = sessions._judgeLaunchIsolation('my-engine', input);
+      assert.equal(verdict.allowed, false);
+      assert.equal(verdict.adapterName, 'codex');
+      assert.equal(verdict.reasonCode, 'command_not_pinned', 'refused for what the command is, not as no_judge');
+      const built = sessions._isolatedLegacyLaunch('my-engine', 'wrapper --x', input.engineProfile, '/opt/x/wrapper');
+      assert.ok(built, 'the builder is asked too');
+      assert.equal(built.adapterName, 'codex');
+    });
+
     it('a throwing judgment refuses whether or not another adapter would have answered', () => {
       const verdict = sessions._judgeLaunchIsolation('codex', verified, { broken: { judgeLaunchCommand: () => { throw new Error('fault'); } }, codex });
       assert.equal(verdict.reasonCode, 'judgment_failed');

@@ -1539,28 +1539,6 @@ describe('Codex startupControl adapter', () => {
       assert.equal(codex._internal._trusted({}, '/a/b'), null);
     });
 
-    it('isolates legacy launches only when the probed Codex version accepts --no-daemon', () => {
-      const previous = codex._internal._version.version;
-      try {
-        codex._internal._version.version = null;
-        assert.equal(codex.legacyLaunchCommand('codex'), 'codex');
-        codex._internal._version.version = '0.154.0';
-        assert.equal(codex.legacyLaunchCommand('codex'), 'codex');
-        codex._internal._version.version = '0.156.1';
-        assert.equal(codex.legacyLaunchCommand('codex'), 'codex --no-daemon');
-        codex._internal._version.version = '0.157.1';
-        assert.equal(
-          codex.legacyLaunchCommand('codex --ask-for-approval never --sandbox workspace-write'),
-          'codex --ask-for-approval never --sandbox workspace-write --no-daemon'
-        );
-        assert.equal(codex.legacyLaunchCommand('codex --no-daemon'), 'codex --no-daemon');
-        codex._internal._version.version = '0.158.0';
-        assert.equal(codex.legacyLaunchCommand('codex'), 'codex', 'future versions are not guessed compatible');
-      } finally {
-        codex._internal._version.version = previous;
-      }
-    });
-
     describe('judgeLaunchCommand: the last look at a Codex launch (#2233)', () => {
       const BIN = '/opt/fake/bin/codex';
       const probe = (version, enginePath = BIN) => ({ version, enginePath });
@@ -1604,9 +1582,15 @@ describe('Codex startupControl adapter', () => {
         assert.equal(judge({ command: `${BIN} --sandbox workspace-write`, probe: probe('0.157.1') }).reasonCode, 'command_unisolated');
         assert.equal(judge({ command: `${BIN} --no-daemonize`, probe: probe('0.157.1') }).reasonCode, 'command_unisolated');
         assert.equal(judge({ command: `${BIN} -- --no-daemon`, probe: probe('0.157.1') }).reasonCode, 'command_unparseable');
-        for (const args of ['-c "x --no-daemon"', "-c 'x' --no-daemon", '--no-daemon; codex', '$(x) --no-daemon', '--no-daemon && codex', '`x` --no-daemon', '--no-daemon | cat']) {
+        for (const args of [
+          '-c "x --no-daemon"', "-c 'x' --no-daemon", '--no-daemon; codex', '$(x) --no-daemon', '--no-daemon && codex', '`x` --no-daemon', '--no-daemon | cat',
+          // A shell may rewrite each of these before Codex sees it: a glob that matches a file, history, tilde and `=` expansion, a comment.
+          '--daemo[n] --no-daemon', '--no-daemon --d?emon', '--no-daemon *', '^x --no-daemon', '=codex --no-daemon', '~root --no-daemon',
+          '--no-daemon #x', '--no-daemon !!', '{a,b} --no-daemon', '--no-daemon \\x', '--no-daemon >out', '--no-daemon <in', '--no-daemon (x)'
+        ]) {
           assert.equal(judge({ command: `${BIN} ${args}`, probe: probe('0.157.1') }).reasonCode, 'command_unparseable', args);
         }
+        assert.match(judge({ command: `${BIN} --daemo[n] --no-daemon`, probe: probe('0.157.1') }).reason, /"--daemo\[n\]"/, 'the refusal names the argument at fault');
       });
 
       it('refuses --remote to anything but the socket this launch started from this executable', () => {
@@ -1671,13 +1655,40 @@ describe('Codex startupControl adapter', () => {
         assert.equal(codex.judgeLaunchCommand({ engineId: 'codex', command: `${spaced} --no-daemon`, enginePath: spaced, probe: built.probe, native: null }).reasonCode, 'command_not_pinned', 'the unquoted form would run /Users/Jo');
       });
 
-      it('every refusal carries a reason and a recovery that names the verified versions', () => {
-        const verdict = judge({ command: 'codex', probe: probe('0.161.0') });
-        assert.equal(verdict.applies, true);
-        assert.equal(verdict.allowed, false);
-        for (const version of codex._internal.NO_DAEMON_VERSIONS) assert.ok(verdict.recovery.includes(version));
-        assert.match(verdict.recovery, /Nothing was started/);
-        assert.match(verdict.recovery, /already running are not changed/);
+      it('a version refusal says which versions to install, and gives the command that installs one', () => {
+        for (const verdict of [judge({ command: 'codex', probe: probe('0.161.0') }), judge({ command: 'codex', probe: null })]) {
+          assert.equal(verdict.allowed, false);
+          for (const version of codex._internal.NO_DAEMON_VERSIONS) assert.ok(verdict.recovery.includes(version));
+          assert.ok(verdict.recovery.includes(codex._internal.INSTALL_COMMAND));
+          assert.match(verdict.recovery, /Nothing was started/);
+          assert.match(verdict.recovery, /already running are not changed/);
+        }
+      });
+
+      it('the install command it gives is the one the engine profile offers, and installs a version that launches', () => {
+        const profile = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));
+        assert.equal(profile.install.command, codex._internal.INSTALL_COMMAND);
+        const pinned = /@openai\/codex@(\d+\.\d+\.\d+)$/.exec(profile.install.command);
+        assert.ok(pinned, 'the offered command pins a version: an unpinned one installs the newest Codex, which does not launch');
+        assert.ok(codex._internal.NO_DAEMON_VERSIONS.includes(pinned[1]), 'verified for --no-daemon');
+        assert.ok(profile.capabilities.startupControl.verifiedVersions.includes(pinned[1]), 'verified for the native channel');
+      });
+
+      it('a refusal that a different Codex version would not fix does not tell the operator to install one', () => {
+        const onVerified = { probe: probe('0.157.1') };
+        for (const [reasonCode, verdict] of [
+          ['command_not_pinned', judge({ command: 'codex --no-daemon', ...onVerified })],
+          ['command_unparseable', judge({ command: `${BIN} "x" --no-daemon`, ...onVerified })],
+          ['command_unisolated', judge({ command: `${BIN} --sandbox workspace-write`, ...onVerified })],
+          ['executable_unresolved', judge({ command: 'codex', enginePath: "/opt/it's/codex", probe: probe('0.157.1', "/opt/it's/codex") })]
+        ]) {
+          assert.equal(verdict.reasonCode, reasonCode);
+          assert.doesNotMatch(verdict.recovery, /Install a Codex version/, reasonCode);
+          assert.ok(!verdict.recovery.includes(codex._internal.INSTALL_COMMAND), reasonCode);
+          assert.match(verdict.recovery, /Nothing was started/, reasonCode);
+        }
+        assert.match(judge({ command: 'codex --no-daemon', ...onVerified }).recovery, /not the Codex version/);
+        assert.match(judge({ command: 'codex', enginePath: "/opt/it's/codex", probe: probe('0.157.1', "/opt/it's/codex") }).recovery, /command -v codex/);
       });
 
       it('reads no version cache: a verified cache does not rescue an unverified probe, nor the reverse', () => {
@@ -1699,6 +1710,10 @@ describe('Codex startupControl adapter', () => {
         assert.equal(codex.judgeLaunchCommand({ engineId: 'my-engine', command: 'wrapper', enginePath: BIN }).applies, true, 'the executable names it');
         assert.equal(codex.judgeLaunchCommand({ engineId: 'codex', command: 'wrapper', enginePath: '/opt/x/wrapper' }).applies, true, 'the engine id names it');
         assert.equal(codex.judgeLaunchCommand({ engineId: 'my-engine', command: 'codex', enginePath: null }).allowed, false);
+        // The launch site recognised it from the profile it holds; the adapter takes its word and judges.
+        assert.equal(codex.judgeLaunchCommand({ engineId: 'my-engine', command: 'wrapper', enginePath: '/opt/x/wrapper', identifiedAs: 'codex' }).applies, true);
+        assert.equal(codex.judgeLaunchCommand({ engineId: 'my-engine', command: 'wrapper', enginePath: '/opt/x/wrapper', identifiedAs: 'codex' }).allowed, false);
+        assert.equal(codex.isolateLaunch({ engineId: 'my-engine', launchCmd: 'wrapper', shell: 'wrapper', enginePath: '/opt/x/wrapper', identifiedAs: 'codex' }, { probeVersionSync: () => '0.157.1' }).applies, true);
       });
     });
 

@@ -142,6 +142,8 @@ describe('#1637 classifyLaunchFailure', () => {
       UNAUTHENTICATED: 'retryable',
       ACCOUNT_REQUIRED: 'retryable',
       CSRF_TOKEN_INVALID: 'retryable',
+      // Refused before any pane existed (#2233): nothing to reconcile, and the message says what to change.
+      LAUNCH_ISOLATION_UNVERIFIED: 'retryable',
       STRANDED_WRAPS: 'needs-landing',
       TUNNEL_CONFLICT: 'needs-landing',
       LIVENESS_UNKNOWN: 'liveness-unknown',
