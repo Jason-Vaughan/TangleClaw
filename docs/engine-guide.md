@@ -629,10 +629,16 @@ entry (#2177). A profile with no list of its own inherits the refusal with the d
 `command`. **If the installed profiles cannot be read at all** (the store's profile list throws,
 or comes back empty), a profile that inherits has lost its declaration: what its program declares
 could not be found out, which is not the same as nothing, so its launch types nothing either, under
-the same code. That clears by itself when the list reads again; a profile with a list of its own,
-`[]` included, does not depend on the list. One look, one watch and one launch each read the
-declaration **once** (`startupDialog.resolve`), so a fault that comes or goes in the middle cannot
-be pieced together into "nothing declared and nothing wrong". Only a literal `[]` declares none. Entries that could be read still protect later
+the same code. In that state **every later sender is refused as well**, not only the launch: the
+command bar, a wake nudge, a coordinator's command, a wrap's prompt, the Critic action. No dialog
+is known for the engine at all, so there is nothing to read the pane against and no send can be
+shown safe; the pane is not read, and nothing is recorded as a blocker. The refusal says it is a
+failure to read TangleClaw's installed profiles and not something to fix in the profile. It clears
+by itself at the next send after the list reads again; a profile with a list of its own, `[]`
+included, does not depend on the list. A list with one unreadable entry is a different state: its
+sound entries still read the pane for later sends, as described above. One look, one watch and one
+launch each read the declaration **once** (`startupDialog.resolve`), so a fault that comes or goes
+in the middle cannot be pieced together into "nothing declared and nothing wrong". Only a literal `[]` declares none. Entries that could be read still protect later
 sends. The watch tells a finished boot by the measured prompt signature in
 the engine's `wake` block, or failing that in the `wake` block of the profile that declares the
 dialogs for the same command. With neither, the boot is not watched and the launch types nothing
