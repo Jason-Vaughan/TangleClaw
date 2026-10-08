@@ -764,7 +764,7 @@ The flag must appear once and in its plain form: a repeated flag, both flags tog
 `--daemon` flag or a bare `--` is refused, and so is any argument that is not a plain word (letters, digits and `_ . , : = @ % + / -`, with `=` not first), because a shell may rewrite anything else and which flags Codex
 would follow is not known. Both run the executable by its full path, so the pane's shell cannot
 resolve a different Codex. Anything else is refused with `409 LAUNCH_ISOLATION_UNVERIFIED`, a `reasonCode`
-(`executable_unresolved`, `version_unknown`, `version_unverified`, `command_not_pinned`,
+(`executable_unresolved`, `executable_unverified`, `version_unknown`, `version_unverified`, `native_version_unverified`, `command_not_pinned`,
 `command_unparseable`, `command_unisolated`, `judgment_failed`, `no_judge`) and recovery text. The recovery is specific to the reason: a version reason names the verified versions and
 the command that installs one (`npm install -g @openai/codex@0.156.1`, which is also what the first-run
 wizard offers); an unresolvable executable says where to install Codex; a command reason says to remove
@@ -775,7 +775,38 @@ launch whose engine id, profile (its id, launch command or detection target), re
 command names `codex`. Such a launch is also refused (`no_judge`) when no check could run for it at all:
 the Codex adapter is not registered, lacks the check, or does not claim the launch. Every other engine
 launches as before. It does not see an executable replaced after the probe, a wrapper or alias with another name,
-Codex reached over SSH, or sessions already running, which must be ended and relaunched. The channel ends with the
+Codex reached over SSH, or sessions already running, which must be ended and relaunched.
+
+**Codex compatibility after this check (a security patch, #2233).**
+
+| What | Versions |
+|---|---|
+| Launches attached to its own per-launch server (`--remote`) | 0.156.1 (`capabilities.startupControl.verifiedVersions` in `data/engines/codex.json`) |
+| Launches with `--no-daemon` | 0.156.1, 0.157.1 (`NO_DAEMON_VERSIONS` in `lib/startup-control-codex.js`) |
+| Refused | 0.154.0 and every other version, 0.161.0 included, and any install whose version cannot be read |
+| Installed by the command TangleClaw offers | 0.156.1 (`npm install -g @openai/codex@0.156.1`), the only version on both lists |
+
+The two lists are separate and neither vouches for the other. A refusal on the `--remote` path
+(`native_version_unverified`) names only the first list, so it never suggests 0.157.1, which that path
+would refuse again. Codex's own update prompt offers to replace a pinned install with the newest version;
+the newest version does not launch, so skip it (Escape).
+
+- **Sessions already running.** The check runs when a pane is created. A Codex session started before
+  the upgrade keeps running on whatever command started it, isolated or not, and nothing ends it.
+- **Operator cutover.** After upgrading TangleClaw, end every Codex session and the Project Master if
+  it runs Codex, then launch them again. Each relaunch either starts isolated or is refused with the
+  reason. Until that is done for a session, this check says nothing about it.
+- **Not supported, and refused or unseen.** Refused: a launch a profile identifies as Codex whose
+  executable is not named `codex` (a wrapper is not trusted to pass the isolation flags on, whatever
+  version it reports); a Codex whose path holds a quote or control character; custom launch arguments that are not plain words or that touch the isolation flags.
+  The recovery for it says to select or install the real Codex executable directly.
+  Unseen: a wrapper or alias not named `codex` that no profile field identifies, a different program
+  that is itself named `codex` (the name and the version it prints are the whole identity tested), Codex reached over
+  SSH, an executable replaced between the version check and the launch, and whether a `--remote`
+  client can ever consult the shared process (allowed on the evidence recorded for 0.156.1 only).
+- **No override.** No setting, flag or profile field allows an unverified Codex to launch.
+
+The channel ends with the
 session: kill, a wrap that ends the session, a
 detected crash, or a relaunch over a dead pane; a keep-running wrap keeps it. At boot TangleClaw
 revalidates every open channel of a live session, recovers in-flight fires without resending, and

@@ -1614,8 +1614,22 @@ describe('Codex startupControl adapter', () => {
         ]) {
           const verdict = judge({ command, ...over });
           assert.equal(verdict.allowed, false, label);
-          assert.equal(verdict.reasonCode, 'version_unverified', label);
+          assert.equal(verdict.reasonCode, 'native_version_unverified', label);
         }
+
+        // 0.157.1 is verified for --no-daemon only. Installing it would be refused again on this path, so it is never offered here.
+        const refused = judge({ command, native: { ...native, engineVersion: '0.157.1' } });
+        assert.match(refused.reason, /0\.157\.1/, 'the reason names the version that was found');
+        assert.ok(!refused.recovery.includes('0.157.1'), 'the recovery does not offer a version this path refuses');
+        assert.match(refused.recovery, /\(0\.156\.1\)/);
+        assert.ok(refused.recovery.includes('npm install -g @openai/codex@0.156.1'));
+        const two = judge({ command, native: { ...native, engineVersion: '0.157.1' }, nativeVerifiedVersions: ['0.160.0', '0.156.1'] });
+        assert.match(two.recovery, /\(0\.160\.0 or 0\.156\.1\)/, 'the list named is the native one, as the profile records it');
+        assert.ok(two.recovery.includes('@openai/codex@0.160.0'));
+        const none = judge({ command, native, nativeVerifiedVersions: null });
+        assert.doesNotMatch(none.recovery, /Install a Codex version/, 'with no verified native version, no install is the remedy');
+        assert.doesNotMatch(none.recovery, /0\.15\d\.\d/);
+        assert.match(none.recovery, /restore or update TangleClaw/);
         // The legacy list does not vouch for the native channel: 0.157.1 accepts --no-daemon and is not verified to attach.
         assert.ok(codex._internal.NO_DAEMON_VERSIONS.includes('0.157.1'));
       });
@@ -1713,7 +1727,28 @@ describe('Codex startupControl adapter', () => {
         // The launch site recognised it from the profile it holds; the adapter takes its word and judges.
         assert.equal(codex.judgeLaunchCommand({ engineId: 'my-engine', command: 'wrapper', enginePath: '/opt/x/wrapper', identifiedAs: 'codex' }).applies, true);
         assert.equal(codex.judgeLaunchCommand({ engineId: 'my-engine', command: 'wrapper', enginePath: '/opt/x/wrapper', identifiedAs: 'codex' }).allowed, false);
-        assert.equal(codex.isolateLaunch({ engineId: 'my-engine', launchCmd: 'wrapper', shell: 'wrapper', enginePath: '/opt/x/wrapper', identifiedAs: 'codex' }, { probeVersionSync: () => '0.157.1' }).applies, true);
+      });
+
+      it('refuses a launch identified as Codex whose executable is not named codex, whatever version it reports', () => {
+        const WRAP = '/opt/x/wrapper';
+        let probes = 0;
+        const deps = { probeVersionSync: () => { probes += 1; return '0.157.1'; } };
+        for (const id of [{ engineId: 'codex' }, { engineId: 'my-engine', identifiedAs: 'codex' }]) {
+          const built = codex.isolateLaunch({ ...id, launchCmd: 'wrapper --x', shell: 'wrapper', enginePath: WRAP }, deps);
+          assert.deepEqual(built, { applies: true, command: null, probe: { version: null, enginePath: WRAP } }, 'no command is built for a wrapper');
+          // Even a command that is pinned, flagged and on a verified version is refused: the wrapper may drop the flag.
+          const verdict = codex.judgeLaunchCommand({ ...id, command: `${WRAP} --no-daemon`, enginePath: WRAP, probe: { version: '0.157.1', enginePath: WRAP }, native: null });
+          assert.equal(verdict.allowed, false);
+          assert.equal(verdict.reasonCode, 'executable_unverified');
+          assert.ok(verdict.reason.includes(WRAP));
+          assert.match(verdict.recovery, /real Codex executable/);
+          assert.match(verdict.recovery, /wrapper's version or flags does not help/);
+          assert.doesNotMatch(verdict.recovery, /Install a Codex version/);
+          const attached = codex.judgeLaunchCommand({ ...id, command: `${WRAP} --remote unix:///private/tmp/fake-daemon/abc`, enginePath: WRAP, nativeVerifiedVersions: ['0.156.1'],
+            native: { resolvedSocketPath: '/private/tmp/fake-daemon/abc', enginePath: WRAP, engineVersion: '0.156.1' } });
+          assert.equal(attached.reasonCode, 'executable_unverified');
+        }
+        assert.equal(probes, 0, 'a wrapper is never asked its version');
       });
     });
 

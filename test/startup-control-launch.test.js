@@ -300,7 +300,7 @@ describe('startupControl at launch and teardown (codex)', () => {
    * passing over a pane that was started.
    * @returns {{result: object, name: string}}
    */
-  function refused() {
+  function refused(detectPath) {
     counter += 1;
     const name = `sc-${counter}`;
     const dir = path.join(projectsDir, name);
@@ -311,6 +311,7 @@ describe('startupControl at launch and teardown (codex)', () => {
       tmux.createSession = () => { throw new Error('a refused launch must not create a tmux session'); };
       tmux.hasSession = () => true;
       tmux.killSession = (n) => { killed.push(n); return true; };
+      if (detectPath) enginesModule.detectEngine = () => ({ available: true, path: detectPath });
       return sessions.launchSession(name, { primePrompt: false });
     });
     assert.deepEqual(killed, [], 'a refused launch kills no existing tmux session either');
@@ -437,10 +438,14 @@ describe('startupControl at launch and teardown (codex)', () => {
       const verdict = sessions._judgeLaunchIsolation('my-engine', input);
       assert.equal(verdict.allowed, false);
       assert.equal(verdict.adapterName, 'codex');
-      assert.equal(verdict.reasonCode, 'command_not_pinned', 'refused for what the command is, not as no_judge');
+      assert.equal(verdict.reasonCode, 'executable_unverified', 'refused for what the executable is, not as no_judge');
       const built = sessions._isolatedLegacyLaunch('my-engine', 'wrapper --x', input.engineProfile, '/opt/x/wrapper');
       assert.ok(built, 'the builder is asked too');
       assert.equal(built.adapterName, 'codex');
+      assert.equal(built.command, null, 'and builds nothing for a wrapper');
+      // A wrapper whose command is otherwise everything an allowed launch is stays refused.
+      const dressed = sessions._judgeLaunchIsolation('my-engine', { ...input, command: '/opt/x/wrapper --no-daemon' });
+      assert.equal(dressed.reasonCode, 'executable_unverified');
     });
 
     it('a throwing judgment refuses whether or not another adapter would have answered', () => {
@@ -479,7 +484,8 @@ describe('startupControl at launch and teardown (codex)', () => {
     } finally {
       codex.prepareLaunch = realPrepare;
     }
-    assert.equal(out.result.isolation.reasonCode, 'version_unverified');
+    assert.equal(out.result.isolation.reasonCode, 'native_version_unverified');
+    assert.ok(!out.result.error.includes('0.157.1 or') && !out.result.error.includes('or 0.157.1'), 'the message does not offer a version this path refuses');
     assert.equal(calls.spawn.length, 1);
     assert.deepEqual(calls.kills, [[-calls.spawn[0].pid, 'SIGTERM']]);
   });
@@ -496,6 +502,61 @@ describe('startupControl at launch and teardown (codex)', () => {
     }
     assert.deepEqual(seen[0].nativeVerifiedVersions, store.engines.get('codex').capabilities.startupControl.verifiedVersions);
     assert.equal(seen[0].native.engineVersion, '0.156.1');
+  });
+
+  describe('a Codex project whose resolved executable is not named codex is refused (#2233)', () => {
+    const WRAP = '/opt/fake/bin/codex-wrapper';
+    const rows = () => store.getDb().prepare('SELECT COUNT(*) AS n FROM sessions').get().n;
+
+    it('on the native path: a wrapper reporting the natively verified version starts nothing and its prepared server is stopped', () => {
+      // The wrapper prints the version the native channel is verified on, so the channel is prepared before the judgment sees it.
+      healthySeams({ execFileSync: () => 'codex-cli 0.156.1\n' });
+      const before = rows();
+      const { result } = refused(WRAP);
+      assert.equal(result.session, null);
+      assert.equal(result.code, 'LAUNCH_ISOLATION_UNVERIFIED');
+      assert.equal(result.isolation.reasonCode, 'executable_unverified');
+      assert.ok(result.error.includes(WRAP));
+      assert.match(result.error, /real Codex executable/);
+      assert.doesNotMatch(result.error, /Install a Codex version/);
+      assert.equal(rows(), before, 'no session row');
+      assert.equal(calls.spawn.length, 1, 'the native channel had been prepared');
+      assert.equal(calls.spawn[0].bin, WRAP);
+      assert.deepEqual(calls.kills, [[-calls.spawn[0].pid, 'SIGTERM']], 'and its server was stopped');
+      assert.equal(store.getDb().prepare("SELECT COUNT(*) AS n FROM startup_control_channels WHERE state = 'open'").get().n, 0);
+    });
+
+    it('on the fallback path: a wrapper reporting a version verified for --no-daemon starts nothing', () => {
+      healthySeams({ execFileSync: () => 'codex-cli 0.157.1\n' });
+      const before = rows();
+      const { result } = refused(WRAP);
+      assert.equal(result.isolation.reasonCode, 'executable_unverified');
+      assert.equal(calls.spawn.length, 0);
+      assert.equal(rows(), before);
+    });
+
+    it('on relaunch: a project that launched on the real Codex is refused once its executable resolves to a wrapper', () => {
+      healthySeams({ execFileSync: () => 'codex-cli 0.156.1\n' });
+      const l = launched();
+      tmux.probeSession = () => ({ answered: true, live: false });
+      try {
+        const again = withStubbedTmux(() => {
+          tmux.createSession = () => { throw new Error('a refused relaunch must not create a tmux session'); };
+          enginesModule.detectEngine = () => ({ available: true, path: WRAP });
+          return sessions.launchSession(l.project.name, { primePrompt: false });
+        });
+        assert.equal(again.session, null);
+        assert.equal(again.isolation.reasonCode, 'executable_unverified');
+      } finally {
+        tmux.probeSession = real.probe;
+      }
+    });
+
+    it('the real Codex at the same moment still launches', () => {
+      healthySeams({ execFileSync: () => 'codex-cli 0.156.1\n' });
+      const l = launched();
+      assert.match(l.command, /; \/opt\/fake\/bin\/codex --remote /);
+    });
   });
 
   it('the command handed to tmux ends with exactly the command that was judged', () => {

@@ -2945,6 +2945,35 @@ describe('ensureMasterSession — Codex daemon isolation (#1895)', () => {
     assert.equal(begun, 0);
   });
 
+  it('refuses a Codex Master whose resolved executable is not named codex, whatever version it reports, and issues no credential', () => {
+    codexAnswers('codex-cli 0.157.1\n');
+    const WRAP = '/opt/fake/bin/codex-wrapper';
+    const config = store.config.load();
+    const saved = config.master;
+    const bridgePrincipal = require('../lib/bridge-principal');
+    const realBegin = bridgePrincipal.begin;
+    let begun = 0;
+    bridgePrincipal.begin = (...args) => { begun += 1; return realBegin(...args); };
+    try {
+      config.master = { accessLevel: 'read-only', scope: 'all', autoStart: false, engine: 'codex' };
+      store.config.save(config);
+      const tmuxLib = fakeTmux({ alive: false });
+      const enginesLib = { detectEngine: () => ({ available: true, path: WRAP }), resolveDefaultEngine: () => 'codex' };
+      const result = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib, enginesLib });
+      assert.equal(result.created, false);
+      assert.equal(result.code, 'LAUNCH_ISOLATION_UNVERIFIED');
+      assert.equal(result.isolation.reasonCode, 'executable_unverified');
+      assert.match(result.error, /real Codex executable/);
+      assert.deepEqual(tmuxLib.calls, [], 'no tmux session');
+      assert.equal(begun, 0, 'no bridge credential');
+      assert.deepEqual(probed, [], 'the wrapper is never asked its version');
+    } finally {
+      bridgePrincipal.begin = realBegin;
+      config.master = saved;
+      store.config.save(config);
+    }
+  });
+
   it('refuses a Codex Master when the Codex judgment is missing', () => {
     codexAnswers('codex-cli 0.157.1\n');
     const realJudge = codexAdapter.judgeLaunchCommand;
