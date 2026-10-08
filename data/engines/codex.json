@@ -39,7 +39,7 @@
         "humanAction": "Answer Codex's update prompt in the pane (Escape skips it). TangleClaw does not answer it: its default is to upgrade the global Codex install.",
         "evidence": {
           "verifiedOn": "2026-10-07",
-          "source": "Live captures of codex-cli 0.156.1 with update checks at Codex's default and a home that had already learned of 0.161.0. The dialog reads `Update available · 0.156.1 → 0.161.0`, with `› 1. Update now (runs \u0060npm install -g @openai/codex\u0060)` highlighted and `enter continue · esc skip` below. First drawn between 0.4 s and 3.7 s after the pane was created, before the folder-trust prompt. An `Enter` sent to it in a sandbox ran the install and ended the pane (#2177). After it is skipped its rows stay in scrollback above the live composer, and a notice box reads `Update available!` without the middle dot, which this pattern does not match."
+          "source": "Live captures of codex-cli 0.156.1 with update checks at Codex's default and a home that had already learned of 0.161.0. The dialog reads `Update available · 0.156.1 → 0.161.0`, with `› 1. Update now (runs `npm install -g @openai/codex`)` highlighted and `enter continue · esc skip` below. First drawn between 0.4 s and 3.7 s after the pane was created, before the folder-trust prompt. An `Enter` sent to it in a sandbox ran the install and ended the pane (#2177). After it is skipped its rows stay in scrollback above the live composer, and a notice box reads `Update available!` without the middle dot, which this pattern does not match."
         }
       }
     ]
@@ -150,12 +150,15 @@
     "startupControl": {
       "adapter": "codex",
       "channel": "One `codex app-server` per launch on a local unix socket, started detached and owned by TangleClaw; the pane's TUI attaches with `--remote` ahead of its launch-mode flags. Fire is `turn/start` on the pane's thread.",
-      "readiness": "Read from the protocol only: the server's version equals the installed and the recorded one; `config/read` trusts the project directory; `account/read` names an account; `account/rateLimits/read` explicitly allows usage or reports usable credits; exactly one loaded thread (the recorded one once seen) whose canonical cwd is the project; and it is `idle`. Any unknown answer fails closed.",
+      "readiness": "Read from the protocol only: the server's version equals the installed and the recorded one; `config/read` trusts the project directory, or holds no trust entry for it while a measured version and a pane witness allow the fire (see `remoteTrustPrompt`); `account/read` names an account; `account/rateLimits/read` explicitly allows usage or reports usable credits; exactly one loaded thread (the recorded one once seen) whose canonical cwd is the project; and it is `idle`. Any unknown answer fails closed.",
       "receipt": "`clientUserMessageId` echoed as the user item's `clientId` WITH content whose bytes hash to the prompt's text digest is accepted (from `item/completed` or a `thread/turns/list` read-back, re-read on an interval); `turn/completed {completed}` on that turn, after acceptance, is applied; `failed` and `interrupted` are named.",
-      "blockers": "Pre-send: untrusted directory (`trust_required`), no account (`auth_required`), exhausted usage with no usable credits (`quota_exhausted`), version disagreement (`version_mismatch`), no single idle thread (`engine_not_ready`), an unreadable answer (`readiness_unknown`). In-turn: `waitingOnApproval` and `waitingOnUserInput` keep the fire accepted under `approval_pending` / `user_input_pending`; the operator answers in the pane.",
+      "blockers": "Pre-send: no trust entry in Codex's config for the directory, where the fire is not allowed without one (`trust_required`, worded as what was read, never as a dialog nobody looked for), no account (`auth_required`), exhausted usage with no usable credits (`quota_exhausted`), version disagreement (`version_mismatch`), no single idle thread (`engine_not_ready`), an unreadable answer (`readiness_unknown`). In-turn: `waitingOnApproval` and `waitingOnUserInput` keep the fire accepted under `approval_pending` / `user_input_pending`; the operator answers in the pane.",
       "verifiedVersions": [
         "0.156.1"
       ],
+      "remoteTrustPrompt": {
+        "absentOn": []
+      },
       "evidence": {
         "adapter": {
           "verifiedOn": "2026-09-24",
@@ -167,7 +170,7 @@
         },
         "readiness": {
           "verifiedOn": "2026-09-24",
-          "source": "Probes 1-6: `initialize.userAgent` carries the server version; `config/read` returns `config.projects[path].trust_level`; an untrusted cwd leaves the TUI at its trust dialog with NO loaded thread; `thread/read` reports `status.type` idle; `account/read` and `account/rateLimits/read` answered as recorded in the plan. A fresh thread cannot be resumed or listed before its first user message, so subscription is not a readiness precondition."
+          "source": "Probes 1-6: `initialize.userAgent` carries the server version; `config/read` returns `config.projects[path].trust_level`; an untrusted cwd leaves the TUI at its trust dialog with NO loaded thread; `thread/read` reports `status.type` idle; `account/read` and `account/rateLimits/read` answered as recorded in the plan. A fresh thread cannot be resumed or listed before its first user message, so subscription is not a readiness precondition. Corrected 2026-10-07 (#2186): the statement that an untrusted cwd leaves the TUI at its trust dialog was not reproduced. Under `--remote` on codex-cli 0.156.1 no trust dialog was drawn in 11 of 11 private fake-key launches of an untrusted folder, nor in one live signed-in launch into a renamed directory; the pane reached its ordinary composer with an idle thread. A home that has never trusted a folder answers `config.projects: null`."
         },
         "receipt": {
           "verifiedOn": "2026-09-24",
@@ -175,11 +178,15 @@
         },
         "blockers": {
           "verifiedOn": "2026-09-24",
-          "source": "Spike case 4 and probes 1, 5: `account/rateLimits/read` names an exhausted window and credits; an untrusted cwd shows the TUI's trust dialog while `thread/start` from the protocol succeeds, so trust is checked through `config/read` before a send; `thread/status/changed {active, activeFlags: [waitingOnApproval]}` plus a server request name an in-turn approval, and the operator's decline ends the turn `interrupted`."
+          "source": "Spike case 4 and probes 1, 5: `account/rateLimits/read` names an exhausted window and credits; an untrusted cwd shows the TUI's trust dialog while `thread/start` from the protocol succeeds, so trust is checked through `config/read` before a send; `thread/status/changed {active, activeFlags: [waitingOnApproval]}` plus a server request name an in-turn approval, and the operator's decline ends the turn `interrupted`. Corrected 2026-10-07 (#2186): `trust_required` is read from `config/read` alone and no longer asserts a dialog; the pane is read only by the fire's pane witness."
         },
         "verifiedVersions": {
           "verifiedOn": "2026-09-24",
           "source": "codex-cli 0.156.1 is the only version the spike and the probes ran against; the protocol is marked [experimental] by the CLI, so no other version is assumed."
+        },
+        "remoteTrustPrompt": {
+          "verifiedOn": "2026-10-07",
+          "source": "EMPTY ON PURPOSE: the allowance this list gates is built and not yet active. Measured so far for codex-cli 0.156.1 under `--remote` in a folder with no trust entry: 11 private launches with a fake API key (git and non-git folders, a fresh home, a home with other trusted projects, default and Full Auto modes, and after a skipped update prompt), and ONE signed-in launch (a live session started in a renamed directory, 2026-10-07). In all twelve no trust dialog was drawn and the pane reached a usable composer with an idle thread. 0.156.1 is added here only after one signed-in untrusted-folder fire has been probed through the real `--remote` path and reviewed (Architect A154). A version in this list never permits a send by itself: the fire's pane witness must still see an empty composer at fire time."
         }
       }
     }

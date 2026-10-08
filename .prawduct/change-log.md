@@ -35,6 +35,28 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-08 — #2186: the native fire in a folder Codex's config does not trust (built, not active)
+
+<!-- prawduct: type=feature | scope=2186-native-fire-untrusted-folder -->
+
+#2186, the Operator's option 2 as ruled by the Architect in A154 and dispatched by the PM. Stacked on #2177 (PR #2209), whose launch dialog guard the pane witness uses.
+
+**The defect.** `_readiness` read `config/read`, found no trust entry for the project path, and blocked the fire with a fixed sentence saying the pane was showing a folder-trust dialog. Nothing read the pane. Under `--remote` on codex-cli 0.156.1 no dialog is drawn (11 private fake-key launches, one live signed-in session in a renamed directory), and a native launch withholds the paste and the kickoff, so the session got no first turn.
+
+**Root cause.** A fact about Codex's config was reported as a fact about the pane, on the strength of probe evidence that turned out not to hold for this launch path.
+
+**What landed.** The block's wording says what was read, claims no dialog and says how to grant trust. Behind it, dormant: `data/engines/codex.json` records `startupControl.remoteTrustPrompt.absentOn`, empty, validated as exact unique versions that are all in `verifiedVersions`. `lib/pane-witness.js` reads a pane twice a second apart and answers yes only when both reads show a bare composer with no declared prompt below it, the cursor on it with nothing typed, a header past its starting value, no busy marker, and an unchanged digest and cursor. `_readiness` runs the account, usage and thread checks first; a fire that passes them with no trust entry is put to `_withoutTrustEntry`, which needs a listed version and the witness; the bound thread is then read again and must still be in the folder and idle. The fire service supplies the list and the witness for every fire, so the automatic and the operator's fire share one rule. An allowed fire writes a `dispatch_note` on its row: a new nullable column, set once at dispatch, never cleared by a later transition, shown on the panel.
+
+**Why a new column.** `updateFire` rewrites `reason` on every transition and the panel shows it only beside a reason code; the activity log is pruned. A note about what a fire was sent despite has to outlive the turn.
+
+**Config answers.** `projects: null` is a well-formed answer from a home that never trusted a folder and now reads as no entry. A missing `projects` key, or one that is not a table, stays `readiness_unknown` and cannot use the exception.
+
+**A test expectation changed, on purpose.** `test/startup-control.test.js` asserted that every field of a `startupControl` block is required. `remoteTrustPrompt` is optional, so the test now lists the required fields by name.
+
+**Not active, and why.** `absentOn` is empty. Adding 0.156.1 waits for one signed-in untrusted-folder fire through the real `--remote` path on the Operator's key tier, which this build did not run and has no access to. #2186 stays open.
+
+**Not covered.** A real fire against a live Codex. What Codex does with project-level config and hooks in an untrusted folder under `--remote`. Codex versions other than 0.156.1. The witness's header pattern is Codex's and lives in its adapter.
+
 ## 2026-10-07 — #2177: a Codex launch types nothing into a guarded dialog
 
 <!-- prawduct: type=bugfix | scope=2177-prekey-containment -->

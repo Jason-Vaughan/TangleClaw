@@ -309,6 +309,85 @@ describe('startup prompt store: v46 (Chunk B2)', () => {
     });
   });
 
+  describe('the dispatch note (#2186)', () => {
+    beforeEach(() => openStore());
+
+    const NOTE = 'Sent without a trust entry in Codex\'s config for /p: TangleClaw did not grant trust.';
+
+    it('is written at dispatch and survives every later transition, including ones that rewrite the reason', () => {
+      const row = store.startupPrompts.insertFire({ ...fire(300, 1, 'pending'), reasonCode: null, reason: null });
+      assert.equal(row.dispatchNote, null);
+      let r = store.startupPrompts.updateFire(row.id, { outcome: 'dispatching', reason: null, engineThreadId: 'T1', dispatchNote: NOTE });
+      assert.equal(r.fire.dispatchNote, NOTE);
+      r = store.startupPrompts.updateFire(row.id, { outcome: 'dispatching', reason: null, engineTurnId: 'U1' });
+      assert.equal(r.fire.dispatchNote, NOTE, 'a transition that carries no note leaves it');
+      r = store.startupPrompts.updateFire(row.id, { outcome: 'accepted', reasonCode: 'approval_pending', reason: 'waiting on an approval' });
+      assert.equal(r.fire.reason, 'waiting on an approval');
+      assert.equal(r.fire.dispatchNote, NOTE);
+      r = store.startupPrompts.updateFire(row.id, { outcome: 'accepted', reasonCode: null, reason: null });
+      assert.equal(r.fire.reason, null, 'the reason is cleared, as it always was');
+      assert.equal(r.fire.dispatchNote, NOTE, 'the note is not');
+      r = store.startupPrompts.updateFire(row.id, { outcome: 'applied' });
+      assert.equal(r.fire.outcome, 'applied');
+      assert.equal(r.fire.dispatchNote, NOTE);
+    });
+
+    it('survives a failed and an indeterminate end, where the reason names the failure', () => {
+      for (const [end, code] of [['failed', 'turn_failed'], ['indeterminate', 'send_unconfirmed'], ['interrupted', 'turn_interrupted']]) {
+        const row = store.startupPrompts.insertFire({ ...fire(310 + end.length, 1, 'pending'), reasonCode: null, reason: null });
+        store.startupPrompts.updateFire(row.id, { outcome: 'dispatching', dispatchNote: NOTE });
+        const r = store.startupPrompts.updateFire(row.id, { outcome: end, reasonCode: code, reason: `the turn ${end}` });
+        assert.equal(r.ok, true, `${end}: ${r.reason || ''}`);
+        assert.equal(r.fire.reason, `the turn ${end}`);
+        assert.equal(r.fire.dispatchNote, NOTE, end);
+      }
+    });
+
+    it('is write-once: a second note does not replace the first', () => {
+      const row = store.startupPrompts.insertFire({ ...fire(320, 1, 'pending'), reasonCode: null, reason: null });
+      store.startupPrompts.updateFire(row.id, { outcome: 'dispatching', dispatchNote: NOTE });
+      const r = store.startupPrompts.updateFire(row.id, { outcome: 'dispatching', dispatchNote: 'something else' });
+      assert.equal(r.fire.dispatchNote, NOTE);
+    });
+
+    it('is bounded, and is read back after the store is reopened', () => {
+      const dir = store._getBasePath();
+      const row = store.startupPrompts.insertFire({ ...fire(330, 1, 'pending'), reasonCode: null, reason: null });
+      store.startupPrompts.updateFire(row.id, { outcome: 'dispatching', dispatchNote: 'n'.repeat(900) });
+      store.close();
+      store._setBasePath(dir);
+      store.init();
+      const again = store.startupPrompts.getFireById(row.id);
+      assert.equal(again.dispatchNote.length, 500);
+    });
+
+    it('a blocked fire carries none, and an empty or non-text note is not stored', () => {
+      const row = store.startupPrompts.insertFire({ ...fire(340, 1, 'pending'), reasonCode: null, reason: null });
+      let r = store.startupPrompts.updateFire(row.id, { outcome: 'dispatching', dispatchNote: '' });
+      assert.equal(r.fire.dispatchNote, null);
+      r = store.startupPrompts.updateFire(row.id, { outcome: 'dispatching', dispatchNote: 42 });
+      assert.equal(r.fire.dispatchNote, null);
+    });
+
+    it('a database from before the column gains it on open, with existing rows reading no note', () => {
+      const dir = store._getBasePath();
+      const row = store.startupPrompts.insertFire({ ...fire(350, 1, 'pending'), reasonCode: null, reason: null });
+      const db = store.getDb();
+      db.exec('ALTER TABLE startup_prompt_fires DROP COLUMN dispatch_note');
+      db.prepare('DELETE FROM schema_version WHERE version >= ?').run(store.CURRENT_SCHEMA_VERSION);
+      db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(store.CURRENT_SCHEMA_VERSION - 1);
+      store.close();
+      store._setBasePath(dir);
+      store.init();
+      const cols = store.getDb().prepare('PRAGMA table_info(startup_prompt_fires)').all().map((c) => c.name);
+      assert.ok(cols.includes('dispatch_note'));
+      assert.equal(store.getDb().prepare('SELECT MAX(version) v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
+      assert.equal(store.startupPrompts.getFireById(row.id).dispatchNote, null);
+      const r = store.startupPrompts.updateFire(row.id, { outcome: 'dispatching', dispatchNote: NOTE });
+      assert.equal(r.fire.dispatchNote, NOTE);
+    });
+  });
+
   describe('fire transitions', () => {
     beforeEach(() => openStore());
 

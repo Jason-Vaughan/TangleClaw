@@ -201,6 +201,15 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
       assert.match(html, /data-startup-fire="9"[^>]*data-session-id="42"/);
       assert.match(html, /Fire startup prompt/);
       const notFireable = render([native({ startupControl: { channel: { state: 'open', adapter: 'codex' }, fires: [], fireable: false } })]);
+      // #2186: a fire sent despite a missing trust entry says so on its row,
+      // whatever it became afterwards, and the note is escaped like any text.
+      const noted = render([native({ startupControl: { channel: { state: 'open', adapter: 'codex' }, fireable: false, fires: [
+        fire({ dispatchNote: 'Sent without a trust entry in Codex\'s config for /p <x>: TangleClaw did not grant trust.' }),
+        fire({ outcome: 'failed', reasonCode: 'turn_failed', reason: 'the engine failed the turn', dispatchNote: 'Sent without a trust entry.' })
+      ] } })]);
+      assert.match(noted, /Fire: <code>applied<\/code> \([^)]*\) — note: Sent without a trust entry in Codex&#39;s config for \/p &lt;x&gt;: TangleClaw did not grant trust\./);
+      assert.match(noted, /<code>failed<\/code> \([^)]*\) — <code>turn_failed<\/code>: the engine failed the turn — note: Sent without a trust entry\./);
+      assert.ok(!/note:/.test(html), 'a fire with no note shows none');
       assert.doesNotMatch(notFireable, /data-startup-fire/);
       assert.match(notFireable, /Fires: none recorded for this launch/);
     });

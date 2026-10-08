@@ -708,6 +708,7 @@ applied it (#1825). Pasting bytes into a terminal pane is not such a channel.
   "receipt": "what the engine reports on accept and on apply",
   "blockers": "how auth, quota, approval and trust prompts are reported",
   "verifiedVersions": ["<engine CLI version>"],
+  "remoteTrustPrompt": { "absentOn": [] },
   "evidence": {
     "adapter": { "verifiedOn": "YYYY-MM-DD", "source": "where this was verified" }
   }
@@ -787,10 +788,10 @@ belongs in how the server is started, not in the bootstrap. A profile's `preKeys
 native launch too: a preKey is a keystroke, and an Enter on a fresh trust dialog would accept its
 default before readiness could refuse `trust_required`. Codex declares none on any path (#2177).
 
-**Readiness is read from the protocol, never from the pane.** Before a send the adapter needs all of:
-the app-server's `initialize` version equal to the installed and the recorded one; `config/read`
-naming the project directory as trusted (Codex shows its folder-trust dialog otherwise, and it is
-never typed through); `account/read` naming an account; `account/rateLimits/read` explicitly allowing
+**Readiness is read from the protocol; the pane is consulted in one case only.** Before a send the
+adapter needs all of: the app-server's `initialize` version equal to the installed and the recorded
+one; `config/read` naming the project directory as trusted, or the trust exception below;
+`account/read` naming an account; `account/rateLimits/read` explicitly allowing
 usage or reporting a usable credit balance; exactly one loaded thread whose canonical cwd is the
 project directory (the recorded one once seen); and that thread `idle`. An unknown answer fails
 closed as `readiness_unknown`; a blocker is `trust_required`, `auth_required`, `quota_exhausted`,
@@ -814,13 +815,47 @@ thread on the reachable channel: a turn carrying the digest settles it to that t
 payload absent on every page while the thread stays idle across a pause settles it to `failed`;
 anything less leaves it indeterminate.
 
+**A folder with no trust entry in Codex's config (#2186).** A new project, a renamed directory or a
+fresh clone path has no entry in Codex's `config.toml`. `config/read` says so (`projects` without the
+folder, or `projects: null` on a home that has never trusted one). Under `--remote`, Codex 0.156.1
+was measured to draw **no** trust dialog for such a folder: the pane reaches its ordinary composer.
+So the blocker never claims a dialog. It says what was read and how to grant trust: add the folder
+under `[projects]` in Codex's `config.toml` with `trust_level = "trusted"`, or run `codex` once in
+the folder outside TangleClaw and accept its prompt, then Fire again.
+
+The operator's decision is that such a fire may go, without a trust entry, when everything else is
+in order. **That allowance is built and not yet active**: it applies only to versions listed in
+the profile's `startupControl.remoteTrustPrompt.absentOn`, and that list ships empty until a
+signed-in fire has been probed. When a version is listed, the fire goes only if all of this holds:
+
+- every other check passes (version, account, usage, the launch's own thread loaded and `idle`);
+- a **pane witness** reads the session's pane twice, a second apart, and both reads show a bare
+  composer with no declared guarded dialog below it, the cursor on that composer with nothing typed,
+  a header past `model: loading`, no busy marker, and an unchanged pane;
+- the same thread, read again after the witness and immediately before `turn/start`, is still in
+  the project directory and still `idle`.
+
+A trust dialog actually on the pane refuses the fire as `trust_required`, worded as read from the
+pane. Anything short of a proven composer refuses it as `pane_not_ready`, naming what failed. A
+`config/read` answer that cannot be understood stays `readiness_unknown`. The automatic launch fire
+and the operator's **Fire** go through the same rule. Nothing writes a trust entry and nothing is
+typed. A fire that goes this way records a **dispatch note** on its row, kept through every later
+outcome and shown in the Launch readiness panel: this pane showed an empty composer and no declared
+trust prompt at fire time, the thread was idle, and TangleClaw did not grant trust.
+
+`remoteTrustPrompt.absentOn` is a different claim from `verifiedVersions`. The second attests the
+protocol on a version; the first records that the version was measured, with its own probe, to reach
+a composer without a trust entry. Every entry must also be in `verifiedVersions`, and an entry never
+permits a send without the witness.
+
 **The adapter contract** (what `ADAPTERS` entries implement): `installedVersion()` (synchronous,
 cached, never spawns); `probeVersionSync({enginePath})` (the launch path only); `prepareLaunch({project,
 engineProfile, launchCmd, enginePath, env})` returning `{ok, handle, command}` or `{ok: false, reasonCode,
 reason}` (`env` is the pane's environment, which the server must inherit); `attachLaunch(handle, {sessionId, sequenceId, engineId})`; `abandonLaunch(handle, reason)`;
 `releaseSession(sessionId, reason)`; `reap()`; `recover()`; `start()`/`stop()`;
-`fire({session, project, sequenceId, promptText, promptTextDigest, payloadDigest, onUpdate})`
-returning `{accepted, settled}` promises; and `reconcile({session, fire, onUpdate})`. Every
+`fire({session, project, sequenceId, promptText, promptTextDigest, payloadDigest, onUpdate,
+trustException})` returning `{accepted, settled}` promises (`trustException` is `{absentOn, witness}`,
+supplied by the fire service for every fire; an adapter with no use for it ignores it); and `reconcile({session, fire, onUpdate})`. Every
 transition an adapter reports goes through the store's transition map, so no adapter can move a fire
 backwards or out of a terminal outcome.
 

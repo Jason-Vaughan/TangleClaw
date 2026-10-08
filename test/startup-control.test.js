@@ -54,13 +54,61 @@ describe('startupControl blockErrors', () => {
     assert.ok(sc.blockErrors('codex').length > 0);
   });
 
-  it('requires every field', () => {
-    for (const field of Object.keys(sc.FIELDS)) {
+  it('requires every field it marks required', () => {
+    const required = Object.keys(sc.FIELDS).filter((field) => sc.FIELDS[field].required);
+    assert.deepEqual(required.sort(), ['adapter', 'blockers', 'channel', 'readiness', 'receipt', 'verifiedVersions']);
+    for (const field of required) {
       const b = block();
       delete b[field];
       delete b.evidence[field];
       assert.ok(sc.blockErrors(b).some((e) => e.includes(`startupControl.${field} is required`)), field);
     }
+  });
+
+  describe('remoteTrustPrompt, the versions measured to draw no trust dialog (#2186)', () => {
+    /**
+     * A valid block that also declares the fact.
+     * @param {*} value - The `remoteTrustPrompt` value.
+     * @returns {object}
+     */
+    const withFact = (value) => {
+      const b = block();
+      b.remoteTrustPrompt = value;
+      b.evidence.remoteTrustPrompt = { verifiedOn: '2026-10-07', source: 'a probe' };
+      return b;
+    };
+
+    it('is optional: a block without it is well-formed', () => {
+      assert.deepEqual(sc.blockErrors(block()), []);
+    });
+
+    it('accepts an empty list: measured for no version yet', () => {
+      assert.deepEqual(sc.blockErrors(withFact({ absentOn: [] })), []);
+    });
+
+    it('accepts an exact version that is also a verified one', () => {
+      const b = withFact({ absentOn: [block().verifiedVersions[0]] });
+      assert.deepEqual(sc.blockErrors(b), []);
+    });
+
+    it('refuses a version the channel is not verified on', () => {
+      const errors = sc.blockErrors(withFact({ absentOn: ['9.9.9'] }));
+      assert.ok(errors.some((e) => e.includes('remoteTrustPrompt.absentOn names 9.9.9, which is not in verifiedVersions')), errors.join('; '));
+    });
+
+    it('refuses anything that is not a list of unique exact versions', () => {
+      const v = block().verifiedVersions[0];
+      for (const bad of [null, [], 'all', { absentOn: 'all' }, { absentOn: ['0.156'] }, { absentOn: ['^0.156.1'] }, { absentOn: [v, v] }, { absentOn: [], extra: true }, {}]) {
+        const errors = sc.blockErrors(withFact(bad));
+        assert.ok(errors.some((e) => e.includes('startupControl.remoteTrustPrompt must be')), JSON.stringify(bad));
+      }
+    });
+
+    it('needs its own evidence, like every declared field', () => {
+      const b = withFact({ absentOn: [] });
+      delete b.evidence.remoteTrustPrompt;
+      assert.ok(sc.blockErrors(b).some((e) => e.includes('evidence.remoteTrustPrompt is missing')));
+    });
   });
 
   it('refuses an unknown field', () => {
