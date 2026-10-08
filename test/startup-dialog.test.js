@@ -1796,7 +1796,7 @@ describe('the session keeps its blocker (#2128)', () => {
             // A profile that cannot be fetched is refused in its own right, for
             // every sender. The recorded blocker is named in it as recorded and
             // uncleared, never as on screen.
-            assert.match(viaApi.error, /^startup_dialogs_unreadable: .*engine profile "claude" could not be fetched: no such engine profile is installed/);
+            assert.match(viaApi.error, /^startup_dialogs_unreadable: .*engine profile "claude" is not available: the store returned no profile/);
             assert.match(viaApi.error, /A launch blocker is also recorded for this session and has not been cleared \(trust_required, the engine's folder trust dialog\); TangleClaw cannot tell from here whether that dialog is still on screen/);
             assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, startupDialog.DECLARATION_UNREADABLE);
           } else {
@@ -3564,7 +3564,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
                 profiles.claude = make();
                 const s = start();
                 pane = TRUST_DIALOG;
-                refusedUnread(send(s), /^startup_dialogs_unreadable: nothing was typed into the session\. The engine profile "claude" could not be fetched: /);
+                refusedUnread(send(s), /^startup_dialogs_unreadable: nothing was typed into the session\. The engine profile "claude" is not available: /);
                 assert.equal(store.sessions.get(s.id).launchBlocker, null);
               });
             }
@@ -3575,12 +3575,10 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
               pane = AFTER_MENU;
               const refused = tmux._startupDialogOn(s.tmuxSession, 'claude');
               assert.equal(refused.code, startupDialog.DECLARATION_UNREADABLE);
-              if (fault === 'there is no such profile') {
-                assert.match(refused.meaning, /^Nothing was sent\. Install or restore that engine profile; sends go through again at the first send after it can be read\./);
-                assert.doesNotMatch(refused.meaning, /cannot be read and needs repair/, 'a missing profile is not an unreadable file');
-              } else {
-                assert.match(refused.meaning, /Sends go through again as soon as TangleClaw can read its engine profiles\. If this keeps happening, an engine profile file cannot be read and needs repair: the server log names the error/);
-              }
+              // One cause and one remedy for every way the fetch fails to yield a
+              // profile: the store cannot tell a missing file from one holding
+              // `null`, so the refusal names the possibilities and asserts none.
+              assert.match(refused.meaning, /^Nothing was sent\. That engine profile may be missing, unreadable or malformed: install or restore a valid profile, or repair the file\. Sends go through again at the first send after it can be read as a profile\./);
               assert.doesNotMatch(startupDialog.refusalText(refused), /clears by itself|nothing .* needs fixing/);
               assert.equal(paneReads, 0);
             });
@@ -3614,6 +3612,60 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
             });
           }
 
+          describe('a profile file that parses, but not to a profile', () => {
+            // `store.engines.get` is a bare JSON.parse. A file overwritten with a
+            // number, a string or a list comes back truthy and declares nothing,
+            // which used to read as a healthy profile with no dialogs.
+            const NOT_PROFILES = { 'a number': 7, 'a string': 'claude', 'a list': [], 'an empty list of profiles': [{}], 'null': null };
+            for (const [what, value] of Object.entries(NOT_PROFILES)) {
+              it(`${what}: every sender and the pane writer refuse, nothing typed, the pane not read`, () => {
+                profiles.claude = value;
+                const s = start();
+                pane = TRUST_DIALOG;
+                for (const send of Object.values(SENDERS)) {
+                  const sent = send(s);
+                  assert.equal(sent.ok, false);
+                  assert.equal(sent.startupDialog.code, startupDialog.DECLARATION_UNREADABLE);
+                  assert.match(sent.error, /The engine profile "claude" is not available: /);
+                  assert.match(sent.error, /may be missing, unreadable or malformed: install or restore a valid profile, or repair the file/);
+                }
+                assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, startupDialog.DECLARATION_UNREADABLE);
+                assert.deepEqual(typed, []);
+                assert.equal(paneReads, 0);
+                assert.equal(store.sessions.get(s.id).launchBlocker, null);
+              });
+            }
+
+            it('handed straight to the module (as a launch hands its profile), it is an unreadable declaration, never "nothing declared"', async () => {
+              for (const value of [7, 'claude', [], [{}]]) {
+                const got = startupDialog.resolve(value);
+                assert.equal(got.dialogs.length, 0);
+                assert.equal(got.problems.length, 1, JSON.stringify(value));
+                assert.equal((await startupDialog.watch({ tmuxName: 't', engineProfile: value })).outcome, 'unreadable');
+                assert.equal(startupDialog.check('t', value).unresolvedCause, 'declaration');
+              }
+              assert.deepEqual(startupDialog.resolve(null), { dialogs: [], problems: [], wake: null, lookupFault: null }, 'no profile at all is the unnamed case, unchanged');
+            });
+
+            it('the refusal does not claim to know which it is', () => {
+              for (const value of [null, 7, new Error('EACCES')]) {
+                profiles.claude = value;
+                const refused = startupDialog.withholdFor(startupDialog.checkEngine('t', 'claude'), null);
+                assert.doesNotMatch(startupDialog.refusalText(refused), /no such engine profile is installed|is not installed|does not exist/);
+              }
+            });
+
+            it('it lifts at the first send after the file holds a profile again', () => {
+              profiles.claude = 7;
+              start();
+              pane = AFTER_MENU;
+              assert.equal(sessions.injectCommand(project.name, 'ls').ok, false);
+              profiles.claude = { ...CLAUDE, id: 'claude', command: 'claude' };
+              assert.equal(sessions.injectCommand(project.name, 'ls').ok, true);
+              assert.deepEqual(typed, [{ text: 'ls' }]);
+            });
+          });
+
           it('control, no engine named: no profile to fetch; refused only while a blocker is stored', () => {
             profiles.claude = new Error('unreadable');
             const s = start();
@@ -3631,14 +3683,14 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
             assert.equal(seen.unresolved, null);
             assert.equal(startupDialog.withholdFor(seen, null), null);
             startupDialog._internal.storeOpen = () => true;
-            assert.equal(startupDialog.checkEngine('t', 'ghost').unresolvedCause, 'profile_missing');
+            assert.equal(startupDialog.checkEngine('t', 'ghost').unresolvedCause, 'profile');
           });
 
           it('the cause is a field, not wording: profile, declaration and lookup are told apart by `unresolvedCause`', () => {
-            profiles.claude = null;
-            assert.equal(startupDialog.checkEngine('t', 'claude').unresolvedCause, 'profile_missing');
-            profiles.claude = new Error('EACCES');
-            assert.equal(startupDialog.checkEngine('t', 'claude').unresolvedCause, 'profile');
+            for (const unavailable of [null, new Error('EACCES'), 7, 'claude', []]) {
+              profiles.claude = unavailable;
+              assert.equal(startupDialog.checkEngine('t', 'claude').unresolvedCause, 'profile', JSON.stringify(unavailable));
+            }
             profiles.claude = { ...CLAUDE, id: 'claude', command: 'claude' };
             const realCheck = startupDialog.check;
             startupDialog.check = () => { throw new Error('boom'); };
@@ -3690,7 +3742,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
               const sent = sessions.injectCommand(project.name, 'ls');
               assert.equal(sent.ok, false);
               assert.equal(sent.startupDialog.code, startupDialog.DECLARATION_UNREADABLE);
-              assert.match(sent.error, /engine profile "openclaw" \(for engine "openclaw:conn-7"\) could not be fetched/);
+              assert.match(sent.error, /engine profile "openclaw" \(for engine "openclaw:conn-7"\) is not available/);
               assert.equal(tmux._startupDialogOn(s.tmuxSession, 'openclaw:conn-7').code, startupDialog.DECLARATION_UNREADABLE);
               assert.deepEqual(typed, []);
             });

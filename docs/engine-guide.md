@@ -648,10 +648,12 @@ only when the lookup failed:
   profile that holds the bad entry. Correcting that profile is not enough by itself: the
   declarations read for each program are kept for the life of the server, so **restart TangleClaw**
   after the fix;
-- the session's **engine profile cannot be fetched** at all, for a send that names its engine. If
-  the read fails, repair the file (the server log names the error); if no such profile is
-  installed, install or restore it. Either way sends go through at the first send after it can be
-  read. A connection-qualified engine id resolves to its base profile first
+- the session's **engine profile is not available as a profile**, for a send that names its
+  engine: the read fails, nothing comes back, or the file parses to something that is not a
+  profile (a number, a string, a list). The refusal says it may be missing, unreadable or
+  malformed and does not claim which, because the store cannot tell a missing file from one
+  holding `null`. Install or restore a valid profile, or repair the file; sends go through at the
+  first send after it can be read as a profile. A connection-qualified engine id resolves to its base profile first
   (`openclaw:<connection>` reads the `openclaw` profile), so a healthy OpenClaw session is not
   affected; only a base profile that really cannot be read is refused;
 - **the look itself fails**: anything thrown while TangleClaw is working out what the pane shows,
