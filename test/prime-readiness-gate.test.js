@@ -96,6 +96,14 @@ describe('_awaitPaneReady (#999) — two signals, honest degradation', () => {
     assert.ok(Number.isFinite(res.waitedMs));
   });
 
+  it('hands every capture to an observer, so a caller can report what the pane shows mid-wait (#2177)', async () => {
+    const seen = [];
+    const { opts } = scriptedPane([AGY_VERIFYING, AGY_READY, AGY_READY]);
+    const res = await sessions._awaitPaneReady('t', 'antigravity', { ...opts, onCapture: (lines) => seen.push(lines[0]) });
+    assert.equal(res.ready, true);
+    assert.deepEqual(seen, ['Verifying your account...', 'transcript line', 'transcript line']);
+  });
+
   it('needs TWO consecutive identical digests — a single marker sighting is not readiness', async () => {
     // Marker visible from the first frame, but the transcript is still moving:
     // readiness may only be declared once the digest holds across two polls.
