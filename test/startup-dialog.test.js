@@ -3128,7 +3128,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
             const s = start();
             pane = AFTER_MENU;
             const realGet = store.engines.get;
-            store.engines.get = (id) => (id === 'claude' ? VARIANT : realGet.call(store.engines, id));
+            store.engines.get = (id) => (id === 'claude' ? { ...VARIANT, id: 'claude' } : realGet.call(store.engines, id));
             try {
               const sent = launchKickoff._internal.inject(project.name, 'Run `tc start next`', { sessionId: s.id, launchSend: true });
               assert.equal(sent.ok, false);
@@ -3211,7 +3211,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
             tmux.capturePane = () => { paneReads += 1; return served(pane); };
             realEngineGet = store.engines.get;
             // The session's engine resolves to the inheriting profile.
-            store.engines.get = (id) => (id === 'claude' ? VARIANT : realEngineGet.call(store.engines, id));
+            store.engines.get = (id) => (id === 'claude' ? { ...VARIANT, id: 'claude' } : realEngineGet.call(store.engines, id));
           });
 
           afterEach(() => { store.engines.get = realEngineGet; });
@@ -3249,7 +3249,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
               assert.equal(sent.ok, false);
               assert.equal(sent.startupDialog.code, startupDialog.DECLARATION_UNREADABLE);
               assert.equal(sent.startupDialog.label, null);
-              assert.match(sent.error, /^startup_dialogs_unreadable: nothing was typed into the session\. The startup dialogs that apply to engine profile "claude-sonnet-reviewer" could not be looked up/);
+              assert.match(sent.error, /^startup_dialogs_unreadable: nothing was typed into the session\. The startup dialogs that apply to engine profile "claude" could not be looked up/);
               assert.match(sent.error, /Sends go through again as soon as TangleClaw can read its engine profiles\. If this keeps happening, an engine profile file cannot be read and needs repair: the server log names the error/);
               assert.doesNotMatch(sent.error, /launch's own text|Fix the declaration|Correct the declaration|clears by itself|nothing .* needs fixing/, 'wording true for any sender, and no promise that it mends itself');
               assert.deepEqual(typed, []);
@@ -3324,7 +3324,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
           it('control, own []: a later send is typed during the fault, because that profile does not depend on the lookup', () => {
             startupDialog.reset();
             startupDialog._internal.engineProfiles = broken;
-            const optedOut = { ...VARIANT, capabilities: { supportsPrimePrompt: true, startupDialogs: [] } };
+            const optedOut = { ...VARIANT, id: 'claude', capabilities: { supportsPrimePrompt: true, startupDialogs: [] } };
             store.engines.get = (id) => (id === 'claude' ? optedOut : realEngineGet.call(store.engines, id));
             const s = start();
             pane = AFTER_MENU;
@@ -3578,7 +3578,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
               // One cause and one remedy for every way the fetch fails to yield a
               // profile: the store cannot tell a missing file from one holding
               // `null`, so the refusal names the possibilities and asserts none.
-              assert.match(refused.meaning, /^Nothing was sent\. That engine profile may be missing, unreadable or malformed: install or restore a valid profile, or repair the file\. Sends go through again at the first send after it can be read as a profile\./);
+              assert.match(refused.meaning, /^Nothing was sent\. That engine profile may be missing, unreadable or malformed, or its file may not carry the profile's own `id`: install or restore a valid profile, or repair the file\. Sends go through again at the first send after it can be read as that profile\./);
               assert.doesNotMatch(startupDialog.refusalText(refused), /clears by itself|nothing .* needs fixing/);
               assert.equal(paneReads, 0);
             });
@@ -3627,7 +3627,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
                   assert.equal(sent.ok, false);
                   assert.equal(sent.startupDialog.code, startupDialog.DECLARATION_UNREADABLE);
                   assert.match(sent.error, /The engine profile "claude" is not available: /);
-                  assert.match(sent.error, /may be missing, unreadable or malformed: install or restore a valid profile, or repair the file/);
+                  assert.match(sent.error, /may be missing, unreadable or malformed, or its file may not carry the profile's own `id`: install or restore a valid profile, or repair the file/);
                 }
                 assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, startupDialog.DECLARATION_UNREADABLE);
                 assert.deepEqual(typed, []);
@@ -3663,6 +3663,159 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
               profiles.claude = { ...CLAUDE, id: 'claude', command: 'claude' };
               assert.equal(sessions.injectCommand(project.name, 'ls').ok, true);
               assert.deepEqual(typed, [{ text: 'ls' }]);
+            });
+          });
+
+          describe('a well-formed object is this profile only if it says so (A160 R14)', () => {
+            // `{}` parses, is a plain object, declares nothing and has no command:
+            // on shape alone it read as a healthy profile with no dialogs. Every
+            // profile TangleClaw saves or validates carries its id, so the fetched
+            // object must carry exactly the id that was asked for.
+            const GOOD = { ...CLAUDE, id: 'claude', command: 'claude' };
+            const UNIDENTIFIED = {
+              'an empty object': {},
+              'a profile with no id': (() => { const { id: _dropped, ...rest } = GOOD; return rest; })(),
+              'another profile\'s id': { ...GOOD, id: 'codex' },
+              'an id differing only in case': { ...GOOD, id: 'Claude' },
+              'an id with stray whitespace': { ...GOOD, id: 'claude ' },
+              'a number for an id': { ...GOOD, id: 7 },
+              'a null id': { ...GOOD, id: null },
+              'a list for an id': { ...GOOD, id: ['claude'] }
+            };
+
+            for (const [what, value] of Object.entries(UNIDENTIFIED)) {
+              it(`${what}: every sender and the pane writer refuse, nothing typed, the pane not read, no blocker touched`, () => {
+                profiles.claude = value;
+                const s = start();
+                pane = TRUST_DIALOG;
+                for (const send of Object.values(SENDERS)) {
+                  const sent = send(s);
+                  assert.equal(sent.ok, false);
+                  assert.equal(sent.startupDialog.code, startupDialog.DECLARATION_UNREADABLE);
+                  assert.match(sent.error, /The engine profile "claude" is not available: what the store returned (does not carry an `id`|identifies itself as ")/);
+                }
+                const refused = tmux._startupDialogOn(s.tmuxSession, 'claude');
+                assert.equal(refused.code, startupDialog.DECLARATION_UNREADABLE);
+                assert.equal(startupDialog.checkEngine(s.tmuxSession, 'claude').unresolvedCause, 'profile');
+                assert.deepEqual(typed, []);
+                assert.equal(paneReads, 0);
+                assert.equal(store.sessions.get(s.id).launchBlocker, null);
+              });
+            }
+
+            it('with a blocker stored it is left byte-identical and named as recorded', () => {
+              profiles.claude = {};
+              const s = start();
+              store.sessions.setLaunchBlocker(s.id, BLOCKER);
+              const before = JSON.stringify(store.sessions.get(s.id).launchBlocker);
+              pane = AFTER_MENU;
+              const sent = sessions.injectCommand(project.name, 'ls');
+              assert.equal(sent.startupDialog.code, startupDialog.DECLARATION_UNREADABLE);
+              assert.match(sent.error, /A launch blocker is also recorded for this session and has not been cleared \(trust_required/);
+              assert.equal(JSON.stringify(store.sessions.get(s.id).launchBlocker), before);
+              assert.deepEqual(typed, []);
+            });
+
+            it('the refusal says the file may not carry the profile\'s own id, among the other possibilities, and asserts none', () => {
+              profiles.claude = {};
+              const refused = startupDialog.withholdFor(startupDialog.checkEngine('t', 'claude'), null);
+              assert.match(refused.meaning, /may be missing, unreadable or malformed, or its file may not carry the profile's own `id`/);
+            });
+
+            it('recovery: the first send after the file is repaired to carry its id is typed, through the session and through the pane writer', () => {
+              profiles.claude = {};
+              const s = start();
+              pane = AFTER_MENU;
+              assert.equal(sessions.injectCommand(project.name, 'ls').ok, false);
+              assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, startupDialog.DECLARATION_UNREADABLE);
+              profiles.claude = GOOD;
+              assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude'), null, 'the pane writer reads the repaired profile at once');
+              assert.equal(sessions.injectCommand(project.name, 'ls').ok, true);
+              assert.deepEqual(typed, [{ text: 'ls' }]);
+              assert.ok(paneReads >= 1);
+            });
+
+            it('once repaired, the dialog on the pane is seen and refused by name', () => {
+              profiles.claude = { ...GOOD, id: 'codex' };
+              start();
+              pane = TRUST_DIALOG;
+              assert.equal(sessions.injectCommand(project.name, 'ls').startupDialog.code, startupDialog.DECLARATION_UNREADABLE);
+              profiles.claude = GOOD;
+              assert.equal(sessions.injectCommand(project.name, 'ls').startupDialog.code, 'trust_required');
+              assert.deepEqual(typed, []);
+            });
+
+            it('control, the bundled profile with its matching id: read as usual', () => {
+              profiles.claude = GOOD;
+              start();
+              pane = AFTER_MENU;
+              assert.equal(sessions.injectCommand(project.name, 'ls').ok, true);
+              assert.ok(paneReads >= 1);
+            });
+
+            it('control, every bundled profile carries an id equal to its file name', () => {
+              const dir = path.join(__dirname, '..', 'data', 'engines');
+              const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
+              assert.ok(files.length >= 5);
+              for (const file of files) {
+                const profile = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+                assert.equal(profile.id, file.replace(/\.json$/, ''), file);
+              }
+            });
+
+            it('control, an operator\'s own profile with a matching id: fetched under its own id and typed into', () => {
+              const custom = { ...GOOD, id: 'claude-sonnet-reviewer', capabilities: { ...GOOD.capabilities } };
+              profiles['claude-sonnet-reviewer'] = custom;
+              const s = store.sessions.start({ projectId: project.id, engineId: 'claude-sonnet-reviewer', tmuxSession: `a160-custom-${counter}` });
+              pane = AFTER_MENU;
+              assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude-sonnet-reviewer'), null);
+              assert.equal(sessions.injectCommand(project.name, 'ls').ok, true);
+              assert.deepEqual(typed, [{ text: 'ls' }]);
+              // The same file with no id is the compatibility cost: refused.
+              typed.length = 0;
+              const { id: _dropped, ...identityless } = custom;
+              profiles['claude-sonnet-reviewer'] = identityless;
+              const sent = sessions.injectCommand(project.name, 'ls');
+              assert.equal(sent.ok, false);
+              assert.match(sent.error, /engine profile "claude-sonnet-reviewer" is not available: what the store returned does not carry an `id`/);
+              assert.deepEqual(typed, []);
+            });
+
+            it('the OpenClaw mapping: the base profile must identify itself as `openclaw`, not as the connection', () => {
+              const OPENCLAW = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'openclaw.json'), 'utf8'));
+              const s = store.sessions.start({ projectId: project.id, engineId: 'openclaw:conn-7', tmuxSession: `a160-oc14-${counter}` });
+              pane = AFTER_MENU;
+              profiles.openclaw = OPENCLAW;
+              assert.equal(tmux._startupDialogOn(s.tmuxSession, 'openclaw:conn-7'), null, 'id "openclaw" matches the base id asked for');
+              assert.equal(sessions.injectCommand(project.name, 'ls').ok, true);
+              typed.length = 0;
+              profiles.openclaw = { ...OPENCLAW, id: 'openclaw:conn-7' };
+              const sent = sessions.injectCommand(project.name, 'ls');
+              assert.equal(sent.ok, false);
+              assert.match(sent.error, /engine profile "openclaw" \(for engine "openclaw:conn-7"\) is not available: what the store returned identifies itself as "openclaw:conn-7"/);
+              assert.deepEqual(typed, []);
+            });
+
+            it('control, no store open: an object with no id is looked at as it always was, not refused', () => {
+              profiles.claude = {};
+              startupDialog._internal.storeOpen = () => false;
+              const seen = startupDialog.checkEngine('t', 'claude');
+              assert.equal(seen.unresolved, null);
+              assert.equal(startupDialog.withholdFor(seen, null), null);
+            });
+
+            it('the limit, stated: a matching id with broken fields is taken as the profile; what it declares is judged as any profile\'s is', () => {
+              // Not caught by identity: an object that names itself correctly and
+              // has lost its declaration and its command reads as declaring nothing.
+              profiles.claude = { id: 'claude' };
+              const s = start();
+              pane = AFTER_MENU;
+              assert.equal(startupDialog.checkEngine(s.tmuxSession, 'claude').unresolved, null);
+              // A matching id with a declaration that cannot be read IS caught, by the declaration rule.
+              profiles.claude = { id: 'claude', command: 'claude', capabilities: { startupDialogs: 'trust' } };
+              startupDialog.reset();
+              startupDialog._internal.engineProfiles = () => { throw new Error('unreadable'); };
+              assert.equal(startupDialog.checkEngine(s.tmuxSession, 'claude').unresolvedCause, 'declaration');
             });
           });
 
@@ -3920,7 +4073,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
           tmux.capturePane = () => { paneReads += 1; return served(pane); };
           startupDialog._internal.wakeProfiles = () => ({ claude: WAKE });
           realEngineGet = store.engines.get;
-          store.engines.get = (id) => (id === 'claude' ? VARIANT : realEngineGet.call(store.engines, id));
+          store.engines.get = (id) => (id === 'claude' ? { ...VARIANT, id: 'claude' } : realEngineGet.call(store.engines, id));
         });
 
         afterEach(() => { store.engines.get = realEngineGet; });

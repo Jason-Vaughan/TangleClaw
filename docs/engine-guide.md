@@ -650,10 +650,21 @@ only when the lookup failed:
   after the fix;
 - the session's **engine profile is not available as a profile**, for a send that names its
   engine: the read fails, nothing comes back, or the file parses to something that is not a
-  profile (a number, a string, a list). The refusal says it may be missing, unreadable or
-  malformed and does not claim which, because the store cannot tell a missing file from one
-  holding `null`. Install or restore a valid profile, or repair the file; sends go through at the
-  first send after it can be read as a profile. A connection-qualified engine id resolves to its base profile first
+  profile (a number, a string, a list), or it is an object that does not carry the profile's own
+  `id`. The refusal says it may be missing, unreadable or malformed, or may not carry its `id`,
+  and does not claim which, because the store cannot tell a missing file from one holding `null`.
+  Install or restore a valid profile, or repair the file; sends go through at the first send after
+  it can be read as that profile.
+
+  **A profile file must carry `"id"` equal to its own profile id** (its file name without
+  `.json`; for an OpenClaw session, `openclaw`). Every profile TangleClaw saves or validates has
+  one, and so does every bundled profile. A file dropped into the engines directory by hand
+  **without** an `id`, or with another profile's, launched and took sends before this check
+  existed; it is now refused on every send until the `id` is added. That cost is deliberate: an
+  object that does not say which profile it is cannot be trusted to say what its engine shows
+  (`{}` is a valid JSON object that declares nothing). **The check is identity only.** It does not
+  validate the profile: a file with the right `id` and broken or missing fields is taken as the
+  profile, and a declaration it has lost is simply not there. A connection-qualified engine id resolves to its base profile first
   (`openclaw:<connection>` reads the `openclaw` profile), so a healthy OpenClaw session is not
   affected; only a base profile that really cannot be read is refused;
 - **the look itself fails**: anything thrown while TangleClaw is working out what the pane shows,
