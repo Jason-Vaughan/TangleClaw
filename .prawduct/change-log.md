@@ -35,6 +35,40 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-07 — #2188: a project stores its selected model (persistence)
+
+<!-- prawduct: type=feature | scope=2188-engine-model-selection -->
+
+Chunk 03 of the #2188 build plan, dispatched by the PM. Storage, validation and reporting only: no launch reads the field, no selector is on, no schema change.
+
+**What landed.** `model` in the project config, beside `engine`. One row in `lib/projects.js#PROJECT_UPDATE_VALIDATORS` judges a saved model with `engine-models.checkSelection` against the engine the project will have after the request; an unreadable roster refuses the save. An engine change clears the model unless the request supplies one for the new engine, and the save's `warnings` say so (`modelAfterUpdate`, `modelClearedWarning`). A stored model that stops being selectable is kept and reported: the project payload carries `model` and `modelCheck` (`storedModelReport`). Every engine payload carries `modelSelection`, with `declared` telling a profile with no `models` key from one set to null (Architect A141), and `GET /api/engines` carries the offered models with their availability.
+
+**Three departures from the design, each sent to the PM with the local head.**
+
+- *A save that stores a model says no launch uses it yet* (`MODEL_NOT_YET_LAUNCHED`). The design did not have this. Each chunk merges and deploys alone, and until the launch chunk a stored model changes nothing; ADR 0013 does not let a setting be accepted in silence when it has no effect. The launch chunk removes the sentence, its test, and the filter that keeps `model` out of the "applies to the next launch" warning meanwhile.
+- *The profile-binding refusal is in the store.* The design refuses "binding a profile to a project with a model". Nothing in the product binds a profile except `store.projects.update`, so that is where `MODEL_SELECTED` is thrown; the PATCH table has no such field.
+- *The offered-models list is not on a project's own engine payload.* Building it parses the CLI's roster (356 KB for Codex on the build host), and that payload is built for every project on a polled list. The project payload carries the profile-only state, and a list of projects reads the roster once per distinct engine and model.
+
+**Moved out, by agreement with the PM at dispatch.** The `sessions` columns: `requested_model` goes with the launch chunk, the evidence columns with the evidence chunk.
+
+**Not duplicated.** The design promised a regression test for #2189 here (a Codex project on Bypass switched to Antigravity reads back `default`). `test/launch-mode-settings.test.js` already pins it on `main`.
+
+**Review.** The first review found no blocker and two things worth fixing, both fixed in the second commit: the validator read the engine from `project.json` before the project row, so a checkout whose file had drifted could store a model the same response reported as unselectable; and a save under a running session said the model "applies to the next launch" beside the sentence saying no launch uses it. The remaining notes are accepted on the record. Four older validator rows still read the engine from `project.json` first; they predate this work and were reported to the PM as a candidate issue.
+
+**After the independent PR review and the Architect's rulings on it (A161).**
+
+- *An unreadable config was shown as no model.* `enrichProject` built the report inside a block that answers a config it cannot use with defaults, and the scanner's config reader returns defaults for a file that will not parse, so a failed read came out as `model: null, modelCheck: null`: the silent drop this chunk forbids, at the read. The scanner child now reports `configError` beside the config, and the payload reports `PROJECT_CONFIG_UNREADABLE` for a directory that would not answer and for a config file that would not read or parse. A file or directory that is simply absent still reports no model.
+- *A stored value that is not text was reported as `model: null`.* It is now shown as its JSON, bounded, in `model` and `modelCheck.stored`.
+- *`MODEL_SELECTED` has no caller.* Kept, by ruling, as a store invariant for a future profile-binding route; the comment and the docs now say exactly that, and that the store reads a checkout file to decide the write.
+- *Wording.* Nothing operator-facing says a stored model applies at the next launch.
+- *The same hole, one layer down* (found by the cumulative review of that fix). `project-config.load` decided a file was absent with `existsSync`, which answers false for any failure, so a `.tangleclaw` directory that may not be searched still read as no config; and a `project.json` holding JSON that is not an object merged to the defaults without a word. `load` now treats only a missing file or directory as absent and reports the rest through `onError`.
+- *And the directory probe* (the Architect's hold on the next head). `lib/dir-scanner-child.js#_probe` read every failure but a permission refusal as "directory gone", so a registered project behind an I/O error, a stale handle or a symlink loop reported no config and no model. Only ENOENT and ENOTDIR now mean absent; any other failure is `unknown`, carried to the facts as `unreadable` with the error's own code and words, and an upload to such a directory answers `project-unknown` instead of `project-missing`. The candidate walks use `_exists` and are unchanged.
+- *And the save* (Architect ruling R5 on A161, required before push). `updateProject` read an unusable `project.json` as defaults at every one of its load-change-save steps, so a PATCH of any field replaced the file's contents with defaults and answered 200, erasing a stored model without a word. One strict read (`loadConfigForWrite`) now runs before validation, the rename, the recovery decision and every write; a config that is present and unusable refuses the whole request with `PROJECT_CONFIG_UNREADABLE` (HTTP 409). Every reload inside the write phase uses the same strict read and throws, so a file that becomes unusable mid-apply is left alone. Scope is the settings PATCH only; the other load-then-save callers in the codebase are a follow-up audit, by the same ruling (#2232).
+- *The three other callers of the loader's failure signal are now pinned* (`test/unknown-is-not-absent.test.js`): under a locked `.tangleclaw` directory or a non-object `project.json`, coordinator rotation counts the project as switchboard-enabled, a wrap that does not say whether to keep the session is refused, and a release cut reports `releasePrepareCommand` as not run. Each is what that caller already did for a file that would not parse; the conditions are what widened.
+- Tests added: an engine switch on a project holding both a non-default launch mode and a model (both warnings, one write of the config), and a roster too old or future-dated at save.
+- The cost of the synchronous roster parse is stated in `docs/engine-guide.md`; a shared short-lived copy for displays is #2220, not built here.
+
+**Not covered.** No live launch, since no launch reads the field. The wider roster, the launch argument, the requested-versus-actual check and the selectors are later chunks.
 ## 2026-10-07 — ADR 0014: the ratification record matches what happened
 
 <!-- prawduct: type=docs | scope=adr-0014-ratification-record -->
