@@ -33,6 +33,8 @@ describe('the pane witness (#2186)', () => {
   let reads;
   let pins;
   const PANE_ID = '%7';
+  /** The tmux server that issued PANE_ID, as a launch records it. */
+  const PANE_SERVER = '4242.1790431343';
 
   before(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pane-witness-'));
@@ -57,7 +59,7 @@ describe('the pane witness (#2186)', () => {
     reads = [];
     pins = [];
     return paneWitness.composerShown({
-      tmuxName: 'tc-x', paneId: PANE_ID, engineProfile: codex, wakeProfile, headerRe: HEADER_RE, startingRe: STARTING_RE, statusRe: STATUS_RE, maxStatusRows: 1, keyHintRe: KEY_HINT_RE, ...over
+      tmuxName: 'tc-x', paneId: PANE_ID, paneServer: PANE_SERVER, engineProfile: codex, wakeProfile, headerRe: HEADER_RE, startingRe: STARTING_RE, statusRe: STATUS_RE, maxStatusRows: 1, keyHintRe: KEY_HINT_RE, ...over
     }, {
       gapMs: 0,
       sleep: async () => { i += 1; },
@@ -308,6 +310,32 @@ describe('the pane witness (#2186)', () => {
       }
     });
 
+    it('a launch with no tmux server on record beside its pane cannot be vouched for either', async () => {
+      for (const missing of [undefined, null, '']) {
+        const r = await ask([good()], { paneServer: missing });
+        assert.deepEqual(r, { shown: false, dialog: null, why: 'the pane this launch created is not on record', lasting: true });
+        assert.deepEqual(reads, []);
+      }
+    });
+
+    it('every read is told which tmux server the launch\'s pane was created in', async () => {
+      const told = [];
+      await ask([good()], {}, { read: (name, id, server) => { told.push(server); return { paneId: id, ...good() }; } });
+      assert.deepEqual(told, [PANE_SERVER, PANE_SERVER]);
+    });
+
+    it('TMUX SERVER RESTARTED: a new server has a session of the same name whose one pane has the same id and a usable composer: refused, and it does not clear by waiting', async () => {
+      // Pane ids start again at %0 in a new server, so the pin passes. Only
+      // the read, which asks the server who it is, can tell.
+      const other = () => { throw Object.assign(new Error('tmux answered from a different server'), { tcOtherServer: true }); };
+      const r = await ask([good()], {}, { pin: () => PANE_ID, read: other });
+      assert.deepEqual(r, { shown: false, dialog: null, why: 'the tmux server is not the one this launch\'s pane was created in', lasting: true });
+      let n = 0;
+      const second = await ask([good()], {}, { read: (name, id) => { n += 1; if (n === 2) other(); return { paneId: id, ...good() }; } });
+      assert.equal(second.shown, false, 'on the second read too');
+      assert.equal(second.lasting, true);
+    });
+
     it('both reads are aimed at the id pinned at the start, not re-resolved', async () => {
       let pinned = 0;
       const asked = [];
@@ -335,7 +363,7 @@ describe('the pane witness (#2186)', () => {
         { height: good.height, x: 2, y: 0, rows: null }
       ];
       for (const frame of bad) {
-        const r = await paneWitness.composerShown({ tmuxName: 'tc-x', paneId: PANE_ID, engineProfile: codex, wakeProfile, headerRe: HEADER_RE, startingRe: STARTING_RE, statusRe: STATUS_RE }, { gapMs: 0, sleep: async () => {}, pin: () => PANE_ID, read: () => ({ paneId: PANE_ID, ...frame }) });
+        const r = await paneWitness.composerShown({ tmuxName: 'tc-x', paneId: PANE_ID, paneServer: PANE_SERVER, engineProfile: codex, wakeProfile, headerRe: HEADER_RE, startingRe: STARTING_RE, statusRe: STATUS_RE }, { gapMs: 0, sleep: async () => {}, pin: () => PANE_ID, read: () => ({ paneId: PANE_ID, ...frame }) });
         assert.deepEqual(r, { shown: false, dialog: null, why: 'the pane and its cursor could not be read row for row' });
       }
     });

@@ -391,6 +391,8 @@ describe('tmux', () => {
         assert.equal(tmux.createSession(name, { command: 'sleep 60', born }), true);
         assert.match(born.paneId, /^%\d+$/);
         assert.equal(born.paneId, tmux.solePaneId(name));
+        assert.equal(born.server, execFileSync('tmux', ['display-message', '-p', '-t', `=${name}:`, '#{pid}.#{start_time}'], { encoding: 'utf8' }).trim(), 'and the server it was created in');
+        assert.equal(tmux.visiblePane(name, born.paneId, born.server).paneId, born.paneId, 'the pair is exactly what the pinned read accepts');
       } finally {
         try { tmux.killSession(name); } catch (_) {}
       }
@@ -416,6 +418,9 @@ describe('tmux', () => {
       try {
         assert.equal(tmux.createSession(name, { command: 'sleep 60' }), true);
         assert.equal(tmux.createSession(name, { command: 'sleep 60' }), false, 'an existing session is still reported, not recreated');
+        const stale = { paneId: '%1', server: '1.1' };
+        assert.equal(tmux.createSession(name, { command: 'sleep 60', born: stale }), false);
+        assert.deepEqual(stale, { paneId: null, server: null }, 'a session this call did not create leaves no pane in the answer, not an earlier one');
       } finally {
         try { tmux.killSession(name); } catch (_) {}
       }
@@ -1216,8 +1221,9 @@ describe('tmux — reading back a session\'s launch environment (#1626)', () => 
 
 describe('tmux — one pinned pane and its cursor, row for row (#2186)', () => {
   const { execFileSync } = require('node:child_process');
-  const PIN = { session: 'tc-x', paneId: '%7' };
-  const head = (h, x, y, over = {}) => `${over.paneId || '%7'},${over.windows || 1},${over.panes || 1},${h},${x},${y},${over.session || 'tc-x'}`;
+  const SERVER = '4242.1790431343';
+  const PIN = { session: 'tc-x', paneId: '%7', server: SERVER };
+  const head = (h, x, y, over = {}) => `${over.paneId || '%7'},${over.windows || 1},${over.panes || 1},${h},${x},${y},${over.server === undefined ? SERVER : over.server},${over.session || 'tc-x'}`;
 
   it('keeps every row in place, leading blank rows included, so cursor_y indexes the rows', () => {
     const out = `${head(6, 2, 3)}\n\n\n  hello\n\u001b[1m›\u001b[0m Ask\n\n  status · line\n`;
@@ -1231,7 +1237,7 @@ describe('tmux — one pinned pane and its cursor, row for row (#2186)', () => {
   });
 
   it('a session name holding commas is still read whole', () => {
-    const odd = { session: 'a,b,c', paneId: '%7' };
+    const odd = { session: 'a,b,c', paneId: '%7', server: SERVER };
     assert.equal(tmux._parseVisiblePane(`${head(1, 0, 0, { session: 'a,b,c' })}\n>\n`, odd).height, 1);
   });
 
@@ -1249,7 +1255,20 @@ describe('tmux — one pinned pane and its cursor, row for row (#2186)', () => {
     assert.throws(() => tmux._parseVisiblePane(`${head(3, 0, 0, { paneId: '%8' })}${rows}`, PIN), /different pane or session/);
     assert.throws(() => tmux._parseVisiblePane(`${head(3, 0, 0, { session: 'tc-y' })}${rows}`, PIN), /different pane or session/);
     assert.throws(() => tmux._parseVisiblePane(`${head(3, 0, 0, { session: 'tc-x-longer' })}${rows}`, PIN), /different pane or session/);
-    assert.throws(() => tmux._parseVisiblePane(`${head(3, 0, 0)}${rows}`, undefined), /different pane or session/);
+    assert.throws(() => tmux._parseVisiblePane(`${head(3, 0, 0)}${rows}`, undefined), /different server/);
+  });
+
+  it('refuses an answer from another tmux server, flagged so a caller can tell it will not clear: the same pane id and session name there are another pane', () => {
+    const rows = '\n>\n\n\n';
+    const flagged = (fn) => assert.throws(fn, (err) => err.tcOtherServer === true && /different server/.test(err.message));
+    flagged(() => tmux._parseVisiblePane(`${head(3, 0, 0, { server: '4243.1790431343' })}${rows}`, PIN));
+    flagged(() => tmux._parseVisiblePane(`${head(3, 0, 0, { server: '4242.1790431344' })}${rows}`, PIN), 'same pid, started at another second');
+    flagged(() => tmux._parseVisiblePane(`${head(3, 0, 0, { server: '' })}${rows}`, PIN));
+    for (const none of [undefined, null, '', '4242', 4242.1]) {
+      flagged(() => tmux._parseVisiblePane(`${head(3, 0, 0)}${rows}`, { ...PIN, server: none }));
+    }
+    // Another pane in the right server is the ordinary refusal, not this one.
+    assert.throws(() => tmux._parseVisiblePane(`${head(3, 0, 0, { paneId: '%8' })}${rows}`, PIN), (err) => err.tcOtherServer !== true);
   });
 
   it('refuses a session that has gained a pane or a window since it was pinned', () => {
@@ -1267,7 +1286,7 @@ describe('tmux — one pinned pane and its cursor, row for row (#2186)', () => {
   });
 
   it('throws for a session that does not exist, like every other read', () => {
-    assert.throws(() => tmux.visiblePane('tc-test-no-such-session-2186', '%1'), /does not exist/);
+    assert.throws(() => tmux.visiblePane('tc-test-no-such-session-2186', '%1', SERVER), /does not exist/);
     assert.throws(() => tmux.solePaneId('tc-test-no-such-session-2186'), /does not exist/);
   });
 
@@ -1276,6 +1295,8 @@ describe('tmux — one pinned pane and its cursor, row for row (#2186)', () => {
     const start = () => execFileSync('tmux', ['new-session', '-d', '-s', name, '-x', '60', '-y', '12', 'printf "\\n\\n  hello\\n> "; sleep 60']);
     const kill = () => { try { execFileSync('tmux', ['kill-session', '-t', `=${name}`]); } catch { /* already gone */ } };
     const settle = () => execFileSync('sleep', ['0.4']);
+    /** The identity of the tmux server the test session lives in, as a launch would have recorded it. */
+    const srv = () => execFileSync('tmux', ['display-message', '-p', '-t', `=${name}:`, '#{pid}.#{start_time}'], { encoding: 'utf8' }).trim();
 
     it('pins the one pane and reads it row for row, leading blank rows kept', () => {
       start();
@@ -1283,7 +1304,7 @@ describe('tmux — one pinned pane and its cursor, row for row (#2186)', () => {
         settle();
         const paneId = tmux.solePaneId(name);
         assert.match(paneId, /^%\d+$/);
-        const pane = tmux.visiblePane(name, paneId);
+        const pane = tmux.visiblePane(name, paneId, srv());
         assert.equal(pane.paneId, paneId);
         assert.equal(pane.height, 12);
         assert.equal(pane.rows.length, 12);
@@ -1305,9 +1326,28 @@ describe('tmux — one pinned pane and its cursor, row for row (#2186)', () => {
         // The split made the NEW pane current. A session-relative read would now be of it.
         const current = execFileSync('tmux', ['display-message', '-p', '-t', `=${name}:`, '#{pane_id}'], { encoding: 'utf8' }).trim();
         assert.notEqual(current, pinned, 'the session\'s current pane is no longer the pinned one');
-        assert.throws(() => tmux.visiblePane(name, pinned), /no longer has exactly one pane/);
+        assert.throws(() => tmux.visiblePane(name, pinned, srv()), /no longer has exactly one pane/);
         execFileSync('tmux', ['select-pane', '-t', pinned]);
-        assert.throws(() => tmux.visiblePane(name, pinned), /no longer has exactly one pane/, 'and switching back does not make two panes one');
+        assert.throws(() => tmux.visiblePane(name, pinned, srv()), /no longer has exactly one pane/, 'and switching back does not make two panes one');
+      } finally {
+        kill();
+      }
+    });
+
+    it('THE SERVER IS PART OF THE PIN: the same pane, asked for as another server\'s, is refused and flagged; a malformed server is refused before tmux is asked', () => {
+      start();
+      try {
+        settle();
+        const paneId = tmux.solePaneId(name);
+        const [pid, started] = srv().split('.');
+        assert.equal(tmux.visiblePane(name, paneId, srv()).paneId, paneId);
+        for (const other of [`${Number(pid) + 1}.${started}`, `${pid}.${Number(started) - 1}`]) {
+          assert.throws(() => tmux.visiblePane(name, paneId, other), (err) => err.tcOtherServer === true, other);
+        }
+        for (const bad of [undefined, null, '', pid, `${pid}.`, `${pid}.${started}; touch /tmp/tc-2186-should-not-exist`, 12]) {
+          assert.throws(() => tmux.visiblePane(name, paneId, bad), /not a tmux server identity/, String(bad));
+        }
+        assert.equal(fs.existsSync('/tmp/tc-2186-should-not-exist'), false);
       } finally {
         kill();
       }
@@ -1317,7 +1357,7 @@ describe('tmux — one pinned pane and its cursor, row for row (#2186)', () => {
       start();
       try {
         for (const bad of ['', '7', '%', '%7; touch /tmp/tc-2186-should-not-exist', `=${name}:`, '%7.1', null, 12, undefined]) {
-          assert.throws(() => tmux.visiblePane(name, bad), /not a tmux pane id|different pane or session/, String(bad));
+          assert.throws(() => tmux.visiblePane(name, bad, srv()), /not a tmux pane id|different pane or session/, String(bad));
         }
         assert.equal(fs.existsSync('/tmp/tc-2186-should-not-exist'), false);
       } finally {
@@ -1332,7 +1372,7 @@ describe('tmux — one pinned pane and its cursor, row for row (#2186)', () => {
       try {
         settle();
         const foreign = tmux.solePaneId(other);
-        assert.throws(() => tmux.visiblePane(name, foreign), /different pane or session/);
+        assert.throws(() => tmux.visiblePane(name, foreign, srv()), /different pane or session/);
       } finally {
         kill();
         try { execFileSync('tmux', ['kill-session', '-t', `=${other}`]); } catch { /* gone */ }
@@ -1350,8 +1390,8 @@ describe('tmux — one pinned pane and its cursor, row for row (#2186)', () => {
         const now = tmux.solePaneId(name);
         assert.match(now, /^%\d+$/, 'the session passes the one-pane check again');
         assert.notEqual(now, launched, 'but its pane is not the one the launch created: only a recorded id can tell');
-        assert.throws(() => tmux.visiblePane(name, launched), /./, 'and the launch\'s own pane can no longer be read');
-        assert.equal(tmux.visiblePane(name, now).paneId, now, 'while the replacement reads perfectly well');
+        assert.throws(() => tmux.visiblePane(name, launched, srv()), /./, 'and the launch\'s own pane can no longer be read');
+        assert.equal(tmux.visiblePane(name, now, srv()).paneId, now, 'while the replacement reads perfectly well');
       } finally {
         kill();
       }
@@ -1364,7 +1404,7 @@ describe('tmux — one pinned pane and its cursor, row for row (#2186)', () => {
         const pinned = tmux.solePaneId(name);
         execFileSync('tmux', ['new-window', '-d', '-t', `=${name}:`, 'sleep 60']);
         assert.throws(() => tmux.solePaneId(name), /does not have exactly one pane/);
-        assert.throws(() => tmux.visiblePane(name, pinned), /no longer has exactly one pane/);
+        assert.throws(() => tmux.visiblePane(name, pinned, srv()), /no longer has exactly one pane/);
       } finally {
         kill();
       }

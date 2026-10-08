@@ -125,7 +125,7 @@ describe('startupControl at launch and teardown (codex)', () => {
   let bornPane;
 
   function withStubbedTmux(fn) {
-    tmux.createSession = (name, opts) => { calls.created.push({ name, opts }); if (opts.born && bornPane !== undefined) opts.born.paneId = bornPane; return true; };
+    tmux.createSession = (name, opts) => { calls.created.push({ name, opts }); if (opts.born && bornPane !== undefined) Object.assign(opts.born, bornPane); return true; };
     tmux.hasSession = () => false;
     tmux.killSession = () => true;
     enginesModule.detectEngine = () => ({ available: true, path: '/opt/fake/bin/codex' });
@@ -195,17 +195,19 @@ describe('startupControl at launch and teardown (codex)', () => {
     // The session's one pane, if anyone asked, is already a replacement.
     tmux.solePaneId = () => { asked += 1; return '%40'; };
     try {
-      bornPane = '%31';
+      bornPane = { paneId: '%31', server: '4242.1790431343' };
       const l = launched();
       assert.equal(store.startupControlChannels.getOpenBySession(l.session.id).adapterState.paneId, '%31');
+      assert.equal(store.startupControlChannels.getOpenBySession(l.session.id).adapterState.paneServer, '4242.1790431343');
       assert.equal(asked, 0, 'the launch never asks the session which pane it has');
 
-      for (const none of [null, undefined, 'not-a-pane']) {
+      for (const none of [{ paneId: null, server: null }, undefined, { paneId: 'not-a-pane', server: '4242.1790431343' }, { paneId: '%31', server: null }]) {
         bornPane = none;
         const l2 = launched();
         const row = store.startupControlChannels.getOpenBySession(l2.session.id);
         assert.ok(row, 'the launch still gets its channel');
-        assert.equal(row.adapterState.paneId, undefined, `no pane on record when creation printed ${none}`);
+        assert.equal(row.adapterState.paneServer, undefined);
+        assert.equal(row.adapterState.paneId, undefined, `no pane on record when creation printed ${JSON.stringify(none)}`);
       }
       assert.equal(asked, 0);
     } finally {
