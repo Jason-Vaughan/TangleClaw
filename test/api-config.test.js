@@ -1132,6 +1132,53 @@ describe('API endpoints', () => {
         });
       }
 
+      describe('an engine ALREADY stored whose profile has gone bad does not block other Master settings (R17)', () => {
+        // The check runs when a patch NAMES the engine. Run on the merged
+        // settings, it refused every partial patch over a stored engine whose
+        // profile had lost its id, and the access toggle sends `accessLevel`
+        // alone: write access could not have been revoked.
+        const stored = 'my-claude';
+        beforeEach(async () => {
+          const good = { ...real(), id: stored };
+          store.engines.get = (id) => (id === stored ? good : realGet.call(store.engines, id));
+          const set = await request(server, 'PATCH', '/api/config', { master: { engine: stored } });
+          assert.equal(set.status, 200, 'precondition: the engine was selectable when it was chosen');
+          // Now its profile file loses its id.
+          const { id: _dropped, ...identityless } = good;
+          store.engines.get = (id) => (id === stored ? identityless : realGet.call(store.engines, id));
+        });
+
+        afterEach(async () => {
+          store.engines.get = realGet;
+          await request(server, 'PATCH', '/api/config', { master: { engine: 'claude', accessLevel: 'read-only', autoStart: false } });
+        });
+
+        it('accessLevel alone, as the Master bar sends it, still saves: write access can be revoked', async () => {
+          const { status } = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'read-only' } });
+          assert.equal(status, 200);
+          assert.equal(store.config.load().master.accessLevel, 'read-only');
+          assert.equal(store.config.load().master.engine, stored, 'and the stored engine is left as it was');
+        });
+
+        it('autoStart alone still saves', async () => {
+          const { status } = await request(server, 'PATCH', '/api/config', { master: { autoStart: true } });
+          assert.equal(status, 200);
+          assert.equal(store.config.load().master.autoStart, true);
+        });
+
+        it('naming that same engine in a patch is refused: it cannot be chosen again while its profile is bad', async () => {
+          const { status, data } = await request(server, 'PATCH', '/api/config', { master: { engine: stored, autoStart: true } });
+          assert.equal(status, 400);
+          assert.match(data.error, /master\.engine "my-claude" cannot be selected: its engine profile is not usable \(what the store returned does not carry an `id`\)/);
+        });
+
+        it('the way out works: engine null, or another engine', async () => {
+          assert.equal((await request(server, 'PATCH', '/api/config', { master: { engine: null } })).status, 200);
+          assert.equal(store.config.load().master.engine, null);
+          assert.equal((await request(server, 'PATCH', '/api/config', { master: { engine: 'claude' } })).status, 200);
+        });
+      });
+
       it('control: a custom profile carrying its own id can be selected', async () => {
         const custom = { ...real(), id: 'my-claude' };
         store.engines.get = (id) => (id === 'my-claude' ? custom : realGet.call(store.engines, id));

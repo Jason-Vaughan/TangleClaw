@@ -663,7 +663,13 @@ only when the lookup failed:
   the launch route) and nothing is started. **The Project Master is held to the same test**: it
   does not start an engine from such a profile (no engine process, no pane; a Master that is
   already running is left as it is), and such an engine cannot be selected as `master.engine`
-  in the settings (400, with the reason). Every profile TangleClaw saves or validates has
+  in the settings (400, with the reason). The settings check runs only when a change **names**
+  the engine: a Master engine already stored whose profile has since gone bad does not block
+  other Master settings (the access level above all), and is refused when the Master is next
+  started. **A command into the Master's pane is refused when its engine cannot be resolved**
+  (`MASTER_ENGINE_UNRESOLVED`): the Master has no session record, so without an engine there is
+  nothing to check its pane against. That happens when any installed profile file cannot be
+  read. Every profile TangleClaw saves or validates has
   one, and so does every bundled profile. A file dropped into the engines directory by hand
   **without** an `id`, or with another profile's, launched and took sends before this check
   existed; it now cannot be launched, and a session already running on it has every send refused,

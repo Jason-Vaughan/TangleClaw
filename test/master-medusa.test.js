@@ -333,11 +333,57 @@ describe('masterWakeRecord / injectMasterCommand — what medusa-wake sees and t
       'the same resolution the wake monitor judges the pane by');
   });
 
-  it('an unreadable engine resolution still delivers, with the engine unknown', () => {
+  it('an unreadable engine resolution REFUSES the send: nothing is typed with the engine unknown (#2128, R17, reversing #1507\'s expectation)', () => {
+    // This test used to assert the opposite: the command was delivered with
+    // `engineId: null`. The Master has no session row, so a send that names no
+    // engine is checked against nothing at all, and the engine resolution
+    // throws whenever an installed profile file cannot be read. Ruling R17:
+    // no unchecked send.
     const t = fakeTmux({ alive: true });
     const enginesLib = { resolveDefaultEngine: () => { throw new Error('no engines'); } };
-    assert.equal(master.injectMasterCommand('x', { tmuxLib: t, config: {}, enginesLib }).ok, true);
-    assert.equal(t.typed[0].options.engineId, null);
+    const r = master.injectMasterCommand('x', { tmuxLib: t, config: {}, enginesLib });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'MASTER_ENGINE_UNRESOLVED');
+    assert.match(r.error, /^Nothing was typed into the Project Master: its engine could not be determined \(no engines\), so TangleClaw cannot check its pane before typing\./);
+    assert.match(r.error, /an engine profile file cannot be read and needs repair, and the server log names the error\.$/);
+    assert.equal(t.typed.length, 0);
+  });
+
+  it('an engine that resolves to nothing refuses the send too', () => {
+    for (const none of [null, undefined, '', 7]) {
+      const t = fakeTmux({ alive: true });
+      const enginesLib = { resolveDefaultEngine: () => none };
+      const r = master.injectMasterCommand('x', { tmuxLib: t, config: {}, enginesLib });
+      assert.equal(r.ok, false, String(none));
+      assert.equal(r.code, 'MASTER_ENGINE_UNRESOLVED');
+      assert.equal(t.typed.length, 0);
+    }
+  });
+
+  it('the real cause: one installed profile file that does not parse stops the resolution, and the command is refused, not typed blind', () => {
+    const realList = store.engines.list;
+    store.engines.list = () => { throw new SyntaxError('Unexpected token } in JSON at position 41'); };
+    try {
+      const t = fakeTmux({ alive: true });
+      const r = master.injectMasterCommand('[TangleClaw Switchboard] nudge', { tmuxLib: t });
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'MASTER_ENGINE_UNRESOLVED');
+      assert.match(r.error, /Unexpected token/);
+      assert.equal(t.typed.length, 0);
+    } finally {
+      store.engines.list = realList;
+    }
+    // Recovery: once the profiles read again the same call is delivered.
+    const t2 = fakeTmux({ alive: true });
+    assert.equal(master.injectMasterCommand('x', { tmuxLib: t2 }).ok, true);
+    assert.equal(t2.typed.length, 1);
+    assert.equal(typeof t2.typed[0].options.engineId, 'string');
+  });
+
+  it('a resolved engine is always NAMED to the pane writer, which is what arms its check', () => {
+    const t = fakeTmux({ alive: true });
+    assert.equal(master.injectMasterCommand('x', { tmuxLib: t }).ok, true);
+    assert.ok(t.typed[0].options.engineId, 'never sent without an engine');
   });
 
   it('refuses when the Master is not running, when tmux is silent, and over the length cap', () => {
