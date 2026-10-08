@@ -1059,12 +1059,26 @@ describe('API endpoints', () => {
         assert.doesNotMatch(unbound.data.error, /write guard is in place/);
         assert.doesNotMatch(unbound.data.error, /SECRET-FRAGMENT|Unexpected token/);
 
+        // The engine resolved and the refresh finished, and the guard did not
+        // read back. That is known, so it gets its own sentence: not the
+        // engine one, and not "may be a step behind".
+        master.applyMasterAccessLevel = () => ({ applied: true, home: '/stub' });
+        assert.equal((await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'write' } })).status, 200);
+        master.applyMasterAccessLevel = () => { throw Object.assign(new Error('guard did not read back'), { levelApplied: true, guardBinds: false }); };
+        const noGuard = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'read-only' } });
+        assert.equal(noGuard.status, 500);
+        assert.equal(noGuard.data.code, 'MASTER_LEVEL_NOT_APPLIED');
+        assert.match(noGuard.data.error, /level file now says "read-only" and its instructions were refreshed, but its write guard could not be confirmed in place/);
+        assert.match(noGuard.data.error, /do not rely on this change having taken effect for a master running Claude Code/);
+        assert.doesNotMatch(noGuard.data.error, /could not determine which engine|may be a step behind|still enforcing/);
+
         // A grant that met the same fault was not applied at all: the applier
         // rethrows it with neither flag, and the old sentence is the true one.
         master.applyMasterAccessLevel = () => { throw new Error('Unexpected token SECRET-FRAGMENT in JSON'); };
         const grant = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'write' } });
         assert.equal(grant.status, 500);
         assert.match(grant.data.error, /still enforcing "read-only"/);
+        assert.match(grant.data.error, /goes through once it is detected again; set `master\.engine` to another engine only if that is the engine the running master actually uses/);
         assert.doesNotMatch(grant.data.error, /SECRET-FRAGMENT|Unexpected token/);
       } finally {
         // Back through the store, never the route: see the engine block below.

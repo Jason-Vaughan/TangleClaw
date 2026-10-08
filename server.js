@@ -1818,7 +1818,7 @@ function _protectedRoots() {
  * engine the master runs (`applyMasterAccessLevel`'s conservative path).
  *
  * Says only what was read back. With the guard in place a Claude master is
- * bound; a master on any other engine never had a guard and is bound by
+ * bound; a master on any other engine reads no guard and is bound by
  * instructions that were NOT rewritten, so the message does not call the change
  * complete in either case.
  * @param {string} level - The level now in the master's level file
@@ -2262,11 +2262,18 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
       // revocation is not confirmed at all.
       if (err.runtimeUnknown && err.levelApplied) {
         masterLevelError = _masterTightenedBlindError(newMasterAccessLevel, err.guardBinds === true);
+      } else if (err.levelApplied && err.guardBinds === false) {
+        // The engine resolved and the refresh finished; what did not happen is
+        // the write guard reading back. That is known, so it is said outright
+        // rather than folded into "may be a step behind".
+        masterLevelError = `The master's access level file now says "${newMasterAccessLevel}" and its instructions were refreshed, `
+          + 'but its write guard could not be confirmed in place, so do not rely on this change having taken effect for a master running Claude Code. '
+          + 'Check that the master\'s home directory and the `.claude` directory inside it are writable, then change the access level and change it back to apply it again.';
       } else masterLevelError = err.levelApplied
         ? `The master's access level is now "${newMasterAccessLevel}", but the refresh that should have followed it did not finish. `
           + 'Its identity, its memory scaffold or its write guard may be a step behind. Restart the master session to bring them back into line.'
         : `Settings were saved, but the master's access level could not be applied — it is still enforcing "${oldMasterAccessLevel}". `
-          + 'TangleClaw must be able to tell which engine the master runs before it raises access: if an installed engine profile file cannot be read, repair it, and if the engine set for the master is not detected on this machine, set the one in use. Restarting the master session then reconciles it.';
+          + 'TangleClaw must be able to tell which engine the master runs before it raises access: if an installed engine profile file cannot be read, repair it. If the engine set for the master is not detected on this machine, the change goes through once it is detected again; set `master.engine` to another engine only if that is the engine the running master actually uses. Restarting the master session then reconciles it.';
     }
   }
 
