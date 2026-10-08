@@ -1197,6 +1197,27 @@ curl -s http://localhost:3100
 - Check server logs for error details
 - **A Codex session or Codex Project Master that answers "TangleClaw did not start the engine"** (`LAUNCH_ISOLATION_UNVERIFIED`): the installed Codex is a version TangleClaw has not verified it can keep off Codex's shared background process, or its version could not be read. The message names the executable, the version found and the versions to install (0.156.1 or 0.157.1). Nothing was started. Install one of those versions, for example with `npm install -g @openai/codex@0.156.1`, and launch again; there is no setting that bypasses the check. The same refusal can also come from the launch's configuration and not the version: the message then says so, and the remedy is to remove custom arguments from the Codex engine profile or launch mode. A Codex session that was already running before you upgraded TangleClaw is not examined by the check and keeps running as it was started: end it and launch it again, and do the same for the Project Master if it runs Codex. If Codex then offers to update itself, skip the update (Escape): the newest Codex is not a verified version and would be refused at the next launch.
 
+### A New Session Sits at "Do You Trust This Folder?"
+
+The first time Claude Code opens a repository it asks whether to trust the folder. TangleClaw sees
+that dialog and types nothing into it, because its default option is "No, exit" and one Enter would
+end the session. The session status shows the blocker `trust_required` while it waits.
+
+- Open the session and answer the dialog in the terminal. Choose "Yes, I trust this folder" only for
+  a folder whose contents you trust: accepting lets the folder's own hooks, MCP servers and
+  permission rules run. TangleClaw does not answer it for you.
+- If you answer within 15 minutes of the dialog appearing, the launch carries on by itself and
+  sends its first turn. After that the session still works; type to start it.
+- Commands sent to the session through TangleClaw are refused with `trust_required` until the
+  dialog is answered.
+- If the session ended at the dialog, the project card's last-session row says so, and so does
+  `lastSession.launchBlocker` in the session status. Launch again and answer the dialog.
+- Claude Code asks once per repository, so a later launch into the same folder is not affected.
+- If a launch stops at some other menu (a confirmation TangleClaw has no name for), it also types
+  nothing and the launch's first turn is recorded as withheld with `pane_not_at_prompt`. Answer
+  the menu in the terminal, then type to start the session. The same happens if text was already
+  typed at the prompt when the launch's first turn was due.
+
 ### Chime Not Working on Mobile
 
 - Tap anywhere on the page first — browsers require user interaction before playing audio

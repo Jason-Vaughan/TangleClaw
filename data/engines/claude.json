@@ -124,6 +124,21 @@
         "source": "Claude Code 2.1.259, probed on a live pane: `claude --permission-mode plan` renders `⏸ plan mode on (shift+tab to cycle)` beneath the input box. `modeLine` is the signature EVERY permission mode draws — the same line reads `bypass permissions on (shift+tab to cycle)` under --dangerously-skip-permissions — so it locates the mode line; `marker` is what makes that line read-only. Locating and deciding are separate fields because a pane with subagents running draws `⏺ main` and one row per agent BELOW the mode line (live captures in test/medusa-wake.test.js, #783/#1101), so the mode line is not the last line and cannot be found by position."
       }
     },
+    "startupDialogs": [
+      {
+        "code": "trust_required",
+        "label": "folder trust dialog",
+        "markers": [
+          "Yes, I trust this folder",
+          "No, exit"
+        ],
+        "meaning": "Claude Code is asking whether to trust this folder before it runs anything in it. Open the session and answer it in the pane. Its default option is \"No, exit\", so pressing Enter without choosing ends the session.",
+        "evidence": {
+          "verifiedOn": "2026-10-07",
+          "source": "Claude Code 2.1.283, three live tmux panes (110x40) in an empty git repository it had never opened (#2128). The dialog reads `Accessing workspace:`, the path, `Quick safety check: Is this a project you created or one you trust? ...`, `Security guide`, then two unnumbered options, `No, exit` and `Yes, I trust this folder`, and the footer `Enter to confirm · Esc to cancel`. The option under the selection glyph `❯`, the same glyph as the composer prompt, is `No, exit`. Measured: with no input it was still waiting at 110 s (it does not time out); Enter on the default exits within 1 s with code 1 and records nothing; an Enter sent 2.5 s after launch, before the dialog drew at 6 to 9 s, was not consumed by it; Down then Enter accepts, and the composer follows about 8 s later. The selected row and the footer carry a colour run around each word, so the markers match only on stripped text, and the two chosen are the option texts because they are the words an operator reads."
+        }
+      }
+    ],
     "wake": {
       "busyMarker": "esc to interrupt",
       "promptPattern": "^\\s*❯[\\u00a0 ]?$",

@@ -1820,6 +1820,30 @@ function _protectedRoots() {
 }
 
 /**
+ * The message for an access level that was tightened without knowing which
+ * engine the master runs (`applyMasterAccessLevel`'s conservative path).
+ *
+ * Says only what was read back. With the guard in place a Claude master is
+ * bound; a master on any other engine reads no guard and is bound by
+ * instructions that were NOT rewritten, so the message does not call the change
+ * complete in either case.
+ * @param {string} level - The level now in the master's level file
+ * @param {boolean} guardBinds - Whether the level and the write guard both read back
+ * @returns {string} Operator-facing error text
+ */
+function _masterTightenedBlindError(level, guardBinds) {
+  const why = 'TangleClaw could not determine which engine the master runs (an installed engine profile may be unreadable, or no engine is detected on this machine)';
+  const remedy = 'Fix that, then restart the master session.';
+  if (guardBinds) {
+    return `The master's access level is now "${level}" and its write guard is in place, so a master running Claude Code is held to it from its next tool call. `
+      + `${why}, so its instructions and memory files were not refreshed and still describe the previous level. `
+      + `A master on another engine has no write guard and follows those instructions. ${remedy}`;
+  }
+  return `The master's access level was written as "${level}", but the level file and the write guard did not both read back, so do not rely on this change having taken effect. `
+    + `${why}, and its instructions and memory files were not refreshed either. ${remedy}`;
+}
+
+/**
  * Validate a PATCHed `master` settings object (the Project Master surface).
  * Merges the patch onto the current effective settings first, so a partial
  * object never wipes fields (the config-file merge is shallow), then
@@ -1845,12 +1869,44 @@ function validateMasterPatch(patch, config) {
   if (!master.MASTER_ENABLED_ACCESS_LEVELS.includes(merged.accessLevel)) {
     return { error: `master.accessLevel "${merged.accessLevel}" is not available yet — it ships only with real structural enforcement (currently enabled: ${master.MASTER_ENABLED_ACCESS_LEVELS.join(', ')})` };
   }
-  if (merged.engine !== null) {
+  // Everything about the ENGINE is checked only when this patch names
+  // `engine` (#2128). The merged object also holds the engine already stored,
+  // and checking that on every patch refused unrelated changes over a stored
+  // engine whose profile had been removed or had gone bad. The Master bar's
+  // access toggle sends `accessLevel` alone, so write access could not be
+  // revoked: a safety control held hostage by an unrelated file. An engine
+  // already stored is refused where it matters, when the Master is started
+  // (`master.ensureMasterSession`).
+  if (Object.prototype.hasOwnProperty.call(patch, 'engine') && merged.engine !== null) {
     if (typeof merged.engine !== 'string' || !merged.engine) {
       return { error: 'master.engine must be an engine id string or null' };
     }
-    if (!store.engines.get(merged.engine)) {
+    let masterProfile;
+    try {
+      masterProfile = store.engines.get(merged.engine);
+    } catch (err) {
+      // A profile file that does not parse cannot be chosen; that is a bad
+      // request about that engine, not an internal failure of this route.
+      // The parser's own message goes to the log and not into the response: it
+      // quotes whatever bytes the file held at the point it gave up.
+      log.warn('master.engine refused: its engine profile could not be read', {
+        engine: merged.engine, error: err.message
+      });
+      return { error: `master.engine "${merged.engine}" cannot be selected: its engine profile file could not be read as JSON. Repair or restore the file.` };
+    }
+    if (!masterProfile) {
       return { error: `master.engine "${merged.engine}" is not a configured engine` };
+    }
+    // The profile must BE that engine's before it can be chosen for the
+    // Master: the same identity test a launch makes. A file found under
+    // another letter case on a case-insensitive disk, or one that does not
+    // carry its own id, is not it.
+    const masterIdentity = require('./lib/startup-dialog').identify(masterProfile, merged.engine);
+    if (!masterIdentity.profile) {
+      return {
+        error: `master.engine "${merged.engine}" cannot be selected: its engine profile is not usable (${masterIdentity.detail}). `
+          + `An engine profile file must be a JSON object whose "id" is exactly "${merged.engine}".`
+      };
     }
   }
   if (merged.scope !== 'all') {
@@ -2189,8 +2245,11 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
       // The config save is deliberately left standing rather than rolled back:
       // the stored intent is correct, and the next ensure reconciles the guard to
       // it. What must not happen is the UI painting a boundary that did not move.
-      log.error('Master access level saved but not applied — the write guard still enforces the previous level', {
-        from: oldMasterAccessLevel, to: newMasterAccessLevel, error: err.message
+      log.error(err.runtimeUnknown
+        ? 'Master access level tightened without resolving its engine — identity not refreshed'
+        : 'Master access level saved but not applied — the write guard still enforces the previous level', {
+        from: oldMasterAccessLevel, to: newMasterAccessLevel, error: err.message,
+        levelApplied: err.levelApplied === true, guardBinds: err.guardBinds
       });
       // Two different truths, and saying the wrong one is the defect this whole
       // route is about. `levelApplied` means the level file was already written
@@ -2201,11 +2260,29 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
       // the same save silently not taking effect, which is a second failure
       // bolted onto the first. The response is still a 500; it just happens
       // after the rest of the save has finished doing what it was asked.
-      masterLevelError = err.levelApplied
+      //
+      // A third truth: the change tightened access and what the master runs on
+      // could not be determined. The level and the write guard were written
+      // without that answer and its instructions were not, so the sentence has to
+      // say which half holds — and, when the guard did not read back, that the
+      // revocation is not confirmed at all.
+      if (err.runtimeUnknown && err.levelApplied) {
+        masterLevelError = _masterTightenedBlindError(newMasterAccessLevel, err.guardBinds === true);
+      } else if (err.levelApplied && err.guardBinds === false) {
+        // The engine resolved and the refresh finished; what did not happen is
+        // the level file and write guard both reading back. That is known, so it
+        // is said outright rather than folded into "may be a step behind". The
+        // remedy must not ask the operator to raise access in order to retry.
+        masterLevelError = `The master's access level was written as "${newMasterAccessLevel}" and its instructions were refreshed, `
+          + 'but the level file and the write guard did not both read back, so do not rely on this change having taken effect for a master running Claude Code. '
+          + 'Repair the master\'s home directory and the `.claude` directory inside it so they are writable, then restart the master session: '
+          + 'a master that resolves as Claude Code has its write guard regenerated at start. Check the guard status in Master settings afterwards. '
+          + 'Do not change the access level to retry.';
+      } else masterLevelError = err.levelApplied
         ? `The master's access level is now "${newMasterAccessLevel}", but the refresh that should have followed it did not finish. `
           + 'Its identity, its memory scaffold or its write guard may be a step behind. Restart the master session to bring them back into line.'
         : `Settings were saved, but the master's access level could not be applied — it is still enforcing "${oldMasterAccessLevel}". `
-          + 'Restart the master session to reconcile it.';
+          + 'TangleClaw must be able to tell which engine the master runs before it raises access: if an installed engine profile file cannot be read, repair it. If the engine set for the master is not detected on this machine, the change goes through once it is detected again; set `master.engine` to another engine only if that is the engine the running master actually uses. Restarting the master session then reconciles it.';
     }
   }
 
@@ -7327,6 +7404,13 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
     if (result.code === 'ORPHANED_LAUNCH' || result.code === 'LAUNCH_BIND_FAILED') {
       return errorResponse(res, 500, result.error, result.code);
     }
+    // #2128: the installed engine profile is not the profile that was asked
+    // for (not a profile object, or no matching `id`). 409, not 500: nothing
+    // internal failed and nothing was started; the profile file is what needs
+    // repairing, and the message says how.
+    if (result.code === 'ENGINE_PROFILE_INVALID') {
+      return errorResponse(res, 409, result.error, result.code);
+    }
     const ackStatus = { BAD_REQUEST: 400, NOT_FOUND: 404, WRITE_FAILED: 500 }[result.code];
     if (ackStatus) {
       return errorResponse(res, ackStatus, result.error, result.code);
@@ -8560,6 +8644,12 @@ route('POST', '/api/sessions/:project/command', (_req, res, params, body) => {
   if (!result.ok && result.controlRefusal) {
     const r = result.controlRefusal;
     return errorResponse(res, r.status, r.message, r.code, r.details);
+  }
+  if (!result.ok && result.startupDialog) {
+    // The send was withheld for an engine startup dialog (#2128): one on the
+    // pane, a recorded blocker not yet positively cleared, or a half-drawn
+    // frame. Nothing failed, and the caller needs to know which dialog.
+    return errorResponse(res, 409, result.error, 'STARTUP_DIALOG', { startupDialog: result.startupDialog });
   }
   if (!result.ok) {
     if (result.error.includes('not found') || result.error.includes('No active')) {

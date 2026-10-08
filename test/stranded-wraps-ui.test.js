@@ -1040,6 +1040,7 @@ describe('dashboard card: last session badge and row (#1544)', () => {
     vm.runInContext([
       escSrc,
       liftFunction(UI_SRC, 'function strandedTime('),
+      liftFunction(UI_SRC, 'function sessionEndCause('),
       liftFunction(UI_SRC, 'function sessionLeftoverSummary('),
       liftFunction(UI_SRC, 'function renderSessionHealthBadge('),
       liftFunction(UI_SRC, 'function renderSessionHealthDetail('),
@@ -1078,6 +1079,37 @@ describe('dashboard card: last session badge and row (#1544)', () => {
       assert.match(left, /crashed · work left/);
       assert.match(left, /1 changed file in the project folder/);
       assert.match(sb.badge({ name: 'p', sessionHealth: health({ status: 'crashed', state: 'checking' }) }), />&#9888; crashed</);
+    });
+
+    it('says what a crashed session was stuck behind when it died at an engine startup dialog (#2128)', () => {
+      const sb = sandboxFor();
+      const launchBlocker = { code: 'trust_required', label: 'folder <trust> dialog', meaning: 'Answer it in the pane.' };
+      const html = sb.badge({ name: 'p', sessionHealth: health({ status: 'crashed', launchBlocker }) });
+      assert.match(html, /title="The last session crashed at its engine&#39;s folder &lt;trust&gt; dialog, which nobody answered \(trust_required\)\. Open/);
+      const row = sb.detail({ name: 'p', sessionHealth: health({ status: 'crashed', launchBlocker }) });
+      assert.match(row, /crashed.* at its engine&#39;s folder &lt;trust&gt; dialog, which nobody answered \(trust_required\)/);
+      // A killed session's blocker is not a crash cause, and the badge does not claim one.
+      const killed = sb.badge({ name: 'p', sessionHealth: health({ state: 'left-work', newPathCount: 1, unpushed: 0, launchBlocker }) });
+      assert.doesNotMatch(killed, /trust_required/);
+    });
+
+    it('escapes the cause at both places it is inserted, in every state of the row (#2128)', () => {
+      const sb = sandboxFor();
+      const hostile = { code: '<img src=x onerror=1>', label: '"><script>alert(1)</script>', meaning: '<b>x</b>' };
+      const badge = sb.badge({ name: 'p', sessionHealth: health({ status: 'crashed', launchBlocker: hostile }) });
+      assert.doesNotMatch(badge, /<script|<img|onerror=1>/, 'the badge title carries no markup from the blocker');
+      assert.match(badge, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+      assert.match(badge, /&lt;img src=x onerror=1&gt;/);
+      for (const over of [
+        { state: 'checking' },
+        { state: 'unknown', reason: 'no git' },
+        { state: 'clean' },
+        { state: 'left-work', newPathCount: 1, unpushed: 0, newPaths: ['a.js'] }
+      ]) {
+        const row = sb.detail({ name: 'p', sessionHealth: health({ status: 'crashed', launchBlocker: hostile, ...over }) });
+        assert.doesNotMatch(row, /<script|<img/, `the row carries no markup from the blocker when ${over.state}`);
+        assert.match(row, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/, `and shows it escaped when ${over.state}`);
+      }
     });
   });
 

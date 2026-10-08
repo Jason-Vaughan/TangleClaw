@@ -70,6 +70,9 @@ case "$mode" in
   slow-each) sleep 0.4 ;;
   no-cursor) [ "$1" = "display-message" ] && { echo ","; exit 0; } ;;
   capture-fails) [ "$1" = "capture-pane" ] && exit 1 ;;
+  cursor-shown) [ "$1" = "display-message" ] && { echo "0,3,1,1"; exit 0; } ;;
+  cursor-hidden) [ "$1" = "display-message" ] && { echo "0,3,1,0"; exit 0; } ;;
+  cursor-flag-odd) [ "$1" = "display-message" ] && { echo "0,3,1,?"; exit 0; } ;;
 esac
 case "$1" in
   has-session) exit 0 ;;
@@ -110,9 +113,20 @@ describe('readPaneAsync — what it answers', () => {
   it('returns the pane tail and the cursor from four commands', async () => {
     const got = await tmux.readPaneAsync('proj', { lines: 15 });
     assert.deepEqual(got.cap, { lines: ['line one', 'line two'], alternateScreen: false });
-    assert.deepEqual(got.cursor, { x: 3, y: 1, line: 'line one\nline two' });
+    // This stand-in reports no cursor flag, so whether the cursor is shown is "not known".
+    assert.deepEqual(got.cursor, { x: 3, y: 1, line: 'line one\nline two', visible: null });
     assert.equal(logLines().filter((l) => l.startsWith('pid ')).length, 4);
     assert.ok(logLines().includes('arg -15'), 'the tail length is passed to the capture');
+  });
+
+  it('says whether the cursor is shown, from the same display-message, and never guesses', async () => {
+    mode('cursor-shown');
+    assert.equal((await tmux.readPaneAsync('proj')).cursor.visible, true);
+    mode('cursor-hidden');
+    assert.equal((await tmux.readPaneAsync('proj')).cursor.visible, false);
+    mode('cursor-flag-odd');
+    assert.equal((await tmux.readPaneAsync('proj')).cursor.visible, null, 'anything but 1 or 0 is not known');
+    assert.ok(logLines().includes('arg #{alternate_on},#{cursor_x},#{cursor_y},#{cursor_flag}'), 'asked in the one query, not a fifth command');
   });
 
   it('rejects for a session tmux says is absent, and that is not a timeout', async () => {

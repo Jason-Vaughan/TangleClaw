@@ -1,6 +1,6 @@
 # ADR 0024: Release Versions group one or more Trains, superseding one-train-one-release
 
-**Status:** Accepted (2026-10-07). **Decisions 2, 4 and 5 are amended by Amendment 1 below** (2026-10-07, Architect rulings A86 and A87), which supersedes their wording where the two conflict. Records the Architect's ruling A84 on an Operator-directed
+**Status:** Accepted (2026-10-07). **Decisions 2, 4 and 5 are amended by Amendment 1 below** (2026-10-07, Architect rulings A86 and A87), and the presentation and publication parts of Decision 4 are further amended by Amendment 2 (2026-10-08). These amendments supersede earlier wording where they conflict. Records the Architect's ruling A84 on an Operator-directed
 roadmap restructuring proposal. Amended same day, before merge, per the Architect's PR review of
 this ADR: fixed a contradiction in Decision 4 (bucket/unscoped Trains stay visible in the unchanged
 Train view, excluded only from the new Release view, not hidden in some third "backlog"), added
@@ -198,3 +198,53 @@ becomes the seed of a new one. Placing an issue in a release now answers a diffe
   `release:` labels are not changed by this amendment and are not required to match it.
 - Sorting the roadmap by release did not complete Decision 5: the Train identity of the issues it
   placed in buckets is open, and is tracked with the identity review above.
+
+---
+
+## Amendment 2 (2026-10-08): the release-first board is canonical
+
+**Source:** Operator review and acceptance of the hosted release-first preview on 2026-10-08.
+**Amends:** Decision 4 and Amendment 1, Decision 4 item 1, where they retain two equal primary
+roadmap presentations.
+
+### Decision
+
+1. The Roadmap Board is a release-first planning surface. One labeled drawer represents each
+   version. The current target opens by default; other upcoming and released versions remain
+   collapsed until selected. The thematic view is no longer a second primary roadmap.
+2. `roadmap2-data.json` is the editorial source for release placement, workstream order, Train
+   identity, dependencies, and internal notes. GitHub remains the source for issue titles, links,
+   labels, issue state, open pull-request state, and published release tags. Generated Markdown
+   and HTML are not edited directly.
+3. Permanent Train identities remain visible inside designed releases. Release-scoped buckets
+   receive no Train number. Every issue outside a designed release appears internally in one
+   collapsed **Unsorted issues** bucket.
+4. Each refresh validates that every scheduled or unsorted issue appears exactly once. A
+   duplicate, malformed identity, unsafe link, or invalid dependency refuses the build. Missing
+   GitHub issues remain visibly unavailable rather than disappearing.
+5. The existing ten-minute local refresh remains the freshness mechanism. Outputs are replaced
+   atomically only after a complete successful fetch, validation, and render. A failed refresh
+   retains the last-good page and records a visible and logged failure.
+6. Release placement remains a forecast. Shipped contents remain established by the tag,
+   changelog, release notes, and release manifest.
+
+### Public projection
+
+The same successful refresh publishes a public projection containing release names and
+deliverables, public workstream names and permanent Train identities, issue order and public
+dependency structure, release lifecycle, and public GitHub issue number, link, title, and status.
+It also includes one filtered Unsorted issues bucket for public work without a designed release.
+
+The public projection omits lane assignments, internal notes, operational details, and issues
+withheld by explicit issue number, security or internal label, or security or internal title
+prefix. Dependencies on withheld issues are omitted rather than exposing their numbers. The page
+states that targets are plans rather than commitments.
+
+### Publication and entry points
+
+- The accepted generated HTML is the canonical internal Board. The established internal Markdown
+  plan path is a small link to that Board rather than a duplicate roadmap.
+- The sanitized public HTML is published to GitHub Pages when its generated meaning changes.
+  Routine refreshes do not open product pull requests.
+- The repository README links prominently to the public roadmap. The repository `ROADMAP.md` is a
+  stable doorway to the live page rather than a separately maintained snapshot.

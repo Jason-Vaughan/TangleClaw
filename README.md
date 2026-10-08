@@ -20,6 +20,7 @@
 <p align="center">
   <a href="https://github.com/Jason-Vaughan/TangleClaw/actions/workflows/test.yml"><img src="https://github.com/Jason-Vaughan/TangleClaw/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/Jason-Vaughan/TangleClaw/releases/latest"><img src="https://img.shields.io/github/v/release/Jason-Vaughan/TangleClaw?color=blue" alt="Release"></a>
+  <a href="https://jason-vaughan.github.io/TangleClaw/"><img src="https://img.shields.io/badge/roadmap-live-0969da" alt="Live Roadmap"></a>
   <a href="#prerequisites"><img src="https://img.shields.io/badge/npm%20dependencies-zero-purple" alt="Zero npm dependencies"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
 </p>
@@ -424,14 +425,9 @@ curl -s http://localhost:3102/api/health | python3 -m json.tool
 
 ## Roadmap
 
-Planned features and improvements — contributions and feedback welcome.
+**[View the live release-first roadmap →](https://jason-vaughan.github.io/TangleClaw/)**
 
-- **Session Switchboard — swarm visibility** — the switchboard, wake nudges, and delivery ledger shipped; next is hover swarm-stats, Master-steered loops from its control bar, and an at-least-once delivery guarantee upstream
-- **Project Master actions** — the Master can now write files at the access level you set; next it acts on the TangleClaw API itself (confirm-gated) across the fleet
-- **Cross-model governance** — extend the deeper governance layers beyond Claude Code to the other engines
-- **Multi-engine sessions** — launch multiple engines on the same project simultaneously (e.g., Claude Code for implementation, Codex for review)
-- **Sidecar controls** — poll, refresh, dismiss, and terminate individual background processes from the detail panel
-- **Linux support** — systemd service management as an alternative to launchd
+It is generated from the canonical release plan and current public GitHub issue status. Release targets are forecasts and update automatically.
 
 ## Community and Conduct
 

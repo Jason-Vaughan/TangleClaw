@@ -96,6 +96,28 @@ describe('startup session-rule delivery (#595)', () => {
   // the top-level `afterEach` restores it unconditionally, so no code path can
   // bypass cleanup. (`t.mock.timers` is auto-restored by node at test end, so
   // it never leaks; the manual globals were the real vector.)
+  /**
+   * Have a launch's boot watch (#2128) answer at once, synchronously.
+   *
+   * A Claude launch now reads its pane before it types, which these tests have
+   * no pane for. The answer is handed back through a thenable that calls its
+   * continuation immediately, so the launch's timers are set inside the
+   * `launchSession` call and the mocked clock drives them as before.
+   * `timeout` is the watch recognising nothing, which is the path a launch
+   * took before boot was watched: the blind paste after a fixed delay.
+   * @param {string} outcome - A `startupDialog.OUTCOME_MEANINGS` key
+   * @param {number} [waitedMs] - How long the watch reports having waited
+   */
+  function bootWatchAnswers(outcome, waitedMs = 0) {
+    const startupDialog = require('../lib/startup-dialog');
+    stub(startupDialog, 'watch', () => ({
+      then(next) {
+        next({ outcome, meaning: startupDialog.OUTCOME_MEANINGS[outcome], dialog: null, waitedMs });
+        return { catch() {} };
+      }
+    }));
+  }
+
   const _restores = [];
   function stub(obj, key, value) {
     _restores.push([obj, key, Object.getOwnPropertyDescriptor(obj, key)]);
@@ -527,6 +549,7 @@ describe('startup session-rule delivery (#595)', () => {
       stub(tmux, 'sendKeys', () => true);
       stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
       t.mock.timers.enable({ apis: ['setTimeout'] });
+      bootWatchAnswers('timeout');
 
       const launched = makeProject(`paste-${uid()}`);
       store.sessionRules.create({ content: 'pasted directive', projectId: launched.id });
@@ -566,6 +589,183 @@ describe('startup session-rule delivery (#595)', () => {
       } finally {
         // `t.mock.timers` is auto-restored by node at test end; globals via
         // afterEach. Only DB rows are cleaned here.
+        for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
+        store.projects.delete(launched.id);
+      }
+    });
+
+    it('a Claude launch whose boot watch saw the prompt pastes at once, and the row still reads unverified (#2128)', (t) => {
+      // Seeing a prompt row is weaker than the settled at-rest marker that
+      // `delivered` is reserved for, so the watch changes WHEN the paste goes
+      // out and what the row says about it, never whether it claims delivery.
+      const tmux = require('../lib/tmux');
+      const enginesModule = require('../lib/engines');
+      let created = false;
+      let pastedAt = null;
+      stub(tmux, 'hasSession', () => created);
+      stub(tmux, 'probeSession', () => ({ live: created, answered: true, cause: null }));
+      stub(tmux, 'createSession', () => { created = true; return true; });
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      let elapsed = 0;
+      stub(tmux, 'sendKeys', () => { pastedAt = elapsed; return true; });
+      bootWatchAnswers('clear', 7100);
+
+      const launched = makeProject(`watched-${uid()}`);
+      store.sessionRules.create({ content: 'pasted directive', projectId: launched.id });
+      const projConfig = store.projectConfig.load(launched.path);
+      projConfig.silentPrime = false;
+      projConfig.launchSequence = { ...(projConfig.launchSequence || {}), pasteRules: 'paste' };
+      store.projectConfig.save(launched.path, projConfig);
+
+      try {
+        const result = sessions.launchSession(launched.name);
+        assert.equal(result.error, null);
+        t.mock.timers.tick(1);
+        elapsed = 1;
+        assert.equal(pastedAt, 0, 'the fixed startup delay is not waited out a second time');
+
+        const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0].channel, 'prime-paste');
+        assert.equal(rows[0].outcome, 'unverified');
+        assert.equal(rows[0].delivered, false);
+        assert.match(rows[0].skipReason, /no at-rest marker.*boot watch saw its prompt \(7100ms\)/);
+
+        store.sessions.kill(result.session.id, 'test cleanup');
+      } finally {
+        for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
+        store.projects.delete(launched.id);
+      }
+    });
+
+    it('a Claude launch at an unanswered startup dialog records the paste as skipped, with the dialog named (#2128)', (t) => {
+      const tmux = require('../lib/tmux');
+      const enginesModule = require('../lib/engines');
+      const startupDialog = require('../lib/startup-dialog');
+      let created = false;
+      let pasted = 0;
+      stub(tmux, 'hasSession', () => created);
+      stub(tmux, 'probeSession', () => ({ live: created, answered: true, cause: null }));
+      stub(tmux, 'createSession', () => { created = true; return true; });
+      stub(tmux, 'sendKeys', () => { pasted += 1; return true; });
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      const dialog = { code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.' };
+      stub(startupDialog, 'watch', (args) => ({
+        then(next) {
+          args.onDialog(dialog);
+          next({ outcome: 'unanswered', meaning: startupDialog.OUTCOME_MEANINGS.unanswered, dialog, waitedMs: 900_000 });
+          return { catch() {} };
+        }
+      }));
+
+      const launched = makeProject(`dialog-${uid()}`);
+      store.sessionRules.create({ content: 'pasted directive', projectId: launched.id });
+      const projConfig = store.projectConfig.load(launched.path);
+      projConfig.silentPrime = false;
+      projConfig.launchSequence = { ...(projConfig.launchSequence || {}), pasteRules: 'paste' };
+      store.projectConfig.save(launched.path, projConfig);
+
+      try {
+        const result = sessions.launchSession(launched.name);
+        assert.equal(result.error, null);
+        t.mock.timers.tick(60_000);
+
+        assert.equal(pasted, 0, 'nothing was typed into the dialog');
+        const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0].channel, 'prime-paste');
+        assert.equal(rows[0].outcome, 'skipped');
+        assert.match(rows[0].skipReason, /^trust_required: the engine's folder trust dialog was on screen and nothing was typed into it/);
+        assert.equal(store.sessions.get(result.session.id).launchBlocker.code, 'trust_required');
+
+        store.sessions.kill(result.session.id, 'test cleanup');
+      } finally {
+        for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
+        store.projects.delete(launched.id);
+      }
+    });
+
+    it('a boot watch that fails outright leaves a skipped row saying so, not a silent gap (#2128)', (t) => {
+      const tmux = require('../lib/tmux');
+      const enginesModule = require('../lib/engines');
+      const startupDialog = require('../lib/startup-dialog');
+      let created = false;
+      let pasted = 0;
+      stub(tmux, 'hasSession', () => created);
+      stub(tmux, 'probeSession', () => ({ live: created, answered: true, cause: null }));
+      stub(tmux, 'createSession', () => { created = true; return true; });
+      stub(tmux, 'sendKeys', () => { pasted += 1; return true; });
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      stub(startupDialog, 'watch', () => ({
+        then() { return { catch(onError) { onError(new Error('watch defect')); } }; }
+      }));
+
+      const launched = makeProject(`watchfail-${uid()}`);
+      store.sessionRules.create({ content: 'pasted directive', projectId: launched.id });
+      const projConfig = store.projectConfig.load(launched.path);
+      projConfig.silentPrime = false;
+      projConfig.launchSequence = { ...(projConfig.launchSequence || {}), pasteRules: 'paste' };
+      store.projectConfig.save(launched.path, projConfig);
+
+      try {
+        const result = sessions.launchSession(launched.name);
+        assert.equal(result.error, null);
+        t.mock.timers.tick(60_000);
+        assert.equal(pasted, 0, 'nothing is typed blind after an unknown failure');
+        const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0].outcome, 'skipped');
+        assert.match(rows[0].skipReason, /boot watch failed before the prime was pasted: watch defect/);
+        store.sessions.kill(result.session.id, 'test cleanup');
+      } finally {
+        for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
+        store.projects.delete(launched.id);
+      }
+    });
+
+    it('a session that ended while its boot was watched leaves a skipped row, not a silent gap (#2128)', (t) => {
+      const tmux = require('../lib/tmux');
+      const enginesModule = require('../lib/engines');
+      const startupDialog = require('../lib/startup-dialog');
+      let created = false;
+      let pasted = 0;
+      let release;
+      stub(tmux, 'hasSession', () => created);
+      stub(tmux, 'probeSession', () => ({ live: created, answered: true, cause: null }));
+      stub(tmux, 'createSession', () => { created = true; return true; });
+      stub(tmux, 'killSession', () => true);
+      stub(tmux, 'sendKeys', () => { pasted += 1; return true; });
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      stub(startupDialog, 'watch', () => ({
+        then(next) {
+          release = () => next({ outcome: 'clear', meaning: startupDialog.OUTCOME_MEANINGS.clear, dialog: null, waitedMs: 5000 });
+          return { catch() {} };
+        }
+      }));
+
+      const launched = makeProject(`ended-${uid()}`);
+      store.sessionRules.create({ content: 'pasted directive', projectId: launched.id });
+      const projConfig = store.projectConfig.load(launched.path);
+      projConfig.silentPrime = false;
+      projConfig.launchSequence = { ...(projConfig.launchSequence || {}), pasteRules: 'paste' };
+      store.projectConfig.save(launched.path, projConfig);
+
+      try {
+        const result = sessions.launchSession(launched.name);
+        assert.equal(result.error, null);
+        store.sessions.kill(result.session.id, 'killed during its boot');
+        release();
+        t.mock.timers.tick(60_000);
+        assert.equal(pasted, 0);
+        const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0].outcome, 'skipped');
+        assert.match(rows[0].skipReason, /session ended while its boot was being watched/);
+      } finally {
         for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
         store.projects.delete(launched.id);
       }
@@ -750,6 +950,7 @@ describe('startup session-rule delivery (#595)', () => {
       stub(tmux, 'sendKeys', () => { throw new Error('must not paste into a pane we could not find'); });
       stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
       t.mock.timers.enable({ apis: ['setTimeout'] });
+      bootWatchAnswers('timeout');
 
       const launched = makeProject(`pasteunknown-${uid()}`);
       store.sessionRules.create({ content: 'never arrives', projectId: launched.id });
@@ -792,6 +993,7 @@ describe('startup session-rule delivery (#595)', () => {
       stub(tmux, 'sendKeys', () => true);
       stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
       t.mock.timers.enable({ apis: ['setTimeout'] });
+      bootWatchAnswers('timeout');
 
       const launched = makeProject(`pasteended-${uid()}`);
       store.sessionRules.create({ content: 'never arrives', projectId: launched.id });
@@ -834,6 +1036,7 @@ describe('startup session-rule delivery (#595)', () => {
       stub(tmux, 'sendKeys', () => { throw new Error('pane is gone'); });
       stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
       t.mock.timers.enable({ apis: ['setTimeout'] });
+      bootWatchAnswers('timeout');
 
       const launched = makeProject(`pastefail-${uid()}`);
       store.sessionRules.create({ content: 'never arrives', projectId: launched.id });
