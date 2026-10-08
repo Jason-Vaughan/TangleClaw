@@ -644,10 +644,21 @@ only when the lookup failed:
 - a profile's **own** `startupDialogs` with no sound entry at all: every entry unreadable, or a
   value that is not a list while its program's dialogs cannot be looked up either. Correct the
   declaration, or set `[]`; sends go through once the corrected profile is read;
-- the session's **engine profile cannot be fetched** at all, for a send that names its engine (the
-  read fails, or no such profile is installed). A connection-qualified engine id resolves to its
-  base profile first (`openclaw:<connection>` reads the `openclaw` profile), so a healthy OpenClaw
-  session is not affected; only a base profile that really cannot be read is refused.
+- a profile that **inherits** a declaration whose every entry is unreadable. The refusal names the
+  profile that holds the bad entry. Correcting that profile is not enough by itself: the
+  declarations read for each program are kept for the life of the server, so **restart TangleClaw**
+  after the fix;
+- the session's **engine profile cannot be fetched** at all, for a send that names its engine. If
+  the read fails, repair the file (the server log names the error); if no such profile is
+  installed, install or restore it. Either way sends go through at the first send after it can be
+  read. A connection-qualified engine id resolves to its base profile first
+  (`openclaw:<connection>` reads the `openclaw` profile), so a healthy OpenClaw session is not
+  affected; only a base profile that really cannot be read is refused;
+- **the look itself fails**: anything thrown while TangleClaw is working out what the pane shows,
+  for a send that names its engine. Nothing is typed on no reading at all. The next send makes the
+  look afresh; if it keeps failing, the server log names the error. One installed profile that is
+  not an object at all (a file holding `null`, say) is reported as a failed lookup, above, and not
+  as a crash.
 
 If a launch blocker is already recorded for the session, the refusal names it as recorded and not
 cleared; it does not claim the dialog is on screen, because that is exactly what cannot be told.
