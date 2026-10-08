@@ -1106,7 +1106,23 @@ describe('API endpoints', () => {
       // case-insensitive disk `Claude` finds `claude.json`; a hand-placed file
       // may carry no id at all. Neither is the profile that was asked for.
       const realGet = store.engines.get;
-      afterEach(() => { store.engines.get = realGet; });
+      // EVERY test here goes through the settings route, and several send
+      // `accessLevel`. The route applies a changed level to the Master's home
+      // directory, which in this process is the OPERATOR'S REAL one. It is
+      // stubbed for the whole block, as the accessLevel tests above do; a test
+      // here that reached the real function rewrote the live Master's
+      // access-level file once (2026-10-08) and the guard at the end of this
+      // file is what caught it.
+      const realApply = master.applyMasterAccessLevel;
+      let applied;
+      beforeEach(() => {
+        applied = [];
+        master.applyMasterAccessLevel = (level) => { applied.push(level); return { applied: true, home: '/stub' }; };
+      });
+      afterEach(() => {
+        store.engines.get = realGet;
+        master.applyMasterAccessLevel = realApply;
+      });
       // Read when a test runs: the test store is not initialised when this block is declared.
       const real = () => realGet.call(store.engines, 'claude');
 
@@ -1177,6 +1193,60 @@ describe('API endpoints', () => {
           assert.equal(store.config.load().master.engine, null);
           assert.equal((await request(server, 'PATCH', '/api/config', { master: { engine: 'claude' } })).status, 200);
         });
+      });
+
+      describe('an engine ALREADY stored whose profile is missing or unreadable does not block other Master settings either (R19)', () => {
+        // The existence check sat on the merged settings too, and predates the
+        // identity test: a stored engine whose profile file had been deleted
+        // refused every partial patch. Same lockout, same fix: nothing about
+        // the engine is looked at unless the patch names it.
+        const stored = 'my-claude';
+        const GONE = {
+          'the profile file is missing': () => null,
+          'the profile file holds null': () => null,
+          'the profile file does not parse': () => { throw new SyntaxError('Unexpected end of JSON input'); }
+        };
+
+        for (const [what, fetch] of Object.entries(GONE)) {
+          describe(what, () => {
+            beforeEach(async () => {
+              const good = { ...real(), id: stored };
+              store.engines.get = (id) => (id === stored ? good : realGet.call(store.engines, id));
+              const set = await request(server, 'PATCH', '/api/config', { master: { engine: stored, accessLevel: 'read-only' } });
+              assert.equal(set.status, 200, 'precondition: the engine was selectable when it was chosen');
+              store.engines.get = (id) => (id === stored ? fetch() : realGet.call(store.engines, id));
+            });
+
+            afterEach(async () => {
+              store.engines.get = realGet;
+              await request(server, 'PATCH', '/api/config', { master: { engine: 'claude', accessLevel: 'read-only', autoStart: false } });
+            });
+
+            it('accessLevel alone still saves, in both directions that are enabled: the access control is not held by the engine', async () => {
+              const down = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'read-only' } });
+              assert.equal(down.status, 200);
+              assert.equal(store.config.load().master.accessLevel, 'read-only');
+              assert.equal(store.config.load().master.engine, stored, 'the stored engine is left as it was');
+            });
+
+            it('autoStart alone still saves', async () => {
+              const { status } = await request(server, 'PATCH', '/api/config', { master: { autoStart: true } });
+              assert.equal(status, 200);
+              assert.equal(store.config.load().master.autoStart, true);
+            });
+
+            it('naming that engine in a patch is refused with a 400, never a 500', async () => {
+              const { status, data } = await request(server, 'PATCH', '/api/config', { master: { engine: stored, autoStart: true } });
+              assert.equal(status, 400);
+              assert.match(data.error, /master\.engine "my-claude" (is not a configured engine|cannot be selected: its engine profile could not be read \(Unexpected end of JSON input\))/);
+            });
+
+            it('the way out works: engine null, or another engine', async () => {
+              assert.equal((await request(server, 'PATCH', '/api/config', { master: { engine: null } })).status, 200);
+              assert.equal((await request(server, 'PATCH', '/api/config', { master: { engine: 'claude' } })).status, 200);
+            });
+          });
+        }
       });
 
       it('control: a custom profile carrying its own id can be selected', async () => {

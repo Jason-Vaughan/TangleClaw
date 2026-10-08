@@ -1839,29 +1839,34 @@ function validateMasterPatch(patch, config) {
   if (!master.MASTER_ENABLED_ACCESS_LEVELS.includes(merged.accessLevel)) {
     return { error: `master.accessLevel "${merged.accessLevel}" is not available yet — it ships only with real structural enforcement (currently enabled: ${master.MASTER_ENABLED_ACCESS_LEVELS.join(', ')})` };
   }
-  if (merged.engine !== null) {
+  // Everything about the ENGINE is checked only when this patch names
+  // `engine` (#2128). The merged object also holds the engine already stored,
+  // and checking that on every patch refused unrelated changes over a stored
+  // engine whose profile had been removed or had gone bad. The Master bar's
+  // access toggle sends `accessLevel` alone, so write access could not be
+  // revoked: a safety control held hostage by an unrelated file. An engine
+  // already stored is refused where it matters, when the Master is started
+  // (`master.ensureMasterSession`).
+  if (Object.prototype.hasOwnProperty.call(patch, 'engine') && merged.engine !== null) {
     if (typeof merged.engine !== 'string' || !merged.engine) {
       return { error: 'master.engine must be an engine id string or null' };
     }
-    const masterProfile = store.engines.get(merged.engine);
+    let masterProfile;
+    try {
+      masterProfile = store.engines.get(merged.engine);
+    } catch (err) {
+      // A profile file that does not parse cannot be chosen; that is a bad
+      // request about that engine, not an internal failure of this route.
+      return { error: `master.engine "${merged.engine}" cannot be selected: its engine profile could not be read (${err.message})` };
+    }
     if (!masterProfile) {
       return { error: `master.engine "${merged.engine}" is not a configured engine` };
     }
-    // The profile must BE that engine's before it can be CHOSEN for the
-    // Master (#2128): the same identity test a launch makes. A file found
-    // under another letter case on a case-insensitive disk, or one that does
-    // not carry its own id, is not it.
-    //
-    // Asked only when this patch names `engine`. The merged object also holds
-    // the engine already stored, and testing that on every patch would refuse
-    // unrelated changes over a stored engine whose profile has gone bad:
-    // the access toggle sends `accessLevel` alone, so write access could not
-    // be revoked. An engine already stored is refused where it matters, when
-    // the Master is started (`master.ensureMasterSession`).
-    const namesEngine = Object.prototype.hasOwnProperty.call(patch, 'engine');
-    const masterIdentity = namesEngine
-      ? require('./lib/startup-dialog').identify(masterProfile, merged.engine)
-      : { profile: masterProfile };
+    // The profile must BE that engine's before it can be chosen for the
+    // Master: the same identity test a launch makes. A file found under
+    // another letter case on a case-insensitive disk, or one that does not
+    // carry its own id, is not it.
+    const masterIdentity = require('./lib/startup-dialog').identify(masterProfile, merged.engine);
     if (!masterIdentity.profile) {
       return {
         error: `master.engine "${merged.engine}" cannot be selected: its engine profile is not usable (${masterIdentity.detail}). `
