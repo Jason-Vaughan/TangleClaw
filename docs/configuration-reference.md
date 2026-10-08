@@ -605,7 +605,9 @@ honest default — the step behaves as it did before the check existed). See
 Omit `startupDialogs` and the profile takes the dialogs declared by any installed profile with the
 same `command`; with none declared for that command either, the pane is not watched at launch for a
 screen it must not type into (#2128) and the launch behaves as it did before the field existed. Set
-it to `[]` to opt a profile out. See `docs/engine-guide.md` →
+it to `[]` to opt a profile out; only a literal `[]` does. A `startupDialogs` value that is not a
+list, or a list with an entry that cannot be read, is not an opt-out: a launch on that profile types
+nothing (`startup_dialogs_unreadable`) until it is fixed. See `docs/engine-guide.md` →
 Capabilities for what a declared dialog does to a launch.
 
 Omit `wake` and the engine is never idle-judged or nudged (skipped and logged, never woken against

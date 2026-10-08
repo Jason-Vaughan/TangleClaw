@@ -618,7 +618,16 @@ are matched on text with styling removed, because an engine may colour a dialog 
 
 `code` is lower_snake_case and becomes the blocker's name; `label` and `meaning` are shown to the
 operator. An entry missing any of `code`, `label`, `meaning` or a non-empty `markers` list is
-ignored and logged at warn, never repaired. The watch tells a finished boot by the measured prompt signature in
+never repaired and never matched on, and it is **not** read as a shorter list either. **A
+declaration that cannot be read fails closed**: while any entry is unreadable, or `startupDialogs`
+is present and is not a list, a launch on that profile types nothing (no pre-key, no prime, no
+kickoff), whatever its pane shows. The delivery ledger and the log say
+`startup_dialogs_unreadable`, with the profile and the entry. The entry that was lost was written
+for a dialog nothing can recognise now, so reading the list as shorter, or as empty, would launch
+unwatched into exactly that dialog. This is the same policy as an unreadable `launch.guardedDialogs`
+entry (#2177). A profile with no list of its own inherits the refusal with the declaration of its
+`command`. Only a literal `[]` declares none. Entries that could be read still protect later
+sends. The watch tells a finished boot by the measured prompt signature in
 the engine's `wake` block, or failing that in the `wake` block of the profile that declares the
 dialogs for the same command. With neither, the boot is not watched and the launch types nothing
 (see above).
@@ -838,8 +847,18 @@ highlights "Update now", which upgrades the global install, and its folder-trust
 and `preKeys`). It is not a general declaration of an engine's dialogs, nothing else in TangleClaw
 reads it, and it is not interchangeable with any other dialog declaration a profile may carry.
 
-`launch.preKeys` still exists for an operator-written profile, and is still sent on a timer without
-knowing what it will answer. **No bundled profile declares any.** Do not declare one for a prompt
+`launch.preKeys` still exists for an operator-written profile, and is still sent on a timer. It is
+no longer sent without a look: each key first passes the startup-dialog check
+(`capabilities.startupDialogs`, #2128), which also withholds it from a menu's selected option or
+typed text, and then the guarded-dialog check above (#2177). A screen that neither declaration
+names and that shows no row led by the prompt glyph still gets the key. **No bundled profile
+declares any.**
+
+**A profile that declares both kinds of dialog has one known limit** (#2221). The guarded-dialog
+check takes "composer" to mean a row matching the bare `promptPattern`. Claude Code's fresh composer
+shows a faint suggestion and is not bare, so on such a profile, when the pane was never observed
+ready, the prime is refused as an unrecognised screen. No bundled profile declares both
+(Claude Code: `startupDialogs`; Codex: `guardedDialogs`). Do not declare one for a prompt
 whose default changes anything outside the pane.
 
 #### `wake.pasteRejectedMarker`

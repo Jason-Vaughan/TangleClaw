@@ -379,7 +379,7 @@ describe('one look before a send (#2128)', () => {
 
   it('the composer is clear', () => {
     frames = [COMPOSER];
-    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: true, noncomposer: false, unread: null, promptKnown: true });
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: true, noncomposer: false, unread: null, promptKnown: true, unreadable: null });
   });
 
   it('a session quoting the dialog above its composer is clear: the prompt is the evidence', () => {
@@ -463,7 +463,7 @@ describe('one look before a send (#2128)', () => {
   it('a profile with no prompt glyph is never read as clear: it has no positive evidence to give', () => {
     startupDialog._internal.wakeProfiles = () => ({});
     frames = [COMPOSER];
-    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, noncomposer: false, unread: null, promptKnown: false });
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, noncomposer: false, unread: null, promptKnown: false, unreadable: null });
     frames = [TRUST_DIALOG];
     assert.equal(look().dialog.code, 'trust_required', 'though it still sees the dialog by its markers');
   });
@@ -552,13 +552,13 @@ describe('one look before a send (#2128)', () => {
 
   it('a screen with neither a dialog nor a prompt is not clear', () => {
     frames = [['  Verifying your account…']];
-    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, noncomposer: false, unread: null, promptKnown: true });
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, noncomposer: false, unread: null, promptKnown: true, unreadable: null });
   });
 
   it('an engine that declares nothing is not read', () => {
     frames = [new Error('must not be read')];
     assert.deepEqual(startupDialog.check('t', { id: 'aider', command: 'aider', capabilities: { startupDialogs: [] } }),
-      { declared: false, dialog: null, suspect: null, clear: false, noncomposer: false, unread: null, promptKnown: false });
+      { declared: false, dialog: null, suspect: null, clear: false, noncomposer: false, unread: null, promptKnown: false, unreadable: null });
   });
 });
 
@@ -600,7 +600,7 @@ describe('the boot watch (#2128)', () => {
     const res = await watch();
     assert.equal(res.meaning, startupDialog.OUTCOME_MEANINGS[res.outcome]);
     assert.deepEqual(Object.keys(startupDialog.OUTCOME_MEANINGS).sort(),
-      ['answered', 'clear', 'pane-gone', 'timeout', 'unanswered', 'undeclared', 'unprofiled']);
+      ['answered', 'clear', 'pane-gone', 'timeout', 'unanswered', 'undeclared', 'unprofiled', 'unreadable']);
   });
 
   it('does not watch an engine that declares no dialogs', async () => {
@@ -2704,6 +2704,28 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
         assert.deepEqual(sent().map((t) => t.key || t.text), ['Enter', 'the prime']);
       });
 
+      it('KNOWN LIMIT (#2221): on a profile declaring both kinds, a fresh composer showing its suggestion has its prime refused by the other guard as unrecognised', async () => {
+        // This module reads the suggestion row as the composer (cursor shown,
+        // boxed, empty). The #2177 guard knows only the bare pattern, so a pane
+        // it never observed ready is "unrecognised" to it. No shipped profile
+        // declares both; this pins the limit so a change to either side shows.
+        const s = start();
+        pane = FRESH;
+        assert.equal(startupDialog.check(s.tmuxSession, BOTH).clear, true, 'precondition: clear to this module');
+        const { rows } = await launchedAfterTimeout(s, BOTH);
+        assert.ok(!typed.some((t) => t.text === 'the prime'), 'the prime was not pasted');
+        // The pre-key IS sent: the #2177 guard withholds a key only from a declared
+        // prompt or an unreadable pane, never from a screen it does not recognise.
+        assert.deepEqual(typed.filter((t) => t.key).map((t) => t.key), ['Enter'], 'the pre-key is still sent');
+        assert.match(rows[0].skipReason, /was never observed ready and shows neither its composer nor a guarded dialog/);
+        for (const file of ['claude.json', 'codex.json']) {
+          const shipped = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', file), 'utf8'));
+          const both = !!(shipped.capabilities && shipped.capabilities.startupDialogs && shipped.capabilities.startupDialogs.length)
+            && !!(shipped.launch && shipped.launch.guardedDialogs && shipped.launch.guardedDialogs.length);
+          assert.equal(both, false, `${file} must not declare both kinds while this limit stands`);
+        }
+      });
+
       it('a profile whose guarded dialog cannot be read gets no pre-key and no prime, even over a bare composer', async () => {
         const s = start();
         pane = AFTER_MENU;
@@ -2744,6 +2766,125 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
         assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required', 'still recorded after all four looks');
       });
     }
+
+    describe('a startup-dialog declaration that cannot be read fails closed (#2224)', () => {
+      // A mistyped entry was written to name a dialog nothing can recognise
+      // now. Reading the list as shorter, or as empty, would launch unwatched
+      // into that dialog. Only a literal [] says "this program shows none".
+      const SOUND = CLAUDE.capabilities.startupDialogs[0];
+      const withDialogs = (value, extra = {}) => ({ ...WITH_PREKEY, ...extra, capabilities: { ...WITH_PREKEY.capabilities, startupDialogs: value } });
+      const CASES = {
+        'every entry unreadable': withDialogs([{ code: 'trust_required', label: 'l', meaning: 'm', markers: [] }]),
+        'one sound entry and one unreadable': withDialogs([SOUND, { code: 'Bad Code', label: 'l', meaning: 'm', markers: ['x'] }]),
+        'a value that is not a list': withDialogs('trust'),
+        'null where a list belongs': withDialogs(null),
+        'an object where a list belongs': withDialogs({ code: 'trust_required' })
+      };
+
+      afterEach(() => { startupDialog.reset(); });
+
+      for (const [name, profile] of Object.entries(CASES)) {
+        it(`${name}: no pre-key, no prime and no kickoff, over a pane at its bare prompt, and the ledger names the profile and the entry`, async () => {
+          const s = start();
+          pane = AFTER_MENU;
+          assert.ok(startupDialog.unreadable(profile).length >= 1);
+          const rows = [];
+          const kicked = [];
+          const realRecord = store.sessionRuleDeliveries.record;
+          store.sessionRuleDeliveries.record = (entry) => { rows.push(entry); return entry; };
+          launchKickoff.kickoff = (args) => { kicked.push(args); return Promise.resolve('sent'); };
+          try {
+            // The REAL watch: it must answer before reading the pane at all.
+            const done = new Promise((resolve) => { launchFinished = resolve; });
+            sessions._deferEngineInit(
+              s.tmuxSession, project.name, 'claude', profile, 'the prime', null, false,
+              { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' },
+              { sessionId: s.id, projectId: project.id, hasSequence: true }
+            );
+            await done;
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            await turns();
+          } finally {
+            store.sessionRuleDeliveries.record = realRecord;
+          }
+          assert.deepEqual(typed, [], 'nothing was typed');
+          assert.deepEqual(kicked, [], 'and the kickoff was not asked to');
+          assert.equal(rows.length, 1);
+          assert.equal(rows[0].outcome, 'skipped');
+          assert.match(rows[0].skipReason, /^startup_dialogs_unreadable: engine profile "claude" declares startup dialogs TangleClaw could not read/);
+          assert.match(rows[0].skipReason, name === 'every entry unreadable' ? /entry 1: / : (name.startsWith('one sound') ? /entry 2: / : /its value: /));
+          assert.match(rows[0].skipReason, /set "startupDialogs": \[\] to declare none/);
+        });
+
+        it(`${name}: a launch send asked on its own is refused too, and a later injection is judged by what could be read`, () => {
+          const s = start();
+          pane = AFTER_MENU;
+          const launch = sessions._startupDialogAtSend(s.tmuxSession, profile, 'claude', project.name, { sessionId: s.id });
+          assert.equal(launch.code, startupDialog.DECLARATION_UNREADABLE);
+          assert.equal(launch.label, null);
+          const seen = startupDialog.check(s.tmuxSession, profile);
+          assert.ok(seen.unreadable);
+          assert.equal(startupDialog.withholdFor(seen, null), null, 'a later injection into a bare composer is an ordinary send');
+        });
+      }
+
+      it('the sound entry of a mixed list still catches its dialog for every sender', () => {
+        const s = start();
+        pane = TRUST_DIALOG;
+        const seen = startupDialog.check(s.tmuxSession, CASES['one sound entry and one unreadable']);
+        assert.equal(seen.dialog.code, 'trust_required');
+        assert.equal(startupDialog.withholdFor(seen, null).code, 'trust_required');
+      });
+
+      it('only a literal [] opts a profile out: it is not watched, and it types', async () => {
+        const s = start();
+        pane = AFTER_MENU;
+        const optedOut = withDialogs([]);
+        assert.deepEqual(startupDialog.unreadable(optedOut), []);
+        let watched = 0;
+        startupDialog.watch = async () => { watched += 1; return { outcome: 'clear', dialog: null, waitedMs: 0 }; };
+        launchKickoff.kickoff = () => Promise.resolve('sent');
+        const done = new Promise((resolve) => { launchFinished = resolve; });
+        sessions._deferEngineInit(s.tmuxSession, project.name, 'claude', optedOut, 'the prime', null, false, null, { sessionId: s.id, projectId: project.id, hasSequence: true });
+        await done;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        await turns();
+        assert.equal(watched, 0);
+        assert.ok(typed.some((t) => t.text === 'the prime'));
+      });
+
+      it('a profile with no list of its own inherits the refusal from the profile that declares for its command, and a profile for another command does not', async () => {
+        const source = { ...CASES['one sound entry and one unreadable'], id: 'claude', command: 'claude' };
+        const variant = { id: 'claude-sonnet-reviewer', command: 'claude', capabilities: { supportsPrimePrompt: true } };
+        const other = { id: 'aider', command: 'aider', capabilities: {} };
+        startupDialog.reset();
+        startupDialog._internal.engineProfiles = () => [other, variant, source];
+        assert.equal(startupDialog.unreadable(variant).length, 1);
+        assert.equal(startupDialog.unreadable(variant)[0].profile, 'claude', 'it names the profile that holds the bad entry');
+        assert.equal((await startupDialog.watch({ tmuxName: 't', engineProfile: variant })).outcome, 'unreadable');
+        assert.deepEqual(startupDialog.unreadable(other), []);
+        assert.deepEqual(startupDialog.unreadable({ id: 'x', command: 'claude-next', capabilities: {} }), [], 'an unknown command has nothing declared for it');
+        assert.equal((await startupDialog.watch({ tmuxName: 't', engineProfile: other })).outcome, 'undeclared');
+        // A profile that says [] for itself is not touched by its program's bad entry.
+        assert.deepEqual(startupDialog.unreadable({ ...variant, capabilities: { startupDialogs: [] } }), []);
+      });
+
+      it('a command whose only declaration is unreadable still passes the refusal on', () => {
+        const source = { ...CASES['every entry unreadable'], id: 'claude', command: 'claude' };
+        startupDialog.reset();
+        startupDialog._internal.engineProfiles = () => [source];
+        assert.equal(startupDialog.unreadable({ id: 'v', command: 'claude', capabilities: {} }).length, 1);
+      });
+
+      it('the shipped profiles all read cleanly', () => {
+        const dir = path.join(__dirname, '..', 'data', 'engines');
+        for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.json'))) {
+          const profile = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+          const own = profile.capabilities && profile.capabilities.startupDialogs;
+          if (own !== undefined) assert.deepEqual(startupDialog.unreadable(profile), [], file);
+        }
+      });
+    });
 
     it('launch, no blocker stored, REAL fresh composer: the pre-key, the prime and the kickoff are all typed', async () => {
       const s = start();
