@@ -484,7 +484,11 @@ under its cursor is "No, exit". A line ending in Enter typed into that screen en
   records a blocker under the entry's `code`, served as `launchBlocker` in session status and kept
   on the session after it ends, so a pane that dies at the dialog leaves a `crashed` session that
   says why. The launch keeps reading for 15 minutes; when the operator answers and the prompt
-  appears, the blocker is cleared and the launch sends its first turn.
+  appears, the blocker is cleared and the launch sends its first turn. In that wait a frame is
+  judged as every later look judges it: a prompt that holds still **below** any dialog text is the
+  answer, so an answered dialog whose text is still in the pane's history does not strand the
+  launch. Before any dialog has been seen the watch is stricter, and takes any dialog text on a
+  fresh pane as a dialog on its way.
 - **The prompt is up, with no dialog.** The launch types as usual, without waiting out the fixed
   `startupDelay` as well.
 - **Neither is recognised within 45 seconds.** The launch proceeds exactly as it did before this

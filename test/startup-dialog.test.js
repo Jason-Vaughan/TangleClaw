@@ -22,7 +22,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { DatabaseSync } = require('node:sqlite');
-const { setLevel } = require('../lib/logger');
+const { setLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
 
@@ -583,6 +583,77 @@ describe('the boot watch (#2128)', () => {
     assert.equal(res.outcome, 'answered');
     assert.equal(res.dialog.code, 'trust_required');
     assert.equal(seen.length, 1);
+  });
+
+  describe('after a dialog, the watch judges a frame as every later look does', () => {
+    // Text of an answered dialog can stay in the rows of history the watch
+    // captures. Judged by the boot rule (no marker anywhere), such a pane is
+    // never clear again and the launch never resumes.
+    const ANSWERED_WITH_HISTORY = Object.freeze([...TRUST_DIALOG, ...COMPOSER]);
+
+    it('dialog text left in history with a stable prompt below it resumes: `answered`', async () => {
+      play([TRUST_DIALOG, ANSWERED_WITH_HISTORY]);
+      const res = await watch();
+      assert.equal(res.outcome, 'answered');
+      assert.equal(res.dialog.code, 'trust_required');
+      assert.ok(res.waitedMs < startupDialog.ANSWER_WINDOW_MS, 'well before the answer window ends');
+    });
+
+    it('it still takes two stable reads: a prompt seen once below the history is not yet the answer', async () => {
+      const moving = [...TRUST_DIALOG, ...COMPOSER, '  output still arriving'];
+      play([TRUST_DIALOG, ANSWERED_WITH_HISTORY, moving, ANSWERED_WITH_HISTORY, ANSWERED_WITH_HISTORY]);
+      startupDialog._internal.paneDigest = (lines) => lines.join('\n');
+      const reads = [];
+      const real = startupDialog._internal.capturePane;
+      startupDialog._internal.capturePane = (...a) => { const r = real(...a); reads.push(r.lines.length); return r; };
+      const res = await watch();
+      assert.equal(res.outcome, 'answered');
+      assert.ok(reads.length >= 5, `answered only once the frame held still (reads: ${reads.length})`);
+    });
+
+    it('a stale composer ABOVE a live dialog still withholds', async () => {
+      play([TRUST_DIALOG, [...COMPOSER, ...TRUST_DIALOG]]);
+      const res = await watch({ answerWindowMs: 6000 });
+      assert.equal(res.outcome, 'unanswered');
+    });
+
+    it('a stale composer above a HALF-DRAWN dialog still withholds', async () => {
+      play([TRUST_DIALOG, [...COMPOSER, ...TRUST_DIALOG.slice(0, 13)]]);
+      assert.equal((await watch({ answerWindowMs: 6000 })).outcome, 'unanswered');
+    });
+
+    it('the boot stage stays conservative: marker text with a prompt below it is not yet clear', async () => {
+      // Before any dialog has been seen, text that looks like one is taken as
+      // one on its way. A fresh pane has no history to quote it from.
+      play([ANSWERED_WITH_HISTORY]);
+      const res = await watch();
+      assert.equal(res.outcome, 'timeout');
+      assert.deepEqual(seen, [], 'and no dialog is reported, because none was fully on screen');
+    });
+
+    it('the one-read check and the answer stage agree on every frame', () => {
+      const frames = {
+        dialog: TRUST_DIALOG,
+        composer: COMPOSER,
+        'answered, text in history': ANSWERED_WITH_HISTORY,
+        'composer above a dialog': [...COMPOSER, ...TRUST_DIALOG],
+        'composer above half a dialog': [...COMPOSER, ...TRUST_DIALOG.slice(0, 13)],
+        'half a dialog': TRUST_DIALOG.slice(0, 13),
+        quoting: QUOTING_SESSION,
+        neither: ['  Verifying your account…'],
+        empty: []
+      };
+      startupDialog._internal.settleSync = () => {};
+      for (const [name, lines] of Object.entries(frames)) {
+        startupDialog._internal.capturePaneSync = () => ({ lines, alternateScreen: false });
+        const viaCheck = startupDialog.check('t', CLAUDE);
+        const viaClassify = startupDialog.classify(lines, DIALOGS, GLYPH);
+        assert.equal(viaCheck.clear, viaClassify.state === 'clear', `clear: ${name}`);
+        assert.equal(!!viaCheck.dialog, viaClassify.state === 'dialog', `dialog: ${name}`);
+      }
+      assert.equal(startupDialog.classify(ANSWERED_WITH_HISTORY, DIALOGS, GLYPH).state, 'clear');
+      assert.equal(startupDialog.classify([...COMPOSER, ...TRUST_DIALOG], DIALOGS, GLYPH).state, 'dialog');
+    });
   });
 
   it('the pane ends behind its dialog: `pane-gone`, still naming the dialog', async () => {
@@ -1228,6 +1299,43 @@ describe('the session keeps its blocker (#2128)', () => {
       assert.match(rows[0].skipReason, /^prompt_unverified: .*cannot tell a finished boot from a dialog and typed nothing/);
       assert.match(rows[0].skipReason, /Add a measured wake declaration to the profile, or start the session by typing in its pane/);
       assert.equal(store.sessions.get(s.id).launchBlocker, null, 'no dialog was seen, so none is recorded');
+    });
+
+    it('the operator answers, the dialog\'s text stays in history: the REAL watch resumes and the prime and kickoff are sent', async () => {
+      const s = start();
+      const history = [...TRUST_DIALOG, ...COMPOSER];
+      const frames = [TRUST_DIALOG, TRUST_DIALOG, history];
+      let clock = 0;
+      startupDialog._internal.now = () => clock;
+      startupDialog._internal.sleep = async (ms) => { clock += ms; };
+      startupDialog._internal.wakeProfiles = () => ({ claude: { promptGlyph: GLYPH } });
+      startupDialog._internal.paneDigest = (lines) => lines.join('\n');
+      startupDialog._internal.capturePane = async () => ({ lines: frames.length > 1 ? frames.shift() : frames[0], alternateScreen: false });
+      // What each send's own look sees once the watch has let the launch go.
+      tmux.capturePane = () => ({ lines: history, alternateScreen: false });
+      await launched(s);
+      assert.ok(typed.some((t) => t.text === 'the prime'), 'the prime was pasted');
+      assert.equal(kicked.length, 1, 'and the kickoff was asked');
+      assert.equal(store.sessions.get(s.id).launchBlocker, null, 'the blocker recorded at the dialog is cleared');
+      assert.equal(store.activity.query({ sessionId: s.id, eventType: 'session.launch_blocked' }).length, 1);
+      assert.equal(store.activity.query({ sessionId: s.id, eventType: 'session.launch_unblocked' }).length, 1);
+    });
+
+    it('a withheld launch says why in the log even when no prime was owed', async () => {
+      const s = start();
+      watchAnswers('unprofiled');
+      let out = '';
+      setConsoleStream({ write: (chunk) => { out += chunk; } });
+      setLevel('warn');
+      try {
+        await launched(s, { silentPrime: true });
+      } finally {
+        setLevel('error');
+        setConsoleStream(null);
+      }
+      assert.deepEqual(typed, []);
+      assert.match(out, /Launch sends withheld by the boot gate/);
+      assert.match(out, /prompt_unverified/);
     });
 
     it('an engine that declares no dialogs is not watched at all', async () => {
