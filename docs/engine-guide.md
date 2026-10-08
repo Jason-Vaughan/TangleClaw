@@ -649,6 +649,10 @@ highlights "Update now", which upgrades the global install, and its folder-trust
   refused when the pane shows neither a bare composer nor a declared prompt, and when the pane cannot
   be read. Such an engine needs a `capabilities.wake.promptPattern`, or no composer is ever
   recognised. An engine that declares none keeps its paste exactly as before.
+- An entry that cannot be read (no `id`, no `match`, a `match` that is not a valid pattern, or a
+  `startupPrompts` value that is not a list) makes
+  the launch type nothing at all for that engine: the prompt it named can no longer be recognised.
+  The server log names the entry.
 - After a refused paste nothing retries it. Once the operator has answered the prompt, the session
   is started as any unprimed session is: by hand, or by the launch-unready nudge where its own gate
   lets it type.

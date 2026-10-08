@@ -45,6 +45,21 @@ describe('declared startup prompts (#2177)', () => {
     assert.deepEqual(prompts.map((p) => p.id), ['ok']);
     assert.equal(prompts[0].humanAction, '');
   });
+
+  it('counts the entries it could not read, because each one is a prompt nothing can recognise any more', () => {
+    const bad = { launch: { startupPrompts: [{ id: 'ok', match: 'Continue\\?' }, { id: 'bad-pattern', match: '(' }, { match: 'no id' }, null] } };
+    assert.equal(startupPrompts.read(bad).unreadable, 3);
+    assert.deepEqual(startupPrompts.read(bad).prompts.map((p) => p.id), ['ok']);
+    assert.deepEqual(startupPrompts.read(codex).unreadable, 0);
+    assert.deepEqual(startupPrompts.read({ launch: {} }), { prompts: [], unreadable: 0 });
+    assert.deepEqual(startupPrompts.read({ launch: { startupPrompts: null } }), { prompts: [], unreadable: 0 });
+  });
+
+  it('a startupPrompts value that is not a list is a declaration nothing can read, not an absent one', () => {
+    for (const wrong of [{ id: 'update', match: 'Update available' }, 'Update available', 0, true]) {
+      assert.deepEqual(startupPrompts.read({ launch: { startupPrompts: wrong } }), { prompts: [], unreadable: 1 });
+    }
+  });
 });
 
 describe('which screen is live, on whole Codex captures (#2177)', () => {
@@ -157,6 +172,23 @@ describe('what a launch-time send is refused for (#2177)', () => {
         const r = sessions._startupTypingRefusal('t', codex, wakeProfile, refuseUnrecognised, () => cap);
         assert.equal(r.promptId, null);
         assert.match(r.reason, /could not be read, so nothing was typed.*came back empty/);
+      }
+    }
+  });
+
+  it('a profile with an unreadable startup prompt refuses every send, whatever the pane shows', () => {
+    // The lost entry is the prompt the profile meant to protect. A composer on
+    // screen proves nothing: the reader could not have told that prompt apart.
+    const typo = { name: 'Fake', launch: { startupPrompts: [{ id: 'update', match: 'Update available (' }] } };
+    const partly = { name: 'Fake', launch: { startupPrompts: [{ id: 'folder-trust', match: 'Trust this folder' }, { id: 'update', match: '(' }] } };
+    const notAList = { name: 'Fake', launch: { startupPrompts: { id: 'update', match: 'Update available' } } };
+    for (const profile of [typo, partly, notAList]) {
+      for (const refuseUnrecognised of [true, false]) {
+        for (const pane of [PANES.composer, PANES.updatePrompt]) {
+          const r = sessions._startupTypingRefusal('t', profile, wakeProfile, refuseUnrecognised, () => ({ lines: [...pane.lines] }));
+          assert.equal(r.promptId, null);
+          assert.match(r.reason, /declares a startup prompt TangleClaw could not read \(1 of its entries\).*nothing was typed/);
+        }
       }
     }
   });

@@ -49,6 +49,8 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 **An empty capture is an unread pane.** `tmux.capturePane` answers a failed `capture-pane` with no lines rather than throwing, so the refusal treats zero lines as unread. The first version caught only a thrown error, which that function does not raise once the session is known to exist, and a preKey would have gone through; the boundary review found it and the tests now stub what tmux really returns.
 
+**A profile entry that cannot be read refuses every send.** The reader first dropped a malformed `startupPrompts` entry with a warning, and its comment said that could never make a launch type more. It could: with the entry gone the prompt it named was invisible, and a preKey or a ready-pane paste went into it. The reader now counts what it dropped and the refusal fails closed on any. Found by the review of the merged head.
+
 **Deliberate behaviour change.** A Codex launch in an untrusted folder now stops at the trust prompt. No path accepts folder trust; the Operator has given no policy for it.
 
 **A test expectation changed, on purpose.** `test/codex-launch-modes.test.js` asserted that the bundled Codex profile resolves to `['Enter', 'Enter']`. That was the behaviour being removed, so the assertion now uses a synthetic profile for the fallback rule it was really about, and a new test pins that bundled Codex sends no `preKeys` in any mode.

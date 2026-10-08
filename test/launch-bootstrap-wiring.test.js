@@ -235,6 +235,17 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
       assert.deepEqual(rawKeys, []);
     });
 
+    it('a profile whose startup prompt cannot be read gets no preKey and no paste, even over a composer', async () => {
+      const BROKEN = Object.freeze({ name: 'Fake', capabilities: { supportsPrimePrompt: true }, launch: { startupDelay: 5, preKeys: ['Enter'], preKeyDelay: 5, startupPrompts: [{ id: 'update', match: 'Update available (' }] } });
+      tmux.capturePane = () => ({ lines: ['> '] });
+      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, BROKEN, 'the prime', null, false, { ...DELIVERY }, LEGACY);
+      // The paste is scheduled after the preKey slot, as on any launch with preKeys.
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      assert.deepEqual(rawKeys, [], 'the key would have answered the prompt the broken entry named');
+      assert.deepEqual(pastes, []);
+      assert.match(ledger[0].skipReason, /could not read/);
+    });
+
     it('an engine that declares none keeps its paste without its pane being read', async () => {
       let reads = 0;
       tmux.capturePane = () => { reads++; return { lines: UPDATE_PROMPT }; };
