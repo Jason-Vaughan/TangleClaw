@@ -1025,6 +1025,56 @@ describe('API endpoints', () => {
       }
     });
 
+    it('a level tightened without knowing the engine is not reported as done, and says which half holds (#2128)', async () => {
+      // `applyMasterAccessLevel` writes the level and the Claude guard when it
+      // cannot work out what the Master runs on. That is a partial change: the
+      // instructions were not rewritten. The route must not answer 200, and must
+      // not say "still enforcing write" either — the guard is already tighter.
+      const realApply = master.applyMasterAccessLevel;
+      const blind = (guardBinds) => Object.assign(new Error('Unexpected token SECRET-FRAGMENT in JSON'), {
+        runtimeUnknown: true, levelApplied: true, guardBinds
+      });
+      try {
+        master.applyMasterAccessLevel = () => ({ applied: true, home: '/stub' });
+        assert.equal((await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'write' } })).status, 200);
+
+        master.applyMasterAccessLevel = () => { throw blind(true); };
+        const bound = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'read-only' } });
+        assert.equal(bound.status, 500);
+        assert.equal(bound.data.code, 'MASTER_LEVEL_NOT_APPLIED');
+        assert.equal(store.config.load().master.accessLevel, 'read-only', 'the stored intent stands');
+        assert.match(bound.data.error, /is now "read-only" and its write guard is in place/);
+        assert.match(bound.data.error, /instructions and memory files were not refreshed/);
+        assert.match(bound.data.error, /A master on another engine has no write guard/);
+        assert.doesNotMatch(bound.data.error, /still enforcing/);
+        assert.doesNotMatch(bound.data.error, /SECRET-FRAGMENT|Unexpected token/, 'the parser message stays in the log');
+
+        master.applyMasterAccessLevel = () => ({ applied: true, home: '/stub' });
+        assert.equal((await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'write' } })).status, 200);
+        master.applyMasterAccessLevel = () => { throw blind(false); };
+        const unbound = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'read-only' } });
+        assert.equal(unbound.status, 500);
+        assert.match(unbound.data.error, /level file now says "read-only", but its write guard could not be confirmed in place/);
+        assert.match(unbound.data.error, /do not rely on this change having taken effect/);
+        assert.doesNotMatch(unbound.data.error, /write guard is in place/);
+        assert.doesNotMatch(unbound.data.error, /SECRET-FRAGMENT|Unexpected token/);
+
+        // A grant that met the same fault was not applied at all: the applier
+        // rethrows it with neither flag, and the old sentence is the true one.
+        master.applyMasterAccessLevel = () => { throw new Error('Unexpected token SECRET-FRAGMENT in JSON'); };
+        const grant = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'write' } });
+        assert.equal(grant.status, 500);
+        assert.match(grant.data.error, /still enforcing "read-only"/);
+        assert.doesNotMatch(grant.data.error, /SECRET-FRAGMENT|Unexpected token/);
+      } finally {
+        // Back through the store, never the route: see the engine block below.
+        const config = store.config.load();
+        if (config.master) config.master.accessLevel = 'read-only';
+        store.config.save(config);
+        master.applyMasterAccessLevel = realApply;
+      }
+    });
+
     it('a failed master level does not cancel the rest of the same save (#755)', async () => {
       // Co-submission is the REAL shape: the settings modal POSTs the whole form,
       // so a master-level failure arrives alongside unrelated settings. Returning
@@ -1109,18 +1159,25 @@ describe('API endpoints', () => {
       // EVERY test here goes through the settings route, and several send
       // `accessLevel`. The route applies a changed level to the Master's home
       // directory, which in this process is the OPERATOR'S REAL one. It is
-      // stubbed for the whole block, as the accessLevel tests above do; a test
-      // here that reached the real function rewrote the live Master's
-      // access-level file once (2026-10-08) and the guard at the end of this
-      // file is what caught it.
+      // stubbed for the whole block, as the accessLevel tests above do. The
+      // guard test at the end of this file fingerprints the real home.
       const realApply = master.applyMasterAccessLevel;
       let applied;
+      let masterBefore;
       beforeEach(() => {
         applied = [];
         master.applyMasterAccessLevel = (level) => { applied.push(level); return { applied: true, home: '/stub' }; };
+        masterBefore = JSON.stringify(store.config.load().master);
       });
       afterEach(() => {
         store.engines.get = realGet;
+        // The stored Master settings go back through the STORE, not the route:
+        // cleanup that sends `accessLevel` through the route is one more caller
+        // of the applier, and cleanup is where a missing stub goes unnoticed.
+        const config = store.config.load();
+        if (masterBefore === undefined) delete config.master;
+        else config.master = JSON.parse(masterBefore);
+        store.config.save(config);
         master.applyMasterAccessLevel = realApply;
       });
       // Read when a test runs: the test store is not initialised when this block is declared.
@@ -1150,29 +1207,32 @@ describe('API endpoints', () => {
 
       describe('an engine ALREADY stored whose profile has gone bad does not block other Master settings (R17)', () => {
         // The check runs when a patch NAMES the engine. Run on the merged
-        // settings, it refused every partial patch over a stored engine whose
-        // profile had lost its id, and the access toggle sends `accessLevel`
-        // alone: write access could not have been revoked.
+        // settings it would refuse every partial patch over a stored engine
+        // whose profile had lost its id, and the access toggle sends
+        // `accessLevel` alone. What is pinned here is that the downgrade is
+        // SAVED and handed to the applier; whether the applier can enforce it
+        // without the engine is `test/master.test.js`'s to show.
         const stored = 'my-claude';
         beforeEach(async () => {
           const good = { ...real(), id: stored };
           store.engines.get = (id) => (id === stored ? good : realGet.call(store.engines, id));
-          const set = await request(server, 'PATCH', '/api/config', { master: { engine: stored } });
+          // The Master holds WRITE access when the profile goes bad: a downgrade
+          // from read-only to read-only changes nothing and reaches no applier,
+          // so it would pass whether or not revocation works.
+          const set = await request(server, 'PATCH', '/api/config', { master: { engine: stored, accessLevel: 'write' } });
           assert.equal(set.status, 200, 'precondition: the engine was selectable when it was chosen');
+          assert.equal(store.config.load().master.accessLevel, 'write', 'precondition: write access is what is stored');
           // Now its profile file loses its id.
           const { id: _dropped, ...identityless } = good;
           store.engines.get = (id) => (id === stored ? identityless : realGet.call(store.engines, id));
         });
 
-        afterEach(async () => {
-          store.engines.get = realGet;
-          await request(server, 'PATCH', '/api/config', { master: { engine: 'claude', accessLevel: 'read-only', autoStart: false } });
-        });
-
-        it('accessLevel alone, as the Master bar sends it, still saves: write access can be revoked', async () => {
+        it('accessLevel alone, as the Master bar sends it, saves the downgrade and hands it to the applier', async () => {
+          const before = applied.length;
           const { status } = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'read-only' } });
           assert.equal(status, 200);
           assert.equal(store.config.load().master.accessLevel, 'read-only');
+          assert.deepEqual(applied.slice(before), ['read-only'], 'the route applied the new level once, and nothing else');
           assert.equal(store.config.load().master.engine, stored, 'and the stored engine is left as it was');
         });
 
@@ -1196,36 +1256,43 @@ describe('API endpoints', () => {
       });
 
       describe('an engine ALREADY stored whose profile is missing or unreadable does not block other Master settings either (R19)', () => {
-        // The existence check sat on the merged settings too, and predates the
-        // identity test: a stored engine whose profile file had been deleted
-        // refused every partial patch. Same lockout, same fix: nothing about
-        // the engine is looked at unless the patch names it.
+        // The existence check follows the same rule as the identity test:
+        // nothing about the engine is looked at unless the patch names it, so a
+        // stored engine whose profile file is gone does not refuse a partial
+        // patch.
         const stored = 'my-claude';
+        // Real files in the test store's engines directory, so each case is the
+        // case it is named for. A stub cannot tell a missing file from one that
+        // holds `null` (the store answers null for both), and a stubbed throw
+        // carries a parser message somebody typed.
+        const profileFile = () => path.join(tmpDir, 'engines', `${stored}.json`);
+        const TRUNCATED = '{"id": "my-claude", "name": "SECRET-FRAGMENT';
         const GONE = {
-          'the profile file is missing': () => null,
-          'the profile file holds null': () => null,
-          'the profile file does not parse': () => { throw new SyntaxError('Unexpected end of JSON input'); }
+          'the profile file is missing': () => fs.rmSync(profileFile()),
+          'the profile file holds null': () => fs.writeFileSync(profileFile(), 'null\n'),
+          'the profile file does not parse': () => fs.writeFileSync(profileFile(), TRUNCATED)
         };
 
-        for (const [what, fetch] of Object.entries(GONE)) {
+        for (const [what, spoil] of Object.entries(GONE)) {
           describe(what, () => {
             beforeEach(async () => {
-              const good = { ...real(), id: stored };
-              store.engines.get = (id) => (id === stored ? good : realGet.call(store.engines, id));
-              const set = await request(server, 'PATCH', '/api/config', { master: { engine: stored, accessLevel: 'read-only' } });
+              fs.writeFileSync(profileFile(), JSON.stringify({ ...real(), id: stored }));
+              const set = await request(server, 'PATCH', '/api/config', { master: { engine: stored, accessLevel: 'write' } });
               assert.equal(set.status, 200, 'precondition: the engine was selectable when it was chosen');
-              store.engines.get = (id) => (id === stored ? fetch() : realGet.call(store.engines, id));
+              assert.equal(store.config.load().master.accessLevel, 'write', 'precondition: write access is what is stored');
+              spoil();
             });
 
-            afterEach(async () => {
-              store.engines.get = realGet;
-              await request(server, 'PATCH', '/api/config', { master: { engine: 'claude', accessLevel: 'read-only', autoStart: false } });
+            afterEach(() => {
+              fs.rmSync(profileFile(), { force: true });
             });
 
-            it('accessLevel alone still saves, in both directions that are enabled: the access control is not held by the engine', async () => {
+            it('accessLevel alone saves the downgrade and hands it to the applier: the engine is not consulted', async () => {
+              const before = applied.length;
               const down = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'read-only' } });
               assert.equal(down.status, 200);
               assert.equal(store.config.load().master.accessLevel, 'read-only');
+              assert.deepEqual(applied.slice(before), ['read-only'], 'the route applied the new level once, and nothing else');
               assert.equal(store.config.load().master.engine, stored, 'the stored engine is left as it was');
             });
 
@@ -1238,7 +1305,10 @@ describe('API endpoints', () => {
             it('naming that engine in a patch is refused with a 400, never a 500', async () => {
               const { status, data } = await request(server, 'PATCH', '/api/config', { master: { engine: stored, autoStart: true } });
               assert.equal(status, 400);
-              assert.match(data.error, /master\.engine "my-claude" (is not a configured engine|cannot be selected: its engine profile could not be read \(Unexpected end of JSON input\))/);
+              assert.match(data.error, /master\.engine "my-claude" (is not a configured engine|cannot be selected: its engine profile file could not be read as JSON\. Repair or restore the file\.)$/);
+              // The parser quotes the bytes it stopped at. None of that belongs
+              // in a response.
+              assert.doesNotMatch(data.error, /SECRET-FRAGMENT|Unexpected|Unterminated|position \d|JSON input/);
             });
 
             it('the way out works: engine null, or another engine', async () => {
@@ -1255,8 +1325,6 @@ describe('API endpoints', () => {
         const { status } = await request(server, 'PATCH', '/api/config', { master: { engine: 'my-claude' } });
         assert.equal(status, 200);
         assert.equal(store.config.load().master.engine, 'my-claude');
-        store.engines.get = realGet;
-        await request(server, 'PATCH', '/api/config', { master: { engine: 'claude' } });
       });
 
       it('an engine with no profile at all keeps the answer it always had', async () => {

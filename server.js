@@ -1814,6 +1814,30 @@ function _protectedRoots() {
 }
 
 /**
+ * The message for an access level that was tightened without knowing which
+ * engine the master runs (`applyMasterAccessLevel`'s conservative path).
+ *
+ * Says only what was read back. With the guard in place a Claude master is
+ * bound; a master on any other engine never had a guard and is bound by
+ * instructions that were NOT rewritten, so the message does not call the change
+ * complete in either case.
+ * @param {string} level - The level now in the master's level file
+ * @param {boolean} guardBinds - Whether the level and the write guard both read back
+ * @returns {string} Operator-facing error text
+ */
+function _masterTightenedBlindError(level, guardBinds) {
+  const why = 'TangleClaw could not determine which engine the master runs (an installed engine profile may be unreadable)';
+  const remedy = 'Repair the engine profiles, then restart the master session.';
+  if (guardBinds) {
+    return `The master's access level is now "${level}" and its write guard is in place, so a master running Claude Code is held to it from its next tool call. `
+      + `${why}, so its instructions and memory files were not refreshed and still describe the previous level. `
+      + `A master on another engine has no write guard and follows those instructions. ${remedy}`;
+  }
+  return `The master's access level file now says "${level}", but its write guard could not be confirmed in place, so do not rely on this change having taken effect. `
+    + `${why}, and its instructions and memory files were not refreshed either. ${remedy}`;
+}
+
+/**
  * Validate a PATCHed `master` settings object (the Project Master surface).
  * Merges the patch onto the current effective settings first, so a partial
  * object never wipes fields (the config-file merge is shallow), then
@@ -1857,7 +1881,12 @@ function validateMasterPatch(patch, config) {
     } catch (err) {
       // A profile file that does not parse cannot be chosen; that is a bad
       // request about that engine, not an internal failure of this route.
-      return { error: `master.engine "${merged.engine}" cannot be selected: its engine profile could not be read (${err.message})` };
+      // The parser's own message goes to the log and not into the response: it
+      // quotes whatever bytes the file held at the point it gave up.
+      log.warn('master.engine refused: its engine profile could not be read', {
+        engine: merged.engine, error: err.message
+      });
+      return { error: `master.engine "${merged.engine}" cannot be selected: its engine profile file could not be read as JSON. Repair or restore the file.` };
     }
     if (!masterProfile) {
       return { error: `master.engine "${merged.engine}" is not a configured engine` };
@@ -2210,8 +2239,11 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
       // The config save is deliberately left standing rather than rolled back:
       // the stored intent is correct, and the next ensure reconciles the guard to
       // it. What must not happen is the UI painting a boundary that did not move.
-      log.error('Master access level saved but not applied — the write guard still enforces the previous level', {
-        from: oldMasterAccessLevel, to: newMasterAccessLevel, error: err.message
+      log.error(err.runtimeUnknown
+        ? 'Master access level tightened without resolving its engine — identity not refreshed'
+        : 'Master access level saved but not applied — the write guard still enforces the previous level', {
+        from: oldMasterAccessLevel, to: newMasterAccessLevel, error: err.message,
+        levelApplied: err.levelApplied === true, guardBinds: err.guardBinds
       });
       // Two different truths, and saying the wrong one is the defect this whole
       // route is about. `levelApplied` means the level file was already written
@@ -2222,7 +2254,15 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
       // the same save silently not taking effect, which is a second failure
       // bolted onto the first. The response is still a 500; it just happens
       // after the rest of the save has finished doing what it was asked.
-      masterLevelError = err.levelApplied
+      //
+      // A third truth: the change tightened access and what the master runs on
+      // could not be determined. The level and the write guard were written
+      // without that answer and its instructions were not, so the sentence has to
+      // say which half holds — and, when the guard did not read back, that the
+      // revocation is not confirmed at all.
+      if (err.runtimeUnknown && err.levelApplied) {
+        masterLevelError = _masterTightenedBlindError(newMasterAccessLevel, err.guardBinds === true);
+      } else masterLevelError = err.levelApplied
         ? `The master's access level is now "${newMasterAccessLevel}", but the refresh that should have followed it did not finish. `
           + 'Its identity, its memory scaffold or its write guard may be a step behind. Restart the master session to bring them back into line.'
         : `Settings were saved, but the master's access level could not be applied — it is still enforcing "${oldMasterAccessLevel}". `

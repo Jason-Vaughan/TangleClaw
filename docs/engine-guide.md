@@ -665,9 +665,16 @@ only when the lookup failed:
   already running is left as it is), and such an engine cannot be selected as `master.engine`
   in the settings (400, with the reason). **Nothing about the engine's profile is looked at
   unless a settings change names the engine**: a Master engine already stored whose profile is
-  now missing, unreadable or without its `id` does not block the Master's other settings (the
-  access level above all, so write access can always be revoked), and is refused when the
-  Master is next started. Naming such an engine in a change is refused. **A command into the
+  now missing, unreadable or without its `id` does not stop the Master's other settings from
+  being saved, and is refused when the Master is next started. Naming such an engine in a
+  change is refused. **Saving a lower access level and applying it are separate steps, and
+  the second does not need the engine either**: if TangleClaw cannot work out which engine the
+  Master runs (any installed profile file that does not parse causes that), a change that
+  lowers access still writes the level file and puts the Claude Code write guard back in the
+  Master's home. That binds a Master running Claude Code from its next tool call. It does not
+  rewrite the Master's instructions, and a Master on another engine has no write guard, so the
+  request answers 500 (`MASTER_LEVEL_NOT_APPLIED`) and says which part holds. A change that
+  raises access is not applied while the engine cannot be resolved. **A command into the
   Master's pane is refused when its engine cannot be resolved** (`MASTER_ENGINE_UNRESOLVED`):
   the Master has no session record, so without an engine there is nothing to check its pane
   against. That arises when no engine can be resolved for the Master, or in the moment after an

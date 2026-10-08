@@ -267,6 +267,14 @@ the regenerated identity, so it arrives at the next master start and nothing str
 it. `GET /api/master/status` reports which of the two is running, and both the control bar and the
 settings modal show it, so the weaker case is never displayed as the stronger one.
 
+**A lower `accessLevel` is applied even when the Master's engine cannot be resolved** (an
+installed engine profile file that does not parse causes that). The level file is written and
+the Claude Code write guard is restored in the Master's home; the Master's instructions are not
+rewritten, and the request answers 500 `MASTER_LEVEL_NOT_APPLIED` with a message saying which
+part holds. A Master on another engine has no write guard, so for it the change takes effect
+only after the profiles are repaired and the Master is restarted. A higher `accessLevel` is
+not applied in that state.
+
 **If you roll TangleClaw back to a build older than #755, set `accessLevel` to `read-only` first.**
 `PATCH /api/config { master: … }` validates the *merged* settings object, so an older build — whose
 enabled set is `['read-only']` — rejects **every** master patch while `suggest` or `write` is stored,
