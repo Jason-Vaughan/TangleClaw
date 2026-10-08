@@ -1,6 +1,6 @@
 # ADR 0014: Dual-Key Review for Untrusted PRs
 
-**Status:** Accepted (2026-09-07, operator-ratified, then corrected by its own first application the same day). Amended 2026-09-17 (operator rulings of 2026-09-16 and an architect security audit): see **Amendment 2026-09-17** below, which moves the micro filter and reconstruction to a dedicated PR Reviewer session, gives contributor replies to the Coordinator (renamed ProjectManager on 2026-09-17, when the reply contract was tightened), and adds the trust-boundary, intake, injection-hold, promotion and record rules. A further amendment was proposed on 2026-10-07 (Architect ruling A162.6) and is in force only once the pull request that adds it has been merged under that amendment's Ratification line: see **Amendment 2026-10-07** below, which leaves the micro filter with the PR Reviewer and moves reconstruction to a reconstruction lane the Operator authorizes.
+**Status:** Accepted (2026-09-07, operator-ratified, then corrected by its own first application the same day). Amended 2026-09-17 (operator rulings of 2026-09-16 and an architect security audit): see **Amendment 2026-09-17** below, which moves the micro filter and reconstruction to a dedicated PR Reviewer session, gives contributor replies to the Coordinator (renamed ProjectManager on 2026-09-17, when the reply contract was tightened), and adds the trust-boundary, intake, injection-hold, promotion and record rules. Amended 2026-10-07 (Architect ruling A162.6; in force since PR #2227 merged, as its Ratification line records): see **Amendment 2026-10-07** below, which leaves the micro filter with the PR Reviewer and moves reconstruction to a reconstruction lane the Operator authorizes.
 **Source:** PR #1334 — the first external contribution to reach this repository, against #1287.
 **Decides:** How an untrusted external pull request is audited, reconstructed, credited and answered.
 **Governs:** Every pull request from outside the repository, in this repo and in any that adopts this ADR.
@@ -248,11 +248,37 @@ None of the three replaces another.
 ## Amendment 2026-10-07: reconstruction moves to an Operator-authorized reconstruction lane
 
 **Source:** Architect ruling A162.6, raised by external PR #2218 (against #2222).
-**Ratification:** proposed until the Operator approves the exact revision of the pull request that
-adds it and merges that revision personally. A merge by the ProjectManager would need a separate
-Operator delegation naming that exact revision. Who merged it is on the pull request's own record
-(`gh pr view <N> --json mergedBy,mergeCommit`). Until it is merged, the corrections this amendment
-makes to Decision items 2 and 3 and to the Roles table are proposed with it.
+**Ratification:** in force. PR #2227 merged at 2026-10-08T02:44:20Z as merge commit
+`ab1aff705d90eda8bc8f0941c1f6f14467b81edf`, at head `947b381ef80398edc1aaaec22e56a5815a49afb1`.
+- **The planned path** (Architect ruling A162.9) was that the Operator approves the exact revision
+  and merges it personally, or delegates the merge to the ProjectManager by naming that exact
+  revision.
+- **What happened** is a variance from that path, and is recorded as one. The ProjectManager
+  reports that it executed the merge. It also reports that immediately before the merge the
+  Operator wrote, directly in the ProjectManager's terminal: "so you have standing authorization between yhou and the architect
+  to do merges. for example builder1 says 2227 is waiting to merge." and then: "but i know you
+  have a specific order". As reported, that instruction named the pull request. It did not name
+  the revision.
+- **Where that statement is kept.** It was typed in the ProjectManager's terminal, which no other
+  session reads. The ProjectManager quoted it to the Architect, whose ruling A162.20 records it.
+  This file repeats the ProjectManager's report. It is not a first-hand record, and the Operator
+  can correct it.
+- **The ruling.** Architect ruling A162.20: this later, direct instruction, which named #2227,
+  authorized a procedural variance from the planned path for this one merge.
+- **What held the merge to one revision.** The Architect's content pass (A162.15) was on head
+  `947b381ef`. The ProjectManager reports that it checked the pull request was still at that head
+  with its `test` check green, and merged with `--match-head-commit` set to it. The merge commit's
+  second parent is that head.
+- **The variance is not a waiver.** It covers this merge. It changes no other gate in this ADR,
+  starts no reconstruction and approves no session rule.
+- **What counts as evidence of a ratification.** The merge commit proves which revision was
+  merged. It does not prove who merged it or who approved it: every session here acts through the
+  Operator's GitHub account, so the pull request's `mergedBy` field reads the same whoever ran the
+  merge. The two are evidenced separately. Who ran the merge is evidenced by the merging
+  session's own report or log. That it was approved is evidenced by the Operator's own statement,
+  or by a logged delegation that names the exact revision. An Operator statement authorizes; it
+  does not show which session ran the command.
+
 **What it changes:** who reconstructs. Everything else in the 2026-09-17 amendment stands, and
 its rules 1 to 8 are not renumbered.
 
