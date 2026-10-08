@@ -1055,7 +1055,7 @@ A profile whose `models` block is present but invalid is a fault, not an engine 
 
 A project stores one model as `model` in `.tangleclaw/project.json`, beside `engine`. `null` (the default) means no model is selected. No launch reads the field yet (see Status below), so today a session starts on the engine's own default whatever is stored.
 
-**Saving.** `PATCH /api/projects/:name` takes `model`: a model id, or `null` to clear it. A model is checked with `checkSelection` against the engine the project will have after the same request, so an engine and a model for it can be sent together. A refused model is a `400` whose message ends with the code in brackets, and nothing in that request is applied. That includes a roster that cannot be read: an unconfirmed model is never stored. Clearing is always accepted.
+**Saving.** `PATCH /api/projects/:name` takes `model`: a model id, or `null` to clear it. A model is checked with `checkSelection` against the engine the project will have after the same request, so an engine and a model for it can be sent together. A refused model is a `400` with the reason, and nothing in that request is applied. When the refusal is `checkSelection`'s, the message ends with its code in brackets; a value that is not text, and a project bound to an orchestration profile, are refused with a sentence and no code. That includes a roster that cannot be read: an unconfirmed model is never stored. Clearing is always accepted.
 
 Two things are deliberately not re-checked. A model sent at the value already stored, with the engine unchanged, is accepted as it is, so a settings save that carries every field does not fail over a roster that went stale since. And nothing re-validates a stored model in the background.
 
@@ -1072,7 +1072,7 @@ Two things are deliberately not re-checked. A model sent at the value already st
 
 Two reports exist only on the read side, because neither is something a save can produce:
 
-- **`PROJECT_CONFIG_UNREADABLE`.** The project's directory would not answer or may not be read, or its `project.json` would not read or parse. `model` is `null` and means *unknown*, not *none*: the reason says what failed. A project whose config file or directory is simply not there has no model, and reports `modelCheck: null`.
+- **`PROJECT_CONFIG_UNREADABLE`.** The project's directory would not answer or may not be read, or its `project.json` would not read or parse, or holds JSON that is not an object. `model` is `null` and means *unknown*, not *none*: the reason says what failed. A project whose config file or directory is simply not there has no model, and reports `modelCheck: null`.
 - **`MODEL_MALFORMED` with `stored`.** A hand edit left something that is not text (a number, an object). `model` and `modelCheck.stored` both carry it as JSON, cut to 120 characters, so the payload shows what is in the file and never reads it as no selection.
 
 **What the reads cost.** A stored model's check parses the CLI's model list (356 KB for Codex on the machine this was built on), synchronously. `GET /api/projects` does that once per distinct engine and model in the list, and only when some project stores a model. `GET /api/engines` does it once per model-offering engine on every request; the pages call it when they load or open a settings form, not on a timer. Nothing caches the list between requests, because a save and a launch must each read it fresh. Whether displays should share a short-lived copy is tracked separately (#2220).

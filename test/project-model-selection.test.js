@@ -539,6 +539,27 @@ describe('project model selection — persistence (#2188)', () => {
         }
       });
 
+      it('a config directory that may not be searched is a failed read, not a missing file', async (t) => {
+        if (process.getuid && process.getuid() === 0) return t.skip('root searches any directory');
+        let locked;
+        try {
+          const read = await readAfter('ms-cfg-dir-locked', (file) => { locked = path.dirname(file); fs.chmodSync(locked, 0o000); });
+          assert.equal(read.model, null);
+          assert.ok(read.modelCheck, 'a file that exists and may hold a model must not read as no model');
+          assert.equal(read.modelCheck.code, 'PROJECT_CONFIG_UNREADABLE');
+        } finally {
+          if (locked) fs.chmodSync(locked, 0o700);
+        }
+      });
+
+      it('valid JSON that is not an object is a config that could not be used', async () => {
+        for (const [i, text] of [[0, '[]'], [1, '42'], [2, '"gpt-6-luna"'], [3, 'null']]) {
+          const read = await readAfter(`ms-cfg-not-object-${i}`, (file) => fs.writeFileSync(file, text));
+          assert.equal(read.model, null);
+          assert.equal(read.modelCheck && read.modelCheck.code, 'PROJECT_CONFIG_UNREADABLE', `root ${text}`);
+        }
+      });
+
       it('a list of projects reports it too, and still reports its neighbours', async () => {
         await readAfter('ms-cfg-corrupt-list', (file) => fs.writeFileSync(file, 'not json'));
         await holding('ms-cfg-good-list');

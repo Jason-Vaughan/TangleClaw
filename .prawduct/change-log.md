@@ -61,6 +61,7 @@ Chunk 03 of the #2188 build plan, dispatched by the PM. Storage, validation and 
 - *A stored value that is not text was reported as `model: null`.* It is now shown as its JSON, bounded, in `model` and `modelCheck.stored`.
 - *`MODEL_SELECTED` has no caller.* Kept, by ruling, as a store invariant for a future profile-binding route; the comment and the docs now say exactly that, and that the store reads a checkout file to decide the write.
 - *Wording.* Nothing operator-facing says a stored model applies at the next launch.
+- *The same hole, one layer down* (found by the cumulative review of that fix). `project-config.load` decided a file was absent with `existsSync`, which answers false for any failure, so a `.tangleclaw` directory that may not be searched still read as no config; and a `project.json` holding JSON that is not an object merged to the defaults without a word. `load` now treats only a missing file or directory as absent and reports the rest through `onError`. Not changed: the scanner's directory probe still reads an I/O error other than a permission refusal as a directory that is gone, which is scanner-wide behaviour and was reported to the PM.
 - Tests added: an engine switch on a project holding both a non-default launch mode and a model (both warnings, one write of the config), and a roster too old or future-dated at save.
 - The cost of the synchronous roster parse is stated in `docs/engine-guide.md`; a shared short-lived copy for displays is #2220, not built here.
 
