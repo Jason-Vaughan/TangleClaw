@@ -506,7 +506,7 @@ before each pre-key.
 
 The rule is that a send goes ahead only on positive evidence, or when nothing stands against it.
 One function states it (`withholdFor` in `lib/startup-dialog.js`) and both the injection path and
-the pane writer ask it. Three things withhold a send:
+the pane writer ask it. Four things withhold a send:
 
 - a declared dialog on the pane;
 - a blocker already recorded for the session that the read did not positively clear. The dialog
@@ -515,21 +515,68 @@ the pane writer ask it. Three things withhold a send:
   same holds if the engine's profile stops declaring the dialog, or no profile is found, while the
   blocker stands: nothing can then confirm the pane clear, and the blocker stays until the session
   ends or the declaration returns;
-- a frame that still carries a declared marker with no prompt beneath it after one re-read, which
-  may be the dialog half-drawn. That send is withheld; no blocker is recorded on a suspicion. If
-  the re-read itself cannot see the pane, the first frame's marker goes on withholding.
+- a frame that still carries a declared marker with no composer at rest beneath it after one
+  re-read. That may be the dialog half-drawn, or another screen that shares one of its option
+  texts: Claude Code's Bypass Permissions confirmation shows "No, exit", so it is withheld from
+  every sender with either option selected. That send is withheld; no blocker is recorded on a
+  suspicion. If the re-read itself cannot see the pane, the first frame's marker goes on
+  withholding. One case is let through for a later injection: marker text **above** a composer
+  that is positively located and holds typed text (the cursor shown on that row, between the
+  composer's two border rows). That is a transcript quoting the dialog above an operator's draft,
+  and the injection keeps and clears the draft as usual. It is still not a clear reading, so it
+  releases no recorded blocker and a launch's own sends are still withheld from it;
+- for a **launch's own sends only** (pre-keys, the prime, the kickoff): a pane whose last row led
+  by the prompt glyph is not the engine's composer at rest, with no blocker recorded and no
+  live declared marker on screen. That row is the selected option of a menu no profile declares, or
+  text already typed at the prompt; the two cannot be told apart by their text. The refusal is
+  `pane_not_at_prompt` and names no dialog. A later injection is **not** refused on this reading
+  alone: it keeps an operator's draft and then clears it, which is also how a stranded nudge is
+  recovered. So a menu nobody declared that appears mid-session, with no blocker recorded, is
+  still typed into by a later injection, as it was before this field existed (#2219).
 
-**What counts as positive evidence** is a row led by the engine's prompt glyph **below** any
-dialog text on screen (or anywhere, when there is none). A composer left on screen above a dialog
-that is being drawn is not evidence.
+A screen with no dialog text and no row led by the prompt glyph at all withholds nothing, for a
+launch too: an unrecognised screen must not cost a healthy launch its first turn.
 
-**The prompt glyph is resolved for the program, like the dialog.** A profile's own measured `wake`
-block is used when it has one. A profile without one takes the glyph of the installed profile that
+**What counts as positive evidence** is the engine's **composer at rest**, as the **last** row led
+by the prompt glyph, **below** any dialog text on screen (or anywhere, when there is none). A row
+led by the prompt glyph is not that by itself: a selector draws its selected option with the same
+glyph, so `❯ 2. Yes, I accept` is not a prompt. Two readings of that last row count:
+
+- **bare**: it matches the `wake` block's measured `promptPattern` (the glyph and at most its pad),
+  and the row directly beneath it is not text (an option whose label wrapped below its glyph);
+- **empty, showing the engine's suggestion**: a fresh Claude Code composer reads
+  `❯ Try "how does <filepath> work?"`, which is not bare and cannot be told from typed text by
+  what it says. It counts only when the terminal cursor is on that row, the cursor is **shown**
+  (tmux's `cursor_flag`, read in the same query as its position), the cursor's own styled row reads
+  as an empty composer (the cursor at the first input column, everything to its right in the
+  `placeholderSgr` styling), **and** the row sits between two border rows, the composer's box.
+  Without a cursor reading, without the flag, without the styling, or without the box, only the
+  bare reading applies. One failed cursor read therefore costs a launch its first turn when the
+  composer is showing a suggestion: the send is withheld as `pane_not_at_prompt` and not retried.
+
+Only the last glyph-led row is judged, and all the evidence must be about that row. A composer
+left on screen above a menu or a dialog drawn later is not evidence; a menu or a dialog left in
+the history above a fresh composer is history. A composer holding typed text is never positive
+evidence. While a launch watches a boot, two clear readings count as "held still" only if that
+row, its neighbours and the cursor did not change between them.
+
+Measured on Claude Code 2.1.283 (2026-10-07, an empty repository, no turn taken): the fresh
+composer sits between two border rows with the cursor shown two columns after the glyph. On the
+folder trust dialog, the `/model` selector, the first-run theme picker and the login-method
+selector the cursor is hidden and parked on the selected row's glyph, no border adjoins the
+selected row, and no option text is drawn faint. The Bypass
+Permissions confirmation could not be captured on the measuring host, so it is not declared as a
+dialog (#2205); it is withheld by the shared option text, under the trust dialog's name.
+
+**The prompt signature is resolved for the program, like the dialog.** A profile's own measured
+`wake` block is used when it has one. A profile without one takes the **whole** `wake` signature
+(the composer pattern, the glyph, its pad and the suggestion styling) of the installed profile that
 declares the dialogs for the same `command`, which is measured, with evidence. So an operator's
 second Claude Code profile with no `wake` block is still watched through its boot and can be
-positively cleared. A glyph is never guessed.
+positively cleared. A signature is never guessed, and a glyph with no measured composer pattern is
+not one.
 
-**With no measured glyph for the profile or its command, nothing can be read as a prompt**, and
+**With no measured signature for the profile or its command, nothing can be read as a prompt**, and
 TangleClaw says so instead of typing:
 
 - the launch's own sends are withheld (`prompt_unverified` in the delivery ledger and the log),
@@ -551,8 +598,9 @@ measured on, and the markers are updated when a new wording is captured.
 
 The stored blocker is a claim about the pane that the operator can make untrue at any moment by
 answering the dialog. So it is checked against the pane whenever the session's status is read and
-before every send. It is cleared only on a positive reading: the engine's prompt on screen, below
-any dialog text. A pane that could not be read, a read that came back empty, or a screen showing neither
+before every send. It is cleared only on a positive reading: the engine's composer at rest, below
+any dialog text (see "What counts as positive evidence" above). A menu's selected option does not
+clear it. A pane that could not be read, a read that came back empty, or a screen showing neither
 changes nothing, because "no dialog was matched" is not evidence that it was answered. A session
 whose status is read after the operator answers therefore does not have a later, unrelated death
 recorded as caused by the dialog. The project list serves the stored record without reading the
@@ -563,14 +611,14 @@ banner.
 servers and permission rules run, which is the operator's decision. It also writes nothing to the
 engine's own state files.
 
-A dialog matches only when **every** marker is on screen and **no prompt row sits below it**. One
+A dialog matches only when **every** marker is on screen and **no row led by the prompt glyph sits below its last marker**. One
 marker alone can be another dialog's option. The second condition is what tells a dialog from a
 session whose transcript is quoting one: the quoting session has its composer underneath. Markers
 are matched on text with styling removed, because an engine may colour a dialog word by word.
 
 `code` is lower_snake_case and becomes the blocker's name; `label` and `meaning` are shown to the
 operator. An entry missing any of `code`, `label`, `meaning` or a non-empty `markers` list is
-ignored and logged at warn, never repaired. The watch tells a finished boot by the prompt glyph in
+ignored and logged at warn, never repaired. The watch tells a finished boot by the measured prompt signature in
 the engine's `wake` block, or failing that in the `wake` block of the profile that declares the
 dialogs for the same command. With neither, the boot is not watched and the launch types nothing
 (see above).

@@ -65,6 +65,47 @@ const TRUST_DIALOG = Object.freeze([
   ''
 ]);
 
+/**
+ * A fresh Claude Code composer row as captured on 2.1.283 (2026-10-07, an
+ * empty repository, no turn taken): the glyph, its NBSP pad, and the engine's
+ * own suggestion. `capture-pane` without `-e` gives the text; with `-e` the
+ * suggestion is wrapped in SGR 2 (faint). The cursor sat at column 2, the
+ * first input column.
+ */
+const SUGGESTION_ROW = '❯\u00a0Try "edit <filepath> to..."';
+const SUGGESTION_CURSOR = Object.freeze({ visible: true, x: 2, y: 5, line: `❯\u00a0${ESC}[2mTry "edit <filepath> to..."${ESC}[0m\n` });
+
+/** Cursors stated for particular frames (`at`); any other frame gets the suggestion row's when it shows one. */
+const CURSORS = new Map();
+
+/**
+ * State where the cursor is on a frame.
+ * @param {string[]} lines - The frame
+ * @param {object|null} cursor - The cursor `tmux.cursorInfo` would report on it
+ * @returns {string[]} The same frame
+ */
+const at = (lines, cursor) => { CURSORS.set(lines, cursor); return lines; };
+
+/** The cursor a pane showing these rows would report: the one stated for the frame, else on the suggestion row when it is there. */
+const cursorOf = (lines) => {
+  if (CURSORS.has(lines)) return CURSORS.get(lines);
+  // A frame built from a stated one: the cursor is where it was on the part drawn last.
+  for (const [frame, cursor] of [...CURSORS].reverse()) {
+    if (lines && lines.length > frame.length && frame.every((row, i) => lines[lines.length - frame.length + i] === row)) return cursor;
+  }
+  return (lines || []).includes(SUGGESTION_ROW) ? SUGGESTION_CURSOR : null;
+};
+
+/** The rows the last stubbed pane read served, so the stubbed cursor read answers for the same pane. */
+let lastServed = [];
+
+/**
+ * A stubbed pane read: the capture, with the cursor that goes with it.
+ * @param {string[]} lines - The rows the pane shows
+ * @returns {{lines: string[], alternateScreen: boolean, cursor: (object|null)}}
+ */
+const served = (lines) => { lastServed = lines; return { lines, alternateScreen: false, cursor: cursorOf(lines) }; };
+
 /** Claude Code at its composer, as captured after the dialog was accepted. */
 const COMPOSER = Object.freeze([
   ' ▐▛███▛█   Claude Code v2.1.283',
@@ -72,7 +113,7 @@ const COMPOSER = Object.freeze([
   ' ▝▝   ▝▝   /private/tmp/scratch/repo',
   '',
   '──────────────────────────────────────────────────────────────',
-  '❯ Try "fix lint errors"',
+  SUGGESTION_ROW,
   '──────────────────────────────────────────────────────────────',
   '  ? for shortcuts'
 ]);
@@ -92,6 +133,10 @@ const QUOTING_SESSION = Object.freeze([
 
 const DIALOGS = startupDialog.declared(CLAUDE);
 const GLYPH = CLAUDE.capabilities.wake.promptGlyph;
+/** Claude Code's measured prompt signature, compiled the way production compiles it. */
+const WAKE = require('../lib/medusa-wake')._buildWakeProfiles([CLAUDE]).claude;
+// File-wide: the cursor read answers for whichever pane the last stubbed read served.
+startupDialog._internal.cursorInfoSync = () => cursorOf(lastServed);
 const REAL_SEAMS = { ...startupDialog._internal };
 
 describe('what an engine declares (#2128)', () => {
@@ -156,9 +201,9 @@ describe('what an engine declares (#2128)', () => {
       // prompt, like the dialog, belongs to the program.
       const pane = { lines: COMPOSER };
       beforeEach(() => {
-        startupDialog._internal.wakeProfiles = () => ({ claude: { promptGlyph: GLYPH } });
-        startupDialog._internal.capturePaneSync = () => ({ lines: pane.lines, alternateScreen: false });
-        startupDialog._internal.capturePane = async () => ({ lines: pane.lines, alternateScreen: false });
+        startupDialog._internal.wakeProfiles = () => ({ claude: WAKE });
+        startupDialog._internal.capturePaneSync = () => served(pane.lines);
+        startupDialog._internal.capturePane = async () => served(pane.lines);
         startupDialog._internal.paneDigest = (lines) => lines.join('\n');
         startupDialog._internal.settleSync = () => {};
         let clock = 0;
@@ -187,7 +232,7 @@ describe('what an engine declares (#2128)', () => {
         // The case an unwatched boot misses: a look at launch sees nothing,
         // and the dialog arrives after it.
         const frames = [[], ['  starting…'], ['  starting…'], TRUST_DIALOG];
-        startupDialog._internal.capturePane = async () => ({ lines: frames.length > 1 ? frames.shift() : frames[0], alternateScreen: false });
+        startupDialog._internal.capturePane = async () => served(frames.length > 1 ? frames.shift() : frames[0]);
         const seen = [];
         const res = await startupDialog.watch({ tmuxName: 't', engineProfile: VARIANT, answerWindowMs: 4000, onDialog: (d) => seen.push(d.code) });
         assert.deepEqual(seen, ['trust_required'], 'reported once, when it drew');
@@ -197,14 +242,31 @@ describe('what an engine declares (#2128)', () => {
 
       it('a lookalike glyph is not borrowed across commands', () => {
         const other = { id: 'codex-variant', command: 'codex', capabilities: {} };
-        startupDialog._internal.wakeProfiles = () => ({ claude: { promptGlyph: GLYPH }, codex: { promptGlyph: '›' } });
+        startupDialog._internal.wakeProfiles = () => ({ claude: WAKE, codex: { promptGlyph: '›' } });
         assert.equal(startupDialog.promptSignatureFor(other), null, 'no dialog is declared for that command, so there is nothing to resolve a glyph for');
         assert.equal(startupDialog.promptSignatureFor({ id: 'x', command: 'claude-next', capabilities: {} }), null, 'a different command is a different program');
       });
 
       it('its own measured signature wins over the program\'s', () => {
-        startupDialog._internal.wakeProfiles = () => ({ claude: { promptGlyph: GLYPH }, 'claude-sonnet-reviewer': { promptGlyph: '›' } });
-        assert.equal(startupDialog.promptSignatureFor(VARIANT).promptGlyph, '›');
+        const own = { ...WAKE, promptGlyph: '›', promptRe: /^›$/ };
+        startupDialog._internal.wakeProfiles = () => ({ claude: WAKE, 'claude-sonnet-reviewer': own });
+        assert.equal(startupDialog.promptSignatureFor(VARIANT), own);
+      });
+
+      it('what is inherited is the whole measured signature, not the glyph alone', () => {
+        const got = startupDialog.promptSignatureFor(VARIANT);
+        assert.equal(got, WAKE, 'the declaring profile\'s wake profile itself');
+        assert.ok(got.promptRe instanceof RegExp, 'with the bare-composer pattern');
+        assert.equal(got.promptPad, '\u00a0');
+        assert.deepEqual(got.placeholderSgr, [2], 'and the suggestion styling the cursor reading needs');
+      });
+
+      it('a glyph with no measured composer pattern is not a signature, for a profile or for its program', () => {
+        startupDialog._internal.wakeProfiles = () => ({ claude: { promptGlyph: GLYPH } });
+        assert.equal(startupDialog.promptSignatureFor(CLAUDE), null);
+        assert.equal(startupDialog.promptSignatureFor(VARIANT), null);
+        startupDialog._internal.wakeProfiles = () => ({ claude: WAKE, 'claude-sonnet-reviewer': { promptGlyph: '›' } });
+        assert.equal(startupDialog.promptSignatureFor(VARIANT), WAKE, 'an unmeasured block of its own does not hide its program\'s measured one');
       });
 
       it('with no measured glyph for the profile or its command there is none, and nothing is guessed', async () => {
@@ -245,7 +307,7 @@ describe('what an engine declares (#2128)', () => {
 
 describe('reading one pane (#2128)', () => {
   it('sees the dialog through the per-word styling', () => {
-    const hit = startupDialog.detect(TRUST_DIALOG, DIALOGS, GLYPH);
+    const hit = startupDialog.detect(TRUST_DIALOG, DIALOGS, WAKE);
     assert.equal(hit.code, 'trust_required');
     assert.equal(hit.label, 'folder trust dialog');
     assert.match(hit.meaning, /No, exit/);
@@ -253,36 +315,37 @@ describe('reading one pane (#2128)', () => {
 
   it('sees it whichever option is selected', () => {
     const moved = TRUST_DIALOG.map((row) => row.includes('Yes, I trust') ? ' ❯ Yes, I trust this folder' : row.replace(/❯/, ' '));
-    assert.equal(startupDialog.detect(moved, DIALOGS, GLYPH).code, 'trust_required');
+    assert.equal(startupDialog.detect(moved, DIALOGS, WAKE).code, 'trust_required');
   });
 
   it('does not see one at the composer', () => {
-    assert.equal(startupDialog.detect(COMPOSER, DIALOGS, GLYPH), null);
+    assert.equal(startupDialog.detect(COMPOSER, DIALOGS, WAKE), null);
   });
 
   it('false positive: a session quoting the dialog above its composer is not showing it', () => {
-    assert.equal(startupDialog.detect(QUOTING_SESSION, DIALOGS, GLYPH), null);
+    assert.equal(startupDialog.detect(QUOTING_SESSION, DIALOGS, WAKE), null);
     // The same text with nothing below it IS the dialog: the composer is what tells them apart.
-    assert.equal(startupDialog.detect(QUOTING_SESSION.slice(0, 4), DIALOGS, GLYPH).code, 'trust_required');
+    assert.equal(startupDialog.detect(QUOTING_SESSION.slice(0, 4), DIALOGS, WAKE).code, 'trust_required');
   });
 
   it('false positive: one marker alone is another dialog, not this one', () => {
     const bypass = [' WARNING: Claude Code running in Bypass Permissions mode', ' ❯ 1. No, exit', '   2. Yes, I accept', ' Enter to confirm · Esc to cancel'];
-    assert.equal(startupDialog.detect(bypass, DIALOGS, GLYPH), null);
+    assert.equal(startupDialog.detect(bypass, DIALOGS, WAKE), null);
   });
 
   it('a booting pane is undecided until it shows a prompt or a dialog', () => {
-    assert.equal(startupDialog.assessBoot([], DIALOGS, GLYPH).state, 'undecided');
-    assert.equal(startupDialog.assessBoot(['', '  starting…'], DIALOGS, GLYPH).state, 'undecided');
-    assert.equal(startupDialog.assessBoot(COMPOSER, DIALOGS, GLYPH).state, 'clear');
-    assert.equal(startupDialog.assessBoot(TRUST_DIALOG, DIALOGS, GLYPH).state, 'dialog');
+    assert.equal(startupDialog.assessBoot([], DIALOGS, WAKE).state, 'undecided');
+    assert.equal(startupDialog.assessBoot(['', '  starting…'], DIALOGS, WAKE).state, 'undecided');
+    assert.equal(startupDialog.assessBoot(COMPOSER, DIALOGS, WAKE, cursorOf(COMPOSER)).state, 'clear');
+    assert.equal(startupDialog.assessBoot(COMPOSER, DIALOGS, WAKE).state, 'undecided', 'the suggestion row is not a prompt without the cursor that says so');
+    assert.equal(startupDialog.assessBoot(TRUST_DIALOG, DIALOGS, WAKE).state, 'dialog');
   });
 
   it('a half-drawn dialog is not a prompt, though its selected row leads with the prompt glyph', () => {
     const half = TRUST_DIALOG.slice(0, 13);
     assert.ok(half.some((row) => row.includes('No,')), 'precondition: the selected row is drawn');
-    assert.equal(startupDialog.detect(half, DIALOGS, GLYPH), null, 'one marker is not the dialog');
-    assert.equal(startupDialog.assessBoot(half, DIALOGS, GLYPH).state, 'undecided');
+    assert.equal(startupDialog.detect(half, DIALOGS, WAKE), null, 'one marker is not the dialog');
+    assert.equal(startupDialog.assessBoot(half, DIALOGS, WAKE).state, 'undecided');
   });
 });
 
@@ -293,12 +356,12 @@ describe('one look before a send (#2128)', () => {
   beforeEach(() => {
     Object.assign(startupDialog._internal, REAL_SEAMS);
     settles = 0;
-    startupDialog._internal.wakeProfiles = () => ({ claude: { promptGlyph: GLYPH } });
+    startupDialog._internal.wakeProfiles = () => ({ claude: WAKE });
     startupDialog._internal.settleSync = () => { settles += 1; };
     startupDialog._internal.capturePaneSync = () => {
       const frame = frames.length > 1 ? frames.shift() : frames[0];
       if (frame instanceof Error) throw frame;
-      return { lines: frame, alternateScreen: false };
+      return served(frame);
     };
   });
 
@@ -316,7 +379,7 @@ describe('one look before a send (#2128)', () => {
 
   it('the composer is clear', () => {
     frames = [COMPOSER];
-    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: true, unread: null, promptKnown: true });
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: true, noncomposer: false, unread: null, promptKnown: true });
   });
 
   it('a session quoting the dialog above its composer is clear: the prompt is the evidence', () => {
@@ -400,7 +463,7 @@ describe('one look before a send (#2128)', () => {
   it('a profile with no prompt glyph is never read as clear: it has no positive evidence to give', () => {
     startupDialog._internal.wakeProfiles = () => ({});
     frames = [COMPOSER];
-    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, unread: null, promptKnown: false });
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, noncomposer: false, unread: null, promptKnown: false });
     frames = [TRUST_DIALOG];
     assert.equal(look().dialog.code, 'trust_required', 'though it still sees the dialog by its markers');
   });
@@ -489,13 +552,13 @@ describe('one look before a send (#2128)', () => {
 
   it('a screen with neither a dialog nor a prompt is not clear', () => {
     frames = [['  Verifying your account…']];
-    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, unread: null, promptKnown: true });
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, noncomposer: false, unread: null, promptKnown: true });
   });
 
   it('an engine that declares nothing is not read', () => {
     frames = [new Error('must not be read')];
     assert.deepEqual(startupDialog.check('t', { id: 'aider', command: 'aider', capabilities: { startupDialogs: [] } }),
-      { declared: false, dialog: null, suspect: null, clear: false, unread: null, promptKnown: false });
+      { declared: false, dialog: null, suspect: null, clear: false, noncomposer: false, unread: null, promptKnown: false });
   });
 });
 
@@ -517,14 +580,14 @@ describe('the boot watch (#2128)', () => {
     seen = [];
     startupDialog._internal.now = () => clock;
     startupDialog._internal.sleep = async (ms) => { clock += ms; };
-    startupDialog._internal.wakeProfiles = () => ({ claude: { promptGlyph: GLYPH } });
+    startupDialog._internal.wakeProfiles = () => ({ claude: WAKE });
     startupDialog._internal.paneDigest = (lines) => lines.join('\n');
     startupDialog._internal.probeSession = () => ({ answered: true, live: true, cause: null });
     startupDialog._internal.capturePane = () => {
       const frame = frames.length > 1 ? frames.shift() : frames[0];
       if (frame === null) throw new Error('tmux session "t" does not exist');
       if (frame instanceof Error) throw frame;
-      return { lines: frame, alternateScreen: false };
+      return served(frame);
     };
   });
 
@@ -645,14 +708,14 @@ describe('the boot watch (#2128)', () => {
       };
       startupDialog._internal.settleSync = () => {};
       for (const [name, lines] of Object.entries(frames)) {
-        startupDialog._internal.capturePaneSync = () => ({ lines, alternateScreen: false });
+        startupDialog._internal.capturePaneSync = () => served(lines);
         const viaCheck = startupDialog.check('t', CLAUDE);
-        const viaClassify = startupDialog.classify(lines, DIALOGS, GLYPH);
+        const viaClassify = startupDialog.classify(lines, DIALOGS, WAKE, cursorOf(lines));
         assert.equal(viaCheck.clear, viaClassify.state === 'clear', `clear: ${name}`);
         assert.equal(!!viaCheck.dialog, viaClassify.state === 'dialog', `dialog: ${name}`);
       }
-      assert.equal(startupDialog.classify(ANSWERED_WITH_HISTORY, DIALOGS, GLYPH).state, 'clear');
-      assert.equal(startupDialog.classify([...COMPOSER, ...TRUST_DIALOG], DIALOGS, GLYPH).state, 'dialog');
+      assert.equal(startupDialog.classify(ANSWERED_WITH_HISTORY, DIALOGS, WAKE, cursorOf(ANSWERED_WITH_HISTORY)).state, 'clear');
+      assert.equal(startupDialog.classify([...COMPOSER, ...TRUST_DIALOG], DIALOGS, WAKE).state, 'dialog');
     });
   });
 
@@ -920,7 +983,7 @@ describe('the session keeps its blocker (#2128)', () => {
       it('a status read clears a blocker whose dialog is gone, so a healthy session is not called blocked', () => {
         const s = start();
         store.sessions.setLaunchBlocker(s.id, BLOCKER);
-        tmux.capturePane = () => ({ lines: COMPOSER, alternateScreen: false });
+        tmux.capturePane = () => served(COMPOSER);
         const status = sessions.getSessionStatus(project.name);
         assert.equal(status.active, true);
         assert.equal(status.launchBlocker, null);
@@ -930,7 +993,7 @@ describe('the session keeps its blocker (#2128)', () => {
       it('and a death long after is then not blamed on the dialog', () => {
         const s = start();
         store.sessions.setLaunchBlocker(s.id, BLOCKER);
-        tmux.capturePane = () => ({ lines: COMPOSER, alternateScreen: false });
+        tmux.capturePane = () => served(COMPOSER);
         sessions.getSessionStatus(project.name);
         tmux.probeSession = () => ({ answered: true, live: false, cause: null });
         const status = sessions.getSessionStatus(project.name);
@@ -943,7 +1006,7 @@ describe('the session keeps its blocker (#2128)', () => {
       it('a status read keeps a blocker whose dialog is still up', () => {
         const s = start();
         store.sessions.setLaunchBlocker(s.id, BLOCKER);
-        tmux.capturePane = () => ({ lines: TRUST_DIALOG, alternateScreen: false });
+        tmux.capturePane = () => served(TRUST_DIALOG);
         assert.equal(sessions.getSessionStatus(project.name).launchBlocker.code, 'trust_required');
         assert.equal(store.activity.query({ sessionId: s.id, eventType: 'session.launch_blocked' }).length, 1, 'and does not record it again');
       });
@@ -959,9 +1022,9 @@ describe('the session keeps its blocker (#2128)', () => {
       it('an EMPTY read is not an answered dialog: tmux\'s reader returns no lines when a capture fails', () => {
         const s = start();
         store.sessions.setLaunchBlocker(s.id, BLOCKER);
-        tmux.capturePane = () => ({ lines: [], alternateScreen: false });
+        tmux.capturePane = () => served([]);
         assert.equal(sessions.getSessionStatus(project.name).launchBlocker.code, 'trust_required');
-        tmux.capturePane = () => ({ lines: ['', '   ', ''], alternateScreen: false });
+        tmux.capturePane = () => served(['', '   ', '']);
         assert.equal(sessions.getSessionStatus(project.name).launchBlocker.code, 'trust_required');
         assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required');
       });
@@ -969,7 +1032,7 @@ describe('the session keeps its blocker (#2128)', () => {
       it('a screen showing neither a dialog nor the prompt clears nothing', () => {
         const s = start();
         store.sessions.setLaunchBlocker(s.id, BLOCKER);
-        tmux.capturePane = () => ({ lines: ['  Verifying your account…'], alternateScreen: false });
+        tmux.capturePane = () => served(['  Verifying your account…']);
         assert.equal(sessions.getSessionStatus(project.name).launchBlocker.code, 'trust_required');
         assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required');
       });
@@ -980,7 +1043,7 @@ describe('the session keeps its blocker (#2128)', () => {
         const real = startupDialog.check;
         startupDialog.check = (...args) => { reads += 1; return real(...args); };
         try {
-          tmux.capturePane = () => ({ lines: COMPOSER, alternateScreen: false });
+          tmux.capturePane = () => served(COMPOSER);
           sessions.getSessionStatus(project.name);
         } finally {
           startupDialog.check = real;
@@ -1044,7 +1107,7 @@ describe('the session keeps its blocker (#2128)', () => {
       // The launch reads the pane before each send. Left to the real tmux,
       // that read is as slow as the host makes it, and on a slow one a launch
       // ran on into the next test. Each test states what the pane shows.
-      tmux.capturePane = () => ({ lines: COMPOSER, alternateScreen: false });
+      tmux.capturePane = () => served(COMPOSER);
       startupDialog._internal.settleSync = () => {};
     });
 
@@ -1159,7 +1222,7 @@ describe('the session keeps its blocker (#2128)', () => {
       let looks = 0;
       const realCheck = startupDialog.check;
       startupDialog.check = (...args) => { looks += 1; return realCheck(...args); };
-      tmux.capturePane = () => ({ lines: TRUST_DIALOG.slice(0, 13), alternateScreen: false });
+      tmux.capturePane = () => served(TRUST_DIALOG.slice(0, 13));
       try {
         await launched(s, { profile: WITH_PREKEY });
       } finally {
@@ -1216,9 +1279,9 @@ describe('the session keeps its blocker (#2128)', () => {
         const realLookup = store.sessions.getActiveByTmuxSession;
         store.sessions.getActiveByTmuxSession = () => { throw new Error('database is locked'); };
         try {
-          tmux.capturePane = () => ({ lines: [], alternateScreen: false });
+          tmux.capturePane = () => served([]);
           assert.equal(sessions._startupDialogAtSend('some-pane', CLAUDE, 'claude', project.name, null).code, 'launch_blocker_unreadable');
-          tmux.capturePane = () => ({ lines: COMPOSER, alternateScreen: false });
+          tmux.capturePane = () => served(COMPOSER);
           assert.equal(sessions._startupDialogAtSend('some-pane', CLAUDE, 'claude', project.name, null), null);
         } finally {
           store.sessions.getActiveByTmuxSession = realLookup;
@@ -1231,9 +1294,9 @@ describe('the session keeps its blocker (#2128)', () => {
         const realGet = store.sessions.get;
         store.sessions.get = () => { throw new Error('database is locked'); };
         try {
-          tmux.capturePane = () => ({ lines: [], alternateScreen: false });
+          tmux.capturePane = () => served([]);
           assert.equal(sessions._startupDialogAtSend(s.tmuxSession, CLAUDE, 'claude', project.name, { sessionId: s.id }).code, 'trust_required');
-          tmux.capturePane = () => ({ lines: COMPOSER, alternateScreen: false });
+          tmux.capturePane = () => served(COMPOSER);
           assert.equal(sessions._startupDialogAtSend(s.tmuxSession, CLAUDE, 'claude', project.name, { sessionId: s.id }), null);
         } finally {
           store.sessions.get = realGet;
@@ -1251,7 +1314,7 @@ describe('the session keeps its blocker (#2128)', () => {
       it('an id the store does not hold is not an ended session: the pane\'s holder is asked instead', () => {
         const holder = start();
         store.sessions.setLaunchBlocker(holder.id, BLOCKER);
-        tmux.capturePane = () => ({ lines: [], alternateScreen: false });
+        tmux.capturePane = () => served([]);
         assert.equal(sessions._startupDialogAtSend(holder.tmuxSession, CLAUDE, 'claude', project.name, { sessionId: 987654 }).code, 'trust_required');
         assert.equal(sessions._startupDialogAtSend('nobody-holds-this', CLAUDE, 'claude', project.name, { sessionId: 987654 }), null);
       });
@@ -1308,11 +1371,11 @@ describe('the session keeps its blocker (#2128)', () => {
       let clock = 0;
       startupDialog._internal.now = () => clock;
       startupDialog._internal.sleep = async (ms) => { clock += ms; };
-      startupDialog._internal.wakeProfiles = () => ({ claude: { promptGlyph: GLYPH } });
+      startupDialog._internal.wakeProfiles = () => ({ claude: WAKE });
       startupDialog._internal.paneDigest = (lines) => lines.join('\n');
-      startupDialog._internal.capturePane = async () => ({ lines: frames.length > 1 ? frames.shift() : frames[0], alternateScreen: false });
+      startupDialog._internal.capturePane = async () => served(frames.length > 1 ? frames.shift() : frames[0]);
       // What each send's own look sees once the watch has let the launch go.
-      tmux.capturePane = () => ({ lines: history, alternateScreen: false });
+      tmux.capturePane = () => served(history);
       await launched(s);
       assert.ok(typed.some((t) => t.text === 'the prime'), 'the prime was pasted');
       assert.equal(kicked.length, 1, 'and the kickoff was asked');
@@ -1372,7 +1435,7 @@ describe('the session keeps its blocker (#2128)', () => {
 
     beforeEach(() => {
       tmux.hasSession = () => true;
-      tmux.capturePane = () => ({ lines: pane, alternateScreen: false });
+      tmux.capturePane = () => served(pane);
     });
 
     it('refuses with the named code, types nothing, and records the blocker', () => {
@@ -1495,9 +1558,9 @@ describe('the session keeps its blocker (#2128)', () => {
       // and one Enter into it ends the session.
       const NOT_CLEAR = {
         'the pane cannot be read': () => { throw new Error('tmux did not answer'); },
-        'the read comes back empty': () => ({ lines: [], alternateScreen: false }),
-        'the pane shows neither the dialog nor the prompt': () => ({ lines: ['  Verifying your account…'], alternateScreen: false }),
-        'the dialog is half-drawn': () => ({ lines: TRUST_DIALOG.slice(0, 13), alternateScreen: false })
+        'the read comes back empty': () => served([]),
+        'the pane shows neither the dialog nor the prompt': () => served(['  Verifying your account…']),
+        'the dialog is half-drawn': () => served(TRUST_DIALOG.slice(0, 13))
       };
 
       for (const [when, capture] of Object.entries(NOT_CLEAR)) {
@@ -1582,7 +1645,7 @@ describe('the session keeps its blocker (#2128)', () => {
           const s = start();
           for (const capture of [
             () => { throw new Error('tmux did not answer'); },
-            () => ({ lines: [], alternateScreen: false })
+            () => served([])
           ]) {
             tmux.capturePane = capture;
             const refusal = tmux._startupDialogOn(s.tmuxSession, 'claude');
@@ -1595,38 +1658,38 @@ describe('the session keeps its blocker (#2128)', () => {
 
         it('an undecided pane (neither dialog nor prompt) refuses the same way', () => {
           const s = start();
-          tmux.capturePane = () => ({ lines: ['  Verifying your account…'], alternateScreen: false });
+          tmux.capturePane = () => served(['  Verifying your account…']);
           assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'launch_blocker_unreadable');
         });
 
         it('a dialog, or part of one, still withholds under its own name', () => {
           const s = start();
-          tmux.capturePane = () => ({ lines: TRUST_DIALOG, alternateScreen: false });
+          tmux.capturePane = () => served(TRUST_DIALOG);
           assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required');
-          tmux.capturePane = () => ({ lines: TRUST_DIALOG.slice(0, 13), alternateScreen: false });
+          tmux.capturePane = () => served(TRUST_DIALOG.slice(0, 13));
           assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required');
         });
 
         it('only a positive prompt reading lets the send through', () => {
           const s = start();
-          tmux.capturePane = () => ({ lines: COMPOSER, alternateScreen: false });
+          tmux.capturePane = () => served(COMPOSER);
           assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude'), null);
-          tmux.capturePane = () => ({ lines: QUOTING_SESSION, alternateScreen: false });
+          tmux.capturePane = () => served(QUOTING_SESSION);
           assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude'), null, 'a prompt below quoted dialog text is positive too');
-          tmux.capturePane = () => ({ lines: ['❯', 'No, exit'], alternateScreen: false });
+          tmux.capturePane = () => served(['❯', 'No, exit']);
           assert.notEqual(tmux._startupDialogOn(s.tmuxSession, 'claude'), null, 'a prompt ABOVE a marker is not');
         });
 
         it('a send that names no engine, or an engine with no declared dialog, cannot be positively read, so it is refused', () => {
           const s = start();
-          tmux.capturePane = () => ({ lines: COMPOSER, alternateScreen: false });
+          tmux.capturePane = () => served(COMPOSER);
           assert.equal(tmux._startupDialogOn(s.tmuxSession, null).code, 'launch_blocker_unreadable');
           assert.equal(tmux._startupDialogOn(s.tmuxSession, 'aider').code, 'launch_blocker_unreadable');
         });
 
         it('the real writer throws STARTUP_DIALOG with that code and types nothing', () => {
           const s = start();
-          tmux.capturePane = () => ({ lines: [], alternateScreen: false });
+          tmux.capturePane = () => served([]);
           tmux.sendKeys = realSendKeys;
           const unreadablePane = uniqueSessionName('startup_dialog_unreadable');
           tmux.hasSession = realHas;
@@ -1650,7 +1713,7 @@ describe('the session keeps its blocker (#2128)', () => {
 
       describe('a lookup that SUCCEEDS and finds no session is a different fact: an ordinary send', () => {
         it('no active row for the pane, and the pane unread: not refused', () => {
-          tmux.capturePane = () => ({ lines: [], alternateScreen: false });
+          tmux.capturePane = () => served([]);
           assert.equal(store.sessions.getActiveByTmuxSession('nobody-holds-this-pane'), null, 'precondition: the lookup answers, with no row');
           assert.equal(tmux._startupDialogOn('nobody-holds-this-pane', 'claude'), null);
           assert.equal(tmux._startupDialogOn('nobody-holds-this-pane', null), null);
@@ -1663,10 +1726,10 @@ describe('the session keeps its blocker (#2128)', () => {
           store.getDb = () => null;
           store.sessions.getActiveByTmuxSession = () => { asked += 1; throw new Error('Store not initialized'); };
           try {
-            tmux.capturePane = () => ({ lines: [], alternateScreen: false });
+            tmux.capturePane = () => served([]);
             assert.equal(tmux._startupDialogOn('standalone-pane', 'claude'), null);
             assert.equal(asked, 0, 'the lookup is not attempted, so nothing is inferred from its failure');
-            tmux.capturePane = () => ({ lines: TRUST_DIALOG, alternateScreen: false });
+            tmux.capturePane = () => served(TRUST_DIALOG);
             assert.equal(tmux._startupDialogOn('standalone-pane', 'claude').code, 'trust_required', 'and a dialog on screen still withholds there');
           } finally {
             store.getDb = realGetDb;
@@ -1678,7 +1741,7 @@ describe('the session keeps its blocker (#2128)', () => {
       it('the positive reading clears it and the send goes through', () => {
         const s = start();
         store.sessions.setLaunchBlocker(s.id, BLOCKER);
-        tmux.capturePane = () => ({ lines: COMPOSER, alternateScreen: false });
+        tmux.capturePane = () => served(COMPOSER);
         assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude'), null, 'the writer sees the prompt');
         assert.deepEqual(sessions.injectCommand(project.name, 'tc start next'), { ok: true, error: null });
         assert.equal(store.sessions.get(s.id).launchBlocker, null);
@@ -1746,7 +1809,7 @@ describe('the session keeps its blocker (#2128)', () => {
     it('a first partial read followed by an empty re-read withholds the send, with no blocker stored', () => {
       const s = start();
       const reads = [TRUST_DIALOG.slice(0, 13), []];
-      tmux.capturePane = () => ({ lines: reads.length > 1 ? reads.shift() : reads[0], alternateScreen: false });
+      tmux.capturePane = () => served(reads.length > 1 ? reads.shift() : reads[0]);
       const res = sessions.injectCommand(project.name, 'hello');
       assert.equal(res.ok, false);
       assert.match(res.error, /^trust_required: .*may still be drawing/);
@@ -1756,7 +1819,7 @@ describe('the session keeps its blocker (#2128)', () => {
 
     it('a half-drawn dialog withholds a send even with no blocker stored, and records none', () => {
       const s = start();
-      tmux.capturePane = () => ({ lines: TRUST_DIALOG.slice(0, 13), alternateScreen: false });
+      tmux.capturePane = () => served(TRUST_DIALOG.slice(0, 13));
       const res = sessions.injectCommand(project.name, 'hello');
       assert.equal(res.ok, false);
       assert.match(res.error, /^trust_required: .*part of it is on screen and it may still be drawing/);
@@ -1830,7 +1893,7 @@ describe('each launch-time sender, against the dialog (#2128)', () => {
       session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'sender-proj' });
       tmux.hasSession = () => true;
       tmux.probeSession = () => ({ answered: true, live: true, cause: null });
-      tmux.capturePane = () => ({ lines: TRUST_DIALOG, alternateScreen: false });
+      tmux.capturePane = () => served(TRUST_DIALOG);
       tmux.sendKeys = (name, text) => { typed.push(text); };
     });
 
@@ -1899,6 +1962,18 @@ describe('the pane writer refuses a declared dialog (#2128)', () => {
     require('node:child_process').execSync('sleep 0.3');
     return tmux.capturePane(PANE, { full: true }).lines.join('\n');
   };
+
+  it('the synchronous cursor read says whether the cursor is shown, on a real pane', () => {
+    try {
+      openPane();
+      assert.equal(tmux.cursorInfo(PANE).visible, true, 'a shell shows its cursor');
+      require('node:child_process').execSync(`tmux send-keys -t '=${PANE}:' 'tput civis' Enter`);
+      require('node:child_process').execSync('sleep 0.5');
+      assert.equal(tmux.cursorInfo(PANE).visible, false, 'and tmux reports it hidden once the program hides it');
+    } finally {
+      try { tmux.killSession(PANE); } catch { /* already gone */ }
+    }
+  });
 
   it('throws STARTUP_DIALOG, naming the dialog, and types nothing', () => {
     try {
@@ -1999,5 +2074,683 @@ describe('the pane writer refuses a declared dialog (#2128)', () => {
     }
     assert.ok(calls >= 5, `expected to find the known senders, found ${calls}`);
     assert.deepEqual(unarmed, [], 'a typed send that does not name its engine is not checked for a startup dialog');
+  });
+});
+
+/**
+ * What counts as the engine's prompt (the A160 hold on #2183).
+ *
+ * The first cut of this module read ANY row led by the prompt glyph as the
+ * composer. A selector draws its selected option with that glyph, so
+ * "❯ 2. Yes, I accept" read as a prompt, a send was allowed, and a stored
+ * blocker was cleared on it.
+ *
+ * Frames marked REAL were captured from Claude Code 2.1.283 on 2026-10-07 in an
+ * empty repository with no turn taken: rows, the styled cursor row and the
+ * cursor column as tmux reported them. Four selectors were captured that way (the
+ * `/model` menu, the onboarding theme picker, the login-method selector, and the
+ * folder trust dialog). The Bypass Permissions confirmation
+ * could not be captured (the host has it switched off, and a private config
+ * home stops at a login first), so that frame is the
+ * text from the report, and is marked UNVERIFIED.
+ */
+describe('only the composer at rest is a prompt (#2128, A160)', () => {
+  const medusaWake = require('../lib/medusa-wake');
+  const BORDER = '─'.repeat(100);
+  const FOOTER = ['  repo (main) | Opus 5.5', '  ⏵⏵ auto mode on (shift+tab to cycle)'];
+  const HEAD = ['', ' ▐▛███▛█   Claude Code v2.1.283', '▝▜██████▀  Opus 5.5 · Claude Max', ' ▝▝   ▝▝   /…/scratchpad/spike2128/repo', ''];
+
+  // REAL: the fresh composer. Border, the row, border; cursor shown at column 2.
+  const FRESH_ROW = '❯ Try "how does <filepath> work?"';
+  const FRESH_CURSOR = Object.freeze({ visible: true, x: 2, y: 36, line: `${ESC}[39m❯ ${ESC}[2mTry "how does <filepath> work?"${ESC}[0m` });
+  const FRESH = at(Object.freeze([...HEAD, BORDER, FRESH_ROW, BORDER, ...FOOTER]), FRESH_CURSOR);
+
+  // REAL: `/model` typed and not submitted. Cursor shown after the text.
+  const DRAFT_CURSOR = Object.freeze({ visible: true, x: 8, y: 36, line: `${ESC}[39m❯ ${ESC}[38;5;153m/model${ESC}[39m` });
+  const DRAFT = at(Object.freeze([...HEAD, BORDER, '❯ /model', BORDER, ...FOOTER]), DRAFT_CURSOR);
+
+  // REAL: the `/model` selector. The cursor is hidden and parked ON the selected row's glyph.
+  const MENU_HEAD = ['▔'.repeat(100), '   Select model', '   Switch between Claude models. Your pick becomes the default for new sessions.', ''];
+  const MENU_FOOT = ['     4.  Haiku 4.5              Fastest for quick answers', '', '   Enter to set as default · s to use this session only · Esc to cancel'];
+  const MODEL_MENU = at(Object.freeze([
+    ...HEAD, ...MENU_HEAD,
+    '     1.  Default (recommended)  Opus 5.5 · Best for everyday, complex tasks',
+    '   ❯ 2.  Opus 5.5 ✔             For complex work and everyday tasks',
+    '     3.  Fable 5.1              For your toughest challenges',
+    ...MENU_FOOT
+  ]), Object.freeze({
+    visible: false, x: 3, y: 26,
+    line: `   ${ESC}[38;5;153m❯${ESC}[39m ${ESC}[38;5;246m2.  ${ESC}[38;5;114mOpus 5.5${ESC}[39m ${ESC}[38;5;114m✔${ESC}[39m             ${ESC}[38;5;246mFor complex work and everyday tasks${ESC}[39m`
+  }));
+  const MODEL_MENU_DOWN = at(Object.freeze([
+    ...HEAD, ...MENU_HEAD,
+    '     1.  Default (recommended)  Opus 5.5 · Best for everyday, complex tasks',
+    '     2.  Opus 5.5 ✔             For complex work and everyday tasks',
+    '   ❯ 3.  Fable 5.1              For your toughest challenges',
+    ...MENU_FOOT
+  ]), Object.freeze({
+    visible: false, x: 3, y: 27,
+    line: `   ${ESC}[38;5;153m❯${ESC}[39m ${ESC}[38;5;246m3.  ${ESC}[38;5;153mFable 5.1${ESC}[39m              ${ESC}[38;5;246mFor your toughest challenges${ESC}[39m`
+  }));
+
+  // REAL: after Esc. The submitted `/model` is a transcript row under the same glyph; the composer is bare.
+  const AFTER_MENU = at(Object.freeze([
+    ...HEAD, '❯ /model', '  ⎿  Kept model as Opus 5.5', '', BORDER, '❯ ', BORDER, ...FOOTER
+  ]), Object.freeze({ x: 2, y: 36, line: `${ESC}[39m❯ ` }));
+
+  // REAL: the folder trust dialog's cursor, hidden and parked on the selected row's glyph.
+  const TRUST_CURSOR = Object.freeze({ visible: false, x: 1, y: 14, line: ` ${ESC}[38;5;153m❯${ESC}[39m ${ESC}[38;5;153mNo,${ESC}[39m ${ESC}[38;5;153mexit${ESC}[39m` });
+
+  // UNVERIFIED: the Bypass Permissions confirmation, from the report's text. It carries ONE of the trust dialog's two markers.
+  const BYPASS_HEAD = [BORDER, ' WARNING: Claude Code running in Bypass Permissions mode', '', ' In Bypass Permissions mode, Claude Code will not ask for your approval before running', ' potentially dangerous commands.', ''];
+  const BYPASS_FOOT = ['', ' Enter to confirm · Esc to cancel'];
+  const BYPASS_1 = Object.freeze([...BYPASS_HEAD, ' ❯ 1. No, exit', '   2. Yes, I accept', ...BYPASS_FOOT]);
+  const BYPASS_2 = Object.freeze([...BYPASS_HEAD, '   1. No, exit', ' ❯ 2. Yes, I accept', ...BYPASS_FOOT]);
+
+  // REAL: first-run onboarding in an empty config home (no account): the theme picker and the
+  // login-method selector. Both numbered, neither carrying declared text; cursor hidden on the glyph.
+  const THEME_PICKER = at(Object.freeze([
+    'Welcome to Claude Code v2.1.283', '', " Let's get started.", '', ' Choose the text style that looks best with your terminal', ' To change this later, run /theme', '',
+    '   1. Auto (match terminal)', ' ❯ 2. Dark mode ✔', '   3. Light mode', '   4. Dark mode (colorblind-friendly)', '',
+    ` ${'╌'.repeat(99)}`, '  1  function greet() {', '  3  }', ` ${'╌'.repeat(99)}`, '  Syntax theme: Monokai Extended (ctrl+t to disable)'
+  ]), Object.freeze({
+    visible: false, x: 1, y: 23,
+    line: ` ${ESC}[38;5;153m❯${ESC}[39m ${ESC}[38;5;246m2.${ESC}[39m ${ESC}[38;5;114mDark${ESC}[39m ${ESC}[38;5;114mmode${ESC}[39m ${ESC}[38;5;114m✔${ESC}[39m`
+  }));
+  const LOGIN_METHOD = at(Object.freeze([
+    'Welcome to Claude Code v2.1.283', '', ' Claude Code can be used with your Claude subscription or billed based on API usage.', '', ' Select login method:', '',
+    ' ❯ 1. Claude account with subscription · Pro, Max, Team, or Enterprise', '   2. Anthropic Console account · API usage billing',
+    '   3. 3rd-party platform · Amazon Bedrock, Microsoft Foundry, or Vertex AI'
+  ]), Object.freeze({
+    visible: false, x: 1, y: 22,
+    line: ` ${ESC}[38;5;153m❯${ESC}[39m ${ESC}[38;5;246m1.${ESC}[39m ${ESC}[38;5;153mClaude account with subscription · ${ESC}[38;5;246mPro, Max, Team, or Enterprise${ESC}[39m`
+  }));
+
+  // A selector with no declared text at all.
+  const MENU_1 = Object.freeze([' Do you want to proceed?', ' ❯ 1. Yes', '   2. No', '', ' Esc to cancel']);
+  const MENU_2 = Object.freeze([' Do you want to proceed?', '   1. Yes', ' ❯ 2. No', '', ' Esc to cancel']);
+
+  /** Every cursor a selector row could plausibly be read with: none, on the glyph, just past it, at the row's end. */
+  const cursorsOn = (row) => [null, { x: row.indexOf('❯'), y: 9, line: row }, { x: row.indexOf('❯') + 2, y: 9, line: row }, { x: row.length, y: 9, line: row }];
+
+  const classify = (lines, cursor = cursorOf(lines)) => startupDialog.classify(lines, DIALOGS, WAKE, cursor).state;
+  const boot = (lines, cursor = cursorOf(lines)) => startupDialog.assessBoot(lines, DIALOGS, WAKE, cursor).state;
+
+  const NOT_A_PROMPT = Object.freeze({
+    'bypass confirmation, option 1 selected': BYPASS_1,
+    'bypass confirmation, option 2 selected': BYPASS_2,
+    'a selector with no declared text, option 1 selected': MENU_1,
+    'a selector with no declared text, option 2 selected': MENU_2,
+    'the real /model selector': MODEL_MENU,
+    'the real /model selector, next option selected': MODEL_MENU_DOWN,
+    'the real onboarding theme picker': THEME_PICKER,
+    'the real login-method selector': LOGIN_METHOD,
+    'a composer holding typed text': DRAFT
+  });
+
+  afterEach(() => { Object.assign(startupDialog._internal, REAL_SEAMS); });
+
+  describe('one frame', () => {
+    it('the measured bare-composer pattern is what Claude declares, and an option row does not match it', () => {
+      assert.equal(WAKE.promptRe.source, CLAUDE.capabilities.wake.promptPattern);
+      for (const bare of ['❯', '❯ ', '❯ ', '  ❯ ']) assert.ok(WAKE.promptRe.test(bare), JSON.stringify(bare));
+      for (const not of [' ❯ 2. Yes, I accept', ' ❯ 1. Yes', FRESH_ROW, '❯ /model', '❯  ']) assert.ok(!WAKE.promptRe.test(not), JSON.stringify(not));
+    });
+
+    it('REAL: a fresh composer showing its suggestion is clear, on its cursor, its styling and its box together', () => {
+      assert.equal(medusaWake._composerEmpty(FRESH_CURSOR, WAKE), true, 'precondition: the cursor reading says empty');
+      assert.equal(classify(FRESH), 'clear');
+      assert.equal(boot(FRESH), 'clear');
+    });
+
+    it('the same frame is NOT clear without each of those', () => {
+      assert.equal(classify(FRESH, null), 'noncomposer', 'no cursor reading');
+      assert.equal(boot(FRESH, null), 'undecided');
+      const unstyled = { ...FRESH_CURSOR, line: FRESH_ROW };
+      assert.equal(classify(FRESH, unstyled), 'noncomposer', 'a cursor row with no styling: the suggestion reads as typed text');
+      assert.equal(classify(FRESH, { ...FRESH_CURSOR, visible: false }), 'noncomposer', 'the cursor hidden, as on every selector captured');
+      assert.equal(classify(FRESH, { ...FRESH_CURSOR, visible: null }), 'noncomposer', 'tmux did not say whether the cursor is shown');
+      const { visible: _omitted, ...noFlag } = FRESH_CURSOR;
+      assert.equal(classify(FRESH, noFlag), 'noncomposer', 'a cursor reading with no visibility flag at all');
+      assert.equal(boot(FRESH, noFlag), 'undecided');
+      assert.equal(classify(FRESH, { ...FRESH_CURSOR, x: 0 }), 'noncomposer', 'the cursor on the glyph, as a selector parks it');
+      assert.equal(classify(FRESH, { ...FRESH_CURSOR, x: 12 }), 'noncomposer', 'the cursor past text: that text was typed');
+      assert.equal(classify(FRESH, { x: 2, y: 3, line: `❯ ${ESC}[2mTry something else${ESC}[0m` }), 'noncomposer', 'the cursor on some other row');
+      const noUpper = FRESH.filter((row, i) => i !== FRESH.indexOf(BORDER));
+      assert.equal(classify(noUpper, FRESH_CURSOR), 'noncomposer', 'no border directly above');
+      const noLower = FRESH.filter((row, i) => i !== FRESH.lastIndexOf(BORDER));
+      assert.equal(classify(noLower, FRESH_CURSOR), 'noncomposer', 'no border directly below');
+    });
+
+    it('REAL: a bare composer is clear with no cursor reading, and the transcript row above it under the same glyph does not matter', () => {
+      assert.equal(classify(AFTER_MENU, null), 'clear');
+      assert.equal(classify(AFTER_MENU), 'clear');
+      assert.equal(boot(AFTER_MENU, null), 'clear');
+    });
+
+    for (const [name, lines] of Object.entries(NOT_A_PROMPT)) {
+      it(`${name}: never a prompt, wherever the cursor is`, () => {
+        const selected = lines.find((row) => row.trimStart().startsWith(GLYPH));
+        for (const cursor of [cursorOf(lines), ...cursorsOn(selected)]) {
+          const state = classify(lines, cursor);
+          assert.notEqual(state, 'clear', `cursor ${JSON.stringify(cursor && cursor.x)}`);
+          assert.notEqual(state, 'unknown', 'and not the "nothing recognised" a launch types through');
+          assert.equal(boot(lines, cursor), 'undecided');
+          assert.equal(startupDialog.detect(lines, DIALOGS, WAKE, cursor), null, 'nor is it reported as the folder trust dialog');
+        }
+      });
+    }
+
+    it('names what it can: the bypass frame shows declared text, so it is part of a dialog with either option selected; the rest name none', () => {
+      for (const lines of [BYPASS_1, BYPASS_2]) {
+        for (const cursor of [null, ...cursorsOn(lines.find((row) => row.trimStart().startsWith(GLYPH))).map((c) => c && { ...c, visible: true })]) {
+          assert.equal(classify(lines, cursor), 'partial', 'whatever the cursor reading, shown included: it has no composer box');
+        }
+        assert.equal(startupDialog.classify(lines, DIALOGS, WAKE).partial.code, 'trust_required');
+      }
+      for (const lines of [MENU_1, MENU_2, MODEL_MENU, MODEL_MENU_DOWN, THEME_PICKER, LOGIN_METHOD, DRAFT]) assert.equal(classify(lines), 'noncomposer');
+    });
+
+    it('REAL: on every selector captured, the cursor is on the selected row\'s glyph, which the composer reading rejects by itself', () => {
+      for (const lines of [MODEL_MENU, MODEL_MENU_DOWN, THEME_PICKER, LOGIN_METHOD]) {
+        const cursor = cursorOf(lines);
+        assert.equal([...medusaWake._strip(cursor.line)].indexOf(GLYPH), cursor.x, 'the cursor column is the glyph\'s');
+        assert.equal(medusaWake._composerEmpty(cursor, WAKE), null);
+        assert.ok(!cursor.line.includes(`${ESC}[2m`), 'and nothing on the row is drawn faint');
+      }
+    });
+
+    it('REAL: the folder trust dialog is still the dialog with its real cursor', () => {
+      assert.equal(medusaWake._composerEmpty(TRUST_CURSOR, WAKE), null, 'the cursor sits on the glyph, not at an input column');
+      assert.equal(classify(TRUST_DIALOG, TRUST_CURSOR), 'dialog');
+    });
+
+    it('a selected option painted faint, with the cursor where a composer keeps it, is still not a prompt', () => {
+      // `_composerEmpty` alone passes this row. Whether any menu paints an
+      // option this way is unverified, so nothing rests on its not happening.
+      const faint = { visible: true, x: 2, y: 9, line: `❯ ${ESC}[2m2. Yes, I accept${ESC}[0m` };
+      assert.equal(medusaWake._composerEmpty(faint, WAKE), true, 'precondition: the cursor reading alone says "empty composer"');
+      const row = '❯ 2. Yes, I accept';
+      assert.equal(classify([...BYPASS_HEAD, '   1. No, exit', row, ...BYPASS_FOOT], faint), 'partial', 'no border on either side, under declared text');
+      assert.equal(classify([' Proceed?', '   1. No', row, '', ' Esc to cancel'], faint), 'noncomposer', 'the same with no declared text');
+      assert.equal(classify([' Proceed?', BORDER, row, '   3. Something else', BORDER], faint), 'noncomposer', 'a border above only: the option below gives it away');
+      assert.equal(classify([' Proceed?', BORDER, '   1. No', row, BORDER], faint), 'noncomposer', 'a border below only');
+    });
+
+    it('ordering: a stale composer ABOVE a selected option does not clear, with the cursor reading on either row', () => {
+      const staleBare = [...AFTER_MENU, ...BYPASS_2];
+      assert.equal(classify(staleBare, null), 'partial');
+      assert.equal(classify(staleBare, cursorOf(AFTER_MENU)), 'partial', 'the cursor still reported on the old composer');
+      assert.equal(classify([...AFTER_MENU, ...MENU_2], cursorOf(AFTER_MENU)), 'noncomposer', 'the same with no declared marker on screen');
+      const staleFresh = [...FRESH, ...BYPASS_2];
+      assert.equal(classify(staleFresh, FRESH_CURSOR), 'partial');
+      assert.equal(classify([...FRESH, ...MENU_2], FRESH_CURSOR), 'noncomposer', 'the same with no declared marker on screen');
+      assert.equal(classify([...FRESH, ...BYPASS_1], FRESH_CURSOR), 'partial');
+      assert.equal(boot(staleFresh, FRESH_CURSOR), 'undecided');
+    });
+
+    it('ordering: an answered menu left ABOVE a fresh composer is history, and the composer clears', () => {
+      assert.equal(classify([...BYPASS_2, ...FRESH], FRESH_CURSOR), 'clear');
+      assert.equal(classify([...BYPASS_1, ...AFTER_MENU], null), 'clear');
+      assert.equal(classify([...MENU_2, ...FRESH], FRESH_CURSOR), 'clear');
+      assert.equal(classify([...TRUST_DIALOG, ...FRESH], FRESH_CURSOR), 'clear', 'the #2213 case, on the real suggestion row');
+      assert.equal(classify([...TRUST_DIALOG, ...FRESH], null), 'partial', 'and without the cursor that proves it, the dialog\'s text still withholds every sender');
+      assert.equal(classify([...TRUST_DIALOG, ...FRESH], { ...FRESH_CURSOR, visible: false }), 'partial', 'the same with the cursor hidden');
+      assert.equal(classify([...TRUST_DIALOG, ...FRESH], { ...FRESH_CURSOR, visible: null }), 'partial', 'or with tmux not saying whether it is shown');
+      assert.equal(boot([...BYPASS_2, ...FRESH], FRESH_CURSOR), 'undecided', 'boot is stricter: marker text on a fresh pane is a dialog on its way');
+    });
+
+    it('an option whose label wrapped below a bare glyph is not a prompt', () => {
+      const wrapped = [...BYPASS_HEAD, '   1. No, exit', ' ❯ ', '   2. Yes, I accept', ...BYPASS_FOOT];
+      assert.equal(classify(wrapped, null), 'partial');
+      assert.equal(boot(wrapped, null), 'undecided');
+      assert.equal(classify([' Proceed?', ' ❯ ', '   1. Yes'], null), 'noncomposer');
+      assert.equal(classify(['some output', '❯ ', ''], null), 'clear', 'a blank row beneath is not text');
+      assert.equal(classify(['some output', '❯ '], null), 'clear', 'nor is the end of the capture');
+    });
+
+    it('the cursor is bound to the judged row by its text: on another row it proves nothing', () => {
+      // The cursor reports the fresh composer, but the last glyph-led row is different text.
+      const other = [...FRESH, BORDER, '❯ Try "something else"', BORDER];
+      assert.equal(classify(other, FRESH_CURSOR), 'noncomposer');
+      // Two identical boxed suggestion rows: the cursor's text matches the last one, which is judged.
+      assert.equal(classify([...FRESH, ...FRESH], FRESH_CURSOR), 'clear');
+    });
+
+    it('a profile with no measured composer pattern never reads clear, whatever is on screen', () => {
+      for (const wake of [null, { promptGlyph: GLYPH }, { promptGlyph: GLYPH, promptPad: ' ', placeholderSgr: [2] }]) {
+        for (const lines of [FRESH, AFTER_MENU, COMPOSER, QUOTING_SESSION]) {
+          assert.notEqual(startupDialog.classify(lines, DIALOGS, wake, cursorOf(lines)).state, 'clear');
+          assert.notEqual(startupDialog.assessBoot(lines, DIALOGS, wake, cursorOf(lines)).state, 'clear');
+        }
+      }
+    });
+  });
+
+  describe('the one look before a send', () => {
+    const STORED = Object.freeze({ code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.' });
+    let cursorReads;
+
+    beforeEach(() => {
+      cursorReads = 0;
+      startupDialog._internal.wakeProfiles = () => ({ claude: WAKE });
+      startupDialog._internal.settleSync = () => {};
+      startupDialog._internal.cursorInfoSync = () => { cursorReads += 1; return cursorOf(lastServed); };
+    });
+
+    const look = (lines) => {
+      startupDialog._internal.capturePaneSync = () => served(lines);
+      return startupDialog.check('t', CLAUDE);
+    };
+
+    for (const [name, lines] of Object.entries(NOT_A_PROMPT)) {
+      it(`${name}: not clear; a stored blocker stands, and a launch send is refused with or without one`, () => {
+        const seen = look(lines);
+        assert.equal(seen.clear, false);
+        assert.equal(seen.dialog, null);
+        const stored = startupDialog.withholdFor(seen, STORED);
+        assert.equal(stored.code, 'trust_required', 'a stored blocker keeps every sender out');
+        assert.equal(startupDialog.withholdFor(seen, STORED, { launchSend: true }).code, 'trust_required');
+        const launch = startupDialog.withholdFor(seen, null, { launchSend: true });
+        assert.ok(launch, 'a launch send is refused with no blocker stored');
+        if (lines === BYPASS_1 || lines === BYPASS_2) {
+          assert.equal(launch.code, 'trust_required', 'it shows declared text with no composer below: withheld as a suspect frame');
+          assert.equal(startupDialog.withholdFor(seen, null).code, 'trust_required', 'for every sender');
+        } else {
+          assert.equal(seen.noncomposer, true);
+          assert.equal(launch.code, startupDialog.NOT_AT_PROMPT);
+          assert.equal(launch.label, null, 'it names no dialog');
+          assert.doesNotMatch(startupDialog.refusalText(launch), /trust/i);
+          assert.match(startupDialog.refusalText(launch), /^pane_not_at_prompt: nothing was typed into the session\./);
+        }
+      });
+    }
+
+    it('a later injection with no blocker stored and no declared marker is not refused on a non-composer row: it keeps and clears a draft as before', () => {
+      for (const lines of [DRAFT, MENU_2, MODEL_MENU]) {
+        assert.equal(startupDialog.withholdFor(look(lines), null), null);
+      }
+    });
+
+    it('declared text quoted ABOVE a located draft is a transcript: a later injection keeps its draft path, a launch send does not, and a blocker is not cleared', () => {
+      const quoting = at([...QUOTING_SESSION.slice(0, 5), ...DRAFT], DRAFT_CURSOR);
+      const seen = look(quoting);
+      assert.equal(seen.noncomposer, true);
+      assert.equal(seen.clear, false);
+      assert.equal(seen.dialog, null, 'and it is not recorded as the dialog');
+      assert.equal(startupDialog.withholdFor(seen, null), null);
+      assert.equal(startupDialog.withholdFor(seen, null, { launchSend: true }).code, startupDialog.NOT_AT_PROMPT);
+      assert.equal(startupDialog.withholdFor(seen, STORED).code, 'trust_required');
+      // The draft must be positively located: each piece missing puts every sender back out.
+      const lacking = {
+        'no cursor reading': null,
+        'the cursor hidden': { ...DRAFT_CURSOR, visible: false },
+        'tmux not saying whether it is shown': { ...DRAFT_CURSOR, visible: null },
+        'the cursor on the glyph, as a selector parks it': { ...DRAFT_CURSOR, x: 0 },
+        'the cursor on another row': { ...DRAFT_CURSOR, line: `${GLYPH} other text` }
+      };
+      for (const [why, cursor] of Object.entries(lacking)) {
+        startupDialog._internal.cursorInfoSync = () => cursor;
+        const got = look(quoting);
+        assert.equal(got.noncomposer, false, why);
+        assert.equal(startupDialog.withholdFor(got, null).code, 'trust_required', why);
+      }
+      startupDialog._internal.cursorInfoSync = () => DRAFT_CURSOR;
+      const unboxed = quoting.filter((row) => row !== BORDER);
+      assert.equal(startupDialog.withholdFor(look(unboxed), null).code, 'trust_required', 'no composer box');
+    });
+
+    it('bypass option 2, no blocker stored: a later injection is refused too, with the cursor shown or not', () => {
+      const selected = BYPASS_2.find((row) => row.trimStart().startsWith(GLYPH));
+      for (const cursor of [null, ...cursorsOn(selected), ...cursorsOn(selected).filter(Boolean).map((c) => ({ ...c, visible: true }))]) {
+        startupDialog._internal.cursorInfoSync = () => cursor;
+        const seen = look(BYPASS_2);
+        assert.equal(seen.clear, false);
+        assert.equal(startupDialog.withholdFor(seen, null).code, 'trust_required');
+      }
+    });
+
+    it('a screen with no glyph-led row at all keeps its old allowance, for a launch send too', () => {
+      const seen = look(['  Verifying your account…']);
+      assert.equal(seen.noncomposer, false);
+      assert.equal(startupDialog.withholdFor(seen, null, { launchSend: true }), null);
+    });
+
+    it('REAL: the fresh composer and the bare one are clear, so a stored blocker is released', () => {
+      for (const lines of [FRESH, AFTER_MENU, [...TRUST_DIALOG, ...FRESH], [...BYPASS_2, ...FRESH]]) {
+        const seen = look(lines);
+        assert.equal(seen.clear, true);
+        assert.equal(startupDialog.withholdFor(seen, STORED, { launchSend: true }), null);
+      }
+    });
+
+    it('the cursor is read only when it can change the answer', () => {
+      look(AFTER_MENU);
+      assert.equal(cursorReads, 0, 'a bare composer needs none');
+      look(['  Verifying your account…']);
+      assert.equal(cursorReads, 0, 'nor does a screen with no glyph-led row');
+      look(FRESH);
+      assert.equal(cursorReads, 1, 'a non-bare glyph row does');
+    });
+
+    it('a cursor that cannot be read, or reads as nothing, never clears the suggestion row', () => {
+      startupDialog._internal.cursorInfoSync = () => { throw new Error('tmux did not answer'); };
+      assert.equal(look(FRESH).clear, false);
+      assert.equal(look(FRESH).noncomposer, true);
+      assert.equal(look(AFTER_MENU).clear, true, 'the bare composer does not depend on it');
+      startupDialog._internal.cursorInfoSync = () => null;
+      assert.equal(look(FRESH).clear, false);
+    });
+
+    it('the pane changing between the row read and the cursor read does not clear', () => {
+      // Rows read: a menu. Cursor read, a moment later: the composer that replaced it.
+      startupDialog._internal.cursorInfoSync = () => FRESH_CURSOR;
+      assert.equal(look(MENU_2).clear, false);
+      // Rows read: the fresh composer. Cursor read: the menu that replaced it.
+      startupDialog._internal.cursorInfoSync = () => cursorOf(MODEL_MENU);
+      assert.equal(look(FRESH).clear, false);
+    });
+
+    it('the one-read check, the classifier and the watch\'s reader agree on every frame, with and without a cursor', async () => {
+      const frames = { ...NOT_A_PROMPT, fresh: FRESH, 'after the menu': AFTER_MENU, trust: TRUST_DIALOG, 'history then fresh': [...TRUST_DIALOG, ...FRESH], 'stale then option': [...FRESH, ...BYPASS_2] };
+      for (const [name, lines] of Object.entries(frames)) {
+        for (const cursor of [cursorOf(lines), null]) {
+          startupDialog._internal.cursorInfoSync = () => cursor;
+          const viaCheck = look(lines);
+          const viaClassify = startupDialog.classify(lines, DIALOGS, WAKE, cursor).state;
+          assert.equal(viaCheck.clear, viaClassify === 'clear', `clear: ${name}, cursor ${cursor ? 'read' : 'missing'}`);
+          assert.equal(!!viaCheck.dialog, viaClassify === 'dialog', `dialog: ${name}`);
+          assert.equal(viaCheck.noncomposer, viaClassify === 'noncomposer', `noncomposer: ${name}`);
+          // The watch reads the same frame through the async reader.
+          let clock = 0;
+          startupDialog._internal.now = () => clock;
+          startupDialog._internal.sleep = async (ms) => { clock += ms; };
+          startupDialog._internal.paneDigest = (rows) => rows.join('\n');
+          startupDialog._internal.probeSession = () => ({ answered: true, live: true, cause: null });
+          startupDialog._internal.capturePane = async () => ({ lines, alternateScreen: false, cursor });
+          const watched = await startupDialog.watch({ tmuxName: 't', engineProfile: CLAUDE, bootWindowMs: 3000, answerWindowMs: 6000 });
+          const bootState = startupDialog.assessBoot(lines, DIALOGS, WAKE, cursor).state;
+          const expected = bootState === 'clear' ? 'clear' : (bootState === 'dialog' ? (viaClassify === 'clear' ? 'answered' : 'unanswered') : 'timeout');
+          assert.equal(watched.outcome, expected, `watch: ${name}, cursor ${cursor ? 'read' : 'missing'}`);
+        }
+      }
+    });
+  });
+
+  describe('the watch', () => {
+    let clock;
+    let frames;
+    let reads;
+
+    beforeEach(() => {
+      clock = 0;
+      reads = 0;
+      startupDialog._internal.now = () => clock;
+      startupDialog._internal.sleep = async (ms) => { clock += ms; };
+      startupDialog._internal.wakeProfiles = () => ({ claude: WAKE });
+      startupDialog._internal.probeSession = () => ({ answered: true, live: true, cause: null });
+      // The transcript digest is held EQUAL throughout: it leaves out the last
+      // glyph-led row and everything under it, which is where these frames differ.
+      startupDialog._internal.paneDigest = () => 'same transcript';
+      startupDialog._internal.capturePane = async () => {
+        reads += 1;
+        const frame = frames.length > 1 ? frames.shift() : frames[0];
+        return { lines: frame.lines, alternateScreen: false, cursor: frame.cursor };
+      };
+    });
+
+    const f = (lines, cursor = cursorOf(lines)) => ({ lines, cursor });
+    const watch = (over = {}) => startupDialog.watch({ tmuxName: 't', engineProfile: CLAUDE, ...over });
+
+    for (const [name, lines] of Object.entries(NOT_A_PROMPT)) {
+      it(`${name}: boot does not clear on it, however long it holds still`, async () => {
+        frames = [f(lines)];
+        assert.equal((await watch()).outcome, 'timeout');
+      });
+
+      it(`${name}: after a dialog, it is not the answer and the launch does not resume`, async () => {
+        frames = [f(TRUST_DIALOG), f(lines)];
+        const res = await watch({ answerWindowMs: 60_000 });
+        assert.equal(res.outcome, 'unanswered');
+        assert.equal(res.dialog.code, 'trust_required');
+      });
+    }
+
+    it('REAL: after a dialog, a bare composer below the retained history resumes after two stable reads', async () => {
+      frames = [f(TRUST_DIALOG), f([...TRUST_DIALOG, ...AFTER_MENU], null)];
+      const res = await watch();
+      assert.equal(res.outcome, 'answered');
+      assert.equal(reads, 3, 'the dialog, then the composer twice');
+    });
+
+    it('REAL: so does the fresh composer showing its suggestion, on its cursor', async () => {
+      frames = [f(TRUST_DIALOG), f([...TRUST_DIALOG, ...FRESH], FRESH_CURSOR)];
+      assert.equal((await watch()).outcome, 'answered');
+      frames = [f(TRUST_DIALOG), f([...TRUST_DIALOG, ...FRESH], null)];
+      assert.equal((await watch({ answerWindowMs: 60_000 })).outcome, 'unanswered', 'and not without it');
+    });
+
+    it('REAL: a fresh boot with no dialog clears on the suggestion row, and only with its cursor', async () => {
+      frames = [f(FRESH)];
+      assert.equal((await watch()).outcome, 'clear');
+      frames = [f(FRESH, null)];
+      assert.equal((await watch()).outcome, 'timeout');
+    });
+
+    it('two clear reads count as stable only if the judged row and the cursor held still too', async () => {
+      const other = [...HEAD, BORDER, '❯ Try "refactor <filepath>"', BORDER, ...FOOTER];
+      const otherCursor = { visible: true, x: 2, y: 36, line: `${ESC}[39m❯ ${ESC}[2mTry "refactor <filepath>"${ESC}[0m` };
+      // Each frame is clear on its own, and the transcript digest never changes.
+      frames = [f(FRESH), f(other, otherCursor), f(FRESH), f(other, otherCursor), f(other, otherCursor)];
+      assert.equal((await watch()).outcome, 'clear');
+      assert.equal(reads, 5, 'not on any pair of differing rows: only once one frame repeated');
+      // A cursor that moves on an unchanged row is movement as well.
+      reads = 0;
+      const styledTwice = { ...FRESH_CURSOR, line: `${FRESH_CURSOR.line}${ESC}[0m` };
+      frames = [f(FRESH), f(FRESH, styledTwice), f(FRESH), f(FRESH)];
+      assert.equal((await watch()).outcome, 'clear');
+      assert.equal(reads, 4);
+    });
+
+    it('the same holds in the answer stage', async () => {
+      const other = [...TRUST_DIALOG, ...HEAD, BORDER, '❯ Try "refactor <filepath>"', BORDER, ...FOOTER];
+      const otherCursor = { visible: true, x: 2, y: 36, line: `${ESC}[39m❯ ${ESC}[2mTry "refactor <filepath>"${ESC}[0m` };
+      const fresh = [...TRUST_DIALOG, ...FRESH];
+      frames = [f(TRUST_DIALOG), f(fresh, FRESH_CURSOR), f(other, otherCursor), f(fresh, FRESH_CURSOR), f(fresh, FRESH_CURSOR)];
+      assert.equal((await watch()).outcome, 'answered');
+      assert.equal(reads, 5);
+    });
+  });
+
+  describe('through the session and the pane writer', () => {
+    const real = {
+      hasSession: tmux.hasSession, capturePane: tmux.capturePane, sendKeys: tmux.sendKeys, sendRawKey: tmux.sendRawKey,
+      probeSession: tmux.probeSession, kickoff: launchKickoff.kickoff, bootstrap: launchBootstrap.bootstrap, watch: startupDialog.watch
+    };
+    const BLOCKER = Object.freeze({ code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.', engineId: 'claude' });
+    const WITH_PREKEY = Object.freeze({ ...CLAUDE, launch: { ...CLAUDE.launch, startupDelay: 1, preKeys: ['Enter'], preKeyDelay: 1 } });
+    let base;
+    let project;
+    let typed;
+    let pane;
+    let counter = 0;
+    let launchFinished;
+
+    before(() => {
+      base = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-startup-dialog-a160-'));
+      store._setBasePath(base);
+      store.init();
+      startupDialog.reset();
+    });
+
+    after(() => {
+      try { store.close(); } catch { /* already closed */ }
+      fs.rmSync(base, { recursive: true, force: true });
+      startupDialog.reset();
+    });
+
+    beforeEach(() => {
+      counter += 1;
+      project = store.projects.create({ name: `a160-proj-${counter}`, path: path.join(base, `a160-proj-${counter}`), engine: 'claude' });
+      typed = [];
+      pane = FRESH;
+      tmux.hasSession = () => true;
+      tmux.probeSession = () => ({ answered: true, live: true, cause: null });
+      tmux.capturePane = () => served(pane);
+      tmux.sendKeys = (session, text) => { typed.push({ text }); };
+      tmux.sendRawKey = (session, key) => { typed.push({ key }); };
+      startupDialog._internal.settleSync = () => {};
+      launchFinished = null;
+      launchBootstrap.bootstrap = () => { if (launchFinished) launchFinished(); return Promise.resolve({ code: 'legacy-recorded' }); };
+    });
+
+    afterEach(() => {
+      tmux.hasSession = real.hasSession;
+      tmux.capturePane = real.capturePane;
+      tmux.sendKeys = real.sendKeys;
+      tmux.sendRawKey = real.sendRawKey;
+      tmux.probeSession = real.probeSession;
+      launchKickoff.kickoff = real.kickoff;
+      launchBootstrap.bootstrap = real.bootstrap;
+      startupDialog.watch = real.watch;
+      Object.assign(startupDialog._internal, REAL_SEAMS);
+      const active = store.sessions.getActive(project.id);
+      if (active) store.sessions.markCrashed(active.id, 'test cleanup');
+    });
+
+    const start = () => store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: `a160-${counter}` });
+    const turns = async (n = 4) => { for (let i = 0; i < n; i++) await new Promise((resolve) => setImmediate(resolve)); };
+
+    /**
+     * Launch after a boot watch that recognised nothing, with the kickoff's own
+     * send made as the real kickoff makes it, and wait for every send to have
+     * been made or withheld.
+     * @param {object} s - The session row
+     * @returns {Promise<{kicks: object[], rows: object[]}>} What the kickoff's send answered, and the delivery rows written
+     */
+    const launchedAfterTimeout = async (s) => {
+      const kicks = [];
+      const rows = [];
+      startupDialog.watch = async () => ({ outcome: 'timeout', meaning: startupDialog.OUTCOME_MEANINGS.timeout, dialog: null, waitedMs: 45000 });
+      launchKickoff.kickoff = (args) => {
+        const sent = launchKickoff._internal.inject(args.projectName, 'Run `tc start next`', { sessionId: args.sessionId, launchSend: true });
+        kicks.push(sent);
+        return Promise.resolve(sent.ok ? 'sent' : 'inject-failed');
+      };
+      const realRecord = store.sessionRuleDeliveries.record;
+      store.sessionRuleDeliveries.record = (entry) => { rows.push(entry); return entry; };
+      try {
+        const done = new Promise((resolve) => { launchFinished = resolve; });
+        sessions._deferEngineInit(
+          s.tmuxSession, project.name, 'claude', WITH_PREKEY, 'the prime', null, false,
+          { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' },
+          { sessionId: s.id, projectId: project.id, hasSequence: true }
+        );
+        await done;
+        await new Promise((resolve) => setTimeout(resolve, WITH_PREKEY.launch.startupDelay + 2));
+        await turns();
+      } finally {
+        store.sessionRuleDeliveries.record = realRecord;
+      }
+      return { kicks, rows };
+    };
+
+    for (const [name, lines] of Object.entries(NOT_A_PROMPT)) {
+      it(`launch, no blocker stored, ${name}: no pre-key, no prime and no kickoff is typed`, async () => {
+        const s = start();
+        pane = lines;
+        const { kicks, rows } = await launchedAfterTimeout(s);
+        assert.deepEqual(typed, [], 'nothing reached the pane');
+        assert.equal(kicks.length, 1, 'the kickoff was reached');
+        assert.equal(kicks[0].ok, false, 'and its send was refused');
+        const code = (lines === BYPASS_1 || lines === BYPASS_2) ? 'trust_required' : startupDialog.NOT_AT_PROMPT;
+        assert.equal(kicks[0].startupDialog.code, code);
+        assert.equal(rows.length, 1, 'the prime that was owed is on the ledger');
+        assert.equal(rows[0].outcome, 'skipped');
+        assert.match(rows[0].skipReason, new RegExp(`^${code}: nothing was typed when the prime was due`));
+        assert.equal(store.sessions.get(s.id).launchBlocker, null, 'no dialog was recognised, so none is recorded');
+      });
+
+      it(`a stored blocker, ${name}: every sender is refused and the blocker is NOT cleared`, () => {
+        const s = start();
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        pane = lines;
+        assert.equal(sessions.getSessionStatus(project.name).launchBlocker.code, 'trust_required', 'a status read leaves it');
+        const sent = sessions.injectCommand(project.name, 'ls');
+        assert.equal(sent.ok, false);
+        assert.equal(sent.startupDialog.code, 'trust_required');
+        assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required', 'the pane writer refuses too');
+        assert.equal(sessions._startupDialogAtSend(s.tmuxSession, CLAUDE, 'claude', project.name, { sessionId: s.id }).code, 'trust_required', 'and so does a launch send');
+        assert.deepEqual(typed, []);
+        assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required', 'still recorded after all four looks');
+      });
+    }
+
+    it('launch, no blocker stored, REAL fresh composer: the pre-key, the prime and the kickoff are all typed', async () => {
+      const s = start();
+      pane = FRESH;
+      const { kicks } = await launchedAfterTimeout(s);
+      // Order is not the subject: this stand-in kickoff sends at once, where the real one first waits for the pane to rest.
+      assert.deepEqual(typed.map((t) => t.key || t.text).sort(), ['Enter', 'Run `tc start next`', 'the prime']);
+      assert.equal(kicks[0].ok, true);
+    });
+
+    it('launch, an unrecognised screen with no glyph-led row: the launch still types, as before', async () => {
+      const s = start();
+      pane = ['  Verifying your account…'];
+      await launchedAfterTimeout(s);
+      assert.ok(typed.some((t) => t.text === 'the prime'));
+    });
+
+    it('a stored blocker IS cleared by the real fresh composer and by the bare one', () => {
+      for (const lines of [FRESH, AFTER_MENU, [...TRUST_DIALOG, ...FRESH]]) {
+        const s = start();
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        pane = lines;
+        assert.equal(sessions.getSessionStatus(project.name).launchBlocker, null);
+        assert.equal(store.sessions.get(s.id).launchBlocker, null);
+        store.sessions.markCrashed(s.id, 'test cleanup');
+      }
+    });
+
+    it('a later injection, no blocker stored, into a composer holding a draft is NOT refused here: the writer keeps and clears the draft', () => {
+      const s = start();
+      pane = DRAFT;
+      assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude'), null, 'the pane writer goes on to its prompt clear');
+      const sent = sessions.injectCommand(project.name, 'ls');
+      assert.equal(sent.ok, true);
+      assert.deepEqual(typed, [{ text: 'ls' }]);
+      assert.equal(store.sessions.get(s.id).launchBlocker, null);
+    });
+
+    for (const [name, lines] of Object.entries({ 'option 1': BYPASS_1, 'option 2': BYPASS_2 })) {
+      it(`a later injection into the bypass confirmation with ${name} selected, no blocker stored, is refused by the session and by the pane writer`, () => {
+        const s = start();
+        pane = lines;
+        const sent = sessions.injectCommand(project.name, 'ls');
+        assert.equal(sent.ok, false);
+        assert.equal(sent.startupDialog.code, 'trust_required');
+        assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required');
+        assert.deepEqual(typed, []);
+        assert.equal(store.sessions.get(s.id).launchBlocker, null, 'a suspect frame records no blocker');
+      });
+    }
+
+    it('a later injection, no blocker stored, into a draft below quoted dialog text is sent, and no blocker is recorded on the quote', () => {
+      const s = start();
+      pane = at([...QUOTING_SESSION.slice(0, 5), ...DRAFT], DRAFT_CURSOR);
+      assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude'), null);
+      assert.equal(sessions.injectCommand(project.name, 'ls').ok, true);
+      assert.deepEqual(typed, [{ text: 'ls' }]);
+      assert.equal(sessions.getSessionStatus(project.name).launchBlocker, null);
+    });
+
+    it('a send that names no engine is refused only while a blocker is stored', () => {
+      const s = start();
+      pane = MENU_2;
+      assert.equal(tmux._startupDialogOn(s.tmuxSession, null), null);
+      store.sessions.setLaunchBlocker(s.id, BLOCKER);
+      assert.equal(tmux._startupDialogOn(s.tmuxSession, null).code, 'trust_required');
+    });
   });
 });

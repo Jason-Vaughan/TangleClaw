@@ -85,7 +85,7 @@ describe('launch kickoff (#1635)', () => {
       assert.equal(injected.length, 1);
       assert.match(injected[0].command, /tc start next/);
       assert.equal(injected[0].projectName, 'TangleClaw-Builder1');
-      assert.deepEqual(injected[0].options, { sessionId: 42 });
+      assert.deepEqual(injected[0].options, { sessionId: 42, launchSend: true }, "addressed to its own session, and as one of the launch's own sends");
     });
 
     it('records that the line was sent, and claims nothing more', async () => {

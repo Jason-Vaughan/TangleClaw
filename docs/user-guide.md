@@ -1211,6 +1211,10 @@ end the session. The session status shows the blocker `trust_required` while it 
 - If the session ended at the dialog, the project card's last-session row says so, and so does
   `lastSession.launchBlocker` in the session status. Launch again and answer the dialog.
 - Claude Code asks once per repository, so a later launch into the same folder is not affected.
+- If a launch stops at some other menu (a confirmation TangleClaw has no name for), it also types
+  nothing and the launch's first turn is recorded as withheld with `pane_not_at_prompt`. Answer
+  the menu in the terminal, then type to start the session. The same happens if text was already
+  typed at the prompt when the launch's first turn was due.
 
 ### Chime Not Working on Mobile
 
