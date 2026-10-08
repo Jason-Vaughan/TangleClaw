@@ -1,6 +1,6 @@
 # ADR 0014: Dual-Key Review for Untrusted PRs
 
-**Status:** Accepted (2026-09-07, operator-ratified, then corrected by its own first application the same day). Amended 2026-09-17 (operator rulings of 2026-09-16 and an architect security audit): see **Amendment 2026-09-17** below, which moves the micro filter and reconstruction to a dedicated PR Reviewer session, gives contributor replies to the Coordinator (renamed ProjectManager on 2026-09-17, when the reply contract was tightened), and adds the trust-boundary, intake, injection-hold, promotion and record rules.
+**Status:** Accepted (2026-09-07, operator-ratified, then corrected by its own first application the same day). Amended 2026-09-17 (operator rulings of 2026-09-16 and an architect security audit): see **Amendment 2026-09-17** below, which moves the micro filter and reconstruction to a dedicated PR Reviewer session, gives contributor replies to the Coordinator (renamed ProjectManager on 2026-09-17, when the reply contract was tightened), and adds the trust-boundary, intake, injection-hold, promotion and record rules. Amended 2026-10-07 (Architect ruling A162.6; in force since PR #2227 merged, as its Ratification line records): see **Amendment 2026-10-07** below, which leaves the micro filter with the PR Reviewer and moves reconstruction to a reconstruction lane the Operator authorizes.
 **Source:** PR #1334 — the first external contribution to reach this repository, against #1287.
 **Decides:** How an untrusted external pull request is audited, reconstructed, credited and answered.
 **Governs:** Every pull request from outside the repository, in this repo and in any that adopts this ADR.
@@ -77,8 +77,8 @@ We establish a **Dual-Key (Two-Person) Review** mechanism for all untrusted exte
    it is never merged, auto-merged or allow-listed. A tag moved upstream does not reach CI at all:
    workflows pin every action to a full commit SHA, and a test enforces it (#1436).
 
-2. **The PR Reviewer (Micro Filter):** If the PR clears the ProjectManager's macro audit, the ProjectManager passes the PR details to the PR Reviewer via Medusa. The PR Reviewer performs a secondary independent raw-text audit, focusing on logical soundness, regressions, and subtle implementation flaws. *(Until 2026-09-16 this role was the Builder's; the operator moved it to a dedicated PR Reviewer session, so external-PR diff intake and reconstruction happen away from the Builder's checkout, which serves the live install. The first-application account below keeps the name of the session that actually did the work.)*
-3. **Execution:** Only when both sessions have passed the PR does the PR Reviewer reconstruct, on a clean branch off `main`, in its own non-serving worktree (Amendment 2026-09-17, rule 5).
+2. **The PR Reviewer (Micro Filter):** If the PR clears the ProjectManager's macro audit, the ProjectManager passes the PR details to the PR Reviewer via Medusa. The PR Reviewer performs a secondary independent raw-text audit, focusing on logical soundness, regressions, and subtle implementation flaws. *(Until 2026-09-16 this role was the Builder's; the operator moved it to a dedicated PR Reviewer session, so external-PR diff intake and reconstruction happen away from the Builder's checkout, which serves the live install. The first-application account below keeps the name of the session that actually did the work. Since Amendment 2026-10-07 the PR Reviewer keeps the micro filter only; reconstruction is the reconstruction lane's.)*
+3. **Execution:** Only when both sessions have passed the PR, and the Operator has authorized the start, does the reconstruction lane reconstruct, on a clean branch off `main`, in a non-serving worktree (Amendment 2026-09-17, rule 5; Amendment 2026-10-07, rules 9 and 10). *(From 2026-09-17 to 2026-10-07 this item named the PR Reviewer as the reconstructing session.)*
 
    **Reconstruct from the ISSUE, not from their diff.** This is the difference between a clean room and laundering, and it is the step most easily skipped because transcription is faster and looks identical in the final diff. Re-derive the fix from the requirement — the issue text, the code, the artifacts — and consult their diff only to confirm the audit already performed, never as the source. Two things fall out of doing it properly, both observed on this ADR's first application (#1287 / PR #1334):
    - **Their flaws do not become ours.** An independently written validator contained a clause that a mutation proved *dead*; it was deleted. A transcription would have shipped it, with our name on it.
@@ -149,10 +149,13 @@ yet, it says so; process holds the line until the mechanism lands.**
 |---|---|---|
 | 0 | GitHub CI | Runs `test.yml`. Fork runs wait for maintainer approval (`all_external_contributors`). **Approving a fork's CI run executes its code on a GitHub runner; it is not approval to merge.** |
 | 1 | ProjectManager | Macro filter (Decision item 1). |
-| 2 | PR Reviewer | Micro filter and reconstruction (Decision items 2–3). |
-| 3 | Code Reviewer | Independent review of the reconstruction (rule 5). |
-| 4 | Operator | The final go and the merge. **No auto-merge on a reconstruction.** |
+| 2 | PR Reviewer | Micro filter (Decision item 2). Review only: it does not reconstruct. |
+| 3 | Reconstruction lane | Reconstruction (Decision item 3), after the Operator authorizes the start (rules 9 and 10). |
+| 4 | Code Reviewer | Independent review of the reconstruction (rule 5). |
+| 5 | Operator | The final go and the merge. **No auto-merge on a reconstruction.** |
 | — | ProjectManager | Finalizes every contributor reply from the recorded findings. The Operator posts it and closes the original PR. No session posts to a contributor. |
+
+*Steps 2 and 3 are as amended on 2026-10-07. Before that, step 2 read "Micro filter and reconstruction" and there was no separate reconstruction step.*
 
 **Interim review, until a Code Reviewer session exists** (operator rulings, 2026-09-16 and
 2026-09-17): a reconstruction is reviewed by all three of the following, and its PR says so.
@@ -232,7 +235,8 @@ None of the three replaces another.
 ### Consequences of the amendment
 - **Positive:** external-PR diff intake and reconstruction are assigned to the PR Reviewer, away
   from the Builder's live-serving checkout, and the reply, review and promotion duties each have one
-  named owner.
+  named owner. *(Amendment 2026-10-07 reassigns reconstruction. The diff intake stays with the PR
+  Reviewer, and reconstruction stays away from the live-serving checkout.)*
 - **Negative, accepted:** an extra session to run, and a slower path to merge, since no
   reconstruction auto-merges.
 - **Honest limit:** rules 3, 5 and 7 are process today. Rule 7's mutable-reference half has its
@@ -240,6 +244,121 @@ None of the three replaces another.
   release-tag half has one too: the release workflow publishes only a commit its own run tested,
   under a tag that dereferences to it (#1551). The remaining mechanisms (#1554, #1553) are open,
   and until they land, the protection is only as strong as each session's adherence to them.
+
+## Amendment 2026-10-07: reconstruction moves to an Operator-authorized reconstruction lane
+
+**Source:** Architect ruling A162.6, raised by external PR #2218 (against #2222).
+**Ratification:** in force. PR #2227 merged at 2026-10-08T02:44:20Z as merge commit
+`ab1aff705d90eda8bc8f0941c1f6f14467b81edf`, at head `947b381ef80398edc1aaaec22e56a5815a49afb1`.
+- **The planned path** (Architect ruling A162.9) was that the Operator approves the exact revision
+  and merges it personally, or delegates the merge to the ProjectManager by naming that exact
+  revision.
+- **What happened** is a variance from that path, and is recorded as one. The ProjectManager
+  reports that it executed the merge. It also reports that immediately before the merge the
+  Operator wrote, directly in the ProjectManager's terminal: "so you have standing authorization between yhou and the architect
+  to do merges. for example builder1 says 2227 is waiting to merge." and then: "but i know you
+  have a specific order". As reported, that instruction named the pull request. It did not name
+  the revision.
+- **Where that statement is kept.** It was typed in the ProjectManager's terminal, which no other
+  session reads. The ProjectManager quoted it to the Architect, whose ruling A162.20 records it.
+  This file repeats the ProjectManager's report. It is not a first-hand record, and the Operator
+  can correct it.
+- **The ruling.** Architect ruling A162.20: this later, direct instruction, which named #2227,
+  authorized a procedural variance from the planned path for this one merge.
+- **What held the merge to one revision.** The Architect's content pass (A162.15) was on head
+  `947b381ef`. The ProjectManager reports that it checked the pull request was still at that head
+  with its `test` check green, and merged with `--match-head-commit` set to it. The merge commit's
+  second parent is that head.
+- **The variance is not a waiver.** It covers this merge. It changes no other gate in this ADR,
+  starts no reconstruction and approves no session rule.
+- **What counts as evidence of a ratification.** The merge commit proves which revision was
+  merged. It does not prove who merged it or who approved it: every session here acts through the
+  Operator's GitHub account, so the pull request's `mergedBy` field reads the same whoever ran the
+  merge. The two are evidenced separately. Who ran the merge is evidenced by the merging
+  session's own report or log. That it was approved is evidenced by the Operator's own statement,
+  or by a logged delegation that names the exact revision. An Operator statement authorizes; it
+  does not show which session ran the command.
+
+**What it changes:** who reconstructs. Everything else in the 2026-09-17 amendment stands, and
+its rules 1 to 8 are not renumbered.
+
+### Why
+
+The 2026-09-17 amendment gave one session two jobs: the micro filter and the reconstruction. The
+PR Reviewer was then set up as a review-only session. Its own project rules forbid it to edit
+product files, cut or check out a branch, commit or push. One session cannot hold both, and the
+same amendment had moved reconstruction away from the Builder. So when PR #2218 came up for
+reconstruction, no session was allowed to write it: the PR Reviewer declined under its rules and
+the Builder declined under this ADR. Both were right.
+
+The two jobs are also better apart. The micro filter reads the contributor's diff closely. The
+reconstruction is meant to be derived from the issue and not from that diff (Decision item 3). A
+session that has just audited the diff line by line is the one least able to write the fix
+without it.
+
+### Rules
+
+9. **The reconstruction lane.** A reconstruction is written by a session that meets all three
+   conditions below. The Operator names the lane. The ProjectManager may recommend one and
+   coordinates the handoff. It does not choose the lane and cannot authorize it.
+   - **It is a Builder-class session.** Its own project rules already allow it to edit product
+     files, cut a branch, commit and push. The PR Reviewer, the ProjectManager and the Architect
+     are not Builder-class. This ADR widens no session's rules: a session whose own rules forbid
+     the work is not a lane until the Operator changes those rules.
+   - **Its checkout does not serve the live install.** The serving checkout is the directory the
+     running server was started from. In this deployment that is the `WorkingDirectory` of the
+     launchd job, and it is read from
+     `launchctl print gui/$(id -u)/com.tangleclaw.server`, never recalled. A session whose own
+     project directory is the serving checkout is not a lane, even if it would do the work in a
+     worktree. A stray checkout or edit in that session's home directory is live at once, and
+     keeping reconstruction out of that session is what the Operator ruled on 2026-09-16.
+   - **It works in a fresh worktree**, cut from freshly fetched `main` for this reconstruction
+     and used for nothing else. No contributor ref is fetched into that worktree or into the clone
+     it belongs to. None is needed, because the reconstruction is derived from the issue.
+10. **Starting a reconstruction.** Rules 1 and 4 apply to the lane unchanged. Two passes make the
+    PR eligible. The start still needs the Operator's direct instruction, given in the lane's own
+    terminal.
+    - **What the instruction names:** the PR, the head commit both filters passed, and the issue.
+      A Dependabot bump has no issue: there the instruction names the PR and its head commit, and
+      the lane works from [`docs/dependency-bump-audit.md`](../dependency-bump-audit.md).
+    - **It is given for this PR.** Rule 4 lets an authorization cover the scope it named. An
+      authorization given for other work, or a standing one, does not start a reconstruction.
+    - **What does not start it:** a ProjectManager dispatch, an Architect ruling, or any other
+      peer message. Those carry the evidence, assign the scope and coordinate the work. If one
+      arrives without the Operator's instruction, the lane replies that it is waiting for it and
+      does nothing else.
+    - **The lane's own gate still applies.** Some lanes may, by their own rules, take work only
+      on a targeted dispatch from the ProjectManager or the Architect. Once the Operator has named
+      the lane, the ProjectManager may send it a scoped assignment naming the PR, the audited head
+      commit and the issue. That lane then needs both: the assignment its own rules ask for, and
+      the Operator's instruction this rule asks for. Neither stands in for the other.
+    - **Before the first edit:** the lane reads the PR's current head commit. If it is not the
+      commit the instruction named, the lane stops and reports. A new commit means a full re-audit
+      (rule 2), not a reconstruction.
+    - **What the lane works from:** the issue, the code, and the findings both filters recorded.
+      It reads the contributor's diff only as Decision item 3 allows, with `gh pr diff`, to confirm
+      the audit and never as the source.
+11. **What the PR Reviewer does now.** The micro filter (Decision item 2), under rules 1 to 3. It
+    hands its recorded findings to the ProjectManager and stops there. A dispatch that asks it to
+    reconstruct is refused. Because it is no longer the reconstructing session, rule 5 does not
+    bar it from being dispatched to review the reconstruction's pull request as it reviews any
+    other. Such a review is extra: it replaces none of the three interim reviews. It is also not
+    the independent review rule 5 asks for, because the PR Reviewer has already read the
+    contributor's diff.
+12. **What does not change.** The review of the reconstruction, including the interim three. No
+    auto-merge on a reconstruction. The Operator approves the exact final revision and merges it.
+    The ProjectManager writes the contributor reply from the recorded findings, and the Operator
+    posts it and closes the original PR.
+
+### Consequences of this amendment
+- **Positive:** every step now has a session that is allowed to do it, and the session that
+  reads the contributor's diff most closely is not the one that writes the fix.
+- **Negative, accepted:** one more handoff. The lane starts from the issue and from findings
+  another session recorded, so those findings have to be complete enough to work from.
+- **Honest limit:** rules 9 and 10 are process. Nothing in TangleClaw checks that a session
+  cutting a reconstruction branch is a lane, that the Operator's instruction was given, or that the
+  head commit was re-read. The protection is each session's adherence to these rules and the
+  Operator's choice of lane.
 
 ## Consequences
 - **Positive:** Dramatically reduces the surface area for supply-chain attacks, obfuscation, or logic bombs making it into the codebase. Enforces the Swarm Protocol's division of concerns.

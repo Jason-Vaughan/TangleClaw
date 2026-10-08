@@ -74,6 +74,29 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 **Known limit of the witness.** The status row is still recognised by shape: a middle-dot row that names no key, alone below a stale composer that holds the cursor, passes. No such Codex frame has been captured; a test pins it by name. Binding the row to the model the pane's header names is left for the activation change, when a signed-in pane can be measured, because it would refuse a long-running session whose header has scrolled away.
 
 **Not covered.** A real fire against a live Codex. The no-entry block wording and the panel were not looked at in a running TangleClaw: at the fake-key tier a fire stops at the usage check before it reaches that block. The untrusted-entry wording returns earlier and could be looked at; it was not. What Codex does with project-level config and hooks in an untrusted folder under `--remote`. Codex versions other than 0.156.1. The witness's header pattern is Codex's and lives in its adapter.
+## 2026-10-07 — ADR 0014: the ratification record matches what happened
+
+<!-- prawduct: type=docs | scope=adr-0014-ratification-record -->
+
+Docs only. Architect ruling A162.20, dispatched by the PM. Follows PR #2227.
+
+**The defect.** The amendment merged in PR #2227 said two things that were not true once it merged. Its Status line still called it proposed. Its Ratification line said the Operator merges it personally and that `gh pr view --json mergedBy` shows who merged. The ProjectManager reports that it merged it and that the Operator instructed it directly, naming the pull request; `mergedBy` reads `Jason-Vaughan` for every session because they share one GitHub account.
+
+**Root cause.** I took the `mergedBy` command from a review suggestion and wrote it into the ADR without running it against a merged pull request in this repository, where it would have shown one login for every merge.
+
+**What landed.** The Status line says the amendment is in force. The Ratification line records the merge commit and head, the planned path, the Operator's words as the ProjectManager reported them, the Architect's ruling that this was a variance for one merge and not a waiver, what bounded the merge to one revision, and what counts as evidence of who merged and of who approved. The merge commit and its head are the only parts checked independently.
+
+## 2026-10-07 — ADR 0014: reconstruction moves from the PR Reviewer to an Operator-authorized lane
+
+<!-- prawduct: type=docs | scope=adr-0014-reconstruction-lane -->
+
+Docs only, no product code. Architect ruling A162.6, dispatched by the PM.
+
+**The defect.** ADR 0014's 2026-09-17 amendment named the PR Reviewer for both the micro filter and the reconstruction of an external PR. The PR Reviewer's own project rule makes it review-only. With reconstruction already moved away from the Builder, no session could rebuild an external PR that had passed both filters. External PR #2218 (issue #2222) stopped on exactly that.
+
+**What landed.** A dated amendment to `docs/adr/0014-dual-key-review-for-untrusted-prs.md` with four new rules (9 to 12): what a reconstruction lane is, what starts one, what the PR Reviewer does now, and what does not change. Decision items 2 and 3, the Roles table and the 2026-09-17 consequences are corrected in place, each with a note of what it said before. `docs/dependency-bump-audit.md` names the lane for a Dependabot rebuild.
+
+**Not in this change.** The session rules that still describe the old routing are not repository files. Their replacement texts are drafted separately for the Architect's review and the Operator's approval.
 
 ## 2026-10-07 — #2177: a Codex launch types nothing into a guarded dialog
 
