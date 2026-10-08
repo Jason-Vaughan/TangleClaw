@@ -4677,7 +4677,9 @@ function _startupControlForLaunch(sequence, access) {
     promptRevision: f.promptRevision,
     createdAt: f.createdAt,
     acceptedAt: f.acceptedAt,
-    settledAt: f.settledAt
+    settledAt: f.settledAt,
+    // What the fire was sent despite (#2186); null on every other fire.
+    dispatchNote: f.dispatchNote || null
   }));
   const session = store.sessions.get(sequence.sessionId);
   const fireable = access.kind === sharedDocsAccess.KINDS.OPERATOR

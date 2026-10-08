@@ -823,13 +823,18 @@ describe('the session keeps its blocker (#2128)', () => {
 
   describe('in the store', () => {
     it('schema: a fresh store has the column, and this is the version that added it', () => {
-      assert.ok(store.CURRENT_SCHEMA_VERSION >= 57);
+      assert.ok(store.CURRENT_SCHEMA_VERSION >= 58);
+      const stamped = store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v;
+      assert.equal(stamped, store.CURRENT_SCHEMA_VERSION);
       const cols = store.getDb().prepare('PRAGMA table_info(sessions)').all().map((c) => c.name);
       assert.ok(cols.includes('launch_blocker'));
     });
 
-    it('an upgraded store gains the column and keeps its sessions', () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-startup-dialog-v56-'));
+    // v57 is the store just before this migration (v57 added a column to
+    // another table, #2186). v56 is one release further back, and must come
+    // through both steps.
+    for (const from of [57, 56]) it(`a v${from} store gains the column on upgrade and keeps its sessions`, () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), `tc-startup-dialog-v${from}-`));
       try {
         store.close();
         store._setBasePath(dir);
@@ -838,39 +843,41 @@ describe('the session keeps its blocker (#2128)', () => {
         const s = store.sessions.start({ projectId: p.id, engineId: 'claude', tmuxSession: 'carried' });
         store.close();
         const db = new DatabaseSync(path.join(dir, 'tangleclaw.db'));
-        // Put `sessions` back to its v56 shape by rebuilding it from its own
+        // Put `sessions` back to its earlier shape by rebuilding it from its own
         // stored DDL with the one column line removed. Not `DROP COLUMN`: the
         // column is the last one and its line carries a trailing SQL comment,
         // and some SQLite builds rewrite that into DDL they then cannot parse.
         const ddl = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sessions'").get().sql;
-        const v56Ddl = ddl
+        const beforeDdl = ddl
           .split('\n')
           .filter((line) => !/^\s*launch_blocker\b/.test(line))
           .join('\n')
           // The line above it ended with the comma that separated the two.
           .replace(/(launch_dirty\s+TEXT),/, '$1')
-          .replace(/^CREATE TABLE\s+(IF NOT EXISTS\s+)?"?sessions"?/, 'CREATE TABLE sessions_v56');
-        assert.doesNotMatch(v56Ddl, /launch_blocker/, 'precondition: the rebuilt DDL has no such column');
+          .replace(/^CREATE TABLE\s+(IF NOT EXISTS\s+)?"?sessions"?/, 'CREATE TABLE sessions_before');
+        assert.doesNotMatch(beforeDdl, /launch_blocker/, 'precondition: the rebuilt DDL has no such column');
         const kept = db.prepare('PRAGMA table_info(sessions)').all().map((c) => c.name).filter((c) => c !== 'launch_blocker').join(', ');
         db.exec('PRAGMA foreign_keys = OFF');
         db.exec('PRAGMA legacy_alter_table = ON');
-        db.exec(v56Ddl);
-        db.exec(`INSERT INTO sessions_v56 (${kept}) SELECT ${kept} FROM sessions`);
+        db.exec(beforeDdl);
+        db.exec(`INSERT INTO sessions_before (${kept}) SELECT ${kept} FROM sessions`);
         db.exec('DROP TABLE sessions');
-        db.exec('ALTER TABLE sessions_v56 RENAME TO sessions');
+        db.exec('ALTER TABLE sessions_before RENAME TO sessions');
         assert.ok(!db.prepare('PRAGMA table_info(sessions)').all().some((c) => c.name === 'launch_blocker'),
-          'precondition: the v56 store has no launch_blocker column');
+          'precondition: the earlier store has no launch_blocker column');
         db.exec('DELETE FROM schema_version');
-        db.exec('INSERT INTO schema_version (version) VALUES (56)');
+        db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(from);
         db.close();
 
         store.init();
         const cols = store.getDb().prepare('PRAGMA table_info(sessions)').all().map((c) => c.name);
         assert.ok(cols.includes('launch_blocker'));
         assert.equal(store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
+        assert.equal(store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 58, 'this migration is v58: v57 belongs to #2186');
+        assert.ok(store.getDb().prepare('PRAGMA table_info(startup_prompt_fires)').all().some((c) => c.name === 'dispatch_note'), 'and the v57 column is there too');
         assert.equal(store.sessions.get(s.id).launchBlocker, null, 'a session from before has no blocker');
         // The rebuild above dropped the table's three indexes with it. A real
-        // v56 store has them; init creates them if absent, so the upgraded
+        // earlier store has them; init creates them if absent, so the upgraded
         // store ends with the same indexes as a fresh one.
         const indexes = store.getDb().prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'sessions' AND name LIKE 'idx_sessions_%'").all().map((r) => r.name).sort();
         assert.deepEqual(indexes, ['idx_sessions_project', 'idx_sessions_started', 'idx_sessions_status']);
@@ -2867,6 +2874,37 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
         assert.equal((await startupDialog.watch({ tmuxName: 't', engineProfile: other })).outcome, 'undeclared');
         // A profile that says [] for itself is not touched by its program's bad entry.
         assert.deepEqual(startupDialog.unreadable({ ...variant, capabilities: { startupDialogs: [] } }), []);
+      });
+
+      it('a launch on a profile with no list of its own, whose program\'s declaration is unreadable, types nothing', async () => {
+        const source = { ...CASES['one sound entry and one unreadable'], id: 'claude', command: 'claude' };
+        const variant = { ...WITH_PREKEY, id: 'claude-sonnet-reviewer', command: 'claude', capabilities: { ...WITH_PREKEY.capabilities } };
+        delete variant.capabilities.startupDialogs;
+        startupDialog.reset();
+        startupDialog._internal.engineProfiles = () => [variant, source];
+        const s = start();
+        pane = AFTER_MENU;
+        const rows = [];
+        const kicked = [];
+        const realRecord = store.sessionRuleDeliveries.record;
+        store.sessionRuleDeliveries.record = (entry) => { rows.push(entry); return entry; };
+        launchKickoff.kickoff = (args) => { kicked.push(args); return Promise.resolve('sent'); };
+        try {
+          const done = new Promise((resolve) => { launchFinished = resolve; });
+          sessions._deferEngineInit(
+            s.tmuxSession, project.name, 'claude-sonnet-reviewer', variant, 'the prime', null, false,
+            { sessionId: s.id, projectId: project.id, engineId: 'claude-sonnet-reviewer', kind: 'startup', ruleIds: [1], digest: 'd' },
+            { sessionId: s.id, projectId: project.id, hasSequence: true }
+          );
+          await done;
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          await turns();
+        } finally {
+          store.sessionRuleDeliveries.record = realRecord;
+        }
+        assert.deepEqual(typed, []);
+        assert.deepEqual(kicked, []);
+        assert.match(rows[0].skipReason, /^startup_dialogs_unreadable: engine profile "claude" declares startup dialogs TangleClaw could not read \(entry 2: /);
       });
 
       it('a command whose only declaration is unreadable still passes the refusal on', () => {

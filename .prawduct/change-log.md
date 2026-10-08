@@ -45,7 +45,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 **The ruling.** See and report, for every engine that declares a dialog; reject blind keys; write nothing to `~/.claude.json`; accepting trust on the operator's behalf is a separate later issue with per-project opt-in. This chunk is the seeing half only.
 
-**The change.** `capabilities.startupDialogs` in the engine profile; `lib/startup-dialog.js` (detect, a one-read check, a bounded watch); the watch runs ahead of a launch's pre-keys, paste and kickoff; `injectCommand` makes the same check before every later send; `sessions.launch_blocker` (schema v57) keeps the named blocker past the pane's death and `markCrashed` carries it as `cause`.
+**The change.** `capabilities.startupDialogs` in the engine profile; `lib/startup-dialog.js` (detect, a one-read check, a bounded watch); the watch runs ahead of a launch's pre-keys, paste and kickoff; `injectCommand` makes the same check before every later send; `sessions.launch_blocker` (schema v58 as merged; v57 on the heads before #2186 took that number) keeps the named blocker past the pane's death and `markCrashed` carries it as `cause`.
 
 **Two decisions taken while building.**
 - A dialog matches only when no prompt row sits below it. Without that, a session whose transcript quotes the dialog (this one did, while the fix was being written) would refuse its own wake nudges.
@@ -83,6 +83,8 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 **Architect A160 R4 (#2224): an unreadable declaration fails closed.** The Critic's review of the merged head found that an operator profile whose own `startupDialogs` list held a malformed entry was read as declaring fewer dialogs, and with every entry malformed as declaring none, which is the opt-out. That was this PR's behaviour from its first head: "drop, never repair" was right about matching and wrong about what the missing entry meant. I offered a fallback to the program's dialogs; the Architect rejected it (it can still miss the dialog the entry was for) and ruled the #2209 policy: any unreadable entry, or a present non-list value, withholds pre-keys, prime and kickoff; only a literal `[]` opts out. `unreadable()` reports it, `watch` answers `unreadable` before reading the pane, the boot gate withholds all three sends with a ledger row naming the profile and entry, and `withholdFor` refuses a launch send asked on its own.
 
+**Merge of main 343bb827 and the move to schema v58.** The PM pinned the order: #2225 (#2186) takes v57 and merges first, so this PR's migration is v58. `lib/store.js` conflicted in the migration ladder, where both branches had written a `currentVersion < 57` block; main's stays as v57 and this branch's follows as `currentVersion < 58` (`_migrateLaunchBlockerV58`). `FEATURES.md` conflicted on adjacent entries; both kept. The upgrade test now runs from a v57 store and from a v56 store, and asserts the stamp is 58 and that #2186's `dispatch_note` column is present alongside `launch_blocker`.
+
 **Also in this head.** Two clear reads in the watch now count as stable only if the judged row, its neighbours and the cursor held still, because the wake digest leaves out exactly that row and everything under it. The cursor is read by the one-read check only when it can change the answer. A profile inherits its program's whole wake signature, not the glyph; a glyph with no measured pattern is not a signature. The kickoff is marked as a launch send.
 
 **Deferred, filed as issues (#2193, #2194, #2195, #2196, then #2201 to #2205 from the last cumulative review), not fixed here.** A server restart during the answer wait loses that launch's pending sends with no record. The 250 ms settle before a half-drawn frame's re-read is a synchronous sleep, reachable from a status read while a blocker is stored. `setLaunchBlocker` can log the same dialog twice. The project card's badge is served from the stored record without a pane read.
@@ -92,6 +94,69 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 **Normal-launch latency, measured.** In a trusted scratch repo at load average 31 to 33, Claude Code drew nothing for 16.6 s and 21.2 s, and the watch called the prompt settled 0.6 s after it first appeared (three watched runs: 18.2 s, 19.5 s, 23.4 s). So the wait is the engine's own boot plus one settle tick; the old path pasted at 2 s into a pane that had drawn nothing. The watch reads through the non-blocking pane reader, because one synchronous read cost 120 to 170 ms at that load.
 
 **Found in the same log.** Those launches ran on `claude-sonnet-reviewer`, an operator-made profile for the `claude` command that exists only in `~/.tangleclaw/engines`. The bundled-profile sync never updates it, so a declaration read per profile would have left the reported launches unprotected. A profile with no list of its own now takes the dialogs declared for the command it runs.
+## 2026-10-08 — #2186: the native fire in a folder Codex's config does not trust (built, not active)
+
+<!-- prawduct: type=feature | scope=2186-native-fire-untrusted-folder -->
+
+#2186, the Operator's option 2 as ruled by the Architect in A154 and dispatched by the PM. Stacked on #2177 (PR #2209), whose launch dialog guard the pane witness uses.
+
+**The defect.** `_readiness` read `config/read`, found no trust entry for the project path, and blocked the fire with a fixed sentence saying the pane was showing a folder-trust dialog. Nothing read the pane. Under `--remote` on codex-cli 0.156.1 no dialog is drawn (11 private fake-key launches, one live signed-in session in a renamed directory), and a native launch withholds the paste and the kickoff, so the session got no first turn.
+
+**Root cause.** A fact about Codex's config was reported as a fact about the pane, on the strength of probe evidence that turned out not to hold for this launch path.
+
+**What landed.** The block's wording says what was read, claims no dialog and says how to grant trust. Behind it, dormant: `data/engines/codex.json` records `startupControl.remoteTrustPrompt.absentOn`, empty, validated as exact unique versions that are all in `verifiedVersions`. `lib/pane-witness.js` reads a pane twice a second apart and answers yes only when both reads show a bare composer with no declared dialog below it, the cursor on it with nothing typed, no header still showing its starting value (a capture whose header has scrolled away passes), no busy marker, and an unchanged digest and cursor. `_readiness` runs the account, usage and thread checks first; a fire that passes them with no trust entry is put to `_withoutTrustEntry`, which needs a listed version and the witness; the bound thread is then read again and must still be in the folder and idle. The fire service supplies the list and the witness for every fire, so the automatic and the operator's fire share one rule. An allowed fire writes a `dispatch_note` on its row: a new nullable column, set once at dispatch, never cleared by a later transition, shown on the panel.
+
+**Why a new column.** `updateFire` rewrites `reason` on every transition and the panel shows it only beside a reason code; the activity log is pruned. A note about what a fire was sent despite has to outlive the turn.
+
+**The panel is served by a field list.** `server.js` builds each fire row the panel reads from a whitelist. The first version of this change added the column and the label and not the field, and its panel test fed the renderer a hand-built row, so the note would have been stored and never shown; the boundary review found it. The serializer carries it now and an API test reads it back.
+
+**An entry that says untrusted is not a missing entry.** It blocks as such, in its own words, and never reaches the exception. A dialog on the pane that is not the trust dialog is `pane_not_ready`, not `trust_required`.
+
+**Config answers.** `projects: null` is a well-formed answer from a home that never trusted a folder and now reads as no entry. A missing `projects` key, or one that is not a table, stays `readiness_unknown` and cannot use the exception.
+
+**A test expectation changed, on purpose.** `test/startup-control.test.js` asserted that every field of a `startupControl` block is required. `remoteTrustPrompt` is optional, so the test now lists the required fields by name.
+
+**Not active, and why.** `absentOn` is empty. Adding 0.156.1 waits for one signed-in untrusted-folder fire through the real `--remote` path on the Operator's key tier, which this build did not run and has no access to. #2186 stays open.
+
+**The cursor is bound to the composer by position.** The witness first took the capture's composer and the cursor's row as two separate facts, then bound them by what the rows read. Neither is enough: a stale composer above an undeclared menu passes the first, and an identical older composer row with the cursor parked on it passes the second (Architect A154 R4 and R5). The existing reads could not give a position: `capturePane` reaches into scrollback and `_exec` trims leading blank rows, so a capture's row index is not a pane row. `tmux.visiblePane` is one invocation that returns the pane's height, the cursor and the visible rows untrimmed (its two commands run in sequence, so it gives rows that line up with the cursor's row number, not a screen held still; the second read a second later is what answers a redraw); the witness requires the cursor's row number to be the last composer row, and refuses a read that is not exactly the pane's height in rows.
+
+**One pinned pane.** `=session:` names a session's CURRENT pane, so the read's two commands, or the witness's two reads, could land on different panes when another is selected between them (Architect A154 R8, from a two-pane reproduction). The witness now pins the id of the session's one pane (`tmux.solePaneId`, which refuses a session with a second pane or window), aims both commands of both reads at that id, and the read checks its own answer: that pane, in that session, still the only pane. Tested against real tmux sessions with a split pane, a second window and a foreign pane id.
+
+**The pane must be the launch's own.** Pinning the session's one pane at fire time is not enough: split the session, kill the pane the launch created, and a different process is its only pane, with a composer of its own (Architect A154 R8, second part). The launch now records its pane id on its channel's adapter state (`sessions._recordLaunchPane`). The id is the one the creating `tmux new-session -P -F '#{pane_id}'` printed (`tmux.createSession`'s `born.paneId`), carried to the channel unchanged; it is never looked up from the session afterwards, because by then the session's one pane can already be a replacement (Architect A154 R10). A launch whose creation printed no usable id records none and is refused. The same print carries the tmux server's identity (`#{pid}.#{start_time}`), recorded beside the pane id as `paneServer`: a channel can outlive the tmux server, since its app-server is a separate process and the row closes only when something notices the pane is gone, and a new server issues the same pane ids again. `tmux.visiblePane` takes that identity, asks for it in the same invocation as the rows, and throws with `tcOtherServer` when it differs; the witness turns that into a refusal that says to relaunch. Then the adapter hands that id to the witness, and the witness refuses a session whose one pane is any other, or a launch with no pane on record, before reading anything. No schema change: adapter state is a JSON column.
+
+**Only a status row may sit below the composer.** Any nonblank row below the last composer row must match the status-row shape the Codex adapter supplies, and there may be one. A boxed or otherwise marked menu the profile does not declare is content nothing recognises. A status line cut down to a single item has no separator and is refused; that fails closed.
+
+**Checked on a live pane.** The witness itself, through the real `tmux.visiblePane` read, on a private sandboxed codex-cli 0.156.1 pane: it named the update prompt, then the folder-trust prompt, and answered shown only at the usable composer, on two reads a second apart.
+
+**A footer is not a status row.** Codex's dialog footer (`  enter continue · esc skip`) has the status row's shape, so a stale composer holding the cursor above a lone footer would have passed (Architect A154 R6). A status-shaped row that holds a token naming a key (enter, return, esc, tab, space, arrows, an arrow glyph) is refused. Whole tokens only: a model name or path containing such a word is not caught, and bare direction words are left out because the measured status row reads `Context 100% left`.
+
+**Known limit of the witness.** The status row is still recognised by shape: a middle-dot row that names no key, alone below a stale composer that holds the cursor, passes. No such Codex frame has been captured; a test pins it by name. Binding the row to the model the pane's header names is left for the activation change, when a signed-in pane can be measured, because it would refuse a long-running session whose header has scrolled away.
+
+**Not covered.** A real fire against a live Codex. The no-entry block wording and the panel were not looked at in a running TangleClaw: at the fake-key tier a fire stops at the usage check before it reaches that block. The untrusted-entry wording returns earlier and could be looked at; it was not. What Codex does with project-level config and hooks in an untrusted folder under `--remote`. Codex versions other than 0.156.1. The witness's header pattern is Codex's and lives in its adapter.
+## 2026-10-07 — ADR 0014: the ratification record matches what happened
+
+<!-- prawduct: type=docs | scope=adr-0014-ratification-record -->
+
+Docs only. Architect ruling A162.20, dispatched by the PM. Follows PR #2227.
+
+**The defect.** The amendment merged in PR #2227 said two things that were not true once it merged. Its Status line still called it proposed. Its Ratification line said the Operator merges it personally and that `gh pr view --json mergedBy` shows who merged. The ProjectManager reports that it merged it and that the Operator instructed it directly, naming the pull request; `mergedBy` reads `Jason-Vaughan` for every session because they share one GitHub account.
+
+**Root cause.** I took the `mergedBy` command from a review suggestion and wrote it into the ADR without running it against a merged pull request in this repository, where it would have shown one login for every merge.
+
+**What landed.** The Status line says the amendment is in force. The Ratification line records the merge commit and head, the planned path, the Operator's words as the ProjectManager reported them, the Architect's ruling that this was a variance for one merge and not a waiver, what bounded the merge to one revision, and what counts as evidence of who merged and of who approved. The merge commit and its head are the only parts checked independently.
+
+## 2026-10-07 — ADR 0014: reconstruction moves from the PR Reviewer to an Operator-authorized lane
+
+<!-- prawduct: type=docs | scope=adr-0014-reconstruction-lane -->
+
+Docs only, no product code. Architect ruling A162.6, dispatched by the PM.
+
+**The defect.** ADR 0014's 2026-09-17 amendment named the PR Reviewer for both the micro filter and the reconstruction of an external PR. The PR Reviewer's own project rule makes it review-only. With reconstruction already moved away from the Builder, no session could rebuild an external PR that had passed both filters. External PR #2218 (issue #2222) stopped on exactly that.
+
+**What landed.** A dated amendment to `docs/adr/0014-dual-key-review-for-untrusted-prs.md` with four new rules (9 to 12): what a reconstruction lane is, what starts one, what the PR Reviewer does now, and what does not change. Decision items 2 and 3, the Roles table and the 2026-09-17 consequences are corrected in place, each with a note of what it said before. `docs/dependency-bump-audit.md` names the lane for a Dependabot rebuild.
+
+**Not in this change.** The session rules that still describe the old routing are not repository files. Their replacement texts are drafted separately for the Architect's review and the Operator's approval.
+
 ## 2026-10-07 — #2177: a Codex launch types nothing into a guarded dialog
 
 <!-- prawduct: type=bugfix | scope=2177-prekey-containment -->
