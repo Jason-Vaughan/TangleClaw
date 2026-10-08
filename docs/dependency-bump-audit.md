@@ -151,6 +151,8 @@ accept, per ADR 0014 Amendment 2026-09-17.
 
 When both filters pass:
 
+- **Who:** the reconstruction lane, on the Operator's direct instruction (ADR 0014, Amendment
+  2026-10-07, rules 9 and 10). The PR Reviewer does not rebuild.
 - Create a branch from `main`, for example `chore/deps-<action>-<version>`. **Edit the `uses:`
   refs by hand.** Do not check out, cherry-pick or merge the bot's branch. The change is one line,
   so copying it would produce the same diff, but ADR 0014 depends on the discipline, not the byte
@@ -163,7 +165,7 @@ When both filters pass:
   CI, and the repository's PR rules exclude CI changes from auto-merge.
 - There is no contributor to credit, so no `Reported-by:` trailer. The PR link is the record.
 - After the rebuild merges, Dependabot normally closes its own PR, because the dependency is now
-  current on `main`. If it does not, the Operator closes it (ADR 0014 step 4).
+  current on `main`. If it does not, the Operator closes it (ADR 0014, Decision item 4).
 
 ## When the audit fails
 
