@@ -352,7 +352,7 @@ Stored in `<project>/.tangleclaw/project.json`. Created when a project is added 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `engine` | string\|null | `null` | Engine ID for this project |
-| `model` | string\|null | `null` | The exact model id the next launch asks the engine for (#2188). `null` passes no model, and the engine runs its own default. It belongs to `engine`: a save validates it against that engine's offered models and the installed CLI's roster, changing `engine` clears it unless the same update sends a model for the new engine, and it cannot be set on a project bound to an orchestration profile. **Not yet read at launch**, and a save that stores one says so. See [Model selection](engine-guide.md#model-selection-models) |
+| `model` | string\|null | `null` | An exact model id stored for the project's engine (#2188), or `null` for none. **No launch reads it yet**: whatever is stored, a session starts on the engine's own default, and a save that stores a model says so. It belongs to `engine`: a save validates it against that engine's offered models and the installed CLI's roster, changing `engine` clears it unless the same update sends a model for the new engine, and it cannot be set on a project bound to an orchestration profile. See [Model selection](engine-guide.md#model-selection-models) |
 | `rules.core` | object | all `true` | Core enforcement rules (not editable) |
 | `rules.extensions` | object | all `false` | Opt-in extension rules |
 | `ports` | object | `{}` | Registered port assignments |

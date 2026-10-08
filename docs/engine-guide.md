@@ -1053,7 +1053,7 @@ A profile whose `models` block is present but invalid is a fault, not an engine 
 
 ### A project's stored model
 
-A project stores one model for its next launch as `model` in `.tangleclaw/project.json`, beside `engine`. `null` (the default) means no model is selected and the engine runs its own default.
+A project stores one model as `model` in `.tangleclaw/project.json`, beside `engine`. `null` (the default) means no model is selected. No launch reads the field yet (see Status below), so today a session starts on the engine's own default whatever is stored.
 
 **Saving.** `PATCH /api/projects/:name` takes `model`: a model id, or `null` to clear it. A model is checked with `checkSelection` against the engine the project will have after the same request, so an engine and a model for it can be sent together. A refused model is a `400` whose message ends with the code in brackets, and nothing in that request is applied. That includes a roster that cannot be read: an unconfirmed model is never stored. Clearing is always accepted.
 
