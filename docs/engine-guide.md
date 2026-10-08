@@ -798,6 +798,50 @@ Engines without a positive marker cannot be gated and **must declare an explicit
 paste is recorded in the delivery ledger as `unverified`, never `delivered` — `delivered` is
 reserved for a paste whose pane was observed ready.
 
+#### `launch.guardedDialogs`
+
+Some engines open on a dialog whose highlighted default has consequences. Codex's update prompt
+highlights "Update now", which upgrades the global install, and its folder-trust prompt highlights
+"Trust and continue". A key sent on a timer answers whichever is on screen (#2177), so a profile
+**declares** the prompts its engine can open on, and the launch reads the pane before it types:
+
+```json
+"guardedDialogs": [
+  { "id": "folder-trust", "match": "Trust this folder\\?", "humanAction": "Answer it in the pane…" }
+]
+```
+
+- `match` is a regular expression tested against the pane's text. `humanAction` is the sentence the
+  operator is shown.
+- **TangleClaw answers none of them.** While a declared prompt is the live screen, the prime is not
+  pasted and no `preKeys` are sent. The delivery ledger records the paste as `skipped` with a reason
+  that names the prompt and carries `humanAction`, and the server log warns when the prompt is first
+  seen. The operator answers the prompt in the pane.
+- A prompt counts as live when it is drawn **below the last bare composer row**. Codex keeps its
+  opening composer on screen above a dialog, and keeps an answered dialog in scrollback above the
+  composer that replaced it, so the text alone does not say which state the pane is in.
+- For an engine that declares guarded dialogs, the blind paste after a readiness timeout is also
+  refused when the pane shows neither a bare composer nor a declared prompt, and when the pane cannot
+  be read. Such an engine needs a `capabilities.wake.promptPattern`, or no composer is ever
+  recognised. An engine that declares none keeps its paste exactly as before.
+- An entry that cannot be read (no `id`, no `match`, a `match` that is not a valid pattern, or a
+  `guardedDialogs` value that is not a list) makes
+  the launch type nothing at all for that engine: the prompt it named can no longer be recognised.
+  The server log names the entry.
+- After a refused paste nothing retries it. Once the operator has answered the prompt, the session
+  is started as any unprimed session is: by hand, or by the launch-unready nudge where its own gate
+  lets it type.
+- The Codex opening screen (`model: loading` over an empty composer) reads as a composer here. It is
+  not told apart from a usable one by this check.
+
+`launch.guardedDialogs` has one reader and one scope: the launch-time sends above (the prime paste
+and `preKeys`). It is not a general declaration of an engine's dialogs, nothing else in TangleClaw
+reads it, and it is not interchangeable with any other dialog declaration a profile may carry.
+
+`launch.preKeys` still exists for an operator-written profile, and is still sent on a timer without
+knowing what it will answer. **No bundled profile declares any.** Do not declare one for a prompt
+whose default changes anything outside the pane.
+
 #### `wake.pasteRejectedMarker`
 
 Optional, and since #1134 the pane being observed ready is **no longer the last word**. An engine
@@ -914,9 +958,9 @@ understanding that with `--remote` the agent loop and its shell tools run in the
 `tc start next` the fired prompt asks for is expected to resolve to the same identity the pane's
 would. That is an assumption until the first live Codex launch after this shipped confirms it
 (`VRF-1825-b3-native-bootstrap`); if it proves false, the pane still has the identity and the fix
-belongs in how the server is started, not in the bootstrap. Codex's engine-level `preKeys` are
-withheld on a native launch too: a preKey is a keystroke, and two Enters on a fresh trust dialog
-would accept its default before readiness could refuse `trust_required`.
+belongs in how the server is started, not in the bootstrap. A profile's `preKeys` are withheld on a
+native launch too: a preKey is a keystroke, and an Enter on a fresh trust dialog would accept its
+default before readiness could refuse `trust_required`. Codex declares none on any path (#2177).
 
 **Readiness is read from the protocol, never from the pane.** Before a send the adapter needs all of:
 the app-server's `initialize` version equal to the installed and the recorded one; `config/read`

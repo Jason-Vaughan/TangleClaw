@@ -2626,9 +2626,10 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
      * send made as the real kickoff makes it, and wait for every send to have
      * been made or withheld.
      * @param {object} s - The session row
+     * @param {object} [profile] - The engine profile to launch with
      * @returns {Promise<{kicks: object[], rows: object[]}>} What the kickoff's send answered, and the delivery rows written
      */
-    const launchedAfterTimeout = async (s) => {
+    const launchedAfterTimeout = async (s, profile = WITH_PREKEY) => {
       const kicks = [];
       const rows = [];
       startupDialog.watch = async () => ({ outcome: 'timeout', meaning: startupDialog.OUTCOME_MEANINGS.timeout, dialog: null, waitedMs: 45000 });
@@ -2642,7 +2643,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
       try {
         const done = new Promise((resolve) => { launchFinished = resolve; });
         sessions._deferEngineInit(
-          s.tmuxSession, project.name, 'claude', WITH_PREKEY, 'the prime', null, false,
+          s.tmuxSession, project.name, 'claude', profile, 'the prime', null, false,
           { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' },
           { sessionId: s.id, projectId: project.id, hasSequence: true }
         );
@@ -2654,6 +2655,64 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
       }
       return { kicks, rows };
     };
+
+    describe('with the guarded dialogs a profile declares for its blind keys (#2177): two guards, one launch', () => {
+      // Each guard reads its own declaration. A launch that this module watched
+      // makes its pre-key and prime sends in the same place the other guard
+      // checks them, so both must still refuse there, and neither must stop a
+      // send the other allows.
+      const BOTH = Object.freeze({
+        ...WITH_PREKEY,
+        launch: { ...WITH_PREKEY.launch, guardedDialogs: [{ id: 'update', match: 'Update available', humanAction: 'Skip it with Escape.' }] }
+      });
+      const UPDATE_PROMPT = Object.freeze(['  Update available · 1 → 2', '  1. Update now', '  enter continue · esc skip']);
+      const sent = () => typed.filter((t) => t.key || t.text === 'the prime');
+
+      it('a guarded dialog on screen, which this module does not know: the pre-key and the prime are still withheld, by the other guard', async () => {
+        const s = start();
+        pane = UPDATE_PROMPT;
+        assert.equal(startupDialog.classify(UPDATE_PROMPT, DIALOGS, WAKE, null).state, 'unknown', 'precondition: nothing here for this module to refuse');
+        const { rows } = await launchedAfterTimeout(s, BOTH);
+        assert.deepEqual(sent(), [], 'no pre-key and no prime');
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0].outcome, 'skipped');
+        assert.match(rows[0].skipReason, /is showing its update prompt, which TangleClaw does not answer/);
+        assert.match(rows[0].skipReason, /Skip it with Escape\./);
+      });
+
+      it('the folder trust dialog on screen: withheld by this module, named, and recorded', async () => {
+        const s = start();
+        pane = TRUST_DIALOG;
+        const { rows } = await launchedAfterTimeout(s, BOTH);
+        assert.deepEqual(sent(), []);
+        assert.match(rows[0].skipReason, /^trust_required: nothing was typed when the prime was due/);
+        assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required');
+      });
+
+      it('a selector neither declaration names: withheld as not at the prompt', async () => {
+        const s = start();
+        pane = MENU_2;
+        const { rows } = await launchedAfterTimeout(s, BOTH);
+        assert.deepEqual(sent(), []);
+        assert.match(rows[0].skipReason, /^pane_not_at_prompt: /);
+      });
+
+      it('a bare composer: both guards pass, and the pre-key and the prime are typed', async () => {
+        const s = start();
+        pane = AFTER_MENU;
+        await launchedAfterTimeout(s, BOTH);
+        assert.deepEqual(sent().map((t) => t.key || t.text), ['Enter', 'the prime']);
+      });
+
+      it('a profile whose guarded dialog cannot be read gets no pre-key and no prime, even over a bare composer', async () => {
+        const s = start();
+        pane = AFTER_MENU;
+        const broken = { ...BOTH, launch: { ...BOTH.launch, guardedDialogs: [{ id: 'update' }] } };
+        const { rows } = await launchedAfterTimeout(s, broken);
+        assert.deepEqual(sent(), []);
+        assert.match(rows[0].skipReason, /declares a guarded dialog TangleClaw could not read/);
+      });
+    });
 
     for (const [name, lines] of Object.entries(NOT_A_PROMPT)) {
       it(`launch, no blocker stored, ${name}: no pre-key, no prime and no kickoff is typed`, async () => {

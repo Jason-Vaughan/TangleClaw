@@ -177,11 +177,24 @@ describe('_resolvePreKeys uses the same honored-mode predicate (#731)', () => {
   });
 
   it('still returns engine preKeys for a real mode that declares none', () => {
-    // Codex's modes carry no mode-level preKeys, so the engine-level
-    // ["Enter","Enter"] must survive — they clear codex's directory-trust
-    // prompt on startup, verified against codex-cli 0.145.0.
-    const resolved = sessions._resolvePreKeys(codex, 'fullAuto');
+    // A mode with no preKeys of its own falls back to the engine's.
+    const profile = { launch: { preKeys: ['Enter', 'Enter'], preKeyDelay: 3000 }, launchModes: { fullAuto: { args: [] } } };
+    const resolved = sessions._resolvePreKeys(profile, 'fullAuto');
     assert.deepEqual(resolved.preKeys, ['Enter', 'Enter']);
+  });
+
+  it('the bundled Codex profile sends no preKeys in any mode (#2177)', () => {
+    // Codex's two Enters were sent blind, three seconds after launch. Its
+    // update prompt highlights "Update now" and its folder-trust prompt
+    // highlights "Trust and continue", so an Enter answers whichever is up.
+    // The profile declares those prompts instead, and nothing answers them.
+    assert.ok(!('preKeys' in codex.launch), 'no engine-level preKeys');
+    assert.ok(!('preKeyDelay' in codex.launch));
+    for (const mode of Object.keys(codex.launchModes)) {
+      assert.ok(!('preKeys' in codex.launchModes[mode]), `no preKeys on ${mode}`);
+      assert.equal(sessions._resolvePreKeys(codex, mode).preKeys, null);
+    }
+    assert.deepEqual(codex.launch.guardedDialogs.map((p) => p.id), ['folder-trust', 'update']);
   });
 });
 
