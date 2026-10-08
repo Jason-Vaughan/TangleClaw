@@ -657,10 +657,16 @@ only when the lookup failed:
   it can be read as that profile.
 
   **A profile file must carry `"id"` equal to its own profile id** (its file name without
-  `.json`; for an OpenClaw session, `openclaw`). Every profile TangleClaw saves or validates has
+  `.json`; for an OpenClaw session, `openclaw`). **A launch checks this first**: before the
+  engine is looked for, a pane is created or a pre-key is scheduled, a profile that is not an
+  object or does not carry that `id` refuses the launch (`ENGINE_PROFILE_INVALID`, HTTP 409 on
+  the launch route) and nothing is started. Every profile TangleClaw saves or validates has
   one, and so does every bundled profile. A file dropped into the engines directory by hand
   **without** an `id`, or with another profile's, launched and took sends before this check
-  existed; it is now refused on every send until the `id` is added. That cost is deliberate: an
+  existed; it now cannot be launched, and a session already running on it has every send refused,
+  until the `id` is added. On a case-insensitive filesystem the same applies to an engine id
+  given in a different case from the profile's own (`Claude` finding `claude.json`): the file is
+  found and says it is `claude`, which is not what was asked for. That cost is deliberate: an
   object that does not say which profile it is cannot be trusted to say what its engine shows
   (`{}` is a valid JSON object that declares nothing). **The check is identity only.** It does not
   validate the profile: a file with the right `id` and broken or missing fields is taken as the

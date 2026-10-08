@@ -7315,6 +7315,13 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
     if (result.code === 'ORPHANED_LAUNCH' || result.code === 'LAUNCH_BIND_FAILED') {
       return errorResponse(res, 500, result.error, result.code);
     }
+    // #2128: the installed engine profile is not the profile that was asked
+    // for (not a profile object, or no matching `id`). 409, not 500: nothing
+    // internal failed and nothing was started; the profile file is what needs
+    // repairing, and the message says how.
+    if (result.code === 'ENGINE_PROFILE_INVALID') {
+      return errorResponse(res, 409, result.error, result.code);
+    }
     const ackStatus = { BAD_REQUEST: 400, NOT_FOUND: 404, WRITE_FAILED: 500 }[result.code];
     if (ackStatus) {
       return errorResponse(res, ackStatus, result.error, result.code);

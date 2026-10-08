@@ -3819,6 +3819,114 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
             });
           });
 
+          describe('a launch refuses an unidentified profile before it does anything (A160 R15)', () => {
+            // A launch fetches the profile itself and then acts on its word: it
+            // looks for the engine, creates the pane and schedules raw pre-keys.
+            // The same identity test must stand in front of all of that.
+            const enginesModule = require('../lib/engines');
+            const real = { detectEngine: enginesModule.detectEngine, createSession: tmux.createSession };
+            let detected;
+            let created;
+
+            beforeEach(() => {
+              detected = [];
+              created = [];
+              // Had the launch gone on, it would have found the engine and made a pane.
+              enginesModule.detectEngine = (profile) => { detected.push(profile && profile.id); return { available: true, path: '/bin/true' }; };
+              tmux.createSession = (name) => { created.push(name); throw new Error('a pane must not be created in this test'); };
+              tmux.hasSession = () => false;
+            });
+
+            afterEach(() => {
+              enginesModule.detectEngine = real.detectEngine;
+              tmux.createSession = real.createSession;
+            });
+
+            // Everything a launch would act on is there: only the identity is wrong.
+            const LAUNCHABLE = {
+              name: 'Launchable', command: 'claude', interactionModel: 'session',
+              configFormat: { filename: null, syntax: null, generator: null },
+              detection: { strategy: 'which', target: 'sh' },
+              launch: { shellCommand: 'sh', args: [], env: {}, preKeys: ['Enter', 'Enter'], preKeyDelay: 1, guardedDialogs: [{ id: 'update', match: 'Update available', humanAction: 'Skip it.' }] },
+              capabilities: { supportsPrimePrompt: true }
+            };
+            const UNIDENTIFIED = {
+              'no id at all': { ...LAUNCHABLE },
+              'another profile\'s id': { ...LAUNCHABLE, id: 'codex' },
+              'an id differing only in case': { ...LAUNCHABLE, id: 'Claude' },
+              'a number for an id': { ...LAUNCHABLE, id: 7 },
+              'an empty object': {},
+              'a list': [LAUNCHABLE],
+              'a string': 'claude'
+            };
+
+            for (const [what, value] of Object.entries(UNIDENTIFIED)) {
+              it(`${what}: refused with a code and a remedy; the engine is not looked for, no pane, no session row, no key`, () => {
+                profiles.claude = value;
+                const before = store.sessions.getActive(project.id);
+                const result = sessions.launchSession(project.name);
+                assert.equal(result.session, null);
+                assert.equal(result.code, 'ENGINE_PROFILE_INVALID');
+                assert.match(result.error, /^Engine "claude" was not launched: its profile "claude" is not usable \(what the store returned /);
+                assert.match(result.error, /must be a JSON object whose "id" is exactly "claude"\. Install or restore a valid profile, or repair the file, then launch again\. Nothing was started\.$/);
+                assert.deepEqual(detected, [], 'the engine was not looked for');
+                assert.deepEqual(created, [], 'no pane was created');
+                assert.deepEqual(typed, [], 'no pre-key or text was sent');
+                assert.equal(store.sessions.getActive(project.id), before, 'no session row was started');
+              });
+            }
+
+            it('a profile the store does not have at all keeps the answer it always had', () => {
+              profiles.claude = null;
+              const result = sessions.launchSession(project.name);
+              assert.equal(result.session, null);
+              assert.match(result.error, /^Engine "claude" not found$/);
+              assert.equal(result.code, undefined);
+              assert.deepEqual(detected, []);
+              assert.deepEqual(created, []);
+            });
+
+            it('control, a profile carrying its own id: the launch goes on past the identity test, to the engine and the pane', () => {
+              profiles.claude = { ...LAUNCHABLE, id: 'claude' };
+              let result;
+              try { result = sessions.launchSession(project.name); } catch (err) { result = { thrown: err.message }; }
+              assert.deepEqual(detected, ['claude'], 'the engine was looked for');
+              assert.equal(created.length, 1, 'and the launch reached the point of creating its pane');
+              assert.notEqual(result && result.code, 'ENGINE_PROFILE_INVALID');
+            });
+
+            it('control, an operator\'s custom profile under its own matching id', () => {
+              const custom = store.projects.create({ name: `r15-custom-${counter}`, path: path.join(base, `r15-custom-${counter}`), engine: 'claude-sonnet-reviewer' });
+              profiles['claude-sonnet-reviewer'] = { ...LAUNCHABLE, id: 'claude-sonnet-reviewer' };
+              let result;
+              try { result = sessions.launchSession(custom.name); } catch (err) { result = { thrown: err.message }; }
+              assert.deepEqual(detected, ['claude-sonnet-reviewer']);
+              assert.notEqual(result && result.code, 'ENGINE_PROFILE_INVALID');
+              // The same file without its id is refused before anything.
+              detected.length = 0;
+              created.length = 0;
+              profiles['claude-sonnet-reviewer'] = { ...LAUNCHABLE };
+              const refused = sessions.launchSession(custom.name);
+              assert.equal(refused.code, 'ENGINE_PROFILE_INVALID');
+              assert.match(refused.error, /its profile "claude-sonnet-reviewer" is not usable \(what the store returned does not carry an `id`\)/);
+              assert.deepEqual(detected, []);
+              assert.deepEqual(created, []);
+            });
+
+            it('the OpenClaw mapping: the base profile must say `openclaw`; a connection-qualified id inside the file is refused', () => {
+              const oc = store.projects.create({ name: `r15-oc-${counter}`, path: path.join(base, `r15-oc-${counter}`), engine: 'openclaw:conn-7' });
+              profiles.openclaw = { ...LAUNCHABLE, id: 'openclaw:conn-7', command: 'ssh' };
+              const refused = sessions.launchSession(oc.name);
+              assert.equal(refused.code, 'ENGINE_PROFILE_INVALID');
+              assert.match(refused.error, /^Engine "openclaw:conn-7" was not launched: its profile "openclaw" is not usable \(what the store returned identifies itself as "openclaw:conn-7"\)/);
+              assert.deepEqual(detected, []);
+              profiles.openclaw = { ...LAUNCHABLE, id: 'openclaw', command: 'ssh' };
+              let result;
+              try { result = sessions.launchSession(oc.name); } catch (err) { result = { thrown: err.message }; }
+              assert.notEqual(result && result.code, 'ENGINE_PROFILE_INVALID', 'the base id passes the identity test');
+            });
+          });
+
           it('control, no engine named: no profile to fetch; refused only while a blocker is stored', () => {
             profiles.claude = new Error('unreadable');
             const s = start();
