@@ -153,14 +153,38 @@ describe('project model selection — persistence (#2188)', () => {
       assert.equal(entry.divergence, 'next-launch');
     });
 
-    it('says so when it is changed under a running session, without asking for a relaunch', async () => {
+    it('under a running session, a save does not claim the model applies to the next launch while no launch reads it', async () => {
+      // The declared advice for this setting is "applies to the next launch".
+      // That is not true yet, so the save says the one true thing and not both.
       const row = mkProject('ms-live');
       store.sessions.start({ projectId: row.id, engineId: 'codex' });
-      const res = await projects.updateProject('ms-live', { model: LUNA });
-      const told = res.warnings.filter((w) => /^Model is saved/.test(w));
-      assert.equal(told.length, 1, JSON.stringify(res.warnings));
-      assert.match(told[0], /next launch/i);
-      assert.doesNotMatch(told[0], /relaunch/i);
+      const res = await projects.updateProject('ms-live', { model: LUNA, showLaunchModePicker: false });
+      assert.ok(res.warnings.includes(projects.MODEL_NOT_YET_LAUNCHED), JSON.stringify(res.warnings));
+      assert.deepEqual(res.warnings.filter((w) => /Model (is|and)|and Model/.test(w) && /next launch;/.test(w)), [],
+        'no sentence may say the model applies to the next launch');
+      assert.equal(res.warnings.filter((w) => /^Show launch mode picker is saved/.test(w)).length, 1,
+        'a sibling setting changed in the same save is still reported');
+    });
+
+    it('is judged against the project row\'s engine when the config file names another', async () => {
+      // project.json sits in the checkout; a branch switch can leave its
+      // `engine` behind. The row is what launches and what the payload checks.
+      const onClaude = mkProject('ms-diverged-claude', 'claude');
+      const cfgA = store.projectConfig.load(onClaude.path);
+      cfgA.engine = 'codex';
+      store.projectConfig.save(onClaude.path, cfgA);
+      const refusedSave = await projects.updateProject('ms-diverged-claude', { model: LUNA });
+      assert.equal(refusedSave.project, null, 'a Codex model must not be stored on a project that launches Claude');
+      assert.match(refusedSave.errors[0], /ENGINE_HAS_NO_MODELS/);
+      assert.equal(onDisk(onClaude), null);
+
+      const onCodex = mkProject('ms-diverged-codex', 'codex');
+      const cfgB = store.projectConfig.load(onCodex.path);
+      cfgB.engine = 'claude';
+      store.projectConfig.save(onCodex.path, cfgB);
+      const saved = await projects.updateProject('ms-diverged-codex', { model: LUNA });
+      assert.deepEqual(saved.errors, []);
+      assert.deepEqual(saved.project.modelCheck, { ok: true }, 'what was accepted is what the payload confirms');
     });
   });
 
