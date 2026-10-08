@@ -832,7 +832,8 @@ the profile's `startupControl.remoteTrustPrompt.absentOn`, and that list ships e
 signed-in fire has been probed. When a version is listed, the fire goes only if all of this holds:
 
 - every other check passes (version, account, usage, the launch's own thread loaded and `idle`);
-- a **pane witness** reads the session's visible pane and cursor together, twice, a second apart,
+- a **pane witness** reads the session's visible pane and cursor in one row-aligned read (one tmux
+  invocation; the pane is not held still across it), twice, a second apart,
   and both reads show: no declared guarded dialog as the live screen; the cursor ON the last bare
   composer row, by its row number, with nothing typed (an earlier composer row that reads the same is
   a different row); nothing below that row but blank rows and at most one status row of the shape

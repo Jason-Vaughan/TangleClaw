@@ -1183,7 +1183,8 @@ describe('tmux — the visible pane and its cursor, row for row (#2186)', () => 
   });
 
   it('refuses an answer that does not line up: wrong row count, a cursor outside the pane, or no numbers', () => {
-    for (const out of ['4,0,0\n>\n\n', '2,0,0\n>\n\n\n\n', '3,0,3\n\n\n\n', '3,0,-1\n\n\n\n', 'x,0,0\n\n', '', '3,,\n\n\n\n']) {
+    const malformed = ['3abc,0,0\n\n\n\n', '3,0x,0\n\n\n\n', '3,0,1e0\n\n\n\n', '3.0,0,0\n\n\n\n', ' 3,0,0\n\n\n\n', '3,0,0,9\n\n\n\n', '3,0\n\n\n\n', '+3,0,0\n\n\n\n'];
+    for (const out of ['4,0,0\n>\n\n', '2,0,0\n>\n\n\n\n', '3,0,3\n\n\n\n', '3,0,-1\n\n\n\n', 'x,0,0\n\n', '', '3,,\n\n\n\n', ...malformed]) {
       assert.throws(() => tmux._parseVisiblePane(out), /row for row/, JSON.stringify(out));
     }
   });

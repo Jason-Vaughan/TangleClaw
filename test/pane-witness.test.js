@@ -168,6 +168,21 @@ describe('the pane witness (#2186)', () => {
       }
     });
 
+    it('KNOWN LIMIT: the status row is recognised by shape, so one menu-like row that is indented and joined by a middle dot passes', async () => {
+      // Codex's own dialog footer has this shape. Every measured Codex dialog
+      // draws more rows than this and parks the cursor on its footer, and a
+      // declared dialog is refused before this rule is reached; but a lone
+      // footer-shaped row below a stale composer that holds the cursor is
+      // NOT positive status-row evidence, and it passes. This test documents
+      // that, so closing it is a deliberate change and not a surprise.
+      for (const menuLike of ['  enter continue · esc skip', '  Yes · No · Cancel']) {
+        assert.deepEqual(await ask([pane([COMPOSER, '', menuLike], 0)]), { shown: true }, menuLike);
+      }
+      // The same row is refused as soon as anything else is drawn with it.
+      assert.equal((await ask([pane([COMPOSER, '', '  Skip the update?', '  enter continue · esc skip'], 0)])).shown, false);
+      assert.equal((await ask([pane([COMPOSER, '', '  enter continue · esc skip'], 2)])).shown, false, 'or when the cursor is on it, as Codex parks it');
+    });
+
     it('one status row is allowed, a second is not', async () => {
       assert.deepEqual(await ask([pane([COMPOSER, '', STATUS], 0)]), { shown: true });
       assert.equal((await ask([pane([COMPOSER, '', STATUS, '  ← for agents · ? for shortcuts'], 0)])).shown, false);
