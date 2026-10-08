@@ -59,6 +59,8 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 **Not active, and why.** `absentOn` is empty. Adding 0.156.1 waits for one signed-in untrusted-folder fire through the real `--remote` path on the Operator's key tier, which this build did not run and has no access to. #2186 stays open.
 
+**The cursor is bound to the composer it vouches for.** The witness first took the capture's composer and the cursor's row as two separate facts: a stale composer above a menu the profile does not declare, whose selected row is glyph-led and faint under the cursor, would have passed, twice. The row under the cursor must now be a bare composer row that reads the same as the capture's last one, and no glyph-led row may follow that one. Raised by the Architect's exact-head review, from a constructed frame, not a captured Codex menu.
+
 **Checked on a live pane.** The witness itself, with real tmux captures and the real cursor, on a private sandboxed codex-cli 0.156.1 pane: it named the update prompt, then the folder-trust prompt, and answered shown only at the usable composer, on two reads a second apart.
 
 **Not covered.** A real fire against a live Codex. The no-entry block wording and the panel were not looked at in a running TangleClaw: at the fake-key tier a fire stops at the usage check before it reaches that block. The untrusted-entry wording returns earlier and could be looked at; it was not. What Codex does with project-level config and hooks in an untrusted folder under `--remote`. Codex versions other than 0.156.1. The witness's header pattern is Codex's and lives in its adapter.

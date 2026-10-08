@@ -108,6 +108,65 @@ describe('the pane witness (#2186)', () => {
     assert.deepEqual(await ask([live('composer')]), { shown: true });
   });
 
+  describe('the cursor is bound to the capture\'s last composer row', () => {
+    // A menu the profile does NOT declare, drawn below a composer it has
+    // superseded. Its selected row starts with the prompt glyph, is drawn
+    // faint like a placeholder, and holds the cursor at the first input
+    // column: everything the emptiness check alone would call an empty
+    // composer. Synthetic: no such Codex menu was captured.
+    const STALE = '› Ask Codex to do anything';
+    const MENU = ['╭──────────────╮', '│ model:  GPT  │', '╰──────────────╯', '', STALE, '', '  Choose a mode', '› Careful', '  Fast', '', '  enter select'];
+    const ON_SELECTED = { x: 2, y: 7, line: '\u001b[1m›\u001b[0m \u001b[2mCareful\u001b[0m' };
+    const ON_COMPOSER = { x: 2, y: 4, line: '\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything\u001b[0m' };
+
+    it('a stable undeclared menu with a faint glyph-led selected row under the cursor is refused, on every read', async () => {
+      const wake = require('../lib/medusa-wake');
+      assert.equal(wake._composerEmpty(ON_SELECTED, wakeProfile), true, 'the emptiness check alone is fooled by this row, which is the point');
+      const r = await ask([{ lines: MENU, cursor: ON_SELECTED }]);
+      assert.equal(r.shown, false);
+      assert.equal(r.why, 'a selector row is drawn below the composer');
+    });
+
+    it('the same menu is refused even if the cursor were reported back on the stale composer', async () => {
+      const r = await ask([{ lines: MENU, cursor: ON_COMPOSER }]);
+      assert.deepEqual(r, { shown: false, dialog: null, why: 'a selector row is drawn below the composer' });
+    });
+
+    it('a glyph-led row below the composer refuses however it is indented', async () => {
+      const lines = [STALE, '', '   › Something', '  other'];
+      assert.equal((await ask([{ lines, cursor: ON_COMPOSER }])).why, 'a selector row is drawn below the composer');
+    });
+
+    it('interleave: the capture shows the composer but the cursor was read after a menu took over', async () => {
+      const r = await ask([{ lines: PANES.composer.lines, cursor: ON_SELECTED }]);
+      assert.deepEqual(r, { shown: false, dialog: null, why: 'the cursor is not on the composer row' });
+    });
+
+    it('interleave: the capture shows the menu but the cursor was read while the composer was still live', async () => {
+      const r = await ask([{ lines: MENU, cursor: CURSORS.composer }]);
+      assert.equal(r.shown, false);
+    });
+
+    it('a cursor row that is a composer but does not read like the capture\'s is a different row', async () => {
+      const other = { x: 2, y: CURSORS.composer.y, line: '\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything else\u001b[0m' };
+      assert.equal((await ask([{ lines: PANES.composer.lines, cursor: other }])).why, 'the cursor is not on the composer row');
+    });
+
+    it('a cursor with no row text is refused', async () => {
+      const r = await ask([{ lines: PANES.composer.lines, cursor: { x: 2, y: CURSORS.composer.y } }]);
+      assert.deepEqual(r, { shown: false, dialog: null, why: 'the row under the cursor could not be read' });
+    });
+
+    it('the engine\'s own animated decoration on the composer row does not break the binding', async () => {
+      // Codex paints a braille shimmer over the composer row in a session with history; it moves between reads.
+      const at = PANES.composer.lines.map((l) => l.startsWith('› Ask Codex')).lastIndexOf(true);
+      const lines = [...PANES.composer.lines];
+      lines[at] = '›⠁Ask Codex to do anything';
+      const cursor = { ...CURSORS.composer, line: '\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything\u001b[0m\u001b[38;2;10;10;10m⡁\u001b[0m' };
+      assert.deepEqual(await ask([{ lines, cursor }]), { shown: true });
+    });
+  });
+
   it('a composer under a cursor that is somewhere else is not shown', async () => {
     const r = await ask([{ lines: PANES.composer.lines, cursor: CURSORS.trustPrompt }]);
     assert.deepEqual(r, { shown: false, dialog: null, why: 'the cursor is not on the composer row' });

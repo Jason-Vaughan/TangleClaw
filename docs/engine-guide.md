@@ -830,7 +830,8 @@ signed-in fire has been probed. When a version is listed, the fire goes only if 
 
 - every other check passes (version, account, usage, the launch's own thread loaded and `idle`);
 - a **pane witness** reads the session's pane twice, a second apart, and both reads show a bare
-  composer with no declared guarded dialog below it, the cursor on that composer with nothing typed,
+  composer with no declared guarded dialog and no other glyph-led row below it, the cursor on that
+  same composer row (the row under the cursor must read the same as the capture's) with nothing typed,
   no header still reading `model: loading` as the newest one (a session that has scrolled its header
   away passes this), no busy marker, and an unchanged pane;
 - the same thread, read again after the witness and immediately before `turn/start`, is still in
