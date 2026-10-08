@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-07 — ADR 0014: the ratification record matches what happened
+
+<!-- prawduct: type=docs | scope=adr-0014-ratification-record -->
+
+Docs only. Architect ruling A162.20, dispatched by the PM. Follows PR #2227.
+
+**The defect.** The amendment merged in PR #2227 said two things that were not true once it merged. Its Status line still called it proposed. Its Ratification line said the Operator merges it personally and that `gh pr view --json mergedBy` shows who merged. The ProjectManager reports that it merged it and that the Operator instructed it directly, naming the pull request; `mergedBy` reads `Jason-Vaughan` for every session because they share one GitHub account.
+
+**Root cause.** I took the `mergedBy` command from a review suggestion and wrote it into the ADR without running it against a merged pull request in this repository, where it would have shown one login for every merge.
+
+**What landed.** The Status line says the amendment is in force. The Ratification line records the merge commit and head, the planned path, the Operator's words as the ProjectManager reported them, the Architect's ruling that this was a variance for one merge and not a waiver, what bounded the merge to one revision, and what counts as evidence of who merged and of who approved. The merge commit and its head are the only parts checked independently.
+
 ## 2026-10-07 — ADR 0014: reconstruction moves from the PR Reviewer to an Operator-authorized lane
 
 <!-- prawduct: type=docs | scope=adr-0014-reconstruction-lane -->
