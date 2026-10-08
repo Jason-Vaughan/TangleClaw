@@ -2594,8 +2594,9 @@ async function refreshProjectLaunchSequences(projectId) {
 }
 
 /**
- * How one fire row is named to the operator: its outcome, who asked, and the
- * typed reason when there is one (#1825 B3).
+ * How one fire row is named to the operator: its outcome, who asked, the typed
+ * reason when there is one (#1825 B3), and the dispatch note when the fire was
+ * sent despite something (#2186).
  *
  * `denied` is shown, and shown as a denial: the whole reason the row exists is
  * that a project tried to fire here and may not, and hiding it would make the
@@ -2611,7 +2612,10 @@ function startupFireLabel(f) {
     : (f.callerKind === 'operator' ? 'the operator' : `project ${esc(f.callerProjectId == null ? '?' : f.callerProjectId)}`);
   const when = esc(f.settledAt || f.acceptedAt || f.createdAt || '');
   const reason = f.reasonCode ? ` — <code>${esc(f.reasonCode)}</code>${f.reason ? `: ${esc(f.reason)}` : ''}` : '';
-  return `<code>${esc(f.outcome)}</code> (${who}, revision ${esc(f.promptRevision)}${when ? `, ${when}` : ''})${reason}`;
+  // What the fire was sent despite (#2186). Shown whatever the outcome became:
+  // it is a fact about the send, and a later failure does not make it untrue.
+  const note = f.dispatchNote ? ` — note: ${esc(f.dispatchNote)}` : '';
+  return `<code>${esc(f.outcome)}</code> (${who}, revision ${esc(f.promptRevision)}${when ? `, ${when}` : ''})${reason}${note}`;
 }
 
 /**

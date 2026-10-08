@@ -256,3 +256,115 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
     });
   });
 });
+
+/** A tmux server identity as `tmux.createSession` reports it: `<pid>.<start time>`. */
+const SRV = '4242.1790431343';
+
+describe('a launch records the pane it created on its channel (#2186)', () => {
+  const sessions = require('../lib/sessions');
+
+  it('writes the pane id it is handed into the channel\'s adapter state', () => {
+    const writes = [];
+    const got = sessions._recordLaunchPane({ id: 41 }, { paneId: '%12', server: SRV }, { setAdapterState: (id, patch) => writes.push([id, patch]) });
+    assert.equal(got, '%12');
+    assert.deepEqual(writes, [[41, { paneId: '%12', paneServer: SRV }]]);
+  });
+
+  it('records nothing, and does not throw, when no usable pane id came from creation or the write fails: the launch goes on', () => {
+    const writes = [];
+    for (const bad of [undefined, null, '', '12', '%', 'tc-b1', '%12 ', 12]) {
+      assert.equal(sessions._recordLaunchPane({ id: 41 }, { paneId: bad, server: SRV }, { setAdapterState: (id, patch) => writes.push([id, patch]) }), null, String(bad));
+    }
+    // A pane id with no usable tmux server beside it is not recorded either: the id alone can recur.
+    for (const bad of [undefined, null, '', '4242', '4242.', 'x.1', 4242.1]) {
+      assert.equal(sessions._recordLaunchPane({ id: 41 }, { paneId: '%12', server: bad }, { setAdapterState: (id, patch) => writes.push([id, patch]) }), null, String(bad));
+    }
+    for (const bad of [undefined, null, '%12']) {
+      assert.equal(sessions._recordLaunchPane({ id: 41 }, bad, { setAdapterState: (id, patch) => writes.push([id, patch]) }), null, String(bad));
+    }
+    assert.deepEqual(writes, []);
+    assert.equal(sessions._recordLaunchPane({ id: 41 }, { paneId: '%12', server: SRV }, { setAdapterState: () => { throw new Error('db locked'); } }), null);
+  });
+
+  it('records nothing for a launch with no channel row', () => {
+    let wrote = 0;
+    assert.equal(sessions._recordLaunchPane(null, { paneId: '%12', server: SRV }, { setAdapterState: () => { wrote += 1; } }), null);
+    assert.equal(wrote, 0);
+  });
+});
+
+describe('attaching a launch\'s channel records its pane on the stored row (#2186)', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const store = require('../lib/store');
+  const tmux = require('../lib/tmux');
+  const sessions = require('../lib/sessions');
+  let tmpDir;
+  let realSole;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-attach-pane-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    realSole = tmux.solePaneId;
+  });
+
+  after(() => {
+    tmux.solePaneId = realSole;
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /** A channel as `_prepareStartupChannel` hands it over, whose adapter records the row for real. */
+  const prepared = (sessionId) => ({
+    handle: { state: { pid: 1, socketPath: '/x' } },
+    adapterName: 'codex',
+    adapter: { attachLaunch: (handle, launch) => store.startupControlChannels.open({ sessionId: launch.sessionId, sequenceId: launch.sequenceId, engineId: launch.engineId, adapter: 'codex', adapterState: handle.state }) }
+  });
+
+  it('the row the launch stores carries the pane id creation printed, beside what the adapter recorded, and the session is never asked for its pane', () => {
+    let asked = 0;
+    tmux.solePaneId = () => { asked += 1; return '%99'; };
+    sessions._attachStartupChannel(prepared(501), { id: 501, tmuxSession: 'tc-proj' }, 'codex', { paneId: '%31', server: SRV });
+    const row = store.startupControlChannels.getOpenBySession(501);
+    assert.equal(asked, 0);
+    assert.equal(row.adapterState.paneId, '%31');
+    assert.equal(row.adapterState.paneServer, SRV, 'with the tmux server that issued it');
+    assert.equal(row.adapterState.socketPath, '/x', 'the adapter\'s own state is kept');
+  });
+
+  it('a later adapter write (the thread, the server version) does not lose the pane id', () => {
+    sessions._attachStartupChannel(prepared(502), { id: 502, tmuxSession: 'tc-proj2' }, 'codex', { paneId: '%32', server: SRV });
+    const row = store.startupControlChannels.getOpenBySession(502);
+    store.startupControlChannels.setAdapterState(row.id, { threadId: 't-1' });
+    store.startupControlChannels.setAdapterState(row.id, { serverVersion: '0.156.1' });
+    assert.equal(store.startupControlChannels.get(row.id).adapterState.paneId, '%32');
+    assert.equal(store.startupControlChannels.get(row.id).adapterState.paneServer, SRV);
+  });
+
+  it('a launch whose creation printed no pane id still gets its channel, with no pane on record', () => {
+    tmux.solePaneId = () => '%99';
+    sessions._attachStartupChannel(prepared(503), { id: 503, tmuxSession: 'tc-proj3' }, 'codex', { paneId: null, server: null });
+    const row = store.startupControlChannels.getOpenBySession(503);
+    assert.ok(row, 'the launch is not failed by it');
+    assert.equal(row.adapterState.paneId, undefined, 'and the session\'s current pane is not recorded in its place');
+  });
+
+  it('REPLACEMENT BETWEEN CREATION AND ATTACH: the session\'s only pane is already a replacement when the channel is attached; the record stays the created pane and the witness refuses the replacement', async () => {
+    // Creation printed %31. Before the channel was attached the session was
+    // split and %31 killed, so the session's one pane is now %40.
+    tmux.solePaneId = () => '%40';
+    sessions._attachStartupChannel(prepared(504), { id: 504, tmuxSession: 'tc-proj4' }, 'codex', { paneId: '%31', server: SRV });
+    const row = store.startupControlChannels.getOpenBySession(504);
+    assert.equal(row.adapterState.paneId, '%31', 'the replacement is not recorded as the launch\'s pane');
+
+    const reads = [];
+    const seen = await require('../lib/pane-witness').composerShown({
+      tmuxName: 'tc-proj4', paneId: row.adapterState.paneId, paneServer: row.adapterState.paneServer, engineProfile: {},
+      wakeProfile: require('../lib/medusa-wake').ENGINE_WAKE_PROFILES.codex
+    }, { gapMs: 0, sleep: async () => {}, read: (name, id) => { reads.push(id); return null; } });
+    assert.deepEqual(seen, { shown: false, dialog: null, why: 'the session\'s pane is not the pane this launch created', lasting: true });
+    assert.deepEqual(reads, [], 'the replacement pane is never read');
+  });
+});

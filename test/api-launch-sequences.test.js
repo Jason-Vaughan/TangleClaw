@@ -317,6 +317,26 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
     assert.deepEqual(bare.startupControl, { channel: null, fires: [], fireable: false }, 'a launch with no record says so, as nulls and empties');
   });
 
+  it('a fire sent without a config trust entry is served with its dispatch note, and every other fire with none (#2186)', async () => {
+    const NOTE = 'Sent without a trust entry in Codex\'s config for /p: TangleClaw did not grant trust.';
+    const row = store.startupPrompts.insertFire({
+      idempotencyKey: 'note-key-00000001', projectId: project.id, sessionId: hooked.sequence.sessionId, sequenceId: hooked.sequence.id,
+      promptRevision: 99, promptTextDigest: 'd'.repeat(64), policyDigest: 'p'.repeat(64),
+      callerKind: 'operator', callerClearance: 'operator-verified', callerProjectId: null,
+      outcome: 'pending', reasonCode: null, reason: null
+    });
+    store.startupPrompts.updateFire(row.id, { outcome: 'dispatching', dispatchNote: NOTE });
+    store.startupPrompts.updateFire(row.id, { outcome: 'accepted' });
+    store.startupPrompts.updateFire(row.id, { outcome: 'applied' });
+
+    const res = await get(server, `/api/launch-sequences?projectId=${project.id}`, { 'x-tangleclaw-client': 'dashboard' });
+    const seq = res.body.sequences.find((s) => s.sequenceId === hooked.sequence.id);
+    const noted = seq.startupControl.fires.find((f) => f.id === row.id);
+    assert.equal(noted.outcome, 'applied');
+    assert.equal(noted.dispatchNote, NOTE, 'the panel is served the note the row carries');
+    for (const f of seq.startupControl.fires.filter((x) => x.id !== row.id)) assert.equal(f.dispatchNote, null);
+  });
+
   it('Fire applies exactly to an active session with an open channel, for the operator only', async () => {
     const live = bind(project);
     store.startupControlChannels.open({ sessionId: live.session.id, sequenceId: live.sequence.id, engineId: 'claude', adapter: 'codex', adapterState: { pid: 1, socketPath: '/tmp/x.sock' } });

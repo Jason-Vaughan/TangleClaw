@@ -35,6 +35,45 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-08 — #2186: the native fire in a folder Codex's config does not trust (built, not active)
+
+<!-- prawduct: type=feature | scope=2186-native-fire-untrusted-folder -->
+
+#2186, the Operator's option 2 as ruled by the Architect in A154 and dispatched by the PM. Stacked on #2177 (PR #2209), whose launch dialog guard the pane witness uses.
+
+**The defect.** `_readiness` read `config/read`, found no trust entry for the project path, and blocked the fire with a fixed sentence saying the pane was showing a folder-trust dialog. Nothing read the pane. Under `--remote` on codex-cli 0.156.1 no dialog is drawn (11 private fake-key launches, one live signed-in session in a renamed directory), and a native launch withholds the paste and the kickoff, so the session got no first turn.
+
+**Root cause.** A fact about Codex's config was reported as a fact about the pane, on the strength of probe evidence that turned out not to hold for this launch path.
+
+**What landed.** The block's wording says what was read, claims no dialog and says how to grant trust. Behind it, dormant: `data/engines/codex.json` records `startupControl.remoteTrustPrompt.absentOn`, empty, validated as exact unique versions that are all in `verifiedVersions`. `lib/pane-witness.js` reads a pane twice a second apart and answers yes only when both reads show a bare composer with no declared dialog below it, the cursor on it with nothing typed, no header still showing its starting value (a capture whose header has scrolled away passes), no busy marker, and an unchanged digest and cursor. `_readiness` runs the account, usage and thread checks first; a fire that passes them with no trust entry is put to `_withoutTrustEntry`, which needs a listed version and the witness; the bound thread is then read again and must still be in the folder and idle. The fire service supplies the list and the witness for every fire, so the automatic and the operator's fire share one rule. An allowed fire writes a `dispatch_note` on its row: a new nullable column, set once at dispatch, never cleared by a later transition, shown on the panel.
+
+**Why a new column.** `updateFire` rewrites `reason` on every transition and the panel shows it only beside a reason code; the activity log is pruned. A note about what a fire was sent despite has to outlive the turn.
+
+**The panel is served by a field list.** `server.js` builds each fire row the panel reads from a whitelist. The first version of this change added the column and the label and not the field, and its panel test fed the renderer a hand-built row, so the note would have been stored and never shown; the boundary review found it. The serializer carries it now and an API test reads it back.
+
+**An entry that says untrusted is not a missing entry.** It blocks as such, in its own words, and never reaches the exception. A dialog on the pane that is not the trust dialog is `pane_not_ready`, not `trust_required`.
+
+**Config answers.** `projects: null` is a well-formed answer from a home that never trusted a folder and now reads as no entry. A missing `projects` key, or one that is not a table, stays `readiness_unknown` and cannot use the exception.
+
+**A test expectation changed, on purpose.** `test/startup-control.test.js` asserted that every field of a `startupControl` block is required. `remoteTrustPrompt` is optional, so the test now lists the required fields by name.
+
+**Not active, and why.** `absentOn` is empty. Adding 0.156.1 waits for one signed-in untrusted-folder fire through the real `--remote` path on the Operator's key tier, which this build did not run and has no access to. #2186 stays open.
+
+**The cursor is bound to the composer by position.** The witness first took the capture's composer and the cursor's row as two separate facts, then bound them by what the rows read. Neither is enough: a stale composer above an undeclared menu passes the first, and an identical older composer row with the cursor parked on it passes the second (Architect A154 R4 and R5). The existing reads could not give a position: `capturePane` reaches into scrollback and `_exec` trims leading blank rows, so a capture's row index is not a pane row. `tmux.visiblePane` is one invocation that returns the pane's height, the cursor and the visible rows untrimmed (its two commands run in sequence, so it gives rows that line up with the cursor's row number, not a screen held still; the second read a second later is what answers a redraw); the witness requires the cursor's row number to be the last composer row, and refuses a read that is not exactly the pane's height in rows.
+
+**One pinned pane.** `=session:` names a session's CURRENT pane, so the read's two commands, or the witness's two reads, could land on different panes when another is selected between them (Architect A154 R8, from a two-pane reproduction). The witness now pins the id of the session's one pane (`tmux.solePaneId`, which refuses a session with a second pane or window), aims both commands of both reads at that id, and the read checks its own answer: that pane, in that session, still the only pane. Tested against real tmux sessions with a split pane, a second window and a foreign pane id.
+
+**The pane must be the launch's own.** Pinning the session's one pane at fire time is not enough: split the session, kill the pane the launch created, and a different process is its only pane, with a composer of its own (Architect A154 R8, second part). The launch now records its pane id on its channel's adapter state (`sessions._recordLaunchPane`). The id is the one the creating `tmux new-session -P -F '#{pane_id}'` printed (`tmux.createSession`'s `born.paneId`), carried to the channel unchanged; it is never looked up from the session afterwards, because by then the session's one pane can already be a replacement (Architect A154 R10). A launch whose creation printed no usable id records none and is refused. The same print carries the tmux server's identity (`#{pid}.#{start_time}`), recorded beside the pane id as `paneServer`: a channel can outlive the tmux server, since its app-server is a separate process and the row closes only when something notices the pane is gone, and a new server issues the same pane ids again. `tmux.visiblePane` takes that identity, asks for it in the same invocation as the rows, and throws with `tcOtherServer` when it differs; the witness turns that into a refusal that says to relaunch. Then the adapter hands that id to the witness, and the witness refuses a session whose one pane is any other, or a launch with no pane on record, before reading anything. No schema change: adapter state is a JSON column.
+
+**Only a status row may sit below the composer.** Any nonblank row below the last composer row must match the status-row shape the Codex adapter supplies, and there may be one. A boxed or otherwise marked menu the profile does not declare is content nothing recognises. A status line cut down to a single item has no separator and is refused; that fails closed.
+
+**Checked on a live pane.** The witness itself, through the real `tmux.visiblePane` read, on a private sandboxed codex-cli 0.156.1 pane: it named the update prompt, then the folder-trust prompt, and answered shown only at the usable composer, on two reads a second apart.
+
+**A footer is not a status row.** Codex's dialog footer (`  enter continue · esc skip`) has the status row's shape, so a stale composer holding the cursor above a lone footer would have passed (Architect A154 R6). A status-shaped row that holds a token naming a key (enter, return, esc, tab, space, arrows, an arrow glyph) is refused. Whole tokens only: a model name or path containing such a word is not caught, and bare direction words are left out because the measured status row reads `Context 100% left`.
+
+**Known limit of the witness.** The status row is still recognised by shape: a middle-dot row that names no key, alone below a stale composer that holds the cursor, passes. No such Codex frame has been captured; a test pins it by name. Binding the row to the model the pane's header names is left for the activation change, when a signed-in pane can be measured, because it would refuse a long-running session whose header has scrolled away.
+
+**Not covered.** A real fire against a live Codex. The no-entry block wording and the panel were not looked at in a running TangleClaw: at the fake-key tier a fire stops at the usage check before it reaches that block. The untrusted-entry wording returns earlier and could be looked at; it was not. What Codex does with project-level config and hooks in an untrusted folder under `--remote`. Codex versions other than 0.156.1. The witness's header pattern is Codex's and lives in its adapter.
 ## 2026-10-07 — ADR 0014: the ratification record matches what happened
 
 <!-- prawduct: type=docs | scope=adr-0014-ratification-record -->

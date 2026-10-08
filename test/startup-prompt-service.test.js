@@ -361,6 +361,102 @@ describe('startup prompt service: fire', () => {
     assert.equal(adapterCalls, 2);
   });
 
+  describe('what the adapter is given for a folder with no trust entry (#2186)', () => {
+    const EVIDENCE = Object.fromEntries(['adapter', 'channel', 'readiness', 'receipt', 'blockers', 'verifiedVersions', 'remoteTrustPrompt'].map((k) => [k, { verifiedOn: null, source: 's' }]));
+    const blockWith = (absentOn) => ({ adapter: 'fake', channel: 'c', readiness: 'r', receipt: 'x', blockers: 'b', verifiedVersions: ['1.0.0'], remoteTrustPrompt: { absentOn }, evidence: EVIDENCE });
+
+    /**
+     * A world whose adapter records what it was handed and settles at once.
+     * @param {object} block - The startupControl block.
+     * @param {object} [session] - The session record.
+     * @param {object} [over] - Dependency overrides.
+     * @returns {{d: object, inputs: object[], targets: object[]}}
+     */
+    const world = (block, session = { id: 10, projectId: 1, engineId: 'codex', status: 'active', tmuxSession: 'tc-target' }, over = {}) => {
+      const inputs = [];
+      const targets = [];
+      const adapter = {
+        installedVersion: () => '1.0.0',
+        fire: (input) => {
+          inputs.push(input);
+          const row = input.onUpdate({ outcome: 'blocked', reasonCode: 'engine_not_ready', reason: 'r' });
+          return { accepted: Promise.resolve(row), settled: Promise.resolve(row) };
+        }
+      };
+      const d2 = deps({
+        adapters: { fake: adapter },
+        getEngine: (id) => ({ id, name: 'Fake', capabilities: { startupControl: block } }),
+        getSession: (id) => (id === 10 ? session : null),
+        wakeProfile: (id) => ({ engine: id, promptRe: /x/ }),
+        paneWitness: async (target) => { targets.push(target); return { shown: true }; },
+        ...over
+      });
+      return { d: d2, inputs, targets };
+    };
+
+    it('the operator\'s fire and the automatic fire are handed the same thing: the measured versions and a witness for this session\'s pane', async () => {
+      for (const caller of [OPERATOR, svc.launchCaller({ sessionId: 10, projectId: 1 })]) {
+        const w = world(blockWith(['1.0.0']));
+        await svc.fire(req(caller, caller.kind === 'operator' ? {} : { paneGate: { ready: true, reason: 'ready' } }), w.d);
+        assert.equal(w.inputs.length, 1, caller.kind);
+        const given = w.inputs[0].trustException;
+        assert.deepEqual(given.absentOn, ['1.0.0'], caller.kind);
+        assert.equal(typeof given.witness, 'function', caller.kind);
+        assert.deepEqual(await given.witness({ headerRe: /h/, startingRe: /s/ }), { shown: true });
+        assert.equal(w.targets.length, 1);
+        assert.equal(w.targets[0].tmuxName, 'tc-target');
+        assert.equal(w.targets[0].engineProfile.name, 'Fake');
+        assert.deepEqual(w.targets[0].wakeProfile.engine, 'codex');
+        assert.deepEqual(String(w.targets[0].headerRe), '/h/', 'the adapter\'s own header patterns reach the witness');
+      }
+    });
+
+    it('the pane id the adapter names (the one its channel recorded at launch) reaches the witness', async () => {
+      const w = world(blockWith(['1.0.0']));
+      await svc.fire(req(OPERATOR), w.d);
+      await w.inputs[0].trustException.witness({ paneId: '%7', paneServer: '4242.1790431343', headerRe: /h/ });
+      assert.equal(w.targets[0].paneId, '%7');
+      assert.equal(w.targets[0].paneServer, '4242.1790431343', 'with the tmux server that issued it');
+      assert.equal(w.targets[0].tmuxName, 'tc-target', 'and the session is still the fire service\'s to name');
+    });
+
+    it('the adapter cannot redirect the witness to another pane or profile', async () => {
+      const w = world(blockWith(['1.0.0']));
+      await svc.fire(req(OPERATOR), w.d);
+      await w.inputs[0].trustException.witness({ tmuxName: 'tc-someone-else', engineProfile: { name: 'Other' }, wakeProfile: { engine: 'other' }, headerRe: /h/ });
+      assert.equal(w.targets[0].tmuxName, 'tc-target');
+      assert.equal(w.targets[0].engineProfile.name, 'Fake');
+      assert.equal(w.targets[0].wakeProfile.engine, 'codex');
+    });
+
+    it('an engine that records no measured version hands over an empty list: the block stays in force', async () => {
+      // The second block declares no such fact at all, as every engine but Codex does.
+      const undeclared = blockWith([]);
+      delete undeclared.remoteTrustPrompt;
+      undeclared.evidence = Object.fromEntries(Object.entries(EVIDENCE).filter(([k]) => k !== 'remoteTrustPrompt'));
+      for (const block of [blockWith([]), undeclared]) {
+        const w = world(block);
+        await svc.fire(req(OPERATOR), w.d);
+        assert.deepEqual(w.inputs[0].trustException.absentOn, []);
+      }
+    });
+
+    it('the adapter gets a copy of the list, so it cannot widen the profile\'s', async () => {
+      const block = blockWith(['1.0.0']);
+      const w = world(block);
+      await svc.fire(req(OPERATOR), w.d);
+      w.inputs[0].trustException.absentOn.push('9.9.9');
+      assert.deepEqual(block.remoteTrustPrompt.absentOn, ['1.0.0']);
+    });
+
+    it('a session with no pane gets no witness, and the pane is never read', async () => {
+      const w = world(blockWith(['1.0.0']), { id: 10, projectId: 1, engineId: 'codex', status: 'active' });
+      await svc.fire(req(OPERATOR), w.d);
+      assert.equal(w.inputs[0].trustException.witness, undefined);
+      assert.deepEqual(w.targets, []);
+    });
+  });
+
   it('an out-of-scope target answers exactly like a missing one, and the denial is recorded', async () => {
     const denied = await svc.fire(req(UNLISTED_IN_GROUP), d);
     const missing = await svc.fire(req(UNLISTED_IN_GROUP, { sessionId: 12 }), d);
