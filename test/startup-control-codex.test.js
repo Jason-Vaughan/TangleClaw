@@ -642,7 +642,32 @@ describe('Codex startupControl adapter', () => {
           assert.equal(settled.outcome, 'blocked');
           assert.equal(settled.reasonCode, 'pane_not_ready');
           assert.match(settled.reason, /does not have exactly one pane to read/);
+          assert.ok(settled.reason.endsWith('Fire again once it is.'), 'closing the extra pane clears this, so the operator is not told to relaunch');
           assert.equal(server.calls('turn/start').length, 0);
+        });
+
+        it('a very long project path does not cost a pane refusal the sentence the operator acts on', async () => {
+          const long = { id: 1, name: 'proj', path: `/Users/someone/Documents/Projects/${'a-deeply-nested-folder/'.repeat(14)}the-project` };
+          assert.ok(long.path.length > 300);
+          for (const [seen, ending] of [
+            [{ shown: false, dialog: null, why: 'the session\'s pane is not the pane this launch created', lasting: true }, 'This does not clear by itself: relaunch the session.'],
+            [{ shown: false, dialog: null, why: 'the composer holds typed text' }, 'Fire again once it is.'],
+            [new Error('tmux went away'), 'Fire again once the pane shows an empty composer.']
+          ]) {
+            await serve({ ...NO_ENTRY, 'thread/read': (p) => ({ thread: { id: p.threadId, cwd: long.path, status: { type: 'idle' } } }) });
+            store.getDb().prepare('DELETE FROM startup_control_channels').run();
+            channel({ paneId: '%7' });
+            const witness = async () => { if (seen instanceof Error) throw seen; return seen; };
+            const settled = await codex.fire({ session, project: long, sequenceId: 100, promptText: PROMPT, promptTextDigest: PROMPT_DIGEST, payloadDigest: DIGEST, onUpdate: pendingFire().onUpdate, trustException: { absentOn: ['0.156.1'], witness } }, { reconnectPauseMs: 10 }).settled;
+            assert.equal(settled.reasonCode, 'pane_not_ready');
+            assert.ok(settled.reason.length <= 500, String(settled.reason.length));
+            assert.ok(settled.reason.includes('/a-deeply-nested-folder/the-project.'), 'the end of the path is kept');
+            assert.ok(settled.reason.includes('…'), 'its front is visibly shortened');
+            assert.ok(settled.reason.endsWith(ending), settled.reason);
+            assert.equal(server.calls('turn/start').length, 0);
+            server.close();
+            server = null;
+          }
         });
 
         it('the active pane switching between the witness\'s two reads gets no trust-free fire', async () => {
