@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, before, after } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const fs = require('node:fs');
@@ -1099,6 +1099,54 @@ describe('API endpoints', () => {
       } finally {
         master.applyMasterAccessLevel = realApply;
       }
+    });
+
+    describe('master.engine must name a profile that says it is that engine (#2128, A160 R16)', () => {
+      // `store.engines.get` is truthy for any file that parses. On a
+      // case-insensitive disk `Claude` finds `claude.json`; a hand-placed file
+      // may carry no id at all. Neither is the profile that was asked for.
+      const realGet = store.engines.get;
+      afterEach(() => { store.engines.get = realGet; });
+      // Read when a test runs: the test store is not initialised when this block is declared.
+      const real = () => realGet.call(store.engines, 'claude');
+
+      const UNIDENTIFIED = {
+        'a file found under another letter case': ['Claude', () => real()],
+        'a profile with no id': ['hand-placed', () => { const { id: _dropped, ...rest } = real(); return rest; }],
+        'an empty object': ['hand-placed', () => ({})],
+        'another profile\'s id': ['hand-placed', () => ({ ...real(), id: 'codex' })],
+        'a number for an id': ['hand-placed', () => ({ ...real(), id: 7 })],
+        'a list': ['hand-placed', () => [real()]]
+      };
+
+      for (const [what, [engineId, make]] of Object.entries(UNIDENTIFIED)) {
+        it(`${what}: 400, the reason says what the file must carry, and nothing is saved`, async () => {
+          const profile = make();
+          const before = JSON.stringify(store.config.load().master);
+          store.engines.get = (id) => (id === engineId ? profile : realGet.call(store.engines, id));
+          const { status, data } = await request(server, 'PATCH', '/api/config', { master: { engine: engineId } });
+          assert.equal(status, 400);
+          assert.match(data.error, new RegExp(`master\\.engine "${engineId}" cannot be selected: its engine profile is not usable \\(what the store returned `));
+          assert.match(data.error, new RegExp(`must be a JSON object whose "id" is exactly "${engineId}"`));
+          assert.equal(JSON.stringify(store.config.load().master), before);
+        });
+      }
+
+      it('control: a custom profile carrying its own id can be selected', async () => {
+        const custom = { ...real(), id: 'my-claude' };
+        store.engines.get = (id) => (id === 'my-claude' ? custom : realGet.call(store.engines, id));
+        const { status } = await request(server, 'PATCH', '/api/config', { master: { engine: 'my-claude' } });
+        assert.equal(status, 200);
+        assert.equal(store.config.load().master.engine, 'my-claude');
+        store.engines.get = realGet;
+        await request(server, 'PATCH', '/api/config', { master: { engine: 'claude' } });
+      });
+
+      it('an engine with no profile at all keeps the answer it always had', async () => {
+        const { status, data } = await request(server, 'PATCH', '/api/config', { master: { engine: 'no-such-engine' } });
+        assert.equal(status, 400);
+        assert.match(data.error, /is not a configured engine/);
+      });
     });
 
     it('rejects unknown fields, unconfigured engines, missing groups, and bad shapes', async () => {

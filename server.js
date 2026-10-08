@@ -1843,8 +1843,20 @@ function validateMasterPatch(patch, config) {
     if (typeof merged.engine !== 'string' || !merged.engine) {
       return { error: 'master.engine must be an engine id string or null' };
     }
-    if (!store.engines.get(merged.engine)) {
+    const masterProfile = store.engines.get(merged.engine);
+    if (!masterProfile) {
       return { error: `master.engine "${merged.engine}" is not a configured engine` };
+    }
+    // The profile must BE that engine's before it can be chosen for the
+    // Master (#2128): the same identity test a launch makes. A file found
+    // under another letter case on a case-insensitive disk, or one that does
+    // not carry its own id, is not it.
+    const masterIdentity = require('./lib/startup-dialog').identify(masterProfile, merged.engine);
+    if (!masterIdentity.profile) {
+      return {
+        error: `master.engine "${merged.engine}" cannot be selected: its engine profile is not usable (${masterIdentity.detail}). `
+          + `An engine profile file must be a JSON object whose "id" is exactly "${merged.engine}".`
+      };
     }
   }
   if (merged.scope !== 'all') {

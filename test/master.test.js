@@ -6,7 +6,7 @@
 // invariant. tmux and engine detection are injected fakes: tests must never
 // create a real `tangleclaw-master` session or launch a real engine.
 
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -363,6 +363,81 @@ describe('ensureMasterSession', () => {
       config.defaultEngine = saved;
       store.config.save(config);
     }
+  });
+
+  describe('an engine profile that is not the profile asked for starts nothing (#2128, A160 R16)', () => {
+    // The same identity test a project launch makes. `store.engines.get` is a
+    // bare JSON.parse, so a file overwritten with `{}` or dropped in by hand
+    // without its `id` comes back truthy; the Master used to start an engine
+    // process from it, with that object's launch environment.
+    const realGet = store.engines.get;
+    // The bundled profile is read when a test runs, not when this block is
+    // declared: the test store is not initialised until `before`.
+    const real = () => realGet.call(store.engines, 'claude');
+    let detected;
+    let enginesSpy;
+
+    beforeEach(() => {
+      detected = [];
+      enginesSpy = { ...availableEngines, detectEngine: (profile) => { detected.push(profile && profile.id); return { available: true }; } };
+    });
+
+    afterEach(() => { store.engines.get = realGet; });
+
+    const UNIDENTIFIED = {
+      'an empty object': () => ({}),
+      'a profile with no id': () => { const { id: _dropped, ...rest } = real(); return rest; },
+      'another profile\'s id': () => ({ ...real(), id: 'codex' }),
+      'an id differing only in case': () => ({ ...real(), id: 'Claude' }),
+      'a number for an id': () => ({ ...real(), id: 7 }),
+      'a list': () => [real()],
+      'a string': () => 'claude',
+      'a number': () => 7
+    };
+
+    for (const [what, make] of Object.entries(UNIDENTIFIED)) {
+      it(`${what}: refused with a code and a remedy; the engine is not looked for and no pane is created`, () => {
+        const value = make();
+        assert.equal(real().id, 'claude', 'precondition: the bundled profile is healthy');
+        store.engines.get = (id) => (id === 'claude' ? value : realGet.call(store.engines, id));
+        const t = fakeTmux({ alive: false });
+        const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: enginesSpy });
+        assert.equal(r.created, false);
+        assert.equal(r.code, 'ENGINE_PROFILE_INVALID');
+        assert.match(r.error, /^Engine "claude" was not started for the Project Master: its profile is not usable \(what the store returned /);
+        assert.match(r.error, /must be a JSON object whose "id" is exactly "claude"\. Install or restore a valid profile, or repair the file, then start the Project Master again\. Nothing was started\.$/);
+        assert.deepEqual(detected, [], 'the engine was not looked for');
+        assert.equal(t.calls.length, 0, 'no pane was created');
+      });
+    }
+
+    it('a profile the store does not have keeps the answer it always had', () => {
+      store.engines.get = (id) => (id === 'claude' ? null : realGet.call(store.engines, id));
+      const t = fakeTmux({ alive: false });
+      const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: enginesSpy });
+      assert.equal(r.created, false);
+      assert.match(r.error, /^Engine "claude" not found$/);
+      assert.equal(r.code, undefined);
+      assert.equal(t.calls.length, 0);
+    });
+
+    it('control, the profile carrying its own id: the engine is looked for and the Master is launched', () => {
+      const t = fakeTmux({ alive: false });
+      const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: enginesSpy });
+      assert.equal(r.created, true);
+      assert.deepEqual(detected, ['claude']);
+      assert.equal(t.calls.length, 1);
+    });
+
+    it('a Master that is already running is left alone: the early return does not depend on the profile', () => {
+      store.engines.get = (id) => (id === 'claude' ? {} : realGet.call(store.engines, id));
+      const t = fakeTmux({ alive: true });
+      const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: enginesSpy });
+      assert.equal(r.created, false);
+      assert.equal(r.error, undefined);
+      assert.equal(r.code, undefined);
+      assert.equal(t.calls.length, 0);
+    });
   });
 
   it('refuses when the engine is available but has no launch command — no bare-shell master', () => {

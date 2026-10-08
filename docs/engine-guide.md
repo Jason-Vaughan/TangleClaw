@@ -660,7 +660,10 @@ only when the lookup failed:
   `.json`; for an OpenClaw session, `openclaw`). **A launch checks this first**: before the
   engine is looked for, a pane is created or a pre-key is scheduled, a profile that is not an
   object or does not carry that `id` refuses the launch (`ENGINE_PROFILE_INVALID`, HTTP 409 on
-  the launch route) and nothing is started. Every profile TangleClaw saves or validates has
+  the launch route) and nothing is started. **The Project Master is held to the same test**: it
+  does not start an engine from such a profile (no engine process, no pane; a Master that is
+  already running is left as it is), and such an engine cannot be selected as `master.engine`
+  in the settings (400, with the reason). Every profile TangleClaw saves or validates has
   one, and so does every bundled profile. A file dropped into the engines directory by hand
   **without** an `id`, or with another profile's, launched and took sends before this check
   existed; it now cannot be launched, and a session already running on it has every send refused,
