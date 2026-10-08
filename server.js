@@ -1833,7 +1833,7 @@ function _masterTightenedBlindError(level, guardBinds) {
       + `${why}, so its instructions and memory files were not refreshed and still describe the previous level. `
       + `A master on another engine has no write guard and follows those instructions. ${remedy}`;
   }
-  return `The master's access level file now says "${level}", but its write guard could not be confirmed in place, so do not rely on this change having taken effect. `
+  return `The master's access level was written as "${level}", but the level file and the write guard did not both read back, so do not rely on this change having taken effect. `
     + `${why}, and its instructions and memory files were not refreshed either. ${remedy}`;
 }
 
@@ -2264,11 +2264,14 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
         masterLevelError = _masterTightenedBlindError(newMasterAccessLevel, err.guardBinds === true);
       } else if (err.levelApplied && err.guardBinds === false) {
         // The engine resolved and the refresh finished; what did not happen is
-        // the write guard reading back. That is known, so it is said outright
-        // rather than folded into "may be a step behind".
-        masterLevelError = `The master's access level file now says "${newMasterAccessLevel}" and its instructions were refreshed, `
-          + 'but its write guard could not be confirmed in place, so do not rely on this change having taken effect for a master running Claude Code. '
-          + 'Check that the master\'s home directory and the `.claude` directory inside it are writable, then change the access level and change it back to apply it again.';
+        // the level file and write guard both reading back. That is known, so it
+        // is said outright rather than folded into "may be a step behind". The
+        // remedy must not ask the operator to raise access in order to retry.
+        masterLevelError = `The master's access level was written as "${newMasterAccessLevel}" and its instructions were refreshed, `
+          + 'but the level file and the write guard did not both read back, so do not rely on this change having taken effect for a master running Claude Code. '
+          + 'Repair the master\'s home directory and the `.claude` directory inside it so they are writable, then restart the master session: '
+          + 'a master that resolves as Claude Code has its write guard regenerated at start. Check the guard status in Master settings afterwards. '
+          + 'Do not change the access level to retry.';
       } else masterLevelError = err.levelApplied
         ? `The master's access level is now "${newMasterAccessLevel}", but the refresh that should have followed it did not finish. `
           + 'Its identity, its memory scaffold or its write guard may be a step behind. Restart the master session to bring them back into line.'

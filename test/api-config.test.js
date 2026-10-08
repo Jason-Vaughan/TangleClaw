@@ -1054,7 +1054,7 @@ describe('API endpoints', () => {
         master.applyMasterAccessLevel = () => { throw blind(false); };
         const unbound = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'read-only' } });
         assert.equal(unbound.status, 500);
-        assert.match(unbound.data.error, /level file now says "read-only", but its write guard could not be confirmed in place/);
+        assert.match(unbound.data.error, /was written as "read-only", but the level file and the write guard did not both read back/);
         assert.match(unbound.data.error, /do not rely on this change having taken effect/);
         assert.doesNotMatch(unbound.data.error, /write guard is in place/);
         assert.doesNotMatch(unbound.data.error, /SECRET-FRAGMENT|Unexpected token/);
@@ -1068,7 +1068,9 @@ describe('API endpoints', () => {
         const noGuard = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'read-only' } });
         assert.equal(noGuard.status, 500);
         assert.equal(noGuard.data.code, 'MASTER_LEVEL_NOT_APPLIED');
-        assert.match(noGuard.data.error, /level file now says "read-only" and its instructions were refreshed, but its write guard could not be confirmed in place/);
+        assert.match(noGuard.data.error, /was written as "read-only" and its instructions were refreshed, but the level file and the write guard did not both read back/);
+        assert.match(noGuard.data.error, /Repair the master's home directory and the `\.claude` directory inside it so they are writable, then restart the master session: a master that resolves as Claude Code has its write guard regenerated at start\. Check the guard status in Master settings afterwards\. Do not change the access level to retry\.$/);
+        assert.doesNotMatch(noGuard.data.error, /change it back/, 'the remedy must never ask for a temporary grant');
         assert.match(noGuard.data.error, /do not rely on this change having taken effect for a master running Claude Code/);
         assert.doesNotMatch(noGuard.data.error, /could not determine which engine|may be a step behind|still enforcing/);
 

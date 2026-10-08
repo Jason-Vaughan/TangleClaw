@@ -669,24 +669,25 @@ only when the lookup failed:
   being saved, and is refused when the Master is next started. Naming such an engine in a
   change is refused. **Saving a lower access level and applying it are separate steps, and
   the second does not need the engine either**: if TangleClaw cannot work out which engine the
-  Master runs (any installed profile file that does not parse causes that; so does having no
-  engine available on the machine while the configured engine is one TangleClaw has a profile
-  for, or while none is configured. A configured id with no profile at all is passed through
-  as itself and is not this case), a change that lowers access still writes the level file and puts the Claude Code write guard back in the
+  Master runs (any installed profile file that does not parse causes that; so does resolution
+  having no answer. The rule: a configured engine id that is not in TangleClaw's engine
+  selection list is passed through as itself; otherwise, when no engine in that list is
+  available, there is no answer. A profile hidden from selection is not in the list, so
+  having a profile file is not the test), a change that lowers access still writes the level file and puts the Claude Code write guard back in the
   Master's home. That binds a Master running Claude Code from its next tool call. It does not
   rewrite the Master's instructions, and a Master on another engine has no write guard, so the
   request answers 500 (`MASTER_LEVEL_NOT_APPLIED`) and says which part holds. A change that
   raises access is not applied while the engine cannot be resolved. **The resolved engine is
-  not trusted to say whether a guard is needed**: when the engine set for the Master is not
-  detected and another is, TangleClaw resolves the other one, so every change that lowers
+  not trusted to say whether a guard is needed**: when the engine set for the Master is in
+  the selection list but not detected, and another is, TangleClaw resolves the other one, so every change that lowers
   access writes the Claude Code write guard and reads it back whichever engine was resolved
   (two unused files in the home of a Master on another engine), and a change that raises
   access is refused. It goes through once the configured engine is detected again. Setting
   `master.engine` to the engine TangleClaw resolved also clears the refusal, and is right only
   if that is the engine the running Master actually uses: do not change it to get past the
   refusal. Two things this does not establish, because TangleClaw keeps no record of the
-  engine a running Master was started on: a Master started earlier on a substituted engine is
-  reported as guarded once the configured engine is detected again, and when no engine is
+  engine a running Master was started on: when the configured engine is Claude Code, a Master started earlier on a substituted engine
+  is reported as guarded once Claude Code is detected again, and when no engine is
   configured at all (neither `master.engine` nor `defaultEngine`) a change that raises access
   is applied on whichever available engine is picked. **A command into the
   Master's pane is refused when its engine cannot be resolved** (`MASTER_ENGINE_UNRESOLVED`):

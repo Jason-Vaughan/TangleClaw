@@ -268,9 +268,10 @@ it. `GET /api/master/status` reports which of the two is running, and both the c
 settings modal show it, so the weaker case is never displayed as the stronger one.
 
 **A lower `accessLevel` is applied even when the Master's engine cannot be resolved** (an
-installed engine profile file that does not parse causes that; so does having no engine available
-on the machine while the configured engine is one TangleClaw has a profile for, or while none is
-configured). The level file is written and
+installed engine profile file that does not parse causes that; so does resolution having no
+answer: a configured engine id that is not in TangleClaw's engine selection list is passed
+through as itself, and otherwise, when no engine in that list is available, there is no answer).
+The level file is written and
 the Claude Code write guard is restored in the Master's home; the Master's instructions are not
 rewritten, and the request answers 500 `MASTER_LEVEL_NOT_APPLIED` with a message saying which
 part holds. A Master on another engine has no write guard, so for it the change takes effect
@@ -281,7 +282,8 @@ not applied in that state.
 for the Master, and reads it back before reporting success. A Master on another engine gains
 two unused files in its home. **A higher `accessLevel` is refused while the engine resolved
 for the Master is not the one configured** (`master.engine`, else `defaultEngine`), which
-happens when the configured engine is not detected on the machine and another is. The change
+happens when the configured engine is in the selection list but not detected on the machine and
+another is. The change
 goes through once the configured engine is detected again. Setting `master.engine` to the
 engine TangleClaw resolved also clears the refusal; do that only if it is the engine the
 running Master actually uses. The comparison is with the configured engine, not with the
