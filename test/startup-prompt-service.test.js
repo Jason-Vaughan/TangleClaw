@@ -411,6 +411,15 @@ describe('startup prompt service: fire', () => {
       }
     });
 
+    it('the adapter cannot redirect the witness to another pane or profile', async () => {
+      const w = world(blockWith(['1.0.0']));
+      await svc.fire(req(OPERATOR), w.d);
+      await w.inputs[0].trustException.witness({ tmuxName: 'tc-someone-else', engineProfile: { name: 'Other' }, wakeProfile: { engine: 'other' }, headerRe: /h/ });
+      assert.equal(w.targets[0].tmuxName, 'tc-target');
+      assert.equal(w.targets[0].engineProfile.name, 'Fake');
+      assert.equal(w.targets[0].wakeProfile.engine, 'codex');
+    });
+
     it('an engine that records no measured version hands over an empty list: the block stays in force', async () => {
       // The second block declares no such fact at all, as every engine but Codex does.
       const undeclared = blockWith([]);

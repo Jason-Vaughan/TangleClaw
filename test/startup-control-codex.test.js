@@ -362,6 +362,37 @@ describe('Codex startupControl adapter', () => {
         assert.equal(server.calls('turn/start').length, 0);
       });
 
+      it('a dialog that is not the trust dialog is a pane that is not ready, named and read from the pane', async () => {
+        await serve(NO_ENTRY);
+        channel();
+        const dialog = { id: 'update', humanAction: 'Answer Codex\'s update prompt in the pane (Escape skips it).' };
+        const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async () => ({ shown: false, dialog, why: 'x' }) }).settled;
+        assert.equal(settled.outcome, 'blocked');
+        assert.equal(settled.reasonCode, 'pane_not_ready');
+        assert.match(settled.reason, /is showing its update prompt in the pane \(read from the pane\)/);
+        assert.match(settled.reason, /Escape skips it/);
+        assert.equal(server.calls('turn/start').length, 0);
+      });
+
+      it('a folder Codex was told NOT to trust is not "no entry": it is blocked as such and never gets the exception', async () => {
+        for (const entry of [{ trust_level: 'untrusted' }, { trust_level: 'none' }, {}, null]) {
+          await serve({ 'config/read': () => ({ config: { projects: { [PROJECT_PATH]: entry } } }) });
+          store.getDb().prepare('DELETE FROM startup_control_channels').run();
+          channel();
+          let consulted = 0;
+          const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async () => { consulted += 1; return { shown: true }; } }).settled;
+          assert.equal(settled.outcome, 'blocked', JSON.stringify(entry));
+          assert.equal(settled.reasonCode, 'trust_required');
+          assert.match(settled.reason, /has an entry for \/private\/tmp\/tc-b2-project that does not trust it/);
+          assert.ok(!/has no trust entry/.test(settled.reason), 'it does not say there is no entry');
+          assert.ok(!/is showing/.test(settled.reason), 'and claims no dialog');
+          assert.equal(consulted, 0, 'the pane is not consulted');
+          assert.equal(server.calls('turn/start').length, 0);
+          server.close();
+          server = null;
+        }
+      });
+
       it('a pane not proven to show an empty composer is pane_not_ready, naming what failed', async () => {
         for (const why of ['the engine is still starting', 'the composer holds typed text', 'the cursor is not on the composer row', 'a turn is running', 'the pane changed between two reads a second apart', 'the pane could not be read (the capture came back empty)']) {
           await serve(NO_ENTRY);
@@ -543,7 +574,7 @@ describe('Codex startupControl adapter', () => {
         });
 
         it('the update prompt and the opening screen are refused too', async () => {
-          for (const [name, code] of [['updatePrompt', 'trust_required'], ['openingScreen', 'pane_not_ready']]) {
+          for (const [name, code] of [['updatePrompt', 'pane_not_ready'], ['openingScreen', 'pane_not_ready']]) {
             await serve(NO_ENTRY);
             store.getDb().prepare('DELETE FROM startup_control_channels').run();
             channel();
@@ -1214,6 +1245,25 @@ describe('Codex startupControl adapter', () => {
       assert.equal(server.calls('turn/start').length, 0, 'a reconcile never sends');
     });
 
+    it('a fire sent without a trust entry keeps its dispatch note when a restart reconciles it (#2186)', async () => {
+      const NOTE = 'Sent without a trust entry in Codex\'s config for /p: TangleClaw did not grant trust.';
+      await serve({
+        'thread/turns/list': () => ({ data: [{ id: TURN, status: 'completed', items: [{ type: 'userMessage', id: 'i', clientId: DIGEST, content: [{ type: 'text', text: PROMPT }] }] }], nextCursor: null })
+      });
+      server.state.turnStarted = true;
+      channel();
+      // The row a restart finds: sent with a note, its outcome unknown.
+      const f = pendingFire('pending');
+      f.onUpdate({ outcome: 'dispatching', reason: null, engineThreadId: THREAD, dispatchNote: NOTE });
+      f.onUpdate({ outcome: 'indeterminate', reasonCode: 'send_unconfirmed', reason: 'the server restarted' });
+      assert.equal(f.current().dispatchNote, NOTE);
+      f.patches.length = 0;
+      const row = await codex.reconcile({ session, fire: f.current(), onUpdate: f.onUpdate }, { stableIdleMs: 5 });
+      assert.equal(row.outcome, 'applied');
+      assert.equal(row.dispatchNote, NOTE, 'kept through reconciliation');
+      assert.ok(f.patches.length > 0 && f.patches.every((p) => !('dispatchNote' in p)), 'reconciliation does not restate it; the row keeps it');
+    });
+
     it('settles to failed only after every page shows the payload absent and the thread stayed idle', async () => {
       await serve();
       server.state.turnStarted = true;
@@ -1338,15 +1388,22 @@ describe('Codex startupControl adapter', () => {
   });
 
   describe('helpers', () => {
-    it('parses the CLI version and the server version, and reads trust by canonical path with an unknown for no table', () => {
+    it('parses the CLI version and the server version, and reads trust by canonical path: trusted, untrusted, absent, or unreadable', () => {
       assert.equal(codex._internal._parseVersion('codex-cli 0.156.1\n'), '0.156.1');
       assert.equal(codex._internal._parseVersion('nonsense'), null);
       assert.equal(codex._internal._serverVersion({ userAgent: 'tangleclaw-probe/0.156.1 (Mac OS 15.6.1; arm64) screen-256color (x; 0.0.0)' }), '0.156.1');
       assert.equal(codex._internal._serverVersion({}), null);
-      assert.equal(codex._internal._trusted({ config: { projects: { '/a/b/': { trust_level: 'trusted' } } } }, '/a/b'), true);
-      assert.equal(codex._internal._trusted({ config: { projects: { '/a/b': { trust_level: 'untrusted' } } } }, '/a/b'), false);
-      assert.equal(codex._internal._trusted({ config: { projects: {} } }, '/a/b'), false);
+      assert.equal(codex._internal._trusted({ config: { projects: { '/a/b/': { trust_level: 'trusted' } } } }, '/a/b'), 'trusted');
+      // An entry that says anything else is a recorded decision, not a missing one (#2186).
+      assert.equal(codex._internal._trusted({ config: { projects: { '/a/b': { trust_level: 'untrusted' } } } }, '/a/b'), 'untrusted');
+      assert.equal(codex._internal._trusted({ config: { projects: { '/a/b': {} } } }, '/a/b'), 'untrusted');
+      assert.equal(codex._internal._trusted({ config: { projects: {} } }, '/a/b'), 'absent');
+      assert.equal(codex._internal._trusted({ config: { projects: { '/x': { trust_level: 'trusted' } } } }, '/a/b'), 'absent');
+      // A home that has trusted nothing answers null for the table; that is "no entry".
+      assert.equal(codex._internal._trusted({ config: { projects: null } }, '/a/b'), 'absent');
       assert.equal(codex._internal._trusted({ config: {} }, '/a/b'), null);
+      assert.equal(codex._internal._trusted({ config: { projects: [] } }, '/a/b'), null);
+      assert.equal(codex._internal._trusted({}, '/a/b'), null);
     });
 
     it('isolates legacy launches only when the probed Codex version accepts --no-daemon', () => {

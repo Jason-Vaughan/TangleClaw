@@ -819,7 +819,7 @@ anything less leaves it indeterminate.
 fresh clone path has no entry in Codex's `config.toml`. `config/read` says so (`projects` without the
 folder, or `projects: null` on a home that has never trusted one). Under `--remote`, Codex 0.156.1
 was measured to draw **no** trust dialog for such a folder: the pane reaches its ordinary composer.
-So the blocker never claims a dialog. It says what was read and how to grant trust: add the folder
+That is a measurement of one version, not a promise about Codex. So the blocker never claims a dialog. It says what was read and how to grant trust: add the folder
 under `[projects]` in Codex's `config.toml` with `trust_level = "trusted"`, or run `codex` once in
 the folder outside TangleClaw and accept its prompt, then Fire again.
 
@@ -831,12 +831,15 @@ signed-in fire has been probed. When a version is listed, the fire goes only if 
 - every other check passes (version, account, usage, the launch's own thread loaded and `idle`);
 - a **pane witness** reads the session's pane twice, a second apart, and both reads show a bare
   composer with no declared guarded dialog below it, the cursor on that composer with nothing typed,
-  a header past `model: loading`, no busy marker, and an unchanged pane;
+  no header still reading `model: loading` as the newest one (a session that has scrolled its header
+  away passes this), no busy marker, and an unchanged pane;
 - the same thread, read again after the witness and immediately before `turn/start`, is still in
   the project directory and still `idle`.
 
 A trust dialog actually on the pane refuses the fire as `trust_required`, worded as read from the
-pane. Anything short of a proven composer refuses it as `pane_not_ready`, naming what failed. A
+pane. Any other dialog (the update prompt), and anything else short of a proven composer, refuses it
+as `pane_not_ready`, naming what was seen. A folder whose entry in Codex's config says anything other
+than trusted is not "no entry": it is `trust_required`, says so, and never gets the allowance. A
 `config/read` answer that cannot be understood stays `readiness_unknown`. The automatic launch fire
 and the operator's **Fire** go through the same rule. Nothing writes a trust entry and nothing is
 typed. A fire that goes this way records a **dispatch note** on its row, kept through every later

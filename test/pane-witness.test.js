@@ -95,6 +95,19 @@ describe('the pane witness (#2186)', () => {
     assert.deepEqual(r, { shown: false, dialog: null, why: 'the engine is still starting' });
   });
 
+  it('a session whose header has scrolled away is shown: the composer and cursor evidence stand without it', async () => {
+    const at = PANES.composer.lines.map((l) => l.startsWith('› Ask Codex')).lastIndexOf(true);
+    const scrolled = ['  an earlier answer', '', ...PANES.composer.lines.slice(at)];
+    assert.ok(!scrolled.some((l) => HEADER_RE.test(l)), 'no header row is left in the capture');
+    assert.deepEqual(await ask([{ lines: scrolled, cursor: CURSORS.composer }]), { shown: true });
+  });
+
+  it('with two headers in the capture, only the newest one is judged', async () => {
+    // The live composer fixture holds the superseded `model: loading` box above the current one.
+    assert.ok(PANES.composer.lines.some((l) => STARTING_RE.test(l)), 'the older header still reads loading');
+    assert.deepEqual(await ask([live('composer')]), { shown: true });
+  });
+
   it('a composer under a cursor that is somewhere else is not shown', async () => {
     const r = await ask([{ lines: PANES.composer.lines, cursor: CURSORS.trustPrompt }]);
     assert.deepEqual(r, { shown: false, dialog: null, why: 'the cursor is not on the composer row' });
@@ -135,7 +148,7 @@ describe('the pane witness (#2186)', () => {
 
   it('an unreadable pane is not shown: empty capture, thrown read, no cursor', async () => {
     assert.match((await ask([{ lines: [], cursor: CURSORS.composer }])).why, /could not be read \(the capture came back empty\)/);
-    assert.match((await ask([new Error('no server running')])).why, /could not be read \(no server running\)/);
+    assert.equal((await ask([new Error('no server running: /private/secret/sock')])).why, 'the pane could not be read', 'the fault\'s own text is for the server log, not the fire row');
     assert.deepEqual(await ask([{ lines: PANES.composer.lines, cursor: null }]), { shown: false, dialog: null, why: 'the cursor position could not be read' });
   });
 
