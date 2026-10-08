@@ -298,6 +298,12 @@ describe('Codex startupControl adapter', () => {
         assert.ok(witnessed[0].headerRe.test('│ model:     GPT-6-Astra   /model to change │'));
         assert.ok(witnessed[0].startingRe.test('│ model:     loading   /model to change │'));
         assert.ok(!witnessed[0].startingRe.test('│ model:     GPT-6-Astra   /model to change │'));
+        assert.ok(witnessed[0].statusRe.test('  GPT-6-Astra default · /private/tmp/b4cs-8d6DW4'), 'Codex\'s default status row');
+        assert.ok(witnessed[0].statusRe.test('  GPT-6-Astra default · Ready · never · Context 100% left'), 'the operator\'s layout');
+        for (const notStatus of ['│ › Careful    │', '› 1. Update now', '  Press enter to continue', '  GPT-6-Astra', '╭──────────────╮', '  enter continue · esc skip'.replace('  enter', '> enter')]) {
+          assert.ok(!witnessed[0].statusRe.test(notStatus), notStatus);
+        }
+        assert.equal(witnessed[0].maxStatusRows, 1);
         assert.match(settled.dispatchNote, /Sent without a trust entry in Codex's config for \/private\/tmp\/tc-b2-project/);
         assert.match(settled.dispatchNote, /this pane showed an empty composer and no declared trust prompt/);
         assert.match(settled.dispatchNote, /TangleClaw did not grant trust\./);
@@ -530,8 +536,7 @@ describe('Codex startupControl adapter', () => {
 
       describe('with the real pane witness reading whole live captures', () => {
         const paneWitness = require('../lib/pane-witness');
-        const { CODEX_STARTUP_PANES: PANES } = require('./_codex-startup-fixtures');
-        const { CODEX_STARTUP_CURSORS: CURSORS } = require('./_codex-startup-cursor-fixtures');
+        const { CODEX_VISIBLE_PANES: PANES } = require('./_codex-visible-pane-fixtures');
         const codexProfile = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));
 
         /**
@@ -541,12 +546,11 @@ describe('Codex startupControl adapter', () => {
          * @returns {Function}
          */
         const witnessOver = (name, tmuxLog) => (opts) => paneWitness.composerShown({
-          tmuxName: 'tc-deputy', engineProfile: codexProfile, wakeProfile: require('../lib/medusa-wake').ENGINE_WAKE_PROFILES.codex, ...opts
+          ...opts, tmuxName: 'tc-deputy', engineProfile: codexProfile, wakeProfile: require('../lib/medusa-wake').ENGINE_WAKE_PROFILES.codex
         }, {
           gapMs: 0,
           sleep: async () => {},
-          capture: () => { tmuxLog.push('capture-pane'); return { lines: [...PANES[name].lines] }; },
-          cursorInfo: () => { tmuxLog.push('cursor'); return CURSORS[name]; }
+          read: () => { tmuxLog.push('read-visible-pane'); return { ...PANES[name], rows: [...PANES[name].rows] }; }
         });
 
         it('a renamed directory with the ordinary composer on screen: the fire goes', async () => {
@@ -557,7 +561,7 @@ describe('Codex startupControl adapter', () => {
           const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: witnessOver('composer', tmuxLog) }).settled;
           assert.equal(settled.outcome, 'applied');
           assert.ok(settled.dispatchNote);
-          assert.deepEqual(tmuxLog, ['capture-pane', 'cursor', 'capture-pane', 'cursor'], 'the pane was read, twice, and nothing was sent to it');
+          assert.deepEqual(tmuxLog, ['read-visible-pane', 'read-visible-pane'], 'the pane was read, twice, and nothing was sent to it');
         });
 
         it('a real folder-trust dialog on screen: the fire is refused, and nothing is sent to the pane or the engine', async () => {
@@ -570,7 +574,15 @@ describe('Codex startupControl adapter', () => {
           assert.match(settled.reason, /is showing its folder-trust prompt in the pane \(read from the pane\)/);
           assert.match(settled.reason, /does not accept folder trust on your behalf/);
           assert.equal(server.calls('turn/start').length, 0);
-          assert.ok(tmuxLog.every((c) => c === 'capture-pane' || c === 'cursor'), 'only reads');
+          assert.ok(tmuxLog.length > 0 && tmuxLog.every((c) => c === 'read-visible-pane'), 'only reads');
+        });
+
+        it('the operator\'s own status line, with its run-state item, is still a composer at rest: the fire goes', async () => {
+          await serve(NO_ENTRY);
+          completeTheTurn();
+          channel();
+          const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: witnessOver('composerOperatorStatus', []) }).settled;
+          assert.equal(settled.outcome, 'applied');
         });
 
         it('the update prompt and the opening screen are refused too', async () => {

@@ -5,8 +5,9 @@
  *
  * A native startup fire into a folder the engine's config does not trust may
  * only go when the pane is positively showing its ordinary composer. These
- * tests feed the witness whole live captures of Codex's startup screens with
- * the cursor each one had, and pin that only the usable composer passes.
+ * tests feed the witness Codex's startup screens as one visible-pane read
+ * gives them (rows in place, cursor row and column) and pin that only the
+ * usable composer passes, and only with the cursor ON it.
  */
 
 const { describe, it, before, after } = require('node:test');
@@ -16,17 +17,19 @@ const os = require('node:os');
 const path = require('node:path');
 const store = require('../lib/store');
 const paneWitness = require('../lib/pane-witness');
-const { CODEX_STARTUP_PANES: PANES } = require('./_codex-startup-fixtures');
-const { CODEX_STARTUP_CURSORS: CURSORS } = require('./_codex-startup-cursor-fixtures');
+const { CODEX_VISIBLE_PANES: PANES } = require('./_codex-visible-pane-fixtures');
 
 const codex = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));
+// What the Codex adapter hands the witness.
 const HEADER_RE = /\bmodel:\s+\S/;
 const STARTING_RE = /\bmodel:\s+loading\b/;
+const STATUS_RE = /^ {2}[^\s│╭╰╮╯›>].* · \S/;
+const COMPOSER = '\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything\u001b[0m';
 
 describe('the pane witness (#2186)', () => {
   let tmpDir;
   let wakeProfile;
-  let tmuxCalls;
+  let reads;
 
   before(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pane-witness-'));
@@ -42,185 +45,215 @@ describe('the pane witness (#2186)', () => {
 
   /**
    * Ask the witness about a scripted pane.
-   * @param {Array<{lines: string[], cursor: (object|null)}|Error>} frames - One per read; the last repeats.
+   * @param {Array<object|Error>} frames - One visible-pane read per call; the last repeats.
    * @param {object} [over] - Target overrides.
    * @returns {Promise<object>}
    */
   const ask = (frames, over = {}) => {
     let i = 0;
-    tmuxCalls = [];
-    const frame = () => frames[Math.min(i, frames.length - 1)];
+    reads = [];
     return paneWitness.composerShown({
-      tmuxName: 'tc-x', engineProfile: codex, wakeProfile, headerRe: HEADER_RE, startingRe: STARTING_RE, ...over
+      tmuxName: 'tc-x', engineProfile: codex, wakeProfile, headerRe: HEADER_RE, startingRe: STARTING_RE, statusRe: STATUS_RE, maxStatusRows: 1, ...over
     }, {
       gapMs: 0,
       sleep: async () => { i += 1; },
-      capture: (name) => { tmuxCalls.push(['capture', name]); const f = frame(); if (f instanceof Error) throw f; return { lines: [...f.lines] }; },
-      cursorInfo: (name) => { tmuxCalls.push(['cursor', name]); const f = frame(); if (f instanceof Error) throw f; return f.cursor; }
+      read: (name) => {
+        reads.push(name);
+        const f = frames[Math.min(i, frames.length - 1)];
+        if (f instanceof Error) throw f;
+        return { ...f, rows: [...f.rows] };
+      }
     });
   };
-  const live = (name) => ({ lines: PANES[name].lines, cursor: CURSORS[name] });
 
-  it('a usable composer, seen twice, is shown', async () => {
-    assert.deepEqual(await ask([live('composer')]), { shown: true });
-    assert.deepEqual(await ask([live('composerAfterUpdateSkipped')]), { shown: true });
-  });
+  /**
+   * A pane built row by row, padded to its height, with the cursor placed.
+   * @param {string[]} top - The rows from the top.
+   * @param {number} y - Cursor row.
+   * @param {number} [x=2] - Cursor column.
+   * @param {number} [height=14] - Pane height.
+   * @returns {{height: number, x: number, y: number, rows: string[]}}
+   */
+  const pane = (top, y, x = 2, height = 14) => ({ height, x, y, rows: [...top, ...Array(Math.max(0, height - top.length)).fill('')] });
 
-  it('reads the pane exactly twice, text and cursor from the same session each time', async () => {
-    await ask([live('composer')]);
-    assert.deepEqual(tmuxCalls, [['capture', 'tc-x'], ['cursor', 'tc-x'], ['capture', 'tc-x'], ['cursor', 'tc-x']]);
-  });
+  describe('on Codex\'s live startup screens', () => {
+    it('a usable composer, seen twice, is shown', async () => {
+      assert.deepEqual(await ask([PANES.composer]), { shown: true });
+      assert.deepEqual(await ask([PANES.composerAfterUpdateSkipped]), { shown: true });
+      assert.deepEqual(await ask([PANES.composerOperatorStatus]), { shown: true }, 'the operator\'s status line, with its run-state item, is a status row');
+    });
 
-  it('the folder-trust prompt is named as a dialog, although the opening composer is drawn above it', async () => {
-    const r = await ask([live('trustPrompt')]);
-    assert.equal(r.shown, false);
-    assert.equal(r.dialog.id, 'folder-trust');
-    assert.match(r.why, /folder-trust prompt/);
-  });
+    it('reads the pane exactly twice, each read one call for rows and cursor together', async () => {
+      await ask([PANES.composer]);
+      assert.deepEqual(reads, ['tc-x', 'tc-x']);
+    });
 
-  it('the update prompt is named as a dialog', async () => {
-    const r = await ask([live('updatePrompt')]);
-    assert.equal(r.shown, false);
-    assert.equal(r.dialog.id, 'update');
-  });
-
-  it('a dialog wins even if the cursor were reported on the stale composer row above it', async () => {
-    const r = await ask([{ lines: PANES.trustPrompt.lines, cursor: CURSORS.openingScreen }]);
-    assert.equal(r.shown, false);
-    assert.equal(r.dialog.id, 'folder-trust');
-  });
-
-  it('the opening screen is not shown: its composer is empty and under the cursor, but the header still reads loading', async () => {
-    const r = await ask([live('openingScreen')]);
-    assert.deepEqual(r, { shown: false, dialog: null, why: 'the engine is still starting' });
-  });
-
-  it('a session whose header has scrolled away is shown: the composer and cursor evidence stand without it', async () => {
-    const at = PANES.composer.lines.map((l) => l.startsWith('› Ask Codex')).lastIndexOf(true);
-    const scrolled = ['  an earlier answer', '', ...PANES.composer.lines.slice(at)];
-    assert.ok(!scrolled.some((l) => HEADER_RE.test(l)), 'no header row is left in the capture');
-    assert.deepEqual(await ask([{ lines: scrolled, cursor: CURSORS.composer }]), { shown: true });
-  });
-
-  it('with two headers in the capture, only the newest one is judged', async () => {
-    // The live composer fixture holds the superseded `model: loading` box above the current one.
-    assert.ok(PANES.composer.lines.some((l) => STARTING_RE.test(l)), 'the older header still reads loading');
-    assert.deepEqual(await ask([live('composer')]), { shown: true });
-  });
-
-  describe('the cursor is bound to the capture\'s last composer row', () => {
-    // A menu the profile does NOT declare, drawn below a composer it has
-    // superseded. Its selected row starts with the prompt glyph, is drawn
-    // faint like a placeholder, and holds the cursor at the first input
-    // column: everything the emptiness check alone would call an empty
-    // composer. Synthetic: no such Codex menu was captured.
-    const STALE = '› Ask Codex to do anything';
-    const MENU = ['╭──────────────╮', '│ model:  GPT  │', '╰──────────────╯', '', STALE, '', '  Choose a mode', '› Careful', '  Fast', '', '  enter select'];
-    const ON_SELECTED = { x: 2, y: 7, line: '\u001b[1m›\u001b[0m \u001b[2mCareful\u001b[0m' };
-    const ON_COMPOSER = { x: 2, y: 4, line: '\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything\u001b[0m' };
-
-    it('a stable undeclared menu with a faint glyph-led selected row under the cursor is refused, on every read', async () => {
-      const wake = require('../lib/medusa-wake');
-      assert.equal(wake._composerEmpty(ON_SELECTED, wakeProfile), true, 'the emptiness check alone is fooled by this row, which is the point');
-      const r = await ask([{ lines: MENU, cursor: ON_SELECTED }]);
+    it('the folder-trust prompt is named as a dialog, although the opening composer is drawn above it', async () => {
+      const r = await ask([PANES.trustPrompt]);
       assert.equal(r.shown, false);
-      assert.equal(r.why, 'a selector row is drawn below the composer');
+      assert.equal(r.dialog.id, 'folder-trust');
     });
 
-    it('the same menu is refused even if the cursor were reported back on the stale composer', async () => {
-      const r = await ask([{ lines: MENU, cursor: ON_COMPOSER }]);
-      assert.deepEqual(r, { shown: false, dialog: null, why: 'a selector row is drawn below the composer' });
+    it('the update prompt is named as a dialog', async () => {
+      const r = await ask([PANES.updatePrompt]);
+      assert.equal(r.shown, false);
+      assert.equal(r.dialog.id, 'update');
     });
 
-    it('a glyph-led row below the composer refuses however it is indented', async () => {
-      const lines = [STALE, '', '   › Something', '  other'];
-      assert.equal((await ask([{ lines, cursor: ON_COMPOSER }])).why, 'a selector row is drawn below the composer');
+    it('the opening screen is not shown: its composer is empty and under the cursor, but the header still reads loading', async () => {
+      assert.deepEqual(await ask([PANES.openingScreen]), { shown: false, dialog: null, why: 'the engine is still starting' });
     });
 
-    it('interleave: the capture shows the composer but the cursor was read after a menu took over', async () => {
-      const r = await ask([{ lines: PANES.composer.lines, cursor: ON_SELECTED }]);
-      assert.deepEqual(r, { shown: false, dialog: null, why: 'the cursor is not on the composer row' });
+    it('with two headers on the pane, only the newest one is judged', async () => {
+      const top = ['│ model:     loading   /model to change │', '', '│ model:     GPT-6-Astra   /model to change │', '', COMPOSER, '', '  GPT-6-Astra default · /p'];
+      assert.deepEqual(await ask([pane(top, 4)]), { shown: true });
+      const stillStarting = ['│ model:     GPT-6-Astra   /model to change │', '', '│ model:     loading   /model to change │', '', COMPOSER, '', '  GPT-6-Astra default · /p'];
+      assert.deepEqual(await ask([pane(stillStarting, 4)]), { shown: false, dialog: null, why: 'the engine is still starting' });
+    });
+  });
+
+  describe('the cursor is bound to the last composer row by position', () => {
+    it('an identical older composer row higher up, with the cursor parked on IT, is refused', async () => {
+      // Codex leaves a superseded composer above the live one (after a skipped
+      // prompt, for one). Whether it is still on the visible pane depends on
+      // the pane's height; this frame keeps it visible.
+      const top = [COMPOSER, '', '│ model:     GPT-6-Astra   /model to change │', '', '› Ask Codex to do anything', '', '  GPT-6-Astra default · /p'];
+      assert.equal(require('../lib/medusa-wake')._composerEmpty({ x: 2, y: 0, line: top[0] }, wakeProfile), true, 'by its text alone the older row is an empty composer under the cursor');
+      assert.deepEqual(await ask([pane(top, 0)]), { shown: false, dialog: null, why: 'the cursor is not on the composer row' });
+      const live = [...top];
+      live[0] = '› Ask Codex to do anything';
+      live[4] = COMPOSER;
+      assert.deepEqual(await ask([pane(live, 4)]), { shown: true }, 'the same pane with the cursor on the last composer row');
     });
 
-    it('interleave: the capture shows the menu but the cursor was read while the composer was still live', async () => {
-      const r = await ask([{ lines: MENU, cursor: CURSORS.composer }]);
+    it('a cursor one row off the composer is refused, whatever that row holds', async () => {
+      for (const dy of [-1, 1, 2]) {
+        const r = await ask([{ ...PANES.composer, y: PANES.composer.y + dy }]);
+        assert.equal(r.shown, false, String(dy));
+      }
+    });
+
+    it('a pane with leading blank rows keeps its rows in place: the composer is found where the cursor says', async () => {
+      const top = ['', '', '', COMPOSER, '', '  GPT-6-Astra default · /p'];
+      assert.deepEqual(await ask([pane(top, 3)]), { shown: true });
+      assert.equal((await ask([pane(top, 0)])).shown, false, 'the cursor on a blank row above is not on the composer');
+    });
+
+    it('a composer holding typed text is not shown', async () => {
+      const r = await ask([pane(['\u001b[1m›\u001b[0m hello', '', '  GPT-6-Astra default · /p'], 0, 7)]);
       assert.equal(r.shown, false);
     });
+  });
 
-    it('a cursor row that is a composer but does not read like the capture\'s is a different row', async () => {
-      const other = { x: 2, y: CURSORS.composer.y, line: '\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything else\u001b[0m' };
-      assert.equal((await ask([{ lines: PANES.composer.lines, cursor: other }])).why, 'the cursor is not on the composer row');
+  describe('what may be drawn below the composer', () => {
+    const STATUS = '  GPT-6-Astra default · /p';
+
+    it('a boxed menu below a stale composer that still holds the cursor is refused: no row starts with the glyph, and it is still not a status row', async () => {
+      const top = [COMPOSER, '', '╭──────────────╮', '│ › Careful    │', '│   Fast       │', '╰──────────────╯'];
+      const r = await ask([pane(top, 0)]);
+      assert.deepEqual(r, { shown: false, dialog: null, why: 'something other than a status row is drawn below the composer' });
     });
 
-    it('a cursor with no row text is refused', async () => {
-      const r = await ask([{ lines: PANES.composer.lines, cursor: { x: 2, y: CURSORS.composer.y } }]);
-      assert.deepEqual(r, { shown: false, dialog: null, why: 'the row under the cursor could not be read' });
+    it('a menu with a faint glyph-led selected row is refused, with the cursor on it or on the stale composer', async () => {
+      const top = [COMPOSER, '', '  Choose a mode', '\u001b[1m›\u001b[0m \u001b[2mCareful\u001b[0m', '  Fast', '', '  enter select'];
+      assert.equal(require('../lib/medusa-wake')._composerEmpty({ x: 2, y: 3, line: top[3] }, wakeProfile), true, 'the emptiness check alone is fooled by the selected row');
+      assert.equal((await ask([pane(top, 3)])).shown, false);
+      assert.equal((await ask([pane(top, 0)])).why, 'a selector row is drawn below the composer');
     });
 
-    it('the engine\'s own animated decoration on the composer row does not break the binding', async () => {
-      // Codex paints a braille shimmer over the composer row in a session with history; it moves between reads.
-      const at = PANES.composer.lines.map((l) => l.startsWith('› Ask Codex')).lastIndexOf(true);
-      const lines = [...PANES.composer.lines];
-      lines[at] = '›⠁Ask Codex to do anything';
-      const cursor = { ...CURSORS.composer, line: '\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything\u001b[0m\u001b[38;2;10;10;10m⡁\u001b[0m' };
-      assert.deepEqual(await ask([{ lines, cursor }]), { shown: true });
+    it('any unrecognised text below the composer is refused, marked or not', async () => {
+      for (const extra of ['  Press enter to continue', 'Continue? [y/N]', '  1. Yes   2. No', '  ? for shortcuts']) {
+        const r = await ask([pane([COMPOSER, '', extra], 0)]);
+        assert.equal(r.shown, false, extra);
+      }
+    });
+
+    it('one status row is allowed, a second is not', async () => {
+      assert.deepEqual(await ask([pane([COMPOSER, '', STATUS], 0)]), { shown: true });
+      assert.equal((await ask([pane([COMPOSER, '', STATUS, '  ← for agents · ? for shortcuts'], 0)])).shown, false);
+    });
+
+    it('a composer with nothing at all below it is shown', async () => {
+      assert.deepEqual(await ask([pane(['  an earlier answer', '', COMPOSER], 2)]), { shown: true });
+    });
+
+    it('an adapter that names no status row allows nothing below the composer', async () => {
+      const r = await ask([pane([COMPOSER, '', STATUS], 0)], { statusRe: null });
+      assert.equal(r.why, 'something other than a status row is drawn below the composer');
     });
   });
 
-  it('a composer under a cursor that is somewhere else is not shown', async () => {
-    const r = await ask([{ lines: PANES.composer.lines, cursor: CURSORS.trustPrompt }]);
-    assert.deepEqual(r, { shown: false, dialog: null, why: 'the cursor is not on the composer row' });
+  describe('two reads a second apart', () => {
+    it('a pane that changes between them is not shown', async () => {
+      const a = pane(['  one line', '', COMPOSER, '', '  GPT-6-Astra default · /p'], 2);
+      const b = pane(['  another line', '', COMPOSER, '', '  GPT-6-Astra default · /p'], 2);
+      assert.deepEqual(await ask([a, b]), { shown: false, dialog: null, why: 'the pane changed between two reads a second apart' });
+    });
+
+    it('a dialog that appears between them is named', async () => {
+      const r = await ask([PANES.composer, PANES.updatePrompt]);
+      assert.equal(r.shown, false);
+      assert.equal(r.dialog.id, 'update');
+    });
+
+    it('a cursor that moves between them is a changed pane', async () => {
+      const a = pane([COMPOSER, '', '  GPT-6-Astra default · /p'], 0, 2);
+      const b = pane([COMPOSER, '', '  GPT-6-Astra default · /p'], 0, 2);
+      b.rows[0] = COMPOSER;
+      assert.deepEqual(await ask([a, b]), { shown: true });
+      assert.equal((await ask([a, { ...a, y: 1 }])).shown, false);
+    });
+
+    it('the engine\'s own animated decoration moving between them is not a change', async () => {
+      const a = pane(['  history ⠁', '', COMPOSER, '', '  GPT-6-Astra default · /p'], 2);
+      const b = pane(['  history ⡁', '', COMPOSER, '', '  GPT-6-Astra default · /p'], 2);
+      assert.deepEqual(await ask([a, b]), { shown: true });
+    });
+
+    it('a busy pane is not shown', async () => {
+      const r = await ask([pane(['• Working (3s • esc to interrupt)', '', COMPOSER, '', '  GPT-6-Astra default · /p'], 2)]);
+      assert.deepEqual(r, { shown: false, dialog: null, why: 'a turn is running' });
+    });
   });
 
-  it('a composer holding typed text is not shown', async () => {
-    // Derived from the live composer: the placeholder replaced by typed text, the cursor after it.
-    const typed = { x: 7, y: CURSORS.composer.y, line: '\u001b[1m›\u001b[0m hello' };
-    const lines = PANES.composer.lines.map((l) => (l === '› Ask Codex to do anything' ? '› hello' : l));
-    const r = await ask([{ lines, cursor: typed }]);
-    assert.equal(r.shown, false);
-    assert.equal(r.dialog, null);
-  });
+  describe('a read that cannot be trusted row for row', () => {
+    it('a thrown read is refused with a fixed sentence; the fault\'s own text is for the server log', async () => {
+      assert.equal((await ask([new Error('no server running: /private/secret/sock')])).why, 'the pane could not be read');
+    });
 
-  it('a busy pane is not shown', async () => {
-    const lines = [...PANES.composer.lines.slice(0, -3), '• Working (3s • esc to interrupt)', ...PANES.composer.lines.slice(-3)];
-    const r = await ask([{ lines, cursor: CURSORS.composer }]);
-    assert.deepEqual(r, { shown: false, dialog: null, why: 'a turn is running' });
-  });
+    it('rows that do not number the pane\'s height, a cursor outside them, or a missing field are refused', async () => {
+      const good = pane([COMPOSER, '', '  GPT-6-Astra default · /p'], 0);
+      const bad = [
+        { ...good, rows: good.rows.slice(1) },
+        { ...good, rows: [...good.rows, ''] },
+        { ...good, height: 0, rows: [] },
+        { ...good, y: good.height },
+        { ...good, y: -1 },
+        { ...good, y: undefined },
+        { ...good, x: undefined },
+        { height: good.height, x: 2, y: 0, rows: null }
+      ];
+      for (const frame of bad) {
+        const r = await paneWitness.composerShown({ tmuxName: 'tc-x', engineProfile: codex, wakeProfile, headerRe: HEADER_RE, startingRe: STARTING_RE, statusRe: STATUS_RE }, { gapMs: 0, sleep: async () => {}, read: () => frame });
+        assert.deepEqual(r, { shown: false, dialog: null, why: 'the pane and its cursor could not be read row for row' });
+      }
+    });
 
-  it('a pane that changes between the two reads is not shown', async () => {
-    const moved = { lines: [...PANES.composer.lines.slice(0, -3), '  a new transcript row', ...PANES.composer.lines.slice(-3)], cursor: CURSORS.composer };
-    const r = await ask([live('composer'), moved]);
-    assert.deepEqual(r, { shown: false, dialog: null, why: 'the pane changed between two reads a second apart' });
-  });
+    it('a profile whose guarded dialogs cannot be read proves nothing', async () => {
+      const broken = { ...codex, launch: { ...codex.launch, guardedDialogs: [{ id: 'update', match: '(' }] } };
+      const r = await ask([PANES.composer], { engineProfile: broken });
+      assert.match(r.why, /could not be read, so a dialog could not be ruled out/);
+    });
 
-  it('a dialog that appears between the two reads is named', async () => {
-    const r = await ask([live('composer'), live('updatePrompt')]);
-    assert.equal(r.shown, false);
-    assert.equal(r.dialog.id, 'update');
-  });
+    it('no pane, or no composer pattern, is not shown and nothing is read', async () => {
+      assert.equal((await ask([PANES.composer], { tmuxName: null })).shown, false);
+      assert.equal((await ask([PANES.composer], { wakeProfile: null })).shown, false);
+      assert.deepEqual(reads, []);
+    });
 
-  it('a cursor that moves between the two reads is a changed pane', async () => {
-    const r = await ask([live('composer'), { lines: PANES.composer.lines, cursor: { ...CURSORS.composer, y: CURSORS.composer.y + 1 } }]);
-    assert.equal(r.shown, false);
-    assert.match(r.why, /changed between two reads/);
-  });
-
-  it('an unreadable pane is not shown: empty capture, thrown read, no cursor', async () => {
-    assert.match((await ask([{ lines: [], cursor: CURSORS.composer }])).why, /could not be read \(the capture came back empty\)/);
-    assert.equal((await ask([new Error('no server running: /private/secret/sock')])).why, 'the pane could not be read', 'the fault\'s own text is for the server log, not the fire row');
-    assert.deepEqual(await ask([{ lines: PANES.composer.lines, cursor: null }]), { shown: false, dialog: null, why: 'the cursor position could not be read' });
-  });
-
-  it('a profile whose guarded dialogs cannot be read proves nothing', async () => {
-    const broken = { ...codex, launch: { ...codex.launch, guardedDialogs: [{ id: 'update', match: '(' }] } };
-    const r = await ask([live('composer')], { engineProfile: broken });
-    assert.equal(r.shown, false);
-    assert.match(r.why, /could not be read, so a dialog could not be ruled out/);
-  });
-
-  it('no pane, or no composer pattern, is not shown and nothing is read', async () => {
-    assert.equal((await ask([live('composer')], { tmuxName: null })).shown, false);
-    assert.equal((await ask([live('composer')], { wakeProfile: null })).shown, false);
-    assert.deepEqual(tmuxCalls, []);
+    it('a session whose header has scrolled away is shown: the composer, cursor and status evidence stand without it', async () => {
+      const r = await ask([pane(['  an earlier answer', '', COMPOSER, '', '  GPT-6-Astra default · /p'], 2)]);
+      assert.deepEqual(r, { shown: true });
+    });
   });
 });

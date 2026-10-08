@@ -1026,7 +1026,12 @@ describe('tmux', () => {
       // 26 since `readSessionEnv` (#1626) added a `show-environment`, which reads
       // back the Project Master's launch id; it is wrapped, and unlike
       // `display-message` it fails on an absent session rather than falling back.
-      assert.equal(targets.length, 26, `expected 26 -t sites in lib/tmux.js, found ${targets.length}`);
+      // 28 since `visiblePane` (#2186) added one invocation with two sites: a
+      // `display-message` reading the pane's height and cursor, and a
+      // `capture-pane -e` of the visible rows, so the row under the cursor is
+      // known by position. Both are wrapped, and it checks the session exists
+      // first, for the reason `paneCurrentPath` does.
+      assert.equal(targets.length, 28, `expected 28 -t sites in lib/tmux.js, found ${targets.length}`);
       for (const expr of targets) {
         assert.match(
           expr,
@@ -1162,5 +1167,28 @@ describe('tmux — reading back a session\'s launch environment (#1626)', () => 
     for (const bad of ['a b', 'X;rm', '', 'lower']) {
       assert.throws(() => tmux.readSessionEnv(name, bad), /Invalid environment variable name/);
     }
+  });
+});
+
+describe('tmux — the visible pane and its cursor, row for row (#2186)', () => {
+  it('keeps every row in place, leading blank rows included, so cursor_y indexes the rows', () => {
+    const out = '6,2,3\n\n\n  hello\n\u001b[1m›\u001b[0m Ask\n\n  status · line\n';
+    const pane = tmux._parseVisiblePane(out);
+    assert.deepEqual(pane, { height: 6, x: 2, y: 3, rows: ['', '', '  hello', '\u001b[1m›\u001b[0m Ask', '', '  status · line'] });
+    assert.equal(pane.rows[pane.y], '\u001b[1m›\u001b[0m Ask', 'the row under the cursor, with its styling');
+  });
+
+  it('keeps trailing blank rows too: a pane is its height in rows', () => {
+    assert.equal(tmux._parseVisiblePane('4,0,0\n>\n\n\n\n').rows.length, 4);
+  });
+
+  it('refuses an answer that does not line up: wrong row count, a cursor outside the pane, or no numbers', () => {
+    for (const out of ['4,0,0\n>\n\n', '2,0,0\n>\n\n\n\n', '3,0,3\n\n\n\n', '3,0,-1\n\n\n\n', 'x,0,0\n\n', '', '3,,\n\n\n\n']) {
+      assert.throws(() => tmux._parseVisiblePane(out), /row for row/, JSON.stringify(out));
+    }
+  });
+
+  it('throws for a session that does not exist, like every other read', () => {
+    assert.throws(() => tmux.visiblePane('tc-test-no-such-session-2186'), /does not exist/);
   });
 });

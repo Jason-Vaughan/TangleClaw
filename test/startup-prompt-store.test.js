@@ -373,7 +373,17 @@ describe('startup prompt store: v46 (Chunk B2)', () => {
       const dir = store._getBasePath();
       const row = store.startupPrompts.insertFire({ ...fire(350, 1, 'pending'), reasonCode: null, reason: null });
       const db = store.getDb();
-      db.exec('ALTER TABLE startup_prompt_fires DROP COLUMN dispatch_note');
+      // Rebuild the table as it stood before the column: the stored CREATE
+      // text with that one column taken out, and the rows copied across.
+      const now = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'startup_prompt_fires'").get().sql;
+      const before = now.replace(/,\s*dispatch_note[^\n]*/, '');
+      assert.ok(now.includes('dispatch_note') && !before.includes('dispatch_note'), 'the old shape has no such column');
+      const kept = db.prepare('PRAGMA table_info(startup_prompt_fires)').all().map((c) => c.name).filter((c) => c !== 'dispatch_note').join(', ');
+      db.exec('ALTER TABLE startup_prompt_fires RENAME TO startup_prompt_fires_now');
+      db.exec(before);
+      db.exec(`INSERT INTO startup_prompt_fires (${kept}) SELECT ${kept} FROM startup_prompt_fires_now`);
+      db.exec('DROP TABLE startup_prompt_fires_now');
+      assert.ok(!db.prepare('PRAGMA table_info(startup_prompt_fires)').all().some((c) => c.name === 'dispatch_note'));
       db.prepare('DELETE FROM schema_version WHERE version >= ?').run(store.CURRENT_SCHEMA_VERSION);
       db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(store.CURRENT_SCHEMA_VERSION - 1);
       store.close();
