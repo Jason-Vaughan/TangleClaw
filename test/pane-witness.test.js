@@ -31,6 +31,8 @@ describe('the pane witness (#2186)', () => {
   let tmpDir;
   let wakeProfile;
   let reads;
+  let pins;
+  const PANE_ID = '%7';
 
   before(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pane-witness-'));
@@ -50,20 +52,23 @@ describe('the pane witness (#2186)', () => {
    * @param {object} [over] - Target overrides.
    * @returns {Promise<object>}
    */
-  const ask = (frames, over = {}) => {
+  const ask = (frames, over = {}, seamOver = {}) => {
     let i = 0;
     reads = [];
+    pins = [];
     return paneWitness.composerShown({
       tmuxName: 'tc-x', engineProfile: codex, wakeProfile, headerRe: HEADER_RE, startingRe: STARTING_RE, statusRe: STATUS_RE, maxStatusRows: 1, keyHintRe: KEY_HINT_RE, ...over
     }, {
       gapMs: 0,
       sleep: async () => { i += 1; },
-      read: (name) => {
-        reads.push(name);
+      pin: (name) => { pins.push(name); return PANE_ID; },
+      read: (name, paneId) => {
+        reads.push(`${name} ${paneId}`);
         const f = frames[Math.min(i, frames.length - 1)];
         if (f instanceof Error) throw f;
-        return { ...f, rows: [...f.rows] };
-      }
+        return { paneId: PANE_ID, ...f, rows: [...f.rows] };
+      },
+      ...seamOver
     });
   };
 
@@ -84,9 +89,10 @@ describe('the pane witness (#2186)', () => {
       assert.deepEqual(await ask([PANES.composerOperatorStatus]), { shown: true }, 'the operator\'s status line, with its run-state item, is a status row');
     });
 
-    it('reads the pane exactly twice, each read one call for rows and cursor together', async () => {
+    it('pins the session\'s pane once, then reads THAT pane exactly twice, each read one call for rows and cursor together', async () => {
       await ask([PANES.composer]);
-      assert.deepEqual(reads, ['tc-x', 'tc-x']);
+      assert.deepEqual(pins, ['tc-x']);
+      assert.deepEqual(reads, ['tc-x %7', 'tc-x %7']);
     });
 
     it('the folder-trust prompt is named as a dialog, although the opening composer is drawn above it', async () => {
@@ -246,6 +252,54 @@ describe('the pane witness (#2186)', () => {
     });
   });
 
+  describe('the witness reads one pinned pane, and no other', () => {
+    const good = () => pane([COMPOSER, '', '  GPT-6-Astra default · /p'], 0);
+
+    it('a session that does not have exactly one pane is refused before anything is read', async () => {
+      const r = await ask([good()], {}, { pin: () => { throw new Error('tmux session "tc-x" does not have exactly one pane'); } });
+      assert.deepEqual(r, { shown: false, dialog: null, why: 'the session does not have exactly one pane to read' });
+      assert.deepEqual(reads, []);
+    });
+
+    it('a pin that is not a pane id is refused before anything is read', async () => {
+      for (const bad of [null, undefined, '', 7]) {
+        const r = await ask([good()], {}, { pin: () => bad });
+        assert.equal(r.shown, false, String(bad));
+        assert.deepEqual(reads, []);
+      }
+    });
+
+    it('the active pane switching between the two reads cannot move the witness: a frame from another pane is refused', async () => {
+      let n = 0;
+      const r = await ask([good()], {}, { read: () => { n += 1; return { paneId: n === 1 ? PANE_ID : '%8', ...good() }; } });
+      assert.deepEqual(r, { shown: false, dialog: null, why: 'the pane that was read is not the pane that was pinned' });
+    });
+
+    it('a first read that already comes from another pane is refused', async () => {
+      const r = await ask([good()], {}, { read: () => ({ paneId: '%8', ...good() }) });
+      assert.equal(r.why, 'the pane that was read is not the pane that was pinned');
+    });
+
+    it('a read that names no pane at all is refused', async () => {
+      const r = await ask([good()], {}, { read: () => good() });
+      assert.equal(r.why, 'the pane that was read is not the pane that was pinned');
+    });
+
+    it('a second pane appearing between the reads is refused: the read itself throws for it', async () => {
+      let n = 0;
+      const r = await ask([good()], {}, { read: () => { n += 1; if (n === 2) throw new Error('the session no longer has exactly one pane'); return { paneId: PANE_ID, ...good() }; } });
+      assert.deepEqual(r, { shown: false, dialog: null, why: 'the pane could not be read' });
+    });
+
+    it('both reads are aimed at the id pinned at the start, not re-resolved', async () => {
+      let pinned = 0;
+      const asked = [];
+      await ask([good()], {}, { pin: () => { pinned += 1; return PANE_ID; }, read: (name, id) => { asked.push(id); return { paneId: id, ...good() }; } });
+      assert.equal(pinned, 1);
+      assert.deepEqual(asked, [PANE_ID, PANE_ID]);
+    });
+  });
+
   describe('a read that cannot be trusted row for row', () => {
     it('a thrown read is refused with a fixed sentence; the fault\'s own text is for the server log', async () => {
       assert.equal((await ask([new Error('no server running: /private/secret/sock')])).why, 'the pane could not be read');
@@ -264,7 +318,7 @@ describe('the pane witness (#2186)', () => {
         { height: good.height, x: 2, y: 0, rows: null }
       ];
       for (const frame of bad) {
-        const r = await paneWitness.composerShown({ tmuxName: 'tc-x', engineProfile: codex, wakeProfile, headerRe: HEADER_RE, startingRe: STARTING_RE, statusRe: STATUS_RE }, { gapMs: 0, sleep: async () => {}, read: () => frame });
+        const r = await paneWitness.composerShown({ tmuxName: 'tc-x', engineProfile: codex, wakeProfile, headerRe: HEADER_RE, startingRe: STARTING_RE, statusRe: STATUS_RE }, { gapMs: 0, sleep: async () => {}, pin: () => PANE_ID, read: () => ({ paneId: PANE_ID, ...frame }) });
         assert.deepEqual(r, { shown: false, dialog: null, why: 'the pane and its cursor could not be read row for row' });
       }
     });

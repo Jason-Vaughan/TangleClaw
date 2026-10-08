@@ -552,7 +552,8 @@ describe('Codex startupControl adapter', () => {
         }, {
           gapMs: 0,
           sleep: async () => {},
-          read: () => { tmuxLog.push('read-visible-pane'); return { ...PANES[name], rows: [...PANES[name].rows] }; }
+          pin: () => { tmuxLog.push('pin-pane'); return '%7'; },
+          read: (session, paneId) => { tmuxLog.push(`read-visible-pane ${paneId}`); return { paneId, ...PANES[name], rows: [...PANES[name].rows] }; }
         });
 
         it('a renamed directory with the ordinary composer on screen: the fire goes', async () => {
@@ -563,7 +564,7 @@ describe('Codex startupControl adapter', () => {
           const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: witnessOver('composer', tmuxLog) }).settled;
           assert.equal(settled.outcome, 'applied');
           assert.ok(settled.dispatchNote);
-          assert.deepEqual(tmuxLog, ['read-visible-pane', 'read-visible-pane'], 'the pane was read, twice, and nothing was sent to it');
+          assert.deepEqual(tmuxLog, ['pin-pane', 'read-visible-pane %7', 'read-visible-pane %7'], 'one pane was pinned and read, twice, and nothing was sent to it');
         });
 
         it('a real folder-trust dialog on screen: the fire is refused, and nothing is sent to the pane or the engine', async () => {
@@ -576,7 +577,7 @@ describe('Codex startupControl adapter', () => {
           assert.match(settled.reason, /is showing its folder-trust prompt in the pane \(read from the pane\)/);
           assert.match(settled.reason, /does not accept folder trust on your behalf/);
           assert.equal(server.calls('turn/start').length, 0);
-          assert.ok(tmuxLog.length > 0 && tmuxLog.every((c) => c === 'read-visible-pane'), 'only reads');
+          assert.ok(tmuxLog.length > 0 && tmuxLog.every((c) => c === 'pin-pane' || c === 'read-visible-pane %7'), 'only reads');
         });
 
         it('the operator\'s own status line, with its run-state item, is still a composer at rest: the fire goes', async () => {
@@ -599,6 +600,32 @@ describe('Codex startupControl adapter', () => {
             server.close();
             server = null;
           }
+        });
+
+        it('a session with a second pane gets no trust-free fire, whatever its panes show', async () => {
+          await serve(NO_ENTRY);
+          channel();
+          const witness = (opts) => paneWitness.composerShown({
+            ...opts, tmuxName: 'tc-deputy', engineProfile: codexProfile, wakeProfile: require('../lib/medusa-wake').ENGINE_WAKE_PROFILES.codex
+          }, { gapMs: 0, sleep: async () => {}, pin: () => { throw new Error('does not have exactly one pane'); }, read: () => ({ paneId: '%7', ...PANES.composer }) });
+          const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness }).settled;
+          assert.equal(settled.outcome, 'blocked');
+          assert.equal(settled.reasonCode, 'pane_not_ready');
+          assert.match(settled.reason, /does not have exactly one pane to read/);
+          assert.equal(server.calls('turn/start').length, 0);
+        });
+
+        it('the active pane switching between the witness\'s two reads gets no trust-free fire', async () => {
+          await serve(NO_ENTRY);
+          channel();
+          let n = 0;
+          const witness = (opts) => paneWitness.composerShown({
+            ...opts, tmuxName: 'tc-deputy', engineProfile: codexProfile, wakeProfile: require('../lib/medusa-wake').ENGINE_WAKE_PROFILES.codex
+          }, { gapMs: 0, sleep: async () => {}, pin: () => '%7', read: () => { n += 1; return { paneId: n === 1 ? '%7' : '%8', ...PANES.composer, rows: [...PANES.composer.rows] }; } });
+          const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness }).settled;
+          assert.equal(settled.reasonCode, 'pane_not_ready');
+          assert.match(settled.reason, /not the pane that was pinned/);
+          assert.equal(server.calls('turn/start').length, 0);
         });
 
         it('as shipped, the same composer does not get the fire: the profile lists no measured version', async () => {
