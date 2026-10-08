@@ -121,8 +121,11 @@ describe('startupControl at launch and teardown (codex)', () => {
    * @param {() => *} fn - Work.
    * @returns {*}
    */
+  /** What the stubbed creation says its pane was; undefined leaves `born` untouched, as an older tmux seam would. */
+  let bornPane;
+
   function withStubbedTmux(fn) {
-    tmux.createSession = (name, opts) => { calls.created.push({ name, opts }); return true; };
+    tmux.createSession = (name, opts) => { calls.created.push({ name, opts }); if (opts.born && bornPane !== undefined) opts.born.paneId = bornPane; return true; };
     tmux.hasSession = () => false;
     tmux.killSession = () => true;
     enginesModule.detectEngine = () => ({ available: true, path: '/opt/fake/bin/codex' });
@@ -183,6 +186,32 @@ describe('startupControl at launch and teardown (codex)', () => {
     assert.equal(channel.adapterState.engineVersion, '0.156.1');
     assert.equal(channel.adapterState.enginePath, '/opt/fake/bin/codex');
     assert.ok(!JSON.stringify(channel).includes(l.sequence.launchId), 'the launch bearer is not in the channel row');
+  });
+
+  it('the pane id the creating tmux call printed is what the launch stores on its channel, and no later lookup replaces it (#2186)', () => {
+    healthySeams();
+    const realSole = tmux.solePaneId;
+    let asked = 0;
+    // The session's one pane, if anyone asked, is already a replacement.
+    tmux.solePaneId = () => { asked += 1; return '%40'; };
+    try {
+      bornPane = '%31';
+      const l = launched();
+      assert.equal(store.startupControlChannels.getOpenBySession(l.session.id).adapterState.paneId, '%31');
+      assert.equal(asked, 0, 'the launch never asks the session which pane it has');
+
+      for (const none of [null, undefined, 'not-a-pane']) {
+        bornPane = none;
+        const l2 = launched();
+        const row = store.startupControlChannels.getOpenBySession(l2.session.id);
+        assert.ok(row, 'the launch still gets its channel');
+        assert.equal(row.adapterState.paneId, undefined, `no pane on record when creation printed ${none}`);
+      }
+      assert.equal(asked, 0);
+    } finally {
+      bornPane = undefined;
+      tmux.solePaneId = realSole;
+    }
   });
 
   it('a launch that started its channel and has a sequence selects the native path, frozen on the sequence row; every other launch is legacy (B3 F1)', async () => {

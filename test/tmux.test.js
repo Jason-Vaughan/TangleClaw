@@ -381,6 +381,47 @@ describe('tmux', () => {
     });
   });
 
+  describe('createSession - the pane it created (#2186)', () => {
+    const { execFileSync } = require('node:child_process');
+
+    it('hands back the id of the pane the session started with, from the creating invocation', () => {
+      const name = uniqueSessionName('born-pane');
+      try {
+        const born = {};
+        assert.equal(tmux.createSession(name, { command: 'sleep 60', born }), true);
+        assert.match(born.paneId, /^%\d+$/);
+        assert.equal(born.paneId, tmux.solePaneId(name));
+      } finally {
+        try { tmux.killSession(name); } catch (_) {}
+      }
+    });
+
+    it('that id still names the created pane after the session\'s pane is replaced, where asking the session does not', () => {
+      const name = uniqueSessionName('born-replaced');
+      try {
+        const born = {};
+        tmux.createSession(name, { command: 'sleep 60', born });
+        execFileSync('tmux', ['split-window', '-t', `=${name}:`, 'sleep 60']);
+        execFileSync('tmux', ['kill-pane', '-t', born.paneId]);
+        const now = tmux.solePaneId(name);
+        assert.match(now, /^%\d+$/);
+        assert.notEqual(now, born.paneId, 'asking afterwards returns the replacement');
+      } finally {
+        try { tmux.killSession(name); } catch (_) {}
+      }
+    });
+
+    it('a caller that asks for nothing gets the same boolean as before', () => {
+      const name = uniqueSessionName('born-none');
+      try {
+        assert.equal(tmux.createSession(name, { command: 'sleep 60' }), true);
+        assert.equal(tmux.createSession(name, { command: 'sleep 60' }), false, 'an existing session is still reported, not recreated');
+      } finally {
+        try { tmux.killSession(name); } catch (_) {}
+      }
+    });
+  });
+
   describe('createSession - history-limit', () => {
     const testSession = uniqueSessionName('histlimit');
 
