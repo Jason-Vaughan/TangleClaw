@@ -55,6 +55,15 @@ Chunk 03 of the #2188 build plan, dispatched by the PM. Storage, validation and 
 
 **Review.** The first review found no blocker and two things worth fixing, both fixed in the second commit: the validator read the engine from `project.json` before the project row, so a checkout whose file had drifted could store a model the same response reported as unselectable; and a save under a running session said the model "applies to the next launch" beside the sentence saying no launch uses it. The remaining notes are accepted on the record. Four older validator rows still read the engine from `project.json` first; they predate this work and were reported to the PM as a candidate issue.
 
+**After the independent PR review and the Architect's rulings on it (A161).**
+
+- *An unreadable config was shown as no model.* `enrichProject` built the report inside a block that answers a config it cannot use with defaults, and the scanner's config reader returns defaults for a file that will not parse, so a failed read came out as `model: null, modelCheck: null`: the silent drop this chunk forbids, at the read. The scanner child now reports `configError` beside the config, and the payload reports `PROJECT_CONFIG_UNREADABLE` for a directory that would not answer and for a config file that would not read or parse. A file or directory that is simply absent still reports no model.
+- *A stored value that is not text was reported as `model: null`.* It is now shown as its JSON, bounded, in `model` and `modelCheck.stored`.
+- *`MODEL_SELECTED` has no caller.* Kept, by ruling, as a store invariant for a future profile-binding route; the comment and the docs now say exactly that, and that the store reads a checkout file to decide the write.
+- *Wording.* Nothing operator-facing says a stored model applies at the next launch.
+- Tests added: an engine switch on a project holding both a non-default launch mode and a model (both warnings, one write of the config), and a roster too old or future-dated at save.
+- The cost of the synchronous roster parse is stated in `docs/engine-guide.md`; a shared short-lived copy for displays is #2220, not built here.
+
 **Not covered.** No live launch, since no launch reads the field. The wider roster, the launch argument, the requested-versus-actual check and the selectors are later chunks.
 ## 2026-10-08 — #2165 follow-up: the hidden-state-word test checked nothing; fallback claims reworded
 

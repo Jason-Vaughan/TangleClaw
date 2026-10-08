@@ -1059,7 +1059,7 @@ A project stores one model as `model` in `.tangleclaw/project.json`, beside `eng
 
 Two things are deliberately not re-checked. A model sent at the value already stored, with the engine unchanged, is accepted as it is, so a settings save that carries every field does not fail over a roster that went stale since. And nothing re-validates a stored model in the background.
 
-**A model and an orchestration profile are mutually exclusive.** A profile supplies its own model at launch. Saving a model on a project bound to a profile is refused, naming the profile, and binding a profile to a project that has a model is refused (`MODEL_SELECTED`), naming the model. Clear one before setting the other.
+**A model and an orchestration profile are mutually exclusive.** A profile supplies its own model at launch. Saving a model on a project bound to a profile is refused, naming the profile. The other direction, binding a profile to a project that has a model, is refused inside `store.projects.update` (`MODEL_SELECTED`), naming the model. That second refusal is an invariant kept for a caller that does not exist yet: no route or library code binds a profile today, and one added later must turn `MODEL_SELECTED` into a refusal the operator sees.
 
 **Changing the engine clears the model**, unless the same request sends a model that is valid for the new engine. A model id means nothing to another engine's CLI. The response's `warnings` say the model was reset, name it and both engines, and say whether the new engine offers models, offers none, or has broken model settings. This is the same rule the default launch mode follows (#2189).
 
@@ -1068,9 +1068,14 @@ Two things are deliberately not re-checked. A model sent at the value already st
 | Field | Meaning |
 |---|---|
 | `model` | The stored model id, or `null` |
-| `modelCheck` | `null` when no model is stored. Otherwise `{ok: true}`, or `{ok: false, code, reason}` with the same codes a save uses |
+| `modelCheck` | `null` when the config was read and holds no model. Otherwise `{ok: true}`, or `{ok: false, code, reason}` with the same codes a save uses, plus the two below |
 
-`GET /api/projects` works each distinct engine and model out once per list, so a fleet on one model costs one roster read.
+Two reports exist only on the read side, because neither is something a save can produce:
+
+- **`PROJECT_CONFIG_UNREADABLE`.** The project's directory would not answer or may not be read, or its `project.json` would not read or parse. `model` is `null` and means *unknown*, not *none*: the reason says what failed. A project whose config file or directory is simply not there has no model, and reports `modelCheck: null`.
+- **`MODEL_MALFORMED` with `stored`.** A hand edit left something that is not text (a number, an object). `model` and `modelCheck.stored` both carry it as JSON, cut to 120 characters, so the payload shows what is in the file and never reads it as no selection.
+
+**What the reads cost.** A stored model's check parses the CLI's model list (356 KB for Codex on the machine this was built on), synchronously. `GET /api/projects` does that once per distinct engine and model in the list, and only when some project stores a model. `GET /api/engines` does it once per model-offering engine on every request; the pages call it when they load or open a settings form, not on a timer. Nothing caches the list between requests, because a save and a launch must each read it fresh. Whether displays should share a short-lived copy is tracked separately (#2220).
 
 **What an engine reports.** Every engine, in `GET /api/engines` and as a project's `engine`, carries `modelSelection`: `{declared, state, errors}`. `GET /api/engines` also carries `models`: the engine's offered models, each `{id, label, available, reason}`, read from the CLI's roster for that request. It is an empty list unless `state` is `ok`, which is why `state` has to be read with it: an empty list from a broken block is not an empty list from an engine that offers nothing. A project's own `engine` does not carry `models`, because that payload is built for every project on a polled list.
 

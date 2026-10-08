@@ -236,6 +236,30 @@ describe('project model selection — persistence (#2188)', () => {
       await refused('ms-no-roster', { model: LUNA }, /ROSTER_UNAVAILABLE/);
     });
 
+    it('any model when the CLI\'s model list is too old to be called current, or dated in the future', async () => {
+      mkProject('ms-stale-roster');
+      const cache = path.join(codexHome, 'models_cache.json');
+      const listing = (fetchedAt) => JSON.stringify({
+        fetched_at: new Date(fetchedAt).toISOString(),
+        models: [SOL, LUNA].map((slug) => ({ slug, display_name: slug }))
+      });
+      const maxAgeMs = shippedCodex.models.roster.maxAgeHours * 3600 * 1000;
+
+      // Inside the bound the same list is accepted, so the refusals below are
+      // about its age and nothing else.
+      fs.writeFileSync(cache, listing(Date.now() - maxAgeMs + 3600 * 1000));
+      const fresh = await projects.updateProject('ms-stale-roster', { model: SOL });
+      assert.deepEqual(fresh.errors, []);
+
+      fs.writeFileSync(cache, listing(Date.now() - maxAgeMs - 24 * 3600 * 1000));
+      await refused('ms-stale-roster', { model: LUNA }, /ROSTER_UNAVAILABLE/);
+      const stale = await projects.updateProject('ms-stale-roster', { model: LUNA });
+      assert.match(stale.errors[0], /day\(s\) ago/);
+
+      fs.writeFileSync(cache, listing(Date.now() + 24 * 3600 * 1000));
+      await refused('ms-stale-roster', { model: LUNA }, /ROSTER_UNAVAILABLE/);
+    });
+
     it('a model on an engine that offers none', async () => {
       mkProject('ms-claude', 'claude');
       await refused('ms-claude', { model: LUNA }, /ENGINE_HAS_NO_MODELS/);
@@ -307,6 +331,36 @@ describe('project model selection — persistence (#2188)', () => {
       assert.match(told[0], new RegExp(`${LUNA} was chosen for Codex`));
       assert.match(told[0], /does not carry to Antigravity/);
       assert.match(told[0], /Antigravity offers no model selection/);
+    });
+
+    it('resets a non-default launch mode and a model together: both said, one write of the config', async () => {
+      const row = mkProject('ms-switch-both');
+      await projects.updateProject('ms-switch-both', { defaultLaunchMode: 'bypassPermissions', model: LUNA });
+      assert.equal(store.projectConfig.load(row.path).defaultLaunchMode, 'bypassPermissions');
+      assert.equal(onDisk(row), LUNA);
+
+      const realSave = store.projectConfig.save;
+      const written = [];
+      store.projectConfig.save = function counted(projectPath, cfg) {
+        if (projectPath === row.path) written.push({ engine: cfg.engine, mode: cfg.defaultLaunchMode, model: cfg.model });
+        return realSave.call(this, projectPath, cfg);
+      };
+      let res;
+      try {
+        res = await projects.updateProject('ms-switch-both', { engine: 'antigravity' });
+      } finally {
+        store.projectConfig.save = realSave;
+      }
+      assert.deepEqual(res.errors, []);
+      // The engine, the mode and the model land in one write, so no reader of
+      // the file ever sees the new engine beside the old engine's choices.
+      assert.deepEqual(written, [{ engine: 'antigravity', mode: 'default', model: null }]);
+      assert.equal(res.warnings.filter((w) => /^Default launch mode is reset/.test(w)).length, 1, JSON.stringify(res.warnings));
+      assert.equal(res.warnings.filter((w) => /^Model is reset/.test(w)).length, 1, JSON.stringify(res.warnings));
+      assert.equal(res.warnings.length, 2, 'the two resets and nothing else');
+      assert.equal(res.project.defaultLaunchMode, 'default');
+      assert.equal(res.project.model, null);
+      assert.equal(res.project.modelCheck, null);
     });
 
     it('reports the clear for a request that names the engine and null together', async () => {
@@ -427,15 +481,101 @@ describe('project model selection — persistence (#2188)', () => {
       'one roster read per distinct engine and model in the list, not one per project');
     });
 
-    it('reports a hand-edited value that is not text instead of reading it as no model', async () => {
-      const row = mkProject('ms-hand-edit');
-      const cfg = store.projectConfig.load(row.path);
-      cfg.model = 42;
-      store.projectConfig.save(row.path, cfg);
-      const read = await projects.getProject('ms-hand-edit');
-      assert.equal(read.model, null);
-      assert.equal(read.modelCheck.ok, false);
-      assert.equal(read.modelCheck.code, 'MODEL_MALFORMED');
+    it('shows a hand-edited value that is not text as what is stored, never as no selection', async () => {
+      for (const [i, raw, shown] of [[0, 42, '42'], [1, { id: LUNA }, `{"id":"${LUNA}"}`], [2, [LUNA], `["${LUNA}"]`], [3, true, 'true']]) {
+        const row = mkProject(`ms-hand-edit-${i}`);
+        const cfg = store.projectConfig.load(row.path);
+        cfg.model = raw;
+        store.projectConfig.save(row.path, cfg);
+        const read = await projects.getProject(`ms-hand-edit-${i}`);
+        assert.equal(read.model, shown, 'the payload shows the stored value');
+        assert.notEqual(read.model, null);
+        assert.equal(read.modelCheck.ok, false);
+        assert.equal(read.modelCheck.code, 'MODEL_MALFORMED');
+        assert.equal(read.modelCheck.stored, shown);
+        assert.ok(read.modelCheck.reason.includes(shown));
+      }
+    });
+
+    it('bounds how much of a hand-edited value it repeats', () => {
+      const report = projects.storedModelReport({ model: { junk: 'x'.repeat(5000) } }, shippedCodex);
+      assert.equal(report.model.length, 120);
+      assert.ok(report.model.endsWith('...'));
+      assert.equal(report.modelCheck.stored, report.model);
+    });
+
+    describe('a config that cannot be read is not a config with no model', () => {
+      /**
+       * A Codex project holding LUNA whose config file is then replaced.
+       * @param {string} name - Project name.
+       * @param {(file: string, row: object) => void} damage - What happens to the file.
+       * @returns {Promise<object>} The project as read afterwards.
+       */
+      async function readAfter(name, damage) {
+        const row = await holding(name);
+        damage(path.join(row.path, '.tangleclaw', 'project.json'), row);
+        return projects.getProject(name);
+      }
+
+      it('a config that will not parse: unknown, reported with PROJECT_CONFIG_UNREADABLE and why', async () => {
+        const read = await readAfter('ms-cfg-corrupt', (file) => fs.writeFileSync(file, '{ "engine": "codex", "model": '));
+        assert.equal(read.model, null);
+        assert.ok(read.modelCheck, 'a failed read must not look like "no model stored"');
+        assert.equal(read.modelCheck.ok, false);
+        assert.equal(read.modelCheck.code, 'PROJECT_CONFIG_UNREADABLE');
+        assert.match(read.modelCheck.reason, /project\.json/);
+        assert.match(read.modelCheck.reason, /unknown/);
+      });
+
+      it('a config file that may not be read: the same report', async (t) => {
+        if (process.getuid && process.getuid() === 0) return t.skip('root reads any file');
+        let locked;
+        try {
+          const read = await readAfter('ms-cfg-noread', (file) => { locked = file; fs.chmodSync(file, 0o000); });
+          assert.equal(read.model, null);
+          assert.equal(read.modelCheck.code, 'PROJECT_CONFIG_UNREADABLE');
+        } finally {
+          if (locked) fs.chmodSync(locked, 0o600);
+        }
+      });
+
+      it('a list of projects reports it too, and still reports its neighbours', async () => {
+        await readAfter('ms-cfg-corrupt-list', (file) => fs.writeFileSync(file, 'not json'));
+        await holding('ms-cfg-good-list');
+        const listed = await projects.listProjects();
+        const bad = listed.find((p) => p.name === 'ms-cfg-corrupt-list');
+        assert.equal(bad.modelCheck.code, 'PROJECT_CONFIG_UNREADABLE');
+        const good = listed.find((p) => p.name === 'ms-cfg-good-list');
+        assert.equal(good.model, LUNA);
+        assert.deepEqual(good.modelCheck, { ok: true });
+      });
+
+      it('a config file that is not there is absent, not unreadable: no model, nothing to report', async () => {
+        const read = await readAfter('ms-cfg-absent', (file) => fs.rmSync(file));
+        assert.equal(read.model, null);
+        assert.equal(read.modelCheck, null);
+      });
+
+      it('a project whose directory is gone has no config and so no model', async () => {
+        const read = await readAfter('ms-dir-gone', (file, row) => fs.rmSync(row.path, { recursive: true, force: true }));
+        assert.equal(read.model, null);
+        assert.equal(read.modelCheck, null);
+      });
+
+      it('configUnreadableReason tells the three cases apart', () => {
+        assert.equal(projects.configUnreadableReason({ exists: true, config: {}, configError: null, unreadable: null }), null);
+        assert.equal(projects.configUnreadableReason({ exists: false, config: null, unreadable: null }), null);
+        assert.match(projects.configUnreadableReason({ exists: true, config: {}, configError: 'Unexpected end of JSON input' }), /project\.json: Unexpected end/);
+        assert.equal(projects.configUnreadableReason({ exists: false, config: null, unreadable: 'the directory did not respond' }), 'the directory did not respond');
+        assert.equal(projects.configUnreadableReason(null), null);
+      });
+
+      it('a directory that would not answer is reported as unknown, whatever defaults stand in for its config', () => {
+        const report = projects.storedModelReport(null, shippedCodex, undefined, 'the directory did not respond');
+        assert.equal(report.model, null);
+        assert.equal(report.modelCheck.code, 'PROJECT_CONFIG_UNREADABLE');
+        assert.match(report.modelCheck.reason, /the directory did not respond/);
+      });
     });
   });
 
