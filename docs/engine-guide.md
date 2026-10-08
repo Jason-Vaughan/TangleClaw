@@ -626,7 +626,13 @@ kickoff), whatever its pane shows. The delivery ledger and the log say
 for a dialog nothing can recognise now, so reading the list as shorter, or as empty, would launch
 unwatched into exactly that dialog. This is the same policy as an unreadable `launch.guardedDialogs`
 entry (#2177). A profile with no list of its own inherits the refusal with the declaration of its
-`command`. Only a literal `[]` declares none. Entries that could be read still protect later
+`command`. **If the installed profiles cannot be read at all** (the store's profile list throws,
+or comes back empty), a profile that inherits has lost its declaration: what its program declares
+could not be found out, which is not the same as nothing, so its launch types nothing either, under
+the same code. That clears by itself when the list reads again; a profile with a list of its own,
+`[]` included, does not depend on the list. One look, one watch and one launch each read the
+declaration **once** (`startupDialog.resolve`), so a fault that comes or goes in the middle cannot
+be pieced together into "nothing declared and nothing wrong". Only a literal `[]` declares none. Entries that could be read still protect later
 sends. The watch tells a finished boot by the measured prompt signature in
 the engine's `wake` block, or failing that in the `wake` block of the profile that declares the
 dialogs for the same command. With neither, the boot is not watched and the launch types nothing

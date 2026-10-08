@@ -873,7 +873,7 @@ describe('the session keeps its blocker (#2128)', () => {
         const cols = store.getDb().prepare('PRAGMA table_info(sessions)').all().map((c) => c.name);
         assert.ok(cols.includes('launch_blocker'));
         assert.equal(store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
-        assert.equal(store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 58, 'this migration is v58: v57 belongs to #2186');
+        assert.ok(store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v >= 58, 'this migration is v58: v57 belongs to #2186');
         assert.ok(store.getDb().prepare('PRAGMA table_info(startup_prompt_fires)').all().some((c) => c.name === 'dispatch_note'), 'and the v57 column is there too');
         assert.equal(store.sessions.get(s.id).launchBlocker, null, 'a session from before has no blocker');
         // The rebuild above dropped the table's three indexes with it. A real
@@ -2819,7 +2819,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
           assert.equal(rows.length, 1);
           assert.equal(rows[0].outcome, 'skipped');
           assert.match(rows[0].skipReason, /^startup_dialogs_unreadable: engine profile "claude" declares startup dialogs TangleClaw could not read/);
-          assert.match(rows[0].skipReason, name === 'every entry unreadable' ? /entry 1: / : (name.startsWith('one sound') ? /entry 2: / : /its value: /));
+          assert.match(rows[0].skipReason, name === 'every entry unreadable' ? /entry 1: / : (name.startsWith('one sound') ? /entry 2: / : /its declaration: /));
           assert.match(rows[0].skipReason, /set "startupDialogs": \[\] to declare none/);
         });
 
@@ -2905,6 +2905,264 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
         assert.deepEqual(typed, []);
         assert.deepEqual(kicked, []);
         assert.match(rows[0].skipReason, /^startup_dialogs_unreadable: engine profile "claude" declares startup dialogs TangleClaw could not read \(entry 2: /);
+      });
+
+      describe('when the installed profiles cannot be consulted, a profile that inherits has lost its declaration (A160 R8)', () => {
+        // The first failures this module answers were on an operator's second
+        // profile for Claude Code, which has no list of its own. If the lookup
+        // that finds its program's dialogs fails and that reads as "nothing
+        // declared", a store fault switches the protection off.
+        const VARIANT = Object.freeze({ ...WITH_PREKEY, id: 'claude-sonnet-reviewer', command: 'claude', capabilities: { supportsPrimePrompt: true } });
+        const FAULTS = {
+          'the profile list throws': () => { throw new Error('profile-list-read-failed'); },
+          'the profile list comes back empty': () => [],
+          'the profile list comes back as nothing': () => null
+        };
+
+        /**
+         * Launch through the real `_deferEngineInit` and the real watch, and wait
+         * for every send to have been made or withheld.
+         * @param {object} s - The session row
+         * @param {object} profile - The engine profile
+         * @returns {Promise<{rows: object[], kicked: object[]}>}
+         */
+        const launchReal = async (s, profile) => {
+          const rows = [];
+          const kicked = [];
+          const realRecord = store.sessionRuleDeliveries.record;
+          store.sessionRuleDeliveries.record = (entry) => { rows.push(entry); return entry; };
+          launchKickoff.kickoff = (args) => { kicked.push(args); return Promise.resolve('sent'); };
+          try {
+            const done = new Promise((resolve) => { launchFinished = resolve; });
+            sessions._deferEngineInit(
+              s.tmuxSession, project.name, profile.id, profile, 'the prime', null, false,
+              { sessionId: s.id, projectId: project.id, engineId: profile.id, kind: 'startup', ruleIds: [1], digest: 'd' },
+              { sessionId: s.id, projectId: project.id, hasSequence: true }
+            );
+            await done;
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            await turns();
+          } finally {
+            store.sessionRuleDeliveries.record = realRecord;
+          }
+          return { rows, kicked };
+        };
+
+        for (const [name, list] of Object.entries(FAULTS)) {
+          it(`${name}, cold cache: not "undeclared"; the watch answers unreadable without reading the pane`, async () => {
+            startupDialog.reset();
+            startupDialog._internal.engineProfiles = list;
+            let paneReads = 0;
+            startupDialog._internal.capturePane = async () => { paneReads += 1; return served(AFTER_MENU); };
+            assert.deepEqual(startupDialog.declared(VARIANT), []);
+            const problems = startupDialog.unreadable(VARIANT);
+            assert.equal(problems.length, 1);
+            assert.equal(problems[0].profile, 'claude-sonnet-reviewer');
+            assert.match(problems[0].errors[0], /declared for its command "claude" could not be looked up/);
+            const res = await startupDialog.watch({ tmuxName: 't', engineProfile: VARIANT });
+            assert.equal(res.outcome, 'unreadable');
+            assert.equal(paneReads, 0);
+          });
+
+          it(`${name}, cold cache: a launch types no pre-key, no prime and no kickoff, over a pane at its bare prompt`, async () => {
+            startupDialog.reset();
+            startupDialog._internal.engineProfiles = list;
+            const s = start();
+            pane = AFTER_MENU;
+            const { rows, kicked } = await launchReal(s, VARIANT);
+            assert.deepEqual(typed, [], 'nothing was typed');
+            assert.deepEqual(kicked, [], 'and the kickoff was not asked to');
+            assert.equal(rows.length, 1);
+            assert.equal(rows[0].outcome, 'skipped');
+            assert.match(rows[0].skipReason, /^startup_dialogs_unreadable: engine profile "claude-sonnet-reviewer" declares startup dialogs TangleClaw could not read \(its declaration: the startup dialogs declared for its command "claude" could not be looked up/);
+          });
+
+          it(`${name}: a launch send asked on its own, and the kickoff's send, are refused too`, () => {
+            startupDialog.reset();
+            startupDialog._internal.engineProfiles = list;
+            const s = start();
+            pane = AFTER_MENU;
+            assert.equal(sessions._startupDialogAtSend(s.tmuxSession, VARIANT, 'claude', project.name, { sessionId: s.id }).code, startupDialog.DECLARATION_UNREADABLE);
+            const seen = startupDialog.check(s.tmuxSession, VARIANT);
+            assert.equal(startupDialog.withholdFor(seen, null, { launchSend: true }).code, startupDialog.DECLARATION_UNREADABLE);
+          });
+        }
+
+        it('the fault is not remembered: once the list reads again the profile is watched and typed into as usual, and a later fault is not hidden by the good read', async () => {
+          startupDialog.reset();
+          let mode = 'throw';
+          startupDialog._internal.engineProfiles = () => {
+            if (mode === 'throw') throw new Error('profile-list-read-failed');
+            return [VARIANT, { ...CLAUDE, id: 'claude', command: 'claude' }];
+          };
+          assert.equal(startupDialog.unreadable(VARIANT).length, 1);
+          mode = 'ok';
+          assert.deepEqual(startupDialog.unreadable(VARIANT), [], 'recovered at the next ask');
+          assert.deepEqual(startupDialog.declared(VARIANT).map((d) => d.code), ['trust_required']);
+          // A good read is kept, as before: the declarations of installed profiles do not change under a running server.
+          mode = 'throw';
+          assert.deepEqual(startupDialog.unreadable(VARIANT), []);
+          assert.deepEqual(startupDialog.declared(VARIANT).map((d) => d.code), ['trust_required']);
+        });
+
+        describe('one snapshot per operation: a fault that comes or goes mid-operation cannot be mixed into "nothing declared, nothing wrong"', () => {
+          const GOOD = () => [VARIANT, { ...CLAUDE, id: 'claude', command: 'claude' }];
+          /**
+           * A profile list that throws on the listed call numbers and reads well on the rest.
+           * @param {number[]} failOn - 1-based call numbers that throw
+           * @returns {{list: Function, calls: () => number}}
+           */
+          const flaky = (failOn) => {
+            let n = 0;
+            return {
+              list: () => { n += 1; if (failOn.includes(n)) throw new Error('profile-list-read-failed'); return GOOD(); },
+              calls: () => n
+            };
+          };
+
+          it('resolve asks the list at most once, and never answers "no dialogs and no problems" for a profile that inherits', () => {
+            for (const failOn of [[], [1], [2], [1, 2], [1, 3], [2, 3], [1, 2, 3]]) {
+              startupDialog.reset();
+              const f = flaky(failOn);
+              startupDialog._internal.engineProfiles = f.list;
+              for (let i = 0; i < 4; i++) {
+                const before = f.calls();
+                const got = startupDialog.resolve(VARIANT);
+                assert.ok(f.calls() - before <= 1, `one lookup per snapshot (failOn ${failOn})`);
+                assert.ok(got.dialogs.length > 0 || got.problems.length > 0, `failOn ${JSON.stringify(failOn)}, ask ${i + 1}: neither part may be empty together`);
+                assert.equal(got.dialogs.length > 0 && got.problems.length > 0, false, 'and they are never mixed either way');
+              }
+            }
+          });
+
+          it('check, throw then recover: the look that met the fault refuses a launch send; the next look is ordinary', () => {
+            startupDialog.reset();
+            const f = flaky([1]);
+            startupDialog._internal.engineProfiles = f.list;
+            const s = start();
+            pane = AFTER_MENU;
+            const first = startupDialog.check(s.tmuxSession, VARIANT);
+            assert.equal(f.calls(), 1, 'one lookup for the whole look');
+            assert.equal(first.declared, false);
+            assert.ok(first.unreadable, 'the fault is carried, not lost between two asks');
+            assert.equal(startupDialog.withholdFor(first, null, { launchSend: true }).code, startupDialog.DECLARATION_UNREADABLE);
+            const second = startupDialog.check(s.tmuxSession, VARIANT);
+            assert.equal(second.unreadable, null);
+            assert.equal(second.clear, true);
+            assert.equal(startupDialog.withholdFor(second, null, { launchSend: true }), null);
+          });
+
+          it('a launch send, throw then recover: the send that met the fault is refused', () => {
+            startupDialog.reset();
+            startupDialog._internal.engineProfiles = flaky([1]).list;
+            const s = start();
+            pane = AFTER_MENU;
+            assert.equal(sessions._startupDialogAtSend(s.tmuxSession, VARIANT, 'claude', project.name, { sessionId: s.id }).code, startupDialog.DECLARATION_UNREADABLE);
+            assert.equal(sessions._startupDialogAtSend(s.tmuxSession, VARIANT, 'claude', project.name, { sessionId: s.id }), null, 'the next one, with the list read, is not');
+          });
+
+          it('the kickoff\'s send, throw then recover: refused, nothing typed', () => {
+            startupDialog.reset();
+            startupDialog._internal.engineProfiles = flaky([1]).list;
+            const s = start();
+            pane = AFTER_MENU;
+            const realGet = store.engines.get;
+            store.engines.get = (id) => (id === 'claude' ? VARIANT : realGet.call(store.engines, id));
+            try {
+              const sent = launchKickoff._internal.inject(project.name, 'Run `tc start next`', { sessionId: s.id, launchSend: true });
+              assert.equal(sent.ok, false);
+              assert.equal(sent.startupDialog.code, startupDialog.DECLARATION_UNREADABLE);
+              assert.deepEqual(typed, []);
+            } finally {
+              store.engines.get = realGet;
+            }
+          });
+
+          it('watch, throw then recover: one snapshot, so it answers unreadable and does not go on to read the pane', async () => {
+            startupDialog.reset();
+            const f = flaky([1]);
+            startupDialog._internal.engineProfiles = f.list;
+            let paneReads = 0;
+            startupDialog._internal.capturePane = async () => { paneReads += 1; return served(AFTER_MENU); };
+            const res = await startupDialog.watch({ tmuxName: 't', engineProfile: VARIANT });
+            assert.equal(res.outcome, 'unreadable');
+            assert.equal(f.calls(), 1);
+            assert.equal(paneReads, 0);
+          });
+
+          it('a launch, throw then recover: the decision and the watch share one snapshot, and no pre-key, prime or kickoff is typed', async () => {
+            startupDialog.reset();
+            const f = flaky([1]);
+            startupDialog._internal.engineProfiles = f.list;
+            const s = start();
+            pane = AFTER_MENU;
+            const { rows, kicked } = await launchReal(s, VARIANT);
+            assert.equal(f.calls(), 1, 'the launch asked the list once: the watch used the launch\'s own snapshot');
+            assert.deepEqual(typed, []);
+            assert.deepEqual(kicked, []);
+            assert.match(rows[0].skipReason, /^startup_dialogs_unreadable: /);
+          });
+
+          it('a launch, recover then throw: the good read stands for the whole launch, which is watched and then types', async () => {
+            startupDialog.reset();
+            const f = flaky([2, 3, 4, 5, 6, 7, 8]);
+            startupDialog._internal.engineProfiles = f.list;
+            let clock = 0;
+            let watchReads = 0;
+            startupDialog._internal.now = () => clock;
+            startupDialog._internal.sleep = async (ms) => { clock += ms; };
+            startupDialog._internal.wakeProfiles = () => ({ claude: WAKE });
+            startupDialog._internal.paneDigest = (lines) => lines.join('\n');
+            startupDialog._internal.capturePane = async () => { watchReads += 1; return served(AFTER_MENU); };
+            const s = start();
+            pane = AFTER_MENU;
+            const { rows } = await launchReal(s, VARIANT);
+            assert.ok(watchReads >= 2, 'the boot was watched, on the declaration read at the start');
+            assert.ok(typed.some((t) => t.text === 'the prime'), 'and, the prompt having been seen, the launch typed');
+            assert.ok(!rows.some((r) => r.outcome === 'skipped'));
+            assert.deepEqual(startupDialog.resolve(VARIANT).dialogs.map((d) => d.code), ['trust_required'], 'the declaration is still in force after the later faults');
+          });
+
+          it('the dialog itself, recover then throw: still seen and still refused for every sender', () => {
+            startupDialog.reset();
+            startupDialog._internal.engineProfiles = flaky([2, 3, 4]).list;
+            startupDialog._internal.wakeProfiles = () => ({ claude: WAKE });
+            const s = start();
+            pane = TRUST_DIALOG;
+            for (let i = 0; i < 3; i++) {
+              const seen = startupDialog.check(s.tmuxSession, VARIANT);
+              assert.equal(seen.dialog.code, 'trust_required');
+              assert.equal(startupDialog.withholdFor(seen, null).code, 'trust_required');
+            }
+          });
+        });
+
+        it('control: a profile that says [] for itself does not depend on the list, and types', async () => {
+          startupDialog.reset();
+          startupDialog._internal.engineProfiles = () => { throw new Error('profile-list-read-failed'); };
+          const optedOut = { ...VARIANT, capabilities: { supportsPrimePrompt: true, startupDialogs: [] } };
+          assert.deepEqual(startupDialog.unreadable(optedOut), []);
+          const s = start();
+          pane = AFTER_MENU;
+          const { rows } = await launchReal(s, optedOut);
+          assert.ok(typed.some((t) => t.text === 'the prime'), 'the prime was pasted');
+          assert.ok(!rows.some((r) => r.outcome === 'skipped'));
+        });
+
+        it('control: a profile with a sound list of its own does not depend on the list either', () => {
+          startupDialog.reset();
+          startupDialog._internal.engineProfiles = () => { throw new Error('profile-list-read-failed'); };
+          assert.deepEqual(startupDialog.unreadable(CLAUDE), []);
+          assert.deepEqual(startupDialog.declared(CLAUDE).map((d) => d.code), ['trust_required']);
+        });
+
+        it('control: with the list readable, a command nothing declares for is still simply undeclared', async () => {
+          startupDialog.reset();
+          startupDialog._internal.engineProfiles = () => [CLAUDE, { id: 'aider', command: 'aider', capabilities: {} }];
+          const aider = { id: 'aider', command: 'aider', capabilities: {} };
+          assert.deepEqual(startupDialog.unreadable(aider), []);
+          assert.equal((await startupDialog.watch({ tmuxName: 't', engineProfile: aider })).outcome, 'undeclared');
+        });
       });
 
       it('a command whose only declaration is unreadable still passes the refusal on', () => {
