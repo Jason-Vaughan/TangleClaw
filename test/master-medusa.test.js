@@ -297,6 +297,12 @@ describe('resyncMasterMedusa — the boot half', () => {
 });
 
 describe('masterWakeRecord / injectMasterCommand — what medusa-wake sees and types', () => {
+  // A resolver that answers an engine, for the tests below that are about a
+  // DELIVERED command. Without it they resolve against the engine CLIs installed
+  // on whatever machine runs them: a host with none (CI) resolves no engine, and
+  // the command is then refused, which is correct and is not what they test.
+  const RESOLVES = { resolveDefaultEngine: () => 'claude' };
+
   it('a live Master is a session-shaped record carrying its opt-in and API base', () => {
     setMaster({ medusaWake: true });
     const rec = master.masterWakeRecord({ tmuxLib: fakeTmux({ alive: true }) });
@@ -316,7 +322,7 @@ describe('masterWakeRecord / injectMasterCommand — what medusa-wake sees and t
 
   it('injects into the reserved tmux session, Enter included, when live', () => {
     const t = fakeTmux({ alive: true });
-    const r = master.injectMasterCommand('[TangleClaw Switchboard] nudge', { tmuxLib: t });
+    const r = master.injectMasterCommand('[TangleClaw Switchboard] nudge', { tmuxLib: t, enginesLib: RESOLVES });
     assert.deepEqual(r, { ok: true, error: null });
     assert.equal(t.typed.length, 1);
     assert.equal(t.typed[0].session, master.MASTER_TMUX_SESSION);
@@ -373,17 +379,19 @@ describe('masterWakeRecord / injectMasterCommand — what medusa-wake sees and t
     } finally {
       store.engines.list = realList;
     }
-    // Recovery: once the profiles read again the same call is delivered.
+    // Recovery: once the engine resolves again the same call is delivered. The
+    // refusal above runs on the real resolver; this half is pinned, because
+    // whether the real one answers an engine depends on the host.
     const t2 = fakeTmux({ alive: true });
-    assert.equal(master.injectMasterCommand('x', { tmuxLib: t2 }).ok, true);
+    assert.equal(master.injectMasterCommand('x', { tmuxLib: t2, enginesLib: RESOLVES }).ok, true);
     assert.equal(t2.typed.length, 1);
     assert.equal(typeof t2.typed[0].options.engineId, 'string');
   });
 
   it('a resolved engine is always NAMED to the pane writer, which is what arms its check', () => {
     const t = fakeTmux({ alive: true });
-    assert.equal(master.injectMasterCommand('x', { tmuxLib: t }).ok, true);
-    assert.ok(t.typed[0].options.engineId, 'never sent without an engine');
+    assert.equal(master.injectMasterCommand('x', { tmuxLib: t, enginesLib: RESOLVES }).ok, true);
+    assert.equal(t.typed[0].options.engineId, 'claude', 'never sent without an engine');
   });
 
   it('refuses when the Master is not running, when tmux is silent, and over the length cap', () => {
