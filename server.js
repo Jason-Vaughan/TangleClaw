@@ -1574,16 +1574,16 @@ route('GET', '/api/master/status', (_req, res) => {
 route('POST', '/api/master/ensure', (_req, res) => {
   const result = master.ensureMasterSession();
   if (result.error) {
+    // Refused before anything started: the engine could not be shown isolated
+    // from a background process it shares between sessions (#2233). 409, not
+    // 500: nothing failed, and the message carries what to do.
+    if (result.code === 'LAUNCH_ISOLATION_UNVERIFIED') {
+      return errorResponse(res, 409, result.error, result.code, result.isolation);
+    }
     // A refusal because tmux never answered is not a failed start, and the panel
     // must not paint it as one — "down" would be a definite claim about the very
     // thing that could not be established. Its own code, so the client branches
     // on a code rather than on the wording of the message.
-    // Refused before anything started: the engine could not be shown isolated
-    // from a background process it shares between sessions (#2233). 409, not
-    // 500: nothing failed, and the message carries what to install.
-    if (result.code === 'LAUNCH_ISOLATION_UNVERIFIED') {
-      return errorResponse(res, 409, result.error, result.code, result.isolation);
-    }
     const code = (result.incomplete || []).includes('exists')
       ? 'MASTER_LIVENESS_UNKNOWN'
       : 'MASTER_ENSURE_FAILED';

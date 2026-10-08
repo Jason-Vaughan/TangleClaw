@@ -796,10 +796,14 @@ the newest version does not launch, so skip it (Escape).
 - **Operator cutover.** After upgrading TangleClaw, end every Codex session and the Project Master if
   it runs Codex, then launch them again. Each relaunch either starts isolated or is refused with the
   reason. Until that is done for a session, this check says nothing about it.
+- **A refused executable is never run.** Whether the resolved executable may be run as Codex at all (it
+  is named `codex`, and its path can be placed in a command) is decided before the version probe and
+  before the per-launch server, both of which execute that path. A wrapper or an unnameable path is
+  therefore refused with nothing started. The other refusals come after the probe, and a per-launch
+  server already started for one of them is stopped.
 - **Not supported, and refused or unseen.** Refused: a launch a profile identifies as Codex whose
   executable is not named `codex` (a wrapper is not trusted to pass the isolation flags on, whatever
   version it reports); a Codex whose path holds a quote or control character; custom launch arguments that are not plain words or that touch the isolation flags.
-  The recovery for it says to select or install the real Codex executable directly.
   Unseen: a wrapper or alias not named `codex` that no profile field identifies, a different program
   that is itself named `codex` (the name and the version it prints are the whole identity tested), Codex reached over
   SSH, an executable replaced between the version check and the launch, and whether a `--remote`

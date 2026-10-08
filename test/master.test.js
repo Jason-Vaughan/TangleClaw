@@ -2974,6 +2974,21 @@ describe('ensureMasterSession — Codex daemon isolation (#1895)', () => {
     }
   });
 
+  it('refuses a Codex Master as a fault of its own, not a version problem, when building the command throws', () => {
+    codexAnswers('codex-cli 0.157.1\n');
+    const realIsolate = codexAdapter.isolateLaunch;
+    codexAdapter.isolateLaunch = () => { throw new Error('builder fault'); };
+    try {
+      const { result, command } = ensureWith({ engine: 'codex' });
+      assert.equal(result.created, false);
+      assert.equal(result.isolation.reasonCode, 'judgment_failed');
+      assert.doesNotMatch(result.error, /Install a Codex version/);
+      assert.equal(command, null);
+    } finally {
+      codexAdapter.isolateLaunch = realIsolate;
+    }
+  });
+
   it('refuses a Codex Master when the Codex judgment is missing', () => {
     codexAnswers('codex-cli 0.157.1\n');
     const realJudge = codexAdapter.judgeLaunchCommand;

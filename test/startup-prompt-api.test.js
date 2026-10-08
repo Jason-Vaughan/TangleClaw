@@ -27,7 +27,7 @@ const openInstallToken = require('../lib/open-install-token');
 const tmux = require('../lib/tmux');
 const enginesModule = require('../lib/engines');
 const codexAdapter = require('../lib/startup-control-codex');
-const { standInCodex } = require('./_codex-launchable');
+const { standInCodex, detectWithCodex } = require('./_codex-launchable');
 const { handleRequest } = require('../server');
 
 const PASSWORD = 'correct-horse-battery';
@@ -173,7 +173,7 @@ describe('startup prompt routes (#1825)', () => {
     tmux.createSession = () => true;
     tmux.hasSession = () => false;
     tmux.killSession = () => true;
-    enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/fake-engine' });
+    enginesModule.detectEngine = detectWithCodex('/usr/bin/fake-engine');
     let session;
     try {
       session = sessions.launchSession(name, {}).session;

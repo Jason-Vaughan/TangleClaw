@@ -1752,6 +1752,34 @@ describe('Codex startupControl adapter', () => {
       });
     });
 
+    describe('admitExecutable: may this path be run as Codex at all (#2233)', () => {
+      it('admits an executable named codex, refuses a wrapper and an unnameable path, and disclaims other engines', () => {
+        assert.deepEqual(codex.admitExecutable({ engineId: 'codex', enginePath: '/opt/fake/bin/codex', command: 'codex' }), { applies: true, allowed: true });
+        assert.deepEqual(codex.admitExecutable({ engineId: 'codex', enginePath: '/Users/Jo Smith/bin/codex', command: 'codex' }), { applies: true, allowed: true });
+        for (const id of [{ engineId: 'codex' }, { engineId: 'my-engine', identifiedAs: 'codex' }, { engineId: 'my-engine', command: 'codex --x' }]) {
+          const verdict = codex.admitExecutable({ command: 'wrapper', ...id, enginePath: '/opt/x/wrapper' });
+          assert.equal(verdict.allowed, false);
+          assert.equal(verdict.reasonCode, 'executable_unverified');
+        }
+        for (const enginePath of [null, 'codex', "/opt/it's/codex"]) {
+          assert.equal(codex.admitExecutable({ engineId: 'codex', enginePath, command: 'codex' }).reasonCode, 'executable_unresolved', String(enginePath));
+        }
+        assert.deepEqual(codex.admitExecutable({ engineId: 'claude', enginePath: '/opt/fake/bin/claude', command: 'claude' }), { applies: false });
+      });
+
+      it('runs nothing to decide', () => {
+        const realSeams = { ...codex._seams };
+        const trap = () => { throw new Error('admitExecutable must not run anything'); };
+        Object.assign(codex._seams, { execFileSync: trap, execFile: trap, spawn: trap });
+        try {
+          assert.equal(codex.admitExecutable({ engineId: 'codex', enginePath: '/opt/fake/bin/codex', command: 'codex' }).allowed, true);
+          assert.equal(codex.admitExecutable({ engineId: 'codex', enginePath: '/opt/x/wrapper', command: 'codex' }).allowed, false);
+        } finally {
+          Object.assign(codex._seams, realSeams);
+        }
+      });
+    });
+
     describe('isolateLaunch: the legacy command on the exact executable (#2233)', () => {
       const BIN = '/opt/fake/bin/codex';
 

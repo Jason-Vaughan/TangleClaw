@@ -19,7 +19,7 @@ const os = require('node:os');
 const { setLevel, setConsoleStream } = require('../lib/logger');
 setLevel('error');
 const store = require('../lib/store');
-const { standInCodex } = require('./_codex-launchable');
+const { standInCodex, detectWithCodex } = require('./_codex-launchable');
 const { installTmuxGuard, removeTmuxGuard, reapFixtureSessions } = require('./_tmux-guard');
 
 describe('#741 a silentPrime that does not apply on this engine says so', () => {
@@ -50,7 +50,7 @@ describe('#741 a silentPrime that does not apply on this engine says so', () => 
     tmux.createSession = () => true;
     tmux.probeSession = () => ({ live: false, answered: true, cause: null });
     tmux.sendKeys = () => true;
-    engines.detectEngine = () => ({ available: true, path: '/usr/bin/engine' });
+    engines.detectEngine = detectWithCodex('/usr/bin/engine');
     // Several of these launch Codex, which starts only when its version answers (#2233).
     saved.restoreCodex = standInCodex(require('../lib/startup-control-codex'));
   });

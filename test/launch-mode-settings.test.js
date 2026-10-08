@@ -18,7 +18,7 @@ const os = require('node:os');
 const store = require('../lib/store');
 const projects = require('../lib/projects');
 const { setLevel } = require('../lib/logger');
-const { standInCodex } = require('./_codex-launchable');
+const { standInCodex, detectWithCodex } = require('./_codex-launchable');
 
 setLevel('error');
 
@@ -526,7 +526,7 @@ describe('launch-mode settings', () => {
       originalHasSession = tmux.hasSession;
       originalDetectEngine = enginesModule.detectEngine;
       originalCreateSession = tmux.createSession;
-      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+      enginesModule.detectEngine = detectWithCodex('/usr/bin/claude');
       tmux.hasSession = () => false;
       tmux.createSession = () => true;
       // One of these launches overrides the engine to Codex, which launches only when its version answers (#2233).

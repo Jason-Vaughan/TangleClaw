@@ -1,5 +1,8 @@
 'use strict';
 
+/** Where the stand-in Codex is "installed". Nothing exists there; the version probe is answered by a seam. */
+const STAND_IN_CODEX_PATH = '/opt/fake/bin/codex';
+
 /**
  * A stand-in Codex install for tests that launch a Codex session and are not
  * about Codex.
@@ -31,4 +34,16 @@ function standInCodex(codexAdapter, version = '0.157.1') {
   };
 }
 
-module.exports = { standInCodex };
+/**
+ * An engine-detection stub for tests that launch several engines on made-up
+ * installs. Codex resolves to an executable named `codex`, because a launch
+ * identified as Codex whose executable has another name is refused as a
+ * wrapper (#2233); every other engine resolves to `otherPath`.
+ * @param {string} otherPath - The path every non-Codex engine resolves to.
+ * @returns {(profile: object) => {available: boolean, path: string}}
+ */
+function detectWithCodex(otherPath) {
+  return (profile) => ({ available: true, path: profile && profile.id === 'codex' ? STAND_IN_CODEX_PATH : otherPath });
+}
+
+module.exports = { standInCodex, detectWithCodex, STAND_IN_CODEX_PATH };

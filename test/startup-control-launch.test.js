@@ -378,7 +378,10 @@ describe('startupControl at launch and teardown (codex)', () => {
     const realIsolate = codex.isolateLaunch;
     codex.isolateLaunch = () => { throw new Error('builder fault'); };
     try {
-      assert.equal(refused().result.code, 'LAUNCH_ISOLATION_UNVERIFIED');
+      const { result } = refused();
+      assert.equal(result.code, 'LAUNCH_ISOLATION_UNVERIFIED');
+      assert.equal(result.isolation.reasonCode, 'judgment_failed', 'a fault of TangleClaw\'s own is not reported as a Codex version problem');
+      assert.doesNotMatch(result.error, /Install a Codex version/);
     } finally {
       codex.isolateLaunch = realIsolate;
     }
@@ -508,36 +511,100 @@ describe('startupControl at launch and teardown (codex)', () => {
     const WRAP = '/opt/fake/bin/codex-wrapper';
     const rows = () => store.getDb().prepare('SELECT COUNT(*) AS n FROM sessions').get().n;
 
-    it('on the native path: a wrapper reporting the natively verified version starts nothing and its prepared server is stopped', () => {
-      // The wrapper prints the version the native channel is verified on, so the channel is prepared before the judgment sees it.
-      healthySeams({ execFileSync: () => 'codex-cli 0.156.1\n' });
-      const before = rows();
-      const { result } = refused(WRAP);
+    /**
+     * Seams that record every time the launch runs the resolved executable:
+     * a version probe or an app-server. A wrapper must cause neither.
+     * @param {string} version - What the executable would print if asked.
+     * @returns {{probes: string[]}}
+     */
+    function wrapperSeams(version) {
+      const ran = { probes: [] };
+      healthySeams({ execFileSync: (bin) => { ran.probes.push(bin); return `codex-cli ${version}\n`; } });
+      return ran;
+    }
+
+    /**
+     * Assert a refusal that ran nothing and left nothing behind.
+     * @param {object} result - The launch result.
+     * @param {{probes: string[]}} ran - From `wrapperSeams`.
+     * @param {number} before - Session row count before the launch.
+     */
+    function assertNothingStarted(result, ran, before) {
       assert.equal(result.session, null);
       assert.equal(result.code, 'LAUNCH_ISOLATION_UNVERIFIED');
       assert.equal(result.isolation.reasonCode, 'executable_unverified');
       assert.ok(result.error.includes(WRAP));
       assert.match(result.error, /real Codex executable/);
+      assert.match(result.error, /Nothing was started/);
       assert.doesNotMatch(result.error, /Install a Codex version/);
+      assert.deepEqual(ran.probes, [], 'the wrapper was never run to ask its version');
+      assert.equal(calls.spawn.length, 0, 'no app-server was started from the wrapper');
+      assert.deepEqual(calls.kills, [], 'so there was nothing to stop');
       assert.equal(rows(), before, 'no session row');
-      assert.equal(calls.spawn.length, 1, 'the native channel had been prepared');
-      assert.equal(calls.spawn[0].bin, WRAP);
-      assert.deepEqual(calls.kills, [[-calls.spawn[0].pid, 'SIGTERM']], 'and its server was stopped');
-      assert.equal(store.getDb().prepare("SELECT COUNT(*) AS n FROM startup_control_channels WHERE state = 'open'").get().n, 0);
+      assert.equal(store.getDb().prepare('SELECT COUNT(*) AS n FROM startup_control_channels').get().n, 0, 'no channel row, open or closed');
+    }
+
+    for (const [label, version] of [
+      ['the version the native channel is verified on (the native path)', '0.156.1'],
+      ['a version verified for --no-daemon only (the fallback path)', '0.157.1'],
+      ['an unverified version', '0.161.0']
+    ]) {
+      it(`a wrapper that would report ${label} is refused before it is run`, () => {
+        const ran = wrapperSeams(version);
+        const before = rows();
+        assertNothingStarted(refused(WRAP).result, ran, before);
+      });
+    }
+
+    it('a wrapper that only the engine profile identifies as Codex is refused before it is run', () => {
+      // An engine whose id says nothing; its profile's launch command and detection target name Codex.
+      const ran = wrapperSeams('0.156.1');
+      const realGet = store.engines.get;
+      store.engines.get = (id) => (id === 'my-engine' ? { ...realGet.call(store.engines, 'codex'), id: 'my-engine' } : realGet.call(store.engines, id));
+      counter += 1;
+      const name = `sc-${counter}`;
+      const dir = path.join(projectsDir, name);
+      fs.mkdirSync(dir, { recursive: true });
+      store.projects.create({ name, path: dir, engine: 'claude' });
+      const before = rows();
+      let result;
+      try {
+        result = withStubbedTmux(() => {
+          tmux.createSession = () => { throw new Error('a refused launch must not create a tmux session'); };
+          enginesModule.detectEngine = () => ({ available: true, path: WRAP });
+          return sessions.launchSession(name, { primePrompt: false, engineOverride: 'my-engine' });
+        });
+      } finally {
+        store.engines.get = realGet;
+      }
+      assertNothingStarted(result, ran, before);
     });
 
-    it('on the fallback path: a wrapper reporting a version verified for --no-daemon starts nothing', () => {
-      healthySeams({ execFileSync: () => 'codex-cli 0.157.1\n' });
-      const before = rows();
-      const { result } = refused(WRAP);
-      assert.equal(result.isolation.reasonCode, 'executable_unverified');
-      assert.equal(calls.spawn.length, 0);
-      assert.equal(rows(), before);
+    it('with the admission check missing or throwing, a Codex launch runs nothing', () => {
+      for (const [label, install, reasonCode] of [
+        ['missing', () => { delete codex.admitExecutable; }, 'no_judge'],
+        ['throwing', () => { codex.admitExecutable = () => { throw new Error('fault'); }; }, 'judgment_failed']
+      ]) {
+        const ran = wrapperSeams('0.156.1');
+        const realAdmit = codex.admitExecutable;
+        install();
+        let out;
+        try {
+          out = refused();
+        } finally {
+          codex.admitExecutable = realAdmit;
+        }
+        assert.equal(out.result.isolation.reasonCode, reasonCode, label);
+        assert.deepEqual(ran.probes, [], `${label}: even the real Codex is not run when it cannot be checked`);
+        assert.equal(calls.spawn.length, 0, label);
+      }
     });
 
     it('on relaunch: a project that launched on the real Codex is refused once its executable resolves to a wrapper', () => {
-      healthySeams({ execFileSync: () => 'codex-cli 0.156.1\n' });
+      const probes = [];
+      healthySeams({ execFileSync: (bin) => { probes.push(bin); return 'codex-cli 0.156.1\n'; } });
       const l = launched();
+      const spawnedBefore = calls.spawn.length;
       tmux.probeSession = () => ({ answered: true, live: false });
       try {
         const again = withStubbedTmux(() => {
@@ -547,6 +614,8 @@ describe('startupControl at launch and teardown (codex)', () => {
         });
         assert.equal(again.session, null);
         assert.equal(again.isolation.reasonCode, 'executable_unverified');
+        assert.equal(calls.spawn.length, spawnedBefore, 'the relaunch started no app-server');
+        assert.deepEqual(probes.filter((bin) => bin === WRAP), [], 'and never ran the wrapper');
       } finally {
         tmux.probeSession = real.probe;
       }
