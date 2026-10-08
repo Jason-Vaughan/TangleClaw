@@ -56,6 +56,24 @@ Chunk 03 of the #2188 build plan, dispatched by the PM. Storage, validation and 
 **Review.** The first review found no blocker and two things worth fixing, both fixed in the second commit: the validator read the engine from `project.json` before the project row, so a checkout whose file had drifted could store a model the same response reported as unselectable; and a save under a running session said the model "applies to the next launch" beside the sentence saying no launch uses it. The remaining notes are accepted on the record. Four older validator rows still read the engine from `project.json` first; they predate this work and were reported to the PM as a candidate issue.
 
 **Not covered.** No live launch, since no launch reads the field. The wider roster, the launch argument, the requested-versus-actual check and the selectors are later chunks.
+## 2026-10-08 — #2165 follow-up: the hidden-state-word test checked nothing; fallback claims reworded
+
+<!-- prawduct: type=bugfix | scope=2165-state-word-test-reach -->
+
+A small test-and-docs follow-up to PR #2179, on the PM's dispatch, for three notes the Architect accepted as non-blocking at its exact-head review (A153).
+
+**The test.** "never hides the state word by any style" matched only selectors containing `.car-state`. The stylesheet has no such rule, because the word needs none, so the assertion ran against an empty set and could not fail. What can hide the word is a rule on a box it sits in. The test now selects every rule whose selector names the release panel, the card, the row of cars, the car's disclosure, the pill or one of its states, leaves out rules on pseudo-elements (they style the disclosure's marker or its content, not the summary), requires that set to contain the boxes it claims to cover, and refuses `display:none`, `visibility`, `opacity`, a zero font size, any `overflow`, `clip` or `clip-path`, `text-indent`, a fixed or maximum width or height, absolute or fixed positioning, a transparent colour and `content-visibility`.
+
+**Two things the Critic found in the first version of this fix.** The rule splitter read a whole `@media` block as one rule named by its prelude, so a rule hiding the word on a narrow screen would have been filtered out unseen; the stylesheet already has such a block. At-rule blocks are now opened up before the rules are read, and the helper refuses a stylesheet it could not fully open. And the companion test carried its own copy of the pattern, so it proved the copy; there is now one `HIDES` pattern and one `rulesReachingTheWord` helper, used by all three tests. The companion feeds the pattern every kind of declaration it names and a sample of the stylesheet's real ones; a third test shows a rule inside an at-rule block being seen and a pseudo-element rule being left out. Nine mutations of the stylesheet each turn a test red, three of them inside or beside an at-rule block.
+
+**What it still does not cover.** The page's own stylesheet in `lib/plan-docs.js` is outside the checked set, and the refused declarations are a list, not a proof: `transform:scale(0)` or a zero `font` shorthand would pass.
+
+**Root cause.** I wrote the test from the selector I had just added to the markup, not from the question it was meant to answer. A negative assertion over a filtered set needs the set shown to be non-empty.
+
+**The fallback.** A test comment and a sentence in `FEATURES.md` stated that where a browser cannot style `::details-content` the detail is the full-line item itself. That is what the CSS is meant to do; nobody has run it in such a browser. Both now say so. Issue #2207's first step, which expected a closed car to omit its state, is updated for the visible state word.
+
+No renderer or stylesheet change.
+
 ## 2026-10-07 — #2165: release panels, two more car states, a car-state legend and car details on served plan pages
 
 <!-- prawduct: type=feature | scope=2165-release-panel -->
