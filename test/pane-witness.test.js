@@ -57,7 +57,7 @@ describe('the pane witness (#2186)', () => {
     reads = [];
     pins = [];
     return paneWitness.composerShown({
-      tmuxName: 'tc-x', engineProfile: codex, wakeProfile, headerRe: HEADER_RE, startingRe: STARTING_RE, statusRe: STATUS_RE, maxStatusRows: 1, keyHintRe: KEY_HINT_RE, ...over
+      tmuxName: 'tc-x', paneId: PANE_ID, engineProfile: codex, wakeProfile, headerRe: HEADER_RE, startingRe: STARTING_RE, statusRe: STATUS_RE, maxStatusRows: 1, keyHintRe: KEY_HINT_RE, ...over
     }, {
       gapMs: 0,
       sleep: async () => { i += 1; },
@@ -291,6 +291,23 @@ describe('the pane witness (#2186)', () => {
       assert.deepEqual(r, { shown: false, dialog: null, why: 'the pane could not be read' });
     });
 
+    it('REPLACEMENT BEFORE THE FIRE: the launch\'s pane was killed and another is now the session\'s only pane, with a usable composer: refused, and never read', async () => {
+      // Split the session, kill the pane the launch created, and the session
+      // again has exactly one pane: a different process, with a composer of its
+      // own. It passes every check a pane can pass. It is not the launch's.
+      const r = await ask([good()], {}, { pin: () => '%9', read: (name, id) => ({ paneId: id, ...good() }) });
+      assert.deepEqual(r, { shown: false, dialog: null, why: 'the session\'s pane is not the pane this launch created' });
+      assert.deepEqual(reads, [], 'the replacement pane is not even read');
+    });
+
+    it('a launch with no pane on record cannot be vouched for', async () => {
+      for (const missing of [undefined, null, '']) {
+        const r = await ask([good()], { paneId: missing });
+        assert.deepEqual(r, { shown: false, dialog: null, why: 'the pane this launch created is not on record' });
+        assert.deepEqual(reads, []);
+      }
+    });
+
     it('both reads are aimed at the id pinned at the start, not re-resolved', async () => {
       let pinned = 0;
       const asked = [];
@@ -318,7 +335,7 @@ describe('the pane witness (#2186)', () => {
         { height: good.height, x: 2, y: 0, rows: null }
       ];
       for (const frame of bad) {
-        const r = await paneWitness.composerShown({ tmuxName: 'tc-x', engineProfile: codex, wakeProfile, headerRe: HEADER_RE, startingRe: STARTING_RE, statusRe: STATUS_RE }, { gapMs: 0, sleep: async () => {}, pin: () => PANE_ID, read: () => ({ paneId: PANE_ID, ...frame }) });
+        const r = await paneWitness.composerShown({ tmuxName: 'tc-x', paneId: PANE_ID, engineProfile: codex, wakeProfile, headerRe: HEADER_RE, startingRe: STARTING_RE, statusRe: STATUS_RE }, { gapMs: 0, sleep: async () => {}, pin: () => PANE_ID, read: () => ({ paneId: PANE_ID, ...frame }) });
         assert.deepEqual(r, { shown: false, dialog: null, why: 'the pane and its cursor could not be read row for row' });
       }
     });

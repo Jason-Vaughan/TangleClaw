@@ -833,7 +833,9 @@ signed-in fire has been probed. When a version is listed, the fire goes only if 
 
 - every other check passes (version, account, usage, the launch's own thread loaded and `idle`);
 - a **pane witness** pins the id of the session's one pane (a session with a second pane or window is
-  refused: there is no saying which pane a launch meant), then reads THAT pane and its cursor in one
+  refused: there is no saying which pane a launch meant), requires it to be the pane the launch itself
+  created (the id is recorded on the launch's channel when it starts; a pane that later replaced it, or
+  a launch with no pane on record, is refused), then reads THAT pane and its cursor in one
   row-aligned read (one tmux invocation, both of its commands aimed at the pinned id and its answer
   checked for pane and session; the pane is not held still across it), twice, a second apart,
   and both reads show: no declared guarded dialog as the live screen; the cursor ON the last bare

@@ -256,3 +256,29 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
     });
   });
 });
+
+describe('a launch records the pane it created on its channel (#2186)', () => {
+  const sessions = require('../lib/sessions');
+
+  it('writes the session\'s one pane id into the channel\'s adapter state', () => {
+    const writes = [];
+    const got = sessions._recordLaunchPane({ id: 41 }, 'tc-b1', { solePaneId: (name) => { assert.equal(name, 'tc-b1'); return '%12'; }, setAdapterState: (id, patch) => writes.push([id, patch]) });
+    assert.equal(got, '%12');
+    assert.deepEqual(writes, [[41, { paneId: '%12' }]]);
+  });
+
+  it('records nothing, and does not throw, when the pane cannot be pinned or the write fails: the launch goes on', () => {
+    const writes = [];
+    assert.equal(sessions._recordLaunchPane({ id: 41 }, 'tc-b1', { solePaneId: () => { throw new Error('does not have exactly one pane'); }, setAdapterState: (id, patch) => writes.push([id, patch]) }), null);
+    assert.deepEqual(writes, []);
+    assert.equal(sessions._recordLaunchPane({ id: 41 }, 'tc-b1', { solePaneId: () => '%12', setAdapterState: () => { throw new Error('db locked'); } }), null);
+  });
+
+  it('records nothing for a launch with no channel row or no tmux session', () => {
+    let asked = 0;
+    const deps = { solePaneId: () => { asked += 1; return '%12'; }, setAdapterState: () => {} };
+    assert.equal(sessions._recordLaunchPane(null, 'tc-b1', deps), null);
+    assert.equal(sessions._recordLaunchPane({ id: 41 }, null, deps), null);
+    assert.equal(asked, 0);
+  });
+});

@@ -1298,6 +1298,24 @@ describe('tmux — one pinned pane and its cursor, row for row (#2186)', () => {
       }
     });
 
+    it('REPLACEMENT: split, kill the original pane, and the session has one pane again, with a DIFFERENT id', () => {
+      start();
+      try {
+        settle();
+        const launched = tmux.solePaneId(name);
+        execFileSync('tmux', ['split-window', '-t', `=${name}:`, 'printf "› Ask Codex to do anything\n"; sleep 60']);
+        execFileSync('tmux', ['kill-pane', '-t', launched]);
+        settle();
+        const now = tmux.solePaneId(name);
+        assert.match(now, /^%\d+$/, 'the session passes the one-pane check again');
+        assert.notEqual(now, launched, 'but its pane is not the one the launch created: only a recorded id can tell');
+        assert.throws(() => tmux.visiblePane(name, launched), /./, 'and the launch\'s own pane can no longer be read');
+        assert.equal(tmux.visiblePane(name, now).paneId, now, 'while the replacement reads perfectly well');
+      } finally {
+        kill();
+      }
+    });
+
     it('a second window is refused too', () => {
       start();
       try {

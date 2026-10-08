@@ -411,6 +411,14 @@ describe('startup prompt service: fire', () => {
       }
     });
 
+    it('the pane id the adapter names (the one its channel recorded at launch) reaches the witness', async () => {
+      const w = world(blockWith(['1.0.0']));
+      await svc.fire(req(OPERATOR), w.d);
+      await w.inputs[0].trustException.witness({ paneId: '%7', headerRe: /h/ });
+      assert.equal(w.targets[0].paneId, '%7');
+      assert.equal(w.targets[0].tmuxName, 'tc-target', 'and the session is still the fire service\'s to name');
+    });
+
     it('the adapter cannot redirect the witness to another pane or profile', async () => {
       const w = world(blockWith(['1.0.0']));
       await svc.fire(req(OPERATOR), w.d);

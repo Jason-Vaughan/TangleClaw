@@ -283,10 +283,22 @@ describe('Codex startupControl adapter', () => {
       /** Every protocol method the adapter called, for the "never grants trust" check. */
       const methodsCalled = () => [...new Set(server.received.filter((m) => m.method !== undefined).map((m) => m.method))];
 
+      it('a launch whose pane was never recorded gets no trust-free fire, and the pane is not consulted', async () => {
+        await serve(NO_ENTRY);
+        channel();
+        let consulted = 0;
+        const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async () => { consulted += 1; return { shown: true }; } }).settled;
+        assert.equal(settled.outcome, 'blocked');
+        assert.equal(settled.reasonCode, 'trust_required');
+        assert.match(settled.reason, /The pane this launch created was not recorded/);
+        assert.equal(consulted, 0);
+        assert.equal(server.calls('turn/start').length, 0);
+      });
+
       it('the session-1363 shape: measured version, idle thread, composer on the pane: the fire goes, and the row keeps saying trust was not granted', async () => {
         await serve(NO_ENTRY);
         completeTheTurn();
-        channel();
+        channel({ paneId: '%7' });
         const f = pendingFire();
         const witnessed = [];
         const handles = fireWith(f, { absentOn: ['0.156.1'], witness: async (opts) => { witnessed.push(opts); return { shown: true }; } });
@@ -295,6 +307,7 @@ describe('Codex startupControl adapter', () => {
         assert.equal(settled.outcome, 'applied');
         assert.equal(server.calls('turn/start').length, 1);
         assert.equal(witnessed.length, 1, 'the pane is consulted once');
+        assert.equal(witnessed[0].paneId, '%7', 'the witness is told which pane this launch created');
         assert.ok(witnessed[0].headerRe.test('│ model:     GPT-6-Astra   /model to change │'));
         assert.ok(witnessed[0].startingRe.test('│ model:     loading   /model to change │'));
         assert.ok(!witnessed[0].startingRe.test('│ model:     GPT-6-Astra   /model to change │'));
@@ -319,7 +332,7 @@ describe('Codex startupControl adapter', () => {
       it('a home that has never trusted any folder (projects: null) is the same case', async () => {
         await serve({ 'config/read': () => ({ config: { projects: null } }) });
         completeTheTurn();
-        channel();
+        channel({ paneId: '%7' });
         const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: SHOWN }).settled;
         assert.equal(settled.outcome, 'applied');
         assert.ok(settled.dispatchNote);
@@ -328,7 +341,7 @@ describe('Codex startupControl adapter', () => {
       it('the thread is read again after the pane check, immediately before the send', async () => {
         await serve(NO_ENTRY);
         completeTheTurn();
-        channel();
+        channel({ paneId: '%7' });
         let readsAtWitness = null;
         await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async () => { readsAtWitness = server.calls('thread/read').length; return { shown: true }; } }).settled;
         const order = server.received.filter((m) => m.method !== undefined && m.id !== undefined).map((m) => m.method);
@@ -339,7 +352,7 @@ describe('Codex startupControl adapter', () => {
 
       it('a thread that turns busy while the pane is being checked stops the send', async () => {
         await serve(NO_ENTRY);
-        channel();
+        channel({ paneId: '%7' });
         const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async () => { server.state.threadStatus = { type: 'active', activeFlags: [] }; return { shown: true }; } }).settled;
         assert.equal(settled.outcome, 'blocked');
         assert.equal(settled.reasonCode, 'engine_not_ready');
@@ -351,7 +364,7 @@ describe('Codex startupControl adapter', () => {
       it('a thread whose folder changes while the pane is being checked stops the send', async () => {
         let moved = false;
         await serve({ ...NO_ENTRY, 'thread/read': (p) => ({ thread: { id: p.threadId, cwd: moved ? '/somewhere/else' : PROJECT_PATH, status: { type: 'idle' } } }) });
-        channel();
+        channel({ paneId: '%7' });
         const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async () => { moved = true; return { shown: true }; } }).settled;
         assert.equal(settled.reasonCode, 'engine_not_ready');
         assert.match(settled.reason, /thread changed while the pane was being checked/);
@@ -360,7 +373,7 @@ describe('Codex startupControl adapter', () => {
 
       it('a trust dialog actually on the pane refuses the fire, and says it was read from the pane', async () => {
         await serve(NO_ENTRY);
-        channel();
+        channel({ paneId: '%7' });
         const dialog = { id: 'folder-trust', humanAction: 'Answer Codex\'s folder-trust prompt in the pane.' };
         const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async () => ({ shown: false, dialog, why: 'the pane is showing the engine\'s folder-trust prompt' }) }).settled;
         assert.equal(settled.outcome, 'blocked');
@@ -372,7 +385,7 @@ describe('Codex startupControl adapter', () => {
 
       it('a dialog that is not the trust dialog is a pane that is not ready, named and read from the pane', async () => {
         await serve(NO_ENTRY);
-        channel();
+        channel({ paneId: '%7' });
         const dialog = { id: 'update', humanAction: 'Answer Codex\'s update prompt in the pane (Escape skips it).' };
         const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async () => ({ shown: false, dialog, why: 'x' }) }).settled;
         assert.equal(settled.outcome, 'blocked');
@@ -386,7 +399,7 @@ describe('Codex startupControl adapter', () => {
         for (const entry of [{ trust_level: 'untrusted' }, { trust_level: 'none' }, {}, null]) {
           await serve({ 'config/read': () => ({ config: { projects: { [PROJECT_PATH]: entry } } }) });
           store.getDb().prepare('DELETE FROM startup_control_channels').run();
-          channel();
+          channel({ paneId: '%7' });
           let consulted = 0;
           const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async () => { consulted += 1; return { shown: true }; } }).settled;
           assert.equal(settled.outcome, 'blocked', JSON.stringify(entry));
@@ -405,7 +418,7 @@ describe('Codex startupControl adapter', () => {
         for (const why of ['the engine is still starting', 'the composer holds typed text', 'the cursor is not on the composer row', 'a turn is running', 'the pane changed between two reads a second apart', 'the pane could not be read (the capture came back empty)']) {
           await serve(NO_ENTRY);
           store.getDb().prepare('DELETE FROM startup_control_channels').run();
-          channel();
+          channel({ paneId: '%7' });
           const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async () => ({ shown: false, dialog: null, why }) }).settled;
           assert.equal(settled.outcome, 'blocked', why);
           assert.equal(settled.reasonCode, 'pane_not_ready', why);
@@ -418,7 +431,7 @@ describe('Codex startupControl adapter', () => {
 
       it('a witness that throws is pane_not_ready with a safe reason; the fault is not shown to the operator', async () => {
         await serve(NO_ENTRY);
-        channel();
+        channel({ paneId: '%7' });
         const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async () => { throw new Error('ENOENT /private/secret/path'); } }).settled;
         assert.equal(settled.reasonCode, 'pane_not_ready');
         assert.ok(!settled.reason.includes('ENOENT') && !settled.reason.includes('/private/secret'), settled.reason);
@@ -429,7 +442,7 @@ describe('Codex startupControl adapter', () => {
         for (const answer of [null, undefined, {}, { shown: 'true' }, { shown: 1 }]) {
           await serve(NO_ENTRY);
           store.getDb().prepare('DELETE FROM startup_control_channels').run();
-          channel();
+          channel({ paneId: '%7' });
           const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async () => answer }).settled;
           assert.equal(settled.reasonCode, 'pane_not_ready', JSON.stringify(answer));
           assert.equal(server.calls('turn/start').length, 0);
@@ -442,7 +455,7 @@ describe('Codex startupControl adapter', () => {
         for (const absentOn of [[], ['0.155.0'], undefined]) {
           await serve(NO_ENTRY);
           store.getDb().prepare('DELETE FROM startup_control_channels').run();
-          channel();
+          channel({ paneId: '%7' });
           let consulted = 0;
           const settled = await fireWith(pendingFire(), { absentOn, witness: async () => { consulted += 1; return { shown: true }; } }).settled;
           assert.equal(settled.outcome, 'blocked');
@@ -465,7 +478,7 @@ describe('Codex startupControl adapter', () => {
         const long = { id: 1, name: 'proj', path: `/Users/someone/Documents/Projects/${'a-deeply-nested-folder/'.repeat(3)}the-project` };
         assert.ok(long.path.length > 90);
         await serve({ ...NO_ENTRY, 'thread/read': (p) => ({ thread: { id: p.threadId, cwd: long.path, status: { type: 'idle' } } }) });
-        channel();
+        channel({ paneId: '%7' });
         const f = pendingFire();
         const settled = await codex.fire({ session, project: long, sequenceId: 100, promptText: PROMPT, promptTextDigest: PROMPT_DIGEST, payloadDigest: DIGEST, onUpdate: f.onUpdate, trustException: { absentOn: [] } }, { reconnectPauseMs: 10 }).settled;
         assert.equal(settled.reasonCode, 'trust_required');
@@ -477,14 +490,14 @@ describe('Codex startupControl adapter', () => {
 
       it('no trust exception supplied at all, or no witness, keeps the block', async () => {
         await serve(NO_ENTRY);
-        channel();
+        channel({ paneId: '%7' });
         let settled = await fireWith(pendingFire()).settled;
         assert.equal(settled.reasonCode, 'trust_required');
         assert.match(settled.reason, /does not claim one/);
         server.close();
         await serve(NO_ENTRY);
         store.getDb().prepare('DELETE FROM startup_control_channels').run();
-        channel();
+        channel({ paneId: '%7' });
         settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'] }).settled;
         assert.equal(settled.reasonCode, 'trust_required');
         assert.match(settled.reason, /pane could not be consulted/);
@@ -494,7 +507,7 @@ describe('Codex startupControl adapter', () => {
       it('a trusted folder is unchanged: the pane is never consulted and the row carries no note', async () => {
         await serve();
         completeTheTurn();
-        channel();
+        channel({ paneId: '%7' });
         let consulted = 0;
         const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async () => { consulted += 1; return { shown: true }; } }).settled;
         assert.equal(settled.outcome, 'applied');
@@ -506,7 +519,7 @@ describe('Codex startupControl adapter', () => {
         for (const config of [{}, { projects: [] }, { projects: 'none' }]) {
           await serve({ 'config/read': () => ({ config }) });
           store.getDb().prepare('DELETE FROM startup_control_channels').run();
-          channel();
+          channel({ paneId: '%7' });
           let consulted = 0;
           const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async () => { consulted += 1; return { shown: true }; } }).settled;
           assert.equal(settled.reasonCode, 'readiness_unknown', JSON.stringify(config));
@@ -526,7 +539,7 @@ describe('Codex startupControl adapter', () => {
         for (const [over, code] of cases) {
           await serve({ ...NO_ENTRY, ...over });
           store.getDb().prepare('DELETE FROM startup_control_channels').run();
-          channel();
+          channel({ paneId: '%7' });
           let consulted = 0;
           const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async () => { consulted += 1; return { shown: true }; } }).settled;
           assert.equal(settled.reasonCode, code);
@@ -559,7 +572,7 @@ describe('Codex startupControl adapter', () => {
         it('a renamed directory with the ordinary composer on screen: the fire goes', async () => {
           await serve(NO_ENTRY);
           completeTheTurn();
-          channel();
+          channel({ paneId: '%7' });
           const tmuxLog = [];
           const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: witnessOver('composer', tmuxLog) }).settled;
           assert.equal(settled.outcome, 'applied');
@@ -569,7 +582,7 @@ describe('Codex startupControl adapter', () => {
 
         it('a real folder-trust dialog on screen: the fire is refused, and nothing is sent to the pane or the engine', async () => {
           await serve(NO_ENTRY);
-          channel();
+          channel({ paneId: '%7' });
           const tmuxLog = [];
           const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: witnessOver('trustPrompt', tmuxLog) }).settled;
           assert.equal(settled.outcome, 'blocked');
@@ -583,7 +596,7 @@ describe('Codex startupControl adapter', () => {
         it('the operator\'s own status line, with its run-state item, is still a composer at rest: the fire goes', async () => {
           await serve(NO_ENTRY);
           completeTheTurn();
-          channel();
+          channel({ paneId: '%7' });
           const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: witnessOver('composerOperatorStatus', []) }).settled;
           assert.equal(settled.outcome, 'applied');
         });
@@ -592,7 +605,7 @@ describe('Codex startupControl adapter', () => {
           for (const [name, code] of [['updatePrompt', 'pane_not_ready'], ['openingScreen', 'pane_not_ready']]) {
             await serve(NO_ENTRY);
             store.getDb().prepare('DELETE FROM startup_control_channels').run();
-            channel();
+            channel({ paneId: '%7' });
             const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: witnessOver(name, []) }).settled;
             assert.equal(settled.outcome, 'blocked', name);
             assert.equal(settled.reasonCode, code, name);
@@ -602,9 +615,24 @@ describe('Codex startupControl adapter', () => {
           }
         });
 
+        it('REPLACEMENT BEFORE THE FIRE: the launch\'s pane was killed and another is the session\'s only pane, showing a usable composer: no trust-free fire', async () => {
+          await serve(NO_ENTRY);
+          channel({ paneId: '%7' });
+          const tmuxLog = [];
+          const witness = (opts) => paneWitness.composerShown({
+            ...opts, tmuxName: 'tc-deputy', engineProfile: codexProfile, wakeProfile: require('../lib/medusa-wake').ENGINE_WAKE_PROFILES.codex
+          }, { gapMs: 0, sleep: async () => {}, pin: () => '%9', read: (session, id) => { tmuxLog.push(`read ${id}`); return { paneId: id, ...PANES.composer, rows: [...PANES.composer.rows] }; } });
+          const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness }).settled;
+          assert.equal(settled.outcome, 'blocked');
+          assert.equal(settled.reasonCode, 'pane_not_ready');
+          assert.match(settled.reason, /is not the pane this launch created/);
+          assert.deepEqual(tmuxLog, [], 'the replacement pane is never read');
+          assert.equal(server.calls('turn/start').length, 0);
+        });
+
         it('a session with a second pane gets no trust-free fire, whatever its panes show', async () => {
           await serve(NO_ENTRY);
-          channel();
+          channel({ paneId: '%7' });
           const witness = (opts) => paneWitness.composerShown({
             ...opts, tmuxName: 'tc-deputy', engineProfile: codexProfile, wakeProfile: require('../lib/medusa-wake').ENGINE_WAKE_PROFILES.codex
           }, { gapMs: 0, sleep: async () => {}, pin: () => { throw new Error('does not have exactly one pane'); }, read: () => ({ paneId: '%7', ...PANES.composer }) });
@@ -617,7 +645,7 @@ describe('Codex startupControl adapter', () => {
 
         it('the active pane switching between the witness\'s two reads gets no trust-free fire', async () => {
           await serve(NO_ENTRY);
-          channel();
+          channel({ paneId: '%7' });
           let n = 0;
           const witness = (opts) => paneWitness.composerShown({
             ...opts, tmuxName: 'tc-deputy', engineProfile: codexProfile, wakeProfile: require('../lib/medusa-wake').ENGINE_WAKE_PROFILES.codex
@@ -630,7 +658,7 @@ describe('Codex startupControl adapter', () => {
 
         it('as shipped, the same composer does not get the fire: the profile lists no measured version', async () => {
           await serve(NO_ENTRY);
-          channel();
+          channel({ paneId: '%7' });
           const tmuxLog = [];
           const shipped = codexProfile.capabilities.startupControl.remoteTrustPrompt.absentOn;
           assert.deepEqual(shipped, []);
@@ -647,7 +675,7 @@ describe('Codex startupControl adapter', () => {
           await serve(NO_ENTRY);
           completeTheTurn();
           store.getDb().prepare('DELETE FROM startup_control_channels').run();
-          channel();
+          channel({ paneId: '%7' });
           await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness }).settled;
           const called = methodsCalled();
           assert.ok(called.includes('config/read'), 'the config is read');
