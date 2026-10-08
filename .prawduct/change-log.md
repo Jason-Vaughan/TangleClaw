@@ -63,6 +63,8 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 **Checked on a live pane.** The witness itself, with real tmux captures and the real cursor, on a private sandboxed codex-cli 0.156.1 pane: it named the update prompt, then the folder-trust prompt, and answered shown only at the usable composer, on two reads a second apart.
 
+**Known limits of the witness.** The cursor is bound to the composer by what its row reads, not by where it is: the capture reaches into scrollback and the cursor's row number is counted on the visible pane, so the two do not share an index. Codex leaves an earlier, identical composer row above the live one, and a cursor parked on that earlier row would pass. And the selector-row rule sees the prompt glyph only at the start of a row: a menu the profile does not declare that boxes its selected row, or marks it some other way, below a stale composer that still holds the cursor, would pass. Neither frame has been captured from Codex. Both are reasons the allowance needs a measured version and a declared dialog list, and are not closed by this change.
+
 **Not covered.** A real fire against a live Codex. The no-entry block wording and the panel were not looked at in a running TangleClaw: at the fake-key tier a fire stops at the usage check before it reaches that block. The untrusted-entry wording returns earlier and could be looked at; it was not. What Codex does with project-level config and hooks in an untrusted folder under `--remote`. Codex versions other than 0.156.1. The witness's header pattern is Codex's and lives in its adapter.
 
 ## 2026-10-07 — #2177: a Codex launch types nothing into a guarded dialog
