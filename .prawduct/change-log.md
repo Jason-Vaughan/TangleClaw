@@ -56,6 +56,24 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 **A test expectation changed, on purpose.** `test/codex-launch-modes.test.js` asserted that the bundled Codex profile resolves to `['Enter', 'Enter']`. That was the behaviour being removed, so the assertion now uses a synthetic profile for the fallback rule it was really about, and a new test pins that bundled Codex sends no `preKeys` in any mode.
 
 **Not covered.** Dismissing the update prompt (later, after matching tests). The opening screen, which this reader calls a composer; telling it apart is the wake gate's pane refusals in the next chunk. Codex versions other than 0.156.1: the prompt wording is assumed unchanged, from earlier captures, and was not re-measured. A real `launchSession` against a live Codex was not run; the refusals are tested through `_deferEngineInit` with stubbed tmux and through the reader on whole live captures. The log line for a prompt first seen mid-wait is exercised only through `_awaitPaneReady`'s observer hook.
+## 2026-10-08 — #2165 follow-up: the hidden-state-word test checked nothing; fallback claims reworded
+
+<!-- prawduct: type=bugfix | scope=2165-state-word-test-reach -->
+
+A small test-and-docs follow-up to PR #2179, on the PM's dispatch, for three notes the Architect accepted as non-blocking at its exact-head review (A153).
+
+**The test.** "never hides the state word by any style" matched only selectors containing `.car-state`. The stylesheet has no such rule, because the word needs none, so the assertion ran against an empty set and could not fail. What can hide the word is a rule on a box it sits in. The test now selects every rule whose selector names the release panel, the card, the row of cars, the car's disclosure, the pill or one of its states, leaves out rules on pseudo-elements (they style the disclosure's marker or its content, not the summary), requires that set to contain the boxes it claims to cover, and refuses `display:none`, `visibility`, `opacity`, a zero font size, any `overflow`, `clip` or `clip-path`, `text-indent`, a fixed or maximum width or height, absolute or fixed positioning, a transparent colour and `content-visibility`.
+
+**Two things the Critic found in the first version of this fix.** The rule splitter read a whole `@media` block as one rule named by its prelude, so a rule hiding the word on a narrow screen would have been filtered out unseen; the stylesheet already has such a block. At-rule blocks are now opened up before the rules are read, and the helper refuses a stylesheet it could not fully open. And the companion test carried its own copy of the pattern, so it proved the copy; there is now one `HIDES` pattern and one `rulesReachingTheWord` helper, used by all three tests. The companion feeds the pattern every kind of declaration it names and a sample of the stylesheet's real ones; a third test shows a rule inside an at-rule block being seen and a pseudo-element rule being left out. Nine mutations of the stylesheet each turn a test red, three of them inside or beside an at-rule block.
+
+**What it still does not cover.** The page's own stylesheet in `lib/plan-docs.js` is outside the checked set, and the refused declarations are a list, not a proof: `transform:scale(0)` or a zero `font` shorthand would pass.
+
+**Root cause.** I wrote the test from the selector I had just added to the markup, not from the question it was meant to answer. A negative assertion over a filtered set needs the set shown to be non-empty.
+
+**The fallback.** A test comment and a sentence in `FEATURES.md` stated that where a browser cannot style `::details-content` the detail is the full-line item itself. That is what the CSS is meant to do; nobody has run it in such a browser. Both now say so. Issue #2207's first step, which expected a closed car to omit its state, is updated for the visible state word.
+
+No renderer or stylesheet change.
+
 ## 2026-10-07 — #2165: release panels, two more car states, a car-state legend and car details on served plan pages
 
 <!-- prawduct: type=feature | scope=2165-release-panel -->

@@ -1457,9 +1457,63 @@ describe('a car\'s detail (#2165)', () => {
       assert.doesNotMatch(html, /<summary class="train-car [a-z-]+"[^>]*\s(aria-|role=|title=|tabindex)/);
     });
 
+    // The word has no rule of its own, so the rules that can hide it are the ones on the boxes it sits in:
+    // the release panel, the card, the row of cars, the car's disclosure, the pill and each of its states.
+    const REACHES_THE_WORD = /(^|[\s>+~,])(\.car-state|summary\.train-car|\.train-car|details\.car-slot|\.train-cars|\.train-card|section\.release-panel)(?![\w-])/;
+    // What would hide, clip, shrink or blank the text a box holds.
+    const HIDES = /(^|;)\s*(display\s*:\s*none|visibility\s*:|opacity\s*:|font-size\s*:\s*0(?![.\d])|overflow[a-z-]*\s*:|clip(-path)?\s*:|text-indent\s*:|(max-)?(width|height)\s*:|position\s*:\s*(absolute|fixed)|color\s*:\s*transparent|content-visibility\s*:)/;
+
+    /**
+     * The style rules that can reach a car's state word. A rule inside an at-rule block, such as a
+     * rule for narrow screens, is taken out of its block and read like any other, so it is not missed.
+     * A rule on a pseudo-element styles something else (the disclosure's marker or its content) and is
+     * left out.
+     * @param {string} css - A stylesheet.
+     * @returns {{selector: string, body: string}[]}
+     */
+    function rulesReachingTheWord(css) {
+      const flat = css.replace(/@[^{};]+\{((?:[^{}]+\{[^}]*\})*)\s*\}/g, '$1');
+      assert.doesNotMatch(flat, /@[^{};]+\{/, 'every at-rule block was opened up');
+      return (flat.match(/[^{}]+\{[^}]*\}/g) || [])
+        .map((rule) => ({ selector: rule.split('{')[0].trim(), body: rule.slice(rule.indexOf('{') + 1, -1) }))
+        .filter(({ selector }) => REACHES_THE_WORD.test(selector) && !selector.includes('::'));
+    }
+
     it('never hides the state word by any style, so it is there for a reader who cannot tell the colours apart', () => {
-      const css = trainCard.TRAIN_CARD_CSS;
-      assert.doesNotMatch(css, /\.car-state[^{]*\{[^}]*(display:none|visibility|opacity|clip|font-size:0|width:1px|height:1px|position:absolute|text-indent|color:transparent)/);
+      const rules = rulesReachingTheWord(trainCard.TRAIN_CARD_CSS);
+      const selectors = rules.map((rule) => rule.selector);
+      // The set is not empty, and it holds the boxes named above: one rule per car state among them.
+      for (const expected of ['section.release-panel', '.train-card', '.train-cars', '.train-car', 'details.car-slot', 'summary.train-car',
+        ...trainCard.CAR_STATES.map((state) => `.train-car.${state}`)]) {
+        assert.ok(selectors.includes(expected), `${expected} is among the rules checked`);
+      }
+      for (const { selector, body } of rules) {
+        assert.doesNotMatch(body, HIDES, `${selector} must not hide, clip, shrink or blank what it holds`);
+      }
+    });
+
+    it('would catch each way of hiding the word, so the rule above is not passing on nothing', () => {
+      for (const hidden of ['display:none', 'visibility:hidden', 'opacity:0', 'font-size:0', 'overflow:hidden', 'clip-path:inset(50%)',
+        'clip:rect(0 0 0 0)', 'text-indent:-999px', 'width:1px', 'max-width:3ch', 'height:0', 'max-height:0', 'position:absolute',
+        'position:fixed', 'color:transparent', 'content-visibility:hidden']) {
+        assert.match(`padding:.1em;${hidden}`, HIDES, hidden);
+      }
+      for (const fine of ['display:block;list-style:none;cursor:pointer', 'display:contents', 'font:.82em ui-monospace;white-space:nowrap;color:var(--fg)',
+        'background:#57606a;border-color:#57606a;color:#fff;text-decoration:line-through', 'box-shadow:0 0 0 2px var(--link)', 'font-size:.82em']) {
+        assert.doesNotMatch(fine, HIDES, fine);
+      }
+    });
+
+    it('sees a rule for narrow screens or one colour scheme as well as a plain one', () => {
+      const plain = rulesReachingTheWord('.train-car{color:#fff}');
+      assert.deepEqual(plain, [{ selector: '.train-car', body: 'color:#fff' }]);
+      const nested = rulesReachingTheWord('\n.a{b:c}\n@media (max-width:30rem){.car-state{display:none}summary.train-car{max-width:4ch}}\n.train-cars{gap:1px}');
+      assert.deepEqual(nested.map((rule) => rule.selector), ['.car-state', 'summary.train-car', '.train-cars']);
+      assert.equal(nested.filter((rule) => HIDES.test(rule.body)).length, 2, 'both hiding rules inside the block are caught');
+      // The real stylesheet has an at-rule block; nothing in it is lost when it is opened up.
+      assert.match(trainCard.TRAIN_CARD_CSS, /@media \(prefers-color-scheme:dark\)\{/);
+      assert.deepEqual(rulesReachingTheWord('@media (prefers-color-scheme:dark){.train-car.open{opacity:0}}').map((rule) => rule.body), ['opacity:0']);
+      assert.deepEqual(rulesReachingTheWord('summary.train-car::-webkit-details-marker{display:none}details.car-slot::details-content{display:none}'), []);
     });
 
     it('uses the same word on the car, in its detail and in the legend', () => {
@@ -1518,7 +1572,8 @@ describe('a car\'s detail (#2165)', () => {
     it('gives the disclosure no box, so a closed car sits in the row as before and an open detail takes a full line under it', () => {
       assert.match(css, /\ndetails\.car-slot\{display:contents\}/);
       assert.match(css, /\n\.train-cars\{[^}]*display:flex;flex-wrap:wrap[^}]*\}/);
-      // Where the browser cannot style the disclosure's content slot, the detail is the full-line item itself.
+      // Meant as the fallback where a browser cannot style the disclosure's content slot: the detail would then be
+      // the full-line item itself. That is reasoned from the rule below; it has not been seen in such a browser.
       assert.match(detail, /(^|;)display:block(;|$)/);
       assert.match(detail, /(^|;)flex:0 0 100%(;|$)/);
       assert.match(detail, /(^|;)box-sizing:border-box(;|$)/);
