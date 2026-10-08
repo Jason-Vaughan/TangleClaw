@@ -752,10 +752,28 @@ adapter, lifecycle) plus a bounded `adapterState` only the Codex adapter reads. 
 app-server cannot be started or whose native protocol version is unverified records why it used the
 legacy path. On an explicitly verified Codex 0.156.1 or 0.157.1 binary that path appends
 `--no-daemon`, preventing a new session from inheriting another session's shell snapshot or launch identity through Codex's
-shared background daemon (#1895). Older or unknown versions keep their historical command because
-Codex 0.154.0 rejects that flag; future versions are also untrusted until tested, so capability
-hardening is never guessed. The Project Master never opens a native channel, so its launch takes the
-same hardening directly: its exact executable is probed and the same version bound applies. The channel ends with the
+shared background daemon (#1895). The Project Master never opens a native channel, so its launch takes the
+same hardening directly: its exact executable is probed and the same version bound applies.
+
+**A Codex launch that cannot be shown isolated does not start (#2233).** Immediately before the pane is
+created, for project sessions, relaunches and the Project Master, TangleClaw reads the engine command it is
+about to run and allows exactly two forms: the probed executable attached with `--remote` to the socket of
+the app-server this launch started from that same executable, on a server version the profile's
+`verifiedVersions` lists, or the probed executable with `--no-daemon` on a version verified to accept it.
+The flag must appear once and in its plain form: a repeated flag, both flags together, an `=` form, a
+`--daemon` flag, a bare `--` or any shell syntax in the arguments is refused, because which one Codex
+would follow is not known. Both run the executable by its full path, so the pane's shell cannot
+resolve a different Codex. Anything else is refused with `409 LAUNCH_ISOLATION_UNVERIFIED`, a `reasonCode`
+(`executable_unresolved`, `version_unknown`, `version_unverified`, `command_not_pinned`,
+`command_unparseable`, `command_unisolated`, `judgment_failed`, `no_judge`) and recovery text naming the
+verified versions. No pane, session row or bridge credential is created, and a per-launch server that was already
+started is stopped. Codex 0.154.0 rejects `--no-daemon` and is not verified for the native channel, so it
+no longer launches; neither does any version not yet tested. There is no override. The check applies to a
+launch whose engine id, profile (its id, launch command or detection target), resolved executable or
+command names `codex`. Such a launch is also refused (`no_judge`) when no check could run for it at all:
+the Codex adapter is not registered, lacks the check, or does not claim the launch. Every other engine
+launches as before. It does not see an executable replaced after the probe, a wrapper or alias with another name,
+Codex reached over SSH, or sessions already running, which must be ended and relaunched. The channel ends with the
 session: kill, a wrap that ends the session, a
 detected crash, or a relaunch over a dead pane; a keep-running wrap keeps it. At boot TangleClaw
 revalidates every open channel of a live session, recovers in-flight fires without resending, and

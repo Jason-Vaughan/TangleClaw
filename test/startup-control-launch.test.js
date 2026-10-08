@@ -174,7 +174,7 @@ describe('startupControl at launch and teardown (codex)', () => {
     assert.ok(sp.args[2].includes(tempDir), 'the socket is requested under the store base path');
     assert.equal(sp.opts.detached, true);
     assert.equal(sp.opts.cwd, l.project.path);
-    assert.match(l.command, /codex --remote unix:\/\/\/private\/tmp\/fake-daemon\/[0-9a-f]{16} --ask-for-approval never --sandbox workspace-write/);
+    assert.match(l.command, /; \/opt\/fake\/bin\/codex --remote unix:\/\/\/private\/tmp\/fake-daemon\/[0-9a-f]{16} --ask-for-approval never --sandbox workspace-write$/, 'the pane runs the executable the app-server was started from, by path');
     assert.ok(!l.command.includes('--no-daemon'), 'a per-launch --remote server needs no legacy daemon isolation');
     const channel = store.startupControlChannels.getOpenBySession(l.session.id);
     assert.ok(channel, 'a channel row is open for the session');
@@ -230,7 +230,9 @@ describe('startupControl at launch and teardown (codex)', () => {
     assert.equal(noSequence.sequence.startupDelivery, 'legacy', 'a channel with nothing to read through it is not a native launch');
     assert.ok(store.startupControlChannels.getOpenBySession(noSequence.session.id), 'the channel still opened; only the first turn stays legacy');
 
-    healthySeams({ execFileSync: () => 'codex-cli 0.150.0\n' });
+    // 0.157.1: not verified for the native channel, verified for `--no-daemon`,
+    // so it still launches. An unlisted version no longer launches at all (#2233).
+    healthySeams({ execFileSync: () => 'codex-cli 0.157.1\n' });
     const unverified = launched();
     assert.equal(unverified.sequence.startupDelivery, 'legacy');
     assert.equal(store.startupControlChannels.getOpenBySession(unverified.session.id), null);
@@ -270,33 +272,275 @@ describe('startupControl at launch and teardown (codex)', () => {
     assert.equal(created.opts.env.TANGLECLAW_LAUNCH_ID, env.TANGLECLAW_LAUNCH_ID, 'pane and server carry the same identity');
   });
 
-  it('an unverified version isolates the shared daemon when supported, while older versions keep today\'s command', () => {
-    healthySeams({ execFileSync: () => 'codex-cli 0.150.0\n' });
-    let l = launched();
-    assert.equal(calls.spawn.length, 0, 'no app-server for an unverified version');
-    assert.ok(!l.command.includes('--remote'));
-    assert.ok(!l.command.includes('--no-daemon'), 'Codex 0.150 predates the isolation flag');
-    assert.equal(store.startupControlChannels.getOpenBySession(l.session.id), null);
-
+  it('a version without a verified native channel launches the exact executable with --no-daemon, and so does a native channel that fails to start', () => {
     healthySeams({ execFileSync: () => 'codex-cli 0.157.1\n' });
-    l = launched({ launchMode: 'fullAuto' });
+    let l = launched({ launchMode: 'fullAuto' });
     assert.equal(calls.spawn.length, 0, 'an unverified native protocol does not start an app-server');
     assert.ok(!l.command.includes('--remote'));
-    assert.match(l.command, /codex --ask-for-approval never --sandbox workspace-write --no-daemon$/);
+    assert.match(l.command, /; \/opt\/fake\/bin\/codex --ask-for-approval never --sandbox workspace-write --no-daemon$/);
     assert.equal(store.startupControlChannels.getOpenBySession(l.session.id), null);
 
     healthySeams({ spawn: () => { throw new Error('ENOENT'); } });
     l = launched();
     assert.ok(!l.command.includes('--remote'));
-    assert.match(l.command, /codex --no-daemon$/);
+    assert.match(l.command, /; \/opt\/fake\/bin\/codex --no-daemon$/);
     assert.equal(store.startupControlChannels.getOpenBySession(l.session.id), null);
 
     healthySeams({ resolveSocket: () => null, now: (() => { let t = 0; return () => (t += 3000); })() });
     l = launched();
     assert.ok(!l.command.includes('--remote'), 'a socket that never appears means no channel');
-    assert.match(l.command, /codex --no-daemon$/);
+    assert.match(l.command, /; \/opt\/fake\/bin\/codex --no-daemon$/);
     assert.deepEqual(calls.kills, [[-calls.spawn[0].pid, 'SIGTERM']], 'the server that never opened its socket is stopped');
     assert.equal(store.startupControlChannels.getOpenBySession(l.session.id), null);
+  });
+
+  /**
+   * Launch a codex project that is expected to be refused. tmux creation is
+   * booby-trapped: a regressed guard fails loudly here instead of the test
+   * passing over a pane that was started.
+   * @returns {{result: object, name: string}}
+   */
+  function refused() {
+    counter += 1;
+    const name = `sc-${counter}`;
+    const dir = path.join(projectsDir, name);
+    fs.mkdirSync(dir, { recursive: true });
+    store.projects.create({ name, path: dir, engine: 'codex' });
+    const killed = [];
+    const result = withStubbedTmux(() => {
+      tmux.createSession = () => { throw new Error('a refused launch must not create a tmux session'); };
+      tmux.hasSession = () => true;
+      tmux.killSession = (n) => { killed.push(n); return true; };
+      return sessions.launchSession(name, { primePrompt: false });
+    });
+    assert.deepEqual(killed, [], 'a refused launch kills no existing tmux session either');
+    return { result, name };
+  }
+
+  // Until #2233 each of these launched the bare `codex` command, which leaves
+  // the pane on Codex's shared background process. Architect ruling A163 R3
+  // reverses that contract: such a launch does not start.
+  for (const [label, probe, reasonCode] of [
+    ['a version that predates the isolation flag', () => 'codex-cli 0.150.0\n', 'version_unverified'],
+    ['a version newer than any verified one', () => 'codex-cli 0.161.0\n', 'version_unverified'],
+    ['version output the probe cannot parse', () => 'something unexpected\n', 'version_unknown'],
+    ['a version probe that fails', () => { throw new Error('spawn codex ENOENT'); }, 'version_unknown']
+  ]) {
+    it(`refuses the launch for ${label}: no pane, no session row, and the operator is told what to install`, () => {
+      healthySeams({ execFileSync: probe });
+      const before = store.getDb().prepare('SELECT COUNT(*) AS n FROM sessions').get().n;
+      const { result, name } = refused();
+      assert.equal(result.session, null);
+      assert.equal(result.code, 'LAUNCH_ISOLATION_UNVERIFIED');
+      assert.equal(result.isolation.reasonCode, reasonCode);
+      assert.match(result.error, new RegExp(`did not start the engine for project "${name}"`));
+      assert.match(result.error, /0\.156\.1 or 0\.157\.1/);
+      assert.match(result.error, /Nothing was started/);
+      assert.equal(result.isolation.recovery.includes('launch again'), true);
+      assert.equal(calls.spawn.length, 0, 'no app-server was started for it');
+      assert.equal(store.getDb().prepare('SELECT COUNT(*) AS n FROM sessions').get().n, before, 'no session row was written');
+    });
+  }
+
+  it('a launch refused after its app-server started stops that server', () => {
+    healthySeams();
+    const realJudge = codex.judgeLaunchCommand;
+    codex.judgeLaunchCommand = () => ({ applies: true, allowed: false, reasonCode: 'command_unisolated', reason: 'test refusal.', recovery: 'test recovery.' });
+    let out;
+    try {
+      out = refused();
+    } finally {
+      codex.judgeLaunchCommand = realJudge;
+    }
+    assert.equal(out.result.code, 'LAUNCH_ISOLATION_UNVERIFIED');
+    assert.equal(calls.spawn.length, 1);
+    assert.deepEqual(calls.kills, [[-calls.spawn[0].pid, 'SIGTERM']], 'the server this launch started is not left running');
+  });
+
+  it('the judgment reads the command that will run: a builder that falls back to the bare name is refused', () => {
+    healthySeams({ execFileSync: () => 'codex-cli 0.157.1\n' });
+    const realIsolate = codex.isolateLaunch;
+    // The builder reports it built nothing, so the launch falls through to the
+    // historical hardening, which names `codex` and lets the pane's PATH pick.
+    codex.isolateLaunch = (input) => ({ ...realIsolate(input), command: null });
+    let out;
+    try {
+      out = refused();
+    } finally {
+      codex.isolateLaunch = realIsolate;
+    }
+    assert.equal(out.result.isolation.reasonCode, 'command_not_pinned');
+  });
+
+  it('an adapter that throws while building or judging is a refusal, never a launch', () => {
+    healthySeams({ execFileSync: () => 'codex-cli 0.157.1\n' });
+    const realIsolate = codex.isolateLaunch;
+    codex.isolateLaunch = () => { throw new Error('builder fault'); };
+    try {
+      assert.equal(refused().result.code, 'LAUNCH_ISOLATION_UNVERIFIED');
+    } finally {
+      codex.isolateLaunch = realIsolate;
+    }
+    const realJudge = codex.judgeLaunchCommand;
+    codex.judgeLaunchCommand = () => { throw new Error('judge fault'); };
+    try {
+      const { result } = refused();
+      assert.equal(result.isolation.reasonCode, 'judgment_failed');
+    } finally {
+      codex.judgeLaunchCommand = realJudge;
+    }
+  });
+
+  describe('a launch that plainly runs Codex and that no judge covered is refused (#2233)', () => {
+    const BIN = '/opt/fake/bin/codex';
+    const verified = { command: `${BIN} --no-daemon`, enginePath: BIN, probe: { version: '0.157.1', enginePath: BIN }, native: null };
+    const registries = [
+      ['no adapter registered', {}],
+      ['an adapter without the judgment', { codex: { isolateLaunch: () => ({ applies: false }) } }],
+      ['an adapter that says the launch is not its engine', { codex: { judgeLaunchCommand: () => ({ applies: false }) } }],
+      ['an adapter that answers nothing', { codex: { judgeLaunchCommand: () => undefined } }]
+    ];
+
+    for (const [label, registry] of registries) {
+      it(`refuses with ${label}, even for a command that would otherwise be allowed`, () => {
+        const verdict = sessions._judgeLaunchIsolation('codex', verified, registry);
+        assert.equal(verdict.allowed, false);
+        assert.equal(verdict.reasonCode, 'no_judge');
+        assert.match(verdict.reason, /would run codex/);
+        assert.match(verdict.recovery, /Nothing was started/);
+      });
+    }
+
+    it('recognises Codex by any one sign, each without the others', () => {
+      const none = { command: 'wrapper --x', enginePath: '/opt/x/wrapper', probe: null, native: null };
+      for (const [label, engineId, input] of [
+        ['the engine id', 'codex', none],
+        ['the profile id', 'my-engine', { ...none, engineProfile: { id: 'codex' } }],
+        ['the profile launch command', 'my-engine', { ...none, engineProfile: { id: 'x', launch: { shellCommand: 'codex' } } }],
+        ['a profile launch command given as a path', 'my-engine', { ...none, engineProfile: { id: 'x', launch: { shellCommand: '/usr/local/bin/codex' } } }],
+        ['the profile detection target', 'my-engine', { ...none, engineProfile: { id: 'x', detection: { strategy: 'which', target: 'codex' } } }],
+        ['the resolved executable', 'my-engine', { ...none, enginePath: BIN }],
+        ['the command', 'my-engine', { ...none, command: 'codex --x' }],
+        ['a command given as a path', 'my-engine', { ...none, command: `${BIN} --x` }]
+      ]) {
+        assert.equal(sessions._judgeLaunchIsolation(engineId, input, {}).reasonCode, 'no_judge', label);
+      }
+      assert.deepEqual(sessions._judgeLaunchIsolation('my-engine', { ...none, engineProfile: { id: 'x', launch: { shellCommand: 'wrapper' }, detection: { target: 'wrapper' } } }, {}),
+        { allowed: true, isolation: 'not-applicable', adapterName: null }, 'a launch with no sign of Codex is not this check\'s concern');
+      assert.equal(sessions._judgeLaunchIsolation('claude', { command: 'claude', enginePath: '/opt/fake/bin/claude', probe: null, native: null, engineProfile: store.engines.get('claude') }, {}).allowed, true);
+    });
+
+    it('a throwing judgment refuses whether or not another adapter would have answered', () => {
+      const verdict = sessions._judgeLaunchIsolation('codex', verified, { broken: { judgeLaunchCommand: () => { throw new Error('fault'); } }, codex });
+      assert.equal(verdict.reasonCode, 'judgment_failed');
+    });
+
+    it('a project launch with the Codex judgment missing starts nothing', () => {
+      healthySeams({ execFileSync: () => 'codex-cli 0.157.1\n' });
+      const realJudge = codex.judgeLaunchCommand;
+      delete codex.judgeLaunchCommand;
+      let out;
+      try {
+        out = refused();
+      } finally {
+        codex.judgeLaunchCommand = realJudge;
+      }
+      assert.equal(out.result.code, 'LAUNCH_ISOLATION_UNVERIFIED');
+      assert.equal(out.result.isolation.reasonCode, 'no_judge');
+    });
+  });
+
+  it('a native launch whose server is not on a version verified for the channel is refused, and the server is stopped', () => {
+    healthySeams();
+    const realPrepare = codex.prepareLaunch;
+    // The server came up and the command attaches to it, but its recorded
+    // version is one the profile has not verified for attaching.
+    codex.prepareLaunch = (input, deps) => {
+      const prepared = realPrepare(input, deps);
+      prepared.handle.state.engineVersion = '0.157.1';
+      return prepared;
+    };
+    let out;
+    try {
+      out = refused();
+    } finally {
+      codex.prepareLaunch = realPrepare;
+    }
+    assert.equal(out.result.isolation.reasonCode, 'version_unverified');
+    assert.equal(calls.spawn.length, 1);
+    assert.deepEqual(calls.kills, [[-calls.spawn[0].pid, 'SIGTERM']]);
+  });
+
+  it('the native allowance reads the verified versions from the launch\'s own profile', () => {
+    healthySeams();
+    const realJudge = codex.judgeLaunchCommand;
+    const seen = [];
+    codex.judgeLaunchCommand = (input) => { seen.push(input); return realJudge(input); };
+    try {
+      launched();
+    } finally {
+      codex.judgeLaunchCommand = realJudge;
+    }
+    assert.deepEqual(seen[0].nativeVerifiedVersions, store.engines.get('codex').capabilities.startupControl.verifiedVersions);
+    assert.equal(seen[0].native.engineVersion, '0.156.1');
+  });
+
+  it('the command handed to tmux ends with exactly the command that was judged', () => {
+    healthySeams({ execFileSync: () => 'codex-cli 0.157.1\n' });
+    const realJudge = codex.judgeLaunchCommand;
+    const judged = [];
+    codex.judgeLaunchCommand = (input) => { judged.push(input); return realJudge(input); };
+    let l;
+    try {
+      l = launched({ launchMode: 'fullAuto' });
+    } finally {
+      codex.judgeLaunchCommand = realJudge;
+    }
+    assert.equal(judged.length, 1, 'one judgment per launch');
+    assert.equal(judged[0].enginePath, '/opt/fake/bin/codex');
+    assert.deepEqual(judged[0].probe, { version: '0.157.1', enginePath: '/opt/fake/bin/codex' });
+    assert.ok(l.command.endsWith(`; ${judged[0].command}`), `tmux got ${l.command}, the judgment saw ${judged[0].command}`);
+  });
+
+  it('the judgment is given this launch\'s own probe, not the module\'s version cache', () => {
+    // The probe answers a verified version once (the launch's own), and the
+    // cache is then overwritten as another launch's probe would overwrite it.
+    healthySeams({ execFileSync: () => 'codex-cli 0.157.1\n' });
+    const realIsolate = codex.isolateLaunch;
+    codex.isolateLaunch = (input) => { const built = realIsolate(input); codex._internal._version.version = '0.161.0'; return built; };
+    let l;
+    try {
+      l = launched();
+    } finally {
+      codex.isolateLaunch = realIsolate;
+    }
+    assert.match(l.command, /; \/opt\/fake\/bin\/codex --no-daemon$/, 'the launch is judged on what it measured');
+  });
+
+  it('an engine no adapter judges launches on its own command', () => {
+    healthySeams();
+    counter += 1;
+    const name = `sc-${counter}`;
+    const dir = path.join(projectsDir, name);
+    fs.mkdirSync(dir, { recursive: true });
+    store.projects.create({ name, path: dir, engine: 'claude' });
+    const realJudge = codex.judgeLaunchCommand;
+    const verdicts = [];
+    codex.judgeLaunchCommand = (input) => { const v = realJudge(input); verdicts.push(v); return v; };
+    let result;
+    try {
+      result = withStubbedTmux(() => {
+        enginesModule.detectEngine = () => ({ available: true, path: '/opt/fake/bin/claude' });
+        return sessions.launchSession(name, { primePrompt: false });
+      });
+    } finally {
+      codex.judgeLaunchCommand = realJudge;
+    }
+    assert.ok(result.session, result.error);
+    assert.deepEqual(verdicts, [{ applies: false }], 'the Codex check was asked and said the launch is not its engine');
+    const command = calls.created[calls.created.length - 1].opts.command;
+    assert.match(command, /; claude( |$)/, 'the Claude command is the one it always was');
+    assert.equal(calls.spawn.length, 0);
   });
 
   it('a resolved socket path unsafe for a shell command is refused, not interpolated', () => {
@@ -454,7 +698,7 @@ describe('startupControl at launch and teardown (codex)', () => {
   });
 
   it('an engine that declares no channel records nothing', () => {
-    healthySeams({ execFileSync: () => 'codex-cli 0.150.0\n' });
+    healthySeams({ execFileSync: () => 'codex-cli 0.157.1\n' });
     const l = launched();
     const last = store.startupControlChannels.getLatestBySession(l.session.id);
     assert.ok(last, 'an unverified version is a reason worth recording');
@@ -478,7 +722,7 @@ describe('startupControl at launch and teardown (codex)', () => {
   });
 
   it('a channel whose adapter is not registered is closed on release without a signal, and says so', () => {
-    healthySeams({ execFileSync: () => 'codex-cli 0.150.0\n' });
+    healthySeams({ execFileSync: () => 'codex-cli 0.157.1\n' });
     const l = launched();
     store.getDb().prepare('DELETE FROM startup_control_channels WHERE session_id = ?').run(l.session.id);
     store.startupControlChannels.open({ sessionId: l.session.id, sequenceId: l.sequence.id, engineId: 'codex', adapter: 'not-registered', adapterState: { pid: 1 } });

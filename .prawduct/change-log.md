@@ -35,6 +35,24 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-07 — #2233: a Codex launch that cannot be shown isolated does not start (S3)
+
+<!-- prawduct: type=bugfix | scope=2233-launch-identity-containment -->
+
+#2233 Chunk 01 of three, under Architect ruling A163 R3 + R4 and PM dispatch. Plan: `/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder1/.tangleclaw/plans/2233-launch-identity-containment.md`. Containment only: the reporter's route is not established and the release hold is unchanged.
+
+**The defect.** Both launch sites (`launchSession`, `ensureMasterSession`) fell through to the bare `codex` command whenever no isolated command could be built: an unlisted version, a failed probe, an adapter hook that threw. A bare Codex can be served by a background process another launch started, with that launch's TangleClaw identity.
+
+**Root cause.** The hardening was a best-effort rewrite with a permissive fallback, and nothing looked at the command that actually ran. Three further gaps were found while re-deriving it: the probed executable and the executed one could differ (the pane ran a name); the legacy hardening read a module-global version cache other probes write; and the adapter was found through a profile capability block.
+
+**What landed.** `judgeLaunchCommand` (pure) and `isolateLaunch` in the Codex adapter; `_isolatedLegacyLaunch`, `_judgeLaunchIsolation` and `_isolationRefusalMessage` in `lib/sessions.js`; both launch sites judge the engine command immediately before tmux and refuse with `LAUNCH_ISOLATION_UNVERIFIED`; both routes map it to 409. The pane command is pinned to the probed executable's full path on the native and legacy paths. No schema change, no override.
+
+**Architect ruling on the plan (PM relay `8577c3c8`), applied before the head.** A1 and A3 approved. A2 vetoed as written: a launch that names Codex must refuse when no registered judge applies, so `_engineNeedingIsolation` recognises Codex independently of the adapter registry and a missing, hook-less or disclaiming adapter is `no_judge`. The native allowance also requires the handle's version to be in the profile's `verifiedVersions`. Repeated, combined, `=`-form and `--daemon*` flags are refused as unparseable.
+
+**Tests whose contract the ruling reversed.** The existing cases that asserted the old fallback, an unverified version launching the bare command (one in `test/startup-control-launch.test.js`, four parameterised in `test/master.test.js`), are replaced by their inverse, with a comment citing the ruling. Three launch fixtures that used 0.150.0 only to reach the legacy path now use 0.157.1, which reaches the same path and still launches; their assertions are unchanged.
+
+**Verification.** Each mechanism was reverted in turn and at least one test went red for every one, bracketed by green baselines: the judgment ignored at each site, the cache read, each pin, throw-allows, no-judge-allows, the server left running, each route mapping, the probe-path, socket, native-version, ambiguous-flag, `--` and shell-character checks, each Codex sign, path quoting, and a credential issued before the refusal.
+
 ## 2026-10-08 — #2186: the native fire in a folder Codex's config does not trust (built, not active)
 
 <!-- prawduct: type=feature | scope=2186-native-fire-untrusted-folder -->

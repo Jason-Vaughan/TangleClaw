@@ -22,6 +22,7 @@ setLevel('error');
 const store = require('../lib/store');
 const projectConfig = require('../lib/project-config');
 const projects = require('../lib/projects');
+const { standInCodex } = require('./_codex-launchable');
 
 describe('launch-sequence settings (Train 21, Chunk 02)', () => {
   let tmpDir;
@@ -169,9 +170,12 @@ describe('launch-sequence settings (Train 21, Chunk 02)', () => {
       tmux.hasSession = () => false;
       tmux.killSession = () => true;
       enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/fake-engine' });
+      // These projects run Codex, which launches only when its version answers (#2233).
+      const restoreCodex = standInCodex(require('../lib/startup-control-codex'));
       try {
         return sessions.launchSession(name, launchOptions);
       } finally {
+        restoreCodex();
         tmux.createSession = real.create;
         tmux.hasSession = real.has;
         tmux.killSession = real.kill;

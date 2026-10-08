@@ -1578,6 +1578,12 @@ route('POST', '/api/master/ensure', (_req, res) => {
     // must not paint it as one — "down" would be a definite claim about the very
     // thing that could not be established. Its own code, so the client branches
     // on a code rather than on the wording of the message.
+    // Refused before anything started: the engine could not be shown isolated
+    // from a background process it shares between sessions (#2233). 409, not
+    // 500: nothing failed, and the message carries what to install.
+    if (result.code === 'LAUNCH_ISOLATION_UNVERIFIED') {
+      return errorResponse(res, 409, result.error, result.code, result.isolation);
+    }
     const code = (result.incomplete || []).includes('exists')
       ? 'MASTER_LIVENESS_UNKNOWN'
       : 'MASTER_ENSURE_FAILED';
@@ -7309,6 +7315,12 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
     // codes are an acknowledgement in that resend that failed.
     if (result.code === 'STRANDED_WRAPS') {
       return errorResponse(res, 409, result.error, result.code, { items: result.items });
+    }
+    // #2233: the engine command could not be shown isolated from a background
+    // process the engine shares between sessions, so no pane was created. 409
+    // with the adapter's reason code and recovery, never a 500: nothing failed.
+    if (result.code === 'LAUNCH_ISOLATION_UNVERIFIED') {
+      return errorResponse(res, 409, result.error, result.code, result.isolation);
     }
     // Train 21: the pane started and its session row did not. The code travels
     // so the dashboard can say whether a pane was left running.
