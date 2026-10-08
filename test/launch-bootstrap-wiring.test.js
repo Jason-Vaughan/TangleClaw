@@ -282,3 +282,61 @@ describe('a launch records the pane it created on its channel (#2186)', () => {
     assert.equal(asked, 0);
   });
 });
+
+describe('attaching a launch\'s channel records its pane on the stored row (#2186)', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const store = require('../lib/store');
+  const tmux = require('../lib/tmux');
+  const sessions = require('../lib/sessions');
+  let tmpDir;
+  let realSole;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-attach-pane-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    realSole = tmux.solePaneId;
+  });
+
+  after(() => {
+    tmux.solePaneId = realSole;
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /** A channel as `_prepareStartupChannel` hands it over, whose adapter records the row for real. */
+  const prepared = (sessionId) => ({
+    handle: { state: { pid: 1, socketPath: '/x' } },
+    adapterName: 'codex',
+    adapter: { attachLaunch: (handle, launch) => store.startupControlChannels.open({ sessionId: launch.sessionId, sequenceId: launch.sequenceId, engineId: launch.engineId, adapter: 'codex', adapterState: handle.state }) }
+  });
+
+  it('the row the launch stores carries the pane id of the session it just created, beside what the adapter recorded', () => {
+    const asked = [];
+    tmux.solePaneId = (name) => { asked.push(name); return '%31'; };
+    sessions._attachStartupChannel(prepared(501), { id: 501, tmuxSession: 'tc-proj' }, 'codex');
+    const row = store.startupControlChannels.getOpenBySession(501);
+    assert.deepEqual(asked, ['tc-proj']);
+    assert.equal(row.adapterState.paneId, '%31');
+    assert.equal(row.adapterState.socketPath, '/x', 'the adapter\'s own state is kept');
+  });
+
+  it('a later adapter write (the thread, the server version) does not lose the pane id', () => {
+    tmux.solePaneId = () => '%32';
+    sessions._attachStartupChannel(prepared(502), { id: 502, tmuxSession: 'tc-proj2' }, 'codex');
+    const row = store.startupControlChannels.getOpenBySession(502);
+    store.startupControlChannels.setAdapterState(row.id, { threadId: 't-1' });
+    store.startupControlChannels.setAdapterState(row.id, { serverVersion: '0.156.1' });
+    assert.equal(store.startupControlChannels.get(row.id).adapterState.paneId, '%32');
+  });
+
+  it('a session whose pane cannot be pinned still gets its channel, with no pane on record', () => {
+    tmux.solePaneId = () => { throw new Error('does not have exactly one pane'); };
+    sessions._attachStartupChannel(prepared(503), { id: 503, tmuxSession: 'tc-proj3' }, 'codex');
+    const row = store.startupControlChannels.getOpenBySession(503);
+    assert.ok(row, 'the launch is not failed by it');
+    assert.equal(row.adapterState.paneId, undefined);
+  });
+});

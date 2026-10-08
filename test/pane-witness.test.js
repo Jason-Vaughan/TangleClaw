@@ -296,14 +296,14 @@ describe('the pane witness (#2186)', () => {
       // again has exactly one pane: a different process, with a composer of its
       // own. It passes every check a pane can pass. It is not the launch's.
       const r = await ask([good()], {}, { pin: () => '%9', read: (name, id) => ({ paneId: id, ...good() }) });
-      assert.deepEqual(r, { shown: false, dialog: null, why: 'the session\'s pane is not the pane this launch created' });
+      assert.deepEqual(r, { shown: false, dialog: null, why: 'the session\'s pane is not the pane this launch created', lasting: true });
       assert.deepEqual(reads, [], 'the replacement pane is not even read');
     });
 
     it('a launch with no pane on record cannot be vouched for', async () => {
       for (const missing of [undefined, null, '']) {
         const r = await ask([good()], { paneId: missing });
-        assert.deepEqual(r, { shown: false, dialog: null, why: 'the pane this launch created is not on record' });
+        assert.deepEqual(r, { shown: false, dialog: null, why: 'the pane this launch created is not on record', lasting: true });
         assert.deepEqual(reads, []);
       }
     });

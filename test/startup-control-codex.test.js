@@ -626,6 +626,8 @@ describe('Codex startupControl adapter', () => {
           assert.equal(settled.outcome, 'blocked');
           assert.equal(settled.reasonCode, 'pane_not_ready');
           assert.match(settled.reason, /is not the pane this launch created/);
+          assert.match(settled.reason, /does not clear by itself: relaunch the session\./, 'waiting will not bring the launch\'s pane back');
+          assert.ok(!/Fire again once it is/.test(settled.reason));
           assert.deepEqual(tmuxLog, [], 'the replacement pane is never read');
           assert.equal(server.calls('turn/start').length, 0);
         });
