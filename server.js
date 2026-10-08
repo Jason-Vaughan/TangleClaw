@@ -7093,11 +7093,28 @@ route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
     // dispatcher would answer a bare 500, and the operator would take the mode
     // for unchanged while it applies from the next launch. Any other throw is
     // the dispatcher's, as before.
+    // The project's config became unusable after the update had begun writing.
+    // The update stops there and does not overwrite the file; the caller is
+    // told which file, and that earlier fields of this request may be saved.
+    if (err.code === projects.PROJECT_CONFIG_UNREADABLE && !err.recoveryDecisionSaved) {
+      log.error('A project update stopped: the project config became unreadable while it was being applied', {
+        project: params.name, error: err.message
+      });
+      return errorResponse(res, 409,
+        `${err.message} The update stopped part-way: settings written before this point were saved, the rest were not.`,
+        projects.PROJECT_CONFIG_UNREADABLE);
+    }
     if (!err.recoveryDecisionSaved) throw err;
     log.error('A project update failed after its recovery-mode decision was saved', {
       project: params.name, error: err.message
     });
-    return errorResponse(res, 500, `The update failed. ${err.recoveryDecisionSavedMessage}`,
+    // When what failed was the project's config becoming unreadable, say so:
+    // the operator needs the file named and the remedy, as well as the fact
+    // that the decision stands. `err.message` already ends with that fact.
+    const said = err.code === projects.PROJECT_CONFIG_UNREADABLE
+      ? `${err.message} The update stopped part-way: settings written before this point were saved, the rest were not.`
+      : `The update failed. ${err.recoveryDecisionSavedMessage}`;
+    return errorResponse(res, 500, said,
       projects.RECOVERY_DECISION_SAVED_UPDATE_FAILED, { recoveryMode: err.recoveryDecisionSaved });
   }
 
@@ -7114,6 +7131,12 @@ route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
     // verdict on the request, and nothing was applied.
     if (result.code === projects.RECOVERY_DECISION_NOT_SAVED) {
       return errorResponse(res, 500, result.errors.join(' '), projects.RECOVERY_DECISION_NOT_SAVED);
+    }
+    // The project's config file is there and cannot be used. A conflict with
+    // the state of the project, not a fault in the request: nothing was
+    // applied, and the same request succeeds once the file is fixed.
+    if (result.code === projects.PROJECT_CONFIG_UNREADABLE) {
+      return errorResponse(res, 409, firstError, projects.PROJECT_CONFIG_UNREADABLE);
     }
     if (firstError.includes('not found')) {
       return errorResponse(res, 404, firstError, 'NOT_FOUND');

@@ -15,6 +15,7 @@
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const http = require('node:http');
 const path = require('node:path');
 const os = require('node:os');
 const store = require('../lib/store');
@@ -24,6 +25,8 @@ const scannerChild = require('../lib/dir-scanner-child');
 const rotation = require('../lib/coordinator-rotation');
 const sessions = require('../lib/sessions');
 const commitStep = require('../lib/wrap-steps/commit');
+const { createServer } = require('../server');
+const { operatorHeaders } = require('./_shared-docs-callers');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -272,5 +275,222 @@ describe('a read that failed is not an absence', () => {
         }
       });
     }
+  });
+
+  describe('a settings save on a project whose config cannot be used', () => {
+    let server;
+    let port;
+    let codexHome;
+    let savedCodexHome;
+
+    before(async () => {
+      // The model check reads the Codex CLI's model list; this test owns it.
+      codexHome = path.join(tmpDir, 'codex-home');
+      fs.mkdirSync(codexHome, { recursive: true });
+      fs.writeFileSync(path.join(codexHome, 'models_cache.json'), JSON.stringify({
+        fetched_at: new Date().toISOString(),
+        models: store.engines.get('codex').models.offered.map((slug) => ({ slug, display_name: slug }))
+      }));
+      savedCodexHome = process.env.CODEX_HOME;
+      process.env.CODEX_HOME = codexHome;
+      server = createServer();
+      await new Promise((resolve) => server.listen(0, () => { port = server.address().port; resolve(); }));
+    });
+
+    after(async () => {
+      if (savedCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = savedCodexHome;
+      await new Promise((resolve) => server.close(resolve));
+    });
+
+    /**
+     * PATCH a project as the operator's dashboard.
+     * @param {string} name - Project name.
+     * @param {object} body - The request body.
+     * @returns {Promise<{status: number, data: object}>}
+     */
+    function patch(name, body) {
+      return new Promise((resolve, reject) => {
+        const req = http.request({
+          hostname: '127.0.0.1', port, path: `/api/projects/${name}`, method: 'PATCH', agent: false,
+          headers: { 'Content-Type': 'application/json', ...operatorHeaders(server) }
+        }, (res) => {
+          const chunks = [];
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => {
+            const raw = Buffer.concat(chunks).toString('utf8');
+            let data;
+            try { data = JSON.parse(raw); } catch { data = raw; }
+            resolve({ status: res.statusCode, data });
+          });
+        });
+        req.on('error', reject);
+        req.write(JSON.stringify(body));
+        req.end();
+      });
+    }
+
+    /**
+     * Everything a refused save must leave exactly as it found it.
+     * @param {object} row - The project row.
+     * @returns {{file: (Buffer|null), engineId: string, tags: string, name: string, recovery: string, dir: boolean}}
+     */
+    function snapshot(row) {
+      const file = path.join(row.path, '.tangleclaw', 'project.json');
+      let bytes = null;
+      try { bytes = fs.readFileSync(file); } catch { bytes = null; }
+      const now = store.projects.get(row.id);
+      return {
+        file: bytes,
+        engineId: now.engineId,
+        tags: JSON.stringify(now.tags),
+        name: now.name,
+        recovery: JSON.stringify(store.projectRecoveryState.get(row.id) || null),
+        dir: fs.existsSync(row.path)
+      };
+    }
+
+    // A request that would touch everything a project update can: the config
+    // file (model, launch mode, launch sequence), the project row (engine,
+    // tags) and the recovery store (the operator's recovery-mode decision).
+    const EVERYTHING = {
+      engine: 'claude',
+      model: null,
+      tags: ['changed'],
+      defaultLaunchMode: 'default',
+      launchSequence: { recoveryMode: 'advisory' }
+    };
+
+    const UNUSABLE = [
+      { what: 'malformed JSON', needsPermissions: false, damage: (file) => fs.writeFileSync(file, '{ "engine": "codex", "model": "gpt-6-luna", '), restore: () => {} },
+      { what: 'a JSON number', needsPermissions: false, damage: (file) => fs.writeFileSync(file, '42'), restore: () => {} },
+      { what: 'a JSON string', needsPermissions: false, damage: (file) => fs.writeFileSync(file, '"gpt-6-luna"'), restore: () => {} },
+      { what: 'a JSON list', needsPermissions: false, damage: (file) => fs.writeFileSync(file, '[]'), restore: () => {} },
+      { what: 'a file that may not be read', needsPermissions: true, damage: (file) => fs.chmodSync(file, 0o000), restore: (file) => fs.chmodSync(file, 0o600) },
+      { what: 'a .tangleclaw directory that may not be searched', needsPermissions: true, damage: (file) => fs.chmodSync(path.dirname(file), 0o000), restore: (file) => fs.chmodSync(path.dirname(file), 0o700) }
+    ];
+
+    for (const condition of UNUSABLE) {
+      it(`${condition.what}: the whole request is refused with 409 PROJECT_CONFIG_UNREADABLE and nothing changes`, async (t) => {
+        if (condition.needsPermissions && IS_ROOT) return t.skip('root is refused nothing');
+        const name = `save-${UNUSABLE.indexOf(condition)}`;
+        const row = mkProject(name, { model: 'gpt-6-luna', defaultLaunchMode: 'fullAuto' });
+        const file = path.join(row.path, '.tangleclaw', 'project.json');
+        // The snapshot has to hold the DAMAGED file's bytes, since the claim is
+        // that a refused save leaves the damaged file exactly as it was. A
+        // file whose permissions were taken away cannot be read while damaged,
+        // so it is damaged, made readable for the snapshot, and damaged again.
+        // For the damage that rewrites the file, `restore` does nothing and
+        // the second damage writes the same bytes.
+        condition.damage(file);
+        let before;
+        try {
+          condition.restore(file);
+          before = snapshot(row);
+          condition.damage(file);
+
+          for (const body of [EVERYTHING, { model: 'gpt-5.6-sol' }, { tags: ['only-the-row'] }, { engine: 'claude' }]) {
+            const res = await patch(name, body);
+            assert.equal(res.status, 409, `${JSON.stringify(body)} -> ${JSON.stringify(res.data)}`);
+            assert.equal(res.data.code, 'PROJECT_CONFIG_UNREADABLE');
+            assert.match(res.data.error, /project\.json/);
+            assert.match(res.data.error, /Nothing in this request was applied/);
+            assert.match(res.data.error, /Fix the file, or remove it/, 'the refusal says what to do');
+          }
+        } finally {
+          condition.restore(file);
+        }
+        assert.deepEqual(snapshot(row), before,
+          'the file, the project row and the recovery store are exactly as they were: no partial write');
+      });
+    }
+
+    it('a project with no config file is not refused: it starts from the defaults (control)', async () => {
+      const row = mkProject('save-absent');
+      fs.rmSync(path.join(row.path, '.tangleclaw', 'project.json'));
+      const res = await patch('save-absent', { model: 'gpt-6-luna', tags: ['ok'] });
+      assert.equal(res.status, 200, JSON.stringify(res.data));
+      assert.equal(res.data.model, 'gpt-6-luna');
+      assert.equal(store.projectConfig.load(row.path).model, 'gpt-6-luna');
+    });
+
+    it('a usable config is not refused, and the same request that was refused succeeds once the file is fixed', async () => {
+      const row = mkProject('save-fixed', { model: 'gpt-6-luna' });
+      const file = path.join(row.path, '.tangleclaw', 'project.json');
+      const good = fs.readFileSync(file);
+      fs.writeFileSync(file, 'not json');
+      assert.equal((await patch('save-fixed', EVERYTHING)).status, 409);
+      fs.writeFileSync(file, good);
+      const res = await patch('save-fixed', EVERYTHING);
+      assert.equal(res.status, 200, JSON.stringify(res.data));
+      assert.equal(res.data.engine, 'claude');
+      assert.equal(res.data.model, null);
+    });
+
+    it('a config that becomes unusable while the update is being applied is not overwritten', async () => {
+      // Two fields that each reload the config and write it back. After the
+      // first write lands, the file is damaged; the second reload must stop
+      // the update instead of reading defaults and saving them over the file.
+      const row = mkProject('save-midway', { model: 'gpt-6-luna' });
+      const file = path.join(row.path, '.tangleclaw', 'project.json');
+      const realSave = store.projectConfig.save;
+      let saves = 0;
+      store.projectConfig.save = function damaging(projectPath, cfg) {
+        const out = realSave.call(this, projectPath, cfg);
+        if (projectPath === row.path && ++saves === 1) fs.writeFileSync(file, '{ damaged');
+        return out;
+      };
+      let res;
+      try {
+        res = await patch('save-midway', { quickCommands: [{ label: 'a', command: 'b' }], medusaWake: true });
+      } finally {
+        store.projectConfig.save = realSave;
+      }
+      assert.equal(saves, 1, 'no second write followed the damage');
+      assert.equal(fs.readFileSync(file, 'utf8'), '{ damaged', 'the unusable file is left as it is, not replaced by defaults');
+      assert.equal(res.status, 409, JSON.stringify(res.data));
+      assert.equal(res.data.code, 'PROJECT_CONFIG_UNREADABLE');
+      assert.match(res.data.error, /stopped part-way/);
+    });
+
+    it('when that happens after a recovery-mode decision was recorded, the answer says the decision stands', async () => {
+      // The recovery decision lives in the server store and is written before
+      // the config file. The two cannot be made one write, so a config that
+      // fails afterwards must not be reported as "nothing happened": the
+      // decision was saved, and the answer has to carry it.
+      const row = mkProject('save-midway-recovery');
+      const file = path.join(row.path, '.tangleclaw', 'project.json');
+      const realSave = store.projectConfig.save;
+      let saves = 0;
+      store.projectConfig.save = function damaging(projectPath, cfg) {
+        const out = realSave.call(this, projectPath, cfg);
+        if (projectPath === row.path && ++saves === 1) fs.writeFileSync(file, '{ damaged');
+        return out;
+      };
+      let res;
+      try {
+        res = await patch('save-midway-recovery', { medusaWake: true, launchSequence: { recoveryMode: 'advisory' } });
+      } finally {
+        store.projectConfig.save = realSave;
+      }
+      assert.equal(saves, 1);
+      assert.equal(fs.readFileSync(file, 'utf8'), '{ damaged', 'the unusable file is not overwritten');
+      assert.equal(res.status, 500, JSON.stringify(res.data));
+      assert.equal(res.data.code, 'RECOVERY_DECISION_SAVED_UPDATE_FAILED');
+      assert.equal(res.data.recoveryMode.mode, 'advisory', 'the saved decision is in the answer');
+      assert.match(res.data.error, /project\.json/);
+      assert.match(res.data.error, /recovery mode itself was saved as advisory/);
+      const decided = store.projectRecoveryState.get(row.id);
+      assert.ok(decided, 'and it really is in the store');
+    });
+
+    it('loadConfigForWrite returns a read config, returns defaults for none, and throws for one it cannot use', () => {
+      const row = mkProject('save-loader', { model: 'gpt-6-luna' });
+      assert.equal(projects.loadConfigForWrite(row.path).model, 'gpt-6-luna');
+      assert.equal(projects.loadConfigForWrite(path.join(projectsDir, 'never-created-2')).model, null);
+      fs.writeFileSync(path.join(row.path, '.tangleclaw', 'project.json'), '{');
+      assert.throws(() => projects.loadConfigForWrite(row.path),
+        (err) => err.code === 'PROJECT_CONFIG_UNREADABLE' && err.cause instanceof Error);
+    });
   });
 });
