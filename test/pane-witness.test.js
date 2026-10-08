@@ -24,6 +24,7 @@ const codex = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'eng
 const HEADER_RE = /\bmodel:\s+\S/;
 const STARTING_RE = /\bmodel:\s+loading\b/;
 const STATUS_RE = /^ {2}[^\s│╭╰╮╯›>].* · \S/;
+const KEY_HINT_RE = /^(enter|return|esc|escape|tab|space|arrows?|[↑↓←→]+)$/i;
 const COMPOSER = '\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything\u001b[0m';
 
 describe('the pane witness (#2186)', () => {
@@ -53,7 +54,7 @@ describe('the pane witness (#2186)', () => {
     let i = 0;
     reads = [];
     return paneWitness.composerShown({
-      tmuxName: 'tc-x', engineProfile: codex, wakeProfile, headerRe: HEADER_RE, startingRe: STARTING_RE, statusRe: STATUS_RE, maxStatusRows: 1, ...over
+      tmuxName: 'tc-x', engineProfile: codex, wakeProfile, headerRe: HEADER_RE, startingRe: STARTING_RE, statusRe: STATUS_RE, maxStatusRows: 1, keyHintRe: KEY_HINT_RE, ...over
     }, {
       gapMs: 0,
       sleep: async () => { i += 1; },
@@ -168,19 +169,33 @@ describe('the pane witness (#2186)', () => {
       }
     });
 
-    it('KNOWN LIMIT: the status row is recognised by shape, so one menu-like row that is indented and joined by a middle dot passes', async () => {
-      // Codex's own dialog footer has this shape. Every measured Codex dialog
-      // draws more rows than this and parks the cursor on its footer, and a
-      // declared dialog is refused before this rule is reached; but a lone
-      // footer-shaped row below a stale composer that holds the cursor is
-      // NOT positive status-row evidence, and it passes. This test documents
-      // that, so closing it is a deliberate change and not a surprise.
-      for (const menuLike of ['  enter continue · esc skip', '  Yes · No · Cancel']) {
-        assert.deepEqual(await ask([pane([COMPOSER, '', menuLike], 0)]), { shown: true }, menuLike);
+    it('a stale composer holding the cursor above one Codex dialog footer is refused: the footer has a status row\'s shape and names keys', async () => {
+      const footerOnly = pane([COMPOSER, '', '  enter continue · esc skip'], 0);
+      assert.ok(STATUS_RE.test('  enter continue · esc skip'), 'by shape alone the footer is a status row');
+      assert.deepEqual(await ask([footerOnly]), { shown: false, dialog: null, why: 'a row below the composer names keys, as a dialog footer does' });
+      for (const footer of ['  enter continue · esc quit', '  Tab to switch · Enter to confirm', '  ↑↓ move · space select', '  arrows move · return accept', '  ESC cancel · x']) {
+        assert.equal((await ask([pane([COMPOSER, '', footer], 0)])).shown, false, footer);
       }
-      // The same row is refused as soon as anything else is drawn with it.
-      assert.equal((await ask([pane([COMPOSER, '', '  Skip the update?', '  enter continue · esc skip'], 0)])).shown, false);
-      assert.equal((await ask([pane([COMPOSER, '', '  enter continue · esc skip'], 2)])).shown, false, 'or when the cursor is on it, as Codex parks it');
+    });
+
+    it('the measured status rows still pass: a key word inside a model name or a path is not a key, and "left" is not an arrow', async () => {
+      for (const status of [
+        '  GPT-6-Astra default · /private/tmp/b4cs-8d6DW4',
+        '  GPT-6-Astra default · Ready · never · Context 100% left',
+        '  GPT-6-Astra default · Ready · Ask for approval · Context 100% left',
+        '  Enterprise-1 default · /Users/someone/space/tab-project/escape',
+        '  gpt-enter default · /srv/esc'
+      ]) {
+        assert.deepEqual(await ask([pane([COMPOSER, '', status], 0)]), { shown: true }, status);
+      }
+    });
+
+    it('KNOWN LIMIT: the status row is still recognised by shape, so a middle-dot row that names no key passes', async () => {
+      // Not positive status-row evidence. Stated so that closing it (by
+      // binding the row to the model the pane's header names, once a signed-in
+      // pane has been measured) is a deliberate change.
+      assert.deepEqual(await ask([pane([COMPOSER, '', '  Yes · No · Cancel'], 0)]), { shown: true });
+      assert.equal((await ask([pane([COMPOSER, '', '  Pick one', '  Yes · No · Cancel'], 0)])).shown, false, 'refused as soon as anything else is drawn with it');
     });
 
     it('one status row is allowed, a second is not', async () => {

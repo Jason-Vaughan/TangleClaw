@@ -304,6 +304,8 @@ describe('Codex startupControl adapter', () => {
           assert.ok(!witnessed[0].statusRe.test(notStatus), notStatus);
         }
         assert.equal(witnessed[0].maxStatusRows, 1);
+        for (const key of ['enter', 'Esc', 'TAB', 'space', 'return', 'arrows', '↑↓']) assert.ok(witnessed[0].keyHintRe.test(key), key);
+        for (const notKey of ['left', 'GPT-6-Astra', 'continue', 'Enterprise', '/srv/esc', 'never']) assert.ok(!witnessed[0].keyHintRe.test(notKey), notKey);
         assert.match(settled.dispatchNote, /Sent without a trust entry in Codex's config for \/private\/tmp\/tc-b2-project/);
         assert.match(settled.dispatchNote, /this pane showed an empty composer and no declared trust prompt/);
         assert.match(settled.dispatchNote, /TangleClaw did not grant trust\./);

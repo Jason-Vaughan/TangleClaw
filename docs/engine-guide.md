@@ -837,7 +837,8 @@ signed-in fire has been probed. When a version is listed, the fire goes only if 
   and both reads show: no declared guarded dialog as the live screen; the cursor ON the last bare
   composer row, by its row number, with nothing typed (an earlier composer row that reads the same is
   a different row); nothing below that row but blank rows and at most one status row of the shape
-  Codex draws (indented, items joined by ` · `); no header still reading `model: loading` as the
+  Codex draws (indented, items joined by ` · `, and naming no key: a row that says `enter` or `esc`
+  is a dialog's footer); no header still reading `model: loading` as the
   newest one (a session that has scrolled its header away passes this); no busy marker; and an
   unchanged pane. A read that does not come back with exactly the pane's height in rows is refused.
   A Codex status line configured down to a single item has no ` · ` and is refused: that fails
