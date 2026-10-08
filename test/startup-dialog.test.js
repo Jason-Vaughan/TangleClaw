@@ -379,7 +379,7 @@ describe('one look before a send (#2128)', () => {
 
   it('the composer is clear', () => {
     frames = [COMPOSER];
-    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: true, noncomposer: false, unread: null, promptKnown: true, unreadable: null, unresolved: null });
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: true, noncomposer: false, unread: null, promptKnown: true, unreadable: null, unresolved: null, unresolvedCause: null });
   });
 
   it('a session quoting the dialog above its composer is clear: the prompt is the evidence', () => {
@@ -463,7 +463,7 @@ describe('one look before a send (#2128)', () => {
   it('a profile with no prompt glyph is never read as clear: it has no positive evidence to give', () => {
     startupDialog._internal.wakeProfiles = () => ({});
     frames = [COMPOSER];
-    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, noncomposer: false, unread: null, promptKnown: false, unreadable: null, unresolved: null });
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, noncomposer: false, unread: null, promptKnown: false, unreadable: null, unresolved: null, unresolvedCause: null });
     frames = [TRUST_DIALOG];
     assert.equal(look().dialog.code, 'trust_required', 'though it still sees the dialog by its markers');
   });
@@ -552,13 +552,13 @@ describe('one look before a send (#2128)', () => {
 
   it('a screen with neither a dialog nor a prompt is not clear', () => {
     frames = [['  Verifying your account…']];
-    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, noncomposer: false, unread: null, promptKnown: true, unreadable: null, unresolved: null });
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, noncomposer: false, unread: null, promptKnown: true, unreadable: null, unresolved: null, unresolvedCause: null });
   });
 
   it('an engine that declares nothing is not read', () => {
     frames = [new Error('must not be read')];
     assert.deepEqual(startupDialog.check('t', { id: 'aider', command: 'aider', capabilities: { startupDialogs: [] } }),
-      { declared: false, dialog: null, suspect: null, clear: false, noncomposer: false, unread: null, promptKnown: false, unreadable: null, unresolved: null });
+      { declared: false, dialog: null, suspect: null, clear: false, noncomposer: false, unread: null, promptKnown: false, unreadable: null, unresolved: null, unresolvedCause: null });
   });
 });
 
@@ -1775,10 +1775,19 @@ describe('the session keeps its blocker (#2128)', () => {
           store.engines.get = get;
           const viaApi = sessions.injectCommand(project.name, 'tc start next');
           assert.equal(viaApi.ok, false);
-          assert.match(viaApi.error, /^trust_required: .*declares no such dialog now/);
           const viaWake = require('../lib/medusa-wake')._internal.injectCommand(project.name, 'you have mail', { sessionId: s.id, controlExempt: 'medusa-wake' });
           assert.equal(viaWake.ok, false);
-          assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required');
+          if (when === 'no profile is found') {
+            // A profile that cannot be fetched is refused in its own right, for
+            // every sender. The recorded blocker is named in it as recorded and
+            // uncleared, never as on screen.
+            assert.match(viaApi.error, /^startup_dialogs_unreadable: .*engine profile "claude" could not be fetched: no such engine profile is installed/);
+            assert.match(viaApi.error, /A launch blocker is also recorded for this session and has not been cleared \(trust_required, the engine's folder trust dialog\); TangleClaw cannot tell from here whether that dialog is still on screen/);
+            assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, startupDialog.DECLARATION_UNREADABLE);
+          } else {
+            assert.match(viaApi.error, /^trust_required: .*declares no such dialog now/);
+            assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required');
+          }
           assert.deepEqual(typed, []);
           assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required', 'and the record is not cleared');
         });
@@ -2831,7 +2840,20 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
           assert.equal(launch.label, null);
           const seen = startupDialog.check(s.tmuxSession, profile);
           assert.ok(seen.unreadable);
-          assert.equal(startupDialog.withholdFor(seen, null), null, 'a later injection into a bare composer is an ordinary send');
+          const later = startupDialog.withholdFor(seen, null);
+          if (name !== 'every entry unreadable') {
+            // A sound entry of its own, or (for a value that is not a list) its
+            // program's dialogs, which the installed profiles supply here.
+            assert.equal(seen.unresolved, null);
+            assert.equal(seen.declared, true);
+            assert.equal(later, null, 'the pane was read against a known dialog: a later injection into a bare composer is an ordinary send');
+          } else {
+            // Nothing of the declaration could be read, so there is nothing to
+            // read the pane against: every sender is refused, not only the launch.
+            assert.equal(seen.unresolvedCause, 'declaration');
+            assert.equal(later.code, startupDialog.DECLARATION_UNREADABLE);
+            assert.match(startupDialog.refusalText(later), /Correct the declaration in the engine profile, or set "startupDialogs": \[\] to declare none/);
+          }
         });
       }
 
@@ -2976,6 +2998,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
             assert.equal(rows[0].outcome, 'skipped');
             assert.match(rows[0].skipReason, /^startup_dialogs_unreadable: startup dialogs that apply to engine profile "claude-sonnet-reviewer" could not be looked up: it takes them from the profile that declares for its command "claude"/);
             assert.match(rows[0].skipReason, /failure to read TangleClaw's installed engine profiles, not an error in that profile/);
+            assert.doesNotMatch(rows[0].skipReason, /clears by itself/);
             assert.doesNotMatch(rows[0].skipReason, /Fix the declaration|declares startup dialogs TangleClaw could not read|the dialog it was written for/, 'it must not send anyone to edit a profile');
           });
 
@@ -3191,8 +3214,8 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
               assert.equal(sent.startupDialog.code, startupDialog.DECLARATION_UNREADABLE);
               assert.equal(sent.startupDialog.label, null);
               assert.match(sent.error, /^startup_dialogs_unreadable: nothing was typed into the session\. The startup dialogs that apply to engine profile "claude-sonnet-reviewer" could not be looked up/);
-              assert.match(sent.error, /Send it again once TangleClaw can read its engine profiles/);
-              assert.doesNotMatch(sent.error, /launch's own text|Fix the declaration/, 'wording true for any sender');
+              assert.match(sent.error, /Sends go through again as soon as TangleClaw can read its engine profiles\. If this keeps happening, an engine profile file cannot be read and needs repair: the server log names the error/);
+              assert.doesNotMatch(sent.error, /launch's own text|Fix the declaration|Correct the declaration|clears by itself|nothing .* needs fixing/, 'wording true for any sender, and no promise that it mends itself');
               assert.deepEqual(typed, []);
               assert.equal(paneReads, 0, 'there is nothing to read the pane against');
               assert.equal(store.sessions.get(s.id).launchBlocker, null, 'and no dialog is recorded on a fault');
@@ -3326,6 +3349,314 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
           const aider = { id: 'aider', command: 'aider', capabilities: {} };
           assert.deepEqual(startupDialog.unreadable(aider), []);
           assert.equal((await startupDialog.watch({ tmuxName: 't', engineProfile: aider })).outcome, 'undeclared');
+        });
+      });
+
+      describe('nothing of the declaration readable, or the profile itself not fetchable: every sender is refused (A160 R11)', () => {
+        const ALL_BAD = Object.freeze({ ...CASES['every entry unreadable'], id: 'claude', command: 'claude' });
+        const MIXED = Object.freeze({ ...CASES['one sound entry and one unreadable'], id: 'claude', command: 'claude' });
+        const NOT_A_LIST = Object.freeze({ ...CASES['a value that is not a list'], id: 'claude', command: 'claude' });
+        const OPTED_OUT = Object.freeze({ ...WITH_PREKEY, id: 'claude', command: 'claude', capabilities: { ...WITH_PREKEY.capabilities, startupDialogs: [] } });
+        let paneReads;
+        let realEngineGet;
+        /** What `store.engines.get` answers for each profile id in a test; anything else falls through to the real store. */
+        let profiles;
+
+        beforeEach(() => {
+          paneReads = 0;
+          profiles = {};
+          tmux.capturePane = () => { paneReads += 1; return served(pane); };
+          startupDialog._internal.wakeProfiles = () => ({ claude: WAKE });
+          realEngineGet = store.engines.get;
+          store.engines.get = (id) => {
+            if (!(id in profiles)) return realEngineGet.call(store.engines, id);
+            if (profiles[id] instanceof Error) throw profiles[id];
+            return profiles[id];
+          };
+        });
+
+        afterEach(() => { store.engines.get = realEngineGet; });
+
+        const SENDERS = {
+          'a command sent over the API': (s) => sessions.injectCommand(project.name, 'ls'),
+          'the switchboard wake': (s) => require('../lib/medusa-wake')._internal.injectCommand(project.name, 'you have mail', { sessionId: s.id, controlExempt: 'medusa-wake' }),
+          'the unready nudge': () => require('../lib/launch-unready')._internal.inject(project.name, 'run tc start next', {}),
+          'the wrap hand-back': () => require('../lib/wrap-handback')._internal.inject(project.name, 'wrap finished', {}),
+          'the launch kickoff': (s) => launchKickoff._internal.inject(project.name, 'read your launch context', { sessionId: s.id, launchSend: true })
+        };
+
+        /**
+         * Assert a sender's answer is the every-sender refusal and that nothing reached, or was read from, the pane.
+         * @param {object} sent - The sender's result
+         * @param {RegExp} why - What the refusal must say
+         * @returns {void}
+         */
+        const refusedUnread = (sent, why) => {
+          assert.equal(sent.ok, false);
+          assert.equal(sent.startupDialog.code, startupDialog.DECLARATION_UNREADABLE);
+          assert.equal(sent.startupDialog.label, null);
+          assert.match(sent.error, why);
+          assert.deepEqual(typed, []);
+          assert.equal(paneReads, 0, 'the pane is not read: there is nothing to read it against');
+        };
+
+        describe('an own declaration with no sound entry', () => {
+          for (const [name, send] of Object.entries(SENDERS)) {
+            it(`${name}: refused, nothing typed, the pane not read, no blocker recorded`, () => {
+              profiles.claude = ALL_BAD;
+              const s = start();
+              pane = TRUST_DIALOG;
+              refusedUnread(send(s), /^startup_dialogs_unreadable: nothing was typed into the session\. The engine profile "claude" declares startup dialogs TangleClaw could not read \(entry 1: /);
+              assert.equal(store.sessions.get(s.id).launchBlocker, null);
+            });
+          }
+
+          it('the pane writer refuses it, with the trust dialog up or a bare composer', () => {
+            profiles.claude = ALL_BAD;
+            const s = start();
+            for (const frame of [TRUST_DIALOG, AFTER_MENU]) {
+              pane = frame;
+              const refused = tmux._startupDialogOn(s.tmuxSession, 'claude');
+              assert.equal(refused.code, startupDialog.DECLARATION_UNREADABLE);
+              assert.match(refused.meaning, /Correct the declaration in the engine profile, or set "startupDialogs": \[\] to declare none; sends go through again once the corrected profile is read/);
+            }
+            assert.equal(paneReads, 0);
+          });
+
+          it('a launch on it types nothing, as before', async () => {
+            const s = start();
+            pane = AFTER_MENU;
+            const rows = [];
+            const realRecord = store.sessionRuleDeliveries.record;
+            store.sessionRuleDeliveries.record = (entry) => { rows.push(entry); return entry; };
+            launchKickoff.kickoff = () => Promise.resolve('sent');
+            try {
+              const done = new Promise((resolve) => { launchFinished = resolve; });
+              sessions._deferEngineInit(s.tmuxSession, project.name, 'claude', ALL_BAD, 'the prime', null, false,
+                { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' },
+                { sessionId: s.id, projectId: project.id, hasSequence: true });
+              await done;
+              await new Promise((resolve) => setTimeout(resolve, 5));
+              await turns();
+            } finally {
+              store.sessionRuleDeliveries.record = realRecord;
+            }
+            assert.deepEqual(typed, []);
+            assert.match(rows[0].skipReason, /^startup_dialogs_unreadable: /);
+          });
+
+          it('it persists send after send, and lifts at the first send after the profile is corrected', () => {
+            profiles.claude = ALL_BAD;
+            const s = start();
+            pane = AFTER_MENU;
+            for (let i = 0; i < 3; i++) assert.equal(sessions.injectCommand(project.name, 'ls').ok, false);
+            assert.deepEqual(typed, []);
+            assert.equal(paneReads, 0);
+            profiles.claude = { ...CLAUDE, id: 'claude', command: 'claude' };
+            assert.equal(sessions.injectCommand(project.name, 'ls').ok, true, 'the corrected profile is read at the next send');
+            assert.deepEqual(typed, [{ text: 'ls' }]);
+            assert.ok(paneReads >= 1);
+            assert.equal(store.sessions.get(s.id).launchBlocker, null);
+          });
+
+          it('once corrected, the dialog it was written for is seen', () => {
+            profiles.claude = ALL_BAD;
+            start();
+            pane = TRUST_DIALOG;
+            assert.equal(sessions.injectCommand(project.name, 'ls').startupDialog.code, startupDialog.DECLARATION_UNREADABLE);
+            profiles.claude = { ...CLAUDE, id: 'claude', command: 'claude' };
+            assert.equal(sessions.injectCommand(project.name, 'ls').startupDialog.code, 'trust_required');
+            assert.deepEqual(typed, []);
+          });
+
+          it('a value that is not a list, while the lookup of its program\'s dialogs has failed, is the same state', () => {
+            startupDialog.reset();
+            startupDialog._internal.engineProfiles = () => { throw new Error('profile-list-read-failed'); };
+            profiles.claude = NOT_A_LIST;
+            const s = start();
+            pane = TRUST_DIALOG;
+            const seen = startupDialog.check(s.tmuxSession, NOT_A_LIST);
+            assert.equal(seen.unresolvedCause, 'declaration');
+            refusedUnread(sessions.injectCommand(project.name, 'ls'), /^startup_dialogs_unreadable: /);
+            assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, startupDialog.DECLARATION_UNREADABLE);
+          });
+
+          it('control, a value that is not a list with its program\'s dialogs known: the pane IS read, the dialog refused by name, a composer typed into', () => {
+            startupDialog.reset();
+            startupDialog._internal.engineProfiles = () => [{ ...CLAUDE, id: 'claude-canonical', command: 'claude' }];
+            profiles.claude = NOT_A_LIST;
+            start();
+            pane = TRUST_DIALOG;
+            assert.equal(sessions.injectCommand(project.name, 'ls').startupDialog.code, 'trust_required');
+            pane = AFTER_MENU;
+            typed.length = 0;
+            assert.equal(sessions.injectCommand(project.name, 'ls').ok, true);
+            assert.ok(paneReads >= 2);
+          });
+
+          it('control, one sound entry beside a bad one: later sends still read and judge the pane', () => {
+            profiles.claude = MIXED;
+            start();
+            pane = AFTER_MENU;
+            assert.equal(sessions.injectCommand(project.name, 'ls').ok, true);
+            assert.ok(paneReads >= 1);
+            typed.length = 0;
+            pane = TRUST_DIALOG;
+            assert.equal(sessions.injectCommand(project.name, 'ls').startupDialog.code, 'trust_required');
+            assert.deepEqual(typed, []);
+          });
+
+          it('control, a literal []: an ordinary send, the pane not consulted for a dialog', () => {
+            profiles.claude = OPTED_OUT;
+            const s = start();
+            pane = TRUST_DIALOG;
+            assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude'), null);
+            assert.equal(sessions.injectCommand(project.name, 'ls').ok, true);
+            assert.deepEqual(typed, [{ text: 'ls' }]);
+          });
+        });
+
+        describe('the session\'s engine profile cannot be fetched', () => {
+          const FAULTS = {
+            'the read throws': () => new Error('Unexpected token } in JSON at position 41'),
+            'there is no such profile': () => null
+          };
+
+          for (const [fault, make] of Object.entries(FAULTS)) {
+            for (const [name, send] of Object.entries(SENDERS)) {
+              it(`${fault}, ${name}: refused, nothing typed, the pane not read`, () => {
+                profiles.claude = make();
+                const s = start();
+                pane = TRUST_DIALOG;
+                refusedUnread(send(s), /^startup_dialogs_unreadable: nothing was typed into the session\. The engine profile "claude" could not be fetched: /);
+                assert.equal(store.sessions.get(s.id).launchBlocker, null);
+              });
+            }
+
+            it(`${fault}: the pane writer refuses a send that names the engine, and says what would lift it`, () => {
+              profiles.claude = make();
+              const s = start();
+              pane = AFTER_MENU;
+              const refused = tmux._startupDialogOn(s.tmuxSession, 'claude');
+              assert.equal(refused.code, startupDialog.DECLARATION_UNREADABLE);
+              assert.match(refused.meaning, /Sends go through again as soon as TangleClaw can read its engine profiles\. If this keeps happening, an engine profile file cannot be read and needs repair: the server log names the error/);
+              assert.doesNotMatch(startupDialog.refusalText(refused), /clears by itself|nothing .* needs fixing/);
+              assert.equal(paneReads, 0);
+            });
+
+            it(`${fault}: it lifts at the first send after the profile reads again`, () => {
+              profiles.claude = make();
+              start();
+              pane = AFTER_MENU;
+              assert.equal(sessions.injectCommand(project.name, 'ls').ok, false);
+              assert.equal(sessions.injectCommand(project.name, 'ls').ok, false, 'and it persists while the fault does');
+              profiles.claude = { ...CLAUDE, id: 'claude', command: 'claude' };
+              assert.equal(sessions.injectCommand(project.name, 'ls').ok, true);
+              assert.deepEqual(typed, [{ text: 'ls' }]);
+            });
+
+            it(`${fault}, with a blocker stored: still refused; the blocker is named as recorded and uncleared, not as on screen, and is not touched`, () => {
+              profiles.claude = make();
+              const s = start();
+              store.sessions.setLaunchBlocker(s.id, BLOCKER);
+              const before = JSON.stringify(store.sessions.get(s.id).launchBlocker);
+              pane = AFTER_MENU;
+              const sent = sessions.injectCommand(project.name, 'ls');
+              assert.equal(sent.ok, false);
+              assert.equal(sent.startupDialog.code, startupDialog.DECLARATION_UNREADABLE);
+              assert.match(sent.error, /A launch blocker is also recorded for this session and has not been cleared \(trust_required, the engine's folder trust dialog\); TangleClaw cannot tell from here whether that dialog is still on screen/);
+              assert.doesNotMatch(sent.error, /it is on screen/);
+              assert.equal(paneReads, 0, 'the send did not read the pane');
+              assert.equal(sessions.getSessionStatus(project.name).launchBlocker.code, 'trust_required', 'a status read does not clear it');
+              assert.equal(JSON.stringify(store.sessions.get(s.id).launchBlocker), before, 'the record is unchanged');
+              assert.deepEqual(typed, []);
+            });
+          }
+
+          it('control, no engine named: no profile to fetch; refused only while a blocker is stored', () => {
+            profiles.claude = new Error('unreadable');
+            const s = start();
+            pane = AFTER_MENU;
+            assert.equal(tmux._startupDialogOn(s.tmuxSession, null), null);
+            assert.equal(startupDialog.checkEngine(s.tmuxSession, null).unresolved, null);
+            store.sessions.setLaunchBlocker(s.id, BLOCKER);
+            assert.equal(tmux._startupDialogOn(s.tmuxSession, null).code, 'trust_required');
+          });
+
+          it('control, no store open: a process with no sessions has nothing to consult, and is not refused', () => {
+            profiles.ghost = null;
+            startupDialog._internal.storeOpen = () => false;
+            const seen = startupDialog.checkEngine('t', 'ghost');
+            assert.equal(seen.unresolved, null);
+            assert.equal(startupDialog.withholdFor(seen, null), null);
+            startupDialog._internal.storeOpen = () => true;
+            assert.equal(startupDialog.checkEngine('t', 'ghost').unresolvedCause, 'profile');
+          });
+
+          it('the cause is a field, not wording: profile, declaration and lookup are told apart by `unresolvedCause`', () => {
+            profiles.claude = null;
+            assert.equal(startupDialog.checkEngine('t', 'claude').unresolvedCause, 'profile');
+            assert.equal(startupDialog.check('t', ALL_BAD).unresolvedCause, 'declaration');
+            startupDialog.reset();
+            startupDialog._internal.engineProfiles = () => { throw new Error('x'); };
+            assert.equal(startupDialog.check('t', { id: 'v', command: 'claude', capabilities: {} }).unresolvedCause, 'lookup');
+            assert.equal(startupDialog.check('t', MIXED).unresolvedCause, null);
+            assert.equal(startupDialog.check('t', OPTED_OUT).unresolvedCause, null);
+          });
+        });
+
+        describe('a connection-qualified engine id resolves to its base profile first', () => {
+          const OPENCLAW = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'openclaw.json'), 'utf8'));
+          const startOpenclaw = () => store.sessions.start({ projectId: project.id, engineId: 'openclaw:conn-7', tmuxSession: `a160-oc-${counter}` });
+
+          it('the mapping is the one a launch makes', () => {
+            assert.equal(startupDialog.profileIdOf('openclaw:conn-7'), 'openclaw');
+            assert.equal(startupDialog.profileIdOf('claude'), 'claude');
+            assert.equal(startupDialog.profileIdOf('claude-sonnet-reviewer'), 'claude-sonnet-reviewer');
+            assert.equal(startupDialog.profileIdOf(null), null);
+            assert.equal(startupDialog.profileIdOf(''), null);
+          });
+
+          it('a healthy OpenClaw session over SSH: its base profile is fetched (never "openclaw:conn-7"), and the send is typed', () => {
+            const asked = [];
+            const inner = store.engines.get;
+            store.engines.get = (id) => { asked.push(id); return inner(id); };
+            profiles.openclaw = OPENCLAW;
+            const s = startOpenclaw();
+            pane = AFTER_MENU;
+            assert.equal(tmux._startupDialogOn(s.tmuxSession, 'openclaw:conn-7'), null);
+            assert.equal(sessions.injectCommand(project.name, 'ls').ok, true);
+            assert.deepEqual(typed, [{ text: 'ls' }]);
+            assert.ok(asked.includes('openclaw'));
+            assert.ok(!asked.includes('openclaw:conn-7'), 'a connection-qualified id is not looked up as a profile');
+          });
+
+          for (const [fault, value] of Object.entries({ 'is missing': null, 'cannot be read': new Error('EACCES: permission denied') })) {
+            it(`the base profile ${fault}: that OpenClaw session's sends are refused, naming the base profile and the engine`, () => {
+              profiles.openclaw = value;
+              const s = startOpenclaw();
+              pane = AFTER_MENU;
+              const sent = sessions.injectCommand(project.name, 'ls');
+              assert.equal(sent.ok, false);
+              assert.equal(sent.startupDialog.code, startupDialog.DECLARATION_UNREADABLE);
+              assert.match(sent.error, /engine profile "openclaw" \(for engine "openclaw:conn-7"\) could not be fetched/);
+              assert.equal(tmux._startupDialogOn(s.tmuxSession, 'openclaw:conn-7').code, startupDialog.DECLARATION_UNREADABLE);
+              assert.deepEqual(typed, []);
+            });
+          }
+
+          it('control, a Web UI session: refused earlier as it always was, for its own reason, with no profile fetched', () => {
+            const asked = [];
+            const inner = store.engines.get;
+            store.engines.get = (id) => { asked.push(id); return inner(id); };
+            profiles.openclaw = null;
+            store.sessions.start({ projectId: project.id, engineId: 'openclaw:conn-7', tmuxSession: null, sessionMode: 'webui' });
+            const sent = sessions.injectCommand(project.name, 'ls');
+            assert.equal(sent.ok, false);
+            assert.match(sent.error, /not supported for Web UI sessions/);
+            assert.equal(sent.startupDialog, undefined);
+            assert.deepEqual(asked, []);
+          });
         });
       });
 

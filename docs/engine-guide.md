@@ -633,10 +633,27 @@ the same code. In that state **every later sender is refused as well**, not only
 command bar, a wake nudge, a coordinator's command, a wrap's prompt, the Critic action. No dialog
 is known for the engine at all, so there is nothing to read the pane against and no send can be
 shown safe; the pane is not read, and nothing is recorded as a blocker. The refusal says it is a
-failure to read TangleClaw's installed profiles and not something to fix in the profile. It clears
-by itself at the next send after the list reads again; a profile with a list of its own, `[]`
-included, does not depend on the list. A list with one unreadable entry is a different state: its
-sound entries still read the pane for later sends, as described above. One look, one watch and one
+failure to read TangleClaw's installed profiles and not an error in the profile. Sends go through
+again at the first send after the profiles read; if it keeps happening, a profile file is
+unreadable and needs repair, and the server log names the error. A profile with a list of its own,
+`[]` included, does not depend on the list.
+
+**The same every-sender refusal applies whenever nothing of the declaration could be read**, not
+only when the lookup failed:
+
+- a profile's **own** `startupDialogs` with no sound entry at all: every entry unreadable, or a
+  value that is not a list while its program's dialogs cannot be looked up either. Correct the
+  declaration, or set `[]`; sends go through once the corrected profile is read;
+- the session's **engine profile cannot be fetched** at all, for a send that names its engine (the
+  read fails, or no such profile is installed). A connection-qualified engine id resolves to its
+  base profile first (`openclaw:<connection>` reads the `openclaw` profile), so a healthy OpenClaw
+  session is not affected; only a base profile that really cannot be read is refused.
+
+If a launch blocker is already recorded for the session, the refusal names it as recorded and not
+cleared; it does not claim the dialog is on screen, because that is exactly what cannot be told.
+A list with at least one sound entry is a different state: its sound entries still read the pane
+for later sends, as described above. A send that names no engine, and a process with no store
+open, are unchanged. One look, one watch and one
 launch each read the declaration **once** (`startupDialog.resolve`), so a fault that comes or goes
 in the middle cannot be pieced together into "nothing declared and nothing wrong". Only a literal `[]` declares none. Entries that could be read still protect later
 sends. The watch tells a finished boot by the measured prompt signature in
