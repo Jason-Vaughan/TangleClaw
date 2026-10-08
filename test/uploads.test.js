@@ -137,6 +137,41 @@ describe('uploads (server half)', () => {
         'the filesystem answered — the Full Disk Access remedy would be the wrong advice');
     });
 
+    it('a project directory whose check FAILED is not reported as one that is gone, nor as refused', async () => {
+      // THE MUTATION THIS CATCHES: drop the `project-unknown` branch, or map it
+      // to `project-missing`. The child answers `project-unknown` when its
+      // check of the directory failed for a reason other than the directory
+      // being absent (a disk error, a stale mount). `project-missing` becomes a
+      // 400 telling the operator their project is not on disk, and the
+      // refusal sentence would tell them it is a permissions problem. Neither
+      // was observed.
+      mock.method(dirScanner, 'interactiveRequest',
+        async () => ({ status: 'project-unknown', code: 'EIO' }));
+      let written = '';
+      setConsoleStream({ write: (chunk) => { written += chunk; } });
+      let result;
+      try {
+        result = await uploads.saveUpload('/p', 'a.txt', 'YQ==');
+      } finally {
+        setConsoleStream(null);
+      }
+      assert.equal(result.status, 'unavailable');
+      assert.notEqual(result.status, 'project-missing');
+      assert.equal(result.unreadableCode, 'EIO', 'the error\'s own code reaches the caller');
+      assert.match(result.unreadable, /could not be checked \(EIO\)/);
+      assert.doesNotMatch(result.unreadable, /may not read it/, 'a failed check is not a permission refusal');
+      assert.equal(result.unreadableHint, null);
+      assert.doesNotMatch(written, /does not know/,
+        'this is a status the module handles, so it is not logged as an unknown one');
+    });
+
+    it('a failed check that carries no code still answers with one a caller can branch on', async () => {
+      mock.method(dirScanner, 'interactiveRequest', async () => ({ status: 'project-unknown' }));
+      const result = await uploads.saveUpload('/p', 'a.txt', 'YQ==');
+      assert.equal(result.status, 'unavailable');
+      assert.equal(result.unreadableCode, 'SCAN_FAILED');
+    });
+
     it('a status this module does not know becomes the server\'s limit, and is logged', async () => {
       // A future handler status must not silently acquire the 400's meaning.
       // The log line is the only thing that would contradict a confident wrong
