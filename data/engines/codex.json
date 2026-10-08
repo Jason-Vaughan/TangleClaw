@@ -23,7 +23,7 @@
     "args": [],
     "env": {},
     "startupDelay": 2000,
-    "startupPrompts": [
+    "guardedDialogs": [
       {
         "id": "folder-trust",
         "match": "Trust this folder\\?",

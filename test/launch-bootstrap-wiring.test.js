@@ -176,10 +176,10 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
     assert.deepEqual(bootstraps, []);
   });
 
-  describe('an engine that declares startup prompts is never typed into while one is up (#2177)', () => {
+  describe('an engine that declares guarded dialogs is never typed into while one is up (#2177)', () => {
     const PROMPTS = [{ id: 'update', match: 'Update available', humanAction: 'Skip it with Escape.' }];
-    const DECLARING = Object.freeze({ name: 'Fake', capabilities: { supportsPrimePrompt: true }, launch: { startupDelay: 5, startupPrompts: PROMPTS } });
-    const DECLARING_WITH_PREKEYS = Object.freeze({ name: 'Fake', capabilities: { supportsPrimePrompt: true }, launch: { startupDelay: 5, preKeys: ['Enter', 'Enter'], preKeyDelay: 5, startupPrompts: PROMPTS } });
+    const DECLARING = Object.freeze({ name: 'Fake', capabilities: { supportsPrimePrompt: true }, launch: { startupDelay: 5, guardedDialogs: PROMPTS } });
+    const DECLARING_WITH_PREKEYS = Object.freeze({ name: 'Fake', capabilities: { supportsPrimePrompt: true }, launch: { startupDelay: 5, preKeys: ['Enter', 'Enter'], preKeyDelay: 5, guardedDialogs: PROMPTS } });
     const UPDATE_PROMPT = ['> ', '  Update available · 1 → 2', '> 1. Update now', '  enter continue · esc skip'];
     const LEGACY = { sessionId: 99, projectId: 3, hasSequence: true, startupDelivery: 'legacy' };
 
@@ -235,8 +235,8 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
       assert.deepEqual(rawKeys, []);
     });
 
-    it('a profile whose startup prompt cannot be read gets no preKey and no paste, even over a composer', async () => {
-      const BROKEN = Object.freeze({ name: 'Fake', capabilities: { supportsPrimePrompt: true }, launch: { startupDelay: 5, preKeys: ['Enter'], preKeyDelay: 5, startupPrompts: [{ id: 'update', match: 'Update available (' }] } });
+    it('a profile whose guarded dialog cannot be read gets no preKey and no paste, even over a composer', async () => {
+      const BROKEN = Object.freeze({ name: 'Fake', capabilities: { supportsPrimePrompt: true }, launch: { startupDelay: 5, preKeys: ['Enter'], preKeyDelay: 5, guardedDialogs: [{ id: 'update', match: 'Update available (' }] } });
       tmux.capturePane = () => ({ lines: ['> '] });
       sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, BROKEN, 'the prime', null, false, { ...DELIVERY }, LEGACY);
       // The paste is scheduled after the preKey slot, as on any launch with preKeys.

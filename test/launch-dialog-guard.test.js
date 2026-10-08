@@ -15,27 +15,27 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const store = require('../lib/store');
-const startupPrompts = require('../lib/startup-prompts');
+const launchDialogGuard = require('../lib/launch-dialog-guard');
 const { CODEX_STARTUP_PANES: PANES } = require('./_codex-startup-fixtures');
 
 const codex = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));
 const COMPOSER_RE = new RegExp(codex.capabilities.wake.promptPattern);
 
-describe('declared startup prompts (#2177)', () => {
+describe('declared guarded dialogs (#2177)', () => {
   it('reads the prompts Codex declares, each with what the operator should do', () => {
-    const prompts = startupPrompts.declared(codex);
+    const prompts = launchDialogGuard.declared(codex);
     assert.deepEqual(prompts.map((p) => p.id), ['folder-trust', 'update']);
     for (const p of prompts) assert.ok(p.humanAction.length > 0, `${p.id} says what to do`);
   });
 
   it('is empty for a profile that declares none', () => {
-    assert.deepEqual(startupPrompts.declared({ launch: {} }), []);
-    assert.deepEqual(startupPrompts.declared({}), []);
-    assert.deepEqual(startupPrompts.declared(null), []);
+    assert.deepEqual(launchDialogGuard.declared({ launch: {} }), []);
+    assert.deepEqual(launchDialogGuard.declared({}), []);
+    assert.deepEqual(launchDialogGuard.declared(null), []);
   });
 
   it('drops a malformed entry and keeps the rest, so a bad profile cannot fail a launch', () => {
-    const prompts = startupPrompts.declared({ launch: { startupPrompts: [
+    const prompts = launchDialogGuard.declared({ launch: { guardedDialogs: [
       { id: 'ok', match: 'Continue\\?' },
       { id: 'bad-pattern', match: '(' },
       { id: '', match: 'x' },
@@ -47,24 +47,24 @@ describe('declared startup prompts (#2177)', () => {
   });
 
   it('counts the entries it could not read, because each one is a prompt nothing can recognise any more', () => {
-    const bad = { launch: { startupPrompts: [{ id: 'ok', match: 'Continue\\?' }, { id: 'bad-pattern', match: '(' }, { match: 'no id' }, null] } };
-    assert.equal(startupPrompts.read(bad).unreadable, 3);
-    assert.deepEqual(startupPrompts.read(bad).prompts.map((p) => p.id), ['ok']);
-    assert.deepEqual(startupPrompts.read(codex).unreadable, 0);
-    assert.deepEqual(startupPrompts.read({ launch: {} }), { prompts: [], unreadable: 0 });
-    assert.deepEqual(startupPrompts.read({ launch: { startupPrompts: null } }), { prompts: [], unreadable: 0 });
+    const bad = { launch: { guardedDialogs: [{ id: 'ok', match: 'Continue\\?' }, { id: 'bad-pattern', match: '(' }, { match: 'no id' }, null] } };
+    assert.equal(launchDialogGuard.read(bad).unreadable, 3);
+    assert.deepEqual(launchDialogGuard.read(bad).prompts.map((p) => p.id), ['ok']);
+    assert.deepEqual(launchDialogGuard.read(codex).unreadable, 0);
+    assert.deepEqual(launchDialogGuard.read({ launch: {} }), { prompts: [], unreadable: 0 });
+    assert.deepEqual(launchDialogGuard.read({ launch: { guardedDialogs: null } }), { prompts: [], unreadable: 0 });
   });
 
-  it('a startupPrompts value that is not a list is a declaration nothing can read, not an absent one', () => {
+  it('a guardedDialogs value that is not a list is a declaration nothing can read, not an absent one', () => {
     for (const wrong of [{ id: 'update', match: 'Update available' }, 'Update available', 0, true]) {
-      assert.deepEqual(startupPrompts.read({ launch: { startupPrompts: wrong } }), { prompts: [], unreadable: 1 });
+      assert.deepEqual(launchDialogGuard.read({ launch: { guardedDialogs: wrong } }), { prompts: [], unreadable: 1 });
     }
   });
 });
 
 describe('which screen is live, on whole Codex captures (#2177)', () => {
-  const prompts = startupPrompts.declared(codex);
-  const assess = (pane) => startupPrompts.assess(pane.lines, prompts, COMPOSER_RE);
+  const prompts = launchDialogGuard.declared(codex);
+  const assess = (pane) => launchDialogGuard.assess(pane.lines, prompts, COMPOSER_RE);
 
   it('the folder-trust prompt is live although the opening composer is still drawn above it', () => {
     assert.ok(PANES.trustPrompt.lines.some((l) => COMPOSER_RE.test(l)), 'the capture holds a bare composer row');
@@ -91,17 +91,17 @@ describe('which screen is live, on whole Codex captures (#2177)', () => {
 
   it('a styled dialog row matches like a plain one', () => {
     const styled = PANES.updatePrompt.lines.map((l) => l.replace('Update available', '\x1b[1mUpdate available\x1b[0m'));
-    assert.equal(startupPrompts.assess(styled, prompts, COMPOSER_RE).state, 'prompt');
+    assert.equal(launchDialogGuard.assess(styled, prompts, COMPOSER_RE).state, 'prompt');
   });
 
   it('a screen with neither a composer nor a declared prompt is unrecognised', () => {
-    assert.deepEqual(startupPrompts.assess(['Verifying your account…', ''], prompts, COMPOSER_RE), { state: 'unrecognised' });
-    assert.deepEqual(startupPrompts.assess([], prompts, COMPOSER_RE), { state: 'unrecognised' });
+    assert.deepEqual(launchDialogGuard.assess(['Verifying your account…', ''], prompts, COMPOSER_RE), { state: 'unrecognised' });
+    assert.deepEqual(launchDialogGuard.assess([], prompts, COMPOSER_RE), { state: 'unrecognised' });
   });
 
   it('without a composer pattern the whole capture is searched, and no composer is ever claimed', () => {
-    assert.equal(startupPrompts.assess(PANES.trustPrompt.lines, prompts, null).state, 'prompt');
-    assert.deepEqual(startupPrompts.assess(PANES.composer.lines, prompts, null), { state: 'unrecognised' });
+    assert.equal(launchDialogGuard.assess(PANES.trustPrompt.lines, prompts, null).state, 'prompt');
+    assert.deepEqual(launchDialogGuard.assess(PANES.composer.lines, prompts, null), { state: 'unrecognised' });
   });
 });
 
@@ -111,7 +111,7 @@ describe('what a launch-time send is refused for (#2177)', () => {
   let wakeProfile;
 
   before(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-startup-prompts-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-launch-dialog-guard-'));
     store._setBasePath(tmpDir);
     store.init();
     sessions = require('../lib/sessions');
@@ -176,24 +176,24 @@ describe('what a launch-time send is refused for (#2177)', () => {
     }
   });
 
-  it('a profile with an unreadable startup prompt refuses every send, whatever the pane shows', () => {
+  it('a profile with an unreadable guarded dialog refuses every send, whatever the pane shows', () => {
     // The lost entry is the prompt the profile meant to protect. A composer on
     // screen proves nothing: the reader could not have told that prompt apart.
-    const typo = { name: 'Fake', launch: { startupPrompts: [{ id: 'update', match: 'Update available (' }] } };
-    const partly = { name: 'Fake', launch: { startupPrompts: [{ id: 'folder-trust', match: 'Trust this folder' }, { id: 'update', match: '(' }] } };
-    const notAList = { name: 'Fake', launch: { startupPrompts: { id: 'update', match: 'Update available' } } };
+    const typo = { name: 'Fake', launch: { guardedDialogs: [{ id: 'update', match: 'Update available (' }] } };
+    const partly = { name: 'Fake', launch: { guardedDialogs: [{ id: 'folder-trust', match: 'Trust this folder' }, { id: 'update', match: '(' }] } };
+    const notAList = { name: 'Fake', launch: { guardedDialogs: { id: 'update', match: 'Update available' } } };
     for (const profile of [typo, partly, notAList]) {
       for (const refuseUnrecognised of [true, false]) {
         for (const pane of [PANES.composer, PANES.updatePrompt]) {
           const r = sessions._startupTypingRefusal('t', profile, wakeProfile, refuseUnrecognised, () => ({ lines: [...pane.lines] }));
           assert.equal(r.promptId, null);
-          assert.match(r.reason, /declares a startup prompt TangleClaw could not read \(1 of its entries\).*nothing was typed/);
+          assert.match(r.reason, /declares a guarded dialog TangleClaw could not read \(1 of its entries\).*nothing was typed/);
         }
       }
     }
   });
 
-  it('an engine that declares no startup prompts is not asked, and its pane is not read', () => {
+  it('an engine that declares no guarded dialogs is not asked, and its pane is not read', () => {
     let reads = 0;
     const r = sessions._startupTypingRefusal('t', { id: 'aider', launch: {} }, null, true, () => { reads++; return { lines: [] }; });
     assert.equal(r, null);

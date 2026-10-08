@@ -35,7 +35,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
-## 2026-10-07 — #2177: a Codex launch types nothing into a startup prompt
+## 2026-10-07 — #2177: a Codex launch types nothing into a guarded dialog
 
 <!-- prawduct: type=bugfix | scope=2177-prekey-containment -->
 
@@ -45,11 +45,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 **Root cause.** A key was scheduled by elapsed time against a screen that depends on the host: whether a newer version is known, whether the folder is trusted, and how loaded the machine is. Nothing ever read which prompt the key would answer.
 
-**What landed.** `data/engines/codex.json` drops `launch.preKeys` and declares `launch.startupPrompts` (folder-trust, update) with evidence. `lib/startup-prompts.js` reads a capture and says whether a declared prompt, a bare composer, or neither is the live screen: a prompt is live when it lies below the last bare composer row, because Codex keeps its opening composer above a dialog and an answered dialog above the composer that replaced it. `lib/sessions.js` asks it immediately before each launch-time send. A declared prompt refuses the prime paste and any `preKeys`; an unrecognised screen on a pane never observed ready, or an unreadable pane, refuses them too. The refused paste is recorded `skipped` in the rule-delivery ledger with the prompt and what the operator should do, and the readiness wait logs the prompt when it is first seen.
+**What landed.** `data/engines/codex.json` drops `launch.preKeys` and declares `launch.guardedDialogs` (folder-trust, update) with evidence. `lib/launch-dialog-guard.js` reads a capture and says whether a declared prompt, a bare composer, or neither is the live screen: a prompt is live when it lies below the last bare composer row, because Codex keeps its opening composer above a dialog and an answered dialog above the composer that replaced it. `lib/sessions.js` asks it immediately before each launch-time send. A declared prompt refuses the prime paste and any `preKeys`; an unrecognised screen on a pane never observed ready, or an unreadable pane, refuses them too. The refused paste is recorded `skipped` in the rule-delivery ledger with the prompt and what the operator should do, and the readiness wait logs the prompt when it is first seen.
 
 **An empty capture is an unread pane.** `tmux.capturePane` answers a failed `capture-pane` with no lines rather than throwing, so the refusal treats zero lines as unread. The first version caught only a thrown error, which that function does not raise once the session is known to exist, and a preKey would have gone through; the boundary review found it and the tests now stub what tmux really returns.
 
-**A profile entry that cannot be read refuses every send.** The reader first dropped a malformed `startupPrompts` entry with a warning, and its comment said that could never make a launch type more. It could: with the entry gone the prompt it named was invisible, and a preKey or a ready-pane paste went into it. The reader now counts what it dropped and the refusal fails closed on any. Found by the review of the merged head.
+**A profile entry that cannot be read refuses every send.** The reader first dropped a malformed `guardedDialogs` entry with a warning, and its comment said that could never make a launch type more. It could: with the entry gone the prompt it named was invisible, and a preKey or a ready-pane paste went into it. The reader now counts what it dropped and the refusal fails closed on any. Found by the review of the merged head.
+
+**Named for what it guards.** The declaration was first called `launch.startupPrompts`, in `lib/startup-prompts.js`. "Startup prompt" already names the text TangleClaw fires into a session (#1825), one letter away, so before release the key became `launch.guardedDialogs` and the module `lib/launch-dialog-guard.js` (Architect A158). Names only: no behaviour and no assertion changed.
 
 **Deliberate behaviour change.** A Codex launch in an untrusted folder now stops at the trust prompt. No path accepts folder trust; the Operator has given no policy for it.
 

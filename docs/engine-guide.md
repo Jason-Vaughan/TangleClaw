@@ -623,7 +623,7 @@ Engines without a positive marker cannot be gated and **must declare an explicit
 paste is recorded in the delivery ledger as `unverified`, never `delivered` — `delivered` is
 reserved for a paste whose pane was observed ready.
 
-#### `launch.startupPrompts`
+#### `launch.guardedDialogs`
 
 Some engines open on a dialog whose highlighted default has consequences. Codex's update prompt
 highlights "Update now", which upgrades the global install, and its folder-trust prompt highlights
@@ -631,7 +631,7 @@ highlights "Update now", which upgrades the global install, and its folder-trust
 **declares** the prompts its engine can open on, and the launch reads the pane before it types:
 
 ```json
-"startupPrompts": [
+"guardedDialogs": [
   { "id": "folder-trust", "match": "Trust this folder\\?", "humanAction": "Answer it in the pane…" }
 ]
 ```
@@ -645,12 +645,12 @@ highlights "Update now", which upgrades the global install, and its folder-trust
 - A prompt counts as live when it is drawn **below the last bare composer row**. Codex keeps its
   opening composer on screen above a dialog, and keeps an answered dialog in scrollback above the
   composer that replaced it, so the text alone does not say which state the pane is in.
-- For an engine that declares startup prompts, the blind paste after a readiness timeout is also
+- For an engine that declares guarded dialogs, the blind paste after a readiness timeout is also
   refused when the pane shows neither a bare composer nor a declared prompt, and when the pane cannot
   be read. Such an engine needs a `capabilities.wake.promptPattern`, or no composer is ever
   recognised. An engine that declares none keeps its paste exactly as before.
 - An entry that cannot be read (no `id`, no `match`, a `match` that is not a valid pattern, or a
-  `startupPrompts` value that is not a list) makes
+  `guardedDialogs` value that is not a list) makes
   the launch type nothing at all for that engine: the prompt it named can no longer be recognised.
   The server log names the entry.
 - After a refused paste nothing retries it. Once the operator has answered the prompt, the session
@@ -658,6 +658,10 @@ highlights "Update now", which upgrades the global install, and its folder-trust
   lets it type.
 - The Codex opening screen (`model: loading` over an empty composer) reads as a composer here. It is
   not told apart from a usable one by this check.
+
+`launch.guardedDialogs` has one reader and one scope: the launch-time sends above (the prime paste
+and `preKeys`). It is not a general declaration of an engine's dialogs, nothing else in TangleClaw
+reads it, and it is not interchangeable with any other dialog declaration a profile may carry.
 
 `launch.preKeys` still exists for an operator-written profile, and is still sent on a timer without
 knowing what it will answer. **No bundled profile declares any.** Do not declare one for a prompt

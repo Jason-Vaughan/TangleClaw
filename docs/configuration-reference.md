@@ -540,7 +540,7 @@ Engine profiles define how TangleClaw interacts with an AI engine. See the [Engi
     "args": ["array of string"],
     "env": { "ENV_VAR": "value" },
     "startupDelay": "number|null — ms to wait before the blind prime paste. Required for a paste-path engine (supportsPrimePrompt, no supportsSilentPrime) whose capabilities.wake block declares no positive at-rest idleMarker; engines WITH one are readiness-gated instead and ignore this. See docs/engine-guide.md → Prime paste readiness.",
-    "startupPrompts": [{ "id": "string", "match": "string — regular expression tested against the pane text", "humanAction": "string — what the operator is told to do", "evidence": "object — when and how the prompt was observed" }]
+    "guardedDialogs": [{ "id": "string", "match": "string — regular expression tested against the pane text", "humanAction": "string — what the operator is told to do", "evidence": "object — when and how the prompt was observed" }]
   },
   "persistent": "object|null — persistent engine config",
   "capabilities": {

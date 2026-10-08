@@ -194,7 +194,7 @@ describe('_resolvePreKeys uses the same honored-mode predicate (#731)', () => {
       assert.ok(!('preKeys' in codex.launchModes[mode]), `no preKeys on ${mode}`);
       assert.equal(sessions._resolvePreKeys(codex, mode).preKeys, null);
     }
-    assert.deepEqual(codex.launch.startupPrompts.map((p) => p.id), ['folder-trust', 'update']);
+    assert.deepEqual(codex.launch.guardedDialogs.map((p) => p.id), ['folder-trust', 'update']);
   });
 });
 
