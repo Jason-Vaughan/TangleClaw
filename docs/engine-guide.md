@@ -669,7 +669,8 @@ only when the lookup failed:
   being saved, and is refused when the Master is next started. Naming such an engine in a
   change is refused. **Saving a lower access level and applying it are separate steps, and
   the second does not need the engine either**: if TangleClaw cannot work out which engine the
-  Master runs (any installed profile file that does not parse causes that), a change that
+  Master runs (any installed profile file that does not parse causes that, and so does having
+  no engine profile installed), a change that
   lowers access still writes the level file and puts the Claude Code write guard back in the
   Master's home. That binds a Master running Claude Code from its next tool call. It does not
   rewrite the Master's instructions, and a Master on another engine has no write guard, so the

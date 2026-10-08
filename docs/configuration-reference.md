@@ -268,7 +268,8 @@ it. `GET /api/master/status` reports which of the two is running, and both the c
 settings modal show it, so the weaker case is never displayed as the stronger one.
 
 **A lower `accessLevel` is applied even when the Master's engine cannot be resolved** (an
-installed engine profile file that does not parse causes that). The level file is written and
+installed engine profile file that does not parse causes that, and so does having no engine
+profile installed). The level file is written and
 the Claude Code write guard is restored in the Master's home; the Master's instructions are not
 rewritten, and the request answers 500 `MASTER_LEVEL_NOT_APPLIED` with a message saying which
 part holds. A Master on another engine has no write guard, so for it the change takes effect

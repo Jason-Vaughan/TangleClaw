@@ -2266,7 +2266,7 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
         ? `The master's access level is now "${newMasterAccessLevel}", but the refresh that should have followed it did not finish. `
           + 'Its identity, its memory scaffold or its write guard may be a step behind. Restart the master session to bring them back into line.'
         : `Settings were saved, but the master's access level could not be applied — it is still enforcing "${oldMasterAccessLevel}". `
-          + 'Restart the master session to reconcile it.';
+          + 'If an installed engine profile file cannot be read, repair it first: a restart is refused until then. Restarting the master session then reconciles it.';
     }
   }
 

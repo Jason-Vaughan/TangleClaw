@@ -2313,23 +2313,69 @@ describe('access level — the guard reads it per invocation (#755)', () => {
       }
     });
 
-    it('a fault that arrives between resolving and refreshing takes the same path', () => {
-      // The refresh resolves the engine a second time. Resolving once cleanly
-      // and failing there must not fall back to "nothing changed".
+    it('resolves the engine once: the refresh is handed the answer and cannot reach a different one', () => {
+      // Two lookups can disagree. With a second one inside the refresh, a
+      // resolver that answered `claude` and then anything else would have the
+      // applier report structural enforcement over a home given no guard.
       const home = provisionedAtWrite();
       try {
+        fs.rmSync(script(home));
         let calls = 0;
-        const flaky = {
-          resolveDefaultEngine: () => { calls += 1; if (calls > 1) throw FAULT; return 'claude'; },
+        const once = {
+          resolveDefaultEngine: () => { calls += 1; return calls === 1 ? 'claude' : 'gemini'; },
           reconcileLaunchMode: () => 'default'
         };
-        const err = thrownBy(() => master.applyMasterAccessLevel('read-only', { home, enginesLib: flaky }));
-        assert.equal(calls, 2, 'the fixture reached the second resolution');
-        assert.equal(err.runtimeUnknown, true);
-        assert.equal(err.guardBinds, true);
+        const result = master.applyMasterAccessLevel('read-only', { home, enginesLib: once });
+        assert.equal(calls, 1);
+        assert.equal(result.enforcement, 'structural');
         assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'deny');
       } finally {
         fs.rmSync(home, { recursive: true, force: true });
+      }
+    });
+
+    describe('an engine that resolves to nothing is the same case as one that could not be resolved', () => {
+      // Resolution answers null, without throwing, when no profile is installed.
+      // Read as "not claude, so instructional", that wrote the level, left a
+      // deleted guard deleted, and returned a clean success to a Master that is
+      // in fact running Claude Code.
+      for (const [label, none] of Object.entries({ null: null, undefined, 'an empty string': '', 'a number': 7 })) {
+        const NOTHING = { resolveDefaultEngine: () => none, reconcileLaunchMode: () => 'default' };
+
+        for (const [what, tamper] of Object.entries(TAMPER)) {
+          it(`${label}, write -> read-only, ${what}: no clean success, and the guard is back and denies`, () => {
+            const home = provisionedAtWrite();
+            try {
+              tamper(home);
+              const err = thrownBy(() => master.applyMasterAccessLevel('read-only', { home, enginesLib: NOTHING }));
+              assert.equal(err.runtimeUnknown, true);
+              assert.equal(err.levelApplied, true);
+              assert.equal(err.guardBinds, true);
+              assert.equal(levelOf(home), 'read-only');
+              assert.equal(fs.readFileSync(script(home), 'utf8'), master.buildMasterGuardScript(home));
+              assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'deny');
+            } finally {
+              fs.rmSync(home, { recursive: true, force: true });
+            }
+          });
+        }
+
+        it(`${label}: a grant is refused, nothing is written, and nothing is flagged as applied`, () => {
+          const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-blind-'));
+          try {
+            master.applyMasterAccessLevel('read-only', { home, enginesLib: STRUCTURAL });
+            const identity = fs.readFileSync(master.masterIdentityPath(home), 'utf8');
+            const err = thrownBy(() => master.applyMasterAccessLevel('write', { home, enginesLib: NOTHING }));
+            assert.match(err.message, /no engine could be resolved for the Master/);
+            assert.equal(err.levelApplied, undefined);
+            assert.equal(err.runtimeUnknown, undefined);
+            assert.equal(levelOf(home), 'read-only');
+            assert.equal(fs.readFileSync(master.masterIdentityPath(home), 'utf8'), identity);
+            assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'deny');
+          } finally {
+            fs.rmSync(home, { recursive: true, force: true });
+          }
+        });
       }
     });
 
