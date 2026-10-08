@@ -185,6 +185,35 @@ describe('api-sessions', () => {
       assert.equal(res.status, 400);
       assert.ok(res.body.error.includes('maximum length'));
     });
+
+    it('returns 409 STARTUP_DIALOG, naming the dialog, while the pane shows one (#2128)', async () => {
+      const tmux = require('../lib/tmux');
+      const real = { hasSession: tmux.hasSession, capturePane: tmux.capturePane, sendKeys: tmux.sendKeys, probeSession: tmux.probeSession };
+      const project = store.projects.getByName('api-sess-test');
+      const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'api-sess-dialog' });
+      let typed = 0;
+      tmux.hasSession = () => true;
+      tmux.probeSession = () => ({ answered: true, live: true, cause: null });
+      tmux.sendKeys = () => { typed += 1; };
+      tmux.capturePane = () => ({
+        lines: [' Accessing workspace:', ' ❯ No, exit', '   Yes, I trust this folder', ' Enter to confirm · Esc to cancel'],
+        alternateScreen: false
+      });
+      try {
+        const res = await request(server, 'POST', '/api/sessions/api-sess-test/command', { command: 'ls' });
+        assert.equal(res.status, 409);
+        assert.equal(res.body.code, 'STARTUP_DIALOG');
+        assert.equal(res.body.startupDialog.code, 'trust_required');
+        assert.match(res.body.error, /^trust_required: /);
+        assert.equal(typed, 0);
+
+        const status = await request(server, 'GET', '/api/sessions/api-sess-test/status');
+        assert.equal(status.body.launchBlocker.code, 'trust_required');
+      } finally {
+        Object.assign(tmux, real);
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
   });
 
   describe('POST /api/sessions/:project/wrap', () => {
@@ -635,6 +664,43 @@ describe('api-sessions', () => {
     it('returns 404 for unknown project', async () => {
       const res = await request(server, 'POST', '/api/sessions/nonexistent', {});
       assert.equal(res.status, 404);
+    });
+
+    it('answers 409 ENGINE_PROFILE_INVALID, not 500, when the engine profile is not the profile asked for; nothing is started (#2128)', async () => {
+      // THE MUTATION THIS CATCHES: dropping the code branch in the route, so the
+      // refusal falls through to the prose matcher and out as a 500. The remedy
+      // is to repair a profile file; nothing internal failed.
+      const store2 = require('../lib/store');
+      const tmux = require('../lib/tmux');
+      const enginesLib = require('../lib/engines');
+      const project = store2.projects.getByName('api-sess-test');
+      const realGet = store2.engines.get;
+      const realDetect = enginesLib.detectEngine;
+      const realCreate = tmux.createSession;
+      const realHas = tmux.hasSession;
+      const real = realGet.call(store2.engines, project.engineId || 'claude');
+      const { id: _dropped, ...identityless } = real;
+      let detected = 0;
+      let created = 0;
+      store2.engines.get = (id) => (id === real.id ? identityless : realGet.call(store2.engines, id));
+      enginesLib.detectEngine = () => { detected += 1; return { available: true }; };
+      tmux.createSession = () => { created += 1; throw new Error('a pane must not be created'); };
+      tmux.hasSession = () => false;
+      try {
+        const res = await request(server, 'POST', '/api/sessions/api-sess-test', {});
+        assert.equal(res.status, 409);
+        assert.equal(res.body.code, 'ENGINE_PROFILE_INVALID');
+        assert.match(res.body.error, /was not launched: its profile ".*" is not usable \(what the store returned does not carry an `id`\)/);
+        assert.match(res.body.error, /Nothing was started\.$/);
+        assert.equal(detected, 0, 'the engine was not looked for');
+        assert.equal(created, 0, 'no pane was created');
+        assert.equal(store2.sessions.getActive(project.id), null, 'and no session row was started');
+      } finally {
+        store2.engines.get = realGet;
+        enginesLib.detectEngine = realDetect;
+        tmux.createSession = realCreate;
+        tmux.hasSession = realHas;
+      }
     });
 
     it('answers 503, not 500, when tmux would not say whether a session is running', async () => {

@@ -288,6 +288,31 @@ function renderEngineErrorBanner(err) {
 }
 
 /**
+ * Show or clear the banner for an engine startup dialog the session is
+ * waiting at (#2128), from the status poll's `launchBlocker`. TangleClaw types
+ * nothing into such a dialog, so the launch waits on the operator, and the
+ * banner says what to do. The server checks the record against the pane on
+ * every status read, so the banner goes once the dialog is answered.
+ *
+ * @param {{code?: string, label?: string, meaning?: string}|null|undefined} blocker
+ *   The status payload's `launchBlocker`, or nothing.
+ * @returns {void}
+ */
+function renderLaunchBlockerBanner(blocker) {
+  const el = document.getElementById('launchBlockerBanner');
+  if (!el) return;
+  if (!blocker || !blocker.code) {
+    el.classList.add('hidden');
+    el.innerHTML = '';
+    return;
+  }
+  const label = blocker.label || 'startup dialog';
+  el.innerHTML = `<strong>This session is waiting at its engine's ${esc(label)}</strong> <code>${esc(blocker.code)}</code>`
+    + `<span class="engine-error-note"> TangleClaw has typed nothing into it. ${esc(blocker.meaning || 'Answer it in the terminal below.')}</span>`;
+  el.classList.remove('hidden');
+}
+
+/**
  * The explicit retry the banner offers. The background loop keeps running
  * regardless; this exists so the operator has an action that answers NOW
  * rather than at the end of the current interval.
@@ -2160,6 +2185,9 @@ async function pollStatus() {
   // The engine's own last API error (#261) rides the same poll — null on the
   // healthy path, which is what hides the banner again.
   renderEngineErrorBanner(data.lastEngineError);
+
+  // An engine startup dialog nobody has answered (#2128) rides it too.
+  renderLaunchBlockerBanner(data.launchBlocker);
 
   // Handle wrapping state
   if (data.wrapping && !sessionState.wrapping) {

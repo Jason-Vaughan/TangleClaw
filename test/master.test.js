@@ -6,7 +6,7 @@
 // invariant. tmux and engine detection are injected fakes: tests must never
 // create a real `tangleclaw-master` session or launch a real engine.
 
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -38,6 +38,20 @@ const store = require('../lib/store');
  */
 const NO_FLEET = async () => ({ refreshed: false, count: 0 });
 const master = require('../lib/master');
+
+/**
+ * A config in which the Master's engine is SET to `id`. A resolver stub that
+ * answers `gemini` while the configured engine is still `claude` is not a
+ * Master on Gemini: it is resolution falling back to another engine, which the
+ * access-level change path treats as doubt. A test that means "this Master runs
+ * Gemini" has to say so in the config as well.
+ * @param {string} id - Engine id to pin for the Master.
+ * @returns {object} The stored config with `master.engine` set.
+ */
+function configWithMasterEngine(id) {
+  const config = store.config.load();
+  return { ...config, master: { ...(config.master || {}), engine: id } };
+}
 
 let tmpDir;
 
@@ -365,6 +379,81 @@ describe('ensureMasterSession', () => {
     }
   });
 
+  describe('an engine profile that is not the profile asked for starts nothing (#2128, A160 R16)', () => {
+    // The same identity test a project launch makes. `store.engines.get` is a
+    // bare JSON.parse, so a file overwritten with `{}` or dropped in by hand
+    // without its `id` comes back truthy; the Master used to start an engine
+    // process from it, with that object's launch environment.
+    const realGet = store.engines.get;
+    // The bundled profile is read when a test runs, not when this block is
+    // declared: the test store is not initialised until `before`.
+    const real = () => realGet.call(store.engines, 'claude');
+    let detected;
+    let enginesSpy;
+
+    beforeEach(() => {
+      detected = [];
+      enginesSpy = { ...availableEngines, detectEngine: (profile) => { detected.push(profile && profile.id); return { available: true }; } };
+    });
+
+    afterEach(() => { store.engines.get = realGet; });
+
+    const UNIDENTIFIED = {
+      'an empty object': () => ({}),
+      'a profile with no id': () => { const { id: _dropped, ...rest } = real(); return rest; },
+      'another profile\'s id': () => ({ ...real(), id: 'codex' }),
+      'an id differing only in case': () => ({ ...real(), id: 'Claude' }),
+      'a number for an id': () => ({ ...real(), id: 7 }),
+      'a list': () => [real()],
+      'a string': () => 'claude',
+      'a number': () => 7
+    };
+
+    for (const [what, make] of Object.entries(UNIDENTIFIED)) {
+      it(`${what}: refused with a code and a remedy; the engine is not looked for and no pane is created`, () => {
+        const value = make();
+        assert.equal(real().id, 'claude', 'precondition: the bundled profile is healthy');
+        store.engines.get = (id) => (id === 'claude' ? value : realGet.call(store.engines, id));
+        const t = fakeTmux({ alive: false });
+        const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: enginesSpy });
+        assert.equal(r.created, false);
+        assert.equal(r.code, 'ENGINE_PROFILE_INVALID');
+        assert.match(r.error, /^Engine "claude" was not started for the Project Master: its profile is not usable \(what the store returned /);
+        assert.match(r.error, /must be a JSON object whose "id" is exactly "claude"\. Install or restore a valid profile, or repair the file, then start the Project Master again\. Nothing was started\.$/);
+        assert.deepEqual(detected, [], 'the engine was not looked for');
+        assert.equal(t.calls.length, 0, 'no pane was created');
+      });
+    }
+
+    it('a profile the store does not have keeps the answer it always had', () => {
+      store.engines.get = (id) => (id === 'claude' ? null : realGet.call(store.engines, id));
+      const t = fakeTmux({ alive: false });
+      const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: enginesSpy });
+      assert.equal(r.created, false);
+      assert.match(r.error, /^Engine "claude" not found$/);
+      assert.equal(r.code, undefined);
+      assert.equal(t.calls.length, 0);
+    });
+
+    it('control, the profile carrying its own id: the engine is looked for and the Master is launched', () => {
+      const t = fakeTmux({ alive: false });
+      const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: enginesSpy });
+      assert.equal(r.created, true);
+      assert.deepEqual(detected, ['claude']);
+      assert.equal(t.calls.length, 1);
+    });
+
+    it('a Master that is already running is left alone: the early return does not depend on the profile', () => {
+      store.engines.get = (id) => (id === 'claude' ? {} : realGet.call(store.engines, id));
+      const t = fakeTmux({ alive: true });
+      const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: enginesSpy });
+      assert.equal(r.created, false);
+      assert.equal(r.error, undefined);
+      assert.equal(r.code, undefined);
+      assert.equal(t.calls.length, 0);
+    });
+  });
+
   it('refuses when the engine is available but has no launch command — no bare-shell master', () => {
     const sessionsLib = require('../lib/sessions');
     const original = sessionsLib._buildLaunchCommand;
@@ -675,7 +764,8 @@ describe('#968 a level change reaches the Master\'s own instructions', () => {
     // is not a cosmetic problem, it is the boundary being wrong.
     const home = mk();
     master.applyMasterAccessLevel('write', {
-      home, enginesLib: { resolveDefaultEngine: () => 'gemini', reconcileLaunchMode: () => 'default' }
+      home, config: configWithMasterEngine('gemini'),
+      enginesLib: { resolveDefaultEngine: () => 'gemini', reconcileLaunchMode: () => 'default' }
     });
     assert.match(levelSection(home), /\*\*write\*\*/);
     assert.equal(fs.existsSync(master.masterGuardScriptPath(home)), false,
@@ -1027,7 +1117,11 @@ describe('readMasterGuardPosture — a degraded guard is visible (#755 chunk 3, 
   function provision(level, enginesLib) {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-r15-'));
     homes.push(home);
-    const result = master.applyMasterAccessLevel(level, { home, enginesLib });
+    // The config names the engine the stub answers, so this is a Master ON that
+    // engine and not resolution falling back to it.
+    const result = master.applyMasterAccessLevel(level, {
+      home, enginesLib, config: configWithMasterEngine(enginesLib.resolveDefaultEngine())
+    });
     assert.equal(result.applied, true,
       'the fixture must actually be provisioned, or every assertion below measures an empty directory');
     return home;
@@ -2165,7 +2259,369 @@ describe('access level — the guard reads it per invocation (#755)', () => {
     }
   });
 
-  it('applyMasterAccessLevel does not provision structural enforcement on an INSTRUCTIONAL master', () => {
+  describe('a revocation does not depend on working out which engine the Master runs (#2128)', () => {
+    // `store.engines.list()` throws when ANY installed profile file is
+    // unparseable, and resolving the Master's engine goes through it. The change
+    // path resolved first and wrote second, so one bad file anywhere left a
+    // write -> read-only change saved in config and enforced nowhere.
+    const FAULT = new SyntaxError('Unexpected end of JSON input');
+    const UNRESOLVABLE = { resolveDefaultEngine: () => { throw FAULT; }, reconcileLaunchMode: () => 'default' };
+    const script = (home) => path.join(home, '.claude', 'hooks', 'guard-writes.js');
+    const levelOf = (home) => fs.readFileSync(master.masterAccessLevelPath(home), 'utf8').trim();
+    /** A home PROVISIONED at write by the real applier, the way production gets
+     *  there, so the identity on disk is a real one that says `write`. */
+    function provisionedAtWrite() {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-blind-'));
+      master.applyMasterAccessLevel('write', { home, enginesLib: STRUCTURAL });
+      assert.equal(levelOf(home), 'write');
+      assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'allow', 'precondition: write access is live');
+      return home;
+    }
+    /** Run the applier and hand back what it threw. */
+    function thrownBy(fn) {
+      try { fn(); } catch (err) { return err; }
+      return assert.fail('the applier must not report a clean success when the engine did not resolve');
+    }
+
+    const TAMPER = {
+      'the guard is intact': () => {},
+      'the guard script was blanked': (home) => fs.writeFileSync(script(home), '#!/usr/bin/env node\nprocess.exit(0);\n'),
+      'the guard script was deleted': (home) => fs.rmSync(script(home)),
+      'the whole .claude directory was deleted': (home) => fs.rmSync(path.join(home, '.claude'), { recursive: true, force: true }),
+      'the guard was unhooked from settings.json': (home) => fs.writeFileSync(path.join(home, '.claude', 'settings.json'), '{}\n')
+    };
+
+    for (const [what, tamper] of Object.entries(TAMPER)) {
+      for (const level of ['read-only', 'suggest']) {
+        it(`write -> ${level}, ${what}: the level is written, the guard is restored, and both hold`, () => {
+          const home = provisionedAtWrite();
+          try {
+            const genuine = master.buildMasterGuardScript(home);
+            tamper(home);
+            const err = thrownBy(() => master.applyMasterAccessLevel(level, { home, enginesLib: UNRESOLVABLE }));
+            assert.equal(err.runtimeUnknown, true);
+            assert.equal(err.levelApplied, true);
+            assert.equal(err.guardBinds, true);
+            assert.equal(err.cause, FAULT);
+            assert.equal(levelOf(home), level);
+            assert.equal(fs.readFileSync(script(home), 'utf8'), genuine);
+            assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), level === 'read-only' ? 'deny' : 'ask',
+              'the guard itself must give the tighter answer, not merely exist');
+            const posture = master.readMasterGuardPosture(level, 'structural', { home });
+            assert.equal(posture.guardDegraded, false);
+            assert.equal(posture.guardLevel, level);
+          } finally {
+            fs.rmSync(home, { recursive: true, force: true });
+          }
+        });
+      }
+    }
+
+    it('says what it did not do: the identity still describes write access', () => {
+      // The instructions render what enforcement the Master is under, which is
+      // the fact that could not be established. They are left alone and the
+      // error says so; a success here would claim a refresh that did not run.
+      const home = provisionedAtWrite();
+      try {
+        const identity = fs.readFileSync(master.masterIdentityPath(home), 'utf8');
+        const err = thrownBy(() => master.applyMasterAccessLevel('read-only', { home, enginesLib: UNRESOLVABLE }));
+        assert.equal(err.runtimeUnknown, true);
+        assert.equal(fs.readFileSync(master.masterIdentityPath(home), 'utf8'), identity);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    });
+
+    it('resolves the engine once: the refresh is handed the answer and cannot reach a different one', () => {
+      // Two lookups can disagree. With a second one inside the refresh, a
+      // resolver that answered `claude` and then anything else would have the
+      // applier report structural enforcement over a home given no guard.
+      const home = provisionedAtWrite();
+      try {
+        fs.rmSync(script(home));
+        let calls = 0;
+        const once = {
+          resolveDefaultEngine: () => { calls += 1; return calls === 1 ? 'claude' : 'gemini'; },
+          reconcileLaunchMode: () => 'default'
+        };
+        const result = master.applyMasterAccessLevel('read-only', { home, enginesLib: once });
+        assert.equal(calls, 1);
+        assert.equal(result.enforcement, 'structural');
+        assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'deny');
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    });
+
+    describe('an engine that resolves to nothing is the same case as one that could not be resolved', () => {
+      // Resolution answers null, without throwing, when no profile is installed.
+      // Read as "not claude, so instructional", that wrote the level, left a
+      // deleted guard deleted, and returned a clean success to a Master that is
+      // in fact running Claude Code.
+      for (const [label, none] of Object.entries({ null: null, undefined, 'an empty string': '', 'a number': 7 })) {
+        const NOTHING = { resolveDefaultEngine: () => none, reconcileLaunchMode: () => 'default' };
+
+        for (const [what, tamper] of Object.entries(TAMPER)) {
+          it(`${label}, write -> read-only, ${what}: no clean success, and the guard is back and denies`, () => {
+            const home = provisionedAtWrite();
+            try {
+              tamper(home);
+              const err = thrownBy(() => master.applyMasterAccessLevel('read-only', { home, enginesLib: NOTHING }));
+              assert.equal(err.runtimeUnknown, true);
+              assert.equal(err.levelApplied, true);
+              assert.equal(err.guardBinds, true);
+              assert.equal(levelOf(home), 'read-only');
+              assert.equal(fs.readFileSync(script(home), 'utf8'), master.buildMasterGuardScript(home));
+              assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'deny');
+            } finally {
+              fs.rmSync(home, { recursive: true, force: true });
+            }
+          });
+        }
+
+        it(`${label}: a grant is refused, nothing is written, and nothing is flagged as applied`, () => {
+          const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-blind-'));
+          try {
+            master.applyMasterAccessLevel('read-only', { home, enginesLib: STRUCTURAL });
+            const identity = fs.readFileSync(master.masterIdentityPath(home), 'utf8');
+            const err = thrownBy(() => master.applyMasterAccessLevel('write', { home, enginesLib: NOTHING }));
+            assert.match(err.message, /no engine could be resolved for the Master/);
+            assert.equal(err.levelApplied, undefined);
+            assert.equal(err.runtimeUnknown, undefined);
+            assert.equal(levelOf(home), 'read-only');
+            assert.equal(fs.readFileSync(master.masterIdentityPath(home), 'utf8'), identity);
+            assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'deny');
+          } finally {
+            fs.rmSync(home, { recursive: true, force: true });
+          }
+        });
+      }
+    });
+
+    const GRANTS = [['read-only', 'suggest'], ['read-only', 'write'], ['suggest', 'write']];
+    for (const [from, to] of GRANTS) {
+      it(`no grant through the fault: ${from} -> ${to} writes nothing and rethrows the fault itself`, () => {
+        const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-blind-'));
+        try {
+          master.applyMasterAccessLevel(from, { home, enginesLib: STRUCTURAL });
+          const guard = fs.readFileSync(script(home), 'utf8');
+          const err = thrownBy(() => master.applyMasterAccessLevel(to, { home, enginesLib: UNRESOLVABLE }));
+          assert.equal(err, FAULT, 'the original fault, with no flag claiming anything was applied');
+          assert.equal(err.levelApplied, undefined);
+          assert.equal(err.runtimeUnknown, undefined);
+          assert.equal(levelOf(home), from);
+          assert.equal(fs.readFileSync(script(home), 'utf8'), guard);
+          assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), from === 'read-only' ? 'deny' : 'ask');
+        } finally {
+          fs.rmSync(home, { recursive: true, force: true });
+        }
+      });
+    }
+
+    for (const [what, spoil] of Object.entries({
+      'a missing level file': (home) => fs.rmSync(master.masterAccessLevelPath(home)),
+      'a level file holding a token the guard does not know': (home) => fs.writeFileSync(master.masterAccessLevelPath(home), 'root\n')
+    })) {
+      it(`no grant through ${what}: the guard reads it as read-only, so only read-only may be written`, () => {
+        const home = provisionedAtWrite();
+        try {
+          spoil(home);
+          for (const to of ['suggest', 'write']) {
+            const err = thrownBy(() => master.applyMasterAccessLevel(to, { home, enginesLib: UNRESOLVABLE }));
+            assert.equal(err, FAULT);
+            assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'deny');
+          }
+          const err = thrownBy(() => master.applyMasterAccessLevel('read-only', { home, enginesLib: UNRESOLVABLE }));
+          assert.equal(err.runtimeUnknown, true);
+          assert.equal(levelOf(home), 'read-only');
+        } finally {
+          fs.rmSync(home, { recursive: true, force: true });
+        }
+      });
+    }
+
+    it('does not claim the guard binds when it could not be written', () => {
+      // `.claude` replaced by a FILE: the level lands, the guard cannot. The
+      // error must say the level is on disk and must not say the guard holds.
+      const home = provisionedAtWrite();
+      try {
+        fs.rmSync(path.join(home, '.claude'), { recursive: true, force: true });
+        fs.writeFileSync(path.join(home, '.claude'), 'not a directory');
+        const err = thrownBy(() => master.applyMasterAccessLevel('read-only', { home, enginesLib: UNRESOLVABLE }));
+        assert.equal(err.runtimeUnknown, true);
+        assert.equal(err.levelApplied, true);
+        assert.equal(err.guardBinds, false);
+        assert.ok(err.writeError, 'and it keeps what stopped the guard');
+        assert.equal(levelOf(home), 'read-only');
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    });
+
+    for (const [from, to] of [['read-only', 'write'], ['write', 'read-only']]) {
+      it(`a failure AFTER the level landed is not relabelled as an engine fault (${from} -> ${to})`, () => {
+        // The refresh throws once the level is on disk, for a reason that has
+        // nothing to do with the engine (`memory` is a file, so its scaffold
+        // cannot be written). That error already says the level is in force.
+        // Sending it down the fallback would report an unresolved engine that
+        // resolved fine — and for a grant, the level file by then equals the
+        // level asked for, so the direction test alone would let it through.
+        const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-blind-'));
+        try {
+          master.applyMasterAccessLevel(from, { home, enginesLib: STRUCTURAL });
+          fs.rmSync(path.join(home, 'memory'), { recursive: true, force: true });
+          fs.writeFileSync(path.join(home, 'memory'), 'not a directory');
+          const err = thrownBy(() => master.applyMasterAccessLevel(to, { home, enginesLib: STRUCTURAL }));
+          assert.equal(err.levelApplied, true);
+          assert.equal(err.runtimeUnknown, undefined);
+          assert.equal(err.guardBinds, undefined);
+          assert.equal(levelOf(home), to);
+        } finally {
+          fs.rmSync(home, { recursive: true, force: true });
+        }
+      });
+    }
+
+    it('an absent home is still a no-op: nothing is created by the fallback', () => {
+      const home = path.join(os.tmpdir(), `tc-master-absent-${process.pid}-${Date.now()}`);
+      assert.deepEqual(master.applyMasterAccessLevel('read-only', { home, enginesLib: UNRESOLVABLE }), { applied: false, home });
+      assert.ok(!fs.existsSync(home));
+    });
+
+    it('healthy control, instructional: a downgrade is a clean success, and the home gains the guard', () => {
+      // A Master whose engine is SET to Gemini and resolves to Gemini. Raising
+      // access hands it nothing. Lowering access writes the Claude guard as it
+      // does for every Master, because resolution answering "not Claude" is
+      // not proof the running Master is not Claude; here it is inert.
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-instr-'));
+      const config = configWithMasterEngine('gemini');
+      try {
+        master.applyMasterAccessLevel('write', { home, enginesLib: INSTRUCTIONAL, config });
+        assert.ok(!fs.existsSync(path.join(home, '.claude')), 'raising access hands an instructional master no guard');
+        const result = master.applyMasterAccessLevel('read-only', { home, enginesLib: INSTRUCTIONAL, config });
+        assert.deepEqual(result, { applied: true, home, enforcement: 'instructional' });
+        assert.equal(levelOf(home), 'read-only');
+        assert.match(fs.readFileSync(master.masterIdentityPath(home), 'utf8'), /read-only/);
+        assert.equal(fs.readFileSync(script(home), 'utf8'), master.buildMasterGuardScript(home));
+        assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'deny');
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    });
+
+    describe('resolution that answers ANOTHER engine than the one configured', () => {
+      // The configured engine is Claude and is not detected; another engine
+      // is, so resolution falls back to it and enforcement reads instructional.
+      // The Master in the pane is still running Claude Code.
+      const SUBSTITUTED = { resolveDefaultEngine: () => 'gemini', reconcileLaunchMode: () => 'default' };
+      const configuredClaude = () => configWithMasterEngine('claude');
+
+      for (const [what, tamper] of Object.entries(TAMPER)) {
+        for (const level of ['read-only', 'suggest']) {
+          it(`write -> ${level}, ${what}: the guard is written and read back whatever engine was answered`, () => {
+            const home = provisionedAtWrite();
+            try {
+              tamper(home);
+              const result = master.applyMasterAccessLevel(level, { home, enginesLib: SUBSTITUTED, config: configuredClaude() });
+              assert.equal(result.applied, true);
+              assert.equal(levelOf(home), level);
+              assert.equal(fs.readFileSync(script(home), 'utf8'), master.buildMasterGuardScript(home));
+              assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), level === 'read-only' ? 'deny' : 'ask');
+              const posture = master.readMasterGuardPosture(level, 'structural', { home });
+              assert.equal(posture.guardDegraded, false);
+            } finally {
+              fs.rmSync(home, { recursive: true, force: true });
+            }
+          });
+        }
+      }
+
+      it('the same holds through the DEFAULT engine when the Master has none of its own', () => {
+        const home = provisionedAtWrite();
+        try {
+          fs.rmSync(script(home));
+          const stored = store.config.load();
+          const config = { ...stored, defaultEngine: 'claude', master: { ...(stored.master || {}), engine: null } };
+          master.applyMasterAccessLevel('read-only', { home, enginesLib: SUBSTITUTED, config });
+          assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'deny');
+        } finally {
+          fs.rmSync(home, { recursive: true, force: true });
+        }
+      });
+
+      for (const [from, to] of GRANTS) {
+        it(`a grant is refused: ${from} -> ${to} writes nothing and flags nothing as applied`, () => {
+          const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-blind-'));
+          try {
+            master.applyMasterAccessLevel(from, { home, enginesLib: STRUCTURAL });
+            const identity = fs.readFileSync(master.masterIdentityPath(home), 'utf8');
+            const err = thrownBy(() => master.applyMasterAccessLevel(to, { home, enginesLib: SUBSTITUTED, config: configuredClaude() }));
+            assert.match(err.message, /configured engine "claude" is not the one resolved \("gemini"\)/);
+            assert.equal(err.levelApplied, undefined);
+            assert.equal(err.runtimeUnknown, undefined);
+            assert.equal(levelOf(home), from);
+            assert.equal(fs.readFileSync(master.masterIdentityPath(home), 'utf8'), identity);
+          } finally {
+            fs.rmSync(home, { recursive: true, force: true });
+          }
+        });
+      }
+
+      it('a grant is refused through the DEFAULT engine too, when the Master has none of its own', () => {
+        const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-blind-'));
+        try {
+          master.applyMasterAccessLevel('read-only', { home, enginesLib: STRUCTURAL });
+          const stored = store.config.load();
+          const config = { ...stored, defaultEngine: 'claude', master: { ...(stored.master || {}), engine: null } };
+          const err = thrownBy(() => master.applyMasterAccessLevel('write', { home, enginesLib: SUBSTITUTED, config }));
+          assert.match(err.message, /configured engine "claude" is not the one resolved/);
+          assert.equal(levelOf(home), 'read-only');
+        } finally {
+          fs.rmSync(home, { recursive: true, force: true });
+        }
+      });
+
+      it('control: the same grant goes through once the Master\'s engine is set to the one in use', () => {
+        const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-blind-'));
+        try {
+          master.applyMasterAccessLevel('read-only', { home, enginesLib: STRUCTURAL });
+          const result = master.applyMasterAccessLevel('write', { home, enginesLib: SUBSTITUTED, config: configWithMasterEngine('gemini') });
+          assert.equal(result.applied, true);
+          assert.equal(levelOf(home), 'write');
+        } finally {
+          fs.rmSync(home, { recursive: true, force: true });
+        }
+      });
+
+      it('does not report success when the guard cannot be written on the normal path either', () => {
+        const home = provisionedAtWrite();
+        try {
+          fs.rmSync(path.join(home, '.claude'), { recursive: true, force: true });
+          fs.writeFileSync(path.join(home, '.claude'), 'not a directory');
+          const err = thrownBy(() => master.applyMasterAccessLevel('read-only', { home, enginesLib: SUBSTITUTED, config: configuredClaude() }));
+          assert.equal(err.levelApplied, true);
+          assert.equal(err.guardBinds, false);
+          assert.equal(err.runtimeUnknown, undefined, 'the engine did resolve; only the guard is unconfirmed');
+          assert.equal(levelOf(home), 'read-only');
+        } finally {
+          fs.rmSync(home, { recursive: true, force: true });
+        }
+      });
+    });
+
+    it('healthy control, structural: a downgrade returns a clean success', () => {
+      const home = provisionedAtWrite();
+      try {
+        assert.deepEqual(master.applyMasterAccessLevel('read-only', { home, enginesLib: STRUCTURAL }),
+          { applied: true, home, enforcement: 'structural' });
+        assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'deny');
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it('applyMasterAccessLevel does not provision structural enforcement on an INSTRUCTIONAL master when access is RAISED', () => {
     // The change path must not hand a non-Claude master a guard it never had —
     // that would be a posture change nobody asked for, on the surface that is
     // supposed to degrade visibly instead. Driven through the engine resolver
@@ -2173,7 +2629,9 @@ describe('access level — the guard reads it per invocation (#755)', () => {
     // decides enforcement everywhere else.
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-instr-'));
     try {
-      const result = master.applyMasterAccessLevel('write', { home, enginesLib: INSTRUCTIONAL });
+      const result = master.applyMasterAccessLevel('write', {
+        home, enginesLib: INSTRUCTIONAL, config: configWithMasterEngine('gemini')
+      });
       assert.equal(result.applied, true);
       assert.equal(result.enforcement, 'instructional');
       assert.equal(fs.readFileSync(master.masterAccessLevelPath(home), 'utf8').trim(), 'write',

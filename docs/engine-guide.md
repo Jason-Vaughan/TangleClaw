@@ -192,6 +192,7 @@ cache, so an engine you have just installed is never refused.
 | `toolOutput.maxChars` | **read** | How many characters of a tool result reach this engine's model intact, which is what a launch sequence pages `tc start` output against — see below |
 | `launchSequence` | **read** | Whether a session on this engine is served its context as an acknowledged `tc start` sequence — see below |
 | `readOnlyModeMarker` | **read** | How this engine's TUI says the session is in a read-only mode, so a wrap refuses instead of timing out — see below |
+| `startupDialogs` | **read** | The screens this engine can draw before its prompt, which a launch must see, leave untyped, and name as the session's blocker — see below |
 | `wake` | **read** | The live-probed pane signature that lets TangleClaw tell a busy pane from a resting one on this engine — see below |
 | `startupControl` | **read** | The native channel TangleClaw can fire the startup prompt through, with a receipt. Active only when it names a registered adapter — see below |
 | `privateTempRoot` | **read** | The variable, socket suffix and byte cap TangleClaw uses to hand the engine a private socket root instead of a shared `/tmp` — see below |
@@ -458,6 +459,282 @@ the check existed, and the step record says which engine declared no marker rath
 clean pane. A field that is present but missing `marker` or `modeLine` is a profile defect: it is
 treated as absent and logged at warn.
 
+#### `startupDialogs`
+
+Optional. An engine that can draw a screen before its prompt, one a launch must not type into,
+declares it:
+
+```json
+"startupDialogs": [
+  {
+    "code": "trust_required",
+    "label": "folder trust dialog",
+    "markers": ["Yes, I trust this folder", "No, exit"],
+    "meaning": "What the operator should do, in a sentence or two.",
+    "evidence": { "verifiedOn": "YYYY-MM-DD", "source": "…" }
+  }
+]
+```
+
+Claude Code asks whether to trust a folder the first time it opens a repository, and the option
+under its cursor is "No, exit". A line ending in Enter typed into that screen ends the session
+(#2128). So a launch on an engine that declares dialogs reads the pane before it types:
+
+- **A declared dialog is up.** Nothing is typed: no pre-key, no prime, no kickoff. The session
+  records a blocker under the entry's `code`, served as `launchBlocker` in session status and kept
+  on the session after it ends, so a pane that dies at the dialog leaves a `crashed` session that
+  says why. The launch keeps reading for 15 minutes; when the operator answers and the prompt
+  appears, the blocker is cleared and the launch sends its first turn. In that wait a frame is
+  judged as every later look judges it: a prompt that holds still **below** any dialog text is the
+  answer, so an answered dialog whose text is still in the pane's history does not strand the
+  launch. Before any dialog has been seen the watch is stricter, and takes any dialog text on a
+  fresh pane as a dialog on its way.
+- **The prompt is up, with no dialog.** The launch types as usual, without waiting out the fixed
+  `startupDelay` as well.
+- **Neither is recognised within 45 seconds.** The launch proceeds exactly as it did before this
+  field existed, except that each send takes one last look at the pane and is withheld if a
+  declared dialog is there. An unknown screen must never cost a healthy launch its first turn.
+
+Every later text send TangleClaw makes into the pane is refused with the code while the dialog is
+up. The refusal is in `tmux.sendKeys`, where text sends converge, so it covers the command bar, a
+wake nudge, a coordinator's command, a wrap's content prompt and the Critic action. What it covers
+depends on what the send names. A send that names the session's engine, which a test requires of
+every caller in `lib/`, has the pane read against that engine's declared dialogs. A send that
+names none cannot be read that way and is refused only while a blocker is already recorded for
+the pane's session. A raw key (`tmux.sendRawKey`) is not checked there; the launch guards its own
+before each pre-key.
+
+The rule is that a send goes ahead only on positive evidence, or when nothing stands against it.
+One function states it (`withholdFor` in `lib/startup-dialog.js`) and both the injection path and
+the pane writer ask it. Four things withhold a send:
+
+- a declared dialog on the pane;
+- a blocker already recorded for the session that the read did not positively clear. The dialog
+  behind it may still be up on a pane that could not be checked or read, came back empty, or shows
+  neither the dialog nor the prompt, so every send stays withheld until the prompt is seen. The
+  same holds if the engine's profile stops declaring the dialog, or no profile is found, while the
+  blocker stands: nothing can then confirm the pane clear, and the blocker stays until the session
+  ends or the declaration returns;
+- a frame that still carries a declared marker with no composer at rest beneath it after one
+  re-read. That may be the dialog half-drawn, or another screen that shares one of its option
+  texts: Claude Code's Bypass Permissions confirmation shows "No, exit", so it is withheld from
+  every sender with either option selected. That send is withheld; no blocker is recorded on a
+  suspicion. If the re-read itself cannot see the pane, the first frame's marker goes on
+  withholding. One case is let through for a later injection: marker text **above** a composer
+  that is positively located and holds typed text (the cursor shown on that row, between the
+  composer's two border rows). That is a transcript quoting the dialog above an operator's draft,
+  and the injection keeps and clears the draft as usual. It is still not a clear reading, so it
+  releases no recorded blocker and a launch's own sends are still withheld from it;
+- for a **launch's own sends only** (pre-keys, the prime, the kickoff): a pane whose last row led
+  by the prompt glyph is not the engine's composer at rest, with no blocker recorded and no
+  live declared marker on screen. That row is the selected option of a menu no profile declares, or
+  text already typed at the prompt; the two cannot be told apart by their text. The refusal is
+  `pane_not_at_prompt` and names no dialog. A later injection is **not** refused on this reading
+  alone: it keeps an operator's draft and then clears it, which is also how a stranded nudge is
+  recovered. So a menu nobody declared that appears mid-session, with no blocker recorded, is
+  still typed into by a later injection, as it was before this field existed (#2219).
+
+A screen with no dialog text and no row led by the prompt glyph at all withholds nothing, for a
+launch too: an unrecognised screen must not cost a healthy launch its first turn.
+
+**What counts as positive evidence** is the engine's **composer at rest**, as the **last** row led
+by the prompt glyph, **below** any dialog text on screen (or anywhere, when there is none). A row
+led by the prompt glyph is not that by itself: a selector draws its selected option with the same
+glyph, so `❯ 2. Yes, I accept` is not a prompt. Two readings of that last row count:
+
+- **bare**: it matches the `wake` block's measured `promptPattern` (the glyph and at most its pad),
+  and the row directly beneath it is not text (an option whose label wrapped below its glyph);
+- **empty, showing the engine's suggestion**: a fresh Claude Code composer reads
+  `❯ Try "how does <filepath> work?"`, which is not bare and cannot be told from typed text by
+  what it says. It counts only when the terminal cursor is on that row, the cursor is **shown**
+  (tmux's `cursor_flag`, read in the same query as its position), the cursor's own styled row reads
+  as an empty composer (the cursor at the first input column, everything to its right in the
+  `placeholderSgr` styling), **and** the row sits between two border rows, the composer's box.
+  Without a cursor reading, without the flag, without the styling, or without the box, only the
+  bare reading applies. One failed cursor read therefore costs a launch its first turn when the
+  composer is showing a suggestion: the send is withheld as `pane_not_at_prompt` and not retried.
+
+Only the last glyph-led row is judged, and all the evidence must be about that row. A composer
+left on screen above a menu or a dialog drawn later is not evidence; a menu or a dialog left in
+the history above a fresh composer is history. A composer holding typed text is never positive
+evidence. While a launch watches a boot, two clear readings count as "held still" only if that
+row, its neighbours and the cursor did not change between them.
+
+Measured on Claude Code 2.1.283 (2026-10-07, an empty repository, no turn taken): the fresh
+composer sits between two border rows with the cursor shown two columns after the glyph. On the
+folder trust dialog, the `/model` selector, the first-run theme picker and the login-method
+selector the cursor is hidden and parked on the selected row's glyph, no border adjoins the
+selected row, and no option text is drawn faint. The Bypass
+Permissions confirmation could not be captured on the measuring host, so it is not declared as a
+dialog (#2205); it is withheld by the shared option text, under the trust dialog's name.
+
+**The prompt signature is resolved for the program, like the dialog.** A profile's own measured
+`wake` block is used when it has one. A profile without one takes the **whole** `wake` signature
+(the composer pattern, the glyph, its pad and the suggestion styling) of the installed profile that
+declares the dialogs for the same `command`, which is measured, with evidence. So an operator's
+second Claude Code profile with no `wake` block is still watched through its boot and can be
+positively cleared. A signature is never guessed, and a glyph with no measured composer pattern is
+not one.
+
+**With no measured signature for the profile or its command, nothing can be read as a prompt**, and
+TangleClaw says so instead of typing:
+
+- the launch's own sends are withheld (`prompt_unverified` in the delivery ledger and the log),
+  because a finished boot cannot be told from a dialog. Start the session by typing in its pane, or
+  add a measured `wake` declaration to the profile;
+- a dialog is still seen by its markers and recorded as the blocker, but no pane read can clear it.
+  Sends to that session stay refused until it ends, and the refusal says why and what to do:
+  relaunch after approving the dialog, or add a measured `wake` declaration.
+
+**If the blocker record itself cannot be read** (the store lookup throws), it is not assumed
+absent. Only a positive prompt reading lets that send through; a dialog or part of one still
+withholds under its own name; anything else is refused as `launch_blocker_unreadable`, which says
+the record could not be read and claims no dialog. A lookup that succeeds and finds no session for
+the pane is a different fact, and an ordinary send. So is a process with no store open at all.
+
+A dialog whose options have been reworded so that no declared marker matches is not seen at all.
+That is a limit of detection, not evidence of safety: the entry's evidence names the version it was
+measured on, and the markers are updated when a new wording is captured.
+
+The stored blocker is a claim about the pane that the operator can make untrue at any moment by
+answering the dialog. So it is checked against the pane whenever the session's status is read and
+before every send. It is cleared only on a positive reading: the engine's composer at rest, below
+any dialog text (see "What counts as positive evidence" above). A menu's selected option does not
+clear it. A pane that could not be read, a read that came back empty, or a screen showing neither
+changes nothing, because "no dialog was matched" is not evidence that it was answered. A session
+whose status is read after the operator answers therefore does not have a later, unrelated death
+recorded as caused by the dialog. The project list serves the stored record without reading the
+pane, so a card can lag until the session's status is next read. While it stands, the project card shows a "needs you" badge and the session page a
+banner.
+
+**TangleClaw never answers the dialog.** Accepting a trust prompt lets the folder's own hooks, MCP
+servers and permission rules run, which is the operator's decision. It also writes nothing to the
+engine's own state files.
+
+A dialog matches only when **every** marker is on screen and **no row led by the prompt glyph sits below its last marker**. One
+marker alone can be another dialog's option. The second condition is what tells a dialog from a
+session whose transcript is quoting one: the quoting session has its composer underneath. Markers
+are matched on text with styling removed, because an engine may colour a dialog word by word.
+
+`code` is lower_snake_case and becomes the blocker's name; `label` and `meaning` are shown to the
+operator. An entry missing any of `code`, `label`, `meaning` or a non-empty `markers` list is
+never repaired and never matched on, and it is **not** read as a shorter list either. **A
+declaration that cannot be read fails closed**: while any entry is unreadable, or `startupDialogs`
+is present and is not a list, a launch on that profile types nothing (no pre-key, no prime, no
+kickoff), whatever its pane shows. The delivery ledger and the log say
+`startup_dialogs_unreadable`, with the profile and the entry. The entry that was lost was written
+for a dialog nothing can recognise now, so reading the list as shorter, or as empty, would launch
+unwatched into exactly that dialog. This is the same policy as an unreadable `launch.guardedDialogs`
+entry (#2177). A profile with no list of its own inherits the refusal with the declaration of its
+`command`. **If the installed profiles cannot be read at all** (the store's profile list throws,
+or comes back empty), a profile that inherits has lost its declaration: what its program declares
+could not be found out, which is not the same as nothing, so its launch types nothing either, under
+the same code. In that state **every later sender is refused as well**, not only the launch: the
+command bar, a wake nudge, a coordinator's command, a wrap's prompt, the Critic action. No dialog
+is known for the engine at all, so there is nothing to read the pane against and no send can be
+shown safe; the pane is not read, and nothing is recorded as a blocker. The refusal says it is a
+failure to read TangleClaw's installed profiles and not an error in the profile. Sends go through
+again at the first send after the profiles read; if it keeps happening, a profile file is
+unreadable and needs repair, and the server log names the error. A profile with a list of its own,
+`[]` included, does not depend on the list.
+
+**The same every-sender refusal applies whenever nothing of the declaration could be read**, not
+only when the lookup failed:
+
+- a profile's **own** `startupDialogs` with no sound entry at all: every entry unreadable, or a
+  value that is not a list while its program's dialogs cannot be looked up either. Correct the
+  declaration, or set `[]`; sends go through once the corrected profile is read;
+- a profile that **inherits** a declaration whose every entry is unreadable. The refusal names the
+  profile that holds the bad entry. Correcting that profile is not enough by itself: the
+  declarations read for each program are kept for the life of the server, so **restart TangleClaw**
+  after the fix;
+- the session's **engine profile is not available as a profile**, for a send that names its
+  engine: the read fails, nothing comes back, or the file parses to something that is not a
+  profile (a number, a string, a list), or it is an object that does not carry the profile's own
+  `id`. The refusal says it may be missing, unreadable or malformed, or may not carry its `id`,
+  and does not claim which, because the store cannot tell a missing file from one holding `null`.
+  Install or restore a valid profile, or repair the file; sends go through at the first send after
+  it can be read as that profile.
+
+  **A profile file must carry `"id"` equal to its own profile id** (its file name without
+  `.json`; for an OpenClaw session, `openclaw`). **A launch checks this first**: before the
+  engine is looked for, a pane is created or a pre-key is scheduled, a profile that is not an
+  object or does not carry that `id` refuses the launch (`ENGINE_PROFILE_INVALID`, HTTP 409 on
+  the launch route) and nothing is started. **The Project Master is held to the same test**: it
+  does not start an engine from such a profile (no engine process, no pane; a Master that is
+  already running is left as it is), and such an engine cannot be selected as `master.engine`
+  in the settings (400, with the reason). **Nothing about the engine's profile is looked at
+  unless a settings change names the engine**: a Master engine already stored whose profile is
+  now missing, unreadable or without its `id` does not stop the Master's other settings from
+  being saved, and is refused when the Master is next started. Naming such an engine in a
+  change is refused. **Saving a lower access level and applying it are separate steps, and
+  the second does not need the engine either**: if TangleClaw cannot work out which engine the
+  Master runs (any installed profile file that does not parse causes that; so does resolution
+  having no answer. The rule: a configured engine id that is not in TangleClaw's engine
+  selection list is passed through as itself; otherwise, when no engine in that list is
+  available, there is no answer. A profile hidden from selection is not in the list, so
+  having a profile file is not the test), a change that lowers access still writes the level file and puts the Claude Code write guard back in the
+  Master's home. That binds a Master running Claude Code from its next tool call. It does not
+  rewrite the Master's instructions, and a Master on another engine has no write guard, so the
+  request answers 500 (`MASTER_LEVEL_NOT_APPLIED`) and says which part holds. A change that
+  raises access is not applied while the engine cannot be resolved. **The resolved engine is
+  not trusted to say whether a guard is needed**: when the engine set for the Master is in
+  the selection list but not detected, and another is, TangleClaw resolves the other one, so every change that lowers
+  access writes the Claude Code write guard and reads it back whichever engine was resolved
+  (two unused files in the home of a Master on another engine), and a change that raises
+  access is refused. It goes through once the configured engine is detected again. Setting
+  `master.engine` to the engine TangleClaw resolved also clears the refusal, and is right only
+  if that is the engine the running Master actually uses: do not change it to get past the
+  refusal. Two things this does not establish, because TangleClaw keeps no record of the
+  engine a running Master was started on: when the configured engine is Claude Code, a Master started earlier on a substituted engine
+  is reported as guarded once Claude Code is detected again, and when no engine is
+  configured at all (neither `master.engine` nor `defaultEngine`) a change that raises access
+  is applied on whichever available engine is picked. **A command into the
+  Master's pane is refused when its engine cannot be resolved** (`MASTER_ENGINE_UNRESOLVED`):
+  the Master has no session record, so without an engine there is nothing to check its pane
+  against. That arises when no engine can be resolved for the Master, or in the moment after an
+  installed profile file becomes unreadable and before the switchboard next leaves the Master
+  out of its nudges. Every profile TangleClaw saves or validates has
+  one, and so does every bundled profile. A file dropped into the engines directory by hand
+  **without** an `id`, or with another profile's, launched and took sends before this check
+  existed; it now cannot be launched, and a session already running on it has every send refused,
+  until the `id` is added. On a case-insensitive filesystem the same applies to an engine id
+  given in a different case from the profile's own (`Claude` finding `claude.json`): the file is
+  found and says it is `claude`, which is not what was asked for. That cost is deliberate: an
+  object that does not say which profile it is cannot be trusted to say what its engine shows
+  (`{}` is a valid JSON object that declares nothing). **The check is identity only.** It does not
+  validate the profile: a file with the right `id` and broken or missing fields is taken as the
+  profile, and a declaration it has lost is simply not there. A connection-qualified engine id resolves to its base profile first
+  (`openclaw:<connection>` reads the `openclaw` profile), so a healthy OpenClaw session is not
+  affected; only a base profile that really cannot be read is refused;
+- **the look itself fails**: anything thrown while TangleClaw is working out what the pane shows,
+  for a send that names its engine. Nothing is typed on no reading at all. The next send makes the
+  look afresh; if it keeps failing, the server log names the error. One installed profile that is
+  not an object at all (a file holding `null`, say) is reported as a failed lookup, above, and not
+  as a crash.
+
+If a launch blocker is already recorded for the session, the refusal names it as recorded and not
+cleared; it does not claim the dialog is on screen, because that is exactly what cannot be told.
+A list with at least one sound entry is a different state: its sound entries still read the pane
+for later sends, as described above. A send that names no engine, and a process with no store
+open, are unchanged. One look, one watch and one
+launch each read the declaration **once** (`startupDialog.resolve`), so a fault that comes or goes
+in the middle cannot be pieced together into "nothing declared and nothing wrong". Only a literal `[]` declares none. Entries that could be read still protect later
+sends. The watch tells a finished boot by the measured prompt signature in
+the engine's `wake` block, or failing that in the `wake` block of the profile that declares the
+dialogs for the same command. With neither, the boot is not watched and the launch types nothing
+(see above).
+
+**A dialog belongs to the program, not the profile.** A profile with no `startupDialogs` of its own
+takes the dialogs declared by any installed profile that runs the same `command`. An operator's
+second profile for Claude Code (pinned to another model, say) is a copy made before this field
+existed, and the bundled-profile sync never touches it; without this it would launch into the same
+dialog unprotected. A profile's own list wins when it has one, and an empty list (`[]`) is how a
+profile says its program shows none.
+
+**With no declaration for the profile or its command, the pane is not watched at launch**: the
+launch behaves as it did before the field existed.
+
 #### `wake`
 
 Optional, and the gate on everything TangleClaw does by *reading* an engine's pane: the idle-gated
@@ -666,9 +943,21 @@ dialog out before it calls a pane an empty composer; it types nothing either way
 declaration of an engine's dialogs, nothing else in TangleClaw reads it, and it is not interchangeable
 with any other dialog declaration a profile may carry.
 
-`launch.preKeys` still exists for an operator-written profile, and is still sent on a timer without
-knowing what it will answer. **No bundled profile declares any.** Do not declare one for a prompt
+`launch.preKeys` still exists for an operator-written profile, and is still sent on a timer. It is
+no longer sent without a look: each key first passes the startup-dialog check
+(`capabilities.startupDialogs`, #2128), which also withholds it from a menu's selected option or
+typed text, and then the guarded-dialog check above (#2177). A screen that neither declaration
+names and that shows no row led by the prompt glyph still gets the key. **No bundled profile
+declares any.** Do not declare one for a prompt
 whose default changes anything outside the pane.
+
+**A profile that declares both kinds of dialog has one known limit** (#2221). The guarded-dialog
+check takes "composer" to mean a row matching the bare `promptPattern`. Claude Code's fresh composer
+shows a faint suggestion and is not bare, so on such a profile, when the pane was never observed
+ready, the prime is refused as an unrecognised screen. A pre-key is still sent in that case: the
+startup-dialog check reads the pane as the empty composer, and the guarded-dialog check withholds a
+key only from a declared prompt or an unreadable pane. No bundled profile declares both
+(Claude Code: `startupDialogs`; Codex: `guardedDialogs`).
 
 #### `wake.pasteRejectedMarker`
 

@@ -137,3 +137,46 @@ describe('#261 project card badge', () => {
     assert.match(UI_SRC, /\$\{engineBadge\}\s*\$\{engineErrorBadge\}/);
   });
 });
+
+describe('#2128 a live session waiting at an engine startup dialog', () => {
+  const BLOCKER = { code: 'trust_required', label: 'folder <trust> dialog', meaning: 'Open the session & answer it.' };
+
+  it('the card says the launch needs the operator, only for a live session', () => {
+    const sandbox = { Number, console };
+    vm.createContext(sandbox);
+    vm.runInContext([
+      liftFunction(LANDING_SRC, 'function esc(str)'),
+      liftFunction(UI_SRC, 'function renderLaunchBlockerBadge(project)'),
+      'globalThis.badge = renderLaunchBlockerBadge;'
+    ].join('\n'), sandbox);
+    const html = sandbox.badge({ session: { active: true, launchBlocker: BLOCKER } });
+    assert.match(html, /&#9888; needs you: folder &lt;trust&gt; dialog</);
+    assert.match(html, /title="Waiting at the engine&#39;s folder &lt;trust&gt; dialog \(trust_required\)\. Nothing has been typed into it\. Open the session &amp; answer it\."/);
+    assert.equal(sandbox.badge({ session: { active: true, launchBlocker: null } }), '');
+    assert.equal(sandbox.badge({ session: { active: null, launchBlocker: BLOCKER } }), '', 'a session nobody could confirm draws nothing');
+    assert.equal(sandbox.badge({}), '');
+    assert.match(UI_SRC, /\$\{launchBlockerBadge\}/, 'and the card renders it');
+  });
+
+  it('the session page shows a banner while the status carries the blocker, and clears it after', () => {
+    assert.match(SESSION_HTML, /id="launchBlockerBanner"[^>]*role="alert"/);
+    const { doc, ids } = makeDocument(['launchBlockerBanner']);
+    const sandbox = { document: doc, console };
+    vm.createContext(sandbox);
+    vm.runInContext([
+      liftFunction(SESSION_SRC, 'function esc(str)'),
+      liftFunction(SESSION_SRC, 'function renderLaunchBlockerBanner(blocker)'),
+      'globalThis.render = renderLaunchBlockerBanner;'
+    ].join('\n'), sandbox);
+    const el = ids.launchBlockerBanner;
+    sandbox.render(BLOCKER);
+    assert.equal(el.classList.contains('hidden'), false);
+    assert.match(el.innerHTML, /waiting at its engine's folder &lt;trust&gt; dialog/);
+    assert.match(el.innerHTML, /<code>trust_required<\/code>/);
+    assert.match(el.innerHTML, /TangleClaw has typed nothing into it\. Open the session &amp; answer it\./);
+    sandbox.render(null);
+    assert.equal(el.classList.contains('hidden'), true);
+    assert.equal(el.innerHTML, '');
+    assert.match(SESSION_SRC, /renderLaunchBlockerBanner\(data\.launchBlocker\)/, 'the status poll drives it');
+  });
+});

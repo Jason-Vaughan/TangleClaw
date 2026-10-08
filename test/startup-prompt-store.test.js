@@ -384,8 +384,12 @@ describe('startup prompt store: v46 (Chunk B2)', () => {
       db.exec(`INSERT INTO startup_prompt_fires (${kept}) SELECT ${kept} FROM startup_prompt_fires_now`);
       db.exec('DROP TABLE startup_prompt_fires_now');
       assert.ok(!db.prepare('PRAGMA table_info(startup_prompt_fires)').all().some((c) => c.name === 'dispatch_note'));
-      db.prepare('DELETE FROM schema_version WHERE version >= ?').run(store.CURRENT_SCHEMA_VERSION);
-      db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(store.CURRENT_SCHEMA_VERSION - 1);
+      // The store as it was before v57, the migration that adds the column. Named
+      // by number, not as "one before current": a later migration (v58, #2128)
+      // moved the current version on, and "current - 1" then names a store that
+      // already has the column.
+      db.prepare('DELETE FROM schema_version WHERE version >= ?').run(57);
+      db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(56);
       store.close();
       store._setBasePath(dir);
       store.init();
