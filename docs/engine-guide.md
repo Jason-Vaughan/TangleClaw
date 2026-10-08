@@ -659,9 +659,12 @@ highlights "Update now", which upgrades the global install, and its folder-trust
 - The Codex opening screen (`model: loading` over an empty composer) reads as a composer here. It is
   not told apart from a usable one by this check.
 
-`launch.guardedDialogs` has one reader and one scope: the launch-time sends above (the prime paste
-and `preKeys`). It is not a general declaration of an engine's dialogs, nothing else in TangleClaw
-reads it, and it is not interchangeable with any other dialog declaration a profile may carry.
+`launch.guardedDialogs` has two readers, each with its own scope, both in `lib/launch-dialog-guard.js`'s
+terms. The launch-time sends above (the prime paste and `preKeys`) read it to decide whether they may
+type. The native startup fire's pane witness (`lib/pane-witness.js`, #2186) reads it to rule a declared
+dialog out before it calls a pane an empty composer; it types nothing either way. It is not a general
+declaration of an engine's dialogs, nothing else in TangleClaw reads it, and it is not interchangeable
+with any other dialog declaration a profile may carry.
 
 `launch.preKeys` still exists for an operator-written profile, and is still sent on a timer without
 knowing what it will answer. **No bundled profile declares any.** Do not declare one for a prompt
