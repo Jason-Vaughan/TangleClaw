@@ -1826,8 +1826,8 @@ function _protectedRoots() {
  * @returns {string} Operator-facing error text
  */
 function _masterTightenedBlindError(level, guardBinds) {
-  const why = 'TangleClaw could not determine which engine the master runs (an installed engine profile may be unreadable)';
-  const remedy = 'Repair the engine profiles, then restart the master session.';
+  const why = 'TangleClaw could not determine which engine the master runs (an installed engine profile may be unreadable, or no engine is detected on this machine)';
+  const remedy = 'Fix that, then restart the master session.';
   if (guardBinds) {
     return `The master's access level is now "${level}" and its write guard is in place, so a master running Claude Code is held to it from its next tool call. `
       + `${why}, so its instructions and memory files were not refreshed and still describe the previous level. `
@@ -2266,7 +2266,7 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
         ? `The master's access level is now "${newMasterAccessLevel}", but the refresh that should have followed it did not finish. `
           + 'Its identity, its memory scaffold or its write guard may be a step behind. Restart the master session to bring them back into line.'
         : `Settings were saved, but the master's access level could not be applied — it is still enforcing "${oldMasterAccessLevel}". `
-          + 'If an installed engine profile file cannot be read, repair it first: a restart is refused until then. Restarting the master session then reconciles it.';
+          + 'TangleClaw must be able to tell which engine the master runs before it raises access: if an installed engine profile file cannot be read, repair it, and if the engine set for the master is not detected on this machine, set the one in use. Restarting the master session then reconciles it.';
     }
   }
 
