@@ -679,7 +679,7 @@ Every plan or design doc a session writes to `<project>/.tangleclaw/plans/<name>
 - A plan moved to `plans/archive/` answers 404 with **Plan archived**, so a stale link says why it stopped working.
 - A plan is addressed by its file name alone — a path, `..`, or a symlink pointing outside the plans directory is refused.
 - Sessions discover the links with `GET /api/projects/<projectId>/plans` (numeric id or project name), which returns every plan with its URL on the host you reach TangleClaw on — never `localhost`, and `url: null` with a note when TangleClaw cannot tell which host that is. `tc capabilities` names the endpoint.
-- Raw HTML in a plan is shown as text, never rendered. The one styled block is a **train card**: a fenced block tagged `tc-train` whose body is one JSON object. The card shows a 🚂 row of issue cars, green when closed, with the train's name, a closed/total count and an optional `verified` badge. Clicking it expands the thesis, the issue table and the sequencing note. The Roadmap Board uses these cards.
+- Raw HTML in a plan is shown as text, never rendered. The one styled block is a **train card**: a fenced block tagged `tc-train` whose body is one JSON object. The card shows a 🚂 row of issue cars, green when closed, and under it the train's name, a closed/total count and an optional `verified` badge. Clicking the name row expands the thesis, the issue table and the sequencing note. The Roadmap Board uses these cards.
 
   ````
   ```tc-train
@@ -700,8 +700,47 @@ Every plan or design doc a session writes to `<project>/.tangleclaw/plans/<name>
   - `kind`: what the card stands for. `train` (the default) reads **Train 16: title**, `bucket` reads **Topic Bucket: title**, `pilot` reads **Pilot B2: title**, and `unconfigured` reads **Unconfigured: title**. An identity equal to the title is not printed twice. A `bucket` or `unconfigured` card must have no `train`, so a Topic Bucket never shows or borrows a train number; `train` and `pilot` cards need one.
   - `version`: a short label such as `v6`, shown as a badge.
   - `status`: one of `planned`, `ready`, `in-progress`, `blocked`, `shipped` or `sunset`, shown as a badge.
+  - `owner`: the lane that owns the work, up to 60 characters, shown as **lane: name** at the end of the train's name line. Leave it out when no lane is assigned.
 
-  A car may carry `state`: `open`, `in-progress` (amber), `blocked` (red) or `closed` (green). It must agree with `closed`. Without it, `closed` alone decides, as before. Each car is labelled with its state in words, so colour is never the only signal.
+  A car may carry `state`: `open`, `in-progress` (amber), `in-review` (purple: a pull request is open for review), `blocked` (red), `closed` (green) or `dropped` (grey and struck through: the issue was closed as not planned). It must agree with `closed`: `closed` and `dropped` need `"closed": true`, and every other state needs `"closed": false`. Without `state`, `closed` alone decides, as before, so a closed car is only drawn as dropped when the block says so. Every car shows its state in words beside its number, for example **#2104 blocked**, so you never have to tell cars apart by colour.
+
+  A dropped car is left out of the count on both sides: a train of five cars with one dropped and two closed reads **(2/4)**, and the expanded card adds **1 dropped**. A train whose cars were all dropped reads **(0/0)**.
+
+  Each car is a pill showing the issue number and its state in words, such as **#2104 blocked** or **#411 open**. A long train therefore takes more lines than a row of bare numbers would.
+
+  Press a car to open its **detail**: click it, tap it, or move to it with the Tab key and press Enter or Space. Press it again to close it. Moving the pointer over a car does nothing. The detail appears in the row, directly under the line its car is on; the car you pressed stays where it is and the cars after it move down to make room. It gives the issue number and title, the car's state with what that state means (the same words as the legend), and the lane that owns the train when the block names an `owner`. A car may also carry `reason`, up to 300 characters, saying why it needs attention; the detail shows it as **Reason: …**. A car with no `title` and no `reason` still shows its number, state and meaning. Nothing in a detail is cut off, however long. Opening one car's detail does not close another's, so several can be open at once. The cars in a release panel work the same way.
+
+  The cars sit on their own row above the train's name. Pressing a car never opens or closes the card; press the name row for that.
+- A **release panel** is a fenced block tagged `tc-release`. It draws one planned release as a single panel: a header with the version, a status badge and the count, then one train card per workstream, in the order written. Every row shows without a click, and each card still opens to its own thesis, issue table and sequencing note.
+
+  ```tc-release
+  {
+    "version": "5.32.0",
+    "status": "planned",
+    "trains": [
+      { "kind": "train", "train": 31, "title": "Recovery", "cars": [{ "issue": 2101, "closed": true }] },
+      { "kind": "bucket", "title": "Install safety", "cars": [{ "issue": 2140, "closed": false, "state": "in-review" }] }
+    ]
+  }
+  ```
+
+  - `version` is required and is three numbers, such as `5.32.0`: no `v`, no leading zero, no suffix. The panel adds the `v`.
+  - `status` is optional and takes the same values as a train's.
+  - `trains` holds 1 to 50 workstreams. Each is written exactly like a `tc-train` block and held to the same rules, with three more. `kind` must be written out and be `train` or `bucket`; a pilot or an unconfigured milestone is not release work. A workstream must have no `version`, because the release states it. No train identity may appear twice, and no two buckets may share a title (case and surrounding spaces are ignored). A release holds at most 1,000 cars in all.
+  - No other key is allowed, so a block cannot supply its own total.
+
+  The header counts the cars of every workstream, Topic Buckets included: **2/4 cars · 2 workstreams · 1 dropped** means two cars closed out of four still planned, with one more dropped and left out of both figures. A release whose cars were all dropped reads **0/0 cars** with its dropped count.
+
+  One mistake anywhere refuses the whole block, which is then shown as code with the reason, naming the workstream (`trains[1].cars[0].href must be an absolute https URL`). A panel is never drawn with a row missing.
+- A page with at least one train card or release panel shows a **legend** of the car states, once, directly above the first of them. You don't write it: TangleClaw adds it, so a plan never has to explain the colours itself. Each entry is a sample car with its state in words and what that state means:
+  - **open**: not started
+  - **in progress**: under way: a draft pull request, or claimed
+  - **in review**: written, pull request open for review
+  - **blocked**: needs attention: merge conflicts, a failed check, or labelled blocked
+  - **closed**: issue closed — not proof the code is written, ready or shipped
+  - **dropped**: closed as not planned
+
+  A page whose only cards are the new cards queue or progress cards has no legend, and neither does a page whose train or release blocks were all refused.
 - The **new cards queue** is a fenced block tagged `tc-queue`: `{"newDays": 14, "issues": [{"issue": 1932, "title": "…", "href": "https://…", "type": "bug", "labels": ["…"], "createdAt": "2026-09-27T09:30:00Z"}]}`, with an optional `title`.
   - It lists every open issue that is not in a train, newest first.
   - Issues filed within `newDays` are marked **new** and appear as blue pills on the card.
