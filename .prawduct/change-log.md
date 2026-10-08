@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-07 — ADR 0014: reconstruction moves from the PR Reviewer to an Operator-authorized lane
+
+<!-- prawduct: type=docs | scope=adr-0014-reconstruction-lane -->
+
+Docs only, no product code. Architect ruling A162.6, dispatched by the PM.
+
+**The defect.** ADR 0014's 2026-09-17 amendment named the PR Reviewer for both the micro filter and the reconstruction of an external PR. The PR Reviewer's own project rule makes it review-only. With reconstruction already moved away from the Builder, no session could rebuild an external PR that had passed both filters. External PR #2218 (issue #2222) stopped on exactly that.
+
+**What landed.** A dated amendment to `docs/adr/0014-dual-key-review-for-untrusted-prs.md` with four new rules (9 to 12): what a reconstruction lane is, what starts one, what the PR Reviewer does now, and what does not change. Decision items 2 and 3, the Roles table and the 2026-09-17 consequences are corrected in place, each with a note of what it said before. `docs/dependency-bump-audit.md` names the lane for a Dependabot rebuild.
+
+**Not in this change.** The session rules that still describe the old routing are not repository files. Their replacement texts are drafted separately for the Architect's review and the Operator's approval.
+
 ## 2026-10-07 — #2177: a Codex launch types nothing into a guarded dialog
 
 <!-- prawduct: type=bugfix | scope=2177-prekey-containment -->
