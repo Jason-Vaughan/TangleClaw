@@ -11337,7 +11337,19 @@ async function handleRequest(req, res) {
     // The floor under every mutating route (#2233): the caller must be known
     // before a handler runs. It establishes who is asking and nothing more; each
     // route's own check of what that caller may touch still runs after it.
-    const binding = launchBindingGuard.judge(req, { ...matched, serviceTokenVerified });
+    // The check reads the store, and this call sits outside the handler's
+    // error boundary below. A read that throws is answered here: left to
+    // escape, the request gets no response and the caller's socket stays open.
+    // The answer is a refusal, because who is asking was never established.
+    let binding;
+    try {
+      binding = launchBindingGuard.judge(req, { ...matched, serviceTokenVerified });
+    } catch (err) {
+      log.error('Launch binding check failed: the request is refused', {
+        method, path: pathname, error: err.message, stack: err.stack
+      });
+      return errorResponse(res, 500, 'Internal server error', 'INTERNAL_ERROR');
+    }
     if (!binding.allowed) {
       log.warn('Mutating request refused: the caller is not bound to a live, current launch', {
         method, path: pathname, code: binding.code, reason: binding.reason

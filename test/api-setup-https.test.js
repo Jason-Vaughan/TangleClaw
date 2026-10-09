@@ -585,12 +585,24 @@ describe('HTTPS Setup API', () => {
       it('caddy mode: prepare on an ungated install is refused', async () => {
         store.config.save({ ...savedConfig, caddyTailnetHost: 'old.tail123.ts.net', authEnabled: false, ingressMode: 'caddy' });
         tailscaleReports(`${TS}.`);
+        // The subject is an install nothing gates. In caddy mode with the login
+        // off, whether the gate stands down is read from the Caddyfile on disk
+        // through `caddy adapt`, so with the suite's hand-written file in place
+        // the answer depends on the host having Caddy: without it the file is
+        // unreadable, the gate enforces, the operator has to sign in, and the
+        // install is then gated. No Caddyfile is no door on every host.
+        const caddyfile = path.join(baseDir, 'Caddyfile');
+        const parked = `${caddyfile}.parked`;
+        fs.renameSync(caddyfile, parked);
         try {
+          const me = await request(server, 'GET', '/api/auth/me');
+          assert.equal(me.data.gateActive, false, 'the install asks for no login, whatever the host has installed');
           const { status, data } = await request(server, 'POST', '/api/setup/generate-cert',
             { reconcileTailnet: 'prepare' });
           assert.equal(status, 409);
           assert.equal(data.code, 'TAILNET_UNGATED');
         } finally {
+          fs.renameSync(parked, caddyfile);
           restore();
         }
       });

@@ -190,6 +190,36 @@ describe('launch-binding floor in the dispatcher (#2233)', () => {
       const res = await send('GET', '/api/ports', null);
       assert.equal(res.status, 200);
     });
+
+    it('answers a write when the check itself fails, and the write does not happen', async () => {
+      // The check reads the store. A read that throws (a locked database) must
+      // still end the request: left unanswered, the caller's socket stays open
+      // and the dashboard waits on a write that will never report. It is
+      // refused, never admitted, because who is asking was not established.
+      const guard = require('../lib/launch-binding-guard');
+      const realJudge = guard.judge;
+      guard.judge = () => { throw new Error('database is locked'); };
+      const { port, body } = lease(project.name);
+      let timer;
+      try {
+        const res = await Promise.race([
+          send('POST', '/api/ports/lease', body, operatorHeaders(server)),
+          new Promise((_resolve, reject) => {
+            timer = setTimeout(() => reject(new Error('the request was never answered')), 3000);
+          })
+        ]);
+        assert.equal(res.status, 500);
+        assert.equal(res.data.code, 'INTERNAL_ERROR');
+        assert.doesNotMatch(JSON.stringify(res.data), /database is locked/, 'the cause stays in the log');
+        assert.equal(leased(port), false);
+      } finally {
+        clearTimeout(timer);
+        guard.judge = realJudge;
+      }
+      // The check is back, and an identified write goes through again.
+      const after = await send('POST', '/api/ports/lease', lease(project.name).body, operatorHeaders(server));
+      assert.equal(after.status, 201, JSON.stringify(after.data));
+    });
   });
 
   describe('an ended launch and its own finalize', () => {
