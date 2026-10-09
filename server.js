@@ -305,6 +305,7 @@ const checkoutState = require('./lib/checkout-state');
 const checkoutFreshness = require('./lib/checkout-freshness');
 const launchWarmup = require('./lib/launch-warmup');
 const checkoutFleet = require('./lib/checkout-fleet');
+const launchIsolationInventory = require('./lib/launch-isolation-inventory');
 const bindPolicy = require('./lib/bind-policy');
 const wrapRunRegistry = require('./lib/wrap-run-registry');
 const wrapHandback = require('./lib/wrap-handback');
@@ -5646,6 +5647,39 @@ function _laneRotation(session) {
     }
   };
 }
+
+// GET /api/launch/isolation — for every live session and the Project Master,
+// whether the command its pane was started with shows it was kept off its
+// engine's shared background process (#2233). A launch is judged as it starts;
+// this is the same question asked of sessions that were already running.
+// `?replaced=<session ids>` adds, for each earlier session, whether it has
+// ended and its project's current session reads isolated. Read-only: it ends
+// and restarts nothing. One tmux invocation per request, so it is asked by
+// hand and not polled. It names every project, so it answers the operator,
+// the Master and a verified project session, and refuses anyone else in the
+// write floor's words.
+route('GET', '/api/launch/isolation', async (req, res) => {
+  const access = sharedDocsAccess.resolveAccess(req);
+  if (access.kind !== sharedDocsAccess.KINDS.OPERATOR && access.kind !== sharedDocsAccess.KINDS.MASTER) {
+    const described = launchBindingGuard.describeBinding(req);
+    if (described.state !== launchBindingGuard.BINDING_STATES.VERIFIED) {
+      const refusal = launchBindingGuard.refusalFor(described);
+      return errorResponse(res, refusal.status, refusal.message, refusal.code);
+    }
+  }
+  const raw = reqUrl(req).searchParams.get('replaced');
+  const asked = raw === null ? null : launchIsolationInventory.parseSessionIds(raw);
+  if (asked && !asked.ok) {
+    return errorResponse(res, 400, '`replaced` is a comma-separated list of session ids, for example ?replaced=1373,1380', 'BAD_REQUEST');
+  }
+  try {
+    const inv = await launchIsolationInventory.inventory();
+    jsonResponse(res, 200, asked ? { ...inv, replaced: launchIsolationInventory.verifyReplaced(asked.ids, inv) } : inv);
+  } catch (err) { // prawduct:allow prawduct/broad-except -- a store or tmux fault answers 500 with no verdicts, never a partial list that reads as the whole fleet
+    log.error('The launch-isolation inventory could not be read', { error: err.message });
+    errorResponse(res, 500, 'The launch-isolation inventory could not be read just now. No session was judged.', 'INTERNAL_ERROR');
+  }
+});
 
 // GET /api/checkouts — the fleet's checkouts in one answer (#1678, #993): one
 // row per project with a live session, from the same `projectCheckout` the

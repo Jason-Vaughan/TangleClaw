@@ -172,7 +172,7 @@ If TangleClaw detects an existing PortHub installation with active leases that h
 
 ### Fleet Workload
 
-Sessions report what they are doing with `tc workload set`, and TangleClaw combines that with what each session's terminal is observed doing into one verdict per session. You see it with `tc sessions` from any launched pane, or `GET /api/tc/sessions`: `AVAILABLE`, `WORKING`, `WAITING`, `BLOCKED`, `COMPLETE_NOT_CLEAR`, `HELD`, `STOPPED` or `UNKNOWN`. A session that has not reported reads as unknown, never available.
+Sessions report what they are doing with `tc workload set`, and TangleClaw combines that with what each session's terminal is observed doing into one verdict per session. (`tc sessions isolation` is a different question: which sessions were started off their engine's shared background process. See the engine guide.) You see the verdict with `tc sessions` from any launched pane, or `GET /api/tc/sessions`: `AVAILABLE`, `WORKING`, `WAITING`, `BLOCKED`, `COMPLETE_NOT_CLEAR`, `HELD`, `STOPPED` or `UNKNOWN`. A session that has not reported reads as unknown, never available.
 
 You can narrow a session's verdict (hold it at unknown, or mark it not safe to clear) through `POST /api/tc/workload/narrowing`. See [Fleet workload](fleet-workload.md). A dashboard view is deferred under the current operator UI freeze.
 

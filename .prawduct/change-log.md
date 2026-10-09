@@ -35,6 +35,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-09 — #2233: which running sessions were launched isolated (inventory and the carried fixes)
+
+<!-- prawduct: type=bugfix | scope=2233-launch-identity-containment -->
+
+#2233 Chunk 04, the last chunk of the plan, on the Operator's word ("get you working on the next chunk"). Branch `fix/2233-session-inventory`, from `origin/main` `0b512c3e9`. The issue stays open until the live proofs have run.
+
+Visual change: no
+
+**What changed.**
+- **A read-only inventory of how each live session was launched.** `lib/tmux.js#listPaneStartCommands` reads every pane's start command in one tmux invocation. `lib/launch-isolation-inventory.js` joins the live session rows and the Project Master to those commands, takes TangleClaw's wrappers off with the inverses of the functions that wrote them (`lib/sessions.js#_withoutPathFloor`, `lib/bridge-handoff.js#unwrapLaunchCommand`) and asks the engine adapter. `lib/startup-control-codex.js#judgeRecordedCommand` answers for Codex. Verdicts: `isolated`, `not-isolated`, `unknown`, `not-applicable`.
+- **A check that an end-and-relaunch took.** `verifyReplaced` says, for each earlier session id, whether it has ended and what its project's current session reads.
+- **Surfaces.** `GET /api/launch/isolation` (`?replaced=`) and `tc sessions isolation [--replaced <ids>]`. The route answers the operator, the Master and a verified project session, and refuses anyone else through `lib/launch-binding-guard.js#refusalFor`, which is the floor's own refusal under an exported name.
+- **The six items carried from the review of the diagnostics**, in the first commit: the per-launch Codex app-server no longer inherits `TMUX` and `TMUX_PANE` (`_serverEnvironment`); whoami reports a Master launch id tmux could not be asked about as `unknown`, and warns in the log for a stale binding; the pane check compares `TANGLECLAW_WORKSPACE_ID` too; two tests hold the pane's recovery sentence equal to the floor's and the guide's quoted line equal to what `tc whoami` prints; the exit-code headers name the local refusal.
+
+**The sibling was re-derived, not copied.** `judgeLaunchCommand` is safe because it is handed the executable TangleClaw resolved and a version probe taken for that launch. Neither exists for a session already running. `judgeRecordedCommand` therefore takes the executable from the command's first word and, for an attached session, the socket, executable and version from the channel row written at launch. For `--no-daemon` nothing recorded the version, and probing now would describe the file on disk, not the running process. What stands in for it: before the launch judgment existed both Codex forms used the bare command name (`git show 343bb8273:lib/startup-control-codex.js`), and only the judged path writes a command that opens with the absolute path. The verdict's own sentence says the version is not re-checked. The two judgments share `_readArguments`, so a recorded command is read by the rules a new one is, and a test holds their reason codes equal for the forms refused as unparseable.
+
+**Measured, and what it changed.** tmux prints a start command bare when it has no special character, otherwise in double quotes with `"`, `$` and a backslash escaped; it also writes a line break as `\n` and a tab as `\t` (throwaway tmux server, 2026-10-09). The reader undoes the first three and answers null for anything else. Run against this host's fleet, the inventory read the one live native Codex pane as `isolated` and two session rows with no tmux session as `unknown`. That second answer was wrong for the reader: tmux had answered, and there is no pane to be on a shared process. A session tmux has no pane for now reads `not-applicable` (`no_pane`); `unknown` is kept for a read that failed.
+
+**Decisions.** The wrappers are recognised by shape (any bin directory the PATH floor accepts, any three quoted paths in the handoff), not by this install's paths, so a pane started before an install was moved is still judged. The pane check's added workspace id was traced first: it is written into a pane once, at launch, and nothing calls `tmux set-environment`. `tc sessions <unknown word>` now exits 1.
+
+**Not covered.** The process now running in a pane; whether a tmux session named for a project is that project's current launch (no pane's environment is read here); a dashboard view. The live proofs (pane launches on Codex 0.156.1 and 0.157.1, a Master launch through its bridge wrapper, the dashboard's 409, and one real end-and-relaunch read with `--replaced`) need a deploy and the Operator's word each, and are not run.
+
+**Tests.** `test/tmux-pane-start-commands.test.js`, `test/launch-isolation-inventory.test.js` and `test/launch-isolation-route.test.js` are new; `test/identity-diagnostics.test.js`, `test/tc-pane-identity.test.js` and `test/startup-control-launch.test.js` gain the carried cases. The carried cases were run red first. The inventory's tests were written before its code and first run after it, so they were red only in that the module did not exist.
+
 ## 2026-10-09 — #2049: close-out
 
 <!-- prawduct: type=docs | scope=2049-fleet-recovery-clearance -->

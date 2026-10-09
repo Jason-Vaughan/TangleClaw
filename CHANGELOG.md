@@ -160,6 +160,13 @@ All notable changes to TangleClaw are documented in this file.
   - A launch that overrides the engine for one session (`engineOverride` on the launch API) no longer picks up the project's stored default mode either; name a mode with that launch if you want one.
   - Not covered: the Project Master's own launch mode still follows the old rule when the Master's engine changes (#2197).
   - If you rely on Bypass or another non-default mode after switching engines, choose it again for the new engine.
+- **You can now see which running sessions were started off their engine's shared background process, and check that a relaunch took** (#2233). TangleClaw checks a Codex launch for isolation as it starts, which says nothing about a session that was already running when that check arrived. `tc sessions isolation` (and `GET /api/launch/isolation`) lists every live session and the Project Master with one of four verdicts and the reason: `ISOLATED`, `NOT ISOLATED`, `NOT SHOWN ISOLATED` or `not applicable`. Reported by GURULifeline.
+  - It reads the command tmux recorded when each pane was started, so it needs no record of its own and works for sessions started before the upgrade. A Codex session started by the bare name `codex` reads `NOT ISOLATED`: that is how Codex was started before the launch check existed.
+  - `NOT SHOWN ISOLATED` means the command could not be read or judged (tmux did not answer, the pane records no start command, or the command could not be read back exactly). Treat it as not isolated. It is never counted as a pass.
+  - **To act on it:** end and relaunch each session it marks, then run `tc sessions isolation --replaced <session ids>`. For each id it says whether that session has ended and whether its project's current session reads isolated.
+  - Read-only: it ends and restarts nothing. It answers the operator, the Project Master and a session with a verified launch binding; anyone else is refused `403`.
+  - **What it cannot tell you.** It judges the command a pane was started with, not the process running in it now. For a `--no-daemon` session the Codex version was checked at launch and is not checked again. A session whose pane tmux no longer has reads `not applicable`: nothing is running in a pane for it.
+  - **Behavior change:** `tc sessions` followed by a word it does not know now exits 1 with usage. It used to ignore the word and print the roster.
 
 ### Fixed
 

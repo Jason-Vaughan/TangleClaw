@@ -901,6 +901,34 @@ another pane's process: it reads that other pane and finds agreement. Nothing in
 that case, which is why a launch is kept off a shared engine process when it starts and why writes
 are checked at the server.
 
+**Sessions that were already running (#2233).** The launch check applies to launches made after it
+was installed. To see how the sessions running now were started, run `tc sessions isolation` from
+any launched pane, or read `GET /api/launch/isolation`. It reads the command tmux recorded for each
+pane when it was started (`#{pane_start_command}`), takes TangleClaw's own wrappers off it, and
+gives each live session and the Project Master one verdict:
+
+| Verdict | Meaning |
+|---|---|
+| `ISOLATED` | Codex was started from an exact executable path, either attached to the server TangleClaw started for that session (`native-app-server`) or with `--no-daemon` (`no-daemon`). |
+| `NOT ISOLATED` | A Codex session whose command does not show that: most often the bare name `codex`, which is how Codex was started before the launch check existed. |
+| `NOT SHOWN ISOLATED` | The command could not be read or judged: tmux did not answer, the pane records no start command, or the command could not be read back exactly. Treat it as not isolated. |
+| `not applicable` | An engine with no shared background process, a session that runs on another machine, or a session tmux has no pane for. |
+
+Cutover after an upgrade, or after installing a different Codex version:
+
+1. Run `tc sessions isolation`. Note the session ids marked `NOT ISOLATED` or `NOT SHOWN ISOLATED`.
+2. End each of those sessions and launch it again. The launch is checked as it starts and is
+   refused if it cannot be isolated.
+3. Run `tc sessions isolation --replaced <those ids>`. Each id should read `relaunched-isolated`.
+   `still-running` means the old session was not ended; `ended-not-relaunched` means its project
+   has no session now; `relaunched-not-isolated` and `relaunched-unknown` mean the new session
+   needs the same attention.
+
+The inventory ends and restarts nothing. It judges the command a pane was started with, not the
+process running in the pane now. For a `--no-daemon` session, the Codex version was checked when it
+was launched and is not checked again. It does not read each pane's environment, so it takes a
+tmux session named for a project to be that project's current launch.
+
 #### Prime paste readiness
 
 When a project runs with `silentPrime` off (or the engine has no silent channel), the prime is
