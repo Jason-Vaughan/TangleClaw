@@ -69,11 +69,10 @@ describe('tmux.listPaneStartCommands', () => {
     const calls = fakeTmux(() => ({ stdout: '' }));
     await tmux.listPaneStartCommands({ timeout: 1234 });
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].args[0], 'list-panes');
-    assert.ok(calls[0].args.includes('-a'));
+    assert.deepEqual(calls[0].args.slice(0, 3), ['-u', 'list-panes', '-a'], 'UTF-8 output is asked for, whatever locale the caller has');
     const format = calls[0].args[calls[0].args.indexOf('-F') + 1];
     assert.equal(format, '#{session_name}:#{pane_start_command}');
-    assert.ok(!/[\u0000-\u001f]/.test(format), 'no control character: tmux rewrites one in its output when it is not run from a pane');
+    assert.ok(!/[\u0000-\u001f]/.test(format), 'no control character: a tmux client that is not told its output is UTF-8 prints one as an underscore');
     assert.equal(calls[0].opts.timeout, 1234);
   });
 
@@ -163,9 +162,12 @@ describe('tmux.listPaneStartCommands', () => {
 describe('tmux.listPaneStartCommands against a real tmux, run as the server runs it', () => {
   const { execFileSync, execFile } = require('node:child_process');
   const socket = `tc-test-panes-${process.pid}`;
-  // The server is not in a tmux pane. A tmux client that is prints its output
-  // differently, so the environment that names a pane is taken away here.
-  const { TMUX: _tmux, TMUX_PANE: _pane, ...outside } = process.env;
+  // The server runs under launchd: not in a tmux pane, and with no locale. A
+  // tmux client in that state does not take its output to be UTF-8, and prints
+  // every control and non-ASCII character as an underscore. A developer's
+  // shell usually has a pane, a UTF-8 locale or both, so both are taken away.
+  const { TMUX: _tmux, TMUX_PANE: _pane, LANG: _lang, LC_CTYPE: _ctype, ...rest } = process.env;
+  const outside = { ...rest, LC_ALL: 'C' };
   let available = true;
   try {
     execFileSync('tmux', ['-V'], { stdio: 'ignore' });
@@ -182,19 +184,23 @@ describe('tmux.listPaneStartCommands against a real tmux, run as the server runs
 
   it('reads back each session\'s name and exact start command, and a session with none', { skip: available ? false : 'tmux is not installed here' }, async (t) => {
     const wrapped = 'export PATH="/x y/bin:$PATH"; /opt/fake/bin/codex --remote unix:///tmp/codex-daemon/abc --full-auto';
+    const accented = '/Users/jos\u00e9/bin/codex --no-daemon; sleep 30';
+    // Registered before anything is started, so a start that fails part way leaves no server behind.
+    t.after(() => { try { onSocket(['kill-server']); } catch { /* never started, or already gone */ } });
     try {
       onSocket(['new-session', '-d', '-s', 'tc-first', `${wrapped}; sleep 30`]);
       onSocket(['new-session', '-d', '-s', 'tc-second', 'sleep 30']);
       onSocket(['new-session', '-d', '-s', 'tc-shell']);
+      onSocket(['new-session', '-d', '-s', 'tc-accent', accented]);
     } catch (err) {
       t.skip(`tmux could not start a server here: ${err.message.split('\n')[0]}`);
       return;
     }
-    t.after(() => { try { onSocket(['kill-server']); } catch { /* already gone */ } });
     tmux._async.execFile = (bin, args, opts, cb) => execFile(bin, ['-L', socket, ...args], { ...opts, env: outside }, cb);
     const read = await tmux.listPaneStartCommands();
     assert.deepEqual({ answered: read.answered, cause: read.cause }, { answered: true, cause: null });
-    assert.deepEqual([...read.sessions.keys()].sort(), ['tc-first', 'tc-second', 'tc-shell']);
+    assert.deepEqual([...read.sessions.keys()].sort(), ['tc-accent', 'tc-first', 'tc-second', 'tc-shell']);
+    assert.deepEqual(read.sessions.get('tc-accent'), [accented], 'a character outside ASCII comes back as itself, not as an underscore');
     assert.deepEqual(read.sessions.get('tc-first'), [`${wrapped}; sleep 30`]);
     assert.deepEqual(read.sessions.get('tc-second'), ['sleep 30']);
     assert.deepEqual(read.sessions.get('tc-shell'), []);

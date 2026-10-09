@@ -43,14 +43,17 @@ Found by the first read of `tc sessions isolation` on the live install, minutes 
 
 Visual change: no
 
-**What was wrong.** `lib/tmux.js#listPaneStartCommands` asked tmux for each pane as name, tab, command. A tmux client run from inside a pane prints that tab. One run outside a pane prints `_` in its place (measured: `env -u TMUX -u TMUX_PANE tmux list-panes -a -F '#{session_name}<tab>#{pane_start_command}'`). The server is not in a pane, so no line could be split, every line became a session name with no command, no session was found under its real name, and the inventory read each one as `not-applicable` (`no_pane`) and printed "No live session needs relaunching". A false all-clear, on every install, for every engine.
+**What was wrong.** `lib/tmux.js#listPaneStartCommands` asked tmux for each pane as name, tab, command. A tmux client that does not take its output to be UTF-8 prints every control and non-ASCII character as `_`. tmux decides that from `TMUX` (set inside a pane) and the locale. The server runs under launchd with neither, so the tab came back as `_` and no line could be split, every line became a session name with no command, no session was found under its real name, and the inventory read each one as `not-applicable` (`no_pane`) and printed "No live session needs relaunching". A false all-clear, on every install, for every engine.
 
-**Why nothing caught it.** The reader's tests put a function in tmux's place, so they tested my model of tmux's output. The one run against a real tmux before the merge was made from this session's own pane, which is the one context where the tab survives. The boundary review found the same end state by another path (a failed tmux read) and that path was closed; this one arrives with tmux exiting 0.
+**Why nothing caught it.** The reader's tests put a function in tmux's place, so they tested my model of tmux's output. The one run against a real tmux before the merge was made from this session's own pane, where `TMUX` is set and the tab survives. The boundary review found the same end state by another path (a failed tmux read) and that path was closed; this one arrives with tmux exiting 0.
 
 **What changed.**
+- The listing is asked for with `tmux -u`, so its output is UTF-8 whatever the caller's environment. Without it a start command holding a non-ASCII character (an executable under `/Users/josé/`) came back with `_` in its place and was judged as if it had been read exactly.
 - The separator is a colon. tmux never lets one into a session name (it stores `a:b.c` as `a_b_c`, measured), so the first colon on a line always ends the name, and tmux prints it the same inside and outside a pane.
 - A line that cannot be split (no separator, or nothing before it) makes the whole read `answered: false` (`unparseable`): every session then reads `unknown`. It used to be taken as a session with no start command.
-- `test/tmux-pane-start-commands.test.js` gains a block that starts a real tmux server on its own socket and reads it with the pane's environment removed, as the server does. It reproduces the defect on the old code. It skips with a reason where tmux is not installed, which includes CI.
+- `test/tmux-pane-start-commands.test.js` gains a block that starts a real tmux server on its own socket and reads it with `TMUX`, `TMUX_PANE` and the locale removed (`LC_ALL=C`), as the server does, including a command with an accented path. It reproduces the defect on the old code. It skips with a reason where tmux is not installed, which includes CI.
+
+**Measured (2026-10-09, tmux 3.6a).** With `TMUX` unset: `LC_ALL=C` or no locale prints a tab as `_` and `é` as `_`; `LC_ALL=en_US.UTF-8`, `LANG=en_US.UTF-8` or `-u` prints both as themselves. The first version of this fix named "outside a pane" as the cause and its test kept the developer's locale; the boundary review (`rev-20261009T210027Z-ca8ff37f`) questioned that, the measurement confirmed the review, and the test now pins the locale.
 
 **Checked the same way.** Run with `TMUX` and `TMUX_PANE` removed against this host, the inventory now finds this session and the Project Master under their own names.
 
