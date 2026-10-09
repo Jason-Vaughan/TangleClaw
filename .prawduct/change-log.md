@@ -61,6 +61,37 @@ Visual change: no
 
 **Tests.** The format, the first-colon split, three unsplittable listings and the two real-tmux cases were run red on `c1ce788a5` first.
 
+**Review.** The boundary review found nothing blocking and three warnings that were one question: whether "outside a pane" was the real cause. It was not, and the second commit is the answer (see Measured above). The verification pass read the three as resolved. R-3 and R-4 were fixed in that same commit; the table shows them accepted because the ledger records a code fix only for blocking and warning findings.
+
+**rev-20261009T210027Z-ca8ff37f** — 2026-10-09T21:02:31Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | Being discharged: the full suite runs on the committed tree and is recorded from its JUnit report before the PR is marked ready. |
+| R-2 | warning | fixed | The real-tmux test removes TMUX and TMUX_PANE but keeps the developer's locale, so whether it reproduces the defect depends on LANG |
+| R-3 | note | accepted | Fixed in the second commit (tmux -u, with an accented-path case against a real tmux); read as addressed by rev-20261009T210544Z-84feb18c. Recorded as an accept because the ledger takes a code fix only through a resolution. |
+| R-4 | note | accepted | Fixed in the second commit (cleanup registered before the first new-session); read as addressed by the verification pass. Accept for the same ledger reason as R-3. |
+| R-5 | warning | fixed | The separator fix names the pane as the variable; the variable is probably the client's UTF-8 flag, which leaves the start command itself open to the same rewrite |
+| R-6 | warning | fixed | The recorded reason for the separator names 'not run from a pane' as the trigger; the real-tmux test removes only TMUX and TMUX_PANE and inherits the developer's locale |
+| R-7 | note | accepted | Informational: the learnings corpus is local-only in the primary checkout, and the reviewer read it there. |
+| R-8 | note | accepted | Informational: nothing to reconcile. |
+
+**8 findings** (4 warning, 4 note) — accepted: 5, fixed: 3.
+
+**rev-20261009T210544Z-84feb18c** — 2026-10-09T21:06:32Z
+
+_No findings._
+
+_Observations — read, not owed. Answering one is optional._
+
+| Observation | State | Detail |
+|---|---|---|
+| O-1 | accepted | Being discharged: full suite on the committed tree, recorded from JUnit before the PR is marked ready. |
+| O-2 | accepted | Measured, not only read: recorded in the change-log entry (tmux 3.6a), and the real-tmux test asserts it on every run where tmux is installed. |
+
+**No findings** — a clean pass.
+**2 observations demoted** — 2 answered. An observation gates nothing; answering one is optional.
+
 ## 2026-10-09 — #2233: which running sessions were launched isolated (inventory and the carried fixes)
 
 <!-- prawduct: type=bugfix | scope=2233-launch-identity-containment -->
