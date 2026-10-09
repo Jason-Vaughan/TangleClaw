@@ -203,12 +203,14 @@ describe('tmux.listPaneStartCommands against a real tmux, run as the server runs
     }
     tmux._async.execFile = (bin, args, opts, cb) => execFile(bin, ['-L', socket, ...args], { ...opts, env: outside }, cb);
     const read = await tmux.listPaneStartCommands();
-    assert.deepEqual({ answered: read.answered, cause: read.cause }, { answered: true, cause: null });
-    assert.deepEqual([...read.sessions.keys()].sort(), [accent, first, second, shell].sort());
-    assert.deepEqual(read.sessions.get(accent), [accented], 'a character outside ASCII comes back as itself, not as an underscore');
-    assert.deepEqual(read.sessions.get(first), [`${wrapped}; sleep 30`]);
-    assert.deepEqual(read.sessions.get(second), ['sleep 30']);
-    assert.deepEqual(read.sessions.get(shell), []);
+    // What this tmux printed, for the failure message: its quoting has differed between versions.
+    const raw = `${execFileSync('tmux', ['-V'], { encoding: 'utf8' }).trim()} printed:\n${onSocket(['-u', 'list-panes', '-a', '-F', '#{session_name}:#{pane_start_command}'])}`;
+    assert.deepEqual({ answered: read.answered, cause: read.cause }, { answered: true, cause: null }, raw);
+    assert.deepEqual([...read.sessions.keys()].sort(), [accent, first, second, shell].sort(), raw);
+    assert.deepEqual(read.sessions.get(accent), [accented], `a character outside ASCII comes back as itself, not as an underscore. ${raw}`);
+    assert.deepEqual(read.sessions.get(first), [`${wrapped}; sleep 30`], raw);
+    assert.deepEqual(read.sessions.get(second), ['sleep 30'], raw);
+    assert.deepEqual(read.sessions.get(shell), [], raw);
   });
 
   it('reads a socket with no server as an answered empty fleet', { skip: available ? false : 'tmux is not installed here' }, async () => {
