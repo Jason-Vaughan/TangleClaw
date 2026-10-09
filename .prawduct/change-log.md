@@ -35,6 +35,29 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-09 — #2049: a signed-in operator reads a batch clear back, with what each launch says now
+
+<!-- prawduct: type=feature | scope=2049-fleet-recovery-clearance -->
+
+#2049, chunk 4 of the plan, by direct Operator assignment to TC-RM01 under RM-LEASE generation 6. Built on branch `feat/2049-batch-observations`, stacked on `1c233fd9` (PR #2247, chunks 2 and 3), which contains `origin/main` `a8610e72`.
+
+**What landed.** `GET /api/launch/recovery-clear-batch/:batchId` and `lib/launch-recovery-batch.js#readBatch`. The answer is the batch as recorded (header, each item's outcome, the clearance of each cleared item) and, beside each item, an observation of its launch read at `observedAt`: stored recovery, whether it is still blocked, the step cursor, whether a READY attestation is recorded, and the session's stored status. No migration.
+
+**Decisions.**
+- Every item is observed, not only the cleared ones. The plan said "for each cleared launch"; a refused item's launch is the one the operator most needs to look at again, and the batch write already re-reads every item. The cost is one launch read and one session read per item, at most 100.
+- The two operator reads that span projects (`recovery-held` and this one) share one check, `_requireOperatorRead`, extracted from the held route. A second copy of the gate ladder could drift from the first, which is the reason the batch write reuses `_requireOperatorWrite`. The held route's answers and log lines are unchanged and its tests pass untouched.
+- Any signed-in operator may read any batch. The answer names who sent it. An install has one operator role, so there is nobody to hide a batch from.
+- The observation reuses the fleet read's three states (`recorded`, `none-recorded`, `unavailable`), so a client reads "holds nothing" and "could not be read" one way in both operator reads.
+- The session's status is read apart from the launch, so an unreadable session row does not hide what the launch row says.
+- A batch that stopped part-way is reported by position (`unrecordedIndexes`). The header stores no item ids, so the launches at those positions are not named and not guessed.
+- The batch write's own re-read (`recoveryNow`, `recoveryRevisionNow`, `stillBlocked`) is left as it is. Both now find the launch through one function, `_launchAsNamed`.
+
+**What "attested READY" and "still at a prompt" became.** The issue asks which sessions attested READY and which are still at a prompt. `attestedReady` is the first, from the launch row. Nothing durable records what a pane is showing, so the second is not answered and the answer says nothing about it; `cursor` and the absence of a READY attestation are what is known.
+
+**Not in this chunk.** The fleet recovery panel (it needs the Operator's exception to the UI freeze), stop provenance and the wake action. #2049 stays open.
+
+**Not verified.** Nothing was run against a live install or a copy of a real database. No client calls this route yet. The tests drive the real request handler against temp stores.
+
 ## 2026-10-08 — #2049: a signed-in operator clears several launches in one request
 
 <!-- prawduct: type=feature | scope=2049-fleet-recovery-clearance -->
@@ -56,6 +79,8 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 **A chunk 2 test changed, and it got stricter.** "records the batch a clear belongs to" cleared under a batch id with no header. That is now refused by the table, so the test records the header and names each item.
 
+**After the chunk's review.** `origin/main` moved to `a8610e72` (#2233's caller check) and was merged in as `64e875e4`. `1c233fd9` then moved three batch tests onto that check, named all four no-login refusals in the API reference and pinned the two that had no test. Chunks 2 and 3 went up as PR #2247 at `1c233fd9`.
+
 **Not in this chunk.** A route that reads a batch back, the fleet recovery panel (it needs the Operator's exception to the UI freeze), stop provenance and the wake action. A93 says an API-only batch is not the feature: #2049 stays open.
 
 **Not verified.** Nothing was run against a live install or a copy of a real database. The tests drive the real request handler and the real migration against temp stores.
@@ -75,6 +100,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 **Not in this chunk.** The batch route, the batch header and per-item outcomes, any route or page that reads the record, stop provenance and the wake action. Clearances made before v59 get no row.
 
 **Not verified.** Nothing was run against a live install. The tests drive the real request handler and the real migration against temp stores.
+
 ## 2026-10-08 — #2233: a request that changes state must say who is asking (I1)
 
 <!-- prawduct: type=bugfix | scope=2233-launch-identity-containment -->
