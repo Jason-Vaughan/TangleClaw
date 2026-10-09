@@ -2417,6 +2417,7 @@ function renderProjectRulesSection(project) {
       <div class="form-group">
         <div class="form-label">Launch readiness</div>
         <div class="form-hint">The last five launches' own evidence, kept separate because the three answer different questions: which <strong>rules channel</strong> the prime used and what became of it, how much of the launch sequence was <strong>served</strong>, and how much the session <strong>acknowledged</strong> and attested.</div>
+        <div class="session-rules-list" id="projRecoveryMode" aria-live="polite"></div>
         <div class="session-rules-list" id="projLaunchSequencesList" aria-live="polite"></div>
       </div>
       <div id="projRulesPwGroup" class="form-group hidden">
@@ -2508,6 +2509,9 @@ function renderProjectRulesUnknown(kind, why) {
 async function loadProjectRules(projectId, projectName) {
   projectRulesTargetId = projectId;
   projectRulesTargetName = projectName || null;
+  // A save's outcome belongs to the sitting it was made in. Opening the modal
+  // again must not repeat "saved" for a save nobody just made.
+  projectRecoveryModeNotice = null;
   for (const { kind } of PROJECT_RULE_KINDS) {
     if ((await refreshProjectRulesList(projectId, kind)) === null) return;
   }
@@ -2600,10 +2604,15 @@ async function refreshProjectLaunchSequences(projectId) {
   if (projectRulesTargetId !== projectId) return null;
   const list = document.getElementById('projLaunchSequencesList');
   if (!list) return null;
+  const modeBox = document.getElementById('projRecoveryMode');
   if (!data || !Array.isArray(data.sequences)) {
     list.innerHTML = window.tcRulesUnknownHtml('Launch readiness',
       window.tcDegradedRead(false, data ? 'the server answered without a list' : api.lastError,
         'Close and reopen Settings to retry.'));
+    // The mode travels on the same read. One that failed says nothing about it,
+    // and a readout left over from an earlier read would state a mode nobody
+    // just reported. What a save was told is kept: it is not from this read.
+    if (modeBox) modeBox.innerHTML = projectRecoveryNoticeHtml(projectId);
     return false;
   }
   // Whether this install has a login decides one control: a session's
@@ -2613,7 +2622,16 @@ async function refreshProjectLaunchSequences(projectId) {
   // answer unknown, and unknown renders the button: the server still decides.
   const me = await api('/api/auth/me');
   if (projectRulesTargetId !== projectId) return null;
-  renderProjectLaunchSequences(data.sequences, { noLogin: Boolean(me && me.openInstallToken) });
+  renderProjectLaunchSequences(data.sequences, {
+    noLogin: Boolean(me && me.openInstallToken),
+    projectRecoveryMode: data.projectRecoveryMode
+  });
+  if (modeBox) {
+    const offer = recoveryModeControlOffer(me);
+    modeBox.innerHTML = projectRecoveryNoticeHtml(projectId)
+      + projectRecoveryReadoutHtml(data, offer) + projectRecoveryControlHtml(data, offer);
+    wireProjectRecoveryMode(modeBox);
+  }
   // Wired here rather than inside the renderer, so the renderer stays a pure
   // markup function: this cycle is what owns fetch → render → wire, and a
   // renderer that also attached listeners could not be rendered anywhere that
@@ -2622,6 +2640,361 @@ async function refreshProjectLaunchSequences(projectId) {
   wireLaunchReconciliationReads(list);
   wireStartupFires(list);
   return true;
+}
+
+/**
+ * The two recovery modes, as the panel names them and says who clears a
+ * recovery under each. The keys are the values `launchSequence.recoveryMode`
+ * takes on the wire.
+ */
+const RECOVERY_MODE_READOUT = {
+  operator: {
+    label: 'Operator-cleared',
+    clears: 'A launch that needs recovery waits until a person clears it from this panel.'
+  },
+  advisory: {
+    label: 'Advisory',
+    clears: 'A session whose launch needs recovery clears it itself, by attesting with a written reconciliation.'
+  }
+};
+
+/**
+ * What the login gate's state means for the recovery default, for the one
+ * source word (`not-armed`) that covers every state but `armed`. A state with
+ * no entry is printed as the server's own word.
+ */
+const RECOVERY_GATE_PHRASES = {
+  open: 'This install has no login.',
+  fallback: 'TangleClaw\'s login is stood down behind Caddy\'s.',
+  'account-required': 'The login is turned on and no account exists yet.',
+  locked: 'The login is turned on and no account can sign in.',
+  unreadable: 'The server could not read its own configuration, so it could not tell whether the login is in force.'
+};
+
+/**
+ * Why the project's recovery mode is what it is, one entry per source word
+ * `lib/project-config.js#resolveRecoveryMode` returns. `mode` is the only mode
+ * that source resolves to: a source arriving with any other is not one this
+ * page understands, and is rendered as unknown.
+ */
+const RECOVERY_SOURCE_READOUT = {
+  pinned: {
+    mode: 'operator',
+    why: () => 'The decision on record pins this project to operator-cleared recovery, whatever its file says.'
+  },
+  chosen: {
+    mode: 'advisory',
+    why: () => 'The decision on record chose advisory recovery for this project.'
+  },
+  inherited: {
+    mode: 'advisory',
+    why: () => 'Nobody has chosen a mode for this project: its file holds only the value every save writes. '
+      + 'Advisory is the default while TangleClaw\'s login is in force.'
+  },
+  launchSequence: {
+    mode: 'advisory',
+    why: () => 'Nobody has chosen a mode for this project from here. Its own file asks for advisory, which a '
+      + 'file may do only while TangleClaw\'s login is in force.'
+  },
+  default: {
+    mode: 'advisory',
+    why: () => 'Nobody has chosen a mode for this project and its file names none. Advisory is the default '
+      + 'while TangleClaw\'s login is in force.'
+  },
+  'not-armed': {
+    mode: 'operator',
+    why: (gateState) => 'Nobody has chosen a mode for this project, and advisory is the default only while '
+      + `TangleClaw's login is in force. ${recoveryGatePhrase(gateState)}`
+  },
+  invalid: {
+    mode: 'operator',
+    why: () => 'The project\'s file holds a recovery mode TangleClaw does not recognise, so recovery stays '
+      + 'operator-cleared until the file is corrected. Saving a choice below rewrites that value.'
+  }
+};
+
+/**
+ * The login gate's state as a sentence, for the `not-armed` readout.
+ *
+ * A missing state is said to be missing: the server reports null when it could
+ * not ask, which is not the same as any state it could have named.
+ * @param {string|null|undefined} gateState - `projectRecoveryGateState` from `GET /api/launch-sequences`
+ * @returns {string} A sentence, already escaped
+ */
+function recoveryGatePhrase(gateState) {
+  if (typeof gateState !== 'string' || gateState === '') {
+    return 'The server did not say what state its login gate is in.';
+  }
+  if (Object.prototype.hasOwnProperty.call(RECOVERY_GATE_PHRASES, gateState)) return RECOVERY_GATE_PHRASES[gateState];
+  return `The login gate's state is reported as "${esc(gateState)}".`;
+}
+
+/**
+ * Whether the panel offers the recovery-mode control, from what
+ * `GET /api/auth/me` answered.
+ *
+ * `PATCH /api/projects/:name` takes the mode from the operator alone. While
+ * the gate enforces, that is a signed-in session, so a page with none would be
+ * refused and is shown the reason in place of the control. Where the gate
+ * stands down the server takes the request from the dashboard itself, with
+ * nobody identified.
+ *
+ * `readback` is whether a signed-in operator is behind this page, which is the
+ * one caller the server lets read a session's reconciliation afterwards. It is
+ * null when the page could not ask; the control is offered then, because the
+ * server still decides.
+ * @param {object|null} me - The answer of `GET /api/auth/me`, or null when the read failed
+ * @returns {{offered: boolean, readback: (boolean|null), why: (string|null)}}
+ */
+function recoveryModeControlOffer(me) {
+  if (!me || typeof me !== 'object') return { offered: true, readback: null, why: null };
+  if (me.authenticated === true) return { offered: true, readback: true, why: null };
+  if (me.gateActive === true) {
+    return {
+      offered: false,
+      readback: false,
+      why: 'The recovery mode cannot be chosen from this page right now: it is not signed in, and the server '
+        + 'takes this choice only from a signed-in operator. Sign in, then reopen Settings.'
+    };
+  }
+  return { offered: true, readback: false, why: null };
+}
+
+/**
+ * The project's recovery mode as it stands now, where that answer came from,
+ * and the decision on record (#1937).
+ *
+ * This is the project's setting, which applies from its next launch. Each
+ * launch row below carries the mode that launch froze, and the two may differ.
+ *
+ * Nothing here is inferred. A mode the server did not report is unknown, never
+ * the default; a source this page has no sentence for is printed as the
+ * server's own word, never as the nearest one it knows.
+ * @param {object} now - The project-level fields of `GET /api/launch-sequences`
+ * @param {{readback: (boolean|null)}} [offer] - From `recoveryModeControlOffer`
+ * @returns {string} Markup, already escaped
+ */
+function projectRecoveryReadoutHtml(now, offer) {
+  const mode = now ? now.projectRecoveryMode : null;
+  const source = now ? now.projectRecoverySource : null;
+  const lines = [];
+  if (mode === null || mode === undefined) {
+    lines.push('<strong>Recovery mode: unknown</strong>');
+    lines.push('<small class="session-rule-meta rules-status-err">The server reported no recovery mode for this '
+      + 'project, so this page does not state one.</small>');
+  } else if (!Object.prototype.hasOwnProperty.call(RECOVERY_MODE_READOUT, mode)) {
+    lines.push('<strong>Recovery mode: unknown</strong>');
+    lines.push(`<small class="session-rule-meta rules-status-err">The server reported the mode as "${esc(mode)}", `
+      + 'which this page does not know.</small>');
+  } else {
+    const known = Object.prototype.hasOwnProperty.call(RECOVERY_SOURCE_READOUT, source)
+      ? RECOVERY_SOURCE_READOUT[source] : null;
+    lines.push(`<strong>Recovery mode: ${RECOVERY_MODE_READOUT[mode].label}</strong>`);
+    lines.push(`<small class="session-rule-meta">${RECOVERY_MODE_READOUT[mode].clears}</small>`);
+    if (known && known.mode === mode) {
+      lines.push(`<small class="session-rule-meta">${known.why(now.projectRecoveryGateState)}</small>`);
+    } else {
+      lines.push('<small class="session-rule-meta rules-status-err">Why it is this mode is unknown: the server '
+        + `gave the reason as "${esc(source === null || source === undefined ? 'none' : source)}", which this page `
+        + 'does not know for this mode.</small>');
+    }
+  }
+  const decision = now ? now.projectRecoveryDecision : null;
+  if (decision) {
+    const decided = decision.pinnedMode === 'operator'
+      ? 'operator-cleared'
+      : (decision.pinnedMode === null || decision.pinnedMode === undefined
+        ? 'advisory' : `"${esc(decision.pinnedMode)}"`);
+    // The record holds the caller KIND the server resolved, and where the login
+    // is not in force that kind is granted to any request with the dashboard's
+    // shape. The record does not say which it was, so the page does not either.
+    const unverified = offer && offer.readback === false
+      ? ' TangleClaw\'s login is not in force on this install now, and the record does not say whether it was '
+        + 'then: without a login, that word means a request with the dashboard\'s shape and identifies nobody.'
+      : '';
+    lines.push(`<small class="session-rule-meta">Decision on record: ${decided}, made ${esc(decision.decidedAt)}, `
+      + `recorded as made by "${esc(decision.decidedBy)}".${unverified}</small>`);
+  } else {
+    lines.push('<small class="session-rule-meta">No decision is on record for this project.</small>');
+  }
+  if (now && now.projectRecoveryDiscrepancy) {
+    lines.push(`<small class="session-rule-meta rules-status-err">Discrepancy: ${esc(now.projectRecoveryDiscrepancy)}.</small>`);
+  }
+  return `<div class="session-rule-item"><div class="session-rule-content">${lines.join('<br>')}</div></div>`;
+}
+
+/**
+ * The control that chooses the project's recovery mode, or the reason there is
+ * none (#1937).
+ *
+ * Two options and no third: the server records `operator` or `advisory`, and
+ * has no way to return a project to having no decision. The option the project
+ * resolves to now is preselected; where the mode is unknown neither is, so a
+ * save is always a choice somebody made.
+ *
+ * Where the server would refuse this page, the reason is shown in place of the
+ * control: a control that cannot work is worse than none.
+ * @param {object} now - The project-level fields of `GET /api/launch-sequences`
+ * @param {{offered: boolean, readback: (boolean|null), why: (string|null)}} offer - From `recoveryModeControlOffer`
+ * @returns {string} Markup, already escaped
+ */
+function projectRecoveryControlHtml(now, offer) {
+  if (!offer || offer.offered !== true) {
+    return '<div class="session-rule-item"><div class="session-rule-content">'
+      + `<small class="session-rule-meta">${esc((offer && offer.why) || 'The recovery mode cannot be chosen from this page.')}</small>`
+      + '</div></div>';
+  }
+  const current = now ? now.projectRecoveryMode : null;
+  // Advisory rests on someone reading what the session wrote. Whether anyone
+  // can is a fact about this install, so the option says which it is here.
+  let readback = 'A signed-in operator can read that reconciliation here afterwards.';
+  if (offer.readback === true) readback = 'You can read that reconciliation here afterwards.';
+  if (offer.readback === false) {
+    readback = 'On this install nobody can read that reconciliation back: the server serves it only to a '
+      + 'signed-in operator, and TangleClaw\'s login is not in force.';
+  }
+  const option = (value, text) => '<label style="display:block;margin:4px 0">'
+    + `<input type="radio" name="projRecoveryModeChoice" value="${value}"${current === value ? ' checked' : ''}> `
+    + `<strong>${RECOVERY_MODE_READOUT[value].label}</strong>`
+    + `<br><small class="session-rule-meta">${text}</small></label>`;
+  return '<div class="session-rule-item"><div class="session-rule-content">'
+    + '<fieldset style="border:0;padding:0;margin:0"><legend class="session-rule-meta">Recovery mode for this project\'s future launches</legend>'
+    + option('operator', 'A person clears each recovery from this panel. Until they do, the launch\'s task step '
+      + 'is withheld and its session cannot attest.')
+    + option('advisory', 'The session reads its task step behind a warning, and must attest with a written '
+      + `reconciliation before it continues. TangleClaw does not check what it writes. ${readback}`)
+    + '</fieldset>'
+    + '<small class="session-rule-meta">A saved choice applies from this project\'s next launch. Launches already '
+    + 'started keep the mode they froze.</small>'
+    + '<br><button type="button" class="btn btn-sm" data-recovery-mode-save>Save recovery mode</button>'
+    + '</div></div>';
+}
+
+/**
+ * What the last recovery-mode save in this sitting was told, and for which
+ * project. Kept beside the readout, and not in the modal's transient status
+ * line, because it says when the choice takes effect and what a failure left
+ * behind, and that line is gone in three seconds.
+ * @type {{projectId: number, text: string, ok: boolean}|null}
+ */
+let projectRecoveryModeNotice = null;
+
+/**
+ * The outcome of the last save, for the project the panel is showing.
+ * @param {number} projectId - The project the panel is rendering
+ * @returns {string} Markup, or an empty string when there is nothing to say about this project
+ */
+function projectRecoveryNoticeHtml(projectId) {
+  const notice = projectRecoveryModeNotice;
+  if (!notice || notice.projectId !== projectId) return '';
+  return '<div class="session-rule-item"><div class="session-rule-content">'
+    + `<small role="status" class="session-rule-meta ${notice.ok ? 'rules-status-ok' : 'rules-status-err'}">${esc(notice.text)}</small>`
+    + '</div></div>';
+}
+
+/**
+ * What the operator is told after a recovery-mode save, by what the server
+ * answered.
+ *
+ * Each failure is worded for what it left behind, because they leave different
+ * things: a refusal and `RECOVERY_DECISION_NOT_SAVED` changed nothing,
+ * `RECOVERY_DECISION_SAVED_UPDATE_FAILED` recorded the decision, and a request
+ * that got no answer may have done either.
+ * @param {string} mode - The mode that was sent
+ * @param {object|null} answer - The answer of `PATCH /api/projects/:name`, or null
+ * @param {{error: (string|null), code: (string|null)}} failure - `api.lastError` and `api.lastErrorCode`
+ * @returns {{text: string, ok: boolean}}
+ */
+function recoveryModeSaveOutcome(mode, answer, failure) {
+  const label = RECOVERY_MODE_READOUT[mode].label.toLowerCase();
+  const applies = 'It applies from this project\'s next launch; launches already started keep the mode they froze.';
+  if (answer && answer.recoveryMode && answer.recoveryMode.mode === mode) {
+    if (answer.recoveryMode.fileWritten === false) {
+      return {
+        text: `Recovery mode saved: ${label}. ${applies} The project's file could not be updated to match; the `
+          + 'saved decision is the one that counts.',
+        ok: true
+      };
+    }
+    return { text: `Recovery mode saved: ${label}. ${applies}`, ok: true };
+  }
+  if (answer) {
+    return {
+      text: 'The server answered without confirming the recovery mode. The readout shows what is recorded now.',
+      ok: false
+    };
+  }
+  const said = failure.error ? ` The server said: ${failure.error}` : '';
+  if (failure.code === 'RECOVERY_DECISION_NOT_SAVED') {
+    return { text: `The recovery mode was not saved, and nothing changed.${said}`, ok: false };
+  }
+  if (failure.code === 'RECOVERY_DECISION_SAVED_UPDATE_FAILED') {
+    return {
+      text: `The recovery mode was saved as ${label} and applies from the next launch, but the update did not `
+        + `finish.${said}`,
+      ok: false
+    };
+  }
+  if (failure.code === 'UNAUTHENTICATED' || failure.code === 'CSRF_TOKEN_INVALID' || failure.code === 'ACCOUNT_REQUIRED') {
+    return {
+      text: `The recovery mode was not saved: this page is not signed in. Sign in, reopen Settings and choose again.${said}`,
+      ok: false
+    };
+  }
+  if (failure.code === 'OPERATOR_ONLY') {
+    return { text: `The recovery mode was not saved: the server did not take this page for the operator.${said}`, ok: false };
+  }
+  if (failure.code) {
+    return { text: `The recovery mode was not saved.${said}`, ok: false };
+  }
+  return {
+    text: 'The save got no answer from the server, so whether it was recorded is not known. The readout shows '
+      + `what is recorded now.${failure.error ? ` (${failure.error})` : ''}`,
+    ok: false
+  };
+}
+
+/**
+ * Wire the recovery-mode save the panel just rendered (#1937).
+ *
+ * Re-wired per refresh for the reason `wireLaunchRecoveryClears` states. The
+ * request carries `launchSequence.recoveryMode` and nothing else: the route
+ * refuses a whole request that names the mode unless the operator sent it, so
+ * no other setting rides along to be refused with it. A second click while one
+ * is in flight sends nothing.
+ *
+ * The panel is re-read after every answer, the failures included, so the
+ * readout shows what is recorded and not what was asked for.
+ * @param {HTMLElement} box - The readout's container element
+ * @returns {void}
+ */
+function wireProjectRecoveryMode(box) {
+  for (const btn of box.querySelectorAll('[data-recovery-mode-save]')) {
+    btn.addEventListener('click', async () => {
+      if (btn.disabled) return;
+      const projectId = projectRulesTargetId;
+      const projectName = projectRulesTargetName;
+      if (!projectName) return;
+      const chosen = box.querySelector('input[name="projRecoveryModeChoice"]:checked');
+      const mode = chosen ? chosen.value : null;
+      if (!Object.prototype.hasOwnProperty.call(RECOVERY_MODE_READOUT, mode)) {
+        _setProjectRulesStatus('Choose a recovery mode first', false);
+        return;
+      }
+      projectRecoveryModeNotice = null;
+      btn.disabled = true;
+      const answer = await api(`/api/projects/${encodeURIComponent(projectName)}`, {
+        method: 'PATCH',
+        // Required: the perimeter refuses an undeclared browser body (#860).
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ launchSequence: { recoveryMode: mode } })
+      });
+      const outcome = recoveryModeSaveOutcome(mode, answer, { error: api.lastError, code: api.lastErrorCode });
+      btn.disabled = false;
+      projectRecoveryModeNotice = { projectId, text: outcome.text, ok: outcome.ok };
+      if (projectRulesTargetId === projectId) await refreshProjectLaunchSequences(projectId);
+    });
+  }
 }
 
 /**
@@ -2776,10 +3149,15 @@ function launchClearanceLabel(s) {
  * launch in `operator` mode. An `advisory` launch clears its own by reconciling,
  * so offering a button there would offer a decision the route refuses
  * (`RECOVERY_MODE_ADVISORY`) — a control that cannot work is worse than none.
+ *
+ * The mode named is the one this launch froze. The project's setting may have
+ * changed since, and a changed setting does not reach back into a launch, so
+ * when the two differ the row says which one the next launch will use.
  * @param {object} s - A sequence row from `GET /api/launch-sequences`
+ * @param {string|null} [projectMode] - The project's recovery mode now, when the server reported one
  * @returns {string} Markup, or an empty string when there is nothing to say
  */
-function launchRecoveryHtml(s) {
+function launchRecoveryHtml(s, projectMode) {
   if (!s.recovery || s.recovery === 'none') return '';
   const verdict = s.preflightVerdict ? `<code>${esc(s.preflightVerdict)}</code>` : 'an unrecorded verdict';
   // The verdict WORD alone asks you to clear a launch without saying what
@@ -2799,12 +3177,19 @@ function launchRecoveryHtml(s) {
       + `${s.recoveryClearedAt ? ` at ${esc(s.recoveryClearedAt)}` : ''}</small>`;
   }
   if (s.recoveryMode === 'advisory') {
+    const next = projectMode === 'operator'
+      ? ' The project is operator-cleared now; its next launch will use that.'
+      : '';
     return `<br><small class="session-rule-meta rules-status-err">Recovery required: ${verdict}.${cause}${whereToLook} `
-      + 'This project is in advisory mode, so the session clears it by attesting with a written '
-      + 'reconciliation — there is nothing here for you to clear.</small>';
+      + 'This launch froze advisory mode, so the session clears it by attesting with a written '
+      + `reconciliation — there is nothing here for you to clear.${next}</small>`;
   }
+  const next = projectMode === 'advisory'
+    ? ' The project is advisory now; its next launch will use that, and this one still waits for a clear.'
+    : '';
   return `<br><small class="session-rule-meta rules-status-err">Recovery required: ${verdict}.${cause}${whereToLook} `
-    + 'The task step is withheld and this session cannot attest until you clear it.</small>'
+    + 'This launch froze operator-cleared mode: the task step is withheld and this session cannot attest until '
+    + `you clear it.${next}</small>`
     + `<br><button type="button" class="btn btn-sm" data-launch-recovery-clear="${esc(s.sequenceId)}" `
     + `data-session-id="${esc(s.sessionId)}" data-recovery-revision="${esc(s.recoveryRevision)}">`
     + 'Clear recovery</button>';
@@ -2949,11 +3334,13 @@ function wireLaunchReconciliationReads(list) {
  * @param {object[]} sequences - Rows from `GET /api/launch-sequences`, newest first
  * @param {object} [opts]
  * @param {boolean} [opts.noLogin] - Whether the server reported this install's login gate as open
+ * @param {string|null} [opts.projectRecoveryMode] - The project's recovery mode now, for a held row to compare with the one its launch froze
  */
 function renderProjectLaunchSequences(sequences, opts) {
   // Only the server's explicit word counts as "no login": anything else,
   // including no options at all, renders the control and lets the server decide.
   const noLogin = Boolean(opts && opts.noLogin === true);
+  const projectMode = opts ? opts.projectRecoveryMode : null;
   const list = document.getElementById('projLaunchSequencesList');
   if (!list) return;
   if (sequences.length === 0) {
@@ -2987,7 +3374,7 @@ function renderProjectLaunchSequences(sequences, opts) {
         <br><small class="session-rule-meta">Rules channel: ${rules}</small>
         <br><small class="session-rule-meta">Served: ${esc(served)}/${esc(s.of)} step(s) | Acknowledged: ${esc(acked)}/${esc(s.of)} | ${nudges}</small>
         <br><small class="session-rule-meta">Launched ${esc(s.createdAt)} | revision ${esc(s.revision)}</small>
-        ${launchRecoveryHtml(s)}
+        ${launchRecoveryHtml(s, projectMode)}
         ${launchReconciliationControlHtml(s, noLogin)}
         ${launchStartupControlHtml(s)}
       </div>
