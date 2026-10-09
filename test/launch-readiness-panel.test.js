@@ -1154,7 +1154,10 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
         assert.equal(notice.ok, true);
         assert.match(notice.text, /^Recovery mode saved: operator-cleared\. It applies from this project's next launch; launches already started keep the mode they froze\.$/);
         assert.deepEqual(w.refreshes, [7], 'the readout is re-read so it shows the recorded decision');
-        assert.match(w.ctx.projectRecoveryNoticeHtml(7), /role="status"[^>]*rules-status-ok[^>]*>Recovery mode saved: operator-cleared/);
+        assert.match(w.ctx.projectRecoveryNoticeHtml(7), /role="status" class="session-rule-meta">Recovery mode saved: operator-cleared/);
+        w.ctx.setNotice({ projectId: 7, text: 'The recovery mode was not saved.', ok: false });
+        assert.match(w.ctx.projectRecoveryNoticeHtml(7), /role="status" class="session-rule-meta rules-status-err">The recovery mode was not saved\./,
+          'a failure is marked the way the panel marks every other failure');
         assert.equal(w.ctx.projectRecoveryNoticeHtml(8), '', 'another project\'s panel does not show it');
         assert.deepEqual(w.status, [], 'it is not put in the status line, which is gone in three seconds');
       });

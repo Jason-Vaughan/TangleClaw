@@ -2891,7 +2891,7 @@ function projectRecoveryNoticeHtml(projectId) {
   const notice = projectRecoveryModeNotice;
   if (!notice || notice.projectId !== projectId) return '';
   return '<div class="session-rule-item"><div class="session-rule-content">'
-    + `<small role="status" class="session-rule-meta ${notice.ok ? 'rules-status-ok' : 'rules-status-err'}">${esc(notice.text)}</small>`
+    + `<small role="status" class="session-rule-meta${notice.ok ? '' : ' rules-status-err'}">${esc(notice.text)}</small>`
     + '</div></div>';
 }
 
