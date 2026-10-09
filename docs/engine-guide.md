@@ -922,7 +922,9 @@ Cutover after an upgrade, or after installing a different Codex version:
 3. Run `tc sessions isolation --replaced <those ids>`. Each id should read `relaunched-isolated`.
    `still-running` means the old session was not ended; `ended-not-relaunched` means its project
    has no session now; `relaunched-not-isolated` and `relaunched-unknown` mean the new session
-   needs the same attention.
+   needs the same attention. `relaunched-not-applicable` means the project now runs an engine with
+   no shared background process, or its new session has no local pane. `unknown-session` means
+   TangleClaw has no session with that id: check the number.
 
 The inventory ends and restarts nothing. It judges the command a pane was started with, not the
 process running in the pane now. For a `--no-daemon` session, the Codex version was checked when it
