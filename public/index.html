@@ -76,6 +76,10 @@
       <button class="dash-action" id="auditToggle" aria-expanded="false" aria-controls="auditPanel">
         Audit <span class="dash-badge" id="auditIncidentCount">0</span>
       </button>
+      <button class="dash-action" id="fleetRecoveryToggle" aria-expanded="false" aria-controls="fleetRecoveryPanel"
+              title="Launches held until an operator clears their recovery, across every project">
+        Recovery
+      </button>
       <button class="dash-action" id="rulesToggle" aria-expanded="false" aria-controls="rulesPanel">
         Global Rules
       </button>
@@ -109,6 +113,9 @@
 
   <!-- Eval Audit Panel (expandable) -->
   <div id="auditPanel" class="audit-panel" aria-label="Eval audit overview"></div>
+
+  <!-- Fleet Recovery Panel (expandable, #2049): drawn by fleet-recovery-panel.js -->
+  <div id="fleetRecoveryPanel" class="fleet-recovery-panel" aria-label="Launches waiting on an operator"></div>
 
   <!-- OpenClaw Connection Modal (create/edit) -->
   <div class="modal-backdrop" id="openclawModal">
@@ -769,6 +776,7 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
   <script src="/update-beacon.js"></script>
   <script src="/health-panel.js"></script>
   <script src="/operator-bridge-panel.js"></script>
+  <script src="/fleet-recovery-panel.js"></script>
   <script src="/sw-register.js"></script>
   <script src="/landing.js"></script>
   <!-- Loaded before ui.js: renderCardDetail calls renderNextMarkdown at render time. -->

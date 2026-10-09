@@ -6126,6 +6126,27 @@ function renderAuditPanel() {
   panel.innerHTML = html;
 }
 
+// ── Fleet Recovery Panel (#2049) ──
+
+/**
+ * Toggle the fleet recovery panel open/closed.
+ *
+ * The panel is its own script (fleet-recovery-panel.js); a page that has not
+ * loaded it opens an empty panel. Every opening hands the container to the
+ * panel's mount, which decides what a reopening keeps and what it reads again.
+ * @returns {void}
+ */
+function toggleFleetRecovery() {
+  state.fleetRecoveryOpen = !state.fleetRecoveryOpen;
+  const panel = document.getElementById('fleetRecoveryPanel');
+  const toggle = document.getElementById('fleetRecoveryToggle');
+  panel.classList.toggle('open', state.fleetRecoveryOpen);
+  toggle.classList.toggle('active', state.fleetRecoveryOpen);
+  toggle.setAttribute('aria-expanded', state.fleetRecoveryOpen);
+  if (!state.fleetRecoveryOpen || typeof window.tcMountFleetRecovery !== 'function') return;
+  window.tcMountFleetRecovery(panel, { api, apiMutate });
+}
+
 // ── Project Master (chunk G, #331) ──
 // The global assistant above all projects, bounded by the operator-set access
 // level on its control bar rather than by a fixed read-only rule (#755). The panel embeds the
@@ -6344,6 +6365,7 @@ refreshMasterDot();
 $('portsToggle').addEventListener('click', togglePorts);
 $('openclawToggle').addEventListener('click', toggleOpenclaw);
 $('auditToggle').addEventListener('click', toggleAudit);
+$('fleetRecoveryToggle').addEventListener('click', toggleFleetRecovery);
 $('ocCancelBtn').addEventListener('click', closeConnectionModal);
 $('ocSaveBtn').addEventListener('click', saveConnection);
 $('ocTestBtn').addEventListener('click', testConnection);

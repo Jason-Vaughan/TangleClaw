@@ -39,6 +39,10 @@ const STATIC_ASSETS = [
   // the mount, so a worker that has not learned this file yet degrades to a
   // settings page with no bridge section, never a ReferenceError.
   '/operator-bridge-panel.js',
+  // fleet-recovery-panel.js (#2049) is dual-listed the same way: ui.js guards
+  // the mount, so a worker that has not learned this file yet degrades to an
+  // empty Recovery panel, never a ReferenceError.
+  '/fleet-recovery-panel.js',
   // reconnect-policy.js is dual-listed for the same reason, with a sharper
   // failure mode: a network-first MISS while the network is down returns the
   // synthetic JSON 503, and a `<script src>` served a 503 leaves both pages
@@ -174,6 +178,10 @@ const NETWORK_FIRST_PATHS = new Set([
   // off (#2031). A stale copy behind an active worker is the wrong thing to be
   // holding when the operator needs the kill switch.
   '/operator-bridge-panel.js',
+  // fleet-recovery-panel.js sends an operator's clear of several launches
+  // (#2049). A stale copy behind an active worker could word an outcome the
+  // server has since changed, so it is fetched network-first.
+  '/fleet-recovery-panel.js',
   // reconnect-policy.js is a shared frontend base like api-helper.js: both page
   // scripts call `tcCreateReconnectPolicy` at load, so a stale copy served
   // against a fresh landing.js or session.js is not a cosmetic skew but a

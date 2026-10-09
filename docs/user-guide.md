@@ -176,6 +176,20 @@ Sessions report what they are doing with `tc workload set`, and TangleClaw combi
 
 You can narrow a session's verdict (hold it at unknown, or mark it not safe to clear) through `POST /api/tc/workload/narrowing`. See [Fleet workload](fleet-workload.md). A dashboard view is deferred under the current operator UI freeze.
 
+### Fleet Recovery
+
+A launch whose handoff state needs recovering, in a project set to operator-cleared recovery, is held until a person clears it. Each project's **Launch readiness** panel clears its own. The **Recovery** button in the header opens a panel that lists every such launch on the install and clears several at once (#2049).
+
+- **It needs a login.** The panel is served only to an operator signed in on an install with a login. On an install with no login it shows the server's refusal and offers no control: nothing there could show that whoever sends a fleet-wide clear is the operator. Clear each launch from its project's Launch readiness panel instead.
+- **What is listed:** launches whose recovery is required in operator-cleared mode, whose session's stored status is active, in projects that are not archived. The stored status is the session row's own word; nothing checks that a pane is alive.
+- **The evidence for each launch:** the project, session, launch and recovery revision; the preflight record the launch stored, whole; how the prior session ended (`killed`, `crashed` or `wrapped`, with no reason, because none is recorded); and **Work that may have been queued or in flight**, which opens to show each source. A source reads **recorded**, **none recorded** or **unknown**. "None recorded" from a pruned record is not proof that nothing happened, and each source says how complete it is. Pane input is always unknown: nothing records what was typed or queued in a pane.
+- **Choose, review, clear.** Tick the launches you want, or press **Select all**, then **Review**. The review names exactly what will be sent, by the binding you read. Press **Clear** there to send it. Nothing is sent before that, and **Back to the list** keeps your selection. One batch clears at most 100 launches.
+- **The result** has one line per launch: **Cleared**, **Already clear**, **Changed since you read it** (left alone; refresh and look again), **Not an operator's to clear** (an advisory launch), **Session ended**, **Not found**, **Project archived** or **Failed**. Each clear is recorded permanently under your account with the batch's id, which the result shows.
+- **What each launch says afterwards** is on the second line of each result, with the time it was read: stored recovery and whether the launch is still held, the launch's step cursor, whether a READY attestation is recorded, and the session's stored status. These are observations of the stored record. They do not say what a session is doing, and **Read the launches again** can show something different.
+- **Clearing sends nothing to a session.** It lifts the hold; it types nothing into a pane and wakes nobody.
+- **If the answer is lost** (a dropped connection), send the clear again. A launch that was cleared answers **Already clear**.
+- Opening the panel again reads the list again and keeps your ticks for launches still listed as they were. During a review or a result it keeps what was on screen; **Back to the list** reads the list again.
+
 ### Coordinator Context Rotation
 
 A Codex coordinator (Architect or ProjectManager) that needs to clear its context runs `tc rotation prepare --checkpoint <file>` instead of a bare `/clear`. TangleClaw then holds the coordinator's new dispatch, clears it once its turn ends, and binds the new thread. It tells that thread to reconcile the checkpoint and submit a receipt with `tc rotation resume`. Dispatch resumes only when the receipt checks out. If a rotation cannot finish, the operator ends it with `POST /api/tc/rotation/abandon`. See [Coordinator context rotation](coordinator-rotation.md).

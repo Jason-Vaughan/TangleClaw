@@ -879,6 +879,34 @@ html[data-tc-keyboard] body {
   padding-bottom: 12px;
   overflow-y: auto;
 }
+.fleet-recovery-panel {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease, padding 0.3s ease;
+  padding: 0 16px;
+}
+.fleet-recovery-panel.open {
+  max-height: 70vh;
+  padding-top: 4px;
+  padding-bottom: 12px;
+  overflow-y: auto;
+}
+.fleet-recovery-heading { font-size: 14px; margin: 8px 0 4px; }
+.fleet-recovery-line { font-size: 12px; margin: 2px 0; overflow-wrap: anywhere; }
+/* Secondary, not faint: these lines carry evidence an operator decides on, so
+   they stay well clear of the contrast floor in every theme. */
+.fleet-recovery-muted { opacity: 0.8; }
+.fleet-recovery-binding { font-size: 13px; overflow-wrap: anywhere; }
+.fleet-recovery-item code { font-size: 12px; }
+.fleet-recovery-controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.fleet-recovery-notice { font-size: 12px; margin: 6px 0; }
+.fleet-recovery-list { list-style: none; margin: 0; padding: 0; }
+.fleet-recovery-item { border-top: 1px solid var(--border, #333); padding: 8px 0; }
+.fleet-recovery-pick { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; min-height: 28px; }
+.fleet-recovery-evidence { font-size: 12px; margin-top: 4px; }
+.fleet-recovery-evidence summary { cursor: pointer; }
+.fleet-recovery-evidence ul { margin: 4px 0 0; padding-left: 18px; }
+.fleet-recovery-evidence li { margin: 4px 0; overflow-wrap: anywhere; }
 .badge-audit {
   background: #1a3a2a;
   color: #8be9a0;
