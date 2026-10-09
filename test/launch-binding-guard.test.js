@@ -270,3 +270,99 @@ describe('launch-binding guard: who may reach a mutating route (#2233)', () => {
     }
   });
 });
+
+describe('describeBinding: the verdict on a launch binding, in the floor\'s own words (#2233)', () => {
+  /**
+   * Lookups that answer a fixed binding and a fixed current session.
+   * @param {object} binding - What the binding resolver answers
+   * @param {object|null} [current] - The project's current session
+   * @returns {object}
+   */
+  function bindingDeps(binding, current = null) {
+    return { resolveBinding: () => binding, resolveAccess: () => binding, currentSession: () => current };
+  }
+
+  it('reads verified for a project whose launch is its current session', () => {
+    const d = guard.describeBinding({}, bindingDeps(PROJECT, { id: 488 }));
+    assert.deepEqual(d, {
+      state: 'verified', reason: null, role: 'project', projectId: 48, sessionId: 488, cause: null, recovery: null
+    });
+  });
+
+  it('reads verified for the live Project Master, which has no project and no session row', () => {
+    const d = guard.describeBinding({}, bindingDeps({ kind: KINDS.MASTER, projectId: null, groupIds: [], reason: null }));
+    assert.equal(d.state, 'verified');
+    assert.equal(d.role, 'master');
+    assert.equal(d.projectId, null);
+    assert.equal(d.sessionId, null);
+  });
+
+  it('reads unbound when no launch id was sent, and says how one is sent', () => {
+    const d = guard.describeBinding({}, bindingDeps({ kind: KINDS.UNBOUND, projectId: null, groupIds: [], reason: null }));
+    assert.equal(d.state, 'unbound');
+    assert.equal(d.reason, 'unbound');
+    assert.match(d.cause, /TANGLECLAW_LAUNCH_ID/);
+    assert.match(d.recovery, /launch/);
+  });
+
+  for (const reason of Object.values(INVALID_REASONS)) {
+    it(`reads stale for an invalid binding and names the cause: ${reason}`, () => {
+      const d = guard.describeBinding({}, bindingDeps({ kind: KINDS.INVALID, projectId: null, groupIds: [], reason }));
+      assert.equal(d.state, 'stale');
+      assert.equal(d.reason, reason);
+      assert.equal(d.cause, guard.causeFor(reason));
+      // A tmux that did not answer says nothing about the binding, so that one
+      // reason is told to try again rather than to stop using the pane.
+      if (reason === INVALID_REASONS.MASTER_UNVERIFIABLE) {
+        assert.match(d.recovery, /Try again/);
+        assert.doesNotMatch(d.recovery, /Do not act/);
+      } else {
+        assert.match(d.recovery, /Do not act from this pane/);
+      }
+    });
+  }
+
+  it('reads stale, not verified, for an ACTIVE session that is not its project\'s current one', () => {
+    for (const current of [{ id: 999 }, null]) {
+      const d = guard.describeBinding({}, bindingDeps(PROJECT, current));
+      assert.equal(d.state, 'stale');
+      assert.equal(d.reason, 'session-not-current');
+      assert.equal(d.projectId, 48, 'the project the store recorded is still named');
+    }
+  });
+
+  it('reads stale for a binding kind it does not know rather than verified', () => {
+    const d = guard.describeBinding({}, bindingDeps({ kind: 'something-new', reason: null }));
+    assert.equal(d.state, 'stale');
+  });
+
+  it('never reads operator: it is asked about the binding, and the operator has none', () => {
+    const d = guard.describeBinding({}, bindingDeps({ kind: KINDS.OPERATOR, projectId: null, groupIds: [], reason: null }));
+    assert.equal(d.state, 'stale');
+  });
+
+  it('gives every reason a sentence of its own, and an unknown reason the general one', () => {
+    const reasons = [...Object.values(INVALID_REASONS), 'session-not-current', 'unbound'];
+    const sentences = reasons.map((reason) => guard.causeFor(reason));
+    assert.equal(new Set(sentences).size, reasons.length, 'two reasons share a sentence');
+    assert.equal(guard.causeFor('never-heard-of-it'), guard.causeFor(undefined));
+    assert.ok(!sentences.includes(guard.causeFor(undefined)), 'a known reason fell through to the general sentence');
+  });
+
+  it('the floor refuses in exactly the words the description gives, for every refusal it makes', () => {
+    const refused = [
+      { kind: KINDS.UNBOUND, projectId: null, groupIds: [], reason: null },
+      ...Object.values(INVALID_REASONS).map((reason) => ({ kind: KINDS.INVALID, projectId: null, groupIds: [], reason })),
+      PROJECT
+    ];
+    for (const binding of refused) {
+      const deps = bindingDeps(binding, null);
+      const described = guard.describeBinding({}, deps);
+      const verdict = guard.judge({}, ROUTE, deps);
+      assert.equal(verdict.allowed, false);
+      assert.equal(verdict.reason, described.reason);
+      assert.ok(verdict.message.includes(described.cause), `${described.reason}: the refusal does not carry the cause`);
+      assert.ok(verdict.message.includes(described.recovery), `${described.reason}: the refusal does not carry the recovery`);
+    }
+  });
+});

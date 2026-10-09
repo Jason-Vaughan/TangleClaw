@@ -138,7 +138,7 @@ Once **Instance Dir** is set, the connection's detail panel shows the OpenClaw i
 
 ### Via API:
 
-As above, the request must say who is asking: the `x-tangleclaw-client: dashboard` header works only on an install with no TangleClaw login. With a login in force, use the form above while signed in.
+As above, the request must say who is asking: the `x-tangleclaw-client: dashboard` header works only on an install with no TangleClaw login. With a login in force, send the request from a signed-in session, or create the connection in the dashboard as in the steps before this section.
 
 ```bash
 curl -sk -X POST https://localhost:3102/api/openclaw/connections \

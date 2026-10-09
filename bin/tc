@@ -16,6 +16,10 @@
  *   TANGLECLAW_WORKSPACE_ID - switchboard workspace id (only when minted)
  *   TANGLECLAW_LAUNCH_ID    - this launch's id, bound to its session row (`tc start`)
  *
+ * One local check runs before any request: where this process is in a tmux
+ * pane, its launch identity must be the one tmux recorded for that pane, or
+ * the verb is refused and nothing is sent (`lib/tc-verbs.js#judgePaneIdentity`).
+ *
  * Every failure is LOUD and names what happened — a missing environment says
  * this pane was not launched under TangleClaw, an unreachable server names
  * the exact URL it tried, an API error relays the server's own words. A
@@ -27,7 +31,7 @@
  */
 
 const path = require('node:path');
-const { VERB_ROSTER, renderUsage, receiptVerbLabel, renderBodyTooLarge, renderControlBanner, bridgeCredentialHeader } = require(path.join(__dirname, '..', 'lib', 'tc-verbs.js'));
+const { VERB_ROSTER, renderUsage, receiptVerbLabel, renderBodyTooLarge, renderControlBanner, bridgeCredentialHeader, readPaneEnvironment, judgePaneIdentity, renderPaneMismatch } = require(path.join(__dirname, '..', 'lib', 'tc-verbs.js'));
 
 async function main() {
   const verb = process.argv[2];
@@ -54,6 +58,18 @@ async function main() {
     process.exit(1);
   }
   const origin = api.replace(/\/+$/, '');
+
+  // #2233: before speaking for this pane, compare the launch identity in this
+  // process's environment with the one tmux recorded for the pane it runs in.
+  // A disagreement means every header below would name a launch this pane is
+  // not, so nothing is sent, for any verb. Where the comparison cannot be made
+  // (no pane, no tmux, a pane that recorded no identity) the verb runs, and
+  // `tc whoami` says the check was not made.
+  const paneCheck = judgePaneIdentity({ env: process.env, pane: readPaneEnvironment(process.env) });
+  if (paneCheck.verdict === 'mismatch') {
+    process.stderr.write(renderPaneMismatch(paneCheck));
+    process.exit(2);
+  }
 
   // Provenance headers, sent on EVERY call (not authentication): the server's
   // dispatcher records one awareness receipt per invocation from these, so the
@@ -168,6 +184,7 @@ async function main() {
     api: origin,
     env: process.env,
     argv,
+    paneCheck,
     getJson: (apiPath, opts) => requestJson('GET', apiPath, undefined, opts),
     postJson: (apiPath, body, opts) => requestJson('POST', apiPath, body, opts)
   };

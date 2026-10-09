@@ -3370,9 +3370,8 @@ describe('ensureMasterSession — Codex daemon isolation (#1895)', () => {
     assert.ok(command.endsWith(`; ${CODEX_BIN} --ask-for-approval never --sandbox workspace-write --no-daemon`), command);
   });
 
-  // Until #2233 these four launched the bare command, which leaves the Master
-  // on Codex's shared background process. Architect ruling A163 R3 reverses
-  // that: a Master that cannot be shown isolated does not start.
+  // The bare command leaves the Master on Codex's shared background process,
+  // so a Master that cannot be shown isolated does not start.
   for (const [label, output, reasonCode] of [
     ['an older version that rejects the flag', 'codex-cli 0.154.0\n', 'version_unverified'],
     ['a future version nobody has verified', 'codex-cli 0.158.0\n', 'version_unverified'],

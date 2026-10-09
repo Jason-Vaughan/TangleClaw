@@ -23,6 +23,7 @@ const master = require('../lib/master');
 const sharedDocsAccess = require('../lib/shared-docs-access');
 const { createServer } = require('../server');
 const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
+const { outsidePane } = require('./_tc-env');
 
 const TC_BIN = path.join(__dirname, '..', 'bin', 'tc');
 const MASTER_LAUNCH_ID = 'master-live-launch-id';
@@ -380,7 +381,7 @@ describe('#1626 shared-docs and groups reads answer only a bound caller', () => 
 
     it('`tc docs` from a project pane lists that project\'s documents only', async () => {
       const res = await runTc(['docs'], {
-        ...process.env,
+        ...outsidePane(process.env),
         TANGLECLAW_API: `http://127.0.0.1:${server.address().port}`,
         TANGLECLAW_PROJECT_ID: String(projectA.id),
         TANGLECLAW_LAUNCH_ID: bindingA.launchId
@@ -392,7 +393,7 @@ describe('#1626 shared-docs and groups reads answer only a bound caller', () => 
     });
 
     it('`tc docs` from the Master pane lists every group\'s documents', async () => {
-      const env = { ...process.env, TANGLECLAW_API: `http://127.0.0.1:${server.address().port}`,
+      const env = { ...outsidePane(process.env), TANGLECLAW_API: `http://127.0.0.1:${server.address().port}`,
         TANGLECLAW_ROLE: 'master', TANGLECLAW_LAUNCH_ID: MASTER_LAUNCH_ID };
       delete env.TANGLECLAW_PROJECT_ID;
       const res = await runTc(['docs'], env);

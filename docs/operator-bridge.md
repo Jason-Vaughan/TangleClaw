@@ -900,6 +900,8 @@ two has its own answer, so no request could ever have reached that refusal.
 
 ## The operator's routes
 
+Every `POST`, `PUT`, `PATCH` and `DELETE` here must come from an identified caller before its route runs: see "Who may write" in `docs/configuration-reference.md`. These routes then ask for more than that:
+
 For the operator only, **signed in with an account session**. A request that merely looks like
 the dashboard while the auth gate is open is refused with `403 OPERATOR_SESSION_REQUIRED`: on
 an install with no accounts, bridge policy cannot be changed at all. Every change is audited

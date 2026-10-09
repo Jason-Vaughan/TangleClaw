@@ -318,9 +318,8 @@ describe('startupControl at launch and teardown (codex)', () => {
     return { result, name };
   }
 
-  // Until #2233 each of these launched the bare `codex` command, which leaves
-  // the pane on Codex's shared background process. Architect ruling A163 R3
-  // reverses that contract: such a launch does not start.
+  // The bare `codex` command leaves the pane on Codex's shared background
+  // process, so a launch that cannot be shown isolated does not start.
   for (const [label, probe, reasonCode] of [
     ['a version that predates the isolation flag', () => 'codex-cli 0.150.0\n', 'version_unverified'],
     ['a version newer than any verified one', () => 'codex-cli 0.161.0\n', 'version_unverified'],
