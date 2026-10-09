@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.32.0] - 2026-10-08
+
+> **Known open issues:** [#2233](https://github.com/Jason-Vaughan/TangleClaw/issues/2233) and [#2241](https://github.com/Jason-Vaughan/TangleClaw/issues/2241) track command-tool processes inheriting another session's TangleClaw identity. This release does not claim to fix cross-session tool identity or to provide complete Operator authentication on installs whose login gate is open or in fallback. If the visible launch context, tmux session environment, and `tc whoami` disagree, stop project-scoped mutations and preserve the mismatch evidence.
+
 ### Added
 
 - **A live public roadmap is now linked from the repository README and `ROADMAP.md`.** The generated view groups work by named release and workstream, shows issue order, dependencies, and live status, and keeps public work without a designed version in an Unsorted issues bucket. Security and internal items remain filtered.
