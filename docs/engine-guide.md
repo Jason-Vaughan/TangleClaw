@@ -911,8 +911,8 @@ gives each live session and the Project Master one verdict:
 |---|---|
 | `ISOLATED` | Codex was started from an exact executable path, either attached to the server TangleClaw started for that session (`native-app-server`) or with `--no-daemon` (`no-daemon`). |
 | `NOT ISOLATED` | A Codex session whose command does not show that: most often the bare name `codex`, which is how Codex was started before the launch check existed. |
-| `NOT SHOWN ISOLATED` | The command could not be read or judged: tmux did not answer, the pane records no start command, or the command could not be read back exactly. Treat it as not isolated. |
-| `not applicable` | An engine with no shared background process, a session that runs on another machine, or a session tmux has no pane for. |
+| `NOT SHOWN ISOLATED` | The command could not be read or judged: tmux did not answer or failed, the pane records no start command, the command could not be read back exactly, or the session's tmux name could not be worked out. Treat it as not isolated. |
+| `not applicable` | An engine with no shared background process, a session that runs on another machine, or a session tmux has no pane for. The last is read only from a tmux that listed its panes, or that said it has no server running. |
 
 Cutover after an upgrade, or after installing a different Codex version:
 
@@ -1125,9 +1125,12 @@ the newest version does not launch, so skip it (Escape).
 
 - **Sessions already running.** The check runs when a pane is created. A Codex session started before
   the upgrade keeps running on whatever command started it, isolated or not, and nothing ends it.
-- **Operator cutover.** After upgrading TangleClaw, end every Codex session and the Project Master if
-  it runs Codex, then launch them again. Each relaunch either starts isolated or is refused with the
-  reason. Until that is done for a session, this check says nothing about it.
+- **Operator cutover.** After upgrading TangleClaw, run `tc sessions isolation` to see which running
+  sessions were not started isolated, end and relaunch those, and check with `--replaced`: the steps
+  are under "Sessions that were already running" above. Each relaunch either starts isolated or is
+  refused with the reason. The launch check itself says nothing about a session until it is
+  relaunched; the inventory is what reads the ones still running. If the inventory cannot be read,
+  end and relaunch every Codex session, and the Project Master if it runs Codex.
 - **A refused executable is never run.** Whether the resolved executable may be run as Codex at all (it
   is named `codex`, and its path can be placed in a command) is decided before the version probe and
   before the per-launch server, both of which execute that path. A wrapper or an unnameable path is

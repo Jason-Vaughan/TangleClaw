@@ -131,6 +131,20 @@ describe('GET /api/launch/isolation (#2233)', () => {
     assert.ok(res.data.sessions.filter((s) => s.role === 'project').every((s) => s.verdict === 'unknown' && s.reasonCode === 'tmux_unanswered'));
   });
 
+  it('a tmux that failed is not an empty fleet: every pane reads not shown isolated, down to what tc prints', async () => {
+    logger.setConsoleStream({ write: () => {} });
+    tmux._async.execFile = (_b, _a, _o, cb) => setImmediate(() => cb(Object.assign(new Error('Command failed: tmux list-panes -a\nprotocol version mismatch (client 8, server 7)\n'), { code: 1 }), ''));
+    const res = await sendAs(server, 'GET', '/api/launch/isolation', undefined, binding.headers);
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.data.tmux, { answered: false, cause: 'tmux-failed' });
+    assert.equal(res.data.summary['not-applicable'], 0);
+    assert.ok(res.data.sessions.some((s) => s.role === 'master'), 'the Master is listed, because it may be running');
+    const printed = verbs.renderIsolation(res.data);
+    assert.match(printed.split('\n')[0], /tmux did not answer \(tmux-failed\)/);
+    assert.doesNotMatch(printed, /No live session needs relaunching/);
+    assert.match(printed, /NOT SHOWN ISOLATED/);
+  });
+
   it('with ?replaced, says what became of each earlier session', async () => {
     const p = store.projects.create({ name: 'iso-relaunch', path: fs.mkdtempSync(path.join(tmpDir, 'r-')), engine: 'codex' });
     const first = bindProject(p);
@@ -218,6 +232,16 @@ describe('tc sessions isolation (#2233)', () => {
 
   it('prints an empty fleet as an answer', () => {
     assert.match(verbs.renderIsolation({ ...INV, sessions: [], summary: {} }), /No live TangleClaw sessions/);
+  });
+
+  it('still prints what became of earlier sessions when nothing is live', () => {
+    const out = verbs.renderIsolation({
+      ...INV, sessions: [], summary: {},
+      replaced: [{ sessionId: 2, outcome: 'ended-not-relaunched', replacedBy: null, detail: 'Ended, and its project has no running session.' }]
+    });
+    assert.match(out, /No live TangleClaw sessions/);
+    assert.match(out, /#2: ended-not-relaunched\. Ended, and its project has no running session\./);
+    assert.match(out, /0 of 1 ended and relaunched isolated/);
   });
 
   it('prints what became of each earlier session', () => {

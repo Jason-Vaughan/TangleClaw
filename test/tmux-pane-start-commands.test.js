@@ -106,11 +106,30 @@ describe('tmux.listPaneStartCommands', () => {
     assert.deepEqual(read.sessions.get('alpha'), ['top\textra']);
   });
 
-  it('reads a tmux with no server as an answer: nothing is live', async () => {
-    fakeTmux(() => ({ error: Object.assign(new Error('no server running on /tmp/tmux-501/default'), { code: 1 }) }));
-    const read = await tmux.listPaneStartCommands();
-    assert.deepEqual({ answered: read.answered, cause: read.cause, size: read.sessions.size }, { answered: true, cause: null, size: 0 });
-  });
+  for (const said of [
+    'no server running on /private/tmp/tmux-501/default',
+    'error connecting to /private/tmp/tmux-501/default (No such file or directory)'
+  ]) {
+    it(`reads "${said.split(' /')[0]}" as an answer: nothing is live`, async () => {
+      fakeTmux(() => ({ error: Object.assign(new Error(`Command failed: tmux list-panes -a\n${said}\n`), { code: 1 }) }));
+      const read = await tmux.listPaneStartCommands();
+      assert.deepEqual({ answered: read.answered, cause: read.cause, size: read.sessions.size }, { answered: true, cause: null, size: 0 });
+    });
+  }
+
+  for (const said of [
+    'protocol version mismatch (client 8, server 7)',
+    'error connecting to /private/tmp/tmux-501/default (Permission denied)',
+    'lost server',
+    ''
+  ]) {
+    it(`reads any other failure as no answer, never as an empty fleet: "${said}"`, async () => {
+      logger.setConsoleStream({ write: () => {} });
+      fakeTmux(() => ({ error: Object.assign(new Error(`Command failed: tmux list-panes -a\n${said}\n`), { code: 1 }) }));
+      const read = await tmux.listPaneStartCommands();
+      assert.deepEqual({ answered: read.answered, cause: read.cause, size: read.sessions.size }, { answered: false, cause: 'tmux-failed', size: 0 });
+    });
+  }
 
   it('reads a tmux it had to stop as no answer', async () => {
     logger.setConsoleStream({ write: () => {} });

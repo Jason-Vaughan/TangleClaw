@@ -258,6 +258,14 @@ describe('the launch-isolation inventory', () => {
     assert.deepEqual([inv.sessions[0].verdict, inv.sessions[0].reasonCode], ['not-applicable', 'no_local_pane']);
   });
 
+  it('unknown: the row records no tmux name and its project could not be read, so there is no name to look up', async () => {
+    const d = deps({ live: [row(1, 'codex', { tmuxSession: null })], panes: { '': [`${FLOOR}claude`] } });
+    d.project = () => { throw new Error('database is locked'); };
+    const inv = await inventory.inventory(d);
+    assert.deepEqual([inv.sessions[0].verdict, inv.sessions[0].reasonCode], ['unknown', 'session_name_unknown']);
+    assert.equal(inv.summary['not-applicable'], 0);
+  });
+
   it('falls back to the project\'s tmux name when the row records none', async () => {
     const inv = await inventory.inventory(deps({ live: [row(1, 'claude', { tmuxSession: null })], panes: { 'project-10': [`${FLOOR}claude`] } }));
     assert.equal(inv.sessions[0].verdict, 'not-applicable');
