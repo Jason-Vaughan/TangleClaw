@@ -685,5 +685,4 @@
 
   global.tcCreateFleetRecoveryPanel = tcCreateFleetRecoveryPanel;
   global.tcMountFleetRecovery = tcMountFleetRecovery;
-  global.tcFleetRecoveryRoutes = ROUTES;
 })(typeof window !== 'undefined' ? window : globalThis);

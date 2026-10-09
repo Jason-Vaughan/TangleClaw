@@ -35,6 +35,25 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-09 — #2049: close-out
+
+<!-- prawduct: type=docs | scope=2049-fleet-recovery-clearance -->
+
+#2049 chunk 6, the last chunk of the plan, by the Operator's word ("start chunk 06") to TC-RM01 under RM-LEASE generation 6. Branch `feat/2049-close-out`, from `origin/main` `39a68a8d`.
+
+Visual change: no
+
+**What changed.**
+- **The panel script no longer publishes its route table.** `public/fleet-recovery-panel.js` set `tcFleetRecoveryRoutes` on the page and nothing read it (the PR #2252 review's first note). It is deleted, and `test/fleet-recovery-panel.test.js` now holds the script to the two names it publishes, by comparing the page's names before and after the script runs.
+- **The user guide's Fleet Recovery section says what each "Back to the list" does.** The result's button reads the list again; the review's returns to the list as it was, without reading. The sentence used to say the first of both (the PR #2252 review's second note).
+- **The user guide and `CHANGELOG.md` say what the result shows when the read-back fails:** what the clear itself re-read of each launch. The behaviour shipped in chunk 5's second commit; the two documents had not said it.
+- `FEATURES.md`: the panel test's line names the new check.
+
+**What was checked and left as it is.** `docs/configuration-reference.md`'s rows for `GET /api/launch/recovery-held`, `POST /api/launch/recovery-clear-batch`, `GET /api/launch/recovery-clear-batch/:batchId` and the single clear were compared with what the routes answer on a temp store: every answer field named, the refusals for a missing login, a missing sign-in, a missing CSRF token, an empty list, an unknown field, a non-number id, a duplicate and a list over the limit, the unknown batch id and the single clear of a cleared launch. Nothing differed, so the file is not edited.
+
+**Every open criterion on #2049, run.** A script drove criteria 1 to 7, 9 and 10 through the real request handler on a temp store, then drove the real panel controller over those same routes. All of its checks passed, on `39a68a8d` before the edits above and again with them; the build plan's chunk 6 section holds the per-criterion result and the commit it ran on. It is the request handler in a process, not a listening server, and no browser. The panel in a browser is VRF-001's record.
+
+**Not done here, by decision:** criterion 8 (wake/resume) is issue #2250 and criterion 11 (stop provenance) is issue #2249.
 ## 2026-10-09 — #2233: a session can ask what its launch identity is worth (diagnostics)
 
 <!-- prawduct: type=bugfix | scope=2233-launch-identity-containment -->
