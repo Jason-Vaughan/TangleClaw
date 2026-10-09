@@ -59,6 +59,26 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 **Not covered.** The pane check's blind spot above. A signal that does not travel with the inherited environment (the tool shell's working directory against the claimed project's path) is proposed to the Operator as its own issue and is not built.
 
+**Review (rev-20261009T161447Z-34ebf192, boundary, three reviewers): 0 blocking.** The two warnings and four of the notes are fixes that ride Chunk 04's first commit and are written in the build plan's section 6d.
+
+**rev-20261009T161447Z-34ebf192** — scope `2233-launch-identity-containment`, chunk 03, 2026-10-09T16:18:49Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | Real, and not reachable under launchd: it needs the server started by hand from a TangleClaw-launched pane. Fix (strip TMUX and TMUX_PANE from the environment of a process the server spawns to carry a launch identity, with a test) rides Chunk 04's first commit; written in the build plan section 6d, which is the chunk that rehearses a native Codex launch. |
+| R-2 | note | accepted | A test tying the guide's quoted literal to renderWhoami rides Chunk 04's first commit; written in the build plan section 6d. |
+| R-3 | note | accepted | Accepted as designed and recorded as a decision in the plan: the guard answers three states, the report adds unknown and unreported, and each is tested at the renderer. Aligning master-unverifiable with NOT CHECKED rides Chunk 04's first commit; written in the build plan section 6d. |
+| R-4 | note | accepted | One owner for the stale recovery sentence is not possible by import (lib/tc-verbs.js stays free of server modules); a test holding the two literals equal rides Chunk 04's first commit; written in the build plan section 6d. |
+| R-5 | note | accepted | The exit-code headers in bin/tc and lib/tc-verbs.js gain the local refusal; doc-only, rides Chunk 04's first commit; written in the build plan section 6d. |
+| R-6 | note | accepted | Not added on this branch; the mirrored Global Rules are the Operator's to move. |
+| R-7 | warning | accepted | One log.warn for a stale whoami verdict rides Chunk 04's first commit; written in the build plan section 6d. |
+| R-8 | note | accepted | Left out deliberately until someone traces whether a workspace id may legitimately change within a session; the question is in the plan section 6d for Chunk 04. |
+| R-9 | note | accepted | No action: the learnings tree is gitignored and exists only in the primary checkout. |
+| R-10 | note | accepted | No action. |
+| R-11 | note | accepted | No action. |
+
+**11 findings** (2 warning, 9 note) — accepted: 11.
+
 ## 2026-10-09 — #2049: two defects in the fleet recovery panel, found by using it
 
 <!-- prawduct: type=bugfix | scope=2049-fleet-recovery-clearance -->
