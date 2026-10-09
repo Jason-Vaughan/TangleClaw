@@ -59,6 +59,40 @@ Visual change: no
 
 **Tests.** `test/tmux-pane-start-commands.test.js`, `test/launch-isolation-inventory.test.js` and `test/launch-isolation-route.test.js` are new; `test/identity-diagnostics.test.js`, `test/tc-pane-identity.test.js` and `test/startup-control-launch.test.js` gain the carried cases. The carried cases were run red first. The inventory's tests were written before its code and first run after it, so they were red only in that the module did not exist.
 
+**Review.** The boundary review found that a tmux failure other than a timeout or a spawn failure was read as an answered empty fleet, which the `no_pane` decision above then printed as nothing to act on: one blocking finding and two warnings, all the same defect. Fixed in the third commit: the pane reader answers an empty fleet only when tmux itself says it has no server, and a session with no derivable tmux name is `unknown`. The verification pass found the three resolved. R-2 and R-4 were fixed in that same commit and read as fixed by the verification pass; the table shows them accepted because the ledger records a code fix only for blocking and warning findings.
+
+**rev-20261009T194749Z-aea188d8** — scope `2233-launch-identity-containment`, 2026-10-09T19:51:08Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | fixed | The inventory reads `not-applicable` (no action) for an absence tmux never reported: any non-zero tmux exit, and a session whose tmux name is not known |
+| R-2 | note | accepted | Fixed in 976ca73c9 (renderIsolation prints the earlier-sessions block for an empty fleet, with a test); the verification pass rev-20261009T195435Z-7e23e824 read it as fixed. Recorded here because the ledger takes a FIXED for a code path only through a resolution, and resolutions cover blocking and warning findings. |
+| R-3 | warning | fixed | A failed read can arrive at `no_pane`, which the inventory prints as nothing to act on |
+| R-4 | note | accepted | Fixed in 976ca73c9 (the reader's comment now states the difference from _readSessionNames as deliberate, and why); read as fixed by rev-20261009T195435Z-7e23e824. Recorded as an accept for the same ledger reason as R-2. |
+| R-5 | note | fixed-unreviewed | fixed in `docs/engine-guide.md` |
+| R-6 | note | fixed-unreviewed | fixed in `docs/configuration-reference.md` |
+| R-7 | note | accepted | The reuse is deliberate: one definition of which engines need a judgment and of each wrapper, shared with the launch path, and the inventory's tests run the real helpers. Making them public is a rename with no behaviour, better done with the server.js split in #2248. |
+| R-8 | blocking | fixed | A tmux that exits with an error other than 'no server running' reads as an answered empty fleet, so the inventory reports every live session 'not applicable' and says nothing needs relaunching |
+| R-9 | note | accepted | Informational: the learnings corpus is local-only in the primary checkout by design, and the reviewer read it from there. |
+| R-10 | note | accepted | Informational: nothing to reconcile; #2233 stays open until the live proofs run. |
+| R-11 | note | accepted | Informational: the records pass found nothing to change. |
+
+**11 findings** (1 blocking, 2 warning, 8 note) — accepted: 6, fixed: 3, fixed-unreviewed: 2.
+
+**rev-20261009T195435Z-7e23e824** — scope `2233-launch-identity-containment`, chunk 04, 2026-10-09T19:55:46Z
+
+_No findings._
+
+_Observations — read, not owed. Answering one is optional._
+
+| Observation | State | Detail |
+|---|---|---|
+| O-1 | accepted | Being discharged, not waived: the full suite is running on this exact tree and is recorded from its JUnit report before the PR is marked ready. |
+| O-2 | accepted | The verdict is right either way (no answer), and the case needs tmux to die without writing to stderr. Not worth a review round for a log field. |
+
+**No findings** — a clean pass.
+**2 observations demoted** — 2 answered. An observation gates nothing; answering one is optional.
+
 ## 2026-10-09 — #2049: close-out
 
 <!-- prawduct: type=docs | scope=2049-fleet-recovery-clearance -->
