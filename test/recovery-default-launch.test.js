@@ -379,6 +379,32 @@ describe('the default recovery mode a launch freezes (#1937)', () => {
       }
     });
 
+    it('points at the setting for future launches exactly where it points at the panel', () => {
+      const pointer = /That panel also sets the recovery mode this project's future launches use\.$/;
+      for (const state of gates) {
+        for (const [name, projectNow] of Object.entries(reasons)) {
+          const hint = launchSequence.operatorHeldHint(projectNow, state);
+          assert.equal(pointer.test(hint.text), hint.clear === 'signed-in-operator' || hint.clear === 'unverified',
+            `${name} in ${state}: a state whose action must not send anyone to the panel does not say what else it does`);
+        }
+      }
+    });
+
+    it('fits the withheld step, the smallest page budget and one line in every gate state', () => {
+      for (const state of gates) {
+        gate(state);
+        const project = makeProject({ fileMode: 'operator' });
+        store.projectRecoveryState.recordDecision(project.id, 'operator', 'operator');
+        const { id } = launch(project);
+        ackThroughState(id);
+        const held = launchSequence.next(id).body;
+        assert.equal(held.withheld, true, String(state));
+        assert.ok(held.content.includes(held.status.recoveryHint), String(state));
+        assert.ok(held.content.length <= launchSequence.MIN_PAGE_BUDGET,
+          `${state}: the withheld step is ${held.content.length} characters, within the smallest budget a page is given`);
+      }
+    });
+
     it('does not say the install has no login for the not-armed reason, which covers five states', () => {
       for (const state of gates.filter((s) => s !== 'open')) {
         assert.doesNotMatch(launchSequence.operatorHeldHint(reasons['not-armed'], state).text, /no login/, String(state));
