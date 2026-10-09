@@ -205,16 +205,24 @@
   /**
    * The uncertain-work evidence of one launch, folded behind a summary that
    * already says how many parts hold something and how many are unknown.
+   *
+   * The fold carries the launch's key and is drawn open when the operator has
+   * opened it: the panel redraws on every tick of a checkbox, and a fold that
+   * closed each time would lose the reader's place in the evidence they are
+   * deciding on.
    * @param {object[]|undefined} parts - `uncertainWork` from the fleet read
+   * @param {string} key - The launch's key ({@link keyOf})
+   * @param {boolean} open - Whether the operator has this fold open
    * @returns {string} Markup, already escaped
    */
-  function uncertainWorkHtml(parts) {
+  function uncertainWorkHtml(parts, key, open) {
     if (!Array.isArray(parts)) {
       return '<div class="fleet-recovery-line rules-status-err">Work that may have been queued or in flight: '
         + 'the server sent no evidence for this launch.</div>';
     }
     const count = (state) => parts.filter((part) => part.state === state).length;
-    return '<details class="fleet-recovery-evidence"><summary>Work that may have been queued or in flight: '
+    return `<details class="fleet-recovery-evidence" data-fleet-fold="${escapeHtml(key)}"${open ? ' open' : ''}>`
+      + '<summary>Work that may have been queued or in flight: '
       + `${count('recorded')} recorded, ${count('none-recorded')} none recorded, ${count('unavailable')} unknown</summary>`
       + `<ul>${parts.map(partHtml).join('')}</ul></details>`;
   }
@@ -285,7 +293,7 @@
    * @param {object} deps
    * @param {Function} deps.api - The page's `api()`; its `lastError` and `lastErrorCode` say why a call returned null.
    * @param {Function} deps.apiMutate - The page's `apiMutate(url, method, body)`, which carries the CSRF token.
-   * @returns {{load: function(): Promise<void>, act: function(string, object=): Promise<void>, html: function(): string, state: object}}
+   * @returns {{load: function(): Promise<void>, act: function(string, object=): Promise<void>, fold: function(string, boolean): void, html: function(): string, state: object}}
    */
   function tcCreateFleetRecoveryPanel(deps) {
     const state = {
@@ -297,6 +305,8 @@
       refused: null,
       /** The keys ({@link keyOf}) of the launches the operator chose. */
       selected: new Set(),
+      /** The keys of the launches whose evidence fold the operator has open. */
+      unfolded: new Set(),
       /** The launches under review, as read when Review was pressed. */
       reviewing: [],
       /** The batch clear's own answer. */
@@ -336,6 +346,7 @@
         state.held = null;
         state.refused = lastError();
         state.selected.clear();
+        state.unfolded.clear();
         return;
       }
       state.held = held;
@@ -344,6 +355,22 @@
       for (const key of [...state.selected]) {
         if (!listed.has(key)) state.selected.delete(key);
       }
+      for (const key of [...state.unfolded]) {
+        if (!listed.has(key)) state.unfolded.delete(key);
+      }
+    }
+
+    /**
+     * Record that the operator opened or closed one launch's evidence fold.
+     * Nothing is redrawn: the browser has already moved the fold, and this
+     * only makes the next redraw agree with it.
+     * @param {string} key - The launch's key ({@link keyOf})
+     * @param {boolean} open - Whether the fold is open now
+     * @returns {void}
+     */
+    function fold(key, open) {
+      if (open) state.unfolded.add(key);
+      else state.unfolded.delete(key);
     }
 
     /**
@@ -472,7 +499,7 @@
           <div class="fleet-recovery-line fleet-recovery-muted">Launched ${escapeHtml(launch.createdAt)} | recovery ${stored(launch.recovery)} in ${stored(launch.recoveryMode)} mode | session's stored status ${stored(launch.sessionStatus && launch.sessionStatus.value)}; nothing checked that its pane is alive</div>
           ${preflightHtml(launch.preflight)}
           ${priorSessionHtml(launch.priorSession)}
-          ${uncertainWorkHtml(launch.uncertainWork)}
+          ${uncertainWorkHtml(launch.uncertainWork, key, state.unfolded.has(key))}
         </li>`;
       }).join('');
       return '<h3 class="fleet-recovery-heading" tabindex="-1">Launches waiting on an operator</h3>'
@@ -579,7 +606,7 @@
       return listHtml();
     }
 
-    return { load, act, html, state };
+    return { load, act, fold, html, state };
   }
 
   /** What is drawn in each container: `{panel, draw}`. */
@@ -643,6 +670,12 @@
       await acting;
       draw(selector, phaseBefore);
     });
+    // `toggle` does not bubble, so it is caught on the way down.
+    container.addEventListener('toggle', (evt) => {
+      const target = evt && evt.target;
+      const key = target && target.dataset && target.dataset.fleetFold;
+      if (key) panel.fold(key, Boolean(target.open));
+    }, true);
     mounted.set(container, { panel, draw });
     draw();
     await panel.load();
