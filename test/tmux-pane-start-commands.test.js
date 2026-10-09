@@ -43,7 +43,12 @@ describe('tmux.unquoteStartCommand', () => {
     ['a quoted command', '"claude --dangerously-skip-permissions"', 'claude --dangerously-skip-permissions'],
     ['the three characters tmux escapes inside quotes', '"export PATH=\\"/a b/bin:\\$PATH\\"; x \\\\ y"', 'export PATH="/a b/bin:$PATH"; x \\ y'],
     ['characters tmux leaves alone', '"X=\'q\' sleep 30 ~ ! `x`"', 'X=\'q\' sleep 30 ~ ! `x`'],
-    ['a pane with no start command', '', '']
+    ['a pane with no start command', '', ''],
+    ['a variable as tmux 3.4 escapes it, with two backslashes', '"export PATH=\\"/x y/bin:\\\\$PATH\\"; sleep 30"', 'export PATH="/x y/bin:$PATH"; sleep 30'],
+    ['a braced variable as tmux 3.4 escapes it', '"echo \\\\${HOME}"', 'echo ${HOME}'],
+    ['a real backslash before a variable, as tmux 3.4 writes it', '"a\\\\\\\\$HOME"', 'a\\$HOME'],
+    ['a real backslash before a variable, as tmux 3.3a and 3.6a write it', '"a\\\\\\$HOME"', 'a\\$HOME'],
+    ['a real backslash before a dollar that opens no name, which every version writes the same way', '"a\\\\$1 b\\\\$"', 'a\\$1 b\\$']
   ]) {
     it(`reads ${label}`, () => {
       assert.equal(tmux.unquoteStartCommand(printed), expected);
