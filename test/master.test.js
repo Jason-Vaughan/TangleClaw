@@ -2989,11 +2989,14 @@ describe('master API routes over HTTP', () => {
     await new Promise((resolve) => server.close(resolve));
   });
 
+  // The writes here (ensure, kill) are the dashboard's Master bar, so they say
+  // so with the header its fetch wrapper adds; a write from a caller that does
+  // not say who it is never reaches the route (#2233).
   function request(method, urlPath) {
     return new Promise((resolve, reject) => {
       const req = http.request({
         hostname: '127.0.0.1', port: server.address().port, path: urlPath, method,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json', ...(method === 'GET' ? {} : { 'X-TangleClaw-Client': 'dashboard' }) }
       }, (res) => {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
@@ -3459,6 +3462,22 @@ describe('ensureMasterSession — Codex daemon isolation (#1895)', () => {
       assert.equal(command, null);
     } finally {
       codexAdapter.judgeLaunchCommand = realJudge;
+    }
+  });
+
+  it('refuses a Codex Master when the Codex admission check is missing, before the executable is asked anything', () => {
+    codexAnswers('codex-cli 0.157.1\n');
+    const realAdmit = codexAdapter.admitExecutable;
+    delete codexAdapter.admitExecutable;
+    try {
+      const { result, command } = ensureWith({ engine: 'codex' });
+      assert.equal(result.created, false);
+      assert.equal(result.code, 'LAUNCH_ISOLATION_UNVERIFIED');
+      assert.equal(result.isolation.reasonCode, 'no_judge');
+      assert.equal(command, null);
+      assert.deepEqual(probed, [], 'the executable is never asked its version');
+    } finally {
+      codexAdapter.admitExecutable = realAdmit;
     }
   });
 

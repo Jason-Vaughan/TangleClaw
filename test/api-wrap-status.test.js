@@ -24,6 +24,7 @@ const { createServer } = require('../server');
 const wrapPipelineMod = require('../lib/wrap-pipeline');
 const wrapRunRegistry = require('../lib/wrap-run-registry');
 const serverInfo = require('../lib/server-info');
+const { operatorHeaders } = require('./_shared-docs-callers');
 
 /**
  * Make an HTTP request to the test server.
@@ -31,13 +32,14 @@ const serverInfo = require('../lib/server-info');
  * @param {string} method
  * @param {string} urlPath
  * @param {object} [body]
+ * @param {Record<string, string>} [callerHeaders] - Who is asking
  * @returns {Promise<{ status: number, body: object }>}
  */
-function request(server, method, urlPath, body) {
+function request(server, method, urlPath, body, callerHeaders = {}) {
   return new Promise((resolve, reject) => {
     const addr = server.address();
     const bodyStr = body != null ? JSON.stringify(body) : null;
-    const headers = { 'Content-Type': 'application/json' };
+    const headers = { 'Content-Type': 'application/json', ...callerHeaders };
     if (bodyStr != null) headers['Content-Length'] = Buffer.byteLength(bodyStr);
     const req = http.request(
       { hostname: '127.0.0.1', port: addr.port, path: urlPath, method, headers },
@@ -60,6 +62,19 @@ function request(server, method, urlPath, body) {
     if (bodyStr != null) req.write(bodyStr);
     req.end();
   });
+}
+
+/**
+ * A request from the operator's dashboard: the wrap drawer starts a wrap, and
+ * the restart control is the dashboard's.
+ * @param {http.Server} server
+ * @param {string} method
+ * @param {string} urlPath
+ * @param {object} [body]
+ * @returns {Promise<{ status: number, body: object }>}
+ */
+function operatorRequest(server, method, urlPath, body) {
+  return request(server, method, urlPath, body, operatorHeaders(server));
 }
 
 describe('api wrap-run status + single-flight (#583)', () => {
@@ -151,7 +166,7 @@ describe('api wrap-run status + single-flight (#583)', () => {
         return { ...EMPTY_PIPELINE_RESULT };
       };
 
-      const post = await request(server, 'POST', '/api/sessions/wrap-run-test/wrap', {});
+      const post = await operatorRequest(server, 'POST', '/api/sessions/wrap-run-test/wrap', {});
       assert.equal(post.status, 202, 'the POST answers once the run is claimed, before the pipeline finishes');
       // Poll until the pipeline has reported its first step (bounded spin).
       let status;
@@ -198,7 +213,7 @@ describe('api wrap-run status + single-flight (#583)', () => {
         return { ...EMPTY_PIPELINE_RESULT };
       };
 
-      const first = await request(server, 'POST', '/api/sessions/wrap-run-test/wrap', {});
+      const first = await operatorRequest(server, 'POST', '/api/sessions/wrap-run-test/wrap', {});
       assert.equal(first.status, 202);
       let status;
       for (let i = 0; i < 50; i++) {
@@ -208,7 +223,7 @@ describe('api wrap-run status + single-flight (#583)', () => {
       }
       assert.equal(status.body.running, true, 'precondition: first wrap is in flight');
 
-      const second = await request(server, 'POST', '/api/sessions/wrap-run-test/wrap', {});
+      const second = await operatorRequest(server, 'POST', '/api/sessions/wrap-run-test/wrap', {});
       assert.equal(second.status, 409, 'concurrent wrap is refused');
       assert.equal(second.body.code, 'WRAP_IN_PROGRESS');
       assert.match(second.body.error, /already running/);
@@ -264,7 +279,7 @@ describe('api wrap-run status + single-flight (#583)', () => {
       // the test independent of pipeline timing.
       wrapRunRegistry.begin('wrap-run-test', 1);
       try {
-        const res = await request(server, 'POST', '/api/server/restart', {});
+        const res = await operatorRequest(server, 'POST', '/api/server/restart', {});
         assert.equal(res.status, 409);
         assert.equal(res.body.code, 'WRAP_RESTART_BLOCKED');
         assert.match(res.body.error, /wrap-run-test/, 'refusal names the wrapping project');
@@ -286,11 +301,11 @@ describe('api wrap-run status + single-flight (#583)', () => {
       serverInfo.detectRestartMechanism = () => null;
       try {
         wrapRunRegistry.begin('wrap-run-test', 1);
-        const blocked = await request(server, 'POST', '/api/server/restart', {});
+        const blocked = await operatorRequest(server, 'POST', '/api/server/restart', {});
         assert.equal(blocked.status, 409, 'a live wrap still blocks — the guard is not disabled');
 
         fakeNow += wrapRunRegistry.STALE_RUN_MS;
-        const res = await request(server, 'POST', '/api/server/restart', {});
+        const res = await operatorRequest(server, 'POST', '/api/server/restart', {});
         assert.equal(res.status, 501,
           'the wedged run no longer blocks: the request reached mechanism detection (stubbed null)');
       } finally {
@@ -312,7 +327,7 @@ describe('api wrap-run status + single-flight (#583)', () => {
       };
       serverInfo.buildRestartCommand = () => { built = true; return 'true'; };
       try {
-        const res = await request(server, 'POST', '/api/server/restart', {});
+        const res = await operatorRequest(server, 'POST', '/api/server/restart', {});
         assert.equal(res.status, 409);
         assert.equal(res.body.code, 'WRAP_RESTART_BLOCKED');
         assert.equal(built, false, 'no restart may be scheduled once a wrap is running');
@@ -329,7 +344,7 @@ describe('api wrap-run status + single-flight (#583)', () => {
       const realDetect = serverInfo.detectRestartMechanism;
       serverInfo.detectRestartMechanism = () => null;
       try {
-        const res = await request(server, 'POST', '/api/server/restart', { force: true });
+        const res = await operatorRequest(server, 'POST', '/api/server/restart', { force: true });
         assert.equal(res.status, 501,
           'force reached mechanism detection (stubbed null) — the wrap guard was bypassed');
       } finally {
@@ -342,7 +357,7 @@ describe('api wrap-run status + single-flight (#583)', () => {
       const realDetect = serverInfo.detectRestartMechanism;
       serverInfo.detectRestartMechanism = () => null;
       try {
-        const res = await request(server, 'POST', '/api/server/restart', {});
+        const res = await operatorRequest(server, 'POST', '/api/server/restart', {});
         assert.equal(res.status, 501, 'reaches mechanism detection with no wrap running');
       } finally {
         serverInfo.detectRestartMechanism = realDetect;

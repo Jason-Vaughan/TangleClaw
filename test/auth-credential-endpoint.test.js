@@ -19,6 +19,7 @@ const store = require('../lib/store');
 const caddy = require('../lib/caddy');
 const { createServer, _setRestartScheduler } = require('../server');
 const { installCaddyStub } = require('./_caddy-stub');
+const { operatorHeaders, signInOperator } = require('./_shared-docs-callers');
 
 const STUB_HASH = '$2a$14$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU';
 const OLD_HASH = '$2b$12$' + 'o'.repeat(53);
@@ -46,6 +47,68 @@ function request(server, method, urlPath, body, headers = {}) {
   });
 }
 
+/**
+ * The signed-in operator's write headers for the store in use, made on first
+ * need. A credential change is an operator's write, and once an install has an
+ * account only that account's session is the operator (#2233, ruling E1).
+ * Reset wherever a suite opens a new store.
+ * @type {Record<string, string>|null}
+ */
+let operatorSession = null;
+
+/**
+ * Make a JSON request as the signed-in operator. The first call creates the
+ * install's first account through `POST /api/auth/set-password` and signs in.
+ * @param {http.Server} server - The listening test server
+ * @param {string} method - HTTP method
+ * @param {string} urlPath - Request path
+ * @param {object} [body] - JSON body
+ * @returns {Promise<{status: number, data: any, raw: string, setCookie: string[]}>}
+ */
+async function signedIn(server, method, urlPath, body) {
+  operatorSession = operatorSession || await signInOperator(server);
+  return request(server, method, urlPath, body, operatorSession);
+}
+
+/**
+ * What a refused change must leave alone: the recorded credential and the
+ * live Caddyfile, read back.
+ * @returns {{user: (string|null), hash: (string|null), caddyfile: (string|null)}}
+ */
+function credentialState() {
+  const config = store.config.load();
+  const p = caddy.getCaddyfilePath();
+  return {
+    user: config.basicAuthUser || null,
+    hash: config.basicAuthHash || null,
+    caddyfile: fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null
+  };
+}
+
+/**
+ * Assert that the two callers who are not the operator are refused a
+ * credential change on an install whose gate is `account-required`, and that
+ * neither changed anything.
+ * @param {http.Server} server - The listening test server
+ * @param {object} body - The change they attempt
+ * @returns {Promise<void>}
+ */
+async function assertRefusedWithoutAnAccount(server, body) {
+  const me = await request(server, 'GET', '/api/auth/me');
+  assert.equal(me.data.gateState, 'account-required', 'precondition: a login is on and no account exists');
+  const before = credentialState();
+
+  const browser = await request(server, 'POST', '/api/auth/credential', body, operatorHeaders(server));
+  assert.equal(browser.status, 401, 'a browser with no session is challenged');
+  assert.equal(browser.data.code, 'ACCOUNT_REQUIRED');
+  assert.deepEqual(credentialState(), before, 'and changed nothing');
+
+  const machine = await request(server, 'POST', '/api/auth/credential', body);
+  assert.equal(machine.status, 403, 'a bare request on the loopback listener is not the operator');
+  assert.equal(machine.data.code, 'LAUNCH_BINDING_REQUIRED');
+  assert.deepEqual(credentialState(), before, 'and changed nothing');
+}
+
 /** A live, gated Caddyfile — the only state in which a change is allowed. */
 function writeGatedCaddyfile(user = 'jason', hash = OLD_HASH) {
   const p = caddy.getCaddyfilePath();
@@ -69,6 +132,7 @@ describe('POST /api/auth/credential', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-credapi-'));
     store._setBasePath(tmpDir);
     store.init();
+    operatorSession = null;
     _setRestartScheduler(() => {});
     server = createServer();
     await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -96,32 +160,118 @@ describe('POST /api/auth/credential', () => {
   });
 
   describe('the guard — what it will not do', () => {
-    it('refuses when nothing is enforcing a login, because nothing authenticated the caller', () => {
+    it('refuses everyone but the operator before an account exists, and changes nothing (#2233)', async () => {
+      // The allowed shape in every respect but one: nobody has an account yet. The
+      // only write that state admits is creating the first one, so a credential
+      // change is refused before the handler, whoever sends it.
+      await assertRefusedWithoutAnAccount(server, { user: 'jason', password: GOOD_PASSWORD });
+    });
+
+    it('refuses on an install with no login, because nothing authenticated the caller; with a login on and no account, refuses before the route', async () => {
       // The #805 shape, from the other direction: on an ungated install there is no
       // perimeter, so this request is anonymous. Writing a credential here would let
       // whoever reaches the box claim it.
       const config = store.config.load();
       config.ingressMode = 'direct';
       store.config.save(config);
-      return request(server, 'POST', '/api/auth/credential',
-        { user: 'jason', password: GOOD_PASSWORD }).then(({ status, data }) => {
-        assert.equal(status, 409);
-        assert.equal(data.code, 'NOT_CADDY_MODE');
-        assert.equal(store.config.load().basicAuthHash, OLD_HASH, 'nothing may be written');
-      });
+      // With a login switched on and no account, the request never reaches the
+      // route (#2233).
+      await assertRefusedWithoutAnAccount(server, { user: 'jason', password: GOOD_PASSWORD });
+
+      // With no login at all the dashboard is the operator, the route answers, and
+      // its own refusal is the one that stands.
+      const open = store.config.load();
+      open.authEnabled = false;
+      store.config.save(open);
+      const before = credentialState();
+      const { status, data } = await request(server, 'POST', '/api/auth/credential',
+        { user: 'jason', password: GOOD_PASSWORD }, operatorHeaders(server));
+      assert.equal(status, 409);
+      assert.equal(data.code, 'NOT_CADDY_MODE');
+      assert.equal(store.config.load().basicAuthHash, OLD_HASH, 'nothing may be written');
+      assert.deepEqual(credentialState(), before);
     });
 
-    it('refuses when config records a credential the live Caddyfile is not applying', async () => {
+    it('refuses when config records a credential the live Caddyfile is not applying, before the route while no account exists and by NO_GATE on an install with no login', async () => {
       // The stored-unconfirmed state. Changing it would report a password change
       // that nothing enforces.
       fs.writeFileSync(caddy.getCaddyfilePath(),
         'localhost:8443 {\n  reverse_proxy 127.0.0.1:3102\n}\n', { mode: 0o600 });
+      // With the login switched on and no account, the request never reaches the
+      // route (#2233).
+      await assertRefusedWithoutAnAccount(server, { user: 'jason', password: GOOD_PASSWORD });
+
+      // The route's own answer, from the one caller who still reaches it in this
+      // shape: the dashboard of an install with no login. Once an account exists
+      // the answer is ACCOUNT_LOGIN instead, which has its own case below.
+      //
+      // The file is REMOVED for this half, not left without a login. Whether an
+      // install with `authEnabled` off is open in caddy mode is read from the
+      // Caddyfile through `caddy adapt`, which the stub does not answer, so a
+      // file that is present keeps the gate closed here. No file is the other
+      // way the live config carries no login, and the route answers the same.
+      fs.rmSync(caddy.getCaddyfilePath());
+      const open = store.config.load();
+      open.authEnabled = false;
+      store.config.save(open);
+      assert.equal((await request(server, 'GET', '/api/auth/me')).data.gateState, 'open',
+        'precondition: this install asks for no login');
+      assert.equal(store.authSessions.accountPresence().exists, false, 'precondition: no account yet');
+      const before = credentialState();
       const { status, data } = await request(server, 'POST', '/api/auth/credential',
-        { user: 'jason', password: GOOD_PASSWORD });
+        { user: 'jason', password: GOOD_PASSWORD }, operatorHeaders(server));
       assert.equal(status, 409);
       assert.equal(data.code, 'NO_GATE');
       assert.match(data.error, /reset-admin/, 'recovery lives at a terminal');
       assert.equal(store.config.load().basicAuthHash, OLD_HASH);
+      assert.deepEqual(credentialState(), before);
+    });
+
+    it('lets the first account be created, and that account\'s session then changes the credential (#2233)', async () => {
+      // The whole flow an operator walks on an install that has only Caddy's
+      // login: nothing but the first-account route answers, the account signs in,
+      // and the signed-in session changes Caddy's password under the route's own
+      // conditions.
+      const me = await request(server, 'GET', '/api/auth/me');
+      assert.equal(me.data.gateState, 'account-required', 'precondition: no account yet');
+      const before = credentialState();
+
+      const { status, data } = await signedIn(server, 'POST', '/api/auth/credential', { password: GOOD_PASSWORD });
+
+      assert.equal((await request(server, 'GET', '/api/auth/me')).data.gateState, 'armed',
+        'the first account armed TangleClaw\'s own login');
+      assert.equal(store.authSessions.accountPresence().exists, true);
+      assert.equal(status, 200);
+      assert.equal(data.user, 'jason');
+      const after = credentialState();
+      assert.equal(after.hash, STUB_HASH, 'the recorded credential changed');
+      assert.ok(after.caddyfile.includes(STUB_HASH), 'and so did the live gate');
+      assert.ok(!after.caddyfile.includes(OLD_HASH));
+      assert.notDeepEqual(after, before);
+    });
+
+    it('still refuses a browser with no session and a bare loopback request once an account exists (#2233)', async () => {
+      await signedIn(server, 'GET', '/api/auth/credential');
+      const before = credentialState();
+
+      const browser = await request(server, 'POST', '/api/auth/credential',
+        { password: GOOD_PASSWORD }, operatorHeaders(server));
+      assert.equal(browser.status, 401);
+      assert.equal(browser.data.code, 'UNAUTHENTICATED');
+      assert.deepEqual(credentialState(), before);
+
+      const machine = await request(server, 'POST', '/api/auth/credential', { password: GOOD_PASSWORD });
+      assert.equal(machine.status, 403, 'loopback alone is not the operator');
+      assert.equal(machine.data.code, 'LAUNCH_BINDING_REQUIRED');
+      assert.deepEqual(credentialState(), before);
+
+      // The session without its CSRF token is refused too.
+      const noToken = { ...operatorSession };
+      delete noToken['x-csrf-token'];
+      const forged = await request(server, 'POST', '/api/auth/credential', { password: GOOD_PASSWORD }, noToken);
+      assert.equal(forged.status, 403);
+      assert.equal(forged.data.code, 'CSRF_TOKEN_INVALID');
+      assert.deepEqual(credentialState(), before);
     });
 
     it('refuses to CREATE a first credential — that is recovery, not settings', async () => {
@@ -132,7 +282,7 @@ describe('POST /api/auth/credential', () => {
       config.basicAuthUser = null;
       config.basicAuthHash = null;
       store.config.save(config);
-      const { status, data } = await request(server, 'POST', '/api/auth/credential',
+      const { status, data } = await signedIn(server, 'POST', '/api/auth/credential',
         { user: 'brand-new', password: GOOD_PASSWORD });
       assert.equal(status, 409);
       assert.equal(data.code, 'NO_CREDENTIAL');
@@ -143,7 +293,7 @@ describe('POST /api/auth/credential', () => {
       // The Direction allows exactly one route to "no password" and it is not this
       // one. An empty password must read as an invalid password, never as "clear it".
       for (const password of ['', null, undefined]) {
-        const { status } = await request(server, 'POST', '/api/auth/credential',
+        const { status } = await signedIn(server, 'POST', '/api/auth/credential',
           { user: 'jason', password });
         assert.equal(status, 400, `password ${JSON.stringify(password)} must not blank the login`);
         assert.equal(store.config.load().basicAuthHash, OLD_HASH);
@@ -151,7 +301,7 @@ describe('POST /api/auth/credential', () => {
     });
 
     it('rejects a weak password with the same rules setup uses, not a second set', async () => {
-      const { status, data } = await request(server, 'POST', '/api/auth/credential',
+      const { status, data } = await signedIn(server, 'POST', '/api/auth/credential',
         { user: 'jason', password: 'short' });
       assert.equal(status, 400);
       // Same validator as the wizard: one implementation, so the rules cannot drift
@@ -164,7 +314,7 @@ describe('POST /api/auth/credential', () => {
     it('rewrites the LIVE gate, not just the recorded config', async () => {
       // Config alone would tell the operator their password changed while the old
       // one still opens the dashboard.
-      const { status, data } = await request(server, 'POST', '/api/auth/credential',
+      const { status, data } = await signedIn(server, 'POST', '/api/auth/credential',
         { user: 'jason', password: GOOD_PASSWORD });
       assert.equal(status, 200);
       assert.equal(data.ok, true);
@@ -177,7 +327,7 @@ describe('POST /api/auth/credential', () => {
     it('keeps the username in force when only a password is sent', async () => {
       // Making someone retype a username to change a password is how a typo
       // silently becomes a second account.
-      const { status, data } = await request(server, 'POST', '/api/auth/credential',
+      const { status, data } = await signedIn(server, 'POST', '/api/auth/credential',
         { password: GOOD_PASSWORD });
       assert.equal(status, 200);
       assert.equal(data.user, 'jason');
@@ -191,7 +341,7 @@ describe('POST /api/auth/credential', () => {
       // gate while config records the new one. Every earlier test here sent
       // `user: 'jason'` — the fixture's OWN name — so the rename path was never
       // once executed. The fixture has to contain the real shape.
-      const { status, data } = await request(server, 'POST', '/api/auth/credential',
+      const { status, data } = await signedIn(server, 'POST', '/api/auth/credential',
         { user: 'somebody-else', password: GOOD_PASSWORD });
       assert.equal(status, 400);
       assert.equal(data.code, 'RENAME_UNSUPPORTED');
@@ -210,7 +360,7 @@ describe('POST /api/auth/credential', () => {
       const config = store.config.load();
       config.basicAuthUser = 'stale-name-in-config';
       store.config.save(config);
-      const { status, data } = await request(server, 'POST', '/api/auth/credential',
+      const { status, data } = await signedIn(server, 'POST', '/api/auth/credential',
         { password: GOOD_PASSWORD });
       assert.equal(status, 200);
       assert.equal(data.user, 'jason', 'the answer is the gate\'s name, not config\'s');
@@ -220,14 +370,15 @@ describe('POST /api/auth/credential', () => {
     it('says plainly that the operator is about to be signed out', async () => {
       // Caddy reloads with the new hash and basic_auth cannot hand a browser new
       // credentials, so the re-prompt is certain. Unexplained, it reads as a fault.
-      const { data } = await request(server, 'POST', '/api/auth/credential',
+      const { data } = await signedIn(server, 'POST', '/api/auth/credential',
         { user: 'jason', password: GOOD_PASSWORD });
       assert.equal(data.signedOut, true);
     });
 
     it('never returns the hash it just wrote', async () => {
-      const { raw } = await request(server, 'POST', '/api/auth/credential',
+      const { status, raw } = await signedIn(server, 'POST', '/api/auth/credential',
         { user: 'jason', password: GOOD_PASSWORD });
+      assert.equal(status, 200, 'the change was made, so there is a new hash to withhold');
       assert.ok(!raw.includes(STUB_HASH), 'a credential hash must not cross the HTTP boundary');
       assert.ok(!raw.includes(GOOD_PASSWORD), 'and neither must the plaintext');
     });
@@ -239,7 +390,7 @@ describe('POST /api/auth/credential', () => {
       // error. The response arriving at all is the assertion; the reload following
       // it is the second half.
       fs.writeFileSync(caddyStub.launchctlLog, '');
-      const { status, data } = await request(server, 'POST', '/api/auth/credential',
+      const { status, data } = await signedIn(server, 'POST', '/api/auth/credential',
         { user: 'jason', password: GOOD_PASSWORD });
 
       assert.equal(status, 200, 'the response must survive the change it reports');
@@ -295,7 +446,7 @@ describe('POST /api/auth/credential', () => {
       // username left this rule inert on every call the product actually makes.
       // Setup enforces it; a change surface that did not would let it be escaped
       // by simply changing the password afterwards.
-      const { status, data } = await request(server, 'POST', '/api/auth/credential',
+      const { status, data } = await signedIn(server, 'POST', '/api/auth/credential',
         { password: 'jason-jason-jason' });
       assert.equal(status, 400);
       assert.match(data.error, /username/i);
@@ -314,7 +465,7 @@ describe('POST /api/auth/credential', () => {
       stored.basicAuthUser = 'stale-name-in-config';
       store.config.save(stored);
       try {
-        const { status, data } = await request(server, 'POST', '/api/auth/credential',
+        const { status, data } = await signedIn(server, 'POST', '/api/auth/credential',
           { password: 'jason-jason-jason' });
         assert.equal(status, 400, 'the gate\'s username is `jason`, so this must be refused');
         assert.match(data.error, /username/i);
@@ -343,7 +494,7 @@ describe('POST /api/auth/credential', () => {
           if (++copies > 1) throw new Error('EROFS: read-only file system');
           return realCopy(from, to);
         };
-        res = await request(server, 'POST', '/api/auth/credential', { password: GOOD_PASSWORD });
+        res = await signedIn(server, 'POST', '/api/auth/credential', { password: GOOD_PASSWORD });
       } finally {
         fs.writeFileSync = realWrite;
         fs.copyFileSync = realCopy;
@@ -365,7 +516,7 @@ describe('POST /api/auth/credential', () => {
           if (p === caddy.getCaddyfilePath()) throw new Error('ENOSPC: no space left on device');
           return realWrite(p, ...rest);
         };
-        res = await request(server, 'POST', '/api/auth/credential', { password: GOOD_PASSWORD });
+        res = await signedIn(server, 'POST', '/api/auth/credential', { password: GOOD_PASSWORD });
       } finally {
         fs.writeFileSync = realWrite;
       }
@@ -420,8 +571,9 @@ describe('POST /api/auth/credential', () => {
         assert.equal(get.data.user, null, 'and must not disclose the username in force');
       } finally {
         adminCredential.isLoopbackRemote = realCheck;
-        store.getDb().prepare('DELETE FROM auth_sessions').run();
-        store.getDb().prepare('DELETE FROM users').run();
+        // Only this case's account: the suite's signed-in operator stays.
+        store.getDb().prepare("DELETE FROM auth_sessions WHERE username = 'rosie'").run();
+        store.getDb().prepare("DELETE FROM users WHERE username = 'rosie'").run();
       }
     });
 
@@ -445,7 +597,7 @@ describe('POST /api/auth/credential', () => {
       // parseBody resolves null for an empty request, so every field read in the
       // handler runs against null. A 500 there reads as "the server broke" for what
       // is simply a malformed request.
-      const { status, data } = await request(server, 'POST', '/api/auth/credential');
+      const { status, data } = await signedIn(server, 'POST', '/api/auth/credential');
       assert.equal(status, 400);
       assert.equal(data.code, 'BAD_REQUEST');
       assert.equal(store.config.load().basicAuthHash, OLD_HASH, 'and nothing may have changed');
@@ -468,7 +620,7 @@ describe('POST /api/auth/credential', () => {
       config.ingressMode = 'direct';
       store.config.save(config);
       const get = await request(server, 'GET', '/api/auth/credential');
-      const post = await request(server, 'POST', '/api/auth/credential',
+      const post = await signedIn(server, 'POST', '/api/auth/credential',
         { user: 'jason', password: GOOD_PASSWORD });
       assert.equal(get.data.changeable, false);
       assert.equal(post.status, 409);
@@ -497,12 +649,12 @@ describe('POST /api/auth/credential', () => {
         assert.equal(get.data.changeable, false);
         assert.equal(get.data.code, 'ACCOUNT_LOGIN');
         assert.match(get.data.remedy, /recovery code/);
-        const post = await request(server, 'POST', '/api/auth/credential', { password: GOOD_PASSWORD });
+        const post = await signedIn(server, 'POST', '/api/auth/credential', { password: GOOD_PASSWORD });
         assert.equal(post.status, 409);
         assert.equal(post.data.code, 'ACCOUNT_LOGIN');
         assert.equal(store.config.load().basicAuthHash, OLD_HASH, 'nothing may have changed');
       } finally {
-        store.getDb().prepare('DELETE FROM users').run();
+        store.getDb().prepare("DELETE FROM users WHERE username = 'rosie'").run();
       }
     });
 
@@ -513,7 +665,7 @@ describe('POST /api/auth/credential', () => {
         assert.equal(get.data.changeable, true);
         assert.equal(get.data.user, 'jason');
       } finally {
-        store.getDb().prepare('DELETE FROM users').run();
+        store.getDb().prepare("DELETE FROM users WHERE username = 'rosie'").run();
       }
     });
   });
@@ -528,6 +680,7 @@ describe('POST /api/auth/credential — fail-closed when Caddy rejects the file'
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-credapi-bad-'));
     store._setBasePath(tmpDir);
     store.init();
+    operatorSession = null;
     _setRestartScheduler(() => {});
     server = createServer();
     await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -549,7 +702,7 @@ describe('POST /api/auth/credential — fail-closed when Caddy rejects the file'
     store.config.save(config);
     writeGatedCaddyfile();
 
-    const { status, data } = await request(server, 'POST', '/api/auth/credential',
+    const { status, data } = await signedIn(server, 'POST', '/api/auth/credential',
       { user: 'jason', password: GOOD_PASSWORD });
 
     assert.equal(status, 400);
@@ -569,8 +722,9 @@ describe('POST /api/auth/credential — fail-closed when Caddy rejects the file'
     config.basicAuthHash = OLD_HASH;
     store.config.save(config);
     writeGatedCaddyfile();
-    const { raw } = await request(server, 'POST', '/api/auth/credential',
+    const { status, raw } = await signedIn(server, 'POST', '/api/auth/credential',
       { user: 'jason', password: GOOD_PASSWORD });
+    assert.equal(status, 400, 'the route itself answered: Caddy rejected the file');
     assert.ok(!raw.includes(STUB_HASH));
     assert.ok(!raw.includes(OLD_HASH));
   });

@@ -8,7 +8,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
-const { operatorHeaders } = require('./_shared-docs-callers');
+const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
 const { createServer } = require('../server');
 const portScanner = require('../lib/port-scanner');
 
@@ -76,12 +76,39 @@ function request(server, method, urlPath, body, headers = {}) {
 describe('API /api/ports', () => {
   let tmpDir;
   let server;
+  let pane;
+
+  /**
+   * A registry write as a session's pane sends it. Leasing, releasing and
+   * renewing a port is what a session does for its own services, and a write
+   * that names no caller is refused before the registry is asked (#2233). The
+   * registry does not read who is calling: the `project` a body names is still
+   * what every ownership answer below is decided on.
+   * @param {string} method
+   * @param {string} urlPath
+   * @param {object} [body]
+   * @returns {Promise<{ status: number, data: object }>}
+   */
+  const paneRequest = (method, urlPath, body) => request(server, method, urlPath, body, pane.headers);
+
+  /**
+   * A registry write as the operator's dashboard sends it: marking an owner
+   * external is done from the ports panel.
+   * @param {string} method
+   * @param {string} urlPath
+   * @param {object} [body]
+   * @returns {Promise<{ status: number, data: object }>}
+   */
+  const operatorRequest = (method, urlPath, body) => request(server, method, urlPath, body, operatorHeaders(server));
 
   before(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-ports-'));
     store._setBasePath(tmpDir);
     store.init();
     probeFindsNothing();
+    const paneDir = path.join(tmpDir, 'ports-pane');
+    fs.mkdirSync(paneDir);
+    pane = bindProject(store.projects.create({ name: 'ports-pane', path: paneDir, engine: 'claude' }));
 
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -111,7 +138,7 @@ describe('API /api/ports', () => {
   });
 
   it('POST /api/ports/lease creates a lease', async () => {
-    const { status, data } = await request(server, 'POST', '/api/ports/lease', {
+    const { status, data } = await paneRequest('POST', '/api/ports/lease', {
       port: 5000,
       project: 'NewProject',
       service: 'api',
@@ -125,14 +152,14 @@ describe('API /api/ports', () => {
   });
 
   it('POST /api/ports/lease validates required fields', async () => {
-    const { status } = await request(server, 'POST', '/api/ports/lease', { port: 5001 });
+    const { status } = await paneRequest('POST', '/api/ports/lease', { port: 5001 });
     assert.equal(status, 400);
   });
 
   // #1394 — the divergence check reads `reach` off the lease to tell a
   // deliberate exposure from an accidental one, so it has to survive the wire.
   it('POST /api/ports/lease round-trips reach, and GET reports it', async () => {
-    const posted = await request(server, 'POST', '/api/ports/lease', {
+    const posted = await paneRequest('POST', '/api/ports/lease', {
       port: 5010, project: 'ReachProject', service: 'gui', reach: 'tailnet'
     });
     assert.equal(posted.status, 201);
@@ -144,7 +171,7 @@ describe('API /api/ports', () => {
   });
 
   it('POST /api/ports/lease defaults reach to loopback, the weakest claim', async () => {
-    const { status, data } = await request(server, 'POST', '/api/ports/lease', {
+    const { status, data } = await paneRequest('POST', '/api/ports/lease', {
       port: 5011, project: 'QuietProject', service: 'db'
     });
     assert.equal(status, 201);
@@ -152,7 +179,7 @@ describe('API /api/ports', () => {
   });
 
   it('POST /api/ports/lease rejects an unknown reach with 400, naming the legal values', async () => {
-    const { status, data } = await request(server, 'POST', '/api/ports/lease', {
+    const { status, data } = await paneRequest('POST', '/api/ports/lease', {
       port: 5012, project: 'BadProject', service: 'x', reach: 'world'
     });
     assert.equal(status, 400);
@@ -168,7 +195,7 @@ describe('API /api/ports', () => {
   it('POST /api/ports/lease returns 409 when another project owns the port', async () => {
     store.portLeases.lease({ port: 5100, project: 'Owner', service: 'dev-server' });
 
-    const { status, data } = await request(server, 'POST', '/api/ports/lease', {
+    const { status, data } = await paneRequest('POST', '/api/ports/lease', {
       port: 5100,
       project: 'Intruder',
       service: 'api'
@@ -184,7 +211,7 @@ describe('API /api/ports', () => {
   it('POST /api/ports/lease renews the same project\'s own lease with 201', async () => {
     store.portLeases.lease({ port: 5101, project: 'Renewer', service: 'api' });
 
-    const { status, data } = await request(server, 'POST', '/api/ports/lease', {
+    const { status, data } = await paneRequest('POST', '/api/ports/lease', {
       port: 5101,
       project: 'Renewer',
       service: 'api-v2'
@@ -197,7 +224,7 @@ describe('API /api/ports', () => {
   it('POST /api/ports/lease takes the port over when force is set', async () => {
     store.portLeases.lease({ port: 5102, project: 'Owner', service: 'dev-server' });
 
-    const { status, data } = await request(server, 'POST', '/api/ports/lease', {
+    const { status, data } = await paneRequest('POST', '/api/ports/lease', {
       port: 5102,
       project: 'Taker',
       service: 'api',
@@ -211,7 +238,7 @@ describe('API /api/ports', () => {
   it('POST /api/ports/release removes a lease', async () => {
     store.portLeases.lease({ port: 6000, project: 'ToRelease', service: 'temp' });
 
-    const { status, data } = await request(server, 'POST', '/api/ports/release', { port: 6000 });
+    const { status, data } = await paneRequest('POST', '/api/ports/release', { port: 6000 });
     assert.equal(status, 200);
     assert.equal(data.ok, true);
     assert.equal(data.port, 6000);
@@ -222,14 +249,14 @@ describe('API /api/ports', () => {
   it('POST /api/ports/heartbeat updates a lease', async () => {
     store.portLeases.lease({ port: 7000, project: 'HB', service: 'dev', ttlMs: 60000 });
 
-    const { status, data } = await request(server, 'POST', '/api/ports/heartbeat', { port: 7000 });
+    const { status, data } = await paneRequest('POST', '/api/ports/heartbeat', { port: 7000 });
     assert.equal(status, 200);
     assert.equal(data.port, 7000);
     assert.ok(data.lastHeartbeat);
   });
 
   it('POST /api/ports/heartbeat returns 404 for unknown port', async () => {
-    const { status } = await request(server, 'POST', '/api/ports/heartbeat', { port: 99999 });
+    const { status } = await paneRequest('POST', '/api/ports/heartbeat', { port: 99999 });
     assert.equal(status, 404);
   });
 
@@ -240,7 +267,7 @@ describe('API /api/ports', () => {
   it('POST /api/ports/release returns 409 when another project owns the live port', async () => {
     store.portLeases.lease({ port: 6100, project: 'Owner', service: 'dev-server' });
 
-    const { status, data } = await request(server, 'POST', '/api/ports/release', {
+    const { status, data } = await paneRequest('POST', '/api/ports/release', {
       port: 6100,
       project: 'Intruder'
     });
@@ -254,7 +281,7 @@ describe('API /api/ports', () => {
   it('POST /api/ports/release with force removes another project\'s lease', async () => {
     store.portLeases.lease({ port: 6101, project: 'Owner', service: 'dev-server' });
 
-    const { status } = await request(server, 'POST', '/api/ports/release', {
+    const { status } = await paneRequest('POST', '/api/ports/release', {
       port: 6101, project: 'Taker', force: true
     });
 
@@ -265,7 +292,7 @@ describe('API /api/ports', () => {
   it('POST /api/ports/release with the owning project succeeds', async () => {
     store.portLeases.lease({ port: 6102, project: 'Mine', service: 'temp' });
 
-    const { status } = await request(server, 'POST', '/api/ports/release', {
+    const { status } = await paneRequest('POST', '/api/ports/release', {
       port: 6102, project: 'Mine'
     });
 
@@ -276,7 +303,7 @@ describe('API /api/ports', () => {
   it('POST /api/ports/release with no project still deletes (backward compat)', async () => {
     store.portLeases.lease({ port: 6103, project: 'Whoever', service: 'temp' });
 
-    const { status } = await request(server, 'POST', '/api/ports/release', { port: 6103 });
+    const { status } = await paneRequest('POST', '/api/ports/release', { port: 6103 });
     assert.equal(status, 200);
     assert.equal(store.portLeases.get(6103), null);
   });
@@ -284,7 +311,7 @@ describe('API /api/ports', () => {
   it('POST /api/ports/heartbeat returns 409 when another project owns the lease', async () => {
     store.portLeases.lease({ port: 7100, project: 'Owner', service: 'dev', ttlMs: 60000 });
 
-    const { status, data } = await request(server, 'POST', '/api/ports/heartbeat', {
+    const { status, data } = await paneRequest('POST', '/api/ports/heartbeat', {
       port: 7100, project: 'Intruder'
     });
 
@@ -311,7 +338,7 @@ describe('API /api/ports', () => {
 
     it('answers 409 PORT_IN_USE naming the listener, and stores nothing', async () => {
       probeFinds(7443, 'caddy');
-      const { status, data } = await request(server, 'POST', '/api/ports/lease', {
+      const { status, data } = await paneRequest('POST', '/api/ports/lease', {
         port: 7443, project: 'WheresMy', service: 'preview'
       });
       assert.equal(status, 409);
@@ -322,7 +349,7 @@ describe('API /api/ports', () => {
 
     it('grants it with adoptListener and reports listenerCheck', async () => {
       probeFinds(7444, 'node');
-      const { status, data } = await request(server, 'POST', '/api/ports/lease', {
+      const { status, data } = await paneRequest('POST', '/api/ports/lease', {
         port: 7444, project: 'Mine', service: 'dev', adoptListener: true
       });
       assert.equal(status, 201);
@@ -332,7 +359,7 @@ describe('API /api/ports', () => {
 
     it('probes a port sent as a string, rather than granting it unchecked', async () => {
       probeFinds(7448, 'caddy');
-      const { status, data } = await request(server, 'POST', '/api/ports/lease', {
+      const { status, data } = await paneRequest('POST', '/api/ports/lease', {
         port: '7448', project: 'P', service: 'dev'
       });
       assert.equal(status, 409);
@@ -342,7 +369,7 @@ describe('API /api/ports', () => {
 
     it('rejects a port that is not an integer in range', async () => {
       for (const port of ['abc', 70000, 3.5]) {
-        const { status, data } = await request(server, 'POST', '/api/ports/lease', { port, project: 'P', service: 's' });
+        const { status, data } = await paneRequest('POST', '/api/ports/lease', { port, project: 'P', service: 's' });
         assert.equal(status, 400, `port ${JSON.stringify(port)}`);
         assert.equal(data.code, 'BAD_REQUEST');
       }
@@ -350,7 +377,7 @@ describe('API /api/ports', () => {
 
     it('keeps the HTTP default of a non-permanent lease', async () => {
       probeFindsNothing();
-      const { status, data } = await request(server, 'POST', '/api/ports/lease', {
+      const { status, data } = await paneRequest('POST', '/api/ports/lease', {
         port: 7445, project: 'P', service: 'dev', ttl: 60000
       });
       assert.equal(status, 201);
@@ -361,12 +388,12 @@ describe('API /api/ports', () => {
 
     it('passes ownerKind through and rejects an unknown one as 400', async () => {
       probeFindsNothing();
-      const ok = await request(server, 'POST', '/api/ports/lease', {
+      const ok = await paneRequest('POST', '/api/ports/lease', {
         port: 7446, project: 'Homebrew', service: 'postgres', ownerKind: 'external'
       });
       assert.equal(ok.status, 201);
       assert.equal(ok.data.ownerKind, 'external');
-      const bad = await request(server, 'POST', '/api/ports/lease', {
+      const bad = await paneRequest('POST', '/api/ports/lease', {
         port: 7447, project: 'P', service: 's', ownerKind: 'daemon'
       });
       assert.equal(bad.status, 400);
@@ -403,7 +430,7 @@ describe('API /api/ports', () => {
     it('answers 400 HOST_REQUIRED naming the host, and deletes nothing', async () => {
       store.portLeases.lease({ port: 7460, project: 'Medusa', service: 'a2a', permanent: true });
       store.portLeases.lease({ port: 7460, host: 'habitat', project: 'RentalClaw', service: 'tools', permanent: true });
-      const { status, data } = await request(server, 'POST', '/api/ports/release', { port: 7460 });
+      const { status, data } = await paneRequest('POST', '/api/ports/release', { port: 7460 });
       assert.equal(status, 400);
       assert.equal(data.code, 'HOST_REQUIRED');
       assert.match(data.error, /habitat/);
@@ -412,7 +439,7 @@ describe('API /api/ports', () => {
     });
 
     it('an explicit host releases exactly that lease', async () => {
-      const { status } = await request(server, 'POST', '/api/ports/release', { port: 7460, host: 'localhost' });
+      const { status } = await paneRequest('POST', '/api/ports/release', { port: 7460, host: 'localhost' });
       assert.equal(status, 200);
       assert.equal(store.portLeases.get(7460), null);
       assert.ok(store.portLeases.get(7460, 'habitat'));
@@ -420,7 +447,7 @@ describe('API /api/ports', () => {
 
     it('a host-less release of a localhost-only port still works', async () => {
       store.portLeases.lease({ port: 7461, project: 'P', service: 's' });
-      const { status } = await request(server, 'POST', '/api/ports/release', { port: 7461 });
+      const { status } = await paneRequest('POST', '/api/ports/release', { port: 7461 });
       assert.equal(status, 200);
       assert.equal(store.portLeases.get(7461), null);
     });
@@ -430,7 +457,7 @@ describe('API /api/ports', () => {
     it('POST /api/ports/owner-kind marks every lease of a name external', async () => {
       store.portLeases.lease({ port: 7470, project: 'Brew', service: 'postgres', permanent: true });
       store.portLeases.lease({ port: 7471, project: 'Brew', service: 'redis', permanent: true });
-      const { status, data } = await request(server, 'POST', '/api/ports/owner-kind', {
+      const { status, data } = await operatorRequest('POST', '/api/ports/owner-kind', {
         project: 'Brew', ownerKind: 'external'
       });
       assert.equal(status, 200);
@@ -440,9 +467,9 @@ describe('API /api/ports', () => {
     });
 
     it('owner-kind answers 404 for a name with no leases, 400 for a bad kind or missing field', async () => {
-      assert.equal((await request(server, 'POST', '/api/ports/owner-kind', { project: 'Nobody', ownerKind: 'external' })).status, 404);
-      assert.equal((await request(server, 'POST', '/api/ports/owner-kind', { project: 'Brew', ownerKind: 'daemon' })).status, 400);
-      assert.equal((await request(server, 'POST', '/api/ports/owner-kind', { ownerKind: 'external' })).status, 400);
+      assert.equal((await operatorRequest('POST', '/api/ports/owner-kind', { project: 'Nobody', ownerKind: 'external' })).status, 404);
+      assert.equal((await operatorRequest('POST', '/api/ports/owner-kind', { project: 'Brew', ownerKind: 'daemon' })).status, 400);
+      assert.equal((await operatorRequest('POST', '/api/ports/owner-kind', { ownerKind: 'external' })).status, 400);
     });
 
     it('import with a missing directory releases nothing and says the leases were kept', async () => {

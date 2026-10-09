@@ -15,6 +15,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { createServer } = require('../server');
+const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
 const store = require('../lib/store');
 const medusa = require('../lib/medusa');
 const sessions = require('../lib/sessions');
@@ -675,6 +676,9 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
   let tempDir;
   let project;
   let active;
+  let pane;
+  /** @returns {Record<string, string>} The headers the operator's dashboard sends (it owns the toggle) */
+  const dashboard = () => operatorHeaders(server);
 
   before(async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-c02-'));
@@ -683,8 +687,10 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
     const projPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-c02-proj-'));
     project = store.projects.create({ name: 'switchboard', path: projPath, engine: 'claude' });
     // A real active-session row so getActive resolves (no tmux needed — the row
-    // is all the routes read).
-    active = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'fake-c02' });
+    // is all the routes read). It carries a launch binding, so the session's
+    // own writes (marking mail read) can say which pane they come from.
+    pane = bindProject(project);
+    active = store.sessions.get(pane.sessionId);
 
     server = createServer();
     await new Promise((resolve) => server.listen(0, () => { port = server.address().port; resolve(); }));
@@ -705,12 +711,16 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
    * @param {string} urlPath - Path to request.
    * @param {string} method - HTTP method.
    * @param {object|null} [body] - JSON body to send.
+   * @param {Record<string, string>} [callerHeaders] - Who is asking.
    * @returns {Promise<{status: number, data: object}>}
    */
-  function req(urlPath, method, body) {
+  function req(urlPath, method, body, callerHeaders = {}) {
     return new Promise((resolve, reject) => {
       const payload = body ? JSON.stringify(body) : null;
-      const headers = payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {};
+      const headers = {
+        ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}),
+        ...callerHeaders
+      };
       const r = http.request({ hostname: '127.0.0.1', port, path: urlPath, method, headers }, (res) => {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
@@ -744,7 +754,7 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
   }
 
   it('toggle returns 404 for an unknown project', async () => {
-    const { status } = await req('/api/sessions/nope/medusa/toggle', 'POST', {});
+    const { status } = await req('/api/sessions/nope/medusa/toggle', 'POST', {}, dashboard());
     assert.equal(status, 404);
   });
 
@@ -754,7 +764,7 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
       engine: 'claude'
     });
     assert.ok(solo);
-    const { status, data } = await req('/api/sessions/no-session/medusa/toggle', 'POST', {});
+    const { status, data } = await req('/api/sessions/no-session/medusa/toggle', 'POST', {}, dashboard());
     assert.equal(status, 409);
     assert.equal(data.code, 'NO_SESSION');
   });
@@ -762,7 +772,7 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
   it('toggle {enabled:false} stops a running listener (→ off)', async () => {
     seedListener();
     assert.equal(medusa.getStatus(active.id).state, 'listening');
-    const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: false });
+    const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: false }, dashboard());
     assert.equal(status, 200);
     assert.deepEqual(data, { state: 'off', workspaceId: null, unread: 0, lastError: null, lastErrorCode: null });
   });
@@ -773,7 +783,7 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
     // the preflight buys is the diagnosis at the moment of the click, not a veto.
     medusa._setBridgeHttpUrl('http://127.0.0.1:59991'); // nothing is listening there
     try {
-      const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: true });
+      const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: true }, dashboard());
       assert.equal(status, 200, 'the toggle must not refuse');
       assert.notEqual(data.state, 'off', 'the listener must still have started');
       assert.equal(data.bridge.healthy, false);
@@ -789,7 +799,7 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
     // A `bridge: null` would read as "we looked and found nothing" on a path that
     // never looked — the same class of false report as the rest of this car.
     seedListener();
-    const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: false });
+    const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: false }, dashboard());
     assert.equal(status, 200);
     assert.ok(!('bridge' in data), 'a toggle-off carries no preflight verdict');
   });
@@ -797,7 +807,7 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
   it('toggle {enabled:true} is idempotent against an already-listening session', async () => {
     const fake = seedListener();
     const before = medusa.getStatus(active.id);
-    const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: true });
+    const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: true }, dashboard());
     assert.equal(status, 200);
     assert.equal(data.state, 'listening');
     assert.equal(data.workspaceId, before.workspaceId);
@@ -807,7 +817,7 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
 
   it('toggle with no body flips off→on (starts a listener)', async () => {
     assert.equal(medusa.getStatus(active.id).state, 'off');
-    const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', null);
+    const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', null, dashboard());
     assert.equal(status, 200);
     // Real socket path (no Bridge up in tests) → connecting, honest and non-off.
     assert.notEqual(data.state, 'off');
@@ -828,7 +838,7 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
 
     // No `ids` in the body is a BADGE CLEAR: the counter resets and nothing is
     // discarded — not from the inbox, and not from the Hub's durable queue.
-    const read = await req('/api/sessions/switchboard/medusa/read', 'POST', {});
+    const read = await req('/api/sessions/switchboard/medusa/read', 'POST', {}, pane.headers);
     assert.equal(read.status, 200);
     assert.equal(read.data.unread, 0);
     const after = await req('/api/sessions/switchboard/medusa/messages', 'GET');
@@ -840,7 +850,7 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
     fake._recv({ type: 'new_message', messageId: 'm1', message: { id: 'm1', from: 'peer-a', message: 'ping' } });
     fake._recv({ type: 'new_message', messageId: 'm2', message: { id: 'm2', from: 'peer-b', message: 'pong' } });
 
-    const read = await req('/api/sessions/switchboard/medusa/read', 'POST', { ids: ['m1'] });
+    const read = await req('/api/sessions/switchboard/medusa/read', 'POST', { ids: ['m1'] }, pane.headers);
     assert.equal(read.status, 200);
 
     const after = await req('/api/sessions/switchboard/medusa/messages', 'GET');
@@ -855,7 +865,7 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
   });
 
   it('read is a safe no-op when no listener is running', async () => {
-    const { status, data } = await req('/api/sessions/switchboard/medusa/read', 'POST', {});
+    const { status, data } = await req('/api/sessions/switchboard/medusa/read', 'POST', {}, pane.headers);
     assert.equal(status, 200);
     assert.equal(data.state, 'off');
   });
@@ -1417,6 +1427,9 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
   let project;
   let active;
   let workspaceId;
+  let pane;
+  /** @returns {Record<string, string>} The headers the operator's dashboard sends (the loop controls, the command bar, the wrap drawer) */
+  const dashboard = () => operatorHeaders(server);
 
   before(async () => {
     bridge = makeFakeBridge();
@@ -1428,7 +1441,10 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     store.init();
     const projPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-c03-proj-'));
     project = store.projects.create({ name: 'sender', path: projPath, engine: 'claude' });
-    active = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'fake-c03' });
+    // The session carries a launch binding, so its own sends and reads can say
+    // which pane they come from.
+    pane = bindProject(project);
+    active = store.sessions.get(pane.sessionId);
 
     server = createServer();
     await new Promise((resolve) => server.listen(0, () => { port = server.address().port; resolve(); }));
@@ -1466,12 +1482,16 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
    * @param {string} urlPath - Path to request.
    * @param {string} method - HTTP method.
    * @param {object|null} [body] - JSON body.
+   * @param {Record<string, string>} [callerHeaders] - Who is asking.
    * @returns {Promise<{status: number, data: object}>}
    */
-  function req(urlPath, method, body) {
+  function req(urlPath, method, body, callerHeaders = {}) {
     return new Promise((resolve, reject) => {
       const payload = body ? JSON.stringify(body) : null;
-      const headers = payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {};
+      const headers = {
+        ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}),
+        ...callerHeaders
+      };
       const r = http.request({ hostname: '127.0.0.1', port, path: urlPath, method, headers }, (res) => {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
@@ -1489,7 +1509,7 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
   }
 
   it('send returns 404 for an unknown project', async () => {
-    const { status } = await req('/api/sessions/nope/medusa/send', 'POST', { to: 'live-ws', message: 'hi' });
+    const { status } = await req('/api/sessions/nope/medusa/send', 'POST', { to: 'live-ws', message: 'hi' }, pane.headers);
     assert.equal(status, 404);
   });
 
@@ -1498,13 +1518,13 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
       name: 'no-session-c03', path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-c03-nosess-')),
       engine: 'claude'
     });
-    const { status, data } = await req('/api/sessions/no-session-c03/medusa/send', 'POST', { to: 'live-ws', message: 'hi' });
+    const { status, data } = await req('/api/sessions/no-session-c03/medusa/send', 'POST', { to: 'live-ws', message: 'hi' }, pane.headers);
     assert.equal(status, 409);
     assert.equal(data.code, 'NO_SESSION');
   });
 
   it('send delivers to a live target → 200 received', async () => {
-    const { status, data } = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'live-ws', message: 'hello' });
+    const { status, data } = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'live-ws', message: 'hello' }, pane.headers);
     assert.equal(status, 200);
     assert.equal(data.status, 'received');
     assert.equal(bridge.received[0].from, workspaceId);
@@ -1521,7 +1541,7 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     // suppress another reader's notices or get its own message drained away.
     const { status } = await req('/api/sessions/sender/medusa/send', 'POST', {
       to: 'live-ws', message: 'hello', from: 'system'
-    });
+    }, pane.headers);
     assert.equal(status, 200);
     assert.equal(bridge.received[0].from, workspaceId,
       'a sender that can name itself `system` can silence a reader or expire its own mail');
@@ -1537,16 +1557,16 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
       roleId: 'role_x', authorityVersion: 1, checkout: {}, now
     });
     try {
-      const fenced = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'live-ws', message: 'go build #9' });
+      const fenced = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'live-ws', message: 'go build #9' }, pane.headers);
       assert.equal(fenced.status, 409);
       assert.equal(fenced.data.code, 'COORDINATOR_FENCED');
       assert.equal(bridge.received.length, 0, 'nothing reached the Bridge');
-      const reply = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'live-ws', message: 'yes', inReplyTo: 'msg-1' });
+      const reply = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'live-ws', message: 'yes', inReplyTo: 'msg-1' }, pane.headers);
       assert.equal(reply.data.code, 'COORDINATOR_FENCED', 'before a replacement is bound, even a reply is held');
-      const ack = await req('/api/sessions/sender/medusa/read', 'POST', { ids: ['msg-1'] });
+      const ack = await req('/api/sessions/sender/medusa/read', 'POST', { ids: ['msg-1'] }, pane.headers);
       assert.equal(ack.data.code, 'COORDINATOR_FENCED', 'and so is acknowledging mail');
       store.coordinatorRotations.updateIf('rot_send_fence', 'fenced', { state: 'abandoned' }, { now });
-      const lifted = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'live-ws', message: 'go build #9' });
+      const lifted = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'live-ws', message: 'go build #9' }, pane.headers);
       assert.equal(lifted.status, 200);
     } finally {
       store.getDb().prepare("DELETE FROM coordinator_rotations WHERE rotation_id = 'rot_send_fence'").run();
@@ -1554,19 +1574,19 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
   });
 
   it('send to an offline target → 200 queued (surfaced as queued, not sent)', async () => {
-    const { status, data } = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'offline-ws', message: 'later' });
+    const { status, data } = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'offline-ws', message: 'later' }, pane.headers);
     assert.equal(status, 200);
     assert.equal(data.status, 'queued');
   });
 
   it('send to an unknown target → 502 honest failure', async () => {
-    const { status, data } = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'ghost-ws', message: 'anyone?' });
+    const { status, data } = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'ghost-ws', message: 'anyone?' }, pane.headers);
     assert.equal(status, 502);
     assert.equal(data.code, 'SEND_REJECTED');
   });
 
   it('send with an empty message → 400', async () => {
-    const { status, data } = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'live-ws', message: '' });
+    const { status, data } = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'live-ws', message: '' }, pane.headers);
     assert.equal(status, 400);
     assert.equal(data.code, 'EMPTY_MESSAGE');
   });
@@ -1630,14 +1650,14 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
   it('loop route returns 404 for an unknown project', async () => {
     const { status } = await req('/api/sessions/nope/medusa/loop', 'POST', {
       target: 'live-ws', task: 't', doneCriteria: 'd'
-    });
+    }, dashboard());
     assert.equal(status, 404);
   });
 
   it('loop route returns 409 when the project has no active session', async () => {
     const { status, data } = await req('/api/sessions/no-session-c03/medusa/loop', 'POST', {
       target: 'live-ws', task: 't', doneCriteria: 'd'
-    });
+    }, dashboard());
     assert.equal(status, 409);
     assert.equal(data.code, 'NO_SESSION');
   });
@@ -1646,7 +1666,7 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     const { status, data } = await req('/api/sessions/sender/medusa/loop', 'POST', {
       target: 'live-ws', task: 'do the thing', doneCriteria: 'the thing is done',
       mode: 'supervised', guards: { maxRounds: 5, maxWallTimeSeconds: 120 }
-    });
+    }, dashboard());
     assert.equal(status, 200);
     assert.equal(data.loop.state, 'initiated');
     assert.equal(data.loop.initiator, workspaceId);
@@ -1660,7 +1680,7 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
   it('loop route surfaces validation failures as 400s', async () => {
     const { status, data } = await req('/api/sessions/sender/medusa/loop', 'POST', {
       target: 'live-ws', task: '', doneCriteria: 'd'
-    });
+    }, dashboard());
     assert.equal(status, 400);
     assert.equal(data.code, 'EMPTY_TASK');
   });
@@ -1668,7 +1688,7 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
   it('status route carries the known loops (the banner loop view rides the status poll) — MED-2K9P v2 T4', async () => {
     const open = await req('/api/sessions/sender/medusa/loop', 'POST', {
       target: 'live-ws', task: 'watch me', doneCriteria: 'seen'
-    });
+    }, dashboard());
     assert.equal(open.status, 200);
     const { status, data } = await req('/api/sessions/sender/medusa/status', 'GET');
     assert.equal(status, 200);
@@ -1680,7 +1700,7 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
   });
 
   it('status route degrades honestly when the Bridge is unreachable mid-poll (loops:[] + loopsError, listener status intact)', async () => {
-    await req('/api/sessions/sender/medusa/loop', 'POST', { target: 'live-ws', task: 't', doneCriteria: 'd' });
+    await req('/api/sessions/sender/medusa/loop', 'POST', { target: 'live-ws', task: 't', doneCriteria: 'd' }, dashboard());
     const goodUrl = `http://127.0.0.1:${bridge.server.address().port}`;
     medusa._setBridgeHttpUrl('http://127.0.0.1:1'); // nothing listens here
     try {
@@ -1697,10 +1717,10 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
   it('force-done route ends an initiated loop with the structured force-done closeSignal', async () => {
     const open = await req('/api/sessions/sender/medusa/loop', 'POST', {
       target: 'live-ws', task: 'stop me', doneCriteria: 'never'
-    });
+    }, dashboard());
     const loopId = open.data.loop.id;
     bridge.loopStore.get(loopId).state = 'responded';
-    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/force-done`, 'POST');
+    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/force-done`, 'POST', null, dashboard());
     assert.equal(status, 200);
     assert.equal(data.loopState, 'complete');
     assert.equal(data.closeSignal.reason, 'force-done');
@@ -1709,19 +1729,19 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
   it('force-done on a guard-halted loop → 400 verbatim ("a halted loop cannot be closed")', async () => {
     const open = await req('/api/sessions/sender/medusa/loop', 'POST', {
       target: 'live-ws', task: 't', doneCriteria: 'd'
-    });
+    }, dashboard());
     const loopId = open.data.loop.id;
     bridge.loopStore.get(loopId).state = 'halted';
-    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/force-done`, 'POST');
+    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/force-done`, 'POST', null, dashboard());
     assert.equal(status, 400);
     assert.equal(data.code, 'FORCE_DONE_REJECTED');
     assert.match(data.error, /already in halted state/);
   });
 
   it('force-done route returns 404 for an unknown project and 409 with no active session', async () => {
-    const a = await req('/api/sessions/nope/medusa/loops/loop-1/force-done', 'POST');
+    const a = await req('/api/sessions/nope/medusa/loops/loop-1/force-done', 'POST', null, dashboard());
     assert.equal(a.status, 404);
-    const b = await req('/api/sessions/no-session-c03/medusa/loops/loop-1/force-done', 'POST');
+    const b = await req('/api/sessions/no-session-c03/medusa/loops/loop-1/force-done', 'POST', null, dashboard());
     assert.equal(b.status, 409);
     assert.equal(b.data.code, 'NO_SESSION');
   });
@@ -1731,10 +1751,10 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
   it('continue route sends an initiator feedback round → responded advances to continue (round++)', async () => {
     const open = await req('/api/sessions/sender/medusa/loop', 'POST', {
       target: 'live-ws', task: 'do the thing', doneCriteria: 'done well'
-    });
+    }, dashboard());
     const loopId = open.data.loop.id;
     bridge.loopStore.get(loopId).state = 'responded'; // target has replied
-    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/continue`, 'POST', { message: 'try again, but tidier' });
+    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/continue`, 'POST', { message: 'try again, but tidier' }, dashboard());
     assert.equal(status, 200);
     assert.equal(data.loopState, 'continue');
     assert.equal(data.round, 1);
@@ -1744,10 +1764,10 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
   it('continue route rejects empty feedback client-of-server-side (400 EMPTY_FEEDBACK, never reaches the Bridge)', async () => {
     const open = await req('/api/sessions/sender/medusa/loop', 'POST', {
       target: 'live-ws', task: 't', doneCriteria: 'd'
-    });
+    }, dashboard());
     const loopId = open.data.loop.id;
     bridge.loopStore.get(loopId).state = 'responded';
-    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/continue`, 'POST', { message: '   ' });
+    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/continue`, 'POST', { message: '   ' }, dashboard());
     assert.equal(status, 400);
     assert.equal(data.code, 'EMPTY_FEEDBACK');
   });
@@ -1755,9 +1775,9 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
   it('continue route passes the Bridge "target response first" 400 through verbatim (wrong-state click)', async () => {
     const open = await req('/api/sessions/sender/medusa/loop', 'POST', {
       target: 'live-ws', task: 't', doneCriteria: 'd'
-    });
+    }, dashboard());
     const loopId = open.data.loop.id; // still `initiated` — target hasn't responded
-    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/continue`, 'POST', { message: 'go' });
+    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/continue`, 'POST', { message: 'go' }, dashboard());
     assert.equal(status, 400);
     assert.equal(data.code, 'CONTINUE_REJECTED');
     assert.match(data.error, /target response first/);
@@ -1766,20 +1786,20 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
   it('continue route: maxRounds guard auto-halts on the round that reaches the cap', async () => {
     const open = await req('/api/sessions/sender/medusa/loop', 'POST', {
       target: 'live-ws', task: 't', doneCriteria: 'd', guards: { maxRounds: 1 }
-    });
+    }, dashboard());
     const loopId = open.data.loop.id;
     bridge.loopStore.get(loopId).state = 'responded';
-    const { data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/continue`, 'POST', { message: 'once' });
+    const { data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/continue`, 'POST', { message: 'once' }, dashboard());
     assert.equal(data.loopState, 'halted', 'round 1 hits maxRounds:1 → Bridge halts');
   });
 
   it('closeout route ends a responded loop as SATISFIED (distinct reason from force-done)', async () => {
     const open = await req('/api/sessions/sender/medusa/loop', 'POST', {
       target: 'live-ws', task: 'wrap it', doneCriteria: 'good enough'
-    });
+    }, dashboard());
     const loopId = open.data.loop.id;
     bridge.loopStore.get(loopId).state = 'responded';
-    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/closeout`, 'POST');
+    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/closeout`, 'POST', null, dashboard());
     assert.equal(status, 200);
     assert.equal(data.loopState, 'complete');
     assert.equal(data.closeSignal.reason, 'satisfied');
@@ -1788,19 +1808,19 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
   it('closeout on an already-closed loop → 400 verbatim (CLOSEOUT_REJECTED)', async () => {
     const open = await req('/api/sessions/sender/medusa/loop', 'POST', {
       target: 'live-ws', task: 't', doneCriteria: 'd'
-    });
+    }, dashboard());
     const loopId = open.data.loop.id;
     bridge.loopStore.get(loopId).state = 'complete';
-    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/closeout`, 'POST');
+    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/closeout`, 'POST', null, dashboard());
     assert.equal(status, 400);
     assert.equal(data.code, 'CLOSEOUT_REJECTED');
   });
 
   it('continue + closeout routes return 409 with no active session', async () => {
-    const a = await req('/api/sessions/no-session-c03/medusa/loops/loop-1/continue', 'POST', { message: 'x' });
+    const a = await req('/api/sessions/no-session-c03/medusa/loops/loop-1/continue', 'POST', { message: 'x' }, dashboard());
     assert.equal(a.status, 409);
     assert.equal(a.data.code, 'NO_SESSION');
-    const b = await req('/api/sessions/no-session-c03/medusa/loops/loop-1/closeout', 'POST');
+    const b = await req('/api/sessions/no-session-c03/medusa/loops/loop-1/closeout', 'POST', null, dashboard());
     assert.equal(b.status, 409);
     assert.equal(b.data.code, 'NO_SESSION');
   });
@@ -1815,12 +1835,12 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
      * or chunked with none, so both `receivedBytes` paths are exercised.
      * @param {string} urlPath - Path.
      * @param {string} raw - The exact body bytes to send.
-     * @param {{chunked?: boolean}} [opts]
+     * @param {{chunked?: boolean, caller?: Record<string, string>}} [opts] - `caller` is who is asking.
      * @returns {Promise<{status: number, data: object}>}
      */
     function rawPost(urlPath, raw, opts = {}) {
       return new Promise((resolve, reject) => {
-        const headers = { 'Content-Type': 'application/json' };
+        const headers = { 'Content-Type': 'application/json', ...(opts.caller || {}) };
         if (!opts.chunked) headers['Content-Length'] = Buffer.byteLength(raw);
         const r = http.request({ hostname: '127.0.0.1', port, path: urlPath, method: 'POST', headers }, (res) => {
           const chunks = [];
@@ -1861,23 +1881,23 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     });
 
     it('a 60 KB send is delivered', async () => {
-      const { status, data } = await rawPost('/api/sessions/sender/medusa/send', bodyOfSize({ to: 'live-ws' }, 60 * 1024));
+      const { status, data } = await rawPost('/api/sessions/sender/medusa/send', bodyOfSize({ to: 'live-ws' }, 60 * 1024), { caller: pane.headers });
       assert.equal(status, 200);
       assert.equal(data.status, 'received');
       assert.equal(bridge.received.at(-1).message.length > 59 * 1024, true, 'the whole message reached the Bridge');
     });
 
     it('a body of exactly the limit is accepted; one byte more is refused', async () => {
-      const at = await rawPost('/api/sessions/sender/medusa/send', bodyOfSize({ to: 'live-ws' }, MESSAGE_BODY_LIMIT_BYTES));
+      const at = await rawPost('/api/sessions/sender/medusa/send', bodyOfSize({ to: 'live-ws' }, MESSAGE_BODY_LIMIT_BYTES), { caller: pane.headers });
       assert.equal(at.status, 200);
-      const over = await rawPost('/api/sessions/sender/medusa/send', bodyOfSize({ to: 'live-ws' }, MESSAGE_BODY_LIMIT_BYTES + 1));
+      const over = await rawPost('/api/sessions/sender/medusa/send', bodyOfSize({ to: 'live-ws' }, MESSAGE_BODY_LIMIT_BYTES + 1), { caller: pane.headers });
       assert.equal(over.status, 413);
       assert.equal(over.data.receivedBytes, MESSAGE_BODY_LIMIT_BYTES + 1);
     });
 
     it('a 70 KB send gets a 413 carrying limitBytes and the exact receivedBytes, and never reaches the Bridge', async () => {
       const before = bridge.received.length;
-      const { status, data } = await rawPost('/api/sessions/sender/medusa/send', bodyOfSize({ to: 'live-ws' }, 70 * 1024));
+      const { status, data } = await rawPost('/api/sessions/sender/medusa/send', bodyOfSize({ to: 'live-ws' }, 70 * 1024), { caller: pane.headers });
       assert.equal(status, 413);
       assert.equal(data.code, 'BODY_TOO_LARGE');
       assert.equal(data.limitBytes, MESSAGE_BODY_LIMIT_BYTES);
@@ -1887,7 +1907,7 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     });
 
     it('without a Content-Length the size is a lower bound, and says so', async () => {
-      const { status, data } = await rawPost('/api/sessions/sender/medusa/send', bodyOfSize({ to: 'live-ws' }, 70 * 1024), { chunked: true });
+      const { status, data } = await rawPost('/api/sessions/sender/medusa/send', bodyOfSize({ to: 'live-ws' }, 70 * 1024), { chunked: true, caller: pane.headers });
       assert.equal(status, 413);
       assert.equal(data.limitBytes, MESSAGE_BODY_LIMIT_BYTES);
       assert.ok(data.receivedBytes > MESSAGE_BODY_LIMIT_BYTES, 'at least more than the limit');
@@ -1897,15 +1917,15 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
 
     it('loop and continue take a 60 KB body and refuse a 70 KB one with the sizes', async () => {
       const task = 'y'.repeat(60 * 1024);
-      const open = await req('/api/sessions/sender/medusa/loop', 'POST', { target: 'live-ws', task, doneCriteria: 'd' });
+      const open = await req('/api/sessions/sender/medusa/loop', 'POST', { target: 'live-ws', task, doneCriteria: 'd' }, dashboard());
       assert.equal(open.status, 200);
       const loopId = open.data.loop.id;
       bridge.loopStore.get(loopId).state = 'responded';
-      const cont = await rawPost(`/api/sessions/sender/medusa/loops/${loopId}/continue`, bodyOfSize({}, 60 * 1024));
+      const cont = await rawPost(`/api/sessions/sender/medusa/loops/${loopId}/continue`, bodyOfSize({}, 60 * 1024), { caller: dashboard() });
       assert.equal(cont.status, 200);
 
       for (const urlPath of ['/api/sessions/sender/medusa/loop', `/api/sessions/sender/medusa/loops/${loopId}/continue`]) {
-        const { status, data } = await rawPost(urlPath, bodyOfSize({ target: 'live-ws', doneCriteria: 'd' }, 70 * 1024));
+        const { status, data } = await rawPost(urlPath, bodyOfSize({ target: 'live-ws', doneCriteria: 'd' }, 70 * 1024), { caller: dashboard() });
         assert.equal(status, 413, urlPath);
         assert.equal(data.limitBytes, MESSAGE_BODY_LIMIT_BYTES, urlPath);
         assert.equal(data.receivedBytes, 70 * 1024, urlPath);
@@ -1915,10 +1935,10 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     it('the command route is in the family: a 12 KB body passes the body cap, a 70 KB one is refused with sizes', async () => {
       // 4000 three-byte characters: inside the route's own 4096-character cap,
       // over the old 10 KB body default. No tmux session → the route's 404, not a 413.
-      const fits = await rawPost('/api/sessions/no-session-c03/command', JSON.stringify({ command: '\u4e2d'.repeat(4000) }));
+      const fits = await rawPost('/api/sessions/no-session-c03/command', JSON.stringify({ command: '\u4e2d'.repeat(4000) }), { caller: dashboard() });
       assert.notEqual(fits.status, 413);
       assert.equal(fits.status, 404);
-      const { status, data } = await rawPost('/api/sessions/no-session-c03/command', bodyOfSize({}, 70 * 1024));
+      const { status, data } = await rawPost('/api/sessions/no-session-c03/command', bodyOfSize({}, 70 * 1024), { caller: dashboard() });
       assert.equal(status, 413);
       assert.equal(data.limitBytes, MESSAGE_BODY_LIMIT_BYTES);
       assert.equal(data.receivedBytes, 70 * 1024);
@@ -1929,16 +1949,16 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
       // same body cap — a hand-kept list of the ones somebody noticed is how the
       // handback stayed on 10 KB while its own cap allows ~11 KB of multibyte text.
       for (const urlPath of ['/api/sessions/no-session-c04/wrap/handback', '/api/sessions/no-session-c04/wrap/complete']) {
-        const fits = await rawPost(urlPath, bodyOfSize({}, 12 * 1024));
+        const fits = await rawPost(urlPath, bodyOfSize({}, 12 * 1024), { caller: dashboard() });
         assert.notEqual(fits.status, 413, `${urlPath} must accept 12 KB`);
-        const { status, data } = await rawPost(urlPath, bodyOfSize({}, 70 * 1024));
+        const { status, data } = await rawPost(urlPath, bodyOfSize({}, 70 * 1024), { caller: dashboard() });
         assert.equal(status, 413, urlPath);
         assert.equal(data.limitBytes, MESSAGE_BODY_LIMIT_BYTES, urlPath);
       }
     });
 
     it('a route left on the default still 413s at 10 KB, now with its own limit named', async () => {
-      const { status, data } = await rawPost('/api/sessions/sender/medusa/read', bodyOfSize({}, 11 * 1024));
+      const { status, data } = await rawPost('/api/sessions/sender/medusa/read', bodyOfSize({}, 11 * 1024), { caller: pane.headers });
       assert.equal(status, 413);
       assert.equal(data.limitBytes, MAX_BODY_SIZE);
     });
@@ -1947,7 +1967,10 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
       const { execFile } = require('node:child_process');
       const run = (text) => new Promise((resolve) => {
         execFile(path.join(__dirname, '..', 'bin', 'tc'), ['message', 'send', 'live-ws', text], {
-          env: { PATH: process.env.PATH, TANGLECLAW_API: `http://127.0.0.1:${port}`, TANGLECLAW_PROJECT_ID: String(project.id) },
+          env: {
+            PATH: process.env.PATH, TANGLECLAW_API: `http://127.0.0.1:${port}`,
+            TANGLECLAW_PROJECT_ID: String(project.id), TANGLECLAW_LAUNCH_ID: pane.launchId
+          },
           encoding: 'utf8'
         }, (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr }));
       });

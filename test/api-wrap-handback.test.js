@@ -23,6 +23,7 @@ const store = require('../lib/store');
 const { createServer } = require('../server');
 const wrapRunRegistry = require('../lib/wrap-run-registry');
 const wrapHandback = require('../lib/wrap-handback');
+const { operatorHeaders } = require('./_shared-docs-callers');
 
 const PROJECT = 'wrap-handback-test';
 const WAIT_MS = 10_000;
@@ -33,12 +34,13 @@ const WAIT_MS = 10_000;
  * @param {string} method
  * @param {string} urlPath
  * @param {object} [body]
+ * @param {Record<string, string>} [callerHeaders] - Who is asking
  * @returns {Promise<{status: number, headers: object, body: any}>}
  */
-function request(server, method, urlPath, body) {
+function request(server, method, urlPath, body, callerHeaders = {}) {
   return new Promise((resolve, reject) => {
     const bodyStr = body != null ? JSON.stringify(body) : null;
-    const headers = { 'Content-Type': 'application/json' };
+    const headers = { 'Content-Type': 'application/json', ...callerHeaders };
     if (bodyStr != null) headers['Content-Length'] = Buffer.byteLength(bodyStr);
     const req = http.request({ hostname: '127.0.0.1', port: server.address().port, path: urlPath, method, headers }, (res) => {
       const chunks = [];
@@ -54,6 +56,19 @@ function request(server, method, urlPath, body) {
     if (bodyStr != null) req.write(bodyStr);
     req.end();
   });
+}
+
+/**
+ * A request from the operator's dashboard. The handback is sent from the wrap
+ * drawer, so the dashboard is who posts it.
+ * @param {http.Server} server
+ * @param {string} method
+ * @param {string} urlPath
+ * @param {object} [body]
+ * @returns {Promise<{status: number, headers: object, body: any}>}
+ */
+function operatorRequest(server, method, urlPath, body) {
+  return request(server, method, urlPath, body, operatorHeaders(server));
 }
 
 const openRequests = new Set();
@@ -158,7 +173,7 @@ describe('wrap handback routes (#1312)', () => {
 
   it('answers 202 with the handback and its stream handle', async () => {
     settleBlocked();
-    const res = await request(server, 'POST', `/api/sessions/${PROJECT}/wrap/handback`, { stepId: 'changelog-update', prompt: 'Write it.' });
+    const res = await operatorRequest(server, 'POST', `/api/sessions/${PROJECT}/wrap/handback`, { stepId: 'changelog-update', prompt: 'Write it.' });
     assert.equal(res.status, 202);
     assert.equal(res.body.handback.state, 'working');
     assert.equal(res.body.streamUrl, `/api/sessions/${PROJECT}/wrap/handback/stream/${res.body.handbackId}`);
@@ -166,20 +181,20 @@ describe('wrap handback routes (#1312)', () => {
   });
 
   it('keeps each refusal\'s status: 409 with no settled halt, 400 on a bad prompt', async () => {
-    let res = await request(server, 'POST', `/api/sessions/${PROJECT}/wrap/handback`, { stepId: 'changelog-update', prompt: 'x' });
+    let res = await operatorRequest(server, 'POST', `/api/sessions/${PROJECT}/wrap/handback`, { stepId: 'changelog-update', prompt: 'x' });
     assert.equal(res.status, 409);
     assert.equal(res.body.code, 'WRAP_NOT_SETTLED');
     settleBlocked();
-    res = await request(server, 'POST', `/api/sessions/${PROJECT}/wrap/handback`, { stepId: 'memory-update', prompt: 'x' });
+    res = await operatorRequest(server, 'POST', `/api/sessions/${PROJECT}/wrap/handback`, { stepId: 'memory-update', prompt: 'x' });
     assert.equal(res.status, 409);
     assert.equal(res.body.code, 'WRAP_STEP_NOT_BLOCKED');
-    res = await request(server, 'POST', `/api/sessions/${PROJECT}/wrap/handback`, { stepId: 'changelog-update', prompt: '' });
+    res = await operatorRequest(server, 'POST', `/api/sessions/${PROJECT}/wrap/handback`, { stepId: 'changelog-update', prompt: '' });
     assert.equal(res.status, 400);
   });
 
   it('the stream delivers handback-start, then handback-done on the marker, and closes', async () => {
     settleBlocked();
-    const res = await request(server, 'POST', `/api/sessions/${PROJECT}/wrap/handback`, { stepId: 'changelog-update', prompt: 'Write it.' });
+    const res = await operatorRequest(server, 'POST', `/api/sessions/${PROJECT}/wrap/handback`, { stepId: 'changelog-update', prompt: 'Write it.' });
     const stream = await readStream(server, res.body.streamUrl, () => { pane = 'done\nTCWRAP-DONE 0badf00d'; });
     assert.equal(stream.status, 200);
     assert.match(stream.headers['content-type'], /^text\/event-stream/);
@@ -192,7 +207,7 @@ describe('wrap handback routes (#1312)', () => {
   it('a stream opened after the watch ended replays both frames and closes at once', async () => {
     settleBlocked();
     pane = 'TCWRAP-DONE 0badf00d';
-    const res = await request(server, 'POST', `/api/sessions/${PROJECT}/wrap/handback`, { stepId: 'changelog-update', prompt: 'Write it.' });
+    const res = await operatorRequest(server, 'POST', `/api/sessions/${PROJECT}/wrap/handback`, { stepId: 'changelog-update', prompt: 'Write it.' });
     for (let i = 0; i < 1000 && wrapHandback.get(PROJECT, wrapRunRegistry.get(PROJECT).runId).state === 'working'; i++) {
       await new Promise((resolve) => setTimeout(resolve, 2));
     }
@@ -216,7 +231,7 @@ describe('wrap handback routes (#1312)', () => {
     wrapRunRegistry._resetForTests();
 
     settleBlocked();
-    const res = await request(server, 'POST', `/api/sessions/${PROJECT}/wrap/handback`, { stepId: 'changelog-update', prompt: 'Write it.' });
+    const res = await operatorRequest(server, 'POST', `/api/sessions/${PROJECT}/wrap/handback`, { stepId: 'changelog-update', prompt: 'Write it.' });
     status = await request(server, 'GET', `/api/sessions/${PROJECT}/wrap/status`);
     assert.equal(status.body.handback.handbackId, res.body.handbackId);
     assert.equal(status.body.handback.stepId, 'changelog-update');

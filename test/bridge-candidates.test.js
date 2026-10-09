@@ -168,11 +168,19 @@ describe('bridge candidates (#2031)', () => {
   it('refuses a caller that is not a verified launch, and anything while disabled', async () => {
     const session = liveSession();
     reports(session);
-    for (const headers of [{}, { 'x-tangleclaw-project-id': String(session.project.id) },
-      { ...session.headers, 'x-tangleclaw-launch-id': 'not-a-launch' },
-      { 'x-tangleclaw-bridge-credential': masterCredential }]) {
+    // A caller that cannot be identified is refused by the server's
+    // launch-binding floor before the bridge is asked (#2233). The bridge's own
+    // refusal is for a caller the floor admits and who is still not a launch:
+    // the operator's dashboard.
+    for (const [headers, code] of [
+      [{}, 'LAUNCH_BINDING_REQUIRED'],
+      [{ 'x-tangleclaw-project-id': String(session.project.id) }, 'LAUNCH_BINDING_REQUIRED'],
+      [{ ...session.headers, 'x-tangleclaw-launch-id': 'not-a-launch' }, 'LAUNCH_BINDING_INVALID'],
+      [{ 'x-tangleclaw-bridge-credential': masterCredential }, 'LAUNCH_BINDING_REQUIRED'],
+      [{ 'x-tangleclaw-client': 'dashboard' }, 'VERIFIED_LAUNCH_REQUIRED']
+    ]) {
       const r = await call('POST', '/api/bridge/session/candidates', { headers, body: { requestId: 'req-none-0001', kind: 'milestone', text: 'x', receipts: [{ kind: 'workload', seq: 1 }] } });
-      assert.deepEqual([r.status, r.body.code], [403, 'VERIFIED_LAUNCH_REQUIRED']);
+      assert.deepEqual([r.status, r.body.code], [403, code], JSON.stringify(headers));
     }
     bridgeStore.settings.set('enabled', 'false');
     assert.equal((await offers(session)).body.code, 'BRIDGE_DISABLED');
@@ -481,9 +489,17 @@ describe('bridge candidates (#2031)', () => {
       const itemRoute = '/api/bridge/operator/outbound/:outboundId/withdraw';
       assert.equal((await operator(AMBIENT, 'POST', candidateRoute, { params: { candidateId: undecided }, body: { requestId: 'req-amb-cand-0001' } })).status, 403);
       assert.equal((await operator(AMBIENT, 'POST', itemRoute, { params: { outboundId: String(item) }, body: { requestId: 'req-amb-item-0001' } })).status, 403);
-      for (const headers of [{}, session.headers, { 'x-tangleclaw-bridge-credential': masterCredential }]) {
+      // An unidentified caller never reaches the bridge (#2233). One the floor
+      // admits, a live session or the dashboard on an open gate, gets the
+      // bridge's own answer: neither is a signed-in operator.
+      for (const [headers, code] of [
+        [{}, 'LAUNCH_BINDING_REQUIRED'],
+        [{ 'x-tangleclaw-bridge-credential': masterCredential }, 'LAUNCH_BINDING_REQUIRED'],
+        [session.headers, 'OPERATOR_SESSION_REQUIRED'],
+        [{ 'x-tangleclaw-client': 'dashboard' }, 'OPERATOR_SESSION_REQUIRED']
+      ]) {
         const res = await call('POST', `/api/bridge/operator/candidates/${undecided}/withdraw`, { headers, body: { requestId: 'req-http-cand-0001' } });
-        assert.deepEqual([res.status, res.body.code], [403, 'OPERATOR_SESSION_REQUIRED']);
+        assert.deepEqual([res.status, res.body.code], [403, code], JSON.stringify(headers));
       }
       assert.equal((await inventory()).length, 4, 'none of that withdrew anything');
 

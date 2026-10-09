@@ -580,6 +580,11 @@ describe('Medusa reply guidance in every config form (#1976)', () => {
         const text = engines._medusaSwitchboardLines(rules, format, { committedCarrier }).join('\n');
         assert.match(text, /tc message send --in-reply-to <message-id>/);
         assert.match(text, /launch headers/);
+        // Every form says a raw write is refused without both headers (#2233),
+        // not only that a reply or a blocking send needs them.
+        assert.match(text, /(every write|Every `?POST`?)[^\n]*refused without your launch headers/i);
+        assert.match(text, /x-tangleclaw-launch-id: \$TANGLECLAW_LAUNCH_ID/);
+        assert.match(text, /x-tangleclaw-project-id: \$TANGLECLAW_PROJECT_ID/);
         assert.match(text, /BEFORE you mark the message handled/);
         assert.match(text, /tc message owed/);
         assert.match(text, /Never use `?\/clear`? as an acknowledgement/);

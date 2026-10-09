@@ -219,18 +219,37 @@ describe('Adding a login from settings (#803)', () => {
     });
 
     it('answers 503 GATE_UNREADABLE, never "already on", when the gate cannot read its state', async () => {
-      // Reachable by a local tool through the machine carve-out: the gate enforces
-      // in `unreadable`, so a browser is challenged before the route.
+      // The gate enforces in `unreadable`, so a browser with no session is
+      // challenged before the route. A session made before the store stopped
+      // answering still resolves, and its holder is the one caller who reaches
+      // the route in this state. A local tool no longer does (#2233): the gate's
+      // machine carve-out lets it past the login, and the launch binding guard
+      // then refuses a write from a caller that says nothing about who it is.
+      store.users.create('rosie', PASSWORD);
       const cfg = store.config.load();
       cfg.authEnabled = true;
       store.config.save(cfg);
+      const login = await send('POST', '/api/auth/login', { body: { username: 'rosie', password: PASSWORD } });
+      assert.equal(login.statusCode, 200, login.body);
+      const cookie = login.headers['set-cookie'].map((c) => c.split(';')[0]).join('; ');
+      const csrf = JSON.parse(login.body).csrfToken;
+      const before = JSON.stringify(store.config.load());
       const orig = store.authSessions.accountPresence;
       store.authSessions.accountPresence = () => { throw new Error('database is locked'); };
       try {
-        const res = await addLogin({ machine: true });
+        assert.equal(await gateState(), 'unreadable', 'precondition: the gate cannot read its state');
+        const res = await addLogin({ cookie, csrf });
         assert.equal(res.statusCode, 503, res.body);
         assert.match(res.body, /GATE_UNREADABLE/);
         assert.doesNotMatch(res.body, /already on/);
+        assert.equal(JSON.stringify(store.config.load()), before, 'and it changed nothing');
+
+        const tool = await addLogin({ machine: true });
+        assert.equal(tool.statusCode, 403, tool.body);
+        assert.equal(JSON.parse(tool.body).code, 'LAUNCH_BINDING_REQUIRED');
+        const signedOut = await addLogin();
+        assert.equal(signedOut.statusCode, 401, signedOut.body);
+        assert.equal(JSON.stringify(store.config.load()), before, 'neither refusal changed anything');
       } finally {
         store.authSessions.accountPresence = orig;
       }

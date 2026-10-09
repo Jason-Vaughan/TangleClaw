@@ -233,7 +233,7 @@ Sessions are monitored via heartbeat. Default interval: 5 minutes.
 
 ### Endpoints
 
-- `POST /api/audit/heartbeat` — keep watchdog alive
+- `POST /api/audit/heartbeat` — keep watchdog alive. It carries no credential, so since #2233 a call from a remote engine is refused with `403 LAUNCH_BINDING_REQUIRED` and the instance shows as silent in telemetry until the heartbeat is given one (#2239). Ingest is unaffected: it proves its connection's audit secret.
 - `GET /api/audit/telemetry` — status of all watched sessions (green/yellow/red)
 
 ---

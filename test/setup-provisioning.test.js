@@ -28,6 +28,15 @@ const { createServer, _setRestartScheduler, _setCutoverSpawner } = require('../s
 const server864 = require('../server');
 const { installCaddyStub, withoutCaddy } = require('./_caddy-stub');
 const { installAlwaysAvailableEngine } = require('./_engine-fixture');
+const { operatorOf, attemptUnidentified, DEFAULT_OPERATOR } = require('./_shared-docs-callers');
+
+/**
+ * The methods a caller must be identified for (#2233). The request helper below
+ * sends the operator's dashboard headers on these and leaves reads exactly as
+ * they were, because a read asks nothing about who is calling.
+ * @type {ReadonlySet<string>}
+ */
+const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 setLevel('error');
 
@@ -36,19 +45,38 @@ const BCRYPT_A = '$2a$14$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0';
 const BCRYPT_B = '$2a$14$zyxwvutsrqponmlkjihgfedcbaZYXWVUTSRQPONMLKJIHGFEDCBA9';
 
 /**
- * Make a request to the test server.
+ * The server under test, for {@link operator}. Assigned by each suite's
+ * `before` hook.
+ * @type {http.Server|null}
+ */
+let liveServer = null;
+
+/**
+ * The operator's write headers for the install as it stands: the dashboard's
+ * own while no login is asked for, and a signed-in account's session once one
+ * is (#2233, ruling E1). Where the install asks for a login and has no account
+ * yet, the account is created first through `POST /api/auth/set-password`, as
+ * an operator meeting that install would.
+ */
+const operator = operatorOf(() => liveServer);
+
+/**
+ * Make a request to the test server. Writes are sent as the operator.
  * @param {http.Server} server
  * @param {string} method
  * @param {string} urlPath
  * @param {object} [body]
+ * @param {Record<string, string>} [as] - Headers to send instead of the
+ *   operator's, for a case about another caller
  * @returns {Promise<{ status: number, data: any, raw: string }>}
  */
-function request(server, method, urlPath, body) {
+async function request(server, method, urlPath, body, as) {
+  const identity = as || (WRITES.has(method) ? await operator() : {});
   return new Promise((resolve, reject) => {
     const addr = server.address();
     const req = http.request({
       hostname: '127.0.0.1', port: addr.port, path: urlPath, method,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json', ...identity }
     }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
@@ -146,6 +174,48 @@ function handEdited(credentialLines) {
   ].join('\n');
 }
 
+/**
+ * Everything finishing setup can change, read back: the config fields it
+ * writes, the live Caddyfile, and whether an account exists.
+ * @returns {object}
+ */
+function setupState() {
+  const c = store.config.load();
+  const p = caddy.getCaddyfilePath();
+  return {
+    setupComplete: c.setupComplete,
+    authEnabled: c.authEnabled,
+    basicAuthUser: c.basicAuthUser || null,
+    basicAuthHash: c.basicAuthHash || null,
+    loginOptOutAt: c.loginOptOutAt || null,
+    ingressMode: c.ingressMode,
+    projectsDir: c.projectsDir,
+    caddyfile: fs.existsSync(p) && fs.statSync(p).isFile() ? fs.readFileSync(p, 'utf8') : null,
+    accounts: store.authSessions.accountPresence().exists
+  };
+}
+
+/**
+ * Assert that finishing setup is refused, before the route, for both callers
+ * who are not the operator on an install that asks for a login and has no
+ * account, and that neither changed anything (#2233, ruling E4).
+ * @param {http.Server} server - The listening test server
+ * @param {object} body - The completion they attempt
+ * @param {function(): number} cutoverCount - How many cutovers have been started
+ * @returns {Promise<void>}
+ */
+async function assertSetupRefusedWithoutAnAccount(server, body, cutoverCount) {
+  const before = setupState();
+  assert.equal(before.accounts, false, 'precondition: no account exists');
+  const { browser, machine } = await attemptUnidentified(server, 'POST', '/api/setup/complete', body);
+  assert.equal(browser.status, 401, 'a browser with no session is sent to create the account first');
+  assert.equal(browser.data.code, 'ACCOUNT_REQUIRED');
+  assert.equal(machine.status, 403, 'a bare request on the loopback listener is not the operator');
+  assert.equal(machine.data.code, 'LAUNCH_BINDING_REQUIRED');
+  assert.deepEqual(setupState(), before, 'neither refusal changed anything');
+  assert.equal(cutoverCount(), 0, 'and neither started a cutover');
+}
+
 describe('setup provisions a login by default', () => {
   let caddyStub;
   let tmpDir;
@@ -167,6 +237,7 @@ describe('setup provisions a login by default', () => {
     _setRestartScheduler(() => {});
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    liveServer = server;
   });
 
   after(async () => {
@@ -293,12 +364,30 @@ describe('setup provisions a login by default', () => {
       assert.equal(res.data.ingress.url, 'https://127.0.0.1:9443');
     });
 
+    it('refuses a bare request under any Host before the route, and writes nothing (#2233)', async () => {
+      const before = setupState();
+      const res = await requestWithHost(server, 'cursatory.tail123678.ts.net:8443', {
+        projectsDir: tmpDir, adminUser: 'jason', adminPassword: 'correct-horse-battery'
+      });
+      assert.equal(res.status, 403);
+      assert.equal(res.data.code, 'LAUNCH_BINDING_REQUIRED');
+      assert.deepEqual(setupState(), before, 'no credential, no account, setup still unfinished');
+      assert.equal(cutovers.length, 0);
+    });
+
     it('discards a Host header that is not a hostname rather than echoing it into the URL', async () => {
       // The URL goes back to the browser and is rendered into markup, including
       // an inline event handler. `Host` is caller-supplied, so anything outside a
       // hostname's alphabet is dropped — escaping would not do: an HTML-entity
       // quote decodes back to a quote before the script sees it.
-      const res = await requestWithHost(server, "evil'+alert(1)+'.example", {
+      //
+      // Sent as the browser of a remote first run on a wide install, which is the
+      // one caller that reaches this route under a name the install does not
+      // serve yet (#864's carve-out). A bare request is no longer anyone (#2233).
+      const c = store.config.load();
+      c.bindAllInterfaces = true;
+      store.config.save(c);
+      const res = await browserRequestWithHost(server, "evil'+alert(1)+'.example", {
         projectsDir: tmpDir, adminUser: 'jason', adminPassword: 'correct-horse-battery'
       });
       assert.equal(res.status, 200);
@@ -493,9 +582,14 @@ describe('setup provisions a login by default', () => {
     });
 
     it('keeps a legitimate hostname, so a remote operator gets their own address', async () => {
-      const res = await requestWithHost(server, 'cursatory.tail123678.ts.net:8443', {
+      // The remote operator's own browser, on the wide first run that lets it in.
+      const c = store.config.load();
+      c.bindAllInterfaces = true;
+      store.config.save(c);
+      const res = await browserRequestWithHost(server, 'cursatory.tail123678.ts.net:8443', {
         projectsDir: tmpDir, adminUser: 'jason', adminPassword: 'correct-horse-battery'
       });
+      assert.equal(res.status, 200);
       assert.equal(res.data.ingress.url, 'https://cursatory.tail123678.ts.net:8443');
     });
 
@@ -641,7 +735,25 @@ describe('setup provisions a login by default', () => {
       const content = handEdited([`jason ${BCRYPT_A}`]);
       writeLive(content);
       caddyIsLive();
-      await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
+      // The completion has to have RUN for an untouched file to mean anything: a
+      // request refused before the route leaves the file alone too.
+      const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
+      assert.equal(res.status, 200);
+      assert.equal(res.data.ingress.action, 'adopt', 'the adoption ran');
+      assert.equal(store.config.load().setupComplete, true, 'and setup finished');
+      assert.equal(store.config.load().basicAuthUser, 'jason', 'having taken the file\'s login into config');
+      assert.equal(fs.readFileSync(caddy.getCaddyfilePath(), 'utf8'), content);
+      assert.equal(cutovers.length, 0);
+    });
+
+    it('refuses to finish an adoptable setup for a caller who is not the operator, and adopts nothing (#2233)', async () => {
+      // The same machine, asked by the two callers who are not its operator. The
+      // Caddyfile's login is not in config afterwards, and setup is not finished.
+      const content = handEdited([`jason ${BCRYPT_A}`]);
+      writeLive(content);
+      caddyIsLive();
+      await assertSetupRefusedWithoutAnAccount(server, { projectsDir: tmpDir }, () => cutovers.length);
+      assert.equal(store.config.load().basicAuthUser, null, 'nothing was adopted');
       assert.equal(fs.readFileSync(caddy.getCaddyfilePath(), 'utf8'), content);
     });
 
@@ -714,7 +826,7 @@ describe('setup provisions a login by default', () => {
       assert.ok(res.data.warnings.some((w) => /cannot tell/.test(w)));
     });
 
-    it('still offers a next step when a completed install re-POSTs', async () => {
+    it('refuses a completed install\'s re-POST while it has no account, and reports the account as the login once it has one', async () => {
       // The eighth path, and the one the seven-state table never covered: when setup is
       // already complete the plan is built WITHOUT decideProvisioning, so its `remedy` is
       // null. Removing the command from the warning left this path with the situation
@@ -727,14 +839,27 @@ describe('setup provisions a login by default', () => {
       c.basicAuthHash = BCRYPT_A;
       store.config.save(c);
 
+      // #2233: this shape (a login switched on, no account) admits one write,
+      // creating the account. The re-POST is refused before the route, so the
+      // `unchanged` answer and its `--dry-run` next step, which this case used to
+      // pin, are no longer produced for any caller who is not in fallback mode.
+      await assertSetupRefusedWithoutAnAccount(server, { projectsDir: tmpDir }, () => cutovers.length);
+
+      // What the operator of this install actually meets: they create the
+      // account, sign in, and the re-POST then reports that account as the login
+      // in force. There is no warning to act on, so no next step is owed.
+      const live = fs.readFileSync(caddy.getCaddyfilePath(), 'utf8');
       const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
       assert.equal(res.status, 200);
-      assert.equal(res.data.ingress.protection, 'unchanged');
-      assert.ok(res.data.warnings.some((w) => /cannot confirm anything is enforcing/.test(w)));
-      assert.ok(res.data.ingress.remedy && res.data.ingress.remedy.trim().length > 0,
-        'a completed install must not be left with a warning and no next step');
-      assert.match(res.data.ingress.remedy, /--dry-run/,
-        'the fallback must be the one instruction that writes nothing and is honest in every state');
+      assert.equal(store.authSessions.accountPresence().exists, true, 'the operator signed in to a real account');
+      assert.equal(res.data.ingress.protection, 'account');
+      assert.equal(res.data.ingress.confirmedProtection, true);
+      assert.ok(!res.data.warnings.some((w) => /cannot confirm anything is enforcing/.test(w)),
+        'a login that is in force must not be reported as unconfirmed');
+      assert.equal(res.data.ingress.action, 'refuse', 'a completed install is still never cut over from here');
+      assert.equal(store.config.load().projectsDir, tmpDir, 'the field the re-POST carried was saved');
+      assert.equal(store.config.load().basicAuthHash, BCRYPT_A, 'and the stored Caddy credential was left alone');
+      assert.equal(fs.readFileSync(caddy.getCaddyfilePath(), 'utf8'), live);
       assert.equal(cutovers.length, 0, 'reporting must never act');
     });
 
@@ -804,6 +929,11 @@ describe('setup provisions a login by default', () => {
         const c = store.config.load();
         c.ingressMode = 'caddy';
         store.config.save(c);
+        // A Caddyfile that cannot be read closes TangleClaw's gate too, and in that
+        // state no account can be created from the browser, so only an operator
+        // who already has one reaches this route. Theirs is seeded as
+        // `reset-admin.js --store` would leave it; the sign-in is the real one.
+        store.users.create(DEFAULT_OPERATOR.username, DEFAULT_OPERATOR.password);
         const probe = await request(server, 'GET', '/api/setup/ingress-state');
         assert.equal(probe.data.state, 'unreadable', 'precondition: the Caddyfile cannot be read');
         assert.equal(probe.data.credential.optOutAllowed, false);
@@ -882,7 +1012,7 @@ describe('setup provisions a login by default', () => {
       assert.equal(store.config.load().authEnabled, false);
     });
 
-    it('warns when a credential is stored but the ingress was left untouched', async () => {
+    it('refuses to finish with a stored credential and no account, and reports the account as the login once it has one', async () => {
       // An operator who already has a credential and a hand-maintained config:
       // the credential is saved, and activating the gate belongs at a terminal
       // where the cutover's backup and rollback exist.
@@ -891,24 +1021,34 @@ describe('setup provisions a login by default', () => {
       config.basicAuthUser = 'admin';
       config.basicAuthHash = BCRYPT_A;
       store.config.save(config);
-      writeLive('# my own proxy\nlocalhost {\n\treverse_proxy 127.0.0.1:3102\n}\n');
+      const proxy = '# my own proxy\nlocalhost {\n\treverse_proxy 127.0.0.1:3102\n}\n';
+      writeLive(proxy);
 
+      // #2233: with a login switched on and no account, finishing setup is refused
+      // before the route. The `unchanged` answer this case used to pin (its
+      // warning, and the `--force` remedy) is no longer produced for any caller
+      // who is not in fallback mode.
+      await assertSetupRefusedWithoutAnAccount(server, { projectsDir: tmpDir }, () => cutovers.length);
+
+      // The operator creates the account and signs in. TangleClaw's own login then
+      // guards the door, so setup finishes and says so, with nothing left to warn
+      // about and the hand-maintained file untouched.
       const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
-      assert.equal(res.data.ingress.protection, 'unchanged');
-      assert.ok(res.data.warnings.some((w) => /cannot confirm anything is enforcing/.test(w)),
-        'the operator must still be told nothing is known to be enforcing the login');
-      // The warning states the situation and names NO command. A bare `--to caddy` is
-      // the form the cutover refuses on a hand-edited Caddyfile — which every path to
-      // this state has — so recommending it here put the failing form on the same
-      // screen as `remedy`'s working one.
+      assert.equal(res.status, 200);
+      assert.equal(store.authSessions.accountPresence().exists, true, 'the operator signed in to a real account');
+      assert.equal(res.data.ingress.protection, 'account');
+      assert.equal(res.data.ingress.confirmedProtection, true);
+      assert.ok(!res.data.warnings.some((w) => /cannot confirm anything is enforcing/.test(w)),
+        'a login that is in force must not be reported as unconfirmed');
+      // No warning names a command the cutover would refuse, or the Caddyfile as
+      // what governs protection: both held of the old answer and hold of this one.
       assert.ok(!res.data.warnings.some((w) => /ingress-cutover/.test(w)),
         'the warning must not name a command the cutover would refuse');
-      // It also must not name the Caddyfile as what governs protection: two states
-      // reaching this arm have nothing serving that file at all.
       assert.ok(!res.data.warnings.some((w) => /that file already makes it/.test(w)),
         'the warning must not claim the Caddyfile determines whether the login is active');
-      assert.match(res.data.ingress.remedy, /--force/,
-        'the state-specific command belongs in remedy, and on a hand-edited file it needs --force');
+      assert.equal(store.config.load().setupComplete, true, 'setup finished');
+      assert.equal(store.config.load().basicAuthHash, BCRYPT_A, 'the stored Caddy credential was left alone');
+      assert.equal(fs.readFileSync(caddy.getCaddyfilePath(), 'utf8'), proxy, 'and so was the operator\'s file');
       assert.equal(cutovers.length, 0);
     });
   });

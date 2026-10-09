@@ -25,22 +25,48 @@ const setupCredential = require('../lib/setup-credential');
 const { createServer, _setRestartScheduler, _setCutoverSpawner } = require('../server');
 const { installCaddyStub, withoutCaddy } = require('./_caddy-stub');
 const { installAlwaysAvailableEngine } = require('./_engine-fixture');
+const { operatorOf, attemptUnidentified } = require('./_shared-docs-callers');
+
+/**
+ * The methods a caller must be identified for (#2233). The request helper below
+ * sends the operator's dashboard headers on these and leaves reads exactly as
+ * they were, because a read asks nothing about who is calling.
+ * @type {ReadonlySet<string>}
+ */
+const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 setLevel('error');
 
 /**
- * Make a JSON request to the test server.
+ * The server under test, for {@link operator}. Assigned by the suite's
+ * `before` hook.
+ * @type {http.Server|null}
+ */
+let liveServer = null;
+
+/**
+ * The operator's write headers for the install as it stands: the dashboard's
+ * own while no login is asked for, and a signed-in account's session once one
+ * is (#2233, ruling E1). Where the install asks for a login and has no account
+ * yet, the account is created first through `POST /api/auth/set-password`, as
+ * an operator meeting that install would.
+ */
+const operator = operatorOf(() => liveServer);
+
+/**
+ * Make a JSON request to the test server. Writes are sent as the operator.
  * @param {http.Server} server
  * @param {string} method
  * @param {string} urlPath
  * @param {object} [body]
  * @returns {Promise<{ status: number, data: any }>}
  */
-function request(server, method, urlPath, body) {
+async function request(server, method, urlPath, body) {
+  const identity = WRITES.has(method) ? await operator() : {};
   return new Promise((resolve, reject) => {
     const req = http.request({
       hostname: '127.0.0.1', port: server.address().port, path: urlPath, method,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json', ...identity }
     }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
@@ -72,6 +98,7 @@ describe('the credential rule has one owner (#804)', () => {
     _setCutoverSpawner(() => ({ ok: true, pid: 1, error: null }));
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    liveServer = server;
   });
 
   after(async () => {
@@ -108,26 +135,46 @@ describe('the credential rule has one owner (#804)', () => {
    * @param {object} overrides - Config for the scenario.
    * @param {string} [caddyfile] - A live Caddyfile for the scenario.
    * @returns {Promise<{ probe: object, completeRequired: boolean, skipRequired: boolean,
-   *   optOutHonoured: boolean }>}
+   *   optOutHonoured: boolean, completeFinished: boolean, skipFinished: boolean,
+   *   optOutFinished: boolean, optOutRecorded: boolean }>}
+   *   The `*Finished` and `optOutRecorded` fields are read back from the saved
+   *   config, so an answer is never inferred from a response alone.
    */
   async function askAll(overrides, caddyfile) {
     freshInstall(overrides, caddyfile);
     const probe = (await request(server, 'GET', '/api/setup/ingress-state')).data.credential;
 
+    // Each write must have been ANSWERED BY ITS ROUTE. A request refused before
+    // the route (401 by the gate, 403 by the launch binding guard) carries no
+    // ADMIN_REQUIRED either, and would read below as "no login required".
+    const reachedRoute = (res, what) => assert.ok(res.status === 200 || res.status === 400,
+      `${what} must be answered by its route, not refused before it (${res.status} ${res.data && res.data.code})`);
+
     freshInstall(overrides, caddyfile);
     const complete = await request(server, 'POST', '/api/setup/complete', {});
+    reachedRoute(complete, 'Finish');
+    const completeFinished = store.config.load().setupComplete === true;
 
     freshInstall(overrides, caddyfile);
     const skip = await request(server, 'PATCH', '/api/config', { setupComplete: true });
+    reachedRoute(skip, 'Skip');
+    const skipFinished = store.config.load().setupComplete === true;
 
     freshInstall(overrides, caddyfile);
     const optOut = await request(server, 'POST', '/api/setup/complete', { noLogin: true });
+    reachedRoute(optOut, 'the choice of no login');
+    const optOutFinished = store.config.load().setupComplete === true;
+    const optOutRecorded = Boolean(store.config.load().loginOptOutAt);
 
     return {
       probe,
       completeRequired: complete.data.code === 'ADMIN_REQUIRED',
       skipRequired: skip.data.code === 'ADMIN_REQUIRED',
-      optOutHonoured: optOut.status === 200
+      optOutHonoured: optOut.status === 200,
+      completeFinished,
+      skipFinished,
+      optOutFinished,
+      optOutRecorded
     };
   }
 
@@ -158,6 +205,12 @@ describe('the credential rule has one owner (#804)', () => {
       assert.equal(typeof a.probe.skipAllowed, 'boolean', 'and Skip\'s answer');
       assert.equal(a.completeRequired, a.probe.required, 'Finish enforces what the probe showed');
       assert.equal(a.skipRequired, !a.probe.skipAllowed, 'Skip enforces what the probe showed');
+      // And what each route DID, read back from the saved config: setup is
+      // finished exactly where the route did not demand a login.
+      assert.equal(a.completeFinished, !a.probe.required, 'Finish finished setup exactly where no login was demanded');
+      assert.equal(a.skipFinished, a.probe.skipAllowed, 'Skip finished setup exactly where the probe allowed it');
+      assert.equal(a.optOutFinished, a.optOutHonoured, 'an honoured choice finished setup, a refused one did not');
+      assert.equal(a.optOutRecorded, a.optOutHonoured, 'and the choice is recorded exactly when it was honoured');
       assert.equal(a.probe.skipAllowed === !a.probe.required, !scenario.adopts,
         'the two answers differ exactly where Finish adopts a login Skip cannot');
       // A satisfied install finishes either way; otherwise the choice of none is
@@ -167,6 +220,29 @@ describe('the credential rule has one owner (#804)', () => {
       }
     });
   }
+
+  it('refuses Finish, Skip and the choice of no login to anyone but the operator where a login is in hand and no account exists (#2233)', async () => {
+    // The `a login already in hand` scenario before its operator has an account:
+    // creating that account is the only write the install admits, so none of the
+    // three routes is reached and nothing they would save is saved.
+    const attempts = [
+      ['POST', '/api/setup/complete', {}],
+      ['PATCH', '/api/config', { setupComplete: true }],
+      ['POST', '/api/setup/complete', { noLogin: true }]
+    ];
+    for (const [method, urlPath, body] of attempts) {
+      freshInstall({ authEnabled: true });
+      const { browser, machine } = await attemptUnidentified(server, method, urlPath, body);
+      assert.equal(browser.status, 401, `${method} ${urlPath} from a browser with no session`);
+      assert.equal(browser.data.code, 'ACCOUNT_REQUIRED');
+      assert.equal(machine.status, 403, `${method} ${urlPath} from a bare loopback request`);
+      assert.equal(machine.data.code, 'LAUNCH_BINDING_REQUIRED');
+      const after = store.config.load();
+      assert.equal(after.setupComplete, false, 'setup is not finished');
+      assert.equal(after.loginOptOutAt, null, 'no choice of no login is recorded');
+      assert.equal(store.authSessions.accountPresence().exists, false, 'and no account appeared');
+    }
+  });
 
   it('agrees with no Caddy installed at all', async () => {
     const a = await withoutCaddy(() => askAll({}));

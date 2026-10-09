@@ -206,6 +206,18 @@ describe('the recovery-clear route (Train 21, #1587)', () => {
   const clearUrl = (project) => `/api/sessions/${encodeURIComponent(project.name)}/launch/recovery-clear`;
 
   /**
+   * The headers the held launch's own session sends on its API calls: the one
+   * machine-shaped caller that is identified, and so reaches the route (#2233).
+   * @param {object} project - Project record
+   * @param {object} sequence - The launch sequence
+   * @returns {object}
+   */
+  const boundHeaders = (project, sequence) => ({
+    'x-tangleclaw-launch-id': sequence.launchId,
+    'x-tangleclaw-project-id': String(project.id)
+  });
+
+  /**
    * Create an account and turn the login on.
    * @returns {void}
    */
@@ -270,13 +282,24 @@ describe('the recovery-clear route (Train 21, #1587)', () => {
       // A local process is not an operator. It is refused for WHAT IT IS, not
       // for a header it failed to send — so it stays refused even holding a
       // token it fetched itself.
-      const { project, body } = launchInRecovery('operator');
+      const { project, sequence, body } = launchInRecovery('operator');
       const token = await pageToken();
+      // One that says nothing about who it is does not reach the route at all
+      // (#2233).
       const res = await send('POST', clearUrl(project), {
         body, browser: false, headers: { 'x-tc-open-token': token }
       });
       assert.equal(res.statusCode, 403);
-      assert.equal(json(res).code, 'OPERATOR_REQUIRED');
+      assert.equal(json(res).code, 'LAUNCH_BINDING_REQUIRED');
+      assert.equal(store.launchSequences.getBySession(sequence.sessionId).recovery, 'required', 'nothing was cleared');
+      // The held launch's own session is identified, reaches the route, and is
+      // refused there for what it is, token and all.
+      const own = await send('POST', clearUrl(project), {
+        body, browser: false, headers: { ...boundHeaders(project, sequence), 'x-tc-open-token': token }
+      });
+      assert.equal(own.statusCode, 403);
+      assert.equal(json(own).code, 'OPERATOR_REQUIRED');
+      assert.equal(store.launchSequences.getBySession(sequence.sessionId).recovery, 'required', 'nothing was cleared');
     });
 
     it('refuses a browser that will not vouch for its own origin', async () => {
@@ -449,14 +472,22 @@ describe('the recovery-clear route (Train 21, #1587)', () => {
       // refused for the state the install is in NOW.
       const token = await pageToken();
       patchConfig({ authEnabled: true });
-      // A machine client is the one caller that reaches the route here: the
-      // fleet carve-out waves it past the perimeter, so the route's own fourth
-      // branch is what answers it.
+      // An unidentified machine client is refused before the route (#2233): the
+      // fleet carve-out waves it past the login, and the launch binding guard
+      // then refuses a write from a caller that says nothing about who it is.
       const machine = await send('POST', clearUrl(project), {
         body, browser: false, headers: { 'x-tc-open-token': token }
       });
-      assert.equal(machine.statusCode, 409);
-      assert.equal(json(machine).code, 'GATE_STATE_UNSUPPORTED');
+      assert.equal(machine.statusCode, 403);
+      assert.equal(json(machine).code, 'LAUNCH_BINDING_REQUIRED');
+      assert.equal(store.launchSequences.getBySession(sequence.sessionId).recovery, 'required');
+      // The held launch's own session is the caller that reaches the route here,
+      // and the route's own fourth branch is what answers it.
+      const own = await send('POST', clearUrl(project), {
+        body, browser: false, headers: { ...boundHeaders(project, sequence), 'x-tc-open-token': token }
+      });
+      assert.equal(own.statusCode, 409);
+      assert.equal(json(own).code, 'GATE_STATE_UNSUPPORTED');
       // A browser never gets that far — the perimeter challenges it for the
       // account that does not exist yet. Asserted so the two refusals are on
       // the record as different, rather than one being assumed to cover both.
@@ -542,6 +573,19 @@ describe('the recovery-clear route (Train 21, #1587)', () => {
       };
     }
 
+    /**
+     * The machine-shaped request the held launch's own session sends: bound to
+     * its launch, so identified, and holding a page token it fetched itself.
+     * @param {string} url - The route
+     * @param {{project: object, sequence: object, body: object}} held - The held launch
+     * @param {string} token - A page token
+     * @returns {Promise<object>} The response
+     */
+    const ownSession = (url, held, token) => send('POST', url, {
+      body: held.body, browser: false,
+      headers: { ...boundHeaders(held.project, held.sequence), 'x-tc-open-token': token }
+    });
+
     const stillHeld = (sequence) => store.launchSequences.getBySession(sequence.sessionId).recovery === 'required';
 
     it('has a row for every login gate state', () => {
@@ -557,15 +601,25 @@ describe('the recovery-clear route (Train 21, #1587)', () => {
       assert.doesNotMatch(hint.text, /sign in|the operator to clear|operator-verified/,
         'no operator is named as the one who clears: nothing here can tell who did');
 
+      // A machine-shaped request that says nothing about who it is never reaches
+      // either route (#2233). The launch's own session does, and each route
+      // refuses it as a local process.
       const read = await bothShapes(readUrl(project), body, token);
       assert.equal(read.machine.statusCode, 403);
-      assert.equal(json(read.machine).code, 'OPERATOR_REQUIRED');
+      assert.equal(json(read.machine).code, 'LAUNCH_BINDING_REQUIRED');
       assert.equal(read.imitation.statusCode, 403, 'the readback refuses the dashboard imitation too');
       assert.equal(json(read.imitation).code, 'LOGIN_GATE_REQUIRED');
+      const ownRead = await ownSession(readUrl(project), { project, sequence, body }, token);
+      assert.equal(ownRead.statusCode, 403);
+      assert.equal(json(ownRead).code, 'OPERATOR_REQUIRED');
 
       const machine = await send('POST', clearUrl(project), { body, browser: false, headers: { 'x-tc-open-token': token } });
       assert.equal(machine.statusCode, 403, 'a raw machine-shaped clear is refused outright');
-      assert.equal(json(machine).code, 'OPERATOR_REQUIRED');
+      assert.equal(json(machine).code, 'LAUNCH_BINDING_REQUIRED');
+      assert.ok(stillHeld(sequence));
+      const ownClear = await ownSession(clearUrl(project), { project, sequence, body }, token);
+      assert.equal(ownClear.statusCode, 403, 'and so is the launch\'s own session');
+      assert.equal(json(ownClear).code, 'OPERATOR_REQUIRED');
       assert.ok(stillHeld(sequence));
       const imitation = await send('POST', clearUrl(project), { body, headers: { 'x-tc-open-token': token } });
       assert.equal(imitation.statusCode, 200, 'a request with the dashboard\'s shape clears, whoever sent it');
@@ -579,8 +633,14 @@ describe('the recovery-clear route (Train 21, #1587)', () => {
       assert.match(hint.text, /Ask the operator to sign in and clear it from this project's Launch readiness panel\./);
       for (const url of [clearUrl(project), readUrl(project)]) {
         const { machine, imitation } = await bothShapes(url, body, token);
-        assert.equal(machine.statusCode, 401, url);
+        // Refused before the route (#2233): nothing says who it is.
+        assert.equal(machine.statusCode, 403, url);
+        assert.equal(json(machine).code, 'LAUNCH_BINDING_REQUIRED', url);
         assert.equal(imitation.statusCode, 401, url);
+        // The launch's own session reaches the route and is told to sign in.
+        const own = await ownSession(url, { project, sequence, body }, token);
+        assert.equal(own.statusCode, 401, url);
+        assert.equal(json(own).code, 'UNAUTHENTICATED', url);
       }
       assert.ok(stillHeld(sequence));
       const { cookie, csrf } = await signIn();
@@ -627,6 +687,14 @@ describe('the recovery-clear route (Train 21, #1587)', () => {
 
         for (const url of [clearUrl(project), readUrl(project)]) {
           const attempts = Object.values(await bothShapes(url, body, token));
+          // The unidentified machine-shaped request is refused before the route in
+          // every one of these states (#2233).
+          assert.equal(attempts[0].statusCode, 403, `${url}: ${attempts[0].body}`);
+          assert.equal(json(attempts[0]).code, 'LAUNCH_BINDING_REQUIRED', url);
+          // The launch's own session is identified, so it is the machine-shaped
+          // request that reaches the route's own refusal.
+          const own = await ownSession(url, { project, sequence, body }, token);
+          attempts.push(own);
           if (operator) {
             attempts.push(await send('POST', url, { body, headers: { cookie: operator.cookie, 'x-csrf-token': operator.csrf } }));
           }
@@ -634,7 +702,7 @@ describe('the recovery-clear route (Train 21, #1587)', () => {
             assert.ok(res.statusCode >= 400, `${url} answered ${res.statusCode}: ${res.body}`);
           }
           if (code) {
-            assert.equal(json(attempts[0]).code, code, `${url}: the machine-shaped request reaches the route's own refusal`);
+            assert.equal(json(own).code, code, `${url}: the launch's own session reaches the route's own refusal`);
           }
         }
         assert.ok(stillHeld(sequence), 'nothing cleared it');

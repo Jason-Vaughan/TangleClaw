@@ -274,6 +274,7 @@ const launchRecoveryHeld = require('./lib/launch-recovery-held');
 const recoveryDefault = require('./lib/recovery-default');
 const master = require('./lib/master');
 const sharedDocsAccess = require('./lib/shared-docs-access');
+const launchBindingGuard = require('./lib/launch-binding-guard');
 const workload = require('./lib/workload');
 const coordinatorRotation = require('./lib/coordinator-rotation');
 const bridgeApi = require('./lib/bridge-api');
@@ -956,7 +957,9 @@ function route(method, pattern, handler, options) {
  * Match a request to a route.
  * @param {string} method - HTTP method
  * @param {string} pathname - URL path
- * @returns {{ handler: Function, params: object, options: object }|null}
+ * @returns {{ handler: Function, params: object, options: object, method: string, pattern: string }|null}
+ *   `method` and `pattern` are the route's own, as registered: what the
+ *   launch-binding guard keys its exception list on.
  */
 function matchRoute(method, pathname) {
   for (const r of routes) {
@@ -967,7 +970,7 @@ function matchRoute(method, pathname) {
       r.paramNames.forEach((name, i) => {
         params[name] = decodeURIComponent(match[i + 1]);
       });
-      return { handler: r.handler, params, options: r.options || {} };
+      return { handler: r.handler, params, options: r.options || {}, method: r.method, pattern: r.pattern };
     }
   }
   return null;
@@ -4938,7 +4941,7 @@ for (const entry of bridgeApi.ROUTES) {
     const query = Object.fromEntries(new URL(req.url, 'http://localhost').searchParams);
     const result = await bridgeApi.handle(entry, { req, headers: req.headers, params, query, body });
     return jsonResponse(res, result.status, result.body);
-  });
+  }, { ownPrincipal: bridgeApi.provesOwnPrincipal(entry) });
 }
 
 // Governed coordinator context rotation (#2032). A coordinator prepares its
@@ -11314,8 +11317,13 @@ async function handleRequest(req, res) {
     // AUTH-4 — M2M service-token gate on the PortHub + shared-docs surfaces. A
     // no-op when serviceTokenEnabled is false (default), so the surfaces stay
     // byte-for-byte open until the operator opts in.
+    // Whether a service token was actually checked on this request: the gate is
+    // on AND the token matched. Read from the one config load that made the
+    // decision, so the guard below cannot see a gate the check above did not.
+    let serviceTokenVerified = false;
     if (serviceToken.requiresServiceToken(pathname)) {
-      const gate = serviceToken.validateRequest(req.headers, store.config.load());
+      const tokenConfig = store.config.load();
+      const gate = serviceToken.validateRequest(req.headers, tokenConfig);
       if (!gate.ok) {
         // Log the denial (never the token) — the gate returns before the normal
         // access-log line below, so without this a rejected M2M caller leaves no
@@ -11323,6 +11331,18 @@ async function handleRequest(req, res) {
         log.warn('Service-token gate denied request', { method, path: pathname, code: gate.code });
         return errorResponse(res, gate.status, gate.message, gate.code);
       }
+      serviceTokenVerified = Boolean(tokenConfig && tokenConfig.serviceTokenEnabled);
+    }
+
+    // The floor under every mutating route (#2233): the caller must be known
+    // before a handler runs. It establishes who is asking and nothing more; each
+    // route's own check of what that caller may touch still runs after it.
+    const binding = launchBindingGuard.judge(req, { ...matched, serviceTokenVerified });
+    if (!binding.allowed) {
+      log.warn('Mutating request refused: the caller is not bound to a live, current launch', {
+        method, path: pathname, code: binding.code, reason: binding.reason
+      });
+      return errorResponse(res, binding.status, binding.message, binding.code, { reason: binding.reason });
     }
 
     try {
@@ -11530,9 +11550,16 @@ route('POST', '/api/audit/ingest', (_req, res, _params, body) => {
     return errorResponse(res, 401, 'Missing Authorization header', 'UNAUTHORIZED');
   }
 
-  // Find the connection by matching audit_secret
-  const connections = store.openclawConnections.list();
-  const conn = connections.find(c => c.auditSecret && c.auditSecret === token);
+  // Find the connection by matching audit_secret. This route is not held to
+  // the launch binding (a remote engine's webhook has none), so this is the
+  // whole of its caller proof and it runs before anything is read or written.
+  // Every connection is compared, in constant time, so neither how much of a
+  // secret matched nor which connection matched shows in the response time.
+  let conn = null;
+  for (const candidate of store.openclawConnections.list()) {
+    if (typeof candidate.auditSecret !== 'string' || candidate.auditSecret === '') continue;
+    if (serviceToken.safeEqual(token, candidate.auditSecret) && !conn) conn = candidate;
+  }
   if (!conn) {
     return errorResponse(res, 401, 'Invalid audit token', 'UNAUTHORIZED');
   }
@@ -12798,10 +12825,13 @@ if (require.main === module) {
  * Every registered route's method and pattern, for tests that must cover a
  * family of routes as registered rather than as a list someone remembered to
  * update (#2032: the gated-route test enumerates the Medusa routes this way).
- * @returns {Array<{method: string, pattern: string}>}
+ * `options` is the route's own registration options, which is what the
+ * launch-binding guard is handed: the coverage test judges each route with the
+ * same three facts the dispatcher does.
+ * @returns {Array<{method: string, pattern: string, options: object}>}
  */
 function _routePatterns() {
-  return routes.map((r) => ({ method: r.method, pattern: r.pattern }));
+  return routes.map((r) => ({ method: r.method, pattern: r.pattern, options: r.options }));
 }
 
 module.exports = { _routePatterns, createServer, _recoveryGateProbeFor, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver };

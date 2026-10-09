@@ -138,7 +138,8 @@ describe('API Contract Validation', () => {
     it('returns ok, config object, and requiresRestart boolean', async () => {
       const res = await request('/api/config', {
         method: 'PATCH',
-        body: { chimeEnabled: true }
+        body: { chimeEnabled: true },
+        headers: operatorHeaders(server)
       });
       assert.equal(res.status, 200);
       assert.equal(res.data.ok, true);

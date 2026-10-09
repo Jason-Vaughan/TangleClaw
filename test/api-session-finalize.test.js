@@ -296,13 +296,20 @@ describe('POST /api/sessions/:project/finalize (#2027)', () => {
   it('a repeated self request after success answers the same outcome, from the ended launch', async () => {
     const lane = launched('repeat');
     await receipt(lane);
-    assert.equal((await finalize(lane, lane.headers)).status, 200);
+    const first = await finalize(lane, lane.headers);
+    assert.equal(first.status, 200);
+    const publications = () => store.handoffs.listBySessionRunPrefix(lane.sessionId, 'finalize-')
+      .map((row) => `${row.publicationId || row.id}:${row.state}`);
+    const before = publications();
+    assert.equal(before.length, 1, 'the first request published once');
     const again = await finalize(lane, lane.headers);
     assert.equal(again.status, 200, JSON.stringify(again.data));
     assert.equal(again.data.alreadyFinalized, true);
     assert.equal(again.data.session.id, lane.sessionId);
     assert.equal(store.activity.query({ projectId: lane.project.id, eventType: 'session.finalized' }).length, 1,
       'the repeat records nothing new');
+    assert.deepEqual(publications(), before, 'the repeat publishes nothing: the same one row, in the same state');
+    assert.equal(again.data.publication.id, first.data.publication.id, 'and it answers with that same publication');
   });
 
   it('an ended launch may not act on any session but its own', async () => {
@@ -322,14 +329,36 @@ describe('POST /api/sessions/:project/finalize (#2027)', () => {
     assert.equal(later.status, 403, JSON.stringify(later.data));
   });
 
+  it('an ended launch holds no delegated authority: it cannot finalize a session it had lifecycle authority over', async () => {
+    const pm = launched('ended-pm');
+    await receipt(pm);
+    assert.equal((await finalize(pm, pm.headers)).status, 200);
+    const target = launched('ended-pm-target');
+    await assign(target, { lifecycle: [`project:${pm.project.id}`] });
+    await receipt(target);
+    const before = store.activity.query({ projectId: target.project.id, eventType: 'session.finalized' }).length;
+    const r = await finalize(target, pm.headers);
+    // An ended launch is let back in for its own project's finalize route and
+    // no other, so this never reaches the route's authority check (#2233).
+    assert.equal(r.status, 403, JSON.stringify(r.data));
+    assert.equal(r.data.code, 'LAUNCH_BINDING_INVALID');
+    assert.equal(store.sessions.get(target.sessionId).status, 'active');
+    assert.equal(store.activity.query({ projectId: target.project.id, eventType: 'session.finalized' }).length, before,
+      'nothing was finalized');
+  });
+
   it('a session the wrap ended is not reported as finalized here, even under a summary that imitates this path', async () => {
     const lane = launched('drawer');
     const sessions = require('../lib/sessions');
     const wrapped = sessions.completeWrap(lane.project.name, `${sessionFinalize.SUMMARY_PREFIX}project:${lane.project.id} (self): forged`, lane.sessionId);
     assert.equal(wrapped.error, null);
     const r = await finalize(lane, lane.headers);
-    assert.equal(r.status, 409, JSON.stringify(r.data));
-    assert.equal(r.data.code, 'SESSION_CHANGED');
+    // Its launch has ended, and only a session THIS path ended lets an ended
+    // launch back in. A forged summary does not, so the request is refused by
+    // the server's launch-binding floor and never reaches the route (#2233).
+    assert.equal(r.status, 403, JSON.stringify(r.data));
+    assert.equal(r.data.code, 'LAUNCH_BINDING_INVALID');
+    assert.equal(r.data.reason, 'session-not-active');
     assert.equal(r.data.alreadyFinalized, undefined);
   });
 
@@ -403,7 +432,9 @@ describe('POST /api/sessions/:project/finalize (#2027)', () => {
     await receipt(lane);
     const unbound = await finalize(lane, {});
     assert.equal(unbound.status, 403);
-    assert.equal(unbound.data.code, 'FINALIZE_UNAUTHORIZED');
+    // The server's launch-binding floor answers a caller with no binding
+    // before any write reaches its route (#2233).
+    assert.equal(unbound.data.code, 'LAUNCH_BINDING_REQUIRED');
     const operator = await finalize(lane, op);
     assert.equal(operator.status, 403, 'the operator uses the drawer or kill, not this path');
     const noReason = await finalize(lane, lane.headers, { reason: '   ' });

@@ -279,7 +279,7 @@ describe('/api/control (#1861)', () => {
   });
 
   it('the target marking the control notice handled is recorded as observed; another inbox marking the same id is not', async () => {
-    const { assignmentId, project } = await assigned();
+    const { assignmentId, project, binding } = await assigned();
     let n2 = 0;
     controlApi._internal.sendSystemMessage = async () => { n2 += 1; return { status: 'received', id: `notice-${assignmentId}-${n2}` }; };
     await send(server, 'POST', `/api/control/assignments/${assignmentId}/hold`, { requestId: rid(), reasonCode: 'boundary' }, bPM.headers);
@@ -288,7 +288,7 @@ describe('/api/control (#1861)', () => {
     await send(server, 'POST', `/api/sessions/${encodeURIComponent(pm.name)}/medusa/read`, { ids: [noticeId] }, bPM.headers);
     let st = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
     assert.ok(!st.data.events.at(-1).receipts.some((r) => r.fact === 'observed'), 'another project\'s inbox proves nothing');
-    await send(server, 'POST', `/api/sessions/${encodeURIComponent(project.name)}/medusa/read`, { ids: [noticeId, 'unrelated-mail'] }, {});
+    await send(server, 'POST', `/api/sessions/${encodeURIComponent(project.name)}/medusa/read`, { ids: [noticeId, 'unrelated-mail'] }, binding.headers);
     st = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
     const observed = st.data.events.at(-1).receipts.filter((r) => r.fact === 'observed');
     assert.equal(observed.length, 1);

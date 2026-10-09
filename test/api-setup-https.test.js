@@ -10,6 +10,15 @@ const { execSync } = require('node:child_process');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const { installAlwaysAvailableEngine } = require('./_engine-fixture');
+const { operatorOf } = require('./_shared-docs-callers');
+
+/**
+ * The methods a caller must be identified for (#2233). The request helper below
+ * sends the operator's dashboard headers on these and leaves reads exactly as
+ * they were, because a read asks nothing about who is calling.
+ * @type {ReadonlySet<string>}
+ */
+const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 setLevel('error');
 
@@ -19,7 +28,34 @@ setLevel('error');
 // assertions depend on how the runner was started.
 delete process.env.TANGLECLAW_PORT;
 
-function request(server, method, urlPath, body) {
+/**
+ * The server under test, for {@link operator}. Assigned by the suite's
+ * `before` hook.
+ * @type {http.Server|null}
+ */
+let liveServer = null;
+
+/**
+ * The operator's write headers for the install as it stands: the dashboard's
+ * own while no login is asked for, and a signed-in account's session once one
+ * is (#2233, ruling E1). Where the install asks for a login and has no account
+ * yet, the account is created first through `POST /api/auth/set-password`, as
+ * an operator meeting that install would.
+ */
+const operator = operatorOf(() => liveServer);
+
+/**
+ * Make an HTTP request to the test server. A write goes as the operator: the
+ * HTTPS setup routes are driven from the setup wizard and the settings page,
+ * and a route that changes state refuses a caller it cannot identify (#2233).
+ * @param {http.Server} server - The listening test server
+ * @param {string} method - HTTP method
+ * @param {string} urlPath - Request path
+ * @param {object} [body] - JSON body
+ * @returns {Promise<{ status: number, data: object }>}
+ */
+async function request(server, method, urlPath, body) {
+  const identity = WRITES.has(method) ? await operator() : {};
   return new Promise((resolve, reject) => {
     const addr = server.address();
     const options = {
@@ -27,7 +63,7 @@ function request(server, method, urlPath, body) {
       port: addr.port,
       path: urlPath,
       method,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json', ...identity }
     };
     const req = http.request(options, (res) => {
       const chunks = [];
@@ -151,6 +187,7 @@ describe('HTTPS Setup API', () => {
 
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    liveServer = server;
   });
 
   after(async () => {
@@ -274,7 +311,15 @@ describe('HTTPS Setup API', () => {
         hostInventory._resetForTest();
       });
       // Each case sets its own config; put the suite's back afterwards.
-      const restore = () => store.config.save({ ...savedConfig });
+      // The account too: a case whose config switches the login on is driven by a
+      // signed-in operator, and an account left behind arms the gate for a later
+      // case that is about an install with no login.
+      const restore = () => {
+        store.config.save({ ...savedConfig });
+        store.getDb().prepare('DELETE FROM auth_sessions').run();
+        store.getDb().prepare('DELETE FROM recovery_codes').run();
+        store.getDb().prepare('DELETE FROM users').run();
+      };
 
       it('mints the detected MagicDNS name, normalized, beside the defaults', async (t) => {
         if (!hasOpenssl) return t.skip('openssl not available');

@@ -375,9 +375,20 @@ describe('recovery codes, end to end (#1420)', () => {
     });
 
     it('lets a local tool with no session mint nothing', async () => {
-      armWithCodes();
+      const { user, codes } = armWithCodes();
+      const before = store.recoveryCodes.status(user.id);
       const res = await send('POST', '/api/auth/recovery-codes', { machine: true, body: { password: PASSWORD } });
-      assert.equal(res.statusCode, 401);
+      // The launch binding guard answers before the route (#2233): a write from a
+      // caller that says nothing about who it is.
+      assert.equal(res.statusCode, 403, res.body);
+      assert.equal(json(res).code, 'LAUNCH_BINDING_REQUIRED');
+      assert.deepEqual(store.recoveryCodes.status(user.id), before, 'the stored set is the one it was');
+      assert.equal(store.recoveryCodes.peek(codes[0]).username, user.username, 'and its codes still stand');
+
+      // A browser with no session is challenged by the gate, and mints nothing either.
+      const browser = await send('POST', '/api/auth/recovery-codes', { body: { password: PASSWORD } });
+      assert.equal(browser.statusCode, 401);
+      assert.deepEqual(store.recoveryCodes.status(user.id), before);
     });
   });
 

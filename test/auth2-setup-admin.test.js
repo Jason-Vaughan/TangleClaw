@@ -18,23 +18,50 @@ const store = require('../lib/store');
 const { createServer } = require('../server');
 const { writeCaddyStub } = require('./_caddy-stub');
 const { installAlwaysAvailableEngine } = require('./_engine-fixture');
+const { operatorOf, attemptUnidentified } = require('./_shared-docs-callers');
+const { FIXTURE_CADDYFILES, adaptFromFixtures } = require('./_caddy-drift-fixtures');
+
+/**
+ * The methods a caller must be identified for (#2233). The request helper below
+ * sends the operator's dashboard headers on these and leaves reads exactly as
+ * they were, because a read asks nothing about who is calling.
+ * @type {ReadonlySet<string>}
+ */
+const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 setLevel('error');
 
 /**
- * Make a JSON HTTP request to the test server.
+ * The server under test, for {@link operator}. Assigned by the suite's
+ * `before` hook.
+ * @type {http.Server|null}
+ */
+let liveServer = null;
+
+/**
+ * The operator's write headers for the install as it stands: the dashboard's
+ * own while no login is asked for, and a signed-in account's session once one
+ * is (#2233, ruling E1). Where the install asks for a login and has no account
+ * yet, the account is created first through `POST /api/auth/set-password`, as
+ * an operator meeting that install would.
+ */
+const operator = operatorOf(() => liveServer);
+
+/**
+ * Make a JSON HTTP request to the test server. Writes are sent as the operator.
  * @param {http.Server} server
  * @param {string} method
  * @param {string} urlPath
  * @param {object} [body]
  * @returns {Promise<{ status: number, data: any }>}
  */
-function request(server, method, urlPath, body) {
+async function request(server, method, urlPath, body) {
+  const identity = WRITES.has(method) ? await operator() : {};
   return new Promise((resolve, reject) => {
     const addr = server.address();
     const req = http.request({
       hostname: '127.0.0.1', port: addr.port, path: urlPath, method,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json', ...identity }
     }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
@@ -77,6 +104,7 @@ describe('forced first-run admin credential', () => {
 
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    liveServer = server;
   });
 
   after(async () => {
@@ -233,31 +261,79 @@ describe('forced first-run admin credential', () => {
       assert.equal(data.ingress.user, null);
     });
 
-    it('reports account.required when setup ends with the gate on and no account', async () => {
-      // The adopt shape: a credential already in config, none typed, so there is
-      // no plaintext to create an account from. Reached here through a
-      // pre-configured credential, which is what the adopt path leaves behind.
+    it('refuses to finish for anyone but the operator once the gate is on and no account exists (#2233)', async () => {
+      // What the adopt path leaves behind: a credential in config, the gate on,
+      // and no account. The one write that state admits is creating the account,
+      // so a completion is refused before the route and nothing is saved.
       const config = store.config.load();
       config.authEnabled = true;
       config.basicAuthUser = 'jason';
       config.basicAuthHash = '$2a$14$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU';
       store.config.save(config);
-      const { status, data } = await request(server, 'POST', '/api/setup/complete', {});
-      assert.equal(status, 200);
-      assert.deepEqual(data.account,
-        { created: false, required: true, loginInForce: false, username: null, recoveryCodes: null });
+      const { browser, machine } = await attemptUnidentified(server, 'POST', '/api/setup/complete', {});
+      assert.equal(browser.status, 401);
+      assert.equal(browser.data.code, 'ACCOUNT_REQUIRED');
+      assert.equal(machine.status, 403);
+      assert.equal(machine.data.code, 'LAUNCH_BINDING_REQUIRED');
+      assert.equal(store.config.load().setupComplete, false, 'setup is not finished');
+      assert.equal(store.authSessions.accountPresence().exists, false, 'and no account appeared');
+    });
+
+    it('reports account.required when setup adopts a Caddy login and so ends with the gate on and no account', async () => {
+      // The adopt path itself, as a first run meets it: Caddy's own login stands
+      // in front, so TangleClaw asks for none and the wizard's browser is the
+      // operator. Adopting turns the gate on with no plaintext to make an account
+      // from, and the wizard has to be told to send the operator to create one.
+      //
+      // Caddy has to be present for there to be anything to adopt, and what
+      // `caddy adapt` says about the file is what tells the gate Caddy's login
+      // covers every route. Both are stood in for here, as the rest of the suite
+      // stands in for the binary.
+      const drift = require('../lib/caddy-drift');
+      const presentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-caddy-present-'));
+      writeCaddyStub(presentDir, { answersVersion: true });
+      const origPath = process.env.PATH;
+      const realAdapt = drift.adaptCaddyfileContent;
+      process.env.PATH = presentDir + path.delimiter + (origPath || '');
+      drift.adaptCaddyfileContent = adaptFromFixtures;
+      const caddyfile = caddy.getCaddyfilePath();
+      fs.mkdirSync(path.dirname(caddyfile), { recursive: true });
+      fs.writeFileSync(caddyfile, FIXTURE_CADDYFILES['live-shape-gated']);
+      try {
+        const me = await request(server, 'GET', '/api/auth/me');
+        assert.equal(me.data.gateState, 'open', 'precondition: Caddy\'s login is the door, so TangleClaw asks for none');
+        const { status, data } = await request(server, 'POST', '/api/setup/complete', {});
+        assert.equal(status, 200, JSON.stringify(data));
+        assert.equal(data.ingress.action, 'adopt');
+        assert.deepEqual(data.account,
+          { created: false, required: true, loginInForce: false, username: null, recoveryCodes: null });
+        const saved = store.config.load();
+        assert.equal(saved.authEnabled, true, 'the adopted login switched the gate on');
+        assert.equal(saved.basicAuthUser, 'fixture');
+        assert.equal(saved.setupComplete, true);
+        assert.equal(store.authSessions.accountPresence().exists, false, 'and there is still no account');
+        assert.equal((await request(server, 'GET', '/api/auth/me')).data.gateState, 'account-required');
+      } finally {
+        process.env.PATH = origPath;
+        drift.adaptCaddyfileContent = realAdapt;
+        fs.rmSync(caddyfile, { force: true });
+        fs.rmSync(presentDir, { recursive: true, force: true });
+      }
     });
 
     it('refuses to finish, without saving, when the gate cannot read its account store (#1420)', async () => {
       // "No account required" would send the wizard into a dashboard that
       // refuses it; the fault must reach the operator, and setup must stay
-      // retryable. The request itself is a machine client, so the enforcing
-      // `unreadable` gate lets it reach the route.
+      // retryable. The request is the signed-in operator's: their session was
+      // made before the store stopped answering, and a session is what the
+      // enforcing `unreadable` gate still lets through (#2233).
       const config = store.config.load();
       config.authEnabled = true;
       config.basicAuthUser = 'jason';
       config.basicAuthHash = '$2a$14$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU';
       store.config.save(config);
+      await operator();
+      assert.equal(store.authSessions.accountPresence().exists, true, 'precondition: the operator has an account');
       const realPresence = store.authSessions.accountPresence;
       store.authSessions.accountPresence = () => { throw new Error('database is locked'); };
       let res;
