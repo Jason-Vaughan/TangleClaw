@@ -35,6 +35,33 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-09 — #2049: the fleet recovery panel
+
+<!-- prawduct: type=feature | scope=2049-fleet-recovery-clearance -->
+
+#2049, chunk 5 of the plan, by direct Operator assignment to TC-RM01 under RM-LEASE generation 6. Built on branch `feat/2049-fleet-recovery-panel`, from `origin/main` `faafb7da`. The Operator granted the exception to the UI freeze (A24) for this panel only.
+
+Visual change: yes
+
+**What landed.** `public/fleet-recovery-panel.js`, opened by a new **Recovery** button in the dashboard header. It lists every launch held in operator-cleared recovery with its evidence, takes a selection of all or some, shows a review of exactly what will be sent, sends one batch clear, and shows one outcome per launch with the batch read's observation beside it. `public/` and tests only: no route, no store change, no migration.
+
+**Decisions.**
+- The panel is its own script with a controller that touches no DOM, so the tests run the shipped code against the real request handler. It follows the Operator Bridge panel's shape.
+- It does not decide who may use it. It calls the fleet read and shows the server's answer; on an install with no login that is the refusal and no control. A second copy of the gate rule in the page could drift from the server's.
+- No count badge on the button. A badge would call the fleet read on every dashboard load, and an install with no login would log a refused read each time.
+- A selection is keyed on the launch and its recovery revision. A refresh that finds the revision moved drops it.
+- The review step is the confirmation. No browser dialog is used.
+- The stored cursor is worded "launch step cursor". "First unacknowledged step", which the plan had carried as an assumption from chunk 4, reads as a claim about acknowledgement.
+- Outcomes that left a launch alone are amber, a failure is red, a clear is green, and each is worded. An outcome the page does not know is shown by its code and never as a clear.
+- It escapes with the page's `tcEscapeHtml` and adds no escaper (#1605).
+- Secondary lines use opacity, not `--text-muted`, which is under the 4.5:1 contrast floor on the dark theme. These lines are the evidence the operator decides on.
+
+**Docs corrected.** Four unreleased `CHANGELOG.md` sentences from chunks 1 to 4 said no page existed for the fleet read, the batch clear, the batch read and the clearance record. The first three now name the panel. The fourth now says what is still true: no page lists a clear made on its own.
+
+**Not in this chunk.** A list of past batches, stop provenance (#2249), the wake action (#2250), #2178. #2049 stays open for the close-out chunk.
+
+**Verified, and not.** The tests drive the real request handler on temp stores. The panel was rendered in headless Chrome against the real stylesheet with scripted answers, in the dark and light themes and at 500 pixels wide, and the screenshots were read. It was not run in the dashboard of a running install, and no person has used it: the operator verification entry is queued for that.
+
 ## 2026-10-09 — #2049: a signed-in operator reads a batch clear back, with what each launch says now
 
 <!-- prawduct: type=feature | scope=2049-fleet-recovery-clearance -->

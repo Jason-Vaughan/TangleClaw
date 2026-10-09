@@ -38,6 +38,7 @@ const state = {
   auditOpen: false,
   auditSummaries: {},
   auditLoaded: false,
+  fleetRecoveryOpen: false,
   orphanHooks: null,
   orphanHooksRepairInFlight: false,
   // #235 — cached restart-mechanism token from /api/server-info. `null`
