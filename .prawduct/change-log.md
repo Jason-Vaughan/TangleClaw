@@ -51,13 +51,13 @@ Visual change: no
 - The listing is asked for with `tmux -u`, so its output is UTF-8 whatever the caller's environment. Without it a start command holding a non-ASCII character (an executable under `/Users/josé/`) came back with `_` in its place and was judged as if it had been read exactly.
 - The separator is a colon. tmux never lets one into a session name (it stores `a:b.c` as `a_b_c`, measured), so the first colon on a line always ends the name, and tmux prints it the same inside and outside a pane.
 - A line that cannot be split (no separator, or nothing before it) makes the whole read `answered: false` (`unparseable`): every session then reads `unknown`. It used to be taken as a session with no start command.
-- `test/tmux-pane-start-commands.test.js` gains a block that starts a real tmux server on its own socket and reads it with `TMUX`, `TMUX_PANE` and the locale removed (`LC_ALL=C`), as the server does, including a command with an accented path. It reproduces the defect on the old code. It skips with a reason where tmux is not installed, which includes CI.
+- `test/tmux-pane-start-commands.test.js` gains a block that starts a real tmux server on its own socket and reads it with `TMUX`, `TMUX_PANE` and the locale removed (`LC_ALL=C`), as the server does, including a command with an accented path. It reproduces the defect on the old code. It skips with a reason where tmux is not installed. CI has tmux 3.4 and runs it.
 
 **Measured (2026-10-09, tmux 3.6a).** With `TMUX` unset: `LC_ALL=C` or no locale prints a tab as `_` and `é` as `_`; `LC_ALL=en_US.UTF-8`, `LANG=en_US.UTF-8` or `-u` prints both as themselves. The first version of this fix named "outside a pane" as the cause and its test kept the developer's locale; the boundary review (`rev-20261009T210027Z-ca8ff37f`) questioned that, the measurement confirmed the review, and the test now pins the locale.
 
 **Checked the same way.** Run with `TMUX` and `TMUX_PANE` removed against this host, the inventory now finds this session and the Project Master under their own names.
 
-**Not covered.** CI has no tmux, so the real-tmux block runs only on a developer's machine. The live proofs for #2233 are still owed.
+**Not covered.** tmux versions other than the three measured. The live proofs for #2233 are still owed.
 
 **Tests.** The format, the first-colon split, three unsplittable listings and the two real-tmux cases were run red on `c1ce788a5` first.
 
@@ -91,6 +91,40 @@ _Observations — read, not owed. Answering one is optional._
 
 **No findings** — a clean pass.
 **2 observations demoted** — 2 answered. An observation gates nothing; answering one is optional.
+
+**Found by CI after the first two commits: tmux 3.4 quotes differently.** CI runs tmux 3.4 (the earlier statement on this branch that CI has no tmux was wrong: it has, and it runs the real-tmux block). 3.4 writes a `$` that opens a variable name with two backslashes in front of it; 3.3a and 3.6a write one. TangleClaw's own PATH wrapper holds `$PATH`, so on 3.4 the wrapper was not recognised and an isolated Codex session would have read as not isolated. `unquoteStartCommand` now reads both forms. Measured on 3.3a (offline clean-room container), 3.4 (CI's log, printed by the test's own failure message) and 3.6a: a real backslash before such a `$` is four backslashes on 3.4 and three on the others, and both read back correctly; a backslash before a `$` that opens no name is written the same by all three. **Limit:** three versions measured. On a version that printed a name-opening `$` bare, a real backslash before `$NAME` would be read as `$NAME`; the only effect reachable through the inventory is a wrapper not being recognised, which reads not isolated.
+
+**Also after the first review.** The real-tmux test takes its session names from `uniqueSessionName` and is listed in `test/tmux-session-names.test.js`'s guard, which the full suite failed on until it was; and its failure message carries the tmux version and the raw listing, which is how the 3.4 form was read.
+
+**Later passes.** `rev-20261009T211422Z-11d366ea` (the session names) and `rev-20261009T214511Z-c6eedea3` (the 3.4 form): no findings in either.
+
+**rev-20261009T211422Z-11d366ea** — 2026-10-09T21:14:53Z
+
+_No findings._
+
+_Observations — read, not owed. Answering one is optional._
+
+| Observation | State | Detail |
+|---|---|---|
+| O-1 | accepted | Being discharged: the full suite is running on this tree and is recorded from its JUnit report before the PR is marked ready. |
+
+**No findings** — a clean pass.
+**1 observation demoted** — 1 answered. An observation gates nothing; answering one is optional.
+
+**rev-20261009T214511Z-c6eedea3** — 2026-10-09T21:46:20Z
+
+_No findings._
+
+_Observations — read, not owed. Answering one is optional._
+
+| Observation | State | Detail |
+|---|---|---|
+| O-1 | accepted | Being discharged: the full suite is running on this tree and is recorded from its JUnit report before the PR is marked ready. |
+| O-2 | accepted | Accepted with the exposure stated: three versions measured (3.3a, 3.4, 3.6a). A command holding a dollar is refused by the Codex judgment after the wrappers are removed, so a misread can only make a wrapper unrecognised, which reads not isolated. The measured-versions limit goes in the change-log entry. |
+| O-3 | accepted | Being done as a Markdown-only commit after the suite finishes, with the PR review's change-log warning: free of review cost. |
+
+**No findings** — a clean pass.
+**3 observations demoted** — 3 answered. An observation gates nothing; answering one is optional.
 
 ## 2026-10-09 — #2233: which running sessions were launched isolated (inventory and the carried fixes)
 
