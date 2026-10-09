@@ -8388,52 +8388,108 @@ route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params,
   });
 });
 
+/**
+ * Establish that a read is a signed-in operator's, or send the refusal.
+ *
+ * For the reads that span every project on the install. They are served only
+ * while the login gate is `armed` and the request carries an operator's
+ * session: on an install with no login nothing could show that the reader of
+ * a fleet-wide answer is the operator. Every other gate state refuses by its
+ * own branch, and the gate state is decided before the session is looked at,
+ * as in `_requireOperatorWrite`.
+ *
+ * No CSRF proof is asked for: a GET changes nothing, and a cross-site page
+ * cannot read the answer.
+ * @param {object} req - Request
+ * @param {object} res - Response
+ * @param {object} o
+ * @param {string} o.logEvent - Log line for a refusal.
+ * @param {string} o.fallbackAction - What cannot be done during fallback, for the 409.
+ * @param {string} o.noLogin - 403 message for an install with no login.
+ * @param {string} o.unauthenticated - 401 message for a caller who is not signed in.
+ * @param {(gateState: string) => string} o.gateUnsupported - 409 message for any other gate state.
+ * @returns {{actor: string, gateState: string}|null} The reader, or null when a refusal was already sent.
+ */
+function _requireOperatorRead(req, res, o) {
+  const gateState = req.tcGateState;
+  const refuse = (status, code, message) => {
+    log.warn(o.logEvent, { code, gateState });
+    errorResponse(res, status, message, code);
+    return null;
+  };
+  if (gateState === authGate.GATE_STATES.FALLBACK) {
+    log.warn(o.logEvent, { code: 'GATE_FALLBACK', gateState });
+    _refuseDuringFallback(res, o.fallbackAction);
+    return null;
+  }
+  if (gateState !== authGate.GATE_STATES.ARMED) {
+    // The status and code the reconciliation read gives the same condition,
+    // so a client handles "this needs a login" once for every operator read.
+    if (authGate.isOpen(gateState)) return refuse(403, 'LOGIN_GATE_REQUIRED', o.noLogin);
+    return refuse(409, 'GATE_STATE_UNSUPPORTED', o.gateUnsupported(gateState));
+  }
+  if (!req.tcSession) return refuse(401, 'UNAUTHENTICATED', o.unauthenticated);
+  return { actor: req.tcSession.username, gateState };
+}
+
 // GET /api/launch/recovery-held — the signed-in operator reads every launch on
 // this install that is waiting on their clear (#2049).
 //
-// Served only while the login gate is `armed` and the request carries an
-// operator's session. It is the list an operator reviews before clearing
-// several launches, so it must never be served to a caller nobody proved: on
+// It is the list an operator reviews before clearing several launches, so it
+// must never be served to a caller nobody proved (`_requireOperatorRead`). On
 // an install with no login the single clear still works and records itself as
-// unverified, but nothing there could show that the reader of a fleet-wide
-// list is the operator. Every other gate state refuses by its own branch, and
-// the gate state is decided before the session is looked at, as in
-// `_requireOperatorWrite`.
-//
-// A GET with no CSRF proof: it changes nothing, and a cross-site page cannot
-// read the answer.
+// unverified.
 route('GET', '/api/launch/recovery-held', (req, res) => {
-  const gateState = req.tcGateState;
-  const refuse = (status, code, message, extra = {}) => {
-    log.warn('Refused a fleet recovery read', { code, gateState, ...extra });
-    return errorResponse(res, status, message, code);
-  };
-  if (gateState === authGate.GATE_STATES.FALLBACK) {
-    log.warn('Refused a fleet recovery read', { code: 'GATE_FALLBACK', gateState });
-    return _refuseDuringFallback(res, 'list the launches waiting on an operator');
-  }
-  if (gateState !== authGate.GATE_STATES.ARMED) {
-    if (authGate.isOpen(gateState)) {
-      // The status and code the reconciliation read gives the same condition,
-      // so a client handles "this needs a login" once for both operator reads.
-      return refuse(403, 'LOGIN_GATE_REQUIRED',
-        'This install has no login, so the launches waiting on an operator cannot be listed here: nothing would '
-        + 'establish that the reader is the operator. Turn the login on and sign in. Each project\'s Launch '
-        + 'readiness panel still shows its own launches.');
-    }
-    return refuse(409, 'GATE_STATE_UNSUPPORTED',
+  const reader = _requireOperatorRead(req, res, {
+    logEvent: 'Refused a fleet recovery read',
+    fallbackAction: 'list the launches waiting on an operator',
+    noLogin: 'This install has no login, so the launches waiting on an operator cannot be listed here: nothing would '
+      + 'establish that the reader is the operator. Turn the login on and sign in. Each project\'s Launch '
+      + 'readiness panel still shows its own launches.',
+    unauthenticated: 'Sign in to list the launches waiting on an operator: this install requires a login.',
+    gateUnsupported: (gateState) =>
       `The launches waiting on an operator cannot be listed while the login gate is "${gateState}". Resolve the `
-      + 'gate first.');
-  }
-  if (!req.tcSession) {
-    return refuse(401, 'UNAUTHENTICATED',
-      'Sign in to list the launches waiting on an operator: this install requires a login.');
-  }
+      + 'gate first.'
+  });
+  if (!reader) return;
   jsonResponse(res, 200, {
-    gateState,
+    gateState: reader.gateState,
     generatedAt: new Date().toISOString(),
     launches: launchRecoveryHeld.listHeld()
   });
+});
+
+// GET /api/launch/recovery-clear-batch/:batchId — the signed-in operator reads
+// one batch recovery clear back: what was asked, what each item was told, and
+// what each named launch says now (#2049).
+//
+// The same reader as the fleet read, for the same reason: a batch names
+// launches across projects. Any signed-in operator may read any batch; the
+// answer says who sent it.
+//
+// The header, items and clearances are the durable record. Each item's
+// `observation` is read at `observedAt` and claims nothing about task
+// acknowledgement, a prompt or resumed work.
+route('GET', '/api/launch/recovery-clear-batch/:batchId', (req, res, params) => {
+  const reader = _requireOperatorRead(req, res, {
+    logEvent: 'Refused a batch recovery read',
+    fallbackAction: 'read a batch recovery clear',
+    noLogin: 'This install has no login, so a batch recovery clear cannot be read here: nothing would establish '
+      + 'that the reader is the operator. Turn the login on and sign in.',
+    unauthenticated: 'Sign in to read a batch recovery clear: this install requires a login.',
+    gateUnsupported: (gateState) =>
+      `A batch recovery clear cannot be read while the login gate is "${gateState}". Resolve the gate first.`
+  });
+  if (!reader) return;
+  let batch;
+  try {
+    batch = launchRecoveryBatch.readBatch(params.batchId);
+  } catch (err) { // prawduct:allow prawduct/broad-except -- the store's message can name SQL, so it is logged and a stable answer is sent
+    log.error('A batch recovery clear could not be read', { username: reader.actor, error: err.message });
+    return errorResponse(res, 500, 'The batch could not be read. Try again.', 'BATCH_NOT_READ');
+  }
+  if (!batch) return errorResponse(res, 404, 'No batch recovery clear has this id.', 'BATCH_NOT_FOUND');
+  jsonResponse(res, 200, batch);
 });
 
 // POST /api/launch/recovery-clear-batch — the signed-in operator clears several
