@@ -336,7 +336,7 @@ describe('advisory READY path (#1937 audit)', () => {
     it('never stamps agent-reconciled over a clear a person gave', () => {
       const { id, sequence } = launchInRecovery('operator');
       ackSteps(id, 3);
-      store.launchSequences.clearRecovery(sequence.id, {
+      store.launchSequences.clearRecoveryAsOperator(sequence.id, {
         sessionId: sequence.sessionId, recoveryRevision: sequence.recoveryRevision, clearance: 'operator-verified', clearedBy: 'jason'
       });
       ackCursorStep(id);

@@ -108,9 +108,11 @@ describe('the operator clearance record (#2049)', () => {
       const second = fixture.launchInRecovery(env);
       const alone = fixture.launchInRecovery(env);
       const batchId = `batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      clearOneLaunch({ project: first.project, ...first.binding, ...OPERATOR, batchId });
+      // A clear under a batch needs that batch on record and names its item in it.
+      store.recoveryClearBatches.create({ batchId, requestedBy: 'rosie', itemCount: 2 });
+      clearOneLaunch({ project: first.project, ...first.binding, ...OPERATOR, batchId, batchItemIndex: 0 });
       clearOneLaunch({ project: alone.project, ...alone.binding, ...OPERATOR });
-      clearOneLaunch({ project: second.project, ...second.binding, ...OPERATOR, batchId });
+      clearOneLaunch({ project: second.project, ...second.binding, ...OPERATOR, batchId, batchItemIndex: 1 });
       assert.deepEqual(store.recoveryClearances.listForBatch(batchId).map((r) => r.sequenceId),
         [first.sequence.id, second.sequence.id]);
       assert.deepEqual(store.recoveryClearances.listForBatch('no-such-batch'), []);

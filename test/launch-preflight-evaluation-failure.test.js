@@ -277,7 +277,7 @@ describe('a preflight that could not be evaluated (#1650)', () => {
       const { id, sequence } = launchUnevaluable('operator');
       ackThroughState(id);
       launchSequence.next(id);
-      store.launchSequences.clearRecovery(sequence.id, {
+      store.launchSequences.clearRecoveryAsOperator(sequence.id, {
         sessionId: sequence.sessionId,
         recoveryRevision: sequence.recoveryRevision,
         clearance: 'operator-verified',
@@ -295,7 +295,7 @@ describe('a preflight that could not be evaluated (#1650)', () => {
     it('a clearance bound to the WRONG revision does not clear it', () => {
       const { sequence } = launchUnevaluable('operator');
       const stale = sequence.recoveryRevision + 1;
-      const written = store.launchSequences.clearRecovery(sequence.id, {
+      const written = store.launchSequences.clearRecoveryAsOperator(sequence.id, {
         sessionId: sequence.sessionId,
         recoveryRevision: stale,
         clearance: 'operator-verified',

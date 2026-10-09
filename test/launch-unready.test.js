@@ -206,7 +206,7 @@ describe('unready-launch monitor (Train 21, car 21.5)', () => {
       preflight: { ...HEALTHY_PREFLIGHT, verdict: 'crash-recovery', reason: 'the last session was killed', requiresRecovery: true }
     });
     for (let i = 0; i < 3; i++) store.launchSequences.ackStep(sequence.id, sequence.revision, i);
-    store.launchSequences.clearRecovery(sequence.id, {
+    store.launchSequences.clearRecoveryAsOperator(sequence.id, {
       sessionId: sequence.sessionId, recoveryRevision: sequence.recoveryRevision, clearance: 'operator-verified', clearedBy: 'op'
     });
     assert.equal(verdictFor(sequence, 11 * MINUTE), 'nudged');
