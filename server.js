@@ -270,6 +270,7 @@ const projectConfig = require('./lib/project-config');
 const { protectedRootsFor } = require('./lib/tcc-folders');
 const launchSequence = require('./lib/launch-sequence');
 const launchRecoveryClear = require('./lib/launch-recovery-clear');
+const launchRecoveryBatch = require('./lib/launch-recovery-batch');
 const launchRecoveryHeld = require('./lib/launch-recovery-held');
 const recoveryDefault = require('./lib/recovery-default');
 const master = require('./lib/master');
@@ -8433,6 +8434,74 @@ route('GET', '/api/launch/recovery-held', (req, res) => {
     generatedAt: new Date().toISOString(),
     launches: launchRecoveryHeld.listHeld()
   });
+});
+
+// POST /api/launch/recovery-clear-batch — the signed-in operator clears several
+// launches' required recovery in one request (#2049).
+// Body: {items: [{projectId, sessionId, sequenceId, recoveryRevision}, ...]}
+//
+// A batch is a larger grant than one clear, so it is taken only from a proven
+// operator: the armed login, an operator's session and its CSRF token. The
+// proof is the single clear's, branch for branch, and the open-install result
+// it can return is refused here. The single clear still works on an install
+// with no login and records itself as unverified; nothing there could show
+// that the sender of a fleet-wide clear is the operator.
+//
+// Each item names one launch by the exact binding the operator read. There is
+// no wildcard. A malformed request is refused whole, with nothing applied.
+// Once accepted, every item gets its own outcome and the answer is 200 even
+// when no item was cleared: partial success is the normal case, and the
+// outcomes are the answer.
+route('POST', '/api/launch/recovery-clear-batch', (req, res, _params, body) => {
+  const refusal = 'Refused a batch recovery clear';
+  const noLoginBatch = 'This install has no login, so launches cannot be cleared in a batch here: nothing would '
+    + 'establish that the sender is the operator. Turn the login on and sign in. Each project\'s Launch readiness '
+    + 'panel still clears its own launch.';
+  const proof = _requireOperatorWrite(req, res, {
+    logEvent: refusal,
+    logContext: {},
+    fallbackAction: 'clear launch recoveries in a batch',
+    sameOriginWhat: 'A batch recovery clear',
+    unauthenticated: 'Sign in to clear launch recoveries in a batch: this install requires a login, and a recovery '
+      + "clear is an operator's decision.",
+    machineClient: 'A batch recovery clear is an operator\'s decision, and a local process is not one. '
+      + noLoginBatch,
+    openToken: noLoginBatch,
+    gateUnsupported: (gateState) =>
+      `Launch recoveries cannot be cleared in a batch while the login gate is "${gateState}". Resolve the gate first.`
+  });
+  if (!proof) return;
+  // Keyed on what the proof established, not on the gate state that led to it:
+  // any clearance other than a verified operator is refused, so a clearance
+  // added to the proof later is refused here until someone decides otherwise.
+  if (proof.clearance !== 'operator-verified') {
+    log.warn(refusal, { code: 'LOGIN_GATE_REQUIRED', senderProof: proof.clearance });
+    return errorResponse(res, 403, noLoginBatch, 'LOGIN_GATE_REQUIRED');
+  }
+
+  const request = launchRecoveryBatch.parseRequest(body);
+  if (!request.ok) {
+    log.warn(refusal, { code: request.code, username: proof.actor });
+    return errorResponse(res, 400, request.message, request.code);
+  }
+
+  let batch;
+  try {
+    batch = launchRecoveryBatch.clearBatch({ items: request.items, clearedBy: proof.actor });
+  } catch (err) { // prawduct:allow prawduct/broad-except -- only the batch header's write throws out of clearBatch, before any item is decided; the store's message can name SQL, so it is logged and a stable answer is sent
+    log.error('A batch recovery clear could not be recorded and was not started', {
+      username: proof.actor, items: request.items.length, error: err.message
+    });
+    return errorResponse(res, 500,
+      'The batch could not be recorded, so no launch in it was cleared. Try again.', 'BATCH_NOT_RECORDED');
+  }
+  log.info('Batch recovery clear', {
+    batchId: batch.batchId,
+    clearedBy: proof.actor,
+    items: batch.items.length,
+    cleared: batch.items.filter((item) => item.outcome === launchRecoveryBatch.ITEM_OUTCOMES.CLEARED).length
+  });
+  jsonResponse(res, 200, batch);
 });
 
 // POST /api/sessions/:project/launch/reconciliation — the operator reads the

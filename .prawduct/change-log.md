@@ -35,6 +35,46 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-08 — #2049: a signed-in operator clears several launches in one request
+
+<!-- prawduct: type=feature | scope=2049-fleet-recovery-clearance -->
+
+#2049, chunk 3 of the plan, by direct Operator assignment to TC-RM01 under RM-LEASE generation 6. Built on `origin/main` `395ebcec` (Builder2's #1937 chunk 01), merged into the branch first as `636257af`.
+
+**What landed.** `POST /api/launch/recovery-clear-batch` and `lib/launch-recovery-batch.js`. A request names one to 100 launches by exact binding; each goes through `clearOneLaunch`, the single clear's own decision, and gets one of eight outcomes plus a re-read saying whether the launch is still blocked. Schema v60 adds `launch_recovery_clear_batches` (the header, written before any item is decided) and `launch_recovery_clear_batch_items` (one outcome per item), both append-only by trigger, with a trigger that refuses an item whose batch has no header.
+
+**Decisions.**
+- The route reuses `_requireOperatorWrite` and then refuses any proof other than `operator-verified`, as the reconciliation read does. One proof for every operator write, so it cannot drift; the cost is that an open install's refusal is reached after the open-install checks.
+- A `cleared` item outcome is written inside `clearRecoveryAsOperator`'s transaction, not afterwards by the batch. The batch's record can then never say less than what was cleared under it, and `recordItem` refuses the word `cleared` so it cannot be written without a clear.
+- The header is never updated. A batch that stops part-way reads as a header naming more items than have rows. An append-only table cannot carry a "completed" stamp, and the shortfall says the same thing.
+- The archived rule is enforced by the batch, not moved into `clearOneLaunch`. A93 says an archived project is not batch-clearable; moving it would also have taken the single clear away from an archived project's own panel, which nobody asked for.
+- Duplicates are two items naming one launch or one session, whatever else they say, because a session has one launch.
+- Ids must be JSON whole numbers. The single clear coerces with `Number()`; a batch refuses `"3"` so that a request is applied exactly as sent or not at all.
+- No client idempotency key. Each request is its own batch, and a repeat answers `already-clear` for what the first one cleared.
+
+**Carried from chunk 2's review, fixed here.** The compare-and-set is now private to `lib/store.js`. Public `clearRecovery` takes `agent-reconciled` only and throws on the two operator words, and it no longer accepts a `clearedBy`. The test call sites that cleared with an operator word moved to `clearRecoveryAsOperator`; none of their assertions changed.
+
+**A chunk 2 test changed, and it got stricter.** "records the batch a clear belongs to" cleared under a batch id with no header. That is now refused by the table, so the test records the header and names each item.
+
+**Not in this chunk.** A route that reads a batch back, the fleet recovery panel (it needs the Operator's exception to the UI freeze), stop provenance and the wake action. A93 says an API-only batch is not the feature: #2049 stays open.
+
+**Not verified.** Nothing was run against a live install or a copy of a real database. The tests drive the real request handler and the real migration against temp stores.
+
+## 2026-10-08 — #2049: an operator's recovery clearance is kept as a permanent record
+
+<!-- prawduct: type=feature | scope=2049-fleet-recovery-clearance -->
+
+#2049, the first chunk after PR #2190 (chunk 2 of the plan), by direct Operator assignment to TC-RM01 with no ProjectManager or Architect coordinating. The plan and its chunk map are in this checkout's build plan; the rulings it follows are the Architect's A93, A96 and A152.
+
+**What landed.** Schema v59 adds `launch_recovery_clearances`: one row per operator clearance, refused on update and delete by trigger, never pruned. `store.launchSequences.clearRecoveryAsOperator` runs the existing compare-and-set and inserts the row in one transaction, and `clearOneLaunch` now clears through it, so the single clear route records every clearance with a null batch id. The row copies the launch's stored preflight record as text. `store.recoveryClearances` reads one launch's record or a batch's.
+
+**Decisions.** Only operator clearances are recorded: a session's advisory reconciliation still clears through `clearRecovery` and writes no row, and the table's CHECK admits the two operator words only (A152: an advisory reconciliation is not an operator clearance). No foreign keys, so a row outlives its project and never blocks deleting one. One row per launch, held by a unique index, because a launch's recovery never returns to `required` once cleared. The table also refuses a batch id on an unverified clearance, which is A93's rule that a batch never inherits the open-install path, stated where a later batch route cannot forget it.
+
+**Behaviour change to the single clear.** A clearance record that cannot be written rolls the clear back and the route answers `500`. Before this the clear had no second write that could fail.
+
+**Not in this chunk.** The batch route, the batch header and per-item outcomes, any route or page that reads the record, stop provenance and the wake action. Clearances made before v59 get no row.
+
+**Not verified.** Nothing was run against a live install. The tests drive the real request handler and the real migration against temp stores.
 ## 2026-10-08 — #2233: a request that changes state must say who is asking (I1)
 
 <!-- prawduct: type=bugfix | scope=2233-launch-identity-containment -->

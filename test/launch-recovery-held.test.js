@@ -247,7 +247,7 @@ describe('the fleet recovery read (#2049)', () => {
       const kept = fixture.launchInRecovery(env);
       const advisory = fixture.launchInRecovery(env, 'advisory');
       const cleared = fixture.launchInRecovery(env);
-      store.launchSequences.clearRecovery(cleared.sequence.id, {
+      store.launchSequences.clearRecoveryAsOperator(cleared.sequence.id, {
         sessionId: cleared.binding.sessionId, recoveryRevision: cleared.binding.recoveryRevision,
         clearance: 'operator-verified', clearedBy: 'rosie'
       });

@@ -244,7 +244,7 @@ describe('launch recovery gate (Train 21, #1587)', () => {
       const { id, sequence } = launchInRecovery('operator');
       ackThroughState(id);
       assert.equal(launchSequence.next(id).body.withheld, true);
-      store.launchSequences.clearRecovery(sequence.id, {
+      store.launchSequences.clearRecoveryAsOperator(sequence.id, {
         sessionId: sequence.sessionId, recoveryRevision: 1, clearance: 'operator-verified', clearedBy: 'jason'
       });
       const body = launchSequence.next(id).body;
@@ -265,7 +265,7 @@ describe('launch recovery gate (Train 21, #1587)', () => {
       ackThroughState(operator.id);
       assert.equal(launchSequence.status(operator.id).body.status.taskWithheld, true);
       assert.equal(launchSequence.taskStepWithheld(store.launchSequences.getBySession(operator.session.id)), true);
-      store.launchSequences.clearRecovery(operator.sequence.id, {
+      store.launchSequences.clearRecoveryAsOperator(operator.sequence.id, {
         sessionId: operator.sequence.sessionId, recoveryRevision: 1, clearance: 'operator-verified', clearedBy: 'jason'
       });
       assert.equal(launchSequence.status(operator.id).body.status.taskWithheld, false, 'a cleared recovery withholds nothing');
@@ -348,7 +348,7 @@ describe('launch recovery gate (Train 21, #1587)', () => {
     it('accepts an operator-mode launch once a person has cleared it', () => {
       const { id, sequence } = launchInRecovery('operator');
       ackThroughState(id);
-      store.launchSequences.clearRecovery(sequence.id, {
+      store.launchSequences.clearRecoveryAsOperator(sequence.id, {
         sessionId: sequence.sessionId, recoveryRevision: 1, clearance: 'operator-verified', clearedBy: 'jason'
       });
       ackCursorStep(id);
@@ -449,7 +449,7 @@ describe('launch recovery gate (Train 21, #1587)', () => {
   describe('the clear binding', () => {
     it('refuses a clear for a recovery revision that has moved on', () => {
       const { sequence } = launchInRecovery('operator');
-      assert.equal(store.launchSequences.clearRecovery(sequence.id, {
+      assert.equal(store.launchSequences.clearRecoveryAsOperator(sequence.id, {
         sessionId: sequence.sessionId, recoveryRevision: 2, clearance: 'operator-verified', clearedBy: 'jason'
       }), null);
       assert.equal(store.launchSequences.getBySession(sequence.sessionId).recovery, 'required');
@@ -481,18 +481,18 @@ describe('launch recovery gate (Train 21, #1587)', () => {
       const after = store.launchSequences.getBySession(sequence.sessionId);
       assert.equal(after.recoveryRevision, 2,
         'the recovery revision moved with the snapshot, because step 3 was re-rendered');
-      assert.equal(store.launchSequences.clearRecovery(sequence.id, clearArgs), null,
+      assert.equal(store.launchSequences.clearRecoveryAsOperator(sequence.id, clearArgs), null,
         'a clear granted against the verdict the operator READ does not apply to the one replacing it');
       assert.equal(store.launchSequences.getBySession(sequence.sessionId).recovery, 'required');
 
       // And the clear against the CURRENT revision still works, so the binding
       // voids the stale decision without stranding the operator.
-      assert.ok(store.launchSequences.clearRecovery(sequence.id, { ...clearArgs, recoveryRevision: 2 }));
+      assert.ok(store.launchSequences.clearRecoveryAsOperator(sequence.id, { ...clearArgs, recoveryRevision: 2 }));
     });
 
     it('refuses a clear naming a different session', () => {
       const { sequence } = launchInRecovery('operator');
-      assert.equal(store.launchSequences.clearRecovery(sequence.id, {
+      assert.equal(store.launchSequences.clearRecoveryAsOperator(sequence.id, {
         sessionId: sequence.sessionId + 1000, recoveryRevision: 1, clearance: 'operator-verified', clearedBy: 'jason'
       }), null);
     });
@@ -502,8 +502,8 @@ describe('launch recovery gate (Train 21, #1587)', () => {
       const args = {
         sessionId: sequence.sessionId, recoveryRevision: 1, clearance: 'operator-verified', clearedBy: 'jason'
       };
-      assert.ok(store.launchSequences.clearRecovery(sequence.id, args));
-      assert.equal(store.launchSequences.clearRecovery(sequence.id, { ...args, clearedBy: 'someone-else' }), null,
+      assert.ok(store.launchSequences.clearRecoveryAsOperator(sequence.id, args));
+      assert.equal(store.launchSequences.clearRecoveryAsOperator(sequence.id, { ...args, clearedBy: 'someone-else' }), null,
         'the first clearance stands; a second call does not re-attribute it');
       assert.equal(store.launchSequences.getBySession(sequence.sessionId).recoveryClearedBy, 'jason');
     });
