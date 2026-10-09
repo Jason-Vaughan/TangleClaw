@@ -2709,7 +2709,7 @@ const RECOVERY_SOURCE_READOUT = {
   invalid: {
     mode: 'operator',
     why: () => 'The project\'s file holds a recovery mode TangleClaw does not recognise, so recovery stays '
-      + 'operator-cleared until the file is corrected. Saving a choice below rewrites that value.'
+      + 'operator-cleared until the file is corrected. Saving a choice from this panel rewrites that value.'
   }
 };
 
@@ -2740,24 +2740,27 @@ function recoveryGatePhrase(gateState) {
  * nobody identified.
  *
  * `readback` is whether a signed-in operator is behind this page, which is the
- * one caller the server lets read a session's reconciliation afterwards. It is
+ * one caller the server lets read a session's reconciliation afterwards.
+ * `loginInForce` is whether the server is asking anyone to sign in at all: a
+ * page that is merely signed out is not an install without a login. Both are
  * null when the page could not ask; the control is offered then, because the
  * server still decides.
  * @param {object|null} me - The answer of `GET /api/auth/me`, or null when the read failed
- * @returns {{offered: boolean, readback: (boolean|null), why: (string|null)}}
+ * @returns {{offered: boolean, readback: (boolean|null), loginInForce: (boolean|null), why: (string|null)}}
  */
 function recoveryModeControlOffer(me) {
-  if (!me || typeof me !== 'object') return { offered: true, readback: null, why: null };
-  if (me.authenticated === true) return { offered: true, readback: true, why: null };
+  if (!me || typeof me !== 'object') return { offered: true, readback: null, loginInForce: null, why: null };
+  if (me.authenticated === true) return { offered: true, readback: true, loginInForce: true, why: null };
   if (me.gateActive === true) {
     return {
       offered: false,
       readback: false,
+      loginInForce: true,
       why: 'The recovery mode cannot be chosen from this page right now: it is not signed in, and the server '
         + 'takes this choice only from a signed-in operator. Sign in, then reopen Settings.'
     };
   }
-  return { offered: true, readback: false, why: null };
+  return { offered: true, readback: false, loginInForce: false, why: null };
 }
 
 /**
@@ -2771,7 +2774,7 @@ function recoveryModeControlOffer(me) {
  * the default; a source this page has no sentence for is printed as the
  * server's own word, never as the nearest one it knows.
  * @param {object} now - The project-level fields of `GET /api/launch-sequences`
- * @param {{readback: (boolean|null)}} [offer] - From `recoveryModeControlOffer`
+ * @param {{loginInForce: (boolean|null)}} [offer] - From `recoveryModeControlOffer`
  * @returns {string} Markup, already escaped
  */
 function projectRecoveryReadoutHtml(now, offer) {
@@ -2808,7 +2811,7 @@ function projectRecoveryReadoutHtml(now, offer) {
     // The record holds the caller KIND the server resolved, and where the login
     // is not in force that kind is granted to any request with the dashboard's
     // shape. The record does not say which it was, so the page does not either.
-    const unverified = offer && offer.readback === false
+    const unverified = offer && offer.loginInForce === false
       ? ' TangleClaw\'s login is not in force on this install now, and the record does not say whether it was '
         + 'then: without a login, that word means a request with the dashboard\'s shape and identifies nobody.'
       : '';
@@ -2835,7 +2838,7 @@ function projectRecoveryReadoutHtml(now, offer) {
  * Where the server would refuse this page, the reason is shown in place of the
  * control: a control that cannot work is worse than none.
  * @param {object} now - The project-level fields of `GET /api/launch-sequences`
- * @param {{offered: boolean, readback: (boolean|null), why: (string|null)}} offer - From `recoveryModeControlOffer`
+ * @param {{offered: boolean, readback: (boolean|null), loginInForce: (boolean|null), why: (string|null)}} offer - From `recoveryModeControlOffer`
  * @returns {string} Markup, already escaped
  */
 function projectRecoveryControlHtml(now, offer) {

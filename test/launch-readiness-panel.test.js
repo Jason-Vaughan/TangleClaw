@@ -959,6 +959,9 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
         assert.doesNotMatch(signedIn, /identifies nobody/);
         const unasked = ctx.projectRecoveryReadoutHtml(decided, ctx.recoveryModeControlOffer(null));
         assert.doesNotMatch(unasked, /identifies nobody/, 'a page that could not ask does not claim the login is off');
+        const signedOut = ctx.projectRecoveryReadoutHtml(decided, ctx.recoveryModeControlOffer({ gateActive: true, authenticated: false }));
+        assert.doesNotMatch(signedOut, /identifies nobody|not in force/,
+          'a signed-out page on an install that enforces its login is not an install without one');
       });
 
       it('shows a discrepancy when the server reports one, and none otherwise', () => {
@@ -1059,7 +1062,7 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
       it('offers the control when the page could not ask, because the server still decides', () => {
         const ctx = sandbox();
         for (const me of [null, undefined, 'nope']) {
-          assert.deepEqual({ ...ctx.recoveryModeControlOffer(me) }, { offered: true, readback: null, why: null });
+          assert.deepEqual({ ...ctx.recoveryModeControlOffer(me) }, { offered: true, readback: null, loginInForce: null, why: null });
         }
       });
     });
