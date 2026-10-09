@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.32.0] - 2026-10-08
+
+> **Known open issues:** [#2233](https://github.com/Jason-Vaughan/TangleClaw/issues/2233) and [#2241](https://github.com/Jason-Vaughan/TangleClaw/issues/2241) track command-tool processes inheriting another session's TangleClaw identity. This release does not claim to fix cross-session tool identity or to provide complete Operator authentication on installs whose login gate is open or in fallback. If the visible launch context, tmux session environment, and `tc whoami` disagree, stop project-scoped mutations and preserve the mismatch evidence.
+
 ### Added
 
 - **The Launch readiness panel shows a project's recovery mode and lets the operator choose it** (#1937). Settings → Project Rules → **Launch readiness** now opens with the project's recovery mode as it stands: operator-cleared or advisory, who clears a recovery under it, and why the project is in that mode (the operator pinned it, the operator chose advisory, nobody has chosen and the install's default applies, or the project's file holds a value TangleClaw does not recognise). It shows the decision on record with when it was made, and any disagreement between that decision and the project's file.
