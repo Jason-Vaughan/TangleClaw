@@ -100,6 +100,17 @@ describe('the batch recovery clear (#2049)', () => {
 
   describe('who may send one', () => {
     /**
+     * The headers a held launch's own session sends on its API calls: the one
+     * local process that says who it is, and so reaches the route.
+     * @param {{project: object, sequence: object}} held - A launch from the fixture
+     * @returns {object}
+     */
+    const boundHeaders = (held) => ({
+      'x-tangleclaw-launch-id': held.sequence.launchId,
+      'x-tangleclaw-project-id': String(held.project.id)
+    });
+
+    /**
      * Assert a refusal carries its code, cleared nothing and recorded nothing.
      * @param {object} res - The response
      * @param {number} status - Expected status
@@ -131,11 +142,39 @@ describe('the batch recovery clear (#2049)', () => {
       assertRefused(res, 403, 'LOGIN_GATE_REQUIRED', held, counts);
     });
 
-    it('refuses a local process on an install with no login', async () => {
+    it('refuses a same-origin browser on an install with no login that carries no page token', async () => {
       const held = fixture.launchInRecovery(env);
       const counts = recordCounts();
-      const res = await client.send('POST', URL, { body: { items: [itemFor(held)] }, browser: false });
-      assertRefused(res, 403, 'OPERATOR_REQUIRED', held, counts);
+      const res = await client.send('POST', URL, { body: { items: [itemFor(held)] } });
+      assertRefused(res, 403, 'OPEN_INSTALL_TOKEN_INVALID', held, counts);
+    });
+
+    it('refuses a cross-site browser on an install with no login, page token or not', async () => {
+      const held = fixture.launchInRecovery(env);
+      const counts = recordCounts();
+      const token = await client.pageToken();
+      const res = await client.send('POST', URL, {
+        body: { items: [itemFor(held)] },
+        headers: { 'sec-fetch-site': 'cross-site', origin: 'http://elsewhere.example', 'x-tc-open-token': token }
+      });
+      assert.equal(res.statusCode, 403, res.body);
+      assert.equal(recoveryOf(held), 'required', 'a refused batch clears nothing');
+      assert.deepEqual(recordCounts(), counts, 'and records nothing');
+    });
+
+    it('refuses a local process on an install with no login, a held launch\'s own session included', async () => {
+      const held = fixture.launchInRecovery(env);
+      const counts = recordCounts();
+      const body = { items: [itemFor(held)] };
+      // One that says nothing about who it is does not reach the route at all.
+      assertRefused(await client.send('POST', URL, { body, browser: false }), 403, 'LAUNCH_BINDING_REQUIRED', held, counts);
+      // The held launch's own session is identified, reaches the route, and is
+      // refused there for what it is, page token and all.
+      const token = await client.pageToken();
+      const own = await client.send('POST', URL, {
+        body, browser: false, headers: { ...boundHeaders(held), 'x-tc-open-token': token }
+      });
+      assertRefused(own, 403, 'OPERATOR_REQUIRED', held, counts);
     });
 
     it('refuses an armed install\'s caller who is not signed in, browser or local process', async () => {
@@ -144,7 +183,11 @@ describe('the batch recovery clear (#2049)', () => {
       client.arm();
       const body = { items: [itemFor(held)] };
       assertRefused(await client.send('POST', URL, { body }), 401, 'UNAUTHENTICATED', held, counts);
-      assertRefused(await client.send('POST', URL, { body, browser: false }), 401, 'UNAUTHENTICATED', held, counts);
+      // A local process that says nothing about who it is is refused before the
+      // route. The held launch's own session reaches it and is told to sign in.
+      assertRefused(await client.send('POST', URL, { body, browser: false }), 403, 'LAUNCH_BINDING_REQUIRED', held, counts);
+      assertRefused(await client.send('POST', URL, { body, browser: false, headers: boundHeaders(held) }),
+        401, 'UNAUTHENTICATED', held, counts);
     });
 
     it('refuses a signed-in operator\'s request that carries no CSRF token, or a wrong one', async () => {
@@ -171,14 +214,16 @@ describe('the batch recovery clear (#2049)', () => {
     });
 
     it('refuses a gate state that is neither armed, open nor fallback by its own branch', async () => {
-      // `account-required`: the login is on and no account exists. A local
-      // process is the caller that reaches the route in this state.
+      // `account-required`: the login is on and no account exists. A held
+      // launch's own session is the caller that reaches the route in this state.
       const held = fixture.launchInRecovery(env);
       const counts = recordCounts();
       const cfg = store.config.load();
       cfg.authEnabled = true;
       store.config.save(cfg);
-      const res = await client.send('POST', URL, { body: { items: [itemFor(held)] }, browser: false });
+      const res = await client.send('POST', URL, {
+        body: { items: [itemFor(held)] }, browser: false, headers: boundHeaders(held)
+      });
       assertRefused(res, 409, 'GATE_STATE_UNSUPPORTED', held, counts);
     });
   });
