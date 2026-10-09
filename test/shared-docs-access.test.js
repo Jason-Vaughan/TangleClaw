@@ -482,3 +482,37 @@ describe('resolveAccess against a real store', () => {
     assert.equal(a.reason, INVALID_REASONS.SESSION_NOT_ACTIVE);
   });
 });
+
+describe('resolveBinding — what the launch binding is worth, whoever else the request is (#2233)', () => {
+  it('answers for the binding even when the request is also the operator', () => {
+    const signedIn = { tcSession: { username: 'op' } };
+    assert.equal(access.resolveAccess(req({ 'x-tangleclaw-launch-id': 'wrapped-8', 'x-tangleclaw-project-id': '8' }, signedIn), fakeDeps()).kind,
+      KINDS.OPERATOR, 'the access answer stops at the operator');
+    const b = access.resolveBinding(req({ 'x-tangleclaw-launch-id': 'wrapped-8', 'x-tangleclaw-project-id': '8' }, signedIn), fakeDeps());
+    assert.equal(b.kind, KINDS.INVALID);
+    assert.equal(b.reason, INVALID_REASONS.SESSION_NOT_ACTIVE);
+  });
+
+  it('never answers operator: a request with no launch id is unbound, signed in or not', () => {
+    for (const extra of [{ tcSession: { username: 'op' } }, { tcGateActive: false }, {}]) {
+      const b = access.resolveBinding(req({ 'sec-fetch-site': 'same-origin' }, extra), fakeDeps());
+      assert.equal(b.kind, KINDS.UNBOUND);
+    }
+  });
+
+  it('gives the same answer resolveAccess gives a caller who is not the operator', () => {
+    const cases = [
+      BOUND_7,
+      { 'x-tangleclaw-launch-id': 'live-7' },
+      { 'x-tangleclaw-launch-id': 'live-7', 'x-tangleclaw-project-id': '8' },
+      { 'x-tangleclaw-launch-id': 'nobody', 'x-tangleclaw-project-id': '7' },
+      { 'x-tangleclaw-launch-id': 'wrapped-8', 'x-tangleclaw-project-id': '8' },
+      { 'x-tangleclaw-launch-id': 'master-live', 'x-tangleclaw-role': 'master' },
+      { 'x-tangleclaw-launch-id': 'master-old', 'x-tangleclaw-role': 'master' },
+      {}
+    ];
+    for (const headers of cases) {
+      assert.deepEqual(access.resolveBinding(req(headers), fakeDeps()), access.resolveAccess(req(headers), fakeDeps()), JSON.stringify(headers));
+    }
+  });
+});

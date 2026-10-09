@@ -363,6 +363,8 @@ All settings live in the project config under `evalAuditMode`:
 
 ## API Reference
 
+Every `POST`, `PUT`, `PATCH` and `DELETE` here must come from an identified caller before its route runs: see "Who may write" in `docs/configuration-reference.md`. Ingest is the listed exception: it proves its connection's audit secret.
+
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | POST | `/api/audit/ingest` | Receive exchange from OpenClaw webhook |

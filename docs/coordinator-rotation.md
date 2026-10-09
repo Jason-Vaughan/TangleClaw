@@ -323,7 +323,9 @@ Each phase prints `PASS` or `FAIL` lines and exits non-zero on any failure.
 ## Commands and routes
 
 Prepare, show, advance and resume are bound to the caller's own verified launch; relaunch, abandon, `GET /api/rotations` and the coordinator-role routes are the operator's alone. An unbound, forged or
-foreign caller is refused with `403 ROTATION_BINDING_REQUIRED`.
+foreign caller is refused with `403 ROTATION_BINDING_REQUIRED`. On a write, a caller with no launch
+binding or one that does not verify is refused earlier, with `403 LAUNCH_BINDING_REQUIRED` or
+`LAUNCH_BINDING_INVALID`: see "Who may write" in `docs/configuration-reference.md`.
 
 | Command | Route | Purpose |
 |---|---|---|

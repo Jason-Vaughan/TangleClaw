@@ -133,6 +133,8 @@ A scripted live sync must therefore send its own `x-tangleclaw-project-id` and
 
 ## API
 
+Every `POST`, `PUT`, `PATCH` and `DELETE` here must come from an identified caller before its route runs: see "Who may write" in `docs/configuration-reference.md`.
+
 All routes are JSON. Control commands take `requestId` (1–128 characters of `[A-Za-z0-9._:-]`) as an
 idempotency key: replaying one returns the original result.
 

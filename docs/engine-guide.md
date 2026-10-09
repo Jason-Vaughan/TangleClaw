@@ -886,6 +886,21 @@ state. This is engine-neutral by construction: a new engine needs no adapter for
 context, and an engine that gates or defers that can have the whole floor and never use it.
 Engine-profile `launch.env` overrides any of these keys on collision.
 
+**What `tc` checks about its own identity (#2233).** Two things, and they answer different
+questions. `tc whoami` prints the server's verdict on the launch id the pane carries: `verified`,
+`stale` with a reason, or `unbound`. And before any verb sends a request, `tc` compares
+`TANGLECLAW_LAUNCH_ID`, `TANGLECLAW_PROJECT_ID` and `TANGLECLAW_ROLE` in its own environment with
+the values tmux recorded for the pane it runs in (`tmux show-environment -t "$TMUX_PANE"`, bounded
+at one second). A difference refuses the verb with `PANE_IDENTITY_MISMATCH`, exit 2, and nothing is
+sent. The comparison needs `TMUX` and `TMUX_PANE` in the tool shell and a tmux it may talk to. An
+engine whose tools run outside the pane (Codex on its native startup channel, where they run in the
+per-launch app-server) or inside a sandbox that hides the tmux socket gets "Pane check: not made"
+from `tc whoami`, and its verbs run. That is a statement that the check did not happen, not a pass.
+The check also cannot see a shell that inherited its whole environment, `TMUX_PANE` included, from
+another pane's process: it reads that other pane and finds agreement. Nothing in the pane can catch
+that case, which is why a launch is kept off a shared engine process when it starts and why writes
+are checked at the server.
+
 #### Prime paste readiness
 
 When a project runs with `silentPrime` off (or the engine has no silent channel), the prime is

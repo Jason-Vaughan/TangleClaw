@@ -23,6 +23,7 @@ const controlApi = require('../lib/control-api');
 const { createServer } = require('../server');
 const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
 const { initRepo } = require('./_temp-repo');
+const { outsidePane } = require('./_tc-env');
 
 const TC = path.join(__dirname, '..', 'bin', 'tc');
 
@@ -168,7 +169,7 @@ describe('#1861 exit: a queued HOLD blocks the next governed mutation before the
     // The Builder's own tc shows the hold, on the control verb and as a
     // notice on any other verb.
     const env = {
-      ...process.env,
+      ...outsidePane(process.env),
       TANGLECLAW_API: api,
       TANGLECLAW_PROJECT_ID: String(builder.id),
       TANGLECLAW_LAUNCH_ID: bBuilder.launchId,

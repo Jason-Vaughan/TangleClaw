@@ -35,6 +35,52 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-09 — #2233: a session can ask what its launch identity is worth (diagnostics)
+
+<!-- prawduct: type=bugfix | scope=2233-launch-identity-containment -->
+
+#2233 Chunk 03. The plan's third chunk was split in two at this session's start: this entry is the diagnostics and every item carried from the earlier boundary reviews; the session inventory, the end-and-relaunch verification and the live cutover proofs are Chunk 04, on its own branch. #2233 stays open.
+
+**The defect.** `GET /api/tc/whoami` resolved the project from the id a pane claimed and never read the launch id beside it, so `tc whoami` told a pane with a stale or foreign binding "You are a TangleClaw-managed session of project X". The pane learned otherwise only when a write was refused, and then from one of three wordings for the same cause: the write floor's, the launch sequence's, and the shared-docs resolver's.
+
+**What landed.**
+- `lib/shared-docs-access.js#resolveBinding`: the resolver without its operator test. `resolveAccess` calls it, so there is still one resolver. It exists because `resolveAccess` stops at the operator and so cannot say what a launch id is worth on a request that is also the operator's.
+- `lib/launch-binding-guard.js#describeBinding`, `causeFor`, `recoveryFor`: one verdict (`verified`, `stale`, `unbound`) and one sentence per cause. `judge` and `describeBinding` share `_classify`, so the floor cannot admit what the report calls stale or the reverse. `lib/launch-sequence.js#_bindingRefusal` reads the same sentences for `SEQUENCE_SESSION_MISMATCH` and `SESSION_ENDED`. Codes and statuses did not change; the `error` text of these refusals did.
+- `server.js`: whoami answers `binding` on the project and the Master answer (`_whoamiBinding`; a check that throws reads `unknown`). The service-token branch of the dispatcher has an error boundary of its own. The request log line of an admitted write carries `via`, and for a project `admittedProject` and `admittedSession` (`_admittedAs`).
+- `lib/tc-verbs.js` and `bin/tc`: `renderWhoami` leads with a binding that is not verified and says "You claim" where it said "You are". Before any request, `bin/tc` compares the launch id, project id and role in its environment with the ones tmux recorded for its pane and refuses every verb on a difference (`PANE_IDENTITY_MISMATCH`, exit 2, nothing sent).
+
+- `lib/engines.js#_medusaDiscoveryLines`, and the hand-kept copy in the tracked `CLAUDE.md`: the generated guide tells a session that a `tc whoami` which does not read `Launch binding: verified` means stop and report. `FEATURES.md` has the entry ("Launch identity diagnostics") and `docs/configuration-reference.md` ("Who may write") and `docs/engine-guide.md` describe the verdict and the pane check.
+
+**Measured, and what it changed.** The plan's requirement for the pane check came from issue #2241 and was marked unverified. Measured on this host from a Claude tool shell: `TMUX_PANE` is set, `tmux show-environment -t "$TMUX_PANE"` answers, and the values equal the process environment. Read from the code, not run: on Codex's native path tools run in the per-launch app-server, which is started with the server's environment and has no `TMUX_PANE`. Reasoned, not run: a tool shell on an engine process shared between sessions inherits that process's whole environment, `TMUX_PANE` included, so it reads the other pane and finds agreement. So the check has three answers (`match`, `mismatch`, `cannot-check`), only `mismatch` refuses, and it does not catch the failure #2241 describes. The CHANGELOG entry, the engine guide and the JSDoc on `judgePaneIdentity` each say that.
+
+**Test expectations that changed, and why.** `test/tc-cli.test.js`: the spawned Master whoami case ran with the role and no launch id and asserted "You are the TangleClaw Project Master". That pane is unbound, so it now asserts the claim wording and `LAUNCH BINDING ABSENT`; the receipt assertion is unchanged. The spawned project whoami case is given a real launch binding, so it still asserts "You are". The test files that spawn `tc` with the developer's environment passed through, and a test identity laid over it, were refused by the new check inside a tmux pane, correctly. They now build that environment through (as does one `git` spawn in `test/checkout-state.test.js`, which did not need it and is harmless) `test/_tc-env.js#outsidePane` (`git grep -l outsidePane test` lists them). CI has no tmux and would not have shown this.
+
+**Carried items, all met here.** The service-token read's error boundary and its test; the wrap-in-flight case through the floor (it passed before any change: it records a behaviour that was promised and untested); the admitted-identity log fields; the longer contracts list and the reporter credit in `CHANGELOG.md`; the `docs/openclaw-setup.md` pointer; pointers to "Who may write" from the control-state, coordinator-rotation, operator-bridge and eval-audit route tables; the history sentences removed from two test comments.
+
+**Not verified.** The new tests were written before the code; the `describeBinding`, `resolveBinding` and `tc` pane-check tests were not run red, since they call functions that did not exist. The launch-sequence wording test and the dispatcher tests were run red. Nothing here was run against a deployed server: the live install runs the previous commit, where the new `tc` reads "Launch binding: not reported by this server".
+
+**Not covered.** The pane check's blind spot above. A signal that does not travel with the inherited environment (the tool shell's working directory against the claimed project's path) is proposed to the Operator as its own issue and is not built.
+
+**Review (rev-20261009T161447Z-34ebf192, boundary, three reviewers): 0 blocking.** The two warnings and four of the notes are fixes that ride Chunk 04's first commit and are written in the build plan's section 6d.
+
+**rev-20261009T161447Z-34ebf192** — scope `2233-launch-identity-containment`, chunk 03, 2026-10-09T16:18:49Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | Real, and not reachable under launchd: it needs the server started by hand from a TangleClaw-launched pane. Fix (strip TMUX and TMUX_PANE from the environment of a process the server spawns to carry a launch identity, with a test) rides Chunk 04's first commit; written in the build plan section 6d, which is the chunk that rehearses a native Codex launch. |
+| R-2 | note | accepted | A test tying the guide's quoted literal to renderWhoami rides Chunk 04's first commit; written in the build plan section 6d. |
+| R-3 | note | accepted | Accepted as designed and recorded as a decision in the plan: the guard answers three states, the report adds unknown and unreported, and each is tested at the renderer. Aligning master-unverifiable with NOT CHECKED rides Chunk 04's first commit; written in the build plan section 6d. |
+| R-4 | note | accepted | One owner for the stale recovery sentence is not possible by import (lib/tc-verbs.js stays free of server modules); a test holding the two literals equal rides Chunk 04's first commit; written in the build plan section 6d. |
+| R-5 | note | accepted | The exit-code headers in bin/tc and lib/tc-verbs.js gain the local refusal; doc-only, rides Chunk 04's first commit; written in the build plan section 6d. |
+| R-6 | note | accepted | Not added on this branch; the mirrored Global Rules are the Operator's to move. |
+| R-7 | warning | accepted | One log.warn for a stale whoami verdict rides Chunk 04's first commit; written in the build plan section 6d. |
+| R-8 | note | accepted | Left out deliberately until someone traces whether a workspace id may legitimately change within a session; the question is in the plan section 6d for Chunk 04. |
+| R-9 | note | accepted | No action: the learnings tree is gitignored and exists only in the primary checkout. |
+| R-10 | note | accepted | No action. |
+| R-11 | note | accepted | No action. |
+
+**11 findings** (2 warning, 9 note) — accepted: 11.
+
 ## 2026-10-09 — #2049: two defects in the fleet recovery panel, found by using it
 
 <!-- prawduct: type=bugfix | scope=2049-fleet-recovery-clearance -->
