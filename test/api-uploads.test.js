@@ -9,9 +9,13 @@ const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const { createServer } = require('../server');
+const { operatorHeaders } = require('./_shared-docs-callers');
 const { canForceRefusal } = require('./_eacces');
 
 setLevel('error');
+
+/** The methods that change state, which the server refuses from a caller it cannot name. */
+const WRITE_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
 
 function request(server, method, urlPath, body) {
   return new Promise((resolve, reject) => {
@@ -21,7 +25,12 @@ function request(server, method, urlPath, body) {
       port: addr.port,
       path: urlPath,
       method,
-      headers: { 'Content-Type': 'application/json' }
+      // Every write here is the operator's dashboard acting, so it is sent as
+      // that browser sends it; a write that names no caller is refused (#2233).
+      headers: {
+        'Content-Type': 'application/json',
+        ...(WRITE_METHODS.includes(method) ? operatorHeaders(server) : {})
+      }
     };
 
     const req = http.request(options, (res) => {

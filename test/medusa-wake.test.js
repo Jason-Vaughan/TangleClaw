@@ -510,7 +510,7 @@ describe('medusa-wake — nudge injection', () => {
     // name again against the composer's verbatim-paste limit.
     assert.match(cmd, /tc message read/);
     assert.match(cmd, /tc message ack <message-id>/);
-    assert.match(cmd, /API at \S+\/api\/sessions\/proj-a\/medusa: GET \/messages, POST \/send \(inReplyTo \+ launch headers\), POST \/read\./);
+    assert.match(cmd, /API at \S+\/api\/sessions\/proj-a\/medusa: GET \/messages; POST \/send \(inReplyTo\) and \/read need launch headers\./);
   });
 
   it('URL-encodes the project name in the nudge path', () => {
@@ -973,7 +973,7 @@ describe('medusa-wake — the Project Master is scanned like any session (#996)'
     // relative to the one API base, with what a raw reply must carry.
     const line = wake._nudgeLineFor('/api/sessions/p/medusa', 1, 'http://localhost:3102');
     assert.match(line, /tc message send --in-reply-to <message-id> <sender-workspace-id> "<reply>"/);
-    assert.match(line, /API at http:\/\/localhost:3102\/api\/sessions\/p\/medusa: GET \/messages, POST \/send \(inReplyTo \+ launch headers\), POST \/read\./);
+    assert.match(line, /API at http:\/\/localhost:3102\/api\/sessions\/p\/medusa: GET \/messages; POST \/send \(inReplyTo\) and \/read need launch headers\./);
     assert.equal(line.split('/api/sessions/p/medusa').length - 1, 1, 'the base is named once');
     assert.match(line, /initiator closes the exchange/);
     assert.ok(!line.includes('\n'), 'still one line');
@@ -1035,6 +1035,10 @@ describe('medusa-wake — the Project Master is scanned like any session (#996)'
     assert.match(line, /POST \/api\/master\/medusa\/send \{"to":"<sender-workspace-id>","message":"<reply>"\}/);
     assert.match(line, /POST \/api\/master\/medusa\/read \{"ids":\[\.\.\.\]\}/);
     assert.ok(line.indexOf('/medusa/send') < line.indexOf('/medusa/read'), 'reply comes before the ack');
+    // Both writes are refused without the Master's own binding (#2233), which
+    // is a role and a launch id, not a project's two headers.
+    assert.match(line, /Both POSTs need the headers x-tangleclaw-role: master and x-tangleclaw-launch-id: \$TANGLECLAW_LAUNCH_ID\./);
+    assert.doesNotMatch(line, /x-tangleclaw-project-id/, 'the Master has no project to claim');
     assert.match(line, /BEFORE marking it handled/);
     assert.match(line, /initiator closes the exchange/);
     assert.match(line, /Never use \/clear as an acknowledgement/);

@@ -94,7 +94,10 @@ describe('ports panel: show and undo "Not a project" (#1768)', () => {
     return new Promise((resolve, reject) => {
       const req = http.request({
         hostname: '127.0.0.1', port: server.address().port, path: urlPath, method,
-        headers: { 'Content-Type': 'application/json' }
+        // What the real wrapper sends on every request (public/api-helper.js
+        // tcWithClient): the label that says this is the dashboard. A write
+        // that names no caller is refused before its handler (#2233).
+        headers: { 'Content-Type': 'application/json', 'X-TangleClaw-Client': 'dashboard' }
       }, (res) => {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));

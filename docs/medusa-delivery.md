@@ -133,6 +133,13 @@ From a pane: `tc message send --priority blocking --reason awaiting-ruling <work
   base once, with `GET /messages`, `POST /send` and `POST /read` relative to
   it, and is held to 750 characters for the longest name `validateName`
   accepts. A name registered without that check (#2180) is not covered.
+- **Every write needs the caller's identity (#2233).** `POST <base>/send`,
+  `POST <base>/read`, the exchange close and the loop routes are refused with
+  `403 LAUNCH_BINDING_REQUIRED` unless the request carries the session's
+  launch headers (`x-tangleclaw-launch-id` and `x-tangleclaw-project-id`), or
+  for the Project Master `x-tangleclaw-role: master` with its launch id.
+  `tc message` sends a session's headers; both nudges name what a raw call
+  needs. The inbox and roster reads need neither.
 - **Closing:** the original sender closes an exchange with
   `POST <base>/medusa/exchanges/<exchange-id>/close` (`tc message close`).
 - **Listing:** `GET <base>/medusa/exchanges?direction=sent|received&open=1`

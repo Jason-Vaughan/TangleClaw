@@ -18,7 +18,7 @@ setLevel('error');
 
 const store = require('../lib/store');
 const { createServer } = require('../server');
-const { bindProject } = require('./_shared-docs-callers');
+const { bindProject, operatorHeaders } = require('./_shared-docs-callers');
 
 /** HTTP request; returns { status, data }. */
 function request(server, method, urlPath, body, extraHeaders = {}) {
@@ -47,6 +47,10 @@ function request(server, method, urlPath, body, extraHeaders = {}) {
 }
 
 const bearer = (t) => ({ Authorization: `Bearer ${t}` });
+
+// Turning the gate on or off and rotating the token are the operator's settings
+// page acting, so those writes are sent as that browser sends them: a write that
+// names no caller is refused before its handler (#2233).
 
 describe('AUTH-4 — service-token gate over HTTP', () => {
   let tmpDir;
@@ -84,7 +88,7 @@ describe('AUTH-4 — service-token gate over HTTP', () => {
   });
 
   it('enabling via PATCH auto-generates a token and redacts it', async () => {
-    const { status, data } = await request(server, 'PATCH', '/api/config', { serviceTokenEnabled: true });
+    const { status, data } = await request(server, 'PATCH', '/api/config', { serviceTokenEnabled: true }, operatorHeaders(server));
     assert.equal(status, 200);
     assert.equal(data.config.serviceTokenEnabled, true);
     assert.equal(data.config.serviceTokenConfigured, true);
@@ -158,14 +162,14 @@ describe('AUTH-4 — service-token gate over HTTP', () => {
   });
 
   it('reversible: disabling re-opens PortHub with no token', async () => {
-    const off = await request(server, 'PATCH', '/api/config', { serviceTokenEnabled: false });
+    const off = await request(server, 'PATCH', '/api/config', { serviceTokenEnabled: false }, operatorHeaders(server));
     assert.equal(off.status, 200);
     const { status } = await request(server, 'GET', '/api/ports');
     assert.equal(status, 200);
   });
 
   it('rejects a non-boolean serviceTokenEnabled', async () => {
-    const { status, data } = await request(server, 'PATCH', '/api/config', { serviceTokenEnabled: 'yes' });
+    const { status, data } = await request(server, 'PATCH', '/api/config', { serviceTokenEnabled: 'yes' }, operatorHeaders(server));
     assert.equal(status, 400);
     assert.equal(data.code, 'BAD_REQUEST');
   });
@@ -196,13 +200,13 @@ describe('AUTH-4b — service-token management endpoints', () => {
   });
 
   it('rotate: 409 while the gate is off (nothing to rotate)', async () => {
-    const { status, data } = await request(server, 'POST', '/api/service-token/rotate', {});
+    const { status, data } = await request(server, 'POST', '/api/service-token/rotate', {}, operatorHeaders(server));
     assert.equal(status, 409);
     assert.equal(data.code, 'SERVICE_TOKEN_DISABLED');
   });
 
   it('reveal: returns the raw token once the gate is enabled', async () => {
-    await request(server, 'PATCH', '/api/config', { serviceTokenEnabled: true });
+    await request(server, 'PATCH', '/api/config', { serviceTokenEnabled: true }, operatorHeaders(server));
     const { status, data } = await request(server, 'GET', '/api/service-token');
     assert.equal(status, 200);
     assert.match(data.token, /^tcsk_/);
@@ -211,7 +215,7 @@ describe('AUTH-4b — service-token management endpoints', () => {
 
   it('rotate: issues a NEW token, persists it, and invalidates the old one', async () => {
     const before = store.config.load().serviceToken;
-    const { status, data } = await request(server, 'POST', '/api/service-token/rotate', {});
+    const { status, data } = await request(server, 'POST', '/api/service-token/rotate', {}, operatorHeaders(server));
     assert.equal(status, 200);
     assert.match(data.token, /^tcsk_/);
     assert.notEqual(data.token, before, 'rotate must produce a different token');
@@ -225,7 +229,7 @@ describe('AUTH-4b — service-token management endpoints', () => {
   });
 
   it('reveal: 404 again after disabling (no raw token leaks while off)', async () => {
-    await request(server, 'PATCH', '/api/config', { serviceTokenEnabled: false });
+    await request(server, 'PATCH', '/api/config', { serviceTokenEnabled: false }, operatorHeaders(server));
     const { status } = await request(server, 'GET', '/api/service-token');
     assert.equal(status, 404);
   });

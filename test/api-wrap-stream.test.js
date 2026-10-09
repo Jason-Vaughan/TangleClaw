@@ -27,6 +27,7 @@ const { createServer, matchRoute } = require('../server');
 const caddy = require('../lib/caddy');
 const wrapPipelineMod = require('../lib/wrap-pipeline');
 const wrapRunRegistry = require('../lib/wrap-run-registry');
+const { operatorHeaders } = require('./_shared-docs-callers');
 
 /**
  * Make a plain JSON request to the test server.
@@ -34,13 +35,14 @@ const wrapRunRegistry = require('../lib/wrap-run-registry');
  * @param {string} method
  * @param {string} urlPath
  * @param {object} [body]
+ * @param {Record<string, string>} [callerHeaders] - Who is asking
  * @returns {Promise<{status: number, headers: object, body: object|string}>}
  */
-function request(server, method, urlPath, body) {
+function request(server, method, urlPath, body, callerHeaders = {}) {
   return new Promise((resolve, reject) => {
     const addr = server.address();
     const bodyStr = body != null ? JSON.stringify(body) : null;
-    const headers = { 'Content-Type': 'application/json' };
+    const headers = { 'Content-Type': 'application/json', ...callerHeaders };
     if (bodyStr != null) headers['Content-Length'] = Buffer.byteLength(bodyStr);
     const req = http.request(
       { hostname: '127.0.0.1', port: addr.port, path: urlPath, method, headers },
@@ -241,7 +243,8 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
    * @returns {Promise<{accepted: {status: number, body: object}, result: object}>}
    */
   async function wrapAndSettle() {
-    const accepted = await request(server, 'POST', '/api/sessions/wrap-stream-test/wrap', {});
+    // The wrap drawer starts the wrap, so the dashboard is who posts it.
+    const accepted = await request(server, 'POST', '/api/sessions/wrap-stream-test/wrap', {}, operatorHeaders(server));
     assert.equal(accepted.status, 202, 'the POST answers once the run is claimed');
     for (let i = 0; i < 500; i++) {
       const status = await request(server, 'GET', '/api/sessions/wrap-stream-test/wrap/status');
@@ -424,7 +427,8 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
      * Run `fn` with the logger pinned to a capture buffer at debug level.
      * The suite's own `setLevel('error')` would otherwise suppress exactly
      * the lines under test.
-     * @param {() => Promise<void>} fn - Body.
+     * @param {(soFar: () => string) => Promise<void>} fn - Body. `soFar`
+     *   reads what has been logged up to now, for a body that must wait on a line.
      * @returns {Promise<string>} Everything the logger emitted.
      */
     async function captureLogs(fn) {
@@ -432,7 +436,7 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
       setConsoleStream({ write: (text) => lines.push(text) });
       setLevel('debug');
       try {
-        await fn();
+        await fn(() => lines.join('\n'));
       } finally {
         setConsoleStream(null);
         setLevel('error');
@@ -494,15 +498,20 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
         return { ok: true, blockedAt: null, results: [], commitSha: null, summary: null, error: null };
       };
 
-      const logged = await captureLogs(async () => {
+      const logged = await captureLogs(async (soFar) => {
         const postPromise = wrapAndSettle();
         const runId = await awaitRunId();
         const addr = server.address();
         const req = http.get({ hostname: '127.0.0.1', port: addr.port, path: STREAM(runId) });
         await new Promise((resolve) => req.on('response', resolve));
         req.destroy();
-        // Let the close event reach the server before the run ends.
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        // Let the close event reach the server before the run ends. How long
+        // that takes depends on the host's load, so wait for the line itself,
+        // within a bound, rather than for a fixed interval: a run that ends
+        // first closes the stream as finished and the line is never written.
+        for (let i = 0; i < 250 && !/Wrap stream client went away/.test(soFar()); i++) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
         release();
         await postPromise;
       });

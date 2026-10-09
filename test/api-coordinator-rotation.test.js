@@ -20,16 +20,24 @@ setLevel('error');
 
 const store = require('../lib/store');
 const { createServer } = require('../server');
+const { bindProject } = require('./_shared-docs-callers');
 
 describe('API — coordinator rotation routes (#2032)', () => {
   let tempDir;
   let server;
   let port;
+  // A project whose launch binding verifies: the caller the route-level
+  // refusals below are about. A caller whose binding does not verify never
+  // reaches a mutating route, so it cannot show what the route itself refuses.
+  let bound;
+  const FORGED = { 'x-tangleclaw-project-id': '1', 'x-tangleclaw-launch-id': 'forged' };
 
   before(async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-rotation-api-'));
     store._setBasePath(tempDir);
     store.init();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-rotation-api-project-'));
+    bound = bindProject(store.projects.create({ name: 'rotation-api-caller', path: dir, engine: 'claude' })).headers;
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', () => { port = server.address().port; resolve(); }));
   });
@@ -78,13 +86,16 @@ describe('API — coordinator rotation routes (#2032)', () => {
     it(`${method} ${url} refuses a caller with no verified launch`, async () => {
       const { status, data } = await req(url, method, body);
       assert.equal(status, 403);
-      assert.equal(data.code, 'ROTATION_BINDING_REQUIRED');
+      // A write is refused by the server's launch-binding floor before the
+      // route is reached; a read still gets the route's own answer.
+      assert.equal(data.code, method === 'GET' ? 'ROTATION_BINDING_REQUIRED' : 'LAUNCH_BINDING_REQUIRED');
     });
 
     it(`${method} ${url} refuses a launch id nobody holds`, async () => {
-      const { status, data } = await req(url, method, body, { 'x-tangleclaw-project-id': '1', 'x-tangleclaw-launch-id': 'forged' });
+      const { status, data } = await req(url, method, body, FORGED);
       assert.equal(status, 403);
-      assert.equal(data.code, 'ROTATION_BINDING_REQUIRED');
+      assert.equal(data.code, method === 'GET' ? 'ROTATION_BINDING_REQUIRED' : 'LAUNCH_BINDING_INVALID');
+      if (method !== 'GET') assert.equal(data.reason, 'unknown-launch');
     });
   }
 
@@ -94,7 +105,7 @@ describe('API — coordinator rotation routes (#2032)', () => {
     ['POST', '/api/coordinator-roles/revoke', { projectId: 1 }]
   ]) {
     it(`${method} ${url} is the operator's alone (A6a)`, async () => {
-      const { status, data } = await req(url, method, body, { 'x-tangleclaw-project-id': '1', 'x-tangleclaw-launch-id': 'forged' });
+      const { status, data } = await req(url, method, body, bound);
       assert.equal(status, 403);
       assert.equal(data.code, 'OPERATOR_ONLY');
     });
@@ -105,18 +116,39 @@ describe('API — coordinator rotation routes (#2032)', () => {
     ['GET', '/api/rotations', null]
   ]) {
     it(`${method} ${url} is the operator's alone (A13)`, async () => {
-      const { status, data } = await req(url, method, body, { 'x-tangleclaw-project-id': '1', 'x-tangleclaw-launch-id': 'forged' });
+      const { status, data } = await req(url, method, body, bound);
       assert.equal(status, 403);
       assert.equal(data.code, 'OPERATOR_ONLY');
     });
   }
 
   it('abandon refuses a project caller: it is the operator\'s exit', async () => {
-    const { status, data } = await req('/api/tc/rotation/abandon', 'POST', { rotationId: 'rot_x', reason: 'x' },
-      { 'x-tangleclaw-project-id': '1', 'x-tangleclaw-launch-id': 'forged' });
+    const { status, data } = await req('/api/tc/rotation/abandon', 'POST', { rotationId: 'rot_x', reason: 'x' }, bound);
     assert.equal(status, 403);
     assert.equal(data.code, 'OPERATOR_ONLY');
   });
+
+  for (const [method, url, body] of [
+    ['POST', '/api/coordinator-roles', { projectId: 1, role: 'architect' }],
+    ['POST', '/api/coordinator-roles/revoke', { projectId: 1 }],
+    ['POST', '/api/tc/rotation/relaunch', { rotationId: 'rot_x' }],
+    ['POST', '/api/tc/rotation/abandon', { rotationId: 'rot_x', reason: 'x' }]
+  ]) {
+    it(`${method} ${url} never reaches the route for a binding that does not verify (#2233)`, async () => {
+      const { status, data } = await req(url, method, body, FORGED);
+      assert.equal(status, 403);
+      assert.equal(data.code, 'LAUNCH_BINDING_INVALID');
+      assert.equal(data.reason, 'unknown-launch');
+    });
+  }
+
+  for (const [url, code] of [['/api/coordinator-roles', 'OPERATOR_ONLY'], ['/api/rotations', 'OPERATOR_ONLY']]) {
+    it(`GET ${url} still answers a forged binding itself: a read is not held to the floor`, async () => {
+      const { status, data } = await req(url, 'GET', null, FORGED);
+      assert.equal(status, 403);
+      assert.equal(data.code, code);
+    });
+  }
 });
 
 describe('API — every gated route answers the epoch gate (#2032)', () => {

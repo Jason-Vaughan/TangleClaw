@@ -2989,11 +2989,14 @@ describe('master API routes over HTTP', () => {
     await new Promise((resolve) => server.close(resolve));
   });
 
+  // The writes here (ensure, kill) are the dashboard's Master bar, so they say
+  // so with the header its fetch wrapper adds; a write from a caller that does
+  // not say who it is never reaches the route (#2233).
   function request(method, urlPath) {
     return new Promise((resolve, reject) => {
       const req = http.request({
         hostname: '127.0.0.1', port: server.address().port, path: urlPath, method,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json', ...(method === 'GET' ? {} : { 'X-TangleClaw-Client': 'dashboard' }) }
       }, (res) => {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
@@ -3039,6 +3042,32 @@ describe('master API routes over HTTP', () => {
       const bad = await request('POST', '/api/master/ensure');
       assert.equal(bad.status, 500);
       assert.equal(bad.data.code, 'MASTER_ENSURE_FAILED');
+    } finally {
+      master.ensureMasterSession = original;
+    }
+  });
+
+  it('POST /api/master/ensure answers 409 with the reason and recovery when the engine could not be shown isolated (#2233)', async () => {
+    const sessionsLib = require('../lib/sessions');
+    // The refusal the route maps is built by the real judgment, so its fields are the ones production emits.
+    const verdict = sessionsLib._judgeLaunchIsolation('codex', {
+      command: 'codex', enginePath: '/opt/fake/bin/codex', probe: { version: '0.161.0', enginePath: '/opt/fake/bin/codex' }, native: null
+    });
+    assert.equal(verdict.allowed, false);
+    const original = master.ensureMasterSession;
+    try {
+      master.ensureMasterSession = () => ({
+        created: false, tmuxSession: 'tangleclaw-master', home: '/tmp/x',
+        error: sessionsLib._isolationRefusalMessage('the Project Master', verdict),
+        code: 'LAUNCH_ISOLATION_UNVERIFIED',
+        isolation: { reasonCode: verdict.reasonCode, recovery: verdict.recovery }
+      });
+      const refused = await request('POST', '/api/master/ensure');
+      assert.equal(refused.status, 409);
+      assert.equal(refused.data.code, 'LAUNCH_ISOLATION_UNVERIFIED');
+      assert.equal(refused.data.reasonCode, 'version_unverified');
+      assert.match(refused.data.recovery, /launch again/);
+      assert.match(refused.data.error, /0\.161\.0/);
     } finally {
       master.ensureMasterSession = original;
     }
@@ -3329,8 +3358,8 @@ describe('ensureMasterSession — Codex daemon isolation (#1895)', () => {
       const { result, command } = ensureWith({ engine: 'codex' });
       assert.equal(result.created, true);
       assert.equal(result.engine, 'codex');
-      assert.match(command, /(^|; )codex --no-daemon$/);
-      assert.deepEqual(probed, [CODEX_BIN], 'the probe must ask the executable this launch runs');
+      assert.ok(command.endsWith(`; ${CODEX_BIN} --no-daemon`), `the pane runs the probed executable by path: ${command}`);
+      assert.ok(probed.length > 0 && probed.every((bin) => bin === CODEX_BIN), 'every probe asks the executable this launch runs');
     });
   }
 
@@ -3338,23 +3367,135 @@ describe('ensureMasterSession — Codex daemon isolation (#1895)', () => {
     codexAnswers('codex-cli 0.157.1\n');
     const { result, command } = ensureWith({ engine: 'codex', launchMode: 'fullAuto' });
     assert.equal(result.launchMode, 'fullAuto');
-    assert.match(command, /(^|; )codex --ask-for-approval never --sandbox workspace-write --no-daemon$/);
+    assert.ok(command.endsWith(`; ${CODEX_BIN} --ask-for-approval never --sandbox workspace-write --no-daemon`), command);
   });
 
-  for (const [label, output] of [
-    ['an older version that rejects the flag', 'codex-cli 0.154.0\n'],
-    ['a future version nobody has verified', 'codex-cli 0.158.0\n'],
-    ['output the probe cannot parse', 'something unexpected\n'],
-    ['a probe that fails', null]
+  // Until #2233 these four launched the bare command, which leaves the Master
+  // on Codex's shared background process. Architect ruling A163 R3 reverses
+  // that: a Master that cannot be shown isolated does not start.
+  for (const [label, output, reasonCode] of [
+    ['an older version that rejects the flag', 'codex-cli 0.154.0\n', 'version_unverified'],
+    ['a future version nobody has verified', 'codex-cli 0.158.0\n', 'version_unverified'],
+    ['output the probe cannot parse', 'something unexpected\n', 'version_unknown'],
+    ['a probe that fails', null, 'version_unknown']
   ]) {
-    it(`fails closed to the historical command for ${label}`, () => {
+    it(`refuses to start the Master for ${label}, and starts nothing`, () => {
       codexAnswers(output);
       const { result, command } = ensureWith({ engine: 'codex' });
-      assert.equal(result.created, true);
-      assert.match(command, /(^|; )codex$/, 'an unverified version keeps the command it always had');
-      assert.doesNotMatch(command, /--no-daemon/);
+      assert.equal(result.created, false);
+      assert.equal(result.code, 'LAUNCH_ISOLATION_UNVERIFIED');
+      assert.equal(result.isolation.reasonCode, reasonCode);
+      assert.match(result.error, /did not start the engine for the Project Master/);
+      assert.match(result.error, /0\.156\.1 or 0\.157\.1/, 'the message names what to install');
+      assert.match(result.error, /Nothing was started/);
+      assert.equal(command, null, 'no tmux session was created');
     });
   }
+
+  it('issues no bridge credential for a Master it refuses to start', () => {
+    codexAnswers('codex-cli 0.158.0\n');
+    const bridgePrincipal = require('../lib/bridge-principal');
+    const realBegin = bridgePrincipal.begin;
+    let begun = 0;
+    bridgePrincipal.begin = (...args) => { begun += 1; return realBegin(...args); };
+    try {
+      assert.equal(ensureWith({ engine: 'codex' }).result.created, false);
+    } finally {
+      bridgePrincipal.begin = realBegin;
+    }
+    assert.equal(begun, 0);
+  });
+
+  it('refuses a Codex Master whose resolved executable is not named codex, whatever version it reports, and issues no credential', () => {
+    codexAnswers('codex-cli 0.157.1\n');
+    const WRAP = '/opt/fake/bin/codex-wrapper';
+    const config = store.config.load();
+    const saved = config.master;
+    const bridgePrincipal = require('../lib/bridge-principal');
+    const realBegin = bridgePrincipal.begin;
+    let begun = 0;
+    bridgePrincipal.begin = (...args) => { begun += 1; return realBegin(...args); };
+    try {
+      config.master = { accessLevel: 'read-only', scope: 'all', autoStart: false, engine: 'codex' };
+      store.config.save(config);
+      const tmuxLib = fakeTmux({ alive: false });
+      const enginesLib = { detectEngine: () => ({ available: true, path: WRAP }), resolveDefaultEngine: () => 'codex' };
+      const result = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib, enginesLib });
+      assert.equal(result.created, false);
+      assert.equal(result.code, 'LAUNCH_ISOLATION_UNVERIFIED');
+      assert.equal(result.isolation.reasonCode, 'executable_unverified');
+      assert.match(result.error, /real Codex executable/);
+      assert.deepEqual(tmuxLib.calls, [], 'no tmux session');
+      assert.equal(begun, 0, 'no bridge credential');
+      assert.deepEqual(probed, [], 'the wrapper is never asked its version');
+    } finally {
+      bridgePrincipal.begin = realBegin;
+      config.master = saved;
+      store.config.save(config);
+    }
+  });
+
+  it('refuses a Codex Master as a fault of its own, not a version problem, when building the command throws', () => {
+    codexAnswers('codex-cli 0.157.1\n');
+    const realIsolate = codexAdapter.isolateLaunch;
+    codexAdapter.isolateLaunch = () => { throw new Error('builder fault'); };
+    try {
+      const { result, command } = ensureWith({ engine: 'codex' });
+      assert.equal(result.created, false);
+      assert.equal(result.isolation.reasonCode, 'judgment_failed');
+      assert.doesNotMatch(result.error, /Install a Codex version/);
+      assert.equal(command, null);
+    } finally {
+      codexAdapter.isolateLaunch = realIsolate;
+    }
+  });
+
+  it('refuses a Codex Master when the Codex judgment is missing', () => {
+    codexAnswers('codex-cli 0.157.1\n');
+    const realJudge = codexAdapter.judgeLaunchCommand;
+    delete codexAdapter.judgeLaunchCommand;
+    try {
+      const { result, command } = ensureWith({ engine: 'codex' });
+      assert.equal(result.created, false);
+      assert.equal(result.code, 'LAUNCH_ISOLATION_UNVERIFIED');
+      assert.equal(result.isolation.reasonCode, 'no_judge');
+      assert.equal(command, null);
+    } finally {
+      codexAdapter.judgeLaunchCommand = realJudge;
+    }
+  });
+
+  it('refuses a Codex Master when the Codex admission check is missing, before the executable is asked anything', () => {
+    codexAnswers('codex-cli 0.157.1\n');
+    const realAdmit = codexAdapter.admitExecutable;
+    delete codexAdapter.admitExecutable;
+    try {
+      const { result, command } = ensureWith({ engine: 'codex' });
+      assert.equal(result.created, false);
+      assert.equal(result.code, 'LAUNCH_ISOLATION_UNVERIFIED');
+      assert.equal(result.isolation.reasonCode, 'no_judge');
+      assert.equal(command, null);
+      assert.deepEqual(probed, [], 'the executable is never asked its version');
+    } finally {
+      codexAdapter.admitExecutable = realAdmit;
+    }
+  });
+
+  it('judges the command it hands to tmux: a builder that falls back to the bare name is refused, not run', () => {
+    codexAnswers('codex-cli 0.157.1\n');
+    const realIsolate = codexAdapter.isolateLaunch;
+    // The builder answers as though it had built nothing, so the launch falls
+    // through to the historical hardening, which still names `codex` by name.
+    codexAdapter.isolateLaunch = (input) => ({ ...realIsolate(input), command: null });
+    try {
+      const { result, command } = ensureWith({ engine: 'codex' });
+      assert.equal(result.created, false);
+      assert.equal(result.isolation.reasonCode, 'command_not_pinned');
+      assert.equal(command, null);
+    } finally {
+      codexAdapter.isolateLaunch = realIsolate;
+    }
+  });
 
   for (const engine of ['claude', 'aider']) {
     it(`leaves the ${engine} Master's command untouched and never probes Codex`, () => {

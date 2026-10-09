@@ -35,6 +35,7 @@ const store = require('../lib/store');
 const medusa = require('../lib/medusa');
 const master = require('../lib/master');
 const { createServer } = require('../server');
+const { operatorHeaders } = require('./_shared-docs-callers');
 
 const NO_FLEET = async () => ({ refreshed: false, count: 0 });
 const OPEN = 1;
@@ -456,6 +457,12 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
   const real = {};
   let liveness = { live: true, answered: true, cause: null };
   const identityRefreshes = [];
+  // The launch id the live Master pane carries, and the two headers its own
+  // calls send with it. A Master that is not running has no launch id.
+  const MASTER_LAUNCH_ID = 'master-medusa-live';
+  const MASTER_PANE = { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': MASTER_LAUNCH_ID };
+  /** @returns {Record<string, string>} The headers the operator's dashboard sends */
+  const dashboard = () => operatorHeaders(server);
 
   before(async () => {
     home = tempHome();
@@ -477,6 +484,10 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     real.refreshMasterIdentity = master.refreshMasterIdentity;
     master.refreshMasterIdentity = (opts) => { identityRefreshes.push(opts); return { home: '/stub', refreshed: true }; };
     master.masterLiveness = () => liveness;
+    real.liveMasterLaunchId = master.liveMasterLaunchId;
+    master.liveMasterLaunchId = () => ({
+      launchId: liveness.live ? MASTER_LAUNCH_ID : null, answered: liveness.answered, cause: liveness.cause
+    });
     master.masterMedusaTarget = () => ({ projectPath: home, sessionId: master.MASTER_MEDUSA_KEY, name: master.MASTER_MEDUSA_NAME });
     master.syncMasterMedusa = (opts) => real.syncMasterMedusa({ ...opts, home, wsFactory: (u) => new FakeWS(u) });
 
@@ -502,12 +513,16 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
    * @param {string} urlPath - Path.
    * @param {string} [method] - Method.
    * @param {object|null} [body] - JSON body.
+   * @param {Record<string, string>} [callerHeaders] - Who is asking.
    * @returns {Promise<{status: number, data: object}>}
    */
-  function req(urlPath, method = 'GET', body = null) {
+  function req(urlPath, method = 'GET', body = null, callerHeaders = {}) {
     return new Promise((resolve, reject) => {
       const payload = body ? JSON.stringify(body) : null;
-      const headers = payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {};
+      const headers = {
+        ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}),
+        ...callerHeaders
+      };
       const r = http.request({ hostname: '127.0.0.1', port, path: urlPath, method, headers }, (res) => {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
@@ -548,7 +563,7 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
 
   it('toggle 409s when the Master is not running, naming the Master rather than "no active session"', async () => {
     liveness = { live: false, answered: true, cause: null };
-    const { status, data } = await req('/api/master/medusa/toggle', 'POST', { enabled: true });
+    const { status, data } = await req('/api/master/medusa/toggle', 'POST', { enabled: true }, dashboard());
     assert.equal(status, 409);
     assert.equal(data.code, 'NO_SESSION');
     assert.match(data.error, /Project Master is not running/);
@@ -556,18 +571,18 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
 
   it('toggle refuses on a silent tmux as UNKNOWN, never as "not running"', async () => {
     liveness = { live: false, answered: false, cause: 'read-timed-out' };
-    const { status, data } = await req('/api/master/medusa/toggle', 'POST', { enabled: true });
+    const { status, data } = await req('/api/master/medusa/toggle', 'POST', { enabled: true }, dashboard());
     assert.equal(status, 409);
     assert.match(data.error, /did not answer/);
     assert.doesNotMatch(data.error, /is not running/);
   });
 
   it('toggle on starts the listener AND persists medusaEnabled — the setting outlives the session', async () => {
-    const on = await req('/api/master/medusa/toggle', 'POST', { enabled: true });
+    const on = await req('/api/master/medusa/toggle', 'POST', { enabled: true }, dashboard());
     assert.equal(on.status, 200);
     assert.notEqual(on.data.state, 'off');
     assert.equal(master.masterSettings(store.config.load()).medusaEnabled, true);
-    const off = await req('/api/master/medusa/toggle', 'POST', { enabled: false });
+    const off = await req('/api/master/medusa/toggle', 'POST', { enabled: false }, dashboard());
     assert.equal(off.data.state, 'off');
     assert.equal(master.masterSettings(store.config.load()).medusaEnabled, false);
   });
@@ -580,7 +595,7 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     assert.equal(inbox.data.messages.length, 1);
     assert.equal(inbox.data.messages[0].message, 'Master, a shared doc changed');
     assert.equal((await req('/api/master/medusa/status')).data.unread, 1);
-    const read = await req('/api/master/medusa/read', 'POST', {});
+    const read = await req('/api/master/medusa/read', 'POST', {}, MASTER_PANE);
     assert.equal(read.status, 200);
     assert.equal(read.data.unread, 0);
   });
@@ -595,7 +610,7 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
   it('send works at write, and the Bridge sees the Master as the sender', async () => {
     const ws = startListening();
     const from = JSON.parse(ws.sent[0]).workspaceId;
-    const { status, data } = await req('/api/master/medusa/send', 'POST', { to: 'live-ws', message: 'please wrap' });
+    const { status, data } = await req('/api/master/medusa/send', 'POST', { to: 'live-ws', message: 'please wrap' }, MASTER_PANE);
     assert.equal(status, 200);
     assert.equal(data.status, 'received');
     assert.equal(bridge.received.at(-1).from, from);
@@ -605,7 +620,7 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     startListening();
     setMaster({ accessLevel: 'read-only' });
     const before = bridge.received.length;
-    const { status, data } = await req('/api/master/medusa/send', 'POST', { to: 'live-ws', message: 'do X' });
+    const { status, data } = await req('/api/master/medusa/send', 'POST', { to: 'live-ws', message: 'do X' }, MASTER_PANE);
     assert.equal(status, 403);
     assert.equal(data.code, 'ACCESS_LEVEL');
     assert.match(data.error, /read-only/);
@@ -616,11 +631,11 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     const { MESSAGE_BODY_LIMIT_BYTES } = require('../server');
     startListening();
     assert.equal((await req('/api/master/medusa/status')).data.messageLimitBytes, MESSAGE_BODY_LIMIT_BYTES);
-    const fits = await req('/api/master/medusa/send', 'POST', { to: 'live-ws', message: 'm'.repeat(60 * 1024) });
+    const fits = await req('/api/master/medusa/send', 'POST', { to: 'live-ws', message: 'm'.repeat(60 * 1024) }, MASTER_PANE);
     assert.equal(fits.status, 200);
     const before = bridge.received.length;
     for (const urlPath of ['/api/master/medusa/send', '/api/master/medusa/loop', '/api/master/medusa/loops/loop-1/continue']) {
-      const { status, data } = await req(urlPath, 'POST', { to: 'live-ws', target: 'live-ws', message: 'm'.repeat(70 * 1024) });
+      const { status, data } = await req(urlPath, 'POST', { to: 'live-ws', target: 'live-ws', message: 'm'.repeat(70 * 1024) }, MASTER_PANE);
       assert.equal(status, 413, urlPath);
       assert.equal(data.code, 'BODY_TOO_LARGE', urlPath);
       assert.equal(data.limitBytes, MESSAGE_BODY_LIMIT_BYTES, urlPath);
@@ -632,11 +647,11 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
   it('the gate reads config per request — a flip binds with no restart, both ways', async () => {
     startListening();
     setMaster({ accessLevel: 'read-only' });
-    assert.equal((await req('/api/master/medusa/send', 'POST', { to: 'live-ws', message: 'a' })).status, 403);
+    assert.equal((await req('/api/master/medusa/send', 'POST', { to: 'live-ws', message: 'a' }, MASTER_PANE)).status, 403);
     setMaster({ accessLevel: 'suggest' });
-    assert.equal((await req('/api/master/medusa/send', 'POST', { to: 'live-ws', message: 'b' })).status, 200);
+    assert.equal((await req('/api/master/medusa/send', 'POST', { to: 'live-ws', message: 'b' }, MASTER_PANE)).status, 200);
     setMaster({ accessLevel: 'read-only' });
-    assert.equal((await req('/api/master/medusa/send', 'POST', { to: 'live-ws', message: 'c' })).status, 403);
+    assert.equal((await req('/api/master/medusa/send', 'POST', { to: 'live-ws', message: 'c' }, MASTER_PANE)).status, 403);
   });
 
   it('status reports the refusal so a control can render a disabled send with its reason', async () => {
@@ -678,11 +693,11 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
   it('loop open is gated the same way: 403 at read-only, 200 at write', async () => {
     startListening();
     setMaster({ accessLevel: 'read-only' });
-    const denied = await req('/api/master/medusa/loop', 'POST', { target: 'live-ws', task: 't', doneCriteria: 'd', mode: 'supervised' });
+    const denied = await req('/api/master/medusa/loop', 'POST', { target: 'live-ws', task: 't', doneCriteria: 'd', mode: 'supervised' }, MASTER_PANE);
     assert.equal(denied.status, 403);
     assert.equal(bridge.loops.length, 0);
     setMaster({ accessLevel: 'write' });
-    const ok = await req('/api/master/medusa/loop', 'POST', { target: 'live-ws', task: 't', doneCriteria: 'd', mode: 'supervised' });
+    const ok = await req('/api/master/medusa/loop', 'POST', { target: 'live-ws', task: 't', doneCriteria: 'd', mode: 'supervised' }, MASTER_PANE);
     assert.equal(ok.status, 200);
     assert.equal(bridge.loops.length, 1);
   });
@@ -691,18 +706,18 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     startListening();
     setMaster({ accessLevel: 'read-only' });
     for (const verb of ['force-done', 'closeout']) {
-      const r = await req(`/api/master/medusa/loops/loop-1/${verb}`, 'POST', {});
+      const r = await req(`/api/master/medusa/loops/loop-1/${verb}`, 'POST', {}, MASTER_PANE);
       assert.equal(r.status, 403, verb);
       assert.equal(r.data.code, 'ACCESS_LEVEL', verb);
     }
-    const cont = await req('/api/master/medusa/loops/loop-1/continue', 'POST', { message: 'go on' });
+    const cont = await req('/api/master/medusa/loops/loop-1/continue', 'POST', { message: 'go on' }, MASTER_PANE);
     assert.equal(cont.status, 403);
   });
 
   it('the project mount still answers its own 409 wording — the family did not change shape', async () => {
     const projPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-medusa-proj-'));
     store.projects.create({ name: 'idle-proj', path: projPath, engine: 'claude' });
-    const { status, data } = await req('/api/sessions/idle-proj/medusa/toggle', 'POST', {});
+    const { status, data } = await req('/api/sessions/idle-proj/medusa/toggle', 'POST', {}, dashboard());
     assert.equal(status, 409);
     assert.equal(data.code, 'NO_SESSION');
     assert.equal(data.error, 'No active session to toggle Medusa for');
@@ -710,26 +725,26 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
   });
 
   it('PATCH /api/config { master: { medusaEnabled } } validates a boolean and syncs the listener at once', async () => {
-    const bad = await req('/api/config', 'PATCH', { master: { medusaEnabled: 'yes' } });
+    const bad = await req('/api/config', 'PATCH', { master: { medusaEnabled: 'yes' } }, dashboard());
     assert.equal(bad.status, 400);
     assert.match(bad.data.error, /medusaEnabled must be a boolean/);
 
-    const on = await req('/api/config', 'PATCH', { master: { medusaEnabled: true } });
+    const on = await req('/api/config', 'PATCH', { master: { medusaEnabled: true } }, dashboard());
     assert.equal(on.status, 200);
     assert.equal(master.masterSettings(store.config.load()).medusaEnabled, true);
     assert.notEqual(master.getMasterMedusaStatus().state, 'off', 'listener started on save, not on the next ensure');
 
-    const off = await req('/api/config', 'PATCH', { master: { medusaEnabled: false } });
+    const off = await req('/api/config', 'PATCH', { master: { medusaEnabled: false } }, dashboard());
     assert.equal(off.status, 200);
     assert.equal(master.getMasterMedusaStatus().state, 'off', 'and stopped on save');
 
-    const wakeBad = await req('/api/config', 'PATCH', { master: { medusaWake: 1 } });
+    const wakeBad = await req('/api/config', 'PATCH', { master: { medusaWake: 1 } }, dashboard());
     assert.equal(wakeBad.status, 400);
   });
 
   it('PATCH with a silent tmux leaves the listener untouched', async () => {
     liveness = { live: false, answered: false, cause: 'read-timed-out' };
-    const on = await req('/api/config', 'PATCH', { master: { medusaEnabled: true } });
+    const on = await req('/api/config', 'PATCH', { master: { medusaEnabled: true } }, dashboard());
     assert.equal(on.status, 200, 'the save itself stands');
     assert.equal(master.getMasterMedusaStatus().state, 'off');
   });
@@ -755,12 +770,12 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     // The gap found the first time this was flipped live: the listener joined
     // the bus on save while the identity still told the Master it was not a
     // participant, until an unrelated ensure happened to run.
-    await req('/api/config', 'PATCH', { master: { medusaEnabled: true } });
+    await req('/api/config', 'PATCH', { master: { medusaEnabled: true } }, dashboard());
     assert.equal(identityRefreshes.length, 1, 'one refresh for the flip');
     assert.equal(identityRefreshes[0].skipIfAbsent, true, 'never creates master state on an install that has none');
-    await req('/api/config', 'PATCH', { master: { medusaWake: true } });
+    await req('/api/config', 'PATCH', { master: { medusaWake: true } }, dashboard());
     assert.equal(identityRefreshes.length, 1, 'an unrelated master save does not regenerate');
-    await req('/api/config', 'PATCH', { master: { medusaEnabled: false } });
+    await req('/api/config', 'PATCH', { master: { medusaEnabled: false } }, dashboard());
     assert.equal(identityRefreshes.length, 2, 'turning it off regenerates too — the section must leave the identity');
   });
 });

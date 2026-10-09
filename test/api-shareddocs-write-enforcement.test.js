@@ -176,17 +176,24 @@ describe('#1626 shared-docs and groups writes', () => {
       for (const r of routes) {
         const res = await send(server, r.method, r.path, r.body);
         assert.equal(res.status, 403, `${r.method} ${r.path}`);
-        assert.equal(res.data.code, 'SHARED_DOCS_BINDING_REQUIRED', `${r.method} ${r.path}`);
+        // Refused by the server's launch-binding floor, which every write
+        // passes before its route (#2233); the fix it names is the same one.
+        assert.equal(res.data.code, 'LAUNCH_BINDING_REQUIRED', `${r.method} ${r.path}`);
         assert.match(res.data.error, /TANGLECLAW_LAUNCH_ID/, `${r.method} ${r.path} names the fix`);
       }
     });
 
-    it('every operator-only write is refused as operator-only, since no binding would help', async () => {
+    it('every operator-only write is refused for a caller with no binding, and as operator-only once the caller is known', async () => {
       const before = snapshot();
       for (const r of operatorWrites()) {
         const res = await send(server, r.method, r.path, r.body);
         assert.equal(res.status, 403, `${r.method} ${r.path}`);
-        assert.equal(res.data.code, 'OPERATOR_ONLY', `${r.method} ${r.path}`);
+        // Who is asking comes first: an unidentified caller is told that, on
+        // every write. The route's own answer is for a caller it can name.
+        assert.equal(res.data.code, 'LAUNCH_BINDING_REQUIRED', `${r.method} ${r.path}`);
+        const known = await send(server, r.method, r.path, r.body, bindingA.headers);
+        assert.equal(known.status, 403, `${r.method} ${r.path}`);
+        assert.equal(known.data.code, 'OPERATOR_ONLY', `${r.method} ${r.path}`);
       }
       assert.deepEqual(snapshot(), before, 'a refused write changes nothing');
     });
@@ -210,7 +217,7 @@ describe('#1626 shared-docs and groups writes', () => {
         for (const r of memberWrites()) {
           const res = await send(server, r.method, r.path, r.body, headers);
           assert.equal(res.status, 403, `${r.method} ${r.path}`);
-          assert.equal(res.data.code, 'SHARED_DOCS_BINDING_INVALID', `${r.method} ${r.path}`);
+          assert.equal(res.data.code, 'LAUNCH_BINDING_INVALID', `${r.method} ${r.path}`);
           assert.match(res.data.error, reason, `${r.method} ${r.path}`);
         }
       }
