@@ -499,6 +499,29 @@ describe('stranded-wraps API (#868, #1538)', () => {
       for (let i = 0; i < 20; i += 1) await new Promise((r) => setImmediate(r));
       assert.deepEqual(checkRows(), []);
     });
+
+    it('answers 409 with the reason and recovery when the engine could not be shown isolated, and starts no check (#2233)', async () => {
+      // The refusal the route maps is built by the real judgment, so its fields are the ones production emits.
+      const verdict = sessions._judgeLaunchIsolation('codex', {
+        command: 'codex', enginePath: '/opt/fake/bin/codex', probe: { version: '0.161.0', enginePath: '/opt/fake/bin/codex' }, native: null
+      });
+      assert.equal(verdict.allowed, false);
+      sessions.launchSession = () => ({
+        session: null, primePrompt: null, ttydUrl: null,
+        error: sessions._isolationRefusalMessage(`project "${project.name}"`, verdict),
+        code: 'LAUNCH_ISOLATION_UNVERIFIED',
+        isolation: { reasonCode: verdict.reasonCode, recovery: verdict.recovery }
+      });
+      const res = await send('POST', `/api/sessions/${encodeURIComponent(project.name)}`, { body: {} });
+      assert.equal(res.statusCode, 409);
+      const body = json(res);
+      assert.equal(body.code, 'LAUNCH_ISOLATION_UNVERIFIED');
+      assert.equal(body.reasonCode, 'version_unverified');
+      assert.match(body.recovery, /launch again/);
+      assert.match(body.error, /0\.161\.0/);
+      for (let i = 0; i < 20; i += 1) await new Promise((r) => setImmediate(r));
+      assert.deepEqual(checkRows(), []);
+    });
   });
 
   describe('the launch gate on POST /api/sessions/:project (#1539)', () => {

@@ -9,11 +9,15 @@ const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const { createServer } = require('../server');
+const { operatorHeaders } = require('./_shared-docs-callers');
 // Every port reads as free to PortHub's listener probe, so connection creates
 // here do not depend on what this host is running (#814).
 require('./_probe-stub').probeAnswersFromFixture();
 
 setLevel('error');
+
+/** The methods that change state, which the server refuses from a caller it cannot name. */
+const WRITE_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
 
 /**
  * Make an HTTP request to the test server.
@@ -31,7 +35,12 @@ function request(server, method, urlPath, body) {
       port: addr.port,
       path: urlPath,
       method,
-      headers: { 'Content-Type': 'application/json' }
+      // Every write here is the operator's dashboard acting, so it is sent as
+      // that browser sends it; a write that names no caller is refused (#2233).
+      headers: {
+        'Content-Type': 'application/json',
+        ...(WRITE_METHODS.includes(method) ? operatorHeaders(server) : {})
+      }
     };
 
     const req = http.request(options, (res) => {

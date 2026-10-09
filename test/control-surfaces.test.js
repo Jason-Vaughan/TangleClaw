@@ -111,15 +111,22 @@ describe('control surfaces (#1861)', () => {
   describe('caller gate: restart and update-apply', () => {
     for (const route of ['/api/server/restart', '/api/update/apply']) {
       it(`${route}: omitted, mismatched and stale headers are unattributable while a lane is held; force never bypasses`, async () => {
+        // A caller that cannot be attributed is refused by the server's
+        // launch-binding floor, which every write passes before its route
+        // (#2233), so it never reaches the control gate at all.
         const omitted = await send(server, 'POST', route, { force: true }, {});
-        assert.equal(omitted.status, 423);
-        assert.equal(omitted.data.code, 'CONTROL_CALLER_UNATTRIBUTABLE');
+        assert.equal(omitted.status, 403);
+        assert.equal(omitted.data.code, 'LAUNCH_BINDING_REQUIRED');
         const mismatched = await send(server, 'POST', route, { force: true },
           { 'x-tangleclaw-project-id': String(pm.id), 'x-tangleclaw-launch-id': bBuilder.launchId });
-        assert.equal(mismatched.data.code, 'CONTROL_CALLER_UNATTRIBUTABLE');
+        assert.equal(mismatched.status, 403);
+        assert.equal(mismatched.data.code, 'LAUNCH_BINDING_INVALID');
+        assert.equal(mismatched.data.reason, 'project-mismatch');
         const stale = await send(server, 'POST', route, null,
           { 'x-tangleclaw-project-id': String(pm.id), 'x-tangleclaw-launch-id': 'no-such-launch' });
-        assert.equal(stale.data.code, 'CONTROL_CALLER_UNATTRIBUTABLE');
+        assert.equal(stale.status, 403);
+        assert.equal(stale.data.code, 'LAUNCH_BINDING_INVALID');
+        assert.equal(stale.data.reason, 'unknown-launch');
       });
 
       it(`${route}: the held Builder is refused; a clear PM and the operator get through to the (stubbed) action`, async () => {

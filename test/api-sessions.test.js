@@ -12,6 +12,7 @@ setLevel('error');
 
 const store = require('../lib/store');
 const { createServer } = require('../server');
+const { operatorHeaders } = require('./_shared-docs-callers');
 
 /**
  * Make an HTTP request to the test server.
@@ -19,13 +20,14 @@ const { createServer } = require('../server');
  * @param {string} method
  * @param {string} path
  * @param {object} [body]
+ * @param {Record<string, string>} [callerHeaders] - Who is asking
  * @returns {Promise<{ status: number, body: object }>}
  */
-function request(server, method, urlPath, body) {
+function request(server, method, urlPath, body, callerHeaders = {}) {
   return new Promise((resolve, reject) => {
     const addr = server.address();
     const bodyStr = body != null ? JSON.stringify(body) : null;
-    const headers = { 'Content-Type': 'application/json' };
+    const headers = { 'Content-Type': 'application/json', ...callerHeaders };
     if (bodyStr != null) {
       headers['Content-Length'] = Buffer.byteLength(bodyStr);
     }
@@ -60,6 +62,20 @@ function request(server, method, urlPath, body) {
     }
     req.end();
   });
+}
+
+/**
+ * A request from the operator's dashboard. Every write this file makes is one
+ * the dashboard sends: the command bar, launch, kill, and the wrap drawer's
+ * wrap and finalize.
+ * @param {http.Server} server
+ * @param {string} method
+ * @param {string} urlPath
+ * @param {object} [body]
+ * @returns {Promise<{ status: number, body: object }>}
+ */
+function operatorRequest(server, method, urlPath, body) {
+  return request(server, method, urlPath, body, operatorHeaders(server));
 }
 
 describe('api-sessions', () => {
@@ -166,20 +182,20 @@ describe('api-sessions', () => {
 
   describe('POST /api/sessions/:project/command', () => {
     it('returns 400 when command missing', async () => {
-      const res = await request(server, 'POST', '/api/sessions/api-sess-test/command', {});
+      const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/command', {});
       assert.equal(res.status, 400);
       assert.equal(res.body.code, 'BAD_REQUEST');
     });
 
     it('returns 404 when no active session', async () => {
-      const res = await request(server, 'POST', '/api/sessions/api-sess-test/command', {
+      const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/command', {
         command: 'ls'
       });
       assert.equal(res.status, 404);
     });
 
     it('rejects commands exceeding 4096 characters', async () => {
-      const res = await request(server, 'POST', '/api/sessions/api-sess-test/command', {
+      const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/command', {
         command: 'x'.repeat(4097)
       });
       assert.equal(res.status, 400);
@@ -200,7 +216,7 @@ describe('api-sessions', () => {
         alternateScreen: false
       });
       try {
-        const res = await request(server, 'POST', '/api/sessions/api-sess-test/command', { command: 'ls' });
+        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/command', { command: 'ls' });
         assert.equal(res.status, 409);
         assert.equal(res.body.code, 'STARTUP_DIALOG');
         assert.equal(res.body.startupDialog.code, 'trust_required');
@@ -218,7 +234,7 @@ describe('api-sessions', () => {
 
   describe('POST /api/sessions/:project/wrap', () => {
     it('returns 404 when no active session', async () => {
-      const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {});
+      const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/wrap', {});
       assert.equal(res.status, 404);
     });
 
@@ -231,7 +247,7 @@ describe('api-sessions', () => {
       config.deletePassword = `${salt}:${hash}`;
       store.config.save(config);
 
-      const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {});
+      const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/wrap', {});
       assert.equal(res.status, 403);
       assert.equal(res.body.code, 'FORBIDDEN');
 
@@ -287,7 +303,7 @@ describe('api-sessions', () => {
       };
 
       try {
-        const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {
+        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/wrap', {
           options: { skipTests: true, prHandling: { 42: 'defer' } }
         });
         const result = await settledWrapResult(server, res);
@@ -347,7 +363,7 @@ describe('api-sessions', () => {
       });
 
       try {
-        const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {});
+        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/wrap', {});
         // A blocked pipeline is NOT a server error — drawer needs the
         // structured result to render decision widgets.
         const result = await settledWrapResult(server, res);
@@ -374,7 +390,7 @@ describe('api-sessions', () => {
       wrapPipelineMod.runWrapPipeline = async () => { throw new Error('synthetic'); };
 
       try {
-        const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {});
+        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/wrap', {});
         // The run was claimed before it threw, so the POST accepted it; the
         // failure is the run's outcome.
         const result = await settledWrapResult(server, res);
@@ -404,7 +420,7 @@ describe('api-sessions', () => {
       };
 
       try {
-        const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {
+        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/wrap', {
           options: { prHandling: { '42': 'merge', '43': 'defer' } }
         });
         await settledWrapResult(server, res);
@@ -443,7 +459,7 @@ describe('api-sessions', () => {
       };
 
       try {
-        const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {
+        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/wrap', {
           options: 'not-an-object'
         });
         await settledWrapResult(server, res);
@@ -483,7 +499,7 @@ describe('api-sessions', () => {
       });
 
       try {
-        const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {});
+        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/wrap', {});
         const result = await settledWrapResult(server, res);
         assert.equal(result.ok, true);
         assert.equal(result.status, 'wrapping');
@@ -500,7 +516,7 @@ describe('api-sessions', () => {
 
   describe('POST /api/sessions/:project/wrap/complete', () => {
     it('returns 404 when there is no session to complete', async () => {
-      const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap/complete', {});
+      const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/wrap/complete', {});
       assert.equal(res.status, 404);
     });
 
@@ -512,7 +528,7 @@ describe('api-sessions', () => {
         tmuxSession: 'wrap-complete-test'
       });
 
-      const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap/complete', {
+      const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/wrap/complete', {
         summary: 'Manual wrap summary'
       });
       assert.equal(res.status, 200);
@@ -535,7 +551,7 @@ describe('api-sessions', () => {
         tmuxSession: 'wrap-complete-stale'
       });
       try {
-        const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap/complete', {
+        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/wrap/complete', {
           sessionId: session.id + 999
         });
         assert.equal(res.status, 409);
@@ -564,7 +580,7 @@ describe('api-sessions', () => {
         error: 'Session 5 for "api-sess-test" ended before this finalize could record it — nothing was changed.'
       });
       try {
-        const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap/complete', {});
+        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/wrap/complete', {});
         assert.equal(res.status, 409);
         assert.equal(res.body.code, 'SESSION_CHANGED');
       } finally {
@@ -580,7 +596,7 @@ describe('api-sessions', () => {
         tmuxSession: 'wrap-complete-match'
       });
 
-      const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap/complete', {
+      const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/wrap/complete', {
         sessionId: session.id,
         summary: 'Named wrap summary'
       });
@@ -598,7 +614,7 @@ describe('api-sessions', () => {
 
   describe('DELETE /api/sessions/:project', () => {
     it('returns 404 when no active session', async () => {
-      const res = await request(server, 'DELETE', '/api/sessions/api-sess-test', {});
+      const res = await operatorRequest(server, 'DELETE', '/api/sessions/api-sess-test', {});
       assert.equal(res.status, 404);
     });
 
@@ -610,7 +626,7 @@ describe('api-sessions', () => {
       config.deletePassword = `${salt}:${hash}`;
       store.config.save(config);
 
-      const res = await request(server, 'DELETE', '/api/sessions/api-sess-test', {
+      const res = await operatorRequest(server, 'DELETE', '/api/sessions/api-sess-test', {
         password: 'wrong'
       });
       assert.equal(res.status, 403);
@@ -626,7 +642,7 @@ describe('api-sessions', () => {
       sessionsLifecycle.killSession = () => ({ session: null, reconciled: true, error: null });
 
       try {
-        const res = await request(server, 'DELETE', '/api/sessions/api-sess-test', {});
+        const res = await operatorRequest(server, 'DELETE', '/api/sessions/api-sess-test', {});
         assert.equal(res.status, 200);
         assert.equal(res.body.ok, true);
         assert.equal(res.body.reconciled, true);
@@ -647,7 +663,7 @@ describe('api-sessions', () => {
       });
 
       try {
-        const res = await request(server, 'DELETE', '/api/sessions/api-sess-test', {});
+        const res = await operatorRequest(server, 'DELETE', '/api/sessions/api-sess-test', {});
         assert.equal(res.status, 200);
         assert.equal(res.body.ok, true);
         assert.equal(res.body.sessionId, 9999);
@@ -662,7 +678,7 @@ describe('api-sessions', () => {
 
   describe('POST /api/sessions/:project (launch)', () => {
     it('returns 404 for unknown project', async () => {
-      const res = await request(server, 'POST', '/api/sessions/nonexistent', {});
+      const res = await operatorRequest(server, 'POST', '/api/sessions/nonexistent', {});
       assert.equal(res.status, 404);
     });
 
@@ -687,7 +703,7 @@ describe('api-sessions', () => {
       tmux.createSession = () => { created += 1; throw new Error('a pane must not be created'); };
       tmux.hasSession = () => false;
       try {
-        const res = await request(server, 'POST', '/api/sessions/api-sess-test', {});
+        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test', {});
         assert.equal(res.status, 409);
         assert.equal(res.body.code, 'ENGINE_PROFILE_INVALID');
         assert.match(res.body.error, /was not launched: its profile ".*" is not usable \(what the store returned does not carry an `id`\)/);
@@ -722,7 +738,7 @@ describe('api-sessions', () => {
       const realProbe = tmux.probeSession;
       tmux.probeSession = () => ({ live: false, answered: false, cause: 'read-timed-out' });
       try {
-        const res = await request(server, 'POST', '/api/sessions/api-sess-test', {});
+        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test', {});
 
         assert.equal(res.status, 503);
         assert.equal(res.body.code, 'LIVENESS_UNKNOWN');

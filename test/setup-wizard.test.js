@@ -12,6 +12,23 @@ const store = require('../lib/store');
 const { createServer, _setCutoverSpawner } = require('../server');
 const { installCaddyStub } = require('./_caddy-stub');
 const { installAlwaysAvailableEngine } = require('./_engine-fixture');
+const { operatorHeaders, signInOperator } = require('./_shared-docs-callers');
+
+/**
+ * The methods a caller must be identified for (#2233). The request helper below
+ * sends the operator's dashboard headers on these and leaves reads exactly as
+ * they were, because a read asks nothing about who is calling.
+ * @type {ReadonlySet<string>}
+ */
+const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/**
+ * The signed-in operator's write headers, once this install has a login. Until
+ * then the gate stands down and the dashboard's own headers are the operator;
+ * after it, only an account session is (#2233, ruling E1).
+ * @type {Record<string, string>|null}
+ */
+let operatorSession = null;
 
 setLevel('error');
 
@@ -31,7 +48,7 @@ function request(server, method, urlPath, body) {
       port: addr.port,
       path: urlPath,
       method,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json', ...(WRITES.has(method) ? (operatorSession || operatorHeaders(server)) : {}) }
     };
 
     const req = http.request(options, (res) => {
@@ -141,6 +158,9 @@ describe('Setup Wizard', () => {
       seeded.basicAuthUser = 'admin';
       seeded.basicAuthHash = '$2a$14$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0';
       store.config.save(seeded);
+      // An install with a login has an account, and its operator is signed in to
+      // it. Every write from here on in this file comes from that session.
+      operatorSession = await signInOperator(server);
 
       const { status, data } = await request(server, 'PATCH', '/api/config', { setupComplete: true });
       assert.equal(status, 200);

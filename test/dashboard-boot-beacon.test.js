@@ -106,7 +106,10 @@ describe('POST /api/dashboard/boot — the beacon reaches the log (#817)', () =>
    */
   function post(raw) {
     return new Promise((resolve, reject) => {
-      const headers = { 'Content-Type': 'application/json' };
+      // The beacon goes out through `tcFetch`, which labels every request as
+      // the dashboard's (public/api-helper.js tcWithClient). A write that
+      // names no caller is refused before its handler (#2233).
+      const headers = { 'Content-Type': 'application/json', 'X-TangleClaw-Client': 'dashboard' };
       if (raw !== null) headers['Content-Length'] = Buffer.byteLength(raw);
       const req = http.request({
         hostname: '127.0.0.1', port: server.address().port,

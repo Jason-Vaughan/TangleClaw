@@ -142,7 +142,7 @@ describe('api/session-rules caller gate (#2013)', () => {
       const before = rulesOf(own.id).length;
       const res = await request('POST', '/api/session-rules', { content: 'unbound, no author', projectId: own.id }, UNBOUND);
       assert.equal(res.status, 403);
-      assert.equal(res.data.code, 'PROJECT_BINDING_REQUIRED');
+      assert.equal(res.data.code, 'LAUNCH_BINDING_REQUIRED');
       assert.equal(rulesOf(own.id).length, before);
     });
 
@@ -151,7 +151,7 @@ describe('api/session-rules caller gate (#2013)', () => {
       const res = await request('POST', '/api/session-rules',
         { content: 'unbound, claims operator', projectId: own.id, createdBy: 'operator' }, UNBOUND);
       assert.equal(res.status, 403);
-      assert.equal(res.data.code, 'PROJECT_BINDING_REQUIRED');
+      assert.equal(res.data.code, 'LAUNCH_BINDING_REQUIRED');
       assert.equal(rulesOf(own.id).length, before);
     });
 
@@ -159,7 +159,7 @@ describe('api/session-rules caller gate (#2013)', () => {
       const before = rulesOf(own.id).length;
       const res = await request('POST', '/api/session-rules', { content: 'forged binding', projectId: own.id }, INVALID);
       assert.equal(res.status, 403);
-      assert.equal(res.data.code, 'PROJECT_BINDING_INVALID');
+      assert.equal(res.data.code, 'LAUNCH_BINDING_INVALID');
       assert.equal(rulesOf(own.id).length, before);
     });
 
@@ -241,7 +241,7 @@ describe('api/session-rules caller gate (#2013)', () => {
     it('an unbound caller cannot rewrite an active rule', async () => {
       const res = await request('PUT', `/api/session-rules/${governing.id}`, { content: 'swapped', changedBy: 'operator' }, UNBOUND);
       assert.equal(res.status, 403);
-      assert.equal(res.data.code, 'PROJECT_BINDING_REQUIRED');
+      assert.equal(res.data.code, 'LAUNCH_BINDING_REQUIRED');
       assert.equal(store.sessionRules.get(governing.id).content, governing.content);
     });
 
@@ -313,7 +313,7 @@ describe('api/session-rules caller gate (#2013)', () => {
       assert.equal((await request('PUT', '/api/session-rules/999999', { content: 'x' }, asOwn)).status, 404);
       const unbound = await request('PUT', '/api/session-rules/999999', { content: 'x' }, UNBOUND);
       assert.equal(unbound.status, 403);
-      assert.equal(unbound.data.code, 'PROJECT_BINDING_REQUIRED');
+      assert.equal(unbound.data.code, 'LAUNCH_BINDING_REQUIRED');
     });
   });
 
@@ -690,7 +690,7 @@ describe('api/session-rules caller gate (#2013)', () => {
       const res = await request('POST', '/api/session-rules/promote',
         { learningId: learning.id, content: 'any text I like' }, UNBOUND);
       assert.equal(res.status, 403);
-      assert.equal(res.data.code, 'PROJECT_BINDING_REQUIRED');
+      assert.equal(res.data.code, 'LAUNCH_BINDING_REQUIRED');
       assert.equal(rulesOf(own.id).length, before);
     });
 
@@ -752,12 +752,12 @@ describe('api/session-rules caller gate (#2013)', () => {
       assert.equal(res.status, 403);
       // An operator-only route names what is missing — the operator — to every
       // other caller, bound or not (the #1752 contract).
-      assert.equal(res.data.code, 'OPERATOR_ONLY');
+      assert.equal(res.data.code, 'LAUNCH_BINDING_REQUIRED');
       assert.equal(store.globalRules.load(), before);
     });
 
     it('reset is the operator\'s too, for a bound and an unbound caller', async () => {
-      for (const [caller, code] of [[asOwn, 'OPERATOR_ONLY'], [UNBOUND, 'OPERATOR_ONLY']]) {
+      for (const [caller, code] of [[asOwn, 'OPERATOR_ONLY'], [UNBOUND, 'LAUNCH_BINDING_REQUIRED']]) {
         const res = await request('POST', '/api/rules/global/reset', null, caller);
         assert.equal(res.status, 403);
         assert.equal(res.data.code, code);

@@ -621,7 +621,7 @@ describe('Landing Page API Integration', () => {
     // a failed measurement is a legitimate outcome, and a test that needed
     // GitHub to answer would be a flake rather than a contract.
     it('answers with the same status shape the GET serves', async () => {
-      const res = await request('/api/update/check', { method: 'POST', body: { manual: true } });
+      const res = await request('/api/update/check', { method: 'POST', body: { manual: true }, headers: operatorHeaders(server) });
       assert.equal(res.status, 200);
       assert.equal(typeof res.data.updateAvailable, 'boolean');
       assert.equal(typeof res.data.checkOk, 'boolean');
@@ -636,8 +636,8 @@ describe('Landing Page API Integration', () => {
       // refocus. Without it, a reload loop is a git ls-remote loop against
       // origin. `checkedAt` not moving IS the evidence no new measurement ran —
       // it is stamped per attempt, so a re-measure would advance it.
-      const first = await request('/api/update/check', { method: 'POST', body: { manual: true } });
-      const second = await request('/api/update/check', { method: 'POST', body: {} });
+      const first = await request('/api/update/check', { method: 'POST', body: { manual: true }, headers: operatorHeaders(server) });
+      const second = await request('/api/update/check', { method: 'POST', body: {}, headers: operatorHeaders(server) });
       assert.equal(second.status, 200);
       assert.equal(second.data.checkedAt, first.data.checkedAt,
         'an automatic check moments after a manual one must serve the cache');

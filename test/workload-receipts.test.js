@@ -354,7 +354,8 @@ describe('POST/GET /api/tc/workload (ADR 0020 §1–§2)', () => {
   it('refuses an unbound caller, the operator, and a mismatched project claim', async () => {
     const unbound = await send(server, 'POST', '/api/tc/workload', OK, TC);
     assert.equal(unbound.status, 403);
-    assert.equal(unbound.data.code, 'WORKLOAD_BINDING_REQUIRED');
+    // Refused by the server's launch-binding floor, before the route (#2233).
+    assert.equal(unbound.data.code, 'LAUNCH_BINDING_REQUIRED');
     assert.equal(unbound.data.reason, 'unbound');
 
     const op = await send(server, 'POST', '/api/tc/workload', OK, { ...operatorHeaders(server), ...TC });
@@ -381,7 +382,7 @@ describe('POST/GET /api/tc/workload (ADR 0020 §1–§2)', () => {
       'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': 'not-a-project-launch', ...TC
     });
     assert.equal(r.status, 403);
-    assert.equal(r.data.code, 'WORKLOAD_BINDING_REQUIRED');
+    assert.equal(r.data.code, 'LAUNCH_BINDING_INVALID');
     assert.notEqual(r.data.reason, 'project', 'a Master claim never becomes a project caller');
   });
 

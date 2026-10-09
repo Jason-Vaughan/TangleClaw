@@ -11,6 +11,7 @@ const net = require('node:net');
 const { PassThrough } = require('node:stream');
 const { handleRequest, handleUpgrade } = require('../server');
 const authGate = require('../lib/auth-gate');
+const { bindProject } = require('./_shared-docs-callers');
 
 // The gate and its three routes driven through the REAL request handler.
 //
@@ -1187,13 +1188,33 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     }
 
     it('a machine WRITE is allowed without a CSRF token', async () => {
-      // PortHub leasing is a POST, and no CLI can hold a CSRF token.
-      const res = await send('POST', '/api/ports/lease', {
+      // PortHub leasing is a POST, and no CLI can hold a CSRF token. The caller
+      // is a session's own tool, so it carries that session's launch binding:
+      // a write with no identity at all is refused whatever the gate says (#2233).
+      const project = store.projects.create({ name: 'fleet-test', path: tempDir, engine: 'claude' });
+      assert.equal(store.portLeases.get(4999), null, 'precondition: the port is not leased');
+
+      // With no identity at all the write is refused, and nothing is leased.
+      const anonymous = await send('POST', '/api/ports/lease', {
         machine: true,
         body: { port: 4999, project: 'fleet-test', service: 'suite' }
       });
-      assert.notEqual(res.statusCode, 401);
-      assert.notEqual(res.statusCode, 403);
+      assert.equal(anonymous.statusCode, 403, anonymous.body);
+      assert.match(anonymous.body, /LAUNCH_BINDING_REQUIRED/);
+      assert.equal(store.portLeases.get(4999), null, 'a refused write leased nothing');
+
+      // The session's own tool, with no cookie and no CSRF token, is let through
+      // the login gate and the lease is actually made.
+      const res = await send('POST', '/api/ports/lease', {
+        machine: true,
+        headers: bindProject(project).headers,
+        body: { port: 4999, project: 'fleet-test', service: 'suite' }
+      });
+      assert.equal(res.statusCode, 201, res.body);
+      const lease = store.portLeases.get(4999);
+      assert.ok(lease, 'the lease exists');
+      assert.equal(lease.project, 'fleet-test');
+      assert.equal(lease.service, 'suite');
     });
 
     it('a BROWSER-shaped loopback request is still gated', async () => {

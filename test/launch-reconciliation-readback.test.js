@@ -440,10 +440,13 @@ describe('the launch reconciliation readback (#1937)', () => {
     });
 
     it('refuses a machine client, even one holding a token it fetched itself', async () => {
+      // Refused before the route (#2233): the read is a POST, and a POST from a
+      // caller that says nothing about who it is does not reach a handler. The
+      // route's own OPERATOR_REQUIRED is what a bound session gets, below.
       const { project, body } = reconciled();
       const token = await pageToken();
       assertRefused(await send('POST', readUrl(project), { body, browser: false, headers: { 'x-tc-open-token': token } }),
-        403, 'OPERATOR_REQUIRED', 'a local process');
+        403, 'LAUNCH_BINDING_REQUIRED', 'a local process');
     });
 
     it('refuses the session that wrote it, and any other bound session', async () => {
@@ -462,12 +465,16 @@ describe('the launch reconciliation readback (#1937)', () => {
     it('refuses a caller claiming the dashboard or the Master by header', async () => {
       const { project, body } = reconciled();
       const token = await pageToken();
-      for (const headers of [
-        { 'x-tangleclaw-client': 'dashboard', 'x-tc-open-token': token },
-        { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': 'no-project-owns-this', 'x-tc-open-token': token }
+      // The dashboard header gets a request to the route, which refuses it as the
+      // local process it is. A Master claim nothing backs is refused before the
+      // route, as a binding TangleClaw cannot verify (#2233).
+      for (const [headers, code] of [
+        [{ 'x-tangleclaw-client': 'dashboard', 'x-tc-open-token': token }, 'OPERATOR_REQUIRED'],
+        [{ 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': 'no-project-owns-this', 'x-tc-open-token': token },
+          'LAUNCH_BINDING_INVALID']
       ]) {
         assertRefused(await send('POST', readUrl(project), { body, browser: false, headers }),
-          403, 'OPERATOR_REQUIRED', JSON.stringify(Object.keys(headers)));
+          403, code, JSON.stringify(Object.keys(headers)));
       }
     });
 
@@ -504,16 +511,25 @@ describe('the launch reconciliation readback (#1937)', () => {
       const mine = reconciled();
       const other = launched({ damaged: false });
       arm();
-      for (const [who, headers] of [
-        ['a bare local process', {}],
-        ['the author', boundHeaders(mine)],
-        ['another project\'s session', boundHeaders(other)],
-        ['a dashboard header', { 'x-tangleclaw-client': 'dashboard' }],
-        ['a Master header', { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': 'no-project-owns-this' }]
+      // Two refusals, by who the caller is (#2233). A session bound to a live
+      // launch is identified, reaches the route, and is told to sign in: it is not
+      // the operator. A caller with no binding, or one nothing backs, is refused
+      // before the route. With the login on, the dashboard header identifies
+      // nobody.
+      const row = () => JSON.stringify(store.getDb().prepare('SELECT * FROM launch_sequences WHERE id = ?').get(mine.sequence.id));
+      const before = row();
+      for (const [who, headers, status, code] of [
+        ['a bare local process', {}, 403, 'LAUNCH_BINDING_REQUIRED'],
+        ['the author', boundHeaders(mine), 401, 'UNAUTHENTICATED'],
+        ['another project\'s session', boundHeaders(other), 401, 'UNAUTHENTICATED'],
+        ['a dashboard header', { 'x-tangleclaw-client': 'dashboard' }, 403, 'LAUNCH_BINDING_REQUIRED'],
+        ['a Master header', { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': 'no-project-owns-this' },
+          403, 'LAUNCH_BINDING_INVALID']
       ]) {
         assertRefused(await send('POST', readUrl(mine.project), { body: mine.body, browser: false, headers }),
-          401, 'UNAUTHENTICATED', who);
+          status, code, who);
       }
+      assert.equal(row(), before, 'and the launch row is as it was');
     });
   });
 
@@ -526,12 +542,19 @@ describe('the launch reconciliation readback (#1937)', () => {
     });
 
     it('refuses in a gate state with no branch of its own, rather than falling through to open', async () => {
-      const { project, body } = reconciled();
+      const mine = reconciled();
+      const { project, body } = mine;
       const token = await pageToken();
       // The login is on and no account exists yet: `account-required`.
       patchConfig({ authEnabled: true });
+      // An unidentified machine client is refused before the route (#2233).
       assertRefused(await send('POST', readUrl(project), { body, browser: false, headers: { 'x-tc-open-token': token } }),
-        409, 'GATE_STATE_UNSUPPORTED', 'a machine client');
+        403, 'LAUNCH_BINDING_REQUIRED', 'a machine client');
+      // The route's own branch is what answers a caller who does reach it: the
+      // session bound to this launch, which is identified and is not the operator.
+      assertRefused(await send('POST', readUrl(project), {
+        body, browser: false, headers: { ...boundHeaders(mine), 'x-tc-open-token': token }
+      }), 409, 'GATE_STATE_UNSUPPORTED', 'the author\'s own session');
       const browser = await send('POST', readUrl(project), { body, headers: { 'x-tc-open-token': token } });
       assert.equal(browser.statusCode, 401, 'a browser is stopped at the perimeter');
       assert.equal(browser.body.includes(SENTINEL), false);
@@ -603,8 +626,17 @@ describe('the launch reconciliation readback (#1937)', () => {
       for (let i = 0; i < 2; i++) {
         assert.equal((await send('POST', readUrl(project), { body, headers })).statusCode, 200);
       }
-      // A refused read changes nothing either.
-      assert.equal((await send('POST', readUrl(project), { body, browser: false })).statusCode, 401);
+      // A refused read changes nothing either: not one refused before the route
+      // (#2233), and not one the route itself refuses.
+      const unbound = await send('POST', readUrl(project), { body, browser: false });
+      assert.equal(unbound.statusCode, 403);
+      assert.equal(json(unbound).code, 'LAUNCH_BINDING_REQUIRED');
+      const author = await send('POST', readUrl(project), {
+        body, browser: false,
+        headers: { 'x-tangleclaw-launch-id': sequence.launchId, 'x-tangleclaw-project-id': String(project.id) }
+      });
+      assert.equal(author.statusCode, 401);
+      assert.equal(json(author).code, 'UNAUTHENTICATED');
       assert.deepEqual(rawRow(sequence.id), before, 'the READY artifact, its digest and the recovery columns are untouched');
       assert.equal(store.activity.query({ projectId: project.id, limit: 200 }).length, eventsBefore,
         'a read writes no activity event');
@@ -683,7 +715,7 @@ describe('the launch reconciliation readback (#1937)', () => {
     });
 
     it('is absent from the server log, for a read that worked and for one that was refused', async () => {
-      const { project, body } = reconciled();
+      const { project, sequence, body } = reconciled();
       // Captured in both gate states: a refusal on an install with no login
       // (the dashboard's own request), then a read and a refusal with one on.
       const token = await pageToken();
@@ -695,7 +727,13 @@ describe('the launch reconciliation readback (#1937)', () => {
         assert.equal((await send('POST', readUrl(project), { body, headers: { 'x-tc-open-token': token } })).statusCode, 403);
         const headers = await asOperator();
         assert.equal((await send('POST', readUrl(project), { body, headers })).statusCode, 200);
-        assert.equal((await send('POST', readUrl(project), { body, browser: false })).statusCode, 401);
+        // Refused before the route (#2233), and then by the route itself for the
+        // session bound to this launch.
+        assert.equal((await send('POST', readUrl(project), { body, browser: false })).statusCode, 403);
+        assert.equal((await send('POST', readUrl(project), {
+          body, browser: false,
+          headers: { 'x-tangleclaw-launch-id': sequence.launchId, 'x-tangleclaw-project-id': String(project.id) }
+        })).statusCode, 401);
       } finally {
         setLevel(level);
         setConsoleStream(null);

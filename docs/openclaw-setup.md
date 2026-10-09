@@ -47,9 +47,12 @@ Replace `<hostname>` with your TangleClaw host's hostname and `<lan-ip>` with it
 
 ### Configure TangleClaw
 
+A write to the API must come from an identified caller (#2233): a bare `curl` is refused with `403 LAUNCH_BINDING_REQUIRED`. On an install with no TangleClaw login, the `x-tangleclaw-client: dashboard` header below marks the request as the dashboard's. With a login in force that header is not accepted: make the change while signed in instead.
+
 ```bash
 curl -X PATCH http://localhost:3102/api/config \
   -H 'Content-Type: application/json' \
+  -H 'x-tangleclaw-client: dashboard' \
   -d '{
     "httpsEnabled": true,
     "httpsCertPath": "/full/path/to/data/certs/<certfile>.pem",
@@ -135,9 +138,12 @@ Once **Instance Dir** is set, the connection's detail panel shows the OpenClaw i
 
 ### Via API:
 
+As above, the request must say who is asking: the `x-tangleclaw-client: dashboard` header works only on an install with no TangleClaw login. With a login in force, use the form above while signed in.
+
 ```bash
 curl -sk -X POST https://localhost:3102/api/openclaw/connections \
   -H 'Content-Type: application/json' \
+  -H 'x-tangleclaw-client: dashboard' \
   -d '{
     "name": "MyOpenClaw",
     "host": "198.51.100.10",

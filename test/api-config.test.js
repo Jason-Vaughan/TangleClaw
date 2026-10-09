@@ -11,18 +11,31 @@ const store = require('../lib/store');
 const master = require('../lib/master');
 const portScanner = require('../lib/port-scanner');
 const { createServer, _setInstallPriorUse } = require('../server');
+const { operatorHeaders, signInOperator, attemptUnidentified } = require('./_shared-docs-callers');
+
+/**
+ * The methods a caller must be identified for (#2233). The request helper below
+ * sends the operator's dashboard headers on these and leaves reads exactly as
+ * they were, because a read asks nothing about who is calling.
+ * @type {ReadonlySet<string>}
+ */
+const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 setLevel('error');
 
 /**
- * Make an HTTP request to the test server.
+ * Make an HTTP request to the test server. A write goes as the operator's
+ * dashboard: every write in this file stands for the config page or the landing
+ * page, and a route that changes state refuses a caller it cannot identify (#2233).
  * @param {http.Server} server
  * @param {string} method
  * @param {string} path
  * @param {object} [body]
+ * @param {Record<string, string>} [as] - Headers to send instead of the
+ *   dashboard's, for a case where the operator is a signed-in account
  * @returns {Promise<{ status: number, data: object }>}
  */
-function request(server, method, urlPath, body) {
+function request(server, method, urlPath, body, as) {
   return new Promise((resolve, reject) => {
     const addr = server.address();
     const options = {
@@ -30,7 +43,7 @@ function request(server, method, urlPath, body) {
       port: addr.port,
       path: urlPath,
       method,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json', ...(as || (WRITES.has(method) ? operatorHeaders(server) : {})) }
     };
 
     const req = http.request(options, (res) => {
@@ -648,11 +661,33 @@ describe('API endpoints', () => {
       try {
         const before = store.config.load().theme;
         const nextTheme = before === 'light' ? 'dark' : 'light';
-        const { status } = await request(server, 'PATCH', '/api/config', { theme: nextTheme });
+
+        // `authEnabled` switches TangleClaw's own login on, so this install now
+        // asks who is writing. Until it has an account nobody is its operator,
+        // and the write is refused before the route with the theme untouched
+        // (#2233).
+        const { browser, machine } = await attemptUnidentified(server, 'PATCH', '/api/config', { theme: nextTheme });
+        assert.equal(browser.status, 401);
+        assert.equal(browser.data.code, 'ACCOUNT_REQUIRED');
+        assert.equal(machine.status, 403);
+        assert.equal(machine.data.code, 'LAUNCH_BINDING_REQUIRED');
+        assert.equal(store.config.load().theme, before, 'neither refusal changed the theme');
+
+        // The operator creates the account and signs in. The half-credentialed
+        // config is still half-credentialed, and the unrelated write goes through.
+        const session = await signInOperator(server);
+        const after = store.config.load();
+        assert.equal(after.authEnabled, true);
+        assert.equal(after.basicAuthUser, null, 'precondition: the stored config is still half-credentialed');
+        const { status } = await request(server, 'PATCH', '/api/config', { theme: nextTheme }, session);
         assert.equal(status, 200, 'an unrelated write must not be held hostage by a state it cannot fix');
         assert.equal(store.config.load().theme, nextTheme);
       } finally {
         store.config.save({ ...store.config.load(), ...restore });
+        // The account this case made would leave a login on the rest of the file.
+        store.getDb().prepare('DELETE FROM auth_sessions').run();
+        store.getDb().prepare('DELETE FROM recovery_codes').run();
+        store.getDb().prepare('DELETE FROM users').run();
       }
     });
   });

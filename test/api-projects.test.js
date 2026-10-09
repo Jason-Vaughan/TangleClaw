@@ -462,14 +462,17 @@ describe('api-projects', () => {
       binding = bindProject(store.projects.getByName('op-only'));
     });
 
-    for (const [label, headersFor] of [
-      ['an unbound caller', () => ({})],
-      ['the project itself', () => binding.headers]
+    // A caller with no binding is refused by the server's launch-binding floor
+    // before any write reaches its route (#2233); the route's own answer is
+    // for a caller it can name.
+    for (const [label, headersFor, code] of [
+      ['an unbound caller', () => ({}), 'LAUNCH_BINDING_REQUIRED'],
+      ['the project itself', () => binding.headers, 'OPERATOR_ONLY']
     ]) {
       it(`refuses DELETE to ${label} when no password is set, and the project survives`, async () => {
         const { status, data } = await request('DELETE', '/api/projects/op-only', { deleteFiles: true }, headersFor());
         assert.equal(status, 403);
-        assert.equal(data.code, 'OPERATOR_ONLY');
+        assert.equal(data.code, code);
         assert.ok(store.projects.getByName('op-only'), 'the project must still exist');
         assert.ok(fs.existsSync(path.join(projectsDir, 'op-only')), 'and so must its directory');
       });
@@ -478,7 +481,7 @@ describe('api-projects', () => {
         for (const verb of ['archive', 'unarchive']) {
           const { status, data } = await request('POST', `/api/projects/op-only/${verb}`, {}, headersFor());
           assert.equal(status, 403, verb);
-          assert.equal(data.code, 'OPERATOR_ONLY', verb);
+          assert.equal(data.code, code, verb);
         }
         assert.equal(store.projects.getByName('op-only').archived, false);
       });
@@ -487,7 +490,10 @@ describe('api-projects', () => {
     it('refuses before any lookup, so a missing project reads the same as a present one', async () => {
       const { status, data } = await request('DELETE', '/api/projects/no-such-project', {});
       assert.equal(status, 403);
-      assert.equal(data.code, 'OPERATOR_ONLY');
+      assert.equal(data.code, 'LAUNCH_BINDING_REQUIRED');
+      const known = await request('DELETE', '/api/projects/no-such-project', {}, binding.headers);
+      assert.equal(known.status, 403);
+      assert.equal(known.data.code, 'OPERATOR_ONLY');
     });
 
     it('lets the operator archive, unarchive and delete', async () => {
@@ -527,11 +533,11 @@ describe('api-projects', () => {
       });
 
       for (const [label, method, urlPath, body] of OPERATOR_ONLY_ROUTES) {
-        it(`${label} refuses an unbound caller and a bound project with OPERATOR_ONLY`, async () => {
-          for (const headers of [{}, a.headers]) {
+        it(`${label} refuses an unbound caller at the floor and a bound project with OPERATOR_ONLY`, async () => {
+          for (const [headers, code] of [[{}, 'LAUNCH_BINDING_REQUIRED'], [a.headers, 'OPERATOR_ONLY']]) {
             const { status, data } = await request(method, urlPath, body, headers);
             assert.equal(status, 403, label);
-            assert.equal(data.code, 'OPERATOR_ONLY', label);
+            assert.equal(data.code, code, label);
           }
         });
       }
@@ -566,7 +572,7 @@ describe('api-projects', () => {
         for (const name of ['gate-b', 'no-such-project']) {
           const { status, data } = await request('PATCH', `/api/projects/${name}`, { tags: ['x'] });
           assert.equal(status, 403, name);
-          assert.equal(data.code, 'PROJECT_BINDING_REQUIRED', name);
+          assert.equal(data.code, 'LAUNCH_BINDING_REQUIRED', name);
         }
       });
 
@@ -621,10 +627,10 @@ describe('api-projects', () => {
           }
         });
 
-        it('refuses an unbound caller with OPERATOR_ONLY, as a rename is', async () => {
+        it('refuses an unbound caller at the floor, as a rename is', async () => {
           const { status, data } = await request('PATCH', '/api/projects/gate-a', { launchSequence: { recoveryMode: 'advisory' } });
           assert.equal(status, 403);
-          assert.equal(data.code, 'OPERATOR_ONLY');
+          assert.equal(data.code, 'LAUNCH_BINDING_REQUIRED');
         });
 
         it('still lets a project change its other launch settings', async () => {
@@ -805,13 +811,13 @@ describe('api-projects', () => {
       ];
 
       for (const [label, urlFor, body] of OWN_PROJECT_ROUTES) {
-        it(`${label} refuses another project with OTHER_PROJECT and an unbound caller with PROJECT_BINDING_REQUIRED`, async () => {
+        it(`${label} refuses another project with OTHER_PROJECT and an unbound caller at the floor`, async () => {
           const other = await request('POST', urlFor('gate-b'), body, a.headers);
           assert.equal(other.status, 403, label);
           assert.equal(other.data.code, 'OTHER_PROJECT', label);
           const unbound = await request('POST', urlFor('gate-b'), body);
           assert.equal(unbound.status, 403, label);
-          assert.equal(unbound.data.code, 'PROJECT_BINDING_REQUIRED', label);
+          assert.equal(unbound.data.code, 'LAUNCH_BINDING_REQUIRED', label);
         });
       }
 

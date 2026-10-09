@@ -659,6 +659,14 @@ TangleClaw's HTTP API lives under `/api/`; the tables below are the reference. A
 { "error": "Human-readable message", "code": "MACHINE_READABLE_CODE" }
 ```
 
+**Who may write (#2233).** Every `POST`, `PUT`, `PATCH` and `DELETE` under `/api/` must say who is asking before its route runs. The caller is one of:
+
+- **The operator.** With a TangleClaw login in force, that is a signed-in session (its cookie, and the CSRF token on a write). On an install with no login, or while the login is stood down by the fallback marker, the dashboard is recognised by the shape of its request: a browser's `Origin` or `Sec-Fetch-Site`, or the `x-tangleclaw-client: dashboard` header the dashboard's own requests carry. That is not a credential: a local process that sends it is taken for the dashboard, which is the protection an install with no login has always had.
+- **A project session**, with the two headers TangleClaw exports into every pane it launches: `x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID` and `x-tangleclaw-project-id: $TANGLECLAW_PROJECT_ID`. The launch must be that project's current, active session. `tc` sends both.
+- **The Project Master**, with `x-tangleclaw-role: master` and its own `x-tangleclaw-launch-id`.
+
+Anything else is refused: `403 LAUNCH_BINDING_REQUIRED` when the request carries no launch id, `403 LAUNCH_BINDING_INVALID` with a `reason` when it carries one that does not verify (unknown, another project's, an ended session, or `session-not-current` for a session a newer launch of the same project replaced). A route's own, narrower refusal still applies to a caller that is identified. Reads are not affected. The routes not held to this are the ones that establish or prove an identity themselves: sign-in, sign-out, recovery and first-account creation; `tc start next` and `ready`; the rule-receipt hook; audit ingest, which proves its connection's secret; and the operator bridge's Master and helper routes, which prove their own credentials. On the five port writes a verified service token also counts, but only while the operator has the service-token gate turned on.
+
 **Request body limits.** A request body is capped at 10 KB unless its route sets its own cap. Every route that carries prose someone wrote into a session allows 64 KB: the switchboard `send`, `loop` and `loops/:loopId/continue` routes (under both `/api/sessions/:project/medusa` and `/api/master/medusa`), `/api/sessions/:project/command`, `/api/sessions/:project/wrap/handback` and `/api/sessions/:project/wrap/complete`. A route's own content cap still applies on top — `/command` refuses a `command` over 4096 characters with a **400**. An over-limit body is a **413** `BODY_TOO_LARGE` carrying `limitBytes` and `receivedBytes`, plus `receivedBytesIsLowerBound: true` when the request had no `Content-Length`, so the count is a floor rather than the total.
 
 ### Core
@@ -731,6 +739,8 @@ TangleClaw's HTTP API lives under `/api/`; the tables below are the reference. A
 | `/api/ports/heartbeat` | POST | Heartbeat a TTL lease |
 | `/api/ports/owner-kind` | POST | Mark an owner name's leases as a TangleClaw project or `external` (#1381) |
 | `/api/ports/sync` | POST | Sync port leases with system state |
+
+Each `POST` here needs an identified caller (see "Who may write" above). A service that is not a TangleClaw session uses the service token, which these routes accept only while the service-token gate is on; with the gate off such a service is refused.
 
 ### Rules & Config
 

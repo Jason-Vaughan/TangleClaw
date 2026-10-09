@@ -205,11 +205,26 @@ describe('API — Medusa exchanges (#1839)', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('records a legacy unbound normal send as unverified, and follows it to an automatic close', async () => {
-    const sent = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'hello' });
+  it('refuses a normal send from a caller with no launch binding, before anything reaches the Hub or the record (#2233)', async () => {
+    const count = () => store.getDb().prepare('SELECT COUNT(*) AS n FROM medusa_exchanges').get().n;
+    const before = count();
+    const received = hub.received.length;
+    const res = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'hello' });
+    assert.equal(res.status, 403);
+    assert.equal(res.data.code, 'LAUNCH_BINDING_REQUIRED');
+    assert.equal(hub.received.length, received);
+    assert.equal(count(), before);
+  });
+
+  // This case used to send with no binding and assert the exchange was
+  // recorded with an unverified sender. A send with no binding is now refused
+  // (above), so no send is recorded unverified; what remains is the path a
+  // normal send takes to its automatic close.
+  it('follows a normal send from a bound sender to an automatic close', async () => {
+    const sent = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'hello' }, bPM.headers);
     assert.equal(sent.status, 200, JSON.stringify(sent.data));
     assert.equal(sent.data.exchange.state, 'stored');
-    assert.equal(sent.data.exchange.sender.verified, false);
+    assert.equal(sent.data.exchange.sender.verified, true);
     assert.equal(sent.data.exchange.tracking, 'tracked');
     const hubId = sent.data.id;
 
@@ -231,7 +246,9 @@ describe('API — Medusa exchanges (#1839)', () => {
     const before = count();
     const res = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'x', priority: 'blocking' });
     assert.equal(res.status, 403);
-    assert.equal(res.data.code, 'PRIORITY_BINDING_REQUIRED');
+    // The launch-binding floor answers a caller with no binding before the
+    // route's own check of a blocking send is reached.
+    assert.equal(res.data.code, 'LAUNCH_BINDING_REQUIRED');
     assert.equal(hub.received.length, 0);
     assert.equal(count(), before);
   });
@@ -249,7 +266,7 @@ describe('API — Medusa exchanges (#1839)', () => {
 
     const unbound = await call(server, 'POST', `${builderBase()}/send`, { to: pmWs, message: 'done', inReplyTo: hubId });
     assert.equal(unbound.status, 403);
-    assert.equal(unbound.data.code, 'EXCHANGE_BINDING_REQUIRED');
+    assert.equal(unbound.data.code, 'LAUNCH_BINDING_REQUIRED');
 
     const reply = await call(server, 'POST', `${builderBase()}/send`, { to: pmWs, message: 'ruled', inReplyTo: hubId }, bBuilder.headers);
     assert.equal(reply.status, 200, JSON.stringify(reply.data));
@@ -264,7 +281,7 @@ describe('API — Medusa exchanges (#1839)', () => {
     assert.equal(missing.status, 404);
     const unboundClose = await call(server, 'POST', `${pmBase()}/exchanges/${target.exchange_id}/close`, null);
     assert.equal(unboundClose.status, 403);
-    assert.equal(unboundClose.data.code, 'EXCHANGE_BINDING_REQUIRED');
+    assert.equal(unboundClose.data.code, 'LAUNCH_BINDING_REQUIRED');
     const closed = await call(server, 'POST', `${pmBase()}/exchanges/${target.exchange_id}/close`, null, bPM.headers);
     assert.equal(closed.status, 200);
     assert.equal(closed.data.exchange.state, 'closed');
@@ -282,12 +299,12 @@ describe('API — Medusa exchanges (#1839)', () => {
 
   it('reports a lost Hub answer as send_unknown and never re-sends the same requestId', async () => {
     hub.setMode('drop');
-    const first = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'x', requestId: 'req-drop-1' });
+    const first = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'x', requestId: 'req-drop-1' }, bPM.headers);
     assert.equal(first.status, 502);
     assert.equal(first.data.exchange.state, 'send_unknown');
     const attempts = hub.received.length;
     hub.setMode('ok');
-    const retry = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'x', requestId: 'req-drop-1' });
+    const retry = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'x', requestId: 'req-drop-1' }, bPM.headers);
     assert.equal(retry.status, 409);
     assert.equal(retry.data.code, 'SEND_ALREADY_ATTEMPTED');
     assert.equal(hub.received.length, attempts, 'the retry never reached the Hub');
@@ -295,14 +312,14 @@ describe('API — Medusa exchanges (#1839)', () => {
 
   it('ends an explicit Hub refusal as undeliverable', async () => {
     hub.setMode('refuse');
-    const res = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'x' });
+    const res = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'x' }, bPM.headers);
     assert.equal(res.status, 502);
     assert.equal(res.data.exchange.state, 'undeliverable');
   });
 
   it('records a Hub success without an id as send_unknown', async () => {
     hub.setMode('noid');
-    const res = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'x' });
+    const res = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'x' }, bPM.headers);
     assert.equal(res.status, 200);
     assert.equal(res.data.exchange.state, 'send_unknown');
   });
@@ -313,19 +330,19 @@ describe('API — Medusa exchanges (#1839)', () => {
     assert.equal(blocked.data.code, 'WATCHDOG_UNAVAILABLE_REMOTE');
     assert.equal(hub.received.length, 0);
     hub.roster.push({ id: 'remote-ws' });
-    const normal = await call(server, 'POST', `${pmBase()}/send`, { to: 'remote-ws', message: 'x' });
+    const normal = await call(server, 'POST', `${pmBase()}/send`, { to: 'remote-ws', message: 'x' }, bPM.headers);
     assert.equal(normal.status, 200, JSON.stringify(normal.data));
     assert.equal(normal.data.exchange.tracking, 'untracked');
   });
 
   it('shows a lost or refused Hub answer on an untracked send too', async () => {
     hub.setMode('drop');
-    const lost = await call(server, 'POST', `${pmBase()}/send`, { to: 'remote-ws', message: 'x' });
+    const lost = await call(server, 'POST', `${pmBase()}/send`, { to: 'remote-ws', message: 'x' }, bPM.headers);
     assert.equal(lost.status, 502);
     assert.equal(lost.data.exchange.tracking, 'untracked');
     assert.equal(lost.data.exchange.state, 'send_unknown');
     hub.setMode('refuse');
-    const refused = await call(server, 'POST', `${pmBase()}/send`, { to: 'remote-ws', message: 'x' });
+    const refused = await call(server, 'POST', `${pmBase()}/send`, { to: 'remote-ws', message: 'x' }, bPM.headers);
     assert.equal(refused.status, 502);
     assert.equal(refused.data.exchange.state, 'undeliverable');
   });

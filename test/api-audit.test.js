@@ -9,6 +9,7 @@ const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const { createServer } = require('../server');
+const { operatorHeaders } = require('./_shared-docs-callers');
 
 setLevel('error');
 
@@ -257,17 +258,27 @@ describe('API /api/audit', () => {
 
   // ── Heartbeat ──
 
+  // The heartbeat carries no credential of its own, so it is held to the
+  // launch-binding floor like any other write (#2233). These two exercise the
+  // handler as a caller the floor admits; that an unidentified caller is
+  // refused is asserted below and in `launch-binding-dispatch.test.js`.
   it('POST /api/audit/heartbeat accepts valid heartbeat', async () => {
     const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
       session_id: 'sess-1'
-    });
+    }, operatorHeaders(server));
     assert.equal(status, 200);
     assert.equal(data.ok, true);
   });
 
   it('POST /api/audit/heartbeat rejects missing session_id', async () => {
-    const { status } = await request(server, 'POST', '/api/audit/heartbeat', {});
+    const { status } = await request(server, 'POST', '/api/audit/heartbeat', {}, operatorHeaders(server));
     assert.equal(status, 400);
+  });
+
+  it('POST /api/audit/heartbeat refuses a caller that does not say who it is', async () => {
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', { session_id: 'sess-1' });
+    assert.equal(status, 403);
+    assert.equal(data.code, 'LAUNCH_BINDING_REQUIRED');
   });
 
   // ── Telemetry ──
@@ -349,7 +360,7 @@ describe('API /api/audit', () => {
   // ── Baseline Recompute Endpoint ──
 
   it('POST /api/audit/:project/baseline/recompute returns null when no scores', async () => {
-    const { status, data } = await request(server, 'POST', '/api/audit/empty-project/baseline/recompute', { window: '14d' });
+    const { status, data } = await request(server, 'POST', '/api/audit/empty-project/baseline/recompute', { window: '14d' }, operatorHeaders(server));
     assert.equal(status, 200);
     assert.equal(data.baseline, null);
   });
@@ -376,7 +387,7 @@ describe('API /api/audit', () => {
       });
     }
 
-    const { status, data } = await request(server, 'POST', '/api/audit/baseline-test/baseline/recompute', { window: '14d' });
+    const { status, data } = await request(server, 'POST', '/api/audit/baseline-test/baseline/recompute', { window: '14d' }, operatorHeaders(server));
     assert.equal(status, 200);
     assert.ok(data.baseline);
     assert.equal(data.baseline.project, 'baseline-test');
@@ -413,7 +424,7 @@ describe('API /api/audit', () => {
     // PUT update status
     const { status: putStatus, data: putData } = await request(server, 'PUT', `/api/audit/inc-test/incidents/${inc.id}`, {
       status: 'dismissed', resolvedBy: 'tester'
-    });
+    }, operatorHeaders(server));
     assert.equal(putStatus, 200);
     assert.equal(putData.incident.status, 'dismissed');
     assert.ok(putData.incident.resolvedAt);
@@ -432,7 +443,7 @@ describe('API /api/audit', () => {
     const inc = store.evalIncidents.insert({
       project: 'val-test', type: 'drift', title: 'Test', description: 'T', detectedAt: new Date().toISOString()
     });
-    const { status } = await request(server, 'PUT', `/api/audit/val-test/incidents/${inc.id}`, { status: 'bogus' });
+    const { status } = await request(server, 'PUT', `/api/audit/val-test/incidents/${inc.id}`, { status: 'bogus' }, operatorHeaders(server));
     assert.equal(status, 400);
   });
 
@@ -451,7 +462,8 @@ describe('API /api/audit', () => {
 
     const { status, data } = await request(server, 'POST',
       `/api/audit/human-test/scores/${score.id}/human`,
-      { score: 4, comment: 'Nice work' }
+      { score: 4, comment: 'Nice work' },
+      operatorHeaders(server)
     );
     assert.equal(status, 200);
     assert.equal(data.score.humanScore, 4);
@@ -470,7 +482,8 @@ describe('API /api/audit', () => {
 
     const { status } = await request(server, 'POST',
       `/api/audit/human-test2/scores/${score.id}/human`,
-      { score: 10 }
+      { score: 10 },
+      operatorHeaders(server)
     );
     assert.equal(status, 400);
   });
@@ -487,7 +500,8 @@ describe('API /api/audit', () => {
 
     const { status } = await request(server, 'POST',
       `/api/audit/proj-b/scores/${score.id}/human`,
-      { score: 3 }
+      { score: 3 },
+      operatorHeaders(server)
     );
     assert.equal(status, 404);
   });
@@ -495,7 +509,7 @@ describe('API /api/audit', () => {
   // ── Retention Endpoint ──
 
   it('POST /api/audit/retention/run returns purge stats', async () => {
-    const { status, data } = await request(server, 'POST', '/api/audit/retention/run', { retentionDays: 90 });
+    const { status, data } = await request(server, 'POST', '/api/audit/retention/run', { retentionDays: 90 }, operatorHeaders(server));
     assert.equal(status, 200);
     assert.equal(typeof data.exchangesPurged, 'number');
     assert.equal(typeof data.scoresPurged, 'number');

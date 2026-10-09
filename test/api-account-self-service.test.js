@@ -210,8 +210,13 @@ describe('account self-service, end to end (#1457, #1463)', () => {
       arm();
       const res = await send('POST', '/api/auth/password',
         { machine: true, body: { currentPassword: PASSWORD, newPassword: NEW_PASSWORD } });
-      assert.equal(res.statusCode, 401, res.body);
-      assert.ok((await login('rosie', PASSWORD)).cookie);
+      // The launch binding guard answers before the route (#2233): a write from a
+      // caller that says nothing about who it is. The route's own 401 for the same
+      // caller is no longer the answer it gets.
+      assert.equal(res.statusCode, 403, res.body);
+      assert.equal(json(res).code, 'LAUNCH_BINDING_REQUIRED');
+      assert.ok((await login('rosie', PASSWORD)).cookie, 'the old password still signs in');
+      assert.equal((await login('rosie', NEW_PASSWORD)).cookie, null, 'and the new one was never set');
     });
 
     it('says a login is not required on an open install', async () => {
@@ -337,12 +342,17 @@ describe('account self-service, end to end (#1457, #1463)', () => {
       assert.equal(await stillSignedIn(s), true);
     });
 
-    it('is challenged for a signed-out browser, and refuses a local tool with no session', async () => {
+    it('is challenged for a signed-out browser, and refuses a local tool with no session, ending no session', async () => {
       arm();
+      const live = await login();
       const signedOut = await send('POST', '/api/auth/logout-everywhere', { body: {} });
       assert.equal(signedOut.statusCode, 401);
+      assert.equal(await stillSignedIn(live), true, 'the challenge ended nobody\'s session');
       const tool = await send('POST', '/api/auth/logout-everywhere', { machine: true, body: {} });
-      assert.equal(tool.statusCode, 401, tool.body);
+      // The launch binding guard answers before the route (#2233).
+      assert.equal(tool.statusCode, 403, tool.body);
+      assert.equal(json(tool).code, 'LAUNCH_BINDING_REQUIRED');
+      assert.equal(await stillSignedIn(live), true, 'and neither did the refusal');
     });
 
     it('says a login is not required on an open install', async () => {
