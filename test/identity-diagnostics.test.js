@@ -143,6 +143,22 @@ describe('launch identity diagnostics through the dispatcher (#2233)', () => {
       assert.ok(['master-launch-stale', 'master-unverifiable'].includes(res.data.binding.reason), res.data.binding.reason);
     });
 
+    it('a Master launch id tmux could not be asked about is reported as not checked, not as stale', async () => {
+      const real = guard.describeBinding;
+      const unverifiable = {
+        state: 'stale', reason: 'master-unverifiable', role: null, projectId: null, sessionId: null,
+        cause: guard.causeFor('master-unverifiable'), recovery: guard.recoveryFor('stale', 'master-unverifiable')
+      };
+      guard.describeBinding = () => unverifiable;
+      try {
+        const res = await sendAs(server, 'GET', '/api/tc/whoami', undefined, { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': 'any' });
+        assert.equal(res.status, 200);
+        assert.deepEqual(res.data.binding, { ...unverifiable, state: 'unknown' }, 'only the state changes: the cause and recovery already say nothing is known to be wrong');
+      } finally {
+        guard.describeBinding = real;
+      }
+    });
+
     it('a check that throws is reported as not checked, and the rest of the answer still arrives', async () => {
       const real = guard.describeBinding;
       guard.describeBinding = () => { throw new Error('database is locked'); };
@@ -302,6 +318,26 @@ describe('launch identity diagnostics through the dispatcher (#2233)', () => {
       assert.match(writes[0], new RegExp(`via=project admittedProject=${project.id} admittedSession=${binding.sessionId}\\b`));
       assert.match(writes[1], /via=operator\b/);
       assert.doesNotMatch(writes[1], /admittedProject=/);
+    });
+
+    it('warns when whoami finds a binding stale, with the reason and who was claimed', async () => {
+      const lines = await collectingLogs(async () => {
+        await whoami(project.id, { 'x-tangleclaw-project-id': String(project.id), 'x-tangleclaw-launch-id': 'not-a-launch' });
+      });
+      const warned = lines.filter((line) => line.includes('whoami found a stale launch binding'));
+      assert.equal(warned.length, 1, lines.join(''));
+      assert.match(warned[0], /WARN/i);
+      assert.match(warned[0], /reason=unknown-launch\b/);
+      assert.match(warned[0], new RegExp(`claimedProjectId=${project.id}\\b`));
+      assert.doesNotMatch(warned[0], /not-a-launch/, 'the launch id itself is not written to the log');
+    });
+
+    it('does not warn for a verified binding, or for a caller that sent none', async () => {
+      const lines = await collectingLogs(async () => {
+        await whoami(project.id, binding.headers);
+        await whoami(project.id);
+      });
+      assert.deepEqual(lines.filter((line) => line.includes('stale launch binding')), [], lines.join(''));
     });
 
     it('adds nothing to the line for a read', async () => {

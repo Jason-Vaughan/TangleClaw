@@ -889,8 +889,8 @@ Engine-profile `launch.env` overrides any of these keys on collision.
 **What `tc` checks about its own identity (#2233).** Two things, and they answer different
 questions. `tc whoami` prints the server's verdict on the launch id the pane carries: `verified`,
 `stale` with a reason, or `unbound`. And before any verb sends a request, `tc` compares
-`TANGLECLAW_LAUNCH_ID`, `TANGLECLAW_PROJECT_ID` and `TANGLECLAW_ROLE` in its own environment with
-the values tmux recorded for the pane it runs in (`tmux show-environment -t "$TMUX_PANE"`, bounded
+`TANGLECLAW_LAUNCH_ID`, `TANGLECLAW_PROJECT_ID`, `TANGLECLAW_ROLE` and `TANGLECLAW_WORKSPACE_ID` in
+its own environment with the values tmux recorded for the pane it runs in (`tmux show-environment -t "$TMUX_PANE"`, bounded
 at one second). A difference refuses the verb with `PANE_IDENTITY_MISMATCH`, exit 2, and nothing is
 sent. The comparison needs `TMUX` and `TMUX_PANE` in the tool shell and a tmux it may talk to. An
 engine whose tools run outside the pane (Codex on its native startup channel, where they run in the
@@ -900,6 +900,36 @@ The check also cannot see a shell that inherited its whole environment, `TMUX_PA
 another pane's process: it reads that other pane and finds agreement. Nothing in the pane can catch
 that case, which is why a launch is kept off a shared engine process when it starts and why writes
 are checked at the server.
+
+**Sessions that were already running (#2233).** The launch check applies to launches made after it
+was installed. To see how the sessions running now were started, run `tc sessions isolation` from
+any launched pane, or read `GET /api/launch/isolation`. It reads the command tmux recorded for each
+pane when it was started (`#{pane_start_command}`), takes TangleClaw's own wrappers off it, and
+gives each live session and the Project Master one verdict:
+
+| Verdict | Meaning |
+|---|---|
+| `ISOLATED` | Codex was started from an exact executable path, either attached to the server TangleClaw started for that session (`native-app-server`) or with `--no-daemon` (`no-daemon`). |
+| `NOT ISOLATED` | A Codex session whose command does not show that: most often the bare name `codex`, which is how Codex was started before the launch check existed. |
+| `NOT SHOWN ISOLATED` | The command could not be read or judged: tmux did not answer or failed, the pane records no start command, the command could not be read back exactly, or the session's tmux name could not be worked out. Treat it as not isolated. |
+| `not applicable` | An engine with no shared background process, a session that runs on another machine, or a session tmux has no pane for. The last is read only from a tmux that listed its panes, or that said it has no server running. |
+
+Cutover after an upgrade, or after installing a different Codex version:
+
+1. Run `tc sessions isolation`. Note the session ids marked `NOT ISOLATED` or `NOT SHOWN ISOLATED`.
+2. End each of those sessions and launch it again. The launch is checked as it starts and is
+   refused if it cannot be isolated.
+3. Run `tc sessions isolation --replaced <those ids>`. Each id should read `relaunched-isolated`.
+   `still-running` means the old session was not ended; `ended-not-relaunched` means its project
+   has no session now; `relaunched-not-isolated` and `relaunched-unknown` mean the new session
+   needs the same attention. `relaunched-not-applicable` means the project now runs an engine with
+   no shared background process, or its new session has no local pane. `unknown-session` means
+   TangleClaw has no session with that id: check the number.
+
+The inventory ends and restarts nothing. It judges the command a pane was started with, not the
+process running in the pane now. For a `--no-daemon` session, the Codex version was checked when it
+was launched and is not checked again. It does not read each pane's environment, so it takes a
+tmux session named for a project to be that project's current launch.
 
 #### Prime paste readiness
 
@@ -1097,9 +1127,12 @@ the newest version does not launch, so skip it (Escape).
 
 - **Sessions already running.** The check runs when a pane is created. A Codex session started before
   the upgrade keeps running on whatever command started it, isolated or not, and nothing ends it.
-- **Operator cutover.** After upgrading TangleClaw, end every Codex session and the Project Master if
-  it runs Codex, then launch them again. Each relaunch either starts isolated or is refused with the
-  reason. Until that is done for a session, this check says nothing about it.
+- **Operator cutover.** After upgrading TangleClaw, run `tc sessions isolation` to see which running
+  sessions were not started isolated, end and relaunch those, and check with `--replaced`: the steps
+  are under "Sessions that were already running" above. Each relaunch either starts isolated or is
+  refused with the reason. The launch check itself says nothing about a session until it is
+  relaunched; the inventory is what reads the ones still running. If the inventory cannot be read,
+  end and relaunch every Codex session, and the Project Master if it runs Codex.
 - **A refused executable is never run.** Whether the resolved executable may be run as Codex at all (it
   is named `codex`, and its path can be placed in a command) is decided before the version probe and
   before the per-launch server, both of which execute that path. A wrapper or an unnameable path is

@@ -35,6 +35,64 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-09 — #2233: which running sessions were launched isolated (inventory and the carried fixes)
+
+<!-- prawduct: type=bugfix | scope=2233-launch-identity-containment -->
+
+#2233 Chunk 04, the last chunk of the plan, on the Operator's word ("get you working on the next chunk"). Branch `fix/2233-session-inventory`, from `origin/main` `0b512c3e9`. The issue stays open until the live proofs have run.
+
+Visual change: no
+
+**What changed.**
+- **A read-only inventory of how each live session was launched.** `lib/tmux.js#listPaneStartCommands` reads every pane's start command in one tmux invocation. `lib/launch-isolation-inventory.js` joins the live session rows and the Project Master to those commands, takes TangleClaw's wrappers off with the inverses of the functions that wrote them (`lib/sessions.js#_withoutPathFloor`, `lib/bridge-handoff.js#unwrapLaunchCommand`) and asks the engine adapter. `lib/startup-control-codex.js#judgeRecordedCommand` answers for Codex. Verdicts: `isolated`, `not-isolated`, `unknown`, `not-applicable`.
+- **A check that an end-and-relaunch took.** `verifyReplaced` says, for each earlier session id, whether it has ended and what its project's current session reads.
+- **Surfaces.** `GET /api/launch/isolation` (`?replaced=`) and `tc sessions isolation [--replaced <ids>]`. The route answers the operator, the Master and a verified project session, and refuses anyone else through `lib/launch-binding-guard.js#refusalFor`, which is the floor's own refusal under an exported name.
+- **The six items carried from the review of the diagnostics**, in the first commit: the per-launch Codex app-server no longer inherits `TMUX` and `TMUX_PANE` (`_serverEnvironment`); whoami reports a Master launch id tmux could not be asked about as `unknown`, and warns in the log for a stale binding; the pane check compares `TANGLECLAW_WORKSPACE_ID` too; two tests hold the pane's recovery sentence equal to the floor's and the guide's quoted line equal to what `tc whoami` prints; the exit-code headers name the local refusal.
+
+**The sibling was re-derived, not copied.** `judgeLaunchCommand` is safe because it is handed the executable TangleClaw resolved and a version probe taken for that launch. Neither exists for a session already running. `judgeRecordedCommand` therefore takes the executable from the command's first word and, for an attached session, the socket, executable and version from the channel row written at launch. For `--no-daemon` nothing recorded the version, and probing now would describe the file on disk, not the running process. What stands in for it: before the launch judgment existed both Codex forms used the bare command name (`git show 343bb8273:lib/startup-control-codex.js`), and only the judged path writes a command that opens with the absolute path. The verdict's own sentence says the version is not re-checked. The two judgments share `_readArguments`, so a recorded command is read by the rules a new one is, and a test holds their reason codes equal for the forms refused as unparseable.
+
+**Measured, and what it changed.** tmux prints a start command bare when it has no special character, otherwise in double quotes with `"`, `$` and a backslash escaped; it also writes a line break as `\n` and a tab as `\t` (throwaway tmux server, 2026-10-09). The reader undoes the first three and answers null for anything else. Run against this host's fleet, the inventory read the one live native Codex pane as `isolated` and two session rows with no tmux session as `unknown`. That second answer was wrong for the reader: tmux had answered, and there is no pane to be on a shared process. A session tmux has no pane for now reads `not-applicable` (`no_pane`); `unknown` is kept for a read that failed.
+
+**Decisions.** The wrappers are recognised by shape (any bin directory the PATH floor accepts, any three quoted paths in the handoff), not by this install's paths, so a pane started before an install was moved is still judged. The pane check's added workspace id was traced first: it is written into a pane once, at launch, and nothing calls `tmux set-environment`. `tc sessions <unknown word>` now exits 1.
+
+**Not covered.** The process now running in a pane; whether a tmux session named for a project is that project's current launch (no pane's environment is read here); a dashboard view. The live proofs (pane launches on Codex 0.156.1 and 0.157.1, a Master launch through its bridge wrapper, the dashboard's 409, and one real end-and-relaunch read with `--replaced`) need a deploy and the Operator's word each, and are not run.
+
+**Tests.** `test/tmux-pane-start-commands.test.js`, `test/launch-isolation-inventory.test.js` and `test/launch-isolation-route.test.js` are new; `test/identity-diagnostics.test.js`, `test/tc-pane-identity.test.js` and `test/startup-control-launch.test.js` gain the carried cases. The carried cases were run red first. The inventory's tests were written before its code and first run after it, so they were red only in that the module did not exist.
+
+**Review.** The boundary review found that a tmux failure other than a timeout or a spawn failure was read as an answered empty fleet, which the `no_pane` decision above then printed as nothing to act on: one blocking finding and two warnings, all the same defect. Fixed in the third commit: the pane reader answers an empty fleet only when tmux itself says it has no server, and a session with no derivable tmux name is `unknown`. The verification pass found the three resolved. R-2 and R-4 were fixed in that same commit and read as fixed by the verification pass; the table shows them accepted because the ledger records a code fix only for blocking and warning findings.
+
+**rev-20261009T194749Z-aea188d8** — scope `2233-launch-identity-containment`, 2026-10-09T19:51:08Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | fixed | The inventory reads `not-applicable` (no action) for an absence tmux never reported: any non-zero tmux exit, and a session whose tmux name is not known |
+| R-2 | note | accepted | Fixed in 976ca73c9 (renderIsolation prints the earlier-sessions block for an empty fleet, with a test); the verification pass rev-20261009T195435Z-7e23e824 read it as fixed. Recorded here because the ledger takes a FIXED for a code path only through a resolution, and resolutions cover blocking and warning findings. |
+| R-3 | warning | fixed | A failed read can arrive at `no_pane`, which the inventory prints as nothing to act on |
+| R-4 | note | accepted | Fixed in 976ca73c9 (the reader's comment now states the difference from _readSessionNames as deliberate, and why); read as fixed by rev-20261009T195435Z-7e23e824. Recorded as an accept for the same ledger reason as R-2. |
+| R-5 | note | fixed-unreviewed | fixed in `docs/engine-guide.md` |
+| R-6 | note | fixed-unreviewed | fixed in `docs/configuration-reference.md` |
+| R-7 | note | accepted | The reuse is deliberate: one definition of which engines need a judgment and of each wrapper, shared with the launch path, and the inventory's tests run the real helpers. Making them public is a rename with no behaviour, better done with the server.js split in #2248. |
+| R-8 | blocking | fixed | A tmux that exits with an error other than 'no server running' reads as an answered empty fleet, so the inventory reports every live session 'not applicable' and says nothing needs relaunching |
+| R-9 | note | accepted | Informational: the learnings corpus is local-only in the primary checkout by design, and the reviewer read it from there. |
+| R-10 | note | accepted | Informational: nothing to reconcile; #2233 stays open until the live proofs run. |
+| R-11 | note | accepted | Informational: the records pass found nothing to change. |
+
+**11 findings** (1 blocking, 2 warning, 8 note) — accepted: 6, fixed: 3, fixed-unreviewed: 2.
+
+**rev-20261009T195435Z-7e23e824** — scope `2233-launch-identity-containment`, chunk 04, 2026-10-09T19:55:46Z
+
+_No findings._
+
+_Observations — read, not owed. Answering one is optional._
+
+| Observation | State | Detail |
+|---|---|---|
+| O-1 | accepted | Being discharged, not waived: the full suite is running on this exact tree and is recorded from its JUnit report before the PR is marked ready. |
+| O-2 | accepted | The verdict is right either way (no answer), and the case needs tmux to die without writing to stderr. Not worth a review round for a log field. |
+
+**No findings** — a clean pass.
+**2 observations demoted** — 2 answered. An observation gates nothing; answering one is optional.
+
 ## 2026-10-09 — #2049: close-out
 
 <!-- prawduct: type=docs | scope=2049-fleet-recovery-clearance -->
