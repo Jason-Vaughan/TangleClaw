@@ -660,6 +660,20 @@ describe('the fleet recovery panel (#2049)', () => {
   });
 
   describe('on the page', () => {
+    it('publishes the controller and the mount on the page, and nothing else', () => {
+      const sandbox = { console: { log() {}, error() {}, warn() {} } };
+      sandbox.window = sandbox;
+      sandbox.globalThis = sandbox;
+      vm.createContext(sandbox);
+      vm.runInContext(API_HELPER_SRC, sandbox);
+      const before = new Set(Object.keys(sandbox));
+      vm.runInContext(SRC, sandbox);
+      assert.deepEqual(
+        Object.keys(sandbox).filter((name) => !before.has(name)).sort(),
+        ['tcCreateFleetRecoveryPanel', 'tcMountFleetRecovery'],
+        'a name published on the page is a contract with every other script on it');
+    });
+
     /**
      * A container that records what is drawn in it and what it is asked to
      * find, with one click listener a test can fire.
