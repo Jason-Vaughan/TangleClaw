@@ -262,6 +262,24 @@
   }
 
   /**
+   * What the batch clear itself read of a launch, straight after deciding it.
+   *
+   * Shown until the fuller read-back arrives, so that whether a launch is
+   * still held is on screen even when that read fails. All three fields are
+   * null when the launch could not be re-read, which is "unknown" and is
+   * never shown as "not held".
+   * @param {object} item - An item of the batch clear's answer
+   * @returns {string} Markup, already escaped
+   */
+  function rereadHtml(item) {
+    if (typeof item.stillBlocked !== 'boolean') {
+      return 'Not read back yet. The clear could not re-read this launch, so nothing is known about it now.';
+    }
+    return `Not read back yet. As the clear re-read it: recovery ${stored(item.recoveryNow)} at revision `
+      + `${escapeHtml(item.recoveryRevisionNow)} (${item.stillBlocked ? 'still held' : 'not held'}).`;
+  }
+
+  /**
    * Make the panel's controller: its state, what it draws, and what each
    * control does. It touches no DOM, so a test can drive it directly.
    * @param {object} deps
@@ -492,7 +510,7 @@
         + '<div class="fleet-recovery-controls">'
         + `<button type="button" class="btn btn-sm btn-primary" data-fleet-action="clear"${state.busy ? ' disabled' : ''}>`
         + `Clear ${escapeHtml(state.reviewing.length)} launch(es)</button>`
-        + '<button type="button" class="btn btn-sm" data-fleet-action="back">Back to the list</button></div>'
+        + `<button type="button" class="btn btn-sm" data-fleet-action="back"${state.busy ? ' disabled' : ''}>Back to the list</button></div>`
         + noticeHtml();
     }
 
@@ -520,7 +538,7 @@
           <div class="fleet-recovery-line">${outcome}${unrecorded}</div>
           <div class="fleet-recovery-line fleet-recovery-muted">${state.observed
             ? `Observed ${escapeHtml(state.observed.observedAt)}: ${observed ? observationHtml(observed.observation) : 'this item is not in the batch\'s record, so nothing was read for it.'}`
-            : 'Not read back yet.'}</div>
+            : rereadHtml(item)}</div>
         </li>`;
       }).join('');
       const missing = state.observed && Array.isArray(state.observed.unrecordedIndexes) && state.observed.unrecordedIndexes.length
@@ -620,7 +638,7 @@
         ? `[data-fleet-key="${key}"]`
         : `[data-fleet-action="${action}"]`;
       const acting = panel.act(action, { key });
-      // Shown while the request is out, so the pressed control cannot be pressed twice.
+      // Shown while the request is out: the review's controls are drawn disabled, so none looks pressable and does nothing.
       if (action === 'clear') container.innerHTML = panel.html();
       await acting;
       draw(selector, phaseBefore);

@@ -576,7 +576,8 @@ describe('the fleet recovery panel (#2049)', () => {
       let drawn = panel.html();
       assert.equal(panel.state.phase, 'result');
       assert.match(drawn, /<strong>Cleared\.<\/strong>/, 'the clear\'s own answer is not lost with the read');
-      assert.match(drawn, /Not read back yet\./);
+      assert.match(drawn, /Not read back yet\. As the clear re-read it: recovery <code>cleared<\/code> at revision 1 \(not held\)\./,
+        'whether the launch is still held is on screen from the clear\'s own answer');
       assert.match(drawn, /What the launches say now could not be read: The batch could not be read\. Try again\./);
 
       readable = true;
@@ -585,6 +586,31 @@ describe('the fleet recovery panel (#2049)', () => {
       assert.match(drawn, /Observed 2026-10-09T08:00:02\.000Z: recovery <code>cleared<\/code> at revision 1 \(not held\) \| launch step cursor: 3/);
       assert.doesNotMatch(drawn, /could not be read/);
       assert.equal(wires.calls.at(-1).url, '/api/launch/recovery-clear-batch/batch-1');
+    });
+
+    it('says from the clear\'s own answer that a launch is still held, or that it is unknown, when the read-back fails', async () => {
+      const wires = scripted((url, method) => {
+        if (url === '/api/launch/recovery-held') return { status: 200, body: { generatedAt: 't', launches: [heldRow(1), heldRow(2)] } };
+        if (method !== 'POST') return null;
+        return {
+          status: 200,
+          body: {
+            batchId: 'b', requestedBy: 'rosie', requestedAt: 't', items: [
+              { index: 0, ...bindingOf(heldRow(1)), outcome: 'stale', recorded: true, recoveryNow: 'required', recoveryRevisionNow: 2, stillBlocked: true },
+              { index: 1, ...bindingOf(heldRow(2)), outcome: 'failed', recorded: true, recoveryNow: null, recoveryRevisionNow: null, stillBlocked: null }
+            ]
+          }
+        };
+      });
+      const panel = controller(wires);
+      await panel.load();
+      await panel.act('select-all');
+      await panel.act('review');
+      await panel.act('clear');
+      const drawn = panel.html();
+      assert.match(drawn, /As the clear re-read it: recovery <code>required<\/code> at revision 2 \(still held\)\./);
+      assert.match(drawn, /The clear could not re-read this launch, so nothing is known about it now\./);
+      assert.equal((drawn.match(/not held/g) || []).length, 0, 'unknown is never shown as not held');
     });
 
     it('words an observation that found no launch, or could not read one, apart from "not held"', () => {
@@ -691,6 +717,7 @@ describe('the fleet recovery panel (#2049)', () => {
       await container.click({ fleetAction: 'review' });
       const first = container.click({ fleetAction: 'clear' });
       assert.match(container.innerHTML, /data-fleet-action="clear" disabled/);
+      assert.match(container.innerHTML, /data-fleet-action="back" disabled/, 'and no control that would do nothing looks pressable');
       await container.click({ fleetAction: 'clear' });
       assert.equal(wires.calls.filter((c) => c.method === 'POST').length, 1, 'a second press while one is out sends nothing');
       release();
