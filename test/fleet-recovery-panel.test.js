@@ -370,6 +370,19 @@ describe('the fleet recovery panel (#2049)', () => {
       assert.match(panel.html(), /Review 1 selected/);
     });
 
+    it('forgets an open evidence fold when its launch leaves the list or its recovery revision moves', async () => {
+      const rows = [heldRow(1), heldRow(2), heldRow(3)];
+      const panel = controller(scriptedFleet(rows));
+      await panel.load();
+      for (const key of ['201:1', '202:1', '203:1']) panel.fold(key, true);
+      assert.equal((panel.html().match(/<details[^>]* open>/g) || []).length, 3);
+      rows.splice(0, 1);
+      rows[0] = heldRow(2, { recoveryRevision: 2 });
+      await panel.act('refresh');
+      assert.deepEqual([...panel.state.unfolded], ['203:1']);
+      assert.match(panel.html(), /data-fleet-fold="202:2">/, 'the launch at its new revision is shown folded: it is other evidence');
+    });
+
     it('will not review more launches than one batch may name, and says why', async () => {
       const rows = Array.from({ length: 101 }, (_, i) => heldRow(i + 1));
       const wires = scriptedFleet(rows);
@@ -660,12 +673,18 @@ describe('the fleet recovery panel (#2049)', () => {
         listeners: [],
         asked: [],
         focused,
-        addEventListener(type, fn) { if (type === 'click') this.listeners.push(fn); },
+        toggleListeners: [],
+        addEventListener(type, fn, capture) {
+          if (type === 'click') this.listeners.push(fn);
+          if (type === 'toggle') this.toggleListeners.push({ fn, capture });
+        },
         querySelector(selector) {
           this.asked.push(selector);
           return { focus: () => focused.push(selector) };
         },
-        click(dataset, disabled = false) { return Promise.all(this.listeners.map((fn) => fn({ target: { dataset, disabled } }))); }
+        click(dataset, disabled = false) { return Promise.all(this.listeners.map((fn) => fn({ target: { dataset, disabled } }))); },
+        /** Fire a `<details>` toggle as the browser does, after it has already opened or closed the fold. */
+        toggle(dataset, open) { this.toggleListeners.forEach(({ fn }) => fn({ target: { dataset, open } })); }
       };
       return container;
     }
@@ -691,6 +710,29 @@ describe('the fleet recovery panel (#2049)', () => {
       assert.equal(panel.state.phase, 'result');
       assert.match(container.innerHTML, /Batch result/);
       assert.equal(container.focused.at(-1), '.fleet-recovery-heading');
+    });
+
+    it('keeps an evidence fold open when a tick redraws the list', async () => {
+      const sandbox = lift();
+      const container = fakeContainer();
+      const wires = scriptedFleet([heldRow(1), heldRow(2)]);
+      await sandbox.tcMountFleetRecovery(container, wires);
+      assert.deepEqual(container.toggleListeners.map((l) => l.capture), [true],
+        'toggle does not bubble, so the one listener must capture');
+      assert.doesNotMatch(container.innerHTML, /<details[^>]* open>/, 'folds start closed');
+
+      container.toggle({ fleetFold: '201:1' }, true);
+      await container.click({ fleetAction: 'toggle', fleetKey: '202:1' });
+      assert.match(container.innerHTML, /<details class="fleet-recovery-evidence" data-fleet-fold="201:1" open>/,
+        'the fold the operator opened is still open after the redraw');
+      assert.match(container.innerHTML, /<details class="fleet-recovery-evidence" data-fleet-fold="202:1">/, 'and the other is still closed');
+
+      container.toggle({ fleetFold: '201:1' }, false);
+      await container.click({ fleetAction: 'select-all' });
+      assert.doesNotMatch(container.innerHTML, /<details[^>]* open>/, 'a fold the operator closed stays closed');
+      container.toggle({}, true);
+      await container.click({ fleetAction: 'select-none' });
+      assert.doesNotMatch(container.innerHTML, /<details[^>]* open>/, 'a toggle of something else opens nothing');
     });
 
     it('ignores a disabled control, and a key that is not one it wrote', async () => {
@@ -786,6 +828,8 @@ describe('the fleet recovery panel (#2049)', () => {
       assert.ok(at('<script src="/fleet-recovery-panel.js">') < at('<script src="/ui.js">'));
       at('id="fleetRecoveryPanel"');
       assert.match(index, /id="fleetRecoveryToggle" aria-expanded="false" aria-controls="fleetRecoveryPanel"/);
+      // A pin on the rule's presence only: whether a disabled button LOOKS disabled is a rendering fact no string test reaches.
+      assert.match(read('style.css'), /\.fleet-recovery-panel button:disabled \{[^}]*opacity: 0\.45;[^}]*cursor: not-allowed;/);
       const sw = read('sw.js');
       assert.equal(sw.split('\'/fleet-recovery-panel.js\'').length - 1, 2,
         'the service worker precaches it and fetches it network-first, as it does the panels beside it');

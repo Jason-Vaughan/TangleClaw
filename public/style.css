@@ -899,6 +899,8 @@ html[data-tc-keyboard] body {
 .fleet-recovery-binding { font-size: 13px; overflow-wrap: anywhere; }
 .fleet-recovery-item code { font-size: 12px; }
 .fleet-recovery-controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+/* A control that will do nothing must not look like one that will. */
+.fleet-recovery-panel button:disabled { opacity: 0.45; cursor: not-allowed; }
 .fleet-recovery-notice { font-size: 12px; margin: 6px 0; }
 .fleet-recovery-list { list-style: none; margin: 0; padding: 0; }
 .fleet-recovery-item { border-top: 1px solid var(--border, #333); padding: 8px 0; }

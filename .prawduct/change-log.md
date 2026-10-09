@@ -35,6 +35,26 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-09 — #2049: two defects in the fleet recovery panel, found by using it
+
+<!-- prawduct: type=bugfix | scope=2049-fleet-recovery-clearance -->
+
+#2049, a fix to chunk 5 after it merged (PR #2252, `de59154b`), by the Operator's word ("fix them as recommended") to TC-RM01 under RM-LEASE generation 6. Branch `fix/2049-recovery-panel-fold-and-disabled`, from `origin/main` `de59154b`.
+
+Visual change: yes
+
+**How they were found.** The Operator had the builder run operator verification VRF-001 on the live install, in their signed-in browser, on a launch held for the purpose. Checks 1 to 6 passed. Two things were wrong that no test and no still screenshot had shown.
+
+**What was wrong, and the fix.**
+- **An open evidence fold closed on every redraw.** The panel redraws its markup when a checkbox is ticked, and a `<details>` drawn fresh is closed. An operator who opened "Work that may have been queued or in flight" and then ticked a launch lost their place. The controller now remembers which launches' folds are open (`state.unfolded`, set by `fold(key, open)`) and draws those open. The mount listens for `toggle` in the capture phase, because `toggle` does not bubble. A fold is forgotten when its launch leaves the list or its recovery revision moves, as a selection is.
+- **A disabled button looked like an enabled one.** `.btn` has no disabled style on this page, so "Review 0 selected" was drawn in the same green with a pointer cursor. One rule, scoped to the panel, dims a disabled button and changes the cursor.
+
+**Root cause.** Both are facts about a rendered, interactive page. The chunk's verification was string tests of markup plus still screenshots of states set up by script; neither presses a control and then looks. The headless harness even opened a fold by script after the last redraw, so it could not have shown the first defect.
+
+**Decision.** The disabled style is scoped to `.fleet-recovery-panel`, not added to `.btn`. A global rule would change every dashboard button, and the UI freeze exception covers this panel only.
+
+**Verified, and not.** Three guards were checked by breaking them (a fold never drawn open, the toggle listener not capturing, a fold kept across a moved revision); a test failed for each. Rendered in headless Chrome with a real toggle and real clicks: the fold stays open through a tick and Select none, and the disabled Review button is dimmed. Not yet seen on the live install: that needs a merge and a deploy.
+
 ## 2026-10-09 — #2049: the fleet recovery panel
 
 <!-- prawduct: type=feature | scope=2049-fleet-recovery-clearance -->
