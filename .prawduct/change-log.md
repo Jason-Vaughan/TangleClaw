@@ -50,6 +50,27 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 **Not in this chunk.** The batch route, the batch header and per-item outcomes, any route or page that reads the record, stop provenance and the wake action. Clearances made before v59 get no row.
 
 **Not verified.** Nothing was run against a live install. The tests drive the real request handler and the real migration against temp stores.
+## 2026-10-08 — #1937: the Launch readiness panel states a project's recovery mode and lets the operator choose it
+
+<!-- prawduct: type=feature | scope=1937-recovery-mode-panel -->
+
+#1937 Chunk 01, assigned by the Operator directly. Plan: `.tangleclaw/plans/1937-recovery-mode-panel.md` in the Builder2 checkout.
+
+**What was missing.** Five merged PRs built the server side: the operator's decision is recorded, advisory is the default where the login is in force, and `GET /api/launch-sequences` reports the project's mode, source, gate state, discrepancy and decision. The panel passed only `sequences` to its renderer and dropped the rest, and nothing under `public/` sent `launchSequence.recoveryMode`. The setting existed and no operator could see or set it without `curl`.
+
+**The change.** `public/ui.js` renders the mode above the launch rows (who clears a recovery under it, why the project is in it, the decision on record, any discrepancy) and a two-option control that saves through the existing operator-only `PATCH /api/projects/:name`. No server route or field was added: the plan's first assumption held. `lib/launch-sequence.js#_operatorHeldAction` adds one sentence pointing at the panel for future launches, in the two gate states whose action is already the panel.
+
+**Decisions taken while building.**
+- The control is offered from what `GET /api/auth/me` answers, not from `projectRecoveryGateState`. The first is the request-side answer the route itself reads; the second is the launch-side probe. Driving the real route in every state in `GATE_STATES` showed it takes the dashboard's save in `armed` (signed in), `open` and `fallback`, and refuses before any route in the other three, where the panel cannot load either. One predicate covers it: no control for a page that is not signed in while the gate enforces.
+- The save's outcome is kept beside the readout, not in the modal's status line. That line hides after three seconds, and the outcome says when the choice takes effect and what a failure left behind.
+- On an install whose login is not in force the control is offered, because ADR 0017 R3 says an operator's decision stands in every gate state. The advisory option says nobody can read a reconciliation back there, which a test holds against the readback route.
+- A held row now says "this launch froze" a mode where it said "this project is in" one. The old wording was wrong whenever the project's mode had changed since the launch.
+
+**Found, not fixed here.** On an install with no login the decision is recorded with `decidedBy: "operator"`, although ADR 0017 R3 describes that record's provenance as `open-install-unverified`. The panel words the record as a request with the dashboard's shape wherever the login is not in force. The stored value is a server-side change outside this chunk and is filed as #2244.
+
+**A plan detail that was wrong.** The plan named `docs/recovery.md` for the documentation. That file is about getting back into TangleClaw's login. The recovery mode is documented in `docs/user-guide.md` and `docs/configuration-reference.md`, and those were updated.
+
+**A test whose assertion moved.** `the refresh cycle tells the renderer whether the install has a login` compared the renderer's whole options object with `{ noLogin }`. The options now also carry the project's mode, so it reads `noLogin` by name; the new field has its own tests.
 
 ## 2026-10-07 — #2128: a launch sees an engine's startup dialog, types nothing into it, and names the cause
 
