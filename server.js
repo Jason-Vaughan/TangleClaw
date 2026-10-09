@@ -5239,6 +5239,10 @@ route('GET', '/api/tc/whoami', (req, res) => {
   const verb = awarenessVerbLabel(req.headers['x-tangleclaw-verb'], 'whoami');
 
   const { project, activeSession } = resolveClaimedProject(claimedProjectId);
+  // What the launch binding this request carries is worth (#2233). The project
+  // above is the one the caller CLAIMS, resolved without asking who it is;
+  // this is the server's own answer about the launch id beside it.
+  const binding = _whoamiBinding(req);
 
   // Provenance (not authentication): the tc client identifies itself with a
   // header, so a browser preview or health check records as 'http' and cannot
@@ -5349,6 +5353,7 @@ route('GET', '/api/tc/whoami', (req, res) => {
       role: 'master',
       project: null,
       sessionId: null,
+      binding,
       workspaceId,
       api: { origin: api, note: 'localhost is correct for YOUR OWN calls from this host' },
       operator: {
@@ -5383,6 +5388,7 @@ route('GET', '/api/tc/whoami', (req, res) => {
       : null,
     unresolved: project ? undefined : `projectId ${query.projectId === undefined ? '(absent)' : query.projectId} did not resolve to a registered project — identity claims below are limited to instance facts`,
     sessionId: activeSession ? activeSession.id : null,
+    binding,
     workspaceId,
     api: {
       origin: api,
@@ -5396,6 +5402,48 @@ route('GET', '/api/tc/whoami', (req, res) => {
     receiptRecorded: !!receipt
   });
 });
+
+/**
+ * Who the launch-binding floor admitted to a write, as fields for the request
+ * log line: what admitted it, and for a project its id and session. Empty for
+ * a read, which the floor does not judge, so reads log as they did.
+ * @param {{via: string, access?: {projectId?: (number|null), sessionId?: number}}} binding - The floor's verdict
+ * @returns {{via?: string, admittedProject?: number, admittedSession?: number}}
+ */
+function _admittedAs(binding) {
+  if (!binding || binding.via === 'not-mutating') return {};
+  const access = binding.access || {};
+  if (binding.via !== sharedDocsAccess.KINDS.PROJECT) return { via: binding.via };
+  return { via: binding.via, admittedProject: access.projectId, admittedSession: access.sessionId };
+}
+
+/**
+ * The verdict on the launch binding a whoami request carries: `verified`,
+ * `stale` or `unbound`, with the cause and the recovery in the words the write
+ * floor refuses in (`lib/launch-binding-guard.js#describeBinding`).
+ *
+ * A check that throws answers `unknown`, never `verified`: whoami is how a
+ * pane diagnoses its identity, so it still answers, and says the check did not
+ * run rather than leaving the field out.
+ * @param {object} req - The request
+ * @returns {{state: string, reason: (string|null), role: (string|null), projectId: (number|null), sessionId: (number|null), cause: (string|null), recovery: (string|null)}}
+ */
+function _whoamiBinding(req) {
+  try {
+    return launchBindingGuard.describeBinding(req);
+  } catch (err) { // prawduct:allow prawduct/broad-except -- whoami is how a pane diagnoses its identity: a failed check is reported as unknown, not as a failed request
+    log.warn('Launch binding could not be checked for whoami: reported as unknown', { error: err.message });
+    return {
+      state: 'unknown',
+      reason: 'check-failed',
+      role: null,
+      projectId: null,
+      sessionId: null,
+      cause: 'TangleClaw could not check this launch binding just now.',
+      recovery: 'Run `tc whoami` again. Until it reads verified, do not rely on this pane\'s identity.'
+    };
+  }
+}
 
 /**
  * The one verb label an awareness receipt may carry: the client's declared
@@ -11447,8 +11495,20 @@ async function handleRequest(req, res) {
     // decision, so the guard below cannot see a gate the check above did not.
     let serviceTokenVerified = false;
     if (serviceToken.requiresServiceToken(pathname)) {
-      const tokenConfig = store.config.load();
-      const gate = serviceToken.validateRequest(req.headers, tokenConfig);
+      // Outside the handler's error boundary below, like the launch-binding
+      // check after it: a config read that throws is answered here, or the
+      // request gets no response at all.
+      let tokenConfig;
+      let gate;
+      try {
+        tokenConfig = store.config.load();
+        gate = serviceToken.validateRequest(req.headers, tokenConfig);
+      } catch (err) { // prawduct:allow prawduct/broad-except -- the dispatcher's boundary for a read that sits ahead of the route's own: any failure must still answer the request
+        log.error('Service-token check failed: the request is refused', {
+          method, path: pathname, error: err.message, stack: err.stack
+        });
+        return errorResponse(res, 500, 'Internal server error', 'INTERNAL_ERROR');
+      }
       if (!gate.ok) {
         // Log the denial (never the token) — the gate returns before the normal
         // access-log line below, so without this a rejected M2M caller leaves no
@@ -11496,7 +11556,7 @@ async function handleRequest(req, res) {
     }
 
     const duration = Date.now() - startTime;
-    log.info(`${method} ${pathname}`, { status: res.statusCode, duration: `${duration}ms` });
+    log.info(`${method} ${pathname}`, { status: res.statusCode, duration: `${duration}ms`, ..._admittedAs(binding) });
     return;
   }
 

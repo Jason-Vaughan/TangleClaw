@@ -391,6 +391,32 @@ describe('launch sequence (Train 21, Chunk 01)', () => {
       assert.equal(launchSequence.status({ launchId: sequence.launchId, projectId: project.id }).body.code, 'SESSION_ENDED');
     });
 
+    it('says what is wrong with the binding, and what to do, in the write floor\'s words (#2233)', () => {
+      const guard = require('../lib/launch-binding-guard');
+      const project = makeProject('samewords');
+      const result = launch('samewords');
+      const sequence = store.launchSequences.getBySession(result.session.id);
+      const asked = { headers: { 'x-tangleclaw-launch-id': sequence.launchId, 'x-tangleclaw-project-id': String(project.id + 5000) } };
+      const route = { method: 'POST', pattern: '/api/ports/lease', options: {} };
+
+      const wrongProject = next({ launchId: sequence.launchId, projectId: project.id + 5000 });
+      const floorWrong = guard.describeBinding(asked);
+      assert.equal(floorWrong.reason, 'project-mismatch');
+      assert.ok(wrongProject.body.error.includes(floorWrong.cause), wrongProject.body.error);
+      assert.ok(wrongProject.body.error.includes(floorWrong.recovery), wrongProject.body.error);
+      assert.ok(guard.judge(asked, route).message.includes(floorWrong.cause));
+      assert.match(wrongProject.body.error, /Nothing was served/);
+
+      store.sessions.wrap(result.session.id, 'done');
+      asked.headers['x-tangleclaw-project-id'] = String(project.id);
+      const ended = next({ launchId: sequence.launchId, projectId: project.id });
+      const floorEnded = guard.describeBinding(asked);
+      assert.equal(floorEnded.reason, 'session-not-active');
+      assert.ok(ended.body.error.includes(floorEnded.cause), ended.body.error);
+      assert.ok(ended.body.error.includes(floorEnded.recovery), ended.body.error);
+      assert.match(ended.body.error, /wrapped/, 'the status the session ended in is still named');
+    });
+
     it('an engine with no launch-sequence support says so instead of serving nothing', () => {
       // An engine profile that declares nothing about launch sequences: the
       // honest default is "no sequence", with the reason said out loud.
