@@ -35,6 +35,22 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-08 — #2049: an operator's recovery clearance is kept as a permanent record
+
+<!-- prawduct: type=feature | scope=2049-fleet-recovery-clearance -->
+
+#2049, the first chunk after PR #2190 (chunk 2 of the plan), by direct Operator assignment to TC-RM01 with no ProjectManager or Architect coordinating. The plan and its chunk map are in this checkout's build plan; the rulings it follows are the Architect's A93, A96 and A152.
+
+**What landed.** Schema v59 adds `launch_recovery_clearances`: one row per operator clearance, refused on update and delete by trigger, never pruned. `store.launchSequences.clearRecoveryAsOperator` runs the existing compare-and-set and inserts the row in one transaction, and `clearOneLaunch` now clears through it, so the single clear route records every clearance with a null batch id. The row copies the launch's stored preflight record as text. `store.recoveryClearances` reads one launch's record or a batch's.
+
+**Decisions.** Only operator clearances are recorded: a session's advisory reconciliation still clears through `clearRecovery` and writes no row, and the table's CHECK admits the two operator words only (A152: an advisory reconciliation is not an operator clearance). No foreign keys, so a row outlives its project and never blocks deleting one. One row per launch, held by a unique index, because a launch's recovery never returns to `required` once cleared. The table also refuses a batch id on an unverified clearance, which is A93's rule that a batch never inherits the open-install path, stated where a later batch route cannot forget it.
+
+**Behaviour change to the single clear.** A clearance record that cannot be written rolls the clear back and the route answers `500`. Before this the clear had no second write that could fail.
+
+**Not in this chunk.** The batch route, the batch header and per-item outcomes, any route or page that reads the record, stop provenance and the wake action. Clearances made before v59 get no row.
+
+**Not verified.** Nothing was run against a live install. The tests drive the real request handler and the real migration against temp stores.
+
 ## 2026-10-07 — #2128: a launch sees an engine's startup dialog, types nothing into it, and names the cause
 
 <!-- prawduct: type=bugfix | scope=2128-startup-dialog -->
