@@ -13,6 +13,7 @@ const assert = require('node:assert/strict');
 
 const tmux = require('../lib/tmux');
 const logger = require('../lib/logger');
+const { uniqueSessionName } = require('./_tmux-session-names');
 
 const saved = { ...tmux._async };
 
@@ -187,11 +188,15 @@ describe('tmux.listPaneStartCommands against a real tmux, run as the server runs
     const accented = '/Users/jos\u00e9/bin/codex --no-daemon; sleep 30';
     // Registered before anything is started, so a start that fails part way leaves no server behind.
     t.after(() => { try { onSocket(['kill-server']); } catch { /* never started, or already gone */ } });
+    const first = uniqueSessionName('panes-first');
+    const second = uniqueSessionName('panes-second');
+    const shell = uniqueSessionName('panes-shell');
+    const accent = uniqueSessionName('panes-accent');
     try {
-      onSocket(['new-session', '-d', '-s', 'tc-first', `${wrapped}; sleep 30`]);
-      onSocket(['new-session', '-d', '-s', 'tc-second', 'sleep 30']);
-      onSocket(['new-session', '-d', '-s', 'tc-shell']);
-      onSocket(['new-session', '-d', '-s', 'tc-accent', accented]);
+      onSocket(['new-session', '-d', '-s', first, `${wrapped}; sleep 30`]);
+      onSocket(['new-session', '-d', '-s', second, 'sleep 30']);
+      onSocket(['new-session', '-d', '-s', shell]);
+      onSocket(['new-session', '-d', '-s', accent, accented]);
     } catch (err) {
       t.skip(`tmux could not start a server here: ${err.message.split('\n')[0]}`);
       return;
@@ -199,11 +204,11 @@ describe('tmux.listPaneStartCommands against a real tmux, run as the server runs
     tmux._async.execFile = (bin, args, opts, cb) => execFile(bin, ['-L', socket, ...args], { ...opts, env: outside }, cb);
     const read = await tmux.listPaneStartCommands();
     assert.deepEqual({ answered: read.answered, cause: read.cause }, { answered: true, cause: null });
-    assert.deepEqual([...read.sessions.keys()].sort(), ['tc-accent', 'tc-first', 'tc-second', 'tc-shell']);
-    assert.deepEqual(read.sessions.get('tc-accent'), [accented], 'a character outside ASCII comes back as itself, not as an underscore');
-    assert.deepEqual(read.sessions.get('tc-first'), [`${wrapped}; sleep 30`]);
-    assert.deepEqual(read.sessions.get('tc-second'), ['sleep 30']);
-    assert.deepEqual(read.sessions.get('tc-shell'), []);
+    assert.deepEqual([...read.sessions.keys()].sort(), [accent, first, second, shell].sort());
+    assert.deepEqual(read.sessions.get(accent), [accented], 'a character outside ASCII comes back as itself, not as an underscore');
+    assert.deepEqual(read.sessions.get(first), [`${wrapped}; sleep 30`]);
+    assert.deepEqual(read.sessions.get(second), ['sleep 30']);
+    assert.deepEqual(read.sessions.get(shell), []);
   });
 
   it('reads a socket with no server as an answered empty fleet', { skip: available ? false : 'tmux is not installed here' }, async () => {
