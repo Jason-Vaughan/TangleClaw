@@ -42,6 +42,8 @@ setLevel('error');
 
 const store = require('../lib/store');
 const { createServer } = require('../server');
+const { outsidePane } = require('./_tc-env');
+const { bindProject } = require('./_shared-docs-callers');
 
 const TC_BIN = path.join(__dirname, '..', 'bin', 'tc');
 
@@ -210,7 +212,12 @@ describe('tc CLI vertical slice (ambient-awareness Chunk 02)', () => {
         PATH: process.env.PATH, TANGLECLAW_API: apiOrigin, TANGLECLAW_ROLE: 'master'
       });
       assert.equal(res.code, 0, res.stderr);
-      assert.match(res.stdout, /You are the TangleClaw Project Master/);
+      // This pane carries the role and no launch id, so the Master branch is
+      // rendered as a claim: only a launch id the live Master pane holds makes
+      // it "You are" (#2233, `test/tc-pane-identity.test.js`).
+      assert.match(res.stdout, /^LAUNCH BINDING ABSENT/);
+      assert.match(res.stdout, /You claim to be the Project Master\. TangleClaw has not verified that\./);
+      assert.doesNotMatch(res.stdout, /TangleClaw-managed session of project/);
       const row = store.getDb().prepare(
         "SELECT COUNT(*) AS n FROM awareness_receipts WHERE role = 'master' AND source = 'tc-cli'"
       ).get();
@@ -258,14 +265,25 @@ describe('tc CLI vertical slice (ambient-awareness Chunk 02)', () => {
 
   describe('bin/tc (spawned for real)', () => {
     it('whoami renders identity and capabilities from a live server', async () => {
-      const res = await runTc(['whoami'], {
-        ...process.env,
-        TANGLECLAW_API: apiOrigin,
-        TANGLECLAW_PROJECT_ID: String(project.id),
-        TANGLECLAW_WORKSPACE_ID: 'ws-test-1'
-      });
+      // A pane TangleClaw launched carries its launch id, and whoami says "you
+      // are" only for a binding the server verifies (#2233). The session is
+      // ended afterwards so no other case in this file finds one active.
+      const bound = bindProject(project);
+      let res;
+      try {
+        res = await runTc(['whoami'], {
+          ...outsidePane(process.env),
+          TANGLECLAW_API: apiOrigin,
+          TANGLECLAW_PROJECT_ID: String(project.id),
+          TANGLECLAW_LAUNCH_ID: bound.launchId,
+          TANGLECLAW_WORKSPACE_ID: 'ws-test-1'
+        });
+      } finally {
+        store.sessions.kill(bound.sessionId, 'test');
+      }
       assert.equal(res.code, 0, res.stderr);
       assert.match(res.stdout, /TangleClaw-managed session of project "tc-cli-proj"/);
+      assert.match(res.stdout, new RegExp(`Launch binding: verified \\(session ${bound.sessionId} is this project's current session\\)`));
       assert.match(res.stdout, new RegExp(`numeric project id ${project.id}`));
       assert.match(res.stdout, /Capabilities:/);
       assert.match(res.stdout, /\[--\] switchboard/, 'a disabled capability renders as absent, not missing');
@@ -326,7 +344,7 @@ describe('tc CLI vertical slice (ambient-awareness Chunk 02)', () => {
         'an operator opening the endpoint in a browser is not the session becoming aware');
 
       const res = await runTc(['whoami'], {
-        ...process.env, TANGLECLAW_API: apiOrigin, TANGLECLAW_PROJECT_ID: String(project.id)
+        ...outsidePane(process.env), TANGLECLAW_API: apiOrigin, TANGLECLAW_PROJECT_ID: String(project.id)
       });
       assert.equal(res.code, 0, res.stderr);
       const viaCli = store.awarenessReceipts.listForProject(project.id)[0];

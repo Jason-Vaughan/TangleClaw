@@ -15,6 +15,7 @@ const path = require('node:path');
 const childProcess = require('node:child_process');
 
 const { VERB_ROSTER, BRANCH_VERDICT_EXIT, receiptVerbLabel, renderUsage } = require('../lib/tc-verbs');
+const { outsidePane } = require('./_tc-env');
 
 const branch = VERB_ROSTER.find((v) => v.id === 'branch');
 const OID = 'a'.repeat(40);
@@ -127,7 +128,7 @@ describe('tc branch check (bin/tc against a real repository)', () => {
       cwd,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_NOSYSTEM: '1', HOME: root }
+      env: { ...outsidePane(process.env), GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_NOSYSTEM: '1', HOME: root }
     }).trim();
   }
 
@@ -153,7 +154,7 @@ describe('tc branch check (bin/tc against a real repository)', () => {
 
     // The child must really spawn git, so it must not inherit the test
     // runner's marker that makes the default git seam refuse to.
-    const { NODE_TEST_CONTEXT: _drop, TANGLECLAW_LAUNCH_ID: _l, ...env } = process.env;
+    const { NODE_TEST_CONTEXT: _drop, TANGLECLAW_LAUNCH_ID: _l, ...env } = outsidePane(process.env);
     const opts = { cwd: dir, encoding: 'utf8', env: { ...env, TANGLECLAW_API: 'http://127.0.0.1:9' } };
 
     const first = childProcess.spawnSync(process.execPath, [TC, 'branch', 'check', 'feat'], opts);

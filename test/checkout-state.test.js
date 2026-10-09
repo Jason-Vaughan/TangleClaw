@@ -20,6 +20,7 @@ const path = require('node:path');
 const childProcess = require('node:child_process');
 
 const cs = require('../lib/checkout-state');
+const { outsidePane } = require('./_tc-env');
 
 const SHA_A = 'a'.repeat(40);
 const SHA_B = 'b'.repeat(40);
@@ -428,7 +429,7 @@ describe('checkout-state: against real git', () => {
   function git(cwd, ...args) {
     return childProcess.execFileSync('git', args, {
       cwd, encoding: 'utf8',
-      env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_NOSYSTEM: '1', HOME: root }
+      env: { ...outsidePane(process.env), GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_NOSYSTEM: '1', HOME: root }
     }).trim();
   }
 
