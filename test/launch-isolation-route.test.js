@@ -29,7 +29,7 @@ const savedAsync = { ...tmux._async };
  * @returns {void}
  */
 function tmuxReports(panes) {
-  const lines = Object.entries(panes).map(([name, command]) => `${name}\t"${command.replace(/(["$\\])/g, '\\$1')}"`);
+  const lines = Object.entries(panes).map(([name, command]) => `${name}:"${command.replace(/(["$\\])/g, '\\$1')}"`);
   tmux._async.execFile = (_bin, _args, _opts, cb) => setImmediate(() => cb(null, lines.join('\n') + '\n'));
 }
 

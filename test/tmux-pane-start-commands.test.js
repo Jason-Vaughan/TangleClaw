@@ -13,6 +13,7 @@ const assert = require('node:assert/strict');
 
 const tmux = require('../lib/tmux');
 const logger = require('../lib/logger');
+const { uniqueSessionName } = require('./_tmux-session-names');
 
 const saved = { ...tmux._async };
 
@@ -42,7 +43,12 @@ describe('tmux.unquoteStartCommand', () => {
     ['a quoted command', '"claude --dangerously-skip-permissions"', 'claude --dangerously-skip-permissions'],
     ['the three characters tmux escapes inside quotes', '"export PATH=\\"/a b/bin:\\$PATH\\"; x \\\\ y"', 'export PATH="/a b/bin:$PATH"; x \\ y'],
     ['characters tmux leaves alone', '"X=\'q\' sleep 30 ~ ! `x`"', 'X=\'q\' sleep 30 ~ ! `x`'],
-    ['a pane with no start command', '', '']
+    ['a pane with no start command', '', ''],
+    ['a variable as tmux 3.4 escapes it, with two backslashes', '"export PATH=\\"/x y/bin:\\\\$PATH\\"; sleep 30"', 'export PATH="/x y/bin:$PATH"; sleep 30'],
+    ['a braced variable as tmux 3.4 escapes it', '"echo \\\\${HOME}"', 'echo ${HOME}'],
+    ['a real backslash before a variable, as tmux 3.4 writes it', '"a\\\\\\\\$HOME"', 'a\\$HOME'],
+    ['a real backslash before a variable, as tmux 3.3a and 3.6a write it', '"a\\\\\\$HOME"', 'a\\$HOME'],
+    ['a real backslash before a dollar that opens no name, which every version writes the same way', '"a\\\\$1 b\\\\$"', 'a\\$1 b\\$']
   ]) {
     it(`reads ${label}`, () => {
       assert.equal(tmux.unquoteStartCommand(printed), expected);
@@ -69,20 +75,21 @@ describe('tmux.listPaneStartCommands', () => {
     const calls = fakeTmux(() => ({ stdout: '' }));
     await tmux.listPaneStartCommands({ timeout: 1234 });
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].args[0], 'list-panes');
-    assert.ok(calls[0].args.includes('-a'));
-    assert.match(calls[0].args[calls[0].args.indexOf('-F') + 1], /#\{session_name\}.*#\{pane_start_command\}/);
+    assert.deepEqual(calls[0].args.slice(0, 3), ['-u', 'list-panes', '-a'], 'UTF-8 output is asked for, whatever locale the caller has');
+    const format = calls[0].args[calls[0].args.indexOf('-F') + 1];
+    assert.equal(format, '#{session_name}:#{pane_start_command}');
+    assert.ok(!/[\u0000-\u001f]/.test(format), 'no control character: a tmux client that is not told its output is UTF-8 prints one as an underscore');
     assert.equal(calls[0].opts.timeout, 1234);
   });
 
   it('groups the panes that have a start command by session, and leaves out the ones that have none', async () => {
     fakeTmux(() => ({
       stdout: [
-        'alpha\t"export PATH=\\"/x/bin:\\$PATH\\"; claude"',
-        'alpha\t',
-        'beta\ttop',
-        'beta\t"sleep 30"',
-        'gamma\t'
+        'alpha:"export PATH=\\"/x/bin:\\$PATH\\"; claude"',
+        'alpha:',
+        'beta:top',
+        'beta:"sleep 30"',
+        'gamma:'
       ].join('\n') + '\n'
     }));
     const read = await tmux.listPaneStartCommands();
@@ -95,16 +102,29 @@ describe('tmux.listPaneStartCommands', () => {
   });
 
   it('keeps a pane whose command it could not read, as null', async () => {
-    fakeTmux(() => ({ stdout: 'alpha\t"a\\nb"\n' }));
+    fakeTmux(() => ({ stdout: 'alpha:"a\\nb"\n' }));
     const read = await tmux.listPaneStartCommands();
     assert.deepEqual(read.sessions.get('alpha'), [null]);
   });
 
-  it('splits on the first tab only, so a command holding one cannot be cut into a different command', async () => {
-    fakeTmux(() => ({ stdout: 'alpha\ttop\textra\n' }));
+  it('splits on the first colon only, so a command holding one is kept whole', async () => {
+    fakeTmux(() => ({ stdout: 'alpha:"codex --remote unix:///tmp/x"\n' }));
     const read = await tmux.listPaneStartCommands();
-    assert.deepEqual(read.sessions.get('alpha'), ['top\textra']);
+    assert.deepEqual(read.sessions.get('alpha'), ['codex --remote unix:///tmp/x']);
   });
+
+  for (const [label, stdout] of [
+    ['a line with no separator at all', 'alpha:top\nbeta_"sleep 30"\n'],
+    ['a line that opens with the separator', ':top\n'],
+    ['output where tmux rewrote the separator on every line', 'alpha_"claude"\nbeta_"codex"\n']
+  ]) {
+    it(`reads ${label} as no answer: a listing it cannot split says nothing about any session`, async () => {
+      logger.setConsoleStream({ write: () => {} });
+      fakeTmux(() => ({ stdout }));
+      const read = await tmux.listPaneStartCommands();
+      assert.deepEqual({ answered: read.answered, cause: read.cause, size: read.sessions.size }, { answered: false, cause: 'unparseable', size: 0 });
+    });
+  }
 
   for (const said of [
     'no server running on /private/tmp/tmux-501/default',
@@ -142,5 +162,65 @@ describe('tmux.listPaneStartCommands', () => {
     fakeTmux(() => ({ error: Object.assign(new Error('spawn tmux ENOENT'), { code: 'ENOENT' }) }));
     const read = await tmux.listPaneStartCommands();
     assert.deepEqual({ answered: read.answered, cause: read.cause }, { answered: false, cause: 'tmux-not-run' });
+  });
+});
+
+describe('tmux.listPaneStartCommands against a real tmux, run as the server runs it', () => {
+  const { execFileSync, execFile } = require('node:child_process');
+  const socket = `tc-test-panes-${process.pid}`;
+  // The server runs under launchd: not in a tmux pane, and with no locale. A
+  // tmux client in that state does not take its output to be UTF-8, and prints
+  // every control and non-ASCII character as an underscore. A developer's
+  // shell usually has a pane, a UTF-8 locale or both, so both are taken away.
+  const { TMUX: _tmux, TMUX_PANE: _pane, LANG: _lang, LC_CTYPE: _ctype, ...rest } = process.env;
+  const outside = { ...rest, LC_ALL: 'C' };
+  let available = true;
+  try {
+    execFileSync('tmux', ['-V'], { stdio: 'ignore' });
+  } catch {
+    available = false;
+  }
+
+  /**
+   * Run tmux on this test's own server.
+   * @param {string[]} args - tmux arguments
+   * @returns {string}
+   */
+  const onSocket = (args) => execFileSync('tmux', ['-L', socket, ...args], { env: outside, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+
+  it('reads back each session\'s name and exact start command, and a session with none', { skip: available ? false : 'tmux is not installed here' }, async (t) => {
+    const wrapped = 'export PATH="/x y/bin:$PATH"; /opt/fake/bin/codex --remote unix:///tmp/codex-daemon/abc --full-auto';
+    const accented = '/Users/jos\u00e9/bin/codex --no-daemon; sleep 30';
+    // Registered before anything is started, so a start that fails part way leaves no server behind.
+    t.after(() => { try { onSocket(['kill-server']); } catch { /* never started, or already gone */ } });
+    const first = uniqueSessionName('panes-first');
+    const second = uniqueSessionName('panes-second');
+    const shell = uniqueSessionName('panes-shell');
+    const accent = uniqueSessionName('panes-accent');
+    try {
+      onSocket(['new-session', '-d', '-s', first, `${wrapped}; sleep 30`]);
+      onSocket(['new-session', '-d', '-s', second, 'sleep 30']);
+      onSocket(['new-session', '-d', '-s', shell]);
+      onSocket(['new-session', '-d', '-s', accent, accented]);
+    } catch (err) {
+      t.skip(`tmux could not start a server here: ${err.message.split('\n')[0]}`);
+      return;
+    }
+    tmux._async.execFile = (bin, args, opts, cb) => execFile(bin, ['-L', socket, ...args], { ...opts, env: outside }, cb);
+    const read = await tmux.listPaneStartCommands();
+    // What this tmux printed, for the failure message: its quoting has differed between versions.
+    const raw = `${execFileSync('tmux', ['-V'], { encoding: 'utf8' }).trim()} printed:\n${onSocket(['-u', 'list-panes', '-a', '-F', '#{session_name}:#{pane_start_command}'])}`;
+    assert.deepEqual({ answered: read.answered, cause: read.cause }, { answered: true, cause: null }, raw);
+    assert.deepEqual([...read.sessions.keys()].sort(), [accent, first, second, shell].sort(), raw);
+    assert.deepEqual(read.sessions.get(accent), [accented], `a character outside ASCII comes back as itself, not as an underscore. ${raw}`);
+    assert.deepEqual(read.sessions.get(first), [`${wrapped}; sleep 30`], raw);
+    assert.deepEqual(read.sessions.get(second), ['sleep 30'], raw);
+    assert.deepEqual(read.sessions.get(shell), [], raw);
+  });
+
+  it('reads a socket with no server as an answered empty fleet', { skip: available ? false : 'tmux is not installed here' }, async () => {
+    tmux._async.execFile = (bin, args, opts, cb) => execFile(bin, ['-L', `${socket}-none`, ...args], { ...opts, env: outside }, cb);
+    const read = await tmux.listPaneStartCommands();
+    assert.deepEqual({ answered: read.answered, cause: read.cause, size: read.sessions.size }, { answered: true, cause: null, size: 0 });
   });
 });
