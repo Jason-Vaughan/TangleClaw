@@ -35,6 +35,29 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-09 — #2233: the isolation inventory could not read tmux when run by the server
+
+<!-- prawduct: type=bugfix | scope=2233-launch-identity-containment -->
+
+Found by the first read of `tc sessions isolation` on the live install, minutes after `c1ce788a5` was deployed. Branch `fix/2233-pane-reader-separator`, from `origin/main` `c1ce788a5`.
+
+Visual change: no
+
+**What was wrong.** `lib/tmux.js#listPaneStartCommands` asked tmux for each pane as name, tab, command. A tmux client run from inside a pane prints that tab. One run outside a pane prints `_` in its place (measured: `env -u TMUX -u TMUX_PANE tmux list-panes -a -F '#{session_name}<tab>#{pane_start_command}'`). The server is not in a pane, so no line could be split, every line became a session name with no command, no session was found under its real name, and the inventory read each one as `not-applicable` (`no_pane`) and printed "No live session needs relaunching". A false all-clear, on every install, for every engine.
+
+**Why nothing caught it.** The reader's tests put a function in tmux's place, so they tested my model of tmux's output. The one run against a real tmux before the merge was made from this session's own pane, which is the one context where the tab survives. The boundary review found the same end state by another path (a failed tmux read) and that path was closed; this one arrives with tmux exiting 0.
+
+**What changed.**
+- The separator is a colon. tmux never lets one into a session name (it stores `a:b.c` as `a_b_c`, measured), so the first colon on a line always ends the name, and tmux prints it the same inside and outside a pane.
+- A line that cannot be split (no separator, or nothing before it) makes the whole read `answered: false` (`unparseable`): every session then reads `unknown`. It used to be taken as a session with no start command.
+- `test/tmux-pane-start-commands.test.js` gains a block that starts a real tmux server on its own socket and reads it with the pane's environment removed, as the server does. It reproduces the defect on the old code. It skips with a reason where tmux is not installed, which includes CI.
+
+**Checked the same way.** Run with `TMUX` and `TMUX_PANE` removed against this host, the inventory now finds this session and the Project Master under their own names.
+
+**Not covered.** CI has no tmux, so the real-tmux block runs only on a developer's machine. The live proofs for #2233 are still owed.
+
+**Tests.** The format, the first-colon split, three unsplittable listings and the two real-tmux cases were run red on `c1ce788a5` first.
+
 ## 2026-10-09 — #2233: which running sessions were launched isolated (inventory and the carried fixes)
 
 <!-- prawduct: type=bugfix | scope=2233-launch-identity-containment -->
