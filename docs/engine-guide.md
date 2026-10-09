@@ -889,8 +889,8 @@ Engine-profile `launch.env` overrides any of these keys on collision.
 **What `tc` checks about its own identity (#2233).** Two things, and they answer different
 questions. `tc whoami` prints the server's verdict on the launch id the pane carries: `verified`,
 `stale` with a reason, or `unbound`. And before any verb sends a request, `tc` compares
-`TANGLECLAW_LAUNCH_ID`, `TANGLECLAW_PROJECT_ID` and `TANGLECLAW_ROLE` in its own environment with
-the values tmux recorded for the pane it runs in (`tmux show-environment -t "$TMUX_PANE"`, bounded
+`TANGLECLAW_LAUNCH_ID`, `TANGLECLAW_PROJECT_ID`, `TANGLECLAW_ROLE` and `TANGLECLAW_WORKSPACE_ID` in
+its own environment with the values tmux recorded for the pane it runs in (`tmux show-environment -t "$TMUX_PANE"`, bounded
 at one second). A difference refuses the verb with `PANE_IDENTITY_MISMATCH`, exit 2, and nothing is
 sent. The comparison needs `TMUX` and `TMUX_PANE` in the tool shell and a tmux it may talk to. An
 engine whose tools run outside the pane (Codex on its native startup channel, where they run in the

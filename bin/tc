@@ -27,7 +27,8 @@
  * which is the failure this CLI exists to end.
  *
  * Exit codes: 0 answered (honest emptiness included) · 1 usage or
- * environment · 2 server unreachable, API error, or the action failed.
+ * environment · 2 server unreachable, API error, the action failed, or the
+ * local `PANE_IDENTITY_MISMATCH` refusal above.
  */
 
 const path = require('node:path');

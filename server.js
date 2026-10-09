@@ -5424,13 +5424,29 @@ function _admittedAs(binding) {
  *
  * A check that throws answers `unknown`, never `verified`: whoami is how a
  * pane diagnoses its identity, so it still answers, and says the check did not
- * run rather than leaving the field out.
+ * run rather than leaving the field out. A Project Master launch id that tmux
+ * could not be asked about is `unknown` here too, with the resolver's own
+ * cause and recovery: nothing was found wrong with it, so the report does not
+ * call it stale. The write floor still refuses it; only this report differs.
+ *
+ * A stale binding is logged at warn, without the launch id. An absent one is
+ * not: every browser preview of this route is unbound.
  * @param {object} req - The request
  * @returns {{state: string, reason: (string|null), role: (string|null), projectId: (number|null), sessionId: (number|null), cause: (string|null), recovery: (string|null)}}
  */
 function _whoamiBinding(req) {
   try {
-    return launchBindingGuard.describeBinding(req);
+    const described = launchBindingGuard.describeBinding(req);
+    if (described.reason === sharedDocsAccess.INVALID_REASONS.MASTER_UNVERIFIABLE) return { ...described, state: 'unknown' };
+    if (described.state === launchBindingGuard.BINDING_STATES.STALE) {
+      log.warn('whoami found a stale launch binding', {
+        reason: described.reason,
+        claimedProjectId: req.headers[sharedDocsAccess.PROJECT_HEADER] || null,
+        claimedRole: req.headers[sharedDocsAccess.ROLE_HEADER] || null,
+        sessionId: described.sessionId
+      });
+    }
+    return described;
   } catch (err) { // prawduct:allow prawduct/broad-except -- whoami is how a pane diagnoses its identity: a failed check is reported as unknown, not as a failed request
     log.warn('Launch binding could not be checked for whoami: reported as unknown', { error: err.message });
     return {

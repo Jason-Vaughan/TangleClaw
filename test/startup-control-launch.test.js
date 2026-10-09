@@ -272,6 +272,27 @@ describe('startupControl at launch and teardown (codex)', () => {
     assert.equal(created.opts.env.TANGLECLAW_LAUNCH_ID, env.TANGLECLAW_LAUNCH_ID, 'pane and server carry the same identity');
   });
 
+  it('the app-server is not told it runs in the tmux pane the TangleClaw server was started from', () => {
+    healthySeams();
+    const had = { TMUX: process.env.TMUX, TMUX_PANE: process.env.TMUX_PANE };
+    process.env.TMUX = '/private/tmp/tmux-501/default,4242,0';
+    process.env.TMUX_PANE = '%424242';
+    try {
+      launched();
+    } finally {
+      for (const [key, value] of Object.entries(had)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+    // Tools run in the app-server. With the server's own pane in their
+    // environment, `tc` would compare this launch with that pane's and refuse.
+    const env = calls.spawn[0].opts.env;
+    assert.ok(!('TMUX' in env), 'TMUX is not passed on');
+    assert.ok(!('TMUX_PANE' in env), 'TMUX_PANE is not passed on');
+    assert.equal(env.HOME, process.env.HOME, 'the rest of the environment is');
+  });
+
   it('a version without a verified native channel launches the exact executable with --no-daemon, and so does a native channel that fails to start', () => {
     healthySeams({ execFileSync: () => 'codex-cli 0.157.1\n' });
     let l = launched({ launchMode: 'fullAuto' });

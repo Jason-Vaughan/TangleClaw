@@ -112,6 +112,24 @@ describe('tc whoami: the launch binding (#2233)', () => {
     assert.match(out, /You claim to be the Project Master\. TangleClaw has not verified that\./);
   });
 
+  it('prints the exact sentence the generated guide tells a session to look for', () => {
+    const guide = fs.readFileSync(path.join(__dirname, '..', 'lib', 'engines.js'), 'utf8');
+    const quoted = guide.match(/a `tc whoami` that does not read `([^`]+)` means stop/);
+    assert.ok(quoted, 'the guide quotes the line a session checks for');
+    for (const out of [
+      verbs.renderWhoami(answer(VERIFIED)),
+      verbs.renderWhoami({ role: 'master', project: null, sessionId: null, binding: { ...VERIFIED, role: 'master', projectId: null, sessionId: null }, api: { origin: 'http://localhost:3102' }, operator: { host: null, note: 'note' }, capabilities: [] })
+    ]) {
+      assert.ok(out.split('\n').some((line) => line.startsWith(quoted[1])), `${quoted[1]} leads a line of:\n${out}`);
+    }
+    assert.ok(!verbs.renderWhoami(answer(STALE)).includes(quoted[1]), 'and a stale binding never prints it');
+  });
+
+  it('tells a pane with a stale binding to do what the server\'s refusal tells it', () => {
+    const guard = require('../lib/launch-binding-guard');
+    assert.equal(verbs.PANE_RECOVERY, guard.recoveryFor(guard.BINDING_STATES.STALE, 'unknown-launch'));
+  });
+
   it('prints what the pane check found, whichever answer it was', () => {
     const match = verbs.renderWhoami(answer(VERIFIED), { verdict: 'match', reason: null, differences: [] });
     assert.match(match, /Pane check: this pane's tmux session recorded the same launch identity\./);
@@ -208,6 +226,26 @@ describe('tc: the pane\'s own launch identity (#2233)', () => {
           assert.equal(d.process, ENV[d.key] || null);
           assert.equal(d.pane, vars[d.key] || null);
         }
+      });
+    }
+
+    it('match: the workspace id the pane recorded is the one this shell carries', () => {
+      const env = { ...ENV, TANGLECLAW_WORKSPACE_ID: 'proj-aaaa1111' };
+      const v = verbs.judgePaneIdentity({ env, pane: pane({ TANGLECLAW_LAUNCH_ID: 'L-aaa', TANGLECLAW_PROJECT_ID: '14', TANGLECLAW_WORKSPACE_ID: 'proj-aaaa1111' }) });
+      assert.equal(v.verdict, 'match');
+    });
+
+    for (const [label, mine, recorded] of [
+      ['this shell carries another workspace\'s id', 'other-bbbb2222', 'proj-aaaa1111'],
+      ['this shell carries a workspace id the pane never recorded', 'other-bbbb2222', null],
+      ['this shell lost the workspace id the pane recorded', null, 'proj-aaaa1111']
+    ]) {
+      it(`mismatch: ${label}`, () => {
+        const env = { ...ENV, ...(mine ? { TANGLECLAW_WORKSPACE_ID: mine } : {}) };
+        const vars = { TANGLECLAW_LAUNCH_ID: 'L-aaa', TANGLECLAW_PROJECT_ID: '14', ...(recorded ? { TANGLECLAW_WORKSPACE_ID: recorded } : {}) };
+        const v = verbs.judgePaneIdentity({ env, pane: pane(vars) });
+        assert.equal(v.verdict, 'mismatch');
+        assert.deepEqual(v.differences, [{ key: 'TANGLECLAW_WORKSPACE_ID', process: mine, pane: recorded }]);
       });
     }
 
