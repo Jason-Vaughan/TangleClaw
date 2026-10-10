@@ -7,7 +7,8 @@
  * The store is real: the receipts, the composition that says a receipt expired
  * and the record of a nudge are the ones the server uses. What the host would
  * have to supply is stubbed at the module's seams: the pane (nothing here runs
- * tmux), the activity observer's reading, and the wrap registry.
+ * tmux), the activity observer's reading, the wrap registry, and the
+ * switchboard (no message leaves the process).
  */
 
 const { describe, it, before, after, beforeEach } = require('node:test');
@@ -40,6 +41,12 @@ describe('workload nudge monitor (#2262)', () => {
   let paneless;
   /** The sessions this test made: the store is shared, and a tick must not judge an earlier test's lanes. */
   let mine;
+  /** @type {Array<{to: string, message: string}>} Every switchboard send the monitor attempted. */
+  let sent;
+  /** A test's own send, or null for one the Hub accepts. */
+  let sendMessage;
+  /** Project id to the switchboard workspace of its live session. */
+  let workspaces;
   let seq = 0;
 
   /**
@@ -113,6 +120,15 @@ describe('workload nudge monitor (#2262)', () => {
     wrapRunning = new Set();
     paneless = new Set();
     mine = new Set();
+    sent = [];
+    sendMessage = null;
+    workspaces = new Map();
+    // No test reaches the Hub or the workspace registry: both are the host's.
+    nudge._internal.workspaceForProject = (project) => workspaces.get(project.id) || null;
+    nudge._internal.sendMessage = (m) => {
+      sent.push(m);
+      return sendMessage ? sendMessage(m) : Promise.resolve({ status: 'delivered', id: `m${sent.length}`, to: m.to });
+    };
     const observer = {
       get: (sessionId) => ({
         ...(engineBySession.get(sessionId) || { activity: 'unknown', reason: 'not-observed' }),
@@ -338,9 +354,12 @@ describe('workload nudge monitor (#2262)', () => {
       const l = expiredLane();
       assert.equal(verdict(l), 'nudged');
       assert.equal(verdict(l, T0 + 32 * MIN), 'already-nudged');
-      assert.equal(verdict(l, T0 + 300 * MIN), 'already-nudged');
+      // Hours later the silence has been escalated (this lane names no
+      // coordinator), and the pane has still had its one line.
+      assert.equal(verdict(l, T0 + 300 * MIN), 'escalated-operator');
+      assert.equal(verdict(l, T0 + 301 * MIN), 'already-escalated');
       assert.equal(typed.length, 1);
-      assert.equal(facts(l).length, 1);
+      assert.deepEqual(facts(l).map((f) => f.kind), ['nudged', 'escalated']);
     });
 
     it('already-nudged: a restart, which forgets everything in memory, types nothing', () => {
@@ -556,6 +575,431 @@ describe('workload nudge monitor (#2262)', () => {
       assert.match(logged, /workloadNudge\.escalateAfterMinutes/);
       assert.equal(logged.includes('line two of a bad text'), false);
       assert.ok(l);
+    });
+  });
+
+  describe('the escalation', () => {
+    /**
+     * An enabled lane whose report expired, naming a coordinator project that
+     * has a live switchboard workspace.
+     * @param {object} [setting] - Extra `workloadNudge` keys for the silent lane
+     * @returns {{l: object, c: object}} The silent lane and its coordinator
+     */
+    const coordinated = (setting = {}) => {
+      const c = lane(undefined);
+      workspaces.set(c.project.id, `ws-${c.project.name}`);
+      return { l: expiredLane({ coordinatorProject: c.project.name, ...setting }), c };
+    };
+    const kinds = (l) => facts(l).map((f) => `${f.kind}/${f.route || '-'}`);
+
+    it('declares a meaning for every code an escalation fact can carry', () => {
+      for (const [code, meaning] of Object.entries(nudge.ESCALATION_MEANINGS)) {
+        assert.equal(typeof meaning, 'string', code);
+        assert.ok(meaning.length > 20, code);
+      }
+    });
+
+    it('is not due until the set time after the nudge, then is one message to the coordinator workspace', async () => {
+      const { l, c } = coordinated();
+      assert.equal(verdict(l), 'nudged');
+      assert.equal(verdict(l, T0 + 40 * MIN), 'already-nudged', 'nine minutes after the nudge');
+      await nudge.settled();
+      assert.deepEqual(sent, []);
+
+      assert.equal(verdict(l, T0 + 41 * MIN), 'escalation-sending');
+      await nudge.settled();
+      assert.equal(sent.length, 1);
+      assert.equal(sent[0].to, `ws-${c.project.name}`);
+      assert.deepEqual(kinds(l), ['nudged/-', 'escalated/coordinator']);
+      const fact = facts(l)[1];
+      assert.equal(fact.target_project_id, c.project.id);
+      assert.equal(fact.code, 'escalated');
+      assert.equal(fact.created_at, new Date(T0 + 41 * MIN).toISOString());
+      assert.equal(fact.engine_activity, 'at-rest');
+      assert.deepEqual(JSON.parse(fact.detail_json), { receiptSeq: l.receipt.seq, silentSeconds: 41 * 60, nudged: true, hubStatus: 'delivered' });
+    });
+
+    it('a second tick sends nothing, and neither does a restart', async () => {
+      const { l } = coordinated();
+      verdict(l);
+      verdict(l, T0 + 41 * MIN);
+      await nudge.settled();
+      assert.equal(verdict(l, T0 + 42 * MIN), 'already-escalated');
+      nudge.stop();
+      assert.equal(verdict(l, T0 + 300 * MIN), 'already-escalated');
+      await nudge.settled();
+      assert.equal(sent.length, 1);
+      assert.equal(typed.length, 1);
+    });
+
+    it('waits the minutes the project set', async () => {
+      const { l } = coordinated({ escalateAfterMinutes: 2 });
+      verdict(l);
+      assert.equal(verdict(l, T0 + 32 * MIN), 'already-nudged');
+      assert.equal(verdict(l, T0 + 33 * MIN), 'escalation-sending');
+      await nudge.settled();
+      assert.equal(sent.length, 1);
+    });
+
+    it('a fresh report before the deadline means no escalation for that expiry, ever', async () => {
+      const { l } = coordinated();
+      verdict(l);
+      reports(l, T0 + 35 * MIN);
+      for (const minute of [41, 50, 64]) assert.equal(verdict(l, T0 + minute * MIN), 'receipt-current');
+      await nudge.settled();
+      assert.deepEqual(sent, []);
+      // The answer's own expiry is a new silence, with its own nudge and its own deadline.
+      assert.equal(verdict(l, T0 + 66 * MIN), 'nudged');
+      assert.equal(verdict(l, T0 + 75 * MIN), 'already-nudged');
+      assert.equal(verdict(l, T0 + 76 * MIN), 'escalation-sending');
+      await nudge.settled();
+      assert.equal(sent.length, 1);
+      assert.deepEqual(kinds(l), ['nudged/-'], 'the first receipt was answered and is never escalated');
+    });
+
+    it('the coordinator is whoever the config names, whatever the projects are called', async () => {
+      const { l, c } = coordinated();
+      const decoy = lane(undefined);
+      workspaces.set(decoy.project.id, 'ws-decoy');
+      verdict(l);
+      verdict(l, T0 + 41 * MIN);
+      await nudge.settled();
+      assert.deepEqual(sent.map((m) => m.to), [`ws-${c.project.name}`]);
+    });
+
+    it('a coordinator with no live session: recorded as unreachable, and escalated on the operator route', async () => {
+      const { l, c } = coordinated();
+      workspaces.delete(c.project.id);
+      verdict(l);
+      assert.equal(verdict(l, T0 + 41 * MIN), 'escalated-operator');
+      await nudge.settled();
+      assert.deepEqual(sent, []);
+      assert.deepEqual(kinds(l), ['nudged/-', 'escalation-undeliverable/coordinator', 'escalated/operator']);
+      const [, unreachable, operator] = facts(l);
+      assert.equal(unreachable.code, 'coordinator-no-live-session');
+      assert.equal(unreachable.target_project_id, c.project.id);
+      assert.equal(operator.code, 'coordinator-no-live-session');
+      assert.equal(operator.target_project_id, null);
+      // The coordinator coming back does not reopen an escalation already made.
+      workspaces.set(c.project.id, 'ws-late');
+      assert.equal(verdict(l, T0 + 42 * MIN), 'already-escalated');
+      await nudge.settled();
+      assert.deepEqual(sent, []);
+    });
+
+    it('a coordinator name that matches no project is recorded, never dropped', async () => {
+      const l = expiredLane({ coordinatorProject: 'no-such-project-anywhere' });
+      verdict(l);
+      assert.equal(verdict(l, T0 + 41 * MIN), 'escalated-operator');
+      assert.deepEqual(kinds(l), ['nudged/-', 'escalation-undeliverable/coordinator', 'escalated/operator']);
+      const unreachable = facts(l)[1];
+      assert.equal(unreachable.code, 'coordinator-unknown-project');
+      assert.equal(unreachable.target_project_id, null);
+      assert.equal(JSON.parse(unreachable.detail_json).coordinator, 'no-such-project-anywhere');
+      assert.deepEqual(sent, []);
+    });
+
+    it('a lane that names itself, or nobody, goes to the operator route with no message to any project', async () => {
+      const nobody = expiredLane();
+      const selfNamed = lane(undefined);
+      const cfg = store.projectConfig.load(selfNamed.project.path);
+      cfg.workloadNudge = { enabled: true, coordinatorProject: selfNamed.project.name };
+      store.projectConfig.save(selfNamed.project.path, cfg);
+      selfNamed.receipt = reports(selfNamed, T0);
+      workspaces.set(selfNamed.project.id, 'ws-self');
+      nudge.tick(T0 + 31 * MIN);
+      const verdicts = nudge.tick(T0 + 41 * MIN);
+      await nudge.settled();
+      assert.equal(verdicts[nobody.sessionId], 'escalated-operator');
+      assert.equal(verdicts[selfNamed.sessionId], 'escalated-operator');
+      assert.deepEqual(kinds(nobody), ['nudged/-', 'escalated/operator']);
+      assert.equal(facts(nobody)[1].code, 'no-coordinator');
+      assert.deepEqual(kinds(selfNamed), ['nudged/-', 'escalated/operator']);
+      assert.equal(facts(selfNamed)[1].code, 'coordinator-is-self');
+      assert.deepEqual(sent, []);
+    });
+
+    it('a send that throws is not counted as sent, and the next tick tries again', async () => {
+      const { l } = coordinated();
+      verdict(l);
+      sendMessage = async () => { throw new Error('Message bridge unreachable'); };
+      assert.equal(verdict(l, T0 + 41 * MIN), 'escalation-sending');
+      await nudge.settled();
+      assert.deepEqual(kinds(l), ['nudged/-'], 'nothing says the coordinator was told');
+      sendMessage = null;
+      assert.equal(verdict(l, T0 + 42 * MIN), 'escalation-sending');
+      await nudge.settled();
+      assert.equal(sent.length, 2, 'both attempts reached the send');
+      assert.deepEqual(kinds(l), ['nudged/-', 'escalated/coordinator']);
+      assert.equal(verdict(l, T0 + 43 * MIN), 'already-escalated');
+    });
+
+    it('a Hub that never takes the message: after the last attempt the coordinator is recorded as unreachable', async () => {
+      const { l, c } = coordinated();
+      verdict(l);
+      sendMessage = async () => { throw new Error('Message bridge unreachable'); };
+      for (let attempt = 0; attempt < nudge.MAX_SEND_ATTEMPTS; attempt += 1) {
+        assert.equal(verdict(l, T0 + (41 + attempt) * MIN), 'escalation-sending', `attempt ${attempt + 1}`);
+        await nudge.settled();
+      }
+      assert.equal(sent.length, nudge.MAX_SEND_ATTEMPTS);
+      assert.equal(verdict(l, T0 + 50 * MIN), 'escalated-operator');
+      await nudge.settled();
+      assert.equal(sent.length, nudge.MAX_SEND_ATTEMPTS, 'no further attempt');
+      assert.deepEqual(kinds(l), ['nudged/-', 'escalation-undeliverable/coordinator', 'escalated/operator']);
+      assert.equal(facts(l)[1].code, 'coordinator-send-failed');
+      assert.equal(facts(l)[1].target_project_id, c.project.id);
+    });
+
+    it('a send the Hub has not answered is not sent again by the next tick', async () => {
+      const { l } = coordinated();
+      verdict(l);
+      let answer;
+      sendMessage = () => new Promise((resolve) => { answer = resolve; });
+      assert.equal(verdict(l, T0 + 41 * MIN), 'escalation-sending');
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(verdict(l, T0 + 42 * MIN), 'escalation-sending');
+      assert.equal(verdict(l, T0 + 43 * MIN), 'escalation-sending');
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(sent.length, 1);
+      answer({ status: 'queued', id: 'm1' });
+      await nudge.settled();
+      assert.deepEqual(kinds(l), ['nudged/-', 'escalated/coordinator']);
+      assert.equal(JSON.parse(facts(l)[1].detail_json).hubStatus, 'queued');
+    });
+
+    it('a message accepted whose record cannot be written is never sent twice', async () => {
+      const { l } = coordinated();
+      verdict(l);
+      let refuse = true;
+      nudge._internal.recordFact = (row) => {
+        if (refuse && row.kind === 'escalated') throw new Error('database is locked');
+        return realInternal.recordFact(row);
+      };
+      assert.equal(verdict(l, T0 + 41 * MIN), 'escalation-sending');
+      await nudge.settled();
+      assert.deepEqual(kinds(l), ['nudged/-']);
+      assert.equal(verdict(l, T0 + 42 * MIN), 'escalated-unrecorded');
+      assert.equal(verdict(l, T0 + 43 * MIN), 'escalated-unrecorded');
+      await nudge.settled();
+      assert.equal(sent.length, 1);
+      refuse = false;
+      assert.equal(verdict(l, T0 + 44 * MIN), 'already-escalated');
+      assert.deepEqual(kinds(l), ['nudged/-', 'escalated/coordinator']);
+      assert.equal(facts(l)[1].created_at, new Date(T0 + 41 * MIN).toISOString(), 'recorded with the time it was sent');
+      assert.equal(sent.length, 1);
+    });
+
+    it('an operator-route record the store refuses is written on a later tick, once', async () => {
+      const { l, c } = coordinated();
+      workspaces.delete(c.project.id);
+      verdict(l);
+      let refuse = true;
+      nudge._internal.recordFact = (row) => {
+        if (refuse && row.kind === 'escalated') throw new Error('database is locked');
+        return realInternal.recordFact(row);
+      };
+      assert.equal(verdict(l, T0 + 41 * MIN), 'check-failed');
+      assert.deepEqual(kinds(l), ['nudged/-', 'escalation-undeliverable/coordinator']);
+      refuse = false;
+      assert.equal(verdict(l, T0 + 42 * MIN), 'escalated-operator');
+      assert.deepEqual(kinds(l), ['nudged/-', 'escalation-undeliverable/coordinator', 'escalated/operator']);
+      assert.equal(facts(l)[2].code, 'coordinator-no-live-session');
+    });
+
+    describe('a lane that could not be nudged', () => {
+      /** Each way a pane cannot be typed into that nobody chose, and how a test brings it about. */
+      const cannot = {
+        'engine-busy': (l) => engineBySession.set(l.sessionId, { activity: 'busy', reason: 'spinner' }),
+        'engine-not-at-rest': (l) => engineBySession.set(l.sessionId, { activity: 'not-at-rest', reason: 'no-prompt' }),
+        'engine-unknown': (l) => engineBySession.delete(l.sessionId),
+        'no-pane': (l) => paneless.add(l.sessionId),
+        'unprofiled-engine': () => { nudge._internal.wakeProfiles = () => ({}); },
+        'startup-dialog': () => { injectResult = { ok: false, error: 'a startup dialog is up', startupDialog: { code: 'trust' } }; },
+        'send-failed': () => { injectResult = { ok: false, error: 'tmux session "x" not found' }; }
+      };
+      for (const [code, arrange] of Object.entries(cannot)) {
+        it(`${code}: escalated with that reason once the time has passed since the report expired`, async () => {
+          const { l, c } = coordinated();
+          arrange(l);
+          assert.equal(verdict(l), code);
+          assert.equal(verdict(l, T0 + 39 * MIN), code, 'nine minutes after the expiry');
+          await nudge.settled();
+          assert.deepEqual(sent, []);
+          assert.deepEqual(facts(l), []);
+
+          assert.equal(verdict(l, T0 + 40 * MIN), 'escalation-sending');
+          await nudge.settled();
+          assert.equal(sent.length, 1);
+          assert.equal(sent[0].to, `ws-${c.project.name}`);
+          assert.match(sent[0].message, /It was not nudged: /);
+          assert.ok(sent[0].message.includes(nudge.VERDICT_MEANINGS[code].split(';')[0]));
+          assert.deepEqual(kinds(l), ['not-nudged/-', 'escalated/coordinator']);
+          assert.equal(facts(l)[0].code, code);
+          assert.equal(JSON.parse(facts(l)[1].detail_json).nudged, false);
+          assert.equal(verdict(l, T0 + 41 * MIN), 'already-escalated');
+          assert.deepEqual(kinds(l), ['not-nudged/-', 'escalated/coordinator'], 'one reason row, not one per tick');
+        });
+      }
+
+      it('a report that lasts 120 minutes is measured from its own expiry', async () => {
+        const c = lane(undefined);
+        workspaces.set(c.project.id, 'ws-c');
+        const l = lane({ enabled: true, coordinatorProject: c.project.name });
+        l.receipt = reports(l, T0, 'waiting-external');
+        paneless.add(l.sessionId);
+        assert.equal(verdict(l, T0 + 129 * MIN), 'no-pane');
+        assert.equal(verdict(l, T0 + 130 * MIN), 'escalation-sending');
+        await nudge.settled();
+        assert.equal(sent.length, 1);
+      });
+
+      it('a pane that comes to rest before the deadline is nudged, and the deadline then runs from the nudge', async () => {
+        const { l } = coordinated();
+        engineBySession.set(l.sessionId, { activity: 'not-at-rest', reason: 'no-prompt' });
+        assert.equal(verdict(l), 'engine-not-at-rest');
+        engineBySession.set(l.sessionId, { activity: 'at-rest', reason: 'at-rest' });
+        assert.equal(verdict(l, T0 + 38 * MIN), 'nudged');
+        assert.equal(verdict(l, T0 + 47 * MIN), 'already-nudged');
+        assert.equal(verdict(l, T0 + 48 * MIN), 'escalation-sending');
+        await nudge.settled();
+        assert.match(sent[0].message, /It was nudged in its pane 10 minute\(s\) ago/);
+        assert.deepEqual(kinds(l), ['nudged/-', 'escalated/coordinator']);
+      });
+
+      it('a pane first typeable after the deadline is nudged on that tick, not escalated on it', async () => {
+        const { l } = coordinated();
+        engineBySession.set(l.sessionId, { activity: 'busy', reason: 'spinner' });
+        assert.equal(verdict(l, T0 + 35 * MIN), 'engine-busy');
+        engineBySession.set(l.sessionId, { activity: 'at-rest', reason: 'at-rest' });
+        nudge.stop(); // a restart: nothing in memory says how long the lane waited
+        assert.equal(verdict(l, T0 + 60 * MIN), 'nudged');
+        await nudge.settled();
+        assert.deepEqual(sent, []);
+        assert.equal(verdict(l, T0 + 70 * MIN), 'escalation-sending');
+        await nudge.settled();
+        assert.equal(sent.length, 1);
+      });
+    });
+
+    describe('a lane left alone on purpose is not escalated', () => {
+      it('wrap-running: never nudged, never escalated, however long', async () => {
+        const { l } = coordinated();
+        wrapRunning.add(l.project.name);
+        assert.equal(verdict(l), 'wrap-running');
+        assert.equal(verdict(l, T0 + 300 * MIN), 'wrap-running');
+        await nudge.settled();
+        assert.deepEqual(sent, []);
+        assert.deepEqual(facts(l), []);
+      });
+
+      it('lane-held: a lane the pane writer refuses as held is not escalated', async () => {
+        const { l } = coordinated();
+        injectResult = { ok: false, error: 'CONTROL_HELD: held', controlRefusal: { code: 'CONTROL_HELD' } };
+        assert.equal(verdict(l), 'lane-held');
+        assert.equal(verdict(l, T0 + 300 * MIN), 'lane-held');
+        await nudge.settled();
+        assert.deepEqual(sent, []);
+        assert.deepEqual(facts(l), []);
+      });
+
+      it('a lane nudged and then held, stopped or wrapped is not escalated until that ends', async () => {
+        const { l } = coordinated();
+        verdict(l);
+        wrapRunning.add(l.project.name);
+        assert.equal(verdict(l, T0 + 41 * MIN), 'wrap-running');
+        wrapRunning.clear();
+        const composed = nudge._internal.laneContext;
+        for (const availability of ['HELD', 'STOPPED']) {
+          nudge._internal.laneContext = (...args) => {
+            const ctx = composed(...args);
+            return { ...ctx, lane: { ...ctx.lane, composed: { ...ctx.lane.composed, availability } } };
+          };
+          assert.equal(verdict(l, T0 + 42 * MIN), 'lane-held', availability);
+        }
+        await nudge.settled();
+        assert.deepEqual(sent, []);
+        assert.deepEqual(kinds(l), ['nudged/-']);
+        nudge._internal.laneContext = composed;
+        assert.equal(verdict(l, T0 + 43 * MIN), 'escalation-sending');
+        await nudge.settled();
+        assert.equal(sent.length, 1);
+      });
+
+      it('a web UI lane running a wrap is not escalated for having no pane', async () => {
+        const { l } = coordinated();
+        paneless.add(l.sessionId);
+        wrapRunning.add(l.project.name);
+        assert.equal(verdict(l, T0 + 60 * MIN), 'wrap-running');
+        await nudge.settled();
+        assert.deepEqual(sent, []);
+        assert.deepEqual(facts(l), []);
+      });
+    });
+
+    describe('the message', () => {
+      it('names the lane, how long it has been silent and what the engine was observed doing', async () => {
+        const secret = 'A project line nobody should find in a message.';
+        const { l } = coordinated({ text: secret });
+        verdict(l);
+        engineBySession.set(l.sessionId, { activity: 'not-at-rest', reason: 'no-prompt' });
+        verdict(l, T0 + 41 * MIN);
+        await nudge.settled();
+        const { message } = sent[0];
+        assert.ok(message.includes(`"${l.project.name}"`));
+        assert.match(message, /has not reported its workload for 41 minute\(s\)/);
+        assert.match(message, /It was nudged in its pane 10 minute\(s\) ago and has not answered\./);
+        assert.match(message, /Its engine was last observed not-at-rest \(no-prompt\)\./);
+        assert.match(message, /restarted, cleared and ended nothing/);
+        assert.equal(message.includes('\n'), false);
+        assert.equal(message.includes(SUMMARY), false, 'nothing from the receipt summary');
+        assert.equal(message.includes(secret), false, 'nothing from the nudge text');
+        assert.equal(facts(l)[1].engine_activity, 'not-at-rest', 'the record keeps the same reading');
+      });
+
+      it('is a fixed template over the values it is given', () => {
+        const body = nudge.escalationBody({
+          projectName: 'lane-x', silentMinutes: 44, activity: 'unknown', reason: null, nudgedMinutesAgo: null, notNudgedCode: 'no-pane'
+        });
+        assert.equal(body, '[TangleClaw] Lane "lane-x" has not reported its workload for 44 minute(s): its last report expired and '
+          + 'no new one has arrived. It was not nudged: the session has no tmux pane to type into (a web UI session). '
+          + 'Its engine was last observed unknown. TangleClaw has restarted, cleared and ended nothing. `tc sessions` shows the lane. '
+          + 'This notice is sent once for this report and needs no reply.');
+      });
+    });
+
+    it('logs name the lane and its coordinator, and never the message, the nudge line or the receipt summary', async () => {
+      const secret = 'A project line nobody should find in a log.';
+      const ok = coordinated({ text: secret });
+      const failing = coordinated({ text: secret });
+      const alone = expiredLane({ text: secret });
+      sendMessage = async (m) => {
+        if (m.to === `ws-${failing.c.project.name}`) throw new Error('Message bridge unreachable');
+        return { status: 'delivered', id: 'm' };
+      };
+      const lines = [];
+      const level = getLevel();
+      setConsoleStream({ write: (text) => lines.push(text) });
+      setLevel('debug');
+      try {
+        nudge.tick(T0 + 31 * MIN);
+        nudge.tick(T0 + 41 * MIN);
+        await nudge.settled();
+      } finally {
+        setConsoleStream(null);
+        setLevel(level);
+      }
+      const logged = lines.join('\n');
+      assert.match(logged, /Escalated a silent lane to its coordinator/);
+      assert.ok(logged.includes(`coordinator=${ok.c.project.name}`));
+      assert.match(logged, /Could not send a silent lane's escalation to its coordinator/);
+      assert.match(logged, /no coordinator that can be told/);
+      assert.ok(logged.includes(nudge.ESCALATION_MEANINGS['no-coordinator']));
+      assert.ok(logged.includes(alone.project.name));
+      assert.ok(sent.length >= 2);
+      for (const m of sent) assert.equal(logged.includes(m.message), false, 'the message body is not logged');
+      assert.equal(logged.includes(secret), false);
+      assert.equal(logged.includes(SUMMARY), false);
     });
   });
 

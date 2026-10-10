@@ -41,14 +41,14 @@ Report at:
 
 ## For coordinators: `tc sessions` / `GET /api/tc/sessions`
 
-Each live lane carries three separate blocks, and a fourth when it was nudged:
+Each live lane carries three separate blocks, and a fourth when it was nudged or escalated:
 
 | Block | What it is |
 |---|---|
 | `engine` | What the pane was observed doing: `busy`, `at-rest`, `not-at-rest` or `unknown`, with `reason`, `observedAt`, `ageSeconds` |
 | `workload` | The newest receipt, with `provenance`: `explicit-receipt`, `stale` (with `staleReason`) or `none`. `narrowing` is present when the operator has narrowed the lane |
 | `composed` | The verdict: `availability`, `clearance`, and the `reasons` behind it |
-| `nudge` | `null`, or the nudge the lane's stale receipt has had and not answered: `nudgedAt`, `receiptSeq`, `ageSeconds`. See [Nudging a lane whose report expired](#nudging-a-lane-whose-report-expired) |
+| `nudge` | `null`, or what was done about the lane's stale receipt and not answered: `nudgedAt`, `receiptSeq`, `ageSeconds` for the nudge (`nudgedAt` is `null` on a lane escalated without one, and `notNudgedReason` then says why), and `escalatedAt`, `escalatedAgeSeconds`, `escalationRoute` (`coordinator` or `operator`) and `escalatedTo` (the coordinator project's name, `null` on the operator route) for the escalation. See [Nudging a lane whose report expired](#nudging-a-lane-whose-report-expired) |
 
 **`availability`**, first match wins:
 
@@ -84,18 +84,45 @@ With it on, a monitor in the server checks that project's live sessions every 30
 - **Only for an expired receipt.** A receipt that stopped counting because a wrap started, a control event was recorded or the launch ended is not nudged, and neither is a session that has written no receipt at all in its launch.
 - **Not every session has a pane that can be typed into.** A web UI session, and a session on an engine with no wake profile, is never nudged.
 
-`tc sessions` shows it on the lane's line, after the engine's reading: `; nudged 14m ago, not yet answered`. The session's own `tc workload show` says the same on its "Coordinators see" line. The clause goes when the session writes a fresh receipt. A stale lane without it was not nudged.
+### When the nudge goes unanswered
 
-What the monitor never does: it clears, restarts and ends nothing, and it writes no receipt on a session's behalf. A lane it nudged stays `UNKNOWN` until the session itself reports.
+A nudge that no fresh receipt answers within `workloadNudge.escalateAfterMinutes` (10 by default) is escalated, once per expired receipt: the server sends one switchboard message to the live session of the project named in the silent lane's own `workloadNudge.coordinatorProject`. The message names the lane, says how long it has been silent, whether and when it was nudged, and what its engine was last observed doing. It is a fixed template: nothing from a receipt's summary or the project's nudge text is in it. It needs no reply.
+
+- **The coordinator is whoever the lane's config names.** No project is treated as a coordinator because of its name or its role.
+- **A fresh receipt first means no escalation**, ever, for that expiry.
+- **A lane that could not be nudged is escalated too**, with the reason, once the same number of minutes has passed since its report expired: a web UI session, an engine with no wake profile, a pane showing a startup dialog, a pane that could not be typed into, or an engine observed `busy`, `not-at-rest` or `unknown` at that moment. If its pane comes to rest first it is nudged instead, and the time then runs from the nudge.
+- **A lane left alone on purpose is not escalated.** One that is held or stopped, or running a wrap, is neither nudged nor escalated while that lasts.
+- **A lane with nobody to tell is recorded on the operator route.** That is a lane that names no coordinator or names itself, one whose coordinator is not a project on this install or has no live session, and one whose message the Hub refused five times running. The reason the coordinator could not be reached is recorded as its own row. **Nothing is sent on the operator route in this version**: the row is the record that the operator is owed the news, and nothing delivers it yet.
+
+`tc sessions` shows all of this on the lane's line, after the engine's reading, and the session's own `tc workload show` says the same on its "Coordinators see" line:
+
+| The lane's line ends | Meaning |
+|---|---|
+| (no clause, on a stale lane) | silent and not noticed: not nudged, not escalated |
+| `; nudged 14m ago, not yet answered` | silent and nudged |
+| `; nudged 14m ago, escalated to TC-Lane-INT 4m ago` | silent, nudged, and its coordinator was told |
+| `; not nudged (startup dialog), escalated to TC-Lane-INT 4m ago` | silent, could not be nudged, and its coordinator was told |
+| `; nudged 14m ago, nobody to escalate to: recorded for the operator 4m ago, nothing sent` | silent, nudged, and nobody could be told |
+
+The clause goes when the session writes a fresh receipt.
+
+Every nudge and escalation is a row in `workload_nudge_facts` with its time: `nudged`, `not-nudged` (with the reason as its `code`), `escalated` (with its `route`, and the coordinator as `target_project_id`) and `escalation-undeliverable`. When the lane answered is not stored there: it is the next receipt of that launch in `workload_receipts`.
+
+What the monitor never does: it clears, restarts and ends nothing, and it writes no receipt on a session's behalf. A lane it nudged or escalated stays `UNKNOWN` until the session itself reports.
 
 **Limits:**
 
 - A nudge is a typed prompt. A session that is wedged will not answer it.
 - The pane's state is the observer's last reading, which can be up to 30 s old.
 - The line is typed before the nudge is recorded, so that a nudge is never on record for a pane that refused it. If the record cannot be written, the server remembers the nudge, retries the write every tick and does not type again. A server restart while the write is still failing is the one case in which a session can get the line twice for one expiry.
-- Nobody else is told yet when a nudge goes unanswered: `coordinatorProject` and `escalateAfterMinutes` are stored and not acted on in this version.
-- Why a lane was not nudged is in the server log and nowhere else yet: the monitor logs each session's verdict, with its meaning, whenever it changes.
-- The monitor logs which project and session it nudged. It never logs the nudge line or a receipt's summary.
+- An escalation is a message to another session. A coordinator that is itself wedged will not act on it, and nothing checks that it did.
+- Nothing is restarted or cleared, for the silent lane or for its coordinator. What to do about a silent lane is the coordinator's decision.
+- A lane that never reported is not watched. The monitor acts only on a receipt that expired by age; a session that has written no receipt in its launch is neither nudged nor escalated.
+- The operator route delivers nothing yet. A silent coordinator, and a lane with no reachable coordinator, are recorded and shown in `tc sessions`, and no notification leaves the server.
+- The message is sent before the escalation is recorded, so that no escalation is on record for a message the Hub refused. A send that fails is tried again on the next tick, up to five times by one server process; the count starts again after a restart. If the Hub accepts the message and the record then cannot be written, the server remembers it, retries the write every tick and does not send again; a restart while the write is still failing is the one case in which a coordinator can get the message twice for one expiry.
+- A session that reports while its escalation is already on its way to the Hub is still escalated for that expiry.
+- Why a lane was not nudged is recorded only when it is escalated. Until then it is in the server log: the monitor logs each session's verdict, with its meaning, whenever it changes.
+- The monitor logs which project and session it nudged or escalated, and to which coordinator. It never logs the nudge line, the escalation message or a receipt's summary.
 
 ## Engine observation
 
