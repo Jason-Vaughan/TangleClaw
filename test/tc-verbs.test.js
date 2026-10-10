@@ -265,6 +265,37 @@ describe('tc verb roster (lib/tc-verbs)', () => {
     });
   });
 
+  describe('a lane line says when a silent lane was nudged (#2262)', () => {
+    const { renderLaneLine } = require('../lib/tc-verbs');
+    const stale = {
+      composed: { availability: 'UNKNOWN', clearance: 'unknown', reasons: ['no-current-receipt'] },
+      workload: {
+        receipt: { state: 'working', clearance: 'do-not-clear', summary: 'building' },
+        provenance: 'stale', staleReason: 'expired', ageSeconds: 45 * 60
+      },
+      engine: { activity: 'at-rest', reason: 'at-rest' }
+    };
+
+    it('adds the clause after the engine reading, with its age in minutes', () => {
+      const line = renderLaneLine({ ...stale, nudge: { nudgedAt: '2026-10-09T12:00:00.000Z', receiptSeq: 3, ageSeconds: 14 * 60 } });
+      assert.match(line, /engine at-rest \(at-rest\); nudged 14m ago, not yet answered$/);
+    });
+
+    it('says nothing about a nudge on a lane that was not nudged', () => {
+      assert.equal(renderLaneLine({ ...stale, nudge: null }).includes('nudged'), false);
+      assert.equal(renderLaneLine(stale).includes('nudged'), false, 'an older server sends no block at all');
+    });
+
+    it('still says nudged when the age is missing, and keeps a narrowing and a rotation after it', () => {
+      const line = renderLaneLine({
+        ...stale,
+        workload: { ...stale.workload, narrowing: { reason: 'reviewing' } },
+        nudge: { nudgedAt: 'not a time', receiptSeq: 3, ageSeconds: null }
+      });
+      assert.match(line, /; nudged, not yet answered; operator-narrowed: reviewing$/);
+    });
+  });
+
   describe('the message verb family fails loudly at every gate', () => {
     const noopCtx = { env: {}, argv: [], getJson: async () => { throw new Error('unexpected fetch'); }, postJson: async () => { throw new Error('unexpected fetch'); } };
     const message = VERB_ROSTER.find((v) => v.id === 'message');

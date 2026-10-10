@@ -269,6 +269,82 @@ describe('composed workload on the routes (ADR 0020 §6, §7, §10)', () => {
     }
     assert.deepEqual(calls, []);
   });
+
+  describe('the nudge block (#2262)', () => {
+    const HOUR = 3_600_000;
+    /**
+     * A receipt written directly, so its time can be in the past: the route
+     * stamps the server's clock and could not produce an expired one.
+     * @param {object} b - A bound project session
+     * @param {object} project - Its project
+     * @param {number} atMs - When it was received
+     * @returns {object} The stored row
+     */
+    const pastReceipt = (b, project, atMs) => store.workloadReceipts.append({
+      project_id: project.id, session_id: b.sessionId, launch_id: b.launchId, assignment_id: null,
+      state: 'working', clearance: 'do-not-clear', summary: 'old work', wait_kind: null, wait_detail: null,
+      refs_json: '{"issues":[],"prs":[],"tasks":[]}', branch: null, head_sha: null, source: 'tc-cli',
+      received_at: new Date(atMs).toISOString()
+    }, { minIntervalMs: 0, nowMs: atMs }).row;
+    const nudgedFact = (b, project, row, atMs) => store.workloadNudgeFacts.record({
+      project_id: project.id, session_id: b.sessionId, launch_id: b.launchId, receipt_id: row.receipt_id,
+      kind: 'nudged', code: 'nudged', created_at: new Date(atMs).toISOString()
+    });
+
+    it('is null on a lane with no receipt, and on a stale lane nobody nudged', async () => {
+      const quiet = bindProject(mkProject('nudge-none'));
+      assert.equal((await lane(quiet.sessionId)).nudge, null);
+      const project = mkProject('nudge-unnoticed');
+      const b = bindProject(project);
+      pastReceipt(b, project, Date.now() - 2 * HOUR);
+      const l = await lane(b.sessionId);
+      assert.equal(l.workload.staleReason, 'expired');
+      assert.equal(l.nudge, null);
+    });
+
+    it('says when the lane\'s expired receipt was nudged, and for which receipt', async () => {
+      const project = mkProject('nudge-told');
+      const b = bindProject(project);
+      const row = pastReceipt(b, project, Date.now() - 2 * HOUR);
+      const nudgedAt = Date.now() - 14 * 60_000;
+      nudgedFact(b, project, row, nudgedAt);
+      const l = await lane(b.sessionId);
+      assert.equal(l.nudge.nudgedAt, new Date(nudgedAt).toISOString());
+      assert.equal(l.nudge.receiptSeq, row.seq);
+      assert.ok(Math.abs(l.nudge.ageSeconds - 14 * 60) <= 5, `ageSeconds ${l.nudge.ageSeconds}`);
+      assert.deepEqual(Object.keys(l.nudge).sort(), ['ageSeconds', 'nudgedAt', 'receiptSeq']);
+    });
+
+    it('goes when the session reports again, and does not return for the answered receipt', async () => {
+      const project = mkProject('nudge-answered');
+      const b = bindProject(project);
+      const row = pastReceipt(b, project, Date.now() - 2 * HOUR);
+      nudgedFact(b, project, row, Date.now() - 60 * 60_000);
+      assert.ok((await lane(b.sessionId)).nudge);
+      // The answer, itself now expired and not nudged: the block is about the
+      // lane's newest receipt only.
+      pastReceipt(b, project, Date.now() - 50 * 60_000);
+      const stale = await lane(b.sessionId);
+      assert.equal(stale.workload.staleReason, 'expired');
+      assert.equal(stale.nudge, null);
+      const r = await assertReceipt(b, { schema: 'tc.workload/1', state: 'working', clearance: 'do-not-clear', summary: 'back at it' });
+      assert.equal(r.status, 201);
+      const current = await lane(b.sessionId);
+      assert.equal(current.workload.provenance, 'explicit-receipt');
+      assert.equal(current.nudge, null);
+    });
+
+    it('a fact of another kind is not a nudge', async () => {
+      const project = mkProject('nudge-other-kind');
+      const b = bindProject(project);
+      const row = pastReceipt(b, project, Date.now() - 2 * HOUR);
+      store.workloadNudgeFacts.record({
+        project_id: project.id, session_id: b.sessionId, launch_id: b.launchId, receipt_id: row.receipt_id,
+        kind: 'not-nudged', code: 'startup-dialog', created_at: new Date().toISOString()
+      });
+      assert.equal((await lane(b.sessionId)).nudge, null);
+    });
+  });
 });
 
 describe('a wrap of this session started after the receipt supersedes it (ADR 0020 §4)', () => {
@@ -306,4 +382,3 @@ describe('a wrap of this session started after the receipt supersedes it (ADR 00
     }
   });
 });
-

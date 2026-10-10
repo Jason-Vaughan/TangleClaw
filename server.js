@@ -335,6 +335,7 @@ const { WRAP_STREAM_EVENTS } = require('./public/wrap-stream-events');
 const medusaWake = require('./lib/medusa-wake');
 const deliveryDisposition = require('./lib/medusa-delivery-disposition');
 const launchUnready = require('./lib/launch-unready');
+const workloadNudge = require('./lib/workload-nudge');
 const authIdentity = require('./lib/auth-identity');
 const authSession = require('./lib/auth-session');
 const authGate = require('./lib/auth-gate');
@@ -12979,6 +12980,11 @@ if (require.main === module) {
     // behind the same idle gate the wake monitor uses. It records and reminds;
     // it gates nothing.
     launchUnready.start();
+    // Start the workload nudge monitor (#2262): types one line into a session
+    // whose workload report expired, for projects that turned it on. It reads
+    // engine activity from the observer above and types only into a pane seen
+    // at rest.
+    workloadNudge.start({ observer: activityObserver });
     // Re-sync Medusa listeners for live sessions (TC#550, MED-2K9P v2 T4) —
     // listeners are in-memory, so without this a server restart silently
     // deregistered every running session from the switchboard.
@@ -13043,6 +13049,7 @@ if (require.main === module) {
     activityObserver.stop();
     medusaWatchdog.stop();
     launchUnready.stop();
+    workloadNudge.stop();
     // Each startupControl adapter's reaper timer (#1825): the timers are unref'd,
     // so this is bookkeeping symmetry with `start`, not what lets the process exit.
     for (const [name, adapter] of Object.entries(startupControl.ADAPTERS)) {

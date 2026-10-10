@@ -260,22 +260,6 @@ describe('saving workloadNudge through updateProject (#2262)', () => {
     assert.deepEqual(resolveWorkloadNudge(store.projectConfig.load(dir)).warnings, []);
   });
 
-  it('says, on a save that leaves it enabled, that nothing acts on it yet', async () => {
-    const { name } = makeProject();
-    const on = await projects.updateProject(name, { workloadNudge: { enabled: true } });
-    const said = (r) => (r.warnings || []).filter((w) => w.startsWith(projects.WORKLOAD_NUDGE_NOT_ACTED_ON));
-    assert.equal(said(on).length, 1);
-    assert.match(said(on)[0], /nothing in this version of TangleClaw acts on it/);
-    const still = await projects.updateProject(name, { workloadNudge: { escalateAfterMinutes: 5 } });
-    assert.equal(said(still).length, 1, 'a later save that leaves it on says so again');
-    const off = await projects.updateProject(name, { workloadNudge: { enabled: false } });
-    assert.equal(said(off).length, 0);
-    const reset = await projects.updateProject(name, { workloadNudge: null });
-    assert.equal(said(reset).length, 0);
-    const other = await projects.updateProject(name, { medusaWake: false });
-    assert.equal(said(other).length, 0, 'a save that does not name the setting says nothing about it');
-  });
-
   it('resets the whole setting on null', async () => {
     const { name, dir } = makeProject({ enabled: true, text: 'Gone.', coordinatorProject: 'lead', escalateAfterMinutes: 30 });
     const r = await projects.updateProject(name, { workloadNudge: null });

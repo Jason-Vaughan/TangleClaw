@@ -41,13 +41,14 @@ Report at:
 
 ## For coordinators: `tc sessions` / `GET /api/tc/sessions`
 
-Each live lane carries three separate blocks:
+Each live lane carries three separate blocks, and a fourth when it was nudged:
 
 | Block | What it is |
 |---|---|
 | `engine` | What the pane was observed doing: `busy`, `at-rest`, `not-at-rest` or `unknown`, with `reason`, `observedAt`, `ageSeconds` |
 | `workload` | The newest receipt, with `provenance`: `explicit-receipt`, `stale` (with `staleReason`) or `none`. `narrowing` is present when the operator has narrowed the lane |
 | `composed` | The verdict: `availability`, `clearance`, and the `reasons` behind it |
+| `nudge` | `null`, or the nudge the lane's stale receipt has had and not answered: `nudgedAt`, `receiptSeq`, `ageSeconds`. See [Nudging a lane whose report expired](#nudging-a-lane-whose-report-expired) |
 
 **`availability`**, first match wins:
 
@@ -71,6 +72,29 @@ Each live lane carries three separate blocks:
 - The launch ends.
 
 Ordinary messages supersede nothing. A typed assignment-dispatch will, once it exists (ADR 0020 §4).
+
+## Nudging a lane whose report expired
+
+Off by default. A project turns it on in its own config, with [`workloadNudge`](configuration-reference.md) (`{"enabled": true}`); there is no settings screen for it.
+
+With it on, a monitor in the server checks that project's live sessions every 30 s. A session whose newest receipt **expired by age** gets one line typed into its pane, asking it to report with `tc workload set`. The project's `workloadNudge.text` replaces that line whole.
+
+- **Once per expired receipt.** The nudge is a row in `workload_nudge_facts`, so a second tick, a second server process and a server restart do not type it again. A session that reports and later lets that report expire too is nudged once for the new one.
+- **Only into a pane observed at rest.** Nothing is typed while the engine is observed `busy`, `not-at-rest` or `unknown`, while a wrap is running in the session, into a held or stopped lane, or into a pane showing an engine startup dialog. Each of these is checked again on the next tick.
+- **Only for an expired receipt.** A receipt that stopped counting because a wrap started, a control event was recorded or the launch ended is not nudged, and neither is a session that has written no receipt at all in its launch.
+- **Not every session has a pane that can be typed into.** A web UI session, and a session on an engine with no wake profile, is never nudged.
+
+`tc sessions` shows it on the lane's line, after the engine's reading: `; nudged 14m ago, not yet answered`. The clause goes when the session writes a fresh receipt. A stale lane without it was not nudged.
+
+What the monitor never does: it clears, restarts and ends nothing, and it writes no receipt on a session's behalf. A lane it nudged stays `UNKNOWN` until the session itself reports.
+
+**Limits:**
+
+- A nudge is a typed prompt. A session that is wedged will not answer it.
+- The pane's state is the observer's last reading, which can be up to 30 s old.
+- The line is typed before the nudge is recorded, so that a nudge is never on record for a pane that refused it. If the record cannot be written, the server remembers the nudge, retries the write every tick and does not type again. A server restart while the write is still failing is the one case in which a session can get the line twice for one expiry.
+- Nobody else is told yet when a nudge goes unanswered: `coordinatorProject` and `escalateAfterMinutes` are stored and not acted on in this version.
+- The monitor logs which project and session it nudged and why it did not. It never logs the nudge line or a receipt's summary.
 
 ## Engine observation
 
