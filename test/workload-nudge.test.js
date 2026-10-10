@@ -842,6 +842,20 @@ describe('workload nudge monitor (#2262)', () => {
         });
       }
 
+      it('is not nudged afterwards, when its pane comes to rest: the coordinator was told it was not', async () => {
+        const { l } = coordinated();
+        engineBySession.set(l.sessionId, { activity: 'busy', reason: 'spinner' });
+        verdict(l);
+        assert.equal(verdict(l, T0 + 40 * MIN), 'escalation-sending');
+        await nudge.settled();
+        engineBySession.set(l.sessionId, { activity: 'at-rest', reason: 'at-rest' });
+        assert.equal(verdict(l, T0 + 41 * MIN), 'already-escalated');
+        nudge.stop();
+        assert.equal(verdict(l, T0 + 60 * MIN), 'already-escalated', 'nor after a restart');
+        assert.deepEqual(typed, []);
+        assert.deepEqual(kinds(l), ['not-nudged/-', 'escalated/coordinator']);
+      });
+
       it('a report that lasts 120 minutes is measured from its own expiry', async () => {
         const c = lane(undefined);
         workspaces.set(c.project.id, 'ws-c');
