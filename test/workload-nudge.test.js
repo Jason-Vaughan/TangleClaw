@@ -517,6 +517,33 @@ describe('workload nudge monitor (#2262)', () => {
       assert.equal(logged.includes(SUMMARY), false, 'a receipt summary is not logged');
     });
 
+    it('says which gate held a lane, once per change, and nothing for a project that never turned it on', () => {
+      const held = expiredLane();
+      engineBySession.set(held.sessionId, { activity: 'not-at-rest', reason: 'no-prompt' });
+      const web = expiredLane();
+      paneless.add(web.sessionId);
+      const off = lane(undefined);
+      const lineFor = (logged, l) => logged.split('\n')
+        .filter((line) => line.includes('Workload nudge verdict for a session') && line.includes(`session=${l.sessionId} `));
+      const waiting = captureLogs(() => {
+        nudge.tick(T0 + 31 * MIN);
+        nudge.tick(T0 + 32 * MIN);
+        nudge.tick(T0 + 33 * MIN);
+      });
+      assert.equal(lineFor(waiting, held).length, 1, 'three ticks at one gate are one line');
+      assert.match(lineFor(waiting, held)[0], /verdict=engine-not-at-rest/);
+      assert.ok(lineFor(waiting, held)[0].includes(nudge.VERDICT_MEANINGS['engine-not-at-rest']));
+      assert.match(lineFor(waiting, web)[0], /verdict=no-pane/);
+      assert.deepEqual(lineFor(waiting, off), []);
+
+      engineBySession.set(held.sessionId, { activity: 'at-rest', reason: 'at-rest' });
+      const moved = captureLogs(() => {
+        nudge.tick(T0 + 34 * MIN);
+        nudge.tick(T0 + 35 * MIN);
+      });
+      assert.deepEqual(lineFor(moved, held).map((line) => /verdict=([a-z-]+)/.exec(line)[1]), ['nudged', 'already-nudged']);
+    });
+
     it('logs a config that falls back once per session, describing the bad value without quoting it', () => {
       const bad = 'line one\nline two of a bad text';
       const l = expiredLane({ text: bad, escalateAfterMinutes: 9999 });

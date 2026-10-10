@@ -84,7 +84,7 @@ With it on, a monitor in the server checks that project's live sessions every 30
 - **Only for an expired receipt.** A receipt that stopped counting because a wrap started, a control event was recorded or the launch ended is not nudged, and neither is a session that has written no receipt at all in its launch.
 - **Not every session has a pane that can be typed into.** A web UI session, and a session on an engine with no wake profile, is never nudged.
 
-`tc sessions` shows it on the lane's line, after the engine's reading: `; nudged 14m ago, not yet answered`. The clause goes when the session writes a fresh receipt. A stale lane without it was not nudged.
+`tc sessions` shows it on the lane's line, after the engine's reading: `; nudged 14m ago, not yet answered`. The session's own `tc workload show` says the same on its "Coordinators see" line. The clause goes when the session writes a fresh receipt. A stale lane without it was not nudged.
 
 What the monitor never does: it clears, restarts and ends nothing, and it writes no receipt on a session's behalf. A lane it nudged stays `UNKNOWN` until the session itself reports.
 
@@ -94,7 +94,8 @@ What the monitor never does: it clears, restarts and ends nothing, and it writes
 - The pane's state is the observer's last reading, which can be up to 30 s old.
 - The line is typed before the nudge is recorded, so that a nudge is never on record for a pane that refused it. If the record cannot be written, the server remembers the nudge, retries the write every tick and does not type again. A server restart while the write is still failing is the one case in which a session can get the line twice for one expiry.
 - Nobody else is told yet when a nudge goes unanswered: `coordinatorProject` and `escalateAfterMinutes` are stored and not acted on in this version.
-- The monitor logs which project and session it nudged and why it did not. It never logs the nudge line or a receipt's summary.
+- Why a lane was not nudged is in the server log and nowhere else yet: the monitor logs each session's verdict, with its meaning, whenever it changes.
+- The monitor logs which project and session it nudged. It never logs the nudge line or a receipt's summary.
 
 ## Engine observation
 
