@@ -35,6 +35,35 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-09 — #2262: the record a workload nudge is counted against, and the setting that will turn it on
+
+<!-- prawduct: type=feature | scope=2262-workload-nudge -->
+
+#2262 Chunk 01 of four. Branch `feat/2262-nudge-record-config`, from `origin/main` `76988eed`. It ships no behaviour: nothing on this branch types into a pane or sends a message.
+
+Visual change: no
+
+**Why it is its own chunk.** A lane whose workload receipt expired is to be nudged once and, if it stays silent, escalated once. Both limits have to hold across a server restart, and a run has to be able to say afterwards how each stall was noticed. `activity_log` is pruned per event type, so neither can rest on it. The issue's charter expected no migration; planning found that these two requirements cannot be met without a table, and a migration is reviewed on its own.
+
+**What changed.**
+- Schema v61: `workload_nudge_facts`, one append-only row per fact (`nudged`, `not-nudged`, `escalated`, `escalation-undeliverable`), with where an escalation was bound (`coordinator` or `operator`), the verdict code, and what the activity observer said at that moment. All the kinds and both routes are in the CHECKs now, so the later chunks of #2262 need no further migration. The migration reads the stored DDL back before it advances the version, as v59 and v60 do.
+- A fact is unique per receipt, kind and route, and the index reads a missing route as `''`. SQLite treats two NULLs as different values in a unique index, and a `nudged` fact has no route, so a plain index would have admitted a second `nudged` row for one expiry: the exact failure the table exists to prevent. The migration refuses to advance over a table carrying the plain index.
+- `store.workloadNudgeFacts`: `record` writes a fact once and says whether this call was the one that wrote it (a uniqueness conflict is the expected answer; any other refusal by the table throws), `listForReceipt`, and `listBetween` for a span of time.
+- The per-project `workloadNudge` setting: `{ enabled, text, coordinatorProject, escalateAfterMinutes }`, `null` by default so a settings save writes no opinion into a project that never chose one. `lib/project-config.js#resolveWorkloadNudge` reads it; a value that cannot be used falls back for that one setting, and `enabled` falls back to off.
+- `PATCH /api/projects/:name` validates the block, merges it onto what the stored block resolves to, and refuses an unknown key, an empty object and each bad value with a message naming the field. The save and the reader share one judgement of each value (`workloadNudgeProblem`), so a value that saves is never one the reader discards.
+- `docs/configuration-reference.md` documents the setting and says that in this release it is stored and not yet acted on. The chunk that ships the monitor removes that sentence.
+
+**Decisions made while building, beyond the plan.**
+- The plan said a fact's route is "null for `nudged`; `coordinator` or `operator` otherwise". The table requires a route on `escalated` and `escalation-undeliverable`, forbids one on `nudged`, and lets `not-nudged` carry either: a reason for not typing into a pane is not always about a destination, and the chunk that records those facts must not need a schema change to say so.
+- `listBetween` is not in the plan's list of accessors. It is here because `lib/store.js` is on this lane's list for this chunk only, and "for every stall in a time range" is one of the questions the plan says the table must answer.
+- A refused value is described in a warning by type and length and never quoted, so a nudge line refused for carrying a control character is not copied into a log by the warning about it.
+- `coordinatorProject` is held to one safe line of at most 255 characters with no space at either end, which is narrower than the plan's "a non-empty string". It will be written to logs and matched against project names.
+- The "one safe line" character classes are written twice, in `lib/workload.js` (workload summaries) and `lib/project-config.js`, because the second cannot import the first: it runs in the scanner child and the first opens the database. `test/workload-nudge-settings.test.js` holds the two to the same answer over a corpus. One home for the predicate needs an edit to `lib/workload.js`, which is outside this chunk's files.
+
+**Not covered.** No module reads `resolveWorkloadNudge` or writes a fact yet, so nothing here has been exercised by a running monitor. The resolver's warnings are returned to a caller that does not exist yet and are logged nowhere. The saved block is not echoed in the `PATCH` response or on `GET /api/projects` (as `launchSequence` is not); it is read back from the project's file. Who may set it is not restricted: a project's own session can, as it can `medusaWake`.
+
+**Tests.** `test/workload-nudge-facts.test.js` and `test/workload-nudge-settings.test.js`, both new.
+
 ## 2026-10-09 — #2233: the isolation inventory could not read tmux when run by the server
 
 <!-- prawduct: type=bugfix | scope=2233-launch-identity-containment -->
