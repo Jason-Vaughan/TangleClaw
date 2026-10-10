@@ -162,7 +162,8 @@ describe('store: the workload nudge fact schema (v61, #2262)', () => {
       kind TEXT NOT NULL CHECK (kind IN ('nudged','not-nudged','escalated','escalation-undeliverable')),
       route TEXT CHECK (route IS NULL OR route IN ('coordinator','operator')),
       target_project_id INTEGER, code TEXT NOT NULL, engine_activity TEXT, engine_reason TEXT,
-      detail_json TEXT, created_at TEXT NOT NULL)`);
+      detail_json TEXT, created_at TEXT NOT NULL,
+      CHECK (target_project_id IS NULL OR COALESCE(route, '') = 'coordinator'))`);
     db.exec('CREATE UNIQUE INDEX idx_workload_nudge_facts_once ON workload_nudge_facts(receipt_id, kind, route)');
     db.close();
     store._setBasePath(dir);
@@ -171,6 +172,24 @@ describe('store: the workload nudge fact schema (v61, #2262)', () => {
     const left = new DatabaseSync(path.join(dir, 'tangleclaw.db'));
     assert.equal(left.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 60, 'the version stays where it was');
     left.close();
+  });
+
+  it('refuses to advance over a table that lets a fact with no route name a coordinator', () => {
+    const dir = seedV60();
+    const db = new DatabaseSync(path.join(dir, 'tangleclaw.db'));
+    // Everything right but the last CHECK, which compares a missing route with `=`.
+    db.exec(`CREATE TABLE workload_nudge_facts (
+      fact_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, session_id INTEGER NOT NULL,
+      launch_id TEXT NOT NULL, receipt_id INTEGER NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('nudged','not-nudged','escalated','escalation-undeliverable')),
+      route TEXT CHECK (route IS NULL OR route IN ('coordinator','operator')),
+      target_project_id INTEGER, code TEXT NOT NULL, engine_activity TEXT, engine_reason TEXT,
+      detail_json TEXT, created_at TEXT NOT NULL,
+      CHECK (target_project_id IS NULL OR route = 'coordinator'))`);
+    db.close();
+    store._setBasePath(dir);
+    assert.throws(() => store.init(), /v60→v61 left workload_nudge_facts without the CHECK that only a coordinator-route fact names a coordinator/);
+    store.close();
   });
 
   it('refuses to advance over a table whose kind admits any word', () => {
@@ -263,6 +282,10 @@ describe('store.workloadNudgeFacts (#2262)', () => {
       [{ kind: 'escalated', route: null }, /CHECK constraint failed/],
       [{ kind: 'escalation-undeliverable', route: null }, /CHECK constraint failed/],
       [{ kind: 'escalated', route: 'operator', target_project_id: 7 }, /CHECK constraint failed/],
+      // No route at all: a comparison with NULL is not false, so a CHECK
+      // written as `route = 'coordinator'` would let these two through.
+      [{ kind: 'nudged', target_project_id: 7 }, /CHECK constraint failed/],
+      [{ kind: 'not-nudged', route: null, target_project_id: 7 }, /CHECK constraint failed/],
       [{ code: '' }, /CHECK constraint failed/],
       [{ launch_id: '' }, /CHECK constraint failed/],
       [{ detail_json: 'x'.repeat(2049) }, /CHECK constraint failed/],
