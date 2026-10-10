@@ -294,6 +294,53 @@ describe('tc verb roster (lib/tc-verbs)', () => {
       });
       assert.match(line, /; nudged, not yet answered; operator-narrowed: reviewing$/);
     });
+
+    const block = (over) => ({
+      nudgedAt: '2026-10-09T12:00:00.000Z', receiptSeq: 3, ageSeconds: 14 * 60, notNudgedReason: null,
+      escalatedAt: null, escalatedAgeSeconds: null, escalationRoute: null, escalatedTo: null, ...over
+    });
+
+    it('a block with the escalation keys and no escalation still reads nudged, not yet answered', () => {
+      assert.match(renderLaneLine({ ...stale, nudge: block({}) }), /; nudged 14m ago, not yet answered$/);
+    });
+
+    it('says who the silence was escalated to, and when', () => {
+      const line = renderLaneLine({
+        ...stale,
+        nudge: block({ escalatedAt: '2026-10-09T12:10:00.000Z', escalatedAgeSeconds: 4 * 60, escalationRoute: 'coordinator', escalatedTo: 'TC-Lane-INT' })
+      });
+      assert.match(line, /; nudged 14m ago, escalated to TC-Lane-INT 4m ago$/);
+      assert.equal(line.includes('not yet answered'), false);
+    });
+
+    it('says a lane was escalated without a nudge, and why it was not nudged', () => {
+      const line = renderLaneLine({
+        ...stale,
+        nudge: block({
+          nudgedAt: null, ageSeconds: null, notNudgedReason: 'startup-dialog',
+          escalatedAt: '2026-10-09T12:10:00.000Z', escalatedAgeSeconds: 4 * 60, escalationRoute: 'coordinator', escalatedTo: 'TC-Lane-INT'
+        })
+      });
+      assert.match(line, /; not nudged \(startup dialog\), escalated to TC-Lane-INT 4m ago$/);
+    });
+
+    it('does not claim anyone was told when the escalation is on the operator route', () => {
+      const line = renderLaneLine({
+        ...stale,
+        nudge: block({ escalatedAt: '2026-10-09T12:10:00.000Z', escalatedAgeSeconds: 4 * 60, escalationRoute: 'operator' })
+      });
+      assert.match(line, /; nudged 14m ago, nobody to escalate to: recorded for the operator 4m ago, nothing sent$/);
+      assert.equal(line.includes('escalated to'), false);
+    });
+
+    it('a coordinator project that is gone, and a missing age, still read as escalated', () => {
+      const line = renderLaneLine({
+        ...stale,
+        nudge: block({ escalatedAt: 'not a time', escalationRoute: 'coordinator' }),
+        workload: { ...stale.workload, narrowing: { reason: 'reviewing' } }
+      });
+      assert.match(line, /; nudged 14m ago, escalated to its coordinator; operator-narrowed: reviewing$/);
+    });
   });
 
   describe('the message verb family fails loudly at every gate', () => {

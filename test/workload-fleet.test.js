@@ -291,6 +291,11 @@ describe('composed workload on the routes (ADR 0020 §6, §7, §10)', () => {
       kind: 'nudged', code: 'nudged', created_at: new Date(atMs).toISOString()
     });
 
+    const fact = (b, project, row, fields, atMs) => store.workloadNudgeFacts.record({
+      project_id: project.id, session_id: b.sessionId, launch_id: b.launchId, receipt_id: row.receipt_id,
+      created_at: new Date(atMs).toISOString(), ...fields
+    });
+
     it('is null on a lane with no receipt, and on a stale lane nobody nudged', async () => {
       const quiet = bindProject(mkProject('nudge-none'));
       assert.equal((await lane(quiet.sessionId)).nudge, null);
@@ -312,7 +317,59 @@ describe('composed workload on the routes (ADR 0020 §6, §7, §10)', () => {
       assert.equal(l.nudge.nudgedAt, new Date(nudgedAt).toISOString());
       assert.equal(l.nudge.receiptSeq, row.seq);
       assert.ok(Math.abs(l.nudge.ageSeconds - 14 * 60) <= 5, `ageSeconds ${l.nudge.ageSeconds}`);
-      assert.deepEqual(Object.keys(l.nudge).sort(), ['ageSeconds', 'nudgedAt', 'receiptSeq']);
+      assert.deepEqual(Object.keys(l.nudge).sort(), ['ageSeconds', 'escalatedAgeSeconds', 'escalatedAt', 'escalatedTo',
+        'escalationRoute', 'notNudgedReason', 'nudgedAt', 'receiptSeq']);
+      assert.deepEqual([l.nudge.escalatedAt, l.nudge.escalatedAgeSeconds, l.nudge.escalatedTo, l.nudge.escalationRoute,
+        l.nudge.notNudgedReason], [null, null, null, null, null], 'nudged and not escalated');
+    });
+
+    it('says when the silence was escalated, and names the coordinator it went to', async () => {
+      const coordinator = mkProject('nudge-coordinator');
+      const project = mkProject('nudge-escalated');
+      const b = bindProject(project);
+      const row = pastReceipt(b, project, Date.now() - 2 * HOUR);
+      nudgedFact(b, project, row, Date.now() - 14 * 60_000);
+      const escalatedAt = Date.now() - 4 * 60_000;
+      fact(b, project, row, { kind: 'escalated', route: 'coordinator', target_project_id: coordinator.id, code: 'escalated' }, escalatedAt);
+      const l = await lane(b.sessionId);
+      assert.equal(l.nudge.escalatedAt, new Date(escalatedAt).toISOString());
+      assert.ok(Math.abs(l.nudge.escalatedAgeSeconds - 4 * 60) <= 5, `escalatedAgeSeconds ${l.nudge.escalatedAgeSeconds}`);
+      assert.equal(l.nudge.escalationRoute, 'coordinator');
+      assert.equal(l.nudge.escalatedTo, 'nudge-coordinator');
+      assert.equal(l.nudge.notNudgedReason, null);
+      assert.ok(Math.abs(l.nudge.ageSeconds - 14 * 60) <= 5);
+    });
+
+    it('shows a lane escalated without a nudge, with the reason it was not nudged', async () => {
+      const coordinator = mkProject('nudge-coordinator-2');
+      const project = mkProject('nudge-untyped');
+      const b = bindProject(project);
+      const row = pastReceipt(b, project, Date.now() - 2 * HOUR);
+      fact(b, project, row, { kind: 'not-nudged', code: 'startup-dialog' }, Date.now() - 5 * 60_000);
+      fact(b, project, row, { kind: 'escalated', route: 'coordinator', target_project_id: coordinator.id, code: 'escalated' }, Date.now() - 5 * 60_000);
+      const l = await lane(b.sessionId);
+      assert.equal(l.nudge.nudgedAt, null);
+      assert.equal(l.nudge.ageSeconds, null);
+      assert.equal(l.nudge.notNudgedReason, 'startup-dialog');
+      assert.equal(l.nudge.escalatedTo, 'nudge-coordinator-2');
+    });
+
+    it('an escalation with nobody to send to is on the operator route and names no project', async () => {
+      const coordinator = mkProject('nudge-coordinator-3');
+      const project = mkProject('nudge-operator-route');
+      const b = bindProject(project);
+      const row = pastReceipt(b, project, Date.now() - 2 * HOUR);
+      nudgedFact(b, project, row, Date.now() - 14 * 60_000);
+      fact(b, project, row, {
+        kind: 'escalation-undeliverable', route: 'coordinator', target_project_id: coordinator.id, code: 'coordinator-no-live-session'
+      }, Date.now() - 4 * 60_000);
+      const undelivered = await lane(b.sessionId);
+      assert.equal(undelivered.nudge.escalatedAt, null, 'a coordinator who could not be reached was not told');
+      fact(b, project, row, { kind: 'escalated', route: 'operator', code: 'coordinator-no-live-session' }, Date.now() - 4 * 60_000);
+      const l = await lane(b.sessionId);
+      assert.equal(l.nudge.escalationRoute, 'operator');
+      assert.equal(l.nudge.escalatedTo, null);
+      assert.ok(l.nudge.escalatedAt);
     });
 
     it('goes when the session reports again, and does not return for the answered receipt', async () => {
@@ -334,7 +391,7 @@ describe('composed workload on the routes (ADR 0020 §6, §7, §10)', () => {
       assert.equal(current.nudge, null);
     });
 
-    it('a fact of another kind is not a nudge', async () => {
+    it('a reason for not nudging, with no escalation yet, is not a block', async () => {
       const project = mkProject('nudge-other-kind');
       const b = bindProject(project);
       const row = pastReceipt(b, project, Date.now() - 2 * HOUR);
