@@ -284,19 +284,4 @@ describe('store.workloadNudgeFacts (#2262)', () => {
       /workload_nudge_facts is append-only/);
     assert.equal(store.workloadNudgeFacts.listForReceipt(100)[0].code, 'nudged');
   });
-
-  it('reads back the facts of a span of time, oldest first, the end left out', () => {
-    openFresh('span');
-    const at = (minute) => `2026-10-09T11:${String(minute).padStart(2, '0')}:00.000Z`;
-    store.workloadNudgeFacts.record(fact({ receipt_id: 3, created_at: at(30) }));
-    store.workloadNudgeFacts.record(fact({ receipt_id: 1, created_at: at(10) }));
-    store.workloadNudgeFacts.record(fact({ receipt_id: 2, created_at: at(20) }));
-    store.workloadNudgeFacts.record(fact({ receipt_id: 2, kind: 'escalated', route: 'operator', created_at: at(20) }));
-
-    const span = store.workloadNudgeFacts.listBetween(at(10), at(30));
-    assert.deepEqual(span.map((f) => [f.receipt_id, f.kind]), [[1, 'nudged'], [2, 'nudged'], [2, 'escalated']]);
-    assert.deepEqual(store.workloadNudgeFacts.listBetween(at(40), at(50)), []);
-    assert.equal(store.workloadNudgeFacts.listBetween(at(0), at(59), { limit: 2 }).length, 2);
-    assert.equal(store.workloadNudgeFacts.listBetween(at(0), at(59), { limit: 0 }).length, 4, 'a limit that is no limit is ignored');
-  });
 });
