@@ -35,6 +35,31 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-09 — #2115: asking `scripts/apply-update.js` for help applied the update
+
+<!-- prawduct: type=bugfix | scope=update-2115 -->
+Chunk 01, the plan's only chunk. Branch `fix/2115-apply-update-help`, from `origin/main` `76988eed`.
+
+Visual change: no
+
+**What was wrong.** `main()` passed `argv.includes('--discard-tc-files')` to the applier and looked at nothing else, so every invocation ran the update whatever its arguments. `--help` is what a careful operator or agent types before a mutation, and here it was the mutation.
+
+**What changed.**
+- The script sorts its arguments with an exact-match parser. `--help` and `-h` print usage on stdout and exit 0. Anything else it does not recognize is refused with exit 2: the argument named on stderr, then usage, and nothing on stdout. That covers a positional word (`help`), a near-miss of the real flag (`--discard-tc-file`, `--discard-tc-files=true`) and an empty argument. A recognized flag beside an unknown one is refused whole. Help wins over everything else on the line.
+- Neither path calls the applier, and neither opens the server-side log: the entry point asks the same `runsApplier` decision `main` does before it configures logging.
+- A bare invocation and `--discard-tc-files` are unchanged: same call, same JSON, same exit codes 0 and 1.
+- The README's manual upgrade path, ADR 0010 point 2 and the script's header say the same thing about flags and exit codes.
+
+**Decided.** A usage error is exit 2 with an empty stdout, not a JSON refusal with a new `code`. Exit 1 keeps meaning "the applier answered, read the JSON", and ADR 0010 point 5 (a surface that reports refusal codes lists all of them) is left with the applier's own list, so the agent prompt in `public/session.js` needs no change.
+
+**Not built.** The issue's "Consider requiring an explicit flag (`--apply` or `--yes`)" is a requirements question the issue does not decide. It is parked with the Operator, recommendation no: a bare invocation is what the README, ADR 0010 and the agent prompt teach.
+
+**Checked by hand, on the chunk branch.** `--help`, `-h` and `--bogus` each run against the real script with `git rev-parse HEAD` read before and after: usage and exit 0, usage and exit 0, refusal and exit 2 with zero bytes on stdout, HEAD unchanged each time. A bare invocation was not run by hand.
+
+**Not covered.** The script on the live install, which is read after a deploy and never run there. Node's own `ExperimentalWarning` for SQLite still reaches stderr on every path, help included, because the script requires the store for its base path; that predates this change.
+
+**Tests.** In-process, with an applier that throws if it is reached. The help, refusal, parser and entry-point cases were run red on `76988eed` first; the two that pin the unchanged invocations passed there, as they should.
+
 ## 2026-10-09 — #2233: the isolation inventory could not read tmux when run by the server
 
 <!-- prawduct: type=bugfix | scope=2233-launch-identity-containment -->
