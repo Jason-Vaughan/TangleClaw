@@ -35,6 +35,38 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-09 — #2262: a session whose workload report expired is nudged once, for projects that ask
+
+<!-- prawduct: type=feature | scope=2262-workload-nudge -->
+
+#2262 Chunk 02 of four. Branch `feat/2262-nudge-monitor`, from `origin/main` `c8fd1142`. The first behaviour of the issue. No escalation yet: `coordinatorProject` and `escalateAfterMinutes` are still stored and not acted on.
+
+Visual change: no
+
+**Why.** A lane whose workload receipt expires reads UNKNOWN and nothing tells the session. A coordinator sees it go quiet and cannot tell a session that forgot to report from one that stopped.
+
+**What changed.**
+- New `lib/workload-nudge.js`, a monitor beside `lib/launch-unready.js`, started and stopped in `server.js` and handed the activity observer. Every 30 s, for each live project session whose project sets `workloadNudge.enabled` to exactly `true`: if the session's newest receipt of its live launch expired by age, and the pane was observed at rest, one fixed line is typed into the pane through `lib/sessions.js#injectCommand`, and a `nudged` fact is recorded in `workload_nudge_facts`. The project's `workloadNudge.text` replaces the line whole.
+- The judge returns one code per lane from a declared table (`VERDICT_MEANINGS`). Nothing is typed when the project has not turned the monitor on, the receipt is current, the receipt went stale for a reason other than age, the session never reported, the session has no pane or its engine has no wake profile, a wrap is running, the engine is observed busy, not at rest or unknown, the lane is held, or the pane shows a startup dialog. Whether a receipt expired is read from `lib/workload-fleet.js`, never recomputed.
+- `lib/workload-fleet.js`: `laneFor` now returns a `nudge` block (`nudgedAt`, `receiptSeq`, `ageSeconds`), null unless the lane's newest receipt is stale and has a `nudged` fact. A new `laneContext` returns the same lane with the receipt's row id and the launch id, which the monitor records against; they stay out of the lane the fleet read returns.
+- `lib/tc-verbs.js`: `tc sessions` adds `; nudged <n>m ago, not yet answered` to that lane's line, after the engine's reading.
+- `lib/projects.js` loses the `WORKLOAD_NUDGE_NOT_ACTED_ON` save warning and `docs/configuration-reference.md` the sentence that went with it: something reads the setting now. `docs/fleet-workload.md` gains the behaviour and its limits.
+
+**Decisions made while building, beyond the plan.**
+- **The line is typed first and the fact recorded after.** The plan left the order open and asked for it to be chosen on purpose. The fact means "this session was told". Every refusal to type (a held lane, a startup dialog, a pane that vanished) happens inside the send, so a fact written first would claim a nudge that reached nobody, in a table that cannot be corrected, and a lane held at that moment would have lost its one nudge. The cost is the case where the line was typed and the write then failed: the process keeps the fact, retries the write each tick whatever the lane says by then, and never types for that receipt again. A server restart while the store still refuses the write is the one case in which a session can get the line twice for one expiry. It is stated in the docs under Limits.
+- **A pane's state is the observer's last reading**, up to 30 s old, where `lib/launch-unready.js` captures the pane itself. The plan says to read the observer, and the module holds no tmux call of its own.
+- **The lane-held verdict is the pane writer's control refusal.** A lane held through its open control assignment is usually caught earlier: the hold supersedes the receipt, so it reads `stale-not-expired`.
+- **No row in `lib/engines.js#ENGINE_CONDITIONAL_SETTINGS`** for `workloadNudge`, which the plan said to check. That table feeds the settings screens and their browser mirror, and this setting has no screen. On an engine whose pane cannot be typed into, the monitor says so once in the log (`unprofiled-engine`, `no-pane`), and the docs name both cases. A save does not warn about it.
+- **No activity-log row for a nudge.** The fact is the record; `activity_log` is pruned.
+- **30 s tick**, where the unready monitor uses 15 s: an expiry is measured in tens of minutes, and each tick reads each project's config file.
+- `laneFor` ignores a receipt row with no integer `receipt_id` when looking for a nudge. An existing test hands it a hand-built row without one.
+
+**Checked against a real pane, not a second server.** The plan's check starts a scratch server from the chunk's commit. That was not done: `lib/tangleclaw-home.js` says a second concurrent install on one machine is unsafe (its state is separable, its ingress is not) and records that an earlier attempt migrated the live database. Instead, on `dd4474f5`, one node process with its own `HOME`, `TANGLECLAW_HOME` and tmux server ran the real store, the real timer (`start`, 2 s), the real `injectCommand` and a real pane running `cat`. Observed: with the real activity observer the pane read `not-at-rest` and nothing was typed; with the reading stubbed to at-rest the timer typed the line once and recorded one fact, the lane's `nudge` block was set and the `tc sessions` line ended `; nudged 0m ago, not yet answered`; further ticks and a stop and start of the monitor typed nothing more; a fresh receipt gave `receipt-current` and a null block; with the setting removed, `monitor-off`. Not covered: the two lines in `server.js` in a booted server, the route over HTTP on a running server for a nudged lane (covered on a test server), and a real engine pane at rest.
+
+**Tests.** New `test/workload-nudge.test.js`: one test per verdict, the budget across ticks and a restart, a failed write (remembered, retried, never typed twice, still recorded when the session answered first), a fact another process wrote first, the line, what is logged, and the timer. Additions to `test/workload-fleet.test.js` (the block over the real route) and `test/tc-verbs.test.js` (the clause). `test/workload-nudge-settings.test.js` loses the test of the removed warning.
+
+**Also in this hunk.** One blank line added between this lane's Chunk 01 entry and the `#2115` heading below it, which Chunk 01 left out; the Integrator accepted it for this PR.
+
 ## 2026-10-09 — #2262: the record a workload nudge is counted against, and the setting that will turn it on
 
 <!-- prawduct: type=feature | scope=2262-workload-nudge -->
@@ -66,6 +98,7 @@ Visual change: no
 **Checked against a real v60 database.** The migration test makes its v60 store by dropping the new table from a store this branch created, so it never meets a database a v60 server wrote. Separately, a database was created by `origin/main`'s own `lib/store.js` (schema 60) with a project and a workload receipt in it, then opened with this branch's `store.init()`, the call the server makes: it read versions 60 and 61, had the table, index and triggers, kept the project and the receipt, recorded a fact, and opened again unchanged. A standalone server was not started on it, though the plan named that: a server boot on this host reads the host's tmux and service state, and the lane keeps away from the installed services.
 
 **Tests.** `test/workload-nudge-facts.test.js` and `test/workload-nudge-settings.test.js`, both new.
+
 ## 2026-10-09 — #2115: asking `scripts/apply-update.js` for help applied the update
 
 <!-- prawduct: type=bugfix | scope=update-2115 -->
