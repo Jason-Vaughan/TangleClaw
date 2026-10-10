@@ -327,6 +327,8 @@ node scripts/apply-update.js   # same guarded applier as the button
 launchctl kickstart -k gui/$(id -u)/com.tangleclaw.server
 ```
 
+`node scripts/apply-update.js --help` prints the script's usage and changes nothing. The update runs only with no arguments or with `--discard-tc-files`: any other argument is refused with exit 2, the reason on stderr and nothing on stdout, before the updater is called.
+
 Run `./deploy/install.sh` **only** when a release changed a launchd plist or another deploy asset. It restarts the server itself, so it replaces the `kickstart` above rather than following it. It works in both ingress modes:
 
 - **Direct mode:** it refreshes the plists, `~/.tmux.conf` and dependencies, and reloads both agents.
