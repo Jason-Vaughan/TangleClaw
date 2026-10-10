@@ -60,7 +60,10 @@ Concretely:
 2. Surfaces reach it through a caller, never by reproducing its steps:
    - the dashboard button → `POST /api/update/apply`;
    - the injected agent prompt and the documented manual path → `scripts/apply-update.js`, a CLI over
-     the same module.
+     the same module. It calls the module only for an invocation it recognizes in full (no
+     arguments, or `--discard-tc-files`); `--help` prints usage, and any other argument is refused
+     with exit 2 before the module is reached, so a caller cannot start an update by asking what
+     the script does.
 3. **No surface hands a user or an agent raw git for this purpose.** Documentation included — the
    README's manual path previously read `git pull --ff-only`, which fails outright on the
    tag-detached checkout a successful update produces.

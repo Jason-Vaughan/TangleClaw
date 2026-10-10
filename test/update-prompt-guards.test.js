@@ -11,6 +11,10 @@
  *    applier is stubbed — a test that spawned the real script for coverage would
  *    run `git checkout` against the developer's own tree.
  *
+ *    The same half covers #2115: `--help`, `-h` and any argument the script does
+ *    not recognize never reach the applier. The script used to read one flag and
+ *    ignore the rest, so asking it for help applied the update.
+ *
  *  - Source-level, over `public/session.js`: the prompt text is a durable
  *    instruction executed verbatim by an agent, so its contract is the words.
  *    Same pattern as test/update-prompt-path.test.js (#183) and
@@ -27,13 +31,37 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { main, configureProcessLogging } = require('../scripts/apply-update');
+const { main, configureProcessLogging, parseArgs, runsApplier, USAGE } = require('../scripts/apply-update');
 const logger = require('../lib/logger');
 
 /** Collect stdout writes for assertion. */
 function capture() {
   const chunks = [];
   return { write: (s) => chunks.push(s), text: () => chunks.join('') };
+}
+
+/**
+ * An applier that fails the test if it is reached.
+ *
+ * The cases that use it are about invocations that must change nothing, so a
+ * fall-through has to be loud: a stub that returned a refusal would let the
+ * script "pass" by printing JSON and exiting 1.
+ *
+ * @returns {{applyUpdate: function}}
+ */
+function forbiddenApplier() {
+  return {
+    applyUpdate: () => { throw new Error('the applier was called for an invocation that must not run it'); }
+  };
+}
+
+/**
+ * An applier that records each call's options and reports success.
+ * @returns {{applyUpdate: function, calls: object[]}}
+ */
+function recordingApplier() {
+  const calls = [];
+  return { calls, applyUpdate: (opts) => { calls.push(opts); return { ok: true }; } };
 }
 
 /**
@@ -219,6 +247,127 @@ describe('apply-update CLI (#730)', () => {
   it('runs the same applier the dashboard button calls — one guarded path', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'apply-update.js'), 'utf8');
     assert.match(src, /require\('\.\.\/lib\/update-applier'\)/);
+  });
+});
+
+describe('apply-update CLI arguments (#2115)', () => {
+  for (const flag of ['--help', '-h']) {
+    it(`${flag} prints usage, exits 0 and does not run the update`, () => {
+      const out = capture();
+      const err = capture();
+      const code = main(forbiddenApplier(), out, [flag], err);
+
+      assert.equal(code, 0);
+      assert.equal(out.text(), USAGE);
+      assert.equal(err.text(), '', 'help is not an error');
+    });
+  }
+
+  it('usage names both flags and all three exit codes', () => {
+    assert.match(USAGE, /node scripts\/apply-update\.js/);
+    assert.match(USAGE, /--discard-tc-files/);
+    assert.match(USAGE, /--help/);
+    assert.match(USAGE, /-h\b/);
+    for (const exitCode of ['0', '1', '2']) {
+      assert.match(USAGE, new RegExp(`^\\s+${exitCode}\\s`, 'm'), `usage omits exit code ${exitCode}`);
+    }
+  });
+
+  it('refuses an unknown flag with exit 2, nothing on stdout, and does not run the update', () => {
+    const out = capture();
+    const err = capture();
+    const code = main(forbiddenApplier(), out, ['--bogus'], err);
+
+    assert.equal(code, 2);
+    // A caller parsing stdout is promised the applier's result object or
+    // nothing; a usage error must not put prose where JSON is expected.
+    assert.equal(out.text(), '');
+    assert.match(err.text(), /--bogus/);
+    assert.match(err.text(), /nothing was run/i);
+    assert.ok(err.text().endsWith(USAGE), 'the refusal carries the usage text');
+  });
+
+  it('refuses a positional word — `help` without dashes must not run the update', () => {
+    const out = capture();
+    const err = capture();
+    assert.equal(main(forbiddenApplier(), out, ['help'], err), 2);
+    assert.equal(out.text(), '');
+    assert.match(err.text(), /help/);
+  });
+
+  it('refuses a near-miss of the real flag rather than updating without it', () => {
+    // The case where ignoring the argument is most costly: the operator asked
+    // for a specific variant of the update and would get a different one.
+    for (const typo of ['--discard-tc-file', '--discard-tc-files=true', '--DISCARD-TC-FILES', '']) {
+      const out = capture();
+      const err = capture();
+      assert.equal(main(forbiddenApplier(), out, [typo], err), 2, `"${typo}" must be refused`);
+      assert.equal(out.text(), '');
+    }
+  });
+
+  it('refuses when a recognized flag sits beside an unknown one', () => {
+    const out = capture();
+    const err = capture();
+    assert.equal(main(forbiddenApplier(), out, ['--discard-tc-files', '--force'], err), 2);
+    assert.match(err.text(), /--force/);
+    assert.doesNotMatch(err.text().split('\n')[0], /--discard-tc-files/, 'only the unrecognized argument is named');
+  });
+
+  it('names every unknown argument, not only the first', () => {
+    const err = capture();
+    assert.equal(main(forbiddenApplier(), capture(), ['--one', 'two'], err), 2);
+    assert.match(err.text(), /--one/);
+    assert.match(err.text(), /two/);
+  });
+
+  it('help wins over everything else on the line, and still runs nothing', () => {
+    for (const argv of [['--help', '--discard-tc-files'], ['--discard-tc-files', '-h'], ['--bogus', '--help']]) {
+      const out = capture();
+      const err = capture();
+      assert.equal(main(forbiddenApplier(), out, argv, err), 0, `${argv.join(' ')} must show help`);
+      assert.equal(out.text(), USAGE);
+      assert.equal(err.text(), '');
+    }
+  });
+
+  it('a bare invocation still runs the update once, without the discard', () => {
+    const applier = recordingApplier();
+    const out = capture();
+    assert.equal(main(applier, out, []), 0);
+    assert.deepEqual(applier.calls, [{ discardDirty: false }]);
+    assert.deepEqual(JSON.parse(out.text()), { ok: true });
+  });
+
+  it('--discard-tc-files still runs the update once, with the discard', () => {
+    const applier = recordingApplier();
+    assert.equal(main(applier, capture(), ['--discard-tc-files']), 0);
+    assert.deepEqual(applier.calls, [{ discardDirty: true }]);
+  });
+
+  it('parseArgs sorts every argument into exactly one bucket', () => {
+    assert.deepEqual(parseArgs([]), { discardDirty: false, help: false, unknown: [] });
+    assert.deepEqual(parseArgs(['--discard-tc-files']), { discardDirty: true, help: false, unknown: [] });
+    assert.deepEqual(parseArgs(['-h', 'x', '--y']), { discardDirty: false, help: true, unknown: ['x', '--y'] });
+  });
+
+  it('opens the server-side log only for an invocation that runs the update', () => {
+    // A request for help must open nothing. `runsApplier` is the one decision
+    // both the entry point and `main` read, so they cannot disagree about
+    // which invocations are real.
+    assert.equal(runsApplier([]), true);
+    assert.equal(runsApplier(['--discard-tc-files']), true);
+    for (const argv of [['--help'], ['-h'], ['--bogus'], ['help'], ['--discard-tc-files', '--bogus'], ['--help', '--discard-tc-files']]) {
+      assert.equal(runsApplier(argv), false, `${argv.join(' ')} must not initialize file logging`);
+    }
+  });
+
+  it('the entry point consults that decision before it configures logging', () => {
+    const src = stripComments(fs.readFileSync(path.join(__dirname, '..', 'scripts', 'apply-update.js'), 'utf8'));
+    assert.match(src, /if \(runsApplier\(process\.argv\.slice\(2\)\)\) configureProcessLogging\(\);/);
+    // Exactly one call site: an unguarded second call would open the log on the
+    // help path while the guarded one still satisfied the match above.
+    assert.equal(src.match(/configureProcessLogging\(\)/g).length, 1);
   });
 });
 
