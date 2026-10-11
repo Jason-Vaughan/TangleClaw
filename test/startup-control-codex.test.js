@@ -1629,6 +1629,53 @@ describe('Codex startupControl adapter', () => {
       assert.equal(codex._internal._trusted({}, '/a/b'), null);
     });
 
+    describe('the app-server\'s environment: a launch identity variable is the launch\'s or it is absent (#2268)', () => {
+      // TangleClaw's own environment as it is when the server was started from
+      // inside a launched pane: every identity variable set, to another launch's values.
+      const OWN = {
+        HOME: '/Users/someone',
+        TMUX: '/private/tmp/tmux-501/default,4242,0',
+        TMUX_PANE: '%7',
+        TANGLECLAW_LAUNCH_ID: 'L-own',
+        TANGLECLAW_PROJECT_ID: '900',
+        TANGLECLAW_ROLE: 'master',
+        TANGLECLAW_WORKSPACE_ID: 'own-workspace-0000'
+      };
+      const IDENTITY = ['TANGLECLAW_LAUNCH_ID', 'TANGLECLAW_PROJECT_ID', 'TANGLECLAW_ROLE', 'TANGLECLAW_WORKSPACE_ID'];
+      const identityOf = (env) => Object.fromEntries(IDENTITY.filter((key) => key in env).map((key) => [key, env[key]]));
+
+      it('a project launch that gives a launch id and a project id passes on those two and neither of the others', () => {
+        const env = codex._internal._serverEnvironment(OWN, { TANGLECLAW_LAUNCH_ID: 'L-this', TANGLECLAW_PROJECT_ID: '14', PATH: '/x/bin:/usr/bin' });
+        assert.deepEqual(identityOf(env), { TANGLECLAW_LAUNCH_ID: 'L-this', TANGLECLAW_PROJECT_ID: '14' },
+          'the role and workspace id TangleClaw itself holds do not reach the server');
+        assert.equal(env.PATH, '/x/bin:/usr/bin', 'the pane\'s other entries still lie over TangleClaw\'s');
+        assert.equal(env.HOME, '/Users/someone', 'TangleClaw\'s own environment is still underneath');
+        assert.ok(!('TMUX' in env) && !('TMUX_PANE' in env), 'and the pane keys are still removed');
+      });
+
+      it('passes on every identity variable the launch gives, with the launch\'s value', () => {
+        const given = { TANGLECLAW_LAUNCH_ID: 'L-this', TANGLECLAW_PROJECT_ID: '14', TANGLECLAW_ROLE: 'builder', TANGLECLAW_WORKSPACE_ID: 'this-workspace-1111' };
+        assert.deepEqual(identityOf(codex._internal._serverEnvironment(OWN, given)), given);
+      });
+
+      it('reads an empty value as not given: the variable is absent, not TangleClaw\'s and not empty', () => {
+        const env = codex._internal._serverEnvironment(OWN, { TANGLECLAW_LAUNCH_ID: 'L-this', TANGLECLAW_ROLE: '' });
+        assert.deepEqual(identityOf(env), { TANGLECLAW_LAUNCH_ID: 'L-this' });
+      });
+
+      it('passes on no identity variable at all when the launch gives no entries', () => {
+        for (const paneEnv of [undefined, null, {}, 'not an object']) {
+          assert.deepEqual(identityOf(codex._internal._serverEnvironment(OWN, paneEnv)), {}, `for ${JSON.stringify(paneEnv)}`);
+        }
+      });
+
+      it('does not change the environment it was handed', () => {
+        const own = { ...OWN };
+        codex._internal._serverEnvironment(own, { TANGLECLAW_LAUNCH_ID: 'L-this' });
+        assert.deepEqual(own, OWN);
+      });
+    });
+
     describe('judgeLaunchCommand: the last look at a Codex launch (#2233)', () => {
       const BIN = '/opt/fake/bin/codex';
       const probe = (version, enginePath = BIN) => ({ version, enginePath });

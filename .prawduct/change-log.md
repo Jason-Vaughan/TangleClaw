@@ -35,6 +35,35 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-11 — #2268: every launch decides every identity variable, for the pane and for the per-launch engine server
+
+<!-- prawduct: type=bugfix | scope=2268-launch-identity-not-inherited -->
+
+#2268 Chunk 01 of three. Branch `fix/2268-launch-decides-identity`, from `origin/main` `b7f2e515`. No schema change.
+
+Visual change: no
+
+**Why.** `tc` refuses every verb when its shell and its tmux pane disagree on `TANGLECLAW_LAUNCH_ID`, `TANGLECLAW_PROJECT_ID`, `TANGLECLAW_ROLE` or `TANGLECLAW_WORKSPACE_ID`. A launch gives only some of the four: a project session has no role, the Project Master has no project id, and a workspace id exists only with the switchboard on. tmux starts a new session from its server's global environment, which holds whatever the process that started that server held, so a variable the launch did not give arrived with another launch's value: in the shell, and not in the pane's own record (#2268). The per-launch app-server had the same gap from another source: it inherits TangleClaw's own environment, and a TangleClaw server started from inside a launched pane holds that pane's role and workspace id.
+
+**What changed.**
+- New `lib/launch-identity.js`: `LAUNCH_IDENTITY_KEYS` (the four, frozen) and `undecidedIdentityKeys(env)`, the keys a launch's entries give no non-empty value for.
+- `lib/tmux.js`: `createSession` passes one empty entry, `-e KEY=`, for each undecided identity key, after the caller's entries and whether or not the caller passed any. The session records the empty value, so a window or pane opened in it later reads that and not the global one. The command line is now built by `_newSessionCommand`, a function a test can call without a tmux server; `createSession` runs what it returns.
+- `lib/startup-control-codex.js`: `_serverEnvironment` deletes each identity key the pane's entries do not give, as it already deletes `TMUX` and `TMUX_PANE`. It is exported under `_internal` for its cases.
+- `docs/engine-guide.md`: one paragraph in the pane-check section.
+- Tests: new `test/launch-identity.test.js`; a block in `test/tmux.test.js` (the built command, and a real tmux server private to the block whose global environment is seeded with all four); a block in `test/startup-control-codex.test.js`. No existing assertion changes. One existing line in `test/tmux.test.js` changes: the `node:test` import gains `before` and `after`.
+
+**Decisions.**
+- [DECISION: "cleared" is the empty value on the `new-session` that creates the pane, not an `unset` in the pane's command. | Plan assumption A1. One mechanism, recorded by the session and inherited by later panes; the pane's command string, which the launch-isolation inventory parses, is unchanged. Every reader of these variables treats empty and unset alike.]
+- [DECISION: the decision is made in `createSession`, not in its two callers. | Both launch paths create their pane there, so `lib/sessions.js` and `lib/master.js` are not edited and a third caller is covered without knowing about this.]
+- [DECISION: an empty value in the caller's entries counts as not given. | It is what every reader does with it. Such a caller gets the same empty entry twice.]
+- [DECISION: the app-server has the variable removed, where the pane has it set empty. | A child process's environment is built here whole, so absence can be had directly; a tmux session can only be told a value.]
+- [DECISION: the real-tmux cases run tmux in this test process with `TMUX` removed and `TMUX_TMPDIR` pointed at a directory of their own, not in a child process as the plan's hazard note describes. | `test/tmux-session-names.test.js` traces every name a test file hands `tmux.createSession` to the name factory and cannot trace one inside a child's script. This is the shape `test/tmux-named-paste-buffer.test.js` already uses: the socket is proven to be under the directory before anything is written, each created session is checked against that server's identity, and teardown stops that socket and no other.]
+- [DECISION: nothing is removed from tmux's global environment. | Ruled `global report`. After this change a stray global value cannot reach a pane TangleClaw launches, and that environment belongs to every user of the tmux server.]
+
+**Checked.** With the empty entries removed from `lib/tmux.js`, the built-command cases and the private-server cases fail; with the delete removed from `_serverEnvironment`, three of its cases fail; with the role dropped from `LAUNCH_IDENTITY_KEYS`, the case holding it equal to `tc`'s list fails. The private-server block has a case showing that a session deciding only its launch id does receive the seeded values, so the clean results after it are not an empty seed. After the narrow runs the host's default tmux server's global environment held `TANGLECLAW_PORT` and no identity variable, as before them. The PR lists what else ran.
+
+**Not covered.** A launch made by a server without this change, and a session already running: each keeps what it started with until launched again. The cases run `tc`'s judgement function on what a real pane saw and what its session recorded; they do not run the `tc` binary inside that pane. `launchSession` and the Project Master's launch are not run against a real tmux here: their tests stub `createSession`, and what they pass it is unchanged. The report of a global environment that holds one of these, and the wording of `tc`'s refusal, are the next two chunks.
+
 ## 2026-10-11 — #2272: the server tells the operator when the Discord helper has had no connection for five minutes, and once when it is back
 
 <!-- prawduct: type=feature | scope=bridge-2272 -->
