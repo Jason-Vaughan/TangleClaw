@@ -585,6 +585,26 @@ describe('api/session-rules (#347/D1a)', () => {
       assert.equal(inForce.length, 2, 'the approval and the retirement it carries are one refresh, after both');
     });
 
+    it('status: approving a replacement that is switched off still takes the rule it retires out of the files', async () => {
+      const project = launchedProject(['Stays in force.', 'Replaced by a rule that is switched off.']);
+      const edit = await request('PUT', `/api/session-rules/${project.rules[1].id}`, { content: 'The replacement, switched off.' });
+      const proposalId = edit.data.replacementProposed.id;
+      const off = await request('PUT', `/api/session-rules/${proposalId}`, { enabled: false });
+      assert.equal(off.status, 200);
+
+      const approved = await request('PUT', `/api/session-rules/${proposalId}/status`,
+        { status: 'active', expectedContent: 'The replacement, switched off.' });
+      assert.equal(approved.status, 200);
+      assert.equal(approved.data.enabled, false);
+      assert.equal(store.sessionRules.get(project.rules[1].id).status, 'retired');
+
+      const text = deliveredText(project.path);
+      assert.ok(!text.includes('Replaced by a rule that is switched off.'),
+        'the approval retired this rule, so it must not be re-delivered as binding');
+      const inForce = await assertFilesMatchRulesInForce(project);
+      assert.equal(inForce.length, 1);
+    });
+
     it('status: declining a proposal changes nothing in the files', async () => {
       const project = launchedProject(['In force.']);
       const proposal = store.sessionRules.create({ content: 'Proposed by a session.', projectId: project.id, createdBy: 'ai' });

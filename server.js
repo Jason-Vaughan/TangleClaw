@@ -5985,9 +5985,10 @@ function sessionRuleCaller(req, res, target) {
  * they are rewritten, so every route that can change the rules in force calls
  * this once, after its store write and before it answers.
  *
- * The files are rewritten only when the change moved the set in force, which
- * is when this rule entered or left it. A proposal, a wrap rule and a Project
- * Master rule never do. Nor does a text edit or rollback of an active rule:
+ * The files are rewritten only when the change can have moved the set in
+ * force: this rule entered or left it, or became or stopped being an active
+ * rule (an approval may retire another rule with it). A proposal, a wrap rule
+ * and a Project Master rule never do. Nor does a text edit or rollback of an active rule:
  * the store files that as a proposal and leaves the rule as it was, so new
  * text reaches the files when its proposal is approved and enters the set.
  *
@@ -6009,7 +6010,11 @@ function sessionRuleCaller(req, res, target) {
  */
 function refreshDeliveredRules(before, after) {
   const inForce = (rule) => !!rule && rule.kind === 'startup' && rule.status === 'active' && !!rule.enabled;
-  if (inForce(before) === inForce(after)) return {};
+  // An approval can retire the rule it replaces in the same write, whatever
+  // the approved rule's own switch says, so a rule becoming or ceasing to be
+  // active counts as well as this rule entering or leaving the set.
+  const active = (rule) => !!rule && rule.kind === 'startup' && rule.status === 'active';
+  if (inForce(before) === inForce(after) && active(before) === active(after)) return {};
   const projectId = (after || before).projectId;
   try {
     const verdict = rulesRefresh.refreshProjectRules(projectId);
