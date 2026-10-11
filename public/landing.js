@@ -218,6 +218,7 @@ async function loadServerInfo() {
   renderBindNotice(data.bindNotice);
   renderBindNotice(data.ttydNotice, 'ttydNotice');
   renderCaddyDriftBanner(data.caddyDriftNotice);
+  renderLaunchIdentityBanner(data.launchIdentityNotice);
   renderRecoveryNotice(data.recoveryNotice);
 
   // The version label is written on every tick, not only when something looks
@@ -674,6 +675,74 @@ function renderCaddyDriftBanner(notice) {
     .concat(unmeasured.map((u) => `<li class="caddy-drift-unmeasured">not checked: ${esc(u)}</li>`));
   const list = items.length ? `<ul class="caddy-drift-findings">${items.join('')}</ul>` : '';
   textEl.innerHTML = `⚠ <strong>${esc(message)}</strong>${list}`;
+  banner.classList.remove('hidden');
+}
+
+/**
+ * Show or hide the banner for launch identity variables left in tmux's global
+ * environment (#2268).
+ *
+ * The server reads that environment once, before it listens, and reports one
+ * of three outcomes in `state`. Each gets its own treatment: `found` names the
+ * variables and the command that removes each; `could-not-check` says the read
+ * did not happen; `none` hides the banner.
+ *
+ * `none` is the only thing that hides it. A notice that is missing, has no
+ * `state`, or has one this page does not know is shown as "could not check":
+ * an older server, a dropped field and a clean read would otherwise all look
+ * the same, and only one of them is a clean read. For that case the banner
+ * does not repeat the server's assurance that no pane inherits the variables,
+ * because a server too old to send the report may also be too old for it to
+ * be true.
+ *
+ * State-driven like the Caddyfile banner: no dismiss control and no timer. The
+ * read is made at server start, so the banner gives its time and clears at the
+ * next restart.
+ *
+ * Only names, commands and the server's sentence are rendered, each escaped.
+ * The value of a variable is never on the page: a launch id is what the
+ * server accepts as a caller's binding.
+ *
+ * @param {{state: string, variables: string[], removeCommands: string[],
+ *   observedAt: (string|null), message: string}|null|undefined} notice -
+ *   `launchIdentityNotice` from /api/server-info
+ * @returns {void}
+ */
+function renderLaunchIdentityBanner(notice) {
+  const banner = document.getElementById('launchIdentityBanner');
+  const textEl = document.getElementById('launchIdentityBannerText');
+  if (!banner || !textEl) return;
+
+  const given = notice && typeof notice === 'object' ? notice : {};
+  if (given.state === 'none') {
+    textEl.textContent = '';
+    banner.classList.add('hidden');
+    return;
+  }
+  const strings = (list) => (Array.isArray(list) ? list.filter((s) => typeof s === 'string' && s) : []);
+  const read = typeof given.observedAt === 'string' ? new Date(given.observedAt) : null;
+  const when = read && !Number.isNaN(read.getTime()) ? esc(read.toLocaleString()) : '';
+  const variables = strings(given.variables);
+
+  if (given.state === 'found' && variables.length > 0) {
+    const names = variables.map((v) => `<code>${esc(v)}</code>`).join(', ');
+    const commands = strings(given.removeCommands).map((c) => `<code>${esc(c)}</code>`).join(' and ');
+    const remove = commands ? ` To remove them, run ${commands}.` : '';
+    textEl.innerHTML = `⚠ <strong>tmux's global environment holds launch identity variables: ${names}.</strong>`
+      + ' No pane TangleClaw launches inherits them: every launch sets each of them itself.'
+      + ' A session on that tmux server that TangleClaw did not launch does.'
+      + remove
+      + ` This was read once, when the server started${when ? ` (${when})` : ''}:`
+      + ' the banner clears at the next server restart after they are removed.';
+  } else if (given.state === 'could-not-check' && typeof given.message === 'string' && given.message) {
+    textEl.innerHTML = `⚠ <strong>${esc(given.message)}</strong>`
+      + (when ? ` Tried at ${when}.` : '')
+      + ' The check runs once, when the server starts.';
+  } else {
+    textEl.innerHTML = '⚠ <strong>TangleClaw could not check tmux\'s global environment for launch identity variables:'
+      + ' the server sent no report this page can read.</strong>'
+      + ' A server that has not been restarted since an update sends none. The check runs once, when the server starts.';
+  }
   banner.classList.remove('hidden');
 }
 

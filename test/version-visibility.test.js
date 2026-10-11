@@ -333,6 +333,7 @@ describe('#744 the dashboard stops advertising a version it is not running', () 
       renderAuthStatus: () => {},
       renderBindNotice: () => {},
       renderCaddyDriftBanner: () => {},
+      renderLaunchIdentityBanner: () => {},
       renderRecoveryNotice: () => {},
       renderBehindOriginBanner: () => {},
       renderMedusaEscalationBanner: () => {},

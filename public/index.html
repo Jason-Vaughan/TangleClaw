@@ -442,6 +442,14 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
     <div id="caddyDriftBanner" class="orphan-banner caddy-drift-banner hidden" role="alert">
       <span class="orphan-banner-text" id="caddyDriftBannerText"></span>
     </div>
+    <!-- Launch identity banner (#2268). Hidden until /api/server-info answers;
+         then hidden only when the server says tmux's global environment holds
+         no launch identity variable. Shown when it holds one, and when that
+         could not be checked. No button and no dismiss: the read is made at
+         server start, so it clears at the next restart. -->
+    <div id="launchIdentityBanner" class="orphan-banner launch-identity-banner hidden" role="status">
+      <span class="orphan-banner-text" id="launchIdentityBannerText"></span>
+    </div>
     <!-- Recovery-code notice (#1420). Hidden until /api/server-info reports a
          recoveryNotice: this account's password was reset with a recovery code.
          It stays until the account acknowledges it or generates new codes — an
