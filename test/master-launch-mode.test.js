@@ -727,6 +727,40 @@ describe('#2197 — the Master\'s launch mode belongs to the engine it was chose
       }
     });
 
+    it('the status payload states which engine is set for the Master, apart from the one that will start', () => {
+      const saved = store.config.load();
+      const home = fs.mkdtempSync(path.join(tmpDir, 'home-'));
+      const tmuxLib = {
+        probeSession: () => ({ live: false, answered: true, cause: null }),
+        sessionCreatedAt: () => ({ createdAt: null, answered: true, cause: null }),
+        hasSession: () => false
+      };
+      /**
+       * `settings` of the status payload for a stored Master block.
+       * @param {object} masterBlock - Fields over an unpinned Master.
+       * @param {string|null} defaultEngine - The install's default engine.
+       * @returns {object}
+       */
+      const settingsFor = (masterBlock, defaultEngine) => {
+        store.config.save({ ...saved, defaultEngine, master: configWith(masterBlock).master });
+        return master.getMasterStatus({ home, tmuxLib, enginesLib: SUBSTITUTED }).settings;
+      };
+      try {
+        const pinned = settingsFor({ engine: 'claude' }, 'aider');
+        assert.equal(pinned.configuredEngine, 'claude', 'the pin');
+        assert.equal(pinned.resolvedEngine, 'codex');
+        const following = settingsFor({ engine: null }, 'claude');
+        assert.equal(following.engine, null);
+        assert.equal(following.configuredEngine, 'claude', 'no pin: the default engine, not the stand-in');
+        assert.equal(following.resolvedEngine, 'codex');
+        const unset = settingsFor({ engine: null }, null);
+        assert.ok(Object.prototype.hasOwnProperty.call(unset, 'configuredEngine'), 'present and null, not absent');
+        assert.equal(unset.configuredEngine, null);
+      } finally {
+        store.config.save(saved);
+      }
+    });
+
     it('the status payload carries null for the default mode', () => {
       const home = fs.mkdtempSync(path.join(tmpDir, 'home-'));
       const tmuxLib = {
