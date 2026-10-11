@@ -212,7 +212,7 @@ minutes, and announces the recovery once.
 - **Two types, not one.** A notice that the connection is gone asks something of the operator
   when Discord has refused it. A notice that it is back asks nothing. The type is what a reader
   filters by, so each has its own.
-- **Their authoritative producer will be** the helper's own report of its connection, which it
+- **Their authoritative producer is** the helper's own report of its connection, which it
   sends with every claim and the server holds (`docs/operator-bridge.md`, "The helper's
   Discord connection").
 - **They are transport control like the others:** fixed templates that take only a time, a
@@ -222,9 +222,13 @@ minutes, and announces the recovery once.
   with its zone, and UTC, said as UTC, where the zone cannot be named.
 - **`gateway-down` keeps for 7 days,** because it is still so until the connection is back.
   **`gateway-recovered` keeps for 1 day,** as `fleet-idle` does: it describes a moment.
-- **Admitted before they are produced,** as `lane-silent` was. Schema v63 widens the CHECK on
+- **Admitted before they were produced,** as `lane-silent` was. Schema v63 widens the CHECK on
   `bridge_outbound.notify_type`, the retention limits name both and each has its template.
-  Nothing raises either yet.
+- **Raised by the pass in `lib/bridge-notify.js`,** from that report. One outage runs from its
+  notice to the next report that says connected, and the notice in the queue is its record, so
+  neither a helper restart nor a server restart announces it twice. A report that is missing
+  or stale neither opens an outage nor closes one. `docs/operator-bridge.md`, "Server
+  notifications", has the rules in full.
 
 The two reserved types stay reserved.
 

@@ -35,6 +35,39 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-11 — #2272: the server tells the operator when the Discord helper has had no connection for five minutes, and once when it is back
+
+<!-- prawduct: type=feature | scope=bridge-2272 -->
+
+#2272 Chunk 05 of five, the last. Branch `fix/2272-gateway-outage-notice`, from `origin/main` `5f55e3a9`. No schema change.
+
+Visual change: no
+
+**Why.** The Discord helper lost its Gateway connection for twelve hours and went on posting, so the operator's replies reached nobody and nothing told them (#2272). The earlier chunks made the helper recover, report its connection and show it on the page, and admitted two notification types. This one raises them: a notice the operator reads in the chat, which is the one place they were looking.
+
+**What changed.**
+- `lib/bridge-notify.js`: one producer, `_gatewayOutage`, with its line in `reconcile` and a count, `gatewayOutage`, in the pass's result. It reads the helper's report through a new seam, `_deps.discordReading`, which requires `lib/bridge-gateway.js` when called: that module already requires this one. `GATEWAY_DOWN_AFTER_MS` is the five minutes.
+- `docs/operator-bridge.md`, `docs/discord-operator-notifications.md` and ADR 0023: the two types as raised, when each is and what raises neither.
+- `lib/bridge-store.js`: the comment above `expire()` only, no code line. It said nothing let go is ever raised again, which is no longer so for an uncollected `gateway-down` whose outage is still going on.
+
+**Decisions.** All but the last two are ruling 27's (`c05 decisions ok`), written here as built.
+- [DECISION: the five minutes count from the latest of the helper's own time for the outage, this process's first reading of it as down, and the bridge's enable time. | A wrong helper clock, a server just started and a bridge just enabled each cost a delay; none can raise a notice for an outage this server has not watched for five minutes.]
+- [DECISION: one outage runs from its notice to the next reading that says connected, and the queue's rows are the record. | A helper restarted mid-outage restarts its own count and a server restart forgets what it saw; neither may announce twice.]
+- [DECISION: a refused connection raises the notice after the same five minutes. | Ruling 8 (`fatal yes`). Its sentence says it will not come back by itself.]
+- [DECISION: a missing or stale report neither opens an outage nor closes one, and does not restart the wait. | A helper polling slower than the staleness limit reads not-reported while it runs. Restarting the wait on it would mean such a helper's outage is never announced.]
+- [DECISION: recovery is announced only for an outage whose notice was not let go. | A notice nobody collected was never seen.]
+- [DECISION: an outage still open after retention removed its posted notice is announced once more. | Ruling 27: intended, as a reminder.]
+- [DECISION: a `gateway-down` let go uncollected holds no outage open, and if the helper still reports that outage it is announced again as a new notice with its first beginning. | Ruling 28. Ruling 27 has no recovery follow a notice nobody saw, so nothing would close it and every later outage would go unannounced. And the helper that could not post for a week and still has no connection is the case this issue is about: letting the notice go ends the announcement, not the outage. The new notice is keyed by the one let go, so it cannot repeat faster than the 7-day limit.]
+- [DECISION: only a notice let go for being uncollected is announced again; one somebody withdrew is final. | Both end as `dropped`. Withdrawing is a decision by the Master or the operator, and a notice that came back a pass later would undo it.]
+- [DECISION: a helper restarted after its notice was let go is announced from the beginning it now reports. | Its report no longer carries the first beginning, and with no notice the operator saw the server has no record to tell it from a new outage.]
+- [DECISION: the recovery notice is keyed by the beginning its outage's notice was raised for, and gives the length from there. | One recovery per announced outage, and the length the operator was first told to count from, whatever a restarted helper reports since.]
+
+**Existing assertions changed, each still exact.** `test/bridge-notify.test.js` holds `reconcile()`'s whole result in three cases: 'delivers no backlog...' (the disabled pass), 'one kind failing does not stop the others' and 'a pass that cannot read the facts raises nothing for them...'. Each held four counts and holds five, with `gatewayOutage: 0`.
+
+**Checked.** `test/bridge-notify.test.js` alone and with the bridge's API, retention and migration files. Each rule was taken out of the producer in turn and the file run: dropping any of the three starting times, counting strictly more than five minutes, letting a let-go notice hold an outage open, not announcing again an outage whose notice was let go, announcing while one is open, restarting the wait on a missing report, not ending a run of down readings on a connected one, and measuring the recovery's length from the wrong time each fail at least one case. One case goes through the gateway's real `recordDiscordReport` and `discordReading`, staleness limit included.
+
+**Not covered.** No notice of either type has been raised on a live install, and none will be staged: a real one means keeping the live helper off Discord for five minutes. Tests only. The sentences have not been read on a phone.
+
 ## 2026-10-11 — #2272: the operator bridge admits two notification types about the helper's own connection (schema v63)
 
 <!-- prawduct: type=feature | scope=bridge-2272 -->

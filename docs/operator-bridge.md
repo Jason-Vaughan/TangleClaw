@@ -20,7 +20,7 @@ is in [discord-operator-notifications.md](discord-operator-notifications.md).
 | The operator's policy routes: enable, allowlist, token, aliases, pins | Built |
 | The candidate lane: a session offers, the Master decides | Built |
 | The four typed server notifications | Built. The fourth, `lane-silent` (#2262), has not yet been seen to arrive on a live install |
-| Two more types, `gateway-down` and `gateway-recovered` (#2272) | Admitted, with their sentences. Nothing raises them yet |
+| Two more types, `gateway-down` and `gateway-recovered` (#2272) | Built. Raised from the helper's own report of its connection. Neither has been seen to arrive on a live install: staging one means holding the live helper off Discord for five minutes |
 | Discord helper (`bin/tc-bridge-helper`) | Built; not yet run against Discord. See [operator-bridge-helper.md](operator-bridge-helper.md) |
 | The operator's dashboard panel (global settings, Operator bridge) | Built; not yet used by a person on a live install |
 | Cutover | Not started; Rule #145 is unchanged and in force |
@@ -669,13 +669,61 @@ typed.
 | `fleet-idle` | the fleet is seen to become idle: every live lane finished and clear | the episode: when it began and which lanes were in it |
 | `lane-silent` | the workload nudge monitor escalated a lane's expired workload report and had no coordinator it could tell, so it recorded the escalation on the operator route ([fleet-workload.md](fleet-workload.md), "When the nudge goes unanswered"). An escalation that reached a coordinator raises nothing. | that record: the `workload_nudge_facts` row |
 
-Two more types are admitted and not yet raised: `gateway-down` and `gateway-recovered` (#2272;
-ADR 0023 Decision 9 as amended 2026-10-11). They are about the chat helper itself. A helper
-that has lost its connection to Discord's Gateway still posts, and does not receive what the
-operator sends. The queue accepts both types (schema v63), each has a retention limit and each
-has its fixed sentence, but no pass raises either, so neither can reach the chat. The pass that
-raises them is a later change. Until it lands, the connection is read on the page and in
-`tc bridge status` ("The helper's Discord connection", below).
+Two more types are about the chat helper itself: `gateway-down` and `gateway-recovered` (#2272;
+ADR 0023 Decision 9 as amended 2026-10-11). A helper that has lost its connection to Discord's
+Gateway still posts, and does not receive what the operator sends. So the notice can reach the
+chat while the operator's own messages cannot, and it is what tells them so.
+
+| Type | Raised when | Bound to |
+|---|---|---|
+| `gateway-down` | the helper's report has read `down` and the outage has lasted five minutes | the outage: the time the helper says it began |
+| `gateway-recovered` | the helper's report reads `connected` while an announced outage is open | that outage |
+
+Both come from the helper's report of its connection, which it sends with every claim and the
+server holds in memory ("The helper's Discord connection", below). The same pass that raises the
+other four reads it, so nothing is raised while the bridge is disabled.
+
+- **Five minutes, counted from the latest of three times:** when the helper says the outage
+  began, when this server process first read it as down, and when the bridge was enabled. A
+  reconnect normally takes seconds and raises nothing. A helper whose clock is wrong, a server
+  that has just started and a bridge that has just been enabled each cost a delay; none can
+  raise a notice for an outage this server has not watched for five minutes.
+- **A connection Discord refused is an outage too,** after the same five minutes. Its notice
+  says it is refused and why, and that it will not come back by itself.
+- **One outage, one notice.** An outage runs from its notice to the next report that says
+  connected, and the notice in the queue is the record of it. While the newest of the two
+  types is a `gateway-down` that is waiting or was posted, the outage is open: a report of
+  down raises nothing more, whatever time it carries. So a helper restarted in the middle of
+  an outage, which starts counting again from its own start, is not a second outage, and a
+  server restart cannot announce one twice.
+- **Recovery is announced once, and only for an outage that was announced.** A drop shorter
+  than five minutes raised nothing, so its end raises nothing. The recovery notice gives the
+  length from the beginning its outage's notice was raised for.
+- **No report is not a report of anything.** `not-reported` and `never-reported` neither open
+  an outage nor close one, and do not restart the five minutes. A helper that polls slower
+  than the three-minute staleness limit, or is backing off, reads `not-reported` while it
+  runs. A helper that stops reporting during an outage leaves it open: no recovery is
+  announced until a report says connected. A helper that has stopped altogether raises
+  nothing, because every notice is posted by the helper; that is read on the page and in
+  `tc bridge status`.
+- **A notice let go uncollected was never seen.** Letting a `gateway-down` go after 7 days
+  ends that announcement, not the outage. No recovery follows it, and if the connection is
+  back by then nothing is sent. If the helper still reports the same outage afterwards, it is
+  announced again as a new notice, with the beginning it always had and its real length so
+  far, and from then on behaves like any other: one notice, then its recovery. That is the
+  helper that could not post for a week, can again, and still has no connection. It cannot
+  repeat faster than the 7-day limit. A helper that was restarted in the meantime reports its
+  own start as the beginning, and is announced from there after the usual five minutes.
+- **A notice somebody withdrew stays withdrawn.** Withdrawing a `gateway-down` is a decision
+  and is final: that outage is not announced again and has no recovery notice. A later outage
+  is announced as its own.
+- **An outage still open after 30 days is announced once more.** Retention removes a posted
+  notice 30 days on, and with it the record that the outage was announced. That second notice
+  is intended, as a reminder. An outage that ends after its notice was removed has no recovery
+  notice.
+
+What cannot be checked on a live install without harm: raising a real `gateway-down` means
+keeping the live helper off Discord for five minutes. Both types are held by tests only.
 
 Their sentences take only what the helper's report holds: a time, a whole number of minutes, a
 state from the helper's own list and Discord's close code. Nothing anybody typed is in them.
@@ -1205,9 +1253,11 @@ other.
 
 Being let go is final. Nothing is let go while a lease on it is live, so the helper that held
 it holds only a lapsed lease, and its acknowledgement is refused `409 LEASE_LAPSED` like any
-other lapsed lease's. The item is never handed over again. Nothing let go is raised again:
-its row and its idempotency key stay until retention removes them, so the event that caused it
-remains accounted for.
+other lapsed lease's. The item is never handed over again. Nothing let go is raised again
+under its own key: its row and its idempotency key stay until retention removes them, so the
+event that caused it remains accounted for. One thing is a condition and not an event, and is
+told again in a new notice: an uncollected `gateway-down` whose outage the helper still
+reports ("Server notifications", above).
 
 Three things keep that true however long anything lasts:
 
@@ -1236,7 +1286,7 @@ check is refused, and the message names each object that is missing or misshapen
 - `lib/bridge-handoff.js`: minting, hashing and the FIFO handoff. It does not load the store.
 - `lib/bridge-principal.js`: when a credential exists and whether a presented one is live.
 - `lib/bridge-gateway.js`: accept, resolve, dispatch, reply capture, the periodic pass.
-- `lib/bridge-notify.js`: the four typed server notifications, and the sentences of the two admitted and not yet raised.
+- `lib/bridge-notify.js`: the six typed server notifications.
 - `public/operator-bridge-panel.js`: the signed-in operator's panel in the dashboard's global
   settings. Operator routes only.
 - `lib/bridge-api.js`: every bridge route, declared with the principal it belongs to. One
