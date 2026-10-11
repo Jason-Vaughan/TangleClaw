@@ -198,6 +198,41 @@ and `GET /api/learnings` (#1121); a valid project with no rules returns `200 []`
 | `GET /api/learnings?projectId=&tier=` | #569 — list a project's learnings |
 | `PUT /api/learnings/:id/tier` `{tier}` | #569 — operator override of a learning's tier. #2018: the operator only, because an active learning is rendered into the project's session primes |
 
+### A rule change and the running session (#2273)
+
+On Claude the session-start hook prints `.tangleclaw/session-rules-<n>.json` on every start,
+including after a `/clear` and a compaction. The launch writes those files, and each of the six
+routes above that can change the rules in force (`POST`, `PUT :id`, `DELETE :id`, `promote`,
+`PUT :id/status`, `POST :id/restore`) rewrites them from the store after its write, so a cleared
+session is re-delivered the rules in force at that moment: a rule approved mid-session is there,
+a retired, disabled or deleted one is not. The files are rewritten when a `startup` rule enters or
+leaves the set in force; a proposal, a `wrap` rule and a Project Master rule change nothing in
+them. The rewritten block states how many rules are in force and when it was written.
+
+The store stays the authority and `tc rules` reads it. The rule change never fails because of
+the files. When they do not follow it, the route's success response carries `deliveryWarning`
+and the server log says the same.
+
+| Field | On | Type | When it is sent |
+|---|---|---|---|
+| `deliveryWarning` | the success response (`200`, `201` or `202`) of `POST /api/session-rules`, `PUT /api/session-rules/:id`, `DELETE /api/session-rules/:id`, `POST /api/session-rules/promote`, `PUT /api/session-rules/:id/status` and `POST /api/session-rules/:id/restore`, beside the fields the route already answers with | string: one or two sentences for a person to read, not a code | only when the change could move the rules in force **and** one of the two cases below holds. Otherwise the field is **absent** (not `null`, not an empty string), so test for its presence. An error response never carries it |
+
+No screen shows `deliveryWarning` yet: it reaches a caller of the API and the server log.
+Showing it in the dashboard is part of #2293. The two cases:
+
+- **The files could not be rewritten.** They hold the earlier set (or, named as such, a set part
+  new and part old) until the next launch of the project rewrites them.
+- **The running session has no rules file, or no hook registered to print one.** A project
+  launched with no rule in force has neither, and a refresh registers no hook, so the first rule
+  approved for it mid-session is in force and is not re-delivered to that session after a clear
+  until its next launch. The warning gives the count of rules in force. Delivering this case is
+  #2293.
+
+A refresh writes at most one file per rules hook registered for the project; a rule set that
+outgrew them is named by id in the last file, with a pointer to `tc rules`. A session on an
+engine that pulls its rules in the launch sequence re-reads them with `tc rules`; nothing is
+rewritten for it.
+
 ## The automatic loop (#569)
 
 Before this, the loop existed on paper only: nothing advanced a learning's tier, and
