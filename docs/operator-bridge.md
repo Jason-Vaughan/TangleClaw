@@ -514,7 +514,7 @@ the bridge's own routes and nowhere else, so it is never typed.
 
 | Command | Does |
 |---|---|
-| `tc bridge status` | Says whether the bridge is enabled and which generation is asking. Answers while disabled. |
+| `tc bridge status` | Says whether the bridge is enabled and which generation is asking, and, on a line of its own, how the helper's connection to Discord reads (see [The helper's Discord connection](#the-helpers-discord-connection)). Answers while disabled. |
 | `tc bridge destinations` | Lists every project the bridge may reach, with each name it answers to and whether it is running. Worked out as it is asked (`GET /api/bridge/master/destinations`). Answers while disabled. |
 | `tc bridge nicknames`, `tc bridge nickname <name>` | Lists every nickname, or explains one: what it means, whether that is reachable and running, who set it and on which message. Answer while disabled. |
 | `tc bridge nickname set <name> --to <dest> --answered-by <route-id>` | Stores a nickname the operator asked for. |
@@ -720,7 +720,7 @@ also carries `x-tangleclaw-bridge-nonce`, 16 to 128 URL-safe characters, never u
 |---|---|
 | `POST /api/bridge/helper/preflight` | `{authorId, spaceId, channelId}`. Reads only, takes no nonce, and answers while the bridge is disabled: `tokenLive`, `bridgeEnabled`, `allowlistSet`, `allowlistMatch` (one answer for all three ids together) and `circuit` (`open` or `closed`). No id, token or text comes back. Six a minute. |
 | `POST /api/bridge/helper/inbound` | Hands over one operator message: `externalId`, `authorId`, `spaceId`, `channelId`, optional `threadId` and `replyToExternalId`, and `text` (at most 8000 characters). `202` when stored, `200` for a replay. |
-| `POST /api/bridge/helper/outbound/claim` | Collects what to post next, oldest first: optional `{limit}`, 1 to 20, 10 by default. Each item comes with the chat context to post it in and a lease. |
+| `POST /api/bridge/helper/outbound/claim` | Collects what to post next, oldest first: optional `{limit}`, 1 to 20, 10 by default. Each item comes with the chat context to post it in and a lease. May also carry `discordGateway`, the helper's report of its Discord connection (see [The helper's Discord connection](#the-helpers-discord-connection)); the answer is the same with it or without. |
 | `POST /api/bridge/helper/outbound/:id/parts` | `{leaseId, partIndex, partCount, externalId}`: one message the chat made for the item, reported as soon as it is made. |
 | `POST /api/bridge/helper/outbound/:id/ack` | `{leaseId, parts, partCount}`: the lease the item was claimed under, and the chat's id for every message the item was posted as, in order, with how many there are. It seals the item. Exact: repeating it changes nothing, and a different set is refused. |
 | `POST /api/bridge/helper/outbound/:id/failure` | `{leaseId, reason, parts?, partCount?}`: the helper could not post the item, why, and which parts did post. |
@@ -730,6 +730,7 @@ messages, 600 outbound requests, six preflights, each counted apart; a request o
 writes nothing and spends no nonce, so it can be sent again as it is), `401 HELPER_TOKEN_REQUIRED`, `409 BRIDGE_DISABLED`, `400 NONCE_REQUIRED`,
 `409 NONCE_REUSED`, `409 ALLOWLIST_NOT_SET`, `403 NOT_ALLOWLISTED`, `400 BAD_INBOUND`,
 `413 INBOUND_TOO_LONG`, `409 EXTERNAL_ID_MISMATCH`, `409 EXTERNAL_ID_COLLISION`, `400 BAD_CLAIM`,
+`400 BAD_GATEWAY_REPORT`,
 `400 LEASE_REQUIRED`, `404 LEASE_NOT_FOUND`, `403 LEASE_NOT_YOURS`, `400 BAD_PART`,
 `400 BAD_ACK`, `400 BAD_FAILURE`, `409 PART_MISMATCH`, `409 PART_OUT_OF_ORDER`,
 `409 PART_ID_COLLISION`, `409 ACK_MISMATCH`, `409 LEASE_LAPSED`,
@@ -747,6 +748,64 @@ is no longer its own: it stops asking under that lease and goes on to the next i
 
 Acknowledging an answer marks it delivered, settles its lease, and closes and clears its route
 in one transaction.
+
+### The helper's Discord connection
+
+The operator's messages reach TangleClaw over the helper's Gateway connection to Discord. When
+that connection is down nothing the operator writes arrives, and nothing else in the bridge
+shows it: notices still post, because posting uses Discord's REST API. So the helper says how
+the connection is, and the bridge keeps what it last said.
+
+**The report.** The helper sends it inside the claim it already makes on every pass, as the
+optional body field `discordGateway`. There is no route and no request for it alone.
+
+| Field | Is |
+|---|---|
+| `state` | One of `idle`, `connecting`, `reconnecting`, `ready`, `fatal`, `stopped`: the helper's own words for its connection. |
+| `since` | The time to count from, exactly as `toISOString` writes one. For `ready`, when the connection became ready. For every other state, when it last stopped being ready, or when the helper started it if it has not been ready yet. It is not when the current state began: a connection that is down moves between `connecting` and `reconnecting` on every attempt. |
+| `fatalCloseCode` | Discord's close code, a whole number from 1000 to 4999, when `state` is `fatal`. Null or left out for every other state. |
+
+Nothing else may be in it. A `discordGateway` that is anything else (an unknown state, words
+or a differently written time where the time belongs, a field not listed here, a close code on
+a connection that was not refused) refuses the whole claim with `400 BAD_GATEWAY_REPORT`: no
+lease is issued, and the report the bridge already holds stays as it was. A claim with no
+`discordGateway` is answered exactly as before, so a helper that has not been restarted since
+this was added keeps working and reads as not reported.
+
+A report is kept whenever the claim that carried it was itself well formed and came from the
+active helper token, including a claim answered `409 BRIDGE_CONFIGURATION_BLOCKED`: the helper
+asked, so it is running. It is not kept from a claim refused before it is read: a wrong token,
+a rate limit, a bridge that is disabled.
+
+**What the bridge keeps.** The last report and the time it arrived, in memory only. It is a
+reading of now and not a record: nothing is stored, and after a server restart the reading is
+`never-reported` until the helper's next pass, seconds later.
+
+**The reading.** `GET /api/bridge/operator/status` and `GET /api/bridge/master/status` both
+carry `discordGateway`: `{reading, state, since, fatalCloseCode, reportedAt}`.
+
+| `reading` | Means | `tc bridge status` prints |
+|---|---|---|
+| `connected` | The helper's last report said `ready`, and is no older than three minutes. | `Discord connection: connected since <since> (the helper's report of <reportedAt>).` |
+| `down` | The last report said anything else, and is no older than three minutes. `state` says what the helper is doing about it; `fatal` means Discord refused the connection (`fatalCloseCode` says how) and the helper will not retry. | `Discord connection: NOT CONNECTED since <since>: the helper reports <state> ...` and, for `fatal`, the close code and that it will not retry until it is put right and restarted. |
+| `not-reported` | The last report is older than three minutes, whatever it said. `state` and `since` are what it said then; `reportedAt` is when the helper was last heard. Whether Discord is connected is not known. | `Discord connection: NOT REPORTED since <reportedAt>: the helper last said <state> ...` |
+| `never-reported` | No report since this server started: `state`, `since`, `fatalCloseCode` and `reportedAt` are null. The helper is not running, has not yet asked for work, or predates the report. | `Discord connection: never reported since this server started: ...` |
+
+Three minutes, because a helper that died still said `ready` in its last report. The helper
+claims every `pollSeconds` (5 to 300, 15 by default), and backs off to as much as five minutes
+between passes while its passes are failing, so a helper that is slow for either reason can
+read `not-reported` while it is running. `not-reported` says exactly that the bridge has not
+heard, and never that the connection is down. While the bridge is disabled no report is read
+at all, and `tc bridge status` adds that the reading then says nothing about the helper.
+
+A refused report is logged by the server as `Bridge request refused` with
+`code: BAD_GATEWAY_REPORT`, because the helper's own log gives only the status: a helper whose
+report is refused on every pass is handed nothing, so nothing posts until the two are from the
+same version again.
+
+`since` is the helper's clock, and `reportedAt` the server's. Nothing here raises a notice, and
+the dashboard panel does not show the reading yet: it is in the two status payloads and in
+`tc bridge status`.
 
 ### Claims and leases
 
@@ -946,7 +1005,7 @@ request.
 
 | Route | Does |
 |---|---|
-| `GET /api/bridge/operator/status` | Whether it is enabled, the allowlist, whether a helper token exists, the Master generation, aliases, each nickname with who set it and on which message (`nicknames`), what the bridge may reach (`reach`: how the Master's scope reads, the reachable projects, and the projects opted out), pins, how many routes are open, in each state and since when (`openRoutes`, `openRoutesByState`, `oldestOpenRouteAt`: counts and a time, no text), what is waiting (`waitingForHelper`, which counts an open episode's notice), how many items are set aside (`setAside`), each item set aside by id, kind and reason and never its text (`setAsideItems`), everything queued that no open route owns, undecided candidates included, by id, kind, state and age and never its text (`routelessItems`), whether sessions are being told of `tc candidate`, what the switch was last set to whether or not the bridge is on for it to take effect, and the last launch that was not told (`candidatesPrimed`, `candidatePrimerSetting`, `candidatePrimerOmitted`), whether the Master can be told and how many routes it has not been told of (`masterListener`, `routesMasterNotTold`), the open configuration episode if there is one (`configurationCircuit`), and the arrivals the gateway dropped since the server started, each with its reason. |
+| `GET /api/bridge/operator/status` | Whether it is enabled, the allowlist, whether a helper token exists, the Master generation, aliases, each nickname with who set it and on which message (`nicknames`), what the bridge may reach (`reach`: how the Master's scope reads, the reachable projects, and the projects opted out), pins, how many routes are open, in each state and since when (`openRoutes`, `openRoutesByState`, `oldestOpenRouteAt`: counts and a time, no text), what is waiting (`waitingForHelper`, which counts an open episode's notice), how many items are set aside (`setAside`), each item set aside by id, kind and reason and never its text (`setAsideItems`), everything queued that no open route owns, undecided candidates included, by id, kind, state and age and never its text (`routelessItems`), whether sessions are being told of `tc candidate`, what the switch was last set to whether or not the bridge is on for it to take effect, and the last launch that was not told (`candidatesPrimed`, `candidatePrimerSetting`, `candidatePrimerOmitted`), whether the Master can be told and how many routes it has not been told of (`masterListener`, `routesMasterNotTold`), the open configuration episode if there is one (`configurationCircuit`), how the helper's connection to Discord reads from its last report (`discordGateway`, see [The helper's Discord connection](#the-helpers-discord-connection)), and the arrivals the gateway dropped since the server started, each with its reason. |
 | `POST /api/bridge/operator/allowlist` | Sets the one `authorId`, `spaceId` and `channelId` accepted. |
 | `POST /api/bridge/operator/helper-token` | Replaces the helper token. The value is in this response and nowhere else. |
 | `DELETE /api/bridge/operator/helper-token` | Revokes it. |

@@ -3184,6 +3184,271 @@ describe('bridge API: the round trip (#2031)', () => {
     });
   });
 
+  describe('how the helper\'s Discord connection reads (#2272)', () => {
+    const NEVER = { reading: 'never-reported', state: null, since: null, fatalCloseCode: null, reportedAt: null };
+
+    // Whatever the cases above left waiting is leased here, so each case below
+    // is handed only what it queued itself. Nothing in this block moves the
+    // clock forward, so those leases stay live throughout.
+    beforeEach(async () => {
+      while ((await claim()).body.items.length > 0) { /* until nothing is left to lease */ }
+    });
+
+    /**
+     * Claim as the helper does, with a body of the test's choosing.
+     * @param {object} body - The claim's body.
+     * @returns {Promise<{status: number, body: object}>}
+     */
+    const claimWith = (body) => call('POST', '/api/bridge/helper/outbound/claim', { headers: asHelper(), body });
+
+    /**
+     * The reading as each of its two readers is given it.
+     * @returns {Promise<object[]>} The operator's, then the Master's.
+     */
+    const readings = async () => [
+      (await asOperator('GET', '/api/bridge/operator/status')).body.discordGateway,
+      (await call('GET', '/api/bridge/master/status', { headers: asMaster() })).body.discordGateway
+    ];
+
+    /**
+     * Run with the gateway's clock held at one time.
+     * @param {string} when - ISO time.
+     * @param {function(): Promise<*>} fn - What to run.
+     * @returns {Promise<*>}
+     */
+    const at = async (when, fn) => {
+      const realNow = gateway._deps.now;
+      gateway._deps.now = () => when;
+      try { return await fn(); } finally { gateway._deps.now = realNow; }
+    };
+
+    /**
+     * The `Discord connection` line of `tc bridge status`.
+     * @returns {Promise<string>}
+     */
+    const tcLine = async () => {
+      const shown = await tc(['bridge', 'status']);
+      assert.equal(shown.code, 0, shown.stderr);
+      const lines = shown.stdout.split('\n').filter((line) => line.startsWith('Discord connection: '));
+      assert.equal(lines.length, 1, shown.stdout);
+      assert.ok(shown.stdout.startsWith('Operator bridge: enabled; '), 'the line it already printed still comes first');
+      return lines[0];
+    };
+
+    it('says never reported until the helper reports, and a claim with no report is answered as it always was', async () => {
+      assert.deepEqual(await readings(), [NEVER, NEVER]);
+      assert.equal(await tcLine(), 'Discord connection: never reported since this server started: the helper is not running, has not yet asked for work, or predates the report and needs a restart.');
+
+      // A helper not yet restarted sends no report. It keeps working, and reads as not reported.
+      for (const body of [{}, { limit: 20 }]) {
+        const old = await claimWith(body);
+        assert.deepEqual([old.status, old.body], [200, { replayed: false, items: [] }]);
+      }
+      assert.deepEqual(await readings(), [NEVER, NEVER]);
+
+      // Disabled, the bridge refuses the claim before it reads the report: the line must not blame the helper for that.
+      assert.equal((await asOperator('POST', '/api/bridge/operator/disable')).status, 200);
+      const refused = await claimWith({ discordGateway: { state: 'ready', since: '2026-10-11T05:00:02.000Z' } });
+      assert.deepEqual([refused.status, refused.body.code], [409, 'BRIDGE_DISABLED']);
+      assert.deepEqual(await readings(), [NEVER, NEVER]);
+      const off = (await tc(['bridge', 'status'])).stdout.split('\n').find((line) => line.startsWith('Discord connection: '));
+      assert.equal(off, 'Discord connection: never reported since this server started: the helper is not running, has not yet asked for work, or predates the report and needs a restart.'
+        + ' The bridge is disabled, and a disabled bridge does not read the helper\'s reports: this says nothing about the helper.');
+    });
+
+    it('a claim carrying a report is answered exactly as one without, and both readers are then told what was reported and since when', async () => {
+      const accepted = await operatorSays(`m${++seq}`, '@master hello');
+      await masterWrites(accepted.body.routeId, 'answer', { expectedVersion: bridgeStore.routes.get(accepted.body.routeId).version, text: 'hi' });
+
+      const ready = { state: 'ready', since: '2026-10-11T05:00:02.000Z', fatalCloseCode: null };
+      const answer = await at('2026-10-11T05:00:10.000Z', () => claimWith({ limit: 20, discordGateway: ready }));
+      assert.deepEqual([answer.status, Object.keys(answer.body), answer.body.replayed], [200, ['replayed', 'items'], false], 'nothing is added to the answer');
+      assert.deepEqual(answer.body.items.map((item) => [item.text, item.leaseState]), [['hi', 'live']], 'and what waited is handed over under a lease, as before');
+
+      await at('2026-10-11T05:00:20.000Z', async () => {
+        const connected = { reading: 'connected', ...ready, reportedAt: '2026-10-11T05:00:10.000Z' };
+        assert.deepEqual(await readings(), [connected, connected]);
+        assert.equal(await tcLine(), 'Discord connection: connected since 2026-10-11T05:00:02.000Z (the helper\'s report of 2026-10-11T05:00:10.000Z).');
+      });
+
+      // Down, and trying: counted from when it stopped being ready, which is the time the helper sends.
+      await at('2026-10-11T05:09:00.000Z', async () => {
+        assert.equal((await claimWith({ discordGateway: { state: 'reconnecting', since: '2026-10-11T05:03:00.000Z' } })).status, 200, 'a close code left out is one that is null');
+        const down = { reading: 'down', state: 'reconnecting', since: '2026-10-11T05:03:00.000Z', fatalCloseCode: null, reportedAt: '2026-10-11T05:09:00.000Z' };
+        assert.deepEqual(await readings(), [down, down]);
+        assert.equal(await tcLine(), 'Discord connection: NOT CONNECTED since 2026-10-11T05:03:00.000Z: the helper reports reconnecting (its report of 2026-10-11T05:09:00.000Z). Nothing the operator writes arrives meanwhile.');
+
+        // Refused by Discord: not retrying, and the line must not read like a connection that is.
+        assert.equal((await claimWith({ discordGateway: { state: 'fatal', since: '2026-10-11T05:03:00.000Z', fatalCloseCode: 4014 } })).status, 200);
+        assert.deepEqual((await readings())[1], { ...down, state: 'fatal', fatalCloseCode: 4014 });
+        assert.equal(await tcLine(), 'Discord connection: NOT CONNECTED since 2026-10-11T05:03:00.000Z: the helper reports fatal (close code 4014): '
+          + 'Discord refused the connection and the helper will not retry until it is put right and restarted (its report of 2026-10-11T05:09:00.000Z). Nothing the operator writes arrives meanwhile.');
+
+        // A report still current when the bridge is switched off is still what the helper said: nothing is added to it.
+        const fatalLine = await tcLine();
+        assert.equal((await asOperator('POST', '/api/bridge/operator/disable')).status, 200);
+        assert.equal((await tc(['bridge', 'status'])).stdout.split('\n').find((line) => line.startsWith('Discord connection: ')), fatalLine);
+      });
+    });
+
+    it('a report that is not one refuses the whole claim: nothing is leased, and the last good report stays', async () => {
+      const good = { state: 'ready', since: '2026-10-11T05:00:02.000Z', fatalCloseCode: null };
+      await at('2026-10-11T05:00:10.000Z', () => claimWith({ discordGateway: good }));
+      const before = { reading: 'connected', ...good, reportedAt: '2026-10-11T05:00:10.000Z' };
+      const text = 'waits through every refused claim';
+      const id = bridgeStore.outbound.enqueue({
+        idemKey: `notify:operator-needed:report-${++seq}`, kind: 'notification', notifyType: 'operator-needed', sourceLabel: 'TangleClaw', text, digest: bridgeStore.digest(text)
+      }).outboundId;
+
+      const malformed = {
+        'a state the helper does not have': { ...good, state: 'online' },
+        'no state': { since: good.since },
+        'words where the time belongs': { ...good, since: 'five minutes ago' },
+        'a time not written as the helper writes one': { ...good, since: '2026-10-11T05:00:02Z' },
+        'a date that does not exist': { ...good, since: '2026-02-30T05:00:02.000Z' },
+        'a number where the time belongs': { ...good, since: 1791522002000 },
+        'no time': { state: 'ready' },
+        'a field nobody defined': { ...good, detail: 'socket hang up' },
+        'a close code on a connection that was not refused': { ...good, fatalCloseCode: 4004 },
+        'a refusal with no close code': { state: 'fatal', since: good.since },
+        'a close code that is text': { state: 'fatal', since: good.since, fatalCloseCode: '4004' },
+        'a close code no socket can close with': { state: 'fatal', since: good.since, fatalCloseCode: 999 },
+        'a close code past the range': { state: 'fatal', since: good.since, fatalCloseCode: 5000 },
+        'a close code that is not whole': { state: 'fatal', since: good.since, fatalCloseCode: 4004.5 },
+        'a list': [good],
+        'a word': 'ready',
+        'nothing, said outright': null
+      };
+      const logged = [];
+      setLevel('warn');
+      setConsoleStream({ write: (line) => { logged.push(String(line)); return true; } });
+      try {
+        await at('2026-10-11T05:00:30.000Z', async () => {
+          for (const [what, discordGateway] of Object.entries(malformed)) {
+            const refused = await claimWith({ limit: 20, discordGateway });
+            assert.deepEqual([refused.status, refused.body.code, Object.keys(refused.body).sort()], [400, 'BAD_GATEWAY_REPORT', ['code', 'error']], what);
+            assert.deepEqual(await readings(), [before, before], what);
+          }
+        });
+      } finally {
+        setConsoleStream(null);
+        setLevel('error');
+      }
+      // Each refusal leaves a line in the server's log: the helper's own log says only that a claim failed with 400.
+      const refusals = logged.filter((line) => line.includes('Bridge request refused') && line.includes('BAD_GATEWAY_REPORT'));
+      assert.equal(refusals.length, Object.keys(malformed).length, logged.join(''));
+      for (const line of refusals) assert.ok(!line.includes('socket hang up') && !line.includes('five minutes ago'), 'the code, and nothing of what was sent');
+      await at('2026-10-11T05:00:30.000Z', async () => {
+        // A claim that is itself malformed records nothing either, however good the report in it.
+        const badLimit = await claimWith({ limit: 500, discordGateway: { ...good, since: '2026-10-11T05:00:25.000Z' } });
+        assert.deepEqual([badLimit.status, badLimit.body.code], [400, 'BAD_CLAIM']);
+        assert.deepEqual(await readings(), [before, before]);
+      });
+      assert.equal(bridgeStore.outbound.get(id).attempts, 0, 'none of those claims was handed the item');
+      const handed = (await claimWith({ limit: 20, discordGateway: good })).body.items.find((item) => item.outboundId === id);
+      assert.deepEqual([handed.leaseState, handed.attempts], ['live', 1], 'the first good claim is the first to be handed it');
+    });
+
+    it('a report older than three minutes reads as not reported, whatever it said', async () => {
+      assert.equal(gateway.DISCORD_REPORT_STALE_MS, 3 * 60 * 1000);
+      for (const report of [
+        { state: 'ready', since: '2026-10-11T05:00:02.000Z', fatalCloseCode: null },
+        { state: 'connecting', since: '2026-10-11T04:50:00.000Z', fatalCloseCode: null }
+      ]) {
+        await at('2026-10-11T05:00:10.000Z', () => claimWith({ discordGateway: report }));
+        const fresh = report.state === 'ready' ? 'connected' : 'down';
+        await at('2026-10-11T05:03:10.000Z', async () => {
+          assert.deepEqual((await readings()).map((r) => r.reading), [fresh, fresh], 'three minutes exactly is still a report of now');
+        });
+        await at('2026-10-11T05:03:10.001Z', async () => {
+          const stale = { reading: 'not-reported', ...report, reportedAt: '2026-10-11T05:00:10.000Z' };
+          assert.deepEqual(await readings(), [stale, stale]);
+          assert.equal(await tcLine(), `Discord connection: NOT REPORTED since 2026-10-11T05:00:10.000Z: the helper last said ${report.state} and has not reported since. `
+            + 'It may not be running; whether Discord is connected is not known.');
+          // Switched off, the bridge stops reading reports, so going quiet is its own doing and the line says so.
+          assert.equal((await asOperator('POST', '/api/bridge/operator/disable')).status, 200);
+          const off = (await tc(['bridge', 'status'])).stdout.split('\n').find((line) => line.startsWith('Discord connection: '));
+          assert.ok(off.startsWith('Discord connection: NOT REPORTED since 2026-10-11T05:00:10.000Z: ')
+            && off.endsWith(' The bridge is disabled, and a disabled bridge does not read the helper\'s reports: this says nothing about the helper.'), off);
+          assert.equal((await asOperator('POST', '/api/bridge/operator/enable')).status, 200);
+        });
+        // The next report is of now again.
+        await at('2026-10-11T05:10:00.000Z', async () => {
+          await claimWith({ discordGateway: report });
+          assert.deepEqual((await readings()).map((r) => [r.reading, r.reportedAt]), [[fresh, '2026-10-11T05:10:00.000Z'], [fresh, '2026-10-11T05:10:00.000Z']]);
+        });
+      }
+    });
+
+    it('a claim the bridge will not hand anything over on still says the helper is there', async () => {
+      const text = 'notice for a closed chat';
+      const id = bridgeStore.outbound.enqueue({
+        idemKey: `notify:operator-needed:report-circuit-${++seq}`, kind: 'notification', notifyType: 'operator-needed', sourceLabel: 'TangleClaw', text, digest: bridgeStore.digest(text)
+      }).outboundId;
+      const item = (await claim()).body.items.find((i) => i.outboundId === id);
+      await call('POST', `/api/bridge/helper/outbound/${id}/failure`, { headers: asHelper(), body: { leaseId: item.leaseId, reason: 'chat-channel-missing' } });
+
+      const report = { state: 'ready', since: '2026-10-11T05:00:02.000Z', fatalCloseCode: null };
+      const blocked = await at('2026-10-11T05:00:10.000Z', () => claimWith({ discordGateway: report }));
+      assert.deepEqual([blocked.status, blocked.body.code], [409, 'BRIDGE_CONFIGURATION_BLOCKED']);
+      await at('2026-10-11T05:00:11.000Z', async () => {
+        assert.deepEqual((await readings())[0], { reading: 'connected', ...report, reportedAt: '2026-10-11T05:00:10.000Z' });
+      });
+      // The circuit is closed again, and its item withdrawn, so the cases after this one find the bridge as they expect it.
+      const reset = await call('POST', '/api/bridge/master/circuit/reset', { headers: asMaster(), body: { requestId: `req-r-${++seq}-0000`, decision: 'withdraw' } });
+      assert.equal(reset.status, 200, JSON.stringify(reset.body));
+      assert.equal(bridgeStore.circuit.open(), null);
+    });
+
+    it('tc bridge status says nothing of the connection to a server that does not report it, or reports a reading it does not know', async () => {
+      const http = require('node:http');
+      const base = { enabled: true, openRoutes: 0, masterGeneration: 1, proof: 'master-launch', configurationCircuit: null, scope: { kind: 'all' } };
+      for (const [what, body] of Object.entries({
+        'a server from before the report': base,
+        'a reading from after this tc': { ...base, discordGateway: { reading: 'degraded', state: 'ready', since: null, fatalCloseCode: null, reportedAt: null } }
+      })) {
+        const old = http.createServer((req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); });
+        await new Promise((resolve) => old.listen(0, '127.0.0.1', resolve));
+        try {
+          const shown = await tc(['bridge', 'status'], { TANGLECLAW_API: `http://127.0.0.1:${old.address().port}` });
+          assert.equal(shown.stdout, 'Operator bridge: enabled; 0 open route(s). You are Master generation 1 (master-launch).\n', what);
+        } finally {
+          await new Promise((resolve) => old.close(resolve));
+        }
+      }
+    });
+
+    it('every state the helper\'s own gateway can be in is a report the bridge admits', async () => {
+      const { createGateway, OP } = require('../lib/bridge-helper/discord-gateway');
+      const { gatewayReport } = require('../lib/bridge-helper/outbound');
+      const { fakeWebSocket } = require('./_fake-discord');
+      const ws = fakeWebSocket();
+      const idle = { setTimeout: () => 1, clearTimeout: () => {}, setInterval: () => 1, clearInterval: () => {} };
+      const gw = createGateway({ token: 'not-a-token', WebSocket: ws.WebSocket, timers: idle, log: () => {}, onMessageCreate: () => {} });
+      const seen = [];
+      /** @returns {void} */
+      const admit = () => {
+        const report = gatewayReport(gw.status());
+        assert.deepEqual(gateway.discordReport(JSON.parse(JSON.stringify(report))), report, report.state);
+        seen.push(report.state);
+      };
+      admit();
+      gw.start();
+      admit();
+      ws.sockets[0].receive({ op: OP.HELLO, d: { heartbeat_interval: 40000 } });
+      ws.sockets[0].receive({ op: OP.DISPATCH, t: 'READY', s: 1, d: { session_id: 'sess-1', user: { id: '900000000000000009' } } });
+      admit();
+      ws.sockets[0].drop(1006);
+      admit();
+      gw.stop();
+      admit();
+      gw.start();
+      ws.sockets[1].drop(4004);
+      admit();
+      assert.deepEqual([...seen].sort(), [...gateway.DISCORD_STATES].sort(), 'and those are all the states there are');
+    });
+  });
+
   describe('who may call what', () => {
     it('the helper routes answer only the active helper token, with a fresh nonce on every write', async () => {
       const body = { externalId: `m${++seq}`, ...ALLOWED, text: 'hello' };

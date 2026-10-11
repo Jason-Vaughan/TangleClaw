@@ -225,6 +225,13 @@ describe('bridge helper: the Discord Gateway connection (#2031)', () => {
       gw.start();
       await settle();
       assert.equal(ws.sockets.length, 1, 'and starting it again does not connect');
+      // Stopped and started again, it is still refused, and says that: not `stopped`, which a start would cure.
+      gw.stop();
+      assert.deepEqual([gw.status().state, gw.status().fatalCloseCode], ['stopped', code]);
+      gw.start();
+      await settle();
+      assert.deepEqual([gw.status().state, gw.status().fatalCloseCode, ws.sockets.length], ['fatal', code, 1]);
+      assert.deepEqual(timers.waiting(), [], 'with nothing scheduled and no watchdog');
     }
     assert.ok(FATAL_CLOSES.has(4004) && FATAL_CLOSES.has(4014), 'a refused token and disallowed intents among them');
   });
@@ -758,6 +765,59 @@ describe('bridge helper: a Gateway connection attempt that goes nowhere (#2272)'
     clock += 1000;
     gw.stop();
     assert.deepEqual([gw.status().state, gw.status().since], ['stopped', '2026-10-11T05:01:03.000Z']);
+  });
+
+  it('says since when it has not been ready, through every attempt of an outage, and null while it is', async () => {
+    let clock = Date.parse('2026-10-11T05:00:00.000Z');
+    const gw = gateway({ now: () => new Date(clock) });
+    /** @returns {Array} The state, when it began, and since when the gateway has not been ready. */
+    const read = () => [gw.status().state, gw.status().since, gw.status().notReadySince];
+    assert.deepEqual(read(), ['idle', '2026-10-11T05:00:00.000Z', '2026-10-11T05:00:00.000Z'], 'made and not started');
+    clock += 5000;
+    gw.start();
+    await settle();
+    assert.deepEqual(read(), ['connecting', '2026-10-11T05:00:05.000Z', '2026-10-11T05:00:05.000Z'], 'never ready: since it was started');
+    // The first attempt goes nowhere, and so does the next: the state changes each time and the outage is one.
+    clock += 30000;
+    expireAttempt();
+    assert.deepEqual(read(), ['reconnecting', '2026-10-11T05:00:35.000Z', '2026-10-11T05:00:05.000Z']);
+    clock += 1000;
+    fireReconnect();
+    await settle();
+    assert.deepEqual(read(), ['connecting', '2026-10-11T05:00:36.000Z', '2026-10-11T05:00:05.000Z']);
+    clock += 1000;
+    ws.sockets.at(-1).receive({ op: OP.HELLO, d: { heartbeat_interval: 40000 } });
+    ws.sockets.at(-1).receive({ op: OP.DISPATCH, t: 'READY', s: 1, d: { session_id: 'sess-1', resume_gateway_url: RESUME_URL, user: { id: '900000000000000009' } } });
+    assert.deepEqual(read(), ['ready', '2026-10-11T05:00:37.000Z', null]);
+
+    // It drops, and three attempts fail: still the one time, the moment it stopped being ready.
+    clock += 600000;
+    ws.sockets.at(-1).drop(1006);
+    assert.deepEqual(read(), ['reconnecting', '2026-10-11T05:10:37.000Z', '2026-10-11T05:10:37.000Z']);
+    for (let n = 1; n <= 3; n++) {
+      clock += 1000;
+      fireReconnect();
+      await settle();
+      assert.deepEqual([gw.status().state, gw.status().notReadySince], ['connecting', '2026-10-11T05:10:37.000Z'], `attempt ${n}`);
+      clock += 30000;
+      expireAttempt();
+      assert.deepEqual([gw.status().state, gw.status().notReadySince], ['reconnecting', '2026-10-11T05:10:37.000Z'], `attempt ${n} given up`);
+    }
+    // A resume makes it ready again; a stop, and a start after it, do not move the time it stopped being ready.
+    clock += 1000;
+    fireReconnect();
+    await settle();
+    ws.sockets.at(-1).receive({ op: OP.HELLO, d: { heartbeat_interval: 40000 } });
+    ws.sockets.at(-1).receive({ op: OP.DISPATCH, t: 'RESUMED', s: 2, d: {} });
+    assert.deepEqual([gw.status().state, gw.status().notReadySince], ['ready', null]);
+    clock += 60000;
+    gw.stop();
+    const stoppedAt = new Date(clock).toISOString();
+    assert.deepEqual(read(), ['stopped', stoppedAt, stoppedAt]);
+    clock += 60000;
+    gw.start();
+    await settle();
+    assert.deepEqual([gw.status().state, gw.status().notReadySince], ['connecting', stoppedAt]);
   });
 });
 

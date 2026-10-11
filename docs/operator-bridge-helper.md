@@ -204,7 +204,36 @@ start once a session is ready):
 Posting does not depend on any of this: the helper posts over Discord's REST API whether or
 not the Gateway is connected. So while the Gateway is down, notices still arrive and replies
 do not. The helper's `status` shows the Gateway's state and, in the snapshot file, when that
-state began.
+state began (`since`) and since when the Gateway has not been ready (`notReadySince`: when it
+last stopped being ready, or when it was started if it has not been ready yet; null while it is
+ready). The first restarts on every attempt of an outage. The second is how long the outage
+has lasted.
+
+### Telling TangleClaw how the connection is
+
+On every pass the helper tells TangleClaw how its Gateway connection is, inside the claim it
+already makes: the state, the time to count from (when it became ready, or since when it has
+not been), and Discord's close code if the connection was refused. Closed values only, like
+the log. TangleClaw keeps the last report and says what it reads from it in
+`tc bridge status` and in the bridge's two status payloads: connected, not connected, not
+reported for more than three minutes, or never reported. The fields and the exact rules are in
+[`operator-bridge.md`](operator-bridge.md#the-helpers-discord-connection).
+
+Three things follow for whoever runs the helper:
+
+- **A helper started before this was added reports nothing** and reads as never reported, or
+  as not reported once the server has heard from a newer one. Restart it
+  (`launchctl kickstart -k gui/$(id -u)/com.tangleclaw.bridge-helper`) after TangleClaw is
+  updated.
+- **A helper that is not running cannot say so.** Its last report goes stale after three
+  minutes and then reads as not reported, which is all TangleClaw can know.
+- **A pass that ends before the claim reports nothing.** While the helper cannot reach
+  TangleClaw, or its token is refused, TangleClaw hears nothing and its reading goes stale in
+  the same way.
+
+A gateway Discord refused for good (`gateway-fatal`) reports `fatal` with the close code, and
+keeps reporting it for as long as the helper runs. It does not retry: put right what the close
+code names, then restart the helper.
 
 ## Operating it
 
@@ -388,7 +417,7 @@ TangleClaw's answer is echoed.
 | `outbound-chat-closed` | Discord said the chat is closed to the bot, and the bridge was told. The line carries the reason chosen. |
 | `outbound-reply-target-missing` | The message an answer replied to may be gone; the answer is being tried once more by itself. The next line for that item says how the retry went. |
 | `outbound-unplaceable` | Discord refused an item in a way the helper could not place. Nothing was posted; the bridge set the item aside. See "Settling an `uncertain` item" for the two cases. |
-| `claim-failed` | The bridge could not be asked what to post. The status is in the line: `0` is no answer, `401` a replaced token, `409` a disabled bridge. |
+| `claim-failed` | The bridge could not be asked what to post. The status is in the line: `0` is no answer, `401` a replaced token, `409` a disabled bridge, `400` a claim the bridge calls malformed. A `400` on every pass means the bridge refuses this helper's report of its Discord connection (`BAD_GATEWAY_REPORT` in TangleClaw's own log, as `Bridge request refused`): the helper and TangleClaw are from different versions. Nothing is posted while it lasts. Update and restart the helper. |
 | `redirect-refused` | A server answered with a redirect, which the helper never follows. Check `--base-url`. |
 | `outbound-uncertain` | An item is held here and set aside at the bridge; see "Settling an `uncertain` item". |
 | `outbound-rejected`, `outbound-part-conflict` | The bridge was asked to set an item aside; see "Items set aside". |
@@ -410,6 +439,9 @@ Discord account, and belong to the live verification before cutover:
   stall on demand, so this is proved against Node's real WebSocket and loopback servers that
   refuse, accept and say nothing, or complete the handshake and say nothing
   (`test/bridge-helper-gateway.test.js`), and not against Discord;
+- the helper's report of its connection, against Discord itself: the tests drive the real
+  gateway module through every state over a stand-in socket and hold each report to the
+  server's rule, but what the live helper reports during a real outage has not been watched;
 - one two-way conversation, and one of each notification.
 
 ## Code

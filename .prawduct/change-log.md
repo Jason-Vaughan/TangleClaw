@@ -35,6 +35,45 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-10 — #2272: the Discord helper says how its Gateway connection is, and the bridge says what it reads from that
+
+<!-- prawduct: type=feature | scope=bridge-2272 -->
+#2272 Chunk 02 of five. Branch `fix/2272-gateway-state-report`, from `origin/main` `7d2304fa`.
+
+Visual change: no
+
+**Why.** While the helper's Gateway connection is down, nothing the operator writes in Discord reaches TangleClaw, and nothing in TangleClaw shows it: notices still post over REST, the bridge reads enabled, and the only trace is a line in the helper's own log on the helper's own machine. Chunk 01 stopped the connection from hanging for good. This chunk makes its state something the server holds, so that the Project Master can read it now and the later chunks can show it on the panel and raise a notice from it.
+
+**What the helper sends.** `discordGateway` on the outbound claim it already makes on every pass: `state` (the gateway's own word), `since`, and `fatalCloseCode` for a refused connection only. No route, no request and no token scope is added; `lib/bridge-helper/bridge-client.js` still builds six paths. `since` is the time to count from: when the connection became ready, or since when it has not been.
+
+**The time an outage began.** Chunk 01's `status().since` is when the current state began, and a gateway that is down moves between `connecting` and `reconnecting` on every attempt, so it restarts and never says how long the outage has lasted. `gateway.status()` gains `notReadySince`: when the gateway last stopped being ready, or when it was first started if it has not been ready yet; null while it is ready. It is kept in `setState`, from the same clock reading as `since`. A stop, and a start after it, do not move it.
+
+**A refused gateway says `fatal` after a stop and a start.** It used to say `stopped`, which reads as something a start cures, while `start()` on it connects nothing. Found by the Critic on Chunk 01 and carried here because this is where the word starts to be reported.
+
+**What the server does with it.** `lib/bridge-gateway.js#discordReport` admits closed values only: one of the six states, a time exactly as `toISOString` writes one (held to the round trip, so a 30th of February is refused), and a close code that is a whole number from 1000 to 4999 when the state is `fatal` and absent or null otherwise; any other key refuses it. `lib/bridge-api.js#helperClaim` refuses a claim whose `discordGateway` is not one with `400 BAD_GATEWAY_REPORT` before anything is leased, and the last good report stays. A claim with no `discordGateway` is answered exactly as before. A good report is kept when the claim was well formed, including one answered `409 BRIDGE_CONFIGURATION_BLOCKED` (the helper asked, so it is running), and not when the claim itself is `400 BAD_CLAIM`. The report is held in memory with the server's time of receipt; nothing is stored, and there is no migration.
+
+**The reading.** `discordGateway: {reading, state, since, fatalCloseCode, reportedAt}` on `GET /api/bridge/operator/status` and `GET /api/bridge/master/status`: `connected`, `down`, `not-reported` (the last report is older than three minutes, whatever it said: a helper that died still said `ready`), or `never-reported` (none since the server started). `tc bridge status` prints one more line, `Discord connection: ...`, for each of the four, and for `fatal` says the close code and that the helper will not retry. No verb is added or renamed: `node scripts/sync-claude-md-block.js` exits 0 and `CLAUDE.md` is untouched.
+
+**After the review.** A refused report is logged by the server (`Bridge request refused`, `BAD_GATEWAY_REPORT`): a helper whose report is refused on every pass is handed nothing, and its own log says only `claim-failed` with 400. And on a disabled bridge, which refuses the claim before reading the report, `tc bridge status` adds that a silent reading then says nothing about the helper.
+
+**Decided here.**
+- The report is recorded after the claim is answered, and only if the claim was not itself malformed, so a request the bridge calls bad changes nothing at all. A circuit refusal is not a bad request.
+- An explicit `discordGateway: null` is refused like any other non-report. A helper with nothing to say leaves the field out.
+- The field is called `discordGateway` in the claim and in both payloads, not `gateway`: on the server `gateway` already means the bridge's own module.
+- The reading keeps what the stale report said (`state`, `since`) beside `not-reported`, so a reader can say "last said ready" without being told it is connected.
+
+**Not done, and why.** The Critic's other note on Chunk 01 was that `ready` could be shown with no socket for up to a minute. I read every path that drops a ready gateway's socket (a missed heartbeat, RECONNECT, a bad HELLO, an invalid session, a close, a stop): each moves the state in the same call. No path leaves `ready` without a socket, so a clause deriving the word from the socket could not be turned red by any test, and it is not written. What covers the case that matters, a helper that died while saying `ready`, is the three-minute rule on the server.
+
+**One existing assertion changed, and why that is not a weakening.** `test/api-bridge.test.js` held the Master's whole status body to six fields with `deepEqual`. The body has seven now, by this chunk's own deliverable, so the expected object gains `discordGateway` as `never-reported`. It still holds the whole body. The plan's criterion 6 said every existing case would pass unmodified; it could not for this one assertion, and the plan is amended to say so. Every other existing case in the six files passes as it was.
+
+**Tests.** `test/api-bridge-gateway.test.js`, a new block: never reported, and a claim with no report answered as before; a report accepted, the claim's answer unchanged, both payloads and the printed line for connected, down and fatal; a table of things that are not a report, each refused with nothing leased and the reading unmoved, and a malformed claim recording nothing; three minutes exactly still current and one millisecond more not; a circuit-refused claim still recorded; and the helper's real gateway driven through all six states with each report admitted by the server's rule, so the two halves cannot drift apart. `test/bridge-helper-gateway.test.js`: `notReadySince` through two failed attempts, a ready session, a drop, three more failed attempts, a resume, a stop and a start; `fatal` after a stop and a start. `test/bridge-helper-units.test.js`: the claim's body with and without the report; the mapping. `test/bridge-helper-relay.test.js`, against the real server: every pass reports, one with nothing to post included; a claim asked again says how the connection is now; a refused pass changes nothing; a relay given no gateway reports nothing; and the end-to-end `run` case reads `connected` on the server with the gateway's own `since`.
+
+**Mutations, in a scratch copy.** Each condition and call site this chunk adds was inverted or removed in turn and the narrow files run against it; the list and what each run answered are in the PR.
+
+**Docs.** `docs/operator-bridge.md` gains "The helper's Discord connection" (the field, the rule, what is kept, the four readings and the line each prints, and why a slow helper can read `not-reported` while running), the claim row, the refusal list, the status row and the `tc bridge status` row. `docs/operator-bridge-helper.md` gains `notReadySince`, "Telling TangleClaw how the connection is" and one more line under what is not proven.
+
+**Not covered.** No screen shows the reading (Chunk 03) and nothing is notified (Chunks 04 and 05). A helper configured with `pollSeconds` above 180, or backing off after failed passes, reads `not-reported` between passes while it runs; the doc says so, and Chunk 05 must not treat `not-reported` as an outage. `since` is the helper's clock and is not bounded here; Chunk 05 bounds what it times by the server's receipt. Not proved against Discord: what the live helper reports during a real outage.
+
 ## 2026-10-11 — #1999: the setup-scan own-install test stops walking the host's real Projects folder
 
 <!-- prawduct: type=bugfix | scope=1999-setup-scan-test-hermetic -->

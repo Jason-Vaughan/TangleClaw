@@ -878,6 +878,47 @@ describe('bridge helper: the relay against the real server (#2031)', () => {
       assert.equal(relay.state.claim(), null, 'and the claim is done');
     });
 
+    it('every pass says how the Discord connection is, one with nothing to post included, and a claim asked again says how it is now (#2272)', async () => {
+      let status = { state: 'connecting', since: '2026-10-11T05:00:31.000Z', notReadySince: '2026-10-11T05:00:01.000Z', fatalCloseCode: null, resumable: false, reconnectAttempts: 1 };
+      assert.equal(gateway.discordReading().reading, 'never-reported');
+      const relay = outbound({ gatewayStatus: () => status });
+      assert.deepEqual(await relay.pass(), { ok: true, posted: 0, acked: 0, held: 0 }, 'nothing waits');
+      const first = gateway.discordReading();
+      assert.deepEqual([first.reading, first.state, first.since, first.fatalCloseCode], ['down', 'connecting', '2026-10-11T05:00:01.000Z', null],
+        'counted from when it stopped being ready, not from the attempt in hand');
+
+      // The claim's answer is lost. The bridge heard it all the same, and the helper asks that claim again once it is ready.
+      const lossy = outbound({ bridge: losingOnce('claim'), gatewayStatus: () => status });
+      assert.deepEqual(await lossy.pass(), { ok: false, posted: 0, acked: 0, held: 0 });
+      assert.equal(gateway.discordReading().state, 'connecting');
+      status = { ...status, state: 'ready', since: '2026-10-11T05:00:40.000Z', notReadySince: null, resumable: true, reconnectAttempts: 0 };
+      const asked = [];
+      const watching = { ...bridge, claim: async (...args) => { asked.push(args); return bridge.claim(...args); } };
+      assert.deepEqual(await outbound({ bridge: watching, gatewayStatus: () => status }).pass(), { ok: true, posted: 0, acked: 0, held: 0 });
+      assert.equal(asked.length, 2, 'the claim in progress, then a new one');
+      for (const args of asked) assert.deepEqual(args.slice(1), [undefined, { state: 'ready', since: '2026-10-11T05:00:40.000Z', fatalCloseCode: null }]);
+      const now = gateway.discordReading();
+      assert.deepEqual([now.reading, now.state, now.since], ['connected', 'ready', '2026-10-11T05:00:40.000Z']);
+    });
+
+    it('a pass the bridge refuses changes nothing of what it holds, and a relay given no gateway reports nothing (#2272)', async () => {
+      const status = { state: 'ready', since: '2026-10-11T05:00:40.000Z', notReadySince: null, fatalCloseCode: null, resumable: true, reconnectAttempts: 0 };
+      await outbound({ gatewayStatus: () => status }).pass();
+      const held = gateway.discordReading();
+      assert.equal(held.reading, 'connected');
+
+      // A helper whose token is no longer the active one says it is refused by Discord. It is not heard.
+      const stranger = createBridgeClient({ origin, token: `bht_${'x'.repeat(43)}` });
+      const refused = outbound({ bridge: stranger, gatewayStatus: () => ({ ...status, state: 'fatal', notReadySince: '2026-10-11T05:05:00.000Z', fatalCloseCode: 4004 }) });
+      assert.deepEqual(await refused.pass(), { ok: false, posted: 0, acked: 0, held: 0 });
+      assert.deepEqual(gateway.discordReading(), held);
+
+      // The relay as it was before it was handed a gateway: it claims, and reports nothing.
+      gateway._reset();
+      assert.deepEqual(await outbound().pass(), { ok: true, posted: 0, acked: 0, held: 0 });
+      assert.equal(gateway.discordReading().reading, 'never-reported');
+    });
+
     it('posts nothing whose text does not match its digest, or that names another channel', async () => {
       const { outboundId } = await answered('the answer');
       const tampered = (change) => ({ ...bridge, claim: async (...args) => {
@@ -1312,6 +1353,9 @@ describe('bridge helper: the relay against the real server (#2031)', () => {
         }
       }, 'a status snapshot taken once the Gateway was ready');
       assert.deepEqual([snapshot.pid, snapshot.gateway.state, snapshot.lastPassOk], [process.pid, 'ready', true]);
+      // And the bridge was told the same on the claim that collected the answer: connected, since the gateway became ready.
+      const told = gateway.discordReading();
+      assert.deepEqual([told.reading, told.state, told.since, told.fatalCloseCode], ['connected', 'ready', snapshot.gateway.since, null]);
       assert.equal(fs.readFileSync(paths(home).lock, 'utf8'), `${process.pid}\n`);
 
       await until(() => sleeps.length === 2, 'the helper to wait for its next pass');
