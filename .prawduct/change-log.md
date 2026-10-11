@@ -35,6 +35,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-11 — #2210: the soak-guest test stops racing a 2-second probe bound it chose itself
+
+<!-- prawduct: type=bugfix | scope=2210-soak-guest-probe-bound -->
+#2210 Chunk 01, the plan's only chunk. Branch `fix/2210-soak-guest-probe-bound`, from `origin/main` `a7e69797`. A test file only; nothing under `deploy/` changes.
+
+Visual change: no
+
+**Why.** `test/soak-guest.test.js` told `deploy/soak/guest/guest-setup.sh` to kill every probe after 2 seconds (`SOAK_PROBE_TIMEOUT`, set in the test's `setup()` helper), then answered each probe with a fake that exits at once. On a loaded host a fake can take longer than 2 seconds to start and exit. The script then reads the kill as a hang, which is the right answer for a script that cannot tell, and the case reaches a different refusal than the one it pins. Three reports in the issue are three callers of that one bound: "IPv4 loopback is unreachable", "no DHCP lease", and "a DNS query to 1.1.1.1 over UDP hung past 2s". The last failed a full-suite run on 2026-10-11 whose change had nothing to do with it. The 2 seconds was never production's setting: `guest.conf` defaults the bound to 10.
+
+**What changed.** `test/soak-guest.test.js` only:
+- Two named bounds. `setup()` and the one direct call that passed 2 now pass 60 seconds: a bound no fake that exits at once should reach, so the refusal a case pins no longer depends on how busy the host is.
+- The cases that need a probe to hang pass 6 seconds themselves (the four table rows and two calls whose fake sleeps 30 seconds), and so does the case where the stub hub never answers, because the script tries the hub once a second for the whole bound. The assertion that quoted "hung past 2s" builds its text from the same constant.
+- The wall-clock check on every `--verify-workload` failure case goes from 15 to 25 seconds. It shows the watchdog ended a hung probe before the fake's own 30-second sleep did; 25 is still inside 30, so a watchdog that does nothing still fails the case. With a 6-second wait in place of 2, the rest of such a case had 9 seconds of room where it had 13.
+- No case is added or removed, no fake changes, and no other assertion changes. The script, `guest.conf` and their defaults are untouched.
+
+**Decisions.**
+- [DECISION: the hang cases wait 6 seconds, not 2. | Ruled `2210 hang middle` by TangleClaw-Builder1: at 2 seconds they keep the exposure the issue reports. It costs about 4 seconds for each probe that hangs.]
+- [DECISION: one existing assertion's number changes, 15000 to 25000 ms. | The plan said no other assertion changes; it had not seen that three hang cases sit under this check. Ruled `2210 watchdog 25` by TangleClaw-Builder1: the property is that the watchdog beat the fake's sleep, the fake's 30 seconds is the real ceiling, and each hang case also pins the refusal's reason, which does not depend on the clock.]
+- [DECISION: neither of the issue's two suggested routes. | Making two checks deterministic for one case fixes one case of the file; accepting any early refusal and pinning the 400 separately loosens an assertion.]
+
+**Checked.** In a scratch copy outside the checkout, every generated fake was given a 3-second sleep: a fake that exits at once but takes longer than 2 seconds to do it. The two reported cases ("setup cannot be finished" and "the projects directory is the TCC-protected default") failed on `main`'s version of the file, each with "en0 has no DHCP lease to attest", and passed as built. With every fake's 30-second sleep turned into an immediate exit, each of the six hang cases went red; the three under the wall-clock check went red again after its number changed. The file run alone passed on `main` and as built with the same cases; against `main`, the only cases that took over 3 seconds longer were hang cases, by 3.3 to 4.0 seconds each. The junit reports are kept in the lane's evidence directory and their numbers are in the PR.
+
+**Not covered.** The hang cases and the stub-hub case still depend on the host: every probe that runs before the one meant to hang is under the 6-second bound too, so at loads far above those seen so far such a case can still be refused early. 6 seconds is a smaller exposure, not proof of none. The built file was run alone once, not the three times the plan asked, and the full suite had not run when this entry was written; both were held back while the host was kept quiet for another lane's run, and the PR says what was run by the time it was marked ready. The other load-sensitive test the issue mentions in passing (`test/startup-control-codex.test.js`) is not this chunk's.
+
 ## 2026-10-11 — #1999: the setup-scan own-install test stops walking the host's real Projects folder
 
 <!-- prawduct: type=bugfix | scope=1999-setup-scan-test-hermetic -->
