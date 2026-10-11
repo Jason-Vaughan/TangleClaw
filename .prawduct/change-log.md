@@ -35,6 +35,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-11 — #1999: the setup-scan own-install test stops walking the host's real Projects folder
+
+<!-- prawduct: type=bugfix | scope=1999-setup-scan-test-hermetic -->
+#1999 Chunk 01, the plan's only chunk. Branch `fix/1999-setup-scan-hermetic`, from `origin/main` `5ee6452f`. A test file only; no product file changes.
+
+Visual change: no
+
+**Why.** Three cases of `test/setup-scan-own-install.test.js` scanned the directory the checkout sits in, two of them against a 30-second wall clock. The walk runs a git probe for every subdirectory, so the result depended on how many clones the host holds and how loaded it is. On 2026-10-11 it gave up at 105 of 114 in a full suite and failed a run whose change had nothing to do with it; the issue had reported 69 of 78 two weeks earlier. The third case could not fail, but on a host with a large folder it returned early and asserted nothing. A test must not depend on what sits beside the checkout.
+
+**What changed.** `test/setup-scan-own-install.test.js` only:
+- The two child-level cases walk a parent the file creates: a stand-in for the running checkout, a neighbouring project, a plain directory, a hidden directory and a file. The child is told which realpath is "us" by argument, so a created directory can stand for the checkout. Both cases now also hold the listing itself, so a walk that returned fewer or more entries fails.
+- The full-chain case runs the real route in a separate `node` process started from a clone that sits beside a known neighbour, with the working tree's `lib/` laid over the clone, its own data directory, and none of the session's launch identity or tmux. The answer must be `ok`, offer the neighbour and not the clone. Its early return for a scan that did not finish is gone: against two directories, not finishing is a failure.
+- One case is added: a checkout that sits elsewhere and shares a neighbour's directory name marks nothing.
+- The scanner, the route and the 30-second budget the cases pass are unchanged.
+
+**Decisions.**
+- [DECISION: the full-chain case makes its own clone rather than reusing the one the "clone living elsewhere" case makes. | The plan said reuse. Reusing would make one case depend on another having run first, and adding the neighbour to that case's parent would change its assertion; the plan also says that case is not changed. A second shallow clone costs about a second.]
+- [DECISION: a sixth case, not in the plan. | The plan's own criterion: each property is broken on purpose and must turn a case red. Marking by directory name instead of realpath turned none red in a checkout whose folder is not named `TangleClaw`. The existing clone case catches it only where the running checkout carries that name, which is true in CI and false in every lane clone. That was so on `main` too. The property is "identity, never name", so it is held directly.]
+- [DECISION: no seam in `lib/projects.js`. | Ruled `1999 chain clone` by the Integrator: the child already takes the directory and the identity as arguments, and a process started from a clone gives the route a different "running checkout" with no product change.]
+
+**Checked.** Each property broken in a scratch clone, one at a time, and restored by sha256: comparing the spelled path instead of the realpath (the symlinked-route case and the full-chain case go red); marking by name (the added case); marking everything when no identity is given (the no-identity case); the route keeping marked entries (the route case and the full-chain case); the walk dropping an entry, and the walk keeping hidden directories (both child-level listing assertions). From a scratch clone placed beside 400 directories, the file as on `main` spent 12.7 s and 13.5 s in the two child-level cases and returned early from the third at its 4.75 s budget; as built, the same cases took 0.07 s, 0.001 s and 1.2 s. The junit reports of each are kept in the lane's evidence directory and their numbers are in the PR.
+
+**Not covered.** Whether any test that starts a whole server without naming `projectsDir` reads the default `~/Projects` was not audited. The search for other tests reading the checkout's parent, or walking with a budget of ten seconds or more, found only this file.
+
 ## 2026-10-10 — #2288: the README opens with the problem, the product, and what it is not
 
 <!-- prawduct: type=docs | scope=2288-readme-opening -->
