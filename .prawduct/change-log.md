@@ -35,6 +35,32 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-11 — #2057: the Codex startup-control tests order their fakes by the adapter's progress, not by timers
+
+<!-- prawduct: type=bugfix | scope=2057-codex-receipt-poll-case -->
+
+#2057 Chunk 01, the plan's only chunk. Branch `fix/2057-codex-fake-timers`, from `origin/main` `4cb79a8b`. A test file only; `lib/startup-control-codex.js` is not changed.
+
+Visual change: no
+
+**Why.** Six cases in `test/startup-control-codex.test.js` had the fake app-server act on a wall-clock timer started in its `turn/start` handler. Each assumed the adapter would reach a given step inside that delay, and a busy host breaks the assumption. The issue's case ("an accepted turn whose end no notification reports is still settled from the record by the poll") ended the turn 60 ms after `turn/start`. The adapter makes two round trips before its first read of the record; when that read lands after the 60 ms it finds a turn already ended and carrying the echoed message, accepts and settles in that one call, and the poll never runs, so "the record was re-read" is false. The race is that first read against the fake's timer; the 25 ms poll interval is not part of it. Earlier fixes in this file each removed the timer from the one case that had just failed and left the rest.
+
+**What changed.** `test/startup-control-codex.test.js` only. Each fake now acts on an event of the adapter's own:
+- The poll case ends the turn on the fake's `request` event for the adapter's first `thread/turns/list`. The fake emits that event after it has written the answer, so the first read always answers "in progress" and only a later read can answer "completed".
+- The three after-acceptance cases (a socket lost, the channel lost for good, a protocol fault) start the fire, wait for its `accepted` patch, and only then take the step. On a timer, a slow first read meant the step landed before acceptance and the case passed by another path.
+- The two cases that send an early summary-shaped `turn/completed` send it on the fake's `request` event for the adapter's `thread/resume`. The adapter drops a completion for a turn id it has not been given, and it asks to subscribe only after it has the id; sent then, the completion is on the wire ahead of every read-back answer. On a 1 ms timer the completion could arrive together with the `turn/start` answer and be dropped, and the case passed from the read-back alone.
+- Two helpers: `startFire` (a fire that is not awaited) and `afterFirstRequest` (run a step once, after the fake answered the adapter's first request of a method).
+- Every existing assertion stays as written. Each case gains one that pins the order it depends on: what each read saw and the order of the last two patches (the poll case); the fire's outcome at the moment of the loss or fault (the three after-acceptance cases); that no read of the list had been asked for when the completion was sent (the two early-completion cases).
+- No fake-side timer is left in the file. Its two remaining `setTimeout` calls are waits that loop until a condition holds and race nothing.
+
+**Decisions.**
+- [DECISION: all six fake-side timers in this one chunk, not only the failing case. | Ruled `2057 all timers` by TangleClaw-Builder1: fixing the next one after it fails is the pattern to end.]
+- [DECISION: the poll case keeps a real 25 ms poll interval and the adapter gets no clock seam. | Nothing races the interval once the fake's timer is gone; it decides only how long the case takes. Shown by running the case with the interval at 1 ms and at 500 ms.]
+- [DECISION: the after-acceptance cases wait for the `accepted` patch and not for a request event. | Destroying a socket straight after an answer is written may discard the answer; the patch is the adapter's own statement that acceptance happened.]
+
+**Checked.** Each run was the one file, alone, one process at a time. On `main`'s version with the poll case's turn ended inside `turn/start` (the losing order made certain), that case failed on "the record was re-read". As built the file passed three times, and with the poll interval at 1 ms and at 500 ms. Each new assertion was shown to bite against a scratch copy: the turn ended inside `turn/start` failed "the first read saw the turn still running"; the step taken at the `turn/start` request, before acceptance, failed all three after-acceptance cases on their new assertion alone, their older assertions still passing; with the adapter's read-back removed from its not-yet-accepted branch both early-completion cases settled `failed`; with an unreadable list read as absence the unreadable-list case settled `failed`; with the adapter's poll never started the poll case did not settle. The junit reports are kept in the lane's evidence directory and the PR lists every run.
+
+**Not covered.** The reproduction first tried, `main`'s 60 ms timer set to 0, passed: in one process the adapter's first read can still land inside a zero-delay timer, so only ending the turn inside the handler made the losing order certain. The poll-removed run ended by the runner's timeout for the file, which shows the case did not settle and nothing finer. The three after-acceptance cases still wait on real reconnect pauses of 5 and 10 ms, which are the adapter's own behaviour under test and not a fake's clock. The PR says which full-suite run stands behind the head it was marked ready on.
 ## 2026-10-11 — #2272: the operator bridge panel says how the helper's Discord connection reads
 
 <!-- prawduct: type=feature | scope=bridge-2272 -->

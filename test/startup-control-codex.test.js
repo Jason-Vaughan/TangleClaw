@@ -179,6 +179,36 @@ describe('Codex startupControl adapter', () => {
   }
 
   /**
+   * Start a fire against the fake server without waiting on it, for cases
+   * that act between its acceptance and its end.
+   * @param {object} f - From `pendingFire`.
+   * @param {object} [deps] - Adapter seams.
+   * @returns {{accepted: Promise<object>, settled: Promise<object>}}
+   */
+  function startFire(f, deps = { reconnectPauseMs: 10 }) {
+    return codex.fire({ session, project, sequenceId: 100, promptText: PROMPT, promptTextDigest: PROMPT_DIGEST, payloadDigest: DIGEST, onUpdate: f.onUpdate }, deps);
+  }
+
+  /**
+   * Run `step` once, when the fake has answered the adapter's first `method`
+   * request after the turn started. The fake emits `request` after it has
+   * written that answer, so whatever `step` sends follows the answer on the
+   * wire: the fake's side of a case is ordered by the adapter's own progress
+   * and not by a clock a busy host can outrun.
+   * @param {string} method - The adapter's request to follow.
+   * @param {() => void} step - What the fake does then.
+   * @returns {void}
+   */
+  function afterFirstRequest(method, step) {
+    let done = false;
+    server.on('request', (req) => {
+      if (done || req.method !== method || !server.state.turnStarted) return;
+      done = true;
+      step();
+    });
+  }
+
+  /**
    * The server's turn, finished with a status, carrying the echoed user item.
    * @param {string} status - Turn status.
    * @param {object} [extra] - Extra turn fields.
@@ -1155,14 +1185,24 @@ describe('Codex startupControl adapter', () => {
           server.state.turnStarted = true;
           server.state.userItem = { type: 'userMessage', id: 'item-1', clientId: p.clientUserMessageId, content: p.input };
           server.state.turn = { id: TURN, status: 'completed', items: [server.state.userItem] };
-          // A summary-shaped completion arrives before any subscription or read-back.
-          setTimeout(() => server.notify('turn/completed', { threadId: THREAD, turn: { id: TURN, status: 'completed', items: [] } }), 1);
           return { turn: { id: TURN, status: 'inProgress', items: [] } };
         }
+      });
+      // A summary-shaped completion arrives before any read-back is answered.
+      // It follows the adapter's subscription request and not the turn/start
+      // answer: the adapter drops a completion for a turn id it has not been
+      // given yet, and it asks to subscribe only once it has the id. Sent
+      // then, the completion is on the wire ahead of every read-back answer,
+      // so it is weighed with no accepted evidence.
+      let listsAskedBeforeCompletion = null;
+      afterFirstRequest('thread/resume', () => {
+        listsAskedBeforeCompletion = server.calls('thread/turns/list').length;
+        server.notify('turn/completed', { threadId: THREAD, turn: { id: TURN, status: 'completed', items: [] } });
       });
       channel();
       const f = pendingFire();
       const { settled } = await fireAndSettle(f);
+      assert.equal(listsAskedBeforeCompletion, 0, 'the completion was sent before any read-back was asked for');
       assert.equal(settled.outcome, 'applied');
       assert.ok(f.patches.some((p) => p.outcome === 'accepted'), 'accepted was proven before applied');
       assert.ok(f.patches.findIndex((p) => p.outcome === 'accepted') < f.patches.findIndex((p) => p.outcome === 'applied'));
@@ -1176,15 +1216,30 @@ describe('Codex startupControl adapter', () => {
           server.state.turn = { id: TURN, status: 'inProgress', items: [server.state.userItem] };
           // Measured live on 0.156.1: the subscription can be refused after the send.
           server.handlers['thread/resume'] = () => { throw Object.assign(new Error('list_turns is not supported yet'), { code: -32601 }); };
-          setTimeout(() => { server.state.turn = finishedTurn('completed'); }, 60);
           return { turn: { id: TURN, status: 'inProgress', items: [] } };
         }
+      });
+      // The turn ends once the adapter's first read of the record has been
+      // answered, not after a delay: a read that found the turn already ended
+      // would accept and settle in one call, and the poll would never be
+      // needed. The request event fires after the answer is written, so the
+      // first read always answers "in progress" and only a later one can
+      // answer "completed". The poll's interval decides how long the case
+      // takes and nothing else.
+      const readSaw = [];
+      server.on('request', ({ method }) => {
+        if (method !== 'thread/turns/list' || !server.state.turnStarted) return;
+        readSaw.push(server.state.turn.status);
+        if (readSaw.length === 1) server.state.turn = finishedTurn('completed');
       });
       channel();
       const f = pendingFire();
       const { settled, accepted } = await fireAndSettle(f, { reconnectPauseMs: 10, pollMs: 25 });
       assert.equal(accepted.outcome, 'accepted');
       assert.equal(settled.outcome, 'applied');
+      assert.equal(readSaw[0], 'inProgress', 'the first read saw the turn still running');
+      assert.equal(readSaw[readSaw.length - 1], 'completed', 'a later read saw it ended');
+      assert.deepEqual(f.patches.map((p) => p.outcome).slice(-2), ['accepted', 'applied'], 'accepted from the first read, applied from a later one');
       assert.ok(server.calls('thread/turns/list').length >= 2, 'the record was re-read');
       assert.equal(server.calls('turn/start').length, 1);
     });
@@ -1272,18 +1327,30 @@ describe('Codex startupControl adapter', () => {
 
     it('a socket lost after acceptance is reconnected, and the turn is settled from the read-back', async () => {
       let connectionsSeen = 0;
+      let turnConn = null;
       await serve({
         initialize: () => { connectionsSeen += 1; return { userAgent: 'tangleclaw/0.156.1 (x)' }; },
         'turn/start': (p, ctx) => {
           server.state.turnStarted = true;
           server.state.userItem = { type: 'userMessage', id: 'item-1', clientId: p.clientUserMessageId, content: p.input };
           server.state.turn = { id: TURN, status: 'inProgress', items: [server.state.userItem] };
-          setTimeout(() => { ctx.conn.destroy(); server.state.turn = finishedTurn('completed'); }, 60);
+          turnConn = ctx.conn;
           return { turn: { id: TURN, status: 'inProgress', items: [] } };
         }
       });
       channel();
-      const { settled, accepted } = await fireAndSettle(pendingFire(), { reconnectPauseMs: 10 });
+      const f = pendingFire();
+      const handles = startFire(f, { reconnectPauseMs: 10 });
+      // The socket goes only once the adapter has recorded acceptance: lost
+      // any earlier, the fire would end the same way by another path and the
+      // case would not be about a loss after acceptance.
+      await untilPatch(f, (p) => p.outcome === 'accepted');
+      const outcomeAtLoss = f.current().outcome;
+      turnConn.destroy();
+      server.state.turn = finishedTurn('completed');
+      const settled = await handles.settled;
+      const accepted = await handles.accepted;
+      assert.equal(outcomeAtLoss, 'accepted', 'the socket was lost from an accepted fire');
       assert.equal(accepted.outcome, 'accepted');
       assert.equal(settled.outcome, 'applied');
       assert.ok(connectionsSeen >= 2, `reconnected (${connectionsSeen} connections)`);
@@ -1295,12 +1362,19 @@ describe('Codex startupControl adapter', () => {
           server.state.turnStarted = true;
           server.state.userItem = { type: 'userMessage', id: 'item-1', clientId: p.clientUserMessageId, content: p.input };
           server.state.turn = { id: TURN, status: 'inProgress', items: [server.state.userItem] };
-          setTimeout(() => server.close(), 60);
           return { turn: { id: TURN, status: 'inProgress', items: [] } };
         }
       });
       channel();
-      const { settled } = await fireAndSettle(pendingFire(), { reconnectPauseMs: 5 });
+      const f = pendingFire();
+      const handles = startFire(f, { reconnectPauseMs: 5 });
+      // The server goes only once the adapter has recorded acceptance, so the
+      // loss is one the reconnects have to answer for.
+      await untilPatch(f, (p) => p.outcome === 'accepted');
+      const outcomeAtLoss = f.current().outcome;
+      server.close();
+      const settled = await handles.settled;
+      assert.equal(outcomeAtLoss, 'accepted', 'the channel was lost from an accepted fire');
       assert.equal(settled.outcome, 'indeterminate');
       assert.equal(settled.reasonCode, 'channel_lost');
     });
@@ -1310,23 +1384,30 @@ describe('Codex startupControl adapter', () => {
     it('a protocol fault after acceptance is logged and turned into a reconnect, never an unhandled error', async () => {
       const { frame } = require('./helpers/ws-test-server');
       let faults = 0;
+      let turnConn = null;
       await serve({
         'turn/start': (p, ctx) => {
           server.state.turnStarted = true;
           server.state.userItem = { type: 'userMessage', id: 'item-1', clientId: p.clientUserMessageId, content: p.input };
           server.state.turn = { id: TURN, status: 'inProgress', items: [server.state.userItem] };
-          setTimeout(() => {
-            faults += 1;
-            // Garbage the client cannot parse as JSON, then a frame with a reserved opcode: a fault, not a close.
-            ctx.conn.send('{not json');
-            ctx.conn.raw(frame(0x3, Buffer.from('x')));
-            server.state.turn = finishedTurn('completed');
-          }, 50);
+          turnConn = ctx.conn;
           return { turn: { id: TURN, status: 'inProgress', items: [] } };
         }
       });
       channel();
-      const { settled } = await fireAndSettle(pendingFire(), { reconnectPauseMs: 10, pollMs: 25 });
+      const f = pendingFire();
+      const handles = startFire(f, { reconnectPauseMs: 10, pollMs: 25 });
+      // The fault is sent only once the adapter has recorded acceptance, so it
+      // lands on a fire that is being watched.
+      await untilPatch(f, (p) => p.outcome === 'accepted');
+      const outcomeAtFault = f.current().outcome;
+      faults += 1;
+      // Garbage the client cannot parse as JSON, then a frame with a reserved opcode: a fault, not a close.
+      turnConn.send('{not json');
+      turnConn.raw(frame(0x3, Buffer.from('x')));
+      server.state.turn = finishedTurn('completed');
+      const settled = await handles.settled;
+      assert.equal(outcomeAtFault, 'accepted', 'the fault reached an accepted fire');
       assert.equal(settled.outcome, 'applied');
       assert.equal(faults, 1);
     });
@@ -1338,7 +1419,6 @@ describe('Codex startupControl adapter', () => {
           server.state.turnStarted = true;
           server.state.userItem = { type: 'userMessage', id: 'item-1', clientId: p.clientUserMessageId, content: p.input };
           server.state.turn = { id: TURN, status: 'completed', items: [server.state.userItem] };
-          setTimeout(() => server.notify('turn/completed', { threadId: THREAD, turn: { id: TURN, status: 'completed', items: [] } }), 1);
           return { turn: { id: TURN, status: 'inProgress', items: [] } };
         },
         'thread/turns/list': () => {
@@ -1347,9 +1427,19 @@ describe('Codex startupControl adapter', () => {
           return { data: [server.state.turn], nextCursor: null };
         }
       });
+      // The summary-shaped completion follows the adapter's subscription
+      // request: by then the adapter knows the turn id, and no read of the
+      // list has been asked for, so the read the completion triggers is one
+      // of the unreadable ones.
+      let listsAskedBeforeCompletion = null;
+      afterFirstRequest('thread/resume', () => {
+        listsAskedBeforeCompletion = listCalls;
+        server.notify('turn/completed', { threadId: THREAD, turn: { id: TURN, status: 'completed', items: [] } });
+      });
       channel();
       const f = pendingFire();
       const { settled } = await fireAndSettle(f, { reconnectPauseMs: 10, pollMs: 25 });
+      assert.equal(listsAskedBeforeCompletion, 0, 'the completion was sent before any read of the list was asked for');
       assert.equal(settled.outcome, 'applied');
       assert.ok(!f.patches.some((p) => p.outcome === 'failed'), 'an unreadable list was never read as absence');
       assert.ok(listCalls >= 3);
