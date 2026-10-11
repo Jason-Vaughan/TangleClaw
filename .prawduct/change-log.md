@@ -48,6 +48,7 @@ Visual change: no
 **What changed.**
 - `lib/bridge-notify.js`: one producer, `_gatewayOutage`, with its line in `reconcile` and a count, `gatewayOutage`, in the pass's result. It reads the helper's report through a new seam, `_deps.discordReading`, which requires `lib/bridge-gateway.js` when called: that module already requires this one. `GATEWAY_DOWN_AFTER_MS` is the five minutes.
 - `docs/operator-bridge.md`, `docs/discord-operator-notifications.md` and ADR 0023: the two types as raised, when each is and what raises neither.
+- `lib/bridge-store.js`: the comment above `expire()` only, no code line. It said nothing let go is ever raised again, which is no longer so for an uncollected `gateway-down` whose outage is still going on.
 
 **Decisions.** All but the last two are ruling 27's (`c05 decisions ok`), written here as built.
 - [DECISION: the five minutes count from the latest of the helper's own time for the outage, this process's first reading of it as down, and the bridge's enable time. | A wrong helper clock, a server just started and a bridge just enabled each cost a delay; none can raise a notice for an outage this server has not watched for five minutes.]
