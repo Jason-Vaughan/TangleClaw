@@ -35,6 +35,31 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-10 — #2288: the README opens with the problem, the product, and what it is not
+
+<!-- prawduct: type=docs | scope=2288-readme-opening -->
+#2288 Chunk 01, the issue's only chunk. Branch `docs/2288-readme-opening`, from `origin/main` `8cbaf34b`. Documentation only.
+
+Visual change: no
+
+**Why.** A visitor decides in seconds. The old opening spent them on a category and a promise nobody could check ("a fundamentally new way to build software"), and said neither what goes wrong without TangleClaw nor what the visitor would see after installing it. The Operator approved a replacement text, with its headline and subtitle, in the issue.
+
+**What changed.** `README.md` only:
+- From the tagline to the line before "Core Features", the file is now the issue's approved text: the headline "Many Agents. One Claw.", the problem, "What you get", the engines sentence, "What it is not", "Built with itself" and "Try it". The logo block and the badge block keep their bytes. The engine chips line, the centred macOS line, the `## Overview` heading, the two rules, the note naming a gallery version and the empty `## Screenshots` heading are gone; the macOS fact is carried by "What it is not".
+- The demo line is an HTML comment until the Operator supplies a recording, and nothing renders in its place.
+- "SDLC Departments & Agent Roles" moved, whole, to after "Core Features" and before "Quick Start". It gained one paragraph saying which roles exist today, and its Builder bullet lost the word "autonomously", which contradicted the section's own last paragraph.
+- "Core Features" and everything from "Quick Start" to the end of the file are byte-identical to before.
+
+**Decisions.**
+- [DECISION: the Node bullet reads "written against Node.js 22's standard library: no `npm install`, no bundler", not the approved "Node.js 22 and nothing else: no `npm install`, no build step". | Ruled `2288 node narrowed` and then `2288 build narrowed` by TangleClaw-Builder1, which drafted the text: the installer also puts ttyd, tmux, mkcert and Caddy on the machine, and it builds ttyd from pinned source, so both halves of the approved sentence were true of the server only. "A false claim does not ship because it was approved".]
+- [DECISION: the sentence linking a screenshots gallery is removed. | Ruled `2288 screenshots drop`: the address answered 404 when read. The README linked the same dead address before this change; publishing a gallery is the Operator's.]
+- [DECISION: the roles paragraph says the Project Master is the one role that ships as a product feature and that no role template can be selected yet. | Written from the code and checked against it by TangleClaw-Builder1: no role or template file, setting or screen exists. The coordinator roles the Operator can grant over the API govern only a context rotation and are left out, because a visitor cannot use them. The merge waited for the Operator's yes on this paragraph.]
+- [DECISION: no test is added. | No behaviour changes, and a test pinning marketing copy would fail every later edit of it. The install command's tag stays held to `version.json` by the existing pin test.]
+
+**Checked.** Every claim in the new text was read against a line of "Core Features" or the code, one row each in the PR. Two failed and were ruled as above. One holds with a limit the PR states: a rule reaches every session of its project at launch and after a clear, and a session already running gets a later rule at its next one. The unchanged ranges were compared by sha256, not by eye.
+
+**Left for a later documentation fix, outside this chunk's range.** "Core Features" still says "No npm install, no build step, no bundler" under "Zero dependencies": the same inaccuracy this chunk removed from the opening. `CONTRIBUTING.md`, the vision line of `CLAUDE.md` and the website still carry the old tagline.
+
 ## 2026-10-10 — #2282: the contributing guide says who can open a pull request
 
 <!-- prawduct: type=docs | scope=2282-contributing-outside-prs -->

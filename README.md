@@ -38,7 +38,7 @@ It works with **Claude Code, Codex, Antigravity and Aider** locally, and with Op
 ### What it is not
 
 - Not a model, and not a new coding agent. It runs the agents you already use.
-- Not a cloud service. It is a small server on your machine, written against Node.js 22's standard library: no `npm install`, no build step.
+- Not a cloud service. It is a small server on your machine, written against Node.js 22's standard library: no `npm install`, no bundler.
 - Not cross-platform yet. **macOS only**, because it uses launchd to keep its services running.
 
 ### Built with itself
@@ -53,7 +53,7 @@ git clone --branch v5.31.0 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw && ./deploy/install.sh
 ```
 
-Then open the dashboard, finish the short first-run setup, and launch a session on any project folder. Screenshots of the current release: **[tangleclaw.com/screenshots](https://tangleclaw.com/screenshots)**. More at **[tangleclaw.com](https://tangleclaw.com)**.
+Then open the dashboard, finish the short first-run setup, and launch a session on any project folder. More at **[tangleclaw.com](https://tangleclaw.com)**.
 
 ## Core Features
 
