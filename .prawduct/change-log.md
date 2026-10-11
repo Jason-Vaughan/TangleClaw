@@ -61,6 +61,37 @@ Visual change: no
 **Checked.** Each run was the one file, alone, one process at a time. On `main`'s version with the poll case's turn ended inside `turn/start` (the losing order made certain), that case failed on "the record was re-read". As built the file passed three times, and with the poll interval at 1 ms and at 500 ms. Each new assertion was shown to bite against a scratch copy: the turn ended inside `turn/start` failed "the first read saw the turn still running"; the step taken at the `turn/start` request, before acceptance, failed all three after-acceptance cases on their new assertion alone, their older assertions still passing; with the adapter's read-back removed from its not-yet-accepted branch both early-completion cases settled `failed`; with an unreadable list read as absence the unreadable-list case settled `failed`; with the adapter's poll never started the poll case did not settle. The junit reports are kept in the lane's evidence directory and the PR lists every run.
 
 **Not covered.** The reproduction first tried, `main`'s 60 ms timer set to 0, passed: in one process the adapter's first read can still land inside a zero-delay timer, so only ending the turn inside the handler made the losing order certain. The poll-removed run ended by the runner's timeout for the file, which shows the case did not settle and nothing finer. The three after-acceptance cases still wait on real reconnect pauses of 5 and 10 ms, which are the adapter's own behaviour under test and not a fake's clock. The PR says which full-suite run stands behind the head it was marked ready on.
+## 2026-10-11 — #2272: the operator bridge panel says how the helper's Discord connection reads
+
+<!-- prawduct: type=feature | scope=bridge-2272 -->
+#2272 Chunk 03 of five. Branch `fix/2272-panel-discord-reading`, from `origin/main` `0e4fc49c`.
+
+Visual change: yes
+
+**Why.** Chunk 02 made the helper's Gateway state something the server holds and `tc bridge status` prints. The operator does not run `tc`: they open the dashboard. Until this chunk the panel that shows whether the bridge is enabled said nothing about whether the helper is connected to Discord, which is the one condition under which nothing they write arrives while everything else looks well.
+
+**What it draws.** One line, **Discord connection**, among the panel's status lines, after **To post**, from `discordGateway` on `GET /api/bridge/operator/status`. No control, no route, no request of its own: it is read when the panel is, and when any control is pressed, Refresh included. The words are `public/operator-bridge-panel.js#discordWords`, a pure function of the reading and whether the bridge is enabled:
+- `connected`: connected since a time, with the time of the helper's report.
+- `down`: **NOT CONNECTED** since a time, with the helper's own word for what it is doing, and that nothing written in the chat arrives meanwhile.
+- `down` with state `fatal`: **REFUSED by Discord**, the close code, and for 4004 and 4014 what it means (a bad bot token; Message Content Intent off), and that the helper will not retry until it is put right and restarted. A refusal is never worded as a connection that is retrying, nor the other way round.
+- `not-reported`: not reported since the time the helper was last heard, what it last said, and that whether Discord is connected is not known.
+- `never-reported`: never reported since this server started, and to restart the helper after an update.
+
+**Decided here.**
+- The line says what `tc bridge status` says, in the same order, so the Project Master and the operator are told the same thing. Two differences, both deliberate: the panel names the two refusals an operator can put right, because the operator is the one who will; and it says "nothing you write", where the Master is told "nothing the operator writes".
+- A status with no `discordGateway`, one that is not an object, or one whose reading the page does not know draws NO line, and the rest of the panel is the same character for character. A server not yet deployed says nothing of the connection, and the page must not invent a reading for it.
+- On a disabled bridge the `not-reported` and `never-reported` lines end by saying that a disabled bridge does not read the helper's reports, so the silence says nothing about the helper. `connected` and `down` do not: a report that was read says what it says.
+- Times are shown exactly as the server gave them, escaped, as the panel shows every other time. No local-time formatting is added for this one line.
+- Any close code other than the two named is shown as its number alone. The four others the helper treats as fatal are not ones an operator's settings cause.
+- No style rule is added: the line is the panel's existing `.ob-line` with its `.ob-label` and `.ob-value`. `public/style.css` is untouched.
+- `public/sw.js` is untouched: the panel's script is fetched network-first, so `scripts/cache-bump-guard.js` asks for no `CACHE_NAME` change.
+
+**Tests.** `test/operator-bridge-panel.test.js`, a new block, the panel's real script run in a sandbox: each reading's whole line, compared as a whole string, with the two named refusals and an unnamed one; no line, and an otherwise identical panel, for a status without the field and for eight things that are not a reading the page knows (`constructor` and `toString` among them); with a line, that the line is the only difference, sits between **To post** and the allowlist, and adds no control; every value in the reading drawn as text when it is markup; the disabled sentence on the two silent readings only; and against the real status handler on a real store, never reported, then a report recorded through the server's own functions read as connected, as refused, and three minutes and a second later as not reported. The file's existing cases pass unmodified.
+
+**Docs.** `docs/operator-bridge.md`: "The dashboard panel" gains the line, a table of what it says for each reading, the disabled sentence, when no line is drawn, and that it does not update by itself; "The helper's Discord connection" no longer says the panel does not show the reading.
+
+**Not covered.** No browser has drawn this line: no scratch server was run on this host (the Integrator's word, 2026-10-11), and the check is deferred to after the deploy under ruling 10, by TangleClaw-Builder1 with the Operator's browser. What only a browser can show: how the longest line (a refusal) wraps at 375 and 320 pixels beside its label, and that nothing else on the panel moved. The line does not refresh by itself, so a panel left open shows the reading as of when it was opened. Nothing is notified (Chunks 04 and 05).
+
 ## 2026-10-11 — #2210: the soak-guest test stops racing a 2-second probe bound it chose itself
 
 <!-- prawduct: type=bugfix | scope=2210-soak-guest-probe-bound -->

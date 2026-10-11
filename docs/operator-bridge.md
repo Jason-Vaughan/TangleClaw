@@ -803,9 +803,9 @@ A refused report is logged by the server as `Bridge request refused` with
 report is refused on every pass is handed nothing, so nothing posts until the two are from the
 same version again.
 
-`since` is the helper's clock, and `reportedAt` the server's. Nothing here raises a notice, and
-the dashboard panel does not show the reading yet: it is in the two status payloads and in
-`tc bridge status`.
+`since` is the helper's clock, and `reportedAt` the server's. Nothing here raises a notice: the
+reading is in the two status payloads, in `tc bridge status`, and on the dashboard panel (see
+[The dashboard panel](#the-dashboard-panel)).
 
 ### Claims and leases
 
@@ -997,6 +997,26 @@ it has to sign in, and nothing of the bridge.
 | Reset the circuit | Two buttons, one for each decision: put back what was set aside, or withdraw it. There is no reset without one. |
 | Put back / Withdraw, on each item set aside | By item, with what it is and why it is held. Never its text. |
 | Withdraw, on each thing queued with no open route | Everything that would still be posted after every route was closed: an undecided candidate, an approved milestone not yet collected, a server notice, an item set aside. By id, kind, state and age. Asks first. Disabling the bridge withdraws none of them; a rollback has the operator withdraw each. |
+
+Among its status lines, after **To post**, the panel has one line with no control,
+**Discord connection**, drawn from the status's `discordGateway` (see
+[The helper's Discord connection](#the-helpers-discord-connection)). It says what
+`tc bridge status` says, and shows the times exactly as the server gave them, as the panel
+shows every other time.
+
+| `reading` | The line says |
+|---|---|
+| `connected` | `connected since <since> (the helper's report of <reportedAt>)` |
+| `down`, any state but `fatal` | **NOT CONNECTED** `since <since>: the helper reports <state> (its report of <reportedAt>). Nothing you write in the chat arrives meanwhile.` |
+| `down`, state `fatal` | **REFUSED by Discord** `since <since> (close code <code>: <what it means>). The helper will not retry until it is put right and restarted (its report of <reportedAt>). Nothing you write in the chat arrives meanwhile.` The meaning is given for the two refusals the operator can put right: 4004, `bad bot token`, and 4014, `Message Content Intent is off`. Any other code is shown as its number alone. A refusal is never worded as a connection that is retrying. |
+| `not-reported` | **not reported** `since <reportedAt>: the helper last said <state> and has not reported since. It may not be running; whether Discord is connected is not known.` |
+| `never-reported` | `never reported since this server started: the helper is not running, has not yet asked for work, or predates the report. Restart the helper after an update.` |
+
+While the bridge is disabled, the `not-reported` and `never-reported` lines end with `The bridge
+is disabled, and a disabled bridge does not read the helper's reports: this says nothing about
+the helper.` A status with no `discordGateway`, or with a reading the page does not know, draws
+no line at all: the page never invents a reading. The line is read when the panel is opened and
+when a control is pressed, **Refresh** included; it does not update by itself.
 
 A write that must not happen twice (a reset, a put-back, a withdrawal) carries a request id. If
 its answer is lost, pressing the control again sends the same id, and the server answers the
