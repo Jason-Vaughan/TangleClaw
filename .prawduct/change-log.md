@@ -35,6 +35,40 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-11 — #2268: the landing page shows the launch identity report as a banner
+
+<!-- prawduct: type=bugfix | scope=2268-launch-identity-not-inherited -->
+
+#2268 Chunk 03 of three, the last. Branch `fix/2268-identity-banner`, from `origin/main` `a2aa2d95`. No server file, no route, no schema change.
+
+Visual change: yes
+
+**Why.** The server reads tmux's global environment once at start and carries the outcome on `GET /api/server-info` as `launchIdentityNotice`. Nothing showed it to a person: the operator is rarely at the machine to read a log line. The issue's Expected 4 as ruled (`report shown`): show it on a read the operator sees, with names and no value.
+
+**What changed.**
+- `public/landing.js`: `renderLaunchIdentityBanner(notice)`, and its call in `loadServerInfo` beside the Caddyfile banner's. For `found` it names each variable, says no pane TangleClaw launches inherits them, gives the command that removes each, gives the time of the read, and says the banner clears at the next server restart after they are removed. For `could-not-check` it shows the server's sentence, and the time the read was tried when there is one. For `none` it hides and empties the banner.
+- `public/index.html`: the banner's element after the Caddyfile banner, hidden until the first answer, `role="status"`, with no button.
+- `docs/user-guide.md`: a "Launch Identity Banner" subsection under "The Landing Page".
+- `test/launch-identity-banner.test.js` (new): the real render function against a small DOM, fed notices built by the server's own report function; and the page's poll run with every other render function stubbed.
+- `test/version-visibility.test.js`: one added line, the new function stubbed in the `vm` context that runs the poll. Nothing else in that file changes; without the stub the poll throws there.
+
+`public/style.css` is not changed: the base banner classes fit, because the banner is running text with names and commands in `code` and carries no list. `public/sw.js` is not changed: `scripts/cache-bump-guard.js` reports no cache-first asset in the diff.
+
+**Decisions.**
+- [DECISION: the banner is hidden on `state: 'none'` and on nothing else. A notice that is missing, null, has no `state`, has a state this page does not know, says `found` with no variable named, or says `could-not-check` with no sentence is shown as "could not check". | The lane queue's ruling 29: a clean result told by an absent field looks the same as an older server, a dropped field or a read that never ran. So a page served by a new checkout against a server not yet restarted onto it shows the "could not check" line until the restart; that is the ruling's intent.]
+- [DECISION: for a report it cannot read, the banner says the server sent none and that a server not restarted since an update sends none. It does not say that no pane inherits the variables. | That assurance is true of a server that sets every identity variable at launch. A server too old to send the report may be too old for it to be true, and the page cannot tell which it is talking to.]
+- [DECISION: for `found` the banner is composed from `variables`, `removeCommands` and `observedAt`, and the notice's `message` is not rendered. | `message` is the same facts as one sentence for a log or an API reader; rendering both would say everything twice. It also means the one free-text field is on the page only for `could-not-check`, where it is the server's own account of why.]
+- [DECISION: every server string is escaped, and a name or command that is not a string is dropped. | They arrive at `innerHTML`. The names come from a fixed list of four on the server today; the page does not rely on that.]
+- [DECISION: the time is shown in the reader's locale, and left out when it is missing or not a time. | The banner then still says the read was made once, at server start. A server that made no read sends no time, by design.]
+- [DECISION: the base amber banner, `role="status"`, no variant class with rules of its own. | It reports and asks for nothing urgent, as the live-checkout banner does. The element carries the class `launch-identity-banner` as a name for a later rule; no rule uses it.]
+
+**Verification.** The new test file and `test/version-visibility.test.js`, one process each: green, counts in the PR. Deliberate breaks, one file each, restored and hashed: each fails a case (hiding on anything but a stated none; hiding on a missing notice; each of the three strings unescaped; the message printed for `found`; the poll not calling the function, or reading another field; no time; non-strings kept; the unknown state printing its message; the element not hidden in the page; the stub removed). `scripts/cache-bump-guard.js --base origin/main` and `scripts/sync-claude-md-block.js`: both exit 0. The full suite: in the PR.
+
+**Not covered.**
+- The banner has not been seen in a browser by anyone. The tests read the markup the function writes and the element's hidden state; they do not lay it out. That it wraps without sideways overflow at 375 and 320 pixels and at a desktop width, how `code` reads on the amber, and that it sits right among the other banners are not shown by any test. The check is deferred as approved (the lane queue's ruling 11): after the deploy, if the live host's tmux global environment holds an identity variable, TangleClaw-Builder1 looks at the real banner; if it holds none, the banner cannot be produced there, and nobody plants the variable.
+- The time's wording depends on the browser's locale; the test checks it against the same call in the test process.
+- That the service worker serves the new `landing.js` and `index.html` to a browser with an old worker is the guard's claim (both are network-first), not something a test loads.
+
 ## 2026-10-11 — #2268: say so when tmux's global environment holds a launch identity variable, and name that cause in `tc`'s refusal
 
 <!-- prawduct: type=bugfix | scope=2268-launch-identity-not-inherited -->
