@@ -87,6 +87,7 @@ describe('undecidedIdentityKeys (#2268)', () => {
 
 describe('reportGlobalIdentity (#2268)', () => {
   const AT = new Date('2026-10-11T22:00:00.000Z');
+  const FIELDS = ['message', 'observedAt', 'removeCommands', 'state', 'variables'];
   // Shaped like a launch id. No stubbed read below returns it in `present`,
   // which holds names; it is planted beside them to show nothing carries it.
   const SECRET = 'L-3f9c2b7e-0d41-4c7a-9b1e-secret';
@@ -107,11 +108,12 @@ describe('reportGlobalIdentity (#2268)', () => {
     return seen;
   }
 
-  it('logs one warning and sets one notice naming each variable and the command that removes it', () => {
+  it('found: logs one warning and sets one notice naming each variable and the command that removes it', () => {
     const seen = run(() => ({ present: ['TANGLECLAW_ROLE', 'TANGLECLAW_LAUNCH_ID'], answered: true, cause: null }));
     assert.equal(seen.reads, 1, 'the environment is read once');
     assert.equal(seen.warnings.length, 1);
     assert.equal(seen.sets, 1);
+    assert.deepEqual(Object.keys(seen.notice).sort(), FIELDS);
     assert.deepEqual(seen.notice.variables, ['TANGLECLAW_LAUNCH_ID', 'TANGLECLAW_ROLE'], 'in the list\'s order');
     assert.deepEqual(seen.notice.removeCommands, [
       'tmux set-environment -g -u TANGLECLAW_LAUNCH_ID',
@@ -145,24 +147,45 @@ describe('reportGlobalIdentity (#2268)', () => {
     ['there is no tmux server', () => ({ present: [], answered: true, cause: null })],
     ['it holds only variables that are not identity', () => ({ present: ['TANGLECLAW_PORT', 'PATH'], answered: true, cause: null })]
   ]) {
-    it(`logs nothing and sets a null notice when ${label}`, () => {
+    it(`none: logs nothing and sets a notice that says "none" when ${label}`, () => {
       const seen = run(read);
       assert.deepEqual(seen.warnings, []);
-      assert.equal(seen.sets, 1, 'the notice is set, to null: an earlier one must not outlive this read');
-      assert.equal(seen.notice, null);
-      assert.equal(seen.returned, null);
+      assert.equal(seen.sets, 1);
+      assert.deepEqual(seen.notice, { state: 'none', variables: [], removeCommands: [], observedAt: '2026-10-11T22:00:00.000Z', message: '' },
+        'the outcome is stated, with its time: it is not told by the notice being absent');
+      assert.deepEqual(seen.returned, seen.notice);
     });
   }
 
-  it('says "could not check", and never "none", for a read tmux did not answer', () => {
+  it('could not check, and never "none", for a read tmux did not answer in time', () => {
     const seen = run(() => ({ present: [], answered: false, cause: 'read-timed-out' }));
+    assert.deepEqual(Object.keys(seen.notice).sort(), FIELDS);
     assert.equal(seen.notice.state, 'could-not-check');
     assert.deepEqual(seen.notice.variables, []);
     assert.deepEqual(seen.notice.removeCommands, []);
     assert.equal(seen.notice.observedAt, '2026-10-11T22:00:00.000Z');
-    assert.match(seen.notice.message, /could not check/);
+    assert.match(seen.notice.message, /could not check .*tmux did not answer in time/);
     assert.equal(seen.warnings.length, 1);
-    assert.deepEqual(seen.warnings[0].meta, { cause: 'read-timed-out' });
+    assert.deepEqual(seen.warnings[0].meta, { read: 'tmux show-environment -g', cause: 'read-timed-out', status: null, signal: null, code: null });
+  });
+
+  for (const [label, failure, logged] of [
+    ['tmux\'s exit status', { status: 3, signal: null, code: null }, { status: 3, signal: null, code: null }],
+    ['the signal that ended tmux', { status: null, signal: 'SIGKILL', code: null }, { status: null, signal: 'SIGKILL', code: null }],
+    ['the error code when tmux could not be run', { status: null, signal: null, code: 'ENOENT' }, { status: null, signal: null, code: 'ENOENT' }]
+  ]) {
+    it(`could not check, for a read that failed: the warning names the read and ${label}`, () => {
+      const seen = run(() => ({ present: [], answered: false, cause: 'read-failed', failure }));
+      assert.equal(seen.notice.state, 'could-not-check');
+      assert.match(seen.notice.message, /could not check .*the read of it failed/);
+      assert.equal(seen.warnings.length, 1);
+      assert.deepEqual(seen.warnings[0].meta, { read: 'tmux show-environment -g', cause: 'read-failed', ...logged });
+    });
+  }
+
+  it('logs only a number, a signal name or a code from a failure, whatever else it is handed', () => {
+    const seen = run(() => ({ present: [], answered: false, cause: 'read-failed', failure: { status: SECRET, signal: { toString: () => SECRET }, code: 7, stderr: SECRET } }));
+    assert.deepEqual(seen.warnings[0].meta, { read: 'tmux show-environment -g', cause: 'read-failed', status: null, signal: null, code: null });
   });
 
   for (const [label, read] of [
@@ -177,12 +200,12 @@ describe('reportGlobalIdentity (#2268)', () => {
     });
   }
 
-  it('does not let a read that throws escape, and reports it as not checked without the error\'s text', () => {
-    const seen = run(() => { throw Object.assign(new Error(`Command failed: TANGLECLAW_LAUNCH_ID=${SECRET}`), { code: 'EBOOM' }); });
+  it('does not let a read that throws escape: could not check, with the error\'s name, code, status and signal and not its text', () => {
+    const seen = run(() => { throw Object.assign(new Error(`Command failed: TANGLECLAW_LAUNCH_ID=${SECRET}`), { code: 'EBOOM', status: 2, signal: 'SIGTERM' }); });
     assert.equal(seen.notice.state, 'could-not-check');
     assert.match(seen.notice.message, /could not check/);
     assert.equal(seen.warnings.length, 1);
-    assert.deepEqual(seen.warnings[0].meta, { error: 'Error', code: 'EBOOM' });
+    assert.deepEqual(seen.warnings[0].meta, { read: 'tmux show-environment -g', error: 'Error', code: 'EBOOM', status: 2, signal: 'SIGTERM' });
     assert.ok(!JSON.stringify(seen).includes(SECRET));
   });
 
@@ -199,5 +222,29 @@ describe('reportGlobalIdentity (#2268)', () => {
     const notice = reportGlobalIdentity({ read: () => ({ present: ['TANGLECLAW_ROLE'], answered: true, cause: null }), log: { warn: () => {} }, setNotice: () => {} });
     const at = new Date(notice.observedAt).getTime();
     assert.ok(at >= before && at <= Date.now());
+  });
+
+  it('a tmux that does not answer costs the start its timeout and no more, and the report still returns', () => {
+    // The real read, against a `tmux` that never answers: what the server's
+    // start runs, with a short timeout in place of the module's five seconds.
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    const tmux = require('../lib/tmux');
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-slow-tmux-report-'));
+    fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
+    const realPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${realPath}`;
+    try {
+      const started = Date.now();
+      const seen = run(() => tmux.readGlobalIdentityKeys({ timeout: 300 }));
+      assert.ok(Date.now() - started < 5000, 'bounded by the read\'s timeout');
+      assert.equal(seen.notice.state, 'could-not-check');
+      assert.equal(seen.warnings.length, 1, 'one warning, from the report: the read logs none of its own');
+      assert.equal(seen.warnings[0].meta.cause, 'read-timed-out');
+    } finally {
+      process.env.PATH = realPath;
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
   });
 });

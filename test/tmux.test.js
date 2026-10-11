@@ -1525,6 +1525,70 @@ describe('tmux — which launch identity variables the global environment holds 
       }
     });
 
+    /**
+     * Run the read against a stub `tmux` that prints to stderr and exits.
+     * @param {string} script - The stub's body, after its `#!/bin/sh` line
+     * @returns {object} What `readGlobalIdentityKeys` answered
+     */
+    function readWithStub(script) {
+      const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-stub-tmux-global-'));
+      fs.writeFileSync(path.join(binDir, 'tmux'), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+      const realPath = process.env.PATH;
+      process.env.PATH = `${binDir}:${realPath}`;
+      try {
+        return tmux.readGlobalIdentityKeys();
+      } finally {
+        process.env.PATH = realPath;
+        fs.rmSync(binDir, { recursive: true, force: true });
+      }
+    }
+
+    for (const words of [
+      'no server running on /tmp/tmux-501/default',
+      'error connecting to /tmp/tmux-501/default (No such file or directory)',
+      'error connecting to /tmp/tmux-501/default (Connection refused)'
+    ]) {
+      it(`answers "none" when tmux says "${words}"`, () => {
+        assert.deepEqual(readWithStub(`echo '${words}' >&2; exit 1`), { present: [], answered: true, cause: null });
+      });
+    }
+
+    it('says the read failed, with tmux\'s exit status, for any other failure: that is not "none"', () => {
+      assert.deepEqual(readWithStub('echo \'error connecting to /tmp/tmux-501/default (Permission denied)\' >&2; exit 1'),
+        { present: [], answered: false, cause: 'read-failed', failure: { status: 1, signal: null, code: null } });
+      assert.deepEqual(readWithStub('echo \'no server running on /x\' >&2; exit 3'),
+        { present: [], answered: false, cause: 'read-failed', failure: { status: 3, signal: null, code: null } },
+        'the words alone are not the answer: tmux exits 1 when it has no server');
+      assert.deepEqual(readWithStub('exit 1'),
+        { present: [], answered: false, cause: 'read-failed', failure: { status: 1, signal: null, code: null } });
+    });
+
+    it('does not answer "none" for a tmux a signal ended', () => {
+      // `lib/exec-timeout.js` reads any kill signal as this module's own
+      // timeout, so this is "did not answer" and not "failed". Either way it
+      // is not an answer.
+      const answer = readWithStub('kill -KILL $$');
+      assert.equal(answer.answered, false);
+      assert.equal(answer.cause, 'read-timed-out');
+    });
+
+    it('says the read failed, with the error code, when tmux cannot be run at all', () => {
+      const realPath = process.env.PATH;
+      process.env.PATH = '/nonexistent-tc-2268';
+      try {
+        assert.deepEqual(tmux.readGlobalIdentityKeys(),
+          { present: [], answered: false, cause: 'read-failed', failure: { status: null, signal: null, code: 'ENOENT' } });
+      } finally {
+        process.env.PATH = realPath;
+      }
+    });
+
+    it('carries nothing tmux printed on a failure', () => {
+      const answer = readWithStub('echo \'TANGLECLAW_LAUNCH_ID=L-3f9c2b7e-secret\'; echo \'TANGLECLAW_LAUNCH_ID=L-3f9c2b7e-secret\' >&2; exit 2');
+      assert.equal(answer.cause, 'read-failed');
+      assert.ok(!JSON.stringify(answer).includes('L-3f9c2b7e-secret'));
+    });
+
     it('asks only to be shown the global environment', () => {
       // A tmux that records what it was asked and answers with a listing.
       const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fake-tmux-global-'));

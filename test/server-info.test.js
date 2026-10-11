@@ -949,9 +949,10 @@ describe('getServerInfo carries the launch identity notice (#2268)', () => {
   const tmux = require('../lib/tmux');
   const { reportGlobalIdentity, LAUNCH_IDENTITY_KEYS } = require('../lib/launch-identity');
   const SECRET = 'L-3f9c2b7e-0d41-4c7a-9b1e-secret';
+  const FIELDS = ['message', 'observedAt', 'removeCommands', 'state', 'variables'];
 
   /**
-   * Run the boot-time report into the real setter, for a read that answered with a listing.
+   * Run the boot-time report into the real setter.
    * @param {function(): object} read - Stands for `tmux.readGlobalIdentityKeys`
    * @returns {Array<{message: string, meta: *}>} What it logged
    */
@@ -960,20 +961,38 @@ describe('getServerInfo carries the launch identity notice (#2268)', () => {
     reportGlobalIdentity({ read, log: { warn: (message, meta) => warnings.push({ message, meta }) }, setNotice: serverInfo.setLaunchIdentityNotice });
     return warnings;
   }
+  /** A read that answered with what a listing holds. */
+  const listing = (text) => () => ({ present: tmux._identityKeysIn(text), answered: true, cause: null });
 
   beforeEach(() => serverInfo.__unsafeResetForTest());
 
-  it('is null before any read, and null after a read that found none', () => {
-    assert.equal(serverInfo.getServerInfo().launchIdentityNotice, null);
-    report(() => ({ present: tmux._identityKeysIn('PATH=/usr/bin\nTANGLECLAW_PORT=3102'), answered: true, cause: null }));
-    assert.equal(serverInfo.getServerInfo().launchIdentityNotice, null);
+  it('is never absent: before any read it says the check has not been made, which is not "none"', () => {
+    const notice = serverInfo.getServerInfo().launchIdentityNotice;
+    assert.deepEqual(Object.keys(notice).sort(), FIELDS);
+    assert.equal(notice.state, 'could-not-check');
+    assert.equal(notice.observedAt, null, 'no read, so no time of one');
+    assert.deepEqual(notice.variables, []);
+    assert.match(notice.message, /has not checked/);
   });
 
-  it('carries the variables, the removing commands, the time of the read and the sentence', () => {
+  it('none: says so, with the time of the read, after a read that found none', () => {
     const before = Date.now();
-    report(() => ({ present: tmux._identityKeysIn('TANGLECLAW_ROLE=master\nTANGLECLAW_PROJECT_ID=74'), answered: true, cause: null }));
+    assert.deepEqual(report(listing('PATH=/usr/bin\nTANGLECLAW_PORT=3102')), []);
     const notice = serverInfo.getServerInfo().launchIdentityNotice;
-    assert.deepEqual(Object.keys(notice).sort(), ['message', 'observedAt', 'removeCommands', 'state', 'variables']);
+    assert.deepEqual(Object.keys(notice).sort(), FIELDS);
+    assert.equal(notice.state, 'none');
+    assert.deepEqual(notice.variables, []);
+    assert.deepEqual(notice.removeCommands, []);
+    assert.equal(notice.message, '');
+    const at = new Date(notice.observedAt).getTime();
+    assert.ok(at >= before && at <= Date.now());
+  });
+
+  it('found: carries the variables, the removing commands, the time of the read and the sentence', () => {
+    const before = Date.now();
+    report(listing('TANGLECLAW_ROLE=master\nTANGLECLAW_PROJECT_ID=74'));
+    const notice = serverInfo.getServerInfo().launchIdentityNotice;
+    assert.deepEqual(Object.keys(notice).sort(), FIELDS);
     assert.equal(notice.state, 'found');
     assert.deepEqual(notice.variables, ['TANGLECLAW_PROJECT_ID', 'TANGLECLAW_ROLE']);
     assert.deepEqual(notice.removeCommands, ['tmux set-environment -g -u TANGLECLAW_PROJECT_ID', 'tmux set-environment -g -u TANGLECLAW_ROLE']);
@@ -983,33 +1002,48 @@ describe('getServerInfo carries the launch identity notice (#2268)', () => {
   });
 
   it('never holds the value of an identity variable, in the answer or in the log', () => {
-    const listing = LAUNCH_IDENTITY_KEYS.map((key) => `${key}=${SECRET}-${key.toLowerCase()}`).join('\n');
-    const warnings = report(() => ({ present: tmux._identityKeysIn(listing), answered: true, cause: null }));
+    const text = LAUNCH_IDENTITY_KEYS.map((key) => `${key}=${SECRET}-${key.toLowerCase()}`).join('\n');
+    const warnings = report(listing(text));
     const notice = serverInfo.getServerInfo().launchIdentityNotice;
     assert.deepEqual(notice.variables, [...LAUNCH_IDENTITY_KEYS], 'all four were found, so the check below has something to fail on');
     assert.equal(warnings.length, 1);
-    for (const text of [JSON.stringify(serverInfo.getServerInfo()), JSON.stringify(warnings)]) {
-      assert.ok(!text.includes(SECRET), 'no value of an identity variable');
+    for (const out of [JSON.stringify(serverInfo.getServerInfo()), JSON.stringify(warnings)]) {
+      assert.ok(!out.includes(SECRET), 'no value of an identity variable');
     }
   });
 
-  it('carries "could not check" for a read tmux did not answer, which is not null', () => {
-    report(() => ({ present: [], answered: false, cause: 'read-timed-out' }));
-    const notice = serverInfo.getServerInfo().launchIdentityNotice;
-    assert.equal(notice.state, 'could-not-check');
-    assert.deepEqual(notice.variables, []);
-    assert.match(notice.message, /could not check/);
-  });
+  for (const [label, read] of [
+    ['tmux did not answer', () => ({ present: [], answered: false, cause: 'read-timed-out' })],
+    ['failed', () => ({ present: [], answered: false, cause: 'read-failed', failure: { status: 2, signal: null, code: null } })]
+  ]) {
+    it(`could not check: carried for a read that ${label}, with the time it was tried`, () => {
+      report(read);
+      const notice = serverInfo.getServerInfo().launchIdentityNotice;
+      assert.deepEqual(Object.keys(notice).sort(), FIELDS);
+      assert.equal(notice.state, 'could-not-check');
+      assert.deepEqual(notice.variables, []);
+      assert.match(notice.message, /could not check/);
+      assert.match(notice.observedAt, /^\d{4}-\d{2}-\d{2}T/);
+    });
+  }
 
-  it('is replaced by a later read, cleared by the test reset, and null for an absent notice', () => {
+  it('is replaced by a later read, and goes back to "not checked" on the test reset and for an absent notice', () => {
     report(() => ({ present: ['TANGLECLAW_ROLE'], answered: true, cause: null }));
     report(() => ({ present: [], answered: true, cause: null }));
-    assert.equal(serverInfo.getServerInfo().launchIdentityNotice, null);
-    serverInfo.setLaunchIdentityNotice({ state: 'found', variables: ['TANGLECLAW_ROLE'], removeCommands: [], observedAt: 'T', message: 'm' });
+    assert.equal(serverInfo.getServerInfo().launchIdentityNotice.state, 'none');
+    report(() => ({ present: ['TANGLECLAW_ROLE'], answered: true, cause: null }));
     serverInfo.__unsafeResetForTest();
-    assert.equal(serverInfo.getServerInfo().launchIdentityNotice, null);
+    const unread = serverInfo.getServerInfo().launchIdentityNotice;
+    assert.equal(unread.state, 'could-not-check');
+    assert.equal(unread.observedAt, null);
+    report(() => ({ present: ['TANGLECLAW_ROLE'], answered: true, cause: null }));
     serverInfo.setLaunchIdentityNotice(undefined);
-    assert.equal(serverInfo.getServerInfo().launchIdentityNotice, null);
+    assert.deepEqual(serverInfo.getServerInfo().launchIdentityNotice, unread);
+  });
+
+  it('hands out a "not checked" notice a caller cannot change for the next one', () => {
+    serverInfo.getServerInfo().launchIdentityNotice.variables.push('TANGLECLAW_ROLE');
+    assert.deepEqual(serverInfo.getServerInfo().launchIdentityNotice.variables, []);
   });
 
   it('is read once at server start, before listen, in a try of its own', () => {
@@ -1022,5 +1056,91 @@ describe('getServerInfo carries the launch identity notice (#2268)', () => {
     assert.match(src.slice(at - 12, at), /try \{\n\s+$/, 'the call is the first statement of its own try');
     assert.ok(at > src.indexOf('tmux.refreshStatusBars();'), 'beside the status-bar refresh, after it');
     assert.ok(at < src.indexOf('server.listen(', at) && src.indexOf('server.listen(', at) > 0, 'before the server listens');
+  });
+});
+
+// The same three outcomes, read where a page reads them: the answer of the
+// route itself, from a server on a port and a data directory of its own.
+describe('GET /api/server-info states the outcome of the launch identity read (#2268)', () => {
+  const { before, after } = require('node:test');
+  const http = require('node:http');
+  const fsMod = require('node:fs');
+  const osMod = require('node:os');
+  const pathMod = require('node:path');
+  const store = require('../lib/store');
+  const { createServer } = require('../server');
+  const { reportGlobalIdentity } = require('../lib/launch-identity');
+  const SECRET = 'L-3f9c2b7e-0d41-4c7a-9b1e-secret';
+  let server;
+  let port;
+  let tempDir;
+
+  before(async () => {
+    tempDir = fsMod.mkdtempSync(pathMod.join(osMod.tmpdir(), 'tangleclaw-server-info-2268-'));
+    store._setBasePath(tempDir);
+    store.init();
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', () => { port = server.address().port; resolve(); }));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fsMod.rmSync(tempDir, { recursive: true, force: true });
+    serverInfo.__unsafeResetForTest();
+  });
+
+  /**
+   * Run the boot-time report with a stubbed read, then read the route.
+   * @param {(function(): object)|null} read - Stands for `tmux.readGlobalIdentityKeys`; null to make no read
+   * @returns {Promise<{status: number, text: string, notice: object}>}
+   */
+  async function routeAfter(read) {
+    serverInfo.__unsafeResetForTest();
+    if (read) reportGlobalIdentity({ read, log: { warn: () => {} }, setNotice: serverInfo.setLaunchIdentityNotice });
+    const { status, text } = await new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port, path: '/api/server-info' }, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => resolve({ status: res.statusCode, text: data }));
+      }).on('error', reject);
+    });
+    return { status, text, notice: JSON.parse(text).launchIdentityNotice };
+  }
+
+  it('none', async () => {
+    const { status, notice } = await routeAfter(() => ({ present: [], answered: true, cause: null }));
+    assert.equal(status, 200);
+    assert.equal(notice.state, 'none');
+    assert.deepEqual(notice.variables, []);
+    assert.deepEqual(notice.removeCommands, []);
+    assert.equal(notice.message, '');
+    assert.match(notice.observedAt, /^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('found, with names and commands and no value', async () => {
+    const tmux = require('../lib/tmux');
+    const { status, text, notice } = await routeAfter(() => ({ present: tmux._identityKeysIn(`TANGLECLAW_LAUNCH_ID=${SECRET}\nTANGLECLAW_ROLE=master`), answered: true, cause: null }));
+    assert.equal(status, 200);
+    assert.equal(notice.state, 'found');
+    assert.deepEqual(notice.variables, ['TANGLECLAW_LAUNCH_ID', 'TANGLECLAW_ROLE']);
+    assert.deepEqual(notice.removeCommands, ['tmux set-environment -g -u TANGLECLAW_LAUNCH_ID', 'tmux set-environment -g -u TANGLECLAW_ROLE']);
+    assert.match(notice.observedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.ok(!text.includes(SECRET), 'the whole answer holds no value of an identity variable');
+  });
+
+  it('could not check, for a read tmux did not answer', async () => {
+    const { status, notice } = await routeAfter(() => ({ present: [], answered: false, cause: 'read-timed-out' }));
+    assert.equal(status, 200);
+    assert.equal(notice.state, 'could-not-check');
+    assert.match(notice.message, /could not check/);
+    assert.match(notice.observedAt, /^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('could not check, and not an absent field, on a server that made no read', async () => {
+    const { status, notice } = await routeAfter(null);
+    assert.equal(status, 200);
+    assert.equal(notice.state, 'could-not-check');
+    assert.equal(notice.observedAt, null);
   });
 });

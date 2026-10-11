@@ -926,21 +926,33 @@ belongs to every user of that tmux server.
 
 **What is left in tmux's global environment is reported, not removed (#2268).** When the server
 starts it reads that environment once (`tmux show-environment -g`, which starts no tmux server and
-changes nothing; `lib/tmux.js#readGlobalIdentityKeys`). If it holds any of the four, the server
-logs one warning and `GET /api/server-info` carries `launchIdentityNotice`:
+changes nothing; `lib/tmux.js#readGlobalIdentityKeys`). `GET /api/server-info` then carries
+`launchIdentityNotice`, and carries it whatever the read found:
 
 | Field | What it holds |
 |---|---|
-| `state` | `found`, or `could-not-check` when tmux did not answer the read |
-| `variables` | The names found, in the list's order. Never a value |
+| `state` | `none`, `found` or `could-not-check` |
+| `variables` | The names found, in the list's order. Never a value. Empty unless `found` |
 | `removeCommands` | One `tmux set-environment -g -u <NAME>` for each name |
-| `observedAt` | When the read was made, as an ISO time |
-| `message` | The same facts as one sentence for a person |
+| `observedAt` | When the read was made, as an ISO time; `null` only if no read was made |
+| `message` | The outcome as one sentence for a person; empty for `none` |
 
-The field is `null` when the environment holds none of the four, and when no tmux server is running.
-A read that tmux did not answer in time is `could-not-check`, with no names: it does not delay the
-start beyond tmux's read timeout, and it is not a clean answer. Neither the log line nor the field
-ever holds the value of a variable; a launch id is what the server accepts as a caller's binding. The
+The field is never absent and never `null`: a clean result told by a missing field would look the
+same as an older server or a read that never ran. A reader that finds no such field should take it
+for `could-not-check`, never for `none`.
+
+- `none`: tmux answered and its global environment holds none of the four, or no tmux server is
+  running, so there is no global environment. Nothing is logged.
+- `found`: it holds at least one. The server logs one warning with the names and the commands.
+- `could-not-check`: tmux did not answer within the read's timeout (the module's five seconds), or
+  the read failed in any other way, or it was never made. The server logs one warning naming the
+  read and, for a failure, tmux's exit status or the error code. The server starts regardless, and
+  the read costs the start no more than its timeout.
+
+A variable that is set and empty in the global environment is not reported: a pane that inherits an
+empty value reads the same as one that inherits nothing, and since every launch sets each of the
+four itself, no pane this server launches inherits it at all. Neither the log line nor the field ever
+holds the value of a variable; a launch id is what the server accepts as a caller's binding. The
 read is made once, so a variable removed afterwards keeps its notice until the server restarts, which
 is why the notice carries its time. No pane this server launches inherits a variable the notice
 names. Removing one is the operator's choice, with the command the notice gives.
