@@ -203,6 +203,29 @@ notification, not as a candidate a session submits and not as a session's own se
   producer, the pass in `lib/bridge-notify.js` that raises one notice per operator-route
   escalation in `workload_nudge_facts`; a test holds that every admitted type has a template.
 
+**Amended (2026-10-11, on #2272): a fifth and a sixth type, `gateway-down` and
+`gateway-recovered`.** The chat helper can lose its connection to Discord's Gateway and go on
+posting: the operator's messages then reach nobody, and nothing told them. The operator ruled
+(2026-10-10) that the server queues a notice once the helper has had no connection for five
+minutes, and announces the recovery once.
+
+- **Two types, not one.** A notice that the connection is gone asks something of the operator
+  when Discord has refused it. A notice that it is back asks nothing. The type is what a reader
+  filters by, so each has its own.
+- **Their authoritative producer will be** the helper's own report of its connection, which it
+  sends with every claim and the server holds (`docs/operator-bridge.md`, "The helper's
+  Discord connection").
+- **They are transport control like the others:** fixed templates that take only a time, a
+  whole number of minutes, a state from the helper's closed list and Discord's close code. A
+  connection Discord refused is said to be refused, with the reason, and that it will not come
+  back by itself; it is never worded as one being retried. Times are the host's local time
+  with its zone, and UTC, said as UTC, where the zone cannot be named.
+- **`gateway-down` keeps for 7 days,** because it is still so until the connection is back.
+  **`gateway-recovered` keeps for 1 day,** as `fleet-idle` does: it describes a moment.
+- **Admitted before they are produced,** as `lane-silent` was. Schema v63 widens the CHECK on
+  `bridge_outbound.notify_type`, the retention limits name both and each has its template.
+  Nothing raises either yet.
+
 The two reserved types stay reserved.
 
 ### 9a. The Master routes inbound as well (operator ruling, 2026-10-05)

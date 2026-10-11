@@ -68,6 +68,81 @@ function reopen() {
   store.init();
 }
 
+const bridgeStore = require('../lib/bridge-store');
+const { DatabaseSync } = require('node:sqlite');
+const T0 = '2026-10-09T00:00:00.000Z';
+/** The tables that hold the queue and everything that points at one of its items. */
+const QUEUE_TABLES = ['bridge_outbound', 'bridge_outbound_parts', 'bridge_outbound_leases', 'bridge_outbound_claims'];
+
+/**
+ * Every row of the queue's tables, every column, in a fixed order, with the
+ * highest id the queue has issued (0 for a queue that never held an item,
+ * whether or not SQLite has made its sequence row yet).
+ * @param {object} db - An open database.
+ * @returns {object}
+ */
+function queueSnapshot(db) {
+  const rows = Object.fromEntries(QUEUE_TABLES.map((table) => [
+    table, db.prepare(`SELECT * FROM ${table} ORDER BY 1, 2`).all().map((row) => ({ ...row }))
+  ]));
+  const sequence = db.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'bridge_outbound'").get();
+  return { rows, sequence: sequence ? sequence.seq : 0 };
+}
+
+/**
+ * Fill the queue through the bridge's own writers with an item in each state
+ * a live queue holds: waiting, handed to the helper, delivered in two
+ * messages, set aside, withdrawn, and one that existed and was removed.
+ * @returns {void}
+ */
+function fillQueue() {
+  const db = store.getDb();
+  const notice = (name, type) => {
+    const text = `notice ${name}`;
+    return bridgeStore.outbound.enqueue({
+      idemKey: `notify:${type}:${name}`, kind: 'notification', notifyType: type, sourceLabel: 'TangleClaw', text, digest: bridgeStore.digest(text), at: T0
+    }).outboundId;
+  };
+  const delivered = notice('delivered', 'work-blocked');
+  const setAside = notice('set-aside', 'operator-needed');
+  const leased = notice('leased', 'fleet-idle');
+  const removed = notice('removed', 'fleet-idle');
+  const claim = bridgeStore.leases.claim({ nonce: 'v61-claim-nonce-0001', tokenId: 'bht_v61', limit: 3, at: T0 });
+  assert.equal(claim.outcome, 'claimed');
+  assert.deepEqual(claim.leases.map((l) => l.outboundId), [delivered, setAside, leased]);
+  bridgeStore.transaction(() => {
+    const told = bridgeStore.outbound.markDelivered(delivered, ['chat-msg-1', 'chat-msg-2'], { leaseId: claim.leases[0].leaseId, tokenId: 'bht_v61', at: T0 });
+    assert.equal(told.outcome, 'delivered');
+  });
+  assert.equal(bridgeStore.outbound.block(setAside, 'rejected-by-chat', { at: T0 }), true);
+  db.prepare('DELETE FROM bridge_outbound WHERE outbound_id = ?').run(removed);
+  notice('waiting', 'work-blocked');
+  const route = db.prepare(
+    "INSERT INTO bridge_routes (route_id, external_id, author_id, space_id, channel_id, body_digest, state, created_at, updated_at) VALUES (?, ?, 'a', 's', 'c', ?, 'accepted', ?, ?)"
+  );
+  route.run('rt_kept', 'ext-kept', 'a'.repeat(64), T0, T0);
+  route.run('rt_withdrawn', 'ext-withdrawn', 'b'.repeat(64), T0, T0);
+  assert.equal(bridgeStore.outbound.enqueueStatus('rt_kept', 'pending', { at: T0 }).created, true);
+  bridgeStore.outbound.enqueue({
+    idemKey: 'failure:rt_withdrawn', kind: 'failure', routeId: 'rt_withdrawn', sourceLabel: 'TangleClaw', text: 'could not deliver', digest: bridgeStore.digest('could not deliver'), at: T0
+  });
+  assert.equal(bridgeStore.outbound.withdrawForRoute('rt_withdrawn', { at: T0 }), 1);
+  // The newest item is removed too, so the highest id ever issued is one no row holds.
+  db.prepare('DELETE FROM bridge_outbound WHERE outbound_id = ?').run(notice('removed-last', 'fleet-idle'));
+}
+
+/**
+ * Try to store a notification of a type, straight at the table.
+ * @param {object} db - An open database.
+ * @param {string} type - `notify_type` to try.
+ * @returns {void}
+ */
+function insertType(db, type) {
+  db.prepare(
+    "INSERT INTO bridge_outbound (idem_key, kind, notify_type, source_label, text, digest, state, created_at, updated_at) VALUES (?, 'notification', ?, 'TangleClaw', 'x', ?, 'ready', ?, ?)"
+  ).run(`notify:${type}:direct`, type, 'a'.repeat(64), T0, T0);
+}
+
 describe('store: operator bridge schema (v52 to v54, #2031)', () => {
   afterEach(() => {
     store.close();
@@ -81,8 +156,9 @@ describe('store: operator bridge schema (v52 to v54, #2031)', () => {
     // reshaped two tables, and v54 added the helper's fetch leases. The store
     // as a whole moves on without the bridge (v55 is the recovery state table),
     // so the store's version is held only to be no older than the bridge's.
-    // v62 is the bridge's again: the outbound queue admits `lane-silent`.
-    assert.equal(bridgeSchema.BRIDGE_SCHEMA_VERSION, 62);
+    // v62 is the bridge's again: the outbound queue admits `lane-silent`. v63
+    // is too: it admits `gateway-down` and `gateway-recovered`.
+    assert.equal(bridgeSchema.BRIDGE_SCHEMA_VERSION, 63);
     assert.ok(store.CURRENT_SCHEMA_VERSION >= bridgeSchema.BRIDGE_SCHEMA_VERSION);
     assert.deepEqual(bridgeSchema.bridgeSchemaProblems(store.getDb()), []);
     const have = bridgeObjects();
@@ -553,11 +629,6 @@ describe('store: operator bridge schema (v52 to v54, #2031)', () => {
 });
 
 describe('store: the outbound queue admits lane-silent (v62, #2262)', () => {
-  const bridgeStore = require('../lib/bridge-store');
-  const { DatabaseSync } = require('node:sqlite');
-  const T0 = '2026-10-09T00:00:00.000Z';
-  /** The tables that hold the queue and everything that points at one of its items. */
-  const QUEUE_TABLES = ['bridge_outbound', 'bridge_outbound_parts', 'bridge_outbound_leases', 'bridge_outbound_claims'];
 
   afterEach(() => {
     store.close();
@@ -566,67 +637,11 @@ describe('store: the outbound queue admits lane-silent (v62, #2262)', () => {
   });
 
   /**
-   * Every row of the queue's tables, every column, in a fixed order, with the
-   * highest id the queue has issued (0 for a queue that never held an item,
-   * whether or not SQLite has made its sequence row yet).
-   * @param {object} db - An open database.
-   * @returns {object}
-   */
-  function queueSnapshot(db) {
-    const rows = Object.fromEntries(QUEUE_TABLES.map((table) => [
-      table, db.prepare(`SELECT * FROM ${table} ORDER BY 1, 2`).all().map((row) => ({ ...row }))
-    ]));
-    const sequence = db.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'bridge_outbound'").get();
-    return { rows, sequence: sequence ? sequence.seq : 0 };
-  }
-
-  /**
-   * Fill the queue through the bridge's own writers with an item in each state
-   * a live queue holds: waiting, handed to the helper, delivered in two
-   * messages, set aside, withdrawn, and one that existed and was removed.
-   * @returns {void}
-   */
-  function fillQueue() {
-    const db = store.getDb();
-    const notice = (name, type) => {
-      const text = `notice ${name}`;
-      return bridgeStore.outbound.enqueue({
-        idemKey: `notify:${type}:${name}`, kind: 'notification', notifyType: type, sourceLabel: 'TangleClaw', text, digest: bridgeStore.digest(text), at: T0
-      }).outboundId;
-    };
-    const delivered = notice('delivered', 'work-blocked');
-    const setAside = notice('set-aside', 'operator-needed');
-    const leased = notice('leased', 'fleet-idle');
-    const removed = notice('removed', 'fleet-idle');
-    const claim = bridgeStore.leases.claim({ nonce: 'v61-claim-nonce-0001', tokenId: 'bht_v61', limit: 3, at: T0 });
-    assert.equal(claim.outcome, 'claimed');
-    assert.deepEqual(claim.leases.map((l) => l.outboundId), [delivered, setAside, leased]);
-    bridgeStore.transaction(() => {
-      const told = bridgeStore.outbound.markDelivered(delivered, ['chat-msg-1', 'chat-msg-2'], { leaseId: claim.leases[0].leaseId, tokenId: 'bht_v61', at: T0 });
-      assert.equal(told.outcome, 'delivered');
-    });
-    assert.equal(bridgeStore.outbound.block(setAside, 'rejected-by-chat', { at: T0 }), true);
-    db.prepare('DELETE FROM bridge_outbound WHERE outbound_id = ?').run(removed);
-    notice('waiting', 'work-blocked');
-    const route = db.prepare(
-      "INSERT INTO bridge_routes (route_id, external_id, author_id, space_id, channel_id, body_digest, state, created_at, updated_at) VALUES (?, ?, 'a', 's', 'c', ?, 'accepted', ?, ?)"
-    );
-    route.run('rt_kept', 'ext-kept', 'a'.repeat(64), T0, T0);
-    route.run('rt_withdrawn', 'ext-withdrawn', 'b'.repeat(64), T0, T0);
-    assert.equal(bridgeStore.outbound.enqueueStatus('rt_kept', 'pending', { at: T0 }).created, true);
-    bridgeStore.outbound.enqueue({
-      idemKey: 'failure:rt_withdrawn', kind: 'failure', routeId: 'rt_withdrawn', sourceLabel: 'TangleClaw', text: 'could not deliver', digest: bridgeStore.digest('could not deliver'), at: T0
-    });
-    assert.equal(bridgeStore.outbound.withdrawForRoute('rt_withdrawn', { at: T0 }), 1);
-    // The newest item is removed too, so the highest id ever issued is one no row holds.
-    db.prepare('DELETE FROM bridge_outbound WHERE outbound_id = ?').run(notice('removed-last', 'fleet-idle'));
-  }
-
-  /**
    * Turn the open store into one as schema v61 left it: the queue's table
    * without the fourth type in its CHECK, every row, id and index as it was.
-   * The v61 table's SQL is the current table's with that one type taken out
-   * of the list, which is the only thing v62 changed. The stamp is 61.
+   * The v61 table's SQL is the current table's with that type, and the two
+   * v63 added after it, taken out of the list: the list is all that v62 and
+   * v63 changed. The stamp is 61.
    * @param {() => void} [populate] - Fill the store first, through its own writers.
    * @returns {void}
    */
@@ -635,9 +650,10 @@ describe('store: the outbound queue admits lane-silent (v62, #2262)', () => {
     if (populate) populate();
     const before = queueSnapshot(db);
     const now = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'bridge_outbound'").get().sql;
-    const was = now.replace(",'lane-silent'", '');
+    const was = now.replace(",'lane-silent','gateway-down','gateway-recovered'", '');
     assert.notEqual(was, now, 'the queue differs between v61 and v62');
     assert.ok(!/lane-silent/.test(was));
+    assert.ok(!/gateway-down|gateway-recovered/.test(was), 'and a v61 queue knows nothing v63 added');
     db.exec('BEGIN');
     for (const object of bridgeSchema.BRIDGE_SCHEMA_OBJECTS.filter((o) => o.type === 'trigger')) db.exec(`DROP TRIGGER IF EXISTS ${object.name}`);
     db.exec('ALTER TABLE bridge_outbound RENAME TO bridge_outbound_v62');
@@ -654,18 +670,6 @@ describe('store: the outbound queue admits lane-silent (v62, #2262)', () => {
     assert.deepEqual(bridgeSchema.bridgeSchemaProblems(db), ['table bridge_outbound in an unexpected shape'], 'and not yet a v62 one');
     assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 61);
     store.close();
-  }
-
-  /**
-   * Try to store a notification of a type, straight at the table.
-   * @param {object} db - An open database.
-   * @param {string} type - `notify_type` to try.
-   * @returns {void}
-   */
-  function insertType(db, type) {
-    db.prepare(
-      "INSERT INTO bridge_outbound (idem_key, kind, notify_type, source_label, text, digest, state, created_at, updated_at) VALUES (?, 'notification', ?, 'TangleClaw', 'x', ?, 'ready', ?, ?)"
-    ).run(`notify:${type}:direct`, type, 'a'.repeat(64), T0, T0);
   }
 
   it('a v61 queue refuses lane-silent, which is why the table has to be rebuilt', () => {
@@ -694,7 +698,7 @@ describe('store: the outbound queue admits lane-silent (v62, #2262)', () => {
 
     reopen();
     const db = store.getDb();
-    assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 62);
+    assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 63);
     assert.deepEqual([...bridgeObjects()], [...fresh], 'the upgraded store has exactly the shape of a fresh one');
     assert.deepEqual(queueSnapshot(db), before, 'nothing in the queue changed');
     assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name LIKE '%_superseded'").get().n, 0);
@@ -742,7 +746,7 @@ describe('store: the outbound queue admits lane-silent (v62, #2262)', () => {
   it('a fresh store admits lane-silent and refuses a reserved type', () => {
     freshStore('v62-fresh');
     const db = store.getDb();
-    assert.equal(store.CURRENT_SCHEMA_VERSION, 62);
+    assert.equal(store.CURRENT_SCHEMA_VERSION, 63);
     insertType(db, 'lane-silent');
     assert.throws(() => insertType(db, 'release-action-needed'), /CHECK/);
     assert.throws(() => insertType(db, 'certification-state-changed'), /CHECK/);
@@ -781,7 +785,7 @@ describe('store: the outbound queue admits lane-silent (v62, #2262)', () => {
 
     reopen();
     assert.deepEqual([...bridgeObjects()], [...fresh]);
-    assert.equal(store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 62);
+    assert.equal(store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 63);
     insertType(store.getDb(), 'lane-silent');
   });
 
@@ -804,12 +808,264 @@ describe('store: the outbound queue admits lane-silent (v62, #2262)', () => {
     freshStore('superset-62');
     rewindToV61();
     reopen();
-    for (const version of [52, 53, 54, 61, 62]) assert.deepEqual(bridgeSchema.bridgeSchemaProblems(store.getDb(), null, version), [], `v${version}`);
+    for (const version of [52, 53, 54, 61, 62, 63]) assert.deepEqual(bridgeSchema.bridgeSchemaProblems(store.getDb(), null, version), [], `v${version}`);
   });
 
-  it('the schema names the four types the retention table gives a limit to', () => {
-    assert.deepEqual([...bridgeSchema.NOTIFICATION_TYPES], ['operator-needed', 'work-blocked', 'fleet-idle', 'lane-silent']);
+  it('the schema names the six types the retention table gives a limit to', () => {
+    assert.deepEqual([...bridgeSchema.NOTIFICATION_TYPES], ['operator-needed', 'work-blocked', 'fleet-idle', 'lane-silent', 'gateway-down', 'gateway-recovered']);
     assert.deepEqual(Object.keys(bridgeStore.EXPIRY_MS.notification).sort(), [...bridgeSchema.NOTIFICATION_TYPES].sort());
+  });
+});
+
+describe('store: the outbound queue admits gateway-down and gateway-recovered (v63, #2272)', () => {
+  const ADDED = ['gateway-down', 'gateway-recovered'];
+
+  afterEach(() => {
+    store.close();
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    tmpDir = null;
+  });
+
+  /**
+   * Fill the queue as a v62 store could hold it: an item in each state a live
+   * queue holds, a `lane-silent` notice, the type v62 itself admitted, and an
+   * item of each kind the notices are not: a reply, a question and a candidate.
+   * @returns {void}
+   */
+  function fillV62Queue() {
+    fillQueue();
+    const db = store.getDb();
+    const text = 'notice lane-silent';
+    bridgeStore.outbound.enqueue({
+      idemKey: 'notify:lane-silent:nudge-fact:7', kind: 'notification', notifyType: 'lane-silent', sourceLabel: 'TangleClaw', text, digest: bridgeStore.digest(text), at: T0
+    });
+    const digest = 'c'.repeat(64);
+    const forRoute = db.prepare(
+      'INSERT INTO bridge_outbound (idem_key, kind, route_id, question_id, source_label, text, digest, state, released_generation, created_at, updated_at) '
+      + "VALUES (?, ?, 'rt_kept', ?, 'Project Master', 'x', ?, 'ready', 1, ?, ?)"
+    );
+    forRoute.run('route:rt_kept:answer', 'reply', null, digest, T0, T0);
+    forRoute.run('route:rt_kept:ask:q1', 'question', 'q1', digest, T0, T0);
+    const project = store.projects.create({ name: 'Candidate source', path: path.join(tmpDir, 'candidate-source') });
+    db.prepare(
+      'INSERT INTO bridge_candidates (candidate_id, idem_key, kind, source_project_id, source_launch_id, text, digest, state, created_at) '
+      + "VALUES ('cd_v62', 'cand:v62', 'milestone', ?, 'launch-v62', 'x', ?, 'submitted', ?)"
+    ).run(project.id, digest, T0);
+    db.prepare(
+      'INSERT INTO bridge_outbound (idem_key, kind, candidate_id, source_label, text, digest, state, released_generation, created_at, updated_at) '
+      + "VALUES ('candidate:cd_v62', 'candidate', 'cd_v62', 'Candidate source', 'x', ?, 'ready', 1, ?, ?)"
+    ).run(digest, T0, T0);
+  }
+
+  /**
+   * Turn the open store into one as schema v62 left it: the queue's table
+   * with four types in its CHECK, every row, id and index as it was. The v62
+   * table's SQL is the current table's with the two later types taken out of
+   * the list, which is the only thing v63 changed. The stamp is 62.
+   * @param {() => void} [populate] - Fill the store first, through its own writers.
+   * @returns {void}
+   */
+  function rewindToV62(populate) {
+    const db = store.getDb();
+    if (populate) populate();
+    const before = queueSnapshot(db);
+    const now = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'bridge_outbound'").get().sql;
+    const was = now.replace(",'gateway-down','gateway-recovered'", '');
+    assert.notEqual(was, now, 'the queue differs between v62 and v63');
+    assert.match(was, /notify_type IN \('operator-needed','work-blocked','fleet-idle','lane-silent'\)/, 'the v62 queue names exactly the four types v62 had');
+    db.exec('BEGIN');
+    for (const object of bridgeSchema.BRIDGE_SCHEMA_OBJECTS.filter((o) => o.type === 'trigger')) db.exec(`DROP TRIGGER IF EXISTS ${object.name}`);
+    db.exec('ALTER TABLE bridge_outbound RENAME TO bridge_outbound_v63');
+    db.exec(was);
+    db.exec('INSERT INTO bridge_outbound SELECT * FROM bridge_outbound_v63');
+    if (before.sequence) db.prepare("UPDATE sqlite_sequence SET seq = ? WHERE name = 'bridge_outbound'").run(before.sequence);
+    db.exec('DROP TABLE bridge_outbound_v63');
+    db.exec(bridgeSchema.bridgeIndexDdl());
+    db.exec('DELETE FROM schema_version WHERE version >= 63');
+    db.exec('INSERT INTO schema_version (version) VALUES (62)');
+    db.exec('COMMIT');
+    assert.deepEqual(queueSnapshot(db), before, 'reshaping the store as v62 changed no row');
+    assert.deepEqual(bridgeSchema.bridgeSchemaProblems(db, null, 62), [], 'a sound v62 store');
+    assert.deepEqual(bridgeSchema.bridgeSchemaProblems(db), ['table bridge_outbound in an unexpected shape'], 'and not yet a v63 one');
+    assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 62);
+    store.close();
+  }
+
+  /**
+   * What a refused store must still be: stamped 62, with the rows it had and nothing set aside.
+   * @param {number|null} rows - How many queue rows it held, or null when it has no queue table.
+   * @returns {void}
+   */
+  function assertUntouchedV62(rows) {
+    const check = new DatabaseSync(path.join(tmpDir, 'tangleclaw.db'));
+    assert.equal(check.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 62);
+    if (rows !== null) assert.equal(check.prepare('SELECT COUNT(*) AS n FROM bridge_outbound').get().n, rows);
+    assert.equal(check.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name LIKE '%_superseded'").get().n, 0);
+    check.close();
+  }
+
+  it('a v62 queue admits lane-silent and refuses both new types, which is why the table has to be rebuilt', () => {
+    freshStore('v62-refuses');
+    rewindToV62();
+    const raw = new DatabaseSync(path.join(tmpDir, 'tangleclaw.db'));
+    insertType(raw, 'lane-silent');
+    for (const type of ADDED) assert.throws(() => insertType(raw, type), /CHECK/, type);
+    raw.close();
+  });
+
+  it('upgrades a v62 store holding a live queue: every row, column, id and lease comes through, and the queue then admits both types', () => {
+    freshStore('v62-queue');
+    const fresh = bridgeObjects();
+    let before = null;
+    rewindToV62(() => {
+      fillV62Queue();
+      before = queueSnapshot(store.getDb());
+    });
+    assert.deepEqual(before.rows.bridge_outbound.map((r) => [r.kind, r.notify_type, r.state]), [
+      ['notification', 'work-blocked', 'delivered'], ['notification', 'operator-needed', 'blocked'], ['notification', 'fleet-idle', 'ready'],
+      ['notification', 'work-blocked', 'ready'], ['status', null, 'ready'], ['failure', null, 'dropped'], ['notification', 'lane-silent', 'ready'],
+      ['reply', null, 'ready'], ['question', null, 'ready'], ['candidate', null, 'ready']
+    ], 'the queue held an item in each state, one of the type v62 added, and one of every kind, before the upgrade');
+    assert.deepEqual([...new Set(before.rows.bridge_outbound.map((r) => r.kind))].sort(), [...bridgeSchema.OUTBOUND_KINDS].sort(), 'every kind the queue knows');
+    assert.equal(before.rows.bridge_outbound_parts.length, 2);
+    assert.equal(before.rows.bridge_outbound_leases.length, 3);
+    assert.ok(before.sequence > 0);
+
+    reopen();
+    const db = store.getDb();
+    assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 63);
+    assert.deepEqual(db.prepare('SELECT version FROM schema_version WHERE version >= 62 ORDER BY version').all().map((r) => r.version), [62, 63]);
+    assert.deepEqual([...bridgeObjects()], [...fresh], 'the upgraded store has exactly the shape of a fresh one');
+    assert.deepEqual(queueSnapshot(db), before, 'nothing in the queue changed');
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name LIKE '%_superseded'").get().n, 0);
+
+    insertType(db, 'gateway-down');
+    insertType(db, 'gateway-recovered');
+    const stored = db.prepare("SELECT outbound_id, notify_type FROM bridge_outbound WHERE idem_key LIKE 'notify:gateway-%:direct' ORDER BY outbound_id").all();
+    assert.deepEqual(stored.map((r) => ({ ...r })), [
+      { outbound_id: before.sequence + 1, notify_type: 'gateway-down' }, { outbound_id: before.sequence + 2, notify_type: 'gateway-recovered' }
+    ], 'each is stored, under an id the queue had not issued');
+    assert.throws(() => insertType(db, 'gateway-flapping'), /CHECK/, 'a type outside the list is still refused');
+    assert.throws(() => insertType(db, 'release-action-needed'), /CHECK/, 'and so is a reserved one');
+
+    // The rebuilt queue still works as a queue: what was waiting is handed over,
+    // the lane-silent notice among it, and a new type goes through the writers.
+    const later = '2026-10-09T01:00:00.000Z';
+    const text = 'the helper has no connection';
+    const made = bridgeStore.outbound.enqueue({
+      idemKey: 'notify:gateway-down:outage:1', kind: 'notification', notifyType: 'gateway-down', sourceLabel: 'TangleClaw', text, digest: bridgeStore.digest(text), at: later
+    }).outboundId;
+    const claim = bridgeStore.leases.claim({ nonce: 'v63-claim-nonce-0001', tokenId: 'bht_v61', limit: 20, at: later });
+    const silent = db.prepare("SELECT outbound_id FROM bridge_outbound WHERE idem_key = 'notify:lane-silent:nudge-fact:7'").get().outbound_id;
+    assert.ok(claim.leases.some((l) => l.outboundId === silent), 'the lane-silent notice that came through is handed over');
+    const lease = claim.leases.find((l) => l.outboundId === made);
+    assert.ok(lease, 'and so is the new notice');
+    bridgeStore.transaction(() => {
+      assert.equal(bridgeStore.outbound.markDelivered(made, ['chat-msg-9'], { leaseId: lease.leaseId, tokenId: 'bht_v61', at: later }).outcome, 'delivered');
+    });
+  });
+
+  it('booting a v63 store again rebuilds nothing', () => {
+    freshStore('v63-again');
+    rewindToV62(fillV62Queue);
+    reopen();
+    const db = store.getDb();
+    const once = [...bridgeObjects()];
+    const queue = queueSnapshot(db);
+    const rootpage = () => store.getDb().prepare("SELECT rootpage FROM sqlite_master WHERE name = 'bridge_outbound'").get().rootpage;
+    const page = rootpage();
+    const stamps = () => store.getDb().prepare('SELECT version FROM schema_version ORDER BY version').all().map((r) => r.version);
+    const stamped = stamps();
+    assert.deepEqual(bridgeSchema.upgradeBridgeTables(db, 63), [], 'a store already in the v63 shape has nothing to rebuild');
+    store.close();
+    reopen();
+    assert.deepEqual([...bridgeObjects()], once);
+    assert.deepEqual(queueSnapshot(store.getDb()), queue);
+    assert.equal(rootpage(), page, 'the table is the same table, not a copy of it');
+    assert.deepEqual(stamps(), stamped);
+  });
+
+  it('a fresh store is at v63 and admits both types', () => {
+    freshStore('v63-fresh');
+    const db = store.getDb();
+    assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 63);
+    for (const type of ADDED) insertType(db, type);
+    assert.throws(() => insertType(db, 'gateway-flapping'), /CHECK/);
+  });
+
+  it('refuses a v62 store whose queue is not sound, before touching it, and leaves the stamp at 62', () => {
+    freshStore('v62-unsound');
+    rewindToV62(fillV62Queue);
+    const raw = new DatabaseSync(path.join(tmpDir, 'tangleclaw.db'));
+    const rows = raw.prepare('SELECT COUNT(*) AS n FROM bridge_outbound').get().n;
+    raw.exec('DROP INDEX idx_bridge_outbound_status');
+    raw.close();
+    store._setBasePath(tmpDir);
+    assert.throws(() => store.init(), /not a sound v62 store.*idx_bridge_outbound_status/);
+    store.close();
+    assertUntouchedV62(rows);
+  });
+
+  it('refuses a v62 store whose queue is not the v62 shape, before touching it', () => {
+    freshStore('v62-misshapen');
+    rewindToV62(fillV62Queue);
+    const raw = new DatabaseSync(path.join(tmpDir, 'tangleclaw.db'));
+    const rows = raw.prepare('SELECT COUNT(*) AS n FROM bridge_outbound').get().n;
+    // The queue as v61 had it: a store stamped 62 whose v62 step never took.
+    const sql = raw.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'bridge_outbound'").get().sql;
+    raw.exec('PRAGMA foreign_keys = OFF');
+    raw.exec('BEGIN');
+    for (const object of bridgeSchema.BRIDGE_SCHEMA_OBJECTS.filter((o) => o.type === 'trigger')) raw.exec(`DROP TRIGGER IF EXISTS ${object.name}`);
+    raw.exec('ALTER TABLE bridge_outbound RENAME TO bridge_outbound_was');
+    raw.exec(sql.replace(",'lane-silent'", ''));
+    raw.exec("INSERT INTO bridge_outbound SELECT * FROM bridge_outbound_was WHERE notify_type IS NOT 'lane-silent'");
+    raw.exec('DROP TABLE bridge_outbound_was');
+    raw.exec(bridgeSchema.bridgeIndexDdl());
+    raw.exec('COMMIT');
+    raw.close();
+    store._setBasePath(tmpDir);
+    assert.throws(() => store.init(), /not a sound v62 store.*table bridge_outbound in an unexpected shape/);
+    store.close();
+    assertUntouchedV62(rows - 1);
+  });
+
+  it('refuses a v62 store with no bridge table at all: every start since v52 makes them, so this one lost them', () => {
+    freshStore('v62-no-bridge');
+    const db = store.getDb();
+    for (const object of bridgeSchema.BRIDGE_SCHEMA_OBJECTS.filter((o) => o.type === 'trigger')) db.exec(`DROP TRIGGER IF EXISTS ${object.name}`);
+    for (const name of [...bridgeObjects().keys()].filter((n) => db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(n))) {
+      db.exec(`DROP TABLE ${name}`);
+    }
+    assert.equal(bridgeSchema.hasBridgeTables(db), false);
+    db.exec('DELETE FROM schema_version WHERE version >= 63');
+    db.exec('INSERT INTO schema_version (version) VALUES (62)');
+    store.close();
+    store._setBasePath(tmpDir);
+    assert.throws(() => store.init(), /not a sound v62 store.*no table bridge_outbound/);
+    store.close();
+    assertUntouchedV62(null);
+    const check = new DatabaseSync(path.join(tmpDir, 'tangleclaw.db'));
+    assert.equal(check.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name LIKE 'bridge_%'").get().n, 0, 'and no empty bridge storage was put in its place');
+    check.close();
+  });
+
+  it('refuses a v62 store that has lost its queue table and kept the rest, and leaves the stamp at 62', () => {
+    freshStore('v62-no-queue');
+    rewindToV62();
+    const raw = new DatabaseSync(path.join(tmpDir, 'tangleclaw.db'));
+    raw.exec('DROP TABLE bridge_outbound');
+    raw.close();
+    store._setBasePath(tmpDir);
+    assert.throws(() => store.init(), /not a sound v62 store.*no table bridge_outbound/);
+    store.close();
+    assertUntouchedV62(null);
+  });
+
+  it('v63 is a superset of every earlier bridge shape: what a server from before it required still holds', () => {
+    freshStore('superset-63');
+    rewindToV62();
+    reopen();
+    for (const version of [52, 53, 54, 61, 62, 63]) assert.deepEqual(bridgeSchema.bridgeSchemaProblems(store.getDb(), null, version), [], `v${version}`);
   });
 });
 

@@ -659,8 +659,94 @@ describe('bridge notifications (#2031)', () => {
     });
   });
 
+  describe('the sentences about the helper\'s own connection (#2272)', () => {
+    const DOWN = '2026-10-11T20:03:00.000Z';
+    const down = (values) => bridgeNotify.TEMPLATES['gateway-down']({ since: DOWN, minutes: 5, state: 'reconnecting', fatalCloseCode: null, ...values });
+    const recovered = (values) => bridgeNotify.TEMPLATES['gateway-recovered']({ since: '2026-10-12T08:15:00.000Z', minutes: 732, ...values });
+
+    // The zone is pinned, so these read the same on any machine.
+    beforeEach(() => {
+      bridgeNotify._deps.timeZone = () => 'America/Los_Angeles';
+    });
+
+    it('says a lost connection is still being retried, in the operator\'s local time', () => {
+      const text = 'The Discord helper lost its connection to Discord at 13:03 PDT on 2026-10-11 and has not had one for 5 minutes. '
+        + 'It is still trying. It can still post here, but it is not receiving what you send.';
+      assert.equal(down({ state: 'reconnecting' }), text);
+      assert.equal(down({ state: 'connecting' }), text);
+    });
+
+    it('does not say it is trying when the helper did not say so', () => {
+      for (const state of ['idle', 'stopped']) {
+        assert.equal(down({ state }), 'The Discord helper lost its connection to Discord at 13:03 PDT on 2026-10-11 and has not had one for 5 minutes. '
+          + 'It can still post here, but it is not receiving what you send.');
+      }
+    });
+
+    it('says a refused connection is refused, why, and that it will not come back by itself', () => {
+      const refused = (why) => `Discord has refused the Discord helper's connection since 13:03 PDT on 2026-10-11 (${why}). `
+        + 'It will not reconnect by itself: the cause has to be put right and the helper restarted. '
+        + 'It can still post here, but it is not receiving what you send, so anything you reply will need sending again once it is fixed.';
+      assert.equal(down({ state: 'fatal', fatalCloseCode: 4004 }), refused('the bot token was rejected'));
+      assert.equal(down({ state: 'fatal', fatalCloseCode: 4014 }), refused('Message Content Intent is off'));
+      assert.equal(down({ state: 'fatal', fatalCloseCode: 4010 }), refused('close code 4010'));
+      assert.equal(down({ state: 'fatal', fatalCloseCode: null }), refused('no close code was reported'));
+      assert.deepEqual(bridgeNotify.GATEWAY_REFUSED, { 4004: 'the bot token was rejected', 4014: 'Message Content Intent is off' });
+      // A refusal is never worded as a connection that is being retried.
+      for (const code of [4004, 4014, 4010, null, 'toString']) {
+        assert.ok(!/trying|retry/i.test(down({ state: 'fatal', fatalCloseCode: code })), `close code ${code}`);
+      }
+    });
+
+    it('says the connection is back, for how long it was not, and to send again what may have been missed', () => {
+      assert.equal(recovered(), 'The Discord helper is connected to Discord again, since 01:15 PDT on 2026-10-12. '
+        + 'It was not connected for 12 hours 12 minutes. Anything you sent here in that time may not have arrived: please send it again.');
+    });
+
+    it('counts a length of time in whole minutes and hours', () => {
+      const length = (minutes) => /It was not connected for ([^.]+)\./.exec(recovered({ minutes }))[1];
+      assert.deepEqual([0, 1, 5, 59, 60, 61, 120, 1501].map(length),
+        ['0 minutes', '1 minute', '5 minutes', '59 minutes', '1 hour 0 minutes', '1 hour 1 minute', '2 hours 0 minutes', '25 hours 1 minute']);
+    });
+
+    it('leaves a length out when it was not given one it can count, and never prints what it was given', () => {
+      for (const minutes of [null, undefined, -1, 4.5, NaN, '5', '<b>']) {
+        assert.equal(recovered({ minutes }), 'The Discord helper is connected to Discord again, since 01:15 PDT on 2026-10-12. '
+          + 'Anything you sent here in that time may not have arrived: please send it again.');
+        assert.equal(down({ minutes }), 'The Discord helper lost its connection to Discord at 13:03 PDT on 2026-10-11 and has not had one since. '
+          + 'It is still trying. It can still post here, but it is not receiving what you send.');
+      }
+      for (const since of [null, undefined, 'yesterday', '@everyone', 1760212980000]) {
+        assert.ok(recovered({ since }).startsWith('The Discord helper is connected to Discord again, since a time that was not recorded.'), String(since));
+        assert.ok(!recovered({ since }).includes('@everyone'));
+      }
+      assert.ok(!down({ state: '@everyone' }).includes('@everyone'), 'a state it does not know is not shown');
+    });
+
+    it('shows a time in the zone it is told, with that zone, in summer and in winter', () => {
+      assert.match(down({ since: '2026-01-11T20:03:00.000Z' }), / at 12:03 PST on 2026-01-11 /);
+      assert.match(down({ since: '2026-10-12T06:30:00.000Z' }), / at 23:30 PDT on 2026-10-11 /, 'the date is the local one too');
+      assert.match(down({ since: '2026-10-11T07:00:00.000Z' }), / at 00:00 PDT on 2026-10-11 /, 'midnight is 00, not 24');
+      bridgeNotify._deps.timeZone = () => 'Asia/Kolkata';
+      assert.match(down(), / at 01:33 GMT\+5:30 on 2026-10-12 /, 'a zone with no short name is still named');
+    });
+
+    it('falls back to UTC, said as UTC, for a zone the runtime cannot name, and never shows a time without a zone', () => {
+      bridgeNotify._deps.timeZone = () => 'Nowhere/Not_A_Zone';
+      assert.match(down(), / at 20:03 UTC on 2026-10-11 /);
+      assert.match(recovered(), / since 08:15 UTC on 2026-10-12\./);
+      assert.match(down({ state: 'fatal', fatalCloseCode: 4004 }), / since 20:03 UTC on 2026-10-11 /);
+    });
+
+    it('uses this host\'s own zone when it is told none, and still names it', () => {
+      bridgeNotify._deps.timeZone = realDeps.timeZone;
+      assert.equal(realDeps.timeZone(), undefined);
+      assert.match(down(), / at \d\d:\d\d \S+ on \d{4}-\d\d-\d\d /);
+    });
+  });
+
   it('every notification text comes from a fixed template that takes no free text', () => {
-    assert.deepEqual(Object.keys(bridgeNotify.TEMPLATES).sort(), ['fleet-idle', 'lane-silent', 'operator-needed', 'work-blocked']);
+    assert.deepEqual(Object.keys(bridgeNotify.TEMPLATES).sort(), ['fleet-idle', 'gateway-down', 'gateway-recovered', 'lane-silent', 'operator-needed', 'work-blocked']);
     assert.deepEqual(Object.keys(bridgeNotify.TEMPLATES).sort(), [...bridgeSchema.NOTIFICATION_TYPES].sort(), 'every admitted type has a template, and no other does');
     // A project name is the only string a template shows, and it is cleaned and bounded.
     // The store refuses such a name; this is one it would never have written.

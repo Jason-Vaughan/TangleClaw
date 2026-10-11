@@ -12,7 +12,7 @@ is in [discord-operator-notifications.md](discord-operator-notifications.md).
 
 | Part | State |
 |---|---|
-| Storage (schema v52, reshaped by v53, extended by v54; v62 admits a fourth notification type) | Built |
+| Storage (schema v52, reshaped by v53, extended by v54; v62 admits a fourth notification type, v63 a fifth and a sixth) | Built |
 | The Project Master's bridge credential | Built |
 | Gateway: accept, resolve, dispatch, hold the reply, release | Built |
 | `tc bridge` for the Project Master, routing and answering included | Built |
@@ -20,6 +20,7 @@ is in [discord-operator-notifications.md](discord-operator-notifications.md).
 | The operator's policy routes: enable, allowlist, token, aliases, pins | Built |
 | The candidate lane: a session offers, the Master decides | Built |
 | The four typed server notifications | Built. The fourth, `lane-silent` (#2262), has not yet been seen to arrive on a live install |
+| Two more types, `gateway-down` and `gateway-recovered` (#2272) | Admitted, with their sentences. Nothing raises them yet |
 | Discord helper (`bin/tc-bridge-helper`) | Built; not yet run against Discord. See [operator-bridge-helper.md](operator-bridge-helper.md) |
 | The operator's dashboard panel (global settings, Operator bridge) | Built; not yet used by a person on a live install |
 | Cutover | Not started; Rule #145 is unchanged and in force |
@@ -668,6 +669,30 @@ typed.
 | `fleet-idle` | the fleet is seen to become idle: every live lane finished and clear | the episode: when it began and which lanes were in it |
 | `lane-silent` | the workload nudge monitor escalated a lane's expired workload report and had no coordinator it could tell, so it recorded the escalation on the operator route ([fleet-workload.md](fleet-workload.md), "When the nudge goes unanswered"). An escalation that reached a coordinator raises nothing. | that record: the `workload_nudge_facts` row |
 
+Two more types are admitted and not yet raised: `gateway-down` and `gateway-recovered` (#2272;
+ADR 0023 Decision 9 as amended 2026-10-11). They are about the chat helper itself. A helper
+that has lost its connection to Discord's Gateway still posts, and does not receive what the
+operator sends. The queue accepts both types (schema v63), each has a retention limit and each
+has its fixed sentence, but no pass raises either, so neither can reach the chat. The pass that
+raises them is a later change. Until it lands, the connection is read on the page and in
+`tc bridge status` ("The helper's Discord connection", below).
+
+Their sentences take only what the helper's report holds: a time, a whole number of minutes, a
+state from the helper's own list and Discord's close code. Nothing anybody typed is in them.
+
+- `gateway-down` says when the connection was lost and for how long there has been none, and
+  that the helper can still post but is not receiving. For a helper that is reconnecting it
+  adds that it is still trying. For a connection Discord has refused it says so instead, gives
+  the reason (the bot token was rejected, Message Content Intent is off, or the close code), and
+  says it will not reconnect by itself and that replies will need sending again once it is
+  fixed. A refusal is never worded as a connection that is being retried.
+- `gateway-recovered` says since when the helper is connected again and for how long it was
+  not, and asks for anything sent in that time to be sent again, since it may not have arrived.
+
+A time in either is this host's local time with its zone, as `13:03 PDT on 2026-10-11`. Where
+the runtime cannot name the zone, the time is given in UTC and says so. A time is never shown
+without a zone.
+
 `lane-silent` is the fourth type (operator ruling, 2026-10-10; ADR 0023 Decision 9 as amended).
 Its sentence names the lane's project, says for how many minutes it had reported nothing when
 the escalation was recorded, and gives the reason nobody else was told, from the monitor's own
@@ -1093,6 +1118,15 @@ that is not, before touching anything. A store already in the v62 shape has noth
 The v62 shape is a superset of every earlier one. The store's versions 55 to 61 did not touch
 the bridge, so the bridge's own shape goes from v54 to v62.
 
+Schema v63 changed the same table in the same way (#2272). `bridge_outbound` admits
+`gateway-down` and `gateway-recovered` in the CHECK on `notify_type`. The v63 migration
+rebuilds that one table as v62 did, with every row, column and row id carried over and the
+tables that point at an item left alone. It first proves the store is a sound v62 store and
+refuses one that is not, before touching anything. Unlike v62 it also refuses a store with no
+bridge table at all: every start since v52 creates the bridge's storage, so a v62 store
+without it has lost it. A store already in the v63 shape has nothing rebuilt, and the v63
+shape is a superset of every earlier one.
+
 | Table | Holds |
 |---|---|
 | `bridge_settings` | The operator's switches. The bridge is off unless `enabled` is `true`. |
@@ -1141,8 +1175,8 @@ starts, before any helper request is heard. Revoked pins and helper tokens leave
 | A delivery-failure notice | Let go after 30 days, then kept 30 days |
 | An undecided or uncollected `milestone` candidate | Let go after 7 days, then kept 30 days |
 | An undecided or uncollected `operator-action-required` candidate | Let go after 30 days, then kept 30 days |
-| An uncollected `work-blocked`, `operator-needed` or `lane-silent` notification | Let go after 7 days, then kept 30 days |
-| An uncollected `fleet-idle` notification or route status notice | Let go after 24 hours, then kept 30 days |
+| An uncollected `work-blocked`, `operator-needed`, `lane-silent` or `gateway-down` notification | Let go after 7 days, then kept 30 days |
+| An uncollected `fleet-idle` or `gateway-recovered` notification, or route status notice | Let go after 24 hours, then kept 30 days |
 | Revoked Master generations | 90 days; the newest generation is always kept, so a number is never reused |
 | Audit rows | 90 days, then compacted |
 
@@ -1202,7 +1236,7 @@ check is refused, and the message names each object that is missing or misshapen
 - `lib/bridge-handoff.js`: minting, hashing and the FIFO handoff. It does not load the store.
 - `lib/bridge-principal.js`: when a credential exists and whether a presented one is live.
 - `lib/bridge-gateway.js`: accept, resolve, dispatch, reply capture, the periodic pass.
-- `lib/bridge-notify.js`: the four typed server notifications.
+- `lib/bridge-notify.js`: the four typed server notifications, and the sentences of the two admitted and not yet raised.
 - `public/operator-bridge-panel.js`: the signed-in operator's panel in the dashboard's global
   settings. Operator routes only.
 - `lib/bridge-api.js`: every bridge route, declared with the principal it belongs to. One
