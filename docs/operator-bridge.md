@@ -714,6 +714,9 @@ other four reads it, so nothing is raised while the bridge is disabled.
   helper that could not post for a week, can again, and still has no connection. It cannot
   repeat faster than the 7-day limit. A helper that was restarted in the meantime reports its
   own start as the beginning, and is announced from there after the usual five minutes.
+- **A notice somebody withdrew stays withdrawn.** Withdrawing a `gateway-down` is a decision
+  and is final: that outage is not announced again and has no recovery notice. A later outage
+  is announced as its own.
 - **An outage still open after 30 days is announced once more.** Retention removes a posted
   notice 30 days on, and with it the record that the outage was announced. That second notice
   is intended, as a reminder. An outage that ends after its notice was removed has no recovery

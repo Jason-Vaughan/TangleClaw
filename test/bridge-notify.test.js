@@ -1104,6 +1104,22 @@ describe('bridge notifications (#2031)', () => {
       assert.equal(passes(30), 0);
     });
 
+    it('does not announce again an outage whose notice somebody withdrew, and announces the next one', () => {
+      const began = announcedOutage();
+      // As the store withdraws an item: on purpose, and for good.
+      store.getDb().prepare("UPDATE bridge_outbound SET state = 'dropped', drop_code = 'withdrawn', text = NULL, updated_at = ? WHERE state = 'ready'").run(clock);
+      reads('down', { since: began });
+      assert.equal(passes(30), 0, 'withdrawing is final');
+      later(8 * DAY);
+      assert.equal(passes(5), 0, 'however long it lasts');
+      reads('connected');
+      assert.equal(passes(5), 0, 'and there is no notice for a recovery to follow');
+      assert.equal(ours().length, 1);
+      reads('down');
+      bridgeNotify.reconcile();
+      assert.equal(passes(5), 1, 'a later outage is its own');
+    });
+
     it('announces a helper restarted after its notice was let go from the beginning it now reports, after the usual wait', () => {
       announcedOutage();
       noticeLetGo();
