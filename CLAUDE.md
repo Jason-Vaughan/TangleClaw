@@ -248,6 +248,7 @@ Critic findings.
 - Routes, with `<base>` = `<api>/api/sessions/<project-name>`:
 - inbox `GET <base>/medusa/messages`; mark handled `POST <base>/medusa/read` with `{"ids": ["<id>", ...]}`;
 - send (initiate or respond) `POST <base>/medusa/send` with `{"to": "<workspace-id>", "message": "..."}`;
+- every write (`/read`, `/send`, `/exchanges/.../close`) is refused without your launch headers, `x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID` and `x-tangleclaw-project-id: $TANGLECLAW_PROJECT_ID`; `tc message` sends them for you;
 - peers `GET <base>/medusa/roster`; why a peer has not picked up `GET <base>/medusa/peers/<workspace-id>`.
 - Resolve both placeholders at run time — they are launch facts, not repository facts, and this file is shared by every checkout:
 - `<api>` — the `TANGLECLAW_API` your launch exported.
@@ -290,6 +291,17 @@ TangleClaw is the central port registry for every project on this machine — re
 ### Authentication
 
 When the operator has enabled the M2M service-token gate (AUTH-4), every `/api/ports*` call needs `Authorization: Bearer <token>` (else `401`). Where this guide sits in a file the project COMMITS, the live token is deliberately not beside it — fetch it from `$TANGLECLAW_API/api/service-token` (#1619). In an engine-private config TC still injects the header with the live token below this guide. Off by default (no token needed). Rotating the token invalidates the old one — relaunch to pick up the new value.
+
+### Identify Your Session
+
+Every call that changes a lease (`lease`, `release`, `heartbeat`) must say who is asking, with the two headers TangleClaw exports into every pane it launches:
+
+```
+x-tangleclaw-project-id: $TANGLECLAW_PROJECT_ID
+x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID
+```
+
+Without them the call is refused with `403 LAUNCH_BINDING_REQUIRED`. A launch that has ended, or that a newer session of the same project has replaced, gets `403 LAUNCH_BINDING_INVALID`: relaunch the session. Reading `GET /api/ports` needs neither header. A service that is not a TangleClaw session identifies itself with the service token instead, which these calls accept only while the operator has that gate enabled.
 
 ### API Operations
 
