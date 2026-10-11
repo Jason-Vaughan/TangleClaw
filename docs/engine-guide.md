@@ -1407,7 +1407,11 @@ and exits 1 on a difference. Because sections are omitted when their source is a
 block stands for one named profile, pinned in that script: the switchboard on, the PortHub guide
 on, the install's service-token gate off, and no shared document registered as injectable for the
 project. A checkout launched with other settings still shows an uncommitted `CLAUDE.md`; that is
-its settings, not drift, and it is not committed.
+its settings, not drift, and it is not committed. The same happens when the installed server is
+older or newer than the checkout: a launch rewrites the block with the installed server's generator,
+while the test compares against the checkout's. So a branch that adds a `tc` verb and is relaunched
+before the deploy has its `CLAUDE.md` rewritten back and the test fails locally on a non-defect;
+`node scripts/sync-claude-md-block.js --write` restores the tracked bytes.
 
 **A governed file TC once wrote whole can hold the guide twice (#1911).** The first governed write
 appends the managed block and leaves everything outside it alone. So when a project was launched
