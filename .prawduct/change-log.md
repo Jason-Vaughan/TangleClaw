@@ -73,6 +73,7 @@ Visual change: no
 **Docs.** `docs/operator-bridge.md` gains "The helper's Discord connection" (the field, the rule, what is kept, the four readings and the line each prints, and why a slow helper can read `not-reported` while running), the claim row, the refusal list, the status row and the `tc bridge status` row. `docs/operator-bridge-helper.md` gains `notReadySince`, "Telling TangleClaw how the connection is" and one more line under what is not proven.
 
 **Not covered.** No screen shows the reading (Chunk 03) and nothing is notified (Chunks 04 and 05). A helper configured with `pollSeconds` above 180, or backing off after failed passes, reads `not-reported` between passes while it runs; the doc says so, and Chunk 05 must not treat `not-reported` as an outage. `since` is the helper's clock and is not bounded here; Chunk 05 bounds what it times by the server's receipt. Not proved against Discord: what the live helper reports during a real outage.
+
 ## 2026-10-10 — #2288: the README opens with the problem, the product, and what it is not
 
 <!-- prawduct: type=docs | scope=2288-readme-opening -->
