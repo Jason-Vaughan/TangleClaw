@@ -88,6 +88,16 @@ function deliveredTexts(projectPath) {
   return texts;
 }
 
+/**
+ * @param {string} projectPath
+ * @param {number} index - 1-based file number
+ * @returns {string} the text one rules file would have the hook print
+ */
+function deliveredTextOf(projectPath, index) {
+  const parsed = JSON.parse(fs.readFileSync(channel.shardPath(projectPath, index), 'utf8'));
+  return parsed.hookSpecificOutput.additionalContext;
+}
+
 /** @returns {string[]} the names in a project's `.tangleclaw/` directory */
 function tangleclawDir(projectPath) {
   return fs.readdirSync(path.join(projectPath, '.tangleclaw')).sort();
@@ -237,6 +247,7 @@ describe('#2273 — delivered rules files follow the rules in force', () => {
 
     assert.equal(verdict.status, 'failed');
     assert.equal(verdict.projectId, project.id);
+    assert.equal(verdict.filesReplaced, 0, 'the caller can say the old set is whole');
     assert.ok(verdict.reason, 'the verdict carries the cause for the caller to log and report');
     assert.equal(fs.readFileSync(channel.shardPath(project.path, 1), 'utf8'), before,
       'the file the hook prints is untouched');
@@ -260,6 +271,48 @@ describe('#2273 — delivered rules files follow the rules in force', () => {
       'a set half old and half new would state rules that were never in force together');
     assert.equal(fs.existsSync(channel.shardPath(project.path, 1) + refresh.TMP_SUFFIX), false,
       'the staging file that was written is cleaned up');
+  });
+
+  it('says how many files it had replaced when a swap fails part-way', () => {
+    const body = 'v'.repeat(Math.floor(budget * 0.6));
+    addRule(project.id, `one ${body}`);
+    addRule(project.id, `two ${body}`);
+    assert.equal(launchFiles(project), 2);
+    // A directory where the second file was: staging succeeds beside it and the
+    // swap onto it is refused, after the first file has already been swapped.
+    fs.rmSync(channel.shardPath(project.path, 2));
+    fs.mkdirSync(channel.shardPath(project.path, 2));
+
+    const verdict = refresh.refreshProjectRules(project.id, { now: NOW });
+
+    assert.equal(verdict.status, 'failed');
+    assert.equal(verdict.filesReplaced, 1, 'a set part new and part old is not reported as the old set');
+    assert.match(deliveredTextOf(project.path, 1), /Rules in force: 2, as of/);
+  });
+
+  it('sizes the files for the engine the live session runs, not the one the project stores', () => {
+    // Only an engine that declares a startup cap has one; every other profile
+    // gets the larger fallback. A session started on Claude in a project stored
+    // under another engine must still be held to Claude's cap.
+    const dir = path.join(tmpBase, 'override-proj');
+    fs.mkdirSync(dir, { recursive: true });
+    const other = store.engines.list().find((e) => channel.resolveChannelBudget(e) > budget);
+    assert.ok(other, 'the fixture needs an engine whose budget is larger than Claude\'s');
+    const stored = store.projects.create({ name: 'override-proj', path: dir, engine: other.id });
+    const body = 'u'.repeat(Math.floor(budget * 0.45));
+    for (const n of ['one', 'two', 'three']) addRule(stored.id, `${n} ${body}`);
+    channel.writeShards(dir, channel.buildShards([{ id: 1, content: 'launch-time rule' }], budget), 1);
+
+    const idle = refresh.refreshProjectRules(stored.id, { now: NOW });
+    assert.deepEqual(idle.omittedRuleIds, [], 'with nothing running, the stored engine\'s budget carries all three');
+
+    store.sessions.start({ projectId: stored.id, engineId: 'claude' });
+    const live = refresh.refreshProjectRules(stored.id, { now: NOW });
+
+    assert.equal(live.status, 'refreshed');
+    assert.ok(fs.readFileSync(channel.shardPath(dir, 1), 'utf8').length <= budget,
+      'a file over the running engine\'s cap is replaced by a preview and every rule in it is lost');
+    assert.equal(live.omittedRuleIds.length, 1);
   });
 
   it('leaves no staging file behind after a refresh, and a second refresh agrees with the first', () => {
