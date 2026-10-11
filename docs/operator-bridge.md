@@ -686,8 +686,8 @@ other four reads it, so nothing is raised while the bridge is disabled.
 - **Five minutes, counted from the latest of three times:** when the helper says the outage
   began, when this server process first read it as down, and when the bridge was enabled. A
   reconnect normally takes seconds and raises nothing. A helper whose clock is wrong, a server
-  that has just started and a bridge that has just been enabled each cost a delay of at most
-  five minutes; none can raise a notice for an outage this server has not watched for five.
+  that has just started and a bridge that has just been enabled each cost a delay; none can
+  raise a notice for an outage this server has not watched for five minutes.
 - **A connection Discord refused is an outage too,** after the same five minutes. Its notice
   says it is refused and why, and that it will not come back by itself.
 - **One outage, one notice.** An outage runs from its notice to the next report that says
