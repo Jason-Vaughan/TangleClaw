@@ -741,7 +741,8 @@ function renderLaunchIdentityBanner(notice) {
   } else {
     textEl.innerHTML = '⚠ <strong>TangleClaw could not check tmux\'s global environment for launch identity variables:'
       + ' the server sent no report this page can read.</strong>'
-      + ' A server that has not been restarted since an update sends none. The check runs once, when the server starts.';
+      + ' A server that has not been restarted since an update sends none. The check runs once, when the server starts.'
+      + ' Restart the TangleClaw server to run it.';
   }
   banner.classList.remove('hidden');
 }

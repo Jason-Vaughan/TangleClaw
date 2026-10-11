@@ -234,6 +234,7 @@ describe('#2268 the launch identity banner: a missing report is never read as no
       assert.equal(out.hidden, false, 'the banner is hidden only on a stated none');
       assert.match(out.html, /could not check tmux's global environment for launch identity variables/);
       assert.match(out.html, /the server sent no report this page can read/);
+      assert.match(out.html, /Restart the TangleClaw server to run it\.$/, 'and says what to do about it');
     });
   }
 

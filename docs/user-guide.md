@@ -175,7 +175,7 @@ If TangleClaw detects an existing PortHub installation with active leases that h
 TangleClaw tells each session who it is through four environment variables: `TANGLECLAW_LAUNCH_ID`, `TANGLECLAW_PROJECT_ID`, `TANGLECLAW_WORKSPACE_ID` and `TANGLECLAW_ROLE`. If one of them is ever set in tmux's *global* environment (by a `tmux set-environment -g` typed by hand or run by a script), every session on that tmux server that does not set it itself inherits it. When the server starts it reads that global environment once, and the landing page shows a banner with what it found:
 
 - **Variables found.** The banner names each one, gives the command that removes it (`tmux set-environment -g -u <NAME>`), and says when the read was made. It shows names only, never a value.
-- **Could not check.** The read did not answer or failed, or the server sent no report at all. A server that has not been restarted since an update sends none. This is shown as its own line. It is never treated as "none found".
+- **Could not check.** The read did not answer or failed, or the server sent no report at all. A server that has not been restarted since an update sends none, and the banner then says to restart it. This is shown as its own line. It is never treated as "none found".
 - **None found.** No banner.
 
 Nothing needs doing for TangleClaw's own sessions: every launch sets each of the four variables itself, so no pane TangleClaw launches inherits one from the global environment. Removing a stray variable matters for sessions on that tmux server that TangleClaw did not launch.
