@@ -309,6 +309,8 @@ describe('#2273 — delivered rules files follow the rules in force', () => {
     const verdict = refresh.refreshProjectRules(project.id, { now: NOW });
 
     assert.equal(verdict.status, 'failed', 'an unknown number of readers is not zero readers');
+    assert.ok(verdict.reason.includes(path.join(project.path, '.claude', 'settings.local.json')),
+      `the cause names the file at fault, not only the parser's complaint: ${verdict.reason}`);
     assert.equal(verdict.filesReplaced, 0);
     assert.equal(fs.readFileSync(channel.shardPath(project.path, 1), 'utf8'), before);
   });
