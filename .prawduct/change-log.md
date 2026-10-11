@@ -35,6 +35,41 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-10 — #2272: the Discord helper gives up a Gateway connection attempt that goes nowhere
+
+<!-- prawduct: type=bugfix | scope=bridge-2272 -->
+#2272 Chunk 01 of five. Branch `fix/2272-gateway-stuck-attempt`, from `origin/main` `907ef3d0`.
+
+Visual change: no
+
+**Why.** Twice on 2026-10-10 the operator bridge's Discord helper logged a Gateway close with code 1006, one `gateway-connecting`, and then nothing: for twelve hours the first time and three the second it posted notices and received no reply, until it was restarted by hand. `lib/bridge-helper/discord-gateway.js` scheduled a reconnect only from a socket's `close`, and its `error` handler did nothing, on the stated belief that a close always follows an error.
+
+**The reproduction, before the fix.** `origin/main`'s module, run over Node 22.22.3's own WebSocket for 400 seconds against six kinds of address. In every one the module logged `gateway-connecting` once, stayed in `connecting`, and held no timer at the end:
+- the connection is refused, or the host name does not resolve: Node fires `error` within 50 ms and **no `close`, ever**;
+- the address never answers the connection (a reserved test address): `error` after 10.5 s, no `close`;
+- a server accepts the connection and never answers: `error` after 302 s, no `close`;
+- a server completes the WebSocket handshake and never sends HELLO: `open`, then no event at all;
+- the address lookup never settles (with the fake): no socket is ever made. In the helper as shipped this one is bounded already, since the lookup is a REST call with a 15-second limit.
+So the belief was false for every connection that fails before it opens, which is what a reconnect one second after a 1006 close meets when the network is still down. That fits both nights' logs. It is not proved to be what happened: the helper logged nothing that could tell these cases apart.
+
+**What changed.**
+- `lib/bridge-helper/discord-gateway.js`: an `error` on a socket that has delivered no frame ends the attempt and schedules the next (`gateway-connect-failed`); an `error` on one that has is still left to its close, whose code decides. Every attempt has a limit, 30 seconds from `connect()` to READY or RESUMED (`attemptTimeoutMs`); past it the attempt is given up (`gateway-attempt-abandoned`, with `reached`: `lookup`, `socket`, `open` or `hello`), the socket is detached and closed with the code that keeps the session, and the shared backoff schedules the next. A watchdog on its own interval, 60 seconds (`watchdogMs`), starts an attempt when there is no socket, no attempt in flight and no reconnect waiting (`gateway-watchdog-reconnect`); it runs from `start()` to a stop or a fatal close. An address lookup that answers after its attempt was given up opens nothing. `status()` gains `since`, the time the current state began.
+- `lib/bridge-helper/log.js`: the three codes.
+- `docs/operator-bridge-helper.md`: a section on an attempt that goes nowhere, the three codes in the troubleshooting table, that the helper must be restarted after an update, and what is not proved against Discord.
+
+**Decisions.**
+- [DECISION: a failed connection is retried from its `error`, not only at the 30-second limit. | The plan had the limit and the watchdog; the reproduction showed the common failure is immediate and silent. Waiting out the limit each time would be correct and slow. | Told apart from an error on a live connection by whether the socket ever delivered a frame: Discord sends a fatal close code only after HELLO, so no such code can be lost.]
+- [DECISION: how far an attempt got is logged on the line that gives it up, not by a new code each time a socket opens. | The plan asked for a code when a socket opens "so the next log can tell the cases apart". `reached` tells them apart in one line, adds nothing to the log of a healthy reconnect, and needs no `open` listener, which the shared test WebSocket (`test/_fake-discord.js`, not edited) does not have.]
+- [DECISION: the limit and the watchdog cannot be switched off. | An option to disable them would be an option to bring the defect back.]
+- [DECISION: both new timers are `unref`'d. | They watch the helper's loop and must never be what keeps its process alive; `stop()` clears them as well.]
+- [DECISION: the watchdog's check is "no socket, no attempt, no reconnect", whatever the state says. | A gateway that says `ready` and holds no socket is as dead as one that says `connecting`.]
+
+**Tests.** `test/bridge-helper-gateway.test.js`. With the fake WebSocket and hand-run timers: each of the four ways an attempt stalls is given up at the limit with its `reached`, the socket closed with 4000, a reconnect on the backoff, and a new socket; the abandoned socket's later frames, error and fatal close change nothing; a failed connection is retried from its error and a close that follows is not counted twice; an error on a connection that was open is left to its close; nine attempts in a row back off 750 ms to 45 s and a READY starts the count again; a session is still resumed, same id and sequence, after an attempt was given up; an attempt that ends by a close, a refused session or a constructor that throws takes its limit with it; the watchdog starts an attempt from a state with no socket and no timer (made by a log sink that throws once inside the close handler), and does nothing while ready, while an attempt is in flight with or without a socket, or while a reconnect waits; it is gone after a fatal close, stays gone through a stop and start, and after a stop; a stop leaves no timer in five phases; a lookup that answers after a stop opens nothing; `since`. Over Node's real WebSocket and real timers, with a 150 ms limit: a server that accepts and never answers, one that upgrades and never says hello, and a refused port each give two attempts in the expected codes. Run against `origin/main`'s module in a scratch copy, every case of an attempt that stalls or fails, of the watchdog starting one, and of `since` fails; the cases that guard what the fix must not disturb (an error on an open connection, no limit left behind, no timer after a fatal close) pass there too. Each clause of the fix was changed or removed in turn in a scratch copy and watched red; the clauses no test could reach were removed instead of kept.
+
+**Two existing assertions changed, and why.** "the first heartbeat is jittered inside the interval" and "on the reconnect backoff, with the heartbeat stopped" each compared the whole list of waiting timers, which now also holds the watchdog and, during an attempt, its limit. Both still compare the whole list, with the new timers named in it; neither is loosened. The plan's criterion 7 said every existing case would pass unchanged; these two could not.
+
+**Not built here.** Nothing shows the outage or raises a notice (Chunks 02 to 05). `since` restarts each time the state moves between `connecting` and `reconnecting`, so it is not yet "down since": Chunk 02 needs the time the gateway last stopped being ready. Messages sent to the bot while the Gateway was down are still not replayed. Not proved against Discord, which cannot be made to stall on demand. The live helper runs the old code until it is restarted after the deploy.
+
 ## 2026-10-10 — #2273: every rule change rewrites what a cleared session is re-delivered
 
 <!-- prawduct: type=bugfix | scope=rules-2273 -->
