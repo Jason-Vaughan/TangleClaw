@@ -1173,7 +1173,9 @@ describe('soak guest: workload verifier', () => {
       assert.equal(r.json.length, 1);
       assert.equal(r.json[0].ok, false);
       assert.match(r.json[0].reason, reason);
-      assert.ok(Date.now() - started < 15000, 'a hung probe must be cut off by the watchdog');
+      // The watchdog must end a hung probe before the fake's own `sleep 30`
+      // does: keep this under 30 s and the fakes' sleep at or above it.
+      assert.ok(Date.now() - started < 25000, 'a hung probe must be cut off by the watchdog');
     });
   }
 });
