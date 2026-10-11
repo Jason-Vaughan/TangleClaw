@@ -828,15 +828,33 @@ describe('store: the outbound queue admits gateway-down and gateway-recovered (v
 
   /**
    * Fill the queue as a v62 store could hold it: an item in each state a live
-   * queue holds, and a `lane-silent` notice, the type v62 itself admitted.
+   * queue holds, a `lane-silent` notice, the type v62 itself admitted, and an
+   * item of each kind the notices are not: a reply, a question and a candidate.
    * @returns {void}
    */
   function fillV62Queue() {
     fillQueue();
+    const db = store.getDb();
     const text = 'notice lane-silent';
     bridgeStore.outbound.enqueue({
       idemKey: 'notify:lane-silent:nudge-fact:7', kind: 'notification', notifyType: 'lane-silent', sourceLabel: 'TangleClaw', text, digest: bridgeStore.digest(text), at: T0
     });
+    const digest = 'c'.repeat(64);
+    const forRoute = db.prepare(
+      'INSERT INTO bridge_outbound (idem_key, kind, route_id, question_id, source_label, text, digest, state, released_generation, created_at, updated_at) '
+      + "VALUES (?, ?, 'rt_kept', ?, 'Project Master', 'x', ?, 'ready', 1, ?, ?)"
+    );
+    forRoute.run('route:rt_kept:answer', 'reply', null, digest, T0, T0);
+    forRoute.run('route:rt_kept:ask:q1', 'question', 'q1', digest, T0, T0);
+    const project = store.projects.create({ name: 'Candidate source', path: path.join(tmpDir, 'candidate-source') });
+    db.prepare(
+      'INSERT INTO bridge_candidates (candidate_id, idem_key, kind, source_project_id, source_launch_id, text, digest, state, created_at) '
+      + "VALUES ('cd_v62', 'cand:v62', 'milestone', ?, 'launch-v62', 'x', ?, 'submitted', ?)"
+    ).run(project.id, digest, T0);
+    db.prepare(
+      'INSERT INTO bridge_outbound (idem_key, kind, candidate_id, source_label, text, digest, state, released_generation, created_at, updated_at) '
+      + "VALUES ('candidate:cd_v62', 'candidate', 'cd_v62', 'Candidate source', 'x', ?, 'ready', 1, ?, ?)"
+    ).run(digest, T0, T0);
   }
 
   /**
@@ -905,8 +923,10 @@ describe('store: the outbound queue admits gateway-down and gateway-recovered (v
     });
     assert.deepEqual(before.rows.bridge_outbound.map((r) => [r.kind, r.notify_type, r.state]), [
       ['notification', 'work-blocked', 'delivered'], ['notification', 'operator-needed', 'blocked'], ['notification', 'fleet-idle', 'ready'],
-      ['notification', 'work-blocked', 'ready'], ['status', null, 'ready'], ['failure', null, 'dropped'], ['notification', 'lane-silent', 'ready']
-    ], 'the queue held an item in each state, and one of the type v62 added, before the upgrade');
+      ['notification', 'work-blocked', 'ready'], ['status', null, 'ready'], ['failure', null, 'dropped'], ['notification', 'lane-silent', 'ready'],
+      ['reply', null, 'ready'], ['question', null, 'ready'], ['candidate', null, 'ready']
+    ], 'the queue held an item in each state, one of the type v62 added, and one of every kind, before the upgrade');
+    assert.deepEqual([...new Set(before.rows.bridge_outbound.map((r) => r.kind))].sort(), [...bridgeSchema.OUTBOUND_KINDS].sort(), 'every kind the queue knows');
     assert.equal(before.rows.bridge_outbound_parts.length, 2);
     assert.equal(before.rows.bridge_outbound_leases.length, 3);
     assert.ok(before.sequence > 0);
