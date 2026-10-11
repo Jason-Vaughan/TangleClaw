@@ -35,6 +35,27 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-10 — #2286: a direct test holds every answer of `_operatorProofOf`
+
+<!-- prawduct: type=bugfix | scope=2286-operator-proof-direct-test -->
+#2286 Chunk 01, the issue's only chunk. Branch `fix/2286-operator-proof-direct-test`, from `origin/main` `6ff03b78`.
+
+Visual change: no
+
+**Why.** `server.js#_operatorProofOf` answers `operator-verified` only for a gate that is `armed`, a session, and that session's CSRF token on the request. The `armed` condition could be deleted with every test still passing (seen by deleting it on purpose while building #2244): wherever the login gate stands down the request handler resolves no session, so no request reaches the helper with a session and a gate that is not armed. The word a recovery clear and a recovery-mode decision are recorded with rested on a condition nothing held.
+
+**What changed.**
+- `server.js`: `_operatorProofOf` is added to `module.exports`. That line is the whole change to the file; the function body and every route are as they were.
+- New `test/operator-proof.test.js`: calls the helper with request objects built by hand, carrying the three things it reads (`tcGateState`, `tcSession`, the CSRF header).
+
+**Decisions.**
+- [DECISION: the helper is exported from `server.js` and not moved to a module of its own. | The issue asks for the smallest thing that closes the gap; moving it is a larger diff in an authorization path for no gain here.]
+- [DECISION: the gate states the test walks are read from `auth-gate.js#GATE_STATES`. | A state added later is exercised without editing the test, and it must answer the unverified word to pass.]
+
+**Tests.** The proven case answers `operator-verified` and names the session's user. Every gate state other than `armed`, and a made-up word, `undefined` and `null`, each with a session and its valid token, answer `open-install-unverified` with no actor. An armed gate with no session answers unverified. An armed gate and a session answer unverified with no CSRF header, an empty one, a wrong token of another length, a wrong token of the right length, the right token under another header name, and a session that holds no token. Every case also asserts the answer has exactly the keys `clearance` and `actor`. Three deliberate breaks were each run and the file restored from a copy (byte-identical after): the `armed` condition removed fails the per-state and unknown-state cases; the session condition removed fails the no-session cases; the CSRF comparison removed fails the token cases. No existing test changed.
+
+**Not built here.** What the helper answers, who is admitted in any gate state, and how a session is resolved while the gate stands down are unchanged and were not in question.
+
 ## 2026-10-10 — #2197: the setup route applies the launch-mode rule, and the status payload says which engine is set
 
 <!-- prawduct: type=bugfix | scope=master-2197 -->
