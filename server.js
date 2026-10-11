@@ -7314,13 +7314,16 @@ route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
 
-  // The verified caller kind goes with the decision into the store. It is
-  // read here, after the operator guard above admitted the request, so the
-  // only kind that can arrive is one that guard accepts.
+  // The proof behind the decision goes with it into the store, in the words a
+  // recovery clear is recorded with. It is read here, after the operator guard
+  // above admitted the request: that guard takes a request with the
+  // dashboard's shape as the operator wherever the login stands down, so the
+  // caller kind it resolved would record "operator" for a request that
+  // identified nobody.
   let result;
   try {
     result = await projects.updateProject(params.name, body, choosingRecoveryMode
-      ? { recoveryDecisionBy: sharedDocsAccess.resolveAccess(req).kind }
+      ? { recoveryDecisionBy: _operatorProofOf(req).clearance }
       : {});
   } catch (err) {
     // A failure thrown after the recovery decision reached the store. The
@@ -8309,6 +8312,33 @@ registerMedusaRoutes('/api/master/medusa', resolveMasterMedusaTarget);
 
 
 /**
+ * The proof behind a request that was already admitted as the operator's: the
+ * word its decision is recorded with, and who was named.
+ *
+ * It admits and refuses nothing. Each caller's own guard has done that, and
+ * this says only what that admission rested on, so that every record of an
+ * operator's decision (a recovery clear, a recovery-mode decision) uses one
+ * rule and two of them cannot disagree about the same request.
+ *
+ * `operator-verified` needs all three: a gate that is `armed`, a session, and
+ * that session's CSRF token on the request. Everything else is
+ * `open-install-unverified`, which is the honest word wherever TangleClaw's
+ * own login identified nobody: an `open` install, and `fallback`, where
+ * Caddy's login stands in front and TangleClaw cannot say who came through it.
+ * The default is the unverified word so that a state this function does not
+ * know can never be recorded as a verified person.
+ * @param {http.IncomingMessage} req - The request, as annotated by `handleRequest`
+ * @returns {{clearance: ('operator-verified'|'open-install-unverified'), actor: (string|null)}}
+ */
+function _operatorProofOf(req) {
+  if (req.tcGateState === authGate.GATE_STATES.ARMED && req.tcSession
+    && authSession.csrfTokenMatches(authSession.csrfTokenFromRequest(req), req.tcSession.csrfToken)) {
+    return { clearance: 'operator-verified', actor: req.tcSession.username };
+  }
+  return { clearance: 'open-install-unverified', actor: null };
+}
+
+/**
  * Prove that a state-changing request is the OPERATOR's, or refuse it.
  *
  * One implementation for every write that records a decision as an operator's
@@ -8376,7 +8406,7 @@ function _requireOperatorWrite(req, res, o) {
       errorResponse(res, 403, 'This request is missing a valid CSRF token.', 'CSRF_TOKEN_INVALID');
       return null;
     }
-    return { clearance: 'operator-verified', actor: req.tcSession.username };
+    return _operatorProofOf(req);
   }
 
   if (authGate.isOpen(gateState)) {
@@ -8407,7 +8437,7 @@ function _requireOperatorWrite(req, res, o) {
     // Never `operator-verified`. Same-origin plus a page token proves the click
     // came from this server's own dashboard; it does not prove a human, and it
     // cannot exclude a local process that fetched a token of its own.
-    return { clearance: 'open-install-unverified', actor: null };
+    return _operatorProofOf(req);
   }
 
   // 4. Anything else — `account-required`, `locked`, `unreadable`. There is no

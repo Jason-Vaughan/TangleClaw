@@ -204,7 +204,11 @@ operator and refused everywhere else. So the default follows the readback:
 - An operator's own decision stands in every gate state: a pin is `operator`, a recorded choice of
   advisory is `advisory`. On an install with no login that record's provenance is
   `open-install-unverified`, which is a request with the dashboard's shape and not a verified operator.
-  Whether such a decision should carry this weight is an open question the operator has been asked
+  The record holds that word as `decidedBy` (#2244), by the rule a recovery clear is recorded with:
+  `operator-verified` needs an `armed` gate and a session with its CSRF token, and every other request
+  the route takes is `open-install-unverified`, `fallback` included, where TangleClaw's login stands
+  down and cannot say who came through Caddy's. A decision recorded before the word was kept reads
+  `operator`, whichever it was, and is left as it is. Whether such a decision should carry this weight is an open question the operator has been asked
   separately.
 
 The default is decided when a launch resolves its mode, from the gate state at that moment, and frozen

@@ -391,7 +391,9 @@ where the login is in force; on an install with no login the clear from the pane
 unverified; and where the login is stood down or otherwise unavailable the sentence says the launch
 cannot be cleared until that is resolved. The mode is the operator's choice (ADR 0017 R3a): a
 session that names it in `PATCH /api/projects/:name` is refused `403 OPERATOR_ONLY`. The operator's
-decision is recorded in the server store, which outranks the project's `.tangleclaw/project.json`
+decision is recorded in the server store with the proof it was taken on (`decidedBy`:
+`operator-verified`, or `open-install-unverified` where the login identified nobody, #2244), and the
+store outranks the project's `.tangleclaw/project.json`
 (#1937): once the operator has pinned a project to `operator`, no edit to that file loosens it, and a
 file that disagrees with the decision on record is reported in the server log at launch, on
 `GET /api/launch-sequences` and in `tc start status`. A launch reads the decision once and freezes the

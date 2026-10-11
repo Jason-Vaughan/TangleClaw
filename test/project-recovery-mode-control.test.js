@@ -19,7 +19,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { setLevel } = require('../lib/logger');
+const { setLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
 
@@ -209,6 +209,107 @@ describe('the recovery-mode control against the real routes (#1937)', () => {
           configBytes = null;
         }
       }
+    });
+  });
+
+  // #2244. The decision used to be recorded with the caller KIND the operator
+  // guard resolved, and that guard takes any request with the dashboard's shape
+  // as the operator wherever the login stands down. So the record read
+  // "operator" for a request that identified nobody. It now holds the proof,
+  // in the words a recovery clear is recorded with.
+  describe('the proof a decision is recorded with, in every login gate state (#2244)', () => {
+    /**
+     * What a save from the page is answered in each state, and the proof word
+     * recorded where it is taken. `null` is a state whose save is refused.
+     * Who is admitted is not this change's to move: the statuses here are the
+     * ones the route answered before the proof word was kept.
+     */
+    const expected = {
+      [states.OPEN]: { status: 200, proof: 'open-install-unverified' },
+      [states.ARMED]: { status: 200, proof: 'operator-verified' },
+      [states.FALLBACK]: { status: 200, proof: 'open-install-unverified' },
+      [states.ACCOUNT_REQUIRED]: { status: 401, proof: null },
+      [states.LOCKED]: { status: 401, proof: null },
+      [states.UNREADABLE]: { status: 403, proof: null }
+    };
+
+    /**
+     * The decision events recorded for a project.
+     * @param {object} project - The project
+     * @returns {object[]} Each event's detail
+     */
+    const decisionEvents = (project) => store.activity
+      .query({ projectId: project.id, eventType: 'project.recovery-mode-decided' }).map((e) => e.detail);
+
+    it('has a row for every login gate state', () => {
+      assert.deepEqual(Object.keys(expected).sort(), Object.values(states).sort());
+    });
+
+    for (const state of Object.values(states)) {
+      it(`${state}: the save is answered as before, and a decision taken is recorded with its proof`, async () => {
+        const project = makeProject();
+        const headers = await reach[state]();
+        assert.equal(json(await send('GET', '/api/auth/me', { headers })).gateState, state,
+          'the fixture must reach the state it is named for');
+        const res = await save(project, 'operator', headers);
+        assert.equal(res.statusCode, expected[state].status, `${state}: ${res.body.slice(0, 160)}`);
+        const row = store.projectRecoveryState.get(project.id);
+        if (expected[state].proof === null) {
+          assert.equal(row, null, 'a refused save records no decision');
+          assert.deepEqual(decisionEvents(project), []);
+          return;
+        }
+        assert.equal(json(res).recoveryMode.decidedBy, expected[state].proof, 'the answer carries the proof word');
+        assert.equal(row.pinnedBy, expected[state].proof, 'and so does the record');
+        assert.notEqual(row.pinnedBy, 'operator', 'which is never the caller kind');
+        assert.deepEqual(decisionEvents(project).map((d) => d.decidedBy), [expected[state].proof],
+          'and the activity event');
+      });
+    }
+
+    it('the read the panel renders from carries the word', async () => {
+      const project = makeProject();
+      assert.equal((await save(project, 'advisory')).statusCode, 200);
+      assert.equal((await readPanel(project)).projectRecoveryDecision.decidedBy, 'open-install-unverified');
+    });
+
+    it('the server log line carries the word', async () => {
+      const project = makeProject();
+      const lines = [];
+      setLevel('info');
+      setConsoleStream({ write: (line) => { lines.push(String(line)); return true; } });
+      try {
+        assert.equal((await save(project, 'advisory')).statusCode, 200);
+      } finally {
+        setConsoleStream(null);
+        setLevel('error');
+      }
+      const decided = lines.filter((line) => line.includes('Launch recovery mode decided'));
+      assert.equal(decided.length, 1, lines.join(''));
+      assert.match(decided[0], new RegExp(`project=${project.name} mode=advisory decidedBy=open-install-unverified`));
+    });
+
+    it('a decision made with the login off still reads unverified after the login is turned on', async () => {
+      const project = makeProject();
+      assert.equal((await save(project, 'advisory')).statusCode, 200);
+      const headers = await reach[states.ARMED]();
+      assert.equal(json(await send('GET', '/api/auth/me', { headers })).gateState, states.ARMED,
+        'the login is in force now');
+      assert.equal((await readPanel(project, headers)).projectRecoveryDecision.decidedBy, 'open-install-unverified',
+        'and the record still says what the decision was taken on');
+      // A signed-in operator deciding again replaces it, with their own proof.
+      assert.equal((await save(project, 'operator', headers)).statusCode, 200);
+      assert.equal((await readPanel(project, headers)).projectRecoveryDecision.decidedBy, 'operator-verified');
+      assert.deepEqual(decisionEvents(project).map((d) => d.decidedBy).sort(),
+        ['open-install-unverified', 'operator-verified'], 'and the activity log keeps both');
+    });
+
+    it('armed, a session with no CSRF token: refused as before, and nothing is recorded', async () => {
+      const project = makeProject();
+      const { cookie } = await reach[states.ARMED]();
+      const res = await save(project, 'operator', { cookie });
+      assert.equal(res.statusCode, 403, res.body);
+      assert.equal(store.projectRecoveryState.get(project.id), null);
     });
   });
 

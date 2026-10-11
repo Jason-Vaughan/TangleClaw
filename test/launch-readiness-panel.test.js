@@ -778,7 +778,8 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
       'function projectRecoveryControlHtml', 'function projectRecoveryNoticeHtml', 'function recoveryModeSaveOutcome',
       'function wireProjectRecoveryMode'
     ];
-    const MODE_CONSTANTS = ['const RECOVERY_MODE_READOUT', 'const RECOVERY_GATE_PHRASES', 'const RECOVERY_SOURCE_READOUT'];
+    const MODE_CONSTANTS = ['const RECOVERY_MODE_READOUT', 'const RECOVERY_DECISION_PROOF_READOUT',
+      'const RECOVERY_GATE_PHRASES', 'const RECOVERY_SOURCE_READOUT'];
 
     /**
      * A sandbox holding the panel's real recovery-mode code and the page's own `esc`.
@@ -793,7 +794,8 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
       const lifted = MODE_CONSTANTS.map((decl) => `${liftFunction(UI_SRC, decl)};`).join('\n')
         + '\nlet projectRecoveryModeNotice = null;\n'
         + MODE_FUNCTIONS.map((decl) => liftFunction(UI_SRC, decl)).join('\n')
-        + '\nthis.tables = { RECOVERY_MODE_READOUT, RECOVERY_GATE_PHRASES, RECOVERY_SOURCE_READOUT };'
+        + '\nthis.tables = { RECOVERY_MODE_READOUT, RECOVERY_DECISION_PROOF_READOUT, RECOVERY_GATE_PHRASES, '
+        + 'RECOVERY_SOURCE_READOUT };'
         + '\nthis.setNotice = (n) => { projectRecoveryModeNotice = n; };'
         + '\nthis.getNotice = () => projectRecoveryModeNotice;';
       vm.runInContext(lifted, ctx);
@@ -945,6 +947,60 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
         }));
         assert.match(chosen, /Decision on record: advisory, made 2026-10-08 19:05:00/);
         assert.match(ctx.projectRecoveryReadoutHtml(now()), /No decision is on record for this project\./);
+      });
+
+      // #2244. A decision now records the proof it was taken on, so the page
+      // says what that was, whatever the login's state is now.
+      describe('the proof behind the decision on record (#2244)', () => {
+        /**
+         * The readout of one decision, under each thing the page can know about the login now.
+         * @param {object} ctx - The sandbox
+         * @param {string} decidedBy - The word on record
+         * @returns {string[]} Markup for: login off now, signed in, could not ask, signed out
+         */
+        const underEveryLoginState = (ctx, decidedBy) => {
+          const decided = now({
+            projectRecoverySource: 'chosen',
+            projectRecoveryDecision: { pinnedMode: null, decidedAt: '2026-10-10 19:05:00', decidedBy }
+          });
+          return [{ gateActive: false, authenticated: false }, { gateActive: true, authenticated: true }, null,
+            { gateActive: true, authenticated: false }]
+            .map((me) => ctx.projectRecoveryReadoutHtml(decided, ctx.recoveryModeControlOffer(me)));
+        };
+
+        it('has a sentence for each word the server records, and for no other', () => {
+          const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+          const proofOf = liftFunction(serverSrc, 'function _operatorProofOf');
+          const words = [...proofOf.matchAll(/clearance: '([a-z-]+)'/g)].map((m) => m[1]);
+          assert.equal(words.length, 2, 'the server\'s proof helper names two words');
+          assert.deepEqual(Object.keys(sandbox().tables.RECOVERY_DECISION_PROOF_READOUT).sort(), [...words].sort());
+        });
+
+        it('a verified decision reads as a signed-in operator\'s, whatever the login is now', () => {
+          for (const html of underEveryLoginState(sandbox(), 'operator-verified')) {
+            assert.match(html, /Decision on record: advisory, made 2026-10-10 19:05:00 by a signed-in operator \(recorded as "operator-verified"\)\./);
+            assert.doesNotMatch(html, /does not say|identifies nobody|nobody was identified/);
+          }
+        });
+
+        it('an unverified decision is never worded as a person\'s, whatever the login is now', () => {
+          for (const html of underEveryLoginState(sandbox(), 'open-install-unverified')) {
+            assert.match(html, /made 2026-10-10 19:05:00 while TangleClaw's login was not in force, by a request with the dashboard's shape: nobody was identified \(recorded as "open-install-unverified"\)\./);
+            assert.doesNotMatch(html, /signed-in operator|does not say/);
+          }
+        });
+
+        it('keeps "the record does not say" for a decision recorded before the proof was kept, and only for it', () => {
+          const [loginOff, signedIn] = underEveryLoginState(sandbox(), 'operator');
+          assert.match(loginOff, /recorded as made by "operator"\. TangleClaw's login is not in force on this install now, and the record does not say whether it was then/);
+          assert.match(signedIn, /recorded as made by "operator"\.<\/small>/);
+          assert.doesNotMatch(signedIn, /signed-in operator/, 'an old record is not promoted to a verified one');
+        });
+
+        it('a word this page has no sentence for is printed as the server\'s own', () => {
+          const [loginOff] = underEveryLoginState(sandbox(), 'constructor');
+          assert.match(loginOff, /recorded as made by "constructor"\./);
+        });
       });
 
       it('does not call a recorded decision a person\'s where the login is not in force', () => {

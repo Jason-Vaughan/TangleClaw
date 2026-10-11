@@ -656,13 +656,15 @@ describe('api-projects', () => {
           assert.equal(launchSettings('gate-a').recoveryMode, 'operator');
         });
 
-        it('records the operator\'s decision in the store, with who made it, and answers with it', async () => {
+        it('records the operator\'s decision in the store, with the proof it was taken on, and answers with it', async () => {
           const id = store.projects.getByName('gate-a').id;
           const pin = await request('PATCH', '/api/projects/gate-a', { launchSequence: { recoveryMode: 'operator' } }, asOperator());
           assert.equal(pin.status, 200);
           assert.equal(pin.data.recoveryMode.mode, 'operator');
           assert.equal(pin.data.recoveryMode.pinnedMode, 'operator');
-          assert.equal(pin.data.recoveryMode.decidedBy, 'operator');
+          // This install has no login, so the dashboard's request identified
+          // nobody, and the record says so (#2244).
+          assert.equal(pin.data.recoveryMode.decidedBy, 'open-install-unverified');
           assert.equal(pin.data.recoveryMode.fileWritten, true);
           assert.equal(store.projectRecoveryState.get(id).pinnedMode, 'operator');
           const lift = await request('PATCH', '/api/projects/gate-a', { launchSequence: { recoveryMode: 'advisory' } }, asOperator());
@@ -670,7 +672,7 @@ describe('api-projects', () => {
           const row = store.projectRecoveryState.get(id);
           assert.equal(row.pinnedMode, null);
           assert.ok(row.pinnedAt, 'choosing advisory is recorded as a decision');
-          assert.equal(row.pinnedBy, 'operator');
+          assert.equal(row.pinnedBy, 'open-install-unverified');
         });
 
         it('a refused session request records no decision', async () => {
