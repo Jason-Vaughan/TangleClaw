@@ -35,6 +35,33 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-10 — #1796: the tracked `CLAUDE.md` block is held to what the generator writes
+
+<!-- prawduct: type=chore | scope=1796-claude-md-block-parity -->
+#1796 Chunk 01, the issue's only chunk. Branch `chore/1796-claude-md-block-parity`, from `origin/main` `88d8e5f5`.
+
+Visual change: no
+
+**Why.** The region between the `BEGIN:tangleclaw` and `END:tangleclaw` markers of this repository's `CLAUDE.md` is generated: a launch of any session in a checkout splices it. The generator's output had moved twice (a switchboard row about launch headers, and the PortHub guide's "Identify Your Session" section) and the tracked file had not, so every launched checkout carried the same twelve uncommitted lines, every merge that touched the file was refused until they were set aside, and no test said the two had parted.
+
+**What changed.**
+- `CLAUDE.md`: the twelve lines, inside the markers and nowhere else. They are the server's own rewrite, committed after the production renderer and splice were shown to leave the working copy byte-identical on `88d8e5f5`; nothing between the markers was typed by hand.
+- New `scripts/sync-claude-md-block.js`: with no argument it compares the tracked block with the generated one, writes nothing and exits 1 on a difference; with `--write` it replaces only the marked region, atomically, and refuses a file that does not hold exactly one marker pair in order. `--file <path>` points it at another copy.
+- New `test/claude-md-operational-block.test.js`: reads the tracked file and holds it to the generator. It never writes the file.
+- `docs/engine-guide.md`: one paragraph on the rule this creates and the profile the block stands for.
+
+**Decisions.**
+- [DECISION: the block is rendered for one named profile, pinned in the script: switchboard on, PortHub guide on, the install's service-token gate off, no shared document injectable for the project. | Ruled `1796 pin` by TangleClaw-Builder1 on the Operator's instruction: every clone launched so far has those settings, and making the generator ignore them would change what every managed project is told. A checkout with other settings still shows a difference, and the guide says so.]
+- [DECISION: a script exists and the failing test names it. | Ruled `1796 script`, "Writes only with --write". A contributor reading a CI failure has something to run without running TangleClaw on the checkout.]
+- [DECISION: the script and the test share one comparison, exported from the script, and it goes through `engines._mergeManagedBlock`. | "In sync" then means exactly "a launch would leave this file byte-identical", including the splice's own trimming, and the two cannot disagree about it.]
+- [DECISION: the rendering runs on a scratch store that the script writes and removes, and the store's base path is put back. | The host's token gate must not reach the expected bytes; CI has no host config at all.]
+- [DECISION: `lib/engines.js` is not changed, though the plan allowed its exports list. | The plan read `_managedBlockMarkers` as not exported; on `88d8e5f5` it is, as `managedBlockMarkers` and under its own name.]
+- [DECISION: the failure message shows a window around the first differing character, not the start of the line. | The verb line runs to several hundred characters and differs by one word; the first draft clipped the line and showed two identical halves.]
+
+**Tests.** One begin and one end marker, in order. The block between the markers equals the generated block as the splice leaves it. Splicing the generated block into the tracked text returns the tracked text. Git classifies the file as committed, and rendering with this checkout as the project path gives the same bytes as the pinned rendering. The block carries no loopback origin. A token gate switched on in the store in use adds nothing to the pinned rendering, and the store is handed back where it was. Every verb `tc-verbs.js#verbsFor('pane')` yields is in the tracked block, read from the roster and not listed in the test. A verb pushed onto `VERB_ROSTER` in memory fails the comparison and the message names the sync command and shows the new verb. A changed expected block fails it too. Four malformed files (no markers, no end, a second begin, the pair inverted) are refused with nothing to write. The script, run as a child process on copies in a temporary directory: exit 0 on a match, exit 1 on a drifted copy with the command named and the copy untouched, `--write` restores the copy to the tracked bytes with text outside the markers unchanged and a second run finding nothing to do, `--write` on broken markers leaves the file as it was, exit 2 on an unknown argument and 1 on an unreadable file. Last, the tracked file has the same bytes, size and modification time as before the tests ran. The script is never run with `--write` on the repository's own file. Three deliberate changes to the generator's inputs were each run against the new file and then restored from a copy (sha256 equal before and after): one word added to `data/porthub-guide.md`, a guidance line reworded in `lib/ecosystem-primer.js`, and a verb added to `VERB_ROSTER` in `lib/tc-verbs.js`. Each turned the comparison cases red, and the script's message named the line and the command.
+
+**Not built here.** The generator and what it emits are unchanged. Text outside the markers is neither asserted nor changed. Whether a real launch of the installed server leaves the live checkout clean can only be read after the deploy and is the Integrator's check.
+
 ## 2026-10-10 — #2286: a direct test holds every answer of `_operatorProofOf`
 
 <!-- prawduct: type=bugfix | scope=2286-operator-proof-direct-test -->
