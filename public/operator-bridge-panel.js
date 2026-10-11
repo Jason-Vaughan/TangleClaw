@@ -351,7 +351,7 @@
       const scope = reach.scope || {};
       const nicknames = Array.isArray(s.nicknames) ? s.nicknames : [];
       const discord = discordWords(s.discordGateway, Boolean(s.enabled));
-      const token =state.token === null ? '' : `
+      const token = state.token === null ? '' : `
         <div class="ob-token" data-bridge-token-shown="1">
           <div class="form-hint"><strong>The helper token, shown once.</strong> It is not saved anywhere by this page.
             On the machine that runs the helper, run <code>bin/tc-bridge-helper set-secret helper</code> and paste it at the prompt.
