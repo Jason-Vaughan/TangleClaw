@@ -903,6 +903,27 @@ another pane's process: it reads that other pane and finds agreement. Nothing in
 that case, which is why a launch is kept off a shared engine process when it starts and why writes
 are checked at the server.
 
+**Every launch decides all four (#2268).** A launch gives some of those variables and not others: a
+project session has no role, the Project Master has no project id, and a workspace id exists only
+with the switchboard on. tmux starts every new session from its server's global environment, which
+holds whatever the process that started that server held. A tmux server started from inside a
+launched pane therefore holds that pane's identity, and a later launch would inherit each variable
+it did not set itself: its tool shell would then carry a role or project id that its own pane never
+recorded, and every `tc` verb in it would be refused. So the `tmux new-session` that creates a pane
+(`lib/tmux.js#createSession`, the one place a pane is created) passes each of the four the launch
+gives no value for as an empty entry, `-e KEY=`. `tmux show-environment -t <session>` lists all
+four for a session launched this way, the ungiven ones empty, and a window or pane opened in that
+session later reads the same empty value, not the global one. Empty and unset read alike to `tc`,
+which sends an identity header only for a variable that holds a value. A value an engine profile's
+`launch.env` sets for one of the four is a given value and is passed through. The per-launch
+app-server gets the same treatment by another route: it runs in no pane and inherits TangleClaw's
+own environment, so an identity variable the launch does not give is removed from the environment
+it is started with (`lib/startup-control-codex.js`). The list of the four is
+`lib/launch-identity.js#LAUNCH_IDENTITY_KEYS`, held equal to the list `tc` compares by a test.
+This covers launches made by a server that has the change; a session already running keeps what it
+started with until it is launched again. Nothing is removed from tmux's global environment, which
+belongs to every user of that tmux server.
+
 **Sessions that were already running (#2233).** The launch check applies to launches made after it
 was installed. To see how the sessions running now were started, run `tc sessions isolation` from
 any launched pane, or read `GET /api/launch/isolation`. It reads the command tmux recorded for each

@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -563,6 +563,232 @@ describe('tmux', () => {
       } finally {
         try { tmux.killSession(testSession); } catch (_) {}
       }
+    });
+  });
+
+  describe('createSession - every launch decides every identity variable (#2268)', () => {
+    const IDENTITY = ['TANGLECLAW_LAUNCH_ID', 'TANGLECLAW_PROJECT_ID', 'TANGLECLAW_ROLE', 'TANGLECLAW_WORKSPACE_ID'];
+    const MASTER = { TANGLECLAW_LAUNCH_ID: 'L-master', TANGLECLAW_ROLE: 'master', TANGLECLAW_WORKSPACE_ID: 'master-1234abcd' };
+    const PROJECT = { TANGLECLAW_LAUNCH_ID: 'L-project', TANGLECLAW_PROJECT_ID: '14' };
+
+    /**
+     * The `-e` entries of a built command, in order, as `KEY=VALUE` strings.
+     * @param {string} cmd - What `_newSessionCommand` returned
+     * @returns {string[]}
+     */
+    const entries = (cmd) => [...cmd.matchAll(/ -e '([^']*)'/g)].map((m) => m[1]);
+
+    describe('the command it builds', () => {
+      it('gives a Project Master launch its three values and an empty project id', () => {
+        assert.deepEqual(entries(tmux._newSessionCommand('s', { env: MASTER })), [
+          'TANGLECLAW_LAUNCH_ID=L-master', 'TANGLECLAW_ROLE=master', 'TANGLECLAW_WORKSPACE_ID=master-1234abcd',
+          'TANGLECLAW_PROJECT_ID='
+        ]);
+      });
+
+      it('gives a project launch its two values and an empty role and workspace id', () => {
+        assert.deepEqual(entries(tmux._newSessionCommand('s', { env: PROJECT })), [
+          'TANGLECLAW_LAUNCH_ID=L-project', 'TANGLECLAW_PROJECT_ID=14',
+          'TANGLECLAW_ROLE=', 'TANGLECLAW_WORKSPACE_ID='
+        ]);
+        assert.deepEqual(
+          entries(tmux._newSessionCommand('s', { env: { ...PROJECT, TANGLECLAW_WORKSPACE_ID: 'proj-1234abcd' } })).slice(-1),
+          ['TANGLECLAW_ROLE='],
+          'with the switchboard on, only the role is left to decide'
+        );
+      });
+
+      it('decides all four as empty for a caller that passes no environment at all', () => {
+        const all = IDENTITY.map((key) => `${key}=`);
+        for (const options of [undefined, {}, { env: undefined }, { env: null }, { env: {} }, { env: 'TANGLECLAW_ROLE=master' }]) {
+          assert.deepEqual(entries(tmux._newSessionCommand('s', options)), all, `for ${JSON.stringify(options)}`);
+        }
+      });
+
+      it('adds no entry for a launch that gives all four', () => {
+        const given = { ...MASTER, TANGLECLAW_PROJECT_ID: '14' };
+        assert.deepEqual(entries(tmux._newSessionCommand('s', { env: given })), Object.entries(given).map(([k, v]) => `${k}=${v}`));
+      });
+
+      it('keeps an identity value an engine profile\'s launch.env set, where the caller put it', () => {
+        // The caller lays the profile's entries over its own, so a profile that
+        // names a role arrives here as a given value like any other.
+        const env = { OPENAI_API_BASE: 'http://example.test:4000', ...PROJECT, TANGLECLAW_ROLE: 'profile-role' };
+        assert.deepEqual(entries(tmux._newSessionCommand('s', { env })), [
+          'OPENAI_API_BASE=http://example.test:4000', 'TANGLECLAW_LAUNCH_ID=L-project', 'TANGLECLAW_PROJECT_ID=14', 'TANGLECLAW_ROLE=profile-role',
+          'TANGLECLAW_WORKSPACE_ID='
+        ]);
+      });
+
+      it('leaves every variable that is not an identity variable alone', () => {
+        const cmd = tmux._newSessionCommand('s', { env: { ...PROJECT, TANGLECLAW_API: 'http://localhost:3102', TANGLECLAW_PORT: '3102' } });
+        const keys = entries(cmd).map((e) => e.slice(0, e.indexOf('=')));
+        assert.deepEqual(keys, ['TANGLECLAW_LAUNCH_ID', 'TANGLECLAW_PROJECT_ID', 'TANGLECLAW_API', 'TANGLECLAW_PORT', 'TANGLECLAW_ROLE', 'TANGLECLAW_WORKSPACE_ID']);
+        assert.deepEqual(entries(tmux._newSessionCommand('s', {})).filter((e) => !IDENTITY.includes(e.slice(0, -1))), [], 'and adds none of its own');
+      });
+
+      it('puts the empty entries after the caller\'s and before the command, and hands the command over unchanged', () => {
+        const command = 'export PATH="/x y/bin:$PATH"; claude --dangerously-skip-permissions';
+        const cmd = tmux._newSessionCommand('name-1', { cwd: '/a b/c', command, env: PROJECT });
+        assert.equal(cmd, [
+          "tmux new-session -d -P -F '#{pane_id} #{pid}.#{start_time}' -s 'name-1' -c '/a b/c'",
+          "-e 'TANGLECLAW_LAUNCH_ID=L-project' -e 'TANGLECLAW_PROJECT_ID=14'",
+          "-e 'TANGLECLAW_ROLE=' -e 'TANGLECLAW_WORKSPACE_ID='",
+          `'${command}'`
+        ].join(' '));
+      });
+    });
+
+    describe('on a real tmux server, private to this block, whose global environment holds all four', () => {
+      const { execFileSync } = require('node:child_process');
+      const verbs = require('../lib/tc-verbs');
+      const saved = { TMUX: process.env.TMUX, TMUX_TMPDIR: process.env.TMUX_TMPDIR };
+      const STRAY = Object.fromEntries(IDENTITY.map((key) => [key, `stray-${key.toLowerCase()}`]));
+      let root = null;
+      // The private server's socket and identity, set only once tmux has been
+      // seen answering from under `root`. Nothing below writes a global
+      // environment, or stops a server, anywhere else.
+      let privateSocket = null;
+      let privateServer = null;
+
+      /**
+       * Run tmux against the private server and return its output.
+       * @param {string[]} args - tmux arguments
+       * @returns {string} stdout
+       */
+      function t(args) {
+        assert.ok(privateSocket, 'the private tmux server was not established; refusing to run tmux');
+        return execFileSync('tmux', ['-S', privateSocket, ...args], { encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] });
+      }
+
+      /**
+       * A pane command that writes the four identity variables as it sees them,
+       * one `KEY=value` per line with `UNSET` for one it does not have, then
+       * signals a tmux channel and stays alive.
+       * @param {string} label - Names the file and the channel
+       * @returns {{command: string, seen: function(): Object<string, string>}} The command, and a reader that blocks until it has written
+       */
+      function witness(label) {
+        const out = path.join(root, `${label}.env`);
+        const channel = `seen-${label}`;
+        const lines = IDENTITY.map((key) => `"${key}=\${${key}-UNSET}"`).join(' ');
+        return {
+          command: `printf '%s\\n' ${lines} > '${out}'; tmux wait-for -S '${channel}'; exec sleep 600`,
+          seen: () => {
+            t(['wait-for', channel]);
+            return verbs.parseSessionEnvironment(fs.readFileSync(out, 'utf8'));
+          }
+        };
+      }
+
+      /**
+       * Create a session through `tmux.createSession` and prove it landed on the private server.
+       * @param {string} name - A factory name
+       * @param {object} env - The launch's environment entries
+       * @param {string} command - The pane's command
+       * @returns {void}
+       */
+      function create(name, env, command) {
+        const born = {};
+        assert.equal(tmux.createSession(name, { command, env, born }), true);
+        assert.equal(born.server, privateServer, 'the session was created in the private server, by the invocation that printed it');
+      }
+
+      before(() => {
+        root = fs.mkdtempSync('/tmp/tc-2268-');
+        delete process.env.TMUX;
+        process.env.TMUX_TMPDIR = root;
+        // Proven before anything relies on it: the server this process reaches
+        // is the one under `root`. `-f /dev/null`: this call starts the server,
+        // and the operator's own tmux config has no place in it.
+        const privateProbe = uniqueSessionName('identity-probe');
+        execFileSync('tmux', ['-f', '/dev/null', 'new-session', '-d', '-s', privateProbe, 'exec sleep 600'], { timeout: 10000 });
+        const [socket, server] = execFileSync('tmux', ['display-message', '-p', '-t', `=${privateProbe}:`, '#{socket_path} #{pid}.#{start_time}'],
+          { encoding: 'utf8', timeout: 10000 }).trim().split(' ');
+        if (!fs.realpathSync(socket).startsWith(fs.realpathSync(root) + path.sep)) {
+          // Not ours. Take back the one session just started there, by its
+          // exact name, and stop: nothing below may run against that server.
+          try { execFileSync('tmux', ['kill-session', '-t', `=${privateProbe}`], { timeout: 10000, stdio: 'ignore' }); } catch (_) { /* gone */ }
+          assert.fail(`the test server must be private to this block, but tmux answered from ${socket}`);
+        }
+        privateSocket = socket;
+        privateServer = server;
+        // The fault under test, made on purpose and only here: a global
+        // environment that holds every identity variable, as a tmux server
+        // started from inside a launched pane does.
+        for (const [key, value] of Object.entries(STRAY)) t(['set-environment', '-g', key, value]);
+      });
+
+      after(() => {
+        // Only a server proven private is stopped, and by its socket path.
+        if (privateSocket) {
+          try { t(['kill-server']); } catch (_) { /* already gone */ }
+        }
+        if (saved.TMUX === undefined) delete process.env.TMUX; else process.env.TMUX = saved.TMUX;
+        if (saved.TMUX_TMPDIR === undefined) delete process.env.TMUX_TMPDIR; else process.env.TMUX_TMPDIR = saved.TMUX_TMPDIR;
+        if (root) fs.rmSync(root, { recursive: true, force: true });
+      });
+
+      it('the seeded values do reach a session that decides only its launch id: what the cases below are measured against', () => {
+        const undecided = uniqueSessionName('identity-undecided');
+        const w = witness('undecided');
+        assert.ok(privateSocket, 'the private tmux server was not established; refusing to start a session');
+        execFileSync('tmux', ['-S', privateSocket, 'new-session', '-d', '-s', undecided, '-e', 'TANGLECLAW_LAUNCH_ID=L-only', w.command], { timeout: 10000 });
+        assert.deepEqual(w.seen(), { ...STRAY, TANGLECLAW_LAUNCH_ID: 'L-only' });
+      });
+
+      for (const [shape, env, expected] of [
+        ['a Project Master', MASTER, { ...MASTER, TANGLECLAW_PROJECT_ID: '' }],
+        ['a project', PROJECT, { ...PROJECT, TANGLECLAW_ROLE: '', TANGLECLAW_WORKSPACE_ID: '' }]
+      ]) {
+        const label = shape.split(' ').pop().toLowerCase();
+
+        it(`${shape} launch runs its command with what it gave and nothing from the global environment`, () => {
+          const name = uniqueSessionName(`identity-${label}`);
+          const w = witness(label);
+          create(name, env, w.command);
+          assert.deepEqual(w.seen(), expected);
+        });
+
+        it(`a window and a pane opened later in ${shape} session see the same, and the session recorded it`, () => {
+          const name = uniqueSessionName(`identity-later-${label}`);
+          const first = witness(`later-${label}`);
+          create(name, env, first.command);
+          first.seen();
+          const split = witness(`split-${label}`);
+          t(['split-window', '-d', '-t', `=${name}:`, split.command]);
+          assert.deepEqual(split.seen(), expected, 'a pane split off afterwards');
+          const win = witness(`window-${label}`);
+          t(['new-window', '-d', '-t', `=${name}:`, win.command]);
+          assert.deepEqual(win.seen(), expected, 'a window opened afterwards');
+          const recorded = verbs.parseSessionEnvironment(t(['show-environment', '-t', `=${name}:`]));
+          for (const key of IDENTITY) assert.equal(recorded[key], expected[key], `the session's own environment holds ${key}`);
+        });
+
+        it(`tc's pane check in ${shape} pane answers match, where the undecided session's answers mismatch`, () => {
+          const name = uniqueSessionName(`identity-judge-${label}`);
+          const w = witness(`judge-${label}`);
+          create(name, env, w.command);
+          const shell = w.seen();
+          const pane = { read: 'ok', vars: verbs.parseSessionEnvironment(t(['show-environment', '-t', `=${name}:`])) };
+          assert.deepEqual(verbs.judgePaneIdentity({ env: shell, pane }), { verdict: 'match', reason: null, differences: [] });
+          // The same pane record against a shell that inherited the global
+          // values: the check this launch path now keeps from firing.
+          const inherited = { ...STRAY, ...env };
+          assert.equal(verbs.judgePaneIdentity({ env: inherited, pane }).verdict, 'mismatch');
+        });
+      }
+
+      it('left the global environment as it was seeded', () => {
+        const globals = verbs.parseSessionEnvironment(t(['show-environment', '-g']));
+        for (const key of IDENTITY) assert.equal(globals[key], STRAY[key]);
+      });
+
+      it('wrote nothing to any tmux server but the one under its own directory', () => {
+        assert.equal(process.env.TMUX, undefined);
+        assert.equal(process.env.TMUX_TMPDIR, root);
+        assert.ok(fs.realpathSync(privateSocket).startsWith(fs.realpathSync(root) + path.sep));
+      });
     });
   });
 
