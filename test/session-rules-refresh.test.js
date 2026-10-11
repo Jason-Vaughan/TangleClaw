@@ -171,9 +171,27 @@ describe('#2273 — delivered rules files follow the rules in force', () => {
 
     const verdict = refresh.refreshProjectRules(project.id, { now: NOW });
 
-    assert.deepEqual(verdict, { status: 'nothing-to-refresh', projectId: project.id, reason: 'no-rules-files' });
+    assert.deepEqual(verdict, {
+      status: 'nothing-to-refresh', projectId: project.id, reason: 'no-rules-files', rulesInForce: 1
+    });
     assert.equal(fs.existsSync(path.join(project.path, '.tangleclaw')), false,
       'a refresh must not start delivery the launch declined');
+  });
+
+  it('counts the rules in force on every verdict that leaves the files alone', () => {
+    // A project launched with no rule has no file and no hook, so its first
+    // rules land on the same verdict as a launch that declined delivery. The
+    // count is what lets a caller say a rule is in force and not delivered.
+    assert.equal(refresh.refreshProjectRules(project.id).rulesInForce, 0);
+    addRule(project.id, 'The first rule of a project launched with none.');
+    const second = addRule(project.id, 'A second, switched off below.');
+    store.sessionRules.create({ content: 'A wrap rule is not delivered this way.', projectId: project.id, kind: 'wrap' });
+    assert.equal(refresh.refreshProjectRules(project.id).rulesInForce, 2);
+    store.sessionRules.update(second.id, { enabled: false });
+    assert.equal(refresh.refreshProjectRules(project.id).rulesInForce, 1, 'a disabled rule is not in force');
+
+    assert.equal(refresh.refreshProjectRules(null).rulesInForce, 0);
+    assert.equal(refresh.refreshProjectRules(987654).rulesInForce, 0);
   });
 
   it('has nothing to refresh for a rule with no project, or a project that is gone', () => {
@@ -293,7 +311,9 @@ describe('#2273 — delivered rules files follow the rules in force', () => {
 
     const verdict = refresh.refreshProjectRules(project.id, { now: NOW });
 
-    assert.deepEqual(verdict, { status: 'nothing-to-refresh', projectId: project.id, reason: 'no-rules-hooks' });
+    assert.deepEqual(verdict, {
+      status: 'nothing-to-refresh', projectId: project.id, reason: 'no-rules-hooks', rulesInForce: 1
+    });
     assert.equal(fs.readFileSync(channel.shardPath(project.path, 1), 'utf8'), before);
     fs.rmSync(path.join(project.path, '.claude'), { recursive: true });
     assert.equal(refresh.refreshProjectRules(project.id, { now: NOW }).reason, 'no-rules-hooks',

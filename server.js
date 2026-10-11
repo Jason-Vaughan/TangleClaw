@@ -18,6 +18,7 @@ if (Number.isFinite(_nodeMajor) && _nodeMajor < 22) {
 const { createLogger, setLevel, initFileLogging } = require('./lib/logger');
 const store = require('./lib/store');
 const { ruleLabel } = require('./lib/rule-label');
+const rulesRefresh = require('./lib/session-rules-refresh');
 
 // --- Shared Docs Watcher ---
 const sharedDocWatchers = new Map();
@@ -5974,6 +5975,81 @@ function sessionRuleCaller(req, res, target) {
   return { operator: false, changedBy: 'ai', rule };
 }
 
+/**
+ * Bring a project's delivered rules files up to date after a rule change, and
+ * say so when that could not be done.
+ *
+ * The session-start hook prints files the launch wrote, on every start
+ * including after a `/clear`. A rule that came into force, left it or changed
+ * its text while the session runs is in the store and not in those files until
+ * they are rewritten, so every route that can change the rules in force calls
+ * this once, after its store write and before it answers.
+ *
+ * The files are rewritten only when the change moved the set in force, which
+ * is when this rule entered or left it. A proposal, a wrap rule and a Project
+ * Master rule never do. Nor does a text edit or rollback of an active rule:
+ * the store files that as a proposal and leaves the rule as it was, so new
+ * text reaches the files when its proposal is approved and enters the set.
+ *
+ * It never throws and never fails the route: the rule change is already saved,
+ * and the store stays the authority. What it returns is spread into the
+ * response, so a caller is told when what a cleared session will be shown
+ * differs from the rules in force:
+ *
+ * - the files could not be rewritten;
+ * - the project's running session has no rules file, or no hook that prints
+ *   one (it was launched with no rule in force, or its launch delivered rules
+ *   another way), so rules in force are not re-delivered to it after a clear
+ *   until its next launch. Nothing registers a hook mid-session; delivering
+ *   that case is #2293.
+ *
+ * @param {object|null} before - The rule before the change; null for a new one
+ * @param {object|null} after - The rule after the change; null for a deleted one
+ * @returns {{deliveryWarning?: string}} Empty when there is nothing to say
+ */
+function refreshDeliveredRules(before, after) {
+  const inForce = (rule) => !!rule && rule.kind === 'startup' && rule.status === 'active' && !!rule.enabled;
+  if (inForce(before) === inForce(after)) return {};
+  const projectId = (after || before).projectId;
+  try {
+    const verdict = rulesRefresh.refreshProjectRules(projectId);
+    if (verdict.status === 'failed') {
+      // The refresh logged the project, the directory and the cause.
+      const left = verdict.filesReplaced > 0
+        ? 'some of them were replaced before the failure, so they are part new and part old'
+        : 'they still hold the rule set from before this change';
+      return {
+        deliveryWarning: 'The rule change is saved, but the rules files a cleared session of '
+          + `${verdict.project || `project ${projectId}`} is re-delivered could not be rewritten (${verdict.reason}); ${left}. `
+          + '`tc rules` is correct, and the next launch of the project rewrites the files.'
+      };
+    }
+    const undelivered = verdict.status === 'nothing-to-refresh' && verdict.rulesInForce > 0
+      && verdict.reason !== 'no-project' && store.sessions.getActive(projectId);
+    if (!undelivered) return {};
+    const project = store.projects.get(projectId);
+    const count = `${verdict.rulesInForce} rule${verdict.rulesInForce === 1 ? ' is' : 's are'} in force`;
+    const why = verdict.reason === 'no-rules-hooks'
+      ? 'no session-start hook is registered to print its rules files'
+      : 'its launch wrote no rules file';
+    log.warn(
+      `${count} for ${project.name} and will not be re-delivered to its running session after a clear or a `
+      + `compaction, because ${why}. \`tc rules\` shows them meanwhile; the next launch of the project delivers them (#2293).`,
+      { projectId, project: project.name, reason: verdict.reason, rulesInForce: verdict.rulesInForce }
+    );
+    return {
+      deliveryWarning: `The rule change is saved. ${count} for ${project.name}, and its running session will not be `
+        + `re-delivered them after a clear or a compaction until its next launch, because ${why}. `
+        + '`tc rules` shows them meanwhile.'
+    };
+  } catch (err) {
+    // prawduct:allow prawduct/broad-except -- a rule change that already succeeded must be answered as a success whatever reporting on its delivered copy does
+    log.warn('Could not report on the delivered rules files after a rule change; the change itself is saved and `tc rules` is correct.',
+      { projectId, error: err.message });
+    return {};
+  }
+}
+
 // POST /api/session-rules — create { content, projectId, createdBy?, kind? }
 route('POST', '/api/session-rules', (req, res, _params, body) => {
   // #2032: a coordinator bound to a rotation epoch writes rules only from its
@@ -6018,7 +6094,7 @@ route('POST', '/api/session-rules', (req, res, _params, body) => {
       // silently dropped the way it used to be.
       replacesRuleId: body.replacesRuleId
     });
-    jsonResponse(res, 201, rule);
+    jsonResponse(res, 201, { ...rule, ...refreshDeliveredRules(null, rule) });
   } catch (err) {
     if (err.code === 'BAD_REQUEST') {
       return errorResponse(res, 400, err.message, 'BAD_REQUEST');
@@ -6081,7 +6157,7 @@ route('PUT', '/api/session-rules/:id', (req, res, params, body) => {
     // proposal instead of rewriting the rule — `rule` here is the ORIGINAL
     // rule, unchanged, plus `replacementProposed`. 202 says so; the rule
     // itself still answers 200 for every ordinary (non-deferred) update.
-    jsonResponse(res, rule.replacementProposed ? 202 : 200, rule);
+    jsonResponse(res, rule.replacementProposed ? 202 : 200, { ...rule, ...refreshDeliveredRules(existing, rule) });
   } catch (err) {
     if (err.code === 'NOT_FOUND') {
       return errorResponse(res, 404, err.message, 'NOT_FOUND');
@@ -6124,7 +6200,7 @@ route('DELETE', '/api/session-rules/:id', (req, res, params) => {
         'CONFIRM_REQUIRED');
     }
     store.sessionRules.delete(Number(params.id), { changedBy: caller.changedBy });
-    jsonResponse(res, 200, { ok: true, id: Number(params.id) });
+    jsonResponse(res, 200, { ok: true, id: Number(params.id), ...refreshDeliveredRules(existing, null) });
   } catch (err) {
     if (err.code === 'NOT_FOUND') {
       return errorResponse(res, 404, err.message, 'NOT_FOUND');
@@ -6175,7 +6251,7 @@ route('POST', '/api/session-rules/promote', (req, res, _params, body) => {
       // store method WITHOUT it and gets a proposal.
       approvedByOperator: true
     });
-    jsonResponse(res, 201, rule);
+    jsonResponse(res, 201, { ...rule, ...refreshDeliveredRules(null, rule) });
   } catch (err) {
     if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');
     if (err.code === 'BAD_REQUEST') return errorResponse(res, 400, err.message, 'BAD_REQUEST');
@@ -6249,7 +6325,9 @@ route('PUT', '/api/session-rules/:id/status', (req, res, params, body) => {
       // the text has changed, let alone what it now says.
       expectedContent: body.expectedContent
     });
-    jsonResponse(res, 200, rule);
+    // One refresh covers an approval that also retired the rule it replaces:
+    // both are in the store by now.
+    jsonResponse(res, 200, { ...rule, ...refreshDeliveredRules(caller.rule, rule) });
   } catch (err) {
     if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');
     if (err.code === 'BAD_REQUEST') return errorResponse(res, 400, err.message, 'BAD_REQUEST');
@@ -6385,7 +6463,7 @@ route('POST', '/api/session-rules/:id/restore', (req, res, params, body) => {
     // #1696: a version rollback that changes an active, non-master rule's
     // text files a replacement proposal instead of applying it — same 202
     // contract as the PUT route above.
-    jsonResponse(res, rule.replacementProposed ? 202 : 200, rule);
+    jsonResponse(res, rule.replacementProposed ? 202 : 200, { ...rule, ...refreshDeliveredRules(existing, rule) });
   } catch (err) {
     if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');
     if (err.code === 'BAD_REQUEST') return errorResponse(res, 400, err.message, 'BAD_REQUEST');
