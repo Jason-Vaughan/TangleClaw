@@ -113,7 +113,7 @@ describe('bridge retention: what is let go, and exactly when (#2031)', () => {
   it('states the limits the Architect ruled', () => {
     assert.deepEqual(bridgeStore.EXPIRY_MS, {
       candidate: { milestone: 7 * DAY, 'operator-action-required': 30 * DAY },
-      notification: { 'work-blocked': 7 * DAY, 'operator-needed': 7 * DAY, 'fleet-idle': DAY, 'lane-silent': 7 * DAY },
+      notification: { 'work-blocked': 7 * DAY, 'operator-needed': 7 * DAY, 'fleet-idle': DAY, 'lane-silent': 7 * DAY, 'gateway-down': 7 * DAY, 'gateway-recovered': DAY },
       status: DAY,
       failure: 30 * DAY
     });
@@ -125,7 +125,9 @@ describe('bridge retention: what is let go, and exactly when (#2031)', () => {
     assert.deepEqual(bridgeStore.QUESTION_TTL_MS, { clarify: DAY, launch: 60 * 60 * 1000 });
   });
 
-  for (const [type, limit] of [['work-blocked', 7 * DAY], ['operator-needed', 7 * DAY], ['fleet-idle', DAY], ['lane-silent', 7 * DAY]]) {
+  for (const [type, limit] of [
+    ['work-blocked', 7 * DAY], ['operator-needed', 7 * DAY], ['fleet-idle', DAY], ['lane-silent', 7 * DAY], ['gateway-down', 7 * DAY], ['gateway-recovered', DAY]
+  ]) {
     it(`keeps a ${type} notification at exactly its limit and lets it go one millisecond later`, () => {
       const id = notification(type);
       assert.deepEqual(bridgeStore.expire({ now: at(limit) }), { outbound: 0, candidates: 0, questions: 0 });

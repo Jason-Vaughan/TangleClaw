@@ -35,6 +35,38 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-11 — #2272: the operator bridge admits two notification types about the helper's own connection (schema v63)
+
+<!-- prawduct: type=feature | scope=bridge-2272 -->
+
+#2272 Chunk 04 of five. Branch `fix/2272-gateway-notification-types`, from `origin/main` `c80716fa`. Schema v63, granted to this chunk alone.
+
+Visual change: no
+
+**Why.** The Discord helper can lose its Gateway connection and keep posting, so the operator's messages reach nobody and nothing says so (#2272). The operator ruled that the server queues a notice after five minutes and announces the recovery once. A notice is a typed row in `bridge_outbound`, and its types are a CHECK that SQLite changes only by rebuilding the table. This chunk admits the two types and writes their sentences. Nothing raises them yet: the pass that does is the next chunk.
+
+**What changed.**
+- `lib/bridge-schema.js`: `NOTIFICATION_TYPES` gains `gateway-down` and `gateway-recovered`; `bridge_outbound` gains `needsSince63`; `LATER_VERSIONS` gains 63; `BRIDGE_SCHEMA_VERSION` is 63.
+- `lib/store.js`: `CURRENT_SCHEMA_VERSION` is 63, with the step `_migrateOperatorBridgeV63`. It proves the store is a sound v62 store, rebuilds the one table with every row, column and id carried over, and has nothing to do on a store already in the v63 shape.
+- `lib/bridge-store.js`: retention limits for both types.
+- `lib/bridge-notify.js`: the two templates, the reasons Discord refuses a connection (`GATEWAY_REFUSED`), and a seam for the zone a notice's times are shown in. No producer and no line in `reconcile`.
+- `docs/operator-bridge.md` and ADR 0023: the two types as admitted and not raised, their sentences, the v63 migration, the limits.
+
+**Decisions.**
+- [DECISION: the sentences land here, one chunk ahead of their producer. | `test/bridge-notify.test.js` holds every admitted type to a template, so a type cannot be admitted without one. The Integrator chose this over joining the two chunks.]
+- [DECISION: a refused connection has its own sentence, with the reason, and never the wording of a retry. | Ruling 8 (`fatal yes`): it is the one outage that will not end by itself.]
+- [DECISION: times are the host's local time with its zone, and UTC, said as UTC, where the runtime cannot name the zone. | Ruling 27 (`times local`): the operator reads these on a phone. A time is never shown without a zone.]
+- [DECISION: both notices tell the operator that what they sent may need sending again. | Ruling 27. "May not have arrived" for the recovery, because a short drop that resumes can replay what was missed.]
+- [DECISION: `gateway-down` keeps 7 days and `gateway-recovered` 1 day. | The first is still so until the connection is back; the second describes a moment. Ruling 27 (`retention ok`).]
+- [DECISION: the v63 step refuses a store with no bridge table, where v62 created one. | Every start since v52 creates the bridge's storage, so a v62 store without it has lost it.]
+- [DECISION: a length of time or a moment the template cannot read is left out or said to be unrecorded, never printed as given. | The templates take closed values; this keeps them so if a caller is wrong.]
+
+**Existing assertions changed, each still exact.** In `test/store-bridge-migration.test.js`: `BRIDGE_SCHEMA_VERSION` and `CURRENT_SCHEMA_VERSION` 62 to 63; the stamp a v61 store ends on, 62 to 63, in two cases; the whole type list, four to six; the list of versions a store is a superset of gains 63. Its `rewindToV61` helper now also takes the two new types out of the table it calls v61 and asserts none of the three remains. In `test/bridge-retention.test.js`: the whole limits table gains two entries. In `test/bridge-notify.test.js`: the list of template keys, four to six. Three helpers of the migration file moved to its top level, unchanged, so the v62 and v63 cases share them.
+
+**Checked.** The three test files, each alone. The new migration cases start from a store the code made, filled through the bridge's own writers with an item in every state and a `lane-silent` notice, turned into a v62 store by exact SQL. With the v63 step taken out, seven of the nine new cases fail. With a "no bridge table" branch like v62's put in, the case for that refusal fails.
+
+**Not covered.** Nothing raises either type, so no notice of these types has been queued, posted or read by anyone. The sentences are held by tests only. The migration has not run on the live database: that is the deploy's check.
+
 ## 2026-10-11 — #2057: the Codex startup-control tests order their fakes by the adapter's progress, not by timers
 
 <!-- prawduct: type=bugfix | scope=2057-codex-receipt-poll-case -->
