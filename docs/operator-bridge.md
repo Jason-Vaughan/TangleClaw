@@ -795,7 +795,13 @@ Three minutes, because a helper that died still said `ready` in its last report.
 claims every `pollSeconds` (5 to 300, 15 by default), and backs off to as much as five minutes
 between passes while its passes are failing, so a helper that is slow for either reason can
 read `not-reported` while it is running. `not-reported` says exactly that the bridge has not
-heard, and never that the connection is down.
+heard, and never that the connection is down. While the bridge is disabled no report is read
+at all, and `tc bridge status` adds that the reading then says nothing about the helper.
+
+A refused report is logged by the server as `Bridge request refused` with
+`code: BAD_GATEWAY_REPORT`, because the helper's own log gives only the status: a helper whose
+report is refused on every pass is handed nothing, so nothing posts until the two are from the
+same version again.
 
 `since` is the helper's clock, and `reportedAt` the server's. Nothing here raises a notice, and
 the dashboard panel does not show the reading yet: it is in the two status payloads and in

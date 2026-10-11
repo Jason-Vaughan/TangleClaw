@@ -54,6 +54,8 @@ Visual change: no
 
 **The reading.** `discordGateway: {reading, state, since, fatalCloseCode, reportedAt}` on `GET /api/bridge/operator/status` and `GET /api/bridge/master/status`: `connected`, `down`, `not-reported` (the last report is older than three minutes, whatever it said: a helper that died still said `ready`), or `never-reported` (none since the server started). `tc bridge status` prints one more line, `Discord connection: ...`, for each of the four, and for `fatal` says the close code and that the helper will not retry. No verb is added or renamed: `node scripts/sync-claude-md-block.js` exits 0 and `CLAUDE.md` is untouched.
 
+**After the review.** A refused report is logged by the server (`Bridge request refused`, `BAD_GATEWAY_REPORT`): a helper whose report is refused on every pass is handed nothing, and its own log says only `claim-failed` with 400. And on a disabled bridge, which refuses the claim before reading the report, `tc bridge status` adds that a silent reading then says nothing about the helper.
+
 **Decided here.**
 - The report is recorded after the claim is answered, and only if the claim was not itself malformed, so a request the bridge calls bad changes nothing at all. A circuit refusal is not a bad request.
 - An explicit `discordGateway: null` is refused like any other non-report. A helper with nothing to say leaves the field out.

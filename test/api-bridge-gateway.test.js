@@ -3245,6 +3245,15 @@ describe('bridge API: the round trip (#2031)', () => {
         assert.deepEqual([old.status, old.body], [200, { replayed: false, items: [] }]);
       }
       assert.deepEqual(await readings(), [NEVER, NEVER]);
+
+      // Disabled, the bridge refuses the claim before it reads the report: the line must not blame the helper for that.
+      assert.equal((await asOperator('POST', '/api/bridge/operator/disable')).status, 200);
+      const refused = await claimWith({ discordGateway: { state: 'ready', since: '2026-10-11T05:00:02.000Z' } });
+      assert.deepEqual([refused.status, refused.body.code], [409, 'BRIDGE_DISABLED']);
+      assert.deepEqual(await readings(), [NEVER, NEVER]);
+      const off = (await tc(['bridge', 'status'])).stdout.split('\n').find((line) => line.startsWith('Discord connection: '));
+      assert.equal(off, 'Discord connection: never reported since this server started: the helper is not running, has not yet asked for work, or predates the report and needs a restart.'
+        + ' The bridge is disabled, and a disabled bridge does not read the helper\'s reports: this says nothing about the helper.');
     });
 
     it('a claim carrying a report is answered exactly as one without, and both readers are then told what was reported and since when', async () => {
@@ -3274,6 +3283,11 @@ describe('bridge API: the round trip (#2031)', () => {
         assert.deepEqual((await readings())[1], { ...down, state: 'fatal', fatalCloseCode: 4014 });
         assert.equal(await tcLine(), 'Discord connection: NOT CONNECTED since 2026-10-11T05:03:00.000Z: the helper reports fatal (close code 4014): '
           + 'Discord refused the connection and the helper will not retry until it is put right and restarted (its report of 2026-10-11T05:09:00.000Z). Nothing the operator writes arrives meanwhile.');
+
+        // A report still current when the bridge is switched off is still what the helper said: nothing is added to it.
+        const fatalLine = await tcLine();
+        assert.equal((await asOperator('POST', '/api/bridge/operator/disable')).status, 200);
+        assert.equal((await tc(['bridge', 'status'])).stdout.split('\n').find((line) => line.startsWith('Discord connection: ')), fatalLine);
       });
     });
 
@@ -3305,12 +3319,26 @@ describe('bridge API: the round trip (#2031)', () => {
         'a word': 'ready',
         'nothing, said outright': null
       };
+      const logged = [];
+      setLevel('warn');
+      setConsoleStream({ write: (line) => { logged.push(String(line)); return true; } });
+      try {
+        await at('2026-10-11T05:00:30.000Z', async () => {
+          for (const [what, discordGateway] of Object.entries(malformed)) {
+            const refused = await claimWith({ limit: 20, discordGateway });
+            assert.deepEqual([refused.status, refused.body.code, Object.keys(refused.body).sort()], [400, 'BAD_GATEWAY_REPORT', ['code', 'error']], what);
+            assert.deepEqual(await readings(), [before, before], what);
+          }
+        });
+      } finally {
+        setConsoleStream(null);
+        setLevel('error');
+      }
+      // Each refusal leaves a line in the server's log: the helper's own log says only that a claim failed with 400.
+      const refusals = logged.filter((line) => line.includes('Bridge request refused') && line.includes('BAD_GATEWAY_REPORT'));
+      assert.equal(refusals.length, Object.keys(malformed).length, logged.join(''));
+      for (const line of refusals) assert.ok(!line.includes('socket hang up') && !line.includes('five minutes ago'), 'the code, and nothing of what was sent');
       await at('2026-10-11T05:00:30.000Z', async () => {
-        for (const [what, discordGateway] of Object.entries(malformed)) {
-          const refused = await claimWith({ limit: 20, discordGateway });
-          assert.deepEqual([refused.status, refused.body.code, Object.keys(refused.body).sort()], [400, 'BAD_GATEWAY_REPORT', ['code', 'error']], what);
-          assert.deepEqual(await readings(), [before, before], what);
-        }
         // A claim that is itself malformed records nothing either, however good the report in it.
         const badLimit = await claimWith({ limit: 500, discordGateway: { ...good, since: '2026-10-11T05:00:25.000Z' } });
         assert.deepEqual([badLimit.status, badLimit.body.code], [400, 'BAD_CLAIM']);

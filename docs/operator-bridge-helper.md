@@ -417,7 +417,7 @@ TangleClaw's answer is echoed.
 | `outbound-chat-closed` | Discord said the chat is closed to the bot, and the bridge was told. The line carries the reason chosen. |
 | `outbound-reply-target-missing` | The message an answer replied to may be gone; the answer is being tried once more by itself. The next line for that item says how the retry went. |
 | `outbound-unplaceable` | Discord refused an item in a way the helper could not place. Nothing was posted; the bridge set the item aside. See "Settling an `uncertain` item" for the two cases. |
-| `claim-failed` | The bridge could not be asked what to post. The status is in the line: `0` is no answer, `401` a replaced token, `409` a disabled bridge. |
+| `claim-failed` | The bridge could not be asked what to post. The status is in the line: `0` is no answer, `401` a replaced token, `409` a disabled bridge, `400` a claim the bridge calls malformed. A `400` on every pass means the bridge refuses this helper's report of its Discord connection (`BAD_GATEWAY_REPORT` in TangleClaw's own log, as `Bridge request refused`): the helper and TangleClaw are from different versions. Nothing is posted while it lasts. Update and restart the helper. |
 | `redirect-refused` | A server answered with a redirect, which the helper never follows. Check `--base-url`. |
 | `outbound-uncertain` | An item is held here and set aside at the bridge; see "Settling an `uncertain` item". |
 | `outbound-rejected`, `outbound-part-conflict` | The bridge was asked to set an item aside; see "Items set aside". |
