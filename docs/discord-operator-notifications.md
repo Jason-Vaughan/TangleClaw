@@ -124,7 +124,10 @@ project session posts to Discord directly.
 
 Besides those items, only three other things reach Discord: a reply to something the operator
 wrote, a delivery failure, and the typed server notifications `operator-needed`, `work-blocked`,
-`fleet-idle` and `lane-silent`.
+`fleet-idle`, `lane-silent`, `gateway-down` and `gateway-recovered`. The last two are about the
+helper's own connection to Discord: the server queues the first once the helper has reported no
+connection for five minutes, and the second once when that outage ends
+([operator-bridge.md](operator-bridge.md), "Server notifications").
 
 ### What carries over unchanged
 

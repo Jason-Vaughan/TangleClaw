@@ -4,6 +4,8 @@
 // Each is found from the record that is the event, enqueued once under a key
 // that names that record, written from a fixed template, and only for events
 // that happened while the bridge was enabled. Fleet-idle fails closed.
+// #2272: the helper's own connection to Discord, from its report: one notice
+// for an outage once it has lasted five minutes, and one when it is over.
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
@@ -138,7 +140,7 @@ describe('bridge notifications (#2031)', () => {
       bridgeStore.settings.set('enabled', 'false');
       reports(alpha, 'working');
       reports(alpha, 'blocked');
-      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 0, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0 }, 'nothing while disabled');
+      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 0, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 }, 'nothing while disabled');
       later(60000);
       enable();
       assert.equal(bridgeNotify.reconcile().workBlocked, 0, 'and nothing afterwards for what happened while it was off');
@@ -413,7 +415,7 @@ describe('bridge notifications (#2031)', () => {
       enable();
       reports(alpha, 'blocked');
       bridgeNotify._deps.lanes = () => { throw new Error('the lane reader failed'); };
-      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0 });
+      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 });
     });
 
     it('reads lanes through the fleet\'s own composition: only a fresh, finished, clear lane at rest is AVAILABLE', () => {
@@ -616,7 +618,7 @@ describe('bridge notifications (#2031)', () => {
       const realList = store.workloadNudgeFacts.listOperatorEscalations;
       store.workloadNudgeFacts.listOperatorEscalations = () => { throw new Error('database is locked'); };
       try {
-        assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0 });
+        assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 });
       } finally {
         store.workloadNudgeFacts.listOperatorEscalations = realList;
       }
@@ -742,6 +744,374 @@ describe('bridge notifications (#2031)', () => {
       bridgeNotify._deps.timeZone = realDeps.timeZone;
       assert.equal(realDeps.timeZone(), undefined);
       assert.match(down(), / at \d\d:\d\d \S+ on \d{4}-\d\d-\d\d /);
+    });
+  });
+
+  describe('the outage notice and its recovery (#2272)', () => {
+    const MINUTE = 60000;
+    const DAY = 24 * 60 * MINUTE;
+    let reading;
+
+    /**
+     * What the helper's report reads as, from now on.
+     * @param {string} word - `connected`, `down`, `not-reported` or `never-reported`.
+     * @param {object} [more] - `since`, `state`, `fatalCloseCode`.
+     * @returns {void}
+     */
+    function reads(word, more = {}) {
+      if (word === 'never-reported') {
+        reading = { reading: word, state: null, since: null, fatalCloseCode: null, reportedAt: null };
+        return;
+      }
+      const state = word === 'connected' ? 'ready' : 'reconnecting';
+      reading = { reading: word, state, since: clock, fatalCloseCode: null, reportedAt: clock, ...more };
+    }
+
+    /**
+     * Passes at one-minute steps, as the gateway makes them.
+     * @param {number} minutes - How many.
+     * @returns {number} How many notices they made between them.
+     */
+    function passes(minutes) {
+      let made = 0;
+      for (let i = 0; i < minutes; i++) {
+        later(MINUTE);
+        made += bridgeNotify.reconcile().gatewayOutage;
+      }
+      return made;
+    }
+
+    /**
+     * An outage that began now, watched until its notice is made.
+     * @returns {string} When it began.
+     */
+    function announcedOutage() {
+      const began = clock;
+      reads('down');
+      bridgeNotify.reconcile();
+      assert.equal(passes(5), 1, 'precondition: the outage was announced');
+      return began;
+    }
+
+    /**
+     * The helper posted every notice it was waiting to collect.
+     * @returns {void}
+     */
+    function helperPosts() {
+      store.getDb().prepare("UPDATE bridge_outbound SET state = 'delivered', delivered_at = ?, updated_at = ? WHERE state = 'ready'").run(clock, clock);
+    }
+
+    const ours = () => notifications().filter((x) => x.type.startsWith('gateway-'));
+
+    beforeEach(() => {
+      Object.assign(bridgeNotify._deps, { timeZone: () => 'America/Los_Angeles', discordReading: () => reading });
+      clock = '2026-10-11T20:00:00.000Z';
+      enable();
+      later(60 * MINUTE);
+      reads('never-reported');
+    });
+
+    it('says nothing at 4 minutes 59 seconds, tells the operator at 5 minutes, and once only however long it lasts', () => {
+      assert.equal(bridgeNotify.GATEWAY_DOWN_AFTER_MS, 5 * MINUTE);
+      const began = clock;
+      reads('down');
+      assert.equal(bridgeNotify.reconcile().gatewayOutage, 0);
+      later(5 * MINUTE - 1000);
+      assert.equal(bridgeNotify.reconcile().gatewayOutage, 0, '4 minutes 59 seconds');
+      later(1000);
+      assert.equal(bridgeNotify.reconcile().gatewayOutage, 1, '5 minutes');
+      assert.deepEqual(notifications(), [{
+        type: 'gateway-down', key: `notify:gateway-down:since:${began}`,
+        text: 'The Discord helper lost its connection to Discord at 14:00 PDT on 2026-10-11 and has not had one for 5 minutes. '
+          + 'It is still trying. It can still post here, but it is not receiving what you send.',
+        label: 'TangleClaw', routeId: null
+      }]);
+      assert.equal(passes(60), 0, 'still down an hour later');
+      // The server restarts: what it had seen is gone, and the notice is still the record.
+      bridgeNotify._reset();
+      assert.equal(passes(10), 0, 'a restart does not announce it twice');
+      // Posted or not, it is the one notice.
+      helperPosts();
+      assert.equal(passes(10), 0);
+      assert.equal(notifications().length, 1);
+    });
+
+    it('announces the recovery once, with how long the outage lasted, and nothing more while it stays connected', () => {
+      const began = announcedOutage();
+      later(7 * MINUTE);
+      reads('connected');
+      assert.equal(bridgeNotify.reconcile().gatewayOutage, 1);
+      assert.deepEqual(ours()[1], {
+        type: 'gateway-recovered', key: `notify:gateway-recovered:since:${began}`,
+        text: 'The Discord helper is connected to Discord again, since 14:12 PDT on 2026-10-11. It was not connected for 12 minutes. '
+          + 'Anything you sent here in that time may not have arrived: please send it again.',
+        label: 'TangleClaw', routeId: null
+      });
+      assert.equal(passes(30), 0, 'connected and staying so is not news');
+      bridgeNotify._reset();
+      assert.equal(passes(5), 0, 'nor after a restart');
+      assert.equal(ours().length, 2);
+    });
+
+    it('announces no recovery for an outage that was never announced', () => {
+      reads('down');
+      bridgeNotify.reconcile();
+      assert.equal(passes(4), 0);
+      reads('connected');
+      assert.equal(passes(3), 0, 'back inside five minutes: there was nothing to be back from');
+      assert.deepEqual(notifications(), []);
+      // And the short drop does not count towards the next one, even from a helper whose clock runs behind.
+      reads('down', { since: new Date(Date.parse(clock) - 120 * MINUTE).toISOString() });
+      bridgeNotify.reconcile();
+      assert.equal(passes(4), 0, 'a new drop is watched from its own first reading');
+      assert.equal(passes(1), 1);
+    });
+
+    it('announces a second outage after a recovery as its own outage', () => {
+      const first = announcedOutage();
+      reads('connected');
+      assert.equal(passes(1), 1);
+      later(30 * MINUTE);
+      const second = clock;
+      reads('down');
+      bridgeNotify.reconcile();
+      assert.equal(passes(4), 0);
+      assert.equal(passes(1), 1);
+      reads('connected');
+      assert.equal(passes(1), 1);
+      assert.deepEqual(ours().map((x) => x.key), [
+        `notify:gateway-down:since:${first}`, `notify:gateway-recovered:since:${first}`,
+        `notify:gateway-down:since:${second}`, `notify:gateway-recovered:since:${second}`
+      ]);
+    });
+
+    it('queues nothing for no report, for a report gone stale, or while the bridge is disabled', () => {
+      assert.equal(passes(30), 0, 'never reported');
+      reads('not-reported', { state: 'reconnecting' });
+      assert.equal(passes(30), 0, 'a helper that polls slowly reads like this while it runs: not an outage');
+      reads('not-reported', { state: 'ready' });
+      assert.equal(passes(30), 0);
+      reads('down');
+      bridgeStore.settings.set('enabled', 'false');
+      assert.equal(passes(30), 0, 'disabled');
+      assert.deepEqual(notifications(), []);
+      // Enabled again in the middle of the outage: it has to be watched for five minutes from then.
+      enable();
+      assert.equal(bridgeNotify.reconcile().gatewayOutage, 0, 'the first pass that reads it as down');
+      assert.equal(passes(4), 0, 'not for an outage watched for less than five minutes');
+      assert.equal(passes(1), 1);
+    });
+
+    it('counts from when the bridge was enabled, when that is later than the outage and than first seeing it', () => {
+      reads('down');
+      bridgeNotify.reconcile();
+      passes(1);
+      bridgeStore.settings.set('enabled', 'false');
+      later(2 * MINUTE);
+      enable();
+      assert.equal(passes(4), 0, 'seven minutes down and seen, four since it was enabled');
+      assert.equal(passes(1), 1);
+    });
+
+    it('a reading it cannot use raises nothing and breaks nothing', () => {
+      for (const odd of [null, undefined, {}, { reading: 'something-new' }, 'down']) {
+        reading = odd;
+        assert.equal(passes(6), 0, JSON.stringify(odd));
+      }
+      reads('down', { since: 'yesterday' });
+      assert.equal(passes(10), 0, 'a beginning that is not a time cannot be counted from');
+      assert.deepEqual(notifications(), []);
+    });
+
+    it('tells the operator of a connection Discord refused after the same five minutes, in the refusal\'s own words', () => {
+      reads('down', { state: 'fatal', fatalCloseCode: 4004 });
+      bridgeNotify.reconcile();
+      assert.equal(passes(4), 0);
+      assert.equal(passes(1), 1);
+      assert.equal(notifications()[0].text, 'Discord has refused the Discord helper\'s connection since 14:00 PDT on 2026-10-11 (the bot token was rejected). '
+        + 'It will not reconnect by itself: the cause has to be put right and the helper restarted. '
+        + 'It can still post here, but it is not receiving what you send, so anything you reply will need sending again once it is fixed.');
+      assert.ok(!/trying|retry/i.test(notifications()[0].text));
+      // Put right and restarted: the recovery is announced like any other.
+      later(20 * MINUTE);
+      reads('connected');
+      assert.equal(bridgeNotify.reconcile().gatewayOutage, 1);
+      assert.match(notifications()[1].text, /It was not connected for 25 minutes\./);
+    });
+
+    it('says what the helper is doing when the notice is made, not when the outage began', () => {
+      reads('down', { state: 'connecting' });
+      bridgeNotify.reconcile();
+      passes(4);
+      reads('down', { since: reading.since, state: 'stopped' });
+      assert.equal(passes(1), 1);
+      assert.ok(!notifications()[0].text.includes('It is still trying.'));
+    });
+
+    it('a helper restarted in the middle of an announced outage is not a second outage, and the recovery counts from the first beginning', () => {
+      const began = announcedOutage();
+      later(10 * MINUTE);
+      // A restarted helper counts from its own start.
+      reads('down', { state: 'connecting' });
+      assert.equal(passes(30), 0, 'the same outage, whatever time the report now carries');
+      reads('connected');
+      assert.equal(bridgeNotify.reconcile().gatewayOutage, 1);
+      assert.equal(ours()[1].key, `notify:gateway-recovered:since:${began}`);
+      assert.match(ours()[1].text, /It was not connected for 45 minutes\./);
+    });
+
+    it('a report that stops arriving during an outage neither ends it nor announces a recovery', () => {
+      const began = announcedOutage();
+      reads('not-reported', { since: began, state: 'reconnecting' });
+      assert.equal(passes(120), 0, 'no word from the helper is not word that it is connected');
+      // A last report that said connected, gone stale, is not a connection either.
+      reads('not-reported', { state: 'ready' });
+      assert.equal(passes(10), 0);
+      assert.equal(ours().length, 1);
+      // The outage is still the open one when a report next says down ...
+      reads('down', { since: began });
+      assert.equal(passes(10), 0, 'still down: nothing more');
+      // ... and when one next says connected.
+      reads('connected');
+      assert.equal(bridgeNotify.reconcile().gatewayOutage, 1);
+      assert.equal(ours()[1].key, `notify:gateway-recovered:since:${began}`);
+    });
+
+    it('a report that stops arriving before the notice does not restart the wait', () => {
+      // A helper polling every five minutes reads down for three and not-reported for two, over and over.
+      const began = clock;
+      reads('down');
+      bridgeNotify.reconcile();
+      assert.equal(passes(3), 0);
+      reads('not-reported', { since: began, state: 'reconnecting' });
+      assert.equal(passes(2), 0, 'five minutes are up, but there is no report to act on');
+      reads('down', { since: began });
+      assert.equal(bridgeNotify.reconcile().gatewayOutage, 1, 'the next report that says down is enough');
+    });
+
+    it('does not announce an outage this server has not itself watched for five minutes', () => {
+      // The helper says it has been down for two hours; this process has only just started.
+      reads('down', { since: new Date(Date.parse(clock) - 120 * MINUTE).toISOString() });
+      assert.equal(bridgeNotify.reconcile().gatewayOutage, 0);
+      assert.equal(passes(4), 0);
+      assert.equal(passes(1), 1);
+      assert.match(notifications()[0].text, /has not had one for 2 hours 5 minutes\./, 'the length is the helper\'s');
+      // A helper whose clock runs ahead costs a delay and no more.
+      bridgeNotify._reset();
+      store.getDb().prepare('DELETE FROM bridge_outbound').run();
+      reads('down', { since: new Date(Date.parse(clock) + 10 * MINUTE).toISOString() });
+      assert.equal(passes(14), 0);
+      assert.equal(passes(1), 1);
+    });
+
+    it('a notice that could not be enqueued is made on the next pass, under the same key, for the outage and for the recovery', () => {
+      const began = clock;
+      reads('down');
+      bridgeNotify.reconcile();
+      passes(4);
+      const realEnqueue = bridgeStore.outbound.enqueue;
+      const failing = (work) => {
+        bridgeStore.outbound.enqueue = () => { throw new Error('database is locked'); };
+        try {
+          work();
+        } finally {
+          bridgeStore.outbound.enqueue = realEnqueue;
+        }
+      };
+      failing(() => assert.equal(passes(2), 0));
+      assert.deepEqual(notifications(), [], 'nothing was marked as told');
+      assert.equal(passes(1), 1);
+      reads('connected');
+      failing(() => assert.equal(passes(2), 0));
+      assert.equal(passes(1), 1);
+      assert.deepEqual(ours().map((x) => x.key), [`notify:gateway-down:since:${began}`, `notify:gateway-recovered:since:${began}`]);
+    });
+
+    it('announces no recovery for an outage whose notice was let go uncollected, and does not announce that outage again', () => {
+      const began = announcedOutage();
+      later(7 * DAY + MINUTE);
+      assert.equal(bridgeStore.expire({ now: clock }).outbound, 1, 'precondition: the notice was let go');
+      reads('down', { since: began });
+      assert.equal(passes(10), 0, 'its key still stands');
+      reads('connected');
+      assert.equal(passes(10), 0, 'a notice nobody saw has nothing to be followed by');
+      assert.equal(ours().length, 1);
+      // What was let go holds nothing open: the next outage is announced.
+      reads('down');
+      bridgeNotify.reconcile();
+      assert.equal(passes(5), 1);
+    });
+
+    it('announces once more an outage still open after retention has removed its posted notice, as a reminder', () => {
+      const began = announcedOutage();
+      helperPosts();
+      reads('down', { since: began });
+      later(30 * DAY + MINUTE);
+      assert.equal(bridgeNotify.reconcile().gatewayOutage, 0, 'thirty days on, the notice is still the record');
+      assert.equal(bridgeStore.prune({ now: clock }).outbound, 1, 'precondition: retention removed it');
+      assert.equal(bridgeNotify.reconcile().gatewayOutage, 1);
+      assert.equal(passes(60), 0, 'once');
+      assert.match(notifications()[0].text, /^The Discord helper lost its connection to Discord at 14:00 PDT on 2026-10-11 and has not had one for 720 hours 6 minutes\./);
+    });
+
+    it('has no recovery to announce for an outage that ends after its notice was removed', () => {
+      const began = announcedOutage();
+      helperPosts();
+      later(30 * DAY + MINUTE);
+      bridgeStore.prune({ now: clock });
+      reads('connected');
+      assert.equal(passes(5), 0);
+      assert.deepEqual(notifications(), []);
+      assert.ok(began);
+    });
+
+    it('leaves the other kinds as they were, and its own failure does not stop them', () => {
+      const alpha = liveSession('Alpha');
+      reports(alpha, 'blocked');
+      bridgeNotify._deps.discordReading = () => { throw new Error('the gateway could not be read'); };
+      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 });
+      assert.deepEqual(notifications().map((x) => x.type), ['work-blocked']);
+      // And with an outage announced in the same pass, each kind counts its own.
+      Object.assign(bridgeNotify._deps, { discordReading: () => reading });
+      reads('down');
+      bridgeNotify.reconcile();
+      later(5 * MINUTE);
+      reports(alpha, 'working');
+      reports(alpha, 'blocked');
+      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 1 });
+    });
+
+    it('reads the helper\'s report from the gateway itself when nothing else is supplied', () => {
+      const gateway = require('../lib/bridge-gateway');
+      const gatewayNow = gateway._deps.now;
+      Object.assign(bridgeNotify._deps, { discordReading: realDeps.discordReading });
+      gateway._deps.now = () => clock;
+      gateway._reset();
+      try {
+        assert.equal(passes(6), 0, 'never reported');
+        const began = clock;
+        // The helper reports with every claim; each one is the report held.
+        const claim = (state) => gateway.recordDiscordReport({ state, since: state === 'ready' ? clock : began, fatalCloseCode: null });
+        claim('reconnecting');
+        let made = bridgeNotify.reconcile().gatewayOutage;
+        for (let i = 0; i < 5; i++) {
+          later(MINUTE);
+          claim('reconnecting');
+          made += bridgeNotify.reconcile().gatewayOutage;
+        }
+        assert.equal(made, 1);
+        assert.equal(notifications()[0].key, `notify:gateway-down:since:${began}`);
+        // The helper stops reporting: past the gateway's staleness limit the report says nothing.
+        later(gateway.DISCORD_REPORT_STALE_MS + 1000);
+        assert.equal(gateway.discordReading().reading, 'not-reported');
+        assert.equal(bridgeNotify.reconcile().gatewayOutage, 0);
+        claim('ready');
+        assert.equal(bridgeNotify.reconcile().gatewayOutage, 1);
+        assert.deepEqual(ours().map((x) => x.type), ['gateway-down', 'gateway-recovered']);
+      } finally {
+        gateway._deps.now = gatewayNow;
+        gateway._reset();
+      }
     });
   });
 
