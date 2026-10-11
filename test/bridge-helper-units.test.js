@@ -23,7 +23,7 @@ const config = require('../lib/bridge-helper/config');
 const { openState, peekState, nonceFor, StateError, StateWriteError } = require('../lib/bridge-helper/state');
 const { createBridgeClient, BridgeError, PATHS, TOKEN_HEADER, NONCE_HEADER } = require('../lib/bridge-helper/bridge-client');
 const { createDiscordRest, DiscordError } = require('../lib/bridge-helper/discord-rest');
-const { render, split, PART_MAX } = require('../lib/bridge-helper/outbound');
+const { render, split, gatewayReport, PART_MAX } = require('../lib/bridge-helper/outbound');
 
 const HELPER_TOKEN = `bht_${'a'.repeat(43)}`;
 const BOT_TOKEN = `${'B'.repeat(24)}.${'c'.repeat(6)}.${'d'.repeat(27)}`;
@@ -291,6 +291,30 @@ describe('bridge helper: its parts (#2031)', () => {
         leaseId: 'bol_aaaaaaaaaaaaaaaaaaaaaa', parts: ['300000000000000012', '300000000000000014'], partCount: 2
       }, 'an acknowledgement names every part, in order, and how many there are');
       assert.notEqual(tc.hits[1].headers[NONCE_HEADER], tc.hits[2].headers[NONCE_HEADER], 'every other write has a nonce of its own');
+    });
+
+    it('a claim carries the Gateway report as one field when it is given one, and nothing of it when it is not (#2272)', async () => {
+      const tc = await serve((req, res) => json(res, 200, { items: [], replayed: false }));
+      const client = createBridgeClient({ origin: tc.origin, token: HELPER_TOKEN });
+      const report = { state: 'reconnecting', since: '2026-10-11T05:03:00.000Z', fatalCloseCode: null };
+      await client.claim('claim-nonce-0000005');
+      await client.claim('claim-nonce-0000006', 5);
+      await client.claim('claim-nonce-0000007', undefined, report);
+      await client.claim('claim-nonce-0000008', 5, report);
+      assert.deepEqual(tc.hits.map((h) => JSON.parse(h.body)), [{}, { limit: 5 }, { discordGateway: report }, { limit: 5, discordGateway: report }]);
+    });
+
+    it('the report is the state, the time to count from, and the close code of a refusal only (#2272)', () => {
+      const status = { state: 'ready', since: '2026-10-11T05:00:02.000Z', notReadySince: null, fatalCloseCode: null, resumable: true, reconnectAttempts: 0 };
+      assert.deepEqual(gatewayReport(status), { state: 'ready', since: '2026-10-11T05:00:02.000Z', fatalCloseCode: null }, 'ready: since it became ready');
+      // Down: counted from when it stopped being ready, not from the attempt in hand.
+      assert.deepEqual(gatewayReport({ ...status, state: 'connecting', since: '2026-10-11T05:09:30.000Z', notReadySince: '2026-10-11T05:03:00.000Z', reconnectAttempts: 7 }),
+        { state: 'connecting', since: '2026-10-11T05:03:00.000Z', fatalCloseCode: null });
+      assert.deepEqual(gatewayReport({ ...status, state: 'fatal', since: '2026-10-11T05:03:00.000Z', notReadySince: '2026-10-11T05:03:00.000Z', fatalCloseCode: 4014 }),
+        { state: 'fatal', since: '2026-10-11T05:03:00.000Z', fatalCloseCode: 4014 });
+      // Stopped after a refusal: the gateway still remembers the code, and the report is of a stop.
+      assert.deepEqual(gatewayReport({ ...status, state: 'stopped', since: '2026-10-11T05:04:00.000Z', notReadySince: '2026-10-11T05:03:00.000Z', fatalCloseCode: 4014 }),
+        { state: 'stopped', since: '2026-10-11T05:03:00.000Z', fatalCloseCode: null });
     });
 
     it('follows no redirect: the token never reaches where one pointed', async () => {
