@@ -149,12 +149,18 @@ The current touch scroll shim for xterm.js works but has edge cases on iOS and A
 
 **First-run and install problems are the most valuable reports of all** — we cannot reproduce first-boot state on a machine that is already installed.
 
-Pull requests are still welcome, especially for documentation, typos, and small self-contained changes. Two things to know if you send one:
+**Pull requests can be opened by collaborators only.** That is a setting on this repository, so if you are not a collaborator, GitHub will not let you open one, however small the change. To offer a fix, describe it in an issue: what is wrong, why it happens, and the approach you would take. A report that leads to a fix is credited by name in the changelog.
 
-- **Open an issue first for anything non-trivial**, so we can agree on the approach before you invest the time.
+**A fix offered as a fork branch, or as code in an issue comment, is not picked up either.** Outside code is never merged, fetched or run here, whatever route it arrives by. [Security & Contribution Guidelines](#security--contribution-guidelines) says why, and how a contribution is audited and rebuilt. What does help is a reproducible report: [Reporting Issues](#reporting-issues) lists what to include.
+
+Two more things to know:
+
+- **If you are a collaborator, open an issue first for anything non-trivial**, so we can agree on the approach before you invest the time.
 - **Prefer describing a workaround in the issue over documenting it in the repo.** A documented workaround has to be removed again once the underlying bug is fixed, and it can outlive the bug.
 
 ## Making Changes
+
+These steps are for collaborators, who are the only people able to open a pull request here. If you are not a collaborator, [Issues Are Preferred Over Pull Requests](#issues-are-preferred-over-pull-requests) says what to do instead.
 
 1. Create a branch from `main`
 2. Make your changes
@@ -226,6 +232,13 @@ TangleClaw launches AI sessions that run with real permissions on real machines,
 pull request is audited as a potential supply-chain vector. None of this is a judgement about you —
 it is the same process for everyone, and it is designed so that a good contribution still gets in.
 
+Pull requests can be opened by collaborators only (see
+[Issues Are Preferred Over Pull Requests](#issues-are-preferred-over-pull-requests)), so where a
+point below speaks of a pull request, it is a collaborator's. If you are not a collaborator, your
+contribution is the issue you write. Points 2 and 3 hold for a fix described there as they do for a
+pull request, and the caution behind every point is why code offered some other way, as a fork branch
+or a patch in a comment, is not fetched or run.
+
 1. **Scope.** One issue per PR, and nothing outside it. A diff that touches files unrelated to the
    issue is closed regardless of quality: from the outside, scope overrun and probing look identical.
 
@@ -233,9 +246,12 @@ it is the same process for everyone, and it is designed so that a good contribut
    diffs. We do not check out contributor branches or run contributor code on our own machines.
    (CI does run your tests, in an isolated runner with a read-only token and no access to secrets.)
    If your logic is sound, we reconstruct the fix in a clean commit and credit you by name.
+   A fix described in an issue is treated the same way: a report that leads to a fix is credited
+   by name in the changelog.
 
 3. **Because we reconstruct it, your explanation is worth more than your code.** The most valuable
-   pull request describes the bug precisely, says why it happens, and explains the approach. A clear
+   contribution, whether a collaborator's pull request or an issue, describes the bug precisely,
+   says why it happens, and explains the approach. A clear
    description gets reconstructed and shipped. A large, clever, unexplained diff does not, however
    good it is.
 
