@@ -1027,19 +1027,93 @@ describe('bridge notifications (#2031)', () => {
       assert.deepEqual(ours().map((x) => x.key), [`notify:gateway-down:since:${began}`, `notify:gateway-recovered:since:${began}`]);
     });
 
-    it('announces no recovery for an outage whose notice was let go uncollected, and does not announce that outage again', () => {
-      const began = announcedOutage();
+    /**
+     * The limit for an uncollected outage notice passes, and it is let go.
+     * @returns {void}
+     */
+    function noticeLetGo() {
       later(7 * DAY + MINUTE);
       assert.equal(bridgeStore.expire({ now: clock }).outbound, 1, 'precondition: the notice was let go');
+    }
+
+    it('announces once more, with its first beginning and its real length, an outage still going on after its notice was let go uncollected', () => {
+      const began = announcedOutage();
+      const first = ours()[0];
       reads('down', { since: began });
-      assert.equal(passes(10), 0, 'its key still stands');
+      noticeLetGo();
+      assert.equal(bridgeNotify.reconcile().gatewayOutage, 1, 'the helper is back and still not connected: the operator has been told nothing yet');
+      assert.equal(ours().length, 2);
+      assert.notEqual(ours()[1].key, first.key, 'a new notice, not the one that was let go');
+      assert.ok(ours()[1].key.endsWith(`:since:${began}`));
+      assert.equal(ours()[1].text, 'The Discord helper lost its connection to Discord at 14:00 PDT on 2026-10-11 and has not had one for 168 hours 6 minutes. '
+        + 'It is still trying. It can still post here, but it is not receiving what you send.');
+      assert.equal(passes(60), 0, 'once: the new notice is the outage\'s notice now');
+      bridgeNotify._reset();
+      assert.equal(passes(10), 0, 'and not again after a restart');
+      // Let go a second time, still down: once more, and not sooner than the limit.
+      noticeLetGo();
+      assert.equal(bridgeNotify.reconcile().gatewayOutage, 1);
+      assert.equal(passes(60), 0);
+      assert.equal(new Set(ours().map((x) => x.key)).size, 3);
+    });
+
+    it('says nothing when the connection came back before or after the notice was let go', () => {
+      const began = announcedOutage();
+      // Back while the notice still waited, with the helper unable to post either notice.
       reads('connected');
-      assert.equal(passes(10), 0, 'a notice nobody saw has nothing to be followed by');
+      assert.equal(bridgeNotify.reconcile().gatewayOutage, 1);
+      later(7 * DAY + MINUTE);
+      assert.equal(bridgeStore.expire({ now: clock }).outbound, 2, 'precondition: both were let go');
+      assert.equal(passes(10), 0);
+      assert.equal(ours().length, 2);
+
+      // Back only after the notice was let go: a notice nobody saw has nothing to be followed by.
+      store.getDb().prepare('DELETE FROM bridge_outbound').run();
+      bridgeNotify._reset();
+      reads('never-reported');
+      const second = announcedOutage();
+      reads('not-reported', { since: second, state: 'reconnecting' });
+      noticeLetGo();
+      reads('connected');
+      assert.equal(passes(10), 0);
       assert.equal(ours().length, 1);
-      // What was let go holds nothing open: the next outage is announced.
+      // What was let go holds nothing open: the next outage is announced as its own.
+      const third = clock;
       reads('down');
       bridgeNotify.reconcile();
       assert.equal(passes(5), 1);
+      assert.equal(ours()[1].key, `notify:gateway-down:since:${third}`);
+      assert.ok(began < second && second < third);
+    });
+
+    it('follows an outage announced again with its recovery, counted from its first beginning', () => {
+      const began = announcedOutage();
+      reads('down', { since: began });
+      noticeLetGo();
+      assert.equal(bridgeNotify.reconcile().gatewayOutage, 1);
+      helperPosts();
+      later(30 * MINUTE);
+      reads('connected');
+      assert.equal(bridgeNotify.reconcile().gatewayOutage, 1);
+      assert.deepEqual(ours()[2], {
+        type: 'gateway-recovered', key: `notify:gateway-recovered:since:${began}`,
+        text: 'The Discord helper is connected to Discord again, since 14:36 PDT on 2026-10-18. It was not connected for 168 hours 36 minutes. '
+          + 'Anything you sent here in that time may not have arrived: please send it again.',
+        label: 'TangleClaw', routeId: null
+      });
+      assert.equal(passes(30), 0);
+    });
+
+    it('announces a helper restarted after its notice was let go from the beginning it now reports, after the usual wait', () => {
+      announcedOutage();
+      noticeLetGo();
+      // The server cannot tell this from a new outage: it has no notice the operator saw to hold it to.
+      const restarted = clock;
+      reads('down', { state: 'connecting' });
+      assert.equal(bridgeNotify.reconcile().gatewayOutage, 0);
+      assert.equal(passes(4), 0);
+      assert.equal(passes(1), 1);
+      assert.equal(ours()[1].key, `notify:gateway-down:since:${restarted}`);
     });
 
     it('announces once more an outage still open after retention has removed its posted notice, as a reminder', () => {

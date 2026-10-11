@@ -706,9 +706,14 @@ other four reads it, so nothing is raised while the bridge is disabled.
   announced until a report says connected. A helper that has stopped altogether raises
   nothing, because every notice is posted by the helper; that is read on the page and in
   `tc bridge status`.
-- **A notice let go uncollected was never seen.** A `gateway-down` nobody collected for 7 days
-  holds no outage open, so no recovery follows it. Its row keeps its key, so the same outage
-  is not announced again while the row is kept; a later outage is.
+- **A notice let go uncollected was never seen.** Letting a `gateway-down` go after 7 days
+  ends that announcement, not the outage. No recovery follows it, and if the connection is
+  back by then nothing is sent. If the helper still reports the same outage afterwards, it is
+  announced again as a new notice, with the beginning it always had and its real length so
+  far, and from then on behaves like any other: one notice, then its recovery. That is the
+  helper that could not post for a week, can again, and still has no connection. It cannot
+  repeat faster than the 7-day limit. A helper that was restarted in the meantime reports its
+  own start as the beginning, and is announced from there after the usual five minutes.
 - **An outage still open after 30 days is announced once more.** Retention removes a posted
   notice 30 days on, and with it the record that the outage was announced. That second notice
   is intended, as a reminder. An outage that ends after its notice was removed has no recovery
