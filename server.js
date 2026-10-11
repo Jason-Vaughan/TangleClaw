@@ -12713,6 +12713,19 @@ if (require.main === module) {
     log.warn('Status-bar refresh failed', { error: err.message });
   }
 
+  // Say so when tmux's global environment holds a launch identity variable
+  // (#2268). A launch decides each of them itself, so none reaches a pane
+  // TangleClaw creates; the operator is told because every other session on
+  // that tmux server inherits them. Read once, here: the answer is carried on
+  // `GET /api/server-info`, which is polled too often to run tmux. Before
+  // listen so the first poll already has it, bounded by tmux's read timeout,
+  // and non-throwing, so a tmux that does not answer cannot stop the start.
+  try {
+    require('./lib/launch-identity').reportGlobalIdentity({ read: tmux.readGlobalIdentityKeys, log, setNotice: serverInfo.setLaunchIdentityNotice });
+  } catch (err) {
+    log.warn('Launch identity report failed', { error: err.name });
+  }
+
   // Pin the INSTALLED ttyd job to its configured interface (#710). install.sh
   // writes that plist once and an update is only a `git checkout`, so without
   // this an existing machine keeps serving a `--writable` terminal — one that

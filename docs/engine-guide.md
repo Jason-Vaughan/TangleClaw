@@ -924,6 +924,34 @@ This covers launches made by a server that has the change; a session already run
 started with until it is launched again. Nothing is removed from tmux's global environment, which
 belongs to every user of that tmux server.
 
+**What is left in tmux's global environment is reported, not removed (#2268).** When the server
+starts it reads that environment once (`tmux show-environment -g`, which starts no tmux server and
+changes nothing; `lib/tmux.js#readGlobalIdentityKeys`). If it holds any of the four, the server
+logs one warning and `GET /api/server-info` carries `launchIdentityNotice`:
+
+| Field | What it holds |
+|---|---|
+| `state` | `found`, or `could-not-check` when tmux did not answer the read |
+| `variables` | The names found, in the list's order. Never a value |
+| `removeCommands` | One `tmux set-environment -g -u <NAME>` for each name |
+| `observedAt` | When the read was made, as an ISO time |
+| `message` | The same facts as one sentence for a person |
+
+The field is `null` when the environment holds none of the four, and when no tmux server is running.
+A read that tmux did not answer in time is `could-not-check`, with no names: it does not delay the
+start beyond tmux's read timeout, and it is not a clean answer. Neither the log line nor the field
+ever holds the value of a variable; a launch id is what the server accepts as a caller's binding. The
+read is made once, so a variable removed afterwards keeps its notice until the server restarts, which
+is why the notice carries its time. No pane this server launches inherits a variable the notice
+names. Removing one is the operator's choice, with the command the notice gives.
+
+`tc`'s `PANE_IDENTITY_MISMATCH` refusal names this cause in one case: every variable that differs is
+one the shell holds and its pane recorded none for. That is what a pane launched by a TangleClaw
+from before this change looks like while tmux's global environment holds a role or a project id. The
+refusal then adds that launching again fixes it on a TangleClaw that sets every launch identity
+variable at launch, and that on one that does not, the operator first runs the
+`tmux set-environment -g -u <NAME>` it prints for each variable. Any other mismatch reads as before.
+
 **Sessions that were already running (#2233).** The launch check applies to launches made after it
 was installed. To see how the sessions running now were started, run `tc sessions isolation` from
 any launched pane, or read `GET /api/launch/isolation`. It reads the command tmux recorded for each

@@ -295,6 +295,57 @@ describe('tc: the pane\'s own launch identity (#2233)', () => {
       assert.match(text, /Do not act from this pane/);
       assert.doesNotMatch(text, /export /, 'it must not teach the shell to rewrite its identity');
     });
+
+    describe('the likely cause, tmux\'s global environment (#2268)', () => {
+      const CAUSE = /Likely cause: tmux's global environment/;
+      const render = (differences) => verbs.renderPaneMismatch({ verdict: 'mismatch', reason: null, differences });
+
+      it('is named when every difference is a variable this shell holds and the pane recorded none for', () => {
+        const text = render([
+          { key: 'TANGLECLAW_PROJECT_ID', process: '74', pane: null },
+          { key: 'TANGLECLAW_ROLE', process: 'master', pane: null }
+        ]);
+        assert.match(text, CAUSE);
+        assert.match(text, /Launching again fixes it on a TangleClaw that sets every launch identity variable at launch/);
+        assert.match(text, /the operator runs this first: tmux set-environment -g -u TANGLECLAW_PROJECT_ID ; tmux set-environment -g -u TANGLECLAW_ROLE\n$/);
+        // Everything the refusal said before is still there, in the same words.
+        assert.match(text, /TANGLECLAW_ROLE: this shell has master, the pane recorded \(unset\)/);
+        assert.match(text, /Nothing was sent to TangleClaw\. Do not act from this pane\./);
+        assert.doesNotMatch(text, /export /);
+      });
+
+      it('names the command for the one variable that differs, and for no other', () => {
+        const text = render([{ key: 'TANGLECLAW_WORKSPACE_ID', process: 'p-1234', pane: null }]);
+        assert.match(text, /runs this first: tmux set-environment -g -u TANGLECLAW_WORKSPACE_ID\n$/);
+        assert.equal(text.split('set-environment').length - 1, 1);
+      });
+
+      for (const [label, differences] of [
+        ['the pane recorded a different value', [{ key: 'TANGLECLAW_LAUNCH_ID', process: 'L-aaa', pane: 'L-bbb' }]],
+        ['this shell lost a variable the pane recorded', [{ key: 'TANGLECLAW_LAUNCH_ID', process: null, pane: 'L-bbb' }]],
+        ['one difference has that shape and another does not', [
+          { key: 'TANGLECLAW_ROLE', process: 'master', pane: null },
+          { key: 'TANGLECLAW_LAUNCH_ID', process: 'L-aaa', pane: 'L-bbb' }
+        ]],
+        ['there is no difference to explain', []]
+      ]) {
+        it(`is not named when ${label}`, () => {
+          const text = render(differences);
+          assert.doesNotMatch(text, CAUSE);
+          assert.doesNotMatch(text, /set-environment/);
+          assert.match(text, /Tell them both values above\.\n$/, 'the refusal ends where it always did');
+        });
+      }
+
+      it('is what a real judgement of an inherited role leads to', () => {
+        const check = verbs.judgePaneIdentity({
+          env: { TANGLECLAW_LAUNCH_ID: 'L-1', TANGLECLAW_PROJECT_ID: '14', TANGLECLAW_ROLE: 'master' },
+          pane: { read: 'ok', vars: { TANGLECLAW_LAUNCH_ID: 'L-1', TANGLECLAW_PROJECT_ID: '14', TANGLECLAW_ROLE: '' } }
+        });
+        assert.equal(check.verdict, 'mismatch');
+        assert.match(verbs.renderPaneMismatch(check), /runs this first: tmux set-environment -g -u TANGLECLAW_ROLE\n$/);
+      });
+    });
   });
 });
 
