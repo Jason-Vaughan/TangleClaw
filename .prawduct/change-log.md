@@ -35,6 +35,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-10 — #2284: the setup wizard no longer calls every server notice a skipped item
+
+<!-- prawduct: type=fix | scope=2284-setup-wizard-warning-wording -->
+#2284 Chunk 01, the issue's only chunk. Branch `fix/2284-setup-wizard-notice-wording`, from `origin/main` `dac01887`.
+
+Visual change: yes
+
+**Why.** When `POST /api/setup/complete` answers notices, the wizard's confirm step wrote "Setup finished, but N item(s) were skipped:" in front of them. Only two of the route's notices are skipped items. The others say the Master's launch mode was reset, a project failed to attach, the ingress was left alone, or a login was saved without being enforced, so an operator whose launch mode had just been reset was told an item had been skipped and nothing else.
+
+**What changed.**
+- `public/setup.js`: new `_noticesSentence(warnings)` words the sentence, and the confirm step writes what it returns into `#setupCompleteError`. The sentence is "Setup finished. One thing to know: …" for one notice and "Setup finished. N things to know: …" for more, with the notices joined as before. The comment above the call no longer says the list is what the server skipped.
+- New `test/setup-wizard-notice-wording.test.js`.
+
+**Decisions.**
+- [DECISION: the heading stops claiming a kind; the server does not label kinds. | Ruled `2284 heading` by TangleClaw-Builder1 on the Operator's instruction: "A wording fix; no change to the route's answer." `server.js` is not touched.]
+- [DECISION: the function counts only non-empty strings, as `_warningsBlock` does for the same list on the later screens. | The count then equals the number of notices shown; the old sentence counted every entry and joined whatever was there.]
+- [DECISION: `public/sw.js` is not changed. | `setup.js` is a network-first path, and `scripts/cache-bump-guard.js --base origin/main` answers "No cache-first asset changed in this diff".]
+- [DECISION: `docs/user-guide.md` is not changed. | It does not quote the old sentence.]
+- [DECISION: no browser run, on a scratch server or on the live install. | Ruled `2284 tests only`: "Nobody re-runs setup on the live install for a screenshot." The Integrator's release adds that no scratch server is started on this host. The tests drive the wizard's real submit function and read the element it writes; the queue entry is accepted on that reason, not verified.]
+
+**Tests.** Each drives `wizardComplete` from `public/setup.js` against a stubbed response and reads `#setupCompleteError`. A reset notice alone is shown, in the singular, with no "skipped" anywhere. A skipped project still says so in its own words under a heading that does not. A reset and a skipped item together count 2 and keep the server's order. An already-registered project, a failed attach, an ingress reason and the saved-credential notice are none of them headed as skipped. An empty list, a missing one, a string, an array-like object and a list of non-strings write nothing and leave the element hidden. The count is of the notices shown. A notice carrying markup arrives as characters. The old sentence and the old comment are gone from the file. The later screens' "Also worth knowing:" block renders as before. Four deliberate breaks (the heading saying "skipped", `innerHTML` for `textContent`, the filter removed, the singular removed) each failed cases and were restored byte-identical.
+
+**Not seen in a browser.** The confirm step with a notice on it, at any width; the sentence's wrapping at 375 and 320 pixels.
+
 ## 2026-10-10 — #1796: the tracked `CLAUDE.md` block is held to what the generator writes
 
 <!-- prawduct: type=chore | scope=1796-claude-md-block-parity -->
