@@ -18,6 +18,11 @@
  * shape that wedged this route on a TCC-protected directory, #859); the parent
  * route compares data only and drops marked entries. Identity, never name — a
  * clone of TangleClaw elsewhere stays attachable.
+ *
+ * Every directory scanned here is one this file creates. The walk costs a git
+ * probe per subdirectory against one wall-clock budget, so scanning the folder
+ * the checkout happens to sit in made the result a function of how many
+ * neighbours the host holds and how loaded it is (#1999).
  */
 
 const { describe, it, before, after } = require('node:test');
@@ -35,13 +40,20 @@ const projects = require('../lib/projects');
 // What lib/projects computes for itself: the checkout this process runs from.
 const REPO_ROOT = fs.realpathSync(path.join(__dirname, '..'));
 
+// What a walk of the fixture parent must list: its real, non-hidden
+// subdirectories and nothing else.
+const FIXTURE_LISTING = ['TangleClaw', 'notes', 'their-app'];
+
 describe('setup scan excludes the running install (#708)', () => {
   let tmpDir;
+  let fixtureParent;
+  let standInRealPath;
 
   before(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-own-install-'));
     store._setBasePath(path.join(tmpDir, 'tangleclaw'));
     store.init();
+    ({ fixtureParent, standInRealPath } = makeFixtureParent(tmpDir));
   });
 
   after(() => {
@@ -68,6 +80,71 @@ describe('setup scan excludes the running install (#708)', () => {
     }
   }
 
+  /**
+   * Build the parent directory the child-level cases walk: a stand-in for the
+   * running checkout, a neighbouring project, a plain directory, and two
+   * entries the walk must skip (a hidden directory and a file).
+   *
+   * The child is told which realpath is "us" by argument and compares nothing
+   * else, so a directory made here can stand for the checkout. Its realpath is
+   * returned resolved because the temporary directory is itself reached
+   * through a symlink on macOS: the unresolved spelling would match nothing.
+   *
+   * @param {string} root - Existing directory to build under.
+   * @returns {{fixtureParent: string, standInRealPath: string}}
+   */
+  function makeFixtureParent(root) {
+    const parent = path.join(root, 'fixture-parent');
+    for (const name of ['TangleClaw', 'their-app']) {
+      fs.mkdirSync(path.join(parent, name), { recursive: true });
+      fs.writeFileSync(path.join(parent, name, 'package.json'), '{}\n');
+    }
+    fs.mkdirSync(path.join(parent, 'notes'));
+    fs.mkdirSync(path.join(parent, '.cache'));
+    fs.writeFileSync(path.join(parent, 'README.txt'), 'not a directory\n');
+    return {
+      fixtureParent: parent,
+      standInRealPath: fs.realpathSync(path.join(parent, 'TangleClaw'))
+    };
+  }
+
+  /**
+   * Run the real scan route in a separate node process whose own checkout is
+   * `checkout`, and return its answer.
+   *
+   * The route fixes "the checkout this server runs from" when its module
+   * loads, so the only way to scan the running checkout's parent without
+   * scanning THIS checkout's parent is to be a process that runs from
+   * somewhere else. The child gets its own data directory and none of this
+   * session's launch identity or tmux, so it reads and writes nothing of the
+   * host's.
+   *
+   * @param {string} checkout - A TangleClaw checkout to run the route from.
+   * @param {string} directory - The directory that process is asked to scan.
+   * @returns {{ok: boolean, projects?: object[], error?: string}}
+   */
+  function scanFromCheckout(checkout, directory) {
+    const env = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (key === 'TMUX' || key === 'TMUX_PANE' || key.startsWith('TANGLECLAW_')) continue;
+      env[key] = value;
+    }
+    env.TANGLECLAW_HOME = path.join(tmpDir, 'chain-home');
+    const script = [
+      "const projects = require(process.argv[1]);",
+      "projects.scanDirectoryForProjects(process.argv[2]).then((result) => {",
+      "  require('node:fs').writeSync(1, JSON.stringify(result));",
+      "  process.exit(0);",
+      "}, (err) => { console.error(err); process.exit(1); });"
+    ].join('\n');
+    const out = execFileSync(
+      process.execPath,
+      ['-e', script, path.join(checkout, 'lib', 'projects.js'), directory],
+      { env, cwd: checkout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000 }
+    );
+    return JSON.parse(out);
+  }
+
   it('passes the install identity to the child and drops what the child marked', async () => {
     let sentArgs = null;
     const result = await withScanner(
@@ -91,18 +168,19 @@ describe('setup scan excludes the running install (#708)', () => {
   });
 
   it('child marks the running checkout by identity, even through a symlinked route', async () => {
-    // The child probes realpath under its own budget. Reach the repo's parent
-    // through a symlink so every entry path is spelled differently from its
-    // resolved identity — the mark must land on resolution, not spelling.
+    // The child probes realpath under its own budget. Reach the parent through
+    // a symlink so every entry path is spelled differently from its resolved
+    // identity — the mark must land on resolution, not spelling.
     const link = path.join(tmpDir, 'route');
-    fs.symlinkSync(path.dirname(REPO_ROOT), link);
+    fs.symlinkSync(fixtureParent, link);
 
     const { projects: entries } = await HANDLERS.scanEntries({
-      dir: link, budgetMs: 30000, ownInstallRealPath: REPO_ROOT
+      dir: link, budgetMs: 30000, ownInstallRealPath: standInRealPath
     });
 
-    const me = entries.find((e) => e.name === path.basename(REPO_ROOT));
-    assert.ok(me, 'the checkout must appear in the raw child listing');
+    assert.deepEqual(entries.map((e) => e.name).sort(), FIXTURE_LISTING,
+      'the walk must list every real subdirectory, and only those');
+    const me = entries.find((e) => e.name === 'TangleClaw');
     assert.equal(me.isOwnInstall, true, 'the child must mark the running checkout');
     for (const other of entries.filter((e) => e !== me)) {
       assert.equal(other.isOwnInstall, false, `${other.name} must not be marked`);
@@ -111,8 +189,11 @@ describe('setup scan excludes the running install (#708)', () => {
 
   it('child marks nothing when no identity was provided', async () => {
     const { projects: entries } = await HANDLERS.scanEntries({
-      dir: path.dirname(REPO_ROOT), budgetMs: 30000
+      dir: fixtureParent, budgetMs: 30000
     });
+
+    assert.deepEqual(entries.map((e) => e.name).sort(), FIXTURE_LISTING,
+      'the walk must list every real subdirectory, and only those');
     for (const e of entries) {
       assert.equal(e.isOwnInstall, false,
         'an omitted ownInstallRealPath must mark nothing, not everything');
@@ -133,22 +214,24 @@ describe('setup scan excludes the running install (#708)', () => {
       'a clone elsewhere is not the running install and must be offered');
   });
 
-  it('never offers the running checkout when scanning its parent (full chain)', async () => {
+  it('never offers the running checkout when scanning its parent (full chain)', () => {
     // The reported install shape verbatim: the operator names the directory
-    // their clone sits in. Whatever else that directory holds, the running
-    // checkout itself must be absent from the answer.
-    const result = await projects.scanDirectoryForProjects(path.dirname(REPO_ROOT));
+    // their clone sits in. Here the running checkout is a clone made beside a
+    // neighbouring project, and the scan runs in a process started from that
+    // clone, so its parent is a directory of known contents.
+    const parent = path.join(tmpDir, 'chain-parent');
+    const checkout = path.join(parent, 'TangleClaw');
+    fs.mkdirSync(path.join(parent, 'their-app'), { recursive: true });
+    fs.writeFileSync(path.join(parent, 'their-app', 'package.json'), '{}\n');
+    cloneRepo(`file://${REPO_ROOT}`, checkout, ['--depth', '1']);
+    // A clone holds the last commit. Lay the working tree's lib/ over it so
+    // the code that answers is the code under test.
+    fs.cpSync(path.join(REPO_ROOT, 'lib'), path.join(checkout, 'lib'), { recursive: true });
 
-    if (!result.ok) {
-      // A parent directory the scanner cannot finish (huge, slow disk) proves
-      // nothing either way — but it must fail honestly, not offer the install.
-      assert.equal(typeof result.error, 'string');
-      return;
-    }
-    const resolved = result.projects.map((p) => {
-      try { return fs.realpathSync(p.path); } catch { return p.path; }
-    });
-    assert.equal(resolved.includes(REPO_ROOT), false,
-      'the running checkout offered itself from its own parent directory');
+    const result = scanFromCheckout(checkout, parent);
+
+    assert.equal(result.ok, true, `the scan of a two-entry parent must finish: ${result.error}`);
+    assert.deepEqual(result.projects.map((p) => p.name), ['their-app'],
+      'the neighbour is offered; the running checkout is not');
   });
 });
