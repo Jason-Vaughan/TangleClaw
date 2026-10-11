@@ -3365,6 +3365,12 @@ describe('bridge API: the round trip (#2031)', () => {
           assert.deepEqual(await readings(), [stale, stale]);
           assert.equal(await tcLine(), `Discord connection: NOT REPORTED since 2026-10-11T05:00:10.000Z: the helper last said ${report.state} and has not reported since. `
             + 'It may not be running; whether Discord is connected is not known.');
+          // Switched off, the bridge stops reading reports, so going quiet is its own doing and the line says so.
+          assert.equal((await asOperator('POST', '/api/bridge/operator/disable')).status, 200);
+          const off = (await tc(['bridge', 'status'])).stdout.split('\n').find((line) => line.startsWith('Discord connection: '));
+          assert.ok(off.startsWith('Discord connection: NOT REPORTED since 2026-10-11T05:00:10.000Z: ')
+            && off.endsWith(' The bridge is disabled, and a disabled bridge does not read the helper\'s reports: this says nothing about the helper.'), off);
+          assert.equal((await asOperator('POST', '/api/bridge/operator/enable')).status, 200);
         });
         // The next report is of now again.
         await at('2026-10-11T05:10:00.000Z', async () => {
