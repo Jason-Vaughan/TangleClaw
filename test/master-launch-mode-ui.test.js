@@ -550,15 +550,50 @@ describe('#2197 — the Master settings modal and an engine change', () => {
       }
     });
 
-    it('reads null as no engine set: a recorded mode is foreign to it, an unrecorded one is not', () => {
+    it('reads null as no engine set: the engine compared is the resolved one, and nothing is sent untouched', () => {
+      // No pin and no default engine. The server runs a stored mode on the
+      // engine it resolves when the mode was recorded for that engine, and
+      // starts in default otherwise; the page's own default engine is not read.
       const none = { engine: null, configuredEngine: null, resolvedEngine: 'codex', launchModes: offeredBy('codex') };
-      const recorded = view(settingsOn('codex', 'bypassPermissions', { ...none, launchModeEngine: 'claude', resolvedLaunchMode: 'default' }), '', 'claude');
-      assert.equal(recorded.engineId, null, 'the page\'s own default engine is not read in its place');
-      assert.deepEqual(JSON.parse(JSON.stringify(recorded.foreign)), { mode: 'bypassPermissions', engine: 'claude' });
-      assert.equal(recorded.send, true);
-      const unrecorded = view(settingsOn('codex', 'bypassPermissions', { ...none, launchModeEngine: null, resolvedLaunchMode: 'default' }), '', 'claude');
-      assert.equal(unrecorded.foreign, null);
-      assert.equal(unrecorded.send, false);
+      const runs = view(settingsOn('codex', 'fullAuto', { ...none, launchModeEngine: 'codex' }), '', 'claude');
+      assert.equal(runs.engineId, 'codex');
+      assert.equal(runs.foreign, null, 'the mode is running: it is not called foreign');
+      assert.equal(runs.selected, 'fullAuto');
+      assert.equal(runs.send, false);
+      const idle = view(settingsOn('codex', 'bypassPermissions', { ...none, launchModeEngine: 'claude', resolvedLaunchMode: 'default' }), '', 'claude');
+      assert.deepEqual(JSON.parse(JSON.stringify(idle.foreign)), { mode: 'bypassPermissions', engine: 'claude' });
+      assert.equal(idle.selected, 'default');
+      assert.equal(idle.send, false, 'a stated null names no engine, so nothing is sent on it');
+    });
+
+    it('agrees with the server on whether a stored mode runs when no engine is set', () => {
+      // The reader against `_masterRuntime` itself, for each engine the mode
+      // could be recorded for, with only Codex installed and nothing set.
+      const realEngines = require('../lib/engines');
+      const saved = store.config.load();
+      const list = ENGINE_IDS.map((id) => ({ id, available: id === 'codex' }));
+      const tmuxLib = { probeSession: () => ({ live: false, answered: true, cause: null }) };
+      try {
+        for (const recordedFor of ['codex', 'claude']) {
+          store.config.save({
+            ...saved, defaultEngine: null,
+            master: { accessLevel: 'read-only', engine: null, launchMode: 'bypassPermissions', launchModeEngine: recordedFor, scope: 'all', autoStart: false }
+          });
+          const { settings } = master.getMasterStatus({
+            home: tmpDir, tmuxLib,
+            enginesLib: { resolveDefaultEngine: (config) => realEngines.resolveDefaultEngine(config, list) }
+          });
+          assert.equal(settings.configuredEngine, null, 'this fixture must leave no engine set, or it proves nothing');
+          assert.equal(settings.resolvedEngine, 'codex');
+          const v = view(settings, '', 'claude');
+          const running = settings.resolvedLaunchMode === 'bypassPermissions';
+          assert.equal(running, recordedFor === 'codex', `the server's own answer for a mode recorded for ${recordedFor}`);
+          assert.equal(v.foreign === null, running, `recorded for ${recordedFor}: foreign exactly when it does not run`);
+          assert.equal(v.send, false);
+        }
+      } finally {
+        store.config.save(saved);
+      }
     });
 
     it('reads what the server\'s own status payload states, while another engine stands in', () => {

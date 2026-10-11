@@ -4767,9 +4767,10 @@
    * missing one.
    *
    * Which engine is set is the server's to say: `settings.configuredEngine`.
-   * A payload without that key comes from a server that does not state it, and
-   * the page then reads the engine from the pin, else its own copy of the
-   * config, else the resolved engine.
+   * Null there means none is set, and the engine compared is then the one the
+   * server resolved. A payload without that key comes from a server that does
+   * not state it, and the page then reads the engine from the pin, else its
+   * own copy of the config, else the resolved engine.
    *
    * @param {object|null} settings - `status.settings` from `GET /api/master/status`.
    * @param {object[]} engines - The picker roster (`state.engines`).
@@ -4795,13 +4796,16 @@
     const s = settings || {};
     const storedPin = s.engine || '';
     const followed = defaultEngine || null;
-    // The server's statement of which engine is set, when the payload has
-    // one; null there means no engine is set at all. Without the key: the pin,
-    // else the page's default engine, else the engine the server resolved, the
-    // only reading left.
-    const stated = Object.prototype.hasOwnProperty.call(s, 'configuredEngine');
-    const storedEngine = stated
-      ? (s.configuredEngine || null)
+    // The server's statement of which engine is set, when the payload makes
+    // one. Null there means no engine is set at all: the server then runs a
+    // stored mode on whichever engine it resolves, when the mode was recorded
+    // for that engine, so the resolved engine is the one to compare. Without
+    // the key: the pin, else the page's default engine, else the resolved
+    // engine, the only reading left.
+    const hasKey = Object.prototype.hasOwnProperty.call(s, 'configuredEngine');
+    const stated = hasKey && Boolean(s.configuredEngine);
+    const storedEngine = hasKey
+      ? (s.configuredEngine || s.resolvedEngine || null)
       : (storedPin || followed || s.resolvedEngine || null);
     const engineId = pin === storedPin ? storedEngine : (pin || followed);
     const moved = pin !== storedPin && (!engineId || engineId !== storedEngine);
@@ -4831,7 +4835,8 @@
       // and a control that already shows `default` would never send it.
       //
       // Only on the server's own word for which engine is set: the engine it
-      // states, or a pin. Without either the engine above is this page's
+      // states, or a pin. A stated null names no engine, so it is no such
+      // word. Without either the engine above is this page's
       // reading, from a copy of the config that can be stale or absent or from
       // an engine that may be standing in, and a wrong reading would call a
       // mode foreign that is validly stored and send `default` over it.
