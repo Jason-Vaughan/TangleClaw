@@ -46,7 +46,7 @@ Visual change: yes
 
 **What changed.**
 - `server.js`: `_operatorProofOf(req)` answers the proof behind a request already admitted as the operator's: `operator-verified` for an `armed` gate, a session and that session's CSRF token on the request; `open-install-unverified` for everything else. The PATCH handler records its word as the decision's `decidedBy`. `_requireOperatorWrite` returns the same function's answer at its two successful ends, so the clear and the decision cannot disagree; what it refuses, and in what order, is unchanged. Nothing else in the file.
-- `lib/projects.js`: JSDoc and one comment say what `recoveryDecisionBy` now holds. No logic change: the response, the activity event and the log line already carried whatever word arrived.
+- `lib/projects.js`, `lib/store.js`: JSDoc and one comment say what `recoveryDecisionBy` and `recordDecision`'s argument now hold. No logic change: the response, the activity event and the log line already carried whatever word arrived.
 - `public/ui.js`: `RECOVERY_DECISION_PROOF_READOUT` words each proof, and `projectRecoveryReadoutHtml` prints it whatever the login's state is now: "by a signed-in operator", or "while TangleClaw's login was not in force, by a request with the dashboard's shape: nobody was identified", each followed by the recorded word. Any other word takes the sentence the panel had before.
 - `docs/adr/0017-phased-launch.md` (R3's sentence about `open-install-unverified` is now true of the code; the open question is as written), `docs/configuration-reference.md` (the PATCH and GET rows), `docs/user-guide.md`, `docs/engine-guide.md`.
 
