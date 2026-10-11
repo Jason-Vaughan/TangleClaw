@@ -2534,9 +2534,145 @@
         onOpenError(api.lastError || 'Master settings unavailable');
         return;
       }
-      renderMasterSettingsBody(status.settings, (groupsData && groupsData.groups) || []);
+      showMasterSettings(status.settings, (groupsData && groupsData.groups) || []);
       document.getElementById('masterSettingsModal').classList.add('open');
       loadMasterRules();
+    }
+
+    // The settings the open form was rendered from. The launch-mode control is
+    // rendered again when the engine dropdown moves and after a save, and both
+    // need what is stored rather than what the form shows.
+    let shown = null;
+
+    /**
+     * Render the form and remember the settings it shows.
+     * @param {object} s - status.settings from GET /api/master/status
+     * @param {object[]} groups - Project groups for the scope select
+     */
+    function showMasterSettings(s, groups) {
+      shown = s;
+      renderMasterSettingsBody(s, groups);
+    }
+
+    /**
+     * The launch-mode control, for the engine the engine dropdown names.
+     *
+     * One renderer for every moment the control is drawn: on open, when the
+     * engine dropdown moves, and after a save. A launch mode is a choice about
+     * one engine, so the control lists that engine's modes and selects the
+     * stored mode only where it was chosen for that engine.
+     *
+     * For the stored engine the list is the server's (`s.launchModes`), not one
+     * derived here: a second answer to which modes exist is how a picker comes
+     * to offer a flag the launch will not pass. A stored mode that engine no
+     * longer offers stays visible, selected and named as unavailable, because
+     * showing `default` would misreport what is saved.
+     *
+     * @param {object} s - status.settings from GET /api/master/status
+     * @param {string} pin - The engine dropdown's value; empty follows the default engine.
+     * @param {string[]} notices - What the last save answered about the launch mode.
+     * The group is a polite live region, so a list that changes under the
+     * engine dropdown, and a save's notice, are announced as well as drawn.
+     *
+     * @returns {string} The form group's inner HTML.
+     */
+    function masterLaunchModeMarkup(s, pin, notices) {
+      const view = tcMasterLaunchModeView(s, state.engines, pin, state.config && state.config.defaultEngine);
+      const nameOf = (id) => {
+        const engine = (state.engines || []).find((e) => e && e.id === id);
+        return (engine && engine.name) || id || 'no engine';
+      };
+      const engineName = nameOf(view.engineId);
+      const willRun = s.resolvedLaunchMode || 'default';
+      const options = view.modes
+        .map((m) => `<option value="${esc(m.id)}" ${m.id === view.selected ? 'selected' : ''}>${esc(m.label)}${m.warning ? ' ⚠' : ''}</option>`)
+        .concat(view.stranded
+          ? [`<option value="${esc(view.selected)}" selected>${esc(view.selected)} — not available on this engine</option>`]
+          : [])
+        .join('');
+      // Three ways to have no list, and each says its own: no engine at all,
+      // a default engine this page was not told, and an engine with no modes.
+      const noModes = view.moved
+        ? (view.engineId
+          ? `TangleClaw lists no launch modes for ${engineName}, so there are none to choose from here. Save the engine and the answer says what the master's launch mode is.`
+          : 'This page does not know which engine is the default, so it cannot list that engine’s launch modes. Save the engine and the answer says what the master’s launch mode is.')
+        : (view.standIn
+          ? `TangleClaw lists no launch modes for ${engineName}, the engine set for the master, so there are none to choose from.`
+          : 'No engine is resolved, so there are no launch modes to choose from.');
+      const notes = [];
+      if (view.stranded) {
+        notes.push(`Saved as <code>${esc(view.selected)}</code>, which this engine cannot honor — it will start in <code>${esc(willRun)}</code>.`);
+      }
+      if (view.standIn) {
+        notes.push(`${esc(engineName)} is the engine set for the master, and ${esc(nameOf(s.resolvedEngine))} is standing in for it. A launch mode is chosen for the engine that is set, so these are the modes of ${esc(engineName)}; the stand-in will start in <code>${esc(willRun)}</code>.`);
+      }
+      if (view.foreign && !view.moved) {
+        notes.push(`Saved as <code>${esc(view.foreign.mode)}</code> for ${esc(nameOf(view.foreign.engine))}, which is not used on ${esc(engineName)}: the master will start in <code>${esc(willRun)}</code>. ${view.send
+          ? `Saving this form stores the mode selected here for ${esc(engineName)} in its place.`
+          : 'Choose a mode here to replace it.'}`);
+      }
+      if (view.moved && view.modes.length) {
+        notes.push(`These are the launch modes of ${esc(engineName)}.`
+          + (view.foreign
+            ? ` <code>${esc(view.foreign.mode)}</code> was chosen for ${esc(nameOf(view.foreign.engine))} and does not carry to another engine: saving resets it unless you choose a mode here.`
+            : ''));
+      }
+      if (!view.moved && s.accessLevel === 'write' && s.resolvedLaunchMode === 'bypassPermissions') {
+        notes.push('This combination lets the master act on the fleet with no confirmation at any layer.');
+      }
+      return `
+      <label class="form-label" for="masterLaunchModeSelect">Launch mode</label>
+      ${view.modes.length
+        ? `<select id="masterLaunchModeSelect" class="form-select" data-action="master-launch-mode"${view.send ? ' data-send="1"' : ''}>${options}</select>`
+        : `<div class="form-hint">${esc(noModes)}</div>`}
+      ${notices.map((n) => `<div class="form-hint"><strong>${esc(n)}</strong></div>`).join('')}
+      <div class="form-hint">
+        How the master's own session prompts — enforced by the engine, and separate from
+        Access level, which is what the master may do to the fleet.
+        Applies the next time the master session starts.
+        ${notes.map((n) => `<strong>${n}</strong>`).join(' ')}
+      </div>`;
+    }
+
+    /**
+     * Draw the launch-mode control again for the engine the dropdown names now.
+     * @param {string[]} [notices] - What the last save answered, shown until the next draw.
+     */
+    function renderMasterLaunchMode(notices) {
+      const group = document.getElementById('masterLaunchModeGroup');
+      const engineSel = document.getElementById('masterEngineSelect');
+      if (!group || !engineSel || !shown) return;
+      group.innerHTML = masterLaunchModeMarkup(shown, engineSel.value, notices || []);
+    }
+
+    /**
+     * After a save: read back what is stored and draw the launch-mode control
+     * from it, with what the save answered. Without the read the form would go
+     * on comparing the engine dropdown with the settings it opened with, and
+     * moving the dropdown back would show a mode the save had just reset.
+     * When the read fails the control is withdrawn rather than left stale.
+     * @param {string[]} warnings - The save's `warnings`.
+     */
+    async function adoptSavedMasterSettings(warnings) {
+      const status = await api('/api/master/status');
+      if (status && status.settings) {
+        shown = status.settings;
+        renderMasterLaunchMode(warnings);
+        return;
+      }
+      // Unread, what is stored is unknown, and a control drawn from the
+      // settings the form opened with could send a mode nobody chose on the
+      // next save. So no control is drawn: with nothing to read, a save sends
+      // no launch mode and the server keeps or resets it by its own rule.
+      shown = null;
+      const group = document.getElementById('masterLaunchModeGroup');
+      if (!group) return;
+      const notices = warnings.concat(
+        'The saved settings could not be read back, so the launch mode cannot be shown or changed here. Close Master settings and open it again.'
+      );
+      group.innerHTML = `
+      <div class="form-label">Launch mode</div>
+      ${notices.map((n) => `<div class="form-hint"><strong>${esc(n)}</strong></div>`).join('')}`;
     }
 
     /**
@@ -2601,30 +2737,6 @@
       const engineOpts = '<option value="">(follow default engine)</option>'
         + buildEngineOptions(state.engines, s.engine || '');
 
-      // Launch mode (#756). Rendered from what the SERVER says this engine offers
-      // (`s.launchModes`) rather than re-derived here — a third source of truth for
-      // which flags exist is exactly what #768 warns against.
-      //
-      // A stored mode the resolved engine cannot honor is shown, selected, and
-      // labelled as unavailable rather than dropped: it is still the operator's
-      // saved preference and comes back if they switch the engine back, so silently
-      // showing 'default' would misreport what is stored (the silent-ignore failure
-      // #741 documents). `resolvedLaunchMode` says what will actually run.
-      const offered = Array.isArray(s.launchModes) ? s.launchModes : [];
-      // "Stranded" means this engine offers modes but not the stored one. With NO
-      // modes offered there is no engine to strand it against, and claiming
-      // otherwise renders "no modes to choose from" directly above "saved as
-      // default, which this engine cannot honor" — two sentences that cannot both
-      // be true. `offered.length` is the guard that keeps them exclusive.
-      const stranded = Boolean(offered.length && s.launchMode
-        && !offered.some((m) => m.id === s.launchMode));
-      const modeOpts = offered
-        .map((m) => `<option value="${esc(m.id)}" ${m.id === s.launchMode ? 'selected' : ''}>${esc(m.label)}${m.warning ? ' ⚠' : ''}</option>`)
-        .concat(stranded
-          ? [`<option value="${esc(s.launchMode)}" selected>${esc(s.launchMode)} — not available on this engine</option>`]
-          : [])
-        .join('');
-
       const scopeIsGroup = s.scope && s.scope !== 'all';
       const groupOpts = ['<option value="">All projects</option>']
         .concat(groups.map((g) =>
@@ -2647,26 +2759,10 @@
     </div>
     <div class="form-group">
       <label class="form-label" for="masterEngineSelect">Engine</label>
-      <select id="masterEngineSelect" class="form-select">${engineOpts}</select>
+      <select id="masterEngineSelect" class="form-select" data-action="master-engine">${engineOpts}</select>
       <div class="form-hint">Applies the next time the master session starts (restart via tmux: <code>tmux kill-session -t tangleclaw-master</code>, then reopen).</div>
     </div>
-    <div class="form-group">
-      <label class="form-label" for="masterLaunchModeSelect">Launch mode</label>
-      ${offered.length
-        ? `<select id="masterLaunchModeSelect" class="form-select">${modeOpts}</select>`
-        : '<div class="form-hint">No engine is resolved, so there are no launch modes to choose from.</div>'}
-      <div class="form-hint">
-        How the master's own session prompts — enforced by the engine, and separate from
-        Access level, which is what the master may do to the fleet.
-        Applies the next time the master session starts.
-        ${stranded
-          ? `<strong>Saved as <code>${esc(s.launchMode)}</code>, which this engine cannot honor — it will start in <code>${esc(s.resolvedLaunchMode || 'default')}</code>.</strong> Your choice is kept and applies again if you switch back.`
-          : ''}
-        ${s.accessLevel === 'write' && s.resolvedLaunchMode === 'bypassPermissions'
-          ? '<strong>This combination lets the master act on the fleet with no confirmation at any layer.</strong>'
-          : ''}
-      </div>
-    </div>
+    <div class="form-group" id="masterLaunchModeGroup" aria-live="polite">${masterLaunchModeMarkup(s, s.engine || '', [])}</div>
     <div class="form-group">
       <label class="form-label" for="masterScopeSelect">Scope</label>
       <select id="masterScopeSelect" class="form-select">${groupOpts}</select>
@@ -2898,6 +2994,12 @@
       else if (action === 'master-rule-history' && e.type === 'click') toggleMasterRuleHistory(id);
       else if (action === 'master-restore-defaults' && e.type === 'click') restoreMasterDefaults();
       else if (action === 'master-restore-version' && e.type === 'click') restoreMasterRuleVersion(id, Number(target.getAttribute('data-version-no')));
+      else if (action === 'master-engine' && e.type === 'change') renderMasterLaunchMode();
+      // A mode the operator picked is a choice, and the save sends it. One they
+      // never touched is not sent: the server would read a mode that belongs to
+      // another engine, sent back, as a choice that will not run, and say so on
+      // a save about something else.
+      else if (action === 'master-launch-mode' && e.type === 'change') target.dataset.send = '1';
     }
 
     /** Persist the settings form via PATCH /api/config { master }. */
@@ -2910,15 +3012,24 @@
       const masterPatch = {
         accessLevel: checked ? checked.value : 'read-only',
         engine: engineSel && engineSel.value ? engineSel.value : null,
-        // Absent select → the engine offered no modes, so send nothing rather than
-        // a guess; PATCH merges over the stored block and leaves the choice intact.
-        ...(modeSel && modeSel.value ? { launchMode: modeSel.value } : {}),
+        // Sent only when it is a choice. The control marks itself once the
+        // operator changes it. Left alone it is omitted, which after an engine
+        // change is what tells the server no mode was chosen for the new
+        // engine: the server then resets it and says so in `warnings`. Absent
+        // select → there were no modes to list, so nothing is sent rather than
+        // a guess.
+        ...(modeSel && modeSel.value && modeSel.dataset.send === '1' ? { launchMode: modeSel.value } : {}),
         scope: scopeSel && scopeSel.value ? { type: 'group', groupId: scopeSel.value } : 'all',
         autoStart: !!(autoStartEl && autoStartEl.checked)
       };
       const data = await apiMutate('/api/config', 'PATCH', { master: masterPatch });
       if (data) {
-        _setMasterRulesStatus('Settings saved — engine, launch mode and scope apply on next master start', true);
+        // `warnings` says what the save did to a setting the operator did not
+        // touch (a launch mode reset by the engine change). The status line
+        // hides itself after three seconds, so it only points at the notice;
+        // the words stay under Launch mode until the control is drawn again.
+        const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+        _setMasterRulesStatus(`Settings saved${warnings.length ? ', with a notice under Launch mode' : ''} — engine, launch mode and scope apply on next master start`, true);
         // Tell the surface the level may have moved (#755 chunk 3). The bar and
         // this modal are two controls for ONE setting, often visible at the same
         // moment on the same screen — the gear sits IN the bar. Without this the
@@ -2934,6 +3045,7 @@
         // nothing, and repainting there would make a failed save look like it
         // had done something.
         onSaved();
+        await adoptSavedMasterSettings(warnings);
       } else {
         _setMasterRulesStatus(api.lastError || 'Save failed', false);
       }
@@ -2997,7 +3109,7 @@
       open: openMasterSettings,
       close: closeMasterSettings,
       save: saveMasterSettings,
-      renderBody: renderMasterSettingsBody,
+      renderBody: showMasterSettings,
       // The two reads that render a three-state answer (#948). Exposed so the
       // states can be driven through the component rather than by matching
       // source strings; the delegated click handler calls the same functions.
@@ -4629,6 +4741,101 @@
   }
 
   /**
+   * The launch modes one engine of the picker roster offers, in the shape the
+   * Master status payload lists them.
+   * @param {object[]} engines - The picker roster (`state.engines`).
+   * @param {string|null} engineId - Engine id.
+   * @returns {Array<{id: string, label: string, warning: (string|null)}>}
+   *   Empty when the roster does not hold the engine.
+   */
+  function tcMasterEngineModes(engines, engineId) {
+    const engine = (Array.isArray(engines) ? engines : []).find((e) => e && e.id === engineId) || null;
+    return tcHonoredLaunchModes(engine)
+      .map(([id, mode]) => ({ id, label: mode.label || id, warning: mode.warning || null }));
+  }
+
+  /**
+   * What the Master settings modal's launch-mode control shows, and whether a
+   * save must send it, once the engine dropdown holds `pin`.
+   *
+   * A launch mode is a choice about one engine (`lib/master.js`,
+   * `masterLaunchModeAfterPatch`): the server resets it when the Master's
+   * engine changes unless the same save chooses one. So the control shows the
+   * stored mode only for the engine it was chosen for, and `default` for any
+   * other; and the engine it compares is the one SET for the Master, its pin or
+   * else the default engine, never an installed engine standing in for a
+   * missing one.
+   *
+   * @param {object|null} settings - `status.settings` from `GET /api/master/status`.
+   * @param {object[]} engines - The picker roster (`state.engines`).
+   * @param {string} pin - The engine dropdown's value; empty follows the default engine.
+   * @param {string|null|undefined} defaultEngine - `config.defaultEngine`, when the page holds it.
+   * @returns {{engineId: (string|null), moved: boolean, standIn: boolean,
+   *            modes: Array<{id: string, label: string, warning: (string|null)}>,
+   *            selected: string, stranded: boolean,
+   *            foreign: ({mode: string, engine: (string|null)}|null), send: boolean}}
+   *   `engineId` is the engine the dropdown stands for, null when the page
+   *   cannot tell. `moved` is true when that is another engine than the stored
+   *   one. `standIn` is true when the stored engine is not the one that will
+   *   start. `stranded` is true when the stored engine no longer offers the
+   *   selected mode. `foreign` is the stored mode when it was chosen for
+   *   another engine than `engineId`. `send` is true when a save must send the
+   *   selection even though the operator did not touch the control; a control
+   *   they changed is always sent. Without a pin, `engineId`, `standIn` and
+   *   `foreign` are the page's reading and can be wrong, which is why nothing
+   *   is sent on the strength of them.
+   */
+  function tcMasterLaunchModeView(settings, engines, pin, defaultEngine) {
+    const s = settings || {};
+    const storedPin = s.engine || '';
+    const followed = defaultEngine || null;
+    // With no pin and no default engine known to the page, the engine the
+    // server resolved is the only reading left of which engine is set.
+    const storedEngine = storedPin || followed || s.resolvedEngine || null;
+    const engineId = pin === storedPin ? storedEngine : (pin || followed);
+    const moved = pin !== storedPin && (!engineId || engineId !== storedEngine);
+    const standIn = !moved && Boolean(storedEngine && s.resolvedEngine && s.resolvedEngine !== storedEngine);
+    const held = s.launchMode && s.launchMode !== 'default' ? s.launchMode : null;
+    // A payload without `launchModeEngine` predates the field: the mode is
+    // read as chosen for the stored engine, as the server reads it.
+    const heldFor = held ? (s.launchModeEngine || storedEngine) : null;
+    const foreign = held && heldFor !== engineId ? { mode: held, engine: heldFor } : null;
+    // The stored engine's list is the server's answer; any other engine's can
+    // only come from the roster.
+    const fromServer = !moved && !standIn;
+    const modes = fromServer
+      ? (Array.isArray(s.launchModes) ? s.launchModes : [])
+      : tcMasterEngineModes(engines, engineId);
+    const offers = (mode) => modes.some((m) => m.id === mode);
+    // Stranded needs a list the mode is missing from. With no modes at all
+    // there is no engine to strand it against, and saying so would put "cannot
+    // honor" directly under "no launch modes to choose from".
+    const stranded = Boolean(fromServer && held && !foreign && modes.length && !offers(held));
+    const selected = held && !foreign && (stranded || offers(held)) ? held : 'default';
+    return {
+      engineId, moved, standIn, modes, selected, stranded, foreign,
+      // Untouched, the control is sent in one case only: beside a stored mode
+      // that belongs to another engine than the PINNED one. The server's notice
+      // for that case asks for `default` to be saved first, and a control that
+      // already shows `default` would never send it.
+      //
+      // Only with a pin, because only the pin is the server's own word for
+      // which engine is set. Without one the engine above is this page's
+      // reading, from a copy of the config that can be stale or absent or from
+      // an engine that may be standing in, and a wrong reading would call a
+      // mode foreign that is validly stored and send `default` over it.
+      //
+      // And only while the dropdown still shows that pin. Once it holds
+      // anything else the control is not sent untouched: an omitted mode is
+      // how the server knows none was chosen for the new engine, and only then
+      // does it report a reset, or keep a mode already recorded for the engine
+      // being switched to. That holds for a dropdown emptied onto a default
+      // engine the page believes is the same one, too: the belief can be wrong.
+      send: Boolean(storedPin) && pin === storedPin && Boolean(foreign)
+    };
+  }
+
+  /**
    * The preview hint under the provenance line field: the template with this
    * project's name and engine filled in. A hint only — the server neutralizes
    * unsafe values when it renders, and refuses a bad template on save.
@@ -4960,6 +5167,8 @@
   global.tcProvenancePatch = tcProvenancePatch;
   global.tcLaunchModeForEngine = tcLaunchModeForEngine;
   global.tcLaunchModePatch = tcLaunchModePatch;
+  global.tcMasterEngineModes = tcMasterEngineModes;
+  global.tcMasterLaunchModeView = tcMasterLaunchModeView;
   global.tcProvenancePreview = tcProvenancePreview;
   global.tcCreateProjectBody = tcCreateProjectBody;
   global.tcSettingDefaults = TC_SETTING_DEFAULTS;

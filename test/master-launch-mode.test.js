@@ -105,6 +105,13 @@ function render(settings) {
   vm.createContext(sandbox);
   vm.runInContext([
     liftFunction(LANDING_SRC, 'function esc(str)'),
+    // The launch-mode control is drawn by one function the body calls, over
+    // two pure helpers (#2197). Lifted with it, so every assertion below still
+    // runs the modal's own code.
+    liftFunction(HELPER_SRC, 'function tcHonoredLaunchModes(engine)'),
+    liftFunction(HELPER_SRC, 'function tcMasterEngineModes(engines, engineId)'),
+    liftFunction(HELPER_SRC, 'function tcMasterLaunchModeView(settings, engines, pin, defaultEngine)'),
+    liftFunction(HELPER_SRC, 'function masterLaunchModeMarkup(s, pin, notices)'),
     liftFunction(HELPER_SRC, 'function renderMasterSettingsBody(s, groups)'),
     'globalThis.renderMasterSettingsBody = renderMasterSettingsBody;'
   ].join('\n'), sandbox);
@@ -129,7 +136,9 @@ async function save(fields) {
     masterAutoStart: { checked: !!fields.autoStart }
   };
   if (fields.launchMode !== undefined) {
-    els.masterLaunchModeSelect = { value: fields.launchMode };
+    // `send` is how the control says the operator picked this mode (#2197): a
+    // mode nobody touched is not sent.
+    els.masterLaunchModeSelect = { value: fields.launchMode, dataset: { send: '1' } };
   }
   const sandbox = {
     console,
@@ -144,7 +153,10 @@ async function save(fields) {
     // that scope. `onSaved` joined it in #755 chunk 3 — the bar repaints when the
     // gear saves. Recorded rather than a bare no-op so the count is available to
     // whoever needs it here later; this file's own subject is launch mode.
-    onSaved: () => { status.savedNotifications++; }
+    onSaved: () => { status.savedNotifications++; },
+    // After a save the component reads the status back and redraws the
+    // launch-mode control (#2197); that read is not this file's subject.
+    adoptSavedMasterSettings: async () => {}
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
