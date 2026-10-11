@@ -1253,9 +1253,11 @@ other.
 
 Being let go is final. Nothing is let go while a lease on it is live, so the helper that held
 it holds only a lapsed lease, and its acknowledgement is refused `409 LEASE_LAPSED` like any
-other lapsed lease's. The item is never handed over again. Nothing let go is raised again:
-its row and its idempotency key stay until retention removes them, so the event that caused it
-remains accounted for.
+other lapsed lease's. The item is never handed over again. Nothing let go is raised again
+under its own key: its row and its idempotency key stay until retention removes them, so the
+event that caused it remains accounted for. One thing is a condition and not an event, and is
+told again in a new notice: an uncollected `gateway-down` whose outage the helper still
+reports ("Server notifications", above).
 
 Three things keep that true however long anything lasts:
 
