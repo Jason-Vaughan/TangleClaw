@@ -180,6 +180,32 @@ is never opened.
 - A refused resume address: the session is dropped, the log records `gateway-resume-refused`,
   and the helper identifies afresh at the default address.
 
+### When a connection attempt goes nowhere
+
+A connection can fail without ever closing, and the helper does not wait for a close to try
+again. Three things end an attempt, and each is followed by another attempt on the same backoff
+as any reconnect (about a second at first, doubling to a ceiling of one minute, and back to the
+start once a session is ready):
+
+- **It fails before it opens** (the connection is refused, the host name does not resolve, the
+  network is down). The log records `gateway-connect-failed`. Node's WebSocket reports these
+  with an error and no close, so the helper retries from the error.
+- **It takes longer than 30 seconds** from the start of the attempt to a ready or resumed
+  session. The log records `gateway-attempt-abandoned` with how far it got: `lookup` (Discord
+  had not yet said where to connect), `socket` (a connection was started and never opened),
+  `open` (it opened and Discord said nothing), or `hello` (Discord greeted the helper and the
+  session never became ready). The connection is closed in the way that keeps the session, so
+  the next attempt resumes it and no message is missed that Discord still holds.
+- **Nothing is happening at all.** Once a minute a watchdog checks for a helper with no
+  connection, no attempt in flight and no reconnect waiting, and starts an attempt. The log
+  records `gateway-watchdog-reconnect`. No way to reach that state is known; a line with this
+  code is a defect to report, with the lines before it.
+
+Posting does not depend on any of this: the helper posts over Discord's REST API whether or
+not the Gateway is connected. So while the Gateway is down, notices still arrive and replies
+do not. The helper's `status` shows the Gateway's state and, in the snapshot file, when that
+state began.
+
 ## Operating it
 
 - **`"${TC_CHECKOUT:?set TC_CHECKOUT to the checkout the service runs from}/bin/tc-bridge-helper" status`** shows whether the config is set, whether each secret is
@@ -190,6 +216,10 @@ is never opened.
   Discord's raw answers. The codes are listed in `lib/bridge-helper/log.js`. Nothing rotates
   this file. It gets a line per message relayed and per failure, not per poll, so it grows
   slowly; truncate it or add a `newsyslog` rule if it matters.
+- **After an update, restart it.** The helper is its own launchd job and keeps running the
+  code it started with: updating and restarting the TangleClaw server does not restart it.
+  `launchctl kickstart -k gui/$(id -u)/com.tangleclaw.bridge-helper`, then read
+  `gateway-ready` in the log.
 - **Stopping:** `launchctl bootout gui/$(id -u)/com.tangleclaw.bridge-helper`. The job file
   stays, and launchd loads it again at your next login.
 - **Starting again:** `"${TC_CHECKOUT:?set TC_CHECKOUT to the checkout the service runs from}/bin/tc-bridge-helper" install-launchd`, by that whole path: it rewrites the job to run the
@@ -350,6 +380,9 @@ TangleClaw's answer is echoed.
 | `state-unreadable` | `state.json` is damaged. The helper will not start without it, because forgetting a post in flight could make it twice. Move it aside only after checking the channel for what it names. |
 | `state-write-failed` | `state.json` could not be written: a full disk, or permissions. The helper keeps trying and posts nothing it could not record. |
 | `helper-already-running` | Another helper is running, or the helper could not check whether one is (`ps` failed): it does not start on a guess. With `pid: -1` the lock file `helper.pid` is unreadable. Either way, check that no helper runs (`pgrep -fl tc-bridge-helper`), then delete the lock file. |
+| `gateway-connect-failed` | A connection to the Gateway failed before it opened: refused, a name that did not resolve, or no network. The helper tries again by itself, less often each time up to once a minute. Many in a row mean this machine cannot reach Discord. |
+| `gateway-attempt-abandoned` | An attempt took more than 30 seconds to reach a ready session and was given up; `reached` says how far it got. The helper tries again by itself. See "When a connection attempt goes nowhere". |
+| `gateway-watchdog-reconnect` | The helper had no connection and nothing scheduled, and the watchdog started an attempt. It recovers by itself, but nothing is known to cause it: report it, with the lines before it. |
 | `gateway-fatal` | Discord refused the connection for a reason a retry cannot fix. 4004 is a bad bot token (run `set-secret bot`); 4014 means Message Content Intent is off. The helper keeps posting, but reads nothing until it is restarted. |
 | `bridge-configuration-blocked` | The bridge's configuration circuit is open; see "When the whole chat is closed to the bot". |
 | `outbound-chat-closed` | Discord said the chat is closed to the bot, and the bridge was told. The line carries the reason chosen. |
@@ -373,6 +406,10 @@ Discord account, and belong to the live verification before cutover:
 - the Keychain items and the launchd install, restart and throttle;
 - that Discord honours the nonce as documented, for how long;
 - the Gateway against Discord itself: identify, resume, and the close codes;
+- a connection attempt that goes nowhere against Discord itself. Discord cannot be made to
+  stall on demand, so this is proved against Node's real WebSocket and loopback servers that
+  refuse, accept and say nothing, or complete the handshake and say nothing
+  (`test/bridge-helper-gateway.test.js`), and not against Discord;
 - one two-way conversation, and one of each notification.
 
 ## Code
