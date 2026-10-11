@@ -210,8 +210,15 @@ leaves the set in force; a proposal, a `wrap` rule and a Project Master rule cha
 them. The rewritten block states how many rules are in force and when it was written.
 
 The store stays the authority and `tc rules` reads it. The rule change never fails because of
-the files. When they do not follow it, the route's success response carries `deliveryWarning`,
-a sentence saying which of two things happened, and the server log says the same:
+the files. When they do not follow it, the route's success response carries `deliveryWarning`
+and the server log says the same.
+
+| Field | On | Type | When it is sent |
+|---|---|---|---|
+| `deliveryWarning` | the success response (`200`, `201` or `202`) of `POST /api/session-rules`, `PUT /api/session-rules/:id`, `DELETE /api/session-rules/:id`, `POST /api/session-rules/promote`, `PUT /api/session-rules/:id/status` and `POST /api/session-rules/:id/restore`, beside the fields the route already answers with | string: one or two sentences for a person to read, not a code | only when the change could move the rules in force **and** one of the two cases below holds. Otherwise the field is **absent** (not `null`, not an empty string), so test for its presence. An error response never carries it |
+
+No screen shows `deliveryWarning` yet: it reaches a caller of the API and the server log.
+Showing it in the dashboard is part of #2293. The two cases:
 
 - **The files could not be rewritten.** They hold the earlier set (or, named as such, a set part
   new and part old) until the next launch of the project rewrites them.
