@@ -5,16 +5,8 @@
 </p>
 
 <p align="center">
-  <strong>An open-source, local-first AI-native SDLC orchestration platform</strong><br>
-  <em>Persistent memory &middot; Agent-to-Agent Switchboard &middot; Fleet Governance &middot; Multi-Engine Management</em>
-</p>
-
-<p align="center">
-  <code>claude code</code> &middot; <code>codex</code> &middot; <code>antigravity</code> &middot; <code>aider</code> &middot; <code>openclaw</code> &middot; <code>tmux</code> &middot; <code>pwa</code> &middot; <code>zero dependencies</code>
-</p>
-
-<p align="center">
-  <strong>macOS only</strong> (launchd required for service management)
+  <strong>Many Agents. One Claw.</strong><br>
+  <em>Plan, build, review and ship software with a fleet of AI coding agents, on your own machine.</em>
 </p>
 
 <p align="center">
@@ -25,58 +17,43 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
 </p>
 
+One AI coding agent is easy. Five are not. They forget what the last session decided, edit the same files, fight over the same ports, and wait silently for an answer you did not know they needed. You end up watching terminals.
+
+TangleClaw is the layer above the agents that deals with that. It runs on your own Mac, starts and supervises each agent session, and keeps the things a session cannot keep for itself.
+
+<!-- 60-second demo here: launch two sessions, one messages the other, close the laptop, resume on a phone -->
+
+### What you get
+
+- **Sessions that survive.** Every agent runs in a supervised terminal that outlives a dropped connection, a closed laptop or a switch to your phone.
+- **Context that survives too.** Each session ends with a structured wrap: a summary, an updated changelog, and a "here is where we left off" brief that the next session starts from.
+- **Agents that talk to each other.** A switchboard lets sessions message one another directly, and it records every delivery, so an unanswered question is visible and not just quiet.
+- **Rules that stick.** Write a rule once and every session on that project gets it, on any engine. Agents can propose changes; nothing changes until you approve it.
+- **One assistant that sees everything.** The Project Master watches the whole fleet: what is running, what is idle, what shipped.
+- **Fewer collisions.** A built-in port registry refuses a port another project holds, and each session knows which project it owns, so work that belongs to another project's session is flagged before it happens.
+- **A dashboard on any device.** Launch, watch and steer sessions from a browser or an installed phone app, behind a login and TLS that first-run setup configures for you.
+
+It works with **Claude Code, Codex, Antigravity and Aider** locally, and with OpenClaw sessions on a remote host. You write your instructions once and TangleClaw produces each engine's own configuration.
+
+### What it is not
+
+- Not a model, and not a new coding agent. It runs the agents you already use.
+- Not a cloud service. It is a small server on your machine, written against Node.js 22's standard library: no `npm install`, no bundler.
+- Not cross-platform yet. **macOS only**, because it uses launchd to keep its services running.
+
+### Built with itself
+
+TangleClaw is developed with TangleClaw. Its own Builder, Project Manager and review sessions plan, write, review and merge its changes, with a human directing the work and approving every release. The [live roadmap](https://jason-vaughan.github.io/TangleClaw/) and the issue tracker are that fleet's working backlog, which is why the issue count is high: it is the plan, in public.
+
+### Try it
+
 ```bash
-# Quickstart (macOS) — prerequisites and what the installer does: Quick Start, below
+# macOS. What the installer does, and what you need first: Quick Start, below
 git clone --branch v5.31.0 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw && ./deploy/install.sh
 ```
 
----
-
-As you scale up AI-assisted development, you quickly hit a wall: isolated AI agents lose context, step on each other's toes, and require constant human babysitting.
-
-## Overview
-
-TangleClaw is a fundamentally new way to build software. It escapes the traditional constraints of "dumb terminals" and raw code editors by introducing **Agentic SDLC Orchestration**—a continuously running, local-first ecosystem where intelligent agents (such as the Project Manager, Architect, and Builder) collaborate autonomously to plan, execute, review, and ship code.
-
-Rather than acting as a chat interface that writes disconnected scripts, TangleClaw runs as a background supervisor (`launchd`/`tmux`), managing isolated workspaces, tracking file modifications, assigning ports, and orchestrating multiple specialized agents across your repository.
-
-> **Visualizing the Orchestration:** The repo updates rapidly. To see TangleClaw's orchestration interface and features in action for version **5.28.0**, check out the [Platform Screenshots Gallery](https://tangleclaw.com/screenshots).
-> For the main website, visit: **[tangleclaw.com](https://tangleclaw.com)**
-
----
-
-TangleClaw is an **open-source, local-first AI-native SDLC orchestration platform**. It solves this by turning isolated AI coding assistants into a coordinated engineering organization. Rather than running a single agent, TangleClaw is the execution and control plane that allows you to orchestrate fleets of specialized roles collaborating across different AI models to ship features autonomously.
-
-TangleClaw solves the context and coordination problem at scale: **context that survives between sessions, not just within them**, and **agents that coordinate with each other**. Every session runs in a persistent wrapper, ending with a structured wrap that writes a per-session summary, rolls a "here's where we left off" resume prime for the next session, and snapshots the full transcript. Add a persistent Project Master assistant that watches the whole fleet, the Medusa Switchboard for direct agent-to-agent coordination, per-project routing to local models, and a complete control plane reachable from any browser or phone.
-
-## Screenshots
-
-
-## SDLC Departments & Agent Roles
-
-TangleClaw provides the infrastructure for an entire AI-driven Software Development Life Cycle (SDLC). To achieve this, TangleClaw is building out configurable base templates for specific organizational roles. These foundational templates map directly to SDLC departments, giving you a coordinated engineering organization out of the box.
-
-The ground set of foundational agent templates we are rolling out first:
-
-- **Project Manager (Management):** Oversees the fleet, manages cross-project status, breaks down requirements into actionable chunks, and assigns tasks to specialized agents.
-- **Architect (Architecture):** Specialized in higher-reasoning tasks, system design, and API contracts. Ensures the Builders stay aligned with the broader system design.
-- **Builder (Engineering):** The executors. Multi-engine sessions and parallel fleets (`aider`, `claude code`, `antigravity`) that write the code, run tests, and ship features autonomously.
-
-TangleClaw's features and roadmap align directly with these core SDLC departments:
-
-- **Management:** Project Master, planning, governance, roadmap/trains
-- **Architecture:** Specialized higher-reasoning agents
-- **Engineering:** Multi-engine sessions and parallel builders
-- **Communication:** Session Switchboard/Medusa
-- **Quality:** Critic methodology, Eval Audit Mode, adversarial-agent primitive
-- **Code Review:** Tangle Code Review
-- **Release:** Managed-project release automation
-- **Dependency Management:** Cross-project dependency registry
-- **Operations:** Fleet health, idle/wedged detection, PortHub, service supervision
-- **Security:** Authentication/governance today; TangleScan/SecurityClaw ideas longer-term
-
-Most importantly, TangleClaw enforces strict safety boundaries, ensuring that while the agents do the heavy lifting, the human developer retains absolute control over deployments, destructive actions, and architectural decisions.
+Then open the dashboard, finish the short first-run setup, and launch a session on any project folder. More at **[tangleclaw.com](https://tangleclaw.com)**.
 
 ## Core Features
 
@@ -163,6 +140,33 @@ Most importantly, TangleClaw enforces strict safety boundaries, ensuring that wh
 - **ADRs** — durable design decisions live in [docs/adr/](docs/adr/)
 
 </details>
+
+## SDLC Departments & Agent Roles
+
+TangleClaw provides the infrastructure for an entire AI-driven Software Development Life Cycle (SDLC). To achieve this, TangleClaw is building out configurable base templates for specific organizational roles. These foundational templates map directly to SDLC departments, giving you a coordinated engineering organization out of the box.
+
+Today the Project Master is the one role that ships as a product feature. A Project Manager, an Architect and a Builder are ordinary sessions that take their role from the rules and instructions you give their projects; no role template can be selected yet.
+
+The ground set of foundational agent templates we are rolling out first:
+
+- **Project Manager (Management):** Oversees the fleet, manages cross-project status, breaks down requirements into actionable chunks, and assigns tasks to specialized agents.
+- **Architect (Architecture):** Specialized in higher-reasoning tasks, system design, and API contracts. Ensures the Builders stay aligned with the broader system design.
+- **Builder (Engineering):** The executors. Multi-engine sessions and parallel fleets (`aider`, `claude code`, `antigravity`) that write the code, run tests, and ship features.
+
+TangleClaw's features and roadmap align directly with these core SDLC departments:
+
+- **Management:** Project Master, planning, governance, roadmap/trains
+- **Architecture:** Specialized higher-reasoning agents
+- **Engineering:** Multi-engine sessions and parallel builders
+- **Communication:** Session Switchboard/Medusa
+- **Quality:** Critic methodology, Eval Audit Mode, adversarial-agent primitive
+- **Code Review:** Tangle Code Review
+- **Release:** Managed-project release automation
+- **Dependency Management:** Cross-project dependency registry
+- **Operations:** Fleet health, idle/wedged detection, PortHub, service supervision
+- **Security:** Authentication/governance today; TangleScan/SecurityClaw ideas longer-term
+
+Most importantly, TangleClaw enforces strict safety boundaries, ensuring that while the agents do the heavy lifting, the human developer retains absolute control over deployments, destructive actions, and architectural decisions.
 
 ## Quick Start
 
