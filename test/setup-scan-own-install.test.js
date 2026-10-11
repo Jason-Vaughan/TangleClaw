@@ -48,12 +48,13 @@ describe('setup scan excludes the running install (#708)', () => {
   let tmpDir;
   let fixtureParent;
   let standInRealPath;
+  let namesakeRealPath;
 
   before(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-own-install-'));
     store._setBasePath(path.join(tmpDir, 'tangleclaw'));
     store.init();
-    ({ fixtureParent, standInRealPath } = makeFixtureParent(tmpDir));
+    ({ fixtureParent, standInRealPath, namesakeRealPath } = makeFixtureParent(tmpDir));
   });
 
   after(() => {
@@ -83,7 +84,9 @@ describe('setup scan excludes the running install (#708)', () => {
   /**
    * Build the parent directory the child-level cases walk: a stand-in for the
    * running checkout, a neighbouring project, a plain directory, and two
-   * entries the walk must skip (a hidden directory and a file).
+   * entries the walk must skip (a hidden directory and a file). Outside it, a
+   * directory with the neighbour's name: a checkout that is not in the parent
+   * being walked.
    *
    * The child is told which realpath is "us" by argument and compares nothing
    * else, so a directory made here can stand for the checkout. Its realpath is
@@ -91,7 +94,7 @@ describe('setup scan excludes the running install (#708)', () => {
    * through a symlink on macOS: the unresolved spelling would match nothing.
    *
    * @param {string} root - Existing directory to build under.
-   * @returns {{fixtureParent: string, standInRealPath: string}}
+   * @returns {{fixtureParent: string, standInRealPath: string, namesakeRealPath: string}}
    */
   function makeFixtureParent(root) {
     const parent = path.join(root, 'fixture-parent');
@@ -102,9 +105,12 @@ describe('setup scan excludes the running install (#708)', () => {
     fs.mkdirSync(path.join(parent, 'notes'));
     fs.mkdirSync(path.join(parent, '.cache'));
     fs.writeFileSync(path.join(parent, 'README.txt'), 'not a directory\n');
+    const namesake = path.join(root, 'elsewhere', 'their-app');
+    fs.mkdirSync(namesake, { recursive: true });
     return {
       fixtureParent: parent,
-      standInRealPath: fs.realpathSync(path.join(parent, 'TangleClaw'))
+      standInRealPath: fs.realpathSync(path.join(parent, 'TangleClaw')),
+      namesakeRealPath: fs.realpathSync(namesake)
     };
   }
 
@@ -184,6 +190,20 @@ describe('setup scan excludes the running install (#708)', () => {
     assert.equal(me.isOwnInstall, true, 'the child must mark the running checkout');
     for (const other of entries.filter((e) => e !== me)) {
       assert.equal(other.isOwnInstall, false, `${other.name} must not be marked`);
+    }
+  });
+
+  it('child does not mark a directory that only shares the running checkout\'s name', async () => {
+    // The server runs from a checkout that is not in this parent, and a
+    // neighbour here happens to carry the same directory name.
+    const { projects: entries } = await HANDLERS.scanEntries({
+      dir: fixtureParent, budgetMs: 30000, ownInstallRealPath: namesakeRealPath
+    });
+
+    assert.deepEqual(entries.map((e) => e.name).sort(), FIXTURE_LISTING,
+      'the walk must list every real subdirectory, and only those');
+    for (const e of entries) {
+      assert.equal(e.isOwnInstall, false, `${e.name} shares a name at most, never the identity`);
     }
   });
 
