@@ -3366,6 +3366,24 @@ describe('bridge API: the round trip (#2031)', () => {
       assert.equal(bridgeStore.circuit.open(), null);
     });
 
+    it('tc bridge status says nothing of the connection to a server that does not report it, or reports a reading it does not know', async () => {
+      const http = require('node:http');
+      const base = { enabled: true, openRoutes: 0, masterGeneration: 1, proof: 'master-launch', configurationCircuit: null, scope: { kind: 'all' } };
+      for (const [what, body] of Object.entries({
+        'a server from before the report': base,
+        'a reading from after this tc': { ...base, discordGateway: { reading: 'degraded', state: 'ready', since: null, fatalCloseCode: null, reportedAt: null } }
+      })) {
+        const old = http.createServer((req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); });
+        await new Promise((resolve) => old.listen(0, '127.0.0.1', resolve));
+        try {
+          const shown = await tc(['bridge', 'status'], { TANGLECLAW_API: `http://127.0.0.1:${old.address().port}` });
+          assert.equal(shown.stdout, 'Operator bridge: enabled; 0 open route(s). You are Master generation 1 (master-launch).\n', what);
+        } finally {
+          await new Promise((resolve) => old.close(resolve));
+        }
+      }
+    });
+
     it('every state the helper\'s own gateway can be in is a report the bridge admits', async () => {
       const { createGateway, OP } = require('../lib/bridge-helper/discord-gateway');
       const { gatewayReport } = require('../lib/bridge-helper/outbound');
