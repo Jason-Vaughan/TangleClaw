@@ -424,6 +424,116 @@ describe('the Operator Bridge panel (#2031)', () => {
     });
   });
 
+  describe('the helper\'s Discord connection (#2272)', () => {
+    /** A status the panel can draw whole, with nothing waiting anywhere. */
+    const QUIET = Object.freeze({
+      enabled: true, allowlist: null, helperToken: null, openRoutes: 0, openRoutesByState: {}, waitingForHelper: 0, setAside: 0,
+      masterListener: { enabled: true, state: 'listening' }, setAsideItems: [], routelessItems: []
+    });
+    const SINCE = '2026-10-11T05:00:02.000Z';
+    const HEARD = '2026-10-11T05:00:10.000Z';
+
+    /**
+     * What the panel draws for a status, and the one line this is about.
+     * @param {object} extra - Fields laid over {@link QUIET}.
+     * @returns {Promise<{drawn: string, line: (string|null)}>} `line` is the line's value, or null when it is not drawn.
+     */
+    async function draw(extra) {
+      const { panel } = controller(scripted(() => ({ status: 200, body: { ...QUIET, ...extra } })));
+      await panel.load();
+      const drawn = panel.html();
+      const found = /<div class="ob-line"><span class="ob-label">Discord connection<\/span> <span class="ob-value">([\s\S]*?)<\/span><\/div>/.exec(drawn);
+      return { drawn, line: found ? found[1] : null };
+    }
+
+    it('draws each reading in its own words, with the times as the server gave them', async () => {
+      const reading = (reading, state, fatalCloseCode = null) => ({ discordGateway: { reading, state, since: SINCE, fatalCloseCode, reportedAt: HEARD } });
+      assert.equal((await draw(reading('connected', 'ready'))).line,
+        `connected since ${SINCE} (the helper's report of ${HEARD})`);
+      assert.equal((await draw(reading('down', 'reconnecting'))).line,
+        `<strong>NOT CONNECTED</strong> since ${SINCE}: the helper reports reconnecting (its report of ${HEARD}). Nothing you write in the chat arrives meanwhile.`);
+      assert.equal((await draw(reading('down', 'fatal', 4004))).line,
+        `<strong>REFUSED by Discord</strong> since ${SINCE} (close code 4004: bad bot token). The helper will not retry until it is put right and restarted (its report of ${HEARD}). Nothing you write in the chat arrives meanwhile.`);
+      assert.equal((await draw(reading('down', 'fatal', 4014))).line,
+        `<strong>REFUSED by Discord</strong> since ${SINCE} (close code 4014: Message Content Intent is off). The helper will not retry until it is put right and restarted (its report of ${HEARD}). Nothing you write in the chat arrives meanwhile.`);
+      // A refusal the page has no words for is shown by its number, and still as a refusal.
+      assert.match((await draw(reading('down', 'fatal', 4012))).line, /^<strong>REFUSED by Discord<\/strong> since \S+ \(close code 4012\)\. The helper will not retry/);
+      assert.equal((await draw(reading('not-reported', 'ready'))).line,
+        `<strong>not reported</strong> since ${HEARD}: the helper last said ready and has not reported since. It may not be running; whether Discord is connected is not known.`);
+      assert.equal((await draw({ discordGateway: { reading: 'never-reported', state: null, since: null, fatalCloseCode: null, reportedAt: null } })).line,
+        'never reported since this server started: the helper is not running, has not yet asked for work, or predates the report. Restart the helper after an update.');
+      // A connection that is retrying is never described as refused, nor a refusal as retrying.
+      assert.ok(!/REFUSED|will not retry/.test((await draw(reading('down', 'connecting'))).line));
+      assert.ok(!/NOT CONNECTED|the helper reports/.test((await draw(reading('down', 'fatal', 4004))).line));
+    });
+
+    it('draws no line for a status without the field or with a reading it does not know, and moves nothing else', async () => {
+      const without = await draw({});
+      assert.equal(without.line, null);
+      assert.ok(!/Discord connection/.test(without.drawn), 'a server that predates the report is shown as it always was');
+      for (const discordGateway of [null, 'connected', 7, [], {}, { reading: 'resting' }, { reading: 'constructor' }, { reading: 'toString', since: SINCE }]) {
+        const odd = await draw({ discordGateway });
+        assert.equal(odd.line, null, `no line for ${JSON.stringify(discordGateway)}`);
+        assert.equal(odd.drawn, without.drawn, 'and the rest of the panel is the same, character for character');
+      }
+      // With a line, the rest of the panel is still what it was: the line is the only difference, after "To post".
+      const withLine = await draw({ discordGateway: { reading: 'connected', state: 'ready', since: SINCE, fatalCloseCode: null, reportedAt: HEARD } });
+      const added = /\n *<div class="ob-line"><span class="ob-label">Discord connection<\/span>[^\n]*/.exec(withLine.drawn);
+      assert.ok(added);
+      assert.equal(withLine.drawn.replace(added[0], '\n        ').replace(/[ \t]+\n/g, '\n'), without.drawn.replace(/[ \t]+\n/g, '\n'));
+      assert.ok(withLine.drawn.indexOf('To post') < withLine.drawn.indexOf('Discord connection'));
+      assert.ok(withLine.drawn.indexOf('Discord connection') < withLine.drawn.indexOf('Allowlist'));
+      assert.equal((withLine.drawn.match(/data-bridge-action=/g) || []).length, (without.drawn.match(/data-bridge-action=/g) || []).length, 'and it adds no control');
+    });
+
+    it('treats every value in the reading as text, never markup', async () => {
+      const hostile = '<img src=x onerror=1>';
+      for (const [reading, state] of [['connected', 'ready'], ['down', hostile], ['down', 'fatal'], ['not-reported', hostile]]) {
+        const { line } = await draw({ discordGateway: { reading, state, since: hostile, fatalCloseCode: hostile, reportedAt: '"><script>' } });
+        assert.ok(line, `${reading} is drawn`);
+        assert.ok(!/<img|<script/.test(line), `${reading}, ${state}: nothing from the server becomes an element`);
+        assert.match(line, /&lt;img src=x onerror=1&gt;|&quot;&gt;&lt;script&gt;/);
+        assert.deepEqual([...line.matchAll(/<\/?([a-z]+)/g)].map((m) => m[1]).filter((tag) => tag !== 'strong'), [], 'the only markup is the page\'s own emphasis');
+      }
+    });
+
+    it('does not blame the helper for a silence the bridge itself causes by being disabled', async () => {
+      const unread = /The bridge is disabled, and a disabled bridge does not read the helper's reports: this says nothing about the helper\.$/;
+      const report = { state: 'ready', since: SINCE, fatalCloseCode: null, reportedAt: HEARD };
+      for (const reading of ['not-reported', 'never-reported']) {
+        assert.match((await draw({ enabled: false, discordGateway: { ...report, reading } })).line, unread, `${reading}, disabled`);
+        assert.ok(!/bridge is disabled/.test((await draw({ enabled: true, discordGateway: { ...report, reading } })).line), `${reading}, enabled`);
+      }
+      // A report that was read says what it says, whether or not the bridge has been disabled since.
+      for (const [reading, state] of [['connected', 'ready'], ['down', 'reconnecting']]) {
+        assert.ok(!/bridge is disabled/.test((await draw({ enabled: false, discordGateway: { ...report, reading, state } })).line), `${reading}, disabled`);
+      }
+    });
+
+    it('says what the real status route says, before any report and after one', async () => {
+      const { panel } = controller(real(SIGNED_IN));
+      const lineOf = () => /<span class="ob-label">Discord connection<\/span> <span class="ob-value">([\s\S]*?)<\/span>/.exec(panel.html())[1];
+      await panel.load();
+      assert.match(lineOf(), /^never reported since this server started: [\s\S]* this says nothing about the helper\.$/, 'the bridge is disabled here');
+      const now = gateway._deps.now;
+      try {
+        gateway._deps.now = () => HEARD;
+        gateway.recordDiscordReport(gateway.discordReport({ state: 'ready', since: SINCE }));
+        await panel.act('refresh');
+        assert.equal(lineOf(), `connected since ${SINCE} (the helper's report of ${HEARD})`);
+        gateway.recordDiscordReport(gateway.discordReport({ state: 'fatal', since: SINCE, fatalCloseCode: 4014 }));
+        await panel.act('refresh');
+        assert.match(lineOf(), /^<strong>REFUSED by Discord<\/strong> since 2026-10-11T05:00:02\.000Z \(close code 4014: Message Content Intent is off\)/);
+        // Three minutes and a second later the same report is one the bridge has not heard since.
+        gateway._deps.now = () => '2026-10-11T05:03:11.000Z';
+        await panel.act('refresh');
+        assert.match(lineOf(), new RegExp(`^<strong>not reported</strong> since ${HEARD.replace(/\./g, '\\.')}: the helper last said fatal`));
+      } finally {
+        gateway._deps.now = now;
+      }
+    });
+  });
+
   describe('a write that must not happen twice', () => {
     /**
      * Set the bridge up and set one item aside for a reason of its own.
