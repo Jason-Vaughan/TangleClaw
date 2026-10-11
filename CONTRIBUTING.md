@@ -1,6 +1,6 @@
 # Contributing to TangleClaw
 
-Thanks for your interest in contributing to TangleClaw, the open-source, local-first AI-native SDLC orchestration platform. This document covers how to set up a development environment, run tests, and submit changes.
+Thanks for your interest in contributing to TangleClaw, the open-source, local-first AI-native SDLC orchestration platform. This document covers how to set up a development environment, run tests, and report a problem or offer a fix. Pull requests can be opened by collaborators only; [Issues Are Preferred Over Pull Requests](#issues-are-preferred-over-pull-requests) says what everyone else does instead.
 
 ## Prerequisites
 
@@ -121,7 +121,7 @@ Two limits worth knowing. It reads **committed** history on both sides, so an un
 
 ## Areas Looking for Contributions
 
-These are features we'd love help with. Check the issues tab for related discussions, or open a new issue to propose your approach before starting.
+These are features we'd love help with. Check the issues tab for related discussions. If you are a collaborator, open a new issue to propose your approach before starting. If you are not, the help that reaches us is an issue describing the problem or the design you have in mind: [Issues Are Preferred Over Pull Requests](#issues-are-preferred-over-pull-requests) says why.
 
 ### Authentication
 
