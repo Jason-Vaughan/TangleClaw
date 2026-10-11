@@ -78,6 +78,45 @@
   });
 
   /**
+   * What Discord's close code means, for the two refusals an operator can put
+   * right themselves. Any other code is shown as its number alone.
+   */
+  const REFUSALS = Object.freeze({ 4004: 'bad bot token', 4014: 'Message Content Intent is off' });
+
+  /**
+   * The words for how the helper's connection to Discord reads, from the
+   * `discordGateway` of the status. They say what `tc bridge status` says.
+   *
+   * A status without the field, or with a reading this page does not know,
+   * gets no words: a server that predates the report says nothing of the
+   * connection, and the panel must not invent a reading for it.
+   * @param {*} gateway - The status's `discordGateway`: `{reading, state, since, fatalCloseCode, reportedAt}`.
+   * @param {boolean} enabled - Whether the bridge is enabled.
+   * @returns {string} Safe markup, or '' for no line.
+   */
+  function discordWords(gateway, enabled) {
+    const g = gateway && typeof gateway === 'object' ? gateway : {};
+    const said = {
+      connected: () => `connected since ${escapeHtml(g.since)} (the helper's report of ${escapeHtml(g.reportedAt)})`,
+      down: () => (g.state === 'fatal'
+        ? `<strong>REFUSED by Discord</strong> since ${escapeHtml(g.since)} (close code ${escapeHtml(g.fatalCloseCode)}`
+          + `${Object.prototype.hasOwnProperty.call(REFUSALS, g.fatalCloseCode) ? `: ${REFUSALS[g.fatalCloseCode]}` : ''}). `
+          + 'The helper will not retry until it is put right and restarted'
+        : `<strong>NOT CONNECTED</strong> since ${escapeHtml(g.since)}: the helper reports ${escapeHtml(g.state)}`)
+        + ` (its report of ${escapeHtml(g.reportedAt)}). Nothing you write in the chat arrives meanwhile.`,
+      'not-reported': () => `<strong>not reported</strong> since ${escapeHtml(g.reportedAt)}: the helper last said ${escapeHtml(g.state)} and has not reported since. `
+        + 'It may not be running; whether Discord is connected is not known.',
+      'never-reported': () => 'never reported since this server started: the helper is not running, has not yet asked for work, '
+        + 'or predates the report. Restart the helper after an update.'
+    };
+    if (!Object.prototype.hasOwnProperty.call(said, g.reading)) return '';
+    // A disabled bridge refuses the helper's claim before it reads the report, so silence then says nothing about the helper.
+    const unread = !enabled && (g.reading === 'not-reported' || g.reading === 'never-reported')
+      ? ' The bridge is disabled, and a disabled bridge does not read the helper\'s reports: this says nothing about the helper.' : '';
+    return said[g.reading]() + unread;
+  }
+
+  /**
    * Make the panel's controller: its state, what it draws, and what each
    * control does. It touches no DOM, so a test can drive it directly.
    * @param {object} deps
@@ -311,7 +350,8 @@
       const optouts = Array.isArray(reach.optouts) ? reach.optouts : [];
       const scope = reach.scope || {};
       const nicknames = Array.isArray(s.nicknames) ? s.nicknames : [];
-      const token = state.token === null ? '' : `
+      const discord = discordWords(s.discordGateway, Boolean(s.enabled));
+      const token =state.token === null ? '' : `
         <div class="ob-token" data-bridge-token-shown="1">
           <div class="form-hint"><strong>The helper token, shown once.</strong> It is not saved anywhere by this page.
             On the machine that runs the helper, run <code>bin/tc-bridge-helper set-secret helper</code> and paste it at the prompt.
@@ -328,6 +368,7 @@
           + (s.routesMasterNotTold ? `; <strong>${escapeHtml(s.routesMasterNotTold)} route(s) it has not been told of</strong>` : ''))}
         ${line('Routes', `${escapeHtml(s.openRoutes)} open${routes ? ` (${routes})` : ''}${s.oldestOpenRouteAt ? `, oldest since ${escapeHtml(s.oldestOpenRouteAt)}` : ''}`)}
         ${line('To post', `${escapeHtml(s.waitingForHelper)} waiting for the helper, ${escapeHtml(s.setAside)} set aside, ${escapeHtml(routeless.length)} queued with no open route`)}
+        ${discord ? line('Discord connection', discord) : ''}
 
         <div class="gs-section-sublabel">Allowlist</div>
         ${line('Now', allow ? `author ${escapeHtml(allow.authorId)}, server ${escapeHtml(allow.spaceId)}, channel ${escapeHtml(allow.channelId)}` : '<strong>not set</strong>')}
