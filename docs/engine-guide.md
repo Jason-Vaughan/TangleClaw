@@ -924,6 +924,46 @@ This covers launches made by a server that has the change; a session already run
 started with until it is launched again. Nothing is removed from tmux's global environment, which
 belongs to every user of that tmux server.
 
+**What is left in tmux's global environment is reported, not removed (#2268).** When the server
+starts it reads that environment once (`tmux show-environment -g`, which starts no tmux server and
+changes nothing; `lib/tmux.js#readGlobalIdentityKeys`). `GET /api/server-info` then carries
+`launchIdentityNotice`, and carries it whatever the read found:
+
+| Field | What it holds |
+|---|---|
+| `state` | `none`, `found` or `could-not-check` |
+| `variables` | The names found, in the list's order. Never a value. Empty unless `found` |
+| `removeCommands` | One `tmux set-environment -g -u <NAME>` for each name |
+| `observedAt` | When the read was made, as an ISO time; `null` only if no read was made |
+| `message` | The outcome as one sentence for a person; empty for `none` |
+
+The field is never absent and never `null`: a clean result told by a missing field would look the
+same as an older server or a read that never ran. A reader that finds no such field should take it
+for `could-not-check`, never for `none`.
+
+- `none`: tmux answered and its global environment holds none of the four, or no tmux server is
+  running, so there is no global environment. Nothing is logged.
+- `found`: it holds at least one. The server logs one warning with the names and the commands.
+- `could-not-check`: tmux did not answer within the read's timeout (the module's five seconds), or
+  the read failed in any other way, or it was never made. The server logs one warning naming the
+  read and, for a failure, tmux's exit status or the error code. The server starts regardless, and
+  the read costs the start no more than its timeout.
+
+A variable that is set and empty in the global environment is not reported: a pane that inherits an
+empty value reads the same as one that inherits nothing, and since every launch sets each of the
+four itself, no pane this server launches inherits it at all. Neither the log line nor the field ever
+holds the value of a variable; a launch id is what the server accepts as a caller's binding. The
+read is made once, so a variable removed afterwards keeps its notice until the server restarts, which
+is why the notice carries its time. No pane this server launches inherits a variable the notice
+names. Removing one is the operator's choice, with the command the notice gives.
+
+`tc`'s `PANE_IDENTITY_MISMATCH` refusal names this cause in one case: every variable that differs is
+one the shell holds and its pane recorded none for. That is what a pane launched by a TangleClaw
+from before this change looks like while tmux's global environment holds a role or a project id. The
+refusal then adds that launching again fixes it on a TangleClaw that sets every launch identity
+variable at launch, and that on one that does not, the operator first runs the
+`tmux set-environment -g -u <NAME>` it prints for each variable. Any other mismatch reads as before.
+
 **Sessions that were already running (#2233).** The launch check applies to launches made after it
 was installed. To see how the sessions running now were started, run `tc sessions isolation` from
 any launched pane, or read `GET /api/launch/isolation`. It reads the command tmux recorded for each

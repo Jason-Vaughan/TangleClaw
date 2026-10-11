@@ -779,6 +779,16 @@ describe('tmux', () => {
         });
       }
 
+      it('readGlobalIdentityKeys names the four that server holds, gives no value, and changes nothing', () => {
+        const before = t(['show-environment', '-g']);
+        const found = tmux.readGlobalIdentityKeys();
+        assert.deepEqual(found, { present: IDENTITY, answered: true, cause: null });
+        for (const value of Object.values(STRAY)) {
+          assert.ok(!JSON.stringify(found).includes(value), `the read must not carry the value ${value}`);
+        }
+        assert.equal(t(['show-environment', '-g']), before, 'the global environment is the same after the read as before it');
+      });
+
       it('left the global environment as it was seeded', () => {
         const globals = verbs.parseSessionEnvironment(t(['show-environment', '-g']));
         for (const key of IDENTITY) assert.equal(globals[key], STRAY[key]);
@@ -1442,6 +1452,159 @@ describe('tmux — reading back a session\'s launch environment (#1626)', () => 
     for (const bad of ['a b', 'X;rm', '', 'lower']) {
       assert.throws(() => tmux.readSessionEnv(name, bad), /Invalid environment variable name/);
     }
+  });
+});
+
+describe('tmux — which launch identity variables the global environment holds (#2268)', () => {
+  const IDENTITY = ['TANGLECLAW_LAUNCH_ID', 'TANGLECLAW_PROJECT_ID', 'TANGLECLAW_ROLE', 'TANGLECLAW_WORKSPACE_ID'];
+
+  describe('reading a listing', () => {
+    it('names an identity variable that has a value, in the list\'s order, and never its value', () => {
+      const listing = [
+        'TANGLECLAW_WORKSPACE_ID=master-1234abcd',
+        'PATH=/usr/bin:/bin',
+        'TANGLECLAW_LAUNCH_ID=L-3f9c2b7e-secret',
+        'TANGLECLAW_PORT=3102'
+      ].join('\n');
+      const found = tmux._identityKeysIn(listing);
+      assert.deepEqual(found, ['TANGLECLAW_LAUNCH_ID', 'TANGLECLAW_WORKSPACE_ID']);
+      assert.ok(!JSON.stringify(found).includes('L-3f9c2b7e-secret'));
+    });
+
+    it('does not count one tmux marks removed, or one that is set and empty', () => {
+      assert.deepEqual(tmux._identityKeysIn('-TANGLECLAW_ROLE\nTANGLECLAW_PROJECT_ID=\nTANGLECLAW_LAUNCH_ID=L-1'), ['TANGLECLAW_LAUNCH_ID']);
+    });
+
+    it('does not count a variable that only resembles one, or another TangleClaw variable', () => {
+      assert.deepEqual(tmux._identityKeysIn('TANGLECLAW_ROLE_OLD=master\nXTANGLECLAW_ROLE=master\nTANGLECLAW_API=http://localhost:3102\nTANGLECLAW_PORT=3102'), []);
+    });
+
+    it('keeps a value that contains "=" from hiding its variable, and reads all four', () => {
+      assert.deepEqual(tmux._identityKeysIn(IDENTITY.map((key) => `${key}=a=b`).join('\n')), IDENTITY);
+    });
+
+    it('answers none for no listing at all', () => {
+      for (const nothing of ['', null, undefined]) assert.deepEqual(tmux._identityKeysIn(nothing), []);
+    });
+  });
+
+  describe('asking tmux', () => {
+    const os = require('node:os');
+
+    it('answers "none" where no tmux server is running, and starts none', () => {
+      // A directory of its own for tmux's socket, with nothing in it: the
+      // read is aimed at a server that does not exist, never at the host's.
+      const saved = { TMUX: process.env.TMUX, TMUX_TMPDIR: process.env.TMUX_TMPDIR };
+      const root = fs.mkdtempSync('/tmp/tc-2268-none-');
+      delete process.env.TMUX;
+      process.env.TMUX_TMPDIR = root;
+      try {
+        assert.deepEqual(tmux.readGlobalIdentityKeys(), { present: [], answered: true, cause: null });
+        // tmux makes its socket directory on any call; a server would leave a socket in it.
+        const left = fs.readdirSync(root, { recursive: true }).filter((entry) => fs.statSync(path.join(root, entry)).isSocket());
+        assert.deepEqual(left, [], 'the read must not start a tmux server');
+      } finally {
+        if (saved.TMUX === undefined) delete process.env.TMUX; else process.env.TMUX = saved.TMUX;
+        if (saved.TMUX_TMPDIR === undefined) delete process.env.TMUX_TMPDIR; else process.env.TMUX_TMPDIR = saved.TMUX_TMPDIR;
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it('says tmux did not answer when the read times out, rather than "none"', () => {
+      const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-slow-tmux-global-'));
+      fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
+      const realPath = process.env.PATH;
+      process.env.PATH = `${binDir}:${realPath}`;
+      try {
+        const started = Date.now();
+        assert.deepEqual(tmux.readGlobalIdentityKeys({ timeout: 300 }), { present: [], answered: false, cause: 'read-timed-out' });
+        assert.ok(Date.now() - started < 5000, 'the read is bounded by its timeout');
+      } finally {
+        process.env.PATH = realPath;
+        fs.rmSync(binDir, { recursive: true, force: true });
+      }
+    });
+
+    /**
+     * Run the read against a stub `tmux` that prints to stderr and exits.
+     * @param {string} script - The stub's body, after its `#!/bin/sh` line
+     * @returns {object} What `readGlobalIdentityKeys` answered
+     */
+    function readWithStub(script) {
+      const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-stub-tmux-global-'));
+      fs.writeFileSync(path.join(binDir, 'tmux'), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+      const realPath = process.env.PATH;
+      process.env.PATH = `${binDir}:${realPath}`;
+      try {
+        return tmux.readGlobalIdentityKeys();
+      } finally {
+        process.env.PATH = realPath;
+        fs.rmSync(binDir, { recursive: true, force: true });
+      }
+    }
+
+    for (const words of [
+      'no server running on /tmp/tmux-501/default',
+      'error connecting to /tmp/tmux-501/default (No such file or directory)',
+      'error connecting to /tmp/tmux-501/default (Connection refused)'
+    ]) {
+      it(`answers "none" when tmux says "${words}"`, () => {
+        assert.deepEqual(readWithStub(`echo '${words}' >&2; exit 1`), { present: [], answered: true, cause: null });
+      });
+    }
+
+    it('says the read failed, with tmux\'s exit status, for any other failure: that is not "none"', () => {
+      assert.deepEqual(readWithStub('echo \'error connecting to /tmp/tmux-501/default (Permission denied)\' >&2; exit 1'),
+        { present: [], answered: false, cause: 'read-failed', failure: { status: 1, signal: null, code: null } });
+      assert.deepEqual(readWithStub('echo \'no server running on /x\' >&2; exit 3'),
+        { present: [], answered: false, cause: 'read-failed', failure: { status: 3, signal: null, code: null } },
+        'the words alone are not the answer: tmux exits 1 when it has no server');
+      assert.deepEqual(readWithStub('exit 1'),
+        { present: [], answered: false, cause: 'read-failed', failure: { status: 1, signal: null, code: null } });
+    });
+
+    it('does not answer "none" for a tmux a signal ended', () => {
+      // `lib/exec-timeout.js` reads any kill signal as this module's own
+      // timeout, so this is "did not answer" and not "failed". Either way it
+      // is not an answer.
+      const answer = readWithStub('kill -KILL $$');
+      assert.equal(answer.answered, false);
+      assert.equal(answer.cause, 'read-timed-out');
+    });
+
+    it('says the read failed, with the error code, when tmux cannot be run at all', () => {
+      const realPath = process.env.PATH;
+      process.env.PATH = '/nonexistent-tc-2268';
+      try {
+        assert.deepEqual(tmux.readGlobalIdentityKeys(),
+          { present: [], answered: false, cause: 'read-failed', failure: { status: null, signal: null, code: 'ENOENT' } });
+      } finally {
+        process.env.PATH = realPath;
+      }
+    });
+
+    it('carries nothing tmux printed on a failure', () => {
+      const answer = readWithStub('echo \'TANGLECLAW_LAUNCH_ID=L-3f9c2b7e-secret\'; echo \'TANGLECLAW_LAUNCH_ID=L-3f9c2b7e-secret\' >&2; exit 2');
+      assert.equal(answer.cause, 'read-failed');
+      assert.ok(!JSON.stringify(answer).includes('L-3f9c2b7e-secret'));
+    });
+
+    it('asks only to be shown the global environment', () => {
+      // A tmux that records what it was asked and answers with a listing.
+      const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fake-tmux-global-'));
+      const asked = path.join(binDir, 'asked');
+      fs.writeFileSync(path.join(binDir, 'tmux'),
+        `#!/bin/sh\nprintf '%s\\n' "$*" >> '${asked}'\nprintf 'TANGLECLAW_ROLE=master\\nHOME=/h\\n'\n`, { mode: 0o755 });
+      const realPath = process.env.PATH;
+      process.env.PATH = `${binDir}:${realPath}`;
+      try {
+        assert.deepEqual(tmux.readGlobalIdentityKeys(), { present: ['TANGLECLAW_ROLE'], answered: true, cause: null });
+        assert.deepEqual(fs.readFileSync(asked, 'utf8').trim().split('\n'), ['show-environment -g']);
+      } finally {
+        process.env.PATH = realPath;
+        fs.rmSync(binDir, { recursive: true, force: true });
+      }
+    });
   });
 });
 

@@ -35,6 +35,44 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-11 — #2268: say so when tmux's global environment holds a launch identity variable, and name that cause in `tc`'s refusal
+
+<!-- prawduct: type=bugfix | scope=2268-launch-identity-not-inherited -->
+
+#2268 Chunk 02 of three. Branch `fix/2268-report-global-identity`, from `origin/main` `60f0f12b`. No schema change, no new route.
+
+Visual change: no
+
+**Why.** A launch now decides every identity variable itself, so one left in tmux's global environment reaches no pane TangleClaw creates. Nobody was told it was there. It still reaches every other session on that tmux server, and a pane launched by a TangleClaw from before that change is refused by `tc` while it is there, with a recovery text ("end this session and launch it again") that does not remove the cause. The issue's Expected 3 and 4, as ruled: report it, never remove it (`global report`); show it on a read the operator sees, with names and no value (`report shown`).
+
+**What changed.**
+- `lib/tmux.js`: `readGlobalIdentityKeys()` runs `tmux show-environment -g`, bounded by the module's read timeout, and returns `{present, answered, cause}`, with `failure` (exit status, signal, error code) when the read failed. It starts no server and writes nothing. `_identityKeysIn(text)` reads the listing and keeps names only, from the list of four.
+- `lib/launch-identity.js`: `reportGlobalIdentity({read, log, setNotice, now})` makes the read, sets a notice for whichever outcome it reached, and logs one warning unless the outcome is a clean none. Non-throwing.
+- `lib/server-info.js`: `setLaunchIdentityNotice`, and `launchIdentityNotice` on what `getServerInfo()` returns: always an object, `{state, variables, removeCommands, observedAt, message}`, with `state` one of `none`, `found`, `could-not-check`. Until a read is recorded it says `could-not-check` with no time. `GET /api/server-info` passes that object through, so the route's handler is not edited.
+- `server.js`: one call in the startup sequence, in a `try` of its own, after the status-bar refresh and before `listen`. The module is required in the call itself, so that the file gains the one statement.
+- `lib/tc-verbs.js`: `renderPaneMismatch` adds one line when every difference is a variable the shell holds and the pane recorded none for: the likely cause, that launching again fixes it on a TangleClaw that sets every identity variable at launch, and the `tmux set-environment -g -u <NAME>` the operator runs first on one that does not. No verb is added or renamed; the tracked `CLAUDE.md` block does not move.
+- `docs/engine-guide.md`: the pane-check section gains the report, the field's table, the three states and the refusal's added line.
+- Tests: blocks in `test/tmux.test.js`, `test/server-info.test.js` (one of them reads the route on a server of its own, once per state), `test/launch-identity.test.js` and `test/tc-pane-identity.test.js`.
+
+**An existing assertion changed, by plan.** `test/launch-identity.test.js`'s case 'exports the list and the one function, and nothing else' held the module's export set at `LAUNCH_IDENTITY_KEYS` and `undecidedIdentityKeys`. It now holds it at those two and `reportGlobalIdentity`, and is named 'exports the list and the two functions, and nothing else'. The assertion is as strict as it was: an export added or removed still fails it. No other existing assertion changes.
+
+**Decisions.**
+- [DECISION: the notice is always present and states one of three outcomes, `none`, `found` or `could-not-check`. | Ruled by TangleClaw-Builder1 (the lane queue's ruling 29) on this chunk's question about a `state` field: a clean result told by an absent field looks the same as an older server, a dropped field or a read that never ran, so the producer states the outcome it reached. The plan's shape had four fields and null for none. A reader that finds no field takes it for `could-not-check`; that reader is the next chunk's.]
+- [DECISION: `none` means tmux answered and held none, or tmux said it has no server. Any other failed read is `could-not-check`. | The same ruling. The read therefore runs tmux without a shell and reads its words on a failure, in the C locale, instead of going through `_exec` with stderr discarded as `readSessionEnv` does; `readSessionEnv` is unchanged. A host with no tmux on PATH reads `could-not-check`.]
+- [DECISION: a tmux ended by a signal reads as "did not answer in time". | `lib/exec-timeout.js` takes any kill signal for the module's own timeout, on purpose. Either way the outcome is `could-not-check`.]
+- [DECISION: a variable that is set and empty in the global environment is not reported. | Ruled to stand. A pane that inherits an empty value reads the same as one that inherits nothing, and since every launch sets each of the four itself, no pane this server launches inherits it at all.]
+- [DECISION: the value is dropped where the listing is read, and the report filters to the list of four again. | Two places a value cannot pass, so that no change to one of them alone puts a launch id in a log or an answer.]
+- [DECISION: the warning for a read that failed or threw names the read, and carries the exit status, the signal or the error code, and an error's name; never an error's message or anything tmux printed. | Ruled: enough to act on, and no value. An exec failure's message can carry the command's output.]
+- [DECISION: a read that did not answer, failed or threw logs one warning; a clean none logs nothing. | Ruled to stand.]
+- [DECISION: the read uses the module's existing timeout, five seconds, before `listen`. | Ruled to stand, provided a timeout yields `could-not-check` and the server starts regardless; a case runs the report on the real read against a tmux that never answers.]
+
+**Verification.** The four test files and four that read the same code, one process at a time: green, counts in the PR. Deliberate breaks, one product file each, restored and hashed: each fails a case of this chunk. The read against a real tmux server runs in the block chunk 01 added, on the server private to that block whose global environment holds all four: it names the four, carries no value, and leaves that environment byte for byte as it was. The read against no server runs with tmux's socket directory pointed at an empty directory of its own, and leaves no socket there. The route is read on a server started by its test on a port and data directory of its own, once for each state and once with no read made.
+
+**Not covered.**
+- The startup sequence itself is not run by a test: one case holds the call's place in `server.js` by its source text, and the route cases set the notice through the same report function the startup calls.
+- Nothing shows the notice on a screen yet: that is chunk 03, and so is the reader's handling of a missing field.
+- The live server's log and field after a deploy: the Integrator's check, listed in the PR.
+
 ## 2026-10-11 — #2268: every launch decides every identity variable, for the pane and for the per-launch engine server
 
 <!-- prawduct: type=bugfix | scope=2268-launch-identity-not-inherited -->
