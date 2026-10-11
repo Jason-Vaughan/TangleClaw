@@ -170,6 +170,18 @@ the row also carries `applicable: false`.
 
 If TangleClaw detects an existing PortHub installation with active leases that haven't been imported yet, a banner appears at the top of the landing page offering to import those leases into TangleClaw's built-in port registry. This is a one-time migration convenience — once imported, TangleClaw manages ports directly.
 
+### Launch Identity Banner
+
+TangleClaw tells each session who it is through four environment variables: `TANGLECLAW_LAUNCH_ID`, `TANGLECLAW_PROJECT_ID`, `TANGLECLAW_WORKSPACE_ID` and `TANGLECLAW_ROLE`. If one of them is ever set in tmux's *global* environment (by a `tmux set-environment -g` typed by hand or run by a script), every session on that tmux server that does not set it itself inherits it. When the server starts it reads that global environment once, and the landing page shows a banner with what it found:
+
+- **Variables found.** The banner names each one, gives the command that removes it (`tmux set-environment -g -u <NAME>`), and says when the read was made. It shows names only, never a value.
+- **Could not check.** The read did not answer or failed, or the server sent no report at all. A server that has not been restarted since an update sends none, and the banner then says to restart it. This is shown as its own line. It is never treated as "none found".
+- **None found.** No banner.
+
+Nothing needs doing for TangleClaw's own sessions: every launch sets each of the four variables itself, so no pane TangleClaw launches inherits one from the global environment. Removing a stray variable matters for sessions on that tmux server that TangleClaw did not launch.
+
+The banner has no dismiss button. The read is made only when the server starts, so after you remove the variables the banner stays until the next server restart. The same report is on `GET /api/server-info` as `launchIdentityNotice`; see the pane-check section of the [engine guide](engine-guide.md).
+
 ### Fleet Workload
 
 Sessions report what they are doing with `tc workload set`, and TangleClaw combines that with what each session's terminal is observed doing into one verdict per session. (`tc sessions isolation` is a different question: which sessions were started off their engine's shared background process. See the engine guide.) You see the verdict with `tc sessions` from any launched pane, or `GET /api/tc/sessions`: `AVAILABLE`, `WORKING`, `WAITING`, `BLOCKED`, `COMPLETE_NOT_CLEAR`, `HELD`, `STOPPED` or `UNKNOWN`. A session that has not reported reads as unknown, never available.
