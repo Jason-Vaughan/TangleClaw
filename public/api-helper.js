@@ -4766,6 +4766,11 @@
    * else the default engine, never an installed engine standing in for a
    * missing one.
    *
+   * Which engine is set is the server's to say: `settings.configuredEngine`.
+   * A payload without that key comes from a server that does not state it, and
+   * the page then reads the engine from the pin, else its own copy of the
+   * config, else the resolved engine.
+   *
    * @param {object|null} settings - `status.settings` from `GET /api/master/status`.
    * @param {object[]} engines - The picker roster (`state.engines`).
    * @param {string} pin - The engine dropdown's value; empty follows the default engine.
@@ -4781,17 +4786,23 @@
    *   selected mode. `foreign` is the stored mode when it was chosen for
    *   another engine than `engineId`. `send` is true when a save must send the
    *   selection even though the operator did not touch the control; a control
-   *   they changed is always sent. Without a pin, `engineId`, `standIn` and
-   *   `foreign` are the page's reading and can be wrong, which is why nothing
-   *   is sent on the strength of them.
+   *   they changed is always sent. Where the server did not state the engine
+   *   and there is no pin, `engineId`, `standIn` and `foreign` are the page's
+   *   reading and can be wrong, which is why nothing is sent on the strength
+   *   of them.
    */
   function tcMasterLaunchModeView(settings, engines, pin, defaultEngine) {
     const s = settings || {};
     const storedPin = s.engine || '';
     const followed = defaultEngine || null;
-    // With no pin and no default engine known to the page, the engine the
-    // server resolved is the only reading left of which engine is set.
-    const storedEngine = storedPin || followed || s.resolvedEngine || null;
+    // The server's statement of which engine is set, when the payload has
+    // one; null there means no engine is set at all. Without the key: the pin,
+    // else the page's default engine, else the engine the server resolved, the
+    // only reading left.
+    const stated = Object.prototype.hasOwnProperty.call(s, 'configuredEngine');
+    const storedEngine = stated
+      ? (s.configuredEngine || null)
+      : (storedPin || followed || s.resolvedEngine || null);
     const engineId = pin === storedPin ? storedEngine : (pin || followed);
     const moved = pin !== storedPin && (!engineId || engineId !== storedEngine);
     const standIn = !moved && Boolean(storedEngine && s.resolvedEngine && s.resolvedEngine !== storedEngine);
@@ -4815,23 +4826,23 @@
     return {
       engineId, moved, standIn, modes, selected, stranded, foreign,
       // Untouched, the control is sent in one case only: beside a stored mode
-      // that belongs to another engine than the PINNED one. The server's notice
-      // for that case asks for `default` to be saved first, and a control that
-      // already shows `default` would never send it.
+      // that belongs to another engine than the one SET for the Master. The
+      // server's notice for that case asks for `default` to be saved first,
+      // and a control that already shows `default` would never send it.
       //
-      // Only with a pin, because only the pin is the server's own word for
-      // which engine is set. Without one the engine above is this page's
+      // Only on the server's own word for which engine is set: the engine it
+      // states, or a pin. Without either the engine above is this page's
       // reading, from a copy of the config that can be stale or absent or from
       // an engine that may be standing in, and a wrong reading would call a
       // mode foreign that is validly stored and send `default` over it.
       //
-      // And only while the dropdown still shows that pin. Once it holds
+      // And only while the dropdown still shows the stored pin. Once it holds
       // anything else the control is not sent untouched: an omitted mode is
       // how the server knows none was chosen for the new engine, and only then
       // does it report a reset, or keep a mode already recorded for the engine
       // being switched to. That holds for a dropdown emptied onto a default
       // engine the page believes is the same one, too: the belief can be wrong.
-      send: Boolean(storedPin) && pin === storedPin && Boolean(foreign)
+      send: (stated || Boolean(storedPin)) && pin === storedPin && Boolean(foreign)
     };
   }
 

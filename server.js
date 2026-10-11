@@ -3961,8 +3961,24 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
   if (body.projectsDir && typeof body.projectsDir === 'string') {
     config.projectsDir = body.projectsDir;
   }
+  // The Master's launch mode belongs to the engine it was chosen for, and a
+  // Master with no pin follows the default engine. So setting the default
+  // engine here is judged by the same rule as `PATCH /api/config`: a mode
+  // chosen for the previous engine returns to `default`, and the response says
+  // so. This route sends no launch mode, so it can only keep or reset one.
+  let masterModeReset = null;
   if (body.defaultEngine && typeof body.defaultEngine === 'string') {
+    const masterEngineBefore = { defaultEngine: config.defaultEngine, master: config.master };
     config.defaultEngine = body.defaultEngine;
+    const outcome = master.masterLaunchModeAfterPatch(masterEngineBefore, config, undefined);
+    const held = master.masterSettings(config);
+    if (held.launchMode !== outcome.launchMode || held.launchModeEngine !== outcome.launchModeEngine) {
+      config.master = { ...held, launchMode: outcome.launchMode, launchModeEngine: outcome.launchModeEngine };
+    }
+    if (outcome.reset) {
+      masterModeReset = outcome.reset;
+      warnings.push(master.masterLaunchModeResetWarning(outcome.reset));
+    }
   }
   if (body.deletePassword !== undefined) {
     if (body.deletePassword && typeof body.deletePassword === 'string') {
@@ -4175,6 +4191,12 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
   // Mark setup as complete
   config.setupComplete = true;
   store.config.save(config);
+  if (masterModeReset) {
+    log.info('Master launch mode reset to default: setup changed the default engine the Master follows and the mode was chosen for the previous one', {
+      fromEngine: masterModeReset.fromEngine, toEngine: masterModeReset.toEngine,
+      fromMode: masterModeReset.mode, toMode: 'default'
+    });
+  }
   if (optedOut) {
     log.warn('Setup finished without a login, as the operator chose', { ingressMode: config.ingressMode });
   }

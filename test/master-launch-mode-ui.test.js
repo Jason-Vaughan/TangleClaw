@@ -276,7 +276,7 @@ describe('#2197 — the Master settings modal and an engine change', () => {
         const engine = config.master.engine || config.defaultEngine;
         const runs = outcome.launchModeEngine === engine || outcome.launchMode === 'default';
         live.status = settingsOn(engine, outcome.launchMode, {
-          engine: config.master.engine,
+          engine: config.master.engine, configuredEngine: engine,
           launchModeEngine: outcome.launchModeEngine, resolvedLaunchMode: runs ? outcome.launchMode : 'default'
         });
         return {
@@ -482,6 +482,112 @@ describe('#2197 — the Master settings modal and an engine change', () => {
       assert.equal(v.selected, 'default');
       assert.equal(v.modes.length, 0);
       assert.equal(v.moved, false);
+    });
+  });
+
+  describe('tcMasterLaunchModeView — the engine the server says is set (settings.configuredEngine)', () => {
+    // No pin. Claude Code is the default engine and the mode was chosen for it;
+    // Codex is installed and standing in.
+    const standIn = (over = {}) => settingsOn('codex', 'bypassPermissions', {
+      engine: null, configuredEngine: 'claude', launchModeEngine: 'claude', resolvedLaunchMode: 'default', ...over
+    });
+
+    it('reads the stored engine from the server, whatever the page holds for the default engine', () => {
+      for (const pageDefault of [null, 'codex', 'claude']) {
+        const v = view(standIn(), '', pageDefault);
+        assert.equal(v.engineId, 'claude', `page default ${pageDefault}`);
+        assert.equal(v.moved, false);
+        assert.equal(v.standIn, true, 'Codex is running in place of the engine set');
+        assert.equal(v.foreign, null, 'the mode is validly stored for the engine set, and is not called foreign');
+        assert.equal(v.selected, 'bypassPermissions');
+        assert.deepEqual(ids(v.modes), ids(offeredBy('claude')), 'the modes of the engine set, not the stand-in');
+        assert.equal(v.send, false, 'nothing to clear, so nothing is sent untouched');
+      }
+    });
+
+    it('sends the untouched control beside a foreign mode with no pin, on the server\'s word', () => {
+      // The default engine became Codex where no save saw it; Bypass is still
+      // recorded for Claude Code. The page's own copy of the config is stale.
+      const s = settingsOn('codex', 'bypassPermissions', {
+        engine: null, configuredEngine: 'codex', launchModeEngine: 'claude', resolvedLaunchMode: 'default'
+      });
+      for (const pageDefault of [null, 'claude', 'codex']) {
+        const v = view(s, '', pageDefault);
+        assert.equal(v.engineId, 'codex', `page default ${pageDefault}`);
+        assert.deepEqual(JSON.parse(JSON.stringify(v.foreign)), { mode: 'bypassPermissions', engine: 'claude' });
+        assert.equal(v.selected, 'default');
+        assert.equal(v.send, true, 'so saving Interactive clears it, as the server\'s notice asks');
+      }
+    });
+
+    it('does not call a mode foreign on a stale page copy of the default engine', () => {
+      // The same stale page as the fallback case above it in this file, which
+      // could only refuse to send. Told the engine, the page shows the mode.
+      const v = view(settingsOn('codex', 'fullAuto', { engine: null, configuredEngine: 'codex' }), '', 'claude');
+      assert.equal(v.foreign, null);
+      assert.equal(v.selected, 'fullAuto');
+      assert.equal(v.send, false);
+    });
+
+    it('still sends nothing untouched once the dropdown leaves the stored pin', () => {
+      const foreignHere = settingsOn('codex', 'bypassPermissions', {
+        engine: null, configuredEngine: 'codex', launchModeEngine: 'claude', resolvedLaunchMode: 'default'
+      });
+      assert.equal(view(foreignHere, 'codex', 'codex').send, false, 'pinning the engine it follows is still a moved dropdown');
+      assert.equal(view(foreignHere, 'claude', 'codex').send, false);
+      const pinned = settingsOn('codex', 'bypassPermissions', { configuredEngine: 'codex', launchModeEngine: 'claude' });
+      assert.equal(view(pinned, 'codex').send, true);
+      assert.equal(view(pinned, '', 'codex').send, false);
+    });
+
+    it('agrees with the pin when both are present', () => {
+      for (const engine of ENGINE_IDS) {
+        for (const mode of ids(offeredBy(engine))) {
+          const without = view(settingsOn(engine, mode), engine);
+          const withKey = view(settingsOn(engine, mode, { configuredEngine: engine }), engine);
+          assert.deepEqual(JSON.parse(JSON.stringify(withKey)), JSON.parse(JSON.stringify(without)), `${engine}/${mode}`);
+        }
+      }
+    });
+
+    it('reads null as no engine set: a recorded mode is foreign to it, an unrecorded one is not', () => {
+      const none = { engine: null, configuredEngine: null, resolvedEngine: 'codex', launchModes: offeredBy('codex') };
+      const recorded = view(settingsOn('codex', 'bypassPermissions', { ...none, launchModeEngine: 'claude', resolvedLaunchMode: 'default' }), '', 'claude');
+      assert.equal(recorded.engineId, null, 'the page\'s own default engine is not read in its place');
+      assert.deepEqual(JSON.parse(JSON.stringify(recorded.foreign)), { mode: 'bypassPermissions', engine: 'claude' });
+      assert.equal(recorded.send, true);
+      const unrecorded = view(settingsOn('codex', 'bypassPermissions', { ...none, launchModeEngine: null, resolvedLaunchMode: 'default' }), '', 'claude');
+      assert.equal(unrecorded.foreign, null);
+      assert.equal(unrecorded.send, false);
+    });
+
+    it('reads what the server\'s own status payload states, while another engine stands in', () => {
+      // The producer and this reader, joined: the key the view reads is the key
+      // `getMasterStatus` writes, and with Claude Code set and only Codex
+      // installed the two do not agree on any other field.
+      const realEngines = require('../lib/engines');
+      const saved = store.config.load();
+      const list = ENGINE_IDS.map((id) => ({ id, available: id === 'codex' }));
+      const tmuxLib = { probeSession: () => ({ live: false, answered: true, cause: null }) };
+      try {
+        store.config.save({
+          ...saved, defaultEngine: 'claude',
+          master: { accessLevel: 'read-only', engine: null, launchMode: 'bypassPermissions', launchModeEngine: 'claude', scope: 'all', autoStart: false }
+        });
+        const { settings } = master.getMasterStatus({
+          home: tmpDir, tmuxLib,
+          enginesLib: { resolveDefaultEngine: (config) => realEngines.resolveDefaultEngine(config, list) }
+        });
+        assert.equal(settings.resolvedEngine, 'codex', 'this fixture must substitute, or it proves nothing');
+        assert.equal(settings.configuredEngine, 'claude');
+        const v = view(settings, '', null);
+        assert.equal(v.engineId, 'claude');
+        assert.equal(v.foreign, null);
+        assert.equal(v.selected, 'bypassPermissions');
+        assert.equal(v.send, false);
+      } finally {
+        store.config.save(saved);
+      }
     });
   });
 
@@ -756,6 +862,46 @@ describe('#2197 — the Master settings modal and an engine change', () => {
       await form.open();
       assert.match(form.group(), /Choose a mode here to replace it\./);
       assert.doesNotMatch(form.group(), /Saving this form stores/);
+    });
+
+    it('with the engine stated by the server, an untouched save clears a foreign mode on a Master with no pin', async () => {
+      // Full Auto is recorded for Codex and the Master follows the default
+      // engine, Claude Code. No pin, and a page that holds no config at all.
+      const stored = { engine: null, launchMode: 'fullAuto', launchModeEngine: 'codex' };
+      const form = serverForm(stored, {
+        config: null,
+        settings: settingsOn('claude', 'fullAuto', {
+          engine: null, configuredEngine: 'claude', launchModeEngine: 'codex', resolvedLaunchMode: 'default'
+        })
+      });
+      await form.open();
+      assert.match(form.group(), /Saved as <code>fullAuto<\/code> for Codex, which is not used on Claude Code/);
+      assert.match(form.group(), /Saving this form stores the mode selected here for Claude Code in its place\./);
+      const patch = await form.save();
+      assert.equal(patch.launchMode, 'default');
+      assert.equal(form.outcomes[0].launchMode, 'default');
+      assert.equal(form.outcomes[0].unused, null);
+      assert.doesNotMatch(form.group(), /which is not used on/);
+    });
+
+    it('with the engine stated by the server, an untouched save keeps a mode stored for the default engine while another stands in', async () => {
+      const stored = { engine: null, launchMode: 'bypassPermissions', launchModeEngine: 'claude' };
+      for (const config of [null, { defaultEngine: 'codex' }]) {
+        const form = serverForm(stored, {
+          config,
+          settings: settingsOn('codex', 'bypassPermissions', {
+            engine: null, configuredEngine: 'claude', launchModeEngine: 'claude', resolvedLaunchMode: 'default'
+          })
+        });
+        await form.open();
+        assert.equal(form.mode().value, 'bypassPermissions', 'shown as chosen, for the engine that is set');
+        assert.doesNotMatch(form.group(), /which is not used on/);
+        assert.match(form.group(), /Claude Code is the engine set for the master, and Codex is standing in for it/);
+        const patch = await form.save();
+        assert.ok(!('launchMode' in patch), `no mode sent with the page's config ${JSON.stringify(config)}`);
+        assert.equal(form.outcomes[0].launchMode, 'bypassPermissions');
+        assert.equal(form.outcomes[0].launchModeEngine, 'claude');
+      }
     });
 
     it('a mode chosen and saved survives the next save about something else', async () => {

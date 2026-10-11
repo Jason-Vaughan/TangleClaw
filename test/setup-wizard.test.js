@@ -1,13 +1,13 @@
 'use strict';
 
-const { describe, it, before, after } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { initRepo } = require('./_temp-repo');
-const { setLevel } = require('../lib/logger');
+const { setLevel, setConsoleStream } = require('../lib/logger');
 const store = require('../lib/store');
 const { createServer, _setCutoverSpawner } = require('../server');
 const { installCaddyStub } = require('./_caddy-stub');
@@ -731,6 +731,131 @@ describe('Setup Wizard', () => {
       // First should succeed, second should be skipped
       assert.equal(data.attached.filter(n => n === 'dup-batch-test').length, 1);
       assert.ok(data.warnings.some(w => w.includes('already registered')));
+    });
+
+    describe('a default engine set here does not carry the Master\'s launch mode (#2197)', () => {
+      let savedConfig;
+      let logLines;
+      let restoreLog;
+
+      /**
+       * Store a Master block and default engine directly, as the starting
+       * point of a case. Not through the route: the route is what is under test.
+       * @param {object} masterBlock - Fields over a read-only, unpinned Master.
+       * @param {string} [defaultEngine] - The install's default engine.
+       */
+      function given(masterBlock, defaultEngine = 'claude') {
+        const config = store.config.load();
+        config.defaultEngine = defaultEngine;
+        config.master = {
+          accessLevel: 'read-only', engine: null, launchMode: 'default', scope: 'all', autoStart: false,
+          medusaEnabled: false, medusaWake: false, ...masterBlock
+        };
+        store.config.save(config);
+      }
+
+      /** @returns {string[]} The reset lines the server logged during the case. */
+      const resetLines = () => logLines.filter((line) => /Master launch mode reset to default/.test(line));
+
+      beforeEach(() => {
+        savedConfig = store.config.load();
+        logLines = [];
+        // The server's own lines, read from the logger's stream for the case.
+        setLevel('info');
+        setConsoleStream({ write: (line) => { logLines.push(String(line)); return true; } });
+        restoreLog = () => { setConsoleStream(null); setLevel('error'); };
+      });
+      afterEach(() => {
+        restoreLog();
+        store.config.save(savedConfig);
+      });
+
+      it('resets a mode recorded for the previous default engine, and says so in the response and the log', async () => {
+        given({ launchMode: 'bypassPermissions', launchModeEngine: 'claude' });
+        const { status, data } = await request(server, 'POST', '/api/setup/complete', { defaultEngine: 'codex' });
+        assert.equal(status, 200);
+        const config = store.config.load();
+        assert.equal(config.defaultEngine, 'codex');
+        assert.equal(config.master.launchMode, 'default', 'Bypass was chosen for Claude Code and must not start Codex');
+        assert.equal(config.master.launchModeEngine, null);
+        const said = data.warnings.filter((w) => /launch mode is reset/.test(w));
+        assert.equal(said.length, 1);
+        assert.match(said[0], /reset to Interactive/);
+        assert.match(said[0], /Bypass was chosen for Claude Code and does not carry to Codex/);
+        assert.equal(resetLines().length, 1, 'logged once');
+        assert.match(resetLines()[0], /claude/);
+        assert.match(resetLines()[0], /codex/);
+        assert.match(resetLines()[0], /bypassPermissions/);
+      });
+
+      it('resets a mode stored with no engine recorded: it was chosen for the default engine it is leaving', async () => {
+        given({ launchMode: 'bypassPermissions' });
+        assert.equal(store.config.load().master.launchModeEngine ?? null, null, 'the fixture has no engine recorded');
+        const { status, data } = await request(server, 'POST', '/api/setup/complete', { defaultEngine: 'codex' });
+        assert.equal(status, 200);
+        const config = store.config.load();
+        assert.equal(config.master.launchMode, 'default');
+        assert.equal(config.master.launchModeEngine, null);
+        assert.ok(data.warnings.some((w) => /Bypass was chosen for Claude Code and does not carry to Codex/.test(w)));
+        assert.equal(resetLines().length, 1);
+      });
+
+      it('does not touch a pinned Master', async () => {
+        given({ engine: 'claude', launchMode: 'bypassPermissions', launchModeEngine: 'claude' });
+        const { status, data } = await request(server, 'POST', '/api/setup/complete', { defaultEngine: 'codex' });
+        assert.equal(status, 200);
+        const config = store.config.load();
+        assert.equal(config.defaultEngine, 'codex');
+        assert.equal(config.master.engine, 'claude');
+        assert.equal(config.master.launchMode, 'bypassPermissions');
+        assert.equal(config.master.launchModeEngine, 'claude');
+        assert.ok(!data.warnings.some((w) => /launch mode/.test(w)));
+        assert.equal(resetLines().length, 0);
+      });
+
+      it('does not touch the mode when the default engine is sent unchanged, or not sent', async () => {
+        for (const body of [{ defaultEngine: 'claude' }, { chimeEnabled: true }]) {
+          given({ launchMode: 'bypassPermissions', launchModeEngine: 'claude' });
+          const { status, data } = await request(server, 'POST', '/api/setup/complete', body);
+          assert.equal(status, 200, JSON.stringify(body));
+          const config = store.config.load();
+          assert.equal(config.master.launchMode, 'bypassPermissions', JSON.stringify(body));
+          assert.equal(config.master.launchModeEngine, 'claude');
+          assert.ok(!data.warnings.some((w) => /launch mode/.test(w)));
+        }
+        assert.equal(resetLines().length, 0);
+      });
+
+      it('keeps a mode already recorded for the engine the default becomes', async () => {
+        given({ launchMode: 'fullAuto', launchModeEngine: 'codex' });
+        const { status, data } = await request(server, 'POST', '/api/setup/complete', { defaultEngine: 'codex' });
+        assert.equal(status, 200);
+        const config = store.config.load();
+        assert.equal(config.master.launchMode, 'fullAuto');
+        assert.equal(config.master.launchModeEngine, 'codex');
+        assert.ok(!data.warnings.some((w) => /launch mode/.test(w)));
+      });
+
+      it('leaves a default mode as it is, with nothing to say', async () => {
+        given({});
+        const { status, data } = await request(server, 'POST', '/api/setup/complete', { defaultEngine: 'codex' });
+        assert.equal(status, 200);
+        assert.equal(store.config.load().master.launchMode, 'default');
+        assert.ok(!data.warnings.some((w) => /launch mode/.test(w)));
+        assert.equal(resetLines().length, 0);
+      });
+
+      it('stores nothing and resets nothing when the request is refused', async () => {
+        given({ launchMode: 'bypassPermissions', launchModeEngine: 'claude' });
+        const { status } = await request(server, 'POST', '/api/setup/complete', {
+          defaultEngine: 'codex', httpsEnabled: true, httpsCertPath: '/nonexistent/cert.pem'
+        });
+        assert.equal(status, 400);
+        const config = store.config.load();
+        assert.equal(config.defaultEngine, 'claude');
+        assert.equal(config.master.launchMode, 'bypassPermissions');
+        assert.equal(resetLines().length, 0, 'a reset that was not stored is not logged');
+      });
     });
   });
 });
