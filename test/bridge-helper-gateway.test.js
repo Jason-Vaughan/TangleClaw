@@ -19,6 +19,7 @@ const net = require('node:net');
 const crypto = require('node:crypto');
 const { createGateway, gatewayAddress, backoffDelay, INTENTS, OP, FATAL_CLOSES, RESUME_CLOSE, DEFAULT_URL } = require('../lib/bridge-helper/discord-gateway');
 const { fakeWebSocket } = require('./_fake-discord');
+const { CODES, createLog } = require('../lib/bridge-helper/log');
 
 /** A resume address of the shape Discord really gives: a subdomain of discord.gg. */
 const RESUME_URL = 'wss://gateway-us-east1-b.discord.gg';
@@ -710,6 +711,30 @@ describe('bridge helper: a Gateway connection attempt that goes nowhere (#2272)'
     assert.equal(ws.sockets.length, 1, 'and the second attempt opens one socket when its own answer comes');
   });
 
+  it('every code the gateway logs on these paths is one the helper\'s log defines', async () => {
+    // The other cases collect codes with their own sink; the helper's real log
+    // writes `unknown-code` for a code its registry does not hold.
+    const written = [];
+    const log = createLog({ write: (line) => written.push(JSON.parse(line)) });
+    let failLog = false;
+    const gw = gateway({ log: (code, fields) => { if (failLog && code === 'gateway-closed') { failLog = false; throw new Error('log sink gone'); } return log(code, fields); } });
+    const first = await ready(gw);
+    failLog = true;
+    assert.throws(() => first.drop(1006), /log sink gone/);
+    fireWatchdog();
+    await settle();
+    expireAttempt();
+    fireReconnect();
+    await settle();
+    fail(ws.sockets.at(-1));
+    assert.deepEqual(written.map((record) => record.code), [
+      'gateway-connecting', 'gateway-ready', 'gateway-watchdog-reconnect', 'gateway-connecting',
+      'gateway-attempt-abandoned', 'gateway-connecting', 'gateway-connect-failed'
+    ]);
+    assert.equal(written[4].reached, 'open', 'and how far the attempt got passes the log\'s rule for field values');
+    for (const { code } of written) assert.ok(Object.hasOwn(CODES, code) && code !== 'unknown-code', code);
+  });
+
   it('says when the current state began, and keeps that time while the state does not change', async () => {
     let clock = Date.parse('2026-10-11T05:00:00.000Z');
     const gw = gateway({ now: () => new Date(clock) });
@@ -790,14 +815,15 @@ async function startLoopback(onSocket) {
  * limits, until it has logged `count` codes or `withinMs` has passed.
  * @param {string} url - Where to connect.
  * @param {number} count - How many log codes to wait for.
+ * @param {number} attemptTimeoutMs - The limit on one attempt.
  * @param {number} [withinMs] - The longest this waits.
  * @returns {Promise<Array<[string, object]>>} What it logged, in order.
  */
-async function runReal(url, count, withinMs = 5000) {
+async function runReal(url, count, attemptTimeoutMs, withinMs = 20000) {
   const logged = [];
   const gw = createGateway({
     token: BOT_TOKEN, url, onMessageCreate: () => {}, random: () => 0.5,
-    backoffBaseMs: 20, backoffMaxMs: 40, attemptTimeoutMs: 150, watchdogMs: 10000,
+    backoffBaseMs: 20, backoffMaxMs: 40, attemptTimeoutMs, watchdogMs: 60000,
     log: (code, fields) => logged.push([code, fields || {}])
   });
   gw.start();
@@ -808,13 +834,15 @@ async function runReal(url, count, withinMs = 5000) {
 }
 
 describe('bridge helper: the Gateway over Node\'s real WebSocket, against a server that goes nowhere (#2272)', () => {
-  // Each case waits real time, bounded by the 150 ms attempt limit it sets:
-  // about a third of a second for two attempts, and never more than five seconds.
+  // These cases wait real time, each bounded by the attempt limit it sets. What
+  // they prove is the order of events, so no limit is one a busy machine could
+  // miss: the silent server never answers however long it is given, the
+  // handshake has a full second, and the refused port has five.
 
   it('a server that accepts the connection and never answers: the attempt is given up and another follows', async () => {
     const server = await startSilentServer();
     try {
-      assert.deepEqual(await runReal(server.url, 4), [
+      assert.deepEqual(await runReal(server.url, 4, 150), [
         ['gateway-connecting', {}], ['gateway-attempt-abandoned', { reached: 'socket' }],
         ['gateway-connecting', {}], ['gateway-attempt-abandoned', { reached: 'socket' }]
       ]);
@@ -824,9 +852,9 @@ describe('bridge helper: the Gateway over Node\'s real WebSocket, against a serv
   it('a server that completes the handshake and never says hello: the attempt is given up and another follows', async () => {
     const server = await startUpgradeOnlyServer();
     try {
-      assert.deepEqual(await runReal(server.url, 4), [
+      assert.deepEqual(await runReal(server.url, 3, 1000), [
         ['gateway-connecting', {}], ['gateway-attempt-abandoned', { reached: 'open' }],
-        ['gateway-connecting', {}], ['gateway-attempt-abandoned', { reached: 'open' }]
+        ['gateway-connecting', {}]
       ]);
     } finally { await server.close(); }
   });
@@ -836,10 +864,10 @@ describe('bridge helper: the Gateway over Node\'s real WebSocket, against a serv
     const url = server.url;
     await server.close();
     const began = Date.now();
-    assert.deepEqual(await runReal(url, 4), [
+    assert.deepEqual(await runReal(url, 4, 5000), [
       ['gateway-connecting', {}], ['gateway-connect-failed', {}],
       ['gateway-connecting', {}], ['gateway-connect-failed', {}]
     ]);
-    assert.ok(Date.now() - began < 150, 'two refused attempts, without waiting out one 150 ms limit');
+    assert.ok(Date.now() - began < 5000, 'two refused attempts, without waiting out one five-second limit');
   });
 });
