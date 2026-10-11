@@ -35,6 +35,36 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-10 — #2273: a project's delivered rules files can be regenerated from the rules in force
+
+<!-- prawduct: type=bugfix | scope=rules-2273 -->
+#2273 Chunk 01 of two. Branch `fix/2273-rules-refresh-module`, from `origin/main` `6ff03b78`. Nothing calls the new module yet, so a running install behaves as before; Chunk 02 calls it from the routes that change a rule.
+
+Visual change: no
+
+**Why.** The launch writes `.tangleclaw/session-rules-<n>.json` once, and the session-start hook prints those files on every start, including after a `/clear` and a compaction. A rule approved, edited, disabled or retired while the session runs changes the store and not the files, so a cleared session is re-delivered the launch-time set as binding: new rules missing, retired ones still stated. Nothing was ever built to rewrite the files after launch.
+
+**What changed.**
+- New `lib/session-rules-refresh.js`. `refreshProjectRules(projectId)` reads the project's active startup rules from the store, renders them, and replaces the project's rules files. It returns a verdict and never throws: `refreshed` (with the rule count, the files written, the files removed and the ids of any rule it could only name), `nothing-to-refresh` (no project, or no rules files on disk) or `failed` (with the cause). Each file is written beside its target and renamed over it, and no target is replaced until every file of the set is on disk, so a hook firing mid-refresh prints a whole old file or a whole new one and a failed refresh leaves the old set.
+- `lib/session-rules-channel.js`, two additions the launch does not call. `packFixedSlots` packs a rule set into a fixed number of slots: it never returns more slots than it was given, keeps every payload within the budget measured on the finished JSON, and puts in the last slot one line that gives the count of rules in force, names each rule it could not carry by id and points to `tc rules`. `renderNoRulesText` is the block for a project with no rule left in force. Every rewritten block states the count in force, the time it was written, and that it is the current statement where a count elsewhere in the session differs. `buildShards`, `renderShardText`, `writeShards` and every other function the launch calls are unedited.
+
+**Decisions.**
+- [DECISION: the slot count is the number of rules files on disk, counted as 1..n with no gap, and a refresh never adds a file. | The ruling of 2026-10-10 15:54 PDT (TangleClaw-Builder1, on the Operator's instruction). It is held in one function, `existingSlots`. | OPEN with the Operator as `slots files` / `slots hooks`: see "Found while building".]
+- [DECISION: a rule too large for a slot of its own is named, not printed. | The launch prints it whole and lets the engine clip it; the engine clips by replacing the whole payload with a preview, which loses every other rule in that file too. The plan's criterion is that no file exceeds the budget. | The launch's own behaviour is unchanged.]
+- [DECISION: sizes are measured on the finished payload, not estimated from the text. | Quotes, backslashes and newlines double inside the JSON envelope, and the launch's fixed 320-character reserve does not count them. A rewritten block has a longer header than the launch's, so the reserve would not have been right for it anyway.]
+- [DECISION: with no rule in force the first file stays and says so; further files are removed. | The ruling of 15:54 PDT: the prime tells a session that a missing "Project Rules" block means delivery failed.]
+- [DECISION: no delivery-ledger row for a refresh; a log line records it. | The ledger vouches for a launch's delivery and its receipt. The receipt token is not touched either.]
+- [DECISION: files a shrunken rule set no longer needs are removed, as the launch removes them. | A file left behind is a live hook printing rules that are no longer in force. The cost: a set that later grows again has fewer files to grow into until the next launch, and the last file's line covers the difference.]
+
+**Found while building (both of the plan's engine assumptions).**
+- The plan assumed Claude Code fixes a session's hook list at session start. Its hooks reference, read 2026-10-10 at `code.claude.com/docs/en/hooks`, says: "Direct edits to hooks in settings files are normally picked up automatically by the file watcher." The same page confirms the cap the budget stands for: `additionalContext` is capped at 10,000 characters, and over it the output is replaced by a file path and a preview.
+- The plan assumed the files on disk equal the rules hooks registered. Observed in the lane's own clone, untraced: two rules files written at its launch (2026-10-09 15:25 PDT) and three rules hooks in `.claude/settings.local.json`, rewritten 2026-10-10 14:14 PDT, mid-session, by something not identified.
+- What follows: counting slots from the files is safe and can under-deliver. In that clone, five rules in force against two files would print three rules and name two. Counting the registered hooks instead (three) would print all five, and trusts the file watcher. That choice changes a ruling made for the Operator and is parked with them; this chunk is built as ruled.
+
+**Tests.** New `test/session-rules-refresh.test.js`, against a real store in a temporary home and real project directories: the plan's case of a kept, an edited (through the proposal and its approval) and a new rule with a retired one gone; the count, time and current-statement line; no files, nothing written; no project; no rule left, first file kept and the second removed; a set that outgrew one file, and one that outgrew two, each printed-or-named per rule and within the budget; a refresh that cannot write (a directory where the staging file belongs, which refuses whatever the process's privileges) returns `failed`, throws nothing and leaves the old file byte-identical; a later file that cannot be staged leaves the earlier one unreplaced; no staging file left behind and a second refresh identical; the receipt token untouched; and the real hook script, run with `{"source":"clear"}` on stdin, prints the refreshed block. `test/session-rules-channel.test.js` gains the cases for the two additions; its existing cases are unchanged and pass.
+
+**Not built here.** Nothing calls the refresh (Chunk 02). The launch's `writeShards` still writes each file in place, so a hook firing during a launch's write can print half a file: decided out of this plan by the Integrator (2026-10-10 15:49 PDT) as launch-path work to be done alone. The prime's and the re-entry text's own rule count is still the launch's. Engines other than Claude, Master rules and wrap rules are not covered. A real Claude Code session re-reading the block after a real `/clear` is not proved by any test here: that is the check after the deploy.
+
 ## 2026-10-10 — #2197: the setup route applies the launch-mode rule, and the status payload says which engine is set
 
 <!-- prawduct: type=bugfix | scope=master-2197 -->
