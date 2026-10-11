@@ -35,6 +35,28 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-10 — #2282: the contributing guide says who can open a pull request
+
+<!-- prawduct: type=docs | scope=2282-contributing-outside-prs -->
+#2282 Chunk 01, the issue's only chunk. Branch `docs/2282-contributing-outside-prs`, from `origin/main` `4493b7fe`. Documentation only.
+
+Visual change: no
+
+**Why.** The repository's setting accepts pull requests from collaborators only (`pull_request_creation_policy: collaborators_only`, read from the GitHub API on 2026-10-11 UTC). `CONTRIBUTING.md` told every reader that pull requests were still welcome and ended "Making Changes" with "Submit a pull request", so a reader who is not a collaborator learned the route did not exist only after doing the work.
+
+**What changed.** `CONTRIBUTING.md`, three sections and two sentences outside them:
+- "Issues Are Preferred Over Pull Requests": the "still welcome … if you send one" paragraph is replaced. The section now says pull requests can be opened by collaborators only, that a fix is offered by describing it in an issue, that a fork branch or code in an issue comment is not picked up because outside code is never merged, fetched or run here, and that what helps is a reproducible report. The two pieces of advice that followed are kept: the first is addressed to collaborators, the second to everyone.
+- "Making Changes": one sentence in front of the steps says they are for collaborators and points everyone else to the section above. The steps are unchanged.
+- The introduction no longer says the guide covers how to "submit changes": it says "report a problem or offer a fix", and who can open a pull request. The first paragraph of "Areas Looking for Contributions" told every reader to propose an approach "before starting"; that is now addressed to collaborators, and everyone else is told the help that arrives is an issue. Both would have contradicted the corrected sections; allowed by the Integrator as `2282 two more sentences`.
+- "Security & Contribution Guidelines": one paragraph after the opening says a pull request in the points is a collaborator's and that points 2 and 3 hold for a fix described in an issue. Point 2 gains a sentence carrying the credit to that route. Point 3 says "contribution, whether a collaborator's pull request or an issue" where it said "pull request". The points keep their numbers, which `docs/adr/0014-dual-key-review-for-untrusted-prs.md` and `docs/dependency-bump-audit.md` cite.
+
+**Decisions.**
+- [DECISION: the promise of credit stays, for a report that leads to a fix. | Ruled `2282 credit stays` by TangleClaw-Builder1 on the Operator's instruction: "for a report that leads to a fix. It matches ADR 0014's credit rule."]
+- [DECISION: no rule in "Security & Contribution Guidelines" changes, and ADR 0014 is not edited. | The issue asks that the section still read correctly, not that the policy move.]
+- [DECISION: the guide says outside code is never "merged, fetched or run", not that it is never read. | Those are the repository owner's words on the issue; the section itself says a pull request is audited as a text diff.]
+- [DECISION: no test is added. | No behaviour changes and no test reads this file.]
+
+**Checked.** Every section anchor the new text links to resolves to a heading in the file. Every remaining mention of a pull request in `CONTRIBUTING.md` is CI's, a collaborator's, or the audit's; the PR lists them. A search of every tracked file found no other invitation to an outside pull request.
 ## 2026-10-10 — #2272: the Discord helper gives up a Gateway connection attempt that goes nowhere
 
 <!-- prawduct: type=bugfix | scope=bridge-2272 -->
