@@ -1585,15 +1585,16 @@ async function wizardComplete() {
     return;
   }
 
-  // Surface anything the server skipped. `warnings` has always been on this
-  // response and nothing here read it, so a project that failed to attach —
-  // a path that vanished, a name collision — left the wizard reporting success
-  // and the operator believing every directory they ticked was registered.
-  if (Array.isArray(result.warnings) && result.warnings.length > 0) {
+  // Surface every notice the server answered. Without this a project that
+  // failed to attach (a path that vanished, a name collision) left the wizard
+  // reporting success and the operator believing every directory they ticked
+  // was registered. Not every notice is a skipped item: a launch-mode reset, a
+  // failed attach and an ingress left alone arrive in the same list.
+  const notices = _noticesSentence(result.warnings);
+  if (notices) {
     const err = document.getElementById('setupCompleteError');
     if (err) {
-      err.textContent = `Setup finished, but ${result.warnings.length} item(s) were skipped: `
-        + result.warnings.join('; ');
+      err.textContent = notices;
       err.classList.remove('hidden');
     }
   }
@@ -1609,6 +1610,22 @@ async function wizardComplete() {
     return;
   }
   await _routeAfterComplete(result);
+}
+
+/**
+ * The sentence that introduces the server's notices on the confirm step.
+ *
+ * It counts the notices and says nothing about what kind they are, because the
+ * list mixes kinds: a skipped project, a reset launch mode, a failed attach, an
+ * ingress that was left alone. Each notice says what happened in its own words.
+ * @param {*} warnings - `warnings` from the POST /api/setup/complete response.
+ * @returns {string} The sentence, or '' when there is no notice to show.
+ */
+function _noticesSentence(warnings) {
+  const list = Array.isArray(warnings) ? warnings.filter((w) => typeof w === 'string' && w) : [];
+  if (list.length === 0) return '';
+  const count = list.length === 1 ? 'One thing' : `${list.length} things`;
+  return `Setup finished. ${count} to know: ${list.join('; ')}`;
 }
 
 /**
