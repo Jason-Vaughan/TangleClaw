@@ -588,20 +588,22 @@ describe('recovery state in the store and on the launch path (#1937)', () => {
 
     it('both succeed: the store holds the decision and the file shows it', async () => {
       const project = makeProject();
-      const result = await projects.updateProject(project.name, { launchSequence: { recoveryMode: 'operator' } }, { recoveryDecisionBy: 'operator' });
+      const result = await projects.updateProject(project.name, { launchSequence: { recoveryMode: 'operator' } }, { recoveryDecisionBy: 'operator-verified' });
       assert.ok(result.project);
-      assert.deepEqual({ ...result.recoveryMode, decidedAt: null }, { mode: 'operator', pinnedMode: 'operator', decidedAt: null, decidedBy: 'operator', fileWritten: true });
+      assert.deepEqual({ ...result.recoveryMode, decidedAt: null }, { mode: 'operator', pinnedMode: 'operator', decidedAt: null, decidedBy: 'operator-verified', fileWritten: true });
       assert.equal(fileMode(project), 'operator');
       assert.deepEqual(effective(project), { mode: 'operator', source: 'pinned' });
-      const back = await projects.updateProject(project.name, { launchSequence: { recoveryMode: 'advisory' } }, { recoveryDecisionBy: 'operator' });
+      const back = await projects.updateProject(project.name, { launchSequence: { recoveryMode: 'advisory' } }, { recoveryDecisionBy: 'open-install-unverified' });
       assert.equal(back.recoveryMode.pinnedMode, null);
+      assert.equal(back.recoveryMode.decidedBy, 'open-install-unverified');
       assert.equal(fileMode(project), 'advisory');
       assert.deepEqual(effective(project), { mode: 'advisory', source: 'chosen' });
       // The row holds only the latest decision. The activity log is what says
-      // the project was pinned before the pin was lifted, and who did each.
+      // the project was pinned before the pin was lifted, and on what proof
+      // each decision was taken (#2244).
       const events = store.activity.query({ projectId: project.id, eventType: 'project.recovery-mode-decided' });
       assert.deepEqual(events.map((e) => [e.detail.mode, e.detail.pinnedMode, e.detail.decidedBy]).sort(),
-        [['advisory', null, 'operator'], ['operator', 'operator', 'operator']]);
+        [['advisory', null, 'open-install-unverified'], ['operator', 'operator', 'operator-verified']]);
     });
 
     it('a decision that could not be saved, or was refused, leaves no decision event', async () => {

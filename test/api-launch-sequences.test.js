@@ -184,7 +184,7 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
     assert.equal(plain.body.projectRecoveryDiscrepancy, null);
     assert.equal(plain.body.projectRecoveryDecision, null);
     assert.equal(plain.body.projectRecoveryInheritedNotice, null);
-    store.projectRecoveryState.recordDecision(project.id, 'operator', 'operator');
+    store.projectRecoveryState.recordDecision(project.id, 'operator', 'operator-verified');
     store.projectConfig.save(project.path, { ...store.projectConfig.load(project.path), launchSequence: { recoveryMode: 'advisory' } });
     try {
       const pinned = await get(server, `/api/launch-sequences?projectId=${project.id}`);
@@ -192,7 +192,8 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
       assert.equal(pinned.body.projectRecoverySource, 'pinned');
       assert.match(pinned.body.projectRecoveryDiscrepancy, /the pin decides/);
       assert.equal(pinned.body.projectRecoveryDecision.pinnedMode, 'operator');
-      assert.equal(pinned.body.projectRecoveryDecision.decidedBy, 'operator');
+      assert.equal(pinned.body.projectRecoveryDecision.decidedBy, 'operator-verified',
+        'the proof word on record is served as it is stored');
       assert.ok(pinned.body.projectRecoveryDecision.decidedAt);
     } finally {
       store.projectConfig.save(project.path, { ...store.projectConfig.load(project.path), launchSequence: {} });

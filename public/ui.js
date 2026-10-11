@@ -2659,6 +2659,22 @@ const RECOVERY_MODE_READOUT = {
 };
 
 /**
+ * How the proof behind a recovery-mode decision is worded, one entry per word
+ * `PATCH /api/projects/:name` records as `decidedBy`. They are the words a
+ * recovery clear is recorded with, and `open-install-unverified` is never
+ * worded as a person's here either.
+ *
+ * A word with no entry is printed as the server's own. That is every decision
+ * recorded as "operator", the caller kind that was stored before the proof was
+ * kept: such a record cannot say whether a login was in force when it was made.
+ */
+const RECOVERY_DECISION_PROOF_READOUT = {
+  'operator-verified': 'by a signed-in operator',
+  'open-install-unverified': 'while TangleClaw\'s login was not in force, by a request with the dashboard\'s '
+    + 'shape: nobody was identified'
+};
+
+/**
  * What the login gate's state means for the recovery default, for the one
  * source word (`not-armed`) that covers every state but `armed`. A state with
  * no entry is printed as the server's own word.
@@ -2808,15 +2824,23 @@ function projectRecoveryReadoutHtml(now, offer) {
       ? 'operator-cleared'
       : (decision.pinnedMode === null || decision.pinnedMode === undefined
         ? 'advisory' : `"${esc(decision.pinnedMode)}"`);
-    // The record holds the caller KIND the server resolved, and where the login
-    // is not in force that kind is granted to any request with the dashboard's
-    // shape. The record does not say which it was, so the page does not either.
-    const unverified = offer && offer.loginInForce === false
-      ? ' TangleClaw\'s login is not in force on this install now, and the record does not say whether it was '
-        + 'then: without a login, that word means a request with the dashboard\'s shape and identifies nobody.'
-      : '';
-    lines.push(`<small class="session-rule-meta">Decision on record: ${decided}, made ${esc(decision.decidedAt)}, `
-      + `recorded as made by "${esc(decision.decidedBy)}".${unverified}</small>`);
+    if (Object.prototype.hasOwnProperty.call(RECOVERY_DECISION_PROOF_READOUT, decision.decidedBy)) {
+      // The record holds the proof the decision was taken on, so the page says
+      // what it was then, whatever the login's state is now.
+      lines.push(`<small class="session-rule-meta">Decision on record: ${decided}, made ${esc(decision.decidedAt)} `
+        + `${RECOVERY_DECISION_PROOF_READOUT[decision.decidedBy]} (recorded as "${esc(decision.decidedBy)}").</small>`);
+    } else {
+      // Any other word is the caller KIND the server resolved, and where the
+      // login is not in force that kind is granted to any request with the
+      // dashboard's shape. Such a record does not say which it was, so the
+      // page does not either.
+      const unverified = offer && offer.loginInForce === false
+        ? ' TangleClaw\'s login is not in force on this install now, and the record does not say whether it was '
+          + 'then: without a login, that word means a request with the dashboard\'s shape and identifies nobody.'
+        : '';
+      lines.push(`<small class="session-rule-meta">Decision on record: ${decided}, made ${esc(decision.decidedAt)}, `
+        + `recorded as made by "${esc(decision.decidedBy)}".${unverified}</small>`);
+    }
   } else {
     lines.push('<small class="session-rule-meta">No decision is on record for this project.</small>');
   }
