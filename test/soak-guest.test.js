@@ -424,8 +424,20 @@ function guestFakes(dir, over = {}) {
   return { bin, calls: () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n') : []) };
 }
 
+// guest-setup.sh kills every probe after SOAK_PROBE_TIMEOUT seconds and reads
+// the kill as "hung". A fake that exits at once can still take seconds to
+// start on a loaded host, so the bound these cases run under is one no working
+// host reaches: the refusal a case pins must not depend on how busy the host is.
+const PROBE_TIMEOUT = '60';
+// A case that needs a probe to hang waits this bound out, so it passes a short
+// one itself. Every probe that runs before the hanging one is under it too:
+// such a case still depends on the host starting a fake within this long.
+const HANG_PROBE_TIMEOUT = '6';
+
 /**
- * Run guest-setup.sh with the fakes, a short probe timeout, and `env` on top.
+ * Run guest-setup.sh with the fakes, a probe timeout no fake that exits at
+ * once should reach, and `env` on top. A case that needs a probe to hang
+ * passes `SOAK_PROBE_TIMEOUT: HANG_PROBE_TIMEOUT` in `env`.
  * @param {string[]} args - Arguments
  * @param {{bin: string}} f - Fakes
  * @param {string} home - HOME
@@ -433,7 +445,7 @@ function guestFakes(dir, over = {}) {
  * @returns {{status: number, stdout: string, stderr: string, json: object[]}} Result, with stdout's JSON lines parsed
  */
 function setup(args, f, home, env = {}) {
-  const r = runScript(GUEST_SETUP, args, f.bin, { HOME: home, SOAK_PROBE_TIMEOUT: '2', SOAK_DHCP_SERVER: '192.168.64.2', ...env });
+  const r = runScript(GUEST_SETUP, args, f.bin, { HOME: home, SOAK_PROBE_TIMEOUT: PROBE_TIMEOUT, SOAK_DHCP_SERVER: '192.168.64.2', ...env });
   const json = r.stdout.split('\n').filter((l) => l.startsWith('{')).map((l) => JSON.parse(l));
   return { ...r, json };
 }
@@ -672,7 +684,7 @@ describe('soak guest: guest-setup.sh setup', () => {
     assert.deepEqual(leaked, []);
   });
 
-  for (const [label, over, reason] of [
+  for (const [label, over, reason, env] of [
     ['its port is leased to another service', { curl: [
       'case "$*" in', '  *api/setup/complete*) printf 200;;', '  *api/projects/attach*) printf 201;;',
       '  *api/ports/lease*)',
@@ -681,13 +693,14 @@ describe('soak guest: guest-setup.sh setup', () => {
       '  *http_code*) printf 404;;', `  *api/config) printf '%s' '${SETUP_DONE}';;`, 'esac'
     ].join('\n') }, /leasing port 3009 for the stub hub answered 409: PORT_CONFLICT: Port 3009 on localhost is leased by "other-project"/],
     ['launchd will not load it', { launchctl: 'case "$1" in bootstrap) exit 5;; esac' }, /launchd would not load the stub hub/],
+    // The script tries the hub once a second for the whole bound.
     ['it never answers', { curl: [
       'case "$*" in', '  *api/setup/complete*) printf 200;;', '  *api/projects/attach*) printf 201;;',
       '  *api/ports/lease*) printf 201;;', '  *http_code*) printf 404;;', `  *api/config) printf '%s' '${SETUP_DONE}';;`, '  *:3009/health) exit 7;;', 'esac'
-    ].join('\n') }, /stub hub did not answer on 127\.0\.0\.1:3009/]
+    ].join('\n') }, /stub hub did not answer on 127\.0\.0\.1:3009/, { SOAK_PROBE_TIMEOUT: HANG_PROBE_TIMEOUT }]
   ]) {
     it(`refuses, without claiming the guest is ready, when the stub hub ${label}`, () => {
-      const r = setup([], guestFakes(tmp, over), tmp);
+      const r = setup([], guestFakes(tmp, over), tmp, env);
       assert.equal(r.status, 3, r.stdout);
       assert.match(r.stderr, reason);
       assert.doesNotMatch(r.stdout, /guest ready/);
@@ -970,7 +983,7 @@ describe('soak guest: admin verifier', () => {
     'the TangleClaw process maps two node executables': [{ lsof: `case "$*" in *-iTCP:3102*) printf "p4242\\nu502\\n";; *"-d txt"*) printf "p4242\\nn${NODE}\\nn/opt/other/bin/node\\n";; esac` }, {}, /maps 2 node executables/],
     'the workload account became an admin after setup': [{ dseditgroup: 'case "$*" in *" admin") exit 0;; *) exit 67;; esac' }, {}, /member of admin/],
     'the workload account gained sudo after setup': [{ sudo: '[ "$1" = "-n" ] && shift\nif [ "$1" = "-l" ]; then exit 0; fi\n[ "${FAKE_USER:-admin}" = admin ] || exit 1\nexec "$@"' }, {}, /has sudo rights \(\/bin\/sh is permitted\)/],
-    'sudo -l hangs for the workload account': [{ sudo: '[ "$1" = "-n" ] && shift\nif [ "$1" = "-l" ]; then [ "$3" = admin ] && exit 0; sleep 30; fi\n[ "${FAKE_USER:-admin}" = admin ] || exit 1\nexec "$@"' }, {}, /sudo -l for soakrun hung/],
+    'sudo -l hangs for the workload account': [{ sudo: '[ "$1" = "-n" ] && shift\nif [ "$1" = "-l" ]; then [ "$3" = admin ] && exit 0; sleep 30; fi\n[ "${FAKE_USER:-admin}" = admin ] || exit 1\nexec "$@"' }, { SOAK_PROBE_TIMEOUT: HANG_PROBE_TIMEOUT }, /sudo -l for soakrun hung/],
     'the workload home is owned by someone else': [{ stat: 'case "$2" in %u) if [ "$3" = /Users/soakrun ]; then echo 0; else echo 501; fi;; *) if [ -d "$3" ]; then echo "501 755 Directory"; else echo "501 644 Regular File"; fi;; esac' }, {}, /is not owned by soakrun/],
     'SSH is not listening': [{ netstat: 'echo "tcp4 0 0 127.0.0.1.3102 *.* LISTEN"' }, {}, /SSH management path is down/],
     'the guest TangleClaw runs as the admin': [{ lsof: 'printf "p4242\\nu501\\n"' }, {}, /runs as uid 501 not soakrun/],
@@ -1072,7 +1085,7 @@ describe('soak guest: checkout trust (B1)', () => {
     const f = guestFakes(tmp);
     const link = path.join(tmp, 'link-to-repo');
     fs.symlinkSync(REPO, link);
-    const r = runScript(path.join(link, 'deploy', 'soak', 'guest', 'guest-setup.sh'), ['--verify-admin'], f.bin, { HOME: tmp, SOAK_PROBE_TIMEOUT: '2', SOAK_DHCP_SERVER: '192.168.64.2' });
+    const r = runScript(path.join(link, 'deploy', 'soak', 'guest', 'guest-setup.sh'), ['--verify-admin'], f.bin, { HOME: tmp, SOAK_PROBE_TIMEOUT: PROBE_TIMEOUT, SOAK_DHCP_SERVER: '192.168.64.2' });
     assert.equal(r.status, 3);
     assert.match(r.stderr, /reached through a symlink/);
   });
@@ -1142,13 +1155,13 @@ describe('soak guest: workload verifier', () => {
     'the workload has a system uid': [{ id: 'case "$*" in -un) echo soakrun;; -u) echo 0;; -Gn) echo staff;; esac' }, {}, /system or root uid/],
     'sudo works for the workload': [{ sudo: 'exit 0' }, {}, /sudo works/],
     'pfctl works for the workload': [{ pfctl: 'echo "Status: Enabled"' }, {}, /pfctl works/],
-    'sudo hangs': [{ sudo: 'sleep 30' }, {}, /sudo hung/],
+    'sudo hangs': [{ sudo: 'sleep 30' }, { SOAK_PROBE_TIMEOUT: HANG_PROBE_TIMEOUT }, /sudo hung/],
     'IPv4 loopback is down': [{ ping: 'exit 2' }, {}, /IPv4 loopback/],
-    'IPv6 loopback hangs': [{ ping6: 'sleep 30' }, {}, /IPv6 loopback/],
+    'IPv6 loopback hangs': [{ ping6: 'sleep 30' }, { SOAK_PROBE_TIMEOUT: HANG_PROBE_TIMEOUT }, /IPv6 loopback/],
     'the guest API does not answer': [{ curl: 'exit 7' }, {}, /no TangleClaw answering/],
     'IPv4 egress answers': [{ nc: 'case "$*" in *-6*) exit 1;; *) exit 0;; esac' }, {}, /\(IPv4\) answered/],
     'IPv6 egress answers': [{ nc: 'case "$*" in *-6*) exit 0;; *) exit 1;; esac' }, {}, /\(IPv6\) answered/],
-    'a TCP egress probe hangs': [{ nc: 'sleep 30' }, {}, /hung past 2s: denial is not proven/],
+    'a TCP egress probe hangs': [{ nc: 'sleep 30' }, { SOAK_PROBE_TIMEOUT: HANG_PROBE_TIMEOUT }, new RegExp(`hung past ${HANG_PROBE_TIMEOUT}s: denial is not proven`)],
     'DNS over UDP answers': [{ dig: 'exit 0' }, {}, /over UDP answered/]
   };
   for (const [label, [over, env, reason]] of Object.entries(failures)) {
@@ -1160,7 +1173,9 @@ describe('soak guest: workload verifier', () => {
       assert.equal(r.json.length, 1);
       assert.equal(r.json[0].ok, false);
       assert.match(r.json[0].reason, reason);
-      assert.ok(Date.now() - started < 15000, 'a hung probe must be cut off by the watchdog');
+      // The watchdog must end a hung probe before the fake's own `sleep 30`
+      // does: keep this under 30 s and the fakes' sleep at or above it.
+      assert.ok(Date.now() - started < 25000, 'a hung probe must be cut off by the watchdog');
     });
   }
 });
@@ -1280,14 +1295,14 @@ describe('soak guest: --verify-network, one bound sample (Architect ruling 2baea
   }
 
   // Anything the guest could not MEASURE is unavailable: no pair, no breach.
-  for (const [label, over] of [
-    ['an egress probe hangs past the timeout', { nc: 'sleep 30' }],
+  for (const [label, over, env] of [
+    ['an egress probe hangs past the timeout', { nc: 'sleep 30' }, { SOAK_PROBE_TIMEOUT: HANG_PROBE_TIMEOUT }],
     ['the SSH management path cannot be seen', { netstat: 'echo "tcp4 0 0 127.0.0.1.3102 *.* LISTEN"' }],
     ['pfctl cannot report pf\'s status', { pfctl: '[ "${FAKE_USER:-admin}" = admin ] || exit 1\ncase "$*" in "-s info") echo "garbled";; esac' }]
   ]) {
     it(`prints nothing and exits 3 when ${label}`, () => {
       const f = guestFakes(tmp, over);
-      const r = setup(ARGS, f, tmp);
+      const r = setup(ARGS, f, tmp, env);
       assert.equal(r.status, 3, r.stderr);
       assert.equal(r.stdout, '', 'the runner records unattested, never a breach');
     });
@@ -1309,7 +1324,7 @@ describe('soak guest: --verify-network, one bound sample (Architect ruling 2baea
     assert.equal(breached.status, 3);
     assert.deepEqual([breached.json[0].ok, breached.json[0].code, breached.json[0].breach.fact], [false, 'BREACH', 'egress-permitted']);
     assert.ok(breached.json[0].boot && breached.json[0].artifact, 'a breach line carries the boot and artifact identity it is bound by');
-    const hung = setup(['--verify-workload'], guestFakes(tmp, { nc: 'sleep 30' }), tmp, { FAKE_USER: 'soakrun' });
+    const hung = setup(['--verify-workload'], guestFakes(tmp, { nc: 'sleep 30' }), tmp, { FAKE_USER: 'soakrun', SOAK_PROBE_TIMEOUT: HANG_PROBE_TIMEOUT });
     assert.equal(hung.json[0].code, 'REFUSED');
   });
 
