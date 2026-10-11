@@ -62,7 +62,25 @@ function addRule(projectId, content) {
 }
 
 /**
- * Write the files a launch writes for the project's rules as they stand now.
+ * Register rules hooks 1..count in the project's local settings file, in the
+ * shape the hook sync writes, beside a hook and a setting that are not ours.
+ * @param {string} projectPath
+ * @param {number} count
+ */
+function registerHooks(projectPath, count) {
+  const entry = (command) => ({ matcher: 'startup|clear|compact', hooks: [{ type: 'command', command }] });
+  const SessionStart = [entry("'/opt/tc'/data/hooks/sessionstart-prime-claude.sh"), entry('echo operator-hook 7')];
+  for (let i = 1; i <= count; i += 1) {
+    SessionStart.push(entry(`'/opt/tc'/data/hooks/sessionstart-rules-claude.sh ${i}`));
+  }
+  fs.mkdirSync(path.join(projectPath, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(projectPath, '.claude', 'settings.local.json'),
+    JSON.stringify({ permissions: { allow: [] }, hooks: { SessionStart } }, null, 2));
+}
+
+/**
+ * Write the files a launch writes for the project's rules as they stand now,
+ * and register one hook per file, as the launch's hook sync does.
  * @param {{id:number, path:string}} project
  * @returns {number} how many files the launch wrote
  */
@@ -70,6 +88,7 @@ function launchFiles(project) {
   const rules = store.sessionRules.listActiveForProject(project.id);
   const shards = channel.buildShards(rules, budget);
   channel.writeShards(project.path, shards, rules.length);
+  registerHooks(project.path, shards.length);
   return shards.length;
 }
 
@@ -191,7 +210,7 @@ describe('#2273 — delivered rules files follow the rules in force', () => {
     const verdict = refresh.refreshProjectRules(project.id, { now: NOW });
 
     assert.equal(verdict.status, 'refreshed');
-    assert.equal(verdict.files, 1, 'a file no hook was registered for would be printed by nothing');
+    assert.equal(verdict.files, 1, 'a file no hook is registered for would be printed by nothing');
     assert.equal(verdict.rules, 4);
     assert.deepEqual(tangleclawDir(project.path), ['session-rules-1.json']);
     const raw = fs.readFileSync(channel.shardPath(project.path, 1), 'utf8');
@@ -231,6 +250,101 @@ describe('#2273 — delivered rules files follow the rules in force', () => {
     for (let i = 1; i <= 2; i += 1) {
       assert.ok(fs.readFileSync(channel.shardPath(project.path, i), 'utf8').length <= budget);
     }
+  });
+
+  it('writes a file for every registered hook, including one the launch wrote no file for', () => {
+    const body = 't'.repeat(Math.floor(budget * 0.6));
+    addRule(project.id, `one ${body}`);
+    addRule(project.id, `two ${body}`);
+    assert.equal(launchFiles(project), 2);
+    registerHooks(project.path, 3);
+    addRule(project.id, `three ${body}`);
+
+    const verdict = refresh.refreshProjectRules(project.id, { now: NOW });
+
+    assert.equal(verdict.files, 3, 'two files and three hooks: the third hook has a file to print');
+    assert.deepEqual(verdict.omittedRuleIds, []);
+    const texts = deliveredTexts(project.path);
+    assert.equal(texts.length, 3);
+    assert.match(texts[2], /part 3 of 3/);
+    assert.ok(texts[2].includes('three t'));
+  });
+
+  it('holds to the registered hooks when more files are on disk than hooks', () => {
+    const body = 's'.repeat(Math.floor(budget * 0.6));
+    addRule(project.id, `one ${body}`);
+    const second = addRule(project.id, `two ${body}`);
+    assert.equal(launchFiles(project), 2);
+    registerHooks(project.path, 1);
+
+    const verdict = refresh.refreshProjectRules(project.id, { now: NOW });
+
+    assert.equal(verdict.files, 1);
+    assert.equal(verdict.removed, 1, 'a file nothing prints is not left to look delivered');
+    assert.deepEqual(verdict.omittedRuleIds, [second.id]);
+    assert.ok(deliveredTexts(project.path)[0].includes(`Not carried in this block: Rule #${second.id}.`));
+  });
+
+  it('writes nothing when files are on disk and no rules hook is registered', () => {
+    addRule(project.id, 'A rule whose file has no reader.');
+    launchFiles(project);
+    const before = fs.readFileSync(channel.shardPath(project.path, 1), 'utf8');
+    registerHooks(project.path, 0);
+
+    const verdict = refresh.refreshProjectRules(project.id, { now: NOW });
+
+    assert.deepEqual(verdict, { status: 'nothing-to-refresh', projectId: project.id, reason: 'no-rules-hooks' });
+    assert.equal(fs.readFileSync(channel.shardPath(project.path, 1), 'utf8'), before);
+    fs.rmSync(path.join(project.path, '.claude'), { recursive: true });
+    assert.equal(refresh.refreshProjectRules(project.id, { now: NOW }).reason, 'no-rules-hooks',
+      'no settings file registers no hook');
+  });
+
+  it('fails, and changes nothing, when the registered hooks cannot be read', () => {
+    addRule(project.id, 'A rule delivered at launch.');
+    launchFiles(project);
+    const before = fs.readFileSync(channel.shardPath(project.path, 1), 'utf8');
+    fs.writeFileSync(path.join(project.path, '.claude', 'settings.local.json'), '{ not json');
+
+    const verdict = refresh.refreshProjectRules(project.id, { now: NOW });
+
+    assert.equal(verdict.status, 'failed', 'an unknown number of readers is not zero readers');
+    assert.equal(verdict.filesReplaced, 0);
+    assert.equal(fs.readFileSync(channel.shardPath(project.path, 1), 'utf8'), before);
+  });
+
+  it('counts registered hooks as 1..n with no gap, and only the rules scripts', () => {
+    const entry = (command) => ({ hooks: [{ type: 'command', command }] });
+    const write = (commands) => {
+      fs.mkdirSync(path.join(project.path, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(project.path, '.claude', 'settings.local.json'),
+        JSON.stringify({ hooks: { SessionStart: commands.map(entry), Stop: [entry('x/data/hooks/sessionstart-rules-claude.sh 9')] } }));
+    };
+    const rules = (n) => `'/opt/tc'/data/hooks/sessionstart-rules-claude.sh ${n}`;
+
+    assert.equal(refresh.registeredSlots(project.path), 0, 'no settings file');
+    write([rules(1), rules(2), rules(4)]);
+    assert.equal(refresh.registeredSlots(project.path), 2, 'a hook after a gap has no file the packing gives it');
+    write([rules(2)]);
+    assert.equal(refresh.registeredSlots(project.path), 0);
+    write(["'/opt/tc'/data/hooks/sessionstart-prime-claude.sh", 'echo 1', rules(1), rules(1)]);
+    assert.equal(refresh.registeredSlots(project.path), 1, 'the prime hook and an operator hook are not rules hooks');
+  });
+
+  it('reads the hooks the real hook sync writes', () => {
+    // The count is parsed from what another module writes; a change to that
+    // shape must fail here and not leave every refresh finding no hook.
+    const engines = require('../lib/engines');
+    const body = 'r'.repeat(Math.floor(budget * 0.6));
+    addRule(project.id, `one ${body}`);
+    addRule(project.id, `two ${body}`);
+    const rules = store.sessionRules.listActiveForProject(project.id);
+    const expected = channel.shardCount(rules, budget);
+    assert.equal(expected, 2);
+
+    engines.syncEngineHooks(project.path);
+
+    assert.equal(refresh.registeredSlots(project.path), expected);
   });
 
   it('returns a failure and leaves the previous files readable when it cannot write', () => {
@@ -302,6 +416,7 @@ describe('#2273 — delivered rules files follow the rules in force', () => {
     const body = 'u'.repeat(Math.floor(budget * 0.45));
     for (const n of ['one', 'two', 'three']) addRule(stored.id, `${n} ${body}`);
     channel.writeShards(dir, channel.buildShards([{ id: 1, content: 'launch-time rule' }], budget), 1);
+    registerHooks(dir, 1);
 
     const idle = refresh.refreshProjectRules(stored.id, { now: NOW });
     assert.deepEqual(idle.omittedRuleIds, [], 'with nothing running, the stored engine\'s budget carries all three');
