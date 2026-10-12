@@ -975,13 +975,13 @@ describe('Codex startupControl adapter', () => {
      * @returns {{frame: *, pin: *, log: string[], onGap: (Function|null), afterWitness: (Function|null), witness: Function}}
      */
     const pane = (frame = PANES.composer) => {
-      const screen = { frame, pin: '%7', log: [], onGap: null, afterWitness: null };
+      const screen = { frame, pin: '%7', log: [], onGap: null, afterWitness: null, readAs: null, engineProfile: codexProfile, wakeProfile: require('../lib/medusa-wake').ENGINE_WAKE_PROFILES.codex };
       screen.witness = async (opts) => {
         const { single, ...shape } = opts;
         let unread = false;
         const ask = single === true ? paneWitness.composerShownOnce : paneWitness.composerShown;
         const seen = await ask({
-          ...shape, tmuxName: 'tc-deputy', engineProfile: codexProfile, wakeProfile: require('../lib/medusa-wake').ENGINE_WAKE_PROFILES.codex
+          ...shape, tmuxName: 'tc-deputy', engineProfile: screen.engineProfile, wakeProfile: screen.wakeProfile
         }, {
           gapMs: 0,
           sleep: async () => { if (screen.onGap) screen.onGap(); },
@@ -994,7 +994,7 @@ describe('Codex startupControl adapter', () => {
             screen.log.push(kind);
             const f = typeof screen.frame === 'function' ? screen.frame(kind) : screen.frame;
             if (f instanceof Error) { unread = true; throw f; }
-            return { paneId, ...f, rows: [...f.rows] };
+            return { paneId: screen.readAs || paneId, ...f, rows: [...f.rows] };
           }
         });
         if (screen.afterWitness) screen.afterWitness(single === true);
@@ -1003,6 +1003,20 @@ describe('Codex startupControl adapter', () => {
       return screen;
     };
     const otherServer = () => Object.assign(new Error('another tmux server answered'), { tcOtherServer: true });
+
+    /**
+     * The witness refusals that come back as an answer and not from a failed
+     * tmux call. Nothing establishes that the pane could not be read, so none
+     * of them may be worded as an unavailable proof; each is said as what it
+     * is, with the witness's own reason. Each builder takes the screen to
+     * spoil and returns it.
+     */
+    const REFUSED_WITHOUT_A_FAILED_READ = [
+      ['a frame from another pane', (screen) => Object.assign(screen, { readAs: '%99' }), 'the pane that was read is not the pane that was pinned'],
+      ['a misaligned capture', (screen) => Object.assign(screen, { frame: { ...PANES.composer, rows: PANES.composer.rows.slice(1) } }), 'the pane and its cursor could not be read row for row'],
+      ['an unreadable guarded-dialog declaration', (screen) => Object.assign(screen, { engineProfile: { ...codexProfile, launch: { ...codexProfile.launch, guardedDialogs: [{ id: 'update', match: '(' }] } } }), 'the engine profile declares a guarded dialog that could not be read, so a dialog could not be ruled out'],
+      ['no composer pattern', (screen) => Object.assign(screen, { wakeProfile: null }), 'this session has no pane, or its engine no composer pattern, to read']
+    ];
 
     describe('awaitLaunchReady', () => {
       /**
@@ -1187,6 +1201,27 @@ describe('Codex startupControl adapter', () => {
           server.close();
           server = null;
         }
+      });
+
+      it('THE TWO WORDINGS, AT THE GATE: a refusal with no failed read is "not seen at an empty composer" with the witness\'s reason; a thrown read is an unavailable proof', async () => {
+        for (const [name, spoil, why] of REFUSED_WITHOUT_A_FAILED_READ) {
+          await serve();
+          store.getDb().prepare('DELETE FROM startup_control_channels').run();
+          channel(LAUNCH_PANE);
+          const { answer } = await gate(spoil(pane()));
+          assert.equal(answer.ready, false, name);
+          assert.equal(answer.unavailable, false, `${name}: nothing shows the read failed, so it is not called unavailable`);
+          assert.equal(answer.observation, `the pane was not seen at an empty composer: ${why}`, name);
+          assert.equal(server.calls('turn/start').length, 0, name);
+          server.close();
+          server = null;
+        }
+        await serve();
+        store.getDb().prepare('DELETE FROM startup_control_channels').run();
+        channel(LAUNCH_PANE);
+        const { answer } = await gate(pane(new Error('no server running')));
+        assert.equal(answer.unavailable, true);
+        assert.equal(answer.observation, 'the pane could not be read');
       });
 
       it('a pane that is not the launch\'s own, another tmux server, or no pane on record: unavailable, and answered at once because waiting cannot clear it', async () => {
@@ -1461,6 +1496,31 @@ describe('Codex startupControl adapter', () => {
           });
         });
       }
+
+      it('THE TWO WORDINGS, AT THE SEND: every refusal sends nothing; one with no failed read says "not seen ready … not seen at an empty composer" with the witness\'s reason, a thrown read says the proof was unavailable', async () => {
+        for (const [name, spoil, why] of REFUSED_WITHOUT_A_FAILED_READ) {
+          await serve();
+          store.getDb().prepare('DELETE FROM startup_control_channels').run();
+          store.getDb().prepare('DELETE FROM startup_prompt_fires').run();
+          channel(LAUNCH_PANE);
+          const settled = await fireAuto(pendingFire(), spoil(pane()));
+          assert.equal(settled.outcome, 'blocked', name);
+          assert.equal(settled.reasonCode, 'pane_not_ready', name);
+          assert.equal(settled.reason, `The pane was seen ready at the launch gate and was not seen ready immediately before the send, so nothing was sent: the pane was not seen at an empty composer: ${why}. Press Fire startup prompt once the pane shows an empty composer.`, name);
+          assert.ok(!/unavailable/.test(settled.reason), name);
+          assert.equal(server.calls('turn/start').length, 0, name);
+          server.close();
+          server = null;
+        }
+        await serve();
+        store.getDb().prepare('DELETE FROM startup_control_channels').run();
+        store.getDb().prepare('DELETE FROM startup_prompt_fires').run();
+        channel(LAUNCH_PANE);
+        const settled = await fireAuto(pendingFire(), pane(new Error('no server running')));
+        assert.equal(settled.reason, 'The proof that the pane still showed an empty composer and an idle thread was unavailable immediately before the send, so nothing was sent: the pane could not be read. Press Fire startup prompt once the pane shows an empty composer.');
+        assert.ok(!/not seen/.test(settled.reason));
+        assert.equal(server.calls('turn/start').length, 0);
+      });
 
       it('a long observation gives way before the remedy does: the stored reason keeps its last sentence', async () => {
         await serve();
