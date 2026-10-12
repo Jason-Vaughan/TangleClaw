@@ -1744,3 +1744,220 @@ describe('wrap-step priming-roll — plan-pointer containment policy (#1052)', (
     assert.doesNotMatch(result.blockers[0], /resolves outside/);
   });
 });
+
+// #2320 — the priming file is tracked and shared by every checkout, and the
+// roll is written from whichever plan one checkout holds. A project that works
+// under a coordinator must leave it alone and say why.
+describe('wrap-step priming-roll — a coordinated project is not rolled (#2320)', () => {
+  const primingRoll = require('../lib/wrap-steps/priming-roll');
+  const mergeAuthority = require('../lib/merge-authority');
+  const { initRepo } = require('./_temp-repo');
+  const { execFileSync } = require('node:child_process');
+
+  const PLAN = '# Lane plan\n\n### Chunk 1: First ✅\n\n### Chunk 2: Second\n\n### Chunk 3: Third\n';
+  const PRIMING = '# Priming\n\nShared text every lane reads.\n';
+  const GITHUB = 'https://github.com/acme/widgets.git';
+
+  let tmpDir, projectPath, primingPath, originals, authorityOriginals, execCalls;
+
+  before(() => {
+    originals = { ...primingRoll._internal };
+    authorityOriginals = { ...mergeAuthority._internal };
+  });
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-priming-lane-'));
+    projectPath = path.join(tmpDir, 'lane');
+    fs.mkdirSync(path.join(projectPath, '.tangleclaw', 'plans'), { recursive: true });
+    fs.mkdirSync(path.join(projectPath, '.tangleclaw', 'priming'), { recursive: true });
+    fs.writeFileSync(path.join(projectPath, '.tangleclaw', 'plans', 'lane-plan.md'), PLAN);
+    primingPath = path.join(projectPath, '.tangleclaw', 'priming', 'build-session.md');
+    fs.writeFileSync(primingPath, PRIMING);
+    execCalls = [];
+    // No merge queue unless a test makes one: the store behind the real lookup
+    // is not this file's to open.
+    mergeAuthority._internal.findActiveQueue = () => null;
+    mergeAuthority._internal.getProject = () => null;
+    answerGit({ remote: GITHUB, branch: 'main' });
+  });
+
+  afterEach(() => {
+    Object.assign(primingRoll._internal, originals);
+    Object.assign(mergeAuthority._internal, authorityOriginals);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /**
+   * Answer the step's two git reads; a null value is a read that failed.
+   * @param {{remote: string|null, branch: string|null}} said - What git says
+   * @returns {void}
+   */
+  function answerGit(said) {
+    primingRoll._internal.exec = async (file, args) => {
+      execCalls.push([file, ...args].join(' '));
+      const value = args[0] === 'remote' ? said.remote : said.branch;
+      return value === null
+        ? { exitCode: 1, stdout: '', stderr: 'fatal', error: 'exit 1', timedOut: false }
+        : { exitCode: 0, stdout: `${value}\n`, stderr: '', error: null, timedOut: false };
+    };
+  }
+
+  /**
+   * Write the project's settings file.
+   * @param {string} text - The file's whole content
+   * @returns {void}
+   */
+  function settings(text) {
+    fs.writeFileSync(path.join(projectPath, '.tangleclaw', 'project.json'), text);
+  }
+
+  /**
+   * Run the step on the lane project.
+   * @param {string} [name='lane-a'] - The project's name
+   * @returns {Promise<{result: object, staged: object}>}
+   */
+  async function roll(name = 'lane-a') {
+    const context = {
+      project: { name, path: projectPath, id: 900001 },
+      session: null, step: { id: 'next-session-prime' }, previousResults: [], staged: {}, options: {}
+    };
+    return { result: await primingRoll.run(context), staged: context.staged };
+  }
+
+  /**
+   * Assert the step skipped, staged nothing and left the priming file alone.
+   * @param {{result: object, staged: object}} ran - What `roll` returned
+   * @returns {object} The step's output
+   */
+  function assertNotRolled({ result, staged }) {
+    assert.equal(result.ok, true, 'a skipped roll never fails the wrap');
+    assert.equal(result.status, 'skipped');
+    assert.deepEqual(result.blockers, []);
+    assert.deepEqual(staged, {}, 'nothing is staged for the commit step to write');
+    assert.equal(fs.readFileSync(primingPath, 'utf8'), PRIMING, 'the priming file is byte-identical');
+    assert.equal(result.output.detail, result.output.reason, 'the drawer prints a skipped row\'s detail');
+    assert.match(result.output.reason, /the shared priming file is not rewritten from one checkout's plan/);
+    return result.output;
+  }
+
+  it('skips, names the coordinator and stages nothing when the settings name one', async () => {
+    settings(JSON.stringify({ workloadNudge: { coordinatorProject: 'lane-int' } }));
+    const output = assertNotRolled(await roll());
+    assert.deepEqual(output.mergeAuthority, { authority: 'integrator', integrator: 'lane-int', source: 'coordinator' });
+    // The row is cut to one line in the wrap drawer, so the name comes first.
+    assert.match(output.reason, /^Works under lane-int, the coordinator this project's settings name, so /);
+    assert.match(output.reason, /belongs in the handoff/);
+    assert.deepEqual(execCalls, ['git remote get-url origin', 'git symbolic-ref --short -q HEAD'],
+      'the answer is keyed on the repository and the branch the wrap fired from');
+  });
+
+  it('rolls exactly as before, and reads no git, when the settings name no coordinator', async () => {
+    // The same project with the coordinator removed: proof the skip above is
+    // the guard's doing and not a fixture that could never roll.
+    settings(JSON.stringify({ workloadNudge: { enabled: true } }));
+    primingRoll._internal.exec = async () => { throw new Error('a project that decides for itself must run no git command here'); };
+    const { result, staged } = await roll();
+    assert.equal(result.status, 'done');
+    assert.equal(result.output.changed, true);
+    assert.equal(result.output.pointer.current.id, '2');
+    assert.match(staged['next-session-prime'].newContent, /\*\*Active:\*\* Chunk 2 — Second/);
+    assert.equal(result.output.mergeAuthority, undefined);
+  });
+
+  it('rolls when there is no settings file at all', async () => {
+    primingRoll._internal.exec = async () => { throw new Error('no git read is expected'); };
+    const { result } = await roll();
+    assert.equal(result.status, 'done');
+  });
+
+  it('is asked before any plan is resolved: plans that would block the step do not block a lane wrap', async () => {
+    settings(JSON.stringify({ workloadNudge: { coordinatorProject: 'lane-int' } }));
+    fs.writeFileSync(path.join(projectPath, '.tangleclaw', 'plans', 'second-plan.md'), PLAN);
+    primingRoll._internal.lookupIssueStates = async () => { throw new Error('no plan is examined in a coordinated project'); };
+    assertNotRolled(await roll());
+
+    // Without the coordinator the same two in-progress plans block, as they always did.
+    settings('{}');
+    const { result } = await roll();
+    assert.equal(result.status, 'blocked');
+    assert.match(result.blockers[0], /Multiple in-progress plans/);
+  });
+
+  it('skips with its own sentence when the project is the coordinator itself', async () => {
+    settings(JSON.stringify({ workloadNudge: { coordinatorProject: 'lane-int' } }));
+    const output = assertNotRolled(await roll('lane-int'));
+    assert.match(output.reason, /^lane-int coordinates a lane, so the shared priming file is not rewritten/);
+    assert.doesNotMatch(output.reason, /works under/i);
+  });
+
+  it('skips and says what could not be read when the settings file is not readable JSON', async () => {
+    settings('{ "workloadNudge": { "coordinatorProject": "lane-');
+    const output = assertNotRolled(await roll());
+    assert.equal(output.mergeAuthority.authority, 'unknown');
+    assert.match(output.reason, /^Coordinator not established \(this project's settings \(\.tangleclaw\/project\.json\) could not be read\), so /);
+    assert.match(output.reason, /until it can be\.$/);
+  });
+
+  it('skips when the coordinator setting is not a project name', async () => {
+    settings(JSON.stringify({ workloadNudge: { coordinatorProject: '   ' } }));
+    const output = assertNotRolled(await roll());
+    assert.equal(output.mergeAuthority.authority, 'unknown');
+  });
+
+  for (const [what, said, expected] of [
+    ['the remote cannot be read', { remote: null, branch: 'main' }, /the repository could not be named/],
+    ['the remote is not a github.com repository', { remote: '/srv/git/widgets.git', branch: 'main' }, /the repository could not be named/],
+    ['HEAD is detached', { remote: GITHUB, branch: null }, /the base branch is not known/]
+  ]) {
+    it(`skips as unknown, and still stages nothing, when ${what}`, async () => {
+      settings(JSON.stringify({ workloadNudge: { coordinatorProject: 'lane-int' } }));
+      answerGit(said);
+      const output = assertNotRolled(await roll());
+      assert.equal(output.mergeAuthority.authority, 'unknown');
+      assert.match(output.reason, expected);
+      assert.match(output.reason, /its settings name lane-int as coordinator/);
+    });
+  }
+
+  it('passes the repository and the branch to the question, so a merge queue is looked up for them', async () => {
+    settings(JSON.stringify({ workloadNudge: { coordinatorProject: 'lane-int' } }));
+    answerGit({ remote: 'git@github.com:acme/widgets.git', branch: 'release/9' });
+    const asked = [];
+    mergeAuthority._internal.findActiveQueue = (repo, baseBranch) => {
+      asked.push([repo, baseBranch]);
+      return { ownerProjectId: 900002 };
+    };
+    mergeAuthority._internal.getProject = (id) => (id === 900002 ? { id, name: 'someone-else' } : null);
+    const output = assertNotRolled(await roll());
+    assert.deepEqual(asked, [['acme/widgets', 'release/9']]);
+    assert.equal(output.mergeAuthority.authority, 'unknown', 'a queue owned by another project is a disagreement, not a go-ahead');
+    assert.match(output.reason, /is owned by someone-else/);
+  });
+
+  it('reads a real repository through its own git seam: the remote, the branch, and a detached HEAD', async () => {
+    // The seam's real half. Everything above answers git by hand, so nothing
+    // else here would notice the two commands being wrong for a real checkout.
+    Object.assign(primingRoll._internal, { exec: originals.exec });
+    settings(JSON.stringify({ workloadNudge: { coordinatorProject: 'lane-int' } }));
+    const git = (...args) => execFileSync('git', args, { cwd: projectPath, encoding: 'utf8' }).trim();
+    initRepo(projectPath, ['--initial-branch=trunk']);
+    git('config', 'user.email', 'lane@example.invalid');
+    git('config', 'user.name', 'Lane');
+    git('config', 'commit.gpgsign', 'false');
+    git('remote', 'add', 'origin', GITHUB);
+    git('add', '-A');
+    git('commit', '-m', 'first');
+
+    const asked = [];
+    mergeAuthority._internal.findActiveQueue = (repo, baseBranch) => { asked.push([repo, baseBranch]); return null; };
+    const onBranch = assertNotRolled(await roll());
+    assert.deepEqual(asked, [['acme/widgets', 'trunk']]);
+    assert.equal(onBranch.mergeAuthority.authority, 'integrator');
+
+    git('checkout', '--detach', '-q');
+    const detached = assertNotRolled(await roll());
+    assert.equal(detached.mergeAuthority.authority, 'unknown', 'a detached HEAD names no base branch; it is not a branch called HEAD');
+    assert.match(detached.reason, /the base branch is not known/);
+    assert.equal(asked.length, 1, 'no queue is looked up without a base branch');
+  });
+});
