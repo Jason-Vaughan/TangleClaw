@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-10-12T07:18:30.384Z",
+  "args": [
+    "api",
+    "-i",
+    "-X",
+    "DELETE",
+    "repos/Jason-Vaughan/TangleClaw/git/refs/heads/tc-queue/probe-20261012-000000"
+  ],
+  "exitCode": 1,
+  "statusLine": "HTTP/2.0 422 Unprocessable Entity",
+  "body": "{\"message\":\"Reference does not exist\",\"documentation_url\":\"https://docs.github.com/rest/git/refs#delete-a-reference\",\"status\":\"422\"}",
+  "stderr": "gh: Reference does not exist (HTTP 422)\n"
+}

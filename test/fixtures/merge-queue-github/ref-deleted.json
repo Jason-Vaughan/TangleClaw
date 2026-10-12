@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-10-12T07:18:29.307Z",
+  "args": [
+    "api",
+    "-i",
+    "-X",
+    "DELETE",
+    "repos/Jason-Vaughan/TangleClaw/git/refs/heads/tc-queue/probe-20261012-000000"
+  ],
+  "exitCode": 0,
+  "statusLine": "HTTP/2.0 204 No Content",
+  "body": "",
+  "stderr": ""
+}

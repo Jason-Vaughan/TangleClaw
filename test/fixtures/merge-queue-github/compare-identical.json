@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-10-12T07:18:20.899Z",
+  "args": [
+    "api",
+    "-i",
+    "repos/Jason-Vaughan/TangleClaw/compare/6ee1f14ba03071bdae8056ca8d0f793df2f85cc5...6ee1f14ba03071bdae8056ca8d0f793df2f85cc5",
+    "--jq",
+    "{status: .status, base: .base_commit.sha, merge_base: .merge_base_commit.sha, files: [.files[] | {filename: .filename, previous_filename: .previous_filename}]}"
+  ],
+  "exitCode": 0,
+  "statusLine": "HTTP/2.0 200 OK",
+  "body": "{\"base\":\"6ee1f14ba03071bdae8056ca8d0f793df2f85cc5\",\"files\":[],\"merge_base\":\"6ee1f14ba03071bdae8056ca8d0f793df2f85cc5\",\"status\":\"identical\"}\n",
+  "stderr": ""
+}

@@ -35,6 +35,35 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-12 — #2322: the merge queue's reads and writes on GitHub, checked against the real repository
+
+<!-- prawduct: type=feature | scope=2322-integrator-merge-queue -->
+
+#2322 Chunk 02 of five. Branch `feat/2322-02-merge-queue-github`, from `origin/main` `29354a46`. One module, its tests and fixtures, and the first section of `docs/merge-queue.md`. No route, no `tc` verb, no store or schema change: nothing an operator can reach.
+
+Visual change: no
+
+**Why.** The queue tests a pull request merged with the current `main` on a branch of its own, then merges the pull request. Both are GitHub's work, so the queue needs one bounded place that asks GitHub and never reports what it did not read, and the design's assumptions about GitHub had to be tried on GitHub before anything was built on them.
+
+**What changed.**
+
+- New `lib/merge-queue-github.js`: `readPull`, `readRefTip`, `readCommit`, `readPullFiles`, `readCompareFiles`, `createCandidate`, `deleteRef`, `mergePull`, each a `gh api -i` call with a time and output budget. The HTTP status is read from the response itself, so a conflict (409), nothing to merge (204), a branch that is already there (422) and a branch that is gone (404) are named answers and everything else is `unavailable` with the reason. A write that is `unavailable` says whether GitHub refused it (`applied: false`) or its outcome is not known (`applied: null`); `createCandidate` also says whether a branch now exists (`refCreated`).
+- Writes are held to the queue's own branches: `createCandidate` and `deleteRef` refuse any branch that is not one name under `tc-queue/` before `gh` runs. `mergePull` always sends a merge commit pinned to a full head commit and cannot send squash or rebase. `CANDIDATE_PREFIX` is exported for the workflow trigger test of a later chunk.
+- The two file-list readers for the release refusal answer `unavailable` unless the list is known to be whole: every page read and the row count equal to the pull request's own count and under GitHub's 3000 cap; a comparison under the 300 cap whose second commit descends from the first. A rename gives both paths.
+- `lib/github-checks.js` is used as it is: the check-run reader is not copied, and its definition of a well-formed repository and commit id is the one this module asks.
+- New `test/merge-queue-github.test.js` and `test/fixtures/merge-queue-github/`: the tests replay the exchanges the module itself recorded, and assert the module sends the recorded arguments.
+- New `docs/merge-queue.md`: which GitHub calls the queue makes and what each may change.
+
+**The probe (allowed by the decider's `2322 probe ok`; the Integrator's `probe base 6ee1f14b`, `probe refusals ok`).** Run once on 2026-10-12 through the module's own functions with this session's `gh`. Branch `tc-queue/probe-20261012-071816` was created at `6ee1f14b` (`main` before PR #2331), `1aa8f5de` (that PR's head) was merged into it as `bb4d7904`, and it was deleted; `git ls-remote origin` then printed no `tc-queue/*` line and `main` was still `29354a46`. Four calls that write nothing were made on the same branch: creating it again (422), the same merge again (204), a merge that conflicts, of `cc3e8364` (409), and deleting it again (422); the branch tip read `bb4d7904` before and after the first three.
+
+**What the probe showed.** The candidate's tree is `a09b4f59`, the tree of `main`'s own merge of the same two commits (`29354a46`): GitHub's branch merge and its pull request merge gave the same files. That is one pair of commits, and the queue still compares the trees after every landing. The candidate had no `test` run: CI does not run on a `tc-queue/` branch until the workflow chunk lands, so the assumption that a branch made with this `gh` login starts the workflow is still untested.
+
+**Departures from the plan, each told to the Integrator before the probe.** The probe branch started at `6ee1f14b`, not the tip of `main`: merging an older `main` commit into the tip answers 204 and makes no merge commit. `mergePull` uses `PUT /pulls/{n}/merge` with `sha` (the same pin as `gh pr merge --match-head-commit`) because it answers the merge commit as JSON, which the landing's tree comparison needs. Acceptance criterion 4 is amended in the plan: `mergePull`'s three answers are written from GitHub's documentation, in `pull-merge-DOCUMENTED.json`, which says so, and are to be replaced by the real exchange from the queue's first landing.
+
+**A defect caught by the tests before the first commit.** The first version checked a commit id through a helper whose parameter had a default, so a call with no head commit passed the check and would have sent `sha=undefined`. Root cause: one helper served "repository only" and "repository and commit" by defaulting the commit. They are two functions now, and the refusal tests pass `undefined` for every commit argument.
+
+**Not checked.** A real pull request merge. A file list long enough to page or to reach a cap (those tests are built on the recorded row shape). A pull request from a fork. GitHub rate limiting (a 403 reads as `unavailable`, refused). The recorded pull request of the files test changes five files, none renamed.
+
 ## 2026-10-11 — #2187: whole Codex dialog fixtures, and a known-unsafe list kept by version
 
 <!-- prawduct: type=bugfix | scope=wake-gate-2187 -->

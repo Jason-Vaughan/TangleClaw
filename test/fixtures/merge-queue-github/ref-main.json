@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-10-12T07:18:18.352Z",
+  "args": [
+    "api",
+    "-i",
+    "repos/Jason-Vaughan/TangleClaw/git/ref/heads/main",
+    "--jq",
+    "{ref: .ref, sha: .object.sha, type: .object.type}"
+  ],
+  "exitCode": 0,
+  "statusLine": "HTTP/2.0 200 OK",
+  "body": "{\"ref\":\"refs/heads/main\",\"sha\":\"29354a4674cc207ca89205dadaab40aaf845dffc\",\"type\":\"commit\"}\n",
+  "stderr": ""
+}

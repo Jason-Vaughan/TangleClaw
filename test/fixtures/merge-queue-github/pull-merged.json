@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-10-12T07:18:17.179Z",
+  "args": [
+    "api",
+    "-i",
+    "repos/Jason-Vaughan/TangleClaw/pulls/2331",
+    "--jq",
+    "{number: .number, state: .state, merged: .merged, draft: .draft, mergeable: .mergeable, base_ref: .base.ref, head_sha: .head.sha, changed_files: .changed_files}"
+  ],
+  "exitCode": 0,
+  "statusLine": "HTTP/2.0 200 OK",
+  "body": "{\"base_ref\":\"main\",\"changed_files\":5,\"draft\":false,\"head_sha\":\"1aa8f5de0941e64d171f655c0e00822e6577ba9f\",\"mergeable\":null,\"merged\":true,\"number\":2331,\"state\":\"closed\"}\n",
+  "stderr": ""
+}

@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-10-12T07:18:18.016Z",
+  "args": [
+    "api",
+    "-i",
+    "repos/Jason-Vaughan/TangleClaw/pulls/999999",
+    "--jq",
+    "{number: .number, state: .state, merged: .merged, draft: .draft, mergeable: .mergeable, base_ref: .base.ref, head_sha: .head.sha, changed_files: .changed_files}"
+  ],
+  "exitCode": 1,
+  "statusLine": "HTTP/2.0 404 Not Found",
+  "body": "{\"message\":\"Not Found\",\"documentation_url\":\"https://docs.github.com/rest/pulls/pulls#get-a-pull-request\",\"status\":\"404\"}",
+  "stderr": "gh: Not Found (HTTP 404)\n"
+}
