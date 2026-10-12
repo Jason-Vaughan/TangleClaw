@@ -70,6 +70,18 @@ tc queue withdraw <entry> --reason <text>
 one is. `--operator-gate` is `none` unless given. The verb is not in the list every pane is primed
 with: `tc` with no verb lists it.
 
+**How long `tc` waits.** `tc queue submit` and `tc queue withdraw` each wait 60 seconds for the
+answer; `status` and `show` wait the 10 seconds every other `tc` call waits. A submit ordinarily
+answers in a few seconds: the server reads GitHub several times for it, each read bounded at 10
+seconds, and a withdrawal deletes up to two branches, each bounded at 20.
+
+**When the wait runs out.** The server goes on working after `tc` stops waiting, so a submit or a
+withdrawal that got no answer **may still be running, or may have finished**. `tc` says so, exits
+2, and does not say the API is unreachable. Read `tc queue status` before repeating: the entry is
+there or it is not. Repeating a submit that did go through is refused `DUPLICATE_PR`, naming the
+entry; repeating a withdrawal is harmless. A `status` or `show` that got no answer changed nothing
+and is repeated.
+
 ### What a submit records, and what the queue reads itself
 
 The owner states three gates, each with a reference to where its result is recorded (a message id,
@@ -101,7 +113,18 @@ part that lands.
 
 ### Withdrawing
 
-The owner withdraws an entry with a reason. An entry whose candidate exists, or is being made, has
+The owner withdraws an entry with a reason of at most 1000 characters. **The reason is checked
+first:** one that is missing or too long is refused `400 INVALID_INPUT` before any branch is
+touched, so nothing is deleted for a withdrawal that could not then be recorded.
+
+**One at a time per queue.** A withdrawal holds its queue's slot from reading the entry's state to
+recording it withdrawn. One that arrives while another call holds the slot changes nothing, deletes
+nothing and is refused `409 QUEUE_CALL_IN_FLIGHT`: read `tc queue status`, then withdraw again if
+the entry is still there. A submit does not take the slot (it only adds to the end), and two queues
+do not block each other. The slot is held in the server's memory, so a restart frees it; every call
+that takes it is harmless to repeat.
+
+An entry whose candidate exists, or is being made, has
 both of its branches deleted on GitHub first (`discardCandidate`). If either could not be removed
 the entry **stays in the queue** and the answer says what happened to each branch
 (`503 CANDIDATE_NOT_DISCARDED`); withdraw again, which is harmless. An entry whose merge has been
@@ -119,7 +142,7 @@ Every refusal carries a `code` and says what to do next.
 | `OPERATOR_ONLY` | 403 | making a queue or recording the Operator gate, by anyone else |
 | `NOT_OWNER` | 403 | submitting or withdrawing, by anyone but the owner's launch |
 | `CONTROL_HELD`, `CONTROL_STOPPED` | 423 | the owner's lane is held or stopped; it cannot submit |
-| `INVALID_INPUT`, `GATE_REFERENCE_MISSING` | 400 | a malformed request; a gate with no reference (`gate` names it) |
+| `INVALID_INPUT`, `GATE_REFERENCE_MISSING` | 400 | a malformed request, a withdrawal's reason over 1000 characters included; a gate with no reference (`gate` names it) |
 | `QUEUE_NOT_FOUND`, `ENTRY_NOT_FOUND`, `PROJECT_NOT_FOUND` | 404 | no such thing, or not readable by this caller |
 | `QUEUE_AMBIGUOUS` | 400 | the owner has more than one queue; send `queueId` |
 | `QUEUE_EXISTS`, `QUEUE_RETIRED` | 409 | a second queue for the same base; a queue that takes nothing new |
@@ -129,6 +152,7 @@ Every refusal carries a `code` and says what to do next.
 | `RELEASE_TRIGGER_CHANGED` | 409 | the pull request changes a release-trigger path (`paths`) |
 | `GITHUB_UNAVAILABLE` | 503 | a read from GitHub failed; nothing was queued |
 | `CANDIDATE_NOT_DISCARDED` | 503 | a withdrawal could not remove both branches; the entry stays |
+| `QUEUE_CALL_IN_FLIGHT` | 409 | another withdrawal of this queue is running; nothing was changed. Read the queue, then repeat |
 | `ENTRY_FINISHED`, `TRANSITION_NOT_ALLOWED` | 409 | the entry is done, or its merge has been asked for |
 | `OPERATOR_GATE_NOT_REQUIRED`, `OPERATOR_GATE_ALREADY_RECORDED` | 409 | the Operator gate has nothing to record |
 | `ENTRY_ID_UNUSABLE` | 500 | a defect: the queue made an id no branch can be named after. `withdrawn` says whether it took the entry back out; if not, the entry is still queued and these routes cannot reach it |

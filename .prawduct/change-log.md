@@ -35,6 +35,34 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-12 — #2322: a queue call that is slow is not called unreachable, a withdrawal's reason is checked first, and one withdrawal runs per queue
+
+<!-- prawduct: type=bugfix | scope=2322-integrator-merge-queue -->
+
+#2322 Chunk 05b. Branch `feat/2322-05b-queue-call-limits`, from `origin/main` `8ee3832a`. The issue stays open. It repairs three things in what chunk 04 merged; the queue still lands nothing.
+
+Visual change: no
+
+**Why.**
+
+- `bin/tc` gave every request 10 seconds and then said the API was unreachable. A `tc queue submit` makes the server read GitHub four or more times, each read bounded at 10 seconds, so with GitHub slow the pane was told the API was unreachable while the server went on to queue the entry.
+- `withdraw` deleted a candidate's branches and only then handed the reason to the store, which refuses one over 1000 characters: branches gone for a withdrawal that was not recorded.
+- `withdraw` reads an entry's state, waits on GitHub and then writes, so a second call on the same queue could run in between.
+
+**What changed.**
+
+- `bin/tc`: `requestJson` takes `opts.timeoutMs`; with none it waits the 10 seconds it always did. The rule is `requestTimeoutMs` in `lib/tc-verbs.js`. A wait that ran out, as opposed to a connection that failed, is marked on the error (`timedOut`, `timeoutMs`); its message and code are unchanged.
+- **The calls that pass a limit are two, and no other:** `tc queue submit` (`POST /api/merge-queue/entries`) and `tc queue withdraw` (`POST /api/merge-queue/entries/:id/withdraw`), 60 seconds each (`QUEUE_CALL_TIMEOUT_MS`). Every other verb, the two queue reads and `bin/tc`'s own HOLD banner pass none.
+- `lib/tc-verbs.js`: a `tc queue` call whose wait ran out says, for a submit or a withdrawal, that the request may still be running and to read `tc queue status` before repeating; for `status` or `show`, to repeat it. Exit 2, and never the unreachable text.
+- New `lib/merge-queue.js`: `withQueueSlot(queueId, fn)`, one slot per queue id in the server's memory, taken before the function first yields and given back in a `finally`. A second call is refused, not queued.
+- `lib/merge-queue-api.js#withdraw`: the reason is checked for the store's limit before anything else; the rest runs inside the queue's slot, and a withdrawal that finds it taken is refused `409 QUEUE_CALL_IN_FLIGHT` having changed nothing. `submit` does not take the slot.
+- `docs/merge-queue.md`: the two waits, what to do when one runs out, the reason checked first, one at a time per queue, the new refusal.
+- Tests: new `test/merge-queue-slot.test.js`; cases added to `test/merge-queue-api.test.js`, `test/tc-queue-verb.test.js` and `test/tc-cli.test.js`. The last spawns the real `tc` against a server that answers a submit after 11 seconds and nothing else, which takes that long to run.
+
+**What an operator sees.** A `tc queue submit` or `withdraw` that takes longer than 10 seconds now answers, up to 60; past that the pane is told the request may still be running, not that the API is unreachable.
+
+**Limits.** The slot is memory only: a restart frees it, which is safe because a withdrawal is harmless to repeat. Nothing else takes the slot until `advance` exists. The 1000 is written in `lib/merge-queue-api.js` as well as in the store, which does not export it; a test holds the two to the same number.
+
 ## 2026-10-12 — #2322: read a check as one branch sees it
 
 <!-- prawduct: type=feature | scope=2322-integrator-merge-queue -->

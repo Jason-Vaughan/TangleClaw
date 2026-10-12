@@ -326,6 +326,96 @@ describe('tc CLI vertical slice (ambient-awareness Chunk 02)', () => {
     });
   });
 
+  describe('how long a request waits (#2322)', () => {
+    const { requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS, QUEUE_CALL_TIMEOUT_MS } = require('../lib/tc-verbs');
+
+    it('waits ten seconds unless the call names a usable limit of its own', () => {
+      assert.equal(DEFAULT_REQUEST_TIMEOUT_MS, 10000);
+      for (const opts of [undefined, null, {}, { aux: true }, { timeoutMs: undefined }, { timeoutMs: null }, { timeoutMs: 0 },
+        { timeoutMs: -1 }, { timeoutMs: 1.5 }, { timeoutMs: '60000' }, { timeoutMs: NaN }, { timeoutMs: Infinity }]) {
+        assert.equal(requestTimeoutMs(opts), 10000, JSON.stringify(opts));
+      }
+      assert.equal(requestTimeoutMs({ timeoutMs: 60000 }), 60000);
+      assert.equal(requestTimeoutMs({ timeoutMs: 1, aux: true }), 1);
+    });
+
+    it('bin/tc hands every request\'s options to that one rule and names no limit itself', () => {
+      const source = fs.readFileSync(TC_BIN, 'utf8');
+      assert.equal(source.match(/AbortSignal\.timeout\(/g).length, 1, 'one place decides how long a request waits');
+      assert.match(source, /signal: AbortSignal\.timeout\(requestTimeoutMs\(opts\)\)/);
+      assert.doesNotMatch(source, /timeoutMs\s*:/, 'no request bin/tc makes for itself (the HOLD banner, for one) passes a limit');
+      assert.match(source, /getJson: \(apiPath, opts\) => requestJson\('GET', apiPath, undefined, opts\)/);
+      assert.match(source, /postJson: \(apiPath, body, opts\) => requestJson\('POST', apiPath, body, opts\)/);
+    });
+
+    it('only `tc queue submit` and `tc queue withdraw` pass a limit, of every call a verb makes', () => {
+      // Read from the source of the one file every verb lives in, so a verb
+      // added later is covered without being listed here.
+      const source = fs.readFileSync(path.join(__dirname, '..', 'lib', 'tc-verbs.js'), 'utf8');
+      const passed = [...source.matchAll(/timeoutMs\s*:\s*([^,}\n]*)/g)].map((m) => m[1].trim());
+      assert.deepEqual(passed.sort(), ['QUEUE_CALL_TIMEOUT_MS.submit', 'QUEUE_CALL_TIMEOUT_MS.withdraw']);
+      assert.deepEqual(QUEUE_CALL_TIMEOUT_MS, { submit: 60000, withdraw: 60000 });
+      assert.ok(Object.isFrozen(QUEUE_CALL_TIMEOUT_MS));
+      const other = fs.readdirSync(path.join(__dirname, '..', 'lib')).filter((f) => f.endsWith('.js') && f !== 'tc-verbs.js')
+        .filter((f) => /\b(getJson|postJson)\b/.test(fs.readFileSync(path.join(__dirname, '..', 'lib', f), 'utf8')));
+      assert.deepEqual(other, [], 'no verb\'s requests are made from another file');
+    });
+
+    it('a spawned tc gives up at ten seconds by default and says what it said before, while a queue submit waits on', async () => {
+      // A server that is slow and not down: it answers a submit eleven seconds
+      // after it arrives, and answers nothing else at all.
+      const ENTRY = {
+        entryId: 'mqe_1111111111111111', prNumber: 12, headSha: 'a'.repeat(40), position: 1,
+        gates: { operator: { status: 'not-required' } }
+      };
+      const arrived = [];
+      const slow = http.createServer((req, res) => {
+        arrived.push(`${req.method} ${req.url.split('?')[0]}`);
+        req.resume();
+        if (req.method === 'POST' && req.url === '/api/merge-queue/entries') {
+          setTimeout(() => {
+            res.writeHead(201, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ entry: ENTRY, queue: { queueId: 'mq_1' } }));
+          }, 11000);
+        }
+      });
+      await new Promise((resolve) => slow.listen(0, '127.0.0.1', resolve));
+      const origin = `http://127.0.0.1:${slow.address().port}`;
+      const env = { ...outsidePane(process.env), TANGLECLAW_API: origin, TANGLECLAW_PROJECT_ID: '1' };
+      delete env.TANGLECLAW_LAUNCH_ID;
+      const started = Date.now();
+      const timed = (args) => runTc(args, env).then((r) => ({ ...r, ms: Date.now() - started }));
+      let whoami;
+      let status;
+      let submit;
+      try {
+        [whoami, status, submit] = await Promise.all([
+          timed(['whoami']),
+          timed(['queue', 'status']),
+          timed(['queue', 'submit', '12', '--head', 'a'.repeat(40), '--review', 'r', '--test', 't', '--base', 'b'])
+        ]);
+      } finally {
+        slow.closeAllConnections();
+        await new Promise((resolve) => slow.close(resolve));
+      }
+      assert.deepEqual([...arrived].sort(), ['GET /api/merge-queue', 'GET /api/tc/whoami', 'POST /api/merge-queue/entries']);
+
+      assert.equal(whoami.code, 2);
+      assert.ok(whoami.ms >= 10000, `whoami gave up after ${whoami.ms} ms`);
+      assert.match(whoami.stderr, /\[API_UNREACHABLE_FROM_CONTEXT\]/);
+      assert.match(whoami.stderr, /is unreachable from this execution context \(The operation was aborted due to timeout\)\. That is not proof the server is down/);
+
+      assert.equal(status.code, 2);
+      assert.ok(status.ms >= 10000, `queue status gave up after ${status.ms} ms`);
+      assert.equal(status.stderr, 'tc: queue status got no answer from the TangleClaw API in 10 seconds. '
+        + 'A read changes nothing: repeat it. An answer that is slow is not proof the server is down.\n');
+
+      assert.equal(submit.code, 0, submit.stderr);
+      assert.ok(submit.ms >= 11000, `queue submit answered after ${submit.ms} ms`);
+      assert.match(submit.stdout, /^Queued: entry mqe_1111111111111111, PR #12 /);
+    });
+  });
+
   describe('the test client itself (#1960)', () => {
     it('opens a fresh connection per request, so no request can race a closing keep-alive socket', async () => {
       const first = await request(server, 'GET', `/api/tc/whoami?projectId=${project.id}`);

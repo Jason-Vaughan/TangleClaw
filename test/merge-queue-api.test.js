@@ -19,6 +19,7 @@ const store = require('../lib/store');
 const api = require('../lib/merge-queue-api');
 const queueStore = require('../lib/merge-queue-store');
 const state = require('../lib/merge-queue-state');
+const { withQueueSlot, isQueueSlotTaken } = require('../lib/merge-queue');
 const { GATE_STATES, standsDown } = require('../lib/auth-gate');
 const { createServer } = require('../server');
 const { operatorHeaders, bindProject, signInOperator, sendAs: sendRaw } = require('./_shared-docs-callers');
@@ -693,6 +694,141 @@ describe('/api/merge-queue (#2322)', () => {
       assert.match(res.data.error, /outcome is read/);
       assert.equal(gh.calls.length, 0);
       assert.equal(queueStore.failEntry(entry.entryId, { code: 'TEST_CLEANUP', actor: ownerActor() }).ok, true);
+    });
+
+    it('refuses a reason the records would not take before any branch is deleted', async () => {
+      const entry = await withCandidate(true);
+      const url = `/api/merge-queue/entries/${entry.entryId}/withdraw`;
+      const tooLong = 'x'.repeat(api.MAX_WITHDRAW_REASON + 1);
+      const res = await sendAs(server, 'POST', url, { reason: tooLong }, bOwner.headers);
+      assert.equal(res.status, 400);
+      assert.equal(res.data.code, 'INVALID_INPUT');
+      assert.match(res.data.error, /at most 1000 characters, and this one is 1001\. Nothing was changed/);
+      assert.equal(gh.calls.length, 0, 'no GitHub call was made for a withdrawal that could not be recorded');
+      assert.equal(queueStore.getEntry(entry.entryId).state, 'testing');
+      // The limit checked here is the records' own: the store refuses the same
+      // reason, and takes the longest one this route lets through.
+      assert.equal(queueStore.withdrawEntry(entry.entryId, { reason: tooLong, actor: ownerActor() }).code, 'INVALID_INPUT');
+      const longest = 'y'.repeat(api.MAX_WITHDRAW_REASON);
+      const ok = await sendAs(server, 'POST', url, { reason: `  ${longest}\n` }, bOwner.headers);
+      assert.equal(ok.status, 200, JSON.stringify(ok.data));
+      assert.equal(ok.data.entry.withdrawnReason, longest, 'the space around a reason is not counted, and is not recorded');
+      assert.deepEqual(gh.calls, [['discardCandidate', REPO, `tc-queue/${entry.entryId}`]]);
+    });
+
+    /**
+     * Hold a queue's slot until the returned function is called.
+     * @param {string} id - The queue's id
+     * @returns {() => Promise<void>} Gives the slot back and waits for it to be free
+     */
+    const holdSlot = (id) => {
+      let release;
+      const held = withQueueSlot(id, () => new Promise((resolve) => { release = resolve; }));
+      return async () => { release(); await held; };
+    };
+
+    it('a withdrawal arriving while another call holds the queue changes nothing and deletes nothing', async () => {
+      const entry = await withCandidate(true);
+      const url = `/api/merge-queue/entries/${entry.entryId}/withdraw`;
+      const free = holdSlot(queueId);
+      try {
+        const res = await sendAs(server, 'POST', url, { reason: 'base moved on' }, bOwner.headers);
+        assert.equal(res.status, 409);
+        assert.equal(res.data.code, 'QUEUE_CALL_IN_FLIGHT');
+        assert.equal(res.data.entryId, entry.entryId);
+        assert.match(res.data.error, /changed nothing\. Read `tc queue status`, then withdraw again/);
+        assert.equal(gh.calls.length, 0);
+        assert.equal(queueStore.getEntry(entry.entryId).state, 'testing');
+      } finally {
+        await free();
+      }
+      const after = await sendAs(server, 'POST', url, { reason: 'base moved on' }, bOwner.headers);
+      assert.equal(after.status, 200, JSON.stringify(after.data));
+    });
+
+    it('two withdrawals of one queue do not interleave: the second is refused while the first waits on GitHub', async () => {
+      const entry = await withCandidate(true);
+      const url = `/api/merge-queue/entries/${entry.entryId}/withdraw`;
+      let answerGitHub;
+      let reached;
+      const atGitHub = new Promise((resolve) => { reached = resolve; });
+      // Only the first call waits. A second one reaching GitHub at all is the
+      // defect, and it is answered at once so that the test fails on it rather
+      // than waiting for an answer nobody gives.
+      api._internal.discardCandidate = (repo, ref) => {
+        gh.calls.push(['discardCandidate', repo, ref]);
+        if (answerGitHub) return Promise.resolve(gh.discard);
+        reached();
+        return new Promise((resolve) => { answerGitHub = () => resolve(gh.discard); });
+      };
+      const first = sendAs(server, 'POST', url, { reason: 'first' }, bOwner.headers);
+      await atGitHub;
+      let done;
+      try {
+        assert.equal(isQueueSlotTaken(queueId), true);
+        const second = await sendAs(server, 'POST', url, { reason: 'second' }, bOwner.headers);
+        assert.equal(second.status, 409);
+        assert.equal(second.data.code, 'QUEUE_CALL_IN_FLIGHT');
+        assert.equal(gh.calls.length, 1, 'the refused withdrawal made no GitHub call of its own');
+      } finally {
+        // Whatever was found, the first request is answered: one left open
+        // would keep the server from closing.
+        answerGitHub();
+        done = await first;
+      }
+      assert.equal(done.status, 200, JSON.stringify(done.data));
+      assert.equal(done.data.entry.withdrawnReason, 'first');
+      assert.equal(isQueueSlotTaken(queueId), false);
+    });
+
+    it('gives the slot back after a withdrawal that was refused and after one that threw', async () => {
+      const entry = await withCandidate(true);
+      const url = `/api/merge-queue/entries/${entry.entryId}/withdraw`;
+      gh.discard = { status: 'unavailable', reason: 'timed out', candidate: 'unknown', stage: 'unknown' };
+      const refusedOnce = await sendAs(server, 'POST', url, { reason: 'x' }, bOwner.headers);
+      assert.equal(refusedOnce.data.code, 'CANDIDATE_NOT_DISCARDED');
+      assert.equal(isQueueSlotTaken(queueId), false, 'free after a refusal');
+      api._internal.discardCandidate = async () => { throw new Error('boom'); };
+      const threw = await sendAs(server, 'POST', url, { reason: 'x' }, bOwner.headers);
+      assert.equal(threw.status, 503);
+      assert.equal(threw.data.code, 'MERGE_QUEUE_UNAVAILABLE');
+      assert.equal(isQueueSlotTaken(queueId), false, 'free after a throw');
+      const finished = await sendAs(server, 'POST', `/api/merge-queue/entries/${(await submitted()).entryId}/withdraw`, { reason: 'x' }, bOwner.headers);
+      assert.equal(finished.status, 200, JSON.stringify(finished.data));
+      const again = await sendAs(server, 'POST', `/api/merge-queue/entries/${finished.data.entry.entryId}/withdraw`, { reason: 'x' }, bOwner.headers);
+      assert.equal(again.data.code, 'ENTRY_FINISHED');
+      assert.equal(isQueueSlotTaken(queueId), false, 'free after a refusal made inside the slot');
+      assert.equal(queueStore.failEntry(entry.entryId, { code: 'TEST_CLEANUP', actor: ownerActor() }).ok, true);
+    });
+
+    it('a call holding another queue\'s slot does not block this one', async () => {
+      const entry = await withCandidate(true);
+      const free = holdSlot('mq_some_other_queue');
+      try {
+        const res = await sendAs(server, 'POST', `/api/merge-queue/entries/${entry.entryId}/withdraw`, { reason: 'x' }, bOwner.headers);
+        assert.equal(res.status, 200, JSON.stringify(res.data));
+      } finally {
+        await free();
+      }
+    });
+
+    it('a submit neither waits for the slot nor takes it', async () => {
+      let takenDuringReads = null;
+      const readPull = api._internal.readPull;
+      api._internal.readPull = async (...args) => {
+        takenDuringReads = isQueueSlotTaken(queueId);
+        return readPull(...args);
+      };
+      const alone = await submitted();
+      assert.equal(takenDuringReads, false, 'a submit running alone does not take the slot');
+      const free = holdSlot(queueId);
+      try {
+        const res = await sendAs(server, 'POST', '/api/merge-queue/entries', submitBody(nextPr()), bOwner.headers);
+        assert.equal(res.status, 201, JSON.stringify(res.data));
+      } finally {
+        await free();
+      }
+      assert.equal(queueStore.getEntry(alone.entryId).state, 'queued');
     });
   });
 

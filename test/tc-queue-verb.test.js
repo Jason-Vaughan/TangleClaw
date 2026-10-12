@@ -9,7 +9,8 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  VERB_ROSTER, QUEUE_SUBVERBS, verbsFor, renderUsage, renderQueueStatus, renderQueueEntry, renderQueueRefusal, receiptVerbLabel
+  VERB_ROSTER, QUEUE_SUBVERBS, QUEUE_CALL_TIMEOUT_MS, verbsFor, renderUsage, renderQueueStatus, renderQueueEntry, renderQueueRefusal,
+  renderQueueTimeout, receiptVerbLabel
 } = require('../lib/tc-verbs');
 
 const queue = VERB_ROSTER.find((v) => v.id === 'queue');
@@ -37,7 +38,8 @@ function entry(over = {}) {
 const QUEUE = { queueId: 'mq_1', repo: 'Jason-Vaughan/TangleClaw', baseBranch: 'main', ownerProjectId: 7, ownerProjectName: 'integrator', status: 'active', halt: null };
 
 /**
- * A fake tc context recording every request.
+ * A fake tc context recording every request, with its options when it was
+ * given any.
  * @param {string[]} argv - Arguments after `queue`
  * @param {object} [answers] - `{ get, post }`: what each call answers, or an error to throw
  * @returns {{ctx: object, calls: object[]}}
@@ -48,8 +50,8 @@ function fakeCtx(argv, answers = {}) {
   const ctx = {
     argv,
     env: {},
-    getJson: async (p) => { calls.push(['GET', p]); return give(answers.get); },
-    postJson: async (p, body) => { calls.push(['POST', p, body]); return give(answers.post); }
+    getJson: async (p, ...opts) => { calls.push(['GET', p, ...opts]); return give(answers.get); },
+    postJson: async (p, body, ...opts) => { calls.push(['POST', p, body, ...opts]); return give(answers.post); }
   };
   return { ctx, calls };
 }
@@ -182,7 +184,7 @@ describe('tc queue (#2322)', () => {
     assert.equal(r.code, 0);
     assert.deepEqual(plain.calls, [['POST', '/api/merge-queue/entries', {
       prNumber: 2340, headSha: HEAD, gates: { review: 'msg 1a2b', test: 'run 77', base: 'main c0ffee' }, operatorGate: 'none'
-    }]]);
+    }, { timeoutMs: 60000 }]]);
     assert.match(r.stdout, new RegExp(`Queued: entry mqe_1111111111111111, PR #2340 at ${HEAD}, position 3 in mq_1\\.`));
     assert.match(r.stdout, /Nothing lands yet/);
     assert.ok(!r.stdout.includes('Operator gate'));
@@ -200,7 +202,7 @@ describe('tc queue (#2322)', () => {
     const plain = fakeCtx(['withdraw', 'mqe_1111111111111111', '--reason', 'new head'], { post: { entry: entry({ state: 'withdrawn' }), branches: null } });
     const r = await queue.run(plain.ctx);
     assert.equal(r.code, 0);
-    assert.deepEqual(plain.calls, [['POST', '/api/merge-queue/entries/mqe_1111111111111111/withdraw', { reason: 'new head' }]]);
+    assert.deepEqual(plain.calls, [['POST', '/api/merge-queue/entries/mqe_1111111111111111/withdraw', { reason: 'new head' }, { timeoutMs: 60000 }]]);
     assert.equal(r.stdout, 'Withdrawn: entry mqe_1111111111111111 (PR #2340) is out of the queue.\n');
     const withBranches = fakeCtx(['withdraw', 'mqe_1111111111111111', '--reason', 'x'], {
       post: { entry: entry({ state: 'withdrawn' }), branches: { candidate: 'deleted', stage: 'not-found' } }
@@ -239,5 +241,71 @@ describe('tc queue (#2322)', () => {
   it('lets a failure that is not a refusal reach bin/tc, which reports the server unreachable', async () => {
     const { ctx } = fakeCtx(['status'], { get: new Error('ECONNREFUSED') });
     await assert.rejects(() => queue.run(ctx), /ECONNREFUSED/);
+  });
+
+  const SUBMIT = ['submit', '12', '--head', HEAD, '--review', 'r', '--test', 't', '--base', 'b'];
+  const WITHDRAW = ['withdraw', 'mqe_1', '--reason', 'x'];
+
+  /**
+   * The error `bin/tc` throws for a request whose wait ran out.
+   * @param {number} timeoutMs - How long it waited
+   * @returns {Error}
+   */
+  function timedOut(timeoutMs) {
+    return Object.assign(new Error('the TangleClaw API at http://x is unreachable from this execution context (aborted)'),
+      { code: 'API_UNREACHABLE_FROM_CONTEXT', timedOut: true, timeoutMs });
+  }
+
+  it('submit and withdraw wait sixty seconds for their answer, and the reads name no limit', async () => {
+    assert.deepEqual(QUEUE_CALL_TIMEOUT_MS, { submit: 60000, withdraw: 60000 });
+    const answers = { get: { queues: [], queue: QUEUE, entry: entry(), events: [] }, post: { entry: entry(), queue: QUEUE, branches: null } };
+    const optionsOf = async (argv) => {
+      const { ctx, calls } = fakeCtx(argv, answers);
+      assert.equal((await queue.run(ctx)).code, 0, argv[0]);
+      assert.equal(calls.length, 1, argv[0]);
+      return calls[0].slice(calls[0][0] === 'GET' ? 2 : 3);
+    };
+    assert.deepEqual(await optionsOf(SUBMIT), [{ timeoutMs: 60000 }]);
+    assert.deepEqual(await optionsOf(WITHDRAW), [{ timeoutMs: 60000 }]);
+    assert.deepEqual(await optionsOf(['status']), []);
+    assert.deepEqual(await optionsOf(['show', 'mqe_1']), []);
+  });
+
+  it('a submit or withdrawal that runs out of time says it may still be running, and never that the API is unreachable', async () => {
+    for (const [argv, method] of [[SUBMIT, 'post'], [WITHDRAW, 'post']]) {
+      const { ctx } = fakeCtx(argv, { [method]: timedOut(60000) });
+      const r = await queue.run(ctx);
+      assert.equal(r.code, 2, argv[0]);
+      assert.equal(r.stdout, undefined);
+      assert.ok(r.stderr.startsWith(`tc: queue ${argv[0]} got no answer from the TangleClaw API in 60 seconds. The request may still be running on the server`), r.stderr);
+      assert.match(r.stderr, /read `tc queue status` before repeating it\. Do not report it as done or as failed until the queue says which\.\n$/);
+      assert.doesNotMatch(r.stderr, /unreachable/i);
+    }
+  });
+
+  it('a read that runs out of time says to repeat it, and does not say unreachable either', async () => {
+    for (const argv of [['status'], ['show', 'mqe_1']]) {
+      const { ctx } = fakeCtx(argv, { get: timedOut(10000) });
+      const r = await queue.run(ctx);
+      assert.equal(r.code, 2, argv[0]);
+      assert.equal(r.stderr, `tc: queue ${argv[0]} got no answer from the TangleClaw API in 10 seconds. `
+        + 'A read changes nothing: repeat it. An answer that is slow is not proof the server is down.\n');
+    }
+    assert.match(renderQueueTimeout('status'), / in 10 seconds\. /, 'with no time given it names the default wait');
+  });
+
+  it('a connection that failed, as opposed to a wait that ran out, is still bin/tc\'s to report', async () => {
+    const refusedConnection = Object.assign(new Error('unreachable (ECONNREFUSED)'), { code: 'API_UNREACHABLE_FROM_CONTEXT' });
+    for (const [argv, method] of [[SUBMIT, 'post'], [WITHDRAW, 'post'], [['status'], 'get']]) {
+      const { ctx } = fakeCtx(argv, { [method]: refusedConnection });
+      await assert.rejects(() => queue.run(ctx), /ECONNREFUSED/, argv[0]);
+    }
+  });
+
+  it('renders the slot refusal with the entry it was about', async () => {
+    const { ctx } = fakeCtx(WITHDRAW, { post: refused({ code: 'QUEUE_CALL_IN_FLIGHT', error: 'Another advance or withdrawal of this queue is running.', entryId: 'mqe_1', queueId: 'mq_1' }) });
+    const r = await queue.run(ctx);
+    assert.equal(r.code, 2);
+    assert.equal(r.stderr, 'tc: queue withdraw refused [QUEUE_CALL_IN_FLIGHT] — Another advance or withdrawal of this queue is running.\n  entry: mqe_1\n');
   });
 });
