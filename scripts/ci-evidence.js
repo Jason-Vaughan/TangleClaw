@@ -72,14 +72,17 @@ const _internal = {
 class Refusal extends Error {}
 
 /**
- * Run git in the repository.
+ * A function that runs git in one working folder.
  *
- * @param {string[]} args - git's arguments
- * @returns {{status: (number|null), stdout: string}} `status` is null when git could not run or was killed
+ * @param {string} cwd - The folder git runs in
+ * @returns {function(string[]): {status: (number|null), stdout: string}} Takes git's arguments;
+ *   `status` is null when git could not run or was killed
  */
-function runGit(args) {
-  const r = spawnSync('git', args, { cwd: ROOT, encoding: 'utf8', timeout: GIT_TIMEOUT_MS });
-  return { status: r.error ? null : r.status, stdout: r.stdout || '' };
+function gitIn(cwd) {
+  return (args) => {
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8', timeout: GIT_TIMEOUT_MS });
+    return { status: r.error ? null : r.status, stdout: r.stdout || '' };
+  };
 }
 
 /**
@@ -184,7 +187,9 @@ function readRemote(git, head) {
     'the branch has no upstream on a remote: push it first');
   if (remote === '.') throw new Refusal('the branch tracks a local branch, not a remote: push it first');
   if (git(['fetch', '--quiet', remote]).status !== 0) throw new Refusal(`git could not fetch ${remote}, so what is on the remote is not known`);
-  const upstream = gitLine(git, ['rev-parse', '--verify', `${ref}@{upstream}^{commit}`], 'the branch\'s upstream names no commit after the fetch');
+  // The upstream's own ref is asked for by name: `<ref>@{upstream}` takes a short branch name, not the full ref HEAD gives.
+  const upstreamRef = gitLine(git, ['for-each-ref', '--format=%(upstream)', ref], 'git could not name the branch\'s upstream');
+  const upstream = gitLine(git, ['rev-parse', '--verify', `${upstreamRef}^{commit}`], 'the branch\'s upstream names no commit after the fetch');
   if (upstream !== head) {
     throw new Refusal(`HEAD is not on the remote: the branch's upstream is ${upstream} and HEAD is ${head}`);
   }
@@ -506,7 +511,7 @@ async function main(argv, io = {}) {
   const out = io.stdout || process.stdout;
   const seams = {
     out,
-    git: io.git || runGit,
+    git: io.git || gitIn(ROOT),
     readCheck: io.readCheck || readCheck,
     readJob: io.readJob || readJob,
     readRun: io.readRun || readRun,
@@ -534,7 +539,7 @@ async function main(argv, io = {}) {
 }
 
 module.exports = {
-  Refusal, CHECK_NAME, EVIDENCE_DIR, GITHUB_REMOTE,
+  Refusal, CHECK_NAME, EVIDENCE_DIR, GITHUB_REMOTE, gitIn,
   readTree, readRemote, readRepository, readBaseBranch, requireCheck, requireJob, requireRun, requireBase, readLedger,
   requireComplement, parseArgs, gather, writeEvidence, readJob, readRun, readBaseTip, main, _internal
 };

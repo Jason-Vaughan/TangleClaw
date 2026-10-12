@@ -8,6 +8,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const evidence = require('../scripts/ci-evidence');
+const { initRepo, cloneRepo } = require('./_temp-repo');
 
 const HEAD = 'a'.repeat(40);
 const TREE = 'b'.repeat(40);
@@ -15,6 +16,7 @@ const BASE_TIP = 'c'.repeat(40);
 const OTHER = 'd'.repeat(40);
 const REPO = 'Jason-Vaughan/TangleClaw';
 const REF = 'refs/heads/feat/x';
+const UPSTREAM_REF = 'refs/remotes/origin/feat/x';
 const NOW = '2026-10-12T13:00:00.000Z';
 
 const LEDGER = JSON.stringify({
@@ -76,7 +78,8 @@ function fakeGit(overrides = {}) {
     'symbolic-ref -q HEAD': { status: 0, stdout: `${REF}\n` },
     [`for-each-ref --format=%(upstream:remotename) ${REF}`]: { status: 0, stdout: 'origin\n' },
     'fetch --quiet origin': { status: 0, stdout: '' },
-    [`rev-parse --verify ${REF}@{upstream}^{commit}`]: { status: 0, stdout: `${HEAD}\n` },
+    [`for-each-ref --format=%(upstream) ${REF}`]: { status: 0, stdout: `${UPSTREAM_REF}\n` },
+    [`rev-parse --verify ${UPSTREAM_REF}^{commit}`]: { status: 0, stdout: `${HEAD}\n` },
     'remote get-url origin': { status: 0, stdout: `https://github.com/${REPO}.git\n` },
     'symbolic-ref --short -q refs/remotes/origin/HEAD': { status: 0, stdout: 'origin/main\n' },
     [`merge-base --is-ancestor ${BASE_TIP} ${HEAD}`]: { status: 0, stdout: '' },
@@ -300,7 +303,7 @@ describe('ci-evidence — each refusal alone writes no file and names its fact',
   });
 
   it('HEAD is not pushed: the upstream is another commit', async (t) => {
-    const r = await run(t, { git: { [`rev-parse --verify ${REF}@{upstream}^{commit}`]: { status: 0, stdout: `${OTHER}\n` } } });
+    const r = await run(t, { git: { [`rev-parse --verify ${UPSTREAM_REF}^{commit}`]: { status: 0, stdout: `${OTHER}\n` } } });
     assertRefused(r, new RegExp(`HEAD is not on the remote: the branch's upstream is ${OTHER} and HEAD is ${HEAD}`));
     assert.deepEqual(r.seen.check, []);
   });
@@ -526,6 +529,103 @@ describe('ci-evidence — each refusal alone writes no file and names its fact',
       }
     });
     assertRefused(r, /the skip ledger changed while the complement ran/);
+  });
+});
+
+describe('ci-evidence — the git steps against a real repository', () => {
+  // The cases above fake git, so they cannot tell a command git accepts from one it refuses.
+  // These run the same steps through real git, on a clone with a real remote.
+  const ENV = {
+    ...process.env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_SYSTEM: os.devNull,
+    GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.invalid'
+  };
+
+  /**
+   * A clone on a pushed feature branch, one commit ahead of its remote's `main`.
+   *
+   * @param {import('node:test').TestContext} t - The test, for cleanup
+   * @returns {{clone: string, git: function(string[]): object, sh: function(...string): string}}
+   */
+  function realClone(t) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ci-evidence-git-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const { execFileSync } = require('node:child_process');
+    const at = (cwd) => (...args) => execFileSync('git', args, { cwd, env: ENV, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    const remote = path.join(dir, 'remote.git');
+    const clone = path.join(dir, 'clone');
+    fs.mkdirSync(remote);
+    initRepo(remote, ['--bare', '--initial-branch=main'], { env: ENV });
+    cloneRepo(remote, clone, [], { env: ENV });
+    const sh = at(clone);
+    fs.writeFileSync(path.join(clone, 'a.txt'), 'one\n');
+    sh('add', 'a.txt');
+    sh('commit', '--quiet', '-m', 'one');
+    sh('push', '--quiet', '-u', 'origin', 'main');
+    sh('remote', 'set-head', 'origin', 'main');
+    sh('switch', '--quiet', '-c', 'feat/x');
+    fs.writeFileSync(path.join(clone, 'b.txt'), 'two\n');
+    sh('add', 'b.txt');
+    sh('commit', '--quiet', '-m', 'two');
+    sh('push', '--quiet', '-u', 'origin', 'feat/x');
+    return { clone, git: evidence.gitIn(clone), sh };
+  }
+
+  it('reads a clean tree, finds a pushed HEAD on its remote, and names the remote\'s default branch', (t) => {
+    const { git, sh } = realClone(t);
+    const tree = evidence.readTree(git);
+    assert.equal(tree.head, sh('rev-parse', 'HEAD'));
+    assert.equal(tree.tree, sh('rev-parse', 'HEAD^{tree}'));
+    assert.equal(evidence.readRemote(git, tree.head), 'origin');
+    assert.equal(evidence.readBaseBranch(git, 'origin', null), 'main');
+  });
+
+  it('reads the repository from the URL git gives for the remote, and refuses one that is not GitHub\'s', (t) => {
+    const { git, sh } = realClone(t);
+    assert.throws(() => evidence.readRepository(git, 'origin'), /does not name a GitHub repository/);
+    sh('remote', 'set-url', 'origin', `https://github.com/${REPO}.git`);
+    assert.equal(evidence.readRepository(git, 'origin'), REPO);
+    assert.throws(() => evidence.readRepository(git, 'elsewhere'), /could not read the URL of the remote elsewhere/);
+  });
+
+  it('holds the base\'s tip inside HEAD, and refuses a tip that is not', (t) => {
+    const { git, sh } = realClone(t);
+    const head = sh('rev-parse', 'HEAD');
+    const mainTip = sh('rev-parse', 'origin/main');
+    assert.deepEqual(evidence.requireBase({ ok: true, value: { name: 'main', sha: mainTip } }, 'main', head, git), { branch: 'main', tip: mainTip });
+    assert.throws(() => evidence.requireBase({ ok: true, value: { name: 'main', sha: head } }, 'main', mainTip, git), /which is not inside HEAD/);
+    assert.throws(() => evidence.requireBase({ ok: true, value: { name: 'main', sha: OTHER } }, 'main', head, git), /could not compare with HEAD/);
+  });
+
+  it('refuses a commit made after the push', (t) => {
+    const { clone, git, sh } = realClone(t);
+    fs.writeFileSync(path.join(clone, 'c.txt'), 'three\n');
+    sh('add', 'c.txt');
+    sh('commit', '--quiet', '-m', 'three');
+    assert.throws(() => evidence.readRemote(git, sh('rev-parse', 'HEAD')), /HEAD is not on the remote/);
+  });
+
+  it('refuses a branch that was never pushed, and a detached HEAD', (t) => {
+    const { git, sh } = realClone(t);
+    sh('switch', '--quiet', '--no-track', '-c', 'feat/local');
+    assert.throws(() => evidence.readRemote(git, sh('rev-parse', 'HEAD')), /no upstream on a remote/);
+    sh('switch', '--quiet', '--detach');
+    assert.throws(() => evidence.readRemote(git, sh('rev-parse', 'HEAD')), /HEAD is not on a branch/);
+  });
+
+  it('refuses a tree with an untracked file, and one with an edit', (t) => {
+    const { clone, git } = realClone(t);
+    fs.writeFileSync(path.join(clone, 'scratch.txt'), '');
+    assert.throws(() => evidence.readTree(git), /the working tree is not clean/);
+    fs.rmSync(path.join(clone, 'scratch.txt'));
+    fs.writeFileSync(path.join(clone, 'a.txt'), 'edited\n');
+    assert.throws(() => evidence.readTree(git), /the working tree is not clean/);
+  });
+
+  it('refuses when the remote cannot be fetched', (t) => {
+    const { clone, git, sh } = realClone(t);
+    const head = sh('rev-parse', 'HEAD');
+    fs.rmSync(path.join(clone, '..', 'remote.git'), { recursive: true, force: true });
+    assert.throws(() => evidence.readRemote(git, head), /could not fetch origin/);
   });
 });
 
