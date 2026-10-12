@@ -51,10 +51,12 @@ function answerFor(raw, name) {
  * @returns {object}
  */
 function run(fields = {}) {
+  // As GitHub gives an Actions job: its link names workflow run 7001 and the job, whose id is the check run's.
+  const id = 'id' in fields ? fields.id : 100;
   return {
-    id: 100, name: 'test', head_sha: SHA, status: 'completed', conclusion: 'success',
+    id, name: 'test', head_sha: SHA, status: 'completed', conclusion: 'success',
     started_at: '2026-10-12T04:58:35Z', completed_at: '2026-10-12T05:13:25Z',
-    app: 'github-actions', details_url: `https://github.com/${REPO}/actions/runs/7001/job/100`, ...fields
+    app: 'github-actions', details_url: `https://github.com/${REPO}/actions/runs/7001/job/${id}`, ...fields
   };
 }
 
@@ -337,7 +339,7 @@ describe('github-checks: readCheck (#2323)', () => {
     });
   });
 
-  it('a link of any other shape gives no workflow run and still an answer', async () => {
+  it('a link of any other shape, or one that names another job, gives no workflow run and still an answer', async () => {
     const others = [
       null, undefined, 42, '', 'https://vercel.com/github',
       `https://github.com/${REPO}/runs/100`,
@@ -345,6 +347,9 @@ describe('github-checks: readCheck (#2323)', () => {
       `https://github.com/${REPO}/actions/runs/7001/job/100/extra`,
       `https://github.com/${REPO}/actions/runs/7001/job/100?x=1`,
       `https://github.com/${REPO}/actions/runs/0/job/100`,
+      `https://github.com/${REPO}/actions/runs/7001/job/101`,
+      `https://github.com/${REPO}/actions/runs/7001/job/1000`,
+      `https://github.com/${REPO}/actions/runs/7001/job/0100`,
       `https://github.com/${REPO}/actions/runs/7001x/job/100`,
       `http://github.com/${REPO}/actions/runs/7001/job/100`,
       `https://github.com.example/${REPO}/actions/runs/7001/job/100`,
