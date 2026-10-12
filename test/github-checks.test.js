@@ -99,6 +99,19 @@ describe('github-checks: readCheck (#2323)', () => {
     });
   });
 
+  it('reads the answer GitHub really gave to the request this reader sends, name filter and projection included', async () => {
+    // Captured through the reader's own seam from the real request for `test` on this commit.
+    const captured = fs.readFileSync(path.join(FIXTURES, 'named-check-projected.json'), 'utf8');
+    gh(ok(captured));
+    assert.deepEqual(await checks.readCheck(REPO, SHA, 'test'), {
+      status: 'concluded', conclusion: 'success', runId: TEST_RUN_ID, completedAt: '2026-10-12T05:13:25.000Z'
+    });
+    // The commit has two runs; asked for one name, GitHub counts only that name's. The helper below assumes the same.
+    assert.equal(JSON.parse(captured).total_count, 1);
+    assert.equal(fixture('commit-with-runs.json').total_count, 2);
+    assert.deepEqual(JSON.parse(captured), JSON.parse(answerFor(fixture('commit-with-runs.json'), 'test')));
+  });
+
   it('asks GitHub once, for that commit and that name only, and keeps only the fields it reads', async () => {
     gh(ok(answerFor(fixture('commit-with-runs.json'), 'Vercel Preview Comments')));
     const reading = await checks.readCheck(REPO, SHA, 'Vercel Preview Comments');

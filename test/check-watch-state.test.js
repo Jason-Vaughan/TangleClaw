@@ -222,14 +222,21 @@ describe('check-watch-state: derive (#2323)', () => {
     assert.deepEqual(state.derive(w, NOW), { state: 'ready', reasons: [] });
   });
 
-  it('a record or a time it cannot make sense of is unknown, not waiting', () => {
+  it('a record or a time it cannot make sense of is unknown and says unreadable: not waiting, and not a due time that passed', () => {
+    const unreadable = { state: 'unknown', reasons: ['unreadable'] };
     for (const w of [null, undefined, watch({ dueAt: null }), watch({ dueAt: 'soon' }), watch({ dueAt: undefined })]) {
-      assert.equal(state.derive(w, NOW).state, 'unknown');
+      assert.deepEqual(state.derive(w, NOW), unreadable);
     }
     for (const now of [undefined, null, 'now', NaN, {}]) {
-      assert.equal(state.derive(watch(), now).state, 'unknown', String(now));
+      assert.deepEqual(state.derive(watch(), now), unreadable, String(now));
     }
-    assert.equal(state.derive(watch({ lastRead: { at: BEFORE, outcome: 'maybe', detail: null } }), NOW).state, 'unknown');
+    assert.deepEqual(state.derive(watch({ lastRead: { at: BEFORE, outcome: 'maybe', detail: null } }), NOW), unreadable);
+    // What can still be read is still said beside it.
+    assert.deepEqual(state.derive(watch({ dueAt: 'soon', cancelled: CANCELLATIONS[1], lastRead: LAST_READS[2] }), NOW).reasons, ['cancelled', 'read-failed', 'unreadable']);
+  });
+
+  it('the name limit a watch is stored under is the one the reader accepts', () => {
+    assert.equal(state.MAX_CHECK_NAME, require('../lib/github-checks').MAX_CHECK_NAME);
   });
 
   it('reads nothing but its arguments and changes neither', () => {
