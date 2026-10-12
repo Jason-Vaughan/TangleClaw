@@ -478,6 +478,263 @@ describe('medusa-wake — _assessPane (antigravity idle policy, #560)', () => {
   });
 });
 
+describe('medusa-wake — _assessPane: a row that starts with the prompt glyph below the last bare prompt (#2187)', () => {
+  const CODEX = wake.ENGINE_WAKE_PROFILES.codex;
+  const wakeTransports = require('../lib/wake-transports');
+  const RULE = '──────────────────────────────';
+  const CLAUDE_FOOTER = '  ⏵⏵ bypass permissions on (shift+tab to cycle)';
+  const AG_FOOTER = '? for shortcuts                                    Gemini 3.5 Flash (Medium)';
+  const CX_STATUS = '  GPT-6-Astra default · Ready · Ask for approval';
+  const CX_EMPTY = '› Ask Codex to do anything';
+  /** The cursor on an empty composer row, as each engine styles it. */
+  const CLAUDE_EMPTY_CURSOR = { x: 2, line: '❯ ' };
+  const CX_EMPTY_CURSOR = { x: 2, line: '\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m' };
+
+  /** A nudge exactly as the wake monitor pastes it. */
+  const NUDGE = wakeTransports.withNonce(wake._nudgeLineFor('/api/sessions/proj-a/medusa', 1, 'http://localhost:3102'), 'a1b2c3d4e5f6');
+
+  /**
+   * Text as a composer wraps it: the glyph and one separator on the first row,
+   * continuation rows indented to the text column, cut at a fixed width.
+   * @param {string} glyph - The engine's prompt glyph
+   * @param {string} pad - The separator the engine draws after it
+   * @param {string} text - The composer's contents
+   * @param {number} [width] - Text columns per row
+   * @returns {{rows: string[], cursor: {x: number, line: string}}} The cursor is at the end of the last row
+   */
+  function composerHolding(glyph, pad, text, width = 76) {
+    const chunks = [];
+    for (let i = 0; i < text.length; i += width) chunks.push(text.slice(i, i + width));
+    const rows = chunks.map((chunk, i) => (i === 0 ? `${glyph}${pad}${chunk}` : `  ${chunk}`));
+    const last = rows[rows.length - 1];
+    return { rows, cursor: { x: [...last].length, line: last } };
+  }
+
+  describe('a selector row below a stale composer is refused', () => {
+    const CLAUDE_DIALOG = ['❯ ', RULE, CLAUDE_FOOTER, '', '  Do you want to proceed?', '❯ 1. Yes', '  2. No, and tell Claude what to do differently'];
+    const AG_DIALOG = [RULE, '>', RULE, AG_FOOTER, '', '  Apply this change?', '> Yes', '  No', AG_FOOTER];
+    // The shape of Codex's command-approval dialog as a signed-in 0.156.1
+    // session drew it on 2026-10-12, below the composer row it opened with.
+    const CX_APPROVAL = [CX_EMPTY, '', '  Would you like to run the following command?', '', '  $ ls', '', '› 1. Yes, proceed (y)', '  2. Yes, and don\'t ask again for this command (a)', '  3. No, and tell Codex what to do differently (esc)', '', '  Press enter to confirm or esc to cancel'];
+
+    it('with no cursor: the stale bare row no longer reads as a prompt', () => {
+      assert.deepEqual(wake._assessPane(CLAUDE_DIALOG, CLAUDE, null), { idle: false, reason: 'no-prompt' });
+      assert.deepEqual(wake._assessPane(AG_DIALOG, ANTIGRAVITY, null), { idle: false, reason: 'no-prompt' });
+      assert.deepEqual(wake._assessPane(CX_APPROVAL, CODEX, null, true), { idle: false, reason: 'no-prompt' });
+    });
+
+    it('with the cursor on the stale row, where the cursor alone says the composer is empty', () => {
+      assert.equal(wake._composerEmpty(CLAUDE_EMPTY_CURSOR, CLAUDE), true);
+      assert.deepEqual(wake._assessPane(CLAUDE_DIALOG, CLAUDE, CLAUDE_EMPTY_CURSOR), { idle: false, reason: 'no-prompt' });
+      assert.equal(wake._composerEmpty(CX_EMPTY_CURSOR, CODEX), true);
+      assert.deepEqual(wake._assessPane(CX_APPROVAL, CODEX, CX_EMPTY_CURSOR, true), { idle: false, reason: 'no-prompt' });
+    });
+
+    it('with the cursor on a row that has no glyph, which decides nothing', () => {
+      const footer = { x: 27, line: CX_APPROVAL[CX_APPROVAL.length - 1] };
+      assert.equal(wake._composerEmpty(footer, CODEX), null);
+      assert.deepEqual(wake._assessPane(CX_APPROVAL, CODEX, footer, true), { idle: false, reason: 'no-prompt' });
+    });
+
+    it('the same rows with the selector row gone read at-prompt, so the selector row is what refuses', () => {
+      /** The pane with its selector row taken out; fails if the row is not there. */
+      const without = (pane, selector) => {
+        assert.ok(pane.includes(selector), selector);
+        return pane.filter((row) => row !== selector);
+      };
+      assert.deepEqual(wake._assessPane(without(CLAUDE_DIALOG, '❯ 1. Yes'), CLAUDE, null), { idle: true, reason: 'at-prompt' });
+      assert.deepEqual(wake._assessPane(without(AG_DIALOG, '> Yes'), ANTIGRAVITY, null), { idle: true, reason: 'at-prompt' });
+      assert.deepEqual(wake._assessPane(without(CX_APPROVAL, '› 1. Yes, proceed (y)'), CODEX, null, true), { idle: true, reason: 'at-prompt' });
+    });
+  });
+
+  describe('a usable composer is not refused', () => {
+    it('a composer with only its status row below it', () => {
+      assert.deepEqual(wake._assessPane(IDLE_PANE, CLAUDE, CLAUDE_EMPTY_CURSOR), { idle: true, reason: 'at-prompt' });
+      assert.deepEqual(wake._assessPane(AG_IDLE_PANE, ANTIGRAVITY, null), { idle: true, reason: 'at-prompt' });
+      assert.deepEqual(wake._assessPane([CX_EMPTY, '', CX_STATUS], CODEX, CX_EMPTY_CURSOR), { idle: true, reason: 'at-prompt' });
+    });
+
+    it('submitted messages drawn with the glyph ABOVE the live bare composer', () => {
+      // Codex draws every submitted message as a row that starts with its
+      // glyph. The live composer is the last bare row, so nothing is below it.
+      const codex = [CX_EMPTY, '', '› say hi', '', '• Hi.', '', '› and again', '', '• Hi again.', '', CX_EMPTY, '', CX_STATUS];
+      assert.deepEqual(wake._assessPane(codex, CODEX, null), { idle: true, reason: 'at-prompt' });
+      assert.deepEqual(wake._assessPane(codex, CODEX, CX_EMPTY_CURSOR), { idle: true, reason: 'at-prompt' });
+      const claude = ['❯ an earlier message', '', '⏺ Done.', '', RULE, '❯ ', RULE, CLAUDE_FOOTER];
+      assert.deepEqual(wake._assessPane(claude, CLAUDE, CLAUDE_EMPTY_CURSOR), { idle: true, reason: 'at-prompt' });
+      const quoted = ['> a quoted line', '>', '> another', RULE, '>', RULE, AG_FOOTER];
+      assert.deepEqual(wake._assessPane(quoted, ANTIGRAVITY, null), { idle: true, reason: 'at-prompt' });
+    });
+
+    it('a pending suggestion on the only prompt row is still an empty composer', () => {
+      const suggestion = { x: 2, line: '❯ \x1b[2madd case law to the reading list too\x1b[0m' };
+      const pane = ['⏺ Done.', RULE, '❯ add case law to the reading list too', RULE, CLAUDE_FOOTER];
+      assert.deepEqual(wake._assessPane(pane, CLAUDE, suggestion), { idle: true, reason: 'at-prompt' });
+    });
+
+    it('A DECIDED LIMIT: the same suggestion below a stale bare prompt row is held, and the nudge waits', () => {
+      // The live composer is usable here, and it is refused. Its row is not
+      // bare (the suggestion is drawn on it), so the stale row above is the
+      // last bare prompt and the composer row is a glyph-led row below it. The
+      // cursor does say the composer is empty, but it would say the same of a
+      // dialog's selected option drawn dim, so the cursor alone is not let to
+      // overrule the refusal. The cost is a delayed nudge, never a typed one:
+      // it goes once the suggestion is gone or the stale row has left the read.
+      const suggestion = { x: 2, line: '❯ \x1b[2madd case law to the reading list too\x1b[0m' };
+      const live = ['⏺ Done.', RULE, '❯ add case law to the reading list too', RULE, CLAUDE_FOOTER];
+      assert.equal(wake._composerEmpty(suggestion, CLAUDE), true, 'the cursor alone says empty');
+      assert.deepEqual(wake._assessPane([IDLE_PANE[0], '', ...live], CLAUDE, suggestion), { idle: false, reason: 'no-prompt' });
+      // Without the stale row the very same composer is at-prompt.
+      assert.deepEqual(wake._assessPane(live, CLAUDE, suggestion), { idle: true, reason: 'at-prompt' });
+    });
+  });
+
+  describe('the operator\'s draft below a stale bare row', () => {
+    const draft = composerHolding('❯', ' ', 'half typed');
+    const pane = ['❯ ', '', '⏺ Done.', RULE, ...draft.rows, RULE, CLAUDE_FOOTER];
+
+    it('is refused, and keeps the cursor\'s own reason when the cursor is on it', () => {
+      assert.deepEqual(wake._assessPane(pane, CLAUDE, draft.cursor), { idle: false, reason: 'composer-has-input' });
+    });
+
+    it('is refused as no-prompt when no cursor says whose text it is', () => {
+      assert.deepEqual(wake._assessPane(pane, CLAUDE, null), { idle: false, reason: 'no-prompt' });
+    });
+  });
+
+  describe('the switchboard\'s own stranded nudge below a stale bare row', () => {
+    /** A bordered composer holding `text`, below a bare prompt row left in the history. */
+    const claudePane = (text, below = []) => {
+      const held = composerHolding('❯', ' ', text);
+      return { lines: ['❯ ', '', '⏺ Done.', RULE, ...held.rows, RULE, CLAUDE_FOOTER, ...below], cursor: held.cursor };
+    };
+    /** The same for Antigravity, whose composer is drawn between two rules. */
+    const agPane = (text, below = []) => {
+      const held = composerHolding('>', ' ', text);
+      return { lines: ['>', '', '  DONE', RULE, ...held.rows, RULE, AG_FOOTER, ...below], cursor: held.cursor };
+    };
+
+    it('the nudge is recognised as the monitor\'s own', () => {
+      assert.equal(wake.isOwnNudge(NUDGE), true);
+    });
+
+    it('Claude Code: still safe to type into, so the next nudge can clear and replace it', () => {
+      const { lines, cursor } = claudePane(NUDGE);
+      assert.ok(lines.filter((row) => row.startsWith('❯')).length >= 2, 'a stale bare row and the nudge\'s row');
+      assert.deepEqual(wake._assessPane(lines, CLAUDE, cursor), { idle: true, reason: 'at-prompt' });
+    });
+
+    it('Antigravity: still safe to type into, so the next nudge can clear and replace it', () => {
+      const { lines, cursor } = agPane(NUDGE);
+      assert.ok(lines.filter((row) => row.startsWith('>')).length >= 2, 'a stale bare row and the nudge\'s row');
+      assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, cursor), { idle: true, reason: 'at-prompt' });
+    });
+
+    it('Antigravity: a wrap that starts a row with the glyph hides the composer\'s first row, stale row or none', () => {
+      // The nudge text holds `>`. Cut there, a continuation row starts with the
+      // glyph, the composer's first row is taken to be that row, and the nudge
+      // is not recognised. That is the composer reading's own limit: the pane
+      // is refused the same way with no stale row above it.
+      const held = composerHolding('>', ' ', NUDGE, NUDGE.indexOf('>'));
+      assert.ok(held.rows.slice(1).some((row) => row.trimStart().startsWith('>')), 'a continuation row starts with the glyph');
+      const live = ['  DONE', RULE, ...held.rows, RULE, AG_FOOTER];
+      assert.deepEqual(wake._assessPane(live, ANTIGRAVITY, held.cursor), { idle: false, reason: 'no-prompt' });
+      assert.deepEqual(wake._assessPane(['>', '', ...live], ANTIGRAVITY, held.cursor), { idle: false, reason: 'no-prompt' });
+    });
+
+    it('a selector row outside the nudge\'s composer still refuses', () => {
+      const claude = claudePane(NUDGE, ['', '  Do you want to proceed?', '❯ 1. Yes', '  2. No']);
+      assert.equal(wake._assessPane(claude.lines, CLAUDE, claude.cursor).idle, false);
+      const ag = agPane(NUDGE, ['', '> Yes', '  No', AG_FOOTER]);
+      assert.equal(wake._assessPane(ag.lines, ANTIGRAVITY, ag.cursor).idle, false);
+    });
+
+    it('a row that starts with the glyph between the stale row and the nudge\'s composer still refuses', () => {
+      const held = composerHolding('❯', ' ', NUDGE);
+      const lines = ['❯ ', '', '❯ 1. Yes', '  2. No', RULE, ...held.rows, RULE, CLAUDE_FOOTER];
+      assert.equal(wake._assessPane(lines, CLAUDE, held.cursor).idle, false);
+    });
+
+    it('operator text after the nudge is not the nudge alone, and is refused', () => {
+      const { lines, cursor } = claudePane(`${NUDGE} and also rebase first`);
+      assert.equal(wake._assessPane(lines, CLAUDE, cursor).idle, false);
+    });
+
+    it('a composer whose lower border was not seen is refused', () => {
+      const held = composerHolding('❯', ' ', NUDGE);
+      assert.equal(wake._assessPane(['❯ ', '', RULE, ...held.rows], CLAUDE, held.cursor).idle, false);
+    });
+
+    it('Codex: its composer draws no border, so a stranded nudge is not recognised there, stale row or none', () => {
+      const held = composerHolding('›', ' ', NUDGE);
+      const live = [...held.rows, '', CX_STATUS];
+      assert.deepEqual(wake._assessPane(live, CODEX, held.cursor), { idle: false, reason: 'no-prompt' }, 'as before this rule: the cursor is on a continuation row');
+      assert.deepEqual(wake._assessPane([CX_EMPTY, '', ...live], CODEX, held.cursor), { idle: false, reason: 'no-prompt' });
+    });
+  });
+});
+
+describe('medusa-wake — _assessPane: an engine whose header says it is still starting (#2187)', () => {
+  const CODEX = wake.ENGINE_WAKE_PROFILES.codex;
+  const LOADING = ['╭──────────────────────────────────╮', '│ >_ OpenAI Codex (v0.156.1)       │', '│ model:     loading   /model to change │', '╰──────────────────────────────────╯'];
+  const NAMED = ['╭──────────────────────────────────╮', '│ >_ OpenAI Codex (v0.156.1)       │', '│ model:     GPT-6-Astra   /model to change │', '╰──────────────────────────────────╯'];
+  const COMPOSER = ['', '› Ask Codex to do anything', '', '  GPT-6-Astra default · /tmp/proj'];
+  /** The pane gate with the channel's idle answer, which excuses the at-rest marker. */
+  const underIdle = (lines, profile = CODEX) => wake._assessPane(lines, profile, null, true);
+
+  it('the bundled Codex profile declares the header and its starting marker; the other two declare neither', () => {
+    assert.ok(CODEX.headerRe instanceof RegExp && CODEX.startingRe instanceof RegExp);
+    for (const profile of [CLAUDE, ANTIGRAVITY]) {
+      assert.equal(profile.headerRe, undefined);
+      assert.equal(profile.startingRe, undefined);
+    }
+  });
+
+  it('a header reading loading over an empty composer is refused as engine-starting', () => {
+    assert.deepEqual(underIdle([...LOADING, ...COMPOSER]), { idle: false, reason: 'engine-starting' });
+  });
+
+  it('a header naming its model is not starting', () => {
+    assert.deepEqual(underIdle([...NAMED, ...COMPOSER]), { idle: true, reason: 'at-prompt' });
+  });
+
+  it('the NEWEST header decides: a superseded loading header above one that names a model is not starting', () => {
+    assert.deepEqual(underIdle([...LOADING, '', ...NAMED, ...COMPOSER]), { idle: true, reason: 'at-prompt' });
+    assert.deepEqual(underIdle([...NAMED, '', ...LOADING, ...COMPOSER]), { idle: false, reason: 'engine-starting' });
+  });
+
+  it('a read with no header at all is not refused', () => {
+    assert.deepEqual(underIdle(COMPOSER), { idle: true, reason: 'at-prompt' });
+  });
+
+  it('the word in a transcript, away from a header row, refuses nothing', () => {
+    assert.deepEqual(underIdle(['• The model is loading its weights.', ...COMPOSER]), { idle: true, reason: 'at-prompt' });
+  });
+
+  it('a turn in flight is still reported as the turn, ahead of the header', () => {
+    assert.equal(underIdle([...LOADING, '• Working (0s • esc to interrupt)', ...COMPOSER]).reason, 'turn-in-flight');
+  });
+
+  it('without the channel\'s idle answer the missing at-rest marker is still what refuses', () => {
+    assert.equal(wake._assessPane([...LOADING, ...COMPOSER], CODEX, null, false).reason, 'not-at-rest');
+  });
+
+  it('a profile that declares no starting marker is unaffected by the same rows', () => {
+    const { headerRe, startingRe, ...undeclared } = CODEX;
+    assert.ok(headerRe && startingRe);
+    assert.deepEqual(underIdle([...LOADING, ...COMPOSER], undeclared), { idle: true, reason: 'at-prompt' });
+    const claudePane = ['│ model:     loading   /model to change │', '❯ ', '──────────────', '  ⏵⏵ bypass permissions on (shift+tab to cycle)'];
+    assert.deepEqual(wake._assessPane(claudePane, CLAUDE, null), { idle: true, reason: 'at-prompt' });
+  });
+
+  it('the reason has a meaning a sender can read', () => {
+    const meaning = wake.peerReasonMeaning('pane-engine-starting');
+    assert.equal(typeof meaning, 'string');
+    assert.match(meaning, /starting/);
+  });
+});
+
 describe('medusa-wake — nudge injection', () => {
   let saved;
   beforeEach(() => { wake.stop(); saved = { ...wake._internal }; });

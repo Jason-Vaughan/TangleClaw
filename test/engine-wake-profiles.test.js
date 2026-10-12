@@ -409,6 +409,82 @@ describe('a malformed wake block is refused at the read, never half-loaded', () 
     astral.promptGlyph = '𝄞';
     assert.deepEqual(wake._wakeBlockErrors(astral), []);
   });
+
+  describe('the header and its starting pattern (#2187)', () => {
+    const HEADER = '\\bmodel:\\s+\\S';
+    const STARTING = '\\bmodel:\\s+loading\\b';
+    /**
+     * A well-formed block that also declares the two fields, with their provenance.
+     * @param {object} [fields] - `headerPattern` and `startingPattern`; a field given as null is left out
+     * @returns {object}
+     */
+    const withStarting = (fields = {}) => {
+      const b = wellFormed();
+      for (const [name, value] of Object.entries({ headerPattern: HEADER, startingPattern: STARTING, ...fields })) {
+        if (value === null) continue;
+        b[name] = value;
+        b.evidence[name] = { verifiedOn: '2026-10-11', source: 'a live capture' };
+      }
+      return b;
+    };
+
+    it('both declared: the block loads and both are compiled', () => {
+      assert.deepEqual(wake._wakeBlockErrors(withStarting()), []);
+      const { probe } = derive(withStarting());
+      assert.equal(probe.headerRe.source, HEADER);
+      assert.equal(probe.startingRe.source, STARTING);
+    });
+
+    it('neither declared: the block loads and the profile carries neither', () => {
+      const { probe } = derive(wellFormed());
+      assert.ok(probe);
+      assert.ok(!('headerRe' in probe) && !('startingRe' in probe));
+    });
+
+    it('one without the other is refused, either way round, and the engine stays unprofiled', () => {
+      for (const [b, lone, missing] of [
+        [withStarting({ headerPattern: null }), 'startingPattern', 'headerPattern'],
+        [withStarting({ startingPattern: null }), 'headerPattern', 'startingPattern']
+      ]) {
+        const errors = wake._wakeBlockErrors(b).join(' ');
+        assert.match(errors, new RegExp(`wake\\.${lone} is declared without wake\\.${missing}`));
+        assert.equal(derive(b).probe, undefined);
+      }
+    });
+
+    it('a pattern that will not compile is refused', () => {
+      assert.match(wake._wakeBlockErrors(withStarting({ headerPattern: '(unclosed' })).join(' '), /headerPattern must be/);
+      assert.match(wake._wakeBlockErrors(withStarting({ startingPattern: '[' })).join(' '), /startingPattern must be/);
+    });
+
+    it('a pattern that matches the empty string is refused: it would call every row a header, or every header starting', () => {
+      for (const empty of ['', '.*', 'x?', '^']) {
+        assert.match(wake._wakeBlockErrors(withStarting({ headerPattern: empty })).join(' '), /headerPattern must be/, `header ${JSON.stringify(empty)}`);
+        assert.match(wake._wakeBlockErrors(withStarting({ startingPattern: empty })).join(' '), /startingPattern must be/, `starting ${JSON.stringify(empty)}`);
+        assert.equal(derive(withStarting({ headerPattern: empty })).probe, undefined);
+        assert.equal(derive(withStarting({ startingPattern: empty })).probe, undefined);
+      }
+    });
+
+    it('either field with no evidence entry is refused like any other field', () => {
+      const b = withStarting();
+      delete b.evidence.startingPattern;
+      assert.match(wake._wakeBlockErrors(b).join(' '), /wake\.evidence\.startingPattern is missing/);
+    });
+
+    it('the bundled Codex block declares both, and its starting pattern matches only rows its header pattern does', () => {
+      const codex = wake.ENGINE_WAKE_PROFILES.codex;
+      assert.equal(codex.headerRe.source, block('codex').headerPattern);
+      assert.equal(codex.startingRe.source, block('codex').startingPattern);
+      const loading = '│ model:     loading   /model to change │';
+      const named = '│ model:     GPT-6-Astra   /model to change │';
+      assert.ok(codex.headerRe.test(loading) && codex.headerRe.test(named));
+      assert.ok(codex.startingRe.test(loading) && !codex.startingRe.test(named));
+      for (const notHeader of ['│ directory: /private/tmp/proj         │', '› Ask Codex to do anything', '  GPT-6-Astra default · /tmp/proj', '• The model is loading.']) {
+        assert.ok(!codex.headerRe.test(notHeader), notHeader);
+      }
+    });
+  });
 });
 
 describe('declaring badly and declaring nothing are one answer', () => {

@@ -380,6 +380,66 @@ describe('Codex startupControl adapter', () => {
         assert.ok(f.patches.slice(1).every((p) => !('dispatchNote' in p)), 'and only there: later transitions do not restate it');
       });
 
+      it('an engine profile under another id that names this adapter: the fire reads that profile\'s patterns, the ones the wake reads for the session', async () => {
+        const wakeTable = require('../lib/medusa-wake').ENGINE_WAKE_PROFILES;
+        const variant = { ...wakeTable.codex, headerRe: /\bengine:\s+\S/, startingRe: /\bengine:\s+warming\b/ };
+        const realProfile = codex._seams.wakeProfile;
+        const asked = [];
+        // What the wake's table would hold for a profile `codex-variant`.
+        codex._seams.wakeProfile = (engineId) => { asked.push(engineId); return engineId === 'codex-variant' ? variant : wakeTable[engineId]; };
+        try {
+          await serve(NO_ENTRY);
+          completeTheTurn();
+          channel(LAUNCH_PANE, { engineId: 'codex-variant' });
+          const witnessed = [];
+          const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async (opts) => { witnessed.push(opts); return { shown: true }; } }).settled;
+          assert.equal(settled.outcome, 'applied');
+          assert.deepEqual(asked, ['codex-variant'], 'asked for the launch\'s own engine id');
+          assert.equal(witnessed[0].headerRe, variant.headerRe);
+          assert.equal(witnessed[0].startingRe, variant.startingRe);
+          assert.notEqual(witnessed[0].startingRe, wakeTable.codex.startingRe, 'not the patterns of the profile that happens to be called codex');
+        } finally {
+          codex._seams.wakeProfile = realProfile;
+        }
+      });
+
+      it('the two header patterns handed to the witness are the wake profile\'s own, and a profile that declares none holds the fire', async () => {
+        const declared = require('../lib/medusa-wake').ENGINE_WAKE_PROFILES.codex;
+        assert.ok(declared.headerRe instanceof RegExp && declared.startingRe instanceof RegExp, 'the bundled Codex profile declares both');
+        await serve(NO_ENTRY);
+        completeTheTurn();
+        channel(LAUNCH_PANE);
+        const witnessed = [];
+        const first = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async (opts) => { witnessed.push(opts); return { shown: true }; } }).settled;
+        assert.equal(first.outcome, 'applied');
+        assert.equal(witnessed[0].headerRe, declared.headerRe, 'the same compiled pattern the wake\'s pane gate reads');
+        assert.equal(witnessed[0].startingRe, declared.startingRe);
+        server.close();
+        server = null;
+
+        const realProfile = codex._seams.wakeProfile;
+        try {
+          for (const undeclared of [undefined, (({ headerRe, startingRe, ...rest }) => rest)(declared), { ...declared, startingRe: undefined }]) {
+            codex._seams.wakeProfile = () => undeclared;
+            await serve(NO_ENTRY);
+            store.getDb().prepare('DELETE FROM startup_control_channels').run();
+            channel(LAUNCH_PANE);
+            let consulted = 0;
+            const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async () => { consulted += 1; return { shown: true }; } }).settled;
+            assert.equal(settled.reasonCode, 'pane_not_ready');
+            assert.match(settled.reason, /headerPattern and startingPattern/);
+            assert.match(settled.reason, /The engine profile in force for this session \(codex\)/, 'names the profile by the launch\'s engine id');
+            assert.match(settled.reason, /restore those two fields in that profile/);
+            assert.equal(consulted, 0, 'a pane that cannot be checked for a starting screen is not consulted');
+            assert.equal(server.calls('turn/start').length, 0);
+            server.close();
+            server = null;
+          }
+        } finally {
+          codex._seams.wakeProfile = realProfile;
+        }
+      });
+
       it('a home that has never trusted any folder (projects: null) is the same case', async () => {
         await serve({ 'config/read': () => ({ config: { projects: null } }) });
         completeTheTurn();
@@ -649,6 +709,18 @@ describe('Codex startupControl adapter', () => {
           completeTheTurn();
           channel(LAUNCH_PANE);
           const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: witnessOver('composerOperatorStatus', []) }).settled;
+          assert.equal(settled.outcome, 'applied');
+        });
+
+        it('a status row that ends with a warning and the key that shows it is still a composer at rest: the fire goes', async () => {
+          // Codex appends `⚠ 1 warning · f2 to view` to its status row. The row
+          // names a key, and it is not a dialog footer: the adapter's own list
+          // of footer keys must not take it for one.
+          assert.match(PANES.composerWarningStatus.rows[PANES.composerWarningStatus.y + 2], /⚠ 1 warning · f2 to view$/);
+          await serve(NO_ENTRY);
+          completeTheTurn();
+          channel(LAUNCH_PANE);
+          const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: witnessOver('composerWarningStatus', []) }).settled;
           assert.equal(settled.outcome, 'applied');
         });
 

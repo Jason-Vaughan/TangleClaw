@@ -784,6 +784,23 @@ own half-written text, so the engine stays unprofiled instead.
 Anything it matches stops counting as operator input for that engine, so declare the narrowest range that
 covers the decoration and nothing else.
 
+`headerPattern` and `startingPattern` (and their `evidence` entries) only if the engine draws an empty
+composer BEFORE it can take input, under a header that says so (#2187). Codex 0.156.1 opens with a
+header box whose model row reads `model: loading`, and already draws its composer below it. The wake's
+pane gate reads the rows of the pane top to bottom, keeps the **newest** row `headerPattern` matches,
+and refuses the pane as `pane-engine-starting` while `startingPattern` matches that row. Newest,
+because an engine that draws on the terminal's main screen leaves the superseded header in the
+history above the one that replaced it. A pane with no header row in the read is not refused: in an
+established session the header has scrolled away. Both are regex sources, not substrings, because a
+header pads its value to the width of its box (`model:     loading`), so the run of spaces between
+label and value is not fixed. Each must need some text to match: a pattern that matches the empty
+string is refused when the profile is read, as is one field declared without the other. Codex
+declares them, and its adapter hands the two compiled patterns of the launch's own engine profile
+(the profile the wake reads for that session, whatever its id) to the startup fire's pane
+witness (`lib/pane-witness.js`), so the fire and the wake cannot disagree about what "still starting"
+looks like. A Codex profile that declares neither leaves the witness with no header to ask about, so
+the trust-free fire is held as `pane_not_ready`, naming the two fields, until they are restored.
+
 | Field | What it is |
 |-------|------------|
 | `busyMarker` | Substring present iff a turn is in flight; its presence blocks a nudge |
@@ -794,8 +811,10 @@ covers the decoration and nothing else.
 | `idleMarker` | A POSITIVE at-rest signal, or `null` when nothing was found that is present at rest and absent mid-turn |
 | `pasteRejectedMarker` | Optional — see below |
 | `decorativePattern` | Optional — a regex source matching cells the engine ANIMATES at rest (decoration the operator did not type). Declare it only where you have watched an idle pane and seen it move |
+| `headerPattern` | Optional, declared with `startingPattern` or not at all — a regex source matching the header row that `startingPattern` is read on, whatever that row says |
+| `startingPattern` | Optional, declared with `headerPattern` or not at all — a regex source matching that header row while the engine is still starting |
 
-Every field except `pasteRejectedMarker` and `decorativePattern` is **required**, `null` included. An author who has not
+Every field except `pasteRejectedMarker`, `decorativePattern`, `headerPattern` and `startingPattern` is **required**, `null` included. An author who has not
 measured a value writes `null` and says so in `evidence`, which is a recorded gap; an omitted field
 would be the same gap with nobody able to tell it from an oversight.
 
@@ -848,8 +867,47 @@ profile names an adapter that can observe it (`declaresObserver`; today, Codex):
   answer after the channel was replaced or the session left the scan is discarded, and nothing is
   ever typed from the read's callback.
 - `idle` goes on to the pane gate, where it excuses the at-rest marker and nothing else. The busy
-  marker, the fleet block, a dialog, a draft in the composer and a transcript that is still moving all
-  still hold, because the protocol cannot see the TUI's composer.
+  marker, the fleet block, a dialog, a header that says the engine is still starting, a draft in the
+  composer and a transcript that is still moving all still hold, because the protocol cannot see the
+  TUI's composer.
+- **Two refusals come before anything in the pane gate can answer "at its prompt" (#2187)**, the
+  cursor resting on an empty composer included, because both screens below hold a composer that
+  really is empty:
+  - *A row that starts with the prompt glyph below the last bare prompt row* holds as
+    `pane-no-prompt`. Codex 0.156.1 draws on the terminal's main screen, so the composer row it
+    opened with stays in the read above its folder-trust, update and command-approval dialogs, whose
+    selected option is drawn with the same glyph (`› 1. Trust and continue`). The rule is anchored on
+    the last bare row because rows that start with the glyph are ordinary *above* a live composer:
+    Codex draws every submitted message as one. It applies to every engine with a wake block and
+    names no dialog. A composer holding typed text below a stale bare row is refused by it too; when
+    the cursor is on that text the hold keeps its own code, `pane-composer-has-input`. One composer
+    is excused: the switchboard's own nudge left unsubmitted by a lost Enter, and only when the
+    composer is seen whole to its lower border, holds exactly that nudge, and no other row that
+    starts with the glyph is below the last bare prompt. Codex's composer draws no border, so that
+    recovery does not apply there, with or without this rule.
+    **A known limit, kept on purpose:** a usable composer whose own row is not bare, because the
+    engine has drawn a pending suggestion on it (Claude Code), is refused as `pane-no-prompt` when an
+    older bare prompt row is still in the read above it. The cursor says that composer is empty, but
+    it would say the same of a dialog's selected option drawn dim, so the cursor alone does not
+    overrule the refusal. The cost is a nudge that waits until the suggestion is gone or the older
+    row has left the read; nothing is typed. No such older row has been captured from Claude Code,
+    which draws on the alternate screen. The exception is not widened beyond the exact own nudge
+    without measured pane geometry.
+  - *The engine's own header says it is still starting* (`headerPattern` and `startingPattern`,
+    above) holds as `pane-engine-starting`. **A known limit:** Codex's header pattern is not tied
+    to the header box, so a transcript row that itself reads `model: loading`, when it is the
+    newest row in the read to match, holds the pane as starting until it scrolls out of the read.
+    The startup fire's pane witness has always read the same two expressions the same way, over the
+    visible pane only; the wake's read also reaches 15 rows of history, so it holds a little longer.
+  - **What this covers, by version.** On Codex 0.156.1: the opening screen (`pane-engine-starting`)
+    and the dialogs drawn below it (`pane-no-prompt`). Codex 0.159.0 and 0.161.0 draw their dialogs on
+    the alternate screen, where the dialog is the whole pane and no row is a bare prompt, so those
+    were already held. **Their opening screen is not held by either rule:** it draws no `model:`
+    header row, so there is nothing for the starting pattern to read, and an idle answer from the
+    channel over that screen would be typed into. No session of those versions has a channel today,
+    because neither is in `verifiedVersions`, so no nudge reaches them; a refusal for each version's
+    opening screen, proved on whole captures with the cursor, is a precondition of admitting that
+    version.
 - The first `idle` a launch's thread reports holds as `engine-thread-settling` for one monitor
   interval (`ENGINE_SETTLING_MS`, five seconds), whatever the pane shows, and the pane is not read
   while it holds (#2059). An engine can answer idle a moment before it has finished drawing the screen
@@ -1094,7 +1152,8 @@ highlights "Update now", which upgrades the global install, and its folder-trust
   is started as any unprimed session is: by hand, or by the launch-unready nudge where its own gate
   lets it type.
 - The Codex opening screen (`model: loading` over an empty composer) reads as a composer here. It is
-  not told apart from a usable one by this check.
+  not told apart from a usable one by this check. The wake's pane gate and the startup fire's pane
+  witness do tell it apart, by `capabilities.wake.startingPattern`.
 
 `launch.guardedDialogs` has two readers, each with its own scope, both in `lib/launch-dialog-guard.js`'s
 terms. The launch-time sends above (the prime paste and `preKeys`) read it to decide whether they may

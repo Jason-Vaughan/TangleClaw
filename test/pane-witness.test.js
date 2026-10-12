@@ -20,9 +20,10 @@ const paneWitness = require('../lib/pane-witness');
 const { CODEX_VISIBLE_PANES: PANES } = require('./_codex-visible-pane-fixtures');
 
 const codex = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));
-// What the Codex adapter hands the witness.
-const HEADER_RE = /\bmodel:\s+\S/;
-const STARTING_RE = /\bmodel:\s+loading\b/;
+// What the Codex adapter hands the witness. The two header patterns are the
+// profile's own (`capabilities.wake`), as the adapter reads them.
+const HEADER_RE = new RegExp(codex.capabilities.wake.headerPattern);
+const STARTING_RE = new RegExp(codex.capabilities.wake.startingPattern);
 const STATUS_RE = /^ {2}[^\s│╭╰╮╯›>].* · \S/;
 const KEY_HINT_RE = /^(enter|return|esc|escape|tab|space|arrows?|[↑↓←→]+)$/i;
 const COMPOSER = '\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything\u001b[0m';
@@ -89,6 +90,18 @@ describe('the pane witness (#2186)', () => {
       assert.deepEqual(await ask([PANES.composer]), { shown: true });
       assert.deepEqual(await ask([PANES.composerAfterUpdateSkipped]), { shown: true });
       assert.deepEqual(await ask([PANES.composerOperatorStatus]), { shown: true }, 'the operator\'s status line, with its run-state item, is a status row');
+    });
+
+    it('a status row that ends with a warning and the key that shows it is still a status row', async () => {
+      const status = PANES.composerWarningStatus.rows[PANES.composerWarningStatus.y + 2];
+      assert.match(status, /⚠ 1 warning · f2 to view$/);
+      assert.ok(status.split(/[\s·]+/).includes('f2'), 'the row names a key as a whole token');
+      assert.ok(!KEY_HINT_RE.test('f2'), 'and that key is not one a dialog footer offers');
+      assert.deepEqual(await ask([PANES.composerWarningStatus]), { shown: true });
+      // The same pane read with function keys counted as footer keys is refused,
+      // which is what widening the list would do to every session showing a warning.
+      const widened = await ask([PANES.composerWarningStatus], { keyHintRe: /^(enter|esc|f\d+)$/i });
+      assert.equal(widened.shown, false);
     });
 
     it('pins the session\'s pane once, then reads THAT pane exactly twice, each read one call for rows and cursor together', async () => {

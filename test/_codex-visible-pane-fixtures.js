@@ -12,6 +12,14 @@
  * `composerOperatorStatus` is a usable composer under a status line that
  * includes the run-state item (`· Ready ·`).
  *
+ * `composerWarningStatus` is a usable composer whose status row ends
+ * `⚠ 1 warning · f2 to view`, which Codex appends in a folder that holds its
+ * own `.codex/` config. Its rows are a later read than the others: a signed-in
+ * codex-cli 0.156.1 session on a scratch server, 2026-10-11, from the header
+ * box down. That read kept no cursor position and no pane height, so those
+ * three numbers are set here, not measured: the cursor where an empty composer
+ * holds it, and the height the other panes have.
+ *
  * @type {Readonly<Record<string, {height: number, x: number, y: number, rows: string[]}>>}
  */
 const CODEX_VISIBLE_PANES = Object.freeze({
@@ -299,6 +307,58 @@ const CODEX_VISIBLE_PANES = Object.freeze({
       "",
       "",
       "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ])
+  }),
+  composerWarningStatus: Object.freeze({
+    height: 45,
+    x: 2,
+    y: 16,
+    rows: Object.freeze([
+      "╭─────────────────────────────────────────────────╮",
+      "│ >_ OpenAI Codex (v0.156.1)                      │",
+      "│                                                 │",
+      "│ model:     GPT-6-Astra   /model to change       │",
+      "│ directory: /private/tmp/…/projects/probe-config │",
+      "╰─────────────────────────────────────────────────╯",
+      "",
+      "  To get started, describe a task or try one of these commands:",
+      "",
+      "  /init - create an AGENTS.md file with instructions for Codex",
+      "  /status - show current session configuration",
+      "  /permissions - choose what Codex is allowed to do",
+      "  /model - choose what model and reasoning effort to use",
+      "  /review - review any changes and find issues",
+      "",
+      "",
+      "\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything\u001b[0m",
+      "",
+      "  GPT-6-Astra default · /private/tmp/tcb2186.uWGVKd/…  ⚠ 1 warning · f2 to view",
       "",
       "",
       "",

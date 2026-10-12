@@ -455,8 +455,8 @@ describe('medusa-wake — the settling hold after a launch\'s thread first repor
     const launchedAt = 1_000_000;
     const world = installWorld({ pane: LOADING_PANE, clock: launchedAt + OVERLAP.idleAnswerAt - ANSWER_LAG_MS });
     wake._internal.idleTicksRequired = () => 1;
-    assert.equal(wake._assessPane(LOADING_PANE, CODEX, null, true).idle, true,
-      'precondition: handed an idle answer, the pane gate does not refuse the loading screen');
+    assert.deepEqual(wake._assessPane(LOADING_PANE, CODEX, null, true), { idle: false, reason: 'engine-starting' },
+      'precondition: handed an idle answer, the pane gate refuses the loading screen by itself (#2187); the hold below still speaks first');
 
     wake._internal.tick(); // asks the channel
     world.clock = launchedAt + OVERLAP.idleAnswerAt;
