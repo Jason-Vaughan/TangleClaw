@@ -35,6 +35,32 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-12 — #2186: the wake no longer types into a folder Codex was told not to trust
+
+<!-- prawduct: type=bugfix | scope=codex-trust-2186 -->
+
+#2186 Chunk 02. Branch `fix/2186-02-wake-untrusted-folder-hold`, from `origin/main` `2a9b9741`. The issue stays open: the signed-in automatic launch and the live-install checks remain.
+
+Visual change: no
+
+**Why.** The startup fire refuses to send into a folder whose entry in Codex's config says anything but trusted. The wake did not look: its observation skipped trust by design. A signed-in probe on Codex 0.156.1 (a scratch server, a stand-in for the switchboard bridge, a throwaway Codex home) showed the result: in a folder with `trust_level = "untrusted"` the wake typed its nudge 11 to 16 seconds after the mail, in the same session whose fire had just been refused, and Codex started a turn on it and asked to run a command. The same happened when the entry was added while the session ran. The wake was a way round the fire's refusal.
+
+**What changed.**
+
+- `lib/startup-control-codex.js`: `observeActivity` reads `config/read` on the connection it already holds, only when it is about to answer `idle`, and answers `held` / `folder-untrusted` for a readable entry that is not trusted (`_folderHeld`). No entry and a `null` table do not hold. A read that fails, or an answer with no readable projects table, does not hold either and is warned about once per launch: it establishes nothing about trust. Busy and unknown answers make no extra request. The channel-generation re-read still guards every idle and held answer.
+- `lib/startup-control.js`: the facade admits `held` beside idle, busy and unknown; any other state is still rewritten to unknown. The proposal sent to the Architect missed this layer: it was written from the adapter and the wake and not from what sits between them, where `held` would have been rewritten to the stall code. Found on reading the facade before writing the wake's arm; the Integrator gave leave for the file.
+- `lib/medusa-wake.js`: a `held` / `folder-untrusted` answer holds as `engine-folder-untrusted`, named before the settling hold, which it neither starts nor resets. A `held` answer with any other reason holds as unknown. One peer meaning.
+- `lib/medusa-delivery-disposition.js`: the code is `configuration` with a new next action, `review-folder-trust` (the Architect's name and wording): the recipient's operator may set the entry to trusted to resume automatic wakes, or leave it and read the mail by hand.
+- `docs/engine-guide.md` states the rule for all four cases, who decided it, what a failed read does and does not mean, and what was measured. `docs/user-guide.md` lists the new reason.
+
+**Decided by.** The policy is the decider's ruling of 2026-10-11 (hold on an explicit non-trusted entry, not on a missing one; an unreadable config keeps mail moving and is logged). The Architect cleared the design on 2026-10-12 with four requirements, all built: the once-per-launch warning; no recall of a nudge already typed, its ledger row kept; a held answer on an already-nudged edge recorded as a readiness observation only, with a test through the held-to-trusted transition and a re-arm; the rule applied to every version the channel's version gate admits, with no version added to `remoteTrustPrompt.absentOn`.
+
+**A test that changed on purpose.** `test/startup-control-codex.test.js` asserted that an observation never calls `config/read`. That was the behaviour being replaced. The case now asserts no turn, account or quota call, and new cases assert exactly one `config/read` per idle observation and none for a busy or unknown one.
+
+**Tests.** The adapter: untrusted and other non-trusted values hold; trusted, no entry, another folder's entry and a null table do not; a failing read and an unreadable table are idle and warned once per launch, again for a new launch; no read for busy, unknown or a working second thread; the answer follows an entry changed mid-session; a held answer is withheld when the channel changed under the read. The facade: `held` passes through; an out-of-vocabulary state does not. The wake: nothing typed however long; recorded once per edge; no stall alert; the peer route's meaning; trusted releases with no relaunch and settles like any first idle; a settled thread is not made to settle again; a nudge already typed is not recalled; three observe-only cases; the recorded settling sample still held. The disposition: class, next action and its sentence. Each new guard was broken in turn and a test failed.
+
+**Not verified.** No Codex version but 0.156.1 was probed. What Codex does when the approval it asked for is given was not measured. The hold was not seen on a live install: it is proved by tests against the fake app-server, and by the probe of the behaviour it replaces. A folder holding its own `.codex/` config was not probed.
+
 ## 2026-10-12 — #2322: a queue call that is slow is not called unreachable, a withdrawal's reason is checked first, and one withdrawal runs per queue
 
 <!-- prawduct: type=bugfix | scope=2322-integrator-merge-queue -->

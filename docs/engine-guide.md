@@ -862,6 +862,46 @@ profile names an adapter that can observe it (`declaresObserver`; today, Codex):
   screen: a startup screen or dialog still up when the interval has passed is judged by the pane gate
   alone.
 - `busy` holds as `engine-thread-busy`, whatever the pane shows.
+- **A folder Codex was told not to trust holds as `engine-folder-untrusted` (#2186).** When the
+  thread reads idle, the observation asks `config/read` once more, on the connection it already has
+  open, and answers `held` in place of `idle` if Codex's config holds an entry for the project
+  directory that says anything but `trusted`. The rule, as the release's decider ruled it on
+  2026-10-11 and the Architect cleared its design on 2026-10-12:
+
+  | What `config/read` holds for the folder | The wake |
+  |---|---|
+  | an entry that says `trusted` | no hold |
+  | an entry that says anything else | holds the nudge |
+  | no entry, or `projects: null` | no hold |
+  | the read fails, or its answer has no readable projects table | no hold, and a warning once per launch |
+
+  It is the startup fire's own rule for an explicit entry (below, "A folder with no trust entry"),
+  and it exists because the wake was otherwise a way round it: on Codex 0.156.1, signed in, a nudge
+  was typed into a folder with `trust_level = "untrusted"` 11 to 16 seconds after the mail, in the
+  same session whose startup fire had been refused as `trust_required`, and Codex started a turn on
+  it. A folder with no entry is not held, because the operator's decision for the fire already lets
+  a first turn go there and a nudge is typed into the same composer as their own typing would be.
+
+  **A failed read establishes nothing about trust.** It is not a trusted verdict: the nudge may go
+  if every other gate passes, because an unreadable config must not stop mail, and the server log
+  says once per launch that trust could not be established. An operator who means a folder to be
+  held should check that Codex's `config.toml` parses.
+
+  The hold applies from the next look on. A nudge already typed is not recalled, and its `nudged`
+  row in the ledger stays; for mail already nudged, the monitor records only that the session is
+  not eligible now. The answer follows the config as it stands: setting the entry to `trusted`
+  releases the nudge at the monitor's next look, with no relaunch (an edit made while the app-server
+  ran was read within 12 seconds on 0.156.1). The hold neither starts nor resets the settling hold,
+  and it is not a stall, so it raises no stall alert. A busy or unknown thread is answered without
+  the extra read. The sender is told the class `configuration` and the next action
+  `review-folder-trust`: the recipient's operator may set the entry to trusted to resume automatic
+  wakes, or leave it untrusted and read the mail by hand. Like every `configuration` hold, an aged
+  message held this way is told to the operator.
+
+  The rule reads only `config/read`, so it applies to every Codex version the channel's version gate
+  admits; it adds no version to `remoteTrustPrompt.absentOn`. What Codex does with a nudge was
+  measured on 0.156.1 only: it asked for approval before running anything, and what it does when
+  that approval is given was not measured.
 - With a channel present, anything unproven (not asked yet, stale, failed, `unknown`) holds as
   `engine-thread-unknown`. It never falls back to the pane.
 - With **no** channel (a session launched before channels existed, or whose server did not start or

@@ -22,6 +22,12 @@
  * And the settling hold (#2059): the first `idle` a launch's thread reports
  * holds the nudge for one monitor interval, under its own code, whatever the
  * pane shows and whatever the idle streak is set to.
+ *
+ * And the untrusted-folder hold (#2186): an idle thread in a folder the
+ * engine's own config says not to trust is answered `held`, and the nudge is
+ * withheld under its own code until that entry changes. It is not a stall,
+ * it does not start or reset the settling hold, and it recalls nothing
+ * already typed.
  */
 
 const { describe, it, beforeEach, afterEach, after } = require('node:test');
@@ -612,6 +618,195 @@ describe('medusa-wake — the settling hold after a launch\'s thread first repor
   it('the hold lasts one monitor interval', () => {
     assert.equal(wake.ENGINE_SETTLING_MS, 5000);
     assert.ok(wake.ENGINE_SETTLING_MS < wake.ENGINE_ACTIVITY_MAX_AGE_MS, 'an answer outlives its own settling, or no session would ever be woken');
+  });
+});
+
+describe('medusa-wake — a folder the engine was told not to trust holds the nudge (#2186)', () => {
+  let saved;
+  beforeEach(() => {
+    saved = { ...wake._internal };
+    wake.stop();
+  });
+  afterEach(() => {
+    wake.stop();
+    Object.assign(wake._internal, saved);
+  });
+
+  const HELD = { channel: 'present', state: 'held', reasonCode: 'folder-untrusted' };
+  const IDLE = { channel: 'present', state: 'idle', reasonCode: 'thread-idle' };
+  const CODE = 'engine-folder-untrusted';
+
+  /** Every skip reason the ledger holds, in order. */
+  const skips = (world) => world.recorded.filter((r) => r.outcome === 'skipped').map((r) => r.skipReason);
+  /** The ledger's nudged rows. */
+  const nudges = (world) => world.recorded.filter((r) => r.outcome === 'nudged');
+
+  /**
+   * A second message arriving for a session already nudged for the first.
+   * @param {object} world - The world.
+   */
+  function moreMail(world) {
+    world.inbox = [...world.inbox, { id: `m${world.inbox.length + 1}`, from: 'peer', message: 'again' }];
+  }
+
+  it('types nothing, however long the session sits at rest on a usable pane, and says why', async () => {
+    const world = installWorld({ activity: HELD, pane: CX_IDLE_PANE });
+    await ticks(TICKS_TO_NUDGE + 20);
+    assert.equal(world.injected.length, 0);
+    assert.equal(lastSkip(world), CODE);
+    assert.deepEqual([...new Set(skips(world).slice(1))], [CODE], 'after the first, unanswered tick it is the only reason given');
+  });
+
+  it('is recorded once for the edge, not once per tick', async () => {
+    const world = installWorld({ activity: HELD });
+    await ticks(30);
+    assert.equal(skips(world).filter((r) => r === CODE).length, 1);
+  });
+
+  it('a held answer with a reason this monitor does not know holds as unknown, never as idle', async () => {
+    const world = installWorld({ activity: { channel: 'present', state: 'held', reasonCode: 'something-new' } });
+    await ticks(TICKS_TO_NUDGE + 2);
+    assert.equal(world.injected.length, 0);
+    assert.equal(lastSkip(world), 'engine-thread-unknown');
+  });
+
+  it('is not a stall: no alert is raised however long it lasts', async () => {
+    const world = installWorld({ activity: HELD });
+    for (let t = 0; t < wake.WAKE_STALL_ALERT_MS * 3; t += INTERVAL_MS) await ticks(1);
+    assert.equal(wake.wakeStallSummary(), null);
+    assert.equal(world.injected.length, 0);
+  });
+
+  it('a sender asking about the peer gets the code, its meaning and what its operator can choose', async () => {
+    const world = installWorld({ activity: HELD });
+    wake._internal.masterKey = () => 'master';
+    wake._internal.readRegistry = () => [];
+    await ticks(3);
+    const answer = wake.peerReachability(world.status.workspaceId);
+    assert.equal(answer.local, true);
+    assert.equal(answer.reason, CODE);
+    assert.equal(answer.meaning, wake.peerReasonMeaning(CODE));
+    assert.match(answer.meaning, /does not trust/);
+    assert.match(answer.meaning, /trusted/);
+    assert.match(answer.meaning, /by hand/);
+  });
+
+  it('the entry set to trusted releases the nudge with no relaunch, after the settling hold it never started', async () => {
+    const world = installWorld({ activity: HELD, pane: CX_IDLE_PANE });
+    await ticks(10);
+    assert.equal(world.injected.length, 0);
+    world.activity = IDLE;
+    await ticks(1);
+    assert.equal(lastSkip(world), CODE, 'the tick that asks still holds on the last answer');
+    await ticks(1);
+    assert.equal(lastSkip(world), 'engine-thread-settling', 'the first idle answer of this launch settles like any other');
+    assert.equal(world.injected.length, 0);
+    await ticks(wake.IDLE_TICKS_REQUIRED);
+    assert.equal(world.injected.length, 1);
+  });
+
+  it('does not restart the settling hold of a thread that had already settled', async () => {
+    const world = installWorld({ pane: CX_IDLE_PANE });
+    await ticks(TICKS_TO_NUDGE);
+    assert.equal(world.injected.length, 1, 'trusted and nudged for the first message');
+    world.activity = HELD;
+    moreMail(world);
+    await ticks(6);
+    assert.equal(world.injected.length, 1);
+    assert.equal(lastSkip(world), CODE);
+    world.activity = IDLE;
+    await ticks(2 + wake.IDLE_TICKS_REQUIRED);
+    assert.equal(world.injected.length, 2);
+    assert.ok(!skips(world).slice(skips(world).lastIndexOf(CODE)).includes('engine-thread-settling'), 'no second settling hold on the same channel');
+  });
+
+  it('a nudge already typed is not recalled: its receipt stays, and only later mail is held', async () => {
+    const world = installWorld({ pane: CX_IDLE_PANE });
+    await ticks(TICKS_TO_NUDGE);
+    assert.equal(nudges(world).length, 1);
+    world.activity = HELD;
+    await ticks(10);
+    assert.equal(world.injected.length, 1, 'nothing more is typed for the edge already nudged');
+    assert.equal(nudges(world).length, 1, 'the nudged receipt is still the edge\'s record');
+    assert.ok(!skips(world).includes(CODE), 'an owned edge is not rewritten as held');
+    moreMail(world);
+    await ticks(6);
+    assert.equal(world.injected.length, 1);
+    assert.equal(lastSkip(world), CODE, 'the next message is the one held');
+  });
+
+  describe('an edge already nudged and still being watched (observe-only)', () => {
+    /**
+     * A world nudged once, whose attempt the watchdog has not settled, with
+     * the durable record's seams captured.
+     * @returns {Promise<object>} The world, with `facts` and `readiness` filled as the monitor records.
+     */
+    async function nudgedAndWatched() {
+      const world = installWorld({ pane: CX_IDLE_PANE });
+      world.facts = [];
+      world.readiness = 0;
+      world.rearm = false;
+      wake._internal.recordWakeFacts = (workspaceId, fact, opts) => { world.facts.push({ fact, code: opts && opts.code }); };
+      wake._internal.noteReadiness = () => { world.readiness += 1; return 1; };
+      wake._internal.awaitingReadiness = () => true;
+      wake._internal.rearmDue = () => { const due = world.rearm; world.rearm = false; return due; };
+      wake._internal.alreadyAttempted = () => false;
+      wake._internal.pendingWakeCount = () => 0;
+      await ticks(TICKS_TO_NUDGE);
+      assert.equal(world.injected.length, 1);
+      return world;
+    }
+    const blocked = (world) => world.facts.filter((f) => f.fact === 'wake_blocked').map((f) => f.code);
+
+    it('a held answer is recorded as a readiness observation: the nudged row stays and nothing is typed', async () => {
+      const world = await nudgedAndWatched();
+      world.facts.length = 0;
+      world.activity = HELD;
+      await ticks(6);
+      assert.ok(blocked(world).includes(CODE), 'the watchdog is told the session is not eligible now, and why');
+      assert.equal(world.injected.length, 1);
+      assert.equal(nudges(world).length, 1);
+      assert.ok(!skips(world).includes(CODE), 'the ledger does not say the earlier nudge was withheld');
+      assert.equal(world.readiness, 0, 'a held session is never reported as having become ready');
+      assert.equal(wake.verdictFor(1).reason, 'nudged');
+    });
+
+    it('held then trusted is reported as a readiness change, and a re-arm then nudges once', async () => {
+      const world = await nudgedAndWatched();
+      world.activity = HELD;
+      await ticks(6);
+      assert.equal(world.readiness, 0);
+      world.activity = IDLE;
+      await ticks(2 + wake.IDLE_TICKS_REQUIRED);
+      assert.ok(world.readiness > 0, 'ineligible to eligible is recorded for the watchdog');
+      assert.equal(world.injected.length, 1, 'observing never types');
+      world.rearm = true;
+      await ticks(1 + wake.IDLE_TICKS_REQUIRED);
+      assert.equal(world.injected.length, 2, 'the re-armed edge goes back through the gates and is nudged');
+    });
+
+    it('a re-arm that lands while the folder is still untrusted is held, then nudged once it is trusted', async () => {
+      const world = await nudgedAndWatched();
+      world.activity = HELD;
+      await ticks(3);
+      world.rearm = true;
+      await ticks(6);
+      assert.equal(world.injected.length, 1);
+      assert.equal(lastSkip(world), CODE, 'a re-armed edge is an ordinary edge again, and is held like one');
+      world.activity = IDLE;
+      await ticks(2 + wake.IDLE_TICKS_REQUIRED);
+      assert.equal(world.injected.length, 2);
+    });
+  });
+
+  it('the settling samples are still held with this hold in the chain: an idle answer over the loading screen types nothing', async () => {
+    const { CODEX_FIXTURE_SETS } = require('./_wake-fixtures');
+    const loading = CODEX_FIXTURE_SETS.find((set) => set.cliVersion === '0.156.1').panes.startScreen.lines;
+    wake._internal.idleTicksRequired = () => 1;
+    const world = installWorld({ pane: loading });
+    await ticks(2);
+    assert.equal(world.injected.length, 0);
+    assert.equal(lastSkip(world), 'engine-thread-settling');
   });
 });
 
