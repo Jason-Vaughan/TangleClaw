@@ -150,7 +150,8 @@ describe('store: merge queue schema (v64, #2322)', () => {
     assert.deepEqual(definitions(db), fresh);
     for (const table of TABLES) assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n, 0);
     assert.equal(version(db), store.CURRENT_SCHEMA_VERSION);
-    assert.deepEqual(db.prepare('SELECT version FROM schema_version WHERE version >= 63 ORDER BY version').all().map((r) => r.version).slice(0, 2), [63, 64]);
+    // One stamp per boot, the current version: the v63 stamp is kept and the upgrade adds exactly one.
+    assert.deepEqual(db.prepare('SELECT version FROM schema_version WHERE version >= 63 ORDER BY version').all().map((r) => r.version), [63, store.CURRENT_SCHEMA_VERSION]);
   });
 
   it('migrating twice changes nothing: rows survive, nothing is stamped again', () => {

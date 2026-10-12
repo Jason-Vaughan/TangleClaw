@@ -229,6 +229,10 @@ describe('merge queue store: submitting (#2322)', () => {
     assert.equal(entry.gates.test.reference, 'suite run 42');
     assert.equal(submit(2, { headCheck: { conclusion: 'success' } }).code, REFUSALS.INVALID_INPUT);
     assert.equal(submit(2, { headCheck: { runId: 5 } }).code, REFUSALS.INVALID_INPUT);
+    for (const runId of [null, '', '  ', 0, -4, 1.5, true, {}, [7]]) {
+      assert.equal(submit(2, { headCheck: { runId, conclusion: 'success' } }).code, REFUSALS.INVALID_INPUT, JSON.stringify(runId));
+    }
+    assert.equal(queues.listEntries(queueId).length, 1);
   });
 
   it('takes a submission only from a launch of the owner project', () => {
@@ -469,6 +473,20 @@ describe('merge queue store: an entry\'s path (#2322)', () => {
     assert.equal(history(entry.entryId).pop(), 'failed');
   });
 
+  it('still fails an entry when its detail is too long for the history once escaped, and says the detail was left out', () => {
+    const { entry } = submit(1);
+    queues.beginAssembly(entry.entryId, { actor: OWNER });
+    // 1000 characters in the column; each becomes six in JSON.
+    const failed = queues.failEntry(entry.entryId, { code: 'CONFLICT', detail: `a${'\u0001'.repeat(998)}b`, actor: OWNER });
+    assert.equal(failed.ok, true);
+    assert.equal(failed.entry.state, 'failed');
+    assert.equal(failed.entry.failure.detail.length, 1000);
+    const event = queues.listEvents(queueId, { entryId: entry.entryId }).pop();
+    assert.equal(event.event, 'failed');
+    assert.equal(event.detail.omitted, 'detail too long to record');
+    assert.ok(event.detail.length > 4096);
+  });
+
   it('records why an entry was withdrawn, and refuses a withdrawal once landing has started', () => {
     const a = submit(1).entry;
     assert.equal(queues.withdrawEntry(a.entryId, { actor: OWNER }).code, REFUSALS.INVALID_INPUT);
@@ -574,6 +592,11 @@ describe('merge queue store: gates at landing (#2322)', () => {
     }
     assert.equal(queues.getEntry(entry.entryId).state, 'testing');
     assert.equal(queues.getEntry(entry.entryId).candidate.checkConclusion, null);
+    for (const runId of [null, undefined, '', 0, {}]) {
+      const answer = queues.beginLanding(entry.entryId, { candidateCheck: { runId, conclusion: 'success' }, actor: OWNER });
+      assert.equal(answer.code, REFUSALS.INVALID_INPUT, JSON.stringify(runId));
+    }
+    assert.equal(queues.getEntry(entry.entryId).state, 'testing');
   });
 
   it('holds an entry that needs the Operator gate until the Operator records it, and only the Operator can', () => {

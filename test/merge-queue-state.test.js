@@ -76,6 +76,25 @@ describe('merge queue state machine (#2322)', () => {
     assert.equal(state.checkTransition('queued', 'withdrawn').event, 'withdrawn');
   });
 
+  it('pins every word a stored CHECK constraint was built from at schema v64', () => {
+    // A CHECK is fixed when its table is created. A word added here reaches
+    // new and test stores only; an installed store refuses every write that
+    // uses it. So a change to any of these lists needs a schema number and a
+    // rebuild of the table that holds it, and then this test is updated.
+    const why = 'changing this list needs a schema number and a table rebuild: installed stores keep the CHECK they were created with';
+    assert.deepEqual([...state.STATES], ['queued', 'assembling', 'testing', 'landing', 'landed', 'failed', 'withdrawn'], why);
+    assert.deepEqual([...state.QUEUE_STATUSES], ['active', 'retired'], why);
+    assert.deepEqual([...state.OWNER_GATE_STATUSES], ['missing', 'recorded'], why);
+    assert.deepEqual([...state.OPERATOR_GATE_STATUSES], ['not-required', 'required', 'recorded'], why);
+    assert.deepEqual([...state.ACTOR_KINDS], ['operator', 'project'], why);
+    assert.deepEqual([...state.EVENTS], [
+      'queue-created', 'queue-retired', 'queue-halted', 'queue-halt-cleared',
+      'submitted', 'operator-gate-recorded',
+      'assembly-started', 'candidate-made', 'candidate-discarded',
+      'landing-started', 'landing-not-made', 'landed', 'failed', 'withdrawn'
+    ], why);
+  });
+
   it('keeps every refusal code equal to its own name', () => {
     for (const [name, code] of Object.entries(state.REFUSALS)) assert.equal(code, name);
   });

@@ -69,6 +69,8 @@ Visual change: no
 
 **Verification.** The three new test files pass: every allowed move and every refused one against a table spelled out in the test; order across a withdrawal; a second unfinished entry for one pull request and a second active queue refused; a change and its event landing together, proved by making each write fail in turn; a v63 store migrated to the same stored DDL a fresh install has, with the tables empty; the migration run twice; a table of the right name and the wrong shape refused with the version left at 63.
 
+**After the Critic's review.** No blocking finding. Fixed in one commit: the new migration test read the stamps as `[63, 64]` and now reads `[63, store.CURRENT_SCHEMA_VERSION]`; a test pins every list a stored CHECK was built from, because a CHECK is fixed when its table is created and a word added later would reach new stores only; a check's run id must be a non-empty string or a positive integer; the commit runs inside the transaction's `try`; an event detail too long for its column once written as JSON is replaced by a marker instead of stopping the change.
+
 ## 2026-10-11 — #2268: the landing page shows the launch identity report as a banner
 
 <!-- prawduct: type=bugfix | scope=2268-launch-identity-not-inherited -->
