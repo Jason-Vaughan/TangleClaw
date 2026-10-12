@@ -91,6 +91,17 @@ describe('launch-binding guard: every mutating route is guarded or listed (#2233
     }
   });
 
+  it('guards every state-changing merge queue route: an unidentified caller reaches none (#2322)', () => {
+    const queueRoutes = MUTATING.filter((r) => r.pattern.startsWith('/api/merge-queue')).map(key).sort();
+    assert.deepEqual(queueRoutes, [
+      'POST /api/merge-queue',
+      'POST /api/merge-queue/entries',
+      'POST /api/merge-queue/entries/:id/operator-gate',
+      'POST /api/merge-queue/entries/:id/withdraw'
+    ]);
+    for (const queueRoute of queueRoutes) assert.ok(!admitted.includes(queueRoute), `${queueRoute} must not be reachable unidentified`);
+  });
+
   it('keeps the audit heartbeat guarded: it has no credential of its own', () => {
     assert.ok(MUTATING.some((r) => key(r) === 'POST /api/audit/heartbeat'));
     assert.ok(!admitted.includes('POST /api/audit/heartbeat'));
