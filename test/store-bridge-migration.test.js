@@ -698,7 +698,7 @@ describe('store: the outbound queue admits lane-silent (v62, #2262)', () => {
 
     reopen();
     const db = store.getDb();
-    assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 63);
+    assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
     assert.deepEqual([...bridgeObjects()], [...fresh], 'the upgraded store has exactly the shape of a fresh one');
     assert.deepEqual(queueSnapshot(db), before, 'nothing in the queue changed');
     assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name LIKE '%_superseded'").get().n, 0);
@@ -746,7 +746,7 @@ describe('store: the outbound queue admits lane-silent (v62, #2262)', () => {
   it('a fresh store admits lane-silent and refuses a reserved type', () => {
     freshStore('v62-fresh');
     const db = store.getDb();
-    assert.equal(store.CURRENT_SCHEMA_VERSION, 63);
+    assert.ok(store.CURRENT_SCHEMA_VERSION >= 63);
     insertType(db, 'lane-silent');
     assert.throws(() => insertType(db, 'release-action-needed'), /CHECK/);
     assert.throws(() => insertType(db, 'certification-state-changed'), /CHECK/);
@@ -785,7 +785,7 @@ describe('store: the outbound queue admits lane-silent (v62, #2262)', () => {
 
     reopen();
     assert.deepEqual([...bridgeObjects()], [...fresh]);
-    assert.equal(store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 63);
+    assert.equal(store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
     insertType(store.getDb(), 'lane-silent');
   });
 
@@ -933,8 +933,8 @@ describe('store: the outbound queue admits gateway-down and gateway-recovered (v
 
     reopen();
     const db = store.getDb();
-    assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 63);
-    assert.deepEqual(db.prepare('SELECT version FROM schema_version WHERE version >= 62 ORDER BY version').all().map((r) => r.version), [62, 63]);
+    assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
+    assert.deepEqual(db.prepare('SELECT version FROM schema_version WHERE version >= 62 ORDER BY version').all().map((r) => r.version), [62, store.CURRENT_SCHEMA_VERSION]);
     assert.deepEqual([...bridgeObjects()], [...fresh], 'the upgraded store has exactly the shape of a fresh one');
     assert.deepEqual(queueSnapshot(db), before, 'nothing in the queue changed');
     assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name LIKE '%_superseded'").get().n, 0);
@@ -985,10 +985,10 @@ describe('store: the outbound queue admits gateway-down and gateway-recovered (v
     assert.deepEqual(stamps(), stamped);
   });
 
-  it('a fresh store is at v63 and admits both types', () => {
+  it('a fresh store is at least v63 and admits both types', () => {
     freshStore('v63-fresh');
     const db = store.getDb();
-    assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 63);
+    assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
     for (const type of ADDED) insertType(db, type);
     assert.throws(() => insertType(db, 'gateway-flapping'), /CHECK/);
   });
