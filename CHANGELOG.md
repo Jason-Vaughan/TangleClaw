@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.32.0] - 2026-10-11
+
 ### Added
 
 - **The operator is told in the chat when the Discord helper has lost its connection to Discord, and when it is back (#2272, last of five parts).** After five minutes with no connection one notice says since when, and whether the helper is still trying or Discord has refused it; when the connection returns, one more says how long it was gone and to send again anything sent in that time. One outage is announced once, across a helper restart or a server restart. A helper that has stopped reporting raises nothing: the bridge panel and `tc bridge status` show that.
