@@ -572,6 +572,22 @@ describe('medusa-wake — _assessPane: a row that starts with the prompt glyph b
       const pane = ['⏺ Done.', RULE, '❯ add case law to the reading list too', RULE, CLAUDE_FOOTER];
       assert.deepEqual(wake._assessPane(pane, CLAUDE, suggestion), { idle: true, reason: 'at-prompt' });
     });
+
+    it('A DECIDED LIMIT: the same suggestion below a stale bare prompt row is held, and the nudge waits', () => {
+      // The live composer is usable here, and it is refused. Its row is not
+      // bare (the suggestion is drawn on it), so the stale row above is the
+      // last bare prompt and the composer row is a glyph-led row below it. The
+      // cursor does say the composer is empty, but it would say the same of a
+      // dialog's selected option drawn dim, so the cursor alone is not let to
+      // overrule the refusal. The cost is a delayed nudge, never a typed one:
+      // it goes once the suggestion is gone or the stale row has left the read.
+      const suggestion = { x: 2, line: '❯ \x1b[2madd case law to the reading list too\x1b[0m' };
+      const live = ['⏺ Done.', RULE, '❯ add case law to the reading list too', RULE, CLAUDE_FOOTER];
+      assert.equal(wake._composerEmpty(suggestion, CLAUDE), true, 'the cursor alone says empty');
+      assert.deepEqual(wake._assessPane([IDLE_PANE[0], '', ...live], CLAUDE, suggestion), { idle: false, reason: 'no-prompt' });
+      // Without the stale row the very same composer is at-prompt.
+      assert.deepEqual(wake._assessPane(live, CLAUDE, suggestion), { idle: true, reason: 'at-prompt' });
+    });
   });
 
   describe('the operator\'s draft below a stale bare row', () => {

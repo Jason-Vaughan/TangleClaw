@@ -795,7 +795,8 @@ established session the header has scrolled away. Both are regex sources, not su
 header pads its value to the width of its box (`model:     loading`), so the run of spaces between
 label and value is not fixed. Each must need some text to match: a pattern that matches the empty
 string is refused when the profile is read, as is one field declared without the other. Codex
-declares them, and its adapter hands the same two compiled patterns to the startup fire's pane
+declares them, and its adapter hands the two compiled patterns of the launch's own engine profile
+(the profile the wake reads for that session, whatever its id) to the startup fire's pane
 witness (`lib/pane-witness.js`), so the fire and the wake cannot disagree about what "still starting"
 looks like. A Codex profile that declares neither leaves the witness with no header to ask about, so
 the trust-free fire is held as `pane_not_ready`, naming the two fields, until they are restored.
@@ -884,8 +885,20 @@ profile names an adapter that can observe it (`declaresObserver`; today, Codex):
     composer is seen whole to its lower border, holds exactly that nudge, and no other row that
     starts with the glyph is below the last bare prompt. Codex's composer draws no border, so that
     recovery does not apply there, with or without this rule.
+    **A known limit, kept on purpose:** a usable composer whose own row is not bare, because the
+    engine has drawn a pending suggestion on it (Claude Code), is refused as `pane-no-prompt` when an
+    older bare prompt row is still in the read above it. The cursor says that composer is empty, but
+    it would say the same of a dialog's selected option drawn dim, so the cursor alone does not
+    overrule the refusal. The cost is a nudge that waits until the suggestion is gone or the older
+    row has left the read; nothing is typed. No such older row has been captured from Claude Code,
+    which draws on the alternate screen. The exception is not widened beyond the exact own nudge
+    without measured pane geometry.
   - *The engine's own header says it is still starting* (`headerPattern` and `startingPattern`,
-    above) holds as `pane-engine-starting`.
+    above) holds as `pane-engine-starting`. **A known limit:** Codex's header pattern is not tied
+    to the header box, so a transcript row that itself reads `model: loading`, when it is the
+    newest row in the read to match, holds the pane as starting until it scrolls out of the read.
+    The startup fire's pane witness has always read the same two expressions the same way, over the
+    visible pane only; the wake's read also reaches 15 rows of history, so it holds a little longer.
   - **What this covers, by version.** On Codex 0.156.1: the opening screen (`pane-engine-starting`)
     and the dialogs drawn below it (`pane-no-prompt`). Codex 0.159.0 and 0.161.0 draw their dialogs on
     the alternate screen, where the dialog is the whole pane and no row is a bare prompt, so those

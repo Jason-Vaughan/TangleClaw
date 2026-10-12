@@ -380,6 +380,29 @@ describe('Codex startupControl adapter', () => {
         assert.ok(f.patches.slice(1).every((p) => !('dispatchNote' in p)), 'and only there: later transitions do not restate it');
       });
 
+      it('an engine profile under another id that names this adapter: the fire reads that profile\'s patterns, the ones the wake reads for the session', async () => {
+        const wakeTable = require('../lib/medusa-wake').ENGINE_WAKE_PROFILES;
+        const variant = { ...wakeTable.codex, headerRe: /\bengine:\s+\S/, startingRe: /\bengine:\s+warming\b/ };
+        const realProfile = codex._seams.wakeProfile;
+        const asked = [];
+        // What the wake's table would hold for a profile `codex-variant`.
+        codex._seams.wakeProfile = (engineId) => { asked.push(engineId); return engineId === 'codex-variant' ? variant : wakeTable[engineId]; };
+        try {
+          await serve(NO_ENTRY);
+          completeTheTurn();
+          channel(LAUNCH_PANE, { engineId: 'codex-variant' });
+          const witnessed = [];
+          const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async (opts) => { witnessed.push(opts); return { shown: true }; } }).settled;
+          assert.equal(settled.outcome, 'applied');
+          assert.deepEqual(asked, ['codex-variant'], 'asked for the launch\'s own engine id');
+          assert.equal(witnessed[0].headerRe, variant.headerRe);
+          assert.equal(witnessed[0].startingRe, variant.startingRe);
+          assert.notEqual(witnessed[0].startingRe, wakeTable.codex.startingRe, 'not the patterns of the profile that happens to be called codex');
+        } finally {
+          codex._seams.wakeProfile = realProfile;
+        }
+      });
+
       it('the two header patterns handed to the witness are the wake profile\'s own, and a profile that declares none holds the fire', async () => {
         const declared = require('../lib/medusa-wake').ENGINE_WAKE_PROFILES.codex;
         assert.ok(declared.headerRe instanceof RegExp && declared.startingRe instanceof RegExp, 'the bundled Codex profile declares both');
