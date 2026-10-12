@@ -191,7 +191,9 @@ describe('check-watch-store: registering a watch (#2323)', () => {
       { prNumber: 0 }, { prNumber: '2328' }, { prNumber: 1.5 }, { prNumber: undefined },
       { headSha: 'abc1234' }, { headSha: sha('A') }, { headSha: 'main' },
       { checkName: '' }, { checkName: ' test' }, { checkName: 'x'.repeat(state.MAX_CHECK_NAME + 1) }, { checkName: 'te\nst' },
-      { dueAt: undefined }, { dueAt: null }, { dueAt: '' }, { dueAt: 'soon' }, { dueAt: {} }
+      { dueAt: undefined }, { dueAt: null }, { dueAt: '' }, { dueAt: 'soon' }, { dueAt: {} },
+      // Finite, and further than a Date reaches: refused, not thrown on.
+      { dueAt: 8.64e15 + 1 }, { dueAt: -8.64e15 - 1 }, { dueAt: Number.MAX_VALUE }, { dueAt: Infinity }, { dueAt: new Date(NaN) }
     ];
     for (const fields of malformed) refused(() => register(fields), REFUSALS.MALFORMED);
     refused(() => watches.registerWatch(), REFUSALS.MALFORMED);
@@ -327,6 +329,7 @@ describe('check-watch-store: recording a read (#2323)', () => {
       { status: 'concluded', conclusion: 'success', runId: 1, completedAt: at() },
       { status: 'concluded', conclusion: 'success', runId: '1' },
       { status: 'concluded', conclusion: 'success', runId: '1', completedAt: 'yesterday' },
+      { status: 'concluded', conclusion: 'success', runId: '1', completedAt: 9e15 },
       { status: 'concluded', conclusion: null, runId: '1', completedAt: at() }
     ];
     for (const reading of notReadings) refused(() => watches.recordRead(id, reading), REFUSALS.MALFORMED);
@@ -682,6 +685,7 @@ describe('check-watch-store: the reads the monitor and the API will ask (#2323)'
     assert.throws(() => watches.listOwed('page'), /wake or alarm/);
     assert.throws(() => watches.listOwed(), /wake or alarm/);
     assert.throws(() => watches.listOwed('alarm', 'soon'), /needs a time/);
+    assert.throws(() => watches.listOwed('alarm', 9e15), /needs a time/);
   });
 
   it('a watch\'s history comes back oldest first with each fact\'s detail, and an unknown watch has none', () => {
