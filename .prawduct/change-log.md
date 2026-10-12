@@ -35,6 +35,35 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-12 — #2230: the two-installs case is a test on every Codex launch path
+
+<!-- prawduct: type=chore | scope=codex-probe-path-2230 -->
+
+#2230, its one chunk. Branch `test/2230-01-codex-two-installs`, from `origin/main` `abe00a40`. Tests only: no product file changes. The issue stays open; the Operator closes it after reading the evidence.
+
+Visual change: no
+
+**Why.** The issue reports that a Codex launch read the version of the detected executable but the pane ran `codex` by name, so with two installs the pane could start the one that was never checked. PR #2246 already made every launch put the checked path in the pane's command and refuse when it cannot. What was missing was the issue's own reproduction as a test: the existing cases compare strings against a made-up path and never ask which install a shell would start.
+
+**What changed.**
+
+- `test/_codex-launchable.js`: a new export, `twoCodexInstalls`. It writes two executable shell scripts named `codex` under the test's temp folder, each printing a different version, and builds a PATH with the undetected one first. It answers the version probe by really running what it is given, and it runs the launch at the end of a pane command under that PATH and returns the version of the install that answered. The file's existing exports are untouched.
+- `test/startup-control-launch.test.js`, a new block: a legacy project launch, a native project launch (the app-server's executable too), a relaunch after a dead pane on each path, and a detected path that cannot be written into a command, which is refused with `executable_unresolved` and runs neither install. The other install reports a version no launch is allowed on.
+- `test/master.test.js`: the Project Master's final tmux command, on each of the two versions that launch.
+
+Every case first asserts that `codex` by name, under that PATH, is the other install, so the fixture is the reported case and not a restatement of the path.
+
+**Red under a local mutation, none committed** (the runs are kept in `.prawduct/lane-evidence/2230-c01/`):
+
+- The legacy builder writing the name instead of the path: the legacy launch, the legacy relaunch and both Master cases fail, because the launch is refused (`command_not_pinned`).
+- The native builder writing the name: the native launch and the native relaunch fail the same way.
+- Both builders, with the judgment also made to accept the name: all six fail on the version, expected the detected install's and got `0.161.0`, which is the reported bug seen running.
+- The unresolved-path refusal removed: the refusal case fails (`version_unknown` instead of `executable_unresolved`).
+
+**What an operator sees.** Nothing.
+
+**Not verified.** No real Codex and no real tmux is involved: the pane's command is run by `/bin/sh` with a PATH the test builds, not by a login shell that rebuilds PATH from rc files. An executable replaced between the probe and the pane starting is not covered, and the issue does not ask for it. The Master is only ever launched on the legacy path, so it has no native case.
+
 ## 2026-10-12 — #2322: the test workflow runs on a merge queue candidate
 
 <!-- prawduct: type=feature | scope=2322-integrator-merge-queue -->

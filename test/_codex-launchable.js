@@ -1,5 +1,9 @@
 'use strict';
 
+const fs = require('node:fs');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+
 /** Where the stand-in Codex is "installed". Nothing exists there; the version probe is answered by a seam. */
 const STAND_IN_CODEX_PATH = '/opt/fake/bin/codex';
 
@@ -46,4 +50,49 @@ function detectWithCodex(otherPath) {
   return (profile) => ({ available: true, path: profile && profile.id === 'codex' ? STAND_IN_CODEX_PATH : otherPath });
 }
 
-module.exports = { standInCodex, detectWithCodex, STAND_IN_CODEX_PATH };
+/**
+ * Two Codex installs on disk, for the case where the one TangleClaw detects is
+ * not the one a shell finds first: a pane's rc files rebuild PATH, so a launch
+ * that names `codex` instead of the path it checked can start another Codex
+ * than the one whose version it read (#2230).
+ *
+ * Each install is a shell script named `codex` that prints its own version
+ * whatever it is asked, so nothing here needs a Codex on the machine.
+ *
+ * @param {string} dir - An existing folder of the test's own; two folders are made in it.
+ * @param {{detected: string, earlier: string}} versions - What each install's `--version` prints.
+ * @returns {{detectedPath: string, earlierPath: string, panePath: string,
+ *   probe: (bin: string, args: string[], opts: object) => string,
+ *   versionThePaneRuns: (paneCommand: string) => string}}
+ *   `probe` stands in for the adapter's `execFileSync` seam and really runs what
+ *   it is given, resolving a bare name on the pane's PATH as the pane would.
+ *   `versionThePaneRuns` runs the launch at the end of a pane command under
+ *   that PATH and returns the version of the install that answered.
+ */
+function twoCodexInstalls(dir, versions) {
+  const install = (folder, version) => {
+    const bin = path.join(dir, folder, 'codex');
+    fs.mkdirSync(path.dirname(bin), { recursive: true });
+    fs.writeFileSync(bin, `#!/bin/sh\necho "codex-cli ${version}"\n`, { mode: 0o755 });
+    return bin;
+  };
+  const detectedPath = install('detected', versions.detected);
+  const earlierPath = install('earlier-on-path', versions.earlier);
+  const panePath = [path.dirname(earlierPath), path.dirname(detectedPath), '/usr/bin', '/bin'].join(':');
+  const env = { PATH: panePath };
+  return {
+    detectedPath,
+    earlierPath,
+    panePath,
+    probe: (bin, args, opts) => execFileSync(bin, args, { ...opts, env }),
+    versionThePaneRuns: (paneCommand) => {
+      // The launch is the last command of the pane's line; what precedes it
+      // (the PATH floor, a credential reader) is not what this asks about.
+      const launch = paneCommand.split('; ').pop();
+      const out = execFileSync('/bin/sh', ['-c', launch], { env, encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] });
+      return out.trim().replace(/^codex-cli /, '');
+    }
+  };
+}
+
+module.exports = { standInCodex, detectWithCodex, twoCodexInstalls, STAND_IN_CODEX_PATH };

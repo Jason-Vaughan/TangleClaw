@@ -27,6 +27,7 @@ const wrapPipeline = require('../lib/wrap-pipeline');
 const launchBootstrap = require('../lib/launch-bootstrap');
 const launchKickoff = require('../lib/launch-kickoff');
 const wrapRunRegistry = require('../lib/wrap-run-registry');
+const { twoCodexInstalls } = require('./_codex-launchable');
 
 describe('startupControl at launch and teardown (codex)', () => {
   let tempDir;
@@ -678,6 +679,121 @@ describe('startupControl at launch and teardown (codex)', () => {
       codex.isolateLaunch = realIsolate;
     }
     assert.match(l.command, /; \/opt\/fake\/bin\/codex --no-daemon$/, 'the launch is judged on what it measured');
+  });
+
+  describe('two Codex installs, the other one earlier on the pane\'s PATH (#2230)', () => {
+    const NATIVE = '0.156.1';
+    const LEGACY = '0.157.1';
+    // What the install the pane's PATH finds first reports: a version no launch is allowed on.
+    const OTHER = '0.161.0';
+    let made = 0;
+
+    /**
+     * Put both installs on disk and route the version probe to them, really
+     * run, so a probe by bare name would be answered by the wrong one.
+     * @param {string} detected - The version of the install detection finds.
+     * @param {string} [folder] - Folder name under the test's temp folder.
+     * @returns {object} `twoCodexInstalls`' result plus `probes`, every executable the probe was given.
+     */
+    function installs(detected, folder) {
+      made += 1;
+      const dir = path.join(tempDir, folder || `two-installs-${made}`);
+      fs.mkdirSync(dir, { recursive: true });
+      const two = twoCodexInstalls(dir, { detected, earlier: OTHER });
+      const probes = [];
+      healthySeams({ execFileSync: (bin, args, opts) => { probes.push(bin); return two.probe(bin, args, opts); } });
+      assert.equal(two.versionThePaneRuns('codex --version'), OTHER, 'the fixture is the reported case: by name, the pane finds the other install');
+      return { ...two, probes };
+    }
+
+    /**
+     * A new Codex project, not yet launched.
+     * @returns {string} Its name.
+     */
+    function project() {
+      counter += 1;
+      const name = `sc-${counter}`;
+      const dir = path.join(projectsDir, name);
+      fs.mkdirSync(dir, { recursive: true });
+      store.projects.create({ name, path: dir, engine: 'codex' });
+      return name;
+    }
+
+    /**
+     * Launch a project whose engine detection resolves to the detected install.
+     * @param {object} two - From `installs`.
+     * @param {string} name - Project name.
+     * @param {object} [opts] - Launch options.
+     * @returns {{session: object, command: string}} The session and the command handed to tmux.
+     */
+    function launchOn(two, name, opts = {}) {
+      const result = withStubbedTmux(() => {
+        enginesModule.detectEngine = () => ({ available: true, path: two.detectedPath });
+        return sessions.launchSession(name, { primePrompt: false, ...opts });
+      });
+      assert.ok(result.session, result.error);
+      return { session: result.session, command: calls.created[calls.created.length - 1].opts.command };
+    }
+
+    /**
+     * The executable whose version was read is the one the pane's command runs.
+     * @param {object} two - From `installs`.
+     * @param {string} command - The command handed to tmux.
+     * @param {string} version - The detected install's version.
+     */
+    function assertPaneRunsWhatWasProbed(two, command, version) {
+      assert.ok(two.probes.length > 0, 'the launch read a version');
+      assert.deepEqual(two.probes.filter((bin) => bin !== two.detectedPath), [], 'every probe ran the detected install, by path');
+      assert.equal(two.versionThePaneRuns(command), version, `run under the pane's PATH, the launch starts the install that was probed: ${command}`);
+    }
+
+    it('a legacy launch runs the install it probed', () => {
+      const two = installs(LEGACY);
+      const l = launchOn(two, project(), { launchMode: 'fullAuto' });
+      assert.ok(l.command.endsWith(' --no-daemon') && !l.command.includes('--remote'), l.command);
+      assert.equal(calls.spawn.length, 0);
+      assertPaneRunsWhatWasProbed(two, l.command, LEGACY);
+    });
+
+    it('a native launch starts its app-server from the install it probed, and the pane runs that one too', () => {
+      const two = installs(NATIVE);
+      const l = launchOn(two, project(), { launchMode: 'fullAuto' });
+      assert.ok(l.command.includes(' --remote unix://'), l.command);
+      assert.deepEqual(calls.spawn.map((sp) => sp.bin), [two.detectedPath], 'the app-server is the detected install');
+      assert.equal(store.startupControlChannels.getOpenBySession(l.session.id).adapterState.enginePath, two.detectedPath);
+      assertPaneRunsWhatWasProbed(two, l.command, NATIVE);
+    });
+
+    for (const [label, version] of [['legacy', LEGACY], ['native', NATIVE]]) {
+      it(`a ${label} relaunch after a dead pane probes again and runs the install it probed`, () => {
+        const two = installs(version);
+        const name = project();
+        const first = launchOn(two, name);
+        assertPaneRunsWhatWasProbed(two, first.command, version);
+        two.probes.length = 0;
+        tmux.probeSession = () => ({ answered: true, live: false });
+        try {
+          const again = launchOn(two, name);
+          assert.notEqual(again.session.id, first.session.id, 'a second launch, not the first one found again');
+          assert.equal(calls.created.length, 2);
+          assertPaneRunsWhatWasProbed(two, again.command, version);
+        } finally {
+          tmux.probeSession = real.probe;
+        }
+      });
+    }
+
+    it('a detected install whose path cannot be written into a command is refused, and neither install is run', () => {
+      const two = installs(LEGACY, 'it\'s-two-installs');
+      const before = store.getDb().prepare('SELECT COUNT(*) AS n FROM sessions').get().n;
+      const { result } = refused(two.detectedPath);
+      assert.equal(result.session, null);
+      assert.equal(result.code, 'LAUNCH_ISOLATION_UNVERIFIED');
+      assert.equal(result.isolation.reasonCode, 'executable_unresolved');
+      assert.deepEqual(two.probes, [], 'the launch does not fall back to asking `codex` by name');
+      assert.equal(calls.spawn.length, 0);
+      assert.equal(store.getDb().prepare('SELECT COUNT(*) AS n FROM sessions').get().n, before, 'no session row was written');
+    });
   });
 
   it('an engine no adapter judges launches on its own command', () => {
