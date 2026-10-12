@@ -73,7 +73,8 @@ const TIMED_OUT = { status: 'unavailable', reason: 'gh api timed out after 10000
 function fakeGithub(over = {}) {
   const answers = {
     readPull: (repo, number) => ({
-      status: 'read', number, state: 'open', merged: false, draft: false, mergeable: true, baseRef: 'main', headSha: HEAD, changedFiles: 2
+      status: 'read', number, state: 'open', merged: false, draft: false, mergeable: true, baseRef: 'main', headSha: HEAD, changedFiles: 2,
+      mergeCommitSha: null
     }),
     readRefTip: { status: 'read', sha: BASE },
     readBranchCheck: (repo, branch) => concluded('success', branch === 'main' ? '500' : '501'),
@@ -211,7 +212,7 @@ describe('merge queue advance: from queued to landed (#2322)', () => {
     gh.calls.length = 0;
     const landed = await step(gh);
     assert.equal(landed.step, STEPS.LANDED);
-    assert.deepEqual(landed.landed, { sha: LANDED, tree: TREE, treeMatches: true });
+    assert.deepEqual(landed.landed, { sha: LANDED, tree: TREE, treeMatches: true, baseMatches: true });
     assert.equal(landed.queueHalted, false);
     assert.equal(landed.cleanup, null);
     assert.deepEqual(landed.branches, { candidate: 'deleted', stage: 'not-found' });
@@ -740,7 +741,7 @@ describe('merge queue advance: a tree that is not the tested one (#2322)', () =>
     const landed = await step(gh);
     assert.equal(landed.step, STEPS.LANDED);
     assert.equal(landed.queueHalted, true);
-    assert.deepEqual(landed.landed, { sha: LANDED, tree: OTHER_TREE, treeMatches: false });
+    assert.deepEqual(landed.landed, { sha: LANDED, tree: OTHER_TREE, treeMatches: false, baseMatches: false });
     assert.match(landed.message, /ITS TREE IS NOT THE TESTED CANDIDATE'S, so the queue HALTED itself/);
     assert.equal(queues.getEntry(entry.entryId).landed.treeMatches, false);
     assert.equal(queues.getQueue(queueId).halt.code, queues.HALT_TREE_MISMATCH);
@@ -748,7 +749,7 @@ describe('merge queue advance: a tree that is not the tested one (#2322)', () =>
     for (let i = 0; i < 2; i++) {
       const halted = fakeGithub();
       const refusal = await refusedStep(halted, REFUSALS.QUEUE_HALTED);
-      assert.match(refusal.message, /Nothing advances until the Operator clears the halt\.$/);
+      assert.match(refusal.message, /Nothing advances until the Operator clears the halt \(docs\/merge-queue\.md, "Clearing a halt"\)\.$/);
       assert.deepEqual(halted.calls, [], 'a halted queue reads nothing');
     }
     assert.equal(queues.getEntry(next.entryId).state, 'queued');
@@ -853,8 +854,12 @@ describe('merge queue advance: what became of a merge that was asked for (#2322)
    * @returns {Function}
    */
   const pullReadBack = (fields) => (repo, number) => ({
-    status: 'read', number, state: 'open', merged: false, draft: false, mergeable: null, baseRef: 'main', headSha: HEAD, changedFiles: 2, ...fields
+    status: 'read', number, state: 'open', merged: false, draft: false, mergeable: null, baseRef: 'main', headSha: HEAD, changedFiles: 2,
+    mergeCommitSha: null, ...fields
   });
+
+  /** A pull request read back as merged by this queue's request. */
+  const MERGED = { state: 'closed', merged: true, mergeCommitSha: LANDED };
 
   /**
    * A GitHub in which the pull request reads as open until the merge has been
@@ -871,12 +876,14 @@ describe('merge queue advance: what became of a merge that was asked for (#2322)
 
   it('reads the pull request after a merge whose answer was not read, and records a landing it finds', async () => {
     const entry = await testing();
-    const gh = afterUnreadMerge({ state: 'closed', merged: true }, { readRefTip: (repo, branch) => ({ status: 'read', sha: gh.names().includes('mergePull') ? LANDED : BASE, branch }) });
+    const gh = afterUnreadMerge(MERGED);
     const landed = await step(gh);
     assert.equal(landed.step, STEPS.LANDED);
-    assert.deepEqual(landed.landed, { sha: LANDED, tree: TREE, treeMatches: true });
+    assert.deepEqual(landed.landed, { sha: LANDED, tree: TREE, treeMatches: true, baseMatches: true });
     assert.equal(gh.names().filter((n) => n === 'mergePull').length, 1);
-    assert.deepEqual(gh.names().slice(gh.names().indexOf('mergePull')), ['mergePull', 'readPull', 'readRefTip', 'readCommit', 'readCommit', 'discardCandidate']);
+    assert.deepEqual(gh.calls.slice(gh.names().indexOf('mergePull')), [
+      ['mergePull', REPO, entry.prNumber, HEAD], ['readPull', REPO, entry.prNumber], ['readCommit', REPO, LANDED], ['discardCandidate', REPO, `tc-queue/${entry.entryId}`]
+    ]);
     assert.equal(queues.getEntry(entry.entryId).state, 'landed');
   });
 
@@ -906,11 +913,11 @@ describe('merge queue advance: what became of a merge that was asked for (#2322)
     assert.equal((await step(stillUnread)).step, STEPS.LANDING_UNKNOWN);
     assert.deepEqual(stillUnread.names(), ['readPull']);
 
-    const merged = fakeGithub({ readPull: pullReadBack({ state: 'closed', merged: true }), readRefTip: { status: 'read', sha: LANDED } });
+    const merged = fakeGithub({ readPull: pullReadBack(MERGED) });
     const landed = await step(merged);
     assert.equal(landed.step, STEPS.LANDED);
     assert.ok(!merged.names().includes('mergePull'), 'a landing entry is never merged a second time');
-    assert.deepEqual(merged.names(), ['readPull', 'readRefTip', 'readCommit', 'readCommit', 'discardCandidate']);
+    assert.deepEqual(merged.names(), ['readPull', 'readCommit', 'discardCandidate']);
     assert.equal(queues.getEntry(entry.entryId).state, 'landed');
   });
 
@@ -926,16 +933,75 @@ describe('merge queue advance: what became of a merge that was asked for (#2322)
     assert.equal(queues.getEntry(entry.entryId).state, 'testing');
   });
 
-  it('does not record a landing on a commit that is not the merge of this head into the candidate\'s base', async () => {
+  it('does not record a landing on a commit that is not a merge of the submitted head, whichever way it learned of the commit', async () => {
+    const notOurs = [[MOVED, sha('1')], [BASE], [BASE, HEAD, sha('1')], [HEAD, BASE]];
+    for (const parents of notOurs) {
+      for (const lost of [false, true]) {
+        const entry = await testing();
+        const readCommit = (repo, commit) => ({ status: 'read', sha: commit, tree: TREE, parents });
+        const gh = lost ? afterUnreadMerge(MERGED, { readCommit }) : fakeGithub({ readCommit });
+        const unknown = await step(gh);
+        const where = `${parents.length} parents, answer ${lost ? 'not read' : 'read'}`;
+        assert.equal(unknown.step, STEPS.LANDING_UNKNOWN, where);
+        assert.equal(unknown.merged, true, where);
+        assert.equal(unknown.mergeSha, LANDED, where);
+        assert.match(unknown.message, /merged as e{40}, but that commit is not a merge of the submitted head a{40}, so the landing is not recorded\. This needs a person\./, where);
+        const left = queues.getEntry(entry.entryId);
+        assert.equal(left.state, 'landing', where);
+        assert.equal(left.landed, null, where);
+        assert.ok(!gh.names().includes('discardCandidate'), where);
+        assert.equal(queues.failEntry(entry.entryId, { code: 'TEST_CLEARED', actor: OWNER }).ok, true);
+      }
+    }
+  });
+
+  it('does not take a commit for the landing when GitHub names none for a merged pull request', async () => {
     const entry = await testing();
-    const gh = afterUnreadMerge({ state: 'closed', merged: true }, { readCommit: (repo, commit) => ({ status: 'read', sha: commit, tree: TREE, parents: [MOVED, sha('1')] }) });
+    const gh = afterUnreadMerge({ state: 'closed', merged: true, mergeCommitSha: null });
     const unknown = await step(gh);
     assert.equal(unknown.step, STEPS.LANDING_UNKNOWN);
     assert.equal(unknown.merged, true);
-    assert.match(unknown.message, /the pull request IS MERGED, but its merge commit is not known: main is at b{40}, which is not the merge of a{40} into b{40}/);
+    assert.match(unknown.message, /the pull request IS MERGED, but GitHub did not say as which commit, so the landing is not recorded\./);
+    assert.ok(!gh.names().slice(gh.names().indexOf('mergePull')).includes('readCommit'), 'no commit is read on a guess');
+    assert.ok(!gh.names().slice(gh.names().indexOf('mergePull')).includes('readRefTip'), 'the base branch\'s tip never stands in');
     assert.equal(queues.getEntry(entry.entryId).state, 'landing');
-    assert.equal(queues.getEntry(entry.entryId).landed, null);
-    assert.ok(!gh.names().includes('discardCandidate'));
+  });
+
+  it('never takes the commit GitHub names for an open pull request as a landing', async () => {
+    // GitHub gives an open pull request a trial merge commit under the same
+    // name. The entry goes back to testing; that commit is not read or recorded.
+    const entry = await testing();
+    const gh = afterUnreadMerge({ state: 'open', merged: false, mergeCommitSha: LANDED });
+    const notMade = await step(gh);
+    assert.equal(notMade.step, STEPS.LANDING_NOT_MADE);
+    assert.ok(!gh.names().includes('readCommit'));
+    const back = queues.getEntry(entry.entryId);
+    assert.equal(back.state, 'testing');
+    assert.equal(back.landed, null);
+  });
+
+  it('records a landing made on a base that had moved, and the tree comparison then decides', async () => {
+    const entry = await testing();
+    const gh = afterUnreadMerge(MERGED, { readCommit: (repo, commit) => ({ status: 'read', sha: commit, tree: OTHER_TREE, parents: [MOVED, HEAD] }) });
+    const landed = await step(gh);
+    assert.equal(landed.step, STEPS.LANDED);
+    assert.equal(landed.queueHalted, true);
+    assert.equal(landed.landed.baseMatches, false);
+    assert.equal(queues.getEntry(entry.entryId).landed.treeMatches, false);
+
+    // The same tree on a moved base is the tested tree: recorded, not halted, and the answer says where it was merged.
+    assert.equal(queues.clearHalt(queueId, { actor: OPERATOR, reference: 'checked by hand' }).ok, true);
+    const second = submit();
+    assert.equal((await step(fakeGithub({ readRefTip: { status: 'read', sha: LANDED } }))).step, STEPS.ASSEMBLED);
+    const same = await step(fakeGithub({
+      readRefTip: { status: 'read', sha: LANDED }, mergePull: { status: 'merged', sha: MOVED },
+      readCommit: (repo, commit) => ({ status: 'read', sha: commit, tree: TREE, parents: [sha('1'), HEAD] })
+    }));
+    assert.equal(same.step, STEPS.LANDED);
+    assert.equal(same.queueHalted, false);
+    assert.deepEqual(same.landed, { sha: MOVED, tree: TREE, treeMatches: true, baseMatches: false });
+    assert.match(same.message, /Its tree is the tested candidate's, though it was merged onto 1{40} and not the candidate's base e{40}\./);
+    assert.equal(queues.getEntry(second.entryId).state, 'landed');
   });
 
   it('says the pull request was merged when the merge commit then cannot be read, and records the landing on the next advance', async () => {
@@ -949,7 +1015,7 @@ describe('merge queue advance: what became of a merge that was asked for (#2322)
     assert.equal(queues.getEntry(entry.entryId).state, 'landing');
     assert.ok(!gh.names().includes('discardCandidate'), 'the candidate stays until the landing is recorded');
 
-    const next = fakeGithub({ readPull: pullReadBack({ state: 'closed', merged: true }), readRefTip: { status: 'read', sha: LANDED } });
+    const next = fakeGithub({ readPull: pullReadBack(MERGED) });
     assert.equal((await step(next)).step, STEPS.LANDED);
     assert.ok(!next.names().includes('mergePull'));
   });
@@ -1046,9 +1112,8 @@ describe('merge queue advance: a caller that may no longer act (#2322)', () => {
     const gh = fakeGithub({ mergePull: { status: 'unavailable', reason: 'gh api timed out after 20000ms', applied: null } });
     gh.set('readPull', (repo, number) => ({
       status: 'read', number, state: gh.names().includes('mergePull') ? 'closed' : 'open', merged: gh.names().includes('mergePull'),
-      draft: false, mergeable: null, baseRef: 'main', headSha: HEAD, changedFiles: 2
+      draft: false, mergeable: null, baseRef: 'main', headSha: HEAD, changedFiles: 2, mergeCommitSha: gh.names().includes('mergePull') ? LANDED : null
     }));
-    gh.set('readRefTip', () => ({ status: 'read', sha: gh.names().includes('mergePull') ? LANDED : BASE }));
     const landed = await step(gh, guardUntil(() => gh.names().includes('mergePull')).guard);
     assert.equal(landed.step, STEPS.LANDED);
     assert.equal(gh.names().filter((n) => n === 'mergePull').length, 1);

@@ -36,9 +36,9 @@ the merge commit has the tree of `main`'s own merge of that pull request
 
 | File | The call | Answer |
 |---|---|---|
-| `pull-merged.json` | read pull request #2331, merged | 200 |
-| `pull-open-draft.json` | read pull request #2217, an open draft | 200 |
-| `pull-not-found.json` | read a pull request that does not exist | 404 |
+| `pull-merged.json` | read pull request #2331, merged (re-recorded, below) | 200 |
+| `pull-open-draft.json` | read pull request #2217, an open draft (re-recorded, below) | 200 |
+| `pull-not-found.json` | read a pull request that does not exist (re-recorded, below) | 404 |
 | `pull-files-page.json` | the one page of #2331's changed files | 200 |
 | `ref-main.json` | read the tip of `main` | 200 |
 | `ref-not-found.json` | read a branch that never existed | 404 |
@@ -94,3 +94,20 @@ already existed.
 
 `pull-merge-DOCUMENTED.json` is the one file that is **not** a recording: see
 the note inside it.
+
+**The pull request reads were recorded again (19:26 UTC)** when `readPull` began
+to ask for `merge_commit_sha`, by the module's own read and nothing else: no
+branch was made and nothing was written. `pull-merged.json`,
+`pull-open-draft.json` and `pull-not-found.json` are the same three pull
+requests as in the first sitting; what differs in them is the time, the
+projection sent, and that field in the two bodies that have one
+(`29354a46`, `main`'s merge of #2331, and `null` for #2217, which GitHub could
+not merge). One recording is new:
+
+| File | The call | Answer |
+|---|---|---|
+| `pull-open-with-merge-sha.json` | read pull request #2360, an open draft GitHub could merge | 200 |
+
+GitHub names a commit for that open pull request (`74e977e0`): a trial merge it
+makes to work out `mergeable`, on no branch. It is why `readPull` answers a
+merge commit only for a pull request it read as merged.

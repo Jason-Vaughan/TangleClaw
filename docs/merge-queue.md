@@ -11,7 +11,7 @@ request at one exact head commit.
 
 | Who | May |
 |---|---|
-| The Operator | make a queue and name its owner; record an entry's Operator gate; read |
+| The Operator | make a queue and name its owner; record an entry's Operator gate; clear a queue's halt; read |
 | A verified live launch of the owner project | submit an entry; withdraw an entry; advance the queue; read |
 | A project that shares a group with the owner | read |
 | Anyone else | nothing. A queue they may not read does not exist for them (`404`) |
@@ -52,6 +52,7 @@ POST /api/merge-queue/entries                      {prNumber, headSha, gates: {r
                                                     operatorGate: "required"|"none", queueId?}   the owner
 POST /api/merge-queue/entries/:id/withdraw         {reason}                                the owner
 POST /api/merge-queue/advance                      {queueId?}                              the owner
+POST /api/merge-queue/:id/clear-halt               {reference}                             Operator only
 POST /api/merge-queue/entries/:id/operator-gate    {reference}                             Operator only
 ```
 
@@ -78,7 +79,7 @@ call waits. Each ordinarily answers in a few seconds: the server reads GitHub se
 submit, each read bounded at 10 seconds, and a withdrawal deletes up to two branches, each bounded
 at 20. An advance does one step and no more, so its longest case is bounded too: making a candidate
 is at most 170 seconds (three reads, the candidate at up to 90, and removing what a failed attempt
-left at up to 40), and landing is at most 170 when the merge's answer has to be read back.
+left at up to 40), and landing is at most 150.
 
 **When the wait runs out.** The server goes on working after `tc` stops waiting, so a submit, a
 withdrawal or an advance that got no answer **may still be running, or may have finished**. `tc`
@@ -186,6 +187,26 @@ compared with the candidate's. **If they differ the landing is still recorded, b
 happened, and the queue halts itself:** every further advance is refused `QUEUE_HALTED` until the
 Operator clears the halt, because the base branch then holds a tree no test passed.
 
+### Clearing a halt (the Operator)
+
+A halt is cleared by the Operator and nobody else, with a sentence saying what was checked or
+decided about the base branch. There is no screen. On the signed-in dashboard, in the browser's
+console, with the queue's id (`tc queue status` prints it on the `HALTED` line's queue):
+
+```js
+tcFetch('/api/merge-queue/mq_0123456789abcdef/clear-halt', {  // the halted queue's id
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ reference: 'what was checked or decided, in at most 300 characters' })
+}).then((r) => r.json()).then(console.log);
+```
+
+The answer is the queue, no longer halted, and `cleared`, the halt that was lifted. The history gets
+`queue-halt-cleared` with the Operator's proof tier, the reference, and the halt's code and time. A
+project launch is refused `403 OPERATOR_ONLY`, the owner included; a queue that is not halted is
+refused `409 QUEUE_NOT_HALTED`; a missing reference `400 INVALID_INPUT`. Clearing a halt changes
+nothing on GitHub and lands nothing: it lets the owner advance again.
+
 ### A failed entry, and a candidate's branches
 
 A failed entry is out of the queue and the next one is at the front; its pull request is untouched
@@ -203,6 +224,18 @@ entry is recorded as what it became. Merged: `landed`, with the tree compared. S
 `testing` with its candidate (`landing-not-made`), for the next advance to check everything anew.
 When that read also fails the entry stays `landing` and the answer says so (`landing-unknown`); the
 next advance starts by reading it again. An entry that is `landing` cannot be withdrawn.
+
+**Which commit is the landing.** The merge request's own answer names it, and when that answer was
+lost, the pull request does: GitHub's `merge_commit_sha`, taken only from a pull request read as
+closed and merged. (GitHub gives an open pull request a commit under the same name, a trial merge
+that is on no branch; `readPull` never answers that one.) Either way that exact commit is then
+read, and it is recorded as the landing only if it is a merge whose second parent is the submitted
+head. A commit that cannot be read, a merged pull request with no commit named, or a commit that is
+not that merge leaves the entry `landing` and says why: nothing is recorded on a guess, and the
+base branch's tip never stands in. A merge that was made on a base that had moved since the candidate
+was made is still this entry's landing and is recorded; the tree comparison then decides, halting
+the queue when the base branch does not hold the tested tree, and the answer says which base it was
+merged onto.
 
 ### Four separate facts
 
@@ -270,7 +303,7 @@ context is the one the owner's rotation bound.
   Codex's `CODEX_THREAD_ID`). While an epoch is active, a call without that header is refused and
   says so.
 - **What is not gated.** Reading (`tc queue status`, `tc queue show`), and everything the Operator
-  does: making a queue and recording the Operator gate.
+  does: making a queue, recording the Operator gate and clearing a halt.
 - **Which refusal comes first.** Who the caller is and whether it owns the queue are settled before
   the gate is asked: a caller that is not a verified launch, or not the owner, gets that refusal
   (`CALLER_NOT_VERIFIED`, `NOT_OWNER`, a queue or entry it may not read as `404`) whatever the
@@ -285,7 +318,7 @@ Every refusal carries a `code` and says what to do next.
 |---|---|---|
 | `CALLER_NOT_VERIFIED` | 403 | not the Operator and not a verified launch |
 | `OPERATOR_UNVERIFIABLE` | 503 | an operator-shaped request this install cannot verify; sign in |
-| `OPERATOR_ONLY` | 403 | making a queue or recording the Operator gate, by anyone else |
+| `OPERATOR_ONLY` | 403 | making a queue, recording the Operator gate or clearing a halt, by anyone else |
 | `NOT_OWNER` | 403 | submitting, withdrawing or advancing, by anyone but the owner's launch |
 | `CONTROL_HELD`, `CONTROL_STOPPED` | 423 | the owner's lane is held or stopped; it cannot submit or advance |
 | `COORDINATOR_FENCED`, `COORDINATOR_EPOCH_MISMATCH` | 409 | the owner's context rotation does not admit this caller for a submit, a withdrawal or an advance (`rotationId`); nothing was changed, except that a call overtaken while deleting may have removed the candidate's branches, and an advance overtaken while a candidate was being made leaves that branch for the next advance to remove |
@@ -293,7 +326,7 @@ Every refusal carries a `code` and says what to do next.
 | `QUEUE_NOT_FOUND`, `ENTRY_NOT_FOUND`, `PROJECT_NOT_FOUND` | 404 | no such thing, or not readable by this caller |
 | `QUEUE_AMBIGUOUS` | 400 | the owner has more than one queue; send `queueId` |
 | `QUEUE_EXISTS`, `QUEUE_RETIRED` | 409 | a second queue for the same base; a queue that takes nothing new and advances nothing |
-| `QUEUE_HALTED` | 409 | the queue halted itself on a landed tree that was not the tested one (`halt`); nothing advances until the Operator clears it |
+| `QUEUE_HALTED`, `QUEUE_NOT_HALTED` | 409 | the queue halted itself on a landed tree that was not the tested one (`halt`), and nothing advances until the Operator clears it; clearing a queue that is not halted |
 | `DUPLICATE_PR` | 409 | the pull request already has an unfinished entry (`entryId`) |
 | `PR_NOT_OPEN`, `PR_WRONG_BASE`, `PR_HEAD_MOVED`, `PR_DRAFT` | 409 | what GitHub says of the pull request |
 | `HEAD_CHECK_NOT_GREEN` | 409 | the head's `test` check is missing, running or not `success` |
@@ -320,17 +353,14 @@ so a submit or an advance is refused).
 - **A held owner can still withdraw.** The durable HOLD ([control-state.md](control-state.md))
   refuses a submit and an advance; a withdrawal takes work out of the queue and is not held. A hold
   stored after a merge was asked for does not stop that merge's outcome being recorded.
-- **A halt has no route to clear it.** The queue halts itself when a landed tree is not the tested
-  one, and only the Operator may clear a halt, but no route does it yet: until one exists a halted
-  queue stays halted.
-- **A landing whose merge answer was lost is found only at the base branch's tip.** When the merge
-  request's answer was not read and the pull request reads back merged, the queue takes the base
-  branch's tip as the landing only if it is exactly the merge of the submitted head into the base
-  the candidate was made on. If something else reached the base branch first, the entry stays
-  `landing`, each advance says the pull request is merged and its commit is not known, and nothing
-  behind it advances.
+- **A landing GitHub will not name stays `landing`.** If a merged pull request is read back with no
+  merge commit, or with one that is not a merge of the submitted head, the entry stays `landing`,
+  every advance says so, and nothing behind it advances. No route moves such an entry; it needs a
+  person and, today, a change to the records by hand.
 - **Nothing has been landed on GitHub by this code.** Every test of an advance runs against a faked
   GitHub. The first real landing is the check after the deploy.
+- **Clearing a halt from the browser console has not been run in a browser.** A test clears one as
+  a signed-in Operator; the console command itself is first run by the Operator.
 - **No answer carries a launch id.** An entry shows which project submitted it, not which launch.
 - **Making the queue from the browser console has not been run in a browser.** A test makes a
   queue as a signed-in Operator with the session's token; the console command itself is first run
@@ -344,7 +374,7 @@ the queue talks to GitHub, so this table is the whole of what the queue can chan
 
 | Function | The call | What it can change |
 |---|---|---|
-| `readPull` | `GET /repos/{repo}/pulls/{number}` | nothing |
+| `readPull` | `GET /repos/{repo}/pulls/{number}` (with the commit a merged one was merged as) | nothing |
 | `readPullFiles` | the same, then `GET /repos/{repo}/pulls/{number}/files`, every page | nothing |
 | `readRefTip` | `GET /repos/{repo}/git/ref/heads/{branch}` | nothing |
 | `readCommit` | `GET /repos/{repo}/git/commits/{sha}` | nothing |

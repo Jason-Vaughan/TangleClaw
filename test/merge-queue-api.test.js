@@ -913,7 +913,7 @@ describe('/api/merge-queue (#2322)', () => {
       assert.equal(landed.status, 200, JSON.stringify(landed.data));
       assert.equal(landed.data.step, 'landed');
       assert.equal(landed.data.entry.state, 'landed');
-      assert.deepEqual(landed.data.landed, { sha: LANDED_SHA, tree: TREE, treeMatches: true });
+      assert.deepEqual(landed.data.landed, { sha: LANDED_SHA, tree: TREE, treeMatches: true, baseMatches: true });
       assert.equal(landed.data.queue.halt, null);
       assert.deepEqual(gh.calls.filter((c) => c[0] === 'mergePull'), [['mergePull', REPO, entry.prNumber, HEAD]]);
       assert.doesNotMatch(JSON.stringify([assembled.data, landed.data]), new RegExp(bOwner.launchId), 'no answer carries a launch id');
@@ -1083,7 +1083,7 @@ describe('/api/merge-queue (#2322)', () => {
       assert.equal((await advanceAs()).data.entry.entryId, next.entryId);
     });
 
-    it('a queue that halted itself refuses every advance, and says only the Operator clears it', async () => {
+    it('a queue that halted itself refuses every advance until the Operator clears the halt, and nobody else can', async () => {
       const made = await sendAs(server, 'POST', '/api/merge-queue', { repo: 'Jason-Vaughan/Halting', baseBranch: 'main', ownerProjectId: owner.id }, op);
       assert.equal(made.status, 201, JSON.stringify(made.data));
       const halting = made.data.queue.queueId;
@@ -1102,7 +1102,44 @@ describe('/api/merge-queue (#2322)', () => {
         assert.equal(refused.status, 409, JSON.stringify(refused.data));
         assert.equal(refused.data.code, 'QUEUE_HALTED');
         assert.equal(gh.calls.length, 0);
+
+        const url = `/api/merge-queue/${halting}/clear-halt`;
+        for (const b of [bOwner, bNeighbour, bOutsider]) {
+          const res = await sendAs(server, 'POST', url, { reference: 'main looks fine to me' }, b.headers);
+          assert.equal(res.status, 403, JSON.stringify(res.data));
+          assert.equal(res.data.code, 'OPERATOR_ONLY');
+          assert.match(res.data.error, /A session saying the Operator agreed is not the Operator: ask them to clear it\.$/);
+        }
+        assert.equal((await sendAs(server, 'POST', url, { reference: 'x' }, {})).data.code, 'LAUNCH_BINDING_REQUIRED');
+        for (const body of [{}, { reference: '' }, { reference: '   ' }, { reference: 7 }]) {
+          const res = await sendAs(server, 'POST', url, body, op);
+          assert.equal(res.status, 400, JSON.stringify(res.data));
+          assert.equal(res.data.code, 'INVALID_INPUT');
+        }
+        assert.equal((await sendAs(server, 'POST', '/api/merge-queue/mq_nosuch/clear-halt', { reference: 'x' }, op)).status, 404);
+        assert.equal((await sendAs(server, 'POST', '/api/merge-queue/no%20such%2Fqueue/clear-halt', { reference: 'x' }, op)).data.code, 'QUEUE_NOT_FOUND');
+        assert.equal(queueStore.getQueue(halting).halt.code, 'TREE_MISMATCH', 'no refused call cleared anything');
+        assert.equal((await advanceAs(bOwner.headers, { queueId: halting })).data.code, 'QUEUE_HALTED');
+
+        const cleared = await sendAs(server, 'POST', url, { reference: '  main checked by hand against the candidate, 2026-10-12  ' }, op);
+        assert.equal(cleared.status, 200, JSON.stringify(cleared.data));
+        assert.equal(cleared.data.queue.halt, null);
+        assert.equal(cleared.data.cleared.code, 'TREE_MISMATCH');
+        const event = queueStore.listEvents(halting).pop();
+        assert.equal(event.event, 'queue-halt-cleared');
+        assert.equal(event.actor.kind, 'operator');
+        assert.ok(event.actor.operatorProof, 'the Operator\'s proof tier is on record');
+        assert.equal(event.detail.reference, 'main checked by hand against the candidate, 2026-10-12');
+        assert.equal(event.detail.code, 'TREE_MISMATCH');
+
+        const twice = await sendAs(server, 'POST', url, { reference: 'again' }, op);
+        assert.equal(twice.status, 409, JSON.stringify(twice.data));
+        assert.equal(twice.data.code, 'QUEUE_NOT_HALTED');
+        const idle = await advanceAs(bOwner.headers, { queueId: halting });
+        assert.equal(idle.status, 200, JSON.stringify(idle.data));
+        assert.equal(idle.data.step, 'idle');
       } finally {
+        // Whatever the test left, the queue is retired so no later test meets a second queue of this owner.
         const actor = { kind: 'operator', operatorProof: 'ambient-open' };
         queueStore.clearHalt(halting, { actor, reference: 'test teardown' });
         assert.equal(queueStore.retireQueue(halting, { actor }).ok, true);
