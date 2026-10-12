@@ -51,12 +51,13 @@ Visual change: no
 
 - New `lib/merge-authority.js`. `forProject(project, { repo, baseBranch })` answers `self`, `integrator` or `unknown`, and never throws. The record is the project's own `workloadNudge.coordinatorProject` setting: naming a coordinator hands the merges to it. Where the repository and base have an active merge queue, its owner must be that coordinator or the project itself; another owner is `unknown`. Settings that cannot be read, a value that is not a project name, a repository that cannot be named and a queue record that cannot be read are all `unknown`. `self` is the answer only when the settings read cleanly and name nobody, and then the queue is not read at all, so a project with no coordinator wraps as before on a repository that has a queue.
 - `lib/wrap-steps/commit.js`: the close-loop asks before it opens the wrap's pull request. Anything but `self` still pushes and opens it, adds a "Who merges this" section to its body, arms nothing, and reports the answer in a new `mergeAuthority` field of `autoPr` with the reason in `remediation`. It is said before the methodology's own withhold, whose instruction would be wrong here. `autoMergeWithheld` is left alone: the wrap drawer reads it as "this engine cannot run the methodology".
-- `lib/wrap-steps/pr-merge.js`: the step asks before its push. Anything but `self` is a `skipped` result that names the pull requests and the reason; nothing is pushed onto the pull request's branch and nothing is enqueued. A project that names no coordinator runs the same commands as before and reads no remote.
-- `docs/configuration-reference.md`: the `workloadNudge` row says what naming a coordinator now also means.
+- `lib/wrap-steps/pr-merge.js`: the step asks after the hold check and before its push. Anything but `self` is a `skipped` result that names the pull requests and the reason; nothing is pushed onto the pull request's branch and nothing is enqueued. A project that names no coordinator runs the same commands as before and reads no remote.
+- `docs/configuration-reference.md`: the `workloadNudge` row says what naming a coordinator now also means; `docs/user-guide.md`, "Wrap commits and protected branches": what such a wrap does and where its reason is shown.
 
 **Tests.** `test/merge-authority.test.js` drives every answer through the real settings reader, registry and queue store. The two step tests gain the lane cases, with `gh` and git replaced at their existing seams. `test/auto-merge-callers.test.js` fails when a file other than the two known ones holds an arming command, or when either stops asking.
 
 **Limits.** The wrap drawer has no sentence of its own for this case: it shows "wrap PR opened (auto-merge NOT armed)" and the reason under *How to fix this*. A project's own session can still remove its coordinator setting. The priming roll is unchanged until chunk 02, and the hold on lane wraps stays until the issue is verified after a deploy.
+
 ## 2026-10-12 — #2059: a native Codex launch is gated by its idle thread and its pane, not a status-line word
 
 <!-- prawduct: type=bugfix | scope=codex-launch-gate-2059 -->

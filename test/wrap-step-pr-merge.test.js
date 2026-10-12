@@ -407,6 +407,21 @@ describe('wrap-step pr-merge — a project whose merges are not its own to decid
     assert.deepEqual(execCalls, []);
   });
 
+  it('a held lane is still refused first, before anyone asks who merges', async () => {
+    let asked = 0;
+    prMerge._internal.mergeAuthority = {
+      ...originals.mergeAuthority,
+      forProject: (...args) => { asked += 1; return originals.mergeAuthority.forProject(...args); }
+    };
+    const c = { ...laneCtx(LANE, { 42: 'merge' }), controlGate: (surface) => (surface === 'pr-merge-push'
+      ? { code: 'LANE_HELD', message: 'held by the coordinator', details: { generation: 3 } } : null) };
+    const result = await prMerge.run(c);
+    assert.equal(result.status, 'blocked');
+    assert.equal(asked, 0);
+    assert.deepEqual(enqueued, []);
+    assert.deepEqual(execCalls, []);
+  });
+
   it('a project that names no coordinator pushes and enqueues exactly as before, and reads no remote', async () => {
     for (const settings of [null, JSON.stringify({ workloadNudge: { enabled: true } }), JSON.stringify({ wrapAutoPrEnabled: true })]) {
       execCalls = [];
