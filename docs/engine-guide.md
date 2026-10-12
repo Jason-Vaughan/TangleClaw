@@ -1282,9 +1282,19 @@ under `[projects]` in Codex's `config.toml` with `trust_level = "trusted"`, or r
 the folder outside TangleClaw and accept its prompt, then Fire again.
 
 The operator's decision is that such a fire may go, without a trust entry, when everything else is
-in order. **That allowance is built and not yet active**: it applies only to versions listed in
-the profile's `startupControl.remoteTrustPrompt.absentOn`, and that list ships empty until a
-signed-in fire has been probed. When a version is listed, the fire goes only if all of this holds:
+in order. **That allowance is active on Codex 0.156.1 and on no other version**: it applies only to
+versions listed in the profile's `startupControl.remoteTrustPrompt.absentOn`, and a version is listed
+only after its own signed-in fire has been probed. 0.156.1 was probed on 2026-10-11 (#2186), by the
+operator's **Fire** in two new folders with no trust entry: both fires were accepted and applied, the
+pane drew no trust dialog, and Codex's config held no trust entry afterwards. In the folder that
+carried its own `.codex/config.toml` and hooks, no hook ran and the folder's config was not applied:
+Codex itself disables project-local config, hooks and exec policies until the project is trusted
+(skills still load), and says so in a startup warning. So a fire sent this way reaches a session
+running on the home's settings, not the folder's. **Not probed signed-in: the automatic launch
+fire.** It goes through the same rule, but only after the launch's own pane gate has seen Codex's
+at-rest marker, and on a Codex home whose status line does not show that marker the launch records
+`pane_not_ready` and the operator fires by hand. For a listed version the fire goes only if all of
+this holds:
 
 - every other check passes (version, account, usage, the launch's own thread loaded and `idle`);
 - a **pane witness** pins the id of the session's one pane (a session with a second pane or window is
@@ -1299,8 +1309,9 @@ signed-in fire has been probed. When a version is listed, the fire goes only if 
   and both reads show: no declared guarded dialog as the live screen; the cursor ON the last bare
   composer row, by its row number, with nothing typed (an earlier composer row that reads the same is
   a different row); nothing below that row but blank rows and at most one status row of the shape
-  Codex draws (indented, items joined by ` · `, and naming no key: a row that says `enter` or `esc`
-  is a dialog's footer); no header still reading `model: loading` as the
+  Codex draws (indented, items joined by ` · `, and naming none of the keys a dialog footer names:
+  a row that says `enter`, `esc`, `tab`, `space` or an arrow is a footer. Codex's own
+  `1 warning · f2 to view` item is part of a status row and passes); no header still reading `model: loading` as the
   newest one (a session that has scrolled its header away passes this); no busy marker; and an
   unchanged pane. A read that does not come back with exactly the pane's height in rows is refused.
   A Codex status line configured down to a single item has no ` · ` and is refused: that fails
