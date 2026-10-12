@@ -35,6 +35,33 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-11 — #2186: Codex 0.156.1 is listed in the folder-trust allowance, on a signed-in probe
+
+<!-- prawduct: type=feature | scope=codex-trust-2186 -->
+
+#2186 Chunk 01 of two. Branch `feat/2186-01-codex-trust-allowance`, from `origin/main` `e4dfaf47`. No schema change and no product code change: profile data, two guides, and two tests.
+
+Visual change: yes
+
+**Why.** PR #2225 built the allowance that lets a Codex startup fire go into a folder with no trust entry when a pane witness sees an empty composer, and shipped it switched off: `startupControl.remoteTrustPrompt.absentOn` was empty until one signed-in fire had been probed through the real `--remote` path (Architect A154). Until then a session launched into a new or renamed folder got no first turn.
+
+**The probe (2026-10-11).** A scratch server on this branch's first commit, on a leased port, loopback only, with its own `TANGLECLAW_HOME`, a private tmux server and a throwaway Codex home holding a copy of the Operator's sign-in file, by the Operator's permission given in this lane's pane. The copy was deleted when the probe ended and neither it nor the original changed. The list was switched on in the scratch home's copy of the profile.
+- A plain new folder: no trust dialog; the Fire was refused `trust_required` with the list empty, and accepted and applied with 0.156.1 listed; the row carried the dispatch note; Codex's config held no trust entry afterwards.
+- A new folder with its own `.codex/config.toml` and hooks: refused `engine_not_ready` while Codex's update prompt was up; accepted and applied once it was skipped. No hook ran and the folder's config was not applied; Codex's own warning says those are disabled until the project is trusted.
+
+**What changed.**
+- `data/engines/codex.json`: `remoteTrustPrompt.absentOn` is `["0.156.1"]`; `evidence.remoteTrustPrompt` is what the probe measured and what it did not; the `blockers` description names the untrusted-entry answer and `pane_not_ready`.
+- `docs/engine-guide.md`, `docs/user-guide.md`: the allowance is active on 0.156.1, what was measured, what still blocks, and that the folder's own Codex config and hooks stay off until the folder is trusted. The guide's status-row sentence now lists the keys the witness treats as a footer's.
+- `test/startup-control.test.js`: a case pinning the shipped list to exactly `["0.156.1"]`, every entry verified, the block valid.
+- `test/startup-control-codex.test.js`: the one case that pinned the shipped list as empty now pins it as listed and asserts the fire goes with its note. Added to the chunk with the Integrator's leave. What the old case proved for an empty, other or missing list is still proved by the case above it.
+
+**Decisions.**
+- [DECISION: the version is listed although the automatic launch fire was not exercised signed-in. | Both probed sends were the operator's Fire: on a Codex home with the default status line the launch's pane gate never saw its at-rest marker and recorded `pane_not_ready` before the allowance was reached. The two callers share one rule and the existing tests cover both; the marker is #2059's subject. The evidence text and both guides say so.]
+- [DECISION: the guide's sample `startupControl` block keeps `"absentOn": []`. | It is the shape for any engine, not Codex's profile.]
+
+**Browser look.** Done before the merge by an automated browser run, not yet seen by the Operator: on a scratch server on the branch's head, the Launch readiness panel's applied fire row shows the note and wraps with no sideways overflow at desktop, 375 and 320. The two narrow widths were the page in a same-origin frame, because the browser window would not shrink. Recorded as VRF-004; the Operator's own look is owed after the deploy.
+
+**Not covered.** What a wake does in a folder with a not-trusted entry (it needs the Medusa Bridge, and a scratch server would register on the live one). The automatic fire, as above. One real launch into a new folder on the live install, after the deploy.
 ## 2026-10-11 — #2322: the merge queue's records and its state machine (schema v64)
 
 <!-- prawduct: type=feature | scope=2322-integrator-merge-queue -->

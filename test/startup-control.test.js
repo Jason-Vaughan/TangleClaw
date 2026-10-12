@@ -243,6 +243,16 @@ describe('startupControl resolve', () => {
       codex._internal._version.version = saved;
     }
   });
+
+  it('the codex profile lists exactly the versions measured to draw no trust dialog (#2186)', () => {
+    const p = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));
+    const block = p.capabilities.startupControl;
+    assert.deepEqual(block.remoteTrustPrompt.absentOn, ['0.156.1']);
+    for (const version of block.remoteTrustPrompt.absentOn) {
+      assert.ok(block.verifiedVersions.includes(version), `${version} is listed for the allowance and not verified`);
+    }
+    assert.deepEqual(sc.blockErrors(block), []);
+  });
 });
 
 describe('observeActivity: the generic facade over the optional adapter method (#1628)', () => {
