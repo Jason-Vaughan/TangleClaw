@@ -35,6 +35,21 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-11 — #2186: the Codex trust allowance, towards listing 0.156.1
+
+<!-- prawduct: type=feature | scope=codex-trust-2186 -->
+
+#2186 Chunk 01 of two. Branch `feat/2186-01-codex-trust-allowance`, from `origin/main` `e4dfaf47`. No schema change, no code change: profile data, two guides and one pinned test.
+
+Visual change: yes
+
+**Why.** PR #2225 built the allowance that lets a Codex startup fire go into a folder with no trust entry when a pane witness sees an empty composer, and shipped it switched off: `startupControl.remoteTrustPrompt.absentOn` is empty until one signed-in fire has been probed through the real `--remote` path (Architect A154). This chunk runs that probe and lists the version on its evidence.
+
+**What changed so far.**
+- `data/engines/codex.json`: the `startupControl.blockers` description now names two answers the code already gives and the description left out: an entry that says anything other than trusted is `trust_required` and never gets the allowance, and a pane not seen at an empty composer on the allowance path is `pane_not_ready`.
+
+**Not done at this commit.** The A154 probe has not run: it needs the Operator's signed-in Codex account, and their permission has not been given in this lane's own pane. Until it has run, `absentOn` stays empty, and the pinned test, the guides and the evidence text are not on the branch.
+
 ## 2026-10-11 — #2268: the landing page shows the launch identity report as a banner
 
 <!-- prawduct: type=bugfix | scope=2268-launch-identity-not-inherited -->
