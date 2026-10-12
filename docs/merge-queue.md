@@ -48,16 +48,17 @@ Every function answers with a `status` and never throws.
 - `createCandidate` answers `created` (with the merge commit, its tree and its parents),
   `conflict`, `nothing-to-merge` (the base already holds the head), `ref-exists` (a branch of that
   name was already there and was not touched) or `unavailable`. Every answer carries `refCreated`:
-  whether a branch now exists because of this call, so the caller knows there is one to delete.
+  whether a branch now exists because of this call. That is what says there is a branch to delete,
+  whatever the status: a merge GitHub refused leaves the branch it was to go into.
 - `deleteRef` answers `deleted`, `not-found` (already gone) or `unavailable`.
 - `mergePull` answers `merged` (with the merge commit), `head-moved`, `not-mergeable` or
   `unavailable`.
 
 **`unavailable` never means "no".** It means the answer was not read: `gh` is missing or not signed
 in, the call ran out of time, GitHub answered with an error, or the answer was not what the call
-expects. A write that answers `unavailable` also says what is known of its effect: `applied: false`
-when GitHub answered with a refusal and changed nothing, `applied: null` when the outcome is not
-known. A merge that timed out may have happened, so its caller reads the pull request before it
+expects. `deleteRef` and `mergePull`, which each make one write, also say what is known of its
+effect: `applied: false` when GitHub answered with a refusal and changed nothing, `applied: null`
+when the outcome is not known. `createCandidate` makes two writes and answers `refCreated` instead. A merge that timed out may have happened, so its caller reads the pull request before it
 decides anything.
 
 **A file list is `unavailable` unless it is known to be whole.** GitHub lists at most 3000 files for

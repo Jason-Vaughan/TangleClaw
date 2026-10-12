@@ -1,10 +1,10 @@
 'use strict';
 
 // #2322: every GitHub read and write the merge queue makes. `gh` is replaced at
-// the seam by exchanges the module itself recorded against the real repository
-// (test/fixtures/merge-queue-github/README.md says when, from what, and which
-// one file is written from GitHub's documentation instead). No test calls
-// GitHub.
+// the seam by exchanges recorded against the real repository
+// (test/fixtures/merge-queue-github/README.md says when, from what, which two
+// were sent by the probe and not by the module, and which one file is written
+// from GitHub's documentation instead). No test calls GitHub.
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
@@ -430,7 +430,7 @@ describe('merge-queue-github — making a candidate', () => {
       const r = await gq.createCandidate(REPO, CANDIDATE, BASE, HEAD);
       assert.equal(r.status, 'unavailable', JSON.stringify(parents));
       assert.equal(r.refCreated, true);
-      assert.equal(r.applied, null);
+      assert.ok(!('applied' in r));
     }
   });
 
@@ -445,23 +445,25 @@ describe('merge-queue-github — making a candidate', () => {
   it('says the branch was not made when GitHub refuses to create it, and that it is not known after a timeout', async () => {
     gh(refused(422, 'Object does not exist'));
     const no = await gq.createCandidate(REPO, CANDIDATE, BASE, HEAD);
-    assert.deepEqual([no.status, no.applied, no.refCreated], ['unavailable', false, false]);
+    assert.deepEqual([no.status, no.refCreated], ['unavailable', false]);
     assert.match(no.reason, /HTTP 422: Object does not exist/);
     gh(TIMED_OUT);
     const unknown = await gq.createCandidate(REPO, CANDIDATE, BASE, HEAD);
-    assert.deepEqual([unknown.status, unknown.applied, unknown.refCreated], ['unavailable', null, null]);
+    assert.deepEqual([unknown.status, unknown.refCreated], ['unavailable', null]);
     gh(refused(502, 'Bad Gateway'));
     const gateway = await gq.createCandidate(REPO, CANDIDATE, BASE, HEAD);
-    assert.deepEqual([gateway.applied, gateway.refCreated], [null, null]);
+    assert.equal(gateway.refCreated, null);
   });
 
-  it('says the branch exists when the merge into it is refused or its outcome is not known', async () => {
+  it('says the branch exists when the merge into it is refused or its outcome is not known, and never that nothing changed', async () => {
     gh(recorded('ref-created'), refused(404, 'Head does not exist'));
     const no = await gq.createCandidate(REPO, CANDIDATE, BASE, HEAD);
-    assert.deepEqual([no.status, no.applied, no.refCreated], ['unavailable', false, true]);
+    assert.deepEqual([no.status, no.refCreated], ['unavailable', true]);
+    assert.ok(!('applied' in no));
     gh(recorded('ref-created'), TIMED_OUT);
     const unknown = await gq.createCandidate(REPO, CANDIDATE, BASE, HEAD);
-    assert.deepEqual([unknown.status, unknown.applied, unknown.refCreated], ['unavailable', null, true]);
+    assert.deepEqual([unknown.status, unknown.refCreated], ['unavailable', true]);
+    assert.ok(!('applied' in unknown));
   });
 
   it('writes only under refs/heads/tc-queue/, and refuses any other branch before gh is called', async () => {
@@ -469,7 +471,7 @@ describe('merge-queue-github — making a candidate', () => {
     for (const ref of ['main', 'v5-baseline', 'feat/x', 'tc-queue', 'tc-queue/', 'tc-queue/a/b', 'tc-queue/../main', 'tc-queue/.hidden',
       'tc-queue/a.lock', 'tc-queue/a.', 'refs/heads/tc-queue/a', 'TC-QUEUE/a', ' tc-queue/a', 'tc-queue/a b', `tc-queue/${'a'.repeat(101)}`, '', null, undefined, 7]) {
       const r = await gq.createCandidate(REPO, ref, BASE, HEAD);
-      assert.deepEqual([r.status, r.applied, r.refCreated], ['unavailable', false, false], String(ref));
+      assert.deepEqual([r.status, r.refCreated], ['unavailable', false], String(ref));
       assert.match(r.reason, /one name under tc-queue\//);
     }
     assert.equal(calls.length, 0);

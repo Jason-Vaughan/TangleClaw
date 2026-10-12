@@ -1,10 +1,14 @@
 # Recorded GitHub exchanges for `lib/merge-queue-github.js`
 
-Each `.json` file here is one `gh api -i` call the module itself made against
+Each `.json` file here is one `gh api -i` call made against
 `Jason-Vaughan/TangleClaw` on 2026-10-12 (`capturedAt` in each file), with the
 arguments it sent (`args`), the exit code, the HTTP status line, the body after
 the response headers, and what `gh` wrote to stderr. The response headers are
-not kept. `test/merge-queue-github.test.js` replays them in place of `gh`.
+not kept. The module's own functions made every call but two:
+`merge-nothing.json` and `merge-conflict.json` were sent by the probe script
+itself, to the same endpoint with a commit message of its own and no `--jq`,
+because the module only merges into a branch it has just created. Their
+answers carry no projected body, so they read the same either way. `test/merge-queue-github.test.js` replays them in place of `gh`.
 
 The write calls come from one throwaway branch, created at `6ee1f14b` (`main`
 before pull request #2331), with `1aa8f5de` (that pull request's head) merged
