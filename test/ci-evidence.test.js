@@ -557,6 +557,8 @@ describe('ci-evidence — the git steps against a real repository', () => {
     initRepo(remote, ['--bare', '--initial-branch=main'], { env: ENV });
     cloneRepo(remote, clone, [], { env: ENV });
     const sh = at(clone);
+    // Named here, not left to git: an older git does not carry an empty remote's branch name across a clone.
+    sh('symbolic-ref', 'HEAD', 'refs/heads/main');
     fs.writeFileSync(path.join(clone, 'a.txt'), 'one\n');
     sh('add', 'a.txt');
     sh('commit', '--quiet', '-m', 'one');
