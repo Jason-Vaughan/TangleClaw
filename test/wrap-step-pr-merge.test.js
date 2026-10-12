@@ -5,10 +5,18 @@
  * gate staged, after `commit` has landed.
  */
 
-const { describe, it, before, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const prMerge = require('../lib/wrap-steps/pr-merge');
+const store = require('../lib/store');
+const queues = require('../lib/merge-queue-store');
+const { setLevel } = require('../lib/logger');
+
+setLevel('error');
 
 describe('wrap-step pr-merge — staged-resolution discovery', () => {
   it('finds the gate\'s staged entry by shape, not by step id', () => {
@@ -255,6 +263,172 @@ describe('wrap-step pr-merge — handler', () => {
     assert.equal(result.ok, true);
     assert.equal(result.status, 'skipped');
     assert.match(result.output.reason, /requires context\.project\.path/);
+  });
+});
+
+// #2320 — a project that names a coordinator has given its merges away. The
+// settings are real files read by the real reader; only git and `gh` are
+// replaced, and every call to either is recorded.
+describe('wrap-step pr-merge — a project whose merges are not its own to decide (#2320)', () => {
+  let originals;
+  let tmpDir;
+  let execCalls;
+  let enqueued;
+
+  before(() => {
+    originals = { ...prMerge._internal };
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pr-merge-authority-'));
+    // A real store, so the merge queue's record is read rather than assumed.
+    store._setBasePath(fs.mkdtempSync(path.join(tmpDir, 'store-')));
+    store.init();
+  });
+
+  after(() => {
+    store.close();
+    Object.assign(prMerge._internal, originals);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    Object.assign(prMerge._internal, originals);
+    execCalls = [];
+    enqueued = [];
+    prMerge._internal.enqueueAutoMerge = async (cwd, number) => { enqueued.push(number); return { ok: true, reason: null }; };
+    prMerge._internal.execShell = async (command) => { execCalls.push(command); return { exitCode: 0, stdout: '', stderr: '' }; };
+    prMerge._internal.exec = async (file, args) => {
+      execCalls.push(args.join(' '));
+      if (args[0] === 'remote') return { exitCode: 0, stdout: 'https://github.com/example/sandbox.git\n', stderr: '' };
+      if (args[0] === 'rev-parse') return { exitCode: 0, stdout: 'feat/x\n', stderr: '' };
+      if (args[0] === 'rev-list') return { exitCode: 0, stdout: '1\n', stderr: '' };
+      return { exitCode: 0, stdout: '', stderr: '' };
+    };
+  });
+
+  /**
+   * A context for a project whose settings file holds `settings`.
+   * @param {string|null} settings - The whole content of `.tangleclaw/project.json`; null writes none
+   * @param {Record<string,string>} resolutions - `{prNumber: handling}`
+   * @param {Record<string,string>} [bases] - `{prNumber: baseRefName}`; a PR not named has base `main`
+   * @returns {object}
+   */
+  function laneCtx(settings, resolutions, bases = {}) {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'p-'));
+    if (settings !== null) {
+      fs.mkdirSync(path.join(dir, '.tangleclaw'));
+      fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), settings);
+    }
+    return {
+      // An id no project of this file's store has, so no queue here is "its own".
+      project: { name: 'lane-a', path: dir, id: 4242 },
+      step: { id: 'apply-pr-resolutions' },
+      previousResults: [],
+      staged: {
+        'open-pr-check': {
+          branch: 'feat/x',
+          sessionScoped: Object.keys(resolutions).map((n) => ({ number: Number(n), baseRefName: bases[n] || 'main' })),
+          resolutions
+        }
+      },
+      options: {}
+    };
+  }
+
+  const LANE = JSON.stringify({ workloadNudge: { enabled: true, coordinatorProject: 'integrator' } });
+
+  /**
+   * Assert the step enqueued nothing, pushed nothing and did not fail the wrap.
+   * @param {object} result - The step's result
+   * @returns {void}
+   */
+  function assertNothingArmed(result) {
+    assert.equal(result.ok, true, 'a merge that is not this project\'s to make never strands the wrap');
+    assert.equal(result.status, 'skipped');
+    assert.deepEqual(result.blockers, []);
+    assert.deepEqual(enqueued, [], 'no auto-merge is enqueued');
+    assert.equal(execCalls.some((c) => /^push\b/.test(c)), false, 'nothing is pushed onto the pull request\'s branch');
+    assert.equal(execCalls.some((c) => /gh pr merge/.test(c)), false);
+    assert.equal(result.output.pushed, false);
+    assert.match(result.output.reason, /was not pushed\.$/);
+  }
+
+  it('a coordinator named: enqueues nothing, pushes nothing, and names the coordinator and the PRs', async () => {
+    const c = laneCtx(LANE, { 42: 'merge', 7: 'merge', 9: 'defer' });
+    const result = await prMerge.run(c);
+    assertNothingArmed(result);
+    assert.deepEqual(result.output.notEnqueued.sort(), ['42', '7']);
+    assert.match(result.output.reason, /^merge not enqueued for PRs #7, #42: This project's merges belong to integrator/);
+    assert.equal(result.output.mergeAuthority['42'].authority, 'integrator');
+    assert.equal(result.output.mergeAuthority['42'].source, 'coordinator');
+    assert.deepEqual(result.output.resolutions, { 42: 'merge', 7: 'merge', 9: 'defer' });
+    assert.equal(c.staged['open-pr-check'].applied, undefined, 'nothing was applied, so nothing is recorded as applied');
+  });
+
+  it('asks the queue of each pull request\'s own base branch', async () => {
+    const asked = [];
+    prMerge._internal.mergeAuthority = {
+      ...originals.mergeAuthority,
+      forProject: (project, where) => { asked.push(where || null); return originals.mergeAuthority.forProject(project, where); }
+    };
+    // A queue for `release` only, owned by a project the lane does not name.
+    const stranger = store.projects.create({ name: 'stranger', path: fs.mkdtempSync(path.join(tmpDir, 'str-')) });
+    const made = queues.createQueue({ repo: 'example/sandbox', baseBranch: 'release', ownerProjectId: stranger.id, actor: { kind: 'operator', operatorProof: 'verified-session' } });
+    assert.equal(made.ok, true, made.message);
+    const result = await prMerge.run(laneCtx(LANE, { 42: 'merge', 7: 'merge' }, { 7: 'release' }));
+    assertNothingArmed(result);
+    assert.deepEqual(asked, [null, { repo: 'example/sandbox', baseBranch: 'release' }, { repo: 'example/sandbox', baseBranch: 'main' }]);
+    assert.equal(result.output.mergeAuthority['7'].authority, 'unknown');
+    assert.match(result.output.mergeAuthority['7'].reason, /example\/sandbox release is owned by stranger/);
+    assert.equal(result.output.mergeAuthority['42'].authority, 'integrator');
+    assert.match(result.output.reason, /owned by stranger.*belong to integrator/, 'each distinct reason is said once');
+  });
+
+  it('settings that cannot be read: enqueues nothing and says what could not be read', async () => {
+    const result = await prMerge.run(laneCtx('{ "workloadNudge": ', { 42: 'merge' }));
+    assertNothingArmed(result);
+    assert.equal(result.output.mergeAuthority['42'].authority, 'unknown');
+    assert.match(result.output.reason, /merge not enqueued for PR #42: Who merges for this project could not be established: this project's settings/);
+  });
+
+  it('a remote that cannot be read: enqueues nothing, since no queue could be looked up', async () => {
+    prMerge._internal.exec = async (file, args) => {
+      execCalls.push(args.join(' '));
+      return { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository' };
+    };
+    const result = await prMerge.run(laneCtx(LANE, { 42: 'merge' }));
+    assertNothingArmed(result);
+    assert.match(result.output.reason, /repository could not be named/);
+  });
+
+  it('the methodology\'s refusal still comes first, as before', async () => {
+    const c = { ...laneCtx(LANE, { 42: 'merge' }), methodology: { disposition: 'capability-unavailable', engineId: 'codex', capability: 'prawduct-methodology', reason: 'the codex engine cannot run the Prawduct plugin' } };
+    const result = await prMerge.run(c);
+    assert.equal(result.status, 'capability-unavailable');
+    assert.deepEqual(enqueued, []);
+    assert.deepEqual(execCalls, []);
+  });
+
+  it('a project that names no coordinator pushes and enqueues exactly as before, and reads no remote', async () => {
+    for (const settings of [null, JSON.stringify({ workloadNudge: { enabled: true } }), JSON.stringify({ wrapAutoPrEnabled: true })]) {
+      execCalls = [];
+      enqueued = [];
+      const result = await prMerge.run(laneCtx(settings, { 42: 'merge' }));
+      assert.equal(result.status, 'done');
+      assert.equal(result.output.enqueued, 1);
+      assert.equal(result.output.pushed, true);
+      assert.equal(result.output.mergeAuthority, undefined);
+      assert.deepEqual(enqueued, ['42']);
+      assert.deepEqual(execCalls, ['rev-parse --abbrev-ref HEAD', 'rev-list --count origin/feat/x..HEAD', 'push -u origin feat/x']);
+    }
+  });
+
+  it('enqueues nothing for any answer but self, whatever the answer holds', async () => {
+    for (const answer of [null, undefined, {}, { authority: 'unknown' }, { authority: 'integrator', integrator: 'x' }, { authority: 'SELF' }]) {
+      enqueued = [];
+      execCalls = [];
+      prMerge._internal.mergeAuthority = { ...originals.mergeAuthority, forProject: () => answer };
+      const result = await prMerge.run(laneCtx(null, { 42: 'merge' }));
+      assertNothingArmed(result);
+    }
   });
 });
 

@@ -34,6 +34,9 @@ setLevel('error');
 
 const commitStep = require('../lib/wrap-steps/commit');
 const store = require('../lib/store');
+const queues = require('../lib/merge-queue-store');
+
+const OPERATOR = { kind: 'operator', operatorProof: 'verified-session' };
 
 const PR_URL = 'https://github.com/example/sandbox/pull/12';
 
@@ -47,6 +50,18 @@ function optOutOfAutoPr(projectPath) {
   const cfg = store.projectConfig.load(projectPath);
   cfg.wrapAutoPrEnabled = false;
   store.projectConfig.save(projectPath, cfg);
+  execSync('git add -f .tangleclaw/project.json && git commit --quiet -m config', { cwd: projectPath, shell: '/bin/sh' });
+}
+
+/**
+ * Write this project's `workloadNudge` setting and commit it, so it is project
+ * history rather than a new file the wrap would ask about (#1724).
+ * @param {string} projectPath - The sandbox repo.
+ * @param {string} text - The whole content of `.tangleclaw/project.json`.
+ */
+function commitSettings(projectPath, text) {
+  fs.mkdirSync(path.join(projectPath, '.tangleclaw'), { recursive: true });
+  fs.writeFileSync(path.join(projectPath, '.tangleclaw', 'project.json'), text);
   execSync('git add -f .tangleclaw/project.json && git commit --quiet -m config', { cwd: projectPath, shell: '/bin/sh' });
 }
 
@@ -278,6 +293,132 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
     assert.match(body, /## Why/);
     assert.match(body, /- Bumped 1\.0\.0 → 1\.1\.0 \(minor\)/,
       'PR body must include the wrap commit body lines');
+  });
+
+  // #2320 — a project that names a coordinator has given its merges away: the
+  // wrap still preserves the work in a pull request, and arms nothing.
+  describe('#2320 — a project whose merges are not its own to decide', () => {
+    const LANE = JSON.stringify({ workloadNudge: { enabled: true, coordinatorProject: 'integrator' } });
+
+    /**
+     * Assert the wrap opened its pull request and armed nothing.
+     * @param {object} result - The commit step's result
+     * @returns {object} `output.autoPr`
+     */
+    function assertOpenAndUnarmed(result) {
+      assert.equal(result.status, 'done', 'the wrap still commits');
+      const ap = result.output.autoPr;
+      assert.equal(ap.pushed, true, 'the work is preserved on the remote');
+      assert.equal(ap.prUrl, PR_URL, 'the pull request is opened');
+      assert.equal(ap.autoMergeArmed, false);
+      assert.equal(calls.filter((c) => c.key === 'gh-merge').length, 0, 'gh pr merge must not run');
+      assert.equal(ap.error, null, 'not arming is deliberate, not a failure');
+      assert.equal(ap.autoMergeWithheld, null, 'that field means the engine cannot run the methodology');
+      assert.match(ap.remediation, /auto-merge was deliberately not armed/);
+      assert.ok(ap.remediation.includes(ap.mergeAuthority.said), 'the remediation carries the reason');
+      assert.match(currentBranch(), /^wrap\//, 'HEAD stays on the wrap branch when nothing guarantees the merge');
+      const body = calls.find((c) => c.key === 'gh-create').args.slice(-1)[0];
+      assert.match(body, /## Who merges this\nAuto-merge is not armed, on purpose\. /);
+      assert.ok(body.includes(ap.mergeAuthority.said), 'the pull request says who merges it');
+      const rows = autoPrRows();
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].detail.stranded, false, 'an open pull request is not a stranded wrap');
+      return ap;
+    }
+
+    it('a coordinator named: opens the PR, arms nothing, and names the coordinator', async () => {
+      commitSettings(projectPath, LANE);
+      interceptExec();
+      const ap = assertOpenAndUnarmed(await commitStep.run(buildContext()));
+      assert.deepEqual(
+        { authority: ap.mergeAuthority.authority, integrator: ap.mergeAuthority.integrator, source: ap.mergeAuthority.source },
+        { authority: 'integrator', integrator: 'integrator', source: 'coordinator' }
+      );
+      assert.match(ap.remediation, /belong to integrator.*integrator merges this pull request/);
+    });
+
+    it('a coordinator named and confirmed by its queue for this repository and base', async () => {
+      const integrator = store.projects.create({ name: `integrator-${path.basename(projectPath)}`, path: fs.mkdtempSync(path.join(tmpDir, 'int-')) });
+      const made = queues.createQueue({ repo: `example/${path.basename(projectPath)}`, baseBranch: 'main', ownerProjectId: integrator.id, actor: OPERATOR });
+      assert.equal(made.ok, true, made.message);
+      commitSettings(projectPath, JSON.stringify({ workloadNudge: { coordinatorProject: integrator.name } }));
+      interceptExec({ remote: { exitCode: 0, stdout: `git@github.com:example/${path.basename(projectPath)}.git\n`, stderr: '' } });
+      const ap = assertOpenAndUnarmed(await commitStep.run(buildContext()));
+      assert.equal(ap.mergeAuthority.source, 'coordinator-and-queue');
+      assert.equal(ap.mergeAuthority.integrator, integrator.name);
+    });
+
+    it('a queue owned by someone other than the coordinator named: arms nothing and says the two disagree', async () => {
+      const stranger = store.projects.create({ name: `stranger-${path.basename(projectPath)}`, path: fs.mkdtempSync(path.join(tmpDir, 'str-')) });
+      const made = queues.createQueue({ repo: `example/${path.basename(projectPath)}`, baseBranch: 'main', ownerProjectId: stranger.id, actor: OPERATOR });
+      assert.equal(made.ok, true, made.message);
+      commitSettings(projectPath, LANE);
+      interceptExec({ remote: { exitCode: 0, stdout: `https://github.com/example/${path.basename(projectPath)}.git\n`, stderr: '' } });
+      const ap = assertOpenAndUnarmed(await commitStep.run(buildContext()));
+      assert.equal(ap.mergeAuthority.authority, 'unknown');
+      assert.match(ap.remediation, new RegExp(`name integrator as coordinator, but the merge queue .* is owned by ${stranger.name}`));
+    });
+
+    it('settings that cannot be read: arms nothing and says what could not be read', async () => {
+      commitSettings(projectPath, '{ "workloadNudge": { "coordinatorProject": "integr');
+      interceptExec();
+      const ap = assertOpenAndUnarmed(await commitStep.run(buildContext()));
+      assert.equal(ap.mergeAuthority.authority, 'unknown');
+      assert.match(ap.remediation, /could not be established: this project's settings .* could not be read/);
+    });
+
+    it('a coordinator named on a remote that is not github.com: arms nothing, since no queue could be looked up', async () => {
+      commitSettings(projectPath, LANE);
+      interceptExec({ remote: { exitCode: 0, stdout: 'https://gitlab.com/example/sandbox.git\n', stderr: '' } });
+      const ap = assertOpenAndUnarmed(await commitStep.run(buildContext()));
+      assert.equal(ap.mergeAuthority.authority, 'unknown');
+      assert.match(ap.remediation, /repository could not be named/);
+    });
+
+    it('says the lane reason, not the methodology one, when the engine also cannot run the methodology', async () => {
+      commitSettings(projectPath, LANE);
+      interceptExec();
+      const ctx = buildContext();
+      ctx.methodology = { onboarded: true, available: false, disposition: 'capability-unavailable', engineId: 'gemini', capability: 'prawduct-methodology', reason: 'the gemini engine cannot run the Prawduct plugin' };
+      const ap = assertOpenAndUnarmed(await commitStep.run(ctx));
+      assert.doesNotMatch(ap.remediation, /session that can run the methodology/);
+    });
+
+    it('a held lane is still refused at the push, before anyone asks who merges', async () => {
+      commitSettings(projectPath, LANE);
+      interceptExec();
+      let asked = 0;
+      commitStep._internal.mergeAuthority = {
+        ...originals.mergeAuthority,
+        forProject: (...args) => { asked += 1; return originals.mergeAuthority.forProject(...args); }
+      };
+      const ctx = buildContext();
+      ctx.controlGate = (surface) => (surface === 'wrap-push'
+        ? { code: 'LANE_HELD', message: 'held by the coordinator', details: { generation: 3 } } : null);
+      const result = await commitStep.run(ctx);
+      const ap = result.output.autoPr;
+      assert.equal(ap.pushed, false);
+      assert.match(ap.skippedReason, /^LANE_HELD/);
+      assert.equal(ap.mergeAuthority, null);
+      assert.equal(asked, 0);
+      assert.equal(calls.some((c) => c.key === 'push' || c.key === 'gh-create' || c.key === 'gh-merge'), false);
+    });
+
+    it('a project that names no coordinator arms exactly as before, whatever queue its repository has', async () => {
+      const other = store.projects.create({ name: `other-${path.basename(projectPath)}`, path: fs.mkdtempSync(path.join(tmpDir, 'oth-')) });
+      const made = queues.createQueue({ repo: `example/${path.basename(projectPath)}`, baseBranch: 'main', ownerProjectId: other.id, actor: OPERATOR });
+      assert.equal(made.ok, true, made.message);
+      commitSettings(projectPath, JSON.stringify({ workloadNudge: { enabled: true } }));
+      interceptExec({ remote: { exitCode: 0, stdout: `https://github.com/example/${path.basename(projectPath)}.git\n`, stderr: '' } });
+      const result = await commitStep.run(buildContext());
+      const ap = result.output.autoPr;
+      assert.equal(ap.autoMergeArmed, true);
+      assert.equal(ap.mergeAuthority, null);
+      assert.equal(ap.remediation, null);
+      assert.deepEqual(calls.find((c) => c.key === 'gh-merge').args, ['pr', 'merge', PR_URL, '--auto', '--squash', '--delete-branch']);
+      assert.doesNotMatch(calls.find((c) => c.key === 'gh-create').args.slice(-1)[0], /Who merges this/);
+      assert.equal(currentBranch(), 'main');
+    });
   });
 
   it('wrapAutoPrEnabled:false skips the close-loop entirely (no push attempted)', async () => {
