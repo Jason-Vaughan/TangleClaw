@@ -17,7 +17,8 @@
  * command makes itself, between two reads of the tree. `--base` names the
  * branch the commit is headed for, which the command cannot always derive; a
  * wrong one can only make it refuse, or bind the file to a base its reader can
- * see.
+ * see. It is for before the merge: once a pull request is merged GitHub no
+ * longer names it on its run, and the command refuses.
  *
  * The file changes nothing a gate accepts. No rule lets it stand in for the
  * full local suite: see docs/lane-ci-evidence.md.
@@ -125,6 +126,19 @@ async function ghRead(apiPath, projection) {
 function readJob(repo, checkRunId) {
   return ghRead(`repos/${repo}/actions/jobs/${checkRunId}`,
     '{id: .id, run_id: .run_id, head_sha: .head_sha, workflow_name: .workflow_name}');
+}
+
+/**
+ * Read the workflow run a job belongs to: what started it, on which commit,
+ * and for a pull request's run, the pull requests GitHub says it was for.
+ *
+ * @param {string} repo - `owner/name`
+ * @param {string} workflowRunId - The workflow run's id
+ * @returns {Promise<{ok: true, value: object}|{ok: false, reason: string}>}
+ */
+function readRun(repo, workflowRunId) {
+  return ghRead(`repos/${repo}/actions/runs/${workflowRunId}`,
+    '{id: .id, event: .event, head_sha: .head_sha, pull_requests: [.pull_requests[] | {head_sha: .head.sha, base_ref: .base.ref}]}');
 }
 
 /**
@@ -272,11 +286,51 @@ function requireJob(read, check, head) {
 }
 
 /**
+ * Hold the workflow run to having tested HEAD against the base the file
+ * binds, and answer with the event that started it.
+ *
+ * A pull request's run tests the head merged into the pull request's own base
+ * branch. So the base named here says nothing about what CI tested unless the
+ * run itself is of a pull request into that branch. A push run merges nothing:
+ * it tested the commit's own tree. Every other event, and a pull request's run
+ * that names no pull request of HEAD into this base, refuses. GitHub leaves
+ * that list empty once the pull request is merged and for one from a fork.
+ *
+ * This is one of two checks on the base and neither replaces the other:
+ * `requireBase` shows the merge a pull request's run tested has HEAD's own tree.
+ *
+ * @param {{ok: boolean, value?: object, reason?: string}} read - An answer of `readRun`
+ * @param {{workflowRunId: string}} check - Output of `requireCheck`
+ * @param {string} branch - The base branch's name
+ * @param {string} head - HEAD's full id
+ * @returns {string} `push` or `pull_request`
+ */
+function requireRun(read, check, branch, head) {
+  const at = `workflow run ${check.workflowRunId}`;
+  if (!read || !read.ok) throw new Refusal(`${at} could not be read: ${read && read.reason ? read.reason : 'no answer'}`);
+  const run = read.value;
+  if (!run || typeof run !== 'object' || String(run.id) !== check.workflowRunId || !Array.isArray(run.pull_requests)) {
+    throw new Refusal(`${at} is not the run GitHub answered with`);
+  }
+  if (run.head_sha !== head) throw new Refusal(`${at} is a run of another commit (${String(run.head_sha)}), not of HEAD`);
+  if (run.event === 'push') return run.event;
+  if (run.event !== 'pull_request') {
+    throw new Refusal(`${at} was started by the event ${String(run.event)}, and only a push or a pull request's run is read as CI's test of a commit`);
+  }
+  if (!run.pull_requests.some((pr) => pr && pr.head_sha === head && pr.base_ref === branch)) {
+    throw new Refusal(`${at} names no pull request of HEAD into ${branch}: CI did not test this commit against that base, `
+      + 'or the pull request is merged or comes from a fork');
+  }
+  return run.event;
+}
+
+/**
  * Hold the base branch's tip, as GitHub gives it, to being inside HEAD.
  *
- * With the base's tip inside the head, the tree CI tested for the head is the
- * head's own tree whatever the base was when the run started, so no time is
- * compared; a base that moved after the run is simply not inside HEAD.
+ * With the base's tip inside the head, the merge a pull request's run tested
+ * has the head's own tree whatever the base was when the run started, so no
+ * time is compared; a base that moved after the run is simply not inside HEAD.
+ * Which base the run merged is `requireRun`'s to show.
  *
  * @param {{ok: boolean, value?: object, reason?: string}} read - An answer of `readBaseTip`
  * @param {string} branch - The base branch's name
@@ -389,6 +443,7 @@ async function gather(parsed, seams) {
   const check = requireCheck(await seams.readCheck(repository, before.head, CHECK_NAME), before.head);
   const workflowName = requireJob(await seams.readJob(repository, check.runId), check, before.head);
   const branch = readBaseBranch(git, remote, parsed.base);
+  const event = requireRun(await seams.readRun(repository, check.workflowRunId), check, branch, before.head);
   const base = requireBase(await seams.readBaseTip(repository, branch), branch, before.head, git);
   const sha256 = readLedger(ledgerPath);
 
@@ -402,7 +457,7 @@ async function gather(parsed, seams) {
 
   return {
     repository,
-    check: { ...check, workflowName },
+    check: { ...check, workflowName, event },
     head: before.head,
     tree: before.tree,
     base,
@@ -439,6 +494,7 @@ function writeEvidence(dir, evidence) {
  * @param {function(string[]): {status: (number|null), stdout: string}} [io.git] - Runs git in the repository
  * @param {function(string, string, string): Promise<object>} [io.readCheck] - Reads the named check on a commit
  * @param {function(string, string): Promise<object>} [io.readJob] - Reads the job a check run claims to be
+ * @param {function(string, string): Promise<object>} [io.readRun] - Reads the workflow run a job belongs to
  * @param {function(string, string): Promise<object>} [io.readBaseTip] - Reads a branch's tip from GitHub
  * @param {function(object): object} [io.runComplement] - Runs the complement and answers with its verdict
  * @param {function(): Date} [io.now] - The clock
@@ -453,6 +509,7 @@ async function main(argv, io = {}) {
     git: io.git || runGit,
     readCheck: io.readCheck || readCheck,
     readJob: io.readJob || readJob,
+    readRun: io.readRun || readRun,
     readBaseTip: io.readBaseTip || readBaseTip,
     runComplement: io.runComplement || runComplement,
     now: io.now || (() => new Date()),
@@ -469,7 +526,7 @@ async function main(argv, io = {}) {
   const file = writeEvidence(io.evidenceDir || EVIDENCE_DIR, evidence);
   const { check, base, complement } = evidence;
   out.write(`CI evidence written: ${file}\n`
-    + `  the \`${check.name}\` check (run ${check.runId}, workflow "${check.workflowName}", workflow run ${check.workflowRunId}) concluded ${check.conclusion} on ${evidence.head}\n`
+    + `  the \`${check.name}\` check (run ${check.runId}, workflow "${check.workflowName}", ${check.event} run ${check.workflowRunId}) concluded ${check.conclusion} on ${evidence.head}\n`
     + `  the base branch ${base.branch} is at ${base.tip}, which is inside HEAD\n`
     + `  the complement is green: ${complement.entriesRan} of ${complement.entriesTotal} ledger entries ran here\n`
     + 'This file changes nothing a gate accepts: no rule in force lets it stand in for the full local suite.\n');
@@ -478,8 +535,8 @@ async function main(argv, io = {}) {
 
 module.exports = {
   Refusal, CHECK_NAME, EVIDENCE_DIR, GITHUB_REMOTE,
-  readTree, readRemote, readRepository, readBaseBranch, requireCheck, requireJob, requireBase, readLedger,
-  requireComplement, parseArgs, gather, writeEvidence, readJob, readBaseTip, main, _internal
+  readTree, readRemote, readRepository, readBaseBranch, requireCheck, requireJob, requireRun, requireBase, readLedger,
+  requireComplement, parseArgs, gather, writeEvidence, readJob, readRun, readBaseTip, main, _internal
 };
 
 if (require.main === module) {

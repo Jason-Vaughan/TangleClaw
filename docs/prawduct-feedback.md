@@ -230,9 +230,13 @@ re-read or re-derived by the gate, not taken from the file:
 - **Exact head and tree.** The file's `head` is the commit the gate is asked about and
   `tree` is that commit's tree. Evidence for a parent, or for the same commit before a
   rebase, is not evidence.
-- **Base inside head.** The base branch's tip is an ancestor of the head, so what CI
-  tested for the head is the head's own tree and not a merge with a base that has
-  since moved.
+- **The run's own base.** A pull request's CI run tests the head merged into that
+  pull request's base branch. The run is a push of the head, or a pull request of the
+  head into the base the file names; a run for a pull request into another branch
+  tested a different merge.
+- **Base inside head.** The base branch's tip is an ancestor of the head, so the merge
+  CI tested has the head's own tree and not one with a base that has since moved.
+  This and the item above are both needed; neither stands in for the other.
 - **The skip ledger's digest.** CI is allowed to skip a listed set of tests. The file
   carries the digest of that list; the gate would check it against the list at the
   commit.

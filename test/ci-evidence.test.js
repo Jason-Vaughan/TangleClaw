@@ -33,6 +33,11 @@ const GREEN = Object.freeze({
 /** The job GitHub answers for that check run. */
 const JOB = Object.freeze({ id: 114790000001, run_id: 38245150001, head_sha: HEAD, workflow_name: 'Tests' });
 
+/** The workflow run GitHub answers for that job: a pull request's run, of HEAD into main. */
+const RUN = Object.freeze({
+  id: 38245150001, event: 'pull_request', head_sha: HEAD, pull_requests: [{ head_sha: HEAD, base_ref: 'main' }]
+});
+
 /**
  * A green complement verdict over the two entries of `LEDGER`, as `runComplement` returns one.
  *
@@ -96,6 +101,7 @@ function fakeGit(overrides = {}) {
  * @param {Object<string, object|function>} [opts.git] - Overrides for the git seam
  * @param {object} [opts.check] - What `readCheck` answers
  * @param {object} [opts.job] - What `readJob` answers
+ * @param {object} [opts.workflowRun] - What `readRun` answers
  * @param {object} [opts.baseTip] - What `readBaseTip` answers
  * @param {function(object, string): object} [opts.complement] - The complement seam; handed its io and the folder
  * @param {string|null} [opts.ledger] - The ledger's text, or null for no file
@@ -115,7 +121,7 @@ async function run(t, opts = {}) {
     fs.writeFileSync(file, opts.existing);
   }
   const { git, calls: gitCalls } = fakeGit(opts.git);
-  const seen = { check: [], job: [], baseTip: [], complement: [] };
+  const seen = { check: [], job: [], workflowRun: [], baseTip: [], complement: [] };
   let out = '';
   const code = await evidence.main(opts.argv || [], {
     stdout: { write: (s) => { out += s; } },
@@ -125,6 +131,7 @@ async function run(t, opts = {}) {
     now: () => new Date(NOW),
     readCheck: async (...args) => { seen.check.push(args); return opts.check || GREEN; },
     readJob: async (...args) => { seen.job.push(args); return opts.job || { ok: true, value: JOB }; },
+    readRun: async (...args) => { seen.workflowRun.push(args); return opts.workflowRun || { ok: true, value: RUN }; },
     readBaseTip: async (...args) => { seen.baseTip.push(args); return opts.baseTip || { ok: true, value: { name: args[1], sha: BASE_TIP } }; },
     runComplement: (io) => { seen.complement.push(io); return (opts.complement || greenRun)(io, dir); }
   });
@@ -154,7 +161,7 @@ describe('ci-evidence — the file a green run writes', () => {
       repository: REPO,
       check: {
         name: 'test', runId: '114790000001', workflowRunId: '38245150001', app: 'github-actions',
-        conclusion: 'success', completedAt: '2026-10-12T12:10:00.000Z', workflowName: 'Tests'
+        conclusion: 'success', completedAt: '2026-10-12T12:10:00.000Z', workflowName: 'Tests', event: 'pull_request'
       },
       head: HEAD,
       tree: TREE,
@@ -180,6 +187,7 @@ describe('ci-evidence — the file a green run writes', () => {
     const r = await run(t);
     assert.deepEqual(r.seen.check, [[REPO, HEAD, 'test']]);
     assert.deepEqual(r.seen.job, [[REPO, '114790000001']]);
+    assert.deepEqual(r.seen.workflowRun, [[REPO, '38245150001']]);
     assert.deepEqual(r.seen.baseTip, [[REPO, 'main']]);
   });
 
@@ -219,8 +227,24 @@ describe('ci-evidence — the file a green run writes', () => {
     });
   });
 
+  it('accepts a push run of HEAD, which merged nothing, and records the event', async (t) => {
+    const r = await run(t, { workflowRun: { ok: true, value: { ...RUN, event: 'push', pull_requests: [] } } });
+    assert.equal(r.code, 0, r.out);
+    assert.equal(JSON.parse(fs.readFileSync(r.file, 'utf8')).check.event, 'push');
+    assert.equal(r.gitCalls.includes(`merge-base --is-ancestor ${BASE_TIP} ${HEAD}`), true, 'the base tip is still held inside HEAD');
+  });
+
+  it('accepts a pull request\'s run that names several pull requests when one is of HEAD into the base', async (t) => {
+    const prs = [{ head_sha: OTHER, base_ref: 'main' }, { head_sha: HEAD, base_ref: 'v5-baseline' }, { head_sha: HEAD, base_ref: 'main' }];
+    const r = await run(t, { workflowRun: { ok: true, value: { ...RUN, pull_requests: prs } } });
+    assert.equal(r.code, 0, r.out);
+  });
+
   it('binds to the base named with --base, and reads that branch\'s tip', async (t) => {
-    const r = await run(t, { argv: ['--base', 'release/5.33'] });
+    const r = await run(t, {
+      argv: ['--base', 'release/5.33'],
+      workflowRun: { ok: true, value: { ...RUN, pull_requests: [{ head_sha: HEAD, base_ref: 'release/5.33' }] } }
+    });
     assert.equal(r.code, 0, r.out);
     assert.deepEqual(r.seen.baseTip, [[REPO, 'release/5.33']]);
     assert.deepEqual(JSON.parse(fs.readFileSync(r.file, 'utf8')).base, { branch: 'release/5.33', tip: BASE_TIP });
@@ -355,6 +379,51 @@ describe('ci-evidence — each refusal alone writes no file and names its fact',
 
   it('the job does not name its workflow', async (t) => {
     assertRefused(await run(t, { job: { ok: true, value: { ...JOB, workflow_name: null } } }), /read without its workflow's name/);
+  });
+
+  it('the workflow run cannot be read', async (t) => {
+    const r = await run(t, { workflowRun: { ok: false, reason: 'gh api timed out' } });
+    assertRefused(r, /workflow run 38245150001 could not be read: gh api timed out/);
+    assert.deepEqual(r.seen.complement, []);
+  });
+
+  it('the workflow run answered is another run, or is malformed', async (t) => {
+    for (const value of [{ ...RUN, id: 9 }, { ...RUN, pull_requests: null }, null]) {
+      assertRefused(await run(t, { workflowRun: { ok: true, value } }), /is not the run GitHub answered with/);
+    }
+  });
+
+  it('the workflow run is of another commit', async (t) => {
+    assertRefused(await run(t, { workflowRun: { ok: true, value: { ...RUN, head_sha: OTHER } } }),
+      new RegExp(`is a run of another commit \\(${OTHER}\\), not of HEAD`));
+  });
+
+  it('the workflow run was started by an event that is neither a push nor a pull request', async (t) => {
+    for (const event of ['workflow_dispatch', 'pull_request_target', 'schedule', undefined]) {
+      assertRefused(await run(t, { workflowRun: { ok: true, value: { ...RUN, event } } }), /only a push or a pull request's run is read/);
+    }
+  });
+
+  it('a pull request\'s run into another base than the one bound: CI tested a different merge', async (t) => {
+    const r = await run(t, { workflowRun: { ok: true, value: { ...RUN, pull_requests: [{ head_sha: HEAD, base_ref: 'v5-baseline' }] } } });
+    assertRefused(r, /names no pull request of HEAD into main: CI did not test this commit against that base/);
+    assert.deepEqual(r.seen.complement, []);
+  });
+
+  it('a pull request\'s run that names no pull request: one that is merged, or from a fork', async (t) => {
+    assertRefused(await run(t, { workflowRun: { ok: true, value: { ...RUN, pull_requests: [] } } }),
+      /names no pull request of HEAD into main.*merged or comes from a fork/);
+  });
+
+  it('a pull request\'s run whose pull request into the base is of another commit', async (t) => {
+    assertRefused(await run(t, { workflowRun: { ok: true, value: { ...RUN, pull_requests: [{ head_sha: OTHER, base_ref: 'main' }] } } }),
+      /names no pull request of HEAD into main/);
+  });
+
+  it('a pull request\'s run into the right base still refuses when the base\'s tip is not inside HEAD', async (t) => {
+    const r = await run(t, { git: { [`merge-base --is-ancestor ${BASE_TIP} ${HEAD}`]: { status: 1, stdout: '' } } });
+    assertRefused(r, /which is not inside HEAD/);
+    assert.equal(r.seen.workflowRun.length, 1, 'the run was read and accepted first: the two checks are separate');
   });
 
   it('the remote\'s default branch is not recorded and no base is named', async (t) => {
@@ -520,6 +589,13 @@ describe('ci-evidence — reading GitHub', () => {
     assert.equal(calls[0][0], 'api');
     assert.equal(calls[0][1], `repos/${REPO}/actions/jobs/114790000001`);
     assert.match(calls[0][3], /id: \.id, run_id: \.run_id, head_sha: \.head_sha, workflow_name: \.workflow_name/);
+  });
+
+  it('reads a workflow run by its id, keeping its event, its commit and each pull request\'s head and base', async (t) => {
+    const calls = fakeGh(t, answered(JSON.stringify(RUN)));
+    assert.deepEqual(await evidence.readRun(REPO, '38245150001'), { ok: true, value: RUN });
+    assert.equal(calls[0][1], `repos/${REPO}/actions/runs/38245150001`);
+    assert.match(calls[0][3], /event: \.event, head_sha: \.head_sha, pull_requests: \[\.pull_requests\[\] \| \{head_sha: \.head\.sha, base_ref: \.base\.ref\}\]/);
   });
 
   it('reads a branch\'s tip, a slash in the name kept as a path', async (t) => {

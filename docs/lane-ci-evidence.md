@@ -208,16 +208,28 @@ running on the same host.
 | 3 | the repository is the remote's | the remote's URL cannot be read or names no GitHub repository |
 | 4 | the `test` check on HEAD concluded with success | it cannot be read, does not exist, has not finished, or concluded any other way |
 | 5 | the check run is a GitHub Actions job of HEAD | another app made it; its link names no workflow run as its own job; or GitHub's record of the job (`actions/jobs/<check run id>`) cannot be read, is of another commit, or belongs to another workflow run than the link names |
-| 6 | the base branch's tip, read from GitHub, is inside HEAD | the tip cannot be read, or is not an ancestor of HEAD |
-| 7 | the ledger compiles | `test/skip-ledger.json` is missing or invalid |
-| 8 | the complement, run by this command, is green | it is red (its lines are printed) or did not run to a verdict |
-| 9 | nothing moved while it ran | the tree is no longer clean, HEAD is another commit, or the ledger's bytes changed |
+| 6 | the workflow run tested HEAD against the base branch | the run (`actions/runs/<workflow run id>`) cannot be read or is of another commit; it was started by anything but a push or a pull request; or it is a pull request's run that names no pull request of HEAD into the base branch |
+| 7 | the base branch's tip, read from GitHub, is inside HEAD | the tip cannot be read, or is not an ancestor of HEAD |
+| 8 | the ledger compiles | `test/skip-ledger.json` is missing or invalid |
+| 9 | the complement, run by this command, is green | it is red (its lines are printed) or did not run to a verdict |
+| 10 | nothing moved while it ran | the tree is no longer clean, HEAD is another commit, or the ledger's bytes changed |
 
-Step 6 is how "CI ran against the current base" is checked without comparing times. On a pull
-request CI tests the head merged into the base as the base was when the run started. When the
-base's tip is already inside the head, that merge is the head's own tree, whatever the base was
-then. A base that has moved since is not inside the head, so it is refused: bring the base in, push,
-and let CI run on the result.
+Steps 6 and 7 together are how "CI ran against the current base" is checked without comparing
+times. Neither replaces the other.
+
+On a pull request CI tests the head merged into the pull request's own base branch, as that branch
+was when the run started. Step 6 shows which branch that was: the run must name a pull request of
+HEAD into the base the file binds. A pull request aimed at another branch gets a green check for a
+different merge, and is refused. A push run merged nothing and tested the commit's own tree.
+
+Step 7 then shows the merge had HEAD's own tree. When the base's tip is already inside the head,
+merging the head into the base gives the head's tree, whatever the base was when the run started.
+A base that has moved since is not inside the head, so it is refused: bring the base in, push, and
+let CI run on the result.
+
+**Run it before the merge.** GitHub stops naming a pull request on its run once the pull request is
+merged, so step 6 refuses afterwards. It also refuses a pull request from a fork, whose run names
+no pull request either.
 
 ### Nothing you type supplies a fact
 
@@ -228,7 +240,7 @@ names any of these is refused.
 
 `--base` is the one input, because the branch a commit is headed for is not always something the
 command can derive; it defaults to the remote's default branch. A wrong base can only make the
-command refuse at step 6, or bind the file to a base its reader can see in it.
+command refuse at step 6 or 7, or bind the file to a base its reader can see in it.
 
 ### The file
 
@@ -242,8 +254,9 @@ committed. A file already at that path is replaced only by a successful run and 
 | `check.runId`, `check.app`, `check.conclusion`, `check.completedAt` | the newest run of that name on HEAD | GitHub's check runs for the commit |
 | `check.workflowRunId` | the workflow run the check run belongs to | the check run's link, then confirmed against the job |
 | `check.workflowName` | the workflow the job belongs to | GitHub's record of the job |
+| `check.event` | what started the workflow run: `push` or `pull_request` | GitHub's record of the workflow run |
 | `head`, `tree` | the full ids of HEAD and of its tree | git |
-| `base.branch`, `base.tip` | the base branch and the tip of it that is inside HEAD | `--base` or the remote's default; GitHub |
+| `base.branch`, `base.tip` | the base branch, which a pull request's run was shown to be into, and the tip of it that is inside HEAD | `--base` or the remote's default; GitHub |
 | `ledger.path`, `ledger.sha256` | the ledger, and the digest of its bytes | the file |
 | `complement.ok`, `complement.entriesRan`, `complement.entriesTotal` | the complement's verdict and how many entries ran here | the run this command made |
 | `complement.entries[]` | for each ledger entry its `id`, `verdict`, `detail`, and under `requires` what this machine measured for each value it requires | the same run |
@@ -274,7 +287,8 @@ The text proposed for the lane's Builder rule:
 > **CI as the suite.** For a chunk, the required CI check stands as the full suite when all of
 > these hold, and `node scripts/ci-evidence.js` is what establishes them: the `test` check
 > concluded successfully on the exact head commit; GitHub Actions made it, as a job of that commit;
-> the command itself read it; the base branch's tip is inside the head; the complement was green on
+> the command itself read it; its run was a push of that commit or a pull request of it into the
+> base branch; the base branch's tip is inside the head; the complement was green on
 > the same tree in the same run; and the chunk's own narrow tests passed. The evidence is the file
 > the command writes. Nobody writes or edits one by hand.
 >
