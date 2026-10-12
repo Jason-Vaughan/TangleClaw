@@ -355,6 +355,7 @@ const medusa = require('./lib/medusa');
 const controlState = require('./lib/control-state');
 const controlApi = require('./lib/control-api');
 const controlGate = require('./lib/control-gate');
+const mergeQueueApi = require('./lib/merge-queue-api');
 const { resolveControlCaller, isOperatorShaped } = require('./lib/control-auth');
 const medusaExchanges = require('./lib/medusa-exchanges');
 const medusaWatchdog = require('./lib/medusa-watchdog');
@@ -8411,6 +8412,40 @@ controlRoute('POST', '/api/control/assignments/:id/ack', (req, params, body) => 
 controlRoute('POST', '/api/control/assignments/:id/exchange-closed', (req, params, body) => controlApi.closeExchange(req, params, body), 'control-mutate');
 controlRoute('GET', '/api/control/mine', (req) => controlApi.mine(req));
 controlRoute('GET', '/api/control/check', (req) => controlApi.check(parseQuery(reqUrl(req).search)));
+
+// ── Merge queue (#2322): make a queue, submit, read, withdraw, record the Operator gate ──
+//
+// The handlers live in lib/merge-queue-api.js. Nothing here lands anything.
+
+/**
+ * Register one merge queue route.
+ * @param {string} method - HTTP method
+ * @param {string} pattern - Route pattern
+ * @param {(req: object, params: object, body: object) => ({status: number, body: object}|Promise<{status: number, body: object}>)} fn - Handler
+ * @returns {void}
+ */
+function mergeQueueRoute(method, pattern, fn) {
+  route(method, pattern, async (req, res, params, body) => {
+    let out;
+    try {
+      out = await fn(req, params, body);
+    } catch (err) { // prawduct:allow prawduct/broad-except -- a queue request that did not finish must never read as accepted: a QueueError keeps its own status and code, and anything else (the store threw) is the fail-closed 503
+      if (err instanceof mergeQueueApi.QueueError) {
+        return errorResponse(res, err.status, err.message, err.code, err.details);
+      }
+      log.error('Merge queue unavailable', { method, pattern, error: err.message });
+      return errorResponse(res, 503, 'The merge queue could not answer. Read the queue again before repeating the request.', 'MERGE_QUEUE_UNAVAILABLE');
+    }
+    jsonResponse(res, out.status, out.body);
+  });
+}
+
+mergeQueueRoute('POST', '/api/merge-queue', (req, _params, body) => mergeQueueApi.createQueue(req, body));
+mergeQueueRoute('GET', '/api/merge-queue', (req) => mergeQueueApi.listQueues(req));
+mergeQueueRoute('GET', '/api/merge-queue/entries/:id', (req, params) => mergeQueueApi.getEntry(req, params));
+mergeQueueRoute('POST', '/api/merge-queue/entries', (req, _params, body) => mergeQueueApi.submit(req, body));
+mergeQueueRoute('POST', '/api/merge-queue/entries/:id/withdraw', (req, params, body) => mergeQueueApi.withdraw(req, params, body));
+mergeQueueRoute('POST', '/api/merge-queue/entries/:id/operator-gate', (req, params, body) => mergeQueueApi.recordOperatorGate(req, params, body));
 // The Master's mount (#996). Deliberately the SAME family rather than a subset:
 // the outbound gate, not a missing route, is what a read-only Master meets.
 registerMedusaRoutes('/api/master/medusa', resolveMasterMedusaTarget);

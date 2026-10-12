@@ -58,6 +58,31 @@ Visual change: no
 
 **Limits.** It is a wide run: every test file is loaded. It changes nothing a gate accepts; no rule lets it, with CI, stand in for the suite yet. `scripts/test-skip-audit.js` and the ledger are unchanged. `caddyfile:live` reads the install's own home, so it measures the machine's live install and not a scratch one.
 
+## 2026-10-12 — #2322: make a merge queue, submit to it, read it, withdraw, record the Operator gate
+
+<!-- prawduct: type=feature | scope=2322-integrator-merge-queue -->
+
+#2322 Chunk 04. Branch `feat/2322-04-queue-api`, from `origin/main` `ad6f2cbb`. The issue stays open. Nothing lands yet: assembling and landing are the next chunk.
+
+Visual change: no
+
+**Why.** Chunks 01 to 03 and 02b built the queue's records, its GitHub calls and the CI trigger, and nothing could reach any of it. This chunk is the first surface: the Operator makes the queue and names its owner, the owner submits an exact pull request head with its gates, and anyone entitled reads the order.
+
+**What changed.**
+
+- New `lib/merge-queue-api.js`: six handlers. The caller is resolved by `control-auth#resolveControlCaller`, so the Operator needs a proof tier and a project is a verified live launch. `createQueue` and `recordOperatorGate` are the Operator's alone. `submit` and `withdraw` are the owner project's launch alone, the Operator excluded. `listQueues` and `getEntry` answer the Operator, the owner and a project that shares a group with the owner; to anyone else a queue or entry is a 404. `submit` reads the pull request, its head's `test` check and its file list from GitHub and refuses a closed, draft, wrong-base or moved pull request, a check that is not a concluded success, and any read that failed. A held or stopped owner cannot submit (`control-gate#checkMutation`). `withdraw` calls `discardCandidate` first for an entry that has a candidate or is assembling one, and leaves the entry in the queue unless both branches are gone. No answer carries a launch id.
+- `lib/merge-queue-state.js`: `RELEASE_TRIGGER_PATHS` (`version.json`, `.github/workflows/release.yml`), `releaseTriggerPaths`, and the refusal code `RELEASE_TRIGGER_CHANGED`. Submit refuses a pull request that changes one, and refuses when the file list is not known whole.
+- `server.js`: the six routes, registered through one wrapper that turns a `QueueError` into the `{error, code}` body and anything else into a 503.
+- `lib/tc-verbs.js`: verb `queue` with `status`, `submit`, `show`, `withdraw`. It is in the roster and in `tc`'s usage and **not** in the verb list panes are primed with (`primed: false`): adding it took the ecosystem primer section five characters past its cap, and that cap is not this chunk's to raise. So `CLAUDE.md` and the prime golden files are unchanged.
+- `docs/merge-queue.md`: who may do what, the routes, the Operator's command, `tc queue`, each refusal code, the limits; and two sentences owed from chunk 02b's review.
+- `.prawduct/project-state.yaml`: the API versioning and error-model decisions, recorded for the first time: unversioned `/api`, `{error, code}`.
+- Tests: new `test/merge-queue-api.test.js` (every route as the Operator, the owner, a group neighbour, an outsider and an unbound caller, over an in-process server with GitHub faked at the module's seam), new `test/tc-queue-verb.test.js`, new `test/merge-queue-release-guard.test.js` (reads `release.yml` and fails if it watches a path the list does not name, loses its `paths` filter or gains another trigger). `test/launch-binding-routes.test.js`: the four state-changing queue routes are named and none is reachable unidentified. `test/ecosystem-primer.test.js`: one pin, the verbs left unprimed with the candidate switch on are now `queue`.
+
+**From the reviews.** The Operator's command in the doc uses the dashboard's `tcFetch`: a bare `fetch` carries no CSRF token and a signed-in install refuses it, which the first draft of the doc missed; a test now makes a queue as a signed-in Operator. `submit` asks the HOLD gate twice, before the GitHub reads and immediately before the write. The `ENTRY_ID_UNUSABLE` refusal reads its own withdrawal's answer and says which happened. The test of what a refusal says reads every refusal body answered in the file, in place of one that searched the source.
+
+**What an operator sees.** Nothing until they make a queue with the command in `docs/merge-queue.md`. After that the owner project's session can run `tc queue submit` and anyone in its group `tc queue status`.
+
+**Limits.** Nothing assembles a candidate or merges. A held owner can still withdraw. A coordinator mid-rotation is not fenced from these routes. The Operator's command has not been run against a live install. The store mints entry ids, so an id that could not name a branch is caught after the entry is written and withdrawn at once, not refused before.
 ## 2026-10-12 — #2321: every skip-ledger entry says what a host must have, and the audit refuses one that does not
 
 <!-- prawduct: type=feature | scope=2321-ci-as-suite-evidence -->
