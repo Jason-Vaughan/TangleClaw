@@ -537,6 +537,7 @@ describe('medusa-wake — _assessPane: a row that starts with the prompt glyph b
     });
 
     it('the same rows with the selector row gone read at-prompt, so the selector row is what refuses', () => {
+      /** The pane with its selector row taken out; fails if the row is not there. */
       const without = (pane, selector) => {
         assert.ok(pane.includes(selector), selector);
         return pane.filter((row) => row !== selector);
@@ -592,6 +593,7 @@ describe('medusa-wake — _assessPane: a row that starts with the prompt glyph b
       const held = composerHolding('❯', ' ', text);
       return { lines: ['❯ ', '', '⏺ Done.', RULE, ...held.rows, RULE, CLAUDE_FOOTER, ...below], cursor: held.cursor };
     };
+    /** The same for Antigravity, whose composer is drawn between two rules. */
     const agPane = (text, below = []) => {
       const held = composerHolding('>', ' ', text);
       return { lines: ['>', '', '  DONE', RULE, ...held.rows, RULE, AG_FOOTER, ...below], cursor: held.cursor };
@@ -662,6 +664,7 @@ describe('medusa-wake — _assessPane: an engine whose header says it is still s
   const LOADING = ['╭──────────────────────────────────╮', '│ >_ OpenAI Codex (v0.156.1)       │', '│ model:     loading   /model to change │', '╰──────────────────────────────────╯'];
   const NAMED = ['╭──────────────────────────────────╮', '│ >_ OpenAI Codex (v0.156.1)       │', '│ model:     GPT-6-Astra   /model to change │', '╰──────────────────────────────────╯'];
   const COMPOSER = ['', '› Ask Codex to do anything', '', '  GPT-6-Astra default · /tmp/proj'];
+  /** The pane gate with the channel's idle answer, which excuses the at-rest marker. */
   const underIdle = (lines, profile = CODEX) => wake._assessPane(lines, profile, null, true);
 
   it('the bundled Codex profile declares the header and its starting marker; the other two declare neither', () => {

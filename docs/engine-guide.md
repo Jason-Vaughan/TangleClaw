@@ -795,8 +795,10 @@ established session the header has scrolled away. Both are regex sources, not su
 header pads its value to the width of its box (`model:     loading`), so the run of spaces between
 label and value is not fixed. Each must need some text to match: a pattern that matches the empty
 string is refused when the profile is read, as is one field declared without the other. Codex
-declares them; the launch's pane witness (`lib/pane-witness.js`) reads the same two patterns from
-this block, so the startup fire and the wake cannot disagree about what "still starting" looks like.
+declares them, and its adapter hands the same two compiled patterns to the startup fire's pane
+witness (`lib/pane-witness.js`), so the fire and the wake cannot disagree about what "still starting"
+looks like. A Codex profile that declares neither leaves the witness with no header to ask about, so
+the trust-free fire is held as `pane_not_ready`, naming the two fields, until they are restored.
 
 | Field | What it is |
 |-------|------------|
