@@ -25,9 +25,9 @@
  * verified versions, which a block below reads.
  *
  * The trust and update dialogs are whole reads, each saying which screen Codex
- * drew it on (#2187). That is what decides the pane gate's answer: a dialog on
- * the main screen keeps the opening composer row above it, and one on the
- * alternate screen does not.
+ * drew it on (#2187). A dialog on the main screen keeps the opening composer
+ * row above it, and one on the alternate screen does not; the pane gate holds
+ * both, by different rules, and a block below pins which rule holds which.
  */
 
 const { describe, it, beforeEach, afterEach, after } = require('node:test');
@@ -53,6 +53,7 @@ const PROVEN_CLI_VERSIONS = ['0.155.1', '0.156.1', '0.159.0', '0.161.0'];
 const PROVENANCE = ['live-capture', 'derived'];
 
 const IDLE = { channel: 'present', state: 'idle', reasonCode: 'thread-idle' };
+const HELD = { channel: 'present', state: 'held', reasonCode: 'folder-untrusted' };
 
 /**
  * What the engine's channel can answer. `open` is whether the session has a
@@ -65,6 +66,8 @@ const CHANNEL_ANSWERS = {
   failed: { open: true, answer: () => Promise.reject(new Error('read failed')) },
   // One idle answer, then silence for longer than an answer stays fresh.
   stale: { open: true, stale: true, answer: (n) => (n === 0 ? Promise.resolve(IDLE) : new Promise(() => {})) },
+  // The folder's entry in the engine's own config does not trust it (#2186).
+  held: { open: true, answer: () => Promise.resolve(HELD) },
   absent: { open: false, answer: () => Promise.resolve(IDLE) }
 };
 
@@ -74,6 +77,8 @@ const HELD_BY_CHANNEL = {
   unknown: 'engine-thread-unknown',
   failed: 'engine-thread-unknown',
   stale: 'engine-thread-unknown',
+  // Decided before the pane is read, so no pane reason can stand in for it.
+  held: 'engine-folder-untrusted',
   absent: 'engine-channel-absent'
 };
 
@@ -95,10 +100,14 @@ const ON_FRESH_IDLE = {
   idleRunState: null,
   busyDefaultLayout: 'pane-turn-in-flight',
   busyRunState: 'pane-turn-in-flight',
-  // Held where the dialog is the whole pane. A version that draws it below a
-  // stale composer row is listed in KNOWN_UNSAFE_IF_CHANNEL_IDLE instead.
+  // Held on either screen: as the whole pane, where no row is a bare prompt,
+  // and below a stale composer row, where the selector row is what refuses.
   trustDialog: 'pane-no-prompt',
-  updateDialog: 'pane-no-prompt'
+  updateDialog: 'pane-no-prompt',
+  // Held where the opening screen draws a header that says it is starting. A
+  // version whose opening screen draws none is listed in
+  // KNOWN_UNSAFE_IF_CHANNEL_IDLE instead.
+  startScreen: 'pane-engine-starting'
 };
 
 /**
@@ -107,23 +116,19 @@ const ON_FRESH_IDLE = {
  * nothing may be typed into them. An entry here records a hole, not a safety
  * property, and a green test over it proves only that the hole is still there.
  *
- * The opening screen, on every version it was captured on. Codex draws its
- * empty composer on the screen it opens with, before the folder-trust or
- * update prompt replaces it: no busy marker, a bare prompt, a still
- * transcript. Only the missing at-rest marker refuses that screen, and a fresh
- * idle from the channel excuses exactly that marker.
- *
- * Both dialogs, on 0.156.1 only (#2187). That version draws on the main
- * screen, so the composer row it opened with is still in the read, above the
- * dialog, and the gate's text check accepts a bare prompt row anywhere in the
- * read. 0.159.0 and 0.161.0 draw on the alternate screen: the dialog is the
- * whole pane, no composer row is above it, and the gate holds it. Their
- * dialogs are pinned as held in `ON_FRESH_IDLE`.
+ * The opening screen of 0.159.0 and 0.161.0. Codex draws its empty composer
+ * on the screen it opens with, before the folder-trust or update prompt
+ * replaces it: no busy marker, a bare prompt, a still transcript. On 0.156.1
+ * that screen's header says the engine is starting and the gate holds it by
+ * that (`ON_FRESH_IDLE`). These two versions draw no such header row on any
+ * captured screen, so the starting marker has nothing to read, and only the
+ * missing at-rest marker refuses their opening screen, which a fresh idle from
+ * the channel excuses.
  *
  * So on these panes the one thing keeping a nudge out is the channel not
- * answering idle while they are up. Nothing proves that it cannot, on any
- * version here, the verified one included, and no fixture could: it is a
- * question about a live channel.
+ * answering idle while they are up, and today a session of either version has
+ * no channel at all: neither is a verified version (a block below reads the
+ * profile for that). Admitting one is what would open this hole.
  *
  * The settling hold (#2059) does not take a pane off this list. It delays the
  * nudge by one monitor interval after a launch's first idle answer and judges
@@ -138,7 +143,6 @@ const ON_FRESH_IDLE = {
  * about what a whole read of that version holds.
  */
 const KNOWN_UNSAFE_IF_CHANNEL_IDLE = {
-  '0.156.1': ['startScreen', 'trustDialog', 'updateDialog'],
   '0.159.0': ['startScreen'],
   '0.161.0': ['startScreen']
 };
@@ -435,8 +439,7 @@ describe('what refuses a Codex pane when no channel has spoken (#2059)', () => {
    * What the pane gate would say of each live pane if no at-rest marker were
    * required. Every live pane name has an entry, so a new pane cannot go
    * unjudged. `idle` on `startScreen` is the case a markerless rule gets
-   * wrong, and so is `idle` on a dialog in `WITHOUT_A_MARKER_ON`; every other
-   * `idle` is a pane that really is at rest.
+   * wrong; every other `idle` is a pane that really is at rest.
    */
   const WITHOUT_A_MARKER = {
     idle: 'idle',
@@ -456,12 +459,12 @@ describe('what refuses a Codex pane when no channel has spoken (#2059)', () => {
   };
 
   /**
-   * Where one version's pane reads differently from the table above. On
-   * 0.156.1 a dialog is drawn below the composer row the session opened with,
-   * and with no marker required that stale row reads as a prompt (#2187).
+   * Where one version's pane reads differently from the table above. The
+   * 0.156.1 opening screen is refused by its own header, which needs no
+   * at-rest marker: it says the engine is starting.
    */
   const WITHOUT_A_MARKER_ON = {
-    '0.156.1': { trustDialog: 'idle', updateDialog: 'idle' }
+    '0.156.1': { startScreen: 'engine-starting' }
   };
 
   for (const [version, name, lines] of LIVE_PANES) {
@@ -541,15 +544,16 @@ const SCREENS = ['main', 'alternate'];
 
 /**
  * Where the selector row sits in a dialog read, and whether a bare composer
- * row is above it. Rows are compared as the gate compares them: a bare row is
- * the profile's prompt glyph with nothing typed after it.
+ * row is above it. A bare row is one the shipped profile's own prompt pattern
+ * matches, which is the comparison the gate makes.
  * @param {string[]} lines - Pane lines
  * @returns {{selector: number, footer: number, staleComposer: boolean}}
  */
 function dialogShape(lines) {
+  const { promptRe } = wake.ENGINE_WAKE_PROFILES.codex;
   const selector = lines.findIndex((row) => /^\u203a \d+\. /.test(row));
   const footer = lines.findIndex((row) => /^ {2}enter continue \u00b7 esc /.test(row));
-  const staleComposer = lines.slice(0, selector).some((row) => row.startsWith('\u203a'));
+  const staleComposer = lines.slice(0, selector).some((row) => promptRe.test(row));
   return { selector, footer, staleComposer };
 }
 
@@ -585,17 +589,190 @@ describe('the startup dialogs are whole reads that say which screen drew them (#
         assert.equal(shape.staleComposer, pane.screen === 'main');
       });
 
-      it(`codex-cli ${set.cliVersion} ${name}: known unsafe exactly when a stale composer row is above the dialog`, () => {
-        assert.equal(knownUnsafe(set.cliVersion, name), dialogShape(pane.lines).staleComposer);
+      it(`codex-cli ${set.cliVersion} ${name}: not known unsafe on either screen`, () => {
+        assert.equal(knownUnsafe(set.cliVersion, name), false);
       });
     }
   }
 });
 
-describe('the known-unsafe list is the opening screen everywhere, and both dialogs on 0.156.1 (#2059, #2187)', () => {
+/** The rows of Codex 0.156.1's header box: its borders and the rows inside them. */
+const HEADER_BOX_RE = /^[\u256d\u2502\u2570]/;
+
+/**
+ * The cursor as tmux reported it on each 0.156.1 dialog when the read was
+ * taken (2026-10-11, pane 100x30): hidden, at column 27 of the footer row,
+ * which is the last row of the read. A column past a row with no prompt glyph
+ * decides nothing about the composer, which is the point of having it here.
+ * @param {string[]} lines - A dialog's pane lines
+ * @returns {{x: number, line: string}}
+ */
+function footerCursor(lines) {
+  return { x: 27, line: lines[lines.length - 1] };
+}
+
+/** Codex's empty composer row as a pane read returns it, and as it is styled on the terminal. */
+const EMPTY_COMPOSER_TEXT = '\u203a Ask Codex to do anything';
+const ON_EMPTY_COMPOSER = { x: 2, line: '\u001b[1m\u203a\u001b[0m \u001b[2mAsk Codex to do anything\u001b[0m' };
+
+describe('which rule holds which Codex 0.156.1 startup screen (#2187)', () => {
+  const shipped = () => wake.ENGINE_WAKE_PROFILES.codex;
+  const set = CODEX_FIXTURE_SETS.find((candidate) => candidate.cliVersion === '0.156.1');
+  /** The pane gate with the channel's idle answer, which excuses the at-rest marker. */
+  const underIdle = (lines, cursor = null) => wake._assessPane(lines, shipped(), cursor, true);
+
+  for (const name of DIALOG_PANES) {
+    const { lines } = set.panes[name];
+
+    it(`${name}: held as no-prompt by the selector row below the stale composer, not by its header`, () => {
+      assert.deepEqual(underIdle(lines), { idle: false, reason: 'no-prompt' });
+      // With the header box gone nothing says the engine is starting, and the
+      // dialog is still refused.
+      const noHeader = lines.filter((row) => !HEADER_BOX_RE.test(row));
+      assert.ok(!noHeader.some((row) => /model:/.test(row)), 'the header rows are out of the read');
+      assert.equal(shipped().startingRe.test(lines.join('\n')), true, 'and the whole read did carry the marker');
+      assert.deepEqual(underIdle(noHeader), { idle: false, reason: 'no-prompt' });
+    });
+
+    it(`${name}: held with the cursor where it was captured, hidden on the footer row`, () => {
+      assert.deepEqual(underIdle(lines, footerCursor(lines)), { idle: false, reason: 'no-prompt' });
+    });
+
+    it(`${name}: held with the cursor on the stale composer row, which reads as an empty composer`, () => {
+      // Not captured: Codex parks the cursor on the footer. This is the frame
+      // where the cursor alone would answer at-prompt, so it is built.
+      assert.ok(lines.some((row) => row === EMPTY_COMPOSER_TEXT), 'the stale row is an empty composer');
+      assert.equal(wake._composerEmpty(ON_EMPTY_COMPOSER, shipped()), true, 'the cursor alone says empty');
+      assert.deepEqual(underIdle(lines, ON_EMPTY_COMPOSER), { idle: false, reason: 'no-prompt' });
+    });
+
+    it(`${name}: with the selector row gone the same read is held by its header alone`, () => {
+      const noSelector = lines.filter((row) => !row.startsWith(shipped().promptGlyph) || shipped().promptRe.test(row));
+      assert.deepEqual(underIdle(noSelector), { idle: false, reason: 'engine-starting' });
+    });
+  }
+
+  it('the opening screen is held by its header: nothing is drawn below its composer', () => {
+    const { lines } = set.panes.startScreen;
+    assert.deepEqual(underIdle(lines), { idle: false, reason: 'engine-starting' });
+    assert.equal(lines[lines.length - 1], EMPTY_COMPOSER_TEXT);
+    assert.deepEqual(underIdle(lines, ON_EMPTY_COMPOSER), { idle: false, reason: 'engine-starting' }, 'and with the cursor on its empty composer');
+  });
+
+  it('a header that names its model, below the one that said loading, is not starting', () => {
+    const { lines } = set.panes.idleRunState;
+    const superseded = set.panes.startScreen.lines.slice(0, 6);
+    assert.deepEqual(underIdle([...superseded, '', ...lines]), { idle: true, reason: 'at-prompt' });
+    // The other way round, the newest header is the one that reads loading.
+    assert.deepEqual(underIdle([...lines.slice(0, 6), '', ...set.panes.startScreen.lines]), { idle: false, reason: 'engine-starting' });
+  });
+
+  it('every usable 0.156.1 pane still reads at-prompt under an idle answer', () => {
+    for (const name of ['idleDefaultLayout', 'idleRunState']) {
+      assert.deepEqual(underIdle(set.panes[name].lines), { idle: true, reason: 'at-prompt' }, name);
+    }
+  });
+});
+
+/**
+ * The holds the gate records, in order, while the channel's answer changes.
+ * @param {string[]} pane - Pane lines
+ * @param {Array<object>} answers - The channel's answer for each read; the last one repeats
+ * @param {number} ticks - Ticks to run
+ * @returns {Promise<{injected: number, holds: string[]}>} `holds` with repeats collapsed
+ */
+async function timeline(pane, answers, ticks) {
+  const world = { clock: 1_000_000, injected: 0, holds: [], reads: 0 };
+  const sessionId = nextSession++;
+  const s = wake._internal;
+  s.listLiveAll = () => [{ id: sessionId, projectId: 10, sessionMode: 'tmux', tmuxSession: `tc-cx-${sessionId}`, engineId: 'codex' }];
+  s.getProject = () => ({ id: 10, name: 'proj-cx', path: '/tmp/proj-cx' });
+  s.loadProjectConfig = () => ({ medusaWake: true });
+  s.wrapRunning = () => false;
+  s.rotationOpen = () => false;
+  s.getStatus = () => ({ state: 'listening', workspaceId: 'proj-cx-abc123', unread: 1, lastError: null });
+  s.getMessages = () => [{ id: 'm1', from: 'peer', message: 'hello' }];
+  s.capturePane = () => ({ lines: typeof pane === 'function' ? pane(world) : pane });
+  s.cursorInfo = () => null;
+  s.masterWakeRecord = () => null;
+  s.recordDelivery = (entry) => {
+    if (entry.outcome !== 'skipped') return;
+    if (world.holds[world.holds.length - 1] !== entry.skipReason) world.holds.push(entry.skipReason);
+  };
+  s.injectCommand = () => { world.injected += 1; return { ok: true, error: null }; };
+  s.openChannel = () => ({ id: 7, sessionId, sequenceId: 70, engineId: 'codex', adapter: 'codex', state: 'open', adapterState: { threadId: 't-1' } });
+  s.launchSequence = () => ({ id: 70, sessionId });
+  s.declaresObserver = (engineId) => engineId === 'codex';
+  s.observeActivity = () => Promise.resolve(answers[Math.min(world.reads++, answers.length - 1)]);
+  s.now = () => world.clock;
+  s.recordWakeFacts = () => 0;
+  s.alreadyAttempted = () => false;
+  s.rearmDue = () => false;
+  s.awaitingReadiness = () => false;
+  s.noteAwaitingRead = () => 0;
+  s.noteReadiness = () => 0;
+  s.verifySubmission = () => Promise.resolve({ outcome: 'unknown', reason: 'fixture' });
+  for (let i = 0; i < ticks; i++) {
+    world.tick = i;
+    s.tick();
+    world.clock += ANSWER_LAG_MS;
+    await settle();
+    world.clock += INTERVAL_MS - ANSWER_LAG_MS;
+  }
+  return { injected: world.injected, holds: world.holds };
+}
+
+describe('the folder hold, the settling hold and the pane refusals act in that order (#2186, #2059, #2187)', () => {
+  let saved;
+  beforeEach(() => {
+    saved = { ...wake._internal };
+    wake.stop();
+  });
+  afterEach(() => {
+    wake.stop();
+    Object.assign(wake._internal, saved);
+  });
+
+  const set = CODEX_FIXTURE_SETS.find((candidate) => candidate.cliVersion === '0.156.1');
+  const RELEASED = [HELD, HELD, HELD, IDLE];
+  const TICKS = RELEASED.length + SETTLED_TICKS;
+  /** What the first tick records: it asks the channel and has no answer yet. */
+  const ASKING = 'engine-thread-unknown';
+
+  for (const [name, refusal] of [['startScreen', 'pane-engine-starting'], ['trustDialog', 'pane-no-prompt'], ['updateDialog', 'pane-no-prompt']]) {
+    it(`a session released from the folder hold onto the ${name}: settles, then is refused as ${refusal}, nothing typed`, async () => {
+      const out = await timeline(set.panes[name].lines, RELEASED, TICKS);
+      assert.deepEqual(out, { injected: 0, holds: [ASKING, 'engine-folder-untrusted', 'engine-thread-settling', refusal] });
+    });
+  }
+
+  it('a session released from the folder hold onto a usable composer: settles, then is nudged once', async () => {
+    const out = await timeline(set.panes.idleDefaultLayout.lines, RELEASED, TICKS);
+    assert.equal(out.injected, 1);
+    assert.deepEqual(out.holds.slice(0, 3), [ASKING, 'engine-folder-untrusted', 'engine-thread-settling']);
+    assert.ok(!out.holds.some((hold) => hold === 'pane-engine-starting' || hold === 'pane-no-prompt'), `a usable composer met no pane refusal: ${out.holds}`);
+  });
+
+  it('the opening screen gives way to a usable composer: held as starting while it is up, then nudged once', async () => {
+    const UP_FOR = 6;
+    const pane = (world) => (world.tick < UP_FOR ? set.panes.startScreen.lines : set.panes.idleRunState.lines);
+    const out = await timeline(pane, [IDLE], UP_FOR + SETTLED_TICKS);
+    assert.equal(out.injected, 1);
+    assert.deepEqual(out.holds.slice(0, 3), [ASKING, 'engine-thread-settling', 'pane-engine-starting']);
+  });
+
+  it('a real turn ends: held while the turn is drawn, then nudged once', async () => {
+    const BUSY_FOR = 6;
+    const pane = (world) => (world.tick < BUSY_FOR ? set.panes.busyRunState.lines : set.panes.idleRunState.lines);
+    const out = await timeline(pane, [IDLE], BUSY_FOR + SETTLED_TICKS);
+    assert.equal(out.injected, 1);
+    assert.deepEqual(out.holds.slice(0, 3), [ASKING, 'engine-thread-settling', 'pane-turn-in-flight']);
+  });
+});
+
+describe('the known-unsafe list is the opening screen of the two versions that draw no starting header (#2059, #2187)', () => {
   it('names nothing else, so another hole cannot be added quietly', () => {
     assert.deepEqual(KNOWN_UNSAFE_IF_CHANNEL_IDLE, {
-      '0.156.1': ['startScreen', 'trustDialog', 'updateDialog'],
       '0.159.0': ['startScreen'],
       '0.161.0': ['startScreen']
     });
@@ -612,7 +789,19 @@ describe('the known-unsafe list is the opening screen everywhere, and both dialo
     }
   });
 
-  it('the opening screen has no hold to mistake for a refusal', () => {
-    assert.ok(!('startScreen' in ON_FRESH_IDLE));
+  it('a listed opening screen is one with no header row for the starting marker to read', () => {
+    const { headerRe } = wake.ENGINE_WAKE_PROFILES.codex;
+    for (const set of CODEX_FIXTURE_SETS.filter((candidate) => 'startScreen' in candidate.panes)) {
+      const hasHeader = set.panes.startScreen.lines.some((row) => headerRe.test(row));
+      assert.equal(knownUnsafe(set.cliVersion, 'startScreen'), !hasHeader, set.cliVersion);
+    }
+  });
+
+  it('no listed version is one the profile verifies, so no session of it has a channel to answer idle', () => {
+    const profile = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));
+    const verified = profile.capabilities.startupControl.verifiedVersions;
+    for (const cliVersion of Object.keys(KNOWN_UNSAFE_IF_CHANNEL_IDLE)) {
+      assert.ok(!verified.includes(cliVersion), `${cliVersion} is verified while its opening screen is known unsafe`);
+    }
   });
 });

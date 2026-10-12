@@ -612,6 +612,8 @@ Engine profiles define how TangleClaw interacts with an AI engine. See the [Engi
       "idleMarker": "string|null — a positive at-rest signal; null when nothing was found that is present at rest and absent mid-turn. Required (null counts).",
       "decorativePattern": "string — OPTIONAL. Regex source matching cells this engine ANIMATES while idle (decoration the operator did not type). Both idle gates test it one cell at a time: the transcript digest blanks each matching cell to one space, the composer scan skips them. Declared only where an idle pane was watched and seen to move — codex's braille shimmer (#1344). Refused unless it matches decoration only: a pattern matching the empty string, any printable ASCII character, or a sample of common non-ASCII letters is rejected (that is what an operator types), so it cannot disable both gates silently.",
       "pasteRejectedMarker": "string — the engine's own words when it discards a submission. Optional; declared only where that was observed.",
+      "headerPattern": "string — OPTIONAL, declared with startingPattern or not at all. Regex source matching the header row startingPattern is read on, in any state. Must not match the empty string.",
+      "startingPattern": "string — OPTIONAL, declared with headerPattern or not at all. Regex source matching that header row while the engine is still starting. The wake's pane gate holds the pane as pane-engine-starting while the NEWEST header row in the read matches it. A regex and not a substring because a header pads its value to its box's width, so the spaces between label and value vary (Codex: `model:     loading`). Must not match the empty string.",
       "evidence": {
         "<field>": {
           "verifiedOn": "string|null — ISO date this field was measured, or null for a value nobody has measured",
@@ -634,6 +636,9 @@ it to `[]` to opt a profile out; only a literal `[]` does. A `startupDialogs` va
 list, or a list with an entry that cannot be read, is not an opt-out: a launch on that profile types
 nothing (`startup_dialogs_unreadable`) until it is fixed. See `docs/engine-guide.md` →
 Capabilities for what a declared dialog does to a launch.
+
+Omit `headerPattern` and `startingPattern` and no pane of that engine is held as
+`pane-engine-starting`; every other wake rule applies as before.
 
 Omit `wake` and the engine is never idle-judged or nudged (skipped and logged, never woken against
 a guessed signature). Its `evidence` map must cover the declared fields in both directions, and a

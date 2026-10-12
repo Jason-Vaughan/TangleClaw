@@ -380,6 +380,41 @@ describe('Codex startupControl adapter', () => {
         assert.ok(f.patches.slice(1).every((p) => !('dispatchNote' in p)), 'and only there: later transitions do not restate it');
       });
 
+      it('the two header patterns handed to the witness are the wake profile\'s own, and a profile that declares none holds the fire', async () => {
+        const declared = require('../lib/medusa-wake').ENGINE_WAKE_PROFILES.codex;
+        assert.ok(declared.headerRe instanceof RegExp && declared.startingRe instanceof RegExp, 'the bundled Codex profile declares both');
+        await serve(NO_ENTRY);
+        completeTheTurn();
+        channel(LAUNCH_PANE);
+        const witnessed = [];
+        const first = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async (opts) => { witnessed.push(opts); return { shown: true }; } }).settled;
+        assert.equal(first.outcome, 'applied');
+        assert.equal(witnessed[0].headerRe, declared.headerRe, 'the same compiled pattern the wake\'s pane gate reads');
+        assert.equal(witnessed[0].startingRe, declared.startingRe);
+        server.close();
+        server = null;
+
+        const realProfile = codex._seams.wakeProfile;
+        try {
+          for (const undeclared of [undefined, (({ headerRe, startingRe, ...rest }) => rest)(declared), { ...declared, startingRe: undefined }]) {
+            codex._seams.wakeProfile = () => undeclared;
+            await serve(NO_ENTRY);
+            store.getDb().prepare('DELETE FROM startup_control_channels').run();
+            channel(LAUNCH_PANE);
+            let consulted = 0;
+            const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async () => { consulted += 1; return { shown: true }; } }).settled;
+            assert.equal(settled.reasonCode, 'pane_not_ready');
+            assert.match(settled.reason, /headerPattern and startingPattern/);
+            assert.equal(consulted, 0, 'a pane that cannot be checked for a starting screen is not consulted');
+            assert.equal(server.calls('turn/start').length, 0);
+            server.close();
+            server = null;
+          }
+        } finally {
+          codex._seams.wakeProfile = realProfile;
+        }
+      });
+
       it('a home that has never trusted any folder (projects: null) is the same case', async () => {
         await serve({ 'config/read': () => ({ config: { projects: null } }) });
         completeTheTurn();

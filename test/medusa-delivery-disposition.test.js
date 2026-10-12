@@ -83,6 +83,13 @@ describe('delivery disposition — every reason the monitor can give has a class
       'a stopped monitor ends no hold, this one included');
   });
 
+  it('an engine whose header says it is still starting is waited out: it ends when the engine has started (#2187)', () => {
+    const starting = d.classifyReason('pane-engine-starting');
+    assert.deepEqual([starting.class, starting.nextAction, starting.known], ['actionable', 'wait', true]);
+    assert.equal(d.classifyForSender('pane-engine-starting', { monitorRunning: true }).nextAction, 'wait');
+    assert.equal(d.classifyForSender('pane-engine-starting', { monitorRunning: false }).nextAction, 'investigate');
+  });
+
   it('a folder the engine was told not to trust is its operator\'s to review, and waiting does not end it (#2186)', () => {
     const held = d.classifyReason('engine-folder-untrusted');
     assert.deepEqual([held.class, held.nextAction, held.known], ['configuration', 'review-folder-trust', true]);
