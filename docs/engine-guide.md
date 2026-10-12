@@ -1324,8 +1324,8 @@ pane. Any other dialog (the update prompt), and anything else short of a proven 
 as `pane_not_ready`, naming what was seen. A folder whose entry in Codex's config says anything other
 than trusted is not "no entry": it is `trust_required`, says so, and never gets the allowance. A
 `config/read` answer that cannot be understood stays `readiness_unknown`. The automatic launch fire
-and the operator's **Fire** go through the same rule. Nothing writes a trust entry and nothing is
-typed. A fire that goes this way records a **dispatch note** on its row, kept through every later
+and the operator's **Fire** go through the same rule. Nothing writes a trust entry and no
+trust-acceptance key is typed: the prompt itself reaches the pane as an ordinary user turn. A fire that goes this way records a **dispatch note** on its row, kept through every later
 outcome and shown in the Launch readiness panel: this pane showed an empty composer and no declared
 trust prompt at fire time, the thread was idle, and TangleClaw did not grant trust.
 
