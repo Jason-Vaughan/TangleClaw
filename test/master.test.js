@@ -3397,6 +3397,15 @@ describe('ensureMasterSession — Codex daemon isolation (#1895)', () => {
     });
   }
 
+  it('a Master ensure asks Codex its version once, and freshly again on the next ensure (#2231)', () => {
+    codexAnswers('codex-cli 0.157.1\n');
+    const before = probed.length;
+    assert.equal(ensureWith({ engine: 'codex' }).result.created, true);
+    assert.deepEqual(probed.slice(before), [CODEX_BIN], 'one ensure, one probe');
+    assert.equal(ensureWith({ engine: 'codex' }).result.created, true);
+    assert.deepEqual(probed.slice(before), [CODEX_BIN, CODEX_BIN], 'the next ensure asks again: a version is never kept');
+  });
+
   it('keeps the launch mode flags and appends isolation after them', () => {
     codexAnswers('codex-cli 0.157.1\n');
     const { result, command } = ensureWith({ engine: 'codex', launchMode: 'fullAuto' });

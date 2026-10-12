@@ -844,6 +844,118 @@ describe('startupControl at launch and teardown (codex)', () => {
     assert.equal(store.startupControlChannels.getOpenBySession(l.session.id), null);
   });
 
+  describe('how often a launch asks Codex its version (#2231)', () => {
+    const BIN = '/opt/fake/bin/codex';
+
+    /**
+     * Route the version probe through a counter.
+     * @param {(bin: string) => string} answer - What the executable prints; a throw is a probe that fails.
+     * @returns {string[]} Every executable the probe ran, in order.
+     */
+    function counting(answer) {
+      const probes = [];
+      healthySeams({ execFileSync: (bin) => { probes.push(bin); return answer(bin); } });
+      return probes;
+    }
+
+    /**
+     * Launch again a project whose tmux session has died.
+     * @param {string} name - Project name.
+     * @returns {object} `launchSession`'s result.
+     */
+    function relaunched(name) {
+      tmux.probeSession = () => ({ answered: true, live: false });
+      try {
+        return withStubbedTmux(() => sessions.launchSession(name, { primePrompt: false }));
+      } finally {
+        tmux.probeSession = real.probe;
+      }
+    }
+
+    for (const [label, version] of [
+      ['on the native channel', '0.156.1'],
+      ['on the legacy command', '0.157.1']
+    ]) {
+      it(`a healthy Codex ${version} is asked once per project launch ${label}, and freshly again on the relaunch`, () => {
+        const probes = counting(() => `codex-cli ${version}\n`);
+        const l = launched();
+        assert.deepEqual(probes, [BIN], 'one launch, one probe');
+        const again = relaunched(l.project.name);
+        assert.ok(again.session, again.error);
+        assert.deepEqual(probes, [BIN, BIN], 'the relaunch asks again, once: a healthy answer is never kept');
+      });
+    }
+
+    it('a healthy Codex whose app-server cannot start is still asked once: the fallback to the legacy command reuses the answer', () => {
+      const probes = counting(() => 'codex-cli 0.156.1\n');
+      codex._seams.spawn = () => { throw new Error('spawn EACCES'); };
+      const l = launched();
+      assert.match(l.command, / --no-daemon$/, 'the launch fell back to the isolated legacy command');
+      assert.deepEqual(probes, [BIN]);
+    });
+
+    it('a Codex that cannot answer is run once across two project launches, and the second refusal comes at once and says when it will be asked', () => {
+      const dir = fs.mkdtempSync(path.join(tempDir, 'unanswering-'));
+      const stuck = path.join(dir, 'codex');
+      fs.writeFileSync(stuck, '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
+      let clock = 5_000_000;
+      const probes = counting(() => { throw Object.assign(new Error('spawnSync codex ETIMEDOUT'), { code: 'ETIMEDOUT' }); });
+      codex._seams.now = () => clock;
+      codex._internal._unanswered.clear();
+      try {
+        const first = refused(stuck);
+        assert.equal(first.result.isolation.reasonCode, 'version_unknown');
+        assert.match(first.result.error, /could not read the version of /);
+        assert.deepEqual(probes, [stuck], 'the launch that asked ran it once, not once per step');
+
+        clock += 20000;
+        const second = refused(stuck);
+        assert.equal(second.result.code, 'LAUNCH_ISOLATION_UNVERIFIED');
+        assert.equal(second.result.isolation.reasonCode, 'version_unknown', 'the same reason code');
+        assert.match(second.result.error, new RegExp(`did not start the engine for project "${second.name}"`));
+        assert.match(second.result.error, /less than a minute ago and got no answer, so this launch did not ask again/);
+        assert.match(second.result.error, /It will be asked again in about 40 seconds, or at once if that file is replaced\./);
+        assert.match(second.result.error, /Nothing was started/);
+        assert.deepEqual(probes, [stuck], 'the second launch did not run it');
+
+        // The operator installs a Codex that answers: the next launch asks it at once.
+        fs.writeFileSync(stuck, '#!/bin/sh\necho codex-cli 0.157.1\n', { mode: 0o755 });
+        codex._seams.execFileSync = (bin) => { probes.push(bin); return 'codex-cli 0.157.1\n'; };
+        const name = `sc-${counter += 1}`;
+        fs.mkdirSync(path.join(projectsDir, name), { recursive: true });
+        store.projects.create({ name, path: path.join(projectsDir, name), engine: 'codex' });
+        const third = withStubbedTmux(() => {
+          enginesModule.detectEngine = () => ({ available: true, path: stuck });
+          return sessions.launchSession(name, { primePrompt: false });
+        });
+        assert.ok(third.session, third.error);
+        assert.deepEqual(probes, [stuck, stuck], 'asked once more, inside the time, because the file changed');
+      } finally {
+        codex._internal._unanswered.clear();
+      }
+    });
+
+    it('after the time has passed the same executable is asked again, once', () => {
+      const dir = fs.mkdtempSync(path.join(tempDir, 'unanswering-'));
+      const stuck = path.join(dir, 'codex');
+      fs.writeFileSync(stuck, '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
+      let clock = 9_000_000;
+      const probes = counting(() => { throw new Error('spawn EACCES'); });
+      codex._seams.now = () => clock;
+      codex._internal._unanswered.clear();
+      try {
+        refused(stuck);
+        clock += codex._internal.PROBE_UNANSWERED_MEMORY_MS;
+        const later = refused(stuck);
+        assert.match(later.result.error, /could not read the version of /);
+        assert.doesNotMatch(later.result.error, /asked again/);
+        assert.deepEqual(probes, [stuck, stuck]);
+      } finally {
+        codex._internal._unanswered.clear();
+      }
+    });
+  });
+
   it('a session that ended without teardown is reaped, and a pid that is not ours is never signalled', () => {
     healthySeams();
     const l = launched();

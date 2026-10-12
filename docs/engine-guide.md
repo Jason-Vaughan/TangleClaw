@@ -1185,6 +1185,21 @@ the Codex adapter is not registered, lacks the check, or does not claim the laun
 launches as before. It does not see an executable replaced after the probe, a wrapper or alias with another name,
 Codex reached over SSH, or sessions already running, which must be ended and relaunched.
 
+**A Codex that does not answer its version probe is asked once, then left alone for 60 seconds (#2231).**
+The launch's version probe is synchronous: while `codex --version` runs, up to its 5-second limit, the
+whole server waits. A launch reaches the probe from up to three places (the capability read, the
+app-server start and the legacy command), so one launch now asks its executable once and hands that
+answer on. When the executable fails, times out or prints something that is not a version, that is
+remembered for 60 seconds, and a project launch, relaunch or Project Master start inside that time is
+refused at once without running it. The refusal keeps its code, `version_unknown`, and its recovery
+text; its message says the executable was asked less than a minute ago, was not asked again, and in
+about how many seconds it will be. Launching again after that time asks it again. So does replacing the
+file: the memory is of one file (its resolved path, modification time, size, inode and device), so a
+reinstalled or repaired Codex is asked at the next launch. It is kept in the running server only and a
+restart forgets it. An executable whose file cannot be read is never remembered and is asked every
+time. A Codex that answers is never remembered either: its version is read afresh at every launch.
+The server log has one warning for each launch that did not ask, naming the executable and the wait.
+
 **Codex compatibility after this check (a security patch, #2233).**
 
 | What | Versions |
@@ -1346,8 +1361,10 @@ a composer without a trust entry. Every entry must also be in `verifiedVersions`
 permits a send without the witness.
 
 **The adapter contract** (what `ADAPTERS` entries implement): `installedVersion()` (synchronous,
-cached, never spawns); `probeVersionSync({enginePath})` (the launch path only); `prepareLaunch({project,
-engineProfile, launchCmd, enginePath, env})` returning `{ok, handle, command}` or `{ok: false, reasonCode,
+cached, never spawns); `probeVersionSync({enginePath})` (the launch path only), and optionally
+`probeForLaunch({enginePath})`, the same probe returning `{version, enginePath}` so the launch can hand it
+to the later steps as `probe` instead of asking again; `prepareLaunch({project,
+engineProfile, launchCmd, enginePath, env, probe})` returning `{ok, handle, command}` or `{ok: false, reasonCode,
 reason}` (`env` is the pane's environment, which the server must inherit); `attachLaunch(handle, {sessionId, sequenceId, engineId})`; `abandonLaunch(handle, reason)`;
 `releaseSession(sessionId, reason)`; `reap()`; `recover()`; `start()`/`stop()`;
 `fire({session, project, sequenceId, promptText, promptTextDigest, payloadDigest, onUpdate,

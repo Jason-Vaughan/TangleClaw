@@ -1949,6 +1949,190 @@ describe('Codex startupControl adapter', () => {
       });
     });
 
+    describe('a Codex that does not answer its version probe is left unasked for a short time (#2231)', () => {
+      const WAIT = codex._internal.PROBE_UNANSWERED_MEMORY_MS;
+      let dir;
+      let bin;
+      let clock;
+      let spawns;
+      let saved;
+
+      /**
+       * Make the probe answer as given, counting each run of the executable.
+       * @param {() => string} answer - What the executable prints; a throw is a probe that fails.
+       * @returns {void}
+       */
+      function answers(answer) {
+        codex._seams.execFileSync = (file) => { spawns.push(file); return answer(); };
+      }
+
+      const hangs = () => { throw Object.assign(new Error('spawnSync codex ETIMEDOUT'), { code: 'ETIMEDOUT' }); };
+
+      beforeEach(() => {
+        saved = { ...codex._seams };
+        dir = fs.mkdtempSync(path.join(tempDir, 'probe-memory-'));
+        bin = path.join(dir, 'codex');
+        fs.writeFileSync(bin, '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
+        clock = 1_000_000;
+        spawns = [];
+        codex._seams.now = () => clock;
+        codex._internal._unanswered.clear();
+      });
+
+      afterEach(() => {
+        Object.assign(codex._seams, saved);
+        codex._internal._unanswered.clear();
+      });
+
+      it('is 60 seconds, and longer than the probe itself may run', () => {
+        assert.equal(WAIT, 60000);
+        assert.ok(WAIT > codex._internal.VERSION_PROBE_TIMEOUT_MS);
+      });
+
+      for (const [label, answer] of [
+        ['hangs past the limit', hangs],
+        ['fails to start', () => { throw new Error('spawn EACCES'); }],
+        ['prints something that is not a version', () => 'Segmentation fault\n']
+      ]) {
+        it(`an executable that ${label} is run once, then not again until the time has passed`, () => {
+          answers(answer);
+          assert.deepEqual(codex.probeForLaunch({ enginePath: bin }), { version: null, enginePath: bin }, 'the ask that ran says nothing about waiting');
+          clock += 1000;
+          assert.deepEqual(codex.probeForLaunch({ enginePath: bin }), { version: null, enginePath: bin, retryInSeconds: 59 });
+          assert.equal(codex.probeVersionSync({ enginePath: bin }), null);
+          assert.equal(codex.installedVersion(), null, 'the cached version is empty, as after a failed probe');
+          clock += WAIT - 1001;
+          assert.equal(codex.probeForLaunch({ enginePath: bin }).retryInSeconds, 1, 'still inside the time at its last millisecond');
+          assert.deepEqual(spawns, [bin], 'four asks, one run');
+          clock += 1;
+          assert.deepEqual(codex.probeForLaunch({ enginePath: bin }), { version: null, enginePath: bin });
+          assert.deepEqual(spawns, [bin, bin], 'asked again once the time has passed');
+          clock += 1000;
+          assert.equal(codex.probeForLaunch({ enginePath: bin }).retryInSeconds, 59, 'and that second non-answer is remembered for its own time');
+          assert.deepEqual(spawns, [bin, bin]);
+        });
+      }
+
+      it('a file changed at the same path is asked at once, whether its time, its size or the file itself changed', () => {
+        answers(hangs);
+        codex.probeForLaunch({ enginePath: bin });
+        const touched = new Date(Date.now() + 5000);
+        fs.utimesSync(bin, touched, touched);
+        codex.probeForLaunch({ enginePath: bin });
+        assert.equal(spawns.length, 2, 'a new modification time');
+        fs.appendFileSync(bin, '# longer\n');
+        fs.utimesSync(bin, touched, touched);
+        codex.probeForLaunch({ enginePath: bin });
+        assert.equal(spawns.length, 3, 'a new size under the same modification time');
+        const body = fs.readFileSync(bin);
+        const replacement = path.join(dir, 'codex.new');
+        fs.writeFileSync(replacement, body, { mode: 0o755 });
+        fs.utimesSync(replacement, touched, touched);
+        fs.renameSync(replacement, bin);
+        codex.probeForLaunch({ enginePath: bin });
+        assert.equal(spawns.length, 4, 'another file of the same size and time, moved into place');
+        assert.equal(codex.probeForLaunch({ enginePath: bin }).retryInSeconds, 60);
+        assert.equal(spawns.length, 4, 'and the file as it now is, is left unasked');
+      });
+
+      it('a repaired executable answers at once and nothing of the failure is kept', () => {
+        answers(hangs);
+        codex.probeForLaunch({ enginePath: bin });
+        fs.writeFileSync(bin, '#!/bin/sh\necho codex-cli 0.156.1\n', { mode: 0o755 });
+        answers(() => 'codex-cli 0.156.1\n');
+        assert.deepEqual(codex.probeForLaunch({ enginePath: bin }), { version: '0.156.1', enginePath: bin });
+        assert.equal(codex._internal._unanswered.size, 0);
+      });
+
+      it('an executable that answers is run at every ask: a version is never kept', () => {
+        answers(() => 'codex-cli 0.157.1\n');
+        for (let i = 0; i < 3; i += 1) assert.equal(codex.probeVersionSync({ enginePath: bin }), '0.157.1');
+        assert.equal(spawns.length, 3);
+        assert.equal(codex._internal._unanswered.size, 0);
+      });
+
+      it('each executable is remembered by itself, and a link to one is the file it points at', () => {
+        answers(hangs);
+        const other = path.join(dir, 'other', 'codex');
+        fs.mkdirSync(path.dirname(other));
+        fs.writeFileSync(other, '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
+        const link = path.join(dir, 'codex-link');
+        fs.symlinkSync(bin, link);
+        codex.probeForLaunch({ enginePath: bin });
+        codex.probeForLaunch({ enginePath: other });
+        assert.deepEqual(spawns, [bin, other], 'one failing executable does not silence another');
+        assert.deepEqual(codex.probeForLaunch({ enginePath: link }), { version: null, enginePath: link, retryInSeconds: 60 }, 'the link is not a way to ask the same file again');
+        assert.equal(spawns.length, 2);
+      });
+
+      it('an executable whose file cannot be read is never remembered: it is asked every time', () => {
+        answers(hangs);
+        const gone = path.join(dir, 'missing', 'codex');
+        codex.probeForLaunch({ enginePath: gone });
+        assert.deepEqual(codex.probeForLaunch({ enginePath: gone }), { version: null, enginePath: gone });
+        codex._seams.statSync = () => { throw new Error('EACCES: permission denied'); };
+        codex.probeForLaunch({ enginePath: bin });
+        codex.probeForLaunch({ enginePath: bin });
+        assert.deepEqual(spawns, [gone, gone, bin, bin]);
+        assert.equal(codex._internal._unanswered.size, 0);
+      });
+
+      it('a bare command name is never remembered: it names a different file on a different PATH', () => {
+        answers(hangs);
+        assert.deepEqual(codex.probeForLaunch(), { version: null, enginePath: null });
+        codex.probeForLaunch();
+        assert.deepEqual(spawns, ['codex', 'codex']);
+      });
+
+      it('a clock that went backwards asks again and never waits longer than the time', () => {
+        answers(hangs);
+        codex.probeForLaunch({ enginePath: bin });
+        clock -= 10 * WAIT;
+        codex.probeForLaunch({ enginePath: bin });
+        assert.equal(spawns.length, 2);
+      });
+
+      it('the refusal for an executable that was not asked keeps its reason code and says when it will be asked', () => {
+        answers(hangs);
+        const first = codex.isolateLaunch({ engineId: 'codex', launchCmd: 'codex', shell: 'codex', enginePath: bin });
+        const judge = (probe) => codex.judgeLaunchCommand({ engineId: 'codex', command: 'codex', enginePath: bin, probe });
+        const asked = judge(first.probe);
+        assert.equal(asked.reasonCode, 'version_unknown');
+        assert.match(asked.reason, /^TangleClaw could not read the version of /);
+        assert.doesNotMatch(asked.reason, /asked again/);
+        clock += 18500;
+        const second = codex.isolateLaunch({ engineId: 'codex', launchCmd: 'codex', shell: 'codex', enginePath: bin });
+        assert.deepEqual(second, { applies: true, command: null, probe: { version: null, enginePath: bin, retryInSeconds: 42 } });
+        const waiting = judge(second.probe);
+        assert.equal(waiting.reasonCode, 'version_unknown', 'the same reason code');
+        assert.equal(waiting.allowed, false);
+        assert.equal(waiting.recovery, asked.recovery, 'and the same way out');
+        assert.equal(waiting.reason, `TangleClaw asked ${bin} for its version less than a minute ago and got no answer, so this launch did not ask again and it cannot tell whether that Codex can be kept off its shared background process. It will be asked again in about 42 seconds, or at once if that file is replaced.`);
+        assert.match(judge({ version: null, enginePath: bin, retryInSeconds: 1 }).reason, /in about 1 second, or/);
+        assert.match(judge({ version: null, enginePath: '/elsewhere/codex', retryInSeconds: 30 }).reason, /^TangleClaw could not read the version of /, 'a wait recorded for another executable is not this one\'s');
+        assert.equal(spawns.length, 1);
+      });
+
+      it('a launch step handed the probe its launch already made does not run the executable; a probe of another path is not used', () => {
+        answers(() => 'codex-cli 0.157.1\n');
+        const made = { version: '0.157.1', enginePath: bin };
+        assert.deepEqual(
+          codex.isolateLaunch({ engineId: 'codex', launchCmd: 'codex', shell: 'codex', enginePath: bin, probe: made }),
+          { applies: true, command: `${bin} --no-daemon`, probe: made }
+        );
+        assert.equal(spawns.length, 0);
+        const unanswered = codex.isolateLaunch({ engineId: 'codex', launchCmd: 'codex', shell: 'codex', enginePath: bin, probe: { version: null, enginePath: bin } });
+        assert.deepEqual(unanswered, { applies: true, command: null, probe: { version: null, enginePath: bin } }, 'a non-answer handed on is a non-answer, not a reason to ask again');
+        assert.equal(spawns.length, 0);
+        const elsewhere = codex.isolateLaunch({ engineId: 'codex', launchCmd: 'codex', shell: 'codex', enginePath: bin, probe: { version: '0.156.1', enginePath: '/elsewhere/codex' } });
+        assert.equal(elsewhere.probe.version, '0.157.1', 'the version is this executable\'s own answer');
+        assert.deepEqual(spawns, [bin]);
+        const noServer = codex.prepareLaunch({ project, engineProfile: { launch: { shellCommand: 'codex' } }, launchCmd: 'codex', enginePath: bin, probe: { version: null, enginePath: bin } });
+        assert.equal(noServer.reasonCode, 'channel_unavailable', 'no app-server is started on a version nobody read');
+        assert.equal(spawns.length, 1);
+      });
+    });
+
     it('maps a turn record to its outcome, and an item to its text', () => {
       assert.equal(codex._internal._turnOutcome({ status: 'inProgress' }), null);
       assert.equal(codex._internal._turnOutcome({ status: 'completed' }).outcome, 'applied');
