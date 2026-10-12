@@ -35,6 +35,37 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-11 — #2187: whole Codex dialog fixtures, and a known-unsafe list kept by version
+
+<!-- prawduct: type=bugfix | scope=wake-gate-2187 -->
+
+#2187 Chunk 01 of two. Branch `feat/2187-01-whole-dialog-fixtures`, from `origin/main` `6ee1f14b`. Fixtures and their test only: no product code, no schema, nothing an operator sees.
+
+Visual change: no
+
+**Why.** The issue says the wake's pane gate, given a fresh idle answer from the engine's channel, reads Codex's update prompt and folder-trust prompt as a bare prompt, and that the merged fixtures hide it because they were trimmed to the dialog's own rows. Before the gate is changed, the fixtures have to show what a pane really holds.
+
+**What was read.** Each dialog was read again on 2026-10-11 the way the wake reads a pane (`tmux capture-pane -p -S -15`), in a 100x30 pane on a private tmux server, with a fresh Codex home and a fake API key. Codex 0.159.0 and 0.161.0 were installed into a throwaway prefix under the session's scratchpad; 0.156.1 is the host's binary, run with a private home and never updated.
+
+| Version | Screen | Trust prompt | Update prompt |
+|---|---|---|---|
+| 0.156.1 | main, 11 rows of history | `at-prompt` | `at-prompt` |
+| 0.159.0 | alternate, no history | `no-prompt` | `no-prompt` |
+| 0.161.0 | alternate, no history | `no-prompt` | `no-prompt` |
+
+The verdicts are `_assessPane` on `6ee1f14b` with the shipped Codex profile and a fresh idle, with the cursor withheld and with its position given.
+
+**The issue is right about 0.156.1 and wider than the evidence for the other two.** 0.156.1 draws on the main screen, so the header box and the composer row it opened with are still in the read, above the dialog, and the gate's text check accepts that stale row. 0.159.0 and 0.161.0 draw on the alternate screen: the dialog is the whole pane, no composer row is above it, and the gate holds it. Their merged fixtures were already the whole screen and their `pane-no-prompt` pin was right. The issue's sentence "on every Codex startup screen the pane contributes no refusal" holds for 0.156.1 only. Reported to the Integrator before anything was committed; it ruled `2187 per version` and the plan's first two acceptance criteria were rewritten to match.
+
+**What changed.**
+
+- `test/fixtures/codex-panes/codex-0.156.1.json`, `codex-0.159.0.json`, `codex-0.161.0.json`: `trustDialog` and `updateDialog` are the new whole reads. Each pane carries its own capture date, the screen it was drawn on, and a note of the folder, the launch and what the read did not cover. 0.161.0 gains an `updateDialog`: a newer version exists now, so it draws one.
+- `test/medusa-wake-codex-fixtures.test.js`: the known-unsafe list is keyed by version. 0.156.1 names the opening screen and both dialogs; 0.159.0 and 0.161.0 name the opening screen only, and their dialogs stay pinned as held. A new block checks that each dialog read says its screen, runs to the dialog's footer, holds a stale composer row exactly when it was drawn on the main screen, and is on the known-unsafe list exactly when it holds one. The table of what each pane reads with no at-rest marker follows, by version.
+
+**Not checked.** The cursor's styled row was not captured, so the cursor-given verdicts used the footer row's plain text (0.156.1) and an empty row (the other two). No signed-in account: with a fake key the header says `model: loading` and no model list arrives. One pane size. The 0.155.1 set is rows excerpted by hand and was not read again; its `dialog` pane says nothing about a whole read of that version. Whether a live channel can answer idle while any of these screens is up is not a fixture's question and is not answered here.
+
+**For Chunk 02.** The later-glyph-row refusal (A123's D3) is needed on the main-screen version; on the alternate-screen versions it must not break a hold that already works. The Integrator sent the finding to the Architect and the decider.
+
 ## 2026-10-11 — #2323: the check-run reader, the watch records and the derived state (schema v65)
 
 <!-- prawduct: type=feature | scope=2323-check-watch-wake -->
