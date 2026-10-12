@@ -7,92 +7,111 @@
     "`runsWhere` it does run \u2014 an entry with no such place is a test nothing ever executes.",
     "Patterns are anchored regexes over the path. Match the tier, not one test, so a sibling",
     "test in the same tier is covered without a new entry, and keep them narrow enough that a",
-    "test outside the tier is not."
+    "test outside the tier is not.",
+    "`requires` says the same thing as `runsWhere` in a form a program reads: every value in it",
+    "must hold on a host for the entry's tests to be expected to run there. The values are a",
+    "closed list, `LEDGER_REQUIREMENTS` in `scripts/test-skip-audit.js`, and an entry without a",
+    "valid one fails the audit. The audit measures no host and accepts skips by `match` alone;",
+    "docs/lane-ci-evidence.md says what each value means."
   ],
   "entries": [
     {
       "id": "eacces-fixtures",
       "match": "^.+ > .+ \\(needs a directory this process cannot read\\)$",
       "why": "Stages a genuine EACCES with chmod 000 to exercise \"there, and refused\" rather than \"not there\" \u2014 the distinction the uploads and project-facts reads exist to draw (#889, #885). Root defeats the mode bits, so the refusal never happens and the assertion passes for the wrong reason; the Docker/Debian clean room runs as root. `test/_eacces.js#canForceRefusal` probes the capability rather than reading the uid, because CAP_DAC_OVERRIDE and permission-ignoring mounts defeat the fixture at an ordinary uid too.",
-      "runsWhere": "any host where the suite runs as a normal user \u2014 the operator's install, elkaholic, and the macOS VM clean room. Every title in the tier carries the suffix this pattern matches, so a new refusal fixture is covered without a new entry."
+      "runsWhere": "any host where the suite runs as a normal user \u2014 the operator's install, elkaholic, and the macOS VM clean room. Every title in the tier carries the suffix this pattern matches, so a new refusal fixture is covered without a new entry.",
+      "requires": ["user:mode-bits-enforced"]
     },
     {
       "id": "engine-cli-launch-flags",
       "match": "^engine launch flags exist in the installed CLI \\(#731\\) > [a-z0-9-]+ > launch mode \"[^\"]+\" uses args the installed CLI accepts$",
       "why": "Probes TangleClaw's launch args against the real engine CLI's own parser; the runner has no engine installed.",
-      "runsWhere": "any developer or operator machine with the engine installed \u2014 this is where an upstream flag removal (the recorded codex --full-auto learning) surfaces; a self-hosted runner with the engines would run them per PR (#844 option 2, an operator decision)."
+      "runsWhere": "any developer or operator machine with the engine installed \u2014 this is where an upstream flag removal (the recorded codex --full-auto learning) surfaces; a self-hosted runner with the engines would run them per PR (#844 option 2, an operator decision).",
+      "requires": ["engine-cli:each"]
     },
     {
       "id": "engine-cli-probe-summary",
       "match": "^engine launch flags exist in the installed CLI \\(#731\\) > actually probed something, or says plainly that it did not$",
       "why": "The guard's guard: skips only when no flag-declaring engine is installed, and says so.",
-      "runsWhere": "same hosts as engine-cli-launch-flags."
+      "runsWhere": "same hosts as engine-cli-launch-flags.",
+      "requires": ["engine-cli:any"]
     },
     {
       "id": "prawduct-upstream-drift",
       "match": "^C1 \u2014 per-project plugin migration \\(#262\\) > engines\\.PRAWDUCT_INSTALL_REFERENCE > matches the installed plugin\u2019s INSTALL_REFERENCE \\(skipped when not installed\\)$",
       "why": "Compares TangleClaw's install reference with the INSTALLED prawduct plugin's source under ~/.claude; the runner has no plugin checkout.",
-      "runsWhere": "developer machines with prawduct installed, and the scheduled upstream-drift workflow (#835), which fails rather than skips when the checkout is absent."
+      "runsWhere": "developer machines with prawduct installed, and the scheduled upstream-drift workflow (#835), which fails rather than skips when the checkout is absent.",
+      "requires": ["prawduct:marketplace-checkout"]
     },
     {
       "id": "live-caddyfile",
       "match": "^classifyIngressState > classifies THIS machine's live Caddyfile as protected, when one is present$",
       "why": "Reads the host's live Caddy ingress config; the runner runs no Caddy.",
-      "runsWhere": "the operator's install, where the Caddyfile exists."
+      "runsWhere": "the operator's install, where the Caddyfile exists.",
+      "requires": ["caddyfile:live"]
     },
     {
       "id": "host-pty-pool-darwin",
       "match": "^ttyd-watcher > production output shapes \\(darwin only\\) > (_parseChildren reads the real|_poolFromCounts classifies the real) .*$",
       "why": "Runs the watcher's parsers against the real BSD `ps` and `sysctl` output for the recurring PTY-exhaustion class (#94, #144, #380, #1245); the runner is Linux, whose ps prints a different shape.",
-      "runsWhere": "every macOS developer machine \u2014 the platform the watcher ships on."
+      "runsWhere": "every macOS developer machine \u2014 the platform the watcher ships on.",
+      "requires": ["platform:darwin"]
     },
     {
       "id": "local-vs-utc-date",
       "match": "^.*todayIsoLocal.* > returns LOCAL date \\(not UTC\\) when the host is in a non-UTC zone.*$",
       "why": "The local-vs-UTC distinction is unobservable on a UTC host, and the runner is UTC.",
-      "runsWhere": "any developer machine in a non-UTC zone; the wiring pins beside each of the three copies run everywhere."
+      "runsWhere": "any developer machine in a non-UTC zone; the wiring pins beside each of the three copies run everywhere.",
+      "requires": ["timezone:non-utc"]
     },
     {
       "id": "case-insensitive-fs",
       "match": "^projects > updateProject > .* > allows a case-only self-rename at the DB-validator level .*$",
       "why": "A case-only directory rename is unobservable on a case-insensitive filesystem (macOS APFS default). Skips locally, RUNS on the Linux runner; listed so a case-insensitive CI host would not read as an unknown skip.",
-      "runsWhere": "the ubuntu runner and any case-sensitive filesystem; the cross-rename tests beside it exercise the same gate everywhere."
+      "runsWhere": "the ubuntu runner and any case-sensitive filesystem; the cross-rename tests beside it exercise the same gate everywhere.",
+      "requires": ["filesystem:case-sensitive"]
     },
     {
       "id": "caddy-adapt-absent",
       "match": "^caddy-drift \u2014 against real caddy$",
       "why": "Shells out to `caddy adapt` on real Caddyfiles \u2014 the fixture-freshness re-derivation, the end-to-end run against the hand-edited fixture, the clean run against the generator's own output, and the temp-file cleanup check. The runner has no caddy binary. The PROPERTY layer of this suite is deliberately fixture-driven and DOES run here, so the logic that decides what counts as drift is covered on CI; only the parts that need Caddy's own parser skip.",
-      "runsWhere": "any developer or operator machine with caddy installed \u2014 where it also re-derives test/fixtures/caddy-adapt-*.json and fails if a Caddy release changed the JSON shape, which is the check that stops the committed fixtures describing a Caddy nobody runs."
+      "runsWhere": "any developer or operator machine with caddy installed \u2014 where it also re-derives test/fixtures/caddy-adapt-*.json and fails if a Caddy release changed the JSON shape, which is the check that stops the committed fixtures describing a Caddy nobody runs.",
+      "requires": ["command:caddy"]
     },
     {
       "id": "caddy-adapt-absent-offbox-guard",
       "match": "^offbox guard — against real caddy$",
       "why": "Hands real Caddyfiles to real `caddy adapt`: a pre-guard generated file planned into the current generator's output, the live install's hand-edited SHAPE (snippet import, handle blocks, redirect) read as already holding, and a nested-proxy site refused. The runner has no caddy binary. The decision layer of the same file (the guard reader, the property, the plan and the command) is fixture-driven and DOES run here.",
-      "runsWhere": "any developer or operator machine with caddy installed — where `caddy-drift — against real caddy` also re-derives test/fixtures/caddy-adapt-ungated*.json, the JSON this suite's decision layer reads."
+      "runsWhere": "any developer or operator machine with caddy installed — where `caddy-drift — against real caddy` also re-derives test/fixtures/caddy-adapt-ungated*.json, the JSON this suite's decision layer reads.",
+      "requires": ["command:caddy"]
     },
     {
       "id": "caddy-adapt-absent-gate-fallback",
       "match": "^the fallback marker, end to end \\(#1420\\) > against real caddy$",
       "why": "Writes real Caddyfiles into the store home and lets the REAL request handler run `caddy adapt` over them to decide whether the fallback marker is honoured: the generated gated file and the live install's gated shape honour it, the armed file and the shape with an ungated /openclaw-direct/* handle refuse it. The runner has no caddy binary. The decision layer (`test/gate-fallback.test.js`, over the committed adapt fixtures) and the rest of this file's wiring cases (direct mode, the listener, the refusals, the upgrade gate) need no caddy and DO run here.",
-      "runsWhere": "any developer or operator machine with caddy installed — where `caddy-drift — against real caddy` also re-derives test/fixtures/caddy-adapt-live-shape-*.json, the JSON the decision layer reads."
+      "runsWhere": "any developer or operator machine with caddy installed — where `caddy-drift — against real caddy` also re-derives test/fixtures/caddy-adapt-live-shape-*.json, the JSON the decision layer reads.",
+      "requires": ["command:caddy"]
     },
     {
       "id": "caddy-adapt-absent-redaction",
       "match": "^caddy-drift \u2014 credentials never reach a report > redacts the bcrypt hash out of an adapt failure$",
       "why": "Needs a real `caddy adapt` PARSE FAILURE to produce the stderr that quotes the offending Caddyfile line \u2014 that line can be `basic_auth <user> <hash>`, which is the only way a credential enters text nobody wrote by hand (#821). A stub cannot generate it, so there is nothing to redact without the binary. The sibling case in the same describe (`redacts findings on the way out`) needs no caddy and runs here.",
-      "runsWhere": "any developer or operator machine with caddy installed \u2014 including the live install, whose Caddyfile carries a real hash."
+      "runsWhere": "any developer or operator machine with caddy installed \u2014 including the live install, whose Caddyfile carries a real hash.",
+      "requires": ["command:caddy"]
     },
     {
       "id": "caddy-adapt-absent-pin",
       "match": "^pin-https-listener \u2014 against real caddy$",
       "why": "Hands real Caddyfiles to `caddy adapt` to prove the in-place HTTP/1.1 pin (#848) is read by Caddy as the only change \u2014 including the address-less `servers` block whose settings Caddy drops once a listener gains its own block, which no fixture can show without Caddy's parser. The runner has no caddy binary. The DECISION layer of the suite runs on committed adapt fixtures with `adapt` injected, so what counts as a pin-only change is covered here; only the parts that need Caddy itself skip.",
-      "runsWhere": "any developer or operator machine with caddy installed \u2014 the population the pin tool is run on."
+      "runsWhere": "any developer or operator machine with caddy installed \u2014 the population the pin tool is run on.",
+      "requires": ["command:caddy"]
     },
     {
       "id": "runbook-blocks-typed-into-zsh",
       "match": "^the operator bridge runbooks \\(#2031\\) > the blocks a person pastes, run as printed > each block typed into an interactive zsh: .*$",
       "why": "Types each pasted runbook block into an interactive zsh on a terminal, with `expect`, to see what a person's paste really does: history expansion, interactive parsing and aliases do not apply under `zsh -c`. The runner is Linux and has no macOS zsh to type into.",
-      "runsWhere": "every macOS developer machine with `expect`, which ships with macOS \u2014 the platform the runbooks are written for. What holds everywhere is in the two tests beside it: every block's structure and guards run under `sh`, and every one-line command and the helper's page are read for what an interactive shell would take differently."
+      "runsWhere": "every macOS developer machine with `expect`, which ships with macOS \u2014 the platform the runbooks are written for. What holds everywhere is in the two tests beside it: every block's structure and guards run under `sh`, and every one-line command and the helper's page are read for what an interactive shell would take differently.",
+      "requires": ["platform:darwin", "path:/bin/zsh", "command:expect"]
     }
   ]
 }

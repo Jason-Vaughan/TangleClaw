@@ -27,6 +27,10 @@
  * A pinned count would go stale on every engine-profile change and would not
  * say WHICH test went missing; a path ledger names the tier and the reason.
  *
+ * Each entry also says, in `requires`, what a host must have for its tests to
+ * run there. This script only checks that the field is well formed: it
+ * measures no host, and which skips it accepts is decided by `match` alone.
+ *
  * Usage: node scripts/test-skip-audit.js [--ledger <path>] <junit.xml> [...]
  * Exit 0 when every skip is on the ledger; 1 when one is not, or when the
  * report certified nothing (no test cases at all — an empty or missing report
@@ -37,6 +41,34 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const DEFAULT_LEDGER = path.join(__dirname, '..', 'test', 'skip-ledger.json');
+
+/**
+ * Every value a ledger entry's `requires` may hold. Each names one fact about
+ * a host that a program can measure; an entry's tests are expected to run
+ * where all of its values hold.
+ *
+ * The list is closed on purpose. A value nothing knows how to measure would
+ * make "expected to run here" a guess, so a new kind of host requirement is
+ * added here, reviewed, before any entry may use it. `path:` and `command:`
+ * are not open families: only the spellings below are accepted.
+ * `docs/lane-ci-evidence.md` says what each one means.
+ *
+ * `engine-cli:each` is the one value read per test rather than per entry: the
+ * engine is the one named in the test's own path.
+ */
+const LEDGER_REQUIREMENTS = Object.freeze([
+  'platform:darwin',
+  'timezone:non-utc',
+  'filesystem:case-sensitive',
+  'user:mode-bits-enforced',
+  'command:caddy',
+  'command:expect',
+  'path:/bin/zsh',
+  'caddyfile:live',
+  'prawduct:marketplace-checkout',
+  'engine-cli:any',
+  'engine-cli:each'
+]);
 
 /**
  * Decode the five XML entities plus numeric character references.
@@ -127,6 +159,42 @@ function parseJunit(xml) {
 }
 
 /**
+ * Validate one entry's `requires` and return a copy of it.
+ *
+ * Fails closed: an entry that does not say what its tests need cannot be
+ * judged "expected here" or "not expected here" by anything, and a reader that
+ * fell back to either answer would be guessing. So a missing field, an empty
+ * one, a non-string, a repeated value and a value off the closed list are all
+ * an invalid ledger.
+ *
+ * @param {object} entry - One ledger entry, its `id` already validated
+ * @returns {string[]} The entry's requirements, in the ledger's order
+ */
+function validateRequires(entry) {
+  const where = `skip ledger entry "${entry.id}"`;
+  if (!Array.isArray(entry.requires)) {
+    throw new Error(`${where} is missing \`requires\`: an array of what a host must have for its tests to run there`);
+  }
+  if (entry.requires.length === 0) {
+    throw new Error(`${where} has an empty \`requires\`: it must name at least one host requirement`);
+  }
+  const seen = new Set();
+  for (const value of entry.requires) {
+    if (typeof value !== 'string') {
+      throw new Error(`${where} has a \`requires\` value that is not a string: ${JSON.stringify(value)}`);
+    }
+    if (!LEDGER_REQUIREMENTS.includes(value)) {
+      throw new Error(`${where} has an unknown \`requires\` value "${value}"; the accepted values are ${LEDGER_REQUIREMENTS.join(', ')}`);
+    }
+    if (seen.has(value)) {
+      throw new Error(`${where} repeats the \`requires\` value "${value}"`);
+    }
+    seen.add(value);
+  }
+  return [...entry.requires];
+}
+
+/**
  * Validate the ledger's shape and compile its patterns.
  *
  * Throws rather than tolerating a malformed entry: a ledger that half-loads is
@@ -134,7 +202,7 @@ function parseJunit(xml) {
  * "unexpected skip" on someone else's PR.
  *
  * @param {object} ledger - Parsed `skip-ledger.json`
- * @returns {Array<{id: string, match: RegExp, why: string, runsWhere: string}>}
+ * @returns {Array<{id: string, match: RegExp, why: string, runsWhere: string, requires: string[]}>}
  */
 function compileLedger(ledger) {
   if (!ledger || !Array.isArray(ledger.entries)) {
@@ -149,7 +217,8 @@ function compileLedger(ledger) {
     }
     if (seen.has(e.id)) throw new Error(`skip ledger has two entries with id "${e.id}"`);
     seen.add(e.id);
-    return { id: e.id, match: new RegExp(e.match), why: e.why, runsWhere: e.runsWhere };
+    const requires = validateRequires(e);
+    return { id: e.id, match: new RegExp(e.match), why: e.why, runsWhere: e.runsWhere, requires };
   });
 }
 
@@ -158,7 +227,7 @@ function compileLedger(ledger) {
  *
  * @param {{total: number, skipped: Array<{path: string, kind: string, message: string}>}} run
  *   Output of `parseJunit`
- * @param {Array<{id: string, match: RegExp, why: string, runsWhere: string}>} entries
+ * @param {Array<{id: string, match: RegExp, why: string, runsWhere: string, requires: string[]}>} entries
  *   Output of `compileLedger`
  * @returns {{ok: boolean, total: number, ran: number, expected: Map<string, Array<object>>, unknown: Array<object>}}
  *   `expected` groups matched skips by ledger id (every entry present, possibly
@@ -292,7 +361,9 @@ function main(argv, io = {}) {
   return result.ok ? 0 : 1;
 }
 
-module.exports = { parseJunit, compileLedger, audit, formatReport, parseArgs, main, DEFAULT_LEDGER };
+module.exports = {
+  parseJunit, compileLedger, audit, formatReport, parseArgs, main, DEFAULT_LEDGER, LEDGER_REQUIREMENTS
+};
 
 if (require.main === module) {
   process.exitCode = main(process.argv.slice(2));
