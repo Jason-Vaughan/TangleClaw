@@ -39,7 +39,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- prawduct: type=feature | scope=2323-check-watch-wake -->
 
-#2323 Chunk 01 of three. Branch `feat/2323-01-check-watch-records`, from `origin/main` `2b3f7b03`. No route, no verb, no timer, no file under `public/`: nothing an operator can reach yet, and nothing reads GitHub unless a later chunk calls the reader.
+#2323 Chunk 01 of three. Branch `feat/2323-01-check-watch-records`. No route, no verb, no timer, no file under `public/`: nothing an operator can reach yet, and nothing reads GitHub unless a later chunk calls the reader.
 
 Visual change: no
 
@@ -47,7 +47,7 @@ Visual change: no
 
 **What.**
 
-- `lib/github-checks.js` (new): `readCheck(repo, sha, name)` asks GitHub through `gh` for the runs of that name on that commit and answers `not-found`, `running`, `concluded` (with the conclusion, the run's id and when it completed) or `unavailable` with the reason. The newest run of a name wins. A malformed repository, commit or name is refused before `gh` runs. Anything not understood is `unavailable`, never a guess. Written against two real responses captured from this repository (`test/fixtures/github-checks/`).
+- `lib/github-checks.js` (new): `readCheck(repo, sha, name)` asks GitHub through `gh` for the runs of that name on that commit and answers `not-found`, `running`, `concluded` (with the conclusion, the run's id and when it completed) or `unavailable` with the reason. The newest run of a name wins. A malformed repository, commit or name is refused before `gh` runs. Anything not understood is `unavailable`, never a guess. Written against real responses captured from this repository (`test/fixtures/github-checks/`), one of them the answer to the reader's own filtered request.
 - `lib/check-watch-state.js` (new): the fact kinds, the refusal codes, the limits (20 open watches a project, a due time at most 24 hours ahead), `derive(watch, now)` and `requestIdFor(watchId, kind)`. No I/O.
 - `lib/store.js`: schema **v65**. Two tables, `check_watches` and `check_watch_facts`, created on a fresh install and by the v64→v65 migration, which reads the stored DDL back before the version advances.
 - `lib/check-watch-store.js` (new): every read and write over those tables. Each write is one transaction with its fact.
@@ -59,6 +59,8 @@ Visual change: no
 **Beyond the plan's column list**, each told to the Integrator before the suite: the last read's time and outcome are columns on the watch, so `derive` takes the watch and the time and not the facts; `read-recovered` beside `read-failed`; `alarm-undeliverable` beside `wake-undeliverable`; the open-watch index covers the repository too; the sent facts carry the request id and the recipient workspace as columns.
 
 **Found while building.** A CHECK written as `last_read_detail IS NULL OR last_read_outcome = 'failed'` let a detail through on a row with no read at all, because a comparison with NULL is not false to SQLite. The migration test caught it; the CHECK now names the missing outcome.
+
+**From the review.** `derive` called a record or a time it could not read `past-due`; it now says `unreadable`. `registerWatch` threw on a finite due time beyond what a Date holds, where the store promises a refusal; such a number is now refused. A test ties the check-name limit the store's CHECK is built from to the one the reader accepts.
 
 **Not checked.** Nothing calls these functions yet, so no route, verb, timer or live server was exercised. The reader was run by hand against GitHub for a passed check, a missing name and an unknown commit; the tests replace `gh` at its seam. No real v64 database from an install was migrated.
 
