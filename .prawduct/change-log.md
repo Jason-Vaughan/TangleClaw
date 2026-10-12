@@ -51,10 +51,11 @@ Visual change: no
 - `scripts/test-skip-audit.js`: `LEDGER_REQUIREMENTS`, the closed list of accepted values, exported. `compileLedger` throws on an entry whose `requires` is missing, not an array, empty, holds a non-string, repeats a value or holds a value off the list, and returns `requires` with each compiled entry. `audit`, `formatReport` and `main` are unchanged: the audit measures no host and accepts skips by `match` alone.
 - `test/test-skip-audit.test.js`: each invalid shape refused by name; a valid one carries `requires`; the tracked ledger compiles under the new validation; the command exits 1 on an invalid ledger. The existing cases keep their assertions; their fixture entries gain the field.
 - New `docs/lane-ci-evidence.md`: what a green CI run says and does not, the ledger's fields, each `requires` value and what it means.
+- `CONTRIBUTING.md` (added to the chunk's files by the Integrator, one passage): the sentence on adding an environment-gated test says an entry also needs `requires`, and points at the new page.
 
 **What an operator sees.** Nothing in the product. A contributor who adds an environment-gated test must now give its ledger entry a `requires` from the list, or CI's `test` job fails and names the entry.
 
-**Limits.** Nothing measures a host yet, so nothing checks that an entry's `requires` is true of the machines its `runsWhere` describes. The audit does not measure the CI runner. `CONTRIBUTING.md` still describes a ledger entry as "why" and "where" only.
+**Limits.** Nothing measures a host yet, so nothing checks that an entry's `requires` is true of the machines its `runsWhere` describes. The audit does not measure the CI runner.
 
 ## 2026-10-12 — #2231: a Codex that cannot answer its version probe is asked once, then not again for 60 seconds
 
