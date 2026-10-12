@@ -206,6 +206,51 @@ const SETTLED_TICKS = 2 + wake.IDLE_TICKS_REQUIRED + 2;
 let nextSession = 1;
 
 /**
+ * Point the monitor's seams at one live, opted-in Codex session with one
+ * unread message, and return the seam table.
+ * @param {{clock: number}} world - Holds the clock the monitor reads
+ * @param {object} o
+ * @param {function(): string[]} o.pane - The pane lines for each read
+ * @param {boolean} o.channelOpen - Whether the session has a channel at all
+ * @param {function(): Promise<object>} o.observe - The channel's answer for each read
+ * @param {function(object): void} o.onDelivery - Receives every ledger entry
+ * @param {function(string): void} o.onInject - Receives every typed command
+ * @returns {object} `wake._internal`
+ */
+function installSeams(world, o) {
+  const sessionId = nextSession++;
+  const s = wake._internal;
+  s.listLiveAll = () => [{ id: sessionId, projectId: 10, sessionMode: 'tmux', tmuxSession: `tc-cx-${sessionId}`, engineId: 'codex' }];
+  s.getProject = () => ({ id: 10, name: 'proj-cx', path: '/tmp/proj-cx' });
+  s.loadProjectConfig = () => ({ medusaWake: true });
+  s.wrapRunning = () => false;
+  s.rotationOpen = () => false;
+  s.getStatus = () => ({ state: 'listening', workspaceId: 'proj-cx-abc123', unread: 1, lastError: null });
+  s.getMessages = () => [{ id: 'm1', from: 'peer', message: 'hello' }];
+  s.capturePane = () => ({ lines: o.pane() });
+  s.cursorInfo = () => null;
+  s.masterWakeRecord = () => null;
+  s.recordDelivery = o.onDelivery;
+  s.injectCommand = (projectName, command) => { o.onInject(command); return { ok: true, error: null }; };
+  s.openChannel = () => (o.channelOpen
+    ? { id: 7, sessionId, sequenceId: 70, engineId: 'codex', adapter: 'codex', state: 'open', adapterState: { threadId: 't-1' } }
+    : null);
+  s.launchSequence = () => ({ id: 70, sessionId });
+  s.declaresObserver = (engineId) => engineId === 'codex';
+  s.observeActivity = o.observe;
+  s.now = () => world.clock;
+  // The exchange record is not what is under test here.
+  s.recordWakeFacts = () => 0;
+  s.alreadyAttempted = () => false;
+  s.rearmDue = () => false;
+  s.awaitingReadiness = () => false;
+  s.noteAwaitingRead = () => 0;
+  s.noteReadiness = () => 0;
+  s.verifySubmission = () => Promise.resolve({ outcome: 'unknown', reason: 'fixture' });
+  return s;
+}
+
+/**
  * Judge one Codex pane under one channel answer through the real gate.
  *
  * Time moves as the monitor's timer moves it: a tick, the channel's answer a
@@ -219,36 +264,14 @@ let nextSession = 1;
  * @returns {Promise<{injected: number, held: (string|null)}>}
  */
 async function judge(pane, channel, opts = {}) {
-  const sessionId = nextSession++;
   const world = { clock: 1_000_000, injected: [], recorded: [], reads: 0 };
-  const s = wake._internal;
-  s.listLiveAll = () => [{ id: sessionId, projectId: 10, sessionMode: 'tmux', tmuxSession: `tc-cx-${sessionId}`, engineId: 'codex' }];
-  s.getProject = () => ({ id: 10, name: 'proj-cx', path: '/tmp/proj-cx' });
-  s.loadProjectConfig = () => ({ medusaWake: true });
-  s.wrapRunning = () => false;
-  s.rotationOpen = () => false;
-  s.getStatus = () => ({ state: 'listening', workspaceId: 'proj-cx-abc123', unread: 1, lastError: null });
-  s.getMessages = () => [{ id: 'm1', from: 'peer', message: 'hello' }];
-  s.capturePane = () => ({ lines: pane });
-  s.cursorInfo = () => null;
-  s.masterWakeRecord = () => null;
-  s.recordDelivery = (entry) => { world.recorded.push(entry); };
-  s.injectCommand = (projectName, command) => { world.injected.push(command); return { ok: true, error: null }; };
-  s.openChannel = () => (channel.open
-    ? { id: 7, sessionId, sequenceId: 70, engineId: 'codex', adapter: 'codex', state: 'open', adapterState: { threadId: 't-1' } }
-    : null);
-  s.launchSequence = () => ({ id: 70, sessionId });
-  s.declaresObserver = (engineId) => engineId === 'codex';
-  s.observeActivity = () => channel.answer(world.reads++);
-  s.now = () => world.clock;
-  // The exchange record is not what is under test here.
-  s.recordWakeFacts = () => 0;
-  s.alreadyAttempted = () => false;
-  s.rearmDue = () => false;
-  s.awaitingReadiness = () => false;
-  s.noteAwaitingRead = () => 0;
-  s.noteReadiness = () => 0;
-  s.verifySubmission = () => Promise.resolve({ outcome: 'unknown', reason: 'fixture' });
+  const s = installSeams(world, {
+    pane: () => pane,
+    channelOpen: channel.open,
+    observe: () => channel.answer(world.reads++),
+    onDelivery: (entry) => { world.recorded.push(entry); },
+    onInject: (command) => { world.injected.push(command); }
+  });
 
   if (channel.stale) {
     s.tick();
@@ -676,42 +699,23 @@ describe('which rule holds which Codex 0.156.1 startup screen (#2187)', () => {
 
 /**
  * The holds the gate records, in order, while the channel's answer changes.
- * @param {string[]} pane - Pane lines
+ * @param {string[]|function(object): string[]} pane - Pane lines, or a function of the world giving them for the tick in hand
  * @param {Array<object>} answers - The channel's answer for each read; the last one repeats
  * @param {number} ticks - Ticks to run
  * @returns {Promise<{injected: number, holds: string[]}>} `holds` with repeats collapsed
  */
 async function timeline(pane, answers, ticks) {
-  const world = { clock: 1_000_000, injected: 0, holds: [], reads: 0 };
-  const sessionId = nextSession++;
-  const s = wake._internal;
-  s.listLiveAll = () => [{ id: sessionId, projectId: 10, sessionMode: 'tmux', tmuxSession: `tc-cx-${sessionId}`, engineId: 'codex' }];
-  s.getProject = () => ({ id: 10, name: 'proj-cx', path: '/tmp/proj-cx' });
-  s.loadProjectConfig = () => ({ medusaWake: true });
-  s.wrapRunning = () => false;
-  s.rotationOpen = () => false;
-  s.getStatus = () => ({ state: 'listening', workspaceId: 'proj-cx-abc123', unread: 1, lastError: null });
-  s.getMessages = () => [{ id: 'm1', from: 'peer', message: 'hello' }];
-  s.capturePane = () => ({ lines: typeof pane === 'function' ? pane(world) : pane });
-  s.cursorInfo = () => null;
-  s.masterWakeRecord = () => null;
-  s.recordDelivery = (entry) => {
-    if (entry.outcome !== 'skipped') return;
-    if (world.holds[world.holds.length - 1] !== entry.skipReason) world.holds.push(entry.skipReason);
-  };
-  s.injectCommand = () => { world.injected += 1; return { ok: true, error: null }; };
-  s.openChannel = () => ({ id: 7, sessionId, sequenceId: 70, engineId: 'codex', adapter: 'codex', state: 'open', adapterState: { threadId: 't-1' } });
-  s.launchSequence = () => ({ id: 70, sessionId });
-  s.declaresObserver = (engineId) => engineId === 'codex';
-  s.observeActivity = () => Promise.resolve(answers[Math.min(world.reads++, answers.length - 1)]);
-  s.now = () => world.clock;
-  s.recordWakeFacts = () => 0;
-  s.alreadyAttempted = () => false;
-  s.rearmDue = () => false;
-  s.awaitingReadiness = () => false;
-  s.noteAwaitingRead = () => 0;
-  s.noteReadiness = () => 0;
-  s.verifySubmission = () => Promise.resolve({ outcome: 'unknown', reason: 'fixture' });
+  const world = { clock: 1_000_000, injected: 0, holds: [], reads: 0, tick: 0 };
+  const s = installSeams(world, {
+    pane: () => (typeof pane === 'function' ? pane(world) : pane),
+    channelOpen: true,
+    observe: () => Promise.resolve(answers[Math.min(world.reads++, answers.length - 1)]),
+    onDelivery: (entry) => {
+      if (entry.outcome !== 'skipped') return;
+      if (world.holds[world.holds.length - 1] !== entry.skipReason) world.holds.push(entry.skipReason);
+    },
+    onInject: () => { world.injected += 1; }
+  });
   for (let i = 0; i < ticks; i++) {
     world.tick = i;
     s.tick();
