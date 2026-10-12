@@ -101,8 +101,8 @@ every entry this machine is expected to run did run and did pass.
 Nothing you type decides what it runs or what it expects. The tests come from each entry's
 `match`. Whether an entry is expected here comes from its `requires`, each value measured on this
 machine. There is no option to leave an entry out or to read another ledger. `--junit` only says
-where the run's junit report is written; without it the report goes to a new temporary folder, and
-the path is printed.
+where the run's junit report is written, a relative path being taken from the folder you run the
+command in; without it the report goes to a new temporary folder. Either way the path is printed.
 
 It is a wide run: every test file is loaded, and only the tests the ledger names execute. In a
 lane, do not start it while a full suite is running on the same host.
@@ -144,8 +144,9 @@ COMPLEMENT GREEN: 13 of 14 ledger entries ran here; did not: case-insensitive-fs
 "Ran here" means at least one of the entry's tests ran and none failed or was wrongly skipped. An
 entry that is not expected here is named on that line and does not make the run red.
 
-It also fails, before judging anything, on a ledger it cannot read or that has no entries, and on
-a run that wrote no report or a report with no test case. A report left at the same path by an
+It also fails, before judging anything, on a ledger it cannot read or that has no entries, on a
+run that could not start or was killed (it says which), and on a run that wrote no report or a
+report with no test case. A report left at the same path by an
 earlier run is removed first, so it is never read as this run's.
 
 ### How each value is measured

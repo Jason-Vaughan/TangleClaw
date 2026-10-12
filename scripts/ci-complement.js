@@ -439,19 +439,23 @@ function formatList(entries, host) {
  * for a test and the ledger names none either; the patterns do the selecting.
  *
  * @param {string[]} patterns - One `--test-name-pattern` source per entry
- * @param {string} junitPath - Where the report goes
- * @returns {void}
+ * @param {string} junitPath - Where the report goes, absolute: the run's working folder is the repository's
+ * @returns {string|null} Why the run could not start or was killed, or null when it ran to its end
  */
 function runTests(patterns, junitPath) {
   const files = fs.readdirSync(TEST_DIR).filter((f) => f.endsWith('.test.js')).sort()
     .map((f) => path.join('test', f));
-  spawnSync(process.execPath, [
+  const r = spawnSync(process.execPath, [
     '--test',
     ...patterns.map((p) => `--test-name-pattern=${p}`),
     '--test-reporter=junit',
     `--test-reporter-destination=${junitPath}`,
     ...files
   ], { cwd: ROOT, stdio: 'ignore' });
+  // A red test is the report's to say, so the exit code is not read. Not starting, or being killed, is.
+  if (r.error) return `the test run could not start: ${r.error.message}`;
+  if (r.signal) return `the test run was killed by ${r.signal}`;
+  return null;
 }
 
 /**
@@ -486,7 +490,7 @@ function parseArgs(argv) {
  * @param {{write: function(string): any}} [io.stdout] - Where the lines go
  * @param {string} [io.ledgerPath] - The ledger to read
  * @param {Object<string, function(): *>} [io.measurements] - value → measurement
- * @param {function(string[], string): void} [io.run] - Runs the tests and writes the report
+ * @param {function(string[], string): (string|null|void)} [io.run] - Runs the tests and writes the report; answers why it stopped early, if it did
  * @returns {number} 0 when the complement is green, 1 otherwise
  */
 function main(argv, io = {}) {
@@ -511,13 +515,21 @@ function main(argv, io = {}) {
     return 0;
   }
 
+  // Resolved once, here: the run's working folder is the repository's, not the caller's, and a
+  // relative path read in one and written in the other would lose the report.
   const junitPath = parsed.junitPath
-    || path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ci-complement-')), 'ci-complement.xml');
+    ? path.resolve(parsed.junitPath)
+    : path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ci-complement-')), 'ci-complement.xml');
   // A report left by an earlier run must never be read as this one's.
   fs.rmSync(junitPath, { force: true });
-  run(entries.map(namePattern), junitPath);
+  const stopped = run(entries.map(namePattern), junitPath);
+  if (stopped) out.write(`${stopped}\n`);
   if (!fs.existsSync(junitPath)) {
     out.write(`report not found: ${junitPath}. The run wrote no junit output, so nothing was certified\n`);
+    return 1;
+  }
+  if (stopped) {
+    out.write(`the run did not reach its end, so ${junitPath} is not a whole report and nothing was certified\n`);
     return 1;
   }
   const cases = parseCases(fs.readFileSync(junitPath, 'utf8'));

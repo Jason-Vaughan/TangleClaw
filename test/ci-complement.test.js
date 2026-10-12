@@ -324,9 +324,10 @@ describe('ci-complement — the run, end to end through its seams', () => {
    * @param {string|null} [opts.report] - What the fake run writes, or null to write nothing
    * @param {Object<string, function>} [opts.measurements] - value → measurement
    * @param {string[]} [opts.argv] - Arguments
+   * @param {string|null} [opts.stopped] - What the fake run answers: why it stopped early, or null
    * @returns {{code: number, out: string, runs: Array<{patterns: string[], junitPath: string}>, dir: string}}
    */
-  function runMain({ entries, report = ONE_PASSED, measurements, argv = [] }) {
+  function runMain({ entries, report = ONE_PASSED, measurements, argv = [], stopped = null }) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-complement-test-'));
     const ledgerPath = path.join(dir, 'ledger.json');
     if (typeof entries === 'string') fs.writeFileSync(ledgerPath, entries);
@@ -340,6 +341,7 @@ describe('ci-complement — the run, end to end through its seams', () => {
       run: (patterns, junitPath) => {
         runs.push({ patterns, junitPath });
         if (report !== null) fs.writeFileSync(junitPath, report);
+        return stopped;
       }
     });
     return { code, out, runs, dir };
@@ -443,6 +445,31 @@ describe('ci-complement — the run, end to end through its seams', () => {
     assert.equal(r.code, 0);
     assert.equal(r.runs[0].junitPath, wanted);
     assert.ok(r.out.includes(`junit report: ${wanted}\n`));
+  });
+
+  it('hands the run an absolute report path when --junit is relative, and reads the report from the same place', (t) => {
+    const r = runMain({ entries: [PTY], argv: ['--junit', path.join('some', 'where', 'complement.xml')], report: null });
+    t.after(() => fs.rmSync(r.dir, { recursive: true, force: true }));
+    const handed = r.runs[0].junitPath;
+    assert.equal(path.isAbsolute(handed), true);
+    assert.equal(handed, path.resolve('some', 'where', 'complement.xml'));
+    assert.ok(r.out.includes(`report not found: ${handed}.`));
+  });
+
+  it('is red when the run could not start, and says why beside the missing report', (t) => {
+    const r = runMain({ entries: [PTY], report: null, stopped: 'the test run could not start: spawn ENOENT' });
+    t.after(() => fs.rmSync(r.dir, { recursive: true, force: true }));
+    assert.equal(r.code, 1);
+    assert.match(r.out, /^the test run could not start: spawn ENOENT\nreport not found: /);
+  });
+
+  it('is red when the run was killed, even though a report with a passing test was written', (t) => {
+    const r = runMain({ entries: [PTY], stopped: 'the test run was killed by SIGTERM' });
+    t.after(() => fs.rmSync(r.dir, { recursive: true, force: true }));
+    assert.equal(r.code, 1);
+    assert.match(r.out, /killed by SIGTERM/);
+    assert.match(r.out, /not a whole report and nothing was certified/);
+    assert.doesNotMatch(r.out, /COMPLEMENT GREEN/);
   });
 
   it('--list prints each entry with what it requires and what this host measures, and runs nothing', (t) => {
