@@ -35,6 +35,39 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-11 — #2322: the merge queue's records and its state machine (schema v64)
+
+<!-- prawduct: type=feature | scope=2322-integrator-merge-queue -->
+
+#2322 Chunk 01 of five. Branch `feat/2322-01-merge-queue-records`, from `origin/main` `e4dfaf47`. No route, no verb, no GitHub call, no file under `public/`: nothing an operator can reach yet.
+
+Visual change: no
+
+**Why.** The lanes merge one at a time by hand, and each merge sends the other lane back to re-sync and re-run. The issue asks for a queue the Integrator owns: it submits a reviewed pull request head, TangleClaw tests it merged with the current `main`, and lands it only if every gate still holds. GitHub's own merge queue is not offered to a repository owned by a personal account, so TangleClaw keeps the queue. This chunk is what the other four stand on: where the queue's facts are kept, and the rules for moving an entry.
+
+**What changed.**
+- `lib/merge-queue-state.js` (new): the states (`queued`, `assembling`, `testing`, `landing`, `landed`, `failed`, `withdrawn`), the allowed moves, the event each move is recorded as, the refusal codes, `nextActive(entries)` and `gateProblems(entry)`. No I/O.
+- `lib/store.js`: `_mergeQueueTablesDdl()` for `merge_queues`, `merge_queue_entries` and `merge_queue_events`, called from a fresh install and from the v64 migration; `_verifyMergeQueueV64()` reads the stored DDL before the version advances; `CURRENT_SCHEMA_VERSION` is 64. The CHECK lists are built from the state module's constants.
+- `lib/merge-queue-store.js` (new): every read and write over those tables. Each write is one `BEGIN IMMEDIATE` transaction with its event row; a refused write rolls back and answers `{ ok: false, code, message }`.
+- `test/merge-queue-state.test.js`, `test/merge-queue-store.test.js`, `test/store-merge-queue-migration.test.js` (new).
+
+**What the records answer.** Which project owns a repository's queue, who said so, how they were known and when. What is in the queue and in what order. For an entry: the pull request and exact head, who submitted it from which launch, each gate's status, reference and time, and what the queue itself read of the head's check. Which entry is active and its candidate's ref, base, commit and tree. Why an entry failed or was withdrawn. What landed, as which merge commit, when, and whether its tree was the candidate's. The ordered history of the queue and of each entry.
+
+**Enforced by the database, not only by the caller.** One active queue per repository and base branch, compared without case. One unfinished entry per pull request. One entry at a time between `assembling` and `landing`. A history that refuses UPDATE and DELETE and is numbered once per queue.
+
+**Decisions.**
+- [DECISION: the store module itself refuses a write that is not from the Operator (make or retire a queue, clear a halt, record the Operator gate) or not from a launch of the owner project (everything about an entry). | The issue says no other automation can add to the queue. Who the caller is stays the HTTP layer's question (`lib/control-auth.js`); what a given caller may write is answered here, so the API coming in a later chunk is not the only guard.]
+- [DECISION: `merge_queues` carries `halted_at`, `halt_code` and `halt_detail`, and `recordLanded` sets them in the same transaction when the landed tree is not the candidate's. The entry is still recorded as landed. Only the Operator clears a halt, with a reference. | The plan listed the queue's status as `active` or `retired` and put the stop for a tree mismatch in the last chunk, which has no schema number. The merge has happened by then, so the record says so; the halt is what stops the next entry being built on a tree no test passed.]
+- [DECISION: events are numbered per queue and `entry_id` may be NULL. | Queue-level facts (made, retired, halted, halt cleared) then sit in the same ordered history as the entries', and one entry's history is that list filtered.]
+- [DECISION: an entry keeps what the queue read of the head's check and of the candidate's check (run id and conclusion) in columns apart from the owner's three stated gates. | A later chunk must show which gates are the owner's statement and which the queue read; the landing recheck compares against them.]
+- [DECISION: `beginLanding` refuses unless the candidate's check conclusion is exactly `success` and `gateProblems` is empty, read from the row inside the transaction that writes `landing`. | "Rechecks the gates at landing time and fails closed" is then true of the record whatever the caller forgot.]
+- [DECISION: `landing → withdrawn` is not an allowed move. | Once the merge has been asked for, its outcome is read before anything else is decided: `landed`, or back to `testing` when it was not made.]
+- [DECISION: no foreign keys, and `position` is never renumbered. | A history row must outlive the project and launch it names, as the control and workload tables already hold; a withdrawal in the middle leaves the others where they were.]
+
+**Not done here.** Nothing calls these functions yet. Whether a caller is the Operator or a verified live launch, a hold, every GitHub read and write, and the refusal of a pull request that changes `version.json` belong to later chunks.
+
+**Verification.** The three new test files pass: every allowed move and every refused one against a table spelled out in the test; order across a withdrawal; a second unfinished entry for one pull request and a second active queue refused; a change and its event landing together, proved by making each write fail in turn; a v63 store migrated to the same stored DDL a fresh install has, with the tables empty; the migration run twice; a table of the right name and the wrong shape refused with the version left at 63.
+
 ## 2026-10-11 — #2268: the landing page shows the launch identity report as a banner
 
 <!-- prawduct: type=bugfix | scope=2268-launch-identity-not-inherited -->
