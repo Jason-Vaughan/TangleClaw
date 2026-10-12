@@ -57,7 +57,7 @@ Visual change: yes (the wrap drawer's release banner has a new label and sentenc
 
 `test/wrap-drawer.test.js`: the banner's lane wording, every other outcome compared byte for byte with and without a merge authority, and the path from the wrap's result to the banner.
 
-**Limits.** No real wrap of a lane session has run: that is the Operator's to allow after the deploy, and the hold on lane wraps stays until then. The wrap drawer still has no sentence of its own for a coordinated project, and its tooltip for the priming step does not list this skip (#2366). A coordinator's own wrap skips the roll too.
+**Limits.** No real wrap of a lane session has run: that is the Operator's to allow after the deploy, and the hold on lane wraps stays until then. The commit row still reads "wrap PR opened (auto-merge NOT armed)" with its reason under *How to fix this*, and the drawer's tooltip for the priming step does not list this skip (#2366). The banner shown before GitHub's answer arrives ("release pending PR merge") is unchanged. A coordinator's own wrap skips the roll too.
 
 ## 2026-10-12 — #2320: a wrap arms auto-merge only in a project that decides its own merges
 
