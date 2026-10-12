@@ -915,3 +915,27 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/_release-certification-fixtures.js` — shared fixtures for the release-certification suites: one healthy run's manifest, observations and samples, kept in one place because per-suite copies had drifted.
 - `test/soak-attest-bridge.test.js` — #2020: `lib/soak/attest-bridge.js` from raw admin and workload attestation lines to the bound isolation pair, the breach envelope, and each refusal.
 - `test/operator-bridge-runbooks.test.js` — #2031 (ADR 0023): the Operator Bridge activation and rollback runbooks held to the code. The snapshot and restore blocks are run, the two rule texts are matched word for word, every button and line a step quotes must exist in the code under that name, and the rollback's order and end state are the ones the Architect ruled.
+
+## TODO (auto-stubbed 2026-10-11)
+
+- **TBD** — touched in this session: `test/session-rule-lifecycle.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/fixtures/codex-panes/codex-0.156.1.json`. <!-- describe -->
+- **TBD** — touched in this session: `test/fixtures/codex-panes/codex-0.159.0.json`. <!-- describe -->
+- **TBD** — touched in this session: `test/fixtures/codex-panes/codex-0.161.0.json`. <!-- describe -->
+- **TBD** — touched in this session: `test/medusa-wake-codex-fixtures.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/tmux-read-pane-async.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/_codex-launchable.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/api-account-self-service.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/launch-binding-dispatch.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/_tc-env.js`. <!-- describe -->
+- **TBD** — touched in this session: `docs/adr/0023-master-mediated-operator-bridge.md`. <!-- describe -->
+- **TBD** — touched in this session: `docs/discord-operator-notifications.md`. <!-- describe -->
+- **TBD** — touched in this session: `test/operator-proof.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `scripts/sync-claude-md-block.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/claude-md-operational-block.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/setup-wizard-notice-wording.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/bridge-helper/bridge-client.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/launch-identity.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/launch-identity.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/launch-identity-banner.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `docs/releases/v5.32-status.md`. <!-- describe -->
