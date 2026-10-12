@@ -35,6 +35,7 @@ setLevel('error');
 const commitStep = require('../lib/wrap-steps/commit');
 const store = require('../lib/store');
 const queues = require('../lib/merge-queue-store');
+const drawer = require('../public/wrap-drawer.js');
 
 const OPERATOR = { kind: 'operator', operatorProof: 'verified-session' };
 
@@ -323,6 +324,15 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
       const rows = autoPrRows();
       assert.equal(rows.length, 1);
       assert.equal(rows[0].detail.stranded, false, 'an open pull request is not a stranded wrap');
+      // What a person sees. The drawer's row builder reads a step's own
+      // `remediation` and nothing nested under `autoPr`, so the reason is
+      // asserted on the row it builds, not only on the result.
+      assert.equal(result.output.remediation, ap.remediation);
+      const row = drawer.buildStepRow({ stepId: 'commit', kind: 'commit', status: result.status, output: result.output, blockers: result.blockers }, {});
+      assert.match(row.detail, /wrap PR opened \(auto-merge NOT armed\)/);
+      assert.ok(row.remediation.includes(ap.mergeAuthority.said), 'the drawer row carries who merges, under "How to fix this"');
+      assert.equal(row.isBlocker, false);
+      assert.equal(row.warning, false);
       return ap;
     }
 
@@ -415,6 +425,7 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
       assert.equal(ap.autoMergeArmed, true);
       assert.equal(ap.mergeAuthority, null);
       assert.equal(ap.remediation, null);
+      assert.equal('remediation' in result.output, false, 'an armed wrap has nothing to explain');
       assert.deepEqual(calls.find((c) => c.key === 'gh-merge').args, ['pr', 'merge', PR_URL, '--auto', '--squash', '--delete-branch']);
       assert.doesNotMatch(calls.find((c) => c.key === 'gh-create').args.slice(-1)[0], /Who merges this/);
       assert.equal(currentBranch(), 'main');
