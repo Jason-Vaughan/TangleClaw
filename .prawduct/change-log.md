@@ -35,6 +35,35 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-11 — #2323: the check-run reader, the watch records and the derived state (schema v65)
+
+<!-- prawduct: type=feature | scope=2323-check-watch-wake -->
+
+#2323 Chunk 01 of three. Branch `feat/2323-01-check-watch-records`. No route, no verb, no timer, no file under `public/`: nothing an operator can reach yet, and nothing reads GitHub unless a later chunk calls the reader.
+
+Visual change: no
+
+**Why.** A session that is waiting on CI has no way to be told when it finishes: it polls, or it sits. The issue asks that a session name a check on an exact commit and a due time, and that TangleClaw record the result itself and wake the session once. This chunk is what the other two stand on: how one check on one commit is read from GitHub, where a watch and its history are kept, and how a watch's state is derived from the record.
+
+**What.**
+
+- `lib/github-checks.js` (new): `readCheck(repo, sha, name)` asks GitHub through `gh` for the runs of that name on that commit and answers `not-found`, `running`, `concluded` (with the conclusion, the run's id and when it completed) or `unavailable` with the reason. The newest run of a name wins. A malformed repository, commit or name is refused before `gh` runs. Anything not understood is `unavailable`, never a guess. Written against real responses captured from this repository (`test/fixtures/github-checks/`), one of them the answer to the reader's own filtered request.
+- `lib/check-watch-state.js` (new): the fact kinds, the refusal codes, the limits (20 open watches a project, a due time at most 24 hours ahead), `derive(watch, now)` and `requestIdFor(watchId, kind)`. No I/O.
+- `lib/store.js`: schema **v65**. Two tables, `check_watches` and `check_watch_facts`, created on a fresh install and by the v64→v65 migration, which reads the stored DDL back before the version advances.
+- `lib/check-watch-store.js` (new): every read and write over those tables. Each write is one transaction with its fact.
+
+**Enforced by the database itself.** One open watch per project, repository, commit and check name; a result written whole or not at all; each once-only fact written once (`registered`, `resolved`, `woke`, `wake-undeliverable`, `alarmed`, `alarm-undeliverable`, `cancelled`, `expired`); a `woke` or `alarmed` fact always naming its request id, its exchange and its workspace; a history that refuses UPDATE and DELETE.
+
+**What the decider's rulings needed from the tables.** The wake and the alarm must each be sent under one deterministic request id, reused on a retry, so a restart between the switchboard accepting a message and the fact being written cannot send it twice. The tables carry that: a watch id is random text and never reused; `requestIdFor` makes the request id from the watch id and the message kind alone, and a test pins its form against the shape the switchboard accepts; the sent facts are once-only and carry the exchange id. A watch that is never resolved ends by itself 24 hours after its due time (`2323 expire 24h`): the `expired` fact kind and the `expired_at` column are here, the open-watch index and the per-project limit leave an expired watch out, and `derive` reads it `unknown` with an `expired` reason. Nothing writes `expired_at` in this chunk.
+
+**Beyond the plan's column list**, each told to the Integrator before the suite: the last read's time and outcome are columns on the watch, so `derive` takes the watch and the time and not the facts; `read-recovered` beside `read-failed`; `alarm-undeliverable` beside `wake-undeliverable`; the open-watch index covers the repository too; the sent facts carry the request id and the recipient workspace as columns.
+
+**Found while building.** A CHECK written as `last_read_detail IS NULL OR last_read_outcome = 'failed'` let a detail through on a row with no read at all, because a comparison with NULL is not false to SQLite. The migration test caught it; the CHECK now names the missing outcome.
+
+**From the review.** `derive` called a record or a time it could not read `past-due`; it now says `unreadable`. `registerWatch` threw on a finite due time beyond what a Date holds, where the store promises a refusal; such a number is now refused. A test ties the check-name limit the store's CHECK is built from to the one the reader accepts.
+
+**Not checked.** Nothing calls these functions yet, so no route, verb, timer or live server was exercised. The reader was run by hand against GitHub for a passed check, a missing name and an unknown commit; the tests replace `gh` at its seam. No real v64 database from an install was migrated.
+
 ## 2026-10-11 — #2186: Codex 0.156.1 is listed in the folder-trust allowance, on a signed-in probe
 
 <!-- prawduct: type=feature | scope=codex-trust-2186 -->
