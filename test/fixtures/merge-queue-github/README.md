@@ -5,7 +5,7 @@ Each `.json` file here is one `gh api -i` call made against
 arguments it sent (`args`), the exit code, the HTTP status line, the body after
 the response headers, and what `gh` wrote to stderr. The response headers are
 not kept. `test/merge-queue-github.test.js` replays them in place of `gh`.
-They come from two sittings.
+They come from three sittings.
 
 **The first sitting (07:18 UTC)** was run when a candidate was still merged on
 its own `tc-queue/` branch: one throwaway branch, created at `6ee1f14b` (`main`
@@ -62,6 +62,35 @@ the merge commit has the tree of `main`'s own merge of that pull request
 | `stage-ref-deleted.json` | delete the stage branch | 204 |
 | `candidate-ref-deleted.json` | delete the candidate branch | 204 |
 | `stage-ref-delete-missing.json` | delete the stage branch a second time | 422 |
+
+**The third sitting (13:01 UTC)** made no branch and wrote nothing: it is
+`readBranchCheck`'s two reads, sent by the module, for three commits that
+already existed.
+
+- `48774bab`, the second sitting's candidate commit. Its branches had been
+  deleted about three and a half hours earlier, and its five check suites still
+  named them: four from other apps under the stage branch, one from GitHub
+  Actions under the candidate branch, holding the one `test` run (cancelled).
+- `abe00a40`, `main`'s merge of pull request #2335, which carries two `test`
+  runs: `main`'s own (success) and a later one made for
+  `tc-queue/probe-20261012-084901`, a branch a probe created at `main`'s tip
+  (cancelled). Asked for the latest runs, GitHub answers both, one per suite.
+- `6baff24c`, the head of `fix/2005-delivery-failure-notice`, whose `test` run
+  was run a second time. Asked for the latest runs, GitHub answers only the
+  second attempt; `checks-runs-rerun-all-PROBE.json` is the same read asked for
+  all runs, which the module does not send, and it answers both attempts in
+  one suite. No commit of `main` with a re-run was found to record: none of the
+  newest 600 workflow runs on the repository was a second attempt on `main`.
+
+| File | The call | Answer |
+|---|---|---|
+| `checks-runs-candidate.json` | the `test` runs of `48774bab` | 200 |
+| `checks-suites-candidate.json` | the check suites of `48774bab` | 200 |
+| `checks-runs-main-foreign.json` | the `test` runs of `abe00a40` | 200 |
+| `checks-suites-main-foreign.json` | the check suites of `abe00a40` | 200 |
+| `checks-runs-rerun.json` | the `test` runs of `6baff24c` | 200 |
+| `checks-suites-rerun.json` | the check suites of `6baff24c` | 200 |
+| `checks-runs-rerun-all-PROBE.json` | every `test` run of `6baff24c`, sent by the probe | 200 |
 
 `pull-merge-DOCUMENTED.json` is the one file that is **not** a recording: see
 the note inside it.

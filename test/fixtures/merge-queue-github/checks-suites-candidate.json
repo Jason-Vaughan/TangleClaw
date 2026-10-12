@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-10-12T13:01:11.246Z",
+  "args": [
+    "api",
+    "-i",
+    "repos/Jason-Vaughan/TangleClaw/commits/48774bab0c809a933699f74b9965a5eb86e5e40e/check-suites?per_page=100",
+    "--jq",
+    "{total_count: .total_count, check_suites: [.check_suites[] | {id: .id, head_branch: .head_branch, head_sha: .head_sha}]}"
+  ],
+  "exitCode": 0,
+  "statusLine": "HTTP/2.0 200 OK",
+  "body": "{\"check_suites\":[{\"head_branch\":\"tc-queue-stage/probe-20261012-092611\",\"head_sha\":\"48774bab0c809a933699f74b9965a5eb86e5e40e\",\"id\":103575882147},{\"head_branch\":\"tc-queue-stage/probe-20261012-092611\",\"head_sha\":\"48774bab0c809a933699f74b9965a5eb86e5e40e\",\"id\":103575882929},{\"head_branch\":\"tc-queue-stage/probe-20261012-092611\",\"head_sha\":\"48774bab0c809a933699f74b9965a5eb86e5e40e\",\"id\":103575883381},{\"head_branch\":\"tc-queue-stage/probe-20261012-092611\",\"head_sha\":\"48774bab0c809a933699f74b9965a5eb86e5e40e\",\"id\":103575883838},{\"head_branch\":\"tc-queue/probe-20261012-092611\",\"head_sha\":\"48774bab0c809a933699f74b9965a5eb86e5e40e\",\"id\":103575890893}],\"total_count\":5}\n",
+  "stderr": ""
+}
