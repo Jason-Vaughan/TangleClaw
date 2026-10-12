@@ -2993,4 +2993,661 @@ describe('Codex startupControl adapter', () => {
       assert.match(codex._internal._terminate(state, failing).teardown, /signal failed: EPERM/);
     });
   });
+
+  // #2059. Codex 0.161.0 and 0.162.0, each read by its own declaration
+  // (`capabilities.wake.restRows`) and from its own captures over the launch
+  // path TangleClaw uses: which rows may follow the composer, and which loaded
+  // thread is the launch's own. Neither is a verified version: these tests
+  // drive the adapter directly, behind the facade's version gate.
+  describe('a version that declares its rows at rest, and the launch\'s own thread (#2059)', () => {
+    const paneWitness = require('../lib/pane-witness');
+    const { CODEX_VISIBLE_PANES: PANES, CODEX_CHANNEL_VERSIONS, CODEX_CHANNEL_FIXTURES } = require('./_codex-visible-pane-fixtures');
+    const codexProfile = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));
+    const LAUNCH_PANE = { paneId: '%7', paneServer: '4242.1790431343' };
+    const TITLE = '01a0d0ce-0000-7000-8000-00000000717e';
+    const SECOND = '01a0d0ce-0000-7000-8000-0000000005ec';
+    const ours = {
+      psCommand: (pid) => (pid === 4242 ? 'codex app-server --listen unix:///x/requested.sock' : ''),
+      psBirth: (pid) => (pid === 4242 ? 'Wed Sep 23 18:00:04 2026' : '')
+    };
+    const OPENING_WHY = /the footer row is drawn with no status row above it, as on a screen that is still opening or resuming/;
+    const threadOf = () => store.startupControlChannels.getOpenBySession(session.id).adapterState.threadId;
+    const observe = () => codex.observeActivity(store.startupControlChannels.getOpenBySession(session.id), project, ours);
+
+    /**
+     * A witness over a pane the test can change, built as the fire service
+     * builds one, that records the options the adapter asked with.
+     * @param {object|Function} frame - What a read returns; a function is asked each read with `read` or `read-once`.
+     * @returns {{frame: *, asked: object[], answers: object[], afterWitness: (Function|null), witness: Function}}
+     */
+    const screenOf = (frame) => {
+      const screen = { frame, asked: [], answers: [], afterWitness: null };
+      screen.witness = async (opts) => {
+        const { single, ...shape } = opts;
+        screen.asked.push(opts);
+        const ask = single === true ? paneWitness.composerShownOnce : paneWitness.composerShown;
+        const kind = single === true ? 'read-once' : 'read';
+        const seen = await ask({ ...shape, tmuxName: 'tc-deputy', engineProfile: codexProfile, wakeProfile: require('../lib/medusa-wake').ENGINE_WAKE_PROFILES.codex }, {
+          gapMs: 0,
+          sleep: async () => {},
+          pin: () => '%7',
+          read: (name, paneId) => {
+            const f = typeof screen.frame === 'function' ? screen.frame(kind) : screen.frame;
+            return { paneId, ...f, rows: [...f.rows] };
+          }
+        });
+        screen.answers.push(seen);
+        if (screen.afterWitness) screen.afterWitness(single === true);
+        return seen;
+      };
+      return screen;
+    };
+
+    /**
+     * The gate, with a clock the test owns.
+     * @param {object} screen - From `screenOf`.
+     * @param {number} [windowMs=6000] - The window; one poll interval or less is a single look.
+     * @returns {Promise<{answer: object, looks: number}>}
+     */
+    const gate = async (screen, windowMs = 6000) => {
+      let clock = 0;
+      let waits = 0;
+      const answer = await codex.awaitLaunchReady({ session, project, sequenceId: 100, witness: screen.witness, windowMs, pollMs: 1500 },
+        { now: () => clock, wait: async (ms) => { clock += ms; waits += 1; } });
+      return { answer, looks: waits + 1 };
+    };
+
+    /** Finish the turn once the adapter has read it back. */
+    const completeTheTurn = () => {
+      let sequenced = false;
+      server.on('request', ({ method }) => {
+        if (method !== 'thread/turns/list' || !server.state.turnStarted || sequenced) return;
+        sequenced = true;
+        server.notify('item/completed', { threadId: THREAD, turnId: TURN, item: server.state.userItem, completedAtMs: 1 });
+        server.state.turn = finishedTurn('completed', { durationMs: 10 });
+        server.notify('turn/completed', { threadId: THREAD, turn: server.state.turn });
+      });
+    };
+
+    /**
+     * A fire, the operator's or the launch's own.
+     * @param {object} screen - From `screenOf`.
+     * @param {boolean} automatic - Whether it is the launch's automatic fire.
+     * @returns {Promise<object>} The settled row.
+     */
+    const fireOn = (screen, automatic) => codex.fire({
+      session, project, sequenceId: 100, promptText: PROMPT, promptTextDigest: PROMPT_DIGEST, payloadDigest: DIGEST, onUpdate: pendingFire().onUpdate,
+      trustException: { absentOn: [], witness: screen.witness }, ...(automatic ? { automatic: true, paneWitness: screen.witness } : {})
+    }, { reconnectPauseMs: 10 }).settled;
+
+    for (const version of CODEX_CHANNEL_VERSIONS) {
+      describe(`codex-cli ${version}`, () => {
+        const fx = CODEX_CHANNEL_FIXTURES[version];
+        const MODEL = fx.threads.userBeforeFirstTurn.model;
+        /** A captured thread as this fake's project would hold it: the fixture's own frame, its id and folder replaced. */
+        const captured = (name, id, over = {}) => ({ ...JSON.parse(JSON.stringify(fx.threads[name])), id, sessionId: id, cwd: PROJECT_PATH, ...over });
+        const userIdle = (over = {}) => captured('userBeforeFirstTurn', THREAD, over);
+        const userAfterTurn = (over = {}) => captured('userIdleAfterTurn', THREAD, over);
+        const titleIdle = (over = {}) => captured('titleIdle', TITLE, over);
+        const titleActive = (over = {}) => captured('titleActive', TITLE, over);
+
+        /**
+         * A fake app-server of this version holding `threads`, and a channel its launch recorded.
+         * @param {Array<object|Error>} threads - Loaded threads; an Error is a thread whose read fails (its `threadId` names it).
+         * @param {object} [stateOver] - Adapter state overrides.
+         * @param {object} [handlers] - Handler overrides.
+         * @returns {Promise<{table: Map<string, object|Error>}>}
+         */
+        const world = async (threads, stateOver = {}, handlers = {}) => {
+          codex._internal._version.version = version;
+          const table = new Map(threads.map((t) => [t instanceof Error ? t.threadId : t.id, t]));
+          await serve({
+            initialize: () => ({ userAgent: `tangleclaw/${version} (Mac OS 15.6.1; arm64)`, codexHome: '/x', platformFamily: 'unix', platformOs: 'macos' }),
+            'thread/loaded/list': () => ({ data: [...table.keys()], nextCursor: null }),
+            'thread/read': (p) => {
+              const t = table.get(p.threadId);
+              if (t instanceof Error) throw t;
+              return { thread: t };
+            },
+            ...handlers
+          });
+          // Every world finishes a turn that is started, so a fire that should
+          // have been refused settles as applied and fails its assertion, where
+          // it would otherwise wait on a turn nobody ends.
+          completeTheTurn();
+          channel({ ...LAUNCH_PANE, engineVersion: version, ...stateOver });
+          return { table };
+        };
+        const unreadable = (id) => Object.assign(new Error('thread read failed'), { code: -32603, threadId: id });
+
+        it('the fixture frames are this version\'s own, and are the two kinds the rule tells apart', () => {
+          assert.equal(fx.threads.userBeforeFirstTurn.cliVersion, version);
+          assert.equal(fx.threads.titleActive.cliVersion, version);
+          assert.equal(codex._internal._threadKind(fx.threads.userBeforeFirstTurn), 'launch');
+          assert.equal(codex._internal._threadKind(fx.threads.userActive), 'launch');
+          assert.equal(codex._internal._threadKind(fx.threads.userIdleAfterTurn), 'launch');
+          assert.equal(codex._internal._threadKind(fx.threads.titleActive), 'title');
+          assert.equal(codex._internal._threadKind(fx.threads.titleIdle), 'title');
+          assert.equal(codex._internal._threadKind(fx.threads.titleStarted.thread), 'title', 'as its thread/started notification already says');
+          assert.equal(fx.threads.titleActive.status.type, 'active');
+          assert.equal(codex._internal._isSubagent ? codex._internal._isSubagent(fx.threads.titleActive) : false, false);
+        });
+
+        describe('the launch gate', () => {
+          for (const name of ['idleDefaultLayout', 'idleThreeItemStatus', 'idleSingleItemStatus', 'idleAfterTurn', 'idleAfterUpdateSkipped', 'idleAfterResume']) {
+            it(`${name}: ready on the first look, asked with this version's footer and no row count`, async () => {
+              await world([userIdle()]);
+              const screen = screenOf(fx.panes[name]);
+              const { answer, looks } = await gate(screen);
+              assert.deepEqual(answer, { ready: true });
+              assert.equal(looks, 1);
+              const asked = screen.asked[0];
+              assert.equal(asked.footerRe.source, codexProfile.capabilities.wake.restRows[version].footerPattern);
+              assert.equal('maxStatusRows' in asked, false, 'never a count of two: the order is the rule');
+              assert.ok(asked.statusRe.test(`  ${MODEL.toUpperCase()}`), 'the thread\'s model, alone, is a status row');
+              assert.ok(!asked.statusRe.test('  ? for shortcuts'), 'the footer is not');
+              assert.equal(server.calls('turn/start').length, 0);
+            });
+          }
+
+          for (const name of ['startScreen', 'resumingScreen']) {
+            it(`${name}: refused with the thread reading idle, by a reason that names the rule`, async () => {
+              await world([userIdle()]);
+              const screen = screenOf(fx.panes[name]);
+              const { answer } = await gate(screen);
+              assert.equal(answer.ready, false);
+              assert.equal(answer.unavailable, false, 'the pane was read, and seen not ready');
+              assert.match(answer.observation, OPENING_WHY);
+              assert.equal(server.calls('thread/read').filter((c) => c.params.threadId === THREAD).length > 0, true);
+            });
+          }
+
+          it('the empty status line at rest is refused: the operator\'s Fire is what remains', async () => {
+            await world([userIdle()]);
+            const { answer } = await gate(screenOf(fx.panes.idleEmptyStatus));
+            assert.equal(answer.ready, false);
+            assert.match(answer.observation, /something other than one status row and then the declared footer row is drawn below the composer/);
+            assert.match(answer.remedy, /Press Fire startup prompt/);
+          });
+
+          it('the dialogs, typed text and a drawn busy row are refused as what they are', async () => {
+            const cases = [
+              ['trustDialog', /Codex was showing its folder-trust prompt in the pane/],
+              ['updateDialog', /Codex was showing its update prompt in the pane/],
+              ['typing', /no empty composer row is on screen/],
+              ['busyDefaultLayout', /a turn is running/]
+            ];
+            for (const [name, expected] of cases) {
+              store.getDb().prepare('DELETE FROM startup_control_channels').run();
+              await world([userIdle()]);
+              const { answer } = await gate(screenOf(fx.panes[name]));
+              assert.equal(answer.ready, false, name);
+              assert.match(answer.observation, expected, name);
+              server.close();
+              server = null;
+            }
+          });
+
+          it('the single-item row is recognised only against the thread\'s own model, and the thread must still report it afterwards', async () => {
+            await world([userIdle({ model: 'some-other-model' })]);
+            let { answer } = await gate(screenOf(fx.panes.idleSingleItemStatus));
+            assert.equal(answer.ready, false, 'a row that is not the thread\'s model');
+            assert.match(answer.observation, /something other than one status row and then the declared footer row/);
+            server.close();
+
+            store.getDb().prepare('DELETE FROM startup_control_channels').run();
+            const unread = userIdle();
+            delete unread.model;
+            await world([unread]);
+            ({ answer } = await gate(screenOf(fx.panes.idleSingleItemStatus)));
+            assert.equal(answer.ready, false, 'a model that could not be read recognises no single item');
+            server.close();
+
+            store.getDb().prepare('DELETE FROM startup_control_channels').run();
+            const { table } = await world([userIdle()]);
+            const screen = screenOf(fx.panes.idleSingleItemStatus);
+            screen.afterWitness = () => { table.set(THREAD, userIdle({ model: 'some-other-model' })); };
+            ({ answer } = await gate(screen, 1000));
+            assert.equal(screen.answers[0].shown, true, 'the pane itself passed, against the model read before it');
+            assert.equal(answer.ready, false);
+            assert.match(answer.observation, /the launch's thread was no longer the one in the project directory/);
+          });
+
+          it('a streaming turn: the pane alone passes the witness, and the thread read AFTER it refuses', async () => {
+            const { table } = await world([userIdle()]);
+            const screen = screenOf(fx.turnFrames.streamingFirst);
+            screen.afterWitness = () => { table.set(THREAD, captured('userActive', THREAD)); };
+            const { answer } = await gate(screen);
+            assert.equal(screen.answers[0].shown, true, 'held still, a streaming frame has the shape of a composer at rest');
+            assert.equal(answer.ready, false);
+            assert.match(answer.observation, /the launch's thread was active, not idle/);
+            server.close();
+
+            // And when the two reads straddle a moving transcript, the witness itself refuses.
+            store.getDb().prepare('DELETE FROM startup_control_channels').run();
+            await world([userIdle()]);
+            let n = 0;
+            const moving = screenOf(() => (n++ === 0 ? fx.turnFrames.streamingFirst : fx.turnFrames.streamingNext));
+            assert.match((await gate(moving, 1000)).answer.observation, /the pane changed between two reads a second apart/);
+            server.close();
+
+            // A thread already reading active is refused before any pane is read.
+            store.getDb().prepare('DELETE FROM startup_control_channels').run();
+            await world([captured('userActive', THREAD)]);
+            const unasked = screenOf(fx.turnFrames.streamingFirst);
+            assert.match((await gate(unasked)).answer.observation, /the launch's thread was active, not idle/);
+            assert.equal(unasked.asked.length, 0);
+          });
+
+          it('this version\'s usable composer is refused under 0.156.1\'s rule and under no declaration', async () => {
+            // The same pane on a channel proved to be 0.156.1: the one-row rule.
+            codex._internal._version.version = '0.156.1';
+            await serve({ 'thread/read': () => ({ thread: userIdle() }) });
+            channel(LAUNCH_PANE);
+            let screen = screenOf(fx.panes.idleDefaultLayout);
+            let { answer } = await gate(screen);
+            assert.equal(answer.ready, false);
+            assert.match(answer.observation, /something other than a status row is drawn below the composer/);
+            assert.equal(screen.asked[0].maxStatusRows, 1);
+            assert.equal('footerRe' in screen.asked[0], false);
+            server.close();
+
+            // This version, proved, with a profile that declares nothing for it.
+            store.getDb().prepare('DELETE FROM startup_control_channels').run();
+            const realProfile = codex._seams.wakeProfile;
+            const { restRows, ...undeclared } = require('../lib/medusa-wake').ENGINE_WAKE_PROFILES.codex;
+            assert.ok(restRows[version]);
+            codex._seams.wakeProfile = () => undeclared;
+            try {
+              await world([userIdle()]);
+              screen = screenOf(fx.panes.idleDefaultLayout);
+              ({ answer } = await gate(screen));
+              assert.equal(answer.ready, false);
+              assert.match(answer.observation, /something other than a status row is drawn below the composer/);
+              assert.equal(screen.asked[0].maxStatusRows, 1);
+              server.close();
+
+              // And declared for the OTHER version only: never read by a neighbour's entry.
+              store.getDb().prepare('DELETE FROM startup_control_channels').run();
+              const other = CODEX_CHANNEL_VERSIONS.find((v) => v !== version);
+              codex._seams.wakeProfile = () => ({ ...undeclared, restRows: { [other]: restRows[other] } });
+              await world([userIdle()]);
+              screen = screenOf(fx.panes.idleDefaultLayout);
+              ({ answer } = await gate(screen));
+              assert.equal(answer.ready, false, 'the other version\'s declaration is not this one\'s');
+              assert.equal('footerRe' in screen.asked[0], false);
+            } finally {
+              codex._seams.wakeProfile = realProfile;
+            }
+          });
+
+          it('a channel whose version is not proved is refused outright, lasting, and the pane is not read', async () => {
+            const cases = [
+              ['no version recorded by the launch', { engineVersion: undefined }, {}, /the launch recorded none, its app-server reports/],
+              ['a recorded version the app-server does not report', { engineVersion: '0.156.1' }, {}, /the launch recorded 0\.156\.1, its app-server reports/],
+              ['an app-server that reports no version', {}, { initialize: () => ({ userAgent: 'tangleclaw (no version)' }) }, /its app-server reports none/]
+            ];
+            for (const [name, stateOver, handlers, expected] of cases) {
+              store.getDb().prepare('DELETE FROM startup_control_channels').run();
+              await world([userIdle()], stateOver, handlers);
+              const screen = screenOf(fx.panes.idleDefaultLayout);
+              const { answer, looks } = await gate(screen);
+              assert.equal(answer.ready, false, name);
+              assert.equal(answer.unavailable, true, name);
+              assert.match(answer.observation, /this launch's Codex version could not be proved/, name);
+              assert.match(answer.observation, expected, name);
+              assert.match(answer.remedy, /relaunch the session/, name);
+              assert.equal(looks, 1, `${name}: waiting does not prove a version`);
+              assert.equal(screen.asked.length, 0, `${name}: no rule to read the pane by`);
+              server.close();
+              server = null;
+            }
+          });
+        });
+
+        describe('the fire', () => {
+          it('the automatic fire sends once on a usable composer, after one fresh read under this version\'s declaration', async () => {
+            await world([userIdle()]);
+            const screen = screenOf(fx.panes.idleDefaultLayout);
+            const settled = await fireOn(screen, true);
+            assert.equal(settled.outcome, 'applied');
+            assert.equal(server.calls('turn/start').length, 1);
+            assert.equal(screen.asked.length, 1);
+            assert.equal(screen.asked[0].single, true);
+            assert.equal(screen.asked[0].footerRe.source, codexProfile.capabilities.wake.restRows[version].footerPattern);
+          });
+
+          it('the automatic fire on the single-item status row: sent, the row checked against the model the readiness read', async () => {
+            await world([userIdle()]);
+            const settled = await fireOn(screenOf(fx.panes.idleSingleItemStatus), true);
+            assert.equal(settled.outcome, 'applied');
+          });
+
+          for (const name of ['startScreen', 'resumingScreen']) {
+            it(`a footer that is alone at the send (${name}): nothing sent, although the thread reads idle`, async () => {
+              await world([userIdle()]);
+              const settled = await fireOn(screenOf(fx.panes[name]), true);
+              assert.equal(settled.outcome, 'blocked');
+              assert.equal(settled.reasonCode, 'pane_not_ready');
+              assert.match(settled.reason, /was not seen ready immediately before the send/);
+              assert.match(settled.reason, OPENING_WHY);
+              assert.equal(server.calls('turn/start').length, 0);
+            });
+          }
+
+          it('a footer that changes between the gate and the send: the gate was ready, the send-time read refuses', async () => {
+            await world([userIdle()]);
+            const drawn = fx.panes.idleDefaultLayout;
+            const gone = { ...drawn, rows: drawn.rows.map((row, i) => (i > drawn.y && /for shortcuts/.test(row) ? '' : row)) };
+            const screen = screenOf((kind) => (kind === 'read-once' ? gone : drawn));
+            assert.deepEqual((await gate(screen)).answer, { ready: true });
+            const settled = await fireOn(screen, true);
+            assert.equal(settled.outcome, 'blocked');
+            assert.equal(settled.reasonCode, 'pane_not_ready');
+            assert.match(settled.reason, /something other than one status row and then the declared footer row/);
+            assert.equal(server.calls('turn/start').length, 0);
+          });
+
+          it('a streaming frame at the send: the pane passes, the thread read after it refuses, nothing is sent', async () => {
+            const { table } = await world([userIdle()]);
+            const screen = screenOf(fx.turnFrames.streamingFirst);
+            screen.afterWitness = () => { table.set(THREAD, captured('userActive', THREAD)); };
+            const settled = await fireOn(screen, true);
+            assert.equal(settled.outcome, 'blocked');
+            assert.match(settled.reason, /the launch's thread was active, not idle/);
+            assert.equal(server.calls('turn/start').length, 0);
+          });
+
+          it('a folder with no trust entry stays refused on this version: it is on no measured list', async () => {
+            await world([userIdle()], {}, { 'config/read': () => ({ config: { projects: { '/somewhere/else': { trust_level: 'trusted' } } } }) });
+            const screen = screenOf(fx.panes.idleDefaultLayout);
+            const settled = await fireOn(screen, false);
+            assert.equal(settled.outcome, 'blocked');
+            assert.equal(settled.reasonCode, 'trust_required');
+            assert.match(settled.reason, new RegExp(`It is not established for Codex ${version.replace(/\./g, '\\.')} whether a trust prompt is shown`));
+            assert.equal(screen.asked.length, 0);
+            assert.equal(server.calls('turn/start').length, 0);
+            assert.deepEqual(codexProfile.capabilities.startupControl.remoteTrustPrompt.absentOn.includes(version), false);
+          });
+        });
+
+        describe('whose thread is the launch\'s', () => {
+          it('unbound, the user thread beside an idle title helper: binds the user thread, and the wake reads idle, naming the version', async () => {
+            await world([userAfterTurn(), titleIdle()]);
+            assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle', version });
+            assert.equal(threadOf(), THREAD);
+          });
+
+          it('unbound, the same two threads: the gate and the operator\'s fire take the user thread', async () => {
+            await world([userAfterTurn(), titleIdle()]);
+            assert.deepEqual((await gate(screenOf(fx.panes.idleAfterTurn))).answer, { ready: true });
+            assert.equal(threadOf(), THREAD);
+            server.close();
+            store.getDb().prepare('DELETE FROM startup_control_channels').run();
+            await world([userAfterTurn(), titleIdle()]);
+            const settled = await fireOn(screenOf(fx.panes.idleAfterTurn), false);
+            assert.equal(settled.outcome, 'applied');
+            assert.equal(server.calls('turn/start')[0].params.threadId, THREAD);
+          });
+
+          it('a title helper alone is never bound', async () => {
+            await world([titleIdle()]);
+            assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-unbound', version });
+            assert.equal(threadOf(), null);
+            const { answer } = await gate(screenOf(fx.panes.idleAfterTurn));
+            assert.equal(answer.ready, false);
+            assert.match(answer.observation, /only Codex's title helper is loaded for the project directory, and it is never the launch's thread/);
+            const settled = await fireOn(screenOf(fx.panes.idleAfterTurn), false);
+            assert.equal(settled.outcome, 'blocked');
+            assert.equal(settled.reasonCode, 'engine_not_ready');
+            assert.equal(threadOf(), null);
+            assert.equal(server.calls('turn/start').length, 0);
+          });
+
+          it('two user threads stay ambiguous, with or without a title helper', async () => {
+            await world([userAfterTurn(), captured('userIdleAfterTurn', SECOND), titleIdle()]);
+            assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-ambiguous', version });
+            assert.equal(threadOf(), null);
+            const settled = await fireOn(screenOf(fx.panes.idleAfterTurn), false);
+            assert.equal(settled.outcome, 'blocked');
+            assert.match(settled.reason, /2 threads are loaded for the project directory and none is recorded as this launch's/);
+            assert.equal(server.calls('turn/start').length, 0);
+          });
+
+          it('a thread whose metadata is missing or changed is not guessed into either kind: nothing binds', async () => {
+            const spoiled = [
+              ['a title helper with no threadSource', () => { const t = titleIdle(); delete t.threadSource; return [userAfterTurn(), t]; }],
+              ['a title helper that is not ephemeral', () => [userAfterTurn(), titleIdle({ ephemeral: false })]],
+              ['a title helper with a rollout path', () => [userAfterTurn(), titleIdle({ path: '/x/rollout.jsonl' })]],
+              ['a title helper with no path field', () => { const t = titleIdle(); delete t.path; return [userAfterTurn(), t]; }],
+              ['a thread of another source', () => [userAfterTurn(), titleIdle({ threadSource: 'review' })]],
+              ['a user thread that is ephemeral', () => [userAfterTurn({ ephemeral: true })]],
+              ['a user thread with no rollout path', () => [userAfterTurn({ path: '' })]],
+              ['a user thread with a parent', () => [userAfterTurn({ parentThreadId: SECOND })]],
+              ['a user thread with no ephemeral field', () => { const t = userAfterTurn(); delete t.ephemeral; return [t]; }]
+            ];
+            for (const [name, threads] of spoiled) {
+              store.getDb().prepare('DELETE FROM startup_control_channels').run();
+              await world(threads());
+              assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-ambiguous', version }, name);
+              assert.equal(threadOf(), null, name);
+              const settled = await fireOn(screenOf(fx.panes.idleAfterTurn), false);
+              assert.equal(settled.outcome, 'blocked', name);
+              assert.match(settled.reason, /could not be identified as this launch's own or as Codex's title helper/, name);
+              assert.equal(threadOf(), null, name);
+              assert.equal(server.calls('turn/start').length, 0, name);
+              server.close();
+              server = null;
+            }
+          });
+
+          it('an active title helper holds the wake, and a fire, automatic or the operator\'s, bound or not', async () => {
+            for (const recorded of [null, THREAD]) {
+              store.getDb().prepare('DELETE FROM startup_control_channels').run();
+              await world([userAfterTurn(), titleActive()], { threadId: recorded });
+              assert.deepEqual(await observe(), { state: 'busy', reasonCode: 'other-thread-active', version }, `recorded ${recorded}`);
+              for (const automatic of [true, false]) {
+                const screen = screenOf(fx.panes.idleAfterTurn);
+                const settled = await fireOn(screen, automatic);
+                assert.equal(settled.outcome, 'blocked', `automatic ${automatic}`);
+                assert.equal(settled.reasonCode, 'engine_not_ready');
+                assert.match(settled.reason, /another thread loaded for the project directory is working/);
+              }
+              const { answer } = await gate(screenOf(fx.panes.idleAfterTurn));
+              assert.equal(answer.ready, false);
+              assert.match(answer.observation, /another thread loaded for the project directory is working/);
+              assert.equal(server.calls('turn/start').length, 0);
+              server.close();
+              server = null;
+            }
+          });
+
+          it('a title helper in a status the protocol does not promise holds both', async () => {
+            await world([userAfterTurn(), titleIdle({ status: { type: 'somethingNew' } })], { threadId: THREAD });
+            assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'other-thread-status-unknown', version });
+            const settled = await fireOn(screenOf(fx.panes.idleAfterTurn), false);
+            assert.equal(settled.outcome, 'blocked');
+            assert.match(settled.reason, /is in a state the protocol does not promise/);
+            assert.equal(server.calls('turn/start').length, 0);
+          });
+
+          it('an unreadable title helper refuses, bound or not', async () => {
+            for (const recorded of [null, THREAD]) {
+              store.getDb().prepare('DELETE FROM startup_control_channels').run();
+              await world([userAfterTurn(), unreadable(TITLE)], { threadId: recorded });
+              assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'threads-unreadable', version });
+              const settled = await fireOn(screenOf(fx.panes.idleAfterTurn), false);
+              assert.equal(settled.outcome, 'blocked');
+              assert.match(settled.reason, /a loaded thread could not be read, so the launch's own thread could not be told from the others/);
+              const { answer } = await gate(screenOf(fx.panes.idleAfterTurn));
+              assert.equal(answer.ready, false);
+              assert.equal(answer.unavailable, true, 'a read that could not be made');
+              assert.equal(threadOf(), recorded);
+              assert.equal(server.calls('turn/start').length, 0);
+              server.close();
+              server = null;
+            }
+          });
+
+          it('a recorded user thread stays bound beside an idle title helper, and is fired at', async () => {
+            await world([userAfterTurn(), titleIdle()], { threadId: THREAD });
+            assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle', version });
+            assert.equal(threadOf(), THREAD);
+            const settled = await fireOn(screenOf(fx.panes.idleAfterTurn), true);
+            assert.equal(settled.outcome, 'applied');
+            assert.equal(server.calls('turn/start')[0].params.threadId, THREAD);
+          });
+
+          it('a recorded thread stays authoritative even where filtering would not have chosen it', async () => {
+            // Recorded before these rules, or by a fire: its metadata is not asked for again.
+            await world([userAfterTurn({ threadSource: 'somethingElse' }), titleIdle()], { threadId: THREAD });
+            assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle', version });
+            assert.deepEqual((await gate(screenOf(fx.panes.idleAfterTurn))).answer, { ready: true });
+          });
+
+          it('a recorded thread that is missing does not fall back to the one that is loaded', async () => {
+            await world([captured('userIdleAfterTurn', SECOND), titleIdle()], { threadId: THREAD });
+            assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-not-loaded', version });
+            assert.equal(threadOf(), THREAD);
+            const settled = await fireOn(screenOf(fx.panes.idleAfterTurn), false);
+            assert.equal(settled.outcome, 'blocked');
+            assert.match(settled.reason, /the launch's recorded thread is not loaded for the project directory/);
+            assert.equal(threadOf(), THREAD);
+            assert.equal(server.calls('turn/start').length, 0);
+          });
+
+          it('a binding that loses its race, or a second user thread appearing after it, refuses', async () => {
+            await world([userAfterTurn(), titleIdle()]);
+            const realCas = store.startupControlChannels.updateAdapterStateIf;
+            store.startupControlChannels.updateAdapterStateIf = (id) => ({ written: false, channel: { ...store.startupControlChannels.get(id), adapterState: { threadId: SECOND } } });
+            try {
+              assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-bind-contended', version });
+            } finally {
+              store.startupControlChannels.updateAdapterStateIf = realCas;
+            }
+            assert.equal(threadOf(), null);
+            server.close();
+
+            store.getDb().prepare('DELETE FROM startup_control_channels').run();
+            let lists = 0;
+            const { table } = await world([userAfterTurn(), titleIdle()], {}, {
+              'thread/loaded/list': () => {
+                lists += 1;
+                if (lists === 2) table.set(SECOND, captured('userIdleAfterTurn', SECOND));
+                return { data: [...table.keys()], nextCursor: null };
+              }
+            });
+            assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-ambiguous', version }, 'the fresh read after the write no longer shows one sole launch thread');
+          });
+
+          it('a channel replaced while the answer was being read is not answered idle', async () => {
+            await world([userAfterTurn(), titleIdle()], { threadId: THREAD });
+            const stale = store.startupControlChannels.getOpenBySession(session.id);
+            store.startupControlChannels.setAdapterState(stale.id, { threadId: SECOND });
+            assert.deepEqual(await codex.observeActivity(stale, project, ours), { state: 'unknown', reasonCode: 'channel-changed', version });
+          });
+        });
+      });
+    }
+
+    describe('0.156.1 keeps every rule it had', () => {
+      const fx = CODEX_CHANNEL_FIXTURES['0.161.0'];
+      const at156 = (name, id) => ({ ...JSON.parse(JSON.stringify(fx.threads[name])), id, cwd: PROJECT_PATH });
+
+      it('its candidates are every loaded project thread: a user thread beside a title-shaped one is ambiguous, and no answer names a version', async () => {
+        await serve({
+          'thread/loaded/list': () => ({ data: [THREAD, TITLE], nextCursor: null }),
+          'thread/read': (p) => ({ thread: p.threadId === THREAD ? at156('userIdleAfterTurn', THREAD) : at156('titleIdle', TITLE) })
+        });
+        channel(LAUNCH_PANE);
+        assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-ambiguous' });
+        assert.equal(threadOf(), null);
+      });
+
+      it('its sole loaded thread binds whatever its metadata says, as before', async () => {
+        await serve({
+          'thread/loaded/list': () => ({ data: [TITLE], nextCursor: null }),
+          'thread/read': () => ({ thread: at156('titleIdle', TITLE) })
+        });
+        channel(LAUNCH_PANE);
+        assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle' });
+        assert.equal(threadOf(), TITLE);
+      });
+
+      it('its gate asks the witness exactly what it asked before, and another thread working does not hold its fire', async () => {
+        await serve();
+        channel(LAUNCH_PANE);
+        const screen = screenOf(PANES.composer);
+        assert.deepEqual((await gate(screen)).answer, { ready: true });
+        assert.deepEqual(Object.keys(screen.asked[0]), ['headerRe', 'startingRe', 'statusRe', 'maxStatusRows', 'keyHintRe', 'paneId', 'paneServer']);
+        assert.equal(screen.asked[0].maxStatusRows, 1);
+        assert.equal(screen.asked[0].statusRe.flags, '', 'the status pattern is the one it had, not a model-aware one');
+        server.close();
+
+        store.getDb().prepare('DELETE FROM startup_control_channels').run();
+        await serve({
+          'thread/loaded/list': () => ({ data: [THREAD, TITLE], nextCursor: null }),
+          'thread/read': (p) => ({ thread: p.threadId === THREAD ? { id: THREAD, cwd: PROJECT_PATH, status: { type: 'idle' }, path: '/x/rollout.jsonl' } : at156('titleActive', TITLE) })
+        });
+        channel({ ...LAUNCH_PANE, threadId: THREAD });
+        assert.deepEqual((await gate(screenOf(PANES.composer))).answer, { ready: true }, 'the 0.156.1 gate reads its own thread only, as before');
+      });
+    });
+
+    describe('the rule\'s own parts', () => {
+      it('a thread\'s kind is read from its four fields and from nothing else', () => {
+        const kind = codex._internal._threadKind;
+        const user = { threadSource: 'user', ephemeral: false, path: '/x/r.jsonl', parentThreadId: null };
+        const title = { threadSource: 'thread_title', ephemeral: true, path: null };
+        assert.equal(kind(user), 'launch');
+        assert.equal(kind({ ...user, parentThreadId: undefined }), 'launch');
+        assert.equal(kind(title), 'title');
+        for (const spoiled of [{ ...user, ephemeral: true }, { ...user, ephemeral: undefined }, { ...user, path: '' }, { ...user, path: null }, { ...user, parentThreadId: 'p' }, { ...user, threadSource: 'User' },
+          { ...title, ephemeral: false }, { ...title, path: undefined }, { ...title, path: '' }, { ...title, threadSource: 'title' }, {}, null, undefined]) {
+          assert.equal(kind(spoiled), 'unidentified', JSON.stringify(spoiled));
+        }
+      });
+
+      it('the status pattern recognises a model alone on its row, and nothing else new', () => {
+        const pattern = codex._internal._statusRowPattern;
+        const withModel = pattern('gpt-6.1-sol');
+        assert.ok(withModel.test('  GPT-6.1-Sol'));
+        assert.ok(withModel.test('  gpt-6.1-sol'));
+        assert.ok(withModel.test('  GPT-6.1-Sol default · /a/folder'), 'the shape it had is still a status row');
+        for (const other of ['  GPT-6x1-Sol', '  GPT-6.1-Sol ', '  GPT-6.1-Sol more', ' GPT-6.1-Sol', '   GPT-6.1-Sol', '  ? for shortcuts', '  anything', 'GPT-6.1-Sol']) {
+          assert.equal(withModel.test(other), false, JSON.stringify(other));
+        }
+        assert.ok(pattern('a+b(c)').test('  a+b(c)'), 'a model is matched as text, not as a pattern');
+        assert.equal(pattern('a+b(c)').test('  aab(c)'), false);
+        for (const unusable of [undefined, null, '', 42, 'two words', 'x'.repeat(81), 'tab\tbed']) {
+          const plain = pattern(unusable);
+          assert.equal(plain.flags, '', JSON.stringify(unusable));
+          assert.equal(plain.test('  anything'), false);
+          assert.ok(plain.test('  a · b'));
+        }
+      });
+
+      it('the version is the recorded and the reported one, equal, and the table is asked for that version\'s own entry', () => {
+        const rest = codex._internal._restScreen;
+        const conn = (version) => ({ initResult: { userAgent: version ? `tangleclaw/${version} (x)` : 'tangleclaw' } });
+        const row = (engineVersion) => ({ engineId: 'codex', adapterState: { engineVersion } });
+        assert.equal(rest(conn('0.161.0'), row('0.161.0')).version, '0.161.0');
+        assert.ok(rest(conn('0.161.0'), row('0.161.0')).footerRe instanceof RegExp);
+        assert.equal(rest(conn('0.156.1'), row('0.156.1')).footerRe, null);
+        assert.deepEqual(rest(conn('0.162.0'), row('0.161.0')), { unproved: true, recorded: '0.161.0', reported: '0.162.0' });
+        assert.deepEqual(rest(conn(null), row('0.161.0')), { unproved: true, recorded: '0.161.0', reported: null });
+        assert.deepEqual(rest(conn('0.161.0'), row(undefined)), { unproved: true, recorded: null, reported: '0.161.0' });
+        // The installed binary is not consulted: a host that has since moved on does not change what a launch is.
+        codex._internal._version.version = '0.999.0';
+        assert.equal(rest(conn('0.162.0'), row('0.162.0')).version, '0.162.0');
+        const realProfile = codex._seams.wakeProfile;
+        codex._seams.wakeProfile = () => ({ restRows: Object.create({ '0.161.0': { footerRe: /x/ } }) });
+        try {
+          assert.equal(rest(conn('0.161.0'), row('0.161.0')).footerRe, null, 'an inherited entry is not the version\'s own');
+        } finally {
+          codex._seams.wakeProfile = realProfile;
+        }
+      });
+    });
+  });
 });
