@@ -265,10 +265,29 @@ describe('/api/merge-queue (#2322)', () => {
         const res = await sendAs(server, 'POST', '/api/merge-queue/entries', submitBody(nextPr()), bOwner.headers);
         assert.equal(res.status, 500);
         assert.equal(res.data.code, 'ENTRY_ID_UNUSABLE');
+        assert.equal(res.data.withdrawn, true);
         assert.equal(queueStore.getEntry('mqe/../main').state, 'withdrawn');
       } finally {
         queueStore._internal.id = mint;
       }
+    });
+
+    it('says so when such an entry could not be taken back out, and never claims it was', async () => {
+      const mint = queueStore._internal.id;
+      const withdrawEntry = queueStore.withdrawEntry;
+      queueStore._internal.id = (prefix) => (prefix === 'mqe' ? 'mqe/../stuck' : mint(prefix));
+      queueStore.withdrawEntry = () => ({ ok: false, code: 'TRANSITION_NOT_ALLOWED', message: 'refused for a test' });
+      try {
+        const res = await sendAs(server, 'POST', '/api/merge-queue/entries', submitBody(nextPr()), bOwner.headers);
+        assert.equal(res.status, 500);
+        assert.equal(res.data.code, 'ENTRY_ID_UNUSABLE');
+        assert.equal(res.data.withdrawn, false);
+        assert.match(res.data.error, /could not withdraw the entry \(TRANSITION_NOT_ALLOWED\).*still queued/);
+      } finally {
+        queueStore._internal.id = mint;
+        queueStore.withdrawEntry = withdrawEntry;
+      }
+      assert.equal(queueStore.withdrawEntry('mqe/../stuck', { reason: 'test cleanup', actor: ownerActor() }).ok, true);
     });
 
     it('never returns a launch id', async () => {
