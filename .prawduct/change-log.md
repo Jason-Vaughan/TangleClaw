@@ -35,6 +35,31 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-12 — #2321: one command writes down what CI and the local complement covered for a commit, or refuses
+
+<!-- prawduct: type=feature | scope=2321-ci-as-suite-evidence -->
+
+#2321 Chunk 02b. Branch `feat/2321-02b-ci-evidence`, from `origin/main` `4a3dd268`. The last chunk of this issue's build. The issue stays open: the lane rule it asks for is not in force.
+
+Visual change: no
+
+**Why.** A green `test` check and a green local complement together cover the suite, but each was only somebody's word about a commit. A gate can accept neither until both are bound to one exact commit and tree by something a session cannot type.
+
+**What changed.**
+
+- New `scripts/ci-evidence.js`. For HEAD it checks, in order: the tree is clean; HEAD is the branch's upstream after a fetch; the repository is the remote's; the `test` check concluded with success; the app is `github-actions`, the check run links to a workflow run as its own job, and GitHub's record of that job (`actions/jobs/<check run id>`) is a job of HEAD in that workflow run; the base branch's tip, read from GitHub, is an ancestor of HEAD; the ledger compiles; the complement, which the command runs itself, is green; and afterwards the tree is still clean, HEAD is the same commit and the ledger's bytes are the same. The first fact that does not hold is printed after `REFUSED:` and nothing is written.
+- On success it writes `.prawduct/lane-evidence/ci-<sha>.json` (git-ignored): the repository, the check (run id, workflow run id, workflow name, app, conclusion, completion time), HEAD and its tree, the base branch and tip, the ledger's path and sha-256, the complement's verdict with every entry and what this host measured for each requirement, and when it was written. Every field is one the run read; a reading that lacks one refuses.
+- It takes no argument naming a commit, a repository, a check, a ledger or a result. `--base <branch>` is the one input and defaults to the remote's default branch.
+- `scripts/ci-complement.js`: new exported `runComplement(io)`, which holds what `main` did after parsing its arguments and returns the verdict as a value, with `problems` listing why nothing was judged. `main` calls it and prints what it printed before; its tests pass unedited.
+- `docs/lane-ci-evidence.md`: the command, its checks, the file's fields, what the file does not prove, and the proposed lane rule under a heading that says PROPOSED, NOT IN FORCE.
+- `docs/prawduct-feedback.md`: the draft of the upstream report, marked NOT SENT.
+
+**What an operator sees.** Nothing in the product. A Builder has a new command.
+
+**What does not change.** What `prawduct-hook test-status` accepts, and every lane rule. The command never touches `.prawduct/.test-evidence.json`.
+
+**Limits.** The file does not show that the job named `test` ran the suite and not something else of that name: it does not read the workflow's definition. It is a wide run (it runs the complement). The default base comes from the clone's record of the remote's default branch; a clone without one must name `--base`.
+
 ## 2026-10-12 — #2321: the check reader says which app made a run, and which workflow run it belongs to
 
 <!-- prawduct: type=feature | scope=2321-ci-as-suite-evidence -->

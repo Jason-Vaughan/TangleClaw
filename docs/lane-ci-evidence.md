@@ -1,8 +1,9 @@
 # What a green CI run does and does not say
 
-*Being built (#2321). Today this page covers what CI leaves out, how the list of it is kept, and
-the command that runs that list on your own machine. No rule lets a CI run stand in for the full
-local suite: a lane still runs the suite as its rules say.*
+*Being built (#2321). Today this page covers what CI leaves out, how the list of it is kept, the
+command that runs that list on your own machine, and the command that writes down what CI and that
+run together covered for one commit. No rule lets a CI run stand in for the full local suite: a
+lane still runs the suite as its rules say. The rule at the end of this page is a proposal.*
 
 ## What CI runs
 
@@ -179,3 +180,113 @@ none of the engines the tier's tests name is installed, the entry is not expecte
 The complement runs a tier's tests without the other tests in their files. A test that only passes
 because an earlier test in the same file left something behind fails here, though it passes in the
 full suite. That failure is the complement working: fix the test so it sets up what it needs.
+
+## Writing down what was covered: the evidence command
+
+```bash
+node scripts/ci-evidence.js                 # for the commit checked out here
+node scripts/ci-evidence.js --base <branch> # when the commit is headed for a branch other than the default
+```
+
+For the commit checked out here, the command reads CI's result from GitHub, runs the complement
+itself, and writes one file saying what each covered. If any fact does not hold it prints
+`REFUSED:` with that fact, then `no evidence was written`, and exits 1.
+
+**The file changes nothing a gate accepts.** `prawduct-hook test-status` does not read it, no lane
+rule names it, and the command never touches `.prawduct/.test-evidence.json`. Today it is a record
+a person can read.
+
+It runs the complement, so it is a wide run: in a lane, do not start it while a full suite is
+running on the same host.
+
+### What it checks, in order
+
+| # | The fact | Refuses when |
+|---|---|---|
+| 1 | the working tree is clean and HEAD is a commit | `git status --porcelain --untracked-files=all` prints anything |
+| 2 | HEAD is on the remote | HEAD is on no branch, the branch tracks no remote, the fetch fails, or the branch's upstream after the fetch is not exactly HEAD |
+| 3 | the repository is the remote's | the remote's URL cannot be read or names no GitHub repository |
+| 4 | the `test` check on HEAD concluded with success | it cannot be read, does not exist, has not finished, or concluded any other way |
+| 5 | the check run is a GitHub Actions job of HEAD | another app made it; its link names no workflow run as its own job; or GitHub's record of the job (`actions/jobs/<check run id>`) cannot be read, is of another commit, or belongs to another workflow run than the link names |
+| 6 | the base branch's tip, read from GitHub, is inside HEAD | the tip cannot be read, or is not an ancestor of HEAD |
+| 7 | the ledger compiles | `test/skip-ledger.json` is missing or invalid |
+| 8 | the complement, run by this command, is green | it is red (its lines are printed) or did not run to a verdict |
+| 9 | nothing moved while it ran | the tree is no longer clean, HEAD is another commit, or the ledger's bytes changed |
+
+Step 6 is how "CI ran against the current base" is checked without comparing times. On a pull
+request CI tests the head merged into the base as the base was when the run started. When the
+base's tip is already inside the head, that merge is the head's own tree, whatever the base was
+then. A base that has moved since is not inside the head, so it is refused: bring the base in, push,
+and let CI run on the result.
+
+### Nothing you type supplies a fact
+
+The commit is HEAD. The repository comes from the remote's URL. The check is `test`. The ledger is
+the tracked one. The complement's verdict is taken as a value from the run the command makes, never
+from a report or a file, so there is nothing a person could place for it to read. An argument that
+names any of these is refused.
+
+`--base` is the one input, because the branch a commit is headed for is not always something the
+command can derive; it defaults to the remote's default branch. A wrong base can only make the
+command refuse at step 6, or bind the file to a base its reader can see in it.
+
+### The file
+
+`.prawduct/lane-evidence/ci-<full sha of HEAD>.json`. Git ignores that folder, so the file is never
+committed. A file already at that path is replaced only by a successful run and is never read.
+
+| Field | What it holds | Read from |
+|---|---|---|
+| `repository` | `owner/name` | the remote's URL |
+| `check.name` | `test` | fixed: the check branch protection requires |
+| `check.runId`, `check.app`, `check.conclusion`, `check.completedAt` | the newest run of that name on HEAD | GitHub's check runs for the commit |
+| `check.workflowRunId` | the workflow run the check run belongs to | the check run's link, then confirmed against the job |
+| `check.workflowName` | the workflow the job belongs to | GitHub's record of the job |
+| `head`, `tree` | the full ids of HEAD and of its tree | git |
+| `base.branch`, `base.tip` | the base branch and the tip of it that is inside HEAD | `--base` or the remote's default; GitHub |
+| `ledger.path`, `ledger.sha256` | the ledger, and the digest of its bytes | the file |
+| `complement.ok`, `complement.entriesRan`, `complement.entriesTotal` | the complement's verdict and how many entries ran here | the run this command made |
+| `complement.entries[]` | for each ledger entry its `id`, `verdict`, `detail`, and under `requires` what this machine measured for each value it requires | the same run |
+| `readAt` | when the file was written | the clock |
+
+Every field is one the run read. None has a default, and a reading that lacks one refuses.
+
+### What the file does not prove
+
+- **That the `test` job ran the suite.** The file shows that a GitHub Actions job named `test`, in
+  the workflow it names, concluded with success on the commit. It does not read the workflow's
+  definition, so it does not show that the job's steps were the suite and the skip audit and not
+  something else given the same name. That rests on `.github/workflows/test.yml` as it was at the
+  commit, which a reviewer can read.
+- **That the complement covered a machine other than this one.** It records what this machine
+  measured and ran. An entry not expected here is named as such, with the measurement.
+- **Anything about a later commit.** It is for one commit and one tree.
+
+## PROPOSED, NOT IN FORCE: it needs the Operator's approval and a Prawduct that accepts this evidence
+
+Nothing in this section binds anyone. A lane rule is the Operator's to change, and the gate a lane
+reports ready against (`prawduct-hook test-status`) is Prawduct's and does not read the evidence
+file. Until both change, a lane runs the full local suite as its rules say today, and nobody
+records CI's result as suite evidence by hand.
+
+The text proposed for the lane's Builder rule:
+
+> **CI as the suite.** For a chunk, the required CI check stands as the full suite when all of
+> these hold, and `node scripts/ci-evidence.js` is what establishes them: the `test` check
+> concluded successfully on the exact head commit; GitHub Actions made it, as a job of that commit;
+> the command itself read it; the base branch's tip is inside the head; the complement was green on
+> the same tree in the same run; and the chunk's own narrow tests passed. The evidence is the file
+> the command writes. Nobody writes or edits one by hand.
+>
+> **The full local suite is still required** for: any edit to `test/skip-ledger.json` (add, remove
+> or change); any change to the test runner, the audit or evidence machinery or its configuration;
+> schema; `lib/store.js`; `server.js`; shared test helpers; the last chunk of an issue; once before
+> a deploy; and whenever current-base exact-head evidence cannot be established. In that last case
+> the local suite is run and nothing is hand-stamped.
+>
+> **A green badge never claims the ledger's tests.** They are covered only by the complement, on a
+> machine that has what they need.
+
+What it would take to put it in force: Prawduct accepting the file as test evidence (the draft
+report in `docs/prawduct-feedback.md` says what it would have to check), then the Operator's
+approval of the rule text.
