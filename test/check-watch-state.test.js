@@ -235,6 +235,17 @@ describe('check-watch-state: derive (#2323)', () => {
     assert.deepEqual(state.derive(watch({ dueAt: 'soon', cancelled: CANCELLATIONS[1], lastRead: LAST_READS[2] }), NOW).reasons, ['cancelled', 'read-failed', 'unreadable']);
   });
 
+  it('a due time that passed is still said when only the last read cannot be made sense of', () => {
+    const odd = { at: BEFORE, outcome: 'maybe', detail: null };
+    assert.deepEqual(state.derive(watch({ dueAt: BEFORE, lastRead: odd }), NOW), { state: 'unknown', reasons: ['past-due', 'unreadable'] });
+    assert.deepEqual(state.derive(watch({ dueAt: NOW, lastRead: odd }), NOW).reasons, ['past-due', 'unreadable']);
+    assert.deepEqual(state.derive(watch({ dueAt: AFTER, lastRead: odd }), NOW).reasons, ['unreadable']);
+  });
+
+  it('an unresolved watch is read for 24 hours past its due time and no longer', () => {
+    assert.equal(state.EXPIRE_AFTER_DUE_MS, 24 * 60 * 60 * 1000);
+  });
+
   it('the name limit a watch is stored under is the one the reader accepts', () => {
     assert.equal(state.MAX_CHECK_NAME, require('../lib/github-checks').MAX_CHECK_NAME);
   });

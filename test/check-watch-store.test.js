@@ -107,8 +107,8 @@ function counts() {
 }
 
 /**
- * Mark a watch expired directly. Nothing in the product writes this yet; the
- * column is there so the records can say it.
+ * Mark a watch expired directly, whatever its due time, for the tests that
+ * need an expired watch and are not about how one comes to be expired.
  * @param {string} watchId - Watch id
  * @returns {void}
  */
@@ -564,6 +564,77 @@ describe('check-watch-store: recording the wake and the alarm (#2323)', () => {
   });
 });
 
+describe('check-watch-store: expiring a watch (#2323)', () => {
+  const DAY = 24 * HOUR;
+
+  it('a watch unresolved 24 hours past its due time is expired once, with one expired fact, and frees its place', () => {
+    const id = registered();
+    clock = START + HOUR + DAY;
+    const out = watches.recordExpired(id);
+    assert.equal(out.ok, true, JSON.stringify(out));
+    assert.deepEqual(out.watch.expired, { at: at(HOUR + DAY) });
+    assert.equal(out.watch.result, null);
+    assert.deepEqual(watches.getWatch(id), out.watch);
+    assert.deepEqual(history(id), ['registered', 'expired']);
+    const fact = watches.listFacts(id)[1];
+    assert.equal(fact.at, at(HOUR + DAY));
+    assert.deepEqual(fact.detail, { dueAt: at(HOUR) });
+    assert.deepEqual(state.derive(out.watch, at(HOUR + DAY)), { state: 'unknown', reasons: ['expired', 'past-due'] });
+    assert.equal(watches.countOpen(OWNER.projectId), 0);
+    assert.deepEqual(watches.listUnresolved(), []);
+    // The same check on the same commit can be watched afresh.
+    assert.equal(register({ dueAt: at(HOUR + DAY + HOUR) }).ok, true);
+  });
+
+  it('is refused a moment before 24 hours past due, and allowed at it', () => {
+    const id = registered();
+    clock = START + HOUR + DAY - 1;
+    const early = refused(() => watches.recordExpired(id), REFUSALS.NOT_DUE);
+    assert.match(early.message, /24 hours after its due time/);
+    clock = START + HOUR + DAY;
+    assert.equal(watches.recordExpired(id).ok, true);
+  });
+
+  it('a watch with its result never expires: the result stands', () => {
+    const id = registered();
+    assert.equal(watches.recordRead(id, concluded('failure')).ok, true);
+    clock = START + HOUR + DAY;
+    refused(() => watches.recordExpired(id), REFUSALS.ALREADY_RESOLVED);
+    assert.equal(watches.getWatch(id).expired, null);
+    assert.equal(state.derive(watches.getWatch(id), at(HOUR + DAY)).state, 'failed');
+  });
+
+  it('a cancelled watch, an expired watch and a watch that does not exist are refused', () => {
+    const cancelled = registered();
+    const expired = registered({ headSha: sha('b') });
+    assert.equal(watches.cancelWatch(cancelled, OWNER).ok, true);
+    clock = START + HOUR + DAY;
+    refused(() => watches.recordExpired(cancelled), REFUSALS.CANCELLED);
+    assert.equal(watches.recordExpired(expired).ok, true);
+    refused(() => watches.recordExpired(expired), REFUSALS.EXPIRED);
+    refused(() => watches.recordExpired('cw_missing'), REFUSALS.NOT_FOUND);
+    assert.deepEqual(history(expired), ['registered', 'expired']);
+  });
+
+  it('an expired watch is not read again and cannot then be given a result', () => {
+    const id = registered();
+    clock = START + HOUR + DAY;
+    assert.equal(watches.recordExpired(id).ok, true);
+    refused(() => watches.recordRead(id, concluded()), REFUSALS.EXPIRED);
+    assert.equal(watches.getWatch(id).result, null);
+  });
+
+  it('the expiry and its fact land or fail as one', () => {
+    const id = registered();
+    clock = START + HOUR + DAY;
+    store.getDb().exec("CREATE TRIGGER refuse_expired BEFORE INSERT ON check_watch_facts WHEN NEW.kind = 'expired' "
+      + "BEGIN SELECT RAISE(ABORT, 'no expired fact'); END;");
+    assert.throws(() => watches.recordExpired(id), /no expired fact/);
+    assert.equal(watches.getWatch(id).expired, null);
+    assert.deepEqual(history(id), ['registered']);
+  });
+});
+
 describe('check-watch-store: cancelling (#2323)', () => {
   it('the project a watch belongs to cancels it, once, and the record says who and when', () => {
     const id = registered();
@@ -728,6 +799,7 @@ describe('check-watch-store: what a refused or failed write leaves (#2323)', () 
     store.close();
     assert.throws(() => register(), /not initialized/);
     assert.throws(() => watches.getWatch('cw_1'), /not initialized/);
+    assert.throws(() => watches.recordExpired('cw_1'), /not initialized/);
     store._setBasePath(tmpDir);
     store.init();
   });

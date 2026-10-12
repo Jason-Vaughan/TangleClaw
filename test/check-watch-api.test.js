@@ -214,7 +214,7 @@ describe('/api/tc/check-watches (#2323)', () => {
       assert.equal(res.data.watch.repo, REPO);
     });
 
-    it('says in every answer that nothing reads GitHub for a watch', async () => {
+    it('says in every answer that the watch is not monitored for waking', async () => {
       const watch = await registered();
       const made = await sendAs(server, 'POST', ROOT, watchBody(), bOwner.headers);
       const one = await sendAs(server, 'GET', `${ROOT}/${watch.watchId}`, undefined, bOwner.headers);

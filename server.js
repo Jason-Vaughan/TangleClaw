@@ -337,6 +337,7 @@ const medusaWake = require('./lib/medusa-wake');
 const deliveryDisposition = require('./lib/medusa-delivery-disposition');
 const launchUnready = require('./lib/launch-unready');
 const workloadNudge = require('./lib/workload-nudge');
+const checkWatch = require('./lib/check-watch');
 const authIdentity = require('./lib/auth-identity');
 const authSession = require('./lib/auth-session');
 const authGate = require('./lib/auth-gate');
@@ -13249,6 +13250,10 @@ if (require.main === module) {
     // engine activity from the observer above and types only into a pane seen
     // at rest.
     workloadNudge.start({ observer: activityObserver });
+    // Start the check watch monitor (#2323): reads each open watch's check
+    // from GitHub about once a minute and records its result. It records
+    // only; it messages nobody and types into nothing.
+    checkWatch.start();
     // Re-sync Medusa listeners for live sessions (TC#550, MED-2K9P v2 T4) —
     // listeners are in-memory, so without this a server restart silently
     // deregistered every running session from the switchboard.
@@ -13314,6 +13319,7 @@ if (require.main === module) {
     medusaWatchdog.stop();
     launchUnready.stop();
     workloadNudge.stop();
+    checkWatch.stop();
     // Each startupControl adapter's reaper timer (#1825): the timers are unref'd,
     // so this is bookkeeping symmetry with `start`, not what lets the process exit.
     for (const [name, adapter] of Object.entries(startupControl.ADAPTERS)) {

@@ -35,6 +35,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-12 — #2323: the server reads a watched check and records its result
+
+<!-- prawduct: type=feature | scope=2323-check-watch-wake -->
+
+#2323 Chunk 03a. Branch `feat/2323-03a-check-watch-monitor`, from `origin/main` `250fcd72`. The issue stays open. Nobody is woken: that is chunk 03b.
+
+Visual change: no
+
+**Why.** A watch's record only changed when something asked, and nothing asked: a watch read `waiting` until its due time and `unknown` after it, whatever the check did. The issue's Expected 2 and 3 are that TangleClaw records the check's terminal result when it lands and that a read derives the state from that record.
+
+**What changed.**
+
+- New `lib/check-watch.js`: the monitor, shaped like `lib/workload-nudge.js` (`start`, `stop`, `tick`, `settled`, seams for the clock, the reader and the store). Each pass lists the open watches, reads each that is due with `github-checks#readCheck`, records the reading with `check-watch-store#recordRead`, and expires a watch that is still unresolved 24 hours past its due time. The read comes before the expiry, so a result present at the last read is the watch's result. One pass at a time; a reader that throws or answers something that is not a reading is recorded as a failed read; a pass never throws or rejects.
+- **How much it reads, with nobody asking.** The timer runs a pass every 60 seconds, which sets the rate: one read per watch per minute. A 45-second guard stops a second read of one watch when passes come faster than the timer; it is shorter than the timer because a read is stamped when it completes. At most 4 reads in flight. **At most 30 reads in a pass across every project, least recently read first** (the decider's `2323 limits ok`, which kept an install-wide bound): past it the rest wait for a later pass, so the cadence stretches and no watch is starved. The log says when that starts and stops.
+- `lib/check-watch-store.js`: `recordExpired(watchId)` sets `expired_at` and appends the `expired` fact in one transaction. Refused for a watch with a result, a cancelled one, an expired one, and one not yet 24 hours past due (`CHECK_WATCH_NOT_DUE`).
+- `lib/check-watch-state.js`: `EXPIRE_AFTER_DUE_MS`. `derive` now says `past-due` on the two times alone, so a due time that passed is still said when only the last read's outcome cannot be made sense of (carried from chunk 01's review).
+- `server.js`: the monitor is started and stopped beside the workload nudge's. Nothing else.
+- `docs/check-watch.md`: a section on the monitor, the two new limits, and the opening paragraph now says results are read and nobody is woken.
+- Tests: new `test/check-watch-monitor.test.js` (the real monitor over the real store on a temporary database, a fake reader, one fake clock); `test/check-watch-store.test.js` gains `recordExpired`; `test/check-watch-state.test.js` gains the `past-due` case, added with the Integrator's leave.
+
+**What an operator sees.** A watch a session registered now reads `ready` or `failed` within about a minute of its check ending, and `unknown` with `expired` once it has gone 24 hours past due. One `gh api` call per open watch per minute is made under the server's own GitHub identity.
+
+**Limits.** No message is sent and no pane is typed into; `monitored` stays `false` in every answer. `tc check` still ends each answer with its NOT MONITORED line, reworded: the server reads GitHub for the watch and records the result, but wakes nobody (`lib/tc-verbs.js`, one sentence, and the assertion that pins it in `test/tc-check-verb.test.js`; both added with the Integrator's leave, as were the comment on `MONITORED` in `lib/check-watch-api.js` and one test's name in `test/check-watch-api.test.js`, words only). An expiry is not held back by a last read that could not reach GitHub. Nothing bounds which repository is read: it is whatever the project folder's `origin` named.
+
 ## 2026-10-12 — #2187: the wake's pane gate refuses a dialog below a stale composer and a Codex that is still starting
 
 <!-- prawduct: type=bugfix | scope=wake-gate-2187 -->
