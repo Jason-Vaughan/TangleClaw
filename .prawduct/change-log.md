@@ -35,6 +35,27 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-12 — #2320: a coordinated project's wrap leaves the shared priming file alone
+
+<!-- prawduct: type=bugfix | scope=2320-lane-wrap-no-auto-merge -->
+
+#2320 Chunk 02, the issue's last. Branch `feat/2320-02-priming-roll-skipped`, from `origin/main` `a9b83cd1`. The issue stays open until one real lane wrap is read back on the live install after the deploy.
+
+Visual change: no (no file under `public/` changes; the wrap drawer's existing rows show new text)
+
+**Why.** A lane Builder's wrap rewrote the *Current build chunk* block of `.tangleclaw/priming/build-session.md`, a tracked file every checkout of the repository shares, from the one unapproved plan its own clone held, and carried the rewrite in its wrap commit (#2319).
+
+**Root cause.** The priming roll took the plan it found in the checkout as the project's plan. In a project that works under a coordinator that plan is one lane's, and nothing asked whose project it was.
+
+**What changed.**
+
+- `lib/wrap-steps/priming-roll.js`: the step asks `lib/merge-authority.js` before it resolves any plan. Any answer but `self` is a `skipped` result that stages nothing, so the commit step has nothing to write: the reason names the coordinator the settings name (or says the project is the coordinator itself), or says what could not be read. It is asked with no repository first, so a project that names no coordinator runs no git command and rolls exactly as before. Otherwise the step reads `git remote get-url origin` and the current branch (`git symbolic-ref`, so a detached HEAD is no branch) and asks again with both, the same two the commit step asks with; a read that fails gives `unknown`, which also stages nothing. Being asked first also means plans that would block the step (several in progress) do not block a coordinated project's wrap.
+- `docs/user-guide.md`, "Wrap commits and protected branches": the skipped roll and where its reason is shown.
+
+**Tests.** `test/wrap-step-priming-roll.test.js` gains the lane cases, including one through the step's real git reads on a real repository; its existing cases run unedited. New `test/wrap-pipeline-lane.test.js` drives the real pipeline runner with the real priming, commit, PR-gate and PR-merge steps on a real repository whose pushes land in a local bare one, `gh` answered in the test: a project naming a coordinator keeps its priming file byte-identical and arms nothing at either arming site, with both reasons read off the rows the wrap drawer builds; the same project naming nobody rolls the file and arms, at both sites.
+
+**Limits.** No real wrap of a lane session has run: that is the Operator's to allow after the deploy, and the hold on lane wraps stays until then. The wrap drawer still has no sentence of its own for a coordinated project (#2366). A coordinator's own wrap skips the roll too.
+
 ## 2026-10-12 — #2320: a wrap arms auto-merge only in a project that decides its own merges
 
 <!-- prawduct: type=bugfix | scope=2320-lane-wrap-no-auto-merge -->
