@@ -2,9 +2,9 @@
 
 // #2322: every GitHub read and write the merge queue makes. `gh` is replaced at
 // the seam by exchanges recorded against the real repository
-// (test/fixtures/merge-queue-github/README.md says when, from what, which two
-// were sent by the probe and not by the module, and which one file is written
-// from GitHub's documentation instead). No test calls GitHub.
+// (test/fixtures/merge-queue-github/README.md says when, from what, which were
+// sent by a probe and not by the module, and which one file is written from
+// GitHub's documentation instead). No test calls GitHub.
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
@@ -24,6 +24,16 @@ const MAIN_MERGE = '29354a4674cc207ca89205dadaab40aaf845dffc';
 const TREE = 'a09b4f590cde4061cf24456ff55244fe1739ebee';
 const CANDIDATE = 'tc-queue/probe-20261012-000000';
 const CANDIDATE_SHA = 'bb4d7904fe3b972a6e4a1465a2cd7004fae3ee5e';
+// The recordings of one candidate made the way the module makes it: `main`
+// before pull request #2335, that pull request's head, `main`'s merge of it,
+// the tree both that merge and the candidate have, and the two branches.
+const STAGED_BASE = '43e13e785c112787a0e63407a8c6906a45f30b5f';
+const STAGED_HEAD = 'ccfe717f1d1b68c7e94d38b10d95a014f9f97694';
+const STAGED_MAIN_MERGE = 'abe00a40efb37906f72f88655ff6db8652617dbd';
+const STAGED_TREE = '380674d09bf71d91eb9d3dafa2683fbaa67af4e6';
+const STAGED_SHA = '48774bab0c809a933699f74b9965a5eb86e5e40e';
+const STAGED_CANDIDATE = 'tc-queue/probe-20261012-092611';
+const STAGE = 'tc-queue-stage/probe-20261012-092611';
 const PULL_FILES = [
   '.prawduct/change-log.md', 'test/fixtures/codex-panes/codex-0.156.1.json', 'test/fixtures/codex-panes/codex-0.159.0.json',
   'test/fixtures/codex-panes/codex-0.161.0.json', 'test/medusa-wake-codex-fixtures.test.js'
@@ -397,118 +407,324 @@ describe('merge-queue-github — a read that fails', () => {
 });
 
 describe('merge-queue-github — making a candidate', () => {
-  it('creates the branch at the base and merges the head into it, from the recorded exchanges', async () => {
-    const [ref, merge] = [recorded('ref-created'), recorded('merge-created')];
-    gh(ref, merge);
-    assert.deepEqual(await gq.createCandidate(REPO, CANDIDATE, BASE, HEAD), {
-      status: 'created', ref: CANDIDATE, sha: CANDIDATE_SHA, tree: TREE, parents: [BASE, HEAD], refCreated: true
+  /**
+   * The five recorded exchanges of one candidate, in the order they were made:
+   * the stage branch created, the merge into it, the merge commit read back,
+   * the candidate branch created at it, the stage branch deleted.
+   * @returns {object[]}
+   */
+  function sequence() {
+    return ['stage-ref-created', 'stage-merge-created', 'stage-merge-read', 'candidate-ref-created', 'stage-ref-deleted'].map(recorded);
+  }
+
+  /**
+   * The recorded sequence with some steps answered differently.
+   * @param {Object<number, object>} changes - Step number (1 to 5) to the answer it gets instead
+   * @returns {object[]}
+   */
+  function sequenceWith(changes) {
+    return sequence().map((exchange, i) => changes[i + 1] || exchange);
+  }
+
+  /**
+   * An exchange that answers HTTP 201 with this value as its body.
+   * @param {*} value - The projected answer
+   * @returns {object}
+   */
+  function made(value) {
+    return { exitCode: 0, statusLine: 'HTTP/2.0 201 Created', body: JSON.stringify(value), stderr: '' };
+  }
+
+  /**
+   * The branches the calls made so far created, in order.
+   * @returns {string[]}
+   */
+  function refsCreated() {
+    return calls.map((c) => c.args.find((a) => a.startsWith('ref=refs/heads/'))).filter(Boolean).map((a) => a.slice('ref=refs/heads/'.length));
+  }
+
+  /**
+   * The branches the calls made so far deleted, in order.
+   * @returns {string[]}
+   */
+  function refsDeleted() {
+    const lead = `repos/${REPO}/git/refs/heads/`;
+    return calls.filter((c) => c.args.includes('DELETE')).map((c) => c.args.find((a) => a.startsWith(lead)).slice(lead.length));
+  }
+
+  it('merges on the stage branch, puts the candidate branch on the finished merge and deletes the stage branch, from the recorded exchanges', async () => {
+    const steps = sequence();
+    gh(...steps);
+    assert.deepEqual(await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD), {
+      status: 'created', ref: STAGED_CANDIDATE, sha: STAGED_SHA, tree: STAGED_TREE, parents: [STAGED_BASE, STAGED_HEAD],
+      refCreated: true, stageLeft: false
     });
-    assert.deepEqual(calls.map((c) => c.args), [ref.args, merge.args]);
-    assert.ok(calls.every((c) => c.timeoutMs === gq.WRITE_TIMEOUT_MS));
+    assert.deepEqual(calls.map((c) => c.args), steps.map((s) => s.args));
+    assert.deepEqual(calls.map((c) => c.timeoutMs),
+      [gq.WRITE_TIMEOUT_MS, gq.WRITE_TIMEOUT_MS, gq.READ_TIMEOUT_MS, gq.WRITE_TIMEOUT_MS, gq.WRITE_TIMEOUT_MS]);
   });
 
-  it('answers ref-exists and merges nothing when the branch is already there', async () => {
+  it('writes under tc-queue/ exactly once, at the merge commit and never at the base', async () => {
+    gh(...sequence());
+    await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD);
+    assert.deepEqual(refsCreated(), [STAGE, STAGED_CANDIDATE]);
+    const underCandidate = calls.filter((c) => c.args.some((a) => a.includes(STAGED_CANDIDATE)));
+    assert.equal(underCandidate.length, 1, 'one call names the candidate branch');
+    assert.ok(underCandidate[0].args.includes(`sha=${STAGED_SHA}`), 'and it creates it at the merge commit');
+    assert.ok(calls[1].args.includes(`base=${STAGE}`), 'the merge goes into the stage branch');
+    assert.deepEqual(refsDeleted(), [STAGE]);
+  });
+
+  it('the recorded candidate has the tree main\'s own merge of the same two commits has', () => {
+    const answered = JSON.parse(recorded('stage-merge-created').body);
+    assert.equal(answered.tree, STAGED_TREE);
+    assert.deepEqual(answered.parents, [STAGED_BASE, STAGED_HEAD]);
+    assert.notEqual(answered.sha, STAGED_MAIN_MERGE);
+  });
+
+  it('answers conflict, with the stage branch deleted and no candidate branch made, when the two commits do not merge', async () => {
+    gh(recorded('stage-ref-created'), recorded('merge-conflict'), recorded('stage-ref-deleted'));
+    assert.deepEqual(await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD),
+      { status: 'conflict', ref: STAGED_CANDIDATE, refCreated: false, stageLeft: false });
+    assert.deepEqual(refsCreated(), [STAGE]);
+    assert.deepEqual(refsDeleted(), [STAGE]);
+  });
+
+  it('answers nothing-to-merge, with the stage branch deleted and no candidate branch made, when the base already holds the head', async () => {
+    gh(recorded('stage-ref-created'), recorded('merge-nothing'), recorded('stage-ref-deleted'));
+    assert.deepEqual(await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD),
+      { status: 'nothing-to-merge', ref: STAGED_CANDIDATE, refCreated: false, stageLeft: false });
+    assert.deepEqual(refsCreated(), [STAGE]);
+    assert.deepEqual(refsDeleted(), [STAGE]);
+  });
+
+  it('answers ref-exists for a stage branch already there, and touches neither branch', async () => {
     gh(recorded('ref-create-exists'));
-    assert.deepEqual(await gq.createCandidate(REPO, CANDIDATE, BASE, HEAD), { status: 'ref-exists', ref: CANDIDATE, refCreated: false });
+    assert.deepEqual(await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD),
+      { status: 'ref-exists', ref: STAGED_CANDIDATE, existing: 'stage', refCreated: false, stageLeft: true });
     assert.equal(calls.length, 1);
   });
 
-  it('answers conflict, with the branch made, when the two commits do not merge', async () => {
-    gh(recorded('ref-created'), recorded('merge-conflict'));
-    assert.deepEqual(await gq.createCandidate(REPO, CANDIDATE, BASE, HEAD), { status: 'conflict', ref: CANDIDATE, refCreated: true });
+  it('answers ref-exists for a candidate branch already there, leaves it alone and deletes the stage branch it made', async () => {
+    gh(...sequenceWith({ 4: recorded('ref-create-exists') }));
+    assert.deepEqual(await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD),
+      { status: 'ref-exists', ref: STAGED_CANDIDATE, existing: 'candidate', refCreated: false, stageLeft: false });
+    assert.deepEqual(refsDeleted(), [STAGE], 'the branch that was already there is not deleted');
   });
 
-  it('answers nothing-to-merge, with the branch made, when the base already holds the head', async () => {
-    gh(recorded('ref-created'), recorded('merge-nothing'));
-    assert.deepEqual(await gq.createCandidate(REPO, CANDIDATE, BASE, HEAD), { status: 'nothing-to-merge', ref: CANDIDATE, refCreated: true });
+  it('answers unavailable, never conflict, when the candidate branch is refused or its outcome is not known after a good merge', async () => {
+    gh(...sequenceWith({ 4: refused(403, 'Resource not accessible') }));
+    const no = await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD);
+    assert.deepEqual([no.status, no.refCreated, no.stageLeft], ['unavailable', false, false]);
+    assert.match(no.reason, /HTTP 403: Resource not accessible/);
+    assert.deepEqual(refsDeleted(), [STAGE]);
+
+    calls = [];
+    gh(...sequenceWith({ 4: TIMED_OUT }));
+    const unknown = await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD);
+    assert.deepEqual([unknown.status, unknown.refCreated, unknown.stageLeft], ['unavailable', null, false]);
+    assert.deepEqual(refsDeleted(), [STAGE]);
+
+    gh(...sequenceWith({ 4: refused(502, 'Bad Gateway') }));
+    assert.equal((await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD)).refCreated, null);
   });
 
-  it('answers unavailable for a merge that is not of exactly these two commits, base first', async () => {
+  it('says a candidate branch exists when GitHub made one that is not at the merge commit', async () => {
+    gh(...sequenceWith({ 4: made({ ref: `refs/heads/${STAGED_CANDIDATE}`, sha: STAGED_BASE, type: 'commit' }) }));
+    const r = await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD);
+    assert.deepEqual([r.status, r.refCreated, r.stageLeft], ['unavailable', true, false]);
+  });
+
+  it('answers unavailable and makes no candidate branch when the merge is not of exactly these two commits, base first', async () => {
     const other = '9'.repeat(40);
-    for (const parents of [[HEAD, BASE], [BASE, other], [other, HEAD], [BASE], [BASE, HEAD, other]]) {
-      gh(recorded('ref-created'), { exitCode: 0, statusLine: 'HTTP/2.0 201 Created', body: JSON.stringify({ sha: CANDIDATE_SHA, tree: TREE, parents }), stderr: '' });
-      const r = await gq.createCandidate(REPO, CANDIDATE, BASE, HEAD);
-      assert.equal(r.status, 'unavailable', JSON.stringify(parents));
-      assert.equal(r.refCreated, true);
+    for (const parents of [[STAGED_HEAD, STAGED_BASE], [STAGED_BASE, other], [other, STAGED_HEAD], [STAGED_BASE], [STAGED_BASE, STAGED_HEAD, other]]) {
+      calls = [];
+      gh(recorded('stage-ref-created'), made({ sha: STAGED_SHA, tree: STAGED_TREE, parents }), recorded('stage-ref-deleted'));
+      const r = await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD);
+      assert.deepEqual([r.status, r.refCreated, r.stageLeft], ['unavailable', false, false], JSON.stringify(parents));
+      assert.deepEqual(refsCreated(), [STAGE]);
       assert.ok(!('applied' in r));
     }
   });
 
-  it('answers unavailable when the created reference is not this branch at the base', async () => {
-    gh({ exitCode: 0, statusLine: 'HTTP/2.0 201 Created', body: JSON.stringify({ ref: `refs/heads/${CANDIDATE}`, sha: HEAD, type: 'commit' }), stderr: '' });
-    const r = await gq.createCandidate(REPO, CANDIDATE, BASE, HEAD);
-    assert.equal(r.status, 'unavailable');
-    assert.equal(r.refCreated, true);
-    assert.equal(calls.length, 1, 'nothing is merged into a branch that is not where it should be');
+  it('answers unavailable and makes no candidate branch when the merge commit read back is not what the merge answered', async () => {
+    const other = '9'.repeat(40);
+    const answered = { sha: STAGED_SHA, tree: STAGED_TREE, parents: [STAGED_BASE, STAGED_HEAD] };
+    const readBacks = [
+      ok({ ...answered, tree: other }), ok({ ...answered, parents: [STAGED_HEAD, STAGED_BASE] }), ok({ ...answered, parents: [STAGED_BASE] }),
+      ok({ ...answered, sha: other }), refused(404, 'Not Found'), TIMED_OUT, NOT_JSON
+    ];
+    for (const readBack of readBacks) {
+      calls = [];
+      gh(...sequenceWith({ 3: readBack }).filter((_, i) => i !== 3));
+      const r = await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD);
+      assert.deepEqual([r.status, r.refCreated, r.stageLeft], ['unavailable', false, false], JSON.stringify(readBack));
+      assert.match(r.reason, /read back/);
+      assert.deepEqual(refsCreated(), [STAGE]);
+      assert.deepEqual(refsDeleted(), [STAGE]);
+    }
   });
 
-  it('says the branch was not made when GitHub refuses to create it, and that it is not known after a timeout', async () => {
+  it('says no branch was made when GitHub refuses the stage branch, and deletes nothing', async () => {
     gh(refused(422, 'Object does not exist'));
-    const no = await gq.createCandidate(REPO, CANDIDATE, BASE, HEAD);
-    assert.deepEqual([no.status, no.refCreated], ['unavailable', false]);
+    const no = await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD);
+    assert.deepEqual([no.status, no.refCreated, no.stageLeft], ['unavailable', false, false]);
     assert.match(no.reason, /HTTP 422: Object does not exist/);
-    gh(TIMED_OUT);
-    const unknown = await gq.createCandidate(REPO, CANDIDATE, BASE, HEAD);
-    assert.deepEqual([unknown.status, unknown.refCreated], ['unavailable', null]);
-    gh(refused(502, 'Bad Gateway'));
-    const gateway = await gq.createCandidate(REPO, CANDIDATE, BASE, HEAD);
-    assert.equal(gateway.refCreated, null);
+    assert.equal(calls.length, 1);
   });
 
-  it('says the branch exists when the merge into it is refused or its outcome is not known, and never that nothing changed', async () => {
-    gh(recorded('ref-created'), refused(404, 'Head does not exist'));
-    const no = await gq.createCandidate(REPO, CANDIDATE, BASE, HEAD);
-    assert.deepEqual([no.status, no.refCreated], ['unavailable', true]);
-    assert.ok(!('applied' in no));
-    gh(recorded('ref-created'), TIMED_OUT);
-    const unknown = await gq.createCandidate(REPO, CANDIDATE, BASE, HEAD);
-    assert.deepEqual([unknown.status, unknown.refCreated], ['unavailable', true]);
-    assert.ok(!('applied' in unknown));
+  it('tries to delete a stage branch it may have made, and says what is known of it', async () => {
+    gh(TIMED_OUT, recorded('stage-ref-delete-missing'));
+    const gone = await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD);
+    assert.deepEqual([gone.status, gone.refCreated, gone.stageLeft], ['unavailable', false, false]);
+    assert.deepEqual(refsDeleted(), [STAGE]);
+
+    gh(TIMED_OUT, TIMED_OUT);
+    const unknown = await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD);
+    assert.deepEqual([unknown.status, unknown.refCreated, unknown.stageLeft], ['unavailable', false, null]);
+
+    gh(refused(502, 'Bad Gateway'), refused(403, 'Resource not accessible'));
+    const refusedDelete = await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD);
+    assert.equal(refusedDelete.stageLeft, null, 'a branch not known to have been made is not known to be left');
+
+    gh(made({ ref: `refs/heads/${STAGE}`, sha: STAGED_HEAD, type: 'commit' }), recorded('stage-ref-deleted'));
+    const misplaced = await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD);
+    assert.deepEqual([misplaced.status, misplaced.refCreated, misplaced.stageLeft], ['unavailable', false, false]);
   });
 
-  it('writes only under refs/heads/tc-queue/, and refuses any other branch before gh is called', async () => {
+  it('deletes the stage branch and makes no candidate branch when the merge is refused or its outcome is not known', async () => {
+    for (const merge of [refused(404, 'Head does not exist'), TIMED_OUT, GARBAGE]) {
+      calls = [];
+      gh(recorded('stage-ref-created'), merge, recorded('stage-ref-deleted'));
+      const r = await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD);
+      assert.deepEqual([r.status, r.refCreated, r.stageLeft], ['unavailable', false, false]);
+      assert.deepEqual(refsCreated(), [STAGE]);
+      assert.deepEqual(refsDeleted(), [STAGE]);
+      assert.ok(!('applied' in r));
+    }
+  });
+
+  it('never answers created over a stage branch left behind', async () => {
+    gh(...sequenceWith({ 5: refused(403, 'Resource not accessible') }));
+    const left = await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD);
+    assert.deepEqual([left.status, left.refCreated, left.stageLeft], ['unavailable', true, true]);
+    assert.match(left.reason, /the candidate branch was made; and the stage branch tc-queue-stage\/probe-20261012-092611 could not be deleted \(GitHub answered HTTP 403/);
+    assert.ok(!('sha' in left));
+
+    gh(...sequenceWith({ 5: TIMED_OUT }));
+    const unknown = await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD);
+    assert.deepEqual([unknown.status, unknown.refCreated, unknown.stageLeft], ['unavailable', true, null]);
+
+    gh(...sequenceWith({ 5: recorded('stage-ref-delete-missing') }));
+    assert.equal((await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD)).status, 'created', 'already gone is gone');
+  });
+
+  it('answers unavailable, not the outcome, when the stage branch cannot be deleted after a conflict, nothing to merge or a name already taken', async () => {
+    const cases = [
+      [[recorded('stage-ref-created'), recorded('merge-conflict')], /the two commits do not merge; and the stage branch/],
+      [[recorded('stage-ref-created'), recorded('merge-nothing')], /the base already holds the head; and the stage branch/],
+      [sequenceWith({ 4: recorded('ref-create-exists') }).slice(0, 4), /the candidate branch was already there; and the stage branch/],
+      [[recorded('stage-ref-created'), TIMED_OUT], /timed out.*; and the stage branch/]
+    ];
+    for (const [steps, reason] of cases) {
+      gh(...steps, refused(403, 'Resource not accessible'));
+      const refusedDelete = await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD);
+      assert.deepEqual([refusedDelete.status, refusedDelete.refCreated, refusedDelete.stageLeft], ['unavailable', false, true], String(reason));
+      assert.match(refusedDelete.reason, reason);
+      gh(...steps, TIMED_OUT);
+      const unknown = await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD);
+      assert.deepEqual([unknown.status, unknown.stageLeft], ['unavailable', null], String(reason));
+    }
+  });
+
+  it('accepts only one name under tc-queue/ for the candidate, and refuses any other branch before gh is called', async () => {
     gh();
     for (const ref of ['main', 'v5-baseline', 'feat/x', 'tc-queue', 'tc-queue/', 'tc-queue/a/b', 'tc-queue/../main', 'tc-queue/.hidden',
-      'tc-queue/a.lock', 'tc-queue/a.', 'refs/heads/tc-queue/a', 'TC-QUEUE/a', ' tc-queue/a', 'tc-queue/a b', `tc-queue/${'a'.repeat(101)}`, '', null, undefined, 7]) {
-      const r = await gq.createCandidate(REPO, ref, BASE, HEAD);
-      assert.deepEqual([r.status, r.refCreated], ['unavailable', false], String(ref));
+      'tc-queue/a.lock', 'tc-queue/a.', 'refs/heads/tc-queue/a', 'TC-QUEUE/a', ' tc-queue/a', 'tc-queue/a b', `tc-queue/${'a'.repeat(101)}`,
+      STAGE, 'tc-queue-stage/a', '', null, undefined, 7]) {
+      const r = await gq.createCandidate(REPO, ref, STAGED_BASE, STAGED_HEAD);
+      assert.deepEqual([r.status, r.refCreated, r.stageLeft], ['unavailable', false, false], String(ref));
       assert.match(r.reason, /one name under tc-queue\//);
     }
     assert.equal(calls.length, 0);
-    gh(recorded('ref-created'), recorded('merge-created'));
-    await gq.createCandidate(REPO, CANDIDATE, BASE, HEAD);
-    assert.ok(calls[0].args.includes(`ref=refs/heads/${CANDIDATE}`));
-    assert.ok(calls[1].args.includes(`base=${CANDIDATE}`));
   });
 
-  it('refuses a base or head that is not a full commit id before gh is called', async () => {
+  it('writes to no branch outside the two prefixes: not the base branch, not a pull request\'s branch', async () => {
+    gh(...sequence());
+    await gq.createCandidate(REPO, STAGED_CANDIDATE, STAGED_BASE, STAGED_HEAD);
+    const written = [...refsCreated(), ...refsDeleted(), ...calls.map((c) => c.args.find((a) => a.startsWith('base='))).filter(Boolean).map((a) => a.slice(5))];
+    assert.equal(written.length, 4);
+    for (const branch of written) assert.ok(gq.isCandidateRef(branch) || gq.isStageRef(branch), branch);
+  });
+
+  it('refuses a base or head that is not a full commit id, and a missing argument, before gh is called', async () => {
     gh();
-    for (const [base, head] of [[BASE.slice(0, 7), HEAD], [BASE, 'main'], [BASE.toUpperCase(), HEAD], [BASE, undefined]]) {
-      assert.equal((await gq.createCandidate(REPO, CANDIDATE, base, head)).status, 'unavailable');
+    for (const [base, head] of [[STAGED_BASE.slice(0, 7), STAGED_HEAD], [STAGED_BASE, 'main'], [STAGED_BASE.toUpperCase(), STAGED_HEAD],
+      [STAGED_BASE, undefined], [STAGED_BASE, null], [undefined, STAGED_HEAD], [null, STAGED_HEAD]]) {
+      const r = await gq.createCandidate(REPO, STAGED_CANDIDATE, base, head);
+      assert.deepEqual([r.status, r.refCreated, r.stageLeft], ['unavailable', false, false], `${base} ${head}`);
     }
     assert.equal(calls.length, 0);
   });
 });
 
-describe('merge-queue-github — deleting a candidate', () => {
-  it('deletes the branch, from the recorded exchange', async () => {
+describe('merge-queue-github — the two branches of a candidate', () => {
+  it('knows a candidate branch and a stage branch from each other and from any other', () => {
+    assert.equal(gq.CANDIDATE_PREFIX, 'tc-queue/');
+    assert.equal(gq.STAGE_PREFIX, 'tc-queue-stage/');
+    assert.equal(gq.isCandidateRef(STAGED_CANDIDATE), true);
+    assert.equal(gq.isCandidateRef('tc-queue/e_17.a-b'), true);
+    assert.equal(gq.isStageRef(STAGE), true);
+    assert.equal(gq.isStageRef('tc-queue-stage/e_17.a-b'), true);
+    for (const ref of ['main', 'tc-queue/a/b', STAGE, 'tc-queue-stage/a', null, undefined]) assert.equal(gq.isCandidateRef(ref), false, String(ref));
+    for (const ref of ['main', 'tc-queue-stage', 'tc-queue-stage/', 'tc-queue-stage/a/b', 'tc-queue-stage/../main', 'tc-queue-stage/a.lock',
+      'tc-queue-stages/a', 'x/tc-queue-stage/a', `tc-queue-stage/${'a'.repeat(101)}`, STAGED_CANDIDATE, 'tc-queue/a', null, undefined]) {
+      assert.equal(gq.isStageRef(ref), false, String(ref));
+    }
+  });
+
+  it('builds the stage branch from the candidate branch, the same name under the other prefix', () => {
+    assert.equal(gq.stageRefFor(STAGED_CANDIDATE), STAGE);
+    assert.equal(gq.stageRefFor('tc-queue/e_17.a-b'), 'tc-queue-stage/e_17.a-b');
+    assert.equal(gq.isStageRef(gq.stageRefFor(`tc-queue/${'a'.repeat(100)}`)), true, 'the longest candidate name has a stage name');
+  });
+
+  it('builds no stage branch for a branch that is not a candidate', () => {
+    for (const ref of ['main', STAGE, 'tc-queue/a/b', 'tc-queue/', 'feat/x', '', null, undefined, 7]) {
+      assert.equal(gq.stageRefFor(ref), null, String(ref));
+    }
+  });
+});
+
+describe('merge-queue-github — deleting a branch of a candidate', () => {
+  it('deletes a candidate branch, from the recorded exchange', async () => {
     const fx = recorded('ref-deleted');
     gh(fx);
     assert.deepEqual(await gq.deleteRef(REPO, CANDIDATE), { status: 'deleted' });
     assert.deepEqual(calls[0].args, fx.args);
   });
 
-  it('says not-found when the branch is already gone', async () => {
-    gh(recorded('ref-delete-missing'));
-    assert.deepEqual(await gq.deleteRef(REPO, CANDIDATE), { status: 'not-found' });
+  it('deletes a stage branch, from the recorded exchange', async () => {
+    const fx = recorded('stage-ref-deleted');
+    gh(fx);
+    assert.deepEqual(await gq.deleteRef(REPO, STAGE), { status: 'deleted' });
+    assert.deepEqual(calls[0].args, fx.args);
   });
 
-  it('refuses every branch that is not directly under tc-queue/ before gh is called', async () => {
+  it('says not-found when the branch is already gone', async () => {
+    gh(recorded('ref-delete-missing'), recorded('stage-ref-delete-missing'));
+    assert.deepEqual(await gq.deleteRef(REPO, CANDIDATE), { status: 'not-found' });
+    assert.deepEqual(await gq.deleteRef(REPO, STAGE), { status: 'not-found' });
+  });
+
+  it('refuses every branch that is not one name under one of the two prefixes before gh is called', async () => {
     gh();
-    for (const ref of ['main', 'v5-baseline', 'metrics', 'feat/2322-02-merge-queue-github', 'tc-queue/a/b', 'tc-queue/../main', 'heads/tc-queue/a', '', null]) {
+    for (const ref of ['main', 'v5-baseline', 'metrics', 'feat/2322-02-merge-queue-github', 'tc-queue/a/b', 'tc-queue/../main', 'heads/tc-queue/a',
+      'tc-queue', 'tc-queue-stage', 'tc-queue-stage/', 'tc-queue-stage/a/b', 'tc-queue-stage/../main', 'tc-queue-stages/a', 'tc-queue-staging/a',
+      'tc-queue-other/a', 'refs/heads/tc-queue-stage/a', '', null, undefined]) {
       const r = await gq.deleteRef(REPO, ref);
       assert.deepEqual([r.status, r.applied], ['unavailable', false], String(ref));
-      assert.match(r.reason, /only a branch under tc-queue\//);
+      assert.match(r.reason, /only a branch under tc-queue\/ or tc-queue-stage\/ may be deleted/);
     }
     assert.equal(calls.length, 0);
   });
@@ -520,9 +736,69 @@ describe('merge-queue-github — deleting a candidate', () => {
     const validation = await gq.deleteRef(REPO, CANDIDATE);
     assert.deepEqual([validation.status, validation.applied], ['unavailable', false]);
     gh(TIMED_OUT);
-    assert.deepEqual([(await gq.deleteRef(REPO, CANDIDATE)).applied], [null]);
+    assert.deepEqual([(await gq.deleteRef(REPO, STAGE)).applied], [null]);
     gh(GARBAGE);
     assert.deepEqual([(await gq.deleteRef(REPO, CANDIDATE)).applied], [null]);
+  });
+});
+
+describe('merge-queue-github — discarding a candidate', () => {
+  it('deletes the candidate branch and its stage branch, from the recorded exchanges', async () => {
+    const [candidate, stage] = [recorded('candidate-ref-deleted'), recorded('stage-ref-deleted')];
+    gh(candidate, stage);
+    assert.deepEqual(await gq.discardCandidate(REPO, STAGED_CANDIDATE), { status: 'discarded', candidate: 'deleted', stage: 'deleted' });
+    assert.deepEqual(calls.map((c) => c.args), [candidate.args, stage.args]);
+  });
+
+  it('is discarded when only one of the two was there, as recorded after a finished candidate', async () => {
+    const [candidate, stage] = [recorded('candidate-ref-deleted'), recorded('stage-ref-delete-missing')];
+    gh(candidate, stage);
+    assert.deepEqual(await gq.discardCandidate(REPO, STAGED_CANDIDATE), { status: 'discarded', candidate: 'deleted', stage: 'not-found' });
+    assert.deepEqual(calls.map((c) => c.args), [candidate.args, stage.args]);
+    gh(recorded('ref-delete-missing'), recorded('stage-ref-deleted'));
+    assert.deepEqual(await gq.discardCandidate(REPO, STAGED_CANDIDATE), { status: 'discarded', candidate: 'not-found', stage: 'deleted' });
+  });
+
+  it('is discarded when neither was there, so calling it twice is harmless', async () => {
+    gh(recorded('candidate-ref-deleted'), recorded('stage-ref-deleted'), recorded('ref-delete-missing'), recorded('stage-ref-delete-missing'));
+    assert.equal((await gq.discardCandidate(REPO, STAGED_CANDIDATE)).status, 'discarded');
+    assert.deepEqual(await gq.discardCandidate(REPO, STAGED_CANDIDATE), { status: 'discarded', candidate: 'not-found', stage: 'not-found' });
+    assert.equal(calls.length, 4);
+  });
+
+  it('attempts both deletions when the first is refused, and says which branch is left', async () => {
+    gh(refused(403, 'Resource not accessible'), recorded('stage-ref-deleted'));
+    const r = await gq.discardCandidate(REPO, STAGED_CANDIDATE);
+    assert.deepEqual([r.status, r.candidate, r.stage], ['unavailable', 'refused', 'deleted']);
+    assert.match(r.reason, /^tc-queue\/probe-20261012-092611 could not be deleted \(GitHub answered HTTP 403: Resource not accessible\)$/);
+    assert.equal(calls.length, 2);
+
+    gh(recorded('candidate-ref-deleted'), refused(403, 'Resource not accessible'));
+    const stageLeft = await gq.discardCandidate(REPO, STAGED_CANDIDATE);
+    assert.deepEqual([stageLeft.status, stageLeft.candidate, stageLeft.stage], ['unavailable', 'deleted', 'refused']);
+    assert.match(stageLeft.reason, /^tc-queue-stage\/probe-20261012-092611 could not be deleted/);
+  });
+
+  it('says a deletion that timed out is not known, and never discarded', async () => {
+    gh(recorded('candidate-ref-deleted'), TIMED_OUT);
+    const one = await gq.discardCandidate(REPO, STAGED_CANDIDATE);
+    assert.deepEqual([one.status, one.candidate, one.stage], ['unavailable', 'deleted', 'unknown']);
+    gh(TIMED_OUT, GARBAGE);
+    const both = await gq.discardCandidate(REPO, STAGED_CANDIDATE);
+    assert.deepEqual([both.status, both.candidate, both.stage], ['unavailable', 'unknown', 'unknown']);
+    assert.match(both.reason, /tc-queue\/probe-20261012-092611 could not be deleted .*; tc-queue-stage\/probe-20261012-092611 could not be deleted/);
+    gq._internal.exec = async () => { throw new Error('spawn EMFILE'); };
+    assert.equal((await gq.discardCandidate(REPO, STAGED_CANDIDATE)).status, 'unavailable');
+  });
+
+  it('refuses anything but a candidate branch before gh is called, a stage branch included', async () => {
+    gh();
+    for (const ref of ['main', STAGE, 'tc-queue/a/b', 'tc-queue/', 'feat/x', '', null, undefined, 7]) {
+      const r = await gq.discardCandidate(REPO, ref);
+      assert.deepEqual([r.status, r.candidate, r.stage], ['unavailable', 'refused', 'refused'], String(ref));
+      assert.match(r.reason, /one name under tc-queue\//);
+    }
+    assert.equal(calls.length, 0);
   });
 });
 
@@ -607,7 +883,8 @@ describe('merge-queue-github — what is refused before gh is called', () => {
       const answers = [
         await gq.readPull(repo, 7), await gq.readRefTip(repo, 'main'), await gq.readCommit(repo, BASE),
         await gq.readPullFiles(repo, 7), await gq.readCompareFiles(repo, BASE, HEAD),
-        await gq.createCandidate(repo, CANDIDATE, BASE, HEAD), await gq.deleteRef(repo, CANDIDATE), await gq.mergePull(repo, 7, HEAD)
+        await gq.createCandidate(repo, CANDIDATE, BASE, HEAD), await gq.deleteRef(repo, CANDIDATE), await gq.deleteRef(repo, STAGE),
+        await gq.discardCandidate(repo, CANDIDATE), await gq.mergePull(repo, 7, HEAD)
       ];
       for (const r of answers) {
         assert.equal(r.status, 'unavailable', String(repo));
@@ -633,15 +910,6 @@ describe('merge-queue-github — what is refused before gh is called', () => {
       assert.equal((await gq.readCompareFiles(REPO, BASE, sha)).status, 'unavailable');
     }
     assert.equal(calls.length, 0);
-  });
-
-  it('knows a candidate branch from any other', () => {
-    assert.equal(gq.isCandidateRef(CANDIDATE), true);
-    assert.equal(gq.isCandidateRef('tc-queue/e_17.a-b'), true);
-    assert.equal(gq.isCandidateRef('main'), false);
-    assert.equal(gq.isCandidateRef('tc-queue/a/b'), false);
-    assert.equal(gq.CANDIDATE_PREFIX, 'tc-queue/');
-    assert.ok(CANDIDATE.startsWith(gq.CANDIDATE_PREFIX));
   });
 });
 

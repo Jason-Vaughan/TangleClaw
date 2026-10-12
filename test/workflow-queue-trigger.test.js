@@ -17,7 +17,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { CANDIDATE_PREFIX, isCandidateRef } = require('../lib/merge-queue-github');
+const { CANDIDATE_PREFIX, STAGE_PREFIX, isCandidateRef, isStageRef, stageRefFor } = require('../lib/merge-queue-github');
 
 const WORKFLOW = path.join(__dirname, '..', '.github', 'workflows', 'test.yml');
 
@@ -81,6 +81,23 @@ describe('the test workflow runs on a merge queue candidate (#2322)', () => {
     for (const other of [bare, `${bare}-other/1`, `x/${CANDIDATE_PREFIX}1`, 'feat/2322-03-queue-ci-trigger']) {
       assert.equal(runsOn(other), false, `${other} is not a candidate and must not be matched by the push list`);
     }
+  });
+
+  it('no branch a candidate is merged on starts a run', () => {
+    // The merge is made on a stage branch so that the only push CI sees is the
+    // candidate branch arriving at the finished merge. A stage branch starts at
+    // the base, which is the base branch's own commit: a run for that push
+    // would be a second `test` run on it.
+    const listed = pushBranches(workflowSource());
+    const runsOn = (branch) => listed.some((p) => patternMatches(p, branch));
+    for (const name of ['1', 'entry-42', 'probe-20261012-092611', 'A.b_c-9']) {
+      const stage = stageRefFor(`${CANDIDATE_PREFIX}${name}`);
+      assert.equal(isStageRef(stage), true, `${stage} is a name the queue would merge on`);
+      assert.equal(runsOn(stage), false, `${stage} must not start the workflow`);
+    }
+    assert.ok(!listed.some((p) => p.startsWith(STAGE_PREFIX.slice(0, -1))),
+      `the push trigger must never list the stage prefix ${STAGE_PREFIX}`);
+    assert.ok(!STAGE_PREFIX.startsWith(CANDIDATE_PREFIX), 'a stage name is never under the candidate prefix');
   });
 
   it('the long-lived branches are still on the list', () => {

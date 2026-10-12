@@ -1,0 +1,20 @@
+{
+  "capturedAt": "2026-10-12T09:26:16.823Z",
+  "args": [
+    "api",
+    "-i",
+    "-X",
+    "POST",
+    "repos/Jason-Vaughan/TangleClaw/git/refs",
+    "-f",
+    "ref=refs/heads/tc-queue/probe-20261012-092611",
+    "-f",
+    "sha=48774bab0c809a933699f74b9965a5eb86e5e40e",
+    "--jq",
+    "{ref: .ref, sha: .object.sha, type: .object.type}"
+  ],
+  "exitCode": 0,
+  "statusLine": "HTTP/2.0 201 Created",
+  "body": "{\"ref\":\"refs/heads/tc-queue/probe-20261012-092611\",\"sha\":\"48774bab0c809a933699f74b9965a5eb86e5e40e\",\"type\":\"commit\"}\n",
+  "stderr": ""
+}
