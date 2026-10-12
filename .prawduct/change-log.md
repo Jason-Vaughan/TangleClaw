@@ -35,6 +35,27 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-12 — #2321: every skip-ledger entry says what a host must have, and the audit refuses one that does not
+
+<!-- prawduct: type=feature | scope=2321-ci-as-suite-evidence -->
+
+#2321 Chunk 01a. Branch `feat/2321-01a-ledger-requires`, from `origin/main` `ad6f2cbb`. The issue stays open: this is the first of three chunks, and the lane rule it asks for is not in force.
+
+Visual change: no
+
+**Why.** `test/skip-ledger.json` names the tests CI does not run and says where each tier runs in `runsWhere`, which is prose. The next chunk runs those tests on a Builder's machine and must know which tiers that machine is expected to run. The decider ruled that this comes from the ledger and from measurements of the host, and from nothing a caller types, so the ledger has to say it in a form a program reads.
+
+**What changed.**
+
+- `test/skip-ledger.json`: each entry gains `requires`, a list of values that must all hold on a host for its tests to be expected there. `runsWhere` stays. The comment says what the field is.
+- `scripts/test-skip-audit.js`: `LEDGER_REQUIREMENTS`, the closed list of accepted values, exported. `compileLedger` throws on an entry whose `requires` is missing, not an array, empty, holds a non-string, repeats a value or holds a value off the list, and returns `requires` with each compiled entry. `audit`, `formatReport` and `main` are unchanged: the audit measures no host and accepts skips by `match` alone.
+- `test/test-skip-audit.test.js`: each invalid shape refused by name; a valid one carries `requires`; the tracked ledger compiles under the new validation; the command exits 1 on an invalid ledger. The existing cases keep their assertions; their fixture entries gain the field.
+- New `docs/lane-ci-evidence.md`: what a green CI run says and does not, the ledger's fields, each `requires` value and what it means.
+
+**What an operator sees.** Nothing in the product. A contributor who adds an environment-gated test must now give its ledger entry a `requires` from the list, or CI's `test` job fails and names the entry.
+
+**Limits.** Nothing measures a host yet, so nothing checks that an entry's `requires` is true of the machines its `runsWhere` describes. The audit does not measure the CI runner. `CONTRIBUTING.md` still describes a ledger entry as "why" and "where" only.
+
 ## 2026-10-12 — #2231: a Codex that cannot answer its version probe is asked once, then not again for 60 seconds
 
 <!-- prawduct: type=bugfix | scope=codex-probe-stall-2231 -->
