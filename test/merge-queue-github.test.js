@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const gq = require('../lib/merge-queue-github');
+const checks = require('../lib/github-checks');
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'merge-queue-github');
 const REPO = 'Jason-Vaughan/TangleClaw';
@@ -34,6 +35,12 @@ const STAGED_TREE = '380674d09bf71d91eb9d3dafa2683fbaa67af4e6';
 const STAGED_SHA = '48774bab0c809a933699f74b9965a5eb86e5e40e';
 const STAGED_CANDIDATE = 'tc-queue/probe-20261012-092611';
 const STAGE = 'tc-queue-stage/probe-20261012-092611';
+// The recordings of a commit's checks: `main`'s merge of pull request #2335 while
+// it also carried a run made for a probe branch, and a pull request's head whose
+// `test` run was run a second time.
+const TIP = STAGED_MAIN_MERGE;
+const RERUN_SHA = '6baff24c3640f68caf2ed66deec8816e77b3240b';
+const RERUN_BRANCH = 'fix/2005-delivery-failure-notice';
 const PULL_FILES = [
   '.prawduct/change-log.md', 'test/fixtures/codex-panes/codex-0.156.1.json', 'test/fixtures/codex-panes/codex-0.159.0.json',
   'test/fixtures/codex-panes/codex-0.161.0.json', 'test/medusa-wake-codex-fixtures.test.js'
@@ -909,6 +916,305 @@ describe('merge-queue-github — what is refused before gh is called', () => {
       assert.equal((await gq.readCompareFiles(REPO, sha, HEAD)).status, 'unavailable');
       assert.equal((await gq.readCompareFiles(REPO, BASE, sha)).status, 'unavailable');
     }
+    assert.equal(calls.length, 0);
+  });
+});
+
+/**
+ * A projected check run of a commit, a finished green `test` run of GitHub Actions unless changed.
+ * @param {number} id - The run's id, which is also its job's
+ * @param {number} suiteId - The check suite it is in
+ * @param {object} [fields] - Fields to change
+ * @returns {object}
+ */
+function checkRun(id, suiteId, fields = {}) {
+  return {
+    id, name: 'test', head_sha: TIP, status: 'completed', conclusion: 'success',
+    started_at: '2026-10-12T08:00:00Z', completed_at: '2026-10-12T08:15:00Z', app: 'github-actions',
+    details_url: `https://github.com/${REPO}/actions/runs/900${id}/job/${id}`, check_suite: suiteId, ...fields
+  };
+}
+
+/**
+ * A projected check suite of a commit.
+ * @param {number} id - The suite's id
+ * @param {*} branch - What it gives as its branch
+ * @param {object} [fields] - Fields to change
+ * @returns {object}
+ */
+function checkSuite(id, branch, fields = {}) {
+  return { id, head_branch: branch, head_sha: TIP, ...fields };
+}
+
+/**
+ * The answer to reading a commit's check runs.
+ * @param {object[]} rows - The runs
+ * @param {number} [total] - The count GitHub gives, the rows' own when not given
+ * @returns {object}
+ */
+function runsAnswer(rows, total = rows.length) {
+  return ok({ total_count: total, check_runs: rows });
+}
+
+/**
+ * The answer to reading a commit's check suites.
+ * @param {object[]} rows - The suites
+ * @param {number} [total] - The count GitHub gives, the rows' own when not given
+ * @returns {object}
+ */
+function suitesAnswer(rows, total = rows.length) {
+  return ok({ total_count: total, check_suites: rows });
+}
+
+/**
+ * A recorded exchange's projected body.
+ * @param {string} name - Fixture file name, without `.json`
+ * @returns {object}
+ */
+function recordedBody(name) {
+  return JSON.parse(recorded(name).body);
+}
+
+describe('merge-queue-github — a check as one branch sees it', () => {
+  it('reads the recorded candidate commit for its candidate branch, with the two calls that were recorded', async () => {
+    const [runs, suites] = [recorded('checks-runs-candidate'), recorded('checks-suites-candidate')];
+    gh(runs, suites);
+    assert.deepEqual(await gq.readBranchCheck(REPO, STAGED_CANDIDATE, STAGED_SHA, 'test'), {
+      status: 'concluded', conclusion: 'cancelled', runId: '114746472956', completedAt: '2026-10-12T09:29:08.000Z',
+      app: 'github-actions', workflowRunId: '38229882501', suiteId: '103575890893'
+    });
+    assert.deepEqual(calls.map((c) => c.args), [runs.args, suites.args]);
+    assert.deepEqual(calls.map((c) => c.timeoutMs), [gq.READ_TIMEOUT_MS, gq.READ_TIMEOUT_MS]);
+  });
+
+  it('answers not-found for the stage branch of that commit, whose four suites hold no run of that name', async () => {
+    gh(recorded('checks-runs-candidate'), recorded('checks-suites-candidate'));
+    assert.deepEqual(await gq.readBranchCheck(REPO, STAGE, STAGED_SHA, 'test'), { status: 'not-found' });
+    assert.equal(recordedBody('checks-suites-candidate').check_suites.filter((row) => row.head_branch === STAGE).length, 4);
+  });
+
+  it('answers main\'s own run on the recorded tip that also carries a newer run of another branch', async () => {
+    const runs = recordedBody('checks-runs-main-foreign');
+    // What the reader of a commit answers for the same runs: the newer one, which is not main's.
+    assert.equal(checks.interpret(runs, TIP, 'test', REPO).conclusion, 'cancelled');
+    gh(recorded('checks-runs-main-foreign'), recorded('checks-suites-main-foreign'));
+    assert.deepEqual(await gq.readBranchCheck(REPO, 'main', TIP, 'test'), {
+      status: 'concluded', conclusion: 'success', runId: '114732777086', completedAt: '2026-10-12T09:06:20.000Z',
+      app: 'github-actions', workflowRunId: '38225769581', suiteId: '103564351946'
+    });
+    gh(recorded('checks-runs-main-foreign'), recorded('checks-suites-main-foreign'));
+    const foreign = await gq.readBranchCheck(REPO, 'tc-queue/probe-20261012-084901', TIP, 'test');
+    assert.equal(foreign.conclusion, 'cancelled');
+    assert.equal(foreign.suiteId, '103564755779');
+  });
+
+  it('answers the second attempt of a recorded re-run, which is in the first attempt\'s suite', async () => {
+    gh(recorded('checks-runs-rerun'), recorded('checks-suites-rerun'));
+    const latest = await gq.readBranchCheck(REPO, RERUN_BRANCH, RERUN_SHA, 'test');
+    assert.equal(latest.runId, '111977985772');
+    assert.equal(latest.conclusion, 'success');
+    // Both attempts, as GitHub lists them when asked for all: the newer is still the one answered.
+    const both = recordedBody('checks-runs-rerun-all-PROBE');
+    assert.deepEqual(both.check_runs.map((row) => row.check_suite), [101231172868, 101231172868]);
+    gh(ok(both), recorded('checks-suites-rerun'));
+    assert.deepEqual(await gq.readBranchCheck(REPO, RERUN_BRANCH, RERUN_SHA, 'test'), latest);
+  });
+
+  it('answers a re-run of the branch\'s own run whatever it concludes, green then red and red then green', async () => {
+    for (const [first, second] of [['success', 'failure'], ['failure', 'success']]) {
+      for (const order of [0, 1]) {
+        const rows = [
+          checkRun(11, 1, { conclusion: first, started_at: '2026-10-12T08:00:00Z' }),
+          checkRun(12, 1, { conclusion: second, started_at: '2026-10-12T09:00:00Z' })
+        ];
+        gh(runsAnswer(order ? rows.reverse() : rows), suitesAnswer([checkSuite(1, 'main')]));
+        const r = await gq.readBranchCheck(REPO, 'main', TIP, 'test');
+        assert.equal(r.conclusion, second, `${first} then ${second}`);
+        assert.equal(r.runId, '12');
+      }
+    }
+  });
+
+  it('answers a run that has not finished as running, with its suite and its app', async () => {
+    gh(runsAnswer([checkRun(11, 1, { status: 'in_progress', conclusion: null, completed_at: null })]), suitesAnswer([checkSuite(1, 'main')]));
+    assert.deepEqual(await gq.readBranchCheck(REPO, 'main', TIP, 'test'), {
+      status: 'running', runId: '11', app: 'github-actions', workflowRunId: '90011', suiteId: '1'
+    });
+  });
+
+  it('answers not-found when every run of that name is another branch\'s, green or red', async () => {
+    for (const conclusion of ['success', 'failure']) {
+      gh(runsAnswer([checkRun(11, 2, { conclusion }), checkRun(12, 3, { conclusion })]),
+        suitesAnswer([checkSuite(1, 'main'), checkSuite(2, 'tc-queue/a1'), checkSuite(3, 'feat/other')]));
+      assert.deepEqual(await gq.readBranchCheck(REPO, 'main', TIP, 'test'), { status: 'not-found' });
+    }
+  });
+
+  it('answers not-found when the commit has no run of that name at all', async () => {
+    gh(runsAnswer([]), suitesAnswer([checkSuite(1, 'main')]));
+    assert.deepEqual(await gq.readBranchCheck(REPO, 'main', TIP, 'test'), { status: 'not-found' });
+    gh(runsAnswer([checkRun(11, 1, { name: 'lint' })]), suitesAnswer([checkSuite(1, 'main')]));
+    assert.deepEqual(await gq.readBranchCheck(REPO, 'main', TIP, 'test'), { status: 'not-found' });
+  });
+
+  it('counts a branch only when its name is exactly the one asked for', async () => {
+    for (const other of ['Main', 'main ', 'refs/heads/main', 'main/x', 'mai']) {
+      gh(runsAnswer([checkRun(11, 2)]), suitesAnswer([checkSuite(2, other)]));
+      assert.deepEqual(await gq.readBranchCheck(REPO, 'main', TIP, 'test'), { status: 'not-found' }, other);
+    }
+  });
+
+  // A suite that gives no branch stands in for none. The projection writes a
+  // missing `head_branch` as null; the row with the key absent is what the
+  // reader would see if it did not.
+  const NO_BRANCH = {
+    'a null branch': checkSuite(2, null),
+    'a row with no branch': { id: 2, head_sha: TIP },
+    'a branch that is a number': checkSuite(2, 7),
+    'a branch that is a list': checkSuite(2, ['main']),
+    'a branch that is true': checkSuite(2, true)
+  };
+  for (const [what, suite] of Object.entries(NO_BRANCH)) {
+    it(`ignores a run whose suite gives ${what}, alone`, async () => {
+      gh(runsAnswer([checkRun(11, 2)]), suitesAnswer([suite]));
+      assert.deepEqual(await gq.readBranchCheck(REPO, 'main', TIP, 'test'), { status: 'not-found' });
+    });
+
+    it(`ignores a run whose suite gives ${what}, beside a run of the branch`, async () => {
+      gh(runsAnswer([checkRun(11, 2, { conclusion: 'success', started_at: '2026-10-12T09:00:00Z' }), checkRun(12, 1, { conclusion: 'failure' })]),
+        suitesAnswer([suite, checkSuite(1, 'main')]));
+      const r = await gq.readBranchCheck(REPO, 'main', TIP, 'test');
+      assert.equal(r.runId, '12');
+      assert.equal(r.conclusion, 'failure');
+      assert.equal(r.suiteId, '1');
+    });
+  }
+
+  it('is not stopped by a foreign run it could not have answered', async () => {
+    const foreign = [checkRun(11, 2, { app: null }), checkRun(12, 2, { conclusion: 'mystery' }), checkRun(13, 2, { status: 'unheard-of' })];
+    gh(runsAnswer([...foreign, checkRun(14, 1)]), suitesAnswer([checkSuite(1, 'main'), checkSuite(2, 'feat/other')]));
+    assert.equal((await gq.readBranchCheck(REPO, 'main', TIP, 'test')).runId, '14');
+  });
+
+  it('answers unavailable, never not-found, for a run of the branch it cannot read', async () => {
+    for (const fields of [{ app: null }, { conclusion: 'mystery' }, { status: 'unheard-of' }, { completed_at: null }, { id: 'eleven' }]) {
+      gh(runsAnswer([checkRun(11, 1, fields)]), suitesAnswer([checkSuite(1, 'main')]));
+      assert.equal((await gq.readBranchCheck(REPO, 'main', TIP, 'test')).status, 'unavailable', JSON.stringify(fields));
+    }
+  });
+
+  describe('attribution that is not whole is unavailable', () => {
+    const many = (make) => Array.from({ length: gq.CHECKS_PAGE_SIZE }, (_, i) => make(i + 1));
+    const CASES = {
+      'the suites list at its page size': [runsAnswer([checkRun(11, 1)]), suitesAnswer(many((i) => checkSuite(i, 'main')))],
+      'the suites list with a count larger than its rows': [runsAnswer([checkRun(11, 1)]), suitesAnswer([checkSuite(1, 'main')], 2)],
+      'the suites list with a count smaller than its rows': [runsAnswer([checkRun(11, 1)]), suitesAnswer([checkSuite(1, 'main'), checkSuite(2, 'x')], 1)],
+      'the runs list at its page size': [runsAnswer(many((i) => checkRun(i, 1)))],
+      'the runs list with a count larger than its rows': [runsAnswer([checkRun(11, 1)], 2)],
+      'a run whose suite is not in the list': [runsAnswer([checkRun(11, 9)]), suitesAnswer([checkSuite(1, 'main')])],
+      'a run whose suite is not in the list, beside a run of the branch': [runsAnswer([checkRun(11, 1), checkRun(12, 9)]), suitesAnswer([checkSuite(1, 'main')])],
+      'a run that names no suite': [runsAnswer([checkRun(11, null)]), suitesAnswer([checkSuite(1, 'main')])],
+      'a suites row that is not a row': [runsAnswer([checkRun(11, 1)]), suitesAnswer([checkSuite(1, 'main'), null])],
+      'a suite with no id': [runsAnswer([checkRun(11, 1)]), suitesAnswer([checkSuite(1, 'main'), checkSuite(null, 'main')])],
+      'a suite whose id is not a whole number': [runsAnswer([checkRun(11, 1)]), suitesAnswer([checkSuite(1, 'main'), checkSuite('2', 'main')])],
+      'two suites with one id': [runsAnswer([checkRun(11, 1)]), suitesAnswer([checkSuite(1, 'main'), checkSuite(1, 'feat/other')])],
+      'a suite of another commit': [runsAnswer([checkRun(11, 1)]), suitesAnswer([checkSuite(1, 'main', { head_sha: BASE })])],
+      'a run of another commit': [runsAnswer([checkRun(11, 1), checkRun(12, 2, { head_sha: BASE })])],
+      'a runs row that is not a row': [runsAnswer([checkRun(11, 1), 'run'])],
+      'a runs answer with no list': [ok({ total_count: 0 })],
+      'a runs answer with no count': [ok({ check_runs: [] })],
+      'a runs answer that is a list': [ok([])],
+      'a suites answer with no list': [runsAnswer([checkRun(11, 1)]), ok({ total_count: 0 })],
+      'a suites answer with no count': [runsAnswer([checkRun(11, 1)]), ok({ check_suites: [checkSuite(1, 'main')] })]
+    };
+    for (const [what, answers] of Object.entries(CASES)) {
+      it(what, async () => {
+        gh(...answers);
+        const r = await gq.readBranchCheck(REPO, 'main', TIP, 'test');
+        assert.equal(r.status, 'unavailable');
+        assert.ok(r.reason);
+        assert.equal(calls.length, answers.length);
+      });
+    }
+
+    it('one row short of the page size is read', async () => {
+      const suites = Array.from({ length: gq.CHECKS_PAGE_SIZE - 1 }, (_, i) => checkSuite(i + 1, i ? `feat/b${i}` : 'main'));
+      gh(runsAnswer([checkRun(11, 1)]), suitesAnswer(suites));
+      assert.equal((await gq.readBranchCheck(REPO, 'main', TIP, 'test')).status, 'concluded');
+    });
+  });
+
+  describe('a read that fails is unavailable', () => {
+    const FAILURES = {
+      'refused by GitHub': refused(403, 'API rate limit exceeded'),
+      'not found by GitHub': refused(404, 'Not Found'),
+      'out of time': TIMED_OUT,
+      'gh not signed in': NOT_SIGNED_IN,
+      'output that is not an HTTP answer': GARBAGE,
+      'a body that is not JSON': NOT_JSON,
+      'a body that is null': { exitCode: 0, statusLine: 'HTTP/2.0 200 OK', body: 'null', stderr: '' }
+    };
+    for (const [what, failure] of Object.entries(FAILURES)) {
+      it(`the runs read, ${what}: the suites are not read`, async () => {
+        gh(failure);
+        const r = await gq.readBranchCheck(REPO, 'main', TIP, 'test');
+        assert.equal(r.status, 'unavailable');
+        assert.ok(r.reason);
+        assert.equal(calls.length, 1);
+      });
+
+      it(`the suites read, ${what}: a run of the branch is not answered`, async () => {
+        gh(runsAnswer([checkRun(11, 1)]), failure);
+        const r = await gq.readBranchCheck(REPO, 'main', TIP, 'test');
+        assert.equal(r.status, 'unavailable');
+        assert.ok(r.reason);
+      });
+
+      it(`the suites read, ${what}: no run of that name is still not "not-found"`, async () => {
+        gh(runsAnswer([]), failure);
+        assert.equal((await gq.readBranchCheck(REPO, 'main', TIP, 'test')).status, 'unavailable');
+      });
+    }
+
+    it('gh that cannot be started', async () => {
+      gq._internal.exec = async () => { throw new Error('spawn gh ENOENT'); };
+      assert.deepEqual(await gq.readBranchCheck(REPO, 'main', TIP, 'test'),
+        { status: 'unavailable', reason: 'gh api could not run (spawn gh ENOENT)' });
+    });
+  });
+
+  it('asks for the named check, encoded, on that commit', async () => {
+    gh(runsAnswer([]), suitesAnswer([]));
+    await gq.readBranchCheck(REPO, 'main', TIP, 'build & test');
+    assert.equal(calls[0].args[2], `repos/${REPO}/commits/${TIP}/check-runs?check_name=build%20%26%20test&filter=latest&per_page=100`);
+    assert.equal(calls[1].args[2], `repos/${REPO}/commits/${TIP}/check-suites?per_page=100`);
+  });
+
+  it('refuses a branch that is not well formed before gh is called', async () => {
+    gh();
+    for (const branch of ['', ' main', 'main ', '../main', 'a..b', '/main', 'main/', 'a//b', 'a.lock', '.hidden', 'a b', 'a?b', 'a~1', 'a^', 'a:b',
+      'refs/heads/main\n', 'x'.repeat(201), 7, {}, ['main'], true, undefined, null]) {
+      const r = await gq.readBranchCheck(REPO, branch, TIP, 'test');
+      assert.deepEqual(r, { status: 'unavailable', reason: 'the branch must be a well-formed branch name' }, String(branch));
+    }
+    assert.equal(calls.length, 0);
+  });
+
+  it('refuses a missing or malformed repository, commit or name before gh is called', async () => {
+    gh();
+    const good = [REPO, 'main', TIP, 'test'];
+    for (let i = 0; i < good.length; i++) {
+      for (const bad of [undefined, null]) {
+        const args = [...good];
+        args[i] = bad;
+        assert.equal((await gq.readBranchCheck(...args)).status, 'unavailable', `argument ${i} ${bad}`);
+      }
+    }
+    for (const args of [['owner', 'main', TIP, 'test'], ['../etc/passwd', 'main', TIP, 'test'], [REPO, 'main', TIP.slice(0, 12), 'test'],
+      [REPO, 'main', TIP.toUpperCase(), 'test'], [REPO, 'main', TIP, ''], [REPO, 'main', TIP, ' test'], [REPO, 'main', TIP, 't\u0000est']]) {
+      assert.equal((await gq.readBranchCheck(...args)).status, 'unavailable', JSON.stringify(args));
+    }
+    assert.equal((await gq.readBranchCheck()).status, 'unavailable');
     assert.equal(calls.length, 0);
   });
 });

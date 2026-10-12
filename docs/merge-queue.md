@@ -168,9 +168,12 @@ the queue talks to GitHub, so this table is the whole of what the queue can chan
 | `discardCandidate` | `DELETE /repos/{repo}/git/refs/heads/{branch}`, twice | deletes one branch under `tc-queue/` and the branch of the same name under `tc-queue-stage/` |
 | `deleteRef` | `DELETE /repos/{repo}/git/refs/heads/{branch}` | deletes one branch under `tc-queue/` or `tc-queue-stage/` |
 | `mergePull` | `PUT /repos/{repo}/pulls/{number}/merge` | merges one pull request into its base branch |
+| `readBranchCheck` | `GET /repos/{repo}/commits/{sha}/check-runs`, then `GET /repos/{repo}/commits/{sha}/check-suites` | nothing |
 
-A commit's check runs are read by `lib/github-checks.js` (`GET /repos/{repo}/commits/{sha}/check-runs`),
-which changes nothing.
+A commit's check runs are also read by `lib/github-checks.js` (`GET /repos/{repo}/commits/{sha}/check-runs`),
+which changes nothing and answers the newest run of a name on the commit, whichever branch it was
+made for. `readBranchCheck` answers the newest run made for one branch, and nothing in the queue
+calls it yet.
 
 ### The limits each write is held to
 
