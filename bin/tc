@@ -32,7 +32,7 @@
  */
 
 const path = require('node:path');
-const { VERB_ROSTER, renderUsage, receiptVerbLabel, renderBodyTooLarge, renderControlBanner, bridgeCredentialHeader, readPaneEnvironment, judgePaneIdentity, renderPaneMismatch } = require(path.join(__dirname, '..', 'lib', 'tc-verbs.js'));
+const { VERB_ROSTER, renderUsage, receiptVerbLabel, renderBodyTooLarge, renderControlBanner, bridgeCredentialHeader, readPaneEnvironment, judgePaneIdentity, renderPaneMismatch, requestTimeoutMs } = require(path.join(__dirname, '..', 'lib', 'tc-verbs.js'));
 
 async function main() {
   const verb = process.argv[2];
@@ -114,6 +114,8 @@ async function main() {
    * @param {boolean} [opts.aux] - Auxiliary side-fetch (e.g. resolving the
    *   project name mid-verb): drops the verb header and marks itself so the
    *   server records ONE receipt per invocation, on the primary request only
+   * @param {number} [opts.timeoutMs] - How long to wait for the answer; ten
+   *   seconds when not given. For a call the server is known to take longer over
    * @returns {Promise<object>} Parsed JSON body
    */
   async function requestJson(method, apiPath, body, opts = {}) {
@@ -130,7 +132,7 @@ async function main() {
     try {
       res = await fetch(url, {
         method,
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(requestTimeoutMs(opts)),
         headers: body ? { ...reqHeaders, 'content-type': 'application/json' } : reqHeaders,
         body: body ? JSON.stringify(body) : undefined
       });
@@ -150,6 +152,13 @@ async function main() {
         + 'here, and stop'
       );
       unreachable.code = 'API_UNREACHABLE_FROM_CONTEXT';
+      // The wait ran out, as opposed to the connection failing: the server may
+      // have the request and still be working on it. A verb whose call changes
+      // something says so in its own words.
+      if (err.name === 'TimeoutError') {
+        unreachable.timedOut = true;
+        unreachable.timeoutMs = requestTimeoutMs(opts);
+      }
       throw unreachable;
     }
     if (!res.ok) {
