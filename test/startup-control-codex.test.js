@@ -687,6 +687,18 @@ describe('Codex startupControl adapter', () => {
           assert.equal(settled.outcome, 'applied');
         });
 
+        it('a status row that ends with a warning and the key that shows it is still a composer at rest: the fire goes', async () => {
+          // Codex appends `⚠ 1 warning · f2 to view` to its status row. The row
+          // names a key, and it is not a dialog footer: the adapter's own list
+          // of footer keys must not take it for one.
+          assert.match(PANES.composerWarningStatus.rows[PANES.composerWarningStatus.y + 2], /⚠ 1 warning · f2 to view$/);
+          await serve(NO_ENTRY);
+          completeTheTurn();
+          channel(LAUNCH_PANE);
+          const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: witnessOver('composerWarningStatus', []) }).settled;
+          assert.equal(settled.outcome, 'applied');
+        });
+
         it('the update prompt and the opening screen are refused too', async () => {
           for (const [name, code] of [['updatePrompt', 'pane_not_ready'], ['openingScreen', 'pane_not_ready']]) {
             await serve(NO_ENTRY);
