@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-10-12T13:01:13.141Z",
+  "args": [
+    "api",
+    "-i",
+    "repos/Jason-Vaughan/TangleClaw/commits/6baff24c3640f68caf2ed66deec8816e77b3240b/check-runs?check_name=test&filter=latest&per_page=100",
+    "--jq",
+    "{total_count: .total_count, check_runs: [.check_runs[] | {id: .id, name: .name, head_sha: .head_sha, status: .status, conclusion: .conclusion, started_at: .started_at, completed_at: .completed_at, app: .app.slug, details_url: .details_url, check_suite: .check_suite.id}]}"
+  ],
+  "exitCode": 0,
+  "statusLine": "HTTP/2.0 200 OK",
+  "body": "{\"check_runs\":[{\"app\":\"github-actions\",\"check_suite\":101231172868,\"completed_at\":\"2026-10-05T21:20:02Z\",\"conclusion\":\"success\",\"details_url\":\"https://github.com/Jason-Vaughan/TangleClaw/actions/runs/37372430338/job/111977985772\",\"head_sha\":\"6baff24c3640f68caf2ed66deec8816e77b3240b\",\"id\":111977985772,\"name\":\"test\",\"started_at\":\"2026-10-05T21:08:44Z\",\"status\":\"completed\"}],\"total_count\":1}\n",
+  "stderr": ""
+}

@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-10-12T13:01:13.839Z",
+  "args": [
+    "api",
+    "-i",
+    "repos/Jason-Vaughan/TangleClaw/commits/6baff24c3640f68caf2ed66deec8816e77b3240b/check-suites?per_page=100",
+    "--jq",
+    "{total_count: .total_count, check_suites: [.check_suites[] | {id: .id, head_branch: .head_branch, head_sha: .head_sha}]}"
+  ],
+  "exitCode": 0,
+  "statusLine": "HTTP/2.0 200 OK",
+  "body": "{\"check_suites\":[{\"head_branch\":\"fix/2005-delivery-failure-notice\",\"head_sha\":\"6baff24c3640f68caf2ed66deec8816e77b3240b\",\"id\":101231148290},{\"head_branch\":\"fix/2005-delivery-failure-notice\",\"head_sha\":\"6baff24c3640f68caf2ed66deec8816e77b3240b\",\"id\":101231148761},{\"head_branch\":\"fix/2005-delivery-failure-notice\",\"head_sha\":\"6baff24c3640f68caf2ed66deec8816e77b3240b\",\"id\":101231149088},{\"head_branch\":\"fix/2005-delivery-failure-notice\",\"head_sha\":\"6baff24c3640f68caf2ed66deec8816e77b3240b\",\"id\":101231172868}],\"total_count\":4}\n",
+  "stderr": ""
+}

@@ -60,6 +60,29 @@ Visual change: no
 **What does not change.** What `prawduct-hook test-status` accepts, and every lane rule. The command never touches `.prawduct/.test-evidence.json`.
 
 **Limits.** The file does not show that the job named `test` ran the suite and not something else of that name: it does not read the workflow's definition. It is for before the merge: GitHub names no pull request on a run once the pull request is merged, or for one from a fork, and the command then refuses. It is a wide run (it runs the complement). The default base comes from the clone's record of the remote's default branch; a clone without one must name `--base`.
+## 2026-10-12 — #2322: read a check as one branch sees it
+
+<!-- prawduct: type=feature | scope=2322-integrator-merge-queue -->
+
+#2322 Chunk 05a. Branch `feat/2322-05a-branch-check-reader`, from `origin/main` `7a3e1826`. The issue stays open. Nothing calls the new reader: the queue still lands nothing.
+
+Visual change: no
+
+**Why.** One commit can carry `test` runs made for several branches. `lib/github-checks.js#readCheck` answers the newest of them, so a run made for another branch could be read as `main`'s or as a candidate's. Seen on `abe00a40`: `main`'s own run was green and a later run for a probe branch was cancelled, so the newest read `cancelled`. The decider ruled that a branch is judged only by a run whose check suite names that branch.
+
+**What changed.**
+
+- `lib/merge-queue-github.js`: new `readBranchCheck(repo, branch, sha, name)`. Two bounded reads: the commit's runs of that name (`filter=latest`), then its check suites. A run counts only when its suite's `head_branch` is exactly the branch; the newest of those is answered, so a re-run of the branch's own run replaces it whatever it concludes. The kept runs are read by `readCheck`'s own exported `interpret`, so the answer is `readCheck`'s (with the app and, for an Actions job, the workflow run) plus `suiteId`.
+- **Never stands in:** a run whose suite names another branch, or gives no branch or one that is not a string. If none is left the answer is `not-found`.
+- **Fails closed, `unavailable`:** either read failing; either list at its page size, or with a count that disagrees with its rows, or holding a row of another commit; a suite with no usable id or an id given twice; a run of that name whose suite is not in the list.
+- `lib/github-checks.js` is not edited.
+- `docs/merge-queue.md`: the function's row in the table of calls and the sentence under it (the file was added to this chunk with the Integrator's leave).
+- Tests in `test/merge-queue-github.test.js`, against seven new recordings in `test/fixtures/merge-queue-github/` (reads only; its README says what each is).
+
+**What an operator sees.** Nothing.
+
+**Limits.** No re-run on `main` existed to record; the re-run recording is a pull request branch's. A suite was seen to name its branch about three and a half hours after the branch was deleted, and not later than that.
+
 ## 2026-10-12 — #2323: register, read and cancel a check watch
 
 <!-- prawduct: type=feature | scope=2323-check-watch-wake -->
