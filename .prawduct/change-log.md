@@ -61,6 +61,28 @@ Visual change: no
 
 **Not verified.** No Codex version but 0.156.1 was probed. What Codex does when the approval it asked for is given was not measured. The hold was not seen on a live install: it is proved by tests against the fake app-server, and by the probe of the behaviour it replaces. A folder holding its own `.codex/` config was not probed.
 
+## 2026-10-12 — #2322: a context the owner's rotation has replaced can no longer submit to or withdraw from the merge queue
+
+<!-- prawduct: type=bugfix | scope=2322-integrator-merge-queue -->
+
+#2322 Chunk 05c. Branch `feat/2322-05c-rotation-fence`, from `origin/main` `2a9b9741`. The issue stays open. It closes a gap in what chunk 04 merged; the queue still lands nothing.
+
+Visual change: no
+
+**Why.** Launch binding proves the owner's launch is live. It does not prove that the engine thread making the call is the one the owner's coordinator rotation bound, so after a managed context rotation the replaced context, in the same live launch, could still submit and withdraw. The Architect ruled the fence (`2322 epoch fence`, A177 R1, queue Rulings item 30; the decider concurred).
+
+**What changed.**
+
+- `lib/coordinator-rotation.js`: `merge-queue-mutate` is a gated action. The gate has no branch for it, so it is judged as `control-mutate` is: refused while `fenced`, `rebinding` or `reconciling` (the bound replacement included), accepted while `active` only from the bound replacement, and not judged for a project that never rotated or whose rotation was abandoned.
+- `lib/merge-queue-api.js`: `submit` asks the gate after the owner check and again after the GitHub reads, immediately before the entry is written. `withdraw` asks at entry, immediately before the candidate's branches are deleted, and again immediately before the entry is recorded withdrawn. No check is separated from its step by a wait. The gate is given the owner project, the caller's verified launch with its session (`lib/shared-docs-access.js#resolveAccess`) and the `x-tangleclaw-engine-thread` header; its refusal reaches the caller with its own status, code and details. The gate is a seam (`_internal.rotationGate`) as the GitHub calls are.
+- A rotation that begins while a withdrawal is deleting branches leaves the entry in the queue with its branches gone; the replacement context withdraws again, which is harmless.
+- Not gated: the two reads, and the Operator's two routes. `NOT_OWNER` and the launch binding are answered before the gate.
+- `docs/merge-queue.md`: the limit "a coordinator in a context rotation is not fenced" is removed; a section says what each rotation state does to a submit and a withdrawal, and the two codes join the refusal table.
+- `docs/coordinator-rotation.md`: one bullet in its list of the mutations the gate judges (added to this chunk's files with the Integrator's leave).
+- Tests: `test/coordinator-rotation.test.js` holds the new word to `control-mutate`'s verdict for six callers in each state; `test/merge-queue-api.test.js` covers both calls over HTTP in each state, a stale thread of the same launch, a call with no thread header, a lapsed epoch, a rotation beginning during submit's reads and during withdraw's deletion, and the place of each of the five asks. `withCandidate` moved up one scope in that file, unchanged, so the new block can use it.
+
+**Limits.** `tc` forwards the thread only where the engine sets `CODEX_THREAD_ID`. No server route was changed (`server.js` untouched). No deployment; who owns a queue is unchanged. `advance` does not exist yet and is built already fenced.
+
 ## 2026-10-12 — #2322: a queue call that is slow is not called unreachable, a withdrawal's reason is checked first, and one withdrawal runs per queue
 
 <!-- prawduct: type=bugfix | scope=2322-integrator-merge-queue -->

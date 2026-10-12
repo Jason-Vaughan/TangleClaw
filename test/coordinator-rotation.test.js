@@ -996,7 +996,7 @@ describe('coordinator context rotation (#2032)', () => {
       for (const [action, extra] of [
         ['medusa-send', {}], ['medusa-send', { inReplyTo: 'm-new' }], ['medusa-ack', { messageIds: ['m-old', 'm-new'] }],
         ['exchange-close', { exchangeId: 'mx_other' }], ['wrap', {}], ['session-rule-write', {}], ['control-mutate', {}],
-        ['medusa-loop', {}], ['session-command', {}]
+        ['merge-queue-mutate', {}], ['medusa-loop', {}], ['session-command', {}]
       ]) {
         assert.equal(judge(action, {}, extra).body.code, 'COORDINATOR_FENCED', `${action} ${JSON.stringify(extra)} waits for the resume`);
       }
@@ -1144,6 +1144,33 @@ describe('coordinator context rotation (#2032)', () => {
     it('a project that never rotated is not judged', () => {
       assert.equal(rotation.gate({ projectId: 424242, access: { kind: 'unbound' }, threadId: null, action: 'wrap' }), null);
       assert.throws(() => rotation.gate({ projectId: 1, access: null, threadId: null, action: 'bogus' }), /not a gated action/);
+    });
+
+    it('a merge queue mutation is judged as a control command is, in every state and for every caller (#2322)', async () => {
+      const callers = [{}, { threadId: PRIOR }, { threadId: null }, { access: { launchId: 'other' } }, { access: { sessionId: 999 } },
+        { access: { kind: 'unbound' } }];
+      /** The verdict's code for an action from a caller, or null when it may proceed. */
+      const verdict = (action, over) => { const r = judge(action, over); return r && r.body.code; };
+      /** Both actions get one verdict from every caller; returns the bound replacement's. */
+      const alike = (when) => {
+        for (const over of callers) {
+          assert.equal(verdict('merge-queue-mutate', over), verdict('control-mutate', over), `${when}: ${JSON.stringify(over)}`);
+        }
+        return verdict('merge-queue-mutate', {});
+      };
+      assert.equal(alike('never rotated'), null);
+      const rot = await toReconciling();
+      assert.equal(alike('reconciling'), 'COORDINATOR_FENCED', 'the bound replacement waits for the resume too');
+      assert.equal(verdict('merge-queue-mutate', { threadId: PRIOR }), 'COORDINATOR_EPOCH_MISMATCH');
+      workloadReceipt();
+      const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) };
+      assert.equal((await rotation.resume({ access: access(), threadId: NEXT, body }, deps())).status, 200);
+      assert.equal(alike('active'), null, 'the active bound replacement may act');
+      assert.equal(verdict('merge-queue-mutate', { threadId: PRIOR }), 'COORDINATOR_EPOCH_MISMATCH', 'a stale thread of the same live launch');
+      assert.match(judge('merge-queue-mutate', { threadId: null }).body.error, /through `tc`/);
+      assert.equal(judge('merge-queue-mutate', { threadId: PRIOR }).body.action, 'merge-queue-mutate', 'the refusal names what was refused');
+      rotation.abandon({ caller: { kind: 'operator' }, body: { rotationId: rot.rotationId, reason: 'released' } });
+      assert.equal(alike('abandoned'), null);
     });
   });
 

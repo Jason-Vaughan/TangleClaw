@@ -137,6 +137,8 @@ Once a project has rotated, its coordinator-authority mutations are judged by th
 - `tc workload set`;
 - session-rule writes;
 - control create, hold, release, stop, close and ack;
+- submitting to, or withdrawing from, a merge queue the project owns (see
+  [merge-queue.md](merge-queue.md));
 - starting, completing or handing back a wrap (which is where a handoff is published and the session
   finalized).
 

@@ -131,6 +131,31 @@ the entry **stays in the queue** and the answer says what happened to each branc
 asked for cannot be withdrawn: the merge's outcome is read first. Withdrawing is the only thing
 these routes change on GitHub, and only those two branches.
 
+### An owner in a context rotation
+
+A submit and a withdrawal are the owner acting as a coordinator, so both are judged by the
+coordinator epoch gate ([coordinator-rotation.md](coordinator-rotation.md)) exactly as a control
+command is. Launch binding proves the owner's launch is live; the gate adds that the calling
+context is the one the owner's rotation bound.
+
+| The owner's latest rotation | Submit and withdraw |
+|---|---|
+| none, or `abandoned` | accepted as before: the project is not judged |
+| `fenced` or `rebinding` | refused, `409 COORDINATOR_FENCED`: no replacement context is bound yet |
+| `reconciling` | refused, the bound replacement included: a queue change waits for the resume |
+| `active` | accepted only from the bound replacement; a stale or other thread of the same live launch is refused `409 COORDINATOR_EPOCH_MISMATCH` |
+
+- **The gate is asked more than once.** At the start of the request, and again after every wait,
+  immediately before the queue is written or a branch is deleted. A rotation that begins while a
+  submit is reading GitHub queues nothing. One that begins while a withdrawal is deleting branches
+  leaves the entry in the queue: the replacement context withdraws it again, which is harmless.
+- **Call through `tc`.** `tc` forwards the engine thread (`x-tangleclaw-engine-thread`, from
+  Codex's `CODEX_THREAD_ID`). While an epoch is active, a call without that header is refused and
+  says so.
+- **What is not gated.** Reading (`tc queue status`, `tc queue show`), and everything the Operator
+  does: making a queue and recording the Operator gate. Any other refusal a caller would get
+  (`NOT_OWNER`, a missing launch) is answered first.
+
 ### Refusals
 
 Every refusal carries a `code` and says what to do next.
@@ -142,6 +167,7 @@ Every refusal carries a `code` and says what to do next.
 | `OPERATOR_ONLY` | 403 | making a queue or recording the Operator gate, by anyone else |
 | `NOT_OWNER` | 403 | submitting or withdrawing, by anyone but the owner's launch |
 | `CONTROL_HELD`, `CONTROL_STOPPED` | 423 | the owner's lane is held or stopped; it cannot submit |
+| `COORDINATOR_FENCED`, `COORDINATOR_EPOCH_MISMATCH` | 409 | the owner's context rotation does not admit this caller for a submit or a withdrawal (`rotationId`); nothing was changed, except that a withdrawal overtaken while deleting may have removed the candidate's branches |
 | `INVALID_INPUT`, `GATE_REFERENCE_MISSING` | 400 | a malformed request, a withdrawal's reason over 1000 characters included; a gate with no reference (`gate` names it) |
 | `QUEUE_NOT_FOUND`, `ENTRY_NOT_FOUND`, `PROJECT_NOT_FOUND` | 404 | no such thing, or not readable by this caller |
 | `QUEUE_AMBIGUOUS` | 400 | the owner has more than one queue; send `queueId` |
@@ -168,8 +194,6 @@ so a submit is refused).
 
 - **A held owner can still withdraw.** The durable HOLD ([control-state.md](control-state.md))
   refuses a submit; a withdrawal takes work out of the queue and is not held.
-- **A coordinator in a context rotation is not fenced from these routes.** The rotation gate does
-  not know them.
 - **No answer carries a launch id.** An entry shows which project submitted it, not which launch.
 - **Making the queue from the browser console has not been run in a browser.** A test makes a
   queue as a signed-in Operator with the session's token; the console command itself is first run
