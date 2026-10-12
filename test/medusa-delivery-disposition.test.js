@@ -75,6 +75,14 @@ describe('delivery disposition — every reason the monitor can give has a class
     assert.deepEqual([d.classifyReason('engine-channel-absent').class, d.classifyReason('engine-channel-absent').nextAction], ['configuration', 'relaunch-recipient']);
   });
 
+  it('a thread that has only just gone idle is waited out: the settling hold ends by itself', () => {
+    const settling = d.classifyReason('engine-thread-settling');
+    assert.deepEqual([settling.class, settling.nextAction, settling.known], ['actionable', 'wait', true]);
+    assert.equal(d.classifyForSender('engine-thread-settling', { monitorRunning: true }).nextAction, 'wait');
+    assert.equal(d.classifyForSender('engine-thread-settling', { monitorRunning: false }).nextAction, 'investigate',
+      'a stopped monitor ends no hold, this one included');
+  });
+
   it('a listener that is off needs someone; one that is reconnecting does not', () => {
     assert.equal(d.classifyReason('listener-off').class, 'configuration');
     assert.equal(d.classifyReason('listener-connecting').class, 'actionable');
