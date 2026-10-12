@@ -1,8 +1,155 @@
 # The merge queue
 
-*Being built (#2322). Nothing here can be reached yet: there is no route, no `tc` verb and no
-screen. This page grows with each part as it lands; today it covers what the queue may do on
-GitHub and how a candidate is tested.*
+*Being built (#2322). A queue can be made, submitted to, read and withdrawn from, and the Operator
+gate can be recorded. **Nothing lands yet:** no route assembles a candidate or merges a pull
+request, and there is no screen. This page grows with each part as it lands.*
+
+## Using the queue
+
+A queue belongs to one repository and base branch and has one owner project. An entry is one pull
+request at one exact head commit.
+
+| Who | May |
+|---|---|
+| The Operator | make a queue and name its owner; record an entry's Operator gate; read |
+| A verified live launch of the owner project | submit an entry; withdraw an entry; read |
+| A project that shares a group with the owner | read |
+| Anyone else | nothing. A queue they may not read does not exist for them (`404`) |
+
+"Verified live launch" means the request carries `x-tangleclaw-project-id` and
+`x-tangleclaw-launch-id` of that project's active session; `tc` sends them. The Operator is not the
+owner and cannot submit or withdraw. The owner cannot record the Operator gate: a session saying
+the Operator agreed is not the Operator.
+
+### Making the queue (the Operator, once)
+
+There is no screen and no first-caller ownership. On the signed-in dashboard, open the browser's
+console and run, with the owner project's numeric id (`tc whoami` in that project's pane prints it):
+
+```js
+tcFetch('/api/merge-queue', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ repo: 'Jason-Vaughan/TangleClaw', baseBranch: 'main', ownerProjectId: 12 /* the owner project's id */ })
+}).then((r) => r.json()).then(console.log);
+```
+
+`tcFetch` is the dashboard's own request function and sends the signed-in session's CSRF token. A
+bare `fetch` does not, and a signed-in install refuses it (`403 CSRF_TOKEN_INVALID`).
+
+The answer is the queue with its id. The Operator's proof tier is recorded with it, as for a control
+command ([control-state.md](control-state.md), "Operator proof tier"): a signed-in session, or an
+install whose auth gate is deliberately open. A second active queue for the same repository and
+base is refused (`QUEUE_EXISTS`).
+
+### The routes
+
+```
+POST /api/merge-queue                              {repo, baseBranch, ownerProjectId}     Operator only
+GET  /api/merge-queue                              every active queue the caller may read, entries in order
+GET  /api/merge-queue/entries/:id                  one entry, its queue and its history
+POST /api/merge-queue/entries                      {prNumber, headSha, gates: {review, test, base},
+                                                    operatorGate: "required"|"none", queueId?}   the owner
+POST /api/merge-queue/entries/:id/withdraw         {reason}                                the owner
+POST /api/merge-queue/entries/:id/operator-gate    {reference}                             Operator only
+```
+
+They are part of the unversioned `/api` family and refuse with its `{error, code}` body. `queueId`
+is needed only by a project that owns more than one active queue.
+
+### From a pane: `tc queue`
+
+```
+tc queue status
+tc queue submit <pr> --head <sha> --review <ref> --test <ref> --base <ref> [--operator-gate required|none] [--queue <id>]
+tc queue show <entry>
+tc queue withdraw <entry> --reason <text>
+```
+
+`status` shows each queue's entries in order, each entry's state and each gate, and whose word each
+one is. `--operator-gate` is `none` unless given. The verb is not in the list every pane is primed
+with: `tc` with no verb lists it.
+
+### What a submit records, and what the queue reads itself
+
+The owner states three gates, each with a reference to where its result is recorded (a message id,
+a run id, a commit): `review`, `test` and `base`. The queue records them and judges none of them.
+The owner also says whether the entry needs the Operator gate. `required` leaves it open until the
+Operator records it; an entry with an open Operator gate cannot land.
+
+Before anything is queued, this server asks GitHub itself, and refuses on what it reads:
+
+- the pull request is open, targets the queue's base branch, is not a draft, and its head is the
+  submitted commit;
+- the `test` check on that commit concluded `success` (its run id is kept with the entry);
+- the pull request changes no release-trigger path (below).
+
+A read that fails refuses the submit (`503 GITHUB_UNAVAILABLE`). Nothing is taken from the caller's
+word about the pull request.
+
+### A landing is never a release
+
+The release workflow runs when a push to `main` changes `version.json`. The queue refuses a pull
+request that changes `version.json` or `.github/workflows/release.yml`, at submit, from GitHub's own
+list of the pull request's files (`RELEASE_TRIGGER_CHANGED`, naming the paths). A file list that
+could not be read whole, or is at GitHub's cap, is a refusal and never "no such path found". A
+version bump is merged by hand under [release-process.md](release-process.md), outside the queue.
+The paths are one list, `RELEASE_TRIGGER_PATHS` in `lib/merge-queue-state.js`, and
+`test/merge-queue-release-guard.test.js` fails if the release workflow comes to watch a path that
+list does not name. The same refusal at landing time, against the candidate itself, comes with the
+part that lands.
+
+### Withdrawing
+
+The owner withdraws an entry with a reason. An entry whose candidate exists, or is being made, has
+both of its branches deleted on GitHub first (`discardCandidate`). If either could not be removed
+the entry **stays in the queue** and the answer says what happened to each branch
+(`503 CANDIDATE_NOT_DISCARDED`); withdraw again, which is harmless. An entry whose merge has been
+asked for cannot be withdrawn: the merge's outcome is read first. Withdrawing is the only thing
+these routes change on GitHub, and only those two branches.
+
+### Refusals
+
+Every refusal carries a `code` and says what to do next.
+
+| Code | Status | Meaning |
+|---|---|---|
+| `CALLER_NOT_VERIFIED` | 403 | not the Operator and not a verified launch |
+| `OPERATOR_UNVERIFIABLE` | 503 | an operator-shaped request this install cannot verify; sign in |
+| `OPERATOR_ONLY` | 403 | making a queue or recording the Operator gate, by anyone else |
+| `NOT_OWNER` | 403 | submitting or withdrawing, by anyone but the owner's launch |
+| `CONTROL_HELD`, `CONTROL_STOPPED` | 423 | the owner's lane is held or stopped; it cannot submit |
+| `INVALID_INPUT`, `GATE_REFERENCE_MISSING` | 400 | a malformed request; a gate with no reference (`gate` names it) |
+| `QUEUE_NOT_FOUND`, `ENTRY_NOT_FOUND`, `PROJECT_NOT_FOUND` | 404 | no such thing, or not readable by this caller |
+| `QUEUE_AMBIGUOUS` | 400 | the owner has more than one queue; send `queueId` |
+| `QUEUE_EXISTS`, `QUEUE_RETIRED` | 409 | a second queue for the same base; a queue that takes nothing new |
+| `DUPLICATE_PR` | 409 | the pull request already has an unfinished entry (`entryId`) |
+| `PR_NOT_OPEN`, `PR_WRONG_BASE`, `PR_HEAD_MOVED`, `PR_DRAFT` | 409 | what GitHub says of the pull request |
+| `HEAD_CHECK_NOT_GREEN` | 409 | the head's `test` check is missing, running or not `success` |
+| `RELEASE_TRIGGER_CHANGED` | 409 | the pull request changes a release-trigger path (`paths`) |
+| `GITHUB_UNAVAILABLE` | 503 | a read from GitHub failed; nothing was queued |
+| `CANDIDATE_NOT_DISCARDED` | 503 | a withdrawal could not remove both branches; the entry stays |
+| `ENTRY_FINISHED`, `TRANSITION_NOT_ALLOWED` | 409 | the entry is done, or its merge has been asked for |
+| `OPERATOR_GATE_NOT_REQUIRED`, `OPERATOR_GATE_ALREADY_RECORDED` | 409 | the Operator gate has nothing to record |
+| `ENTRY_ID_UNUSABLE` | 500 | a defect: the queue made an id no branch can be named after. `withdrawn` says whether it took the entry back out; if not, the entry is still queued and these routes cannot reach it |
+| `MERGE_QUEUE_UNAVAILABLE` | 503 | the queue could not answer; read it before repeating |
+
+Three refusals come from the layers in front of every route and are not the queue's own:
+`403 LAUNCH_BINDING_REQUIRED` or `LAUNCH_BINDING_INVALID` (a write with no launch headers, or with
+those of a launch that has ended or been replaced), `403 CSRF_TOKEN_INVALID` (a signed-in write
+without the session's token) and `503 CONTROL_STATE_UNAVAILABLE` (the HOLD state could not be read,
+so a submit is refused).
+
+### Limits
+
+- **A held owner can still withdraw.** The durable HOLD ([control-state.md](control-state.md))
+  refuses a submit; a withdrawal takes work out of the queue and is not held.
+- **A coordinator in a context rotation is not fenced from these routes.** The rotation gate does
+  not know them.
+- **No answer carries a launch id.** An entry shows which project submitted it, not which launch.
+- **Making the queue from the browser console has not been run in a browser.** A test makes a
+  queue as a signed-in Operator with the session's token; the console command itself is first run
+  by the Operator, after the deploy.
 
 ## What the queue does on GitHub
 
@@ -56,7 +203,10 @@ Every function answers with a `status` and never throws.
 - `createCandidate` answers `created` (with the merge commit, its tree and its parents),
   `conflict`, `nothing-to-merge` (the base already holds the head), `ref-exists` (a branch was
   already there under one of the two names and was not touched; `existing` says whether it is the
-  `stage` or the `candidate`) or `unavailable`. `created` means all of it: the merge was read back,
+  `stage` or the `candidate`) or `unavailable`. A stage branch is left untouched only when
+  GitHub's "already exists" was read: when creating it timed out or answered a server error,
+  `createCandidate` deletes that name without knowing it made it. That is safe while one owner
+  advances one entry at a time, which is the only way the queue runs. `created` means all of it: the merge was read back,
   the candidate branch is at it, and the stage branch is gone. After a `conflict` or a
   `nothing-to-merge` there is no candidate branch and the stage branch is gone.
 - Every `createCandidate` answer says what is known of each branch, whatever the status:
@@ -98,7 +248,7 @@ merge of that pull request: the two ways of merging the same two commits gave th
 is what the queue relies on when it tests a candidate and then merges the pull request. The recorded
 exchanges are the test fixtures (`test/fixtures/merge-queue-github/`).
 
-On the same day, after the workflow had its `tc-queue/**` trigger, two more things were tried, each
+On the same day, after the workflow had its `tc-queue/**` trigger, more was tried, each time
 on throwaway branches that were deleted and read back as gone, with nothing merged into `main`:
 
 - **A branch created at the tip of `main` under `tc-queue/` started a second `test` run on `main`'s

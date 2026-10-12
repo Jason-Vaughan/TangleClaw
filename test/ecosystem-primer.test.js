@@ -148,7 +148,10 @@ describe('lib/ecosystem-primer (#1122)', () => {
     try {
       primer.setSwitchReader(() => ['bridge-candidates']);
       assert.ok(verbsFor('pane', { switches: ['bridge-candidates'] }).some((v) => v.id === 'candidate'));
-      assert.deepEqual(verbsFor('unprimed', { switches: ['bridge-candidates'] }).map((v) => v.id), []);
+      // What is left unprimed with the switch on has no switch at all: `queue`
+      // belongs to one project's group and is never in the list every pane carries.
+      assert.deepEqual(verbsFor('unprimed', { switches: ['bridge-candidates'] }).map((v) => v.id), ['queue']);
+      assert.ok(!verbsFor('pane', { switches: ['bridge-candidates'] }).some((v) => v.id === 'queue'));
       // The line itself follows only the switches it is handed. With none it
       // is the same whatever this install's switch says, which is what every
       // carrier written into a project gets.
