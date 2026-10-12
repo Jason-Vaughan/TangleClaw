@@ -1349,16 +1349,50 @@ recorded on the row.
 sequence row (`launch_sequences.startup_delivery = 'native'`, frozen in the transaction that binds the
 sequence, so a restart cannot turn it back into a keystroke path). On that path TangleClaw types
 nothing into the pane, ever: the prime paste and the kickoff line are withheld, and the unready
-monitor stamps the window but sends no nudge. Instead, once the pane's own readiness gate has seen the
-engine's at-rest marker over a settled transcript, the operator's **startup prompt** is fired once
+monitor stamps the window but sends no nudge. Instead, once the launch's readiness gate has passed,
+the operator's **startup prompt** is fired once
 through the channel by the same service the dashboard and the API use, under the internal `launch`
 caller (`launch-automatic` clearance, attributed to the launch's own project) and the deterministic
 key `launch-<sequence>-r<revision>`. The engine's receipt on that fire row is what says the prompt
-arrived. If the pane never renders ready within the launch window, the attempt is still recorded and
-settled `blocked (pane_not_ready)` without the adapter ever being asked — a fact about the pane as
-TangleClaw observed it, not a claim about the engine. If the adapter's own pre-send check blocks
+arrived. If the adapter's own pre-send check blocks
 (`trust_required`, `auth_required`, …), that is recorded the same way. There is no paste fallback and
 no automatic retry: the launch panel names the reason and the operator may **Fire** once it clears.
+
+**The launch's readiness gate (#2059).** Which gate a native launch waits on depends on its engine's
+adapter, and on nothing else:
+
+- **An adapter that implements `awaitLaunchReady`** (Codex) proves readiness itself, and its answer
+  is the gate. For Codex that is both of these at once, looked for about every 1.5 seconds inside a
+  90-second window: the launch's one thread is in the project directory and `idle`, and the pane the
+  launch created positively shows an empty ordinary composer on the pane witness's two reads a
+  second apart, with the thread read `idle` once more after them. **An idle thread alone is never
+  ready**: the protocol cannot see a dialog, typed text or a pane still being drawn. Nothing reads
+  Codex's status line for a word. That line is the operator's to configure and its default carries
+  no at-rest item, so a launch gated on `· Ready ·` waited out the window on a pane that was ready
+  (measured signed-in on 0.156.1, 2026-10-11).
+- **An adapter without that method** keeps the pane's own gate: the engine's at-rest marker over a
+  settled transcript (`_awaitPaneReady`).
+
+The two are never mixed. `startupControl.awaitLaunchReady` answers `unsupported` only when the
+adapter does not have the method. An adapter that has it and could not answer (its channel, the pane
+or the thread unreadable, a throw, no answer within the window and 15 seconds) is `unknown`, which
+is a launch whose readiness is not established: nothing is sent, and the marker gate is not consulted
+to overrule it, whatever the pane shows.
+
+A gate that does not pass still records the attempt, settled `blocked (pane_not_ready)` with nothing
+sent. For an adapter-proved gate the sentence gives the last thing actually observed (the dialog on
+the pane, by name; what the witness refused; the thread's state) and what the operator does. Where
+the pane or the channel could not be read, it says **the proof was unavailable**. That is not a pane
+seen unready and is never worded as one. A refusal that waiting cannot clear (the session's pane is
+not the one the launch created, another tmux server answered, the channel is another launch's) is
+answered at once and not at the window's end.
+
+**A passed gate is not permission to send.** It says the pane became ready, some time before the
+send. The launch's automatic fire therefore reads the launch's pane once more, on one fresh read,
+and its thread once more, immediately before `turn/start`, in a trusted folder as much as in one
+with no trust entry. A pane or thread that changed in between, or a read that could not be made,
+sends nothing and settles the same single row `blocked (pane_not_ready)`. The operator's own
+**Fire** is their look at the pane and is not put to that read; its behaviour is what it was.
 Every other launch keeps today's path (`legacy`) and records, through the same service, why it could
 not go native — `unsupported` with the capability's reason (`engine_declares_none` for an engine that
 declares no channel, `version_unverified`, …) or `blocked (channel_unavailable)` for a supported engine
@@ -1416,10 +1450,10 @@ pane drew no trust dialog, and Codex's config held no trust entry afterwards. In
 carried its own `.codex/config.toml` and hooks, no hook ran and the folder's config was not applied:
 Codex itself disables project-local config, hooks and exec policies until the project is trusted
 (skills still load), and says so in a startup warning. So a fire sent this way reaches a session
-running on the home's settings, not the folder's. **Not probed signed-in: the automatic launch
-fire.** It goes through the same rule, but only after the launch's own pane gate has seen Codex's
-at-rest marker, and on a Codex home whose status line does not show that marker the launch records
-`pane_not_ready` and the operator fires by hand. For a listed version the fire goes only if all of
+running on the home's settings, not the folder's. The automatic launch fire goes through the same
+rule, after the launch's readiness gate above, and was probed signed-in on 2026-10-12 (0.156.1,
+Codex's default status line): applied with no hand Fire in a trusted folder and in a folder with no
+trust entry. For a listed version the fire goes only if all of
 this holds:
 
 - every other check passes (version, account, usage, the launch's own thread loaded and `idle`);
@@ -1468,10 +1502,23 @@ engineProfile, launchCmd, enginePath, env, probe})` returning `{ok, handle, comm
 reason}` (`env` is the pane's environment, which the server must inherit); `attachLaunch(handle, {sessionId, sequenceId, engineId})`; `abandonLaunch(handle, reason)`;
 `releaseSession(sessionId, reason)`; `reap()`; `recover()`; `start()`/`stop()`;
 `fire({session, project, sequenceId, promptText, promptTextDigest, payloadDigest, onUpdate,
-trustException})` returning `{accepted, settled}` promises (`trustException` is `{absentOn, witness}`,
-supplied by the fire service for every fire; an adapter with no use for it ignores it); and `reconcile({session, fire, onUpdate})`. Every
+trustException, automatic, paneWitness})` returning `{accepted, settled}` promises (`trustException` is `{absentOn, witness}`,
+supplied by the fire service for every fire; `automatic: true` and `paneWitness` are present only on the
+launch's own automatic fire, set by the service from the caller it resolved and never inferred by an
+adapter; an adapter with no use for any of them ignores it); and `reconcile({session, fire, onUpdate})`. Every
 transition an adapter reports goes through the store's transition map, so no adapter can move a fire
 backwards or out of a terminal outcome.
+
+**Optionally, `awaitLaunchReady({session, project, sequenceId, witness, windowMs})`** (#2059): the
+launch's readiness gate, described above. It resolves `{ready: true}`, or `{ready: false,
+unavailable, observation, remedy}` at the end of its window (or at once, for a refusal waiting
+cannot clear), where `observation` is the last thing it actually read and `unavailable` says the pane
+or the channel could not be read at all. `witness` is the fire service's pane witness for the
+session: it takes the adapter's own patterns, `single: true` for one read instead of two, and its
+answer carries `unavailable: true` when the pane could not be pinned or read. Callers go through
+`startupControl.awaitLaunchReady`, which adds the `unsupported` and `unknown` answers. An adapter
+that implements it must also make its automatic fire look again before it sends: a gate's answer
+ages.
 
 **Optionally, `observeActivity(channel, project)`** (#1628): a read-only answer to "is this session's
 engine working right now?", returning `{state: 'idle'|'busy'|'unknown'|'held', reasonCode}`. Callers never
