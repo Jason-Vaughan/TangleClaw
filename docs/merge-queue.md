@@ -1,8 +1,8 @@
 # The merge queue
 
 *Being built (#2322). Nothing here can be reached yet: there is no route, no `tc` verb and no
-screen. This page grows with each part as it lands; today it covers one thing, what the queue may
-do on GitHub.*
+screen. This page grows with each part as it lands; today it covers what the queue may do on
+GitHub and how a candidate is tested.*
 
 ## What the queue does on GitHub
 
@@ -68,6 +68,28 @@ so a comparison that lists 300 files is treated as cut short. It also requires t
 descend from the first, so the list is exactly what merging it would change. A renamed file gives
 both its old path and its new one.
 
+## How a candidate is tested
+
+A candidate is the commit the queue makes by merging a pull request's head into the tip of `main`,
+on a branch of its own under `tc-queue/`. It is tested by the same workflow that tests `main`:
+`.github/workflows/test.yml` runs on a push to any `tc-queue/**` branch, so creating the candidate
+starts a `test` run on its commit. That check, read for that exact commit, is what the queue waits
+for before it lands the pull request. No pull request is opened for a candidate, so the push
+trigger is the only thing that tests one.
+
+- **The workflow and the queue name the prefix once.** The queue writes candidates under the
+  constant `CANDIDATE_PREFIX` in `lib/merge-queue-github.js`. `test/workflow-queue-trigger.test.js`
+  reads that constant and fails if the workflow's push list does not carry it, so neither can be
+  renamed alone.
+- **Removing `tc-queue/**` from the workflow stops every landing.** A candidate would then wait for
+  a check that never starts. Nothing lands on a check that was not read, so the queue stalls; it
+  does not land untested work.
+- **A candidate run is a push run.** The step that guards the service-worker cache compares a pull
+  request with its base and runs only on pull requests, so it does not run on a candidate. It has
+  already run on the pull request itself, which must be green before it is submitted.
+- **The run holds no more than a pull request's run does.** The workflow's token is read-only
+  (`contents: read`) on every trigger.
+
 ### What was checked against GitHub itself
 
 On 2026-10-12 the functions were run against `Jason-Vaughan/TangleClaw`. One throwaway branch,
@@ -83,5 +105,7 @@ Not checked there:
 - **Merging a pull request.** It cannot be tried without merging one into `main`. `mergePull` is
   written and tested against GitHub's documented answers; the first real one comes with the queue's
   first landing.
-- **Whether CI runs on a candidate branch.** It does not today: the probe's merge commit had no
-  `test` run. The workflow gains that trigger in a later part of #2322.
+- **Whether a `test` run starts on a candidate branch.** On that day it did not: the workflow had no
+  trigger for `tc-queue/**` and the probe's merge commit had no `test` run. The trigger is in the
+  workflow now. That a branch made through the API with this machine's `gh` login starts the run
+  has not been seen yet; it is checked once on a throwaway branch after the trigger reaches `main`.

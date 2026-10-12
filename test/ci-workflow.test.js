@@ -46,14 +46,17 @@ describe('CI workflow (.github/workflows/test.yml)', () => {
     );
   });
 
-  it('triggers on pull_request and on push to every long-lived branch', () => {
+  it('triggers on pull_request and on push to every long-lived branch and to a merge queue candidate', () => {
     // The branch list is pinned by NAME, not loosened to "any list", because the
     // whole point is that a long-lived branch nobody validates accumulates silent
     // failures. `feat/710-chunk2` reached 17 CI failures without a single run,
     // because CI had never been triggered on it — the PR that opened it was the
     // first. v5-baseline is the integration branch chunk PRs target, so a push to
     // it must be validated like a push to main. Adding a branch here is a
-    // deliberate act; this assertion is what makes it one.
+    // deliberate act; this assertion is what makes it one. The third entry is
+    // the merge queue's candidate branches (#2322): TangleClaw makes one by
+    // merging a pull request's head into the tip of main, and no pull request is
+    // opened for it, so a push is the only event that can test it.
     const src = workflowSource();
     assert.match(src, /^\s*pull_request:/m);
     // Anchored to `push:` and tolerant of comment lines between the two, so this
@@ -64,9 +67,13 @@ describe('CI workflow (.github/workflows/test.yml)', () => {
     // while the test still said it triggered on them.
     const branches = src.match(/^\s*push:\n(?:\s*#.*\n)*\s*branches: \[(.+)\]/m);
     assert.ok(branches, 'push: must exist and carry an explicit branch list directly under it');
-    const listed = branches[1].split(',').map((b) => b.trim());
-    assert.deepEqual(listed, ['main', 'v5-baseline'],
-      'CI must run on pushes to main and to the v5 integration branch');
+    // Quotes are YAML's, not part of the pattern: `*` needs them, a name does not.
+    const listed = branches[1].split(',').map((b) => b.trim().replace(/^(['"])(.*)\1$/, '$2'));
+    // The queue's pattern is built from the constant the queue writes under,
+    // so this list and the module cannot name two different prefixes.
+    const { CANDIDATE_PREFIX } = require('../lib/merge-queue-github');
+    assert.deepEqual(listed, ['main', 'v5-baseline', `${CANDIDATE_PREFIX}**`],
+      'CI must run on pushes to main, to the v5 integration branch and to a merge queue candidate, and to nothing else');
   });
 
   it('audits what the run did not execute, from the junit report the suite writes (#844)', () => {
