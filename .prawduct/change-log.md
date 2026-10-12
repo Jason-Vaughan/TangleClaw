@@ -59,6 +59,29 @@ Visual change: no
 **What does not change.** What `prawduct-hook test-status` accepts, and every lane rule. The command never touches `.prawduct/.test-evidence.json`.
 
 **Limits.** The file does not show that the job named `test` ran the suite and not something else of that name: it does not read the workflow's definition. It is for before the merge: GitHub names no pull request on a run once the pull request is merged, or for one from a fork, and the command then refuses. It is a wide run (it runs the complement). The default base comes from the clone's record of the remote's default branch; a clone without one must name `--base`.
+## 2026-10-12 — #2323: register, read and cancel a check watch
+
+<!-- prawduct: type=feature | scope=2323-check-watch-wake -->
+
+#2323 Chunk 02. Branch `feat/2323-02-check-watch-api`, from `origin/main` `59e9fa7e`. The issue stays open. Nothing reads GitHub for a watch and nobody is woken: that is chunk 03, which is held.
+
+Visual change: no
+
+**Why.** Chunk 01 built the watch's records, its derived state and the reader of a commit's check, and nothing could reach any of it. This chunk is the surface: a session registers a watch for its own project with a due time, reads the state the server derives, and cancels.
+
+**What changed.**
+
+- New `lib/check-watch-api.js`: four handlers. The caller is resolved by `control-auth#resolveControlCaller`. `register` and `cancel` are a verified live launch's alone, for its own project; the Operator is refused (`CHECK_WATCH_LAUNCH_ONLY`). `list` and `show` answer the project, the Operator and a project that shares a group with it; to anyone else a watch or a project's list is a 404, the same body as for one that does not exist. Every answer carries the state from `check-watch-state#derive` at the time of the read, `open`, and `monitored: false`. No answer carries a launch id, in a watch or in a fact's detail.
+- **The repository is not taken from the request.** `register` reads the `origin` remote of the project's own folder with `git` (bounded at four seconds, a seam for tests) and takes it only when `stranded-check#repoOf` reads it as a github.com repository. No remote, or one elsewhere, is `409 CHECK_WATCH_REPO_UNKNOWN`; a read that did not finish is `503 CHECK_WATCH_REPO_UNREADABLE`. It is not a boundary against the project's own session, which can write that folder's git config; the doc and the module say so.
+- **The due time is minutes from now on the server's clock** (`dueInMinutes`, a whole number from 1 to the limit). A time named by the caller is not taken.
+- `server.js`: the four routes under `/api/tc/check-watches`, through one wrapper that turns a `WatchError` into the `{error, code}` body and anything else into `503 CHECK_WATCH_UNAVAILABLE`.
+- `lib/tc-verbs.js`: verb `check` with `watch`, `list [--project <id>]`, `show`, `cancel`. `unknown` is rendered as "neither failed nor done" with its reasons in words. Each answer from a server that says `monitored: false` ends with a line saying nothing reads GitHub for the watch and nobody is woken. The verb is in the roster and in `tc`'s usage and **not** in the list panes are primed with (`primed: false`): the primer section had less room left than the verb's name takes. So `CLAUDE.md` and the prime golden files are unchanged, and a test holds the tracked block to the generator's output.
+- New `docs/check-watch.md`: what a watch is, the four states and the reasons for `unknown`, who may do what, the routes, `tc check`, the limits, each refusal code, and that neither table is pruned.
+- Tests: new `test/check-watch-api.test.js` (every route as the project, a group neighbour, an outsider, the Operator, an unbound caller, a spoofed launch and an ended launch, over an in-process server; one test reads a real folder's remote with real `git`), new `test/tc-check-verb.test.js`. `test/launch-binding-routes.test.js`: the two state-changing routes are named and neither is reachable unidentified. `test/ecosystem-primer.test.js`: one pin, the verbs left unprimed with the candidate switch on are now `queue` and `check`.
+
+**What an operator sees.** Nothing unless a session runs `tc check`. A session that does is told on every answer that the watch is a record only.
+
+**Limits.** No read of GitHub, no wake, no alarm at the due time, no expiry: a watch reads `waiting` until its due time and `unknown` after it. Nothing checks that the pull request exists or that the commit is its head. A held lane can register and cancel. `derive` is unchanged, so the `past-due` point carried from chunk 01's review is still open.
 
 ## 2026-10-12 — #2321: the check reader says which app made a run, and which workflow run it belongs to
 
