@@ -20,6 +20,14 @@
  * three numbers are set here, not measured: the cursor where an empty composer
  * holds it, and the height the other panes have.
  *
+ * `composerDefaultStatusSignedIn`, `composerCustomStatus` and
+ * `composerSingleItemStatus` are one signed-in codex-cli 0.156.1 home on
+ * 2026-10-12 (throwaway CODEX_HOME, private tmux server, a 100 by 30 pane, no
+ * turn sent), read whole with the cursor: Codex's default status line, which
+ * carries no run-state item; `tui.status_line = ["model", "reasoning",
+ * "project-name"]`, three items and none of them `Ready`; and
+ * `tui.status_line = ["model"]`, a single item, which has no separator.
+ *
  * @type {Readonly<Record<string, {height: number, x: number, y: number, rows: string[]}>>}
  */
 const CODEX_VISIBLE_PANES = Object.freeze({
@@ -368,6 +376,117 @@ const CODEX_VISIBLE_PANES = Object.freeze({
       "",
       "",
       "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ])
+  }),
+  composerDefaultStatusSignedIn: Object.freeze({
+    height: 30,
+    x: 2,
+    y: 10,
+    rows: Object.freeze([
+      "╭──────────────────────────────────────────────────╮",
+      "│ >_ OpenAI Codex (v0.156.1)                       │",
+      "│                                                  │",
+      "│ model:     GPT-6-Astra   /model to change        │",
+      "│ directory: /private/tmp/…/projects/probe-trusted │",
+      "╰──────────────────────────────────────────────────╯",
+      "",
+      "  Tip: New Use /fast to enable our fastest inference with increased plan usage.",
+      "",
+      "",
+      "\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything\u001b[0m",
+      "",
+      "  GPT-6-Astra default · /private/tmp/tcb2059.ZnQN4V/projects/probe-trusted",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ])
+  }),
+  composerCustomStatus: Object.freeze({
+    height: 30,
+    x: 2,
+    y: 10,
+    rows: Object.freeze([
+      "╭──────────────────────────────────────────────────╮",
+      "│ >_ OpenAI Codex (v0.156.1)                       │",
+      "│                                                  │",
+      "│ model:     GPT-6-Astra   /model to change        │",
+      "│ directory: /private/tmp/…/projects/probe-trusted │",
+      "╰──────────────────────────────────────────────────╯",
+      "",
+      "  Tip: Try the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true",
+      "",
+      "",
+      "\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything\u001b[0m",
+      "",
+      "  GPT-6-Astra · default · probe-trusted",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ])
+  }),
+  composerSingleItemStatus: Object.freeze({
+    height: 30,
+    x: 2,
+    y: 10,
+    rows: Object.freeze([
+      "╭──────────────────────────────────────────────────╮",
+      "│ >_ OpenAI Codex (v0.156.1)                       │",
+      "│                                                  │",
+      "│ model:     GPT-6-Astra   /model to change        │",
+      "│ directory: /private/tmp/…/projects/probe-trusted │",
+      "╰──────────────────────────────────────────────────╯",
+      "",
+      "  Tip: Try the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true",
+      "",
+      "",
+      "\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything\u001b[0m",
+      "",
+      "  GPT-6-Astra",
       "",
       "",
       "",

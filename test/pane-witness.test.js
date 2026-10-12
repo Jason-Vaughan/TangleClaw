@@ -398,4 +398,90 @@ describe('the pane witness (#2186)', () => {
       assert.deepEqual(r, { shown: true });
     });
   });
+
+  describe('the one-read entry point (#2059)', () => {
+    /**
+     * Ask `composerShownOnce` about a scripted pane, counting its tmux calls.
+     * @param {Array<object|Error>} frames - One visible-pane read per call; the last repeats.
+     * @param {object} [over] - Target overrides.
+     * @param {object} [seamOver] - Seam overrides.
+     * @returns {Promise<object>}
+     */
+    const askOnce = (frames, over = {}, seamOver = {}) => {
+      let i = 0;
+      reads = [];
+      pins = [];
+      return paneWitness.composerShownOnce({
+        tmuxName: 'tc-x', paneId: PANE_ID, paneServer: PANE_SERVER, engineProfile: codex, wakeProfile, headerRe: HEADER_RE, startingRe: STARTING_RE, statusRe: STATUS_RE, maxStatusRows: 1, keyHintRe: KEY_HINT_RE, ...over
+      }, {
+        pin: (name) => { pins.push(name); return PANE_ID; },
+        read: (name, paneId) => {
+          reads.push(`${name} ${paneId}`);
+          const f = frames[Math.min(i, frames.length - 1)];
+          i += 1;
+          if (f instanceof Error) throw f;
+          return { paneId: PANE_ID, ...f, rows: [...f.rows] };
+        },
+        ...seamOver
+      });
+    };
+
+    it('answers every live capture exactly as the two-read witness answers that capture held still', async () => {
+      for (const name of Object.keys(PANES)) {
+        const twice = await ask([PANES[name]]);
+        const once = await askOnce([PANES[name]]);
+        assert.deepEqual(once, twice, name);
+      }
+      assert.deepEqual(await askOnce([PANES.composer]), { shown: true });
+    });
+
+    it('pins the pane once and reads it exactly once', async () => {
+      await askOnce([PANES.composer]);
+      assert.deepEqual(pins, ['tc-x']);
+      assert.deepEqual(reads, ['tc-x %7']);
+    });
+
+    it('judges the one frame it took: a second, different frame is never asked for', async () => {
+      const typed = pane(['\u001b[1m›\u001b[0m hello', '', '  GPT-6-Astra default · /p'], 0, 7);
+      const refused = await ask([typed]);
+      assert.equal(refused.shown, false, 'the frame the two-read witness refuses');
+      assert.deepEqual(await askOnce([PANES.composer, typed]), { shown: true });
+      assert.deepEqual(await askOnce([typed, PANES.composer]), refused);
+      assert.equal(reads.length, 1);
+    });
+
+    it('refuses on one frame what the two-read witness refuses on one frame', async () => {
+      const cases = [
+        [pane([COMPOSER, '', '  GPT-6-Astra default · /p', '  a second row · here'], 0), 'something other than a status row is drawn below the composer'],
+        [pane([COMPOSER, '', '  enter continue · esc skip'], 0), 'a row below the composer names keys, as a dialog footer does'],
+        [pane(['  an answer', COMPOSER], 0), 'the cursor is not on the composer row'],
+        [pane(['  nothing here'], 0), 'no empty composer row is on screen'],
+        [new Error('no server running'), 'the pane could not be read']
+      ];
+      for (const [frame, why] of cases) {
+        const once = await askOnce([frame]);
+        assert.deepEqual(once, await ask([frame]), why);
+        assert.equal(once.why, why);
+      }
+      assert.equal((await askOnce([PANES.trustPrompt])).dialog.id, 'folder-trust');
+      assert.equal((await askOnce([PANES.updatePrompt])).dialog.id, 'update');
+      assert.equal((await askOnce([PANES.openingScreen])).why, 'the engine is still starting');
+    });
+
+    it('keeps the pinning rules: another pane, no pane on record, another tmux server', async () => {
+      assert.deepEqual(await askOnce([PANES.composer], {}, { pin: () => '%40' }),
+        { shown: false, dialog: null, why: 'the session\'s pane is not the pane this launch created', lasting: true });
+      assert.deepEqual(reads, [], 'the other pane is never read');
+      assert.equal((await askOnce([PANES.composer], { paneServer: '' })).why, 'the pane this launch created is not on record');
+      const other = Object.assign(new Error('other server'), { tcOtherServer: true });
+      assert.deepEqual(await askOnce([other]),
+        { shown: false, dialog: null, why: 'the tmux server is not the one this launch\'s pane was created in', lasting: true });
+      assert.equal((await askOnce([PANES.composer], {}, { pin: () => { throw new Error('two panes'); } })).why, 'the session does not have exactly one pane to read');
+    });
+
+    it('a read that throws is asked once, not twice', async () => {
+      await askOnce([new Error('gone'), PANES.composer]);
+      assert.equal(reads.length, 1);
+    });
+  });
 });
