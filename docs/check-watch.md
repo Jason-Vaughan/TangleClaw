@@ -78,9 +78,9 @@ The read is one `gh api` call made under **the server's own GitHub identity**, f
 repository the project folder's `origin` named when the watch was registered. Nothing limits which
 repository that is. What is limited is how much the server reads with nobody asking: see Limits.
 
-`tc check` still ends each answer with a NOT MONITORED line that says the server "does not read
-GitHub" for the watch. That clause is out of date as of this part: the server does read it and
-records the result. The rest of the line is true: nobody is woken, so read the watch.
+`tc check` ends each answer with a NOT MONITORED line for as long as this is so: the server reads
+GitHub for the watch and records the result, but wakes nobody, so read the watch or the check
+yourself.
 
 ## Who may do what
 

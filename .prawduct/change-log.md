@@ -57,7 +57,7 @@ Visual change: no
 
 **What an operator sees.** A watch a session registered now reads `ready` or `failed` within about a minute of its check ending, and `unknown` with `expired` once it has gone 24 hours past due. One `gh api` call per open watch per minute is made under the server's own GitHub identity.
 
-**Limits.** No message is sent and no pane is typed into; `monitored` stays `false` in every answer. `tc check` still ends each answer with a line saying the server does not read GitHub for the watch: that clause is now out of date and is corrected in chunk 03b, which removes the line. An expiry is not held back by a last read that could not reach GitHub. Nothing bounds which repository is read: it is whatever the project folder's `origin` named.
+**Limits.** No message is sent and no pane is typed into; `monitored` stays `false` in every answer. `tc check` still ends each answer with its NOT MONITORED line, reworded: the server reads GitHub for the watch and records the result, but wakes nobody (`lib/tc-verbs.js`, one sentence, and the assertion that pins it in `test/tc-check-verb.test.js`; both added with the Integrator's leave, as were the comment on `MONITORED` in `lib/check-watch-api.js` and one test's name in `test/check-watch-api.test.js`, words only). An expiry is not held back by a last read that could not reach GitHub. Nothing bounds which repository is read: it is whatever the project folder's `origin` named.
 
 ## 2026-10-12 — #2187: the wake's pane gate refuses a dialog below a stale composer and a Codex that is still starting
 
