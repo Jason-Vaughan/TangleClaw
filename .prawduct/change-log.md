@@ -54,7 +54,7 @@ Visual change: no
 
 **What an operator sees.** Nothing yet: no route, verb or screen makes a candidate. In the repository's Actions list a `Tests` run will appear for any branch pushed under `tc-queue/`.
 
-**Not verified.** That a branch created through the API with this machine's `gh` login starts the run. The workflow file GitHub uses for a push is the one on the pushed commit, so this can be seen only after the line is on `main`: one throwaway `tc-queue/probe-*` branch, pushed and deleted, on the Integrator's word after the merge. A candidate's run does not execute the cache-bump step, which is limited to pull requests.
+**Not verified.** That a branch created through the API with this machine's `gh` login starts the run. The workflow file GitHub uses for a push is the one on the pushed commit, so this can be seen only after the line is on `main`: one throwaway `tc-queue/probe-*` branch, pushed and deleted, on the Integrator's word after the merge. A candidate's run does not execute the cache-bump step, which is limited to pull requests. **Found by the review and not settled here:** `createCandidate` makes two pushes to the candidate branch, the first at the tip of `main`, so the new trigger may start a second `test` run on `main`'s own tip each time a candidate is made; the reader the landing will use takes the newest run of that name on a commit. Not observed. The same throwaway branch answers it, and the plan's chunk 05 carries the decision.
 
 ## 2026-10-12 — #2059: the wake holds for one monitor interval after a launch's thread first reports idle
 

@@ -87,6 +87,14 @@ trigger is the only thing that tests one.
 - **A candidate run is a push run.** The step that guards the service-worker cache compares a pull
   request with its base and runs only on pull requests, so it does not run on a candidate. It has
   already run on the pull request itself, which must be green before it is submitted.
+- **Making a candidate may also start a run on the tip of `main`. Not yet seen, and not yet
+  decided.** The candidate's branch is created at the tip of `main` and the pull request's head is
+  then merged into it. Those are two pushes to a `tc-queue/` branch, and the first puts the branch
+  on a commit that is `main`'s own. If GitHub starts a run for that push too, the tip of `main`
+  gets a second `test` run each time a candidate is made, and a reader that takes the newest
+  `test` run on that commit would see it running again. This is checked on the same throwaway
+  branch as the trigger itself, and what the queue does about it is settled before the part that
+  lands a pull request is built.
 - **The run holds no more than a pull request's run does.** The workflow's token is read-only
   (`contents: read`) on every trigger.
 
