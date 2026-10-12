@@ -643,3 +643,277 @@ describe('startup prompt service: the launch-start payload (E8)', () => {
     assert.equal(svc.canonicalJson({ b: 1, a: { d: [3, { z: 1, y: 2 }], c: null } }), '{"a":{"c":null,"d":[3,{"y":2,"z":1}]},"b":1}');
   });
 });
+
+describe('startup prompt service: the launch gate, its sentence and the automatic fire (#2059)', () => {
+  const BLOCK = { adapter: 'fake', channel: 'c', readiness: 'r', receipt: 'x', blockers: 'b', verifiedVersions: ['1.0.0'], evidence: Object.fromEntries(['adapter', 'channel', 'readiness', 'receipt', 'blockers', 'verifiedVersions'].map((k) => [k, { verifiedOn: null, source: 's' }])) };
+  const SESSION = { id: 10, projectId: 1, engineId: 'codex', status: 'active', tmuxSession: 'tc-target' };
+  const self = svc.launchCaller({ sessionId: 10, projectId: 1 });
+
+  /**
+   * A world whose adapter records what it was handed, for a fire and for a launch gate.
+   * @param {object} [over] - Dependency overrides.
+   * @param {object} [adapterOver] - Adapter overrides.
+   * @returns {{d: object, fires: object[], gates: object[], witnessed: object[]}}
+   */
+  const world = (over = {}, adapterOver = {}) => {
+    const fires = [];
+    const gates = [];
+    const witnessed = [];
+    const adapter = {
+      installedVersion: () => '1.0.0',
+      fire: (input) => {
+        fires.push(input);
+        const row = input.onUpdate({ outcome: 'blocked', reasonCode: 'engine_not_ready', reason: 'r' });
+        return { accepted: Promise.resolve(row), settled: Promise.resolve(row) };
+      },
+      awaitLaunchReady: async (input, adapterDeps) => { gates.push({ input, adapterDeps }); return { ready: true }; },
+      ...adapterOver
+    };
+    const d = deps({
+      adapters: { fake: adapter },
+      getEngine: (id) => ({ id, name: 'Fake', capabilities: { startupControl: BLOCK } }),
+      getSession: (id) => (id === 10 ? SESSION : null),
+      wakeProfile: (id) => ({ engine: id, promptRe: /x/ }),
+      paneWitness: async (target, seams) => { witnessed.push({ target, seams, reads: 2 }); return { shown: true }; },
+      paneWitnessOnce: async (target, seams) => { witnessed.push({ target, seams, reads: 1 }); return { shown: true }; },
+      ...over
+    });
+    return { d, fires, gates, witnessed };
+  };
+
+  /**
+   * Fire as the launch with a gate result, and return the stored reason.
+   * @param {object} paneGate - The bootstrap's gate result.
+   * @returns {Promise<{r: object, row: object, w: object}>}
+   */
+  const settle = async (paneGate) => {
+    const w = world();
+    const r = await svc.fire(req(self, { paneGate }), w.d);
+    return { r, row: w.d._fires[0], w };
+  };
+
+  describe('the pane_not_ready sentence for a gate the adapter proved', () => {
+    it('a pane SEEN not ready: the last observation, then what the operator does', async () => {
+      const { r, row, w } = await settle({ ready: false, proof: 'adapter', unavailable: false, reason: 'the pane was not at an empty composer: the composer holds typed text', remedy: 'Press Fire startup prompt once the pane shows an empty composer.' });
+      assert.equal(r.status, 409);
+      assert.equal(r.body.code, 'STARTUP_FIRE_BLOCKED');
+      assert.equal(row.outcome, 'blocked');
+      assert.equal(row.reasonCode, 'pane_not_ready');
+      assert.equal(row.reason, 'the pane was not seen ready within the launch window, so nothing was sent: the pane was not at an empty composer: the composer holds typed text. Press Fire startup prompt once the pane shows an empty composer.');
+      assert.equal(w.fires.length, 0, 'the adapter is never asked to send');
+      assert.equal(w.d._fires.length, 1, 'exactly one row');
+      assert.equal(w.d.prompts.activeFire(100), null, 'and the slot is free for a Fire by hand');
+    });
+
+    it('a proof that could not be made says it was UNAVAILABLE, and never that the pane was seen', async () => {
+      for (const reason of ['the pane could not be read', 'the app-server did not answer', 'the engine adapter did not answer the launch-readiness read in time']) {
+        const { row } = await settle({ ready: false, proof: 'adapter', unavailable: true, reason });
+        assert.equal(row.reasonCode, 'pane_not_ready');
+        assert.equal(row.reason, `the proof that the pane was ready was unavailable, so nothing was sent: ${reason}. Press Fire startup prompt once the pane shows an empty composer.`);
+        assert.ok(!/was not seen ready|did not become ready/.test(row.reason), reason);
+      }
+    });
+
+    it('the adapter\'s own remedy is used when it gives one, and a whole sentence replaces both lead-ins', async () => {
+      let { row } = await settle({ ready: false, proof: 'adapter', unavailable: true, reason: 'the session\'s pane is not the pane this launch created', remedy: 'This does not clear by itself: relaunch the session.' });
+      assert.ok(row.reason.endsWith('the session\'s pane is not the pane this launch created. This does not clear by itself: relaunch the session.'));
+      ({ row } = await settle({ ready: false, proof: 'adapter', unavailable: false, reason: 'x', whole: 'The engine profile in force declares no starting pattern. Restore it, then Fire again.' }));
+      assert.equal(row.reason, 'The engine profile in force declares no starting pattern. Restore it, then Fire again.');
+    });
+
+    it('a long observation is shortened in the middle: the stored reason fits and keeps the sentence the operator acts on', async () => {
+      const { row } = await settle({ ready: false, proof: 'adapter', unavailable: false, reason: 'seen '.repeat(200) });
+      assert.equal(row.reason.length, 500);
+      assert.ok(row.reason.includes('…'));
+      assert.ok(row.reason.endsWith('Press Fire startup prompt once the pane shows an empty composer.'));
+    });
+
+    it('the marker gate\'s result keeps its sentence, word for word', async () => {
+      const { row } = await settle({ ready: false, reason: 'the at-rest marker never appeared' });
+      assert.equal(row.reason, 'the pane did not become ready within the launch window, so nothing was sent: the at-rest marker never appeared');
+    });
+  });
+
+  describe('the adapter is told, outright, that a fire is the launch\'s automatic one', () => {
+    it('the launch caller\'s fire carries automatic: true and the witness; an operator\'s and a project firer\'s carry neither', async () => {
+      let w = world();
+      await svc.fire(req(self, { paneGate: { ready: true, reason: 'ready', proof: 'adapter' } }), w.d);
+      assert.equal(w.fires[0].automatic, true);
+      assert.equal(typeof w.fires[0].paneWitness, 'function');
+      assert.equal(w.fires[0].paneWitness, w.fires[0].trustException.witness, 'the same witness the allowance is given');
+      for (const caller of [OPERATOR, FIRER_IN_GROUP]) {
+        w = world();
+        await svc.fire(req(caller), w.d);
+        assert.equal(w.fires.length, 1, caller.kind);
+        assert.equal('automatic' in w.fires[0], false, caller.kind);
+        assert.equal('paneWitness' in w.fires[0], false, caller.kind);
+      }
+    });
+
+    it('a request cannot claim it: the flag comes from the caller kind the service resolved, not from the input', async () => {
+      const w = world();
+      await svc.fire(req(OPERATOR, { automatic: true, paneWitness: async () => ({ shown: true }) }), w.d);
+      assert.equal('automatic' in w.fires[0], false);
+    });
+  });
+
+  describe('the pane witness the service builds', () => {
+    it('asks for one read only when the adapter says single, and never passes that word on to the witness', async () => {
+      const w = world();
+      await svc.fire(req(OPERATOR), w.d);
+      const witness = w.fires[0].trustException.witness;
+      await witness({ headerRe: /h/ });
+      await witness({ headerRe: /h/, single: true });
+      await witness({ headerRe: /h/, single: 'yes' });
+      assert.deepEqual(w.witnessed.map((x) => x.reads), [2, 1, 2]);
+      for (const x of w.witnessed) assert.equal('single' in x.target, false);
+      assert.equal(w.witnessed[1].target.tmuxName, 'tc-target');
+    });
+
+    it('marks a pane it could not PIN or READ as unavailable, and leaves a pane it read and refused alone', async () => {
+      const boom = new Error('no server running');
+      /**
+       * A witness that uses the seams it is handed, as the real one does.
+       * @param {string} step - Which tmux call it makes.
+       * @returns {Function}
+       */
+      const using = (step) => async (target, seams) => {
+        try {
+          if (step === 'pin') seams.pin(target.tmuxName);
+          if (step === 'read') seams.read(target.tmuxName, '%7', 'srv');
+        } catch {
+          return { shown: false, dialog: null, why: 'the pane could not be read' };
+        }
+        return { shown: false, dialog: null, why: 'the composer holds typed text' };
+      };
+      const cases = [
+        ['pin', { panePin: () => { throw boom; }, paneRead: () => ({}) }, true],
+        ['read', { panePin: () => '%7', paneRead: () => { throw boom; } }, true],
+        ['read', { panePin: () => '%7', paneRead: () => ({}) }, false]
+      ];
+      for (const [step, tmux, unavailable] of cases) {
+        for (const single of [false, true]) {
+          const w = world({ ...tmux, paneWitness: using(step), paneWitnessOnce: using(step) });
+          await svc.fire(req(OPERATOR), w.d);
+          const seen = await w.fires[0].trustException.witness({ single });
+          assert.equal(seen.unavailable === true, unavailable, `${step} ${single}`);
+          assert.equal(seen.shown, false);
+        }
+      }
+    });
+
+    it('a shown pane is never marked, and a deployment with no one-read witness says the pane could not be consulted', async () => {
+      let w = world({ panePin: () => '%7', paneRead: () => ({}) });
+      await svc.fire(req(OPERATOR), w.d);
+      assert.deepEqual(await w.fires[0].trustException.witness({ single: true }), { shown: true });
+      w = world({ paneWitnessOnce: undefined });
+      await svc.fire(req(OPERATOR), w.d);
+      assert.deepEqual(await w.fires[0].trustException.witness({ single: true }), { shown: false, dialog: null, why: 'this session\'s pane could not be consulted', unavailable: true });
+    });
+
+    it('the real witnesses are wired: two reads for the gate, one for the last look, over tmux\'s own pin and read', () => {
+      for (const name of ['paneWitness', 'paneWitnessOnce', 'panePin', 'paneRead']) assert.equal(typeof svc.DEFAULT_DEPS[name], 'function', name);
+    });
+  });
+
+  describe('the whole chain: the bootstrap, this service, the facade and an adapter, with only the adapter stubbed', () => {
+    const launchBootstrap = require('../lib/launch-bootstrap');
+    const REAL = { ...launchBootstrap._internal };
+
+    /**
+     * Bootstrap session 10 as a native launch through the real modules.
+     * @param {object} w - From `world`.
+     * @returns {Promise<{outcome: string, markerAsks: number}>}
+     */
+    const bootstrapThrough = async (w) => {
+      let markerAsks = 0;
+      launchBootstrap.reset();
+      Object.assign(launchBootstrap._internal, {
+        getSequence: () => ({ id: 100, sessionId: 10 }),
+        currentPrompt: () => w.d.prompts.current(),
+        launchGate: (launch) => svc.launchGate(launch, w.d),
+        awaitPaneReady: async () => { markerAsks += 1; return { gated: true, ready: true }; },
+        fire: (input) => svc.fire(input, w.d),
+        logActivity: () => {}
+      });
+      try {
+        const outcome = await launchBootstrap.bootstrap({ sessionId: 10, projectId: 1, projectName: 'target', tmuxName: 'tc-target', engineId: 'codex', hasSequence: true, startupDelivery: 'native' });
+        return { outcome, markerAsks };
+      } finally {
+        Object.assign(launchBootstrap._internal, REAL);
+        launchBootstrap.reset();
+      }
+    };
+
+    it('an adapter that proves the pane ready gets the one automatic fire, told it is automatic, and the marker gate is never asked', async () => {
+      const w = world();
+      const { outcome, markerAsks } = await bootstrapThrough(w);
+      assert.equal(outcome, 'not-sent', 'this adapter\'s fire answers blocked: the point is that it was reached');
+      assert.equal(markerAsks, 0);
+      assert.equal(w.gates.length, 1);
+      assert.equal(w.fires.length, 1);
+      assert.equal(w.fires[0].automatic, true);
+      assert.equal(w.d._fires.length, 1);
+    });
+
+    it('a pane the adapter could not read ends as ONE blocked row saying the proof was unavailable, with the marker gate never asked and the adapter never asked to send', async () => {
+      const w = world({}, { awaitLaunchReady: async () => ({ ready: false, unavailable: true, observation: 'the pane could not be read', remedy: 'Press Fire startup prompt once the pane shows an empty composer.' }) });
+      const { outcome, markerAsks } = await bootstrapThrough(w);
+      assert.equal(outcome, 'not-sent');
+      assert.equal(markerAsks, 0);
+      assert.equal(w.fires.length, 0);
+      assert.equal(w.d._fires.length, 1);
+      assert.equal(w.d._fires[0].reasonCode, 'pane_not_ready');
+      assert.equal(w.d._fires[0].reason, 'the proof that the pane was ready was unavailable, so nothing was sent: the pane could not be read. Press Fire startup prompt once the pane shows an empty composer.');
+    });
+
+    it('an adapter that throws is the same: unknown, unavailable, one blocked row, no marker', async () => {
+      const w = world({}, { awaitLaunchReady: async () => { throw new Error('socket /private/secret gone'); } });
+      const { outcome, markerAsks } = await bootstrapThrough(w);
+      assert.equal(outcome, 'not-sent');
+      assert.equal(markerAsks, 0);
+      assert.equal(w.d._fires.length, 1);
+      assert.match(w.d._fires[0].reason, /^the proof that the pane was ready was unavailable, so nothing was sent: the engine adapter failed while reading launch readiness\. /);
+      assert.ok(!w.d._fires[0].reason.includes('/private/secret'));
+    });
+
+    it('an adapter with no such read: the marker gate is asked, and its pass reaches the adapter\'s fire', async () => {
+      const w = world({}, { awaitLaunchReady: undefined });
+      const { markerAsks } = await bootstrapThrough(w);
+      assert.equal(markerAsks, 1);
+      assert.equal(w.fires.length, 1);
+    });
+  });
+
+  describe('launchGate: the bootstrap\'s question, put to the engine\'s adapter', () => {
+    it('hands the adapter the session, its project, the launch and a witness for this session\'s pane', async () => {
+      const w = world({ launchWindowMs: 25, adapterDeps: { pollMs: 1 } });
+      assert.deepEqual(await svc.launchGate({ sessionId: 10, sequenceId: 100, engineId: 'codex' }, w.d), { answer: 'ready' });
+      const { input, adapterDeps } = w.gates[0];
+      assert.equal(input.session, SESSION);
+      assert.deepEqual(input.project, { id: 1 });
+      assert.equal(input.sequenceId, 100);
+      assert.equal(input.windowMs, 25);
+      assert.deepEqual(adapterDeps, { pollMs: 1 });
+      await input.witness({ paneId: '%7' });
+      assert.equal(w.witnessed[0].target.tmuxName, 'tc-target');
+      assert.equal(w.witnessed[0].target.paneId, '%7');
+    });
+
+    it('an engine whose adapter has no such read is unsupported; a session that is gone is unknown, not unsupported', async () => {
+      let w = world({}, { awaitLaunchReady: undefined });
+      assert.deepEqual(await svc.launchGate({ sessionId: 10, sequenceId: 100, engineId: 'codex' }, w.d), { answer: 'unsupported' });
+      w = world();
+      assert.equal((await svc.launchGate({ sessionId: 99, sequenceId: 100, engineId: 'codex' }, w.d)).answer, 'unknown');
+      w = world({ getSession: () => { throw new Error('db locked'); } });
+      assert.equal((await svc.launchGate({ sessionId: 10, sequenceId: 100, engineId: 'codex' }, w.d)).answer, 'unknown');
+      assert.equal(w.gates.length, 0);
+    });
+
+    it('a session with no pane is asked with no witness, which the adapter must refuse on', async () => {
+      const w = world({ getSession: () => ({ ...SESSION, tmuxSession: null }) });
+      await svc.launchGate({ sessionId: 10, sequenceId: 100, engineId: 'codex' }, w.d);
+      assert.equal(w.gates[0].input.witness, undefined);
+    });
+  });
+});

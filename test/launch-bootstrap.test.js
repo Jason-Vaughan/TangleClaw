@@ -5,7 +5,9 @@
  *
  * A native launch gets exactly one automatic attempt through the shared fire
  * service, after the pane gate, under a deterministic key and the internal
- * launch caller; a gate that never passes still produces the audited attempt,
+ * launch caller. The gate is the engine adapter's own launch-readiness read
+ * where the adapter has one (#2059), and the at-rest marker only where it has
+ * none; a gate that never passes still produces the audited attempt,
  * carried as a launch-only pre-send result the service settles as
  * `pane_not_ready`, and this module never touches the pane or the store. A
  * legacy launch asks the same service so its reason is recorded, and is left
@@ -35,6 +37,9 @@ describe('launch bootstrap (#1825 B3)', () => {
   let activity;
   let readiness;
   let answer;
+  let gate;
+  let gateAsks;
+  let markerAsks;
 
   beforeEach(() => {
     Object.assign(launchBootstrap._internal, REAL);
@@ -45,7 +50,13 @@ describe('launch bootstrap (#1825 B3)', () => {
     answer = () => ({ status: 200, body: { fire: { id: 5, outcome: 'accepted', reasonCode: null }, duplicate: false } });
     launchBootstrap._internal.getSequence = (sid) => (sid === 42 ? { id: 100, sessionId: 42, cursor: 0 } : null);
     launchBootstrap._internal.currentPrompt = () => ({ revision: 3 });
-    launchBootstrap._internal.awaitPaneReady = async () => readiness;
+    // Unless a case says otherwise, the engine's adapter has no launch-readiness
+    // read, which is the one case in which the marker gate below is the gate.
+    gate = { answer: 'unsupported' };
+    gateAsks = [];
+    markerAsks = 0;
+    launchBootstrap._internal.launchGate = async (launch) => { gateAsks.push(launch); return typeof gate === 'function' ? gate() : gate; };
+    launchBootstrap._internal.awaitPaneReady = async () => { markerAsks += 1; return readiness; };
     launchBootstrap._internal.fire = async (input) => { fires.push(input); return answer(input); };
     launchBootstrap._internal.logActivity = (entry) => activity.push(entry);
   });
@@ -125,6 +136,127 @@ describe('launch bootstrap (#1825 B3)', () => {
       };
       assert.equal(await launchBootstrap.bootstrap({ ...NATIVE }), 'fired');
       assert.deepEqual(fires.map((f) => f.idempotencyKey), ['launch-100-r3', 'launch-100-r4']);
+    });
+  });
+
+  describe('the native path, gated by the engine adapter\'s own launch-readiness read (#2059)', () => {
+    const BLOCKED = () => ({ status: 409, body: { code: 'STARTUP_FIRE_BLOCKED', fire: { id: 20, outcome: 'blocked', reasonCode: 'pane_not_ready' }, reasonCode: 'pane_not_ready' } });
+
+    it('asks the adapter for this launch, and a ready answer fires once without the marker gate ever being consulted', async () => {
+      gate = { answer: 'ready' };
+      assert.equal(await launchBootstrap.bootstrap({ ...NATIVE }), 'fired');
+      assert.deepEqual(gateAsks, [{ sessionId: 42, sequenceId: 100, engineId: 'codex' }]);
+      assert.equal(markerAsks, 0);
+      assert.equal(fires.length, 1);
+      assert.deepEqual(fires[0].paneGate, { ready: true, reason: 'the launch\'s thread was idle and its pane showed an empty composer', proof: 'adapter' });
+    });
+
+    it('AN ADAPTER WITHOUT THE METHOD falls back to the marker gate: unsupported is the only answer that does', async () => {
+      gate = { answer: 'unsupported' };
+      assert.equal(await launchBootstrap.bootstrap({ ...NATIVE }), 'fired');
+      assert.equal(markerAsks, 1);
+      assert.deepEqual(fires[0].paneGate, { ready: true, reason: 'the pane rendered its at-rest marker over a settled transcript' });
+      assert.equal('proof' in fires[0].paneGate, false);
+    });
+
+    it('AN ADAPTER WITH THE METHOD THAT CANNOT ANSWER ends pane_not_ready with nothing sent, and the marker gate is never consulted even though the pane shows the marker', async () => {
+      const cannot = [
+        ['its channel, pane or thread could not answer', { answer: 'unknown', unavailable: true, observation: 'the engine adapter failed while reading launch readiness', remedy: null, whole: null }],
+        ['its call timed out', { answer: 'unknown', unavailable: true, observation: 'the engine adapter did not answer the launch-readiness read in time', remedy: null, whole: null }],
+        ['the read threw', () => { throw new Error('boom'); }],
+        ['it answered nothing', null],
+        ['it answered a word nobody defined', { answer: 'maybe' }]
+      ];
+      for (const [name, answerOf] of cannot) {
+        launchBootstrap.reset();
+        fires = [];
+        markerAsks = 0;
+        readiness = { gated: true, ready: true, waitedMs: 10 };
+        gate = answerOf;
+        answer = BLOCKED;
+        assert.equal(await launchBootstrap.bootstrap({ ...NATIVE }), 'not-sent', name);
+        assert.equal(markerAsks, 0, `${name}: a runtime unknown never passes by the status marker`);
+        assert.equal(fires.length, 1, name);
+        assert.equal(fires[0].paneGate.ready, false, name);
+        assert.equal(fires[0].paneGate.proof, 'adapter', name);
+        assert.equal(fires[0].paneGate.unavailable, true, `${name}: a proof that could not be made`);
+        assert.ok(fires[0].paneGate.reason, name);
+      }
+    });
+
+    it('unsupported and unknown are different answers, and only one of them reaches the marker', async () => {
+      const outcomes = {};
+      for (const word of ['unsupported', 'unknown']) {
+        launchBootstrap.reset();
+        fires = [];
+        markerAsks = 0;
+        gate = { answer: word, unavailable: true, observation: 'x' };
+        await launchBootstrap.bootstrap({ ...NATIVE });
+        outcomes[word] = { markerAsks, ready: fires[0].paneGate.ready };
+      }
+      assert.deepEqual(outcomes, { unsupported: { markerAsks: 1, ready: true }, unknown: { markerAsks: 0, ready: false } });
+    });
+
+    it('a pane the adapter saw not ready at the window\'s end is one attempt, carrying its last observation, its remedy, and that it was SEEN', async () => {
+      gate = { answer: 'not-ready', unavailable: false, observation: 'the pane was not at an empty composer: the composer holds typed text', remedy: 'Press Fire startup prompt once the pane shows an empty composer.', whole: null };
+      answer = BLOCKED;
+      assert.equal(await launchBootstrap.bootstrap({ ...NATIVE }), 'not-sent');
+      assert.equal(fires.length, 1, 'recorded once, never retried');
+      assert.deepEqual(fires[0].paneGate, {
+        ready: false, proof: 'adapter', unavailable: false,
+        reason: 'the pane was not at an empty composer: the composer holds typed text',
+        remedy: 'Press Fire startup prompt once the pane shows an empty composer.'
+      });
+      assert.equal(activity[0].detail.reasonCode, 'pane_not_ready');
+      assert.equal(await launchBootstrap.bootstrap({ ...NATIVE }), 'already-fired');
+      assert.equal(fires.length, 1);
+    });
+
+    it('an unreadable pane and an unanswering channel are each carried as a proof that was unavailable', async () => {
+      for (const observation of ['the pane could not be read', 'the app-server did not answer']) {
+        launchBootstrap.reset();
+        fires = [];
+        gate = { answer: 'not-ready', unavailable: true, observation, remedy: 'Press Fire startup prompt once the pane shows an empty composer.', whole: null };
+        answer = BLOCKED;
+        assert.equal(await launchBootstrap.bootstrap({ ...NATIVE }), 'not-sent');
+        assert.equal(fires[0].paneGate.unavailable, true, observation);
+        assert.equal(fires[0].paneGate.reason, observation);
+      }
+    });
+
+    it('a whole sentence from the adapter (a profile fault) is carried as it is', async () => {
+      gate = { answer: 'not-ready', unavailable: false, observation: 'o', remedy: null, whole: 'The engine profile declares no starting pattern.' };
+      answer = BLOCKED;
+      await launchBootstrap.bootstrap({ ...NATIVE });
+      assert.equal(fires[0].paneGate.whole, 'The engine profile declares no starting pattern.');
+      assert.equal('remedy' in fires[0].paneGate, false);
+    });
+
+    it('A READY GATE FOLLOWED BY A REFUSED LAST LOOK IS ONE ROW, NOT TWO: the fire\'s own blocked answer is the outcome and nothing is tried again', async () => {
+      gate = { answer: 'ready' };
+      answer = BLOCKED;
+      assert.equal(await launchBootstrap.bootstrap({ ...NATIVE }), 'not-sent');
+      assert.equal(fires.length, 1);
+      assert.equal(fires[0].paneGate.ready, true);
+      assert.equal(activity.length, 1);
+      assert.deepEqual(activity[0].detail, { sequenceId: 100, startupDelivery: 'native', outcome: 'not-sent', fireId: 20, reasonCode: 'pane_not_ready' });
+    });
+
+    it('a legacy launch never asks the adapter, and a native session with no pane asks nothing', async () => {
+      answer = () => ({ status: 409, body: { code: 'STARTUP_CONTROL_UNSUPPORTED', fire: { id: 12, outcome: 'unsupported', reasonCode: 'engine_declares_none' } } });
+      await launchBootstrap.bootstrap({ ...NATIVE, startupDelivery: 'legacy' });
+      assert.deepEqual(gateAsks, []);
+      assert.equal(markerAsks, 0);
+      launchBootstrap.reset();
+      answer = BLOCKED;
+      await launchBootstrap.bootstrap({ ...NATIVE, tmuxName: null });
+      assert.deepEqual(gateAsks, []);
+      assert.equal(markerAsks, 0);
+    });
+
+    it('the real seam asks the fire service\'s launchGate', () => {
+      assert.equal(typeof REAL.launchGate, 'function');
+      assert.equal(typeof startupPrompt.launchGate, 'function');
     });
   });
 

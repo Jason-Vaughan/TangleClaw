@@ -941,6 +941,503 @@ describe('Codex startupControl adapter', () => {
     });
   });
 
+  describe('the launch gate and the automatic fire\'s last look (#2059)', () => {
+    const paneWitness = require('../lib/pane-witness');
+    const { CODEX_VISIBLE_PANES: PANES } = require('./_codex-visible-pane-fixtures');
+    const codexProfile = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));
+    const NO_ENTRY = { 'config/read': () => ({ config: { projects: { '/somewhere/else': { trust_level: 'trusted' } } } }) };
+    /** What a launch records about its pane: the id, and the tmux server that issued it. */
+    const LAUNCH_PANE = { paneId: '%7', paneServer: '4242.1790431343' };
+
+    /**
+     * The measured empty composer with one of its rows replaced.
+     * @param {number} offset - Rows below the composer row (0 is the composer itself).
+     * @param {string} row - The replacement.
+     * @param {number} [x] - Cursor column, when the composer row changes.
+     * @returns {{height: number, x: number, y: number, rows: string[]}}
+     */
+    const composerWith = (offset, row, x = PANES.composer.x) => {
+      const rows = [...PANES.composer.rows];
+      rows[PANES.composer.y + offset] = row;
+      return { ...PANES.composer, x, rows };
+    };
+    // Constructed from the measured composer, and labelled so: the measured
+    // captures of these screens are the fixtures file's own entries.
+    const TYPED = composerWith(0, '\u001b[1m›\u001b[0m hello', 7);
+    const BUSY = composerWith(-2, '• Working (3s • esc to interrupt)');
+    const CUSTOM_STATUS = composerWith(2, '  gpt-6-astra · 12% used · ~/work/site');
+    const SINGLE_ITEM_STATUS = composerWith(2, '  GPT-6-Astra');
+    const MOVED = composerWith(-3, '  Tip: a different tip is drawn here now');
+
+    /**
+     * A pane the test can change, and a witness over it as the fire service
+     * builds one: the adapter's options first, one read or two as it asks, and
+     * a pane that could not be pinned or read marked `unavailable`.
+     * @param {object|Error|Function} frame - What a read returns, or throws; a function is asked each read.
+     * @returns {{frame: *, pin: *, log: string[], onGap: (Function|null), afterWitness: (Function|null), witness: Function}}
+     */
+    const pane = (frame = PANES.composer) => {
+      const screen = { frame, pin: '%7', log: [], onGap: null, afterWitness: null };
+      screen.witness = async (opts) => {
+        const { single, ...shape } = opts;
+        let unread = false;
+        const ask = single === true ? paneWitness.composerShownOnce : paneWitness.composerShown;
+        const seen = await ask({
+          ...shape, tmuxName: 'tc-deputy', engineProfile: codexProfile, wakeProfile: require('../lib/medusa-wake').ENGINE_WAKE_PROFILES.codex
+        }, {
+          gapMs: 0,
+          sleep: async () => { if (screen.onGap) screen.onGap(); },
+          pin: () => {
+            if (screen.pin instanceof Error) { unread = true; throw screen.pin; }
+            return screen.pin;
+          },
+          read: (name, paneId) => {
+            const kind = single === true ? 'read-once' : 'read';
+            screen.log.push(kind);
+            const f = typeof screen.frame === 'function' ? screen.frame(kind) : screen.frame;
+            if (f instanceof Error) { unread = true; throw f; }
+            return { paneId, ...f, rows: [...f.rows] };
+          }
+        });
+        if (screen.afterWitness) screen.afterWitness(single === true);
+        return unread && seen.shown !== true ? { ...seen, unavailable: true } : seen;
+      };
+      return screen;
+    };
+    const otherServer = () => Object.assign(new Error('another tmux server answered'), { tcOtherServer: true });
+
+    describe('awaitLaunchReady', () => {
+      /**
+       * Ask the gate with a clock the test owns, so a 90-second window costs nothing.
+       * @param {object} screen - From `pane`.
+       * @param {object} [over] - Input overrides.
+       * @returns {Promise<{answer: object, looks: number}>}
+       */
+      const gate = async (screen, over = {}) => {
+        let clock = 0;
+        let waits = 0;
+        const answer = await codex.awaitLaunchReady({
+          session, project, sequenceId: 100, witness: screen ? screen.witness : undefined, windowMs: 6000, pollMs: 1500, ...over
+        }, { now: () => clock, wait: async (ms) => { clock += ms; waits += 1; if (over.onWait) over.onWait(waits); } });
+        return { answer, looks: waits + 1 };
+      };
+
+      it('the session-1410 shape: Codex\'s DEFAULT status line, an idle thread, an empty composer: ready on the first look, and no status-line word was waited for', async () => {
+        await serve();
+        channel(LAUNCH_PANE);
+        assert.ok(!PANES.composer.rows.join('\n').includes('Ready'), 'the default status line carries no at-rest item');
+        const screen = pane(PANES.composer);
+        const { answer, looks } = await gate(screen);
+        assert.deepEqual(answer, { ready: true });
+        assert.equal(looks, 1);
+        assert.deepEqual(screen.log, ['read', 'read'], 'the pane was read twice by the witness and nothing was sent to it');
+        assert.equal(server.calls('turn/start').length, 0, 'the gate sends nothing');
+        assert.equal(server.calls('account/read').length + server.calls('account/rateLimits/read').length + server.calls('config/read').length, 0, 'and reads only the launch\'s thread');
+      });
+
+      it('ready on every measured composer at rest, and on a custom status line that never says Ready', async () => {
+        for (const [name, frame] of [['composerAfterUpdateSkipped', PANES.composerAfterUpdateSkipped], ['composerOperatorStatus', PANES.composerOperatorStatus], ['composerWarningStatus', PANES.composerWarningStatus], ['a custom status line', CUSTOM_STATUS]]) {
+          await serve();
+          store.getDb().prepare('DELETE FROM startup_control_channels').run();
+          channel(LAUNCH_PANE);
+          assert.deepEqual((await gate(pane(frame))).answer, { ready: true }, name);
+          server.close();
+          server = null;
+        }
+      });
+
+      it('the thread is read idle again AFTER the pane was witnessed', async () => {
+        await serve();
+        channel(LAUNCH_PANE);
+        const screen = pane();
+        let readsAtWitness = null;
+        screen.afterWitness = () => { readsAtWitness = server.calls('thread/read').length; };
+        assert.deepEqual((await gate(screen)).answer, { ready: true });
+        assert.equal(server.calls('thread/read').length, readsAtWitness + 1);
+      });
+
+      it('AN IDLE THREAD ALONE IS NEVER READY: each pane that is not a proven empty composer holds the gate to the window\'s end, named', async () => {
+        const cases = [
+          ['the folder-trust prompt', PANES.trustPrompt, /Codex was showing its folder-trust prompt in the pane \(read from the pane\)/],
+          ['the update prompt', PANES.updatePrompt, /Codex was showing its update prompt in the pane/],
+          ['the opening screen', PANES.openingScreen, /the pane was not at an empty composer: the engine is still starting/],
+          ['typed text', TYPED, /the pane was not at an empty composer: /],
+          ['a running turn', BUSY, /the pane was not at an empty composer: a turn is running/],
+          ['a status line of one item', SINGLE_ITEM_STATUS, /something other than a status row is drawn below the composer/]
+        ];
+        for (const [name, frame, said] of cases) {
+          await serve();
+          store.getDb().prepare('DELETE FROM startup_control_channels').run();
+          channel(LAUNCH_PANE);
+          const { answer, looks } = await gate(pane(frame));
+          assert.equal(answer.ready, false, name);
+          assert.equal(answer.unavailable, false, `${name}: the pane was read, so this is not an unavailable proof`);
+          assert.match(answer.observation, said, name);
+          assert.ok(answer.remedy, name);
+          assert.equal(looks, 4, `${name}: it kept looking until the window ended`);
+          assert.ok(server.calls('thread/read').length >= looks, 'the thread answered idle at every look');
+          assert.equal(server.calls('turn/start').length, 0);
+          server.close();
+          server = null;
+        }
+      });
+
+      it('a pane that changes between the witness\'s two reads is not ready', async () => {
+        await serve();
+        channel(LAUNCH_PANE);
+        const screen = pane(() => (screen.log.length % 2 === 1 ? PANES.composer : MOVED));
+        const { answer } = await gate(screen);
+        assert.equal(answer.ready, false);
+        assert.match(answer.observation, /the pane changed between two reads a second apart/);
+      });
+
+      it('a thread that turns busy after the pane was witnessed is not ready', async () => {
+        await serve();
+        channel(LAUNCH_PANE);
+        const screen = pane();
+        screen.afterWitness = () => { server.state.threadStatus = { type: 'active', activeFlags: [] }; };
+        const { answer } = await gate(screen, { windowMs: 1000 });
+        assert.equal(answer.ready, false);
+        assert.equal(answer.unavailable, false);
+        assert.match(answer.observation, /the launch's thread was active, not idle/);
+      });
+
+      it('a thread that is not idle, or not there yet, is not ready, and the pane is not consulted', async () => {
+        await serve();
+        channel(LAUNCH_PANE);
+        server.state.threadStatus = { type: 'active', activeFlags: [] };
+        let screen = pane();
+        let r = await gate(screen);
+        assert.match(r.answer.observation, /the launch's thread was active, not idle/);
+        assert.deepEqual(screen.log, []);
+        server.close();
+        await serve({ 'thread/loaded/list': () => ({ data: [], nextCursor: null }) });
+        store.getDb().prepare('DELETE FROM startup_control_channels').run();
+        channel(LAUNCH_PANE);
+        screen = pane();
+        r = await gate(screen);
+        assert.equal(r.answer.unavailable, false);
+        assert.match(r.answer.observation, /has not opened a thread for the project directory yet/);
+        assert.deepEqual(screen.log, []);
+      });
+
+      it('becomes ready when the pane does: the opening screen, then the composer', async () => {
+        await serve();
+        channel(LAUNCH_PANE);
+        const screen = pane(PANES.openingScreen);
+        const { answer, looks } = await gate(screen, { onWait: (n) => { if (n === 2) screen.frame = PANES.composer; } });
+        assert.deepEqual(answer, { ready: true });
+        assert.equal(looks, 3);
+      });
+
+      it('at the window\'s end the answer is the LAST thing observed, not the first', async () => {
+        await serve();
+        channel(LAUNCH_PANE);
+        const screen = pane(PANES.openingScreen);
+        const { answer } = await gate(screen, { onWait: (n) => { if (n === 1) screen.frame = PANES.updatePrompt; } });
+        assert.match(answer.observation, /update prompt/);
+      });
+
+      it('A PROOF THAT COULD NOT BE MADE is unavailable, never a pane seen unready: an unreadable pane, a second pane, no witness', async () => {
+        const cases = [
+          ['an unreadable pane', () => pane(new Error('no server running')), /the pane could not be read/],
+          ['a second pane', () => Object.assign(pane(), { pin: new Error('2 panes') }), /does not have exactly one pane to read/],
+          ['no witness at all', () => null, /this session's pane could not be consulted/]
+        ];
+        for (const [name, build, said] of cases) {
+          await serve();
+          store.getDb().prepare('DELETE FROM startup_control_channels').run();
+          channel(LAUNCH_PANE);
+          const { answer, looks } = await gate(build());
+          assert.equal(answer.ready, false, name);
+          assert.equal(answer.unavailable, true, name);
+          assert.match(answer.observation, said, name);
+          assert.ok(!/not at an empty composer/.test(answer.observation), `${name}: it does not say the pane was seen`);
+          assert.equal(looks, 4, `${name}: it may clear, so the gate keeps looking`);
+          server.close();
+          server = null;
+        }
+      });
+
+      it('a pane that is not the launch\'s own, another tmux server, or no pane on record: unavailable, and answered at once because waiting cannot clear it', async () => {
+        const cases = [
+          ['a replacement pane', LAUNCH_PANE, () => Object.assign(pane(), { pin: '%40' }), /the session's pane is not the pane this launch created/],
+          ['another tmux server', LAUNCH_PANE, () => pane(otherServer()), /the tmux server is not the one this launch's pane was created in/],
+          ['no pane on record', {}, () => pane(), /the pane this launch created was not recorded/]
+        ];
+        for (const [name, recorded, build, said] of cases) {
+          await serve();
+          store.getDb().prepare('DELETE FROM startup_control_channels').run();
+          channel(recorded);
+          const { answer, looks } = await gate(build());
+          assert.equal(answer.ready, false, name);
+          assert.equal(answer.unavailable, true, name);
+          assert.match(answer.observation, said, name);
+          assert.match(answer.remedy, /relaunch the session/, name);
+          assert.equal(looks, 1, name);
+          assert.equal('lasting' in answer, false);
+          server.close();
+          server = null;
+        }
+      });
+
+      it('a channel that cannot answer is unavailable: no app-server, a thread list that fails, a thread re-read that fails', async () => {
+        channel(LAUNCH_PANE);
+        let r = await gate(pane());
+        assert.equal(r.answer.unavailable, true);
+        assert.match(r.answer.observation, /the app-server did not answer/);
+        assert.equal(r.looks, 4);
+
+        await serve({ 'thread/loaded/list': () => { throw Object.assign(new Error('internal /private/secret'), { code: -32603 }); } });
+        store.getDb().prepare('DELETE FROM startup_control_channels').run();
+        channel(LAUNCH_PANE);
+        r = await gate(pane());
+        assert.equal(r.answer.unavailable, true);
+        assert.match(r.answer.observation, /the loaded threads could not be listed over the channel/);
+        assert.ok(!r.answer.observation.includes('/private/secret'));
+        server.close();
+
+        let fail = false;
+        await serve({ 'thread/read': (p) => { if (fail) throw Object.assign(new Error('gone'), { code: -32603 }); return { thread: { id: p.threadId, cwd: PROJECT_PATH, status: { type: 'idle' } } }; } });
+        store.getDb().prepare('DELETE FROM startup_control_channels').run();
+        channel({ ...LAUNCH_PANE, threadId: THREAD });
+        const screen = pane();
+        screen.afterWitness = () => { fail = true; };
+        r = await gate(screen, { windowMs: 1000 });
+        assert.equal(r.answer.unavailable, true);
+        assert.match(r.answer.observation, /the launch's thread could not be read over the channel/);
+      });
+
+      it('no open channel, or a channel of another launch: unavailable, at once', async () => {
+        await serve();
+        let r = await gate(pane());
+        assert.equal(r.answer.unavailable, true);
+        assert.match(r.answer.observation, /no open native channel/);
+        assert.equal(r.looks, 1);
+        channel(LAUNCH_PANE);
+        r = await gate(pane(), { sequenceId: 999 });
+        assert.match(r.answer.observation, /belongs to a different launch/);
+        assert.equal(r.looks, 1);
+      });
+
+      it('a profile with no starting patterns never sets the gate ready: the pane is not consulted, and the sentence names the two fields, not an unavailable proof', async () => {
+        await serve();
+        channel(LAUNCH_PANE);
+        const realProfile = codex._seams.wakeProfile;
+        const { headerRe, startingRe, ...undeclared } = realProfile('codex');
+        void headerRe; void startingRe;
+        try {
+          codex._seams.wakeProfile = () => undeclared;
+          const screen = pane();
+          const { answer, looks } = await gate(screen);
+          assert.equal(answer.ready, false);
+          assert.equal(answer.unavailable, false, 'a configuration fault is not an unavailable proof');
+          assert.match(answer.whole, /declares no capabilities\.wake\.headerPattern and startingPattern/);
+          assert.match(answer.whole, /This does not clear by itself/);
+          assert.deepEqual(screen.log, []);
+          assert.equal(looks, 1);
+        } finally {
+          codex._seams.wakeProfile = realProfile;
+        }
+      });
+
+      it('the gate is the adapter\'s own window: 90 seconds, as the gate it replaces for this launch', () => {
+        assert.equal(codex._internal.LAUNCH_READY_WINDOW_MS, 90000);
+        assert.equal(codex._internal.LAUNCH_READY_WINDOW_MS, require('../lib/sessions').PANE_READY_TIMEOUT_MS);
+      });
+    });
+
+    describe('the automatic fire reads the pane and the thread once more, immediately before turn/start', () => {
+      /** Finish the turn once the adapter has read it back. */
+      const completeTheTurn = () => {
+        let sequenced = false;
+        server.on('request', ({ method }) => {
+          if (method !== 'thread/turns/list' || !server.state.turnStarted || sequenced) return;
+          sequenced = true;
+          server.notify('item/completed', { threadId: THREAD, turnId: TURN, item: server.state.userItem, completedAtMs: 1 });
+          server.state.turn = finishedTurn('completed', { durationMs: 10 });
+          server.notify('turn/completed', { threadId: THREAD, turn: server.state.turn });
+        });
+      };
+      /**
+       * The launch's automatic fire, as the fire service sends it.
+       * @param {object} f - From `pendingFire`.
+       * @param {object} screen - From `pane`.
+       * @param {object} [over] - Input overrides.
+       * @returns {Promise<object>} The settled row.
+       */
+      const fireAuto = (f, screen, over = {}) => codex.fire({
+        session, project, sequenceId: 100, promptText: PROMPT, promptTextDigest: PROMPT_DIGEST, payloadDigest: DIGEST, onUpdate: f.onUpdate,
+        trustException: { absentOn: ['0.156.1'], witness: screen.witness }, automatic: true, paneWitness: screen.witness, ...over
+      }, { reconnectPauseMs: 10 }).settled;
+      const FOLDERS = [['a trusted folder', {}], ['a folder with no trust entry', NO_ENTRY]];
+      /** The fire rows written for the launch. */
+      const fireRows = () => store.getDb().prepare('SELECT COUNT(*) AS n FROM startup_prompt_fires').get().n;
+
+      for (const [folder, handlers] of FOLDERS) {
+        const noEntry = handlers === NO_ENTRY;
+        /** A pane that is the composer for the allowance's two reads and `then` at the send-time read. */
+        const changedAtTheSend = (then) => pane((kind) => (kind === 'read-once' ? then : PANES.composer));
+
+        describe(folder, () => {
+          it('an unchanged pane and thread: exactly one turn/start, after one fresh pane read and one more thread read', async () => {
+            await serve(handlers);
+            completeTheTurn();
+            channel(LAUNCH_PANE);
+            const screen = pane();
+            let threadReadsAtLastLook = null;
+            screen.afterWitness = (single) => { if (single) threadReadsAtLastLook = server.calls('thread/read').length; };
+            const f = pendingFire();
+            const settled = await fireAuto(f, screen);
+            assert.equal(settled.outcome, 'applied');
+            assert.equal(server.calls('turn/start').length, 1);
+            assert.deepEqual(screen.log, noEntry ? ['read', 'read', 'read-once'] : ['read-once'], 'the allowance\'s two reads where there is no entry, then ONE read at the send');
+            const order = server.received.filter((m) => m.method !== undefined && m.id !== undefined).map((m) => m.method);
+            assert.equal(order.slice(0, order.indexOf('turn/start')).filter((m) => m === 'thread/read').length, threadReadsAtLastLook + 1, 'exactly one thread read between the last pane read and the send');
+            assert.equal(order[order.indexOf('turn/start') - 1], 'thread/read', 'and nothing is asked of the engine between that read and the send');
+            assert.equal(fireRows(), 1);
+          });
+
+          it('A STALE READY GATE IS NOT A PERMISSION: text typed into the composer after the gate passed is not sent over', async () => {
+            await serve(handlers);
+            channel(LAUNCH_PANE);
+            const f = pendingFire();
+            const settled = await fireAuto(f, changedAtTheSend(TYPED));
+            assert.equal(settled.outcome, 'blocked');
+            assert.equal(settled.reasonCode, 'pane_not_ready');
+            assert.match(settled.reason, /^The pane was ready at the launch gate and was not immediately before the send, so nothing was sent: the pane was not at an empty composer: /);
+            assert.ok(settled.reason.endsWith('Press Fire startup prompt once the pane shows an empty composer.'), settled.reason);
+            assert.equal(server.calls('turn/start').length, 0);
+            assert.equal(fireRows(), 1);
+            assert.deepEqual(f.patches.map((p) => p.outcome), ['blocked'], 'one row, settled once, never dispatching');
+          });
+
+          it('a dialog that came up before the send (the update prompt, the trust prompt) stops it, named', async () => {
+            for (const [frame, id] of [[PANES.updatePrompt, 'update'], [PANES.trustPrompt, 'folder-trust']]) {
+              await serve(handlers);
+              store.getDb().prepare('DELETE FROM startup_control_channels').run();
+              store.getDb().prepare('DELETE FROM startup_prompt_fires').run();
+              channel(LAUNCH_PANE);
+              const settled = await fireAuto(pendingFire(), changedAtTheSend(frame));
+              assert.equal(settled.outcome, 'blocked', id);
+              assert.equal(settled.reasonCode, 'pane_not_ready', id);
+              assert.match(settled.reason, new RegExp(`Codex was showing its ${id} prompt in the pane \\(read from the pane\\)`));
+              assert.match(settled.reason, /Then press Fire startup prompt\.$/);
+              assert.ok(settled.reason.length <= 500);
+              assert.equal(server.calls('turn/start').length, 0, id);
+              assert.equal(fireRows(), 1);
+              server.close();
+              server = null;
+            }
+          });
+
+          it('a busy marker drawn before the send stops it', async () => {
+            await serve(handlers);
+            channel(LAUNCH_PANE);
+            const settled = await fireAuto(pendingFire(), changedAtTheSend(BUSY));
+            assert.equal(settled.reasonCode, 'pane_not_ready');
+            assert.match(settled.reason, /a turn is running/);
+            assert.equal(server.calls('turn/start').length, 0);
+          });
+
+          it('a thread that turns active after the last pane read stops it', async () => {
+            await serve(handlers);
+            channel(LAUNCH_PANE);
+            const screen = pane();
+            screen.afterWitness = (single) => { if (single) server.state.threadStatus = { type: 'active', activeFlags: [] }; };
+            const settled = await fireAuto(pendingFire(), screen);
+            assert.equal(settled.outcome, 'blocked');
+            assert.equal(settled.reasonCode, 'pane_not_ready');
+            assert.match(settled.reason, /the launch's thread was active, not idle/);
+            assert.equal(server.calls('turn/start').length, 0);
+            assert.equal(fireRows(), 1);
+          });
+
+          it('A LAST LOOK THAT COULD NOT BE MADE sends nothing and says the proof was unavailable: the pane unreadable, another tmux server, the thread read unanswered', async () => {
+            const cases = [
+              ['the pane cannot be read', () => changedAtTheSend(new Error('no server running: /private/secret/sock'))],
+              ['the tmux server is another one', () => changedAtTheSend(otherServer())],
+              ['the channel does not answer the thread read', () => {
+                const screen = pane();
+                screen.afterWitness = (single) => { if (single) screen.failThread = true; };
+                return screen;
+              }]
+            ];
+            for (const [name, build] of cases) {
+              const screen = build();
+              await serve({ ...handlers, 'thread/read': (p) => { if (screen.failThread) throw Object.assign(new Error('gone /private/secret'), { code: -32603 }); return { thread: { id: p.threadId, cwd: PROJECT_PATH, status: { type: 'idle' } } }; } });
+              store.getDb().prepare('DELETE FROM startup_control_channels').run();
+              store.getDb().prepare('DELETE FROM startup_prompt_fires').run();
+              channel(LAUNCH_PANE);
+              const settled = await fireAuto(pendingFire(), screen);
+              assert.equal(settled.outcome, 'blocked', name);
+              assert.equal(settled.reasonCode, 'pane_not_ready', name);
+              assert.match(settled.reason, /^The proof that the pane still showed an empty composer and an idle thread was unavailable immediately before the send, so nothing was sent: /, name);
+              assert.ok(!/was ready at the launch gate and was not/.test(settled.reason), `${name}: not worded as a pane seen unready`);
+              assert.ok(!settled.reason.includes('/private/secret'), name);
+              assert.equal(server.calls('turn/start').length, 0, name);
+              assert.equal(fireRows(), 1, name);
+              server.close();
+              server = null;
+            }
+          });
+
+          it('no witness for the last look, or a profile with no starting patterns, sends nothing', async () => {
+            await serve(handlers);
+            channel(LAUNCH_PANE);
+            const screen = pane();
+            let settled = await fireAuto(pendingFire(), screen, { paneWitness: undefined });
+            assert.equal(settled.reasonCode, 'pane_not_ready');
+            assert.match(settled.reason, /was unavailable immediately before the send.*this session's pane could not be consulted/);
+            assert.equal(server.calls('turn/start').length, 0);
+            if (noEntry) return;
+            const realProfile = codex._seams.wakeProfile;
+            const { headerRe, startingRe, ...undeclared } = realProfile('codex');
+            void headerRe; void startingRe;
+            try {
+              codex._seams.wakeProfile = () => undeclared;
+              store.getDb().prepare('DELETE FROM startup_prompt_fires').run();
+              settled = await fireAuto(pendingFire(), pane());
+              assert.equal(settled.reasonCode, 'pane_not_ready');
+              assert.match(settled.reason, /^The engine profile in force for this session \(codex\) declares no capabilities\.wake\.headerPattern and startingPattern/);
+              assert.ok(!/unavailable/.test(settled.reason));
+              assert.equal(server.calls('turn/start').length, 0);
+            } finally {
+              codex._seams.wakeProfile = realProfile;
+            }
+          });
+        });
+      }
+
+      it('a long observation gives way before the remedy does: the stored reason keeps its last sentence', async () => {
+        await serve();
+        channel(LAUNCH_PANE);
+        const long = { shown: false, dialog: null, why: `the pane showed ${'something very long '.repeat(40)}` };
+        const settled = await fireAuto(pendingFire(), { witness: async () => long });
+        assert.equal(settled.reason.length, 500);
+        assert.ok(settled.reason.includes('…'));
+        assert.ok(settled.reason.endsWith('Press Fire startup prompt once the pane shows an empty composer.'));
+      });
+
+      it('AN OPERATOR\'S FIRE IS UNCHANGED: in a trusted folder the pane is never consulted, whatever it shows, and only a literal `automatic: true` is the launch\'s fire', async () => {
+        for (const automatic of [undefined, false, 'true', 1]) {
+          await serve();
+          completeTheTurn();
+          store.getDb().prepare('DELETE FROM startup_control_channels').run();
+          // A launch's prompt revision is applied once; each pass is its own launch's fire.
+          store.getDb().prepare('DELETE FROM startup_prompt_fires').run();
+          channel(LAUNCH_PANE);
+          const screen = pane(PANES.updatePrompt);
+          const settled = await fireAuto(pendingFire(), screen, { automatic });
+          assert.equal(settled.outcome, 'applied', String(automatic));
+          assert.deepEqual(screen.log, [], String(automatic));
+          server.close();
+          server = null;
+        }
+      });
+    });
+  });
+
   describe('observeActivity: a read-only view of the launch thread (#1628)', () => {
     /** Process-identity seams under which pid 4242 IS the recorded app-server. */
     const ours = {

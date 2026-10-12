@@ -35,6 +35,32 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-12 — #2059: a native Codex launch is gated by its idle thread and its pane, not a status-line word
+
+<!-- prawduct: type=bugfix | scope=codex-launch-gate-2059 -->
+
+#2059 Chunk 03. Branch `feat/2059-03-codex-launch-gate`, from `origin/main` `d3c02d6f`. The issue is an outside contributor's and stays open.
+
+Visual change: yes (the automatic fire's row in Launch readiness reads `applied` where it read `blocked`, and its blocked sentence changes)
+
+**Why.** A launch on Codex's native channel got its first turn only after `_awaitPaneReady` saw the text `· Ready ·` in the pane. That text is an item of a status line the operator configures, and Codex's default status line does not carry it. Measured on a signed-in 0.156.1 with the defaults (#2186 Chunk 01's probe): the pane reached an empty composer, the thread was idle, and the launch waited 90 seconds, recorded `blocked (pane_not_ready)` and sent nothing. A native launch also withholds the prime paste and the kickoff, so nothing else started the session.
+
+**What changed.**
+
+- `lib/startup-control-codex.js`: a new optional adapter method, `awaitLaunchReady`. Inside the same 90-second window it looks, about every 1.5 seconds, for both proofs at once: the launch's one thread is in the project directory and idle, and the pane the launch created positively shows an empty composer on the existing witness's two reads a second apart, with the thread read idle again afterwards (Architect A175 R6, R7). An idle thread alone is never ready. It reads no account, quota or trust: those are the fire's.
+- **A ready gate is not a permission to send (A175 R7, R8).** The launch's automatic fire reads the pane once more (one fresh read, no second's wait) and the thread once more immediately before `turn/start`, in a trusted folder as much as one with no trust entry. A pane or thread that changed, or a read that could not be made, sends nothing: one `blocked (pane_not_ready)` row. The read sits before the row is marked `dispatching`, because the store allows no `dispatching` to `blocked` transition; one synchronous row update stands between it and the send. An operator's Fire is unchanged and is told apart by a literal `automatic: true` the fire service sets from the caller it resolved.
+- **One check, three callers.** `_paneAndThread` is the pane witness followed by the thread re-read. The launch gate, the fire into a folder with no trust entry, and the send-time read all call it; `_withoutTrustEntry` keeps its own sentences and reason codes, byte for byte, and its existing tests pass unedited. It takes the channel's engine id, so a profile with no starting patterns never sets the gate ready and never sends, with the sentence that names the two fields. `_launchThread` is the thread selection lifted out of `_readiness` for the gate to share.
+- `lib/startup-control.js`: `awaitLaunchReady`, the facade. `unsupported` only when the engine's adapter does not have the method. An adapter that has it and throws, times out (the window plus 15 seconds), answers nonsense, or whose profile or session cannot be read, is `unknown`: a different value, never read as unsupported (A175 R10).
+- `lib/launch-bootstrap.js`: a native launch asks the adapter first and uses `_awaitPaneReady` only on `unsupported`. On anything else that is not ready it fails closed with no send and the marker is never consulted, even when the pane shows it.
+- `lib/startup-prompt.js`: `launchGate` builds the witness and asks the facade, so the gate and the fire read the same pane through the same profiles. The pane witness the service builds now takes `single` from the adapter and marks an answer `unavailable` when the pane could not be pinned or read, which it knows because the two tmux calls go through it. The `pane_not_ready` sentence for an adapter-proved gate gives the last thing actually observed and the Fire remedy; where the pane or the channel could not be read it says the proof was unavailable and never that the pane was seen unready (the decider's `2059c3 same code`). The marker gate's sentence is unchanged.
+- `lib/pane-witness.js`: `composerShownOnce`, one read. It is `composerShown` handed a single capture for both of its reads, so no rule is written twice; `_readOnce` and `composerShown` are not edited.
+
+**Not touched, and checked so:** `lib/sessions.js` `_awaitPaneReady`, `test/prime-readiness-gate.test.js`, `lib/medusa-wake.js`, every existing rule in `lib/pane-witness.js`. Every engine but Codex, and every legacy launch, takes the path it took.
+
+**Limits.** A Codex status line configured down to one item has no ` · ` and is refused by the witness, as before; such a launch needs a Fire by hand. A misaligned capture is worded "the pane was not at an empty composer: the pane and its cursor could not be read row for row" and not as an unavailable proof: the witness gives no flag for it and its rules were not to be edited here. The legacy (non-native) Codex paste still waits on the marker; not this chunk.
+
+**Tests.** The gate over a fake app-server and the real witness on whole captures: ready on the default and on custom status lines; each of the trust, update and opening screens, typed text, a running turn, a single-item status line, a pane that changes between reads, a thread that turns busy after the witness, a second pane, a replaced pane, another tmux server, an unreadable pane, an unanswering channel, as named refusals. The send-time read, each case in a trusted folder and in one with no entry. Fifteen guards were broken one at a time and each seen red. `test/startup-prompt-service.test.js` is outside the plan's list and was added to with the Integrator's leave, additions only.
+
 ## 2026-10-12 — #2323: the server reads a watched check and records its result
 
 <!-- prawduct: type=feature | scope=2323-check-watch-wake -->

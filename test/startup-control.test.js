@@ -339,3 +339,86 @@ describe('declaresObserver: which engines are meant to be judged by their channe
     assert.equal(sc.declaresObserver('x', profile({ adapter: 'fake', verifiedVersions: ['9.9.9'] }), observing), true);
   });
 });
+
+describe('awaitLaunchReady: the generic facade over the optional launch-readiness read (#2059)', () => {
+  const getProfile = (value) => () => profile(value);
+  const session = { id: 5, projectId: 1, engineId: 'eng', tmuxSession: 'tc-eng' };
+  const project = { id: 1, path: '/p' };
+  /**
+   * Ask the facade about an engine whose adapter is `adapter`.
+   * @param {object} adapter - The registered adapter.
+   * @param {object} [over] - Target overrides.
+   * @returns {Promise<object>}
+   */
+  const ask = (adapter, over = {}) => sc.awaitLaunchReady({ engineId: 'eng', getProfile: getProfile(block()), session, project, sequenceId: 9, ...over }, { fake: adapter });
+
+  it('UNSUPPORTED is only an adapter that does not have the method: none declared, none registered, or one without it', async () => {
+    assert.deepEqual(await ask({ installedVersion: () => '1.0.0' }), { answer: 'unsupported' });
+    assert.deepEqual(await ask({ awaitLaunchReady: 'yes' }), { answer: 'unsupported' }, 'a property that is not a function is not the method');
+    assert.deepEqual(await sc.awaitLaunchReady({ engineId: 'eng', getProfile: getProfile(undefined), session, project }, {}), { answer: 'unsupported' });
+    assert.deepEqual(await sc.awaitLaunchReady({ engineId: 'eng', getProfile: getProfile(block({ adapter: 'absent' })), session, project }, {}), { answer: 'unsupported' });
+    assert.deepEqual(await sc.awaitLaunchReady({ engineId: 'eng', getProfile: getProfile(block({ adapter: 'toString' })), session, project }, {}), { answer: 'unsupported' }, 'an inherited property is not an adapter');
+  });
+
+  it('passes the adapter\'s ready and not-ready answers through, and hands it the launch and the witness', async () => {
+    const seen = [];
+    const witness = async () => ({ shown: true });
+    const adapter = { awaitLaunchReady: async (input, deps) => { seen.push({ input, deps }); return { ready: true }; } };
+    assert.deepEqual(await ask(adapter, { witness, windowMs: 50, adapterDeps: { pollMs: 1 } }), { answer: 'ready' });
+    assert.deepEqual(seen[0].input, { session, project, sequenceId: 9, witness, windowMs: 50 });
+    assert.deepEqual(seen[0].deps, { pollMs: 1 });
+
+    const held = { awaitLaunchReady: async () => ({ ready: false, unavailable: false, observation: 'the composer holds typed text', remedy: 'Press Fire.' }) };
+    assert.deepEqual(await ask(held), { answer: 'not-ready', unavailable: false, observation: 'the composer holds typed text', remedy: 'Press Fire.', whole: null });
+    const unread = { awaitLaunchReady: async () => ({ ready: false, unavailable: true, observation: 'the pane could not be read', whole: 'A whole sentence.' }) };
+    assert.deepEqual(await ask(unread), { answer: 'not-ready', unavailable: true, observation: 'the pane could not be read', remedy: null, whole: 'A whole sentence.' });
+  });
+
+  it('UNKNOWN, never unsupported, when an adapter that HAS the method cannot answer: it throws, rejects, answers nonsense, or the launch cannot be read', async () => {
+    const unknowns = [
+      await ask({ awaitLaunchReady: () => { throw new Error('boom /private/path'); } }),
+      await ask({ awaitLaunchReady: async () => { throw new Error('socket gone'); } }),
+      await ask({ awaitLaunchReady: async () => null }),
+      await ask({ awaitLaunchReady: async () => ({}) }),
+      await ask({ awaitLaunchReady: async () => ({ ready: 'true' }) }),
+      await ask({ awaitLaunchReady: async () => ({ ready: false }) }),
+      await ask({ awaitLaunchReady: async () => ({ ready: true }) }, { session: null }),
+      await ask({ awaitLaunchReady: async () => ({ ready: true }) }, { project: null })
+    ];
+    for (const u of unknowns) {
+      assert.equal(u.answer, 'unknown');
+      assert.notEqual(u.answer, 'unsupported');
+      assert.equal(u.unavailable, true, 'an answer that could not be had is a proof that could not be made');
+      assert.ok(u.observation && !u.observation.includes('/private/path'), 'and the fault\'s own text stays in the log');
+    }
+  });
+
+  it('a profile that cannot be read is unknown: nothing says the adapter lacks the method', async () => {
+    const r = await sc.awaitLaunchReady({ engineId: 'eng', getProfile: () => { throw new Error('EACCES'); }, session, project }, {});
+    assert.equal(r.answer, 'unknown');
+  });
+
+  it('an adapter that does not come back within the window and its grace is unknown, and a late answer changes nothing', async (t) => {
+    // The facade's own timer does not hold the process open; this one stands in for the server's.
+    const alive = setInterval(() => {}, 1000);
+    t.after(() => clearInterval(alive));
+    let release;
+    const adapter = { awaitLaunchReady: () => new Promise((resolve) => { release = resolve; }) };
+    const r = await ask(adapter, { windowMs: 5, graceMs: 5 });
+    assert.equal(r.answer, 'unknown');
+    assert.match(r.observation, /did not answer the launch-readiness read in time/);
+    release({ ready: true });
+    const rejecting = { awaitLaunchReady: () => new Promise((resolve, reject) => { setTimeout(() => reject(new Error('late')), 20); }) };
+    assert.equal((await ask(rejecting, { windowMs: 1, graceMs: 1 })).answer, 'unknown');
+    await new Promise((r2) => setTimeout(r2, 30));
+  });
+
+  it('the adapter is found by name, not by the version probe: an unverified version is still asked', async () => {
+    const adapter = { installedVersion: () => '9.9.9', awaitLaunchReady: async () => ({ ready: true }) };
+    assert.deepEqual(await ask(adapter), { answer: 'ready' });
+  });
+
+  it('the Codex adapter implements it', () => {
+    assert.equal(typeof sc.ADAPTERS.codex.awaitLaunchReady, 'function');
+  });
+});
