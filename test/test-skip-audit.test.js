@@ -9,6 +9,10 @@ const { execFileSync } = require('node:child_process');
 
 const skipAudit = require('../scripts/test-skip-audit');
 
+// What the fixture entries below require. Any listed value would do: these
+// cases are about the audit's verdict, which does not read the field.
+const REQ = ['platform:darwin'];
+
 /**
  * Build a junit document in the shape node:test's reporter emits.
  *
@@ -74,10 +78,92 @@ describe('scripts/test-skip-audit — parseJunit', () => {
 describe('scripts/test-skip-audit — compileLedger', () => {
   it('compiles well-formed entries into regexes', () => {
     const entries = skipAudit.compileLedger({ entries: [
-      { id: 'a', match: '^outer > skips', why: 'w', runsWhere: 'r' }
+      { id: 'a', match: '^outer > skips', why: 'w', runsWhere: 'r', requires: REQ }
     ] });
     assert.equal(entries.length, 1);
     assert.ok(entries[0].match instanceof RegExp);
+  });
+
+  it('carries each entry\'s requires, as a copy the caller cannot reach the ledger through', () => {
+    const ledger = { entries: [
+      { id: 'a', match: 'x', why: 'w', runsWhere: 'r', requires: ['platform:darwin', 'path:/bin/zsh', 'command:expect'] }
+    ] };
+    const [entry] = skipAudit.compileLedger(ledger);
+    assert.deepEqual(entry.requires, ['platform:darwin', 'path:/bin/zsh', 'command:expect']);
+    entry.requires.push('command:caddy');
+    assert.equal(ledger.entries[0].requires.length, 3);
+  });
+
+  it('accepts every value on the closed list', () => {
+    for (const value of skipAudit.LEDGER_REQUIREMENTS) {
+      const [entry] = skipAudit.compileLedger({ entries: [
+        { id: 'a', match: 'x', why: 'w', runsWhere: 'r', requires: [value] }
+      ] });
+      assert.deepEqual(entry.requires, [value]);
+    }
+  });
+
+  describe('requires — an entry that does not say what its tests need is an invalid ledger', () => {
+    /**
+     * Compile a one-entry ledger whose `requires` is `value`.
+     *
+     * @param {*} value - What to put in `requires`; `undefined` leaves the field out
+     * @returns {Array<object>} The compiled entries
+     */
+    function withRequires(value) {
+      const entry = { id: 'tier', match: 'x', why: 'w', runsWhere: 'r' };
+      if (value !== undefined) entry.requires = value;
+      return skipAudit.compileLedger({ entries: [entry] });
+    }
+
+    it('refuses an entry with no requires, naming the entry', () => {
+      assert.throws(() => withRequires(undefined), /entry "tier" is missing `requires`/);
+    });
+
+    it('refuses a requires that is not an array', () => {
+      for (const notArray of ['platform:darwin', null, { 'platform:darwin': true }, 1]) {
+        assert.throws(() => withRequires(notArray), /entry "tier" is missing `requires`/);
+      }
+    });
+
+    it('refuses an empty requires', () => {
+      assert.throws(() => withRequires([]), /entry "tier" has an empty `requires`/);
+    });
+
+    it('refuses a value that is not a string, naming it', () => {
+      assert.throws(() => withRequires(['platform:darwin', 7]), /entry "tier" has a `requires` value that is not a string: 7/);
+      assert.throws(() => withRequires([null]), /not a string: null/);
+      assert.throws(() => withRequires([['platform:darwin']]), /not a string/);
+    });
+
+    it('refuses a repeated value, naming it', () => {
+      assert.throws(
+        () => withRequires(['command:caddy', 'platform:darwin', 'command:caddy']),
+        /entry "tier" repeats the `requires` value "command:caddy"/
+      );
+    });
+
+    it('refuses a value off the closed list, naming it and the list', () => {
+      assert.throws(() => withRequires(['platform:linux']), /entry "tier" has an unknown `requires` value "platform:linux"; the accepted values are platform:darwin, /);
+    });
+
+    it('path: and command: are not open families — only the listed spellings pass', () => {
+      assert.throws(() => withRequires(['path:/bin/bash']), /unknown `requires` value "path:\/bin\/bash"/);
+      assert.throws(() => withRequires(['command:docker']), /unknown `requires` value "command:docker"/);
+    });
+
+    it('refuses a negation, an alternative and a near miss — no value is read loosely', () => {
+      for (const loose of ['!platform:darwin', 'command:caddy|command:expect', 'Platform:Darwin', ' platform:darwin', '']) {
+        assert.throws(() => withRequires([loose]), /unknown `requires` value/, loose);
+      }
+    });
+
+    it('one bad entry fails the whole ledger, wherever it sits', () => {
+      assert.throws(() => skipAudit.compileLedger({ entries: [
+        { id: 'good', match: 'x', why: 'w', runsWhere: 'r', requires: REQ },
+        { id: 'bad', match: 'y', why: 'w', runsWhere: 'r' }
+      ] }), /entry "bad" is missing `requires`/);
+    });
   });
 
   it('refuses a ledger that is not an entries array', () => {
@@ -87,7 +173,7 @@ describe('scripts/test-skip-audit — compileLedger', () => {
 
   it('refuses an entry missing id, match, why, or runsWhere — a half-loaded ledger half-checks', () => {
     for (const missing of ['id', 'match', 'why', 'runsWhere']) {
-      const entry = { id: 'a', match: 'x', why: 'w', runsWhere: 'r' };
+      const entry = { id: 'a', match: 'x', why: 'w', runsWhere: 'r', requires: REQ };
       delete entry[missing];
       assert.throws(() => skipAudit.compileLedger({ entries: [entry] }), new RegExp(missing));
     }
@@ -95,16 +181,16 @@ describe('scripts/test-skip-audit — compileLedger', () => {
 
   it('refuses duplicate ids', () => {
     assert.throws(() => skipAudit.compileLedger({ entries: [
-      { id: 'a', match: 'x', why: 'w', runsWhere: 'r' },
-      { id: 'a', match: 'y', why: 'w', runsWhere: 'r' }
+      { id: 'a', match: 'x', why: 'w', runsWhere: 'r', requires: REQ },
+      { id: 'a', match: 'y', why: 'w', runsWhere: 'r', requires: REQ }
     ] }), /two entries with id "a"/);
   });
 });
 
 describe('scripts/test-skip-audit — audit', () => {
   const entries = skipAudit.compileLedger({ entries: [
-    { id: 'reasoned', match: '^outer > skips with reason$', why: 'w', runsWhere: 'r' },
-    { id: 'inner', match: '^outer > inner & deeper > ', why: 'w', runsWhere: 'r' }
+    { id: 'reasoned', match: '^outer > skips with reason$', why: 'w', runsWhere: 'r', requires: REQ },
+    { id: 'inner', match: '^outer > inner & deeper > ', why: 'w', runsWhere: 'r', requires: REQ }
   ] });
 
   it('passes when every skip matches a ledger entry, grouping by entry', () => {
@@ -140,7 +226,7 @@ describe('scripts/test-skip-audit — audit', () => {
 describe('scripts/test-skip-audit — formatReport', () => {
   it('leads with what was certified and lists unknown skips under a failing heading', () => {
     const entries = skipAudit.compileLedger({ entries: [
-      { id: 'reasoned', match: '^outer > skips with reason$', why: 'Needs a host.', runsWhere: 'dev boxes.' }
+      { id: 'reasoned', match: '^outer > skips with reason$', why: 'Needs a host.', runsWhere: 'dev boxes.', requires: REQ }
     ] });
     const result = skipAudit.audit(skipAudit.parseJunit(NESTED), entries);
     const text = skipAudit.formatReport(result, entries);
@@ -152,9 +238,9 @@ describe('scripts/test-skip-audit — formatReport', () => {
 
   it('names ledger entries that matched nothing — the ledger\'s lifecycle signal', () => {
     const entries = skipAudit.compileLedger({ entries: [
-      { id: 'reasoned', match: '^outer > skips with reason$', why: 'w', runsWhere: 'r' },
-      { id: 'inner', match: '^outer > inner & deeper > ', why: 'w', runsWhere: 'r' },
-      { id: 'retired-tier', match: '^gone > ', why: 'w', runsWhere: 'r' }
+      { id: 'reasoned', match: '^outer > skips with reason$', why: 'w', runsWhere: 'r', requires: REQ },
+      { id: 'inner', match: '^outer > inner & deeper > ', why: 'w', runsWhere: 'r', requires: REQ },
+      { id: 'retired-tier', match: '^gone > ', why: 'w', runsWhere: 'r', requires: REQ }
     ] });
     const text = skipAudit.formatReport(skipAudit.audit(skipAudit.parseJunit(NESTED), entries), entries);
     assert.match(text, /no skipped test on this host .*: retired-tier$/m);
@@ -201,8 +287,8 @@ describe('scripts/test-skip-audit — main', () => {
   }
 
   const fullLedger = { entries: [
-    { id: 'reasoned', match: '^outer > skips with reason$', why: 'w', runsWhere: 'r' },
-    { id: 'inner', match: '^outer > inner & deeper > ', why: 'w', runsWhere: 'r' }
+    { id: 'reasoned', match: '^outer > skips with reason$', why: 'w', runsWhere: 'r', requires: REQ },
+    { id: 'inner', match: '^outer > inner & deeper > ', why: 'w', runsWhere: 'r', requires: REQ }
   ] };
 
   it('exits 0 and writes the same report to stdout and the step summary', () => {
@@ -226,6 +312,30 @@ describe('scripts/test-skip-audit — main', () => {
     });
     assert.equal(code, 1);
     assert.match(out, /report not found/);
+  });
+
+  it('a ledger entry without requires stops the audit before any report is read', () => {
+    const bad = { entries: [{ id: 'reasoned', match: '^outer > skips with reason$', why: 'w', runsWhere: 'r' }] };
+    assert.throws(() => run(NESTED, bad), /entry "reasoned" is missing `requires`/);
+  });
+
+  it('the command exits 1 on a ledger entry without requires, as the CI step would see it', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skip-audit-cli-'));
+    try {
+      const report = path.join(dir, 'r.xml');
+      const ledgerPath = path.join(dir, 'l.json');
+      fs.writeFileSync(report, NESTED);
+      fs.writeFileSync(ledgerPath, JSON.stringify({ entries: [
+        { id: 'reasoned', match: '^outer > ', why: 'w', runsWhere: 'r' }
+      ] }));
+      const script = path.join(__dirname, '..', 'scripts', 'test-skip-audit.js');
+      assert.throws(
+        () => execFileSync(process.execPath, [script, '--ledger', ledgerPath, report], { stdio: 'pipe' }),
+        (err) => err.status === 1 && /entry "reasoned" is missing `requires`/.test(String(err.stderr))
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('exits 1 with usage when given no report', () => {
@@ -308,9 +418,24 @@ describe('test/skip-ledger.json — the shipped ledger', () => {
     'projects > updateProject > rename — case-insensitive collision handling (#221, sibling to #188) > allows a case-only self-rename at the DB-validator level (foo-1 → Foo-1)'
   ];
 
-  it('compiles — every entry carries id, match, why and runsWhere, ids unique', () => {
+  it('compiles — every entry carries id, match, why, runsWhere and a valid requires, ids unique', () => {
     const entries = skipAudit.compileLedger(ledger);
     assert.ok(entries.length > 0);
+    assert.equal(entries.length, ledger.entries.length);
+    for (const e of entries) {
+      assert.ok(e.requires.length > 0, `${e.id}: no requires`);
+      for (const value of e.requires) {
+        assert.ok(skipAudit.LEDGER_REQUIREMENTS.includes(value), `${e.id}: ${value} is not on the closed list`);
+      }
+    }
+  });
+
+  // The one entry that is the other way round: it runs on the Linux runner and
+  // skips on a Mac's default filesystem. A reader that took it for a tier this
+  // Mac must run would fail every local run, so its requirement is pinned.
+  it('the case-only rename tier requires a case-sensitive filesystem and nothing else', () => {
+    const entry = skipAudit.compileLedger(ledger).find((e) => e.id === 'case-insensitive-fs');
+    assert.deepEqual(entry.requires, ['filesystem:case-sensitive']);
   });
 
   it('covers every known CI skip', () => {
