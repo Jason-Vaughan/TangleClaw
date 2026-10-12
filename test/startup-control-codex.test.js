@@ -428,6 +428,8 @@ describe('Codex startupControl adapter', () => {
             const settled = await fireWith(pendingFire(), { absentOn: ['0.156.1'], witness: async () => { consulted += 1; return { shown: true }; } }).settled;
             assert.equal(settled.reasonCode, 'pane_not_ready');
             assert.match(settled.reason, /headerPattern and startingPattern/);
+            assert.match(settled.reason, /The engine profile in force for this session \(codex\)/, 'names the profile by the launch\'s engine id');
+            assert.match(settled.reason, /restore those two fields in that profile/);
             assert.equal(consulted, 0, 'a pane that cannot be checked for a starting screen is not consulted');
             assert.equal(server.calls('turn/start').length, 0);
             server.close();
