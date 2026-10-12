@@ -11,7 +11,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { setLevel } = require('../lib/logger');
+const { setLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
 
@@ -19,7 +19,8 @@ const store = require('../lib/store');
 const api = require('../lib/merge-queue-api');
 const queueStore = require('../lib/merge-queue-store');
 const state = require('../lib/merge-queue-state');
-const { withQueueSlot, isQueueSlotTaken } = require('../lib/merge-queue');
+const mergeQueue = require('../lib/merge-queue');
+const { withQueueSlot, isQueueSlotTaken } = mergeQueue;
 const { GATE_STATES, standsDown } = require('../lib/auth-gate');
 const { createServer } = require('../server');
 const { operatorHeaders, bindProject, signInOperator, sendAs: sendRaw } = require('./_shared-docs-callers');
@@ -44,6 +45,7 @@ const OTHER_HEAD = 'b'.repeat(40);
 const BASE_SHA = 'c'.repeat(40);
 const CANDIDATE_SHA = 'd'.repeat(40);
 const TREE = 'e'.repeat(40);
+const LANDED_SHA = 'f'.repeat(40);
 
 describe('/api/merge-queue (#2322)', () => {
   let tmpDir;
@@ -143,6 +145,60 @@ describe('/api/merge-queue (#2322)', () => {
     gh.calls.length = 0;
     return entry;
   };
+
+  /**
+   * Empty the queue of everything unfinished, by the store's own calls, and
+   * count every landing's branches as removed, so an advance starts from a
+   * queue with nothing in front.
+   * @returns {void}
+   */
+  const emptyQueue = () => {
+    for (const waiting of queueStore.listEntries(queueId, { includeFinished: false })) {
+      const out = waiting.state === 'landing'
+        ? queueStore.failEntry(waiting.entryId, { code: 'TEST_CLEARED', actor: ownerActor() })
+        : queueStore.withdrawEntry(waiting.entryId, { reason: 'clearing the queue for a test', actor: ownerActor() });
+      assert.equal(out.ok, true, JSON.stringify(out));
+    }
+    for (const done of queueStore.listEntries(queueId)) mergeQueue._internal.branchesGone.add(done.entryId);
+    mergeQueue._internal.refExistsSeen.clear();
+  };
+
+  /**
+   * GitHub as an advance wants it, beside what `beforeEach` set up for a
+   * submit: `main` at BASE_SHA and green, a candidate that is made and whose
+   * check is green, ordinary changed files, and a merge that lands. A field of
+   * `gh` replaces one answer: `tip`, `create`, `merge`, `commit`, `compare`, or
+   * `branchCheck` as a function of the branch.
+   * @returns {void}
+   */
+  const githubForAdvance = () => {
+    const seam = (name, answer) => {
+      api._internal[name] = async (...args) => {
+        gh.calls.push([name, ...args]);
+        if (gh.during && gh.during[name]) await gh.during[name]();
+        return answer(...args);
+      };
+    };
+    seam('readRefTip', () => gh.tip || { status: 'read', sha: BASE_SHA });
+    seam('readBranchCheck', (repo, branch) => (gh.branchCheck ? gh.branchCheck(branch)
+      : { status: 'concluded', conclusion: 'success', runId: branch === 'main' ? '7000' : '7001', suiteId: '1', completedAt: '2026-10-12T10:00:00Z', app: 'github-actions' }));
+    seam('createCandidate', (repo, ref, baseSha, headSha) => gh.create
+      || { status: 'created', ref, sha: CANDIDATE_SHA, tree: TREE, parents: [baseSha, headSha], refCreated: true, stageLeft: false });
+    seam('readCompareFiles', () => gh.compare || { status: 'read', paths: ['lib/thing.js'] });
+    seam('mergePull', () => gh.merge || { status: 'merged', sha: LANDED_SHA });
+    seam('readCommit', (repo, sha) => gh.commit || { status: 'read', sha, tree: TREE, parents: [BASE_SHA, HEAD] });
+  };
+
+  /**
+   * Advance the queue as a caller.
+   * @param {object} [headers] - The caller's headers, the owner's when not given
+   * @param {object} [body] - The request body
+   * @returns {Promise<{status: number, data: any}>}
+   */
+  const advanceAs = (headers = bOwner.headers, body = {}) => sendAs(server, 'POST', '/api/merge-queue/advance', body, headers);
+
+  /** The calls made to GitHub that change something there. */
+  const githubWrites = () => gh.calls.map((c) => c[0]).filter((n) => ['createCandidate', 'discardCandidate', 'mergePull'].includes(n));
 
   before(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-merge-queue-'));
@@ -832,7 +888,266 @@ describe('/api/merge-queue (#2322)', () => {
     });
   });
 
-  describe('the owner\'s coordinator rotation fences submit and withdraw', () => {
+  describe('advancing', () => {
+    beforeEach(() => {
+      emptyQueue();
+      githubForAdvance();
+    });
+
+    it('the owner takes an entry from queued to landed, one step a call, and each answer says what the call did', async () => {
+      const entry = await submitted();
+      gh.calls.length = 0;
+      const assembled = await advanceAs();
+      assert.equal(assembled.status, 200, JSON.stringify(assembled.data));
+      assert.equal(assembled.data.step, 'assembled');
+      assert.equal(assembled.data.changed, true);
+      assert.equal(assembled.data.entry.entryId, entry.entryId);
+      assert.equal(assembled.data.entry.state, 'testing');
+      assert.deepEqual(assembled.data.entry.candidate, {
+        ref: `tc-queue/${entry.entryId}`, baseSha: BASE_SHA, sha: CANDIDATE_SHA, tree: TREE, checkRunId: null, checkConclusion: null
+      });
+      assert.equal(assembled.data.queue.queueId, queueId);
+      assert.match(assembled.data.message, /advance again once it has concluded\.$/);
+
+      const landed = await advanceAs();
+      assert.equal(landed.status, 200, JSON.stringify(landed.data));
+      assert.equal(landed.data.step, 'landed');
+      assert.equal(landed.data.entry.state, 'landed');
+      assert.deepEqual(landed.data.landed, { sha: LANDED_SHA, tree: TREE, treeMatches: true, baseMatches: true });
+      assert.equal(landed.data.queue.halt, null);
+      assert.deepEqual(gh.calls.filter((c) => c[0] === 'mergePull'), [['mergePull', REPO, entry.prNumber, HEAD]]);
+      assert.doesNotMatch(JSON.stringify([assembled.data, landed.data]), new RegExp(bOwner.launchId), 'no answer carries a launch id');
+
+      const idle = await advanceAs();
+      assert.equal(idle.status, 200);
+      assert.equal(idle.data.step, 'idle');
+      assert.equal(idle.data.entry, null);
+      const shown = await sendAs(server, 'GET', `/api/merge-queue/entries/${entry.entryId}`, undefined, bNeighbour.headers);
+      assert.deepEqual(shown.data.events.map((e) => e.event), ['submitted', 'assembly-started', 'candidate-made', 'landing-started', 'landed']);
+    });
+
+    it('nobody but the owner\'s verified launch advances the queue, and a refused caller reads and changes nothing', async () => {
+      const entry = await submitted();
+      gh.calls.length = 0;
+      const callers = [
+        [op, {}, 403, 'NOT_OWNER'],
+        [bNeighbour.headers, { queueId }, 403, 'NOT_OWNER'],
+        [bNeighbour.headers, {}, 404, 'QUEUE_NOT_FOUND'],
+        [bOutsider.headers, { queueId }, 404, 'QUEUE_NOT_FOUND'],
+        [bOwner.headers, { queueId: 'mq_nosuch' }, 404, 'QUEUE_NOT_FOUND'],
+        [bOwner.headers, { queueId: 7 }, 404, 'QUEUE_NOT_FOUND'],
+        [{}, {}, 403, 'LAUNCH_BINDING_REQUIRED']
+      ];
+      for (const [headers, body, status, code] of callers) {
+        const res = await advanceAs(headers, body);
+        assert.equal(res.status, status, JSON.stringify(res.data));
+        assert.equal(res.data.code, code);
+      }
+      assert.equal(gh.calls.length, 0);
+      assert.equal(queueStore.getEntry(entry.entryId).state, 'queued');
+      assert.match((await advanceAs(op)).data.error, /Ask the owner project's session to advance\.$/);
+    });
+
+    it('a held owner cannot advance, and a hold stored while GitHub is being read stops the step before anything is written', async () => {
+      const entry = await submitted();
+      gh.calls.length = 0;
+      const hold = await holdOwner();
+      const held = await advanceAs();
+      assert.equal(held.status, 423, JSON.stringify(held.data));
+      assert.equal(held.data.code, 'CONTROL_HELD');
+      assert.equal(gh.calls.length, 0);
+      await releaseOwner(hold);
+
+      let during = null;
+      gh.during = { readRefTip: async () => { during = await holdOwner(); } };
+      const overtaken = await advanceAs();
+      gh.during = null;
+      await releaseOwner(during);
+      assert.equal(overtaken.status, 423, JSON.stringify(overtaken.data));
+      assert.equal(overtaken.data.code, 'CONTROL_HELD');
+      assert.deepEqual(githubWrites(), []);
+      assert.equal(queueStore.getEntry(entry.entryId).state, 'queued');
+      assert.equal((await advanceAs()).data.step, 'assembled');
+    });
+
+    it('says which gate stops a green entry, which read failed, and that a red base stops everything', async () => {
+      const entry = await submitted({ operatorGate: 'required' });
+      assert.equal((await advanceAs()).data.step, 'assembled');
+      const gated = await advanceAs();
+      assert.equal(gated.status, 409, JSON.stringify(gated.data));
+      assert.equal(gated.data.code, 'GATES_NOT_MET');
+      assert.deepEqual(gated.data.problems.map((p) => p.gate), ['operator']);
+      assert.equal(gated.data.queueId, queueId);
+
+      gh.branchCheck = (branch) => (branch === 'main'
+        ? { status: 'concluded', conclusion: 'failure', runId: '7000', suiteId: '1', completedAt: '2026-10-12T10:00:00Z', app: 'github-actions' }
+        : { status: 'concluded', conclusion: 'success', runId: '7001', suiteId: '2', completedAt: '2026-10-12T10:00:00Z', app: 'github-actions' });
+      const red = await advanceAs();
+      assert.equal(red.status, 409, JSON.stringify(red.data));
+      assert.equal(red.data.code, 'BASE_NOT_GREEN');
+      assert.deepEqual(red.data.check, { conclusion: 'failure', runId: '7000' });
+
+      gh.branchCheck = () => ({ status: 'unavailable', reason: 'the commit\'s check runs could not be read whole (100 of 100)' });
+      const unread = await advanceAs();
+      assert.equal(unread.status, 503, JSON.stringify(unread.data));
+      assert.equal(unread.data.code, 'GITHUB_UNAVAILABLE');
+      assert.equal(unread.data.reason, 'the commit\'s check runs could not be read whole (100 of 100)');
+      assert.match(unread.data.error, /could not be read whole \(100 of 100\)\)\. Nothing was changed/);
+      assert.equal(queueStore.getEntry(entry.entryId).state, 'testing');
+      assert.deepEqual(githubWrites(), ['createCandidate']);
+    });
+
+    it('stops for a person when a candidate branch is there again after the queue removed it', async () => {
+      const entry = await submitted();
+      gh.create = { status: 'ref-exists', ref: `tc-queue/${entry.entryId}`, existing: 'stage', refCreated: false, stageLeft: true };
+      const retry = await advanceAs();
+      assert.equal(retry.status, 200, JSON.stringify(retry.data));
+      assert.equal(retry.data.step, 'assembly-retry');
+      const again = await advanceAs();
+      assert.equal(again.status, 409, JSON.stringify(again.data));
+      assert.equal(again.data.code, 'CANDIDATE_REF_EXISTS');
+      assert.equal(again.data.existing, 'stage');
+      assert.equal(queueStore.getEntry(entry.entryId).state, 'assembling');
+    });
+
+    it('leaves a failing entry where it is while its branches cannot be removed, and says which is left', async () => {
+      const entry = await submitted();
+      assert.equal((await advanceAs()).data.step, 'assembled');
+      gh.pull = { state: 'closed' };
+      gh.discard = { status: 'unavailable', reason: 'a branch could not be deleted (GitHub answered HTTP 500)', candidate: 'unknown', stage: 'not-found' };
+      const stuck = await advanceAs();
+      assert.equal(stuck.status, 503, JSON.stringify(stuck.data));
+      assert.equal(stuck.data.code, 'CANDIDATE_NOT_DISCARDED');
+      assert.equal(stuck.data.candidate, 'unknown');
+      assert.equal(stuck.data.stage, 'not-found');
+      assert.equal(queueStore.getEntry(entry.entryId).state, 'testing');
+      gh.discard = { status: 'discarded', candidate: 'deleted', stage: 'not-found' };
+      const failed = await advanceAs();
+      assert.equal(failed.data.step, 'failed');
+      assert.deepEqual(failed.data.entry.failure, { code: 'PR_NOT_OPEN', detail: failed.data.failure.detail });
+    });
+
+    it('an advance arriving while another call holds the queue changes nothing, and so does a withdrawal arriving during an advance', async () => {
+      const entry = await submitted();
+      gh.calls.length = 0;
+      let release;
+      const holding = withQueueSlot(queueId, () => new Promise((resolve) => { release = resolve; }));
+      try {
+        const refused = await advanceAs();
+        assert.equal(refused.status, 409, JSON.stringify(refused.data));
+        assert.equal(refused.data.code, 'QUEUE_CALL_IN_FLIGHT');
+        assert.match(refused.data.error, /this advance changed nothing\. Read `tc queue status`, then advance again\.$/);
+        assert.equal(gh.calls.length, 0);
+      } finally {
+        release();
+        await holding;
+      }
+
+      let withdrawn = null;
+      gh.during = {
+        createCandidate: async () => {
+          withdrawn = await sendAs(server, 'POST', `/api/merge-queue/entries/${entry.entryId}/withdraw`, { reason: 'changed my mind' }, bOwner.headers);
+        }
+      };
+      const assembled = await advanceAs();
+      gh.during = null;
+      assert.equal(assembled.data.step, 'assembled');
+      assert.equal(withdrawn.status, 409, JSON.stringify(withdrawn.data));
+      assert.equal(withdrawn.data.code, 'QUEUE_CALL_IN_FLIGHT');
+      assert.ok(!gh.calls.some((c) => c[0] === 'discardCandidate'), 'the refused withdrawal deleted nothing');
+      assert.equal(queueStore.getEntry(entry.entryId).state, 'testing');
+      assert.equal(isQueueSlotTaken(queueId), false);
+    });
+
+    it('an advance arriving during a withdrawal changes nothing, and the slot is free after an advance that was refused', async () => {
+      const entry = await withCandidate(true);
+      githubForAdvance();
+      let overtaking = null;
+      const realDiscard = api._internal.discardCandidate;
+      api._internal.discardCandidate = async (...args) => {
+        overtaking = await advanceAs();
+        return realDiscard(...args);
+      };
+      const wd = await sendAs(server, 'POST', `/api/merge-queue/entries/${entry.entryId}/withdraw`, { reason: 'base moved on' }, bOwner.headers);
+      api._internal.discardCandidate = realDiscard;
+      assert.equal(wd.status, 200, JSON.stringify(wd.data));
+      assert.equal(overtaking.status, 409, JSON.stringify(overtaking.data));
+      assert.equal(overtaking.data.code, 'QUEUE_CALL_IN_FLIGHT');
+      assert.ok(!gh.calls.some((c) => c[0] === 'mergePull' || c[0] === 'createCandidate'));
+
+      const next = await submitted();
+      gh.tip = { status: 'unavailable', reason: 'gh api timed out after 10000ms' };
+      assert.equal((await advanceAs()).status, 503);
+      assert.equal(isQueueSlotTaken(queueId), false);
+      gh.tip = null;
+      assert.equal((await advanceAs()).data.entry.entryId, next.entryId);
+    });
+
+    it('a queue that halted itself refuses every advance until the Operator clears the halt, and nobody else can', async () => {
+      const made = await sendAs(server, 'POST', '/api/merge-queue', { repo: 'Jason-Vaughan/Halting', baseBranch: 'main', ownerProjectId: owner.id }, op);
+      assert.equal(made.status, 201, JSON.stringify(made.data));
+      const halting = made.data.queue.queueId;
+      try {
+        const res = await sendAs(server, 'POST', '/api/merge-queue/entries', submitBody(nextPr(), { queueId: halting }), bOwner.headers);
+        assert.equal(res.status, 201, JSON.stringify(res.data));
+        assert.equal((await advanceAs(bOwner.headers, { queueId: halting })).data.step, 'assembled');
+        gh.commit = { status: 'read', sha: LANDED_SHA, tree: OTHER_HEAD, parents: [BASE_SHA, HEAD] };
+        const landed = await advanceAs(bOwner.headers, { queueId: halting });
+        assert.equal(landed.data.step, 'landed');
+        assert.equal(landed.data.queueHalted, true);
+        assert.equal(landed.data.queue.halt.code, 'TREE_MISMATCH');
+        assert.equal(landed.data.entry.landed.treeMatches, false);
+        gh.calls.length = 0;
+        const refused = await advanceAs(bOwner.headers, { queueId: halting });
+        assert.equal(refused.status, 409, JSON.stringify(refused.data));
+        assert.equal(refused.data.code, 'QUEUE_HALTED');
+        assert.equal(gh.calls.length, 0);
+
+        const url = `/api/merge-queue/${halting}/clear-halt`;
+        for (const b of [bOwner, bNeighbour, bOutsider]) {
+          const res = await sendAs(server, 'POST', url, { reference: 'main looks fine to me' }, b.headers);
+          assert.equal(res.status, 403, JSON.stringify(res.data));
+          assert.equal(res.data.code, 'OPERATOR_ONLY');
+          assert.match(res.data.error, /A session saying the Operator agreed is not the Operator: ask them to clear it\.$/);
+        }
+        assert.equal((await sendAs(server, 'POST', url, { reference: 'x' }, {})).data.code, 'LAUNCH_BINDING_REQUIRED');
+        for (const body of [{}, { reference: '' }, { reference: '   ' }, { reference: 7 }]) {
+          const res = await sendAs(server, 'POST', url, body, op);
+          assert.equal(res.status, 400, JSON.stringify(res.data));
+          assert.equal(res.data.code, 'INVALID_INPUT');
+        }
+        assert.equal((await sendAs(server, 'POST', '/api/merge-queue/mq_nosuch/clear-halt', { reference: 'x' }, op)).status, 404);
+        assert.equal((await sendAs(server, 'POST', '/api/merge-queue/no%20such%2Fqueue/clear-halt', { reference: 'x' }, op)).data.code, 'QUEUE_NOT_FOUND');
+        assert.equal(queueStore.getQueue(halting).halt.code, 'TREE_MISMATCH', 'no refused call cleared anything');
+        assert.equal((await advanceAs(bOwner.headers, { queueId: halting })).data.code, 'QUEUE_HALTED');
+
+        const cleared = await sendAs(server, 'POST', url, { reference: '  main checked by hand against the candidate, 2026-10-12  ' }, op);
+        assert.equal(cleared.status, 200, JSON.stringify(cleared.data));
+        assert.equal(cleared.data.queue.halt, null);
+        assert.equal(cleared.data.cleared.code, 'TREE_MISMATCH');
+        const event = queueStore.listEvents(halting).pop();
+        assert.equal(event.event, 'queue-halt-cleared');
+        assert.equal(event.actor.kind, 'operator');
+        assert.ok(event.actor.operatorProof, 'the Operator\'s proof tier is on record');
+        assert.equal(event.detail.reference, 'main checked by hand against the candidate, 2026-10-12');
+        assert.equal(event.detail.code, 'TREE_MISMATCH');
+
+        const twice = await sendAs(server, 'POST', url, { reference: 'again' }, op);
+        assert.equal(twice.status, 409, JSON.stringify(twice.data));
+        assert.equal(twice.data.code, 'QUEUE_NOT_HALTED');
+        const idle = await advanceAs(bOwner.headers, { queueId: halting });
+        assert.equal(idle.status, 200, JSON.stringify(idle.data));
+        assert.equal(idle.data.step, 'idle');
+      } finally {
+        // Whatever the test left, the queue is retired so no later test meets a second queue of this owner.
+        const actor = { kind: 'operator', operatorProof: 'ambient-open' };
+        queueStore.clearHalt(halting, { actor, reference: 'test teardown' });
+        assert.equal(queueStore.retireQueue(halting, { actor }).ok, true);
+      }
+    });
+  });
+
+  describe('the owner\'s coordinator rotation fences submit, withdraw and advance', () => {
     const PRIOR = 'thread-before-the-rotation';
     const NEXT = 'thread-the-rotation-bound';
     const THREAD = 'x-tangleclaw-engine-thread';
@@ -1071,6 +1386,98 @@ describe('/api/merge-queue (#2322)', () => {
       out = await counted(Infinity, () => sendAs(server, 'POST', `/api/merge-queue/entries/${plain.entryId}/withdraw`, { reason: 'x' }, from(NEXT)));
       assert.equal(out.res.status, 200, JSON.stringify(out.res.data));
       assert.equal(out.asks.length, 2, 'no candidate, so no deletion: entry and before the record');
+    });
+
+    it('a stale thread of the same live launch cannot advance, and the bound replacement can', async () => {
+      emptyQueue();
+      githubForAdvance();
+      const entry = await submitted();
+      gh.calls.length = 0;
+      const rotation = rotate('active');
+      for (const thread of [PRIOR, 'some-other-thread', null]) {
+        const res = await advanceAs(from(thread));
+        assert.equal(res.status, 409, JSON.stringify(res.data));
+        assert.equal(res.data.code, 'COORDINATOR_EPOCH_MISMATCH');
+        assert.equal(res.data.rotationId, rotation.rotationId);
+        assert.equal(res.data.action, 'merge-queue-mutate');
+      }
+      assert.equal(gh.calls.length, 0, 'a refused advance read nothing from GitHub');
+      assert.equal(queueStore.getEntry(entry.entryId).state, 'queued');
+      assert.equal((await advanceAs(from(NEXT))).data.step, 'assembled');
+      assert.equal((await advanceAs(from(NEXT))).data.step, 'landed');
+    });
+
+    for (const to of ['fenced', 'rebinding', 'reconciling']) {
+      it(`while the rotation is ${to}, nobody advances, the bound replacement included`, async () => {
+        emptyQueue();
+        githubForAdvance();
+        const entry = await submitted();
+        gh.calls.length = 0;
+        rotate(to);
+        for (const thread of [NEXT, PRIOR, null]) {
+          const res = await advanceAs(from(thread));
+          assert.equal(res.status, 409, JSON.stringify(res.data));
+          assert.equal(res.data.code, to === 'reconciling' && thread !== NEXT ? 'COORDINATOR_EPOCH_MISMATCH' : 'COORDINATOR_FENCED', `advance from ${thread}`);
+        }
+        assert.equal(gh.calls.length, 0);
+        assert.equal(queueStore.getEntry(entry.entryId).state, 'queued');
+      });
+    }
+
+    it('a rotation that begins during a landing\'s reads prevents the merge, and the refusal is logged as every gated mutation\'s is', async () => {
+      emptyQueue();
+      githubForAdvance();
+      const entry = await submitted();
+      assert.equal((await advanceAs(from(PRIOR))).data.step, 'assembled');
+      gh.calls.length = 0;
+      let rotation = null;
+      gh.during = { readCompareFiles: async () => { rotation = rotate('fenced'); } };
+      const lines = [];
+      setConsoleStream({ write: (line) => { lines.push(String(line)); return true; } });
+      setLevel('info');
+      let res;
+      try {
+        res = await advanceAs(from(PRIOR));
+      } finally {
+        setLevel('error');
+        setConsoleStream(null);
+        gh.during = null;
+      }
+      assert.equal(res.status, 409, JSON.stringify(res.data));
+      assert.equal(res.data.code, 'COORDINATOR_FENCED');
+      assert.ok(!gh.calls.some((c) => c[0] === 'mergePull'), 'the merge is never asked for');
+      const after = queueStore.getEntry(entry.entryId);
+      assert.equal(after.state, 'testing');
+      assert.equal(after.candidate.sha, CANDIDATE_SHA);
+      const logged = lines.filter((line) => line.includes('Coordinator epoch gate refused a mutation'));
+      assert.equal(logged.length, 1, lines.join(''));
+      assert.ok(logged[0].trimEnd().endsWith('[INFO] [merge-queue-api] Coordinator epoch gate refused a mutation '
+        + `projectId=${owner.id} action=merge-queue-mutate code=COORDINATOR_FENCED rotationId=${rotation.rotationId}`), logged[0]);
+    });
+
+    it('a rotation that begins after the merge request was started records the landing, deletes no branch and asks for no second merge', async () => {
+      emptyQueue();
+      githubForAdvance();
+      const entry = await submitted();
+      assert.equal((await advanceAs(from(PRIOR))).data.step, 'assembled');
+      gh.calls.length = 0;
+      gh.during = { mergePull: async () => { rotate('fenced'); } };
+      const res = await advanceAs(from(PRIOR));
+      gh.during = null;
+      assert.equal(res.status, 200, JSON.stringify(res.data));
+      assert.equal(res.data.step, 'landed');
+      assert.equal(res.data.cleanup.code, 'COORDINATOR_FENCED');
+      assert.equal(res.data.entry.state, 'landed');
+      assert.equal(res.data.entry.landed.sha, LANDED_SHA);
+      assert.equal(gh.calls.filter((c) => c[0] === 'mergePull').length, 1);
+      assert.ok(!gh.calls.some((c) => c[0] === 'discardCandidate'));
+      assert.equal(queueStore.getEntry(entry.entryId).state, 'landed');
+
+      rotate('reconciling');
+      rotate('active');
+      const cleaned = await advanceAs(from(NEXT));
+      assert.equal(cleaned.data.step, 'cleaned-up');
+      assert.deepEqual(gh.calls.filter((c) => c[0] === 'discardCandidate'), [['discardCandidate', REPO, `tc-queue/${entry.entryId}`]]);
     });
 
     it('gates only the owner\'s submit and withdraw: other refusals come first, and reading and the Operator are untouched', async () => {

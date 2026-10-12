@@ -348,13 +348,13 @@ describe('tc CLI vertical slice (ambient-awareness Chunk 02)', () => {
       assert.match(source, /postJson: \(apiPath, body, opts\) => requestJson\('POST', apiPath, body, opts\)/);
     });
 
-    it('only `tc queue submit` and `tc queue withdraw` pass a limit, of every call a verb makes', () => {
+    it('only `tc queue submit`, `tc queue withdraw` and `tc queue advance` pass a limit, of every call a verb makes', () => {
       // Read from the source of the one file every verb lives in, so a verb
       // added later is covered without being listed here.
       const source = fs.readFileSync(path.join(__dirname, '..', 'lib', 'tc-verbs.js'), 'utf8');
       const passed = [...source.matchAll(/timeoutMs\s*:\s*([^,}\n]*)/g)].map((m) => m[1].trim());
-      assert.deepEqual(passed.sort(), ['QUEUE_CALL_TIMEOUT_MS.submit', 'QUEUE_CALL_TIMEOUT_MS.withdraw']);
-      assert.deepEqual(QUEUE_CALL_TIMEOUT_MS, { submit: 60000, withdraw: 60000 });
+      assert.deepEqual(passed.sort(), ['QUEUE_CALL_TIMEOUT_MS.advance', 'QUEUE_CALL_TIMEOUT_MS.submit', 'QUEUE_CALL_TIMEOUT_MS.withdraw']);
+      assert.deepEqual(QUEUE_CALL_TIMEOUT_MS, { submit: 60000, withdraw: 60000, advance: 180000 });
       assert.ok(Object.isFrozen(QUEUE_CALL_TIMEOUT_MS));
       const other = fs.readdirSync(path.join(__dirname, '..', 'lib')).filter((f) => f.endsWith('.js') && f !== 'tc-verbs.js')
         .filter((f) => /\b(getJson|postJson)\b/.test(fs.readFileSync(path.join(__dirname, '..', 'lib', f), 'utf8')));

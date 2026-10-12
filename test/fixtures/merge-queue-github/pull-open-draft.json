@@ -1,14 +1,14 @@
 {
-  "capturedAt": "2026-10-12T07:18:17.712Z",
+  "capturedAt": "2026-10-12T19:26:50.391Z",
   "args": [
     "api",
     "-i",
     "repos/Jason-Vaughan/TangleClaw/pulls/2217",
     "--jq",
-    "{number: .number, state: .state, merged: .merged, draft: .draft, mergeable: .mergeable, base_ref: .base.ref, head_sha: .head.sha, changed_files: .changed_files}"
+    "{number: .number, state: .state, merged: .merged, draft: .draft, mergeable: .mergeable, base_ref: .base.ref, head_sha: .head.sha, changed_files: .changed_files, merge_commit_sha: .merge_commit_sha}"
   ],
   "exitCode": 0,
   "statusLine": "HTTP/2.0 200 OK",
-  "body": "{\"base_ref\":\"main\",\"changed_files\":19,\"draft\":true,\"head_sha\":\"a631310872cf0e7d2dce492def427c5252cfa82a\",\"mergeable\":false,\"merged\":false,\"number\":2217,\"state\":\"open\"}\n",
+  "body": "{\"base_ref\":\"main\",\"changed_files\":19,\"draft\":true,\"head_sha\":\"a631310872cf0e7d2dce492def427c5252cfa82a\",\"merge_commit_sha\":null,\"mergeable\":false,\"merged\":false,\"number\":2217,\"state\":\"open\"}\n",
   "stderr": ""
 }

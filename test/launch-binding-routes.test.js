@@ -95,6 +95,8 @@ describe('launch-binding guard: every mutating route is guarded or listed (#2233
     const queueRoutes = MUTATING.filter((r) => r.pattern.startsWith('/api/merge-queue')).map(key).sort();
     assert.deepEqual(queueRoutes, [
       'POST /api/merge-queue',
+      'POST /api/merge-queue/:id/clear-halt',
+      'POST /api/merge-queue/advance',
       'POST /api/merge-queue/entries',
       'POST /api/merge-queue/entries/:id/operator-gate',
       'POST /api/merge-queue/entries/:id/withdraw'
