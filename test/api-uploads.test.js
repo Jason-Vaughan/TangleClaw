@@ -141,6 +141,8 @@ describe('API /api/upload + /api/uploads', () => {
     it('GET /api/uploads names the refusal instead of reporting an empty list (needs a directory this process cannot read)', async (t) => {
       if (!canForceRefusal()) { t.skip('this process can read a 000 directory'); return; }
       const legacy = path.join(projDir(), '.uploads');
+      // Made here, not left to an upload test above: this test must hold when it is run alone.
+      fs.mkdirSync(legacy, { recursive: true });
       fs.chmodSync(legacy, 0o000);
       try {
         const res = await request(server, 'GET', `/api/uploads?project=${projectName}`);
@@ -172,6 +174,8 @@ describe('API /api/upload + /api/uploads', () => {
     it('the session drill-down carries the same distinction (needs a directory this process cannot read)', async (t) => {
       if (!canForceRefusal()) { t.skip('this process can read a 000 directory'); return; }
       const legacy = path.join(projDir(), '.uploads');
+      // Made here, not left to an upload test above: this test must hold when it is run alone.
+      fs.mkdirSync(legacy, { recursive: true });
       fs.chmodSync(legacy, 0o000);
       try {
         const res = await request(server, 'GET',
