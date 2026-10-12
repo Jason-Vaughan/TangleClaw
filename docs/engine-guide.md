@@ -890,8 +890,9 @@ profile names an adapter that can observe it (`declaresObserver`; today, Codex):
   The hold applies from the next look on. A nudge already typed is not recalled, and its `nudged`
   row in the ledger stays; for mail already nudged, the monitor records only that the session is
   not eligible now. The answer follows the config as it stands: setting the entry to `trusted`
-  releases the nudge at the monitor's next look, with no relaunch (an edit made while the app-server
-  ran was read within 12 seconds on 0.156.1). The hold neither starts nor resets the settling hold,
+  releases the nudge within a few monitor intervals, with no relaunch: one look to read the new
+  answer, the settling hold if the launch had not yet reported idle, then the idle streak (an edit
+  made while the app-server ran was read within 12 seconds on 0.156.1). The hold neither starts nor resets the settling hold,
   and it is not a stall, so it raises no stall alert. A busy or unknown thread is answered without
   the extra read. The sender is told the class `configuration` and the next action
   `review-folder-trust`: the recipient's operator may set the entry to trusted to resume automatic
@@ -1414,7 +1415,7 @@ transition an adapter reports goes through the store's transition map, so no ada
 backwards or out of a terminal outcome.
 
 **Optionally, `observeActivity(channel, project)`** (#1628): a read-only answer to "is this session's
-engine working right now?", returning `{state: 'idle'|'busy'|'unknown', reasonCode}`. Callers never
+engine working right now?", returning `{state: 'idle'|'busy'|'unknown'|'held', reasonCode}`. Callers never
 reach an adapter directly. They go through `startupControl.observeActivity({session, project, channel,
 sequence})`, which answers `{channel: 'absent'|'present', state, reasonCode}`. **Absent** means the
 session has no open channel. **Present** covers everything else, and there `unknown` is returned for
@@ -1422,8 +1423,10 @@ any of these: a channel that is not this active session's, or not of its current
 project; an unregistered adapter or one without the method; a throw; an out-of-vocabulary answer. In
 all of those cases the adapter is either never asked or not believed. `startupControl.declaresObserver(engineId,
 getProfile)` says whether an engine's profile names an adapter that can observe it, independent of the
-version probe. It is an observation, never permission: it checks no trust, account or quota, and `idle`
-does not authorize a fire.
+version probe. It is an observation, never permission: it checks no account or quota, and `idle`
+does not authorize a fire. `held` is an adapter's answer for a thread that is idle in a place its
+engine's own configuration says not to type; the reason code names the rule, and the facade passes
+it through as it does the other three states.
 
 The Codex adapter reads it from the protocol alone and opens no turn. It speaks only for the launch's
 own app-server process (command, socket and birth time) on the installed and recorded version, and for
