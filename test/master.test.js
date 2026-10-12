@@ -72,6 +72,7 @@ after(() => {
 // its command would depend on what the host has installed. The stub fails
 // closed (no version), so a test that means to exercise a version sets one.
 const codexAdapter = require('../lib/startup-control-codex');
+const { twoCodexInstalls } = require('./_codex-launchable');
 const realCodexProbe = codexAdapter._seams.execFileSync;
 const realCodexVersion = codexAdapter._internal._version.version;
 before(() => {
@@ -3363,6 +3364,36 @@ describe('ensureMasterSession — Codex daemon isolation (#1895)', () => {
       assert.equal(result.engine, 'codex');
       assert.ok(command.endsWith(`; ${CODEX_BIN} --no-daemon`), `the pane runs the probed executable by path: ${command}`);
       assert.ok(probed.length > 0 && probed.every((bin) => bin === CODEX_BIN), 'every probe asks the executable this launch runs');
+    });
+  }
+
+  for (const version of ['0.156.1', '0.157.1']) {
+    it(`with another Codex earlier on the pane's PATH, a Codex ${version} Master's final tmux command runs the install it probed (#2230)`, () => {
+      const dir = path.join(tmpDir, `two-installs-${version}`);
+      fs.mkdirSync(dir, { recursive: true });
+      const two = twoCodexInstalls(dir, { detected: version, earlier: '0.161.0' });
+      assert.equal(two.versionThePaneRuns('codex --version'), '0.161.0', 'the fixture is the reported case: by name, the pane finds the other install');
+      const config = store.config.load();
+      const saved = config.master;
+      const failClosed = codexAdapter._seams.execFileSync;
+      codexAdapter._seams.execFileSync = (bin, args, opts) => { probed.push(bin); return two.probe(bin, args, opts); };
+      try {
+        config.master = { accessLevel: 'read-only', scope: 'all', autoStart: false, engine: 'codex' };
+        store.config.save(config);
+        const tmuxLib = fakeTmux({ alive: false });
+        const enginesLib = { detectEngine: () => ({ available: true, path: two.detectedPath }), resolveDefaultEngine: () => 'codex' };
+        const result = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib, enginesLib });
+        assert.equal(result.created, true, result.error);
+        assert.equal(tmuxLib.calls.length, 1);
+        const command = tmuxLib.calls[0].opts.command;
+        assert.ok(probed.length > 0, 'the launch read a version');
+        assert.deepEqual(probed.filter((bin) => bin !== two.detectedPath), [], 'every probe ran the detected install, by path');
+        assert.equal(two.versionThePaneRuns(command), version, `run under the pane's PATH, the Master starts the install that was probed: ${command}`);
+      } finally {
+        codexAdapter._seams.execFileSync = failClosed;
+        config.master = saved;
+        store.config.save(config);
+      }
     });
   }
 
