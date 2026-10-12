@@ -102,6 +102,15 @@ describe('launch-binding guard: every mutating route is guarded or listed (#2233
     for (const queueRoute of queueRoutes) assert.ok(!admitted.includes(queueRoute), `${queueRoute} must not be reachable unidentified`);
   });
 
+  it('guards both state-changing check watch routes: an unidentified caller reaches neither (#2323)', () => {
+    const watchRoutes = MUTATING.filter((r) => r.pattern.startsWith('/api/tc/check-watches')).map(key).sort();
+    assert.deepEqual(watchRoutes, [
+      'POST /api/tc/check-watches',
+      'POST /api/tc/check-watches/:id/cancel'
+    ]);
+    for (const watchRoute of watchRoutes) assert.ok(!admitted.includes(watchRoute), `${watchRoute} must not be reachable unidentified`);
+  });
+
   it('keeps the audit heartbeat guarded: it has no credential of its own', () => {
     assert.ok(MUTATING.some((r) => key(r) === 'POST /api/audit/heartbeat'));
     assert.ok(!admitted.includes('POST /api/audit/heartbeat'));

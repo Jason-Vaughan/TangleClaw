@@ -356,6 +356,7 @@ const controlState = require('./lib/control-state');
 const controlApi = require('./lib/control-api');
 const controlGate = require('./lib/control-gate');
 const mergeQueueApi = require('./lib/merge-queue-api');
+const checkWatchApi = require('./lib/check-watch-api');
 const { resolveControlCaller, isOperatorShaped } = require('./lib/control-auth');
 const medusaExchanges = require('./lib/medusa-exchanges');
 const medusaWatchdog = require('./lib/medusa-watchdog');
@@ -8446,6 +8447,37 @@ mergeQueueRoute('GET', '/api/merge-queue/entries/:id', (req, params) => mergeQue
 mergeQueueRoute('POST', '/api/merge-queue/entries', (req, _params, body) => mergeQueueApi.submit(req, body));
 mergeQueueRoute('POST', '/api/merge-queue/entries/:id/withdraw', (req, params, body) => mergeQueueApi.withdraw(req, params, body));
 mergeQueueRoute('POST', '/api/merge-queue/entries/:id/operator-gate', (req, params, body) => mergeQueueApi.recordOperatorGate(req, params, body));
+// ── Check watches (#2323): register, read and cancel a watch on a named check ──
+//
+// The handlers live in lib/check-watch-api.js. Nothing here reads GitHub.
+
+/**
+ * Register one check watch route.
+ * @param {string} method - HTTP method
+ * @param {string} pattern - Route pattern
+ * @param {(req: object, params: object, body: object) => ({status: number, body: object}|Promise<{status: number, body: object}>)} fn - Handler
+ * @returns {void}
+ */
+function checkWatchRoute(method, pattern, fn) {
+  route(method, pattern, async (req, res, params, body) => {
+    let out;
+    try {
+      out = await fn(req, params, body);
+    } catch (err) { // prawduct:allow prawduct/broad-except -- a watch request that did not finish must never read as registered or cancelled: a WatchError keeps its own status and code, and anything else (the store threw) is the fail-closed 503
+      if (err instanceof checkWatchApi.WatchError) {
+        return errorResponse(res, err.status, err.message, err.code, err.details);
+      }
+      log.error('Check watches unavailable', { method, pattern, error: err.message });
+      return errorResponse(res, 503, 'Check watches could not answer. Read the watches again before repeating the request.', 'CHECK_WATCH_UNAVAILABLE');
+    }
+    jsonResponse(res, out.status, out.body);
+  });
+}
+
+checkWatchRoute('POST', '/api/tc/check-watches', (req, _params, body) => checkWatchApi.register(req, body));
+checkWatchRoute('GET', '/api/tc/check-watches', (req) => checkWatchApi.list(req, parseQuery(reqUrl(req).search)));
+checkWatchRoute('GET', '/api/tc/check-watches/:id', (req, params) => checkWatchApi.show(req, params));
+checkWatchRoute('POST', '/api/tc/check-watches/:id/cancel', (req, params) => checkWatchApi.cancel(req, params));
 // The Master's mount (#996). Deliberately the SAME family rather than a subset:
 // the outbound gate, not a missing route, is what a read-only Master meets.
 registerMedusaRoutes('/api/master/medusa', resolveMasterMedusaTarget);
