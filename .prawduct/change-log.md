@@ -35,6 +35,27 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-12 — #2322: the test workflow runs on a merge queue candidate
+
+<!-- prawduct: type=feature | scope=2322-integrator-merge-queue -->
+
+#2322 Chunk 03 of five. Branch `feat/2322-03-queue-ci-trigger`, from `origin/main` `43e13e78`. The issue stays open.
+
+Visual change: no
+
+**Why.** The queue tests a pull request by merging its head into the tip of `main` on a branch under `tc-queue/` and waiting for the `test` check on that commit. No pull request is opened for that branch, and the workflow ran only on pull requests and on pushes to `main` and `v5-baseline`, so a candidate got no run (seen on the probe branch of the chunk before this one).
+
+**What changed.**
+
+- `.github/workflows/test.yml`: one line. The push trigger's branch list goes from `[main, v5-baseline]` to `[main, v5-baseline, 'tc-queue/**']`, with a comment above it saying what makes those branches and that removing the entry stops every queue landing. Nothing else in the file changes: `pull_request`, `workflow_call`, the `permissions` block and every step are as they were (the decider's condition for this change).
+- New `test/workflow-queue-trigger.test.js`: the push list carries the pattern built from `CANDIDATE_PREFIX`, the constant `lib/merge-queue-github.js` writes candidates under; names the queue accepts are matched and near misses are not; `main`, `v5-baseline`, `pull_request` and `workflow_call` are still there; the permissions block is exactly `contents: read`.
+- `test/ci-workflow.test.js`, one case, added to the chunk with the Integrator's leave: it pins the push list exactly and by name, so it had to move with the line. The expected list is now `main`, `v5-baseline` and the pattern built from the same constant; a fourth entry still fails it. The plan had not listed this file: I named the chunk's files without searching the tests for the list.
+- `docs/merge-queue.md`: a section on how a candidate is tested.
+
+**What an operator sees.** Nothing yet: no route, verb or screen makes a candidate. In the repository's Actions list a `Tests` run will appear for any branch pushed under `tc-queue/`.
+
+**Not verified.** That a branch created through the API with this machine's `gh` login starts the run. The workflow file GitHub uses for a push is the one on the pushed commit, so this can be seen only after the line is on `main`: one throwaway `tc-queue/probe-*` branch, pushed and deleted, on the Integrator's word after the merge. A candidate's run does not execute the cache-bump step, which is limited to pull requests. **Found by the review and not settled here:** `createCandidate` makes two pushes to the candidate branch, the first at the tip of `main`, so the new trigger may start a second `test` run on `main`'s own tip each time a candidate is made; the reader the landing will use takes the newest run of that name on a commit. Not observed. The same throwaway branch answers it, and the plan's chunk 05 carries the decision.
+
 ## 2026-10-12 — #2059: the wake holds for one monitor interval after a launch's thread first reports idle
 
 <!-- prawduct: type=bugfix | scope=codex-wake-2059 -->
