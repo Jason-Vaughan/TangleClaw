@@ -22,6 +22,7 @@ const watchStore = require('../lib/check-watch-store');
 const state = require('../lib/check-watch-state');
 const { createServer } = require('../server');
 const { operatorHeaders, bindProject, sendAs: sendRaw } = require('./_shared-docs-callers');
+const { initRepo } = require('./_temp-repo');
 
 /** Every refusal a request in this file was answered with, for the last test to read. */
 const REFUSED = [];
@@ -322,7 +323,7 @@ describe('/api/tc/check-watches (#2323)', () => {
     it('reads a real folder\'s origin with git, in every form a GitHub remote is written', async () => {
       api._internal.readOrigin = original.readOrigin;
       const real = mkProject('real-checkout');
-      execFileSync('git', ['init', '-q'], { cwd: real.path });
+      initRepo(real.path);
       const bReal = bindProject(real);
       const none = await sendAs(server, 'POST', ROOT, watchBody(), bReal.headers);
       assert.equal(none.status, 409, JSON.stringify(none.data));

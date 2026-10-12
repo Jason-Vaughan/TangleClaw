@@ -58,6 +58,7 @@ Visual change: no
 **What an operator sees.** Nothing unless a session runs `tc check`. A session that does is told on every answer that the watch is a record only.
 
 **Limits.** No read of GitHub, no wake, no alarm at the due time, no expiry: a watch reads `waiting` until its due time and `unknown` after it. Nothing checks that the pull request exists or that the commit is its head. A held lane can register and cancel. `derive` is unchanged, so the `past-due` point carried from chunk 01's review is still open.
+
 ## 2026-10-12 — #2321: one command runs the tests CI skips on your own machine, and fails unless every one owed there passed
 
 <!-- prawduct: type=feature | scope=2321-ci-as-suite-evidence -->
