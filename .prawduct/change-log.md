@@ -35,6 +35,28 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-12 — #2231: a Codex that cannot answer its version probe is asked once, then not again for 60 seconds
+
+<!-- prawduct: type=bugfix | scope=codex-probe-stall-2231 -->
+
+#2231 Chunk 01, the plan's only chunk. Branch `fix/2231-01-codex-probe-memory`, from `origin/main` `bffc06c4`. The issue stays open.
+
+Visual change: yes — the launch refusal for such a Codex has a longer message.
+
+**Why.** The launch's version probe is synchronous and may run 5 seconds, and the server has one thread. Measured on `bffc06c4` with counting tests on unchanged code: a project launch or relaunch ran `codex --version` twice (the capability read, then the app-server start or the legacy command) and three times when the app-server could not start. A Project Master ensure ran it once. A non-answer was never kept, so every launch, ensure and summon retry paid the wait again.
+
+**What changed.**
+
+- `lib/startup-control-codex.js`: `probeForLaunch` is the launch's probe and returns `{version, enginePath}`; `probeVersionSync` returns its version. An executable that fails, times out or prints no version is remembered for `PROBE_UNANSWERED_MEMORY_MS` (60 seconds), in the process only, by its resolved path and a stamp of the file (modification time, size, inode, device). Inside that time it is not run and the probe carries `retryInSeconds`. A changed file, the time passing, or a clock that went backwards asks again. An unreadable file and a bare command name are never remembered. A version that was read is never kept. `isolateLaunch` and `prepareLaunch` take `probe` and use it when it is of the same executable. `judgeLaunchCommand` words the `version_unknown` refusal for a probe that was not run; the code and the recovery text are unchanged.
+- `lib/startup-control.js`: `resolveForLaunch` returns the probe it made.
+- `lib/sessions.js` (added to the chunk's files by the Integrator): `_prepareStartupChannel` hands that probe to `prepareLaunch` and returns it; `launchSession` hands it to `_isolatedLegacyLaunch`, which takes one more optional argument. With no probe handed on, each step asks for itself as before.
+- `docs/engine-guide.md`: the behaviour, and the adapter contract's new optional parts.
+- Tests: `test/startup-control-codex.test.js` (the memory, with a fake clock and real files), `test/startup-control-launch.test.js` (probes per launch on the native, legacy and fallback paths and on relaunch; two launches of a Codex that cannot answer), `test/master.test.js` (one case, added to the chunk's files by the Integrator: one probe per ensure, and again on the next).
+
+**What an operator sees.** With a Codex that hangs, the first launch waits once (5 seconds, not 10) and is refused as before. For the next 60 seconds a launch that needs that Codex is refused at once, and the message says it was not asked again and in about how many seconds it will be. Other engines' launches no longer wait behind it.
+
+**Limits.** The first ask still stops the server for up to 5 seconds. The asynchronous probe on the request path is unchanged and neither reads nor clears the memory. A Codex that starts answering without its file changing is refused until the 60 seconds end.
+
 ## 2026-10-12 — #2322: a candidate is merged on a stage branch, so only the candidate push starts CI
 
 <!-- prawduct: type=feature | scope=2322-integrator-merge-queue -->
