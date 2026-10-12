@@ -64,6 +64,32 @@ Visual change: yes (the automatic fire's row in Launch readiness reads `applied`
 
 **Tests.** The gate over a fake app-server and the real witness on whole captures: ready on the default and on custom status lines; each of the trust, update and opening screens, typed text, a running turn, a single-item status line, a pane that changes between reads, a thread that turns busy after the witness, a second pane, a replaced pane, another tmux server, an unreadable pane, an unanswering channel, as named refusals. The send-time read, each case in a trusted folder and in one with no entry. Fifteen guards were broken one at a time and each seen red. `test/startup-prompt-service.test.js` is outside the plan's list and was added to with the Integrator's leave, additions only.
 
+## 2026-10-12 — #2322: the owner advances the merge queue one step at a time, and a pull request lands only when everything was read again in the call that merges
+
+<!-- prawduct: type=feature | scope=2322-integrator-merge-queue -->
+
+#2322 Chunk 05d. Branch `feat/2322-05d-advance-and-land`, from `origin/main` `d3c02d6f`. The issue stays open for its check after a deploy.
+
+Visual change: no
+
+**Why.** A queue could be made, submitted to and withdrawn from, and nothing in it could land. This chunk adds the one call that moves it, for the owner alone, with no timer: an owner that is away lands nothing.
+
+**What changed.**
+
+- `lib/merge-queue.js`, `advance(queue, { actor, guard, github })`: one step per call, inside the queue's slot. A `queued` entry has its candidate made (the pull request, the base tip and the base's own `test` check are read first; none is made on a red base). A `testing` entry is landed only if, in that same call, the pull request is open at the submitted head on the queue's base, the base has not moved since the candidate was made (if it has, the candidate is discarded and made again, which is not a failure), the candidate's `test` concluded success, the base's `test` is not red (and has concluded, unless the base is this queue's own landing of a tree its candidate passed on), every gate is recorded, and the comparison of base to candidate changes no release-trigger path. Then the merge, the tree comparison (the store halts the queue on a difference), and the candidate's two branches deleted. A read that fails changes nothing and answers the reader's own reason.
+- A check is read by branch (`readBranchCheck`), for the base and for the candidate, and the candidate's is read before its branch is deleted.
+- An entry that has or may have a candidate loses both branches before it is failed; while either is left it stays where it is. A landing is recorded first, so a landing whose branches could not be deleted is still a landing, and the next advance deletes them before it does anything else.
+- A merge is asked for once. The entry is marked `landing` first; an answer that was not read is followed by a read of the pull request, and the entry is recorded as what it became. An entry found `landing` is reconciled the same way and never merged again. The landing's commit is the one the merge answered, or GitHub's `merge_commit_sha` of a pull request read as closed and merged (`lib/merge-queue-github.js#readPull` now answers it, and never an open pull request's trial merge); that exact commit is read and recorded only if it is a merge whose second parent is the submitted head (the decider's `pull merge sha yes`).
+- The coordinator epoch gate and the HOLD are asked when the request arrives and again immediately before every queue write, branch deletion and the merge request, with nothing waited on between the last answer and the merge request. Once the request is sent its outcome is recorded whatever the gate would then say, and no branch is deleted for the replaced context.
+- `POST /api/merge-queue/:id/clear-halt {reference}`, the Operator's alone: the store could halt a queue and no route could lift it (the decider's `halt route yes`).
+- `lib/merge-queue-api.js`: `POST /api/merge-queue/advance`; a queue call the epoch gate refuses is now logged where it is thrown, with the fields every other gated mutation's refusal is logged with (submit and withdraw too).
+- `tc queue advance [--queue <id>]`, waiting 180 seconds; a submit's last sentence no longer says nothing lands.
+- `docs/merge-queue.md`: the procedure, what one call does, what a landing rests on and what happens when it does not hold, the four separate facts (merged, batch complete, deployed, released), and which refusals come before the epoch gate.
+
+**Tests.** `test/merge-queue-advance.test.js` (new): the real store, GitHub faked at the calls `advance` is handed, the real `readBranchCheck` over a faked `gh` for the cases of another branch's run on the same commit. `test/merge-queue-api.test.js`: the route over HTTP, who may call it, the hold, the slot against a withdrawal both ways, each rotation state, a rotation during a landing's reads and after the merge request, and the logged refusal. `test/tc-queue-verb.test.js`, and one case of `test/tc-cli.test.js` with the Integrator's leave (the list of calls that pass a time limit gains `advance`).
+
+**Limits.** Nothing has been landed on GitHub by this code: every test runs against a faked GitHub, and the first real landing is the check after the deploy. A merged pull request that GitHub names no merge commit for, or names one that is not a merge of the submitted head, leaves its entry `landing` with no route out. Neither browser-console command (making a queue, clearing a halt) has been typed into a browser. Which landings have had their branches deleted is remembered in the server's memory, so the first advance after a restart may repeat one harmless removal. A candidate's branches that could not be deleted are named in the answer and the server log, not in the queue's records.
+
 ## 2026-10-12 — #2323: the server reads a watched check and records its result
 
 <!-- prawduct: type=feature | scope=2323-check-watch-wake -->

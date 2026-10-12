@@ -135,7 +135,10 @@ function gh(...answers) {
  * @returns {object}
  */
 function pull(fields = {}) {
-  return { number: 7, state: 'open', merged: false, draft: false, mergeable: true, base_ref: 'main', head_sha: HEAD, changed_files: 2, ...fields };
+  return {
+    number: 7, state: 'open', merged: false, draft: false, mergeable: true, base_ref: 'main', head_sha: HEAD, changed_files: 2,
+    merge_commit_sha: null, ...fields
+  };
 }
 
 /**
@@ -166,7 +169,7 @@ describe('merge-queue-github — reading a pull request', () => {
     gh(fx);
     assert.deepEqual(await gq.readPull(REPO, 2331), {
       status: 'read', number: 2331, state: 'closed', merged: true, draft: false, mergeable: null,
-      baseRef: 'main', headSha: HEAD, changedFiles: 5
+      baseRef: 'main', headSha: HEAD, changedFiles: 5, mergeCommitSha: '29354a4674cc207ca89205dadaab40aaf845dffc'
     });
     assert.deepEqual(calls[0].args, fx.args);
     assert.equal(calls[0].timeoutMs, gq.READ_TIMEOUT_MS);
@@ -180,6 +183,33 @@ describe('merge-queue-github — reading a pull request', () => {
     assert.equal(r.draft, true);
     assert.equal(r.merged, false);
     assert.equal(r.mergeable, false);
+    assert.equal(r.mergeCommitSha, null);
+  });
+
+  it('never answers the commit GitHub names for an open pull request, which is a trial merge on no branch', async () => {
+    const fx = recorded('pull-open-with-merge-sha');
+    assert.match(JSON.parse(fx.body).merge_commit_sha, /^[0-9a-f]{40}$/, 'the recording is of an open pull request that GitHub names a commit for');
+    gh(fx);
+    const r = await gq.readPull(REPO, 2360);
+    assert.equal(r.status, 'read');
+    assert.equal(r.state, 'open');
+    assert.equal(r.merged, false);
+    assert.equal(r.mergeCommitSha, null);
+    assert.deepEqual(calls[0].args, fx.args);
+    for (const fields of [{ state: 'closed', merged: false }, { state: 'open', merged: false, draft: true }]) {
+      gh(ok(pull({ ...fields, merge_commit_sha: TIP })));
+      assert.equal((await gq.readPull(REPO, 7)).mergeCommitSha, null, JSON.stringify(fields));
+    }
+  });
+
+  it('answers a merged pull request\'s merge commit, and null when GitHub names none', async () => {
+    gh(ok(pull({ state: 'closed', merged: true, mergeable: null, merge_commit_sha: TIP })));
+    assert.equal((await gq.readPull(REPO, 7)).mergeCommitSha, TIP);
+    gh(ok(pull({ state: 'closed', merged: true, mergeable: null, merge_commit_sha: null })));
+    const unnamed = await gq.readPull(REPO, 7);
+    assert.equal(unnamed.status, 'read');
+    assert.equal(unnamed.merged, true);
+    assert.equal(unnamed.mergeCommitSha, null);
   });
 
   it('answers unavailable for a pull request that does not exist, with GitHub\'s words', async () => {
@@ -189,7 +219,9 @@ describe('merge-queue-github — reading a pull request', () => {
 
   it('answers unavailable when the answer is of another pull request or is missing a part', async () => {
     for (const fields of [{ number: 8 }, { state: 'merged' }, { merged: null }, { draft: undefined }, { mergeable: 'yes' },
-      { base_ref: null }, { head_sha: 'abc' }, { changed_files: -1 }, { changed_files: null }]) {
+      { base_ref: null }, { head_sha: 'abc' }, { changed_files: -1 }, { changed_files: null },
+      { merge_commit_sha: 'abc' }, { merge_commit_sha: 7 }, { merge_commit_sha: undefined }, { merge_commit_sha: TIP.toUpperCase() },
+      { state: 'open', merged: true, merge_commit_sha: TIP }]) {
       gh(ok(pull(fields)));
       const r = await gq.readPull(REPO, 7);
       assert.equal(r.status, 'unavailable', JSON.stringify(fields));

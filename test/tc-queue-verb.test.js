@@ -68,8 +68,10 @@ function refused(body) {
 describe('tc queue (#2322)', () => {
   it('is in the roster and in the usage, and not in the list every pane is primed with', () => {
     assert.ok(queue);
-    assert.deepEqual(QUEUE_SUBVERBS, ['status', 'submit', 'show', 'withdraw']);
+    assert.deepEqual(QUEUE_SUBVERBS, ['status', 'submit', 'show', 'withdraw', 'advance']);
     assert.match(renderUsage(), /tc queue status \| submit <pr> --head <sha>/);
+    assert.match(renderUsage(), /withdraw <entry> --reason <text> \| advance \[--queue <id>\]/);
+    assert.equal(receiptVerbLabel('queue', ['advance']), 'queue.advance');
     assert.ok(!verbsFor('pane').some((v) => v.id === 'queue'));
     assert.ok(verbsFor('unprimed').some((v) => v.id === 'queue'));
     assert.equal(receiptVerbLabel('queue', ['submit']), 'queue.submit');
@@ -85,7 +87,8 @@ describe('tc queue (#2322)', () => {
       ['submit', '12', '--head', HEAD, '--review', 'r', '--test', 't', '--base'],
       ['submit', '12', '--head', HEAD, '--review', 'r', '--test', 't', '--base', 'b', '--force', 'yes'],
       ['submit', '12', '--head', HEAD, '--head', HEAD, '--review', 'r', '--test', 't', '--base', 'b'],
-      ['submit', '12', '--head', HEAD, '--review', 'r', '--test', 't', '--base', 'b', '--operator-gate', 'maybe']
+      ['submit', '12', '--head', HEAD, '--review', 'r', '--test', 't', '--base', 'b', '--operator-gate', 'maybe'],
+      ['advance', 'mqe_1'], ['advance', '--queue'], ['advance', '--force', 'yes'], ['advance', '--queue', 'mq_1', '--queue', 'mq_2'], ['advance', '--queue', 'mq_1', 'extra']
     ];
     for (const argv of bad) {
       const { ctx, calls } = fakeCtx(argv);
@@ -186,7 +189,7 @@ describe('tc queue (#2322)', () => {
       prNumber: 2340, headSha: HEAD, gates: { review: 'msg 1a2b', test: 'run 77', base: 'main c0ffee' }, operatorGate: 'none'
     }, { timeoutMs: 60000 }]]);
     assert.match(r.stdout, new RegExp(`Queued: entry mqe_1111111111111111, PR #2340 at ${HEAD}, position 3 in mq_1\\.`));
-    assert.match(r.stdout, /Nothing lands yet/);
+    assert.match(r.stdout, /Nothing lands by itself: this project lands it, one step at a time, with `tc queue advance`\.\n$/);
     assert.ok(!r.stdout.includes('Operator gate'));
 
     const gated = fakeCtx([...args, '--operator-gate', 'required', '--queue', 'mq_1'], {
@@ -256,9 +259,12 @@ describe('tc queue (#2322)', () => {
       { code: 'API_UNREACHABLE_FROM_CONTEXT', timedOut: true, timeoutMs });
   }
 
-  it('submit and withdraw wait sixty seconds for their answer, and the reads name no limit', async () => {
-    assert.deepEqual(QUEUE_CALL_TIMEOUT_MS, { submit: 60000, withdraw: 60000 });
-    const answers = { get: { queues: [], queue: QUEUE, entry: entry(), events: [] }, post: { entry: entry(), queue: QUEUE, branches: null } };
+  it('submit and withdraw wait sixty seconds for their answer, advance a hundred and eighty, and the reads name no limit', async () => {
+    assert.deepEqual(QUEUE_CALL_TIMEOUT_MS, { submit: 60000, withdraw: 60000, advance: 180000 });
+    const answers = {
+      get: { queues: [], queue: QUEUE, entry: entry(), events: [] },
+      post: { entry: entry(), queue: QUEUE, branches: null, step: 'waiting', changed: false, message: 'It waits.' }
+    };
     const optionsOf = async (argv) => {
       const { ctx, calls } = fakeCtx(argv, answers);
       assert.equal((await queue.run(ctx)).code, 0, argv[0]);
@@ -267,11 +273,16 @@ describe('tc queue (#2322)', () => {
     };
     assert.deepEqual(await optionsOf(SUBMIT), [{ timeoutMs: 60000 }]);
     assert.deepEqual(await optionsOf(WITHDRAW), [{ timeoutMs: 60000 }]);
+    assert.deepEqual(await optionsOf(['advance']), [{ timeoutMs: 180000 }]);
     assert.deepEqual(await optionsOf(['status']), []);
     assert.deepEqual(await optionsOf(['show', 'mqe_1']), []);
   });
 
-  it('a submit or withdrawal that runs out of time says it may still be running, and never that the API is unreachable', async () => {
+  it('a submit, withdrawal or advance that runs out of time says it may still be running, and never that the API is unreachable', async () => {
+    const stuck = await queue.run(fakeCtx(['advance'], { post: timedOut(180000) }).ctx);
+    assert.equal(stuck.code, 2);
+    assert.ok(stuck.stderr.startsWith('tc: queue advance got no answer from the TangleClaw API in 180 seconds. The request may still be running on the server, so the advance may yet happen or already have'), stuck.stderr);
+    assert.doesNotMatch(stuck.stderr, /unreachable/i);
     for (const [argv, method] of [[SUBMIT, 'post'], [WITHDRAW, 'post']]) {
       const { ctx } = fakeCtx(argv, { [method]: timedOut(60000) });
       const r = await queue.run(ctx);
@@ -300,6 +311,53 @@ describe('tc queue (#2322)', () => {
       const { ctx } = fakeCtx(argv, { [method]: refusedConnection });
       await assert.rejects(() => queue.run(ctx), /ECONNREFUSED/, argv[0]);
     }
+  });
+
+  it('advance asks for one step of the caller\'s queue, or of the one named, and prints what the server says it did', async () => {
+    const landed = entry({
+      state: 'landed', candidate: { ref: 'tc-queue/mqe_1111111111111111', sha: 'c'.repeat(40), baseSha: 'b'.repeat(40) },
+      landed: { sha: 'e'.repeat(40), treeMatches: true }
+    });
+    const answer = { step: 'landed', changed: true, message: 'Entry mqe_1111111111111111 (PR #2340) LANDED on main as eeee.', entry: landed, queue: QUEUE };
+    const plain = fakeCtx(['advance'], { post: answer });
+    const r = await queue.run(plain.ctx);
+    assert.equal(r.code, 0);
+    assert.deepEqual(plain.calls, [['POST', '/api/merge-queue/advance', {}, { timeoutMs: 180000 }]]);
+    const lines = r.stdout.split('\n');
+    assert.equal(lines[0], 'Advance of mq_1 [landed]: Entry mqe_1111111111111111 (PR #2340) LANDED on main as eeee.');
+    assert.equal(lines[1], `  - mqe_1111111111111111: PR #2340 at ${HEAD}, landed`);
+    assert.ok(lines.includes(`       landed as ${'e'.repeat(40)}`));
+    assert.doesNotMatch(r.stdout, /No entry was moved/);
+
+    const named = fakeCtx(['advance', '--queue', 'mq_2'], { post: answer });
+    await queue.run(named.ctx);
+    assert.deepEqual(named.calls[0][2], { queueId: 'mq_2' });
+  });
+
+  it('advance says so when the call moved no entry, with or without an entry to show', async () => {
+    const waiting = fakeCtx(['advance'], { post: { step: 'waiting', changed: false, message: 'Entry mqe_1 waits.', entry: entry({ state: 'testing' }), queue: QUEUE } });
+    const w = await queue.run(waiting.ctx);
+    assert.ok(w.stdout.startsWith('Advance of mq_1 [waiting]: Entry mqe_1 waits.\n  No entry was moved by this call.\n  - mqe_1111111111111111: PR #2340'), w.stdout);
+    const idle = fakeCtx(['advance'], { post: { step: 'idle', changed: false, message: 'Nothing is waiting in this queue.', entry: null, queue: QUEUE } });
+    assert.equal((await queue.run(idle.ctx)).stdout, 'Advance of mq_1 [idle]: Nothing is waiting in this queue.\n  No entry was moved by this call.\n');
+  });
+
+  it('renders an advance\'s refusal with the gates that stop it and the branches left', async () => {
+    const gates = fakeCtx(['advance'], {
+      post: refused({
+        code: 'GATES_NOT_MET', error: 'Entry mqe_1 is green and cannot land yet.', entryId: 'mqe_1',
+        problems: [{ gate: 'operator', code: 'OPERATOR_GATE_OPEN', message: 'The Operator gate is required and the Operator has not recorded it.' }]
+      })
+    });
+    const g = await queue.run(gates.ctx);
+    assert.equal(g.code, 2);
+    assert.equal(g.stderr, 'tc: queue advance refused [GATES_NOT_MET] — Entry mqe_1 is green and cannot land yet.\n  entry: mqe_1\n'
+      + '  operator gate: The Operator gate is required and the Operator has not recorded it.\n');
+    const left = fakeCtx(['advance'], {
+      post: refused({ code: 'CANDIDATE_NOT_DISCARDED', error: 'The branches could not both be removed.', entryId: 'mqe_1', candidate: 'unknown', stage: 'deleted' })
+    });
+    assert.equal((await queue.run(left.ctx)).stderr,
+      'tc: queue advance refused [CANDIDATE_NOT_DISCARDED] — The branches could not both be removed.\n  candidate branch: unknown; stage branch: deleted\n  entry: mqe_1\n');
   });
 
   it('renders the slot refusal with the entry it was about', async () => {
