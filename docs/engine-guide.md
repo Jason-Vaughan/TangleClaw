@@ -1385,7 +1385,9 @@ the pane, by name; what the witness refused; the thread's state) and what the op
 the pane or the channel could not be read, it says **the proof was unavailable**. That is not a pane
 seen unready and is never worded as one. A refusal that waiting cannot clear (the session's pane is
 not the one the launch created, another tmux server answered, the channel is another launch's) is
-answered at once and not at the window's end.
+answered at once and not at the window's end. A trust dialog the gate or the last look reads from
+the pane is reported under this same code, by name; `trust_required` is what an operator's Fire
+says of it.
 
 **A passed gate is not permission to send.** It says the pane became ready, some time before the
 send. The launch's automatic fire therefore reads the launch's pane once more, on one fresh read,

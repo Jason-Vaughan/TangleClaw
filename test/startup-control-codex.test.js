@@ -1060,9 +1060,9 @@ describe('Codex startupControl adapter', () => {
         const cases = [
           ['the folder-trust prompt', PANES.trustPrompt, /Codex was showing its folder-trust prompt in the pane \(read from the pane\)/],
           ['the update prompt', PANES.updatePrompt, /Codex was showing its update prompt in the pane/],
-          ['the opening screen', PANES.openingScreen, /the pane was not at an empty composer: the engine is still starting/],
-          ['typed text', TYPED, /the pane was not at an empty composer: /],
-          ['a running turn', BUSY, /the pane was not at an empty composer: a turn is running/],
+          ['the opening screen', PANES.openingScreen, /the pane was not seen at an empty composer: the engine is still starting/],
+          ['typed text', TYPED, /the pane was not seen at an empty composer: /],
+          ['a running turn', BUSY, /the pane was not seen at an empty composer: a turn is running/],
           ['a status line of one item (measured)', PANES.composerSingleItemStatus, /something other than a status row is drawn below the composer/]
         ];
         for (const [name, frame, said] of cases) {
@@ -1182,7 +1182,7 @@ describe('Codex startupControl adapter', () => {
           assert.equal(answer.ready, false, name);
           assert.equal(answer.unavailable, true, name);
           assert.match(answer.observation, said, name);
-          assert.ok(!/not at an empty composer/.test(answer.observation), `${name}: it does not say the pane was seen`);
+          assert.ok(!/at an empty composer/.test(answer.observation), `${name}: it says nothing of a composer it could not read`);
           assert.equal(looks, 4, `${name}: it may clear, so the gate keeps looking`);
           server.close();
           server = null;
@@ -1223,7 +1223,7 @@ describe('Codex startupControl adapter', () => {
         channel(LAUNCH_PANE);
         r = await gate(pane());
         assert.equal(r.answer.unavailable, true);
-        assert.match(r.answer.observation, /the loaded threads could not be listed over the channel/);
+        assert.match(r.answer.observation, /the loaded threads could not all be read over the channel/);
         assert.ok(!r.answer.observation.includes('/private/secret'));
         server.close();
 
@@ -1236,6 +1236,29 @@ describe('Codex startupControl adapter', () => {
         r = await gate(screen, { windowMs: 1000 });
         assert.equal(r.answer.unavailable, true);
         assert.match(r.answer.observation, /the launch's thread could not be read over the channel/);
+      });
+
+      it('a loaded thread that cannot be read is a read that was not made: unavailable, not "no thread yet"', async () => {
+        await serve({ 'thread/read': () => { throw Object.assign(new Error('gone /private/secret'), { code: -32603 }); } });
+        channel(LAUNCH_PANE);
+        const screen = pane();
+        const { answer, looks } = await gate(screen);
+        assert.equal(answer.ready, false);
+        assert.equal(answer.unavailable, true);
+        assert.match(answer.observation, /the loaded threads could not all be read over the channel/);
+        assert.ok(!answer.observation.includes('/private/secret'));
+        assert.deepEqual(screen.log, [], 'and the pane is not read to name a dialog on it');
+        assert.equal(looks, 4);
+      });
+
+      it('a channel that records no socket is unavailable at once: there is nothing to wait for', async () => {
+        await serve();
+        channel({ ...LAUNCH_PANE, resolvedSocketPath: null });
+        const { answer, looks } = await gate(pane());
+        assert.equal(answer.unavailable, true);
+        assert.match(answer.observation, /the channel records no socket/);
+        assert.match(answer.remedy, /relaunch the session/);
+        assert.equal(looks, 1);
       });
 
       it('no open channel, or a channel of another launch: unavailable, at once', async () => {
@@ -1335,7 +1358,7 @@ describe('Codex startupControl adapter', () => {
             const settled = await fireAuto(f, changedAtTheSend(TYPED));
             assert.equal(settled.outcome, 'blocked');
             assert.equal(settled.reasonCode, 'pane_not_ready');
-            assert.match(settled.reason, /^The pane was ready at the launch gate and was not immediately before the send, so nothing was sent: the pane was not at an empty composer: /);
+            assert.match(settled.reason, /^The pane was seen ready at the launch gate and was not seen ready immediately before the send, so nothing was sent: the pane was not seen at an empty composer: /);
             assert.ok(settled.reason.endsWith('Press Fire startup prompt once the pane shows an empty composer.'), settled.reason);
             assert.equal(server.calls('turn/start').length, 0);
             assert.equal(fireRows(), 1);
@@ -1403,7 +1426,7 @@ describe('Codex startupControl adapter', () => {
               assert.equal(settled.outcome, 'blocked', name);
               assert.equal(settled.reasonCode, 'pane_not_ready', name);
               assert.match(settled.reason, /^The proof that the pane still showed an empty composer and an idle thread was unavailable immediately before the send, so nothing was sent: /, name);
-              assert.ok(!/was ready at the launch gate and was not/.test(settled.reason), `${name}: not worded as a pane seen unready`);
+              assert.ok(!/was seen ready at the launch gate/.test(settled.reason), `${name}: not worded as a pane seen unready`);
               assert.ok(!settled.reason.includes('/private/secret'), name);
               assert.equal(server.calls('turn/start').length, 0, name);
               assert.equal(fireRows(), 1, name);

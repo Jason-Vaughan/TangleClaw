@@ -198,13 +198,13 @@ describe('launch bootstrap (#1825 B3)', () => {
     });
 
     it('a pane the adapter saw not ready at the window\'s end is one attempt, carrying its last observation, its remedy, and that it was SEEN', async () => {
-      gate = { answer: 'not-ready', unavailable: false, observation: 'the pane was not at an empty composer: the composer holds typed text', remedy: 'Press Fire startup prompt once the pane shows an empty composer.', whole: null };
+      gate = { answer: 'not-ready', unavailable: false, observation: 'the pane was not seen at an empty composer: the composer holds typed text', remedy: 'Press Fire startup prompt once the pane shows an empty composer.', whole: null };
       answer = BLOCKED;
       assert.equal(await launchBootstrap.bootstrap({ ...NATIVE }), 'not-sent');
       assert.equal(fires.length, 1, 'recorded once, never retried');
       assert.deepEqual(fires[0].paneGate, {
         ready: false, proof: 'adapter', unavailable: false,
-        reason: 'the pane was not at an empty composer: the composer holds typed text',
+        reason: 'the pane was not seen at an empty composer: the composer holds typed text',
         remedy: 'Press Fire startup prompt once the pane shows an empty composer.'
       });
       assert.equal(activity[0].detail.reasonCode, 'pane_not_ready');

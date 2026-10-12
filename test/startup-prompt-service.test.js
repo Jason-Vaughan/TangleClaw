@@ -694,12 +694,12 @@ describe('startup prompt service: the launch gate, its sentence and the automati
 
   describe('the pane_not_ready sentence for a gate the adapter proved', () => {
     it('a pane SEEN not ready: the last observation, then what the operator does', async () => {
-      const { r, row, w } = await settle({ ready: false, proof: 'adapter', unavailable: false, reason: 'the pane was not at an empty composer: the composer holds typed text', remedy: 'Press Fire startup prompt once the pane shows an empty composer.' });
+      const { r, row, w } = await settle({ ready: false, proof: 'adapter', unavailable: false, reason: 'the pane was not seen at an empty composer: the composer holds typed text', remedy: 'Press Fire startup prompt once the pane shows an empty composer.' });
       assert.equal(r.status, 409);
       assert.equal(r.body.code, 'STARTUP_FIRE_BLOCKED');
       assert.equal(row.outcome, 'blocked');
       assert.equal(row.reasonCode, 'pane_not_ready');
-      assert.equal(row.reason, 'the pane was not seen ready within the launch window, so nothing was sent: the pane was not at an empty composer: the composer holds typed text. Press Fire startup prompt once the pane shows an empty composer.');
+      assert.equal(row.reason, 'the pane was not seen ready within the launch window, so nothing was sent: the pane was not seen at an empty composer: the composer holds typed text. Press Fire startup prompt once the pane shows an empty composer.');
       assert.equal(w.fires.length, 0, 'the adapter is never asked to send');
       assert.equal(w.d._fires.length, 1, 'exactly one row');
       assert.equal(w.d.prompts.activeFire(100), null, 'and the slot is free for a Fire by hand');
