@@ -212,7 +212,8 @@ const CODEX_FIXTURE_SETS = Object.freeze([
   }),
   loadCodexSet('0.156.1'),
   loadCodexSet('0.159.0'),
-  loadCodexSet('0.161.0')
+  loadCodexSet('0.161.0'),
+  loadCodexSet('0.162.0')
 ]);
 
 module.exports = {

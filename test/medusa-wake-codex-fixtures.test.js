@@ -16,13 +16,21 @@
  * `PROVEN_CLI_VERSIONS` are the only ones proven; no other version is, and
  * nothing here infers that a neighbouring version behaves the same. The
  * channel's answers are TangleClaw's own normalized shape
- * (`lib/startup-control.js` `observeActivity`), not Codex wire bytes, so they
- * carry no Codex version: the app-server protocol is not proven here either.
+ * (`lib/startup-control.js` `observeActivity`), not Codex wire bytes: the
+ * app-server protocol is not proven here either. An answer names a Codex
+ * version only where the profile declares what that exact version draws below
+ * its composer (`capabilities.wake.restRows`), as the adapter's does, and the
+ * stub here does the same for a set of such a version (`channelFor`).
  *
- * A captured version is not a supported one. The sets for 0.159.0 and 0.161.0
- * exist to pin what the gate REFUSES on them (#2059); whether a session of
- * such a version may be woken at all is decided by the engine profile's
- * verified versions, which a block below reads.
+ * A captured version is not a supported one. The sets for 0.159.0, 0.161.0
+ * and 0.162.0 exist to pin what the gate REFUSES on them (#2059); whether a
+ * session of such a version may be woken at all is decided by the engine
+ * profile's verified versions, which a block below reads.
+ *
+ * The 0.161.0 set file holds two launch paths. Its `panes`, which the matrix
+ * here runs, are a plain launch on the shared daemon. Its captures over the
+ * launch path TangleClaw uses are `channelPanes`, and a block below runs
+ * those, beside 0.162.0's, whose `panes` are that launch path throughout.
  *
  * The trust and update dialogs are whole reads, each saying which screen Codex
  * drew it on (#2187). A dialog on the main screen keeps the opening composer
@@ -48,7 +56,7 @@ const wake = require('../lib/medusa-wake');
 const { CODEX_FIXTURE_SETS } = fixtures;
 
 /** The codex-cli versions with captured fixtures. Every other version is unproven. */
-const PROVEN_CLI_VERSIONS = ['0.155.1', '0.156.1', '0.159.0', '0.161.0'];
+const PROVEN_CLI_VERSIONS = ['0.155.1', '0.156.1', '0.159.0', '0.161.0', '0.162.0'];
 
 const PROVENANCE = ['live-capture', 'derived'];
 
@@ -70,6 +78,22 @@ const CHANNEL_ANSWERS = {
   held: { open: true, answer: () => Promise.resolve(HELD) },
   absent: { open: false, answer: () => Promise.resolve(IDLE) }
 };
+
+/** The versions whose rows below the composer the shipped profile declares. */
+const DECLARED_VERSIONS = Object.keys(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8')).capabilities.wake.restRows);
+
+/**
+ * The channel's answer for a set of one version. An idle answer for a version
+ * the profile declares names that version, as the adapter's does; every other
+ * answer is the version-less one.
+ * @param {string} cliVersion - The set's codex-cli version
+ * @param {string} answerName - A key of `CHANNEL_ANSWERS`
+ * @returns {object}
+ */
+function channelFor(cliVersion, answerName) {
+  if (answerName !== 'idle' || !DECLARED_VERSIONS.includes(cliVersion)) return CHANNEL_ANSWERS[answerName];
+  return { open: true, answer: () => Promise.resolve({ ...IDLE, version: cliVersion }) };
+}
 
 /** What the gate does whatever the pane shows, for every answer but a fresh idle. */
 const HELD_BY_CHANNEL = {
@@ -104,10 +128,23 @@ const ON_FRESH_IDLE = {
   // and below a stale composer row, where the selector row is what refuses.
   trustDialog: 'pane-no-prompt',
   updateDialog: 'pane-no-prompt',
-  // Held where the opening screen draws a header that says it is starting. A
-  // version whose opening screen draws none is listed in
+  // Held where the opening screen draws a header that says it is starting, or
+  // where the profile declares the footer its version opens with and the
+  // channel names that version. A version with neither is listed in
   // KNOWN_UNSAFE_IF_CHANNEL_IDLE instead.
-  startScreen: 'pane-engine-starting'
+  startScreen: 'pane-engine-starting',
+  // 0.162.0 over the channel. The resuming screen draws the declared footer
+  // alone, as the opening screen does.
+  resumingScreen: 'pane-engine-starting',
+  idleThreeItemStatus: null,
+  idleSingleItemStatus: null,
+  idleAfterTurn: null,
+  idleAfterUpdateSkipped: null,
+  idleAfterResume: null,
+  // An empty status line at rest: one row, the footer with a context item
+  // beside it. That is not the declared footer, so this gate does not refuse
+  // it; the startup fire's witness does.
+  idleEmptyStatus: null
 };
 
 /**
@@ -116,19 +153,21 @@ const ON_FRESH_IDLE = {
  * nothing may be typed into them. An entry here records a hole, not a safety
  * property, and a green test over it proves only that the hole is still there.
  *
- * The opening screen of 0.159.0 and 0.161.0. Codex draws its empty composer
- * on the screen it opens with, before the folder-trust or update prompt
- * replaces it: no busy marker, a bare prompt, a still transcript. On 0.156.1
- * that screen's header says the engine is starting and the gate holds it by
- * that (`ON_FRESH_IDLE`). These two versions draw no such header row on any
- * captured screen, so the starting marker has nothing to read, and only the
- * missing at-rest marker refuses their opening screen, which a fresh idle from
- * the channel excuses.
+ * The opening screen of 0.159.0. Codex draws its empty composer on the screen
+ * it opens with, before the folder-trust or update prompt replaces it: no busy
+ * marker, a bare prompt, a still transcript. On 0.156.1 that screen's header
+ * says the engine is starting and the gate holds it by that (`ON_FRESH_IDLE`).
+ * 0.159.0, 0.161.0 and 0.162.0 draw no such header row on any captured screen,
+ * so the starting marker has nothing to read. For 0.161.0 and 0.162.0 the
+ * profile declares the footer row that screen draws alone, and the gate holds
+ * it by that once the channel names the version. Nothing is declared for
+ * 0.159.0, so only the missing at-rest marker refuses its opening screen,
+ * which a fresh idle from the channel excuses.
  *
- * So on these panes the one thing keeping a nudge out is the channel not
- * answering idle while they are up, and today a session of either version has
- * no channel at all: neither is a verified version (a block below reads the
- * profile for that). Admitting one is what would open this hole.
+ * So on that pane the one thing keeping a nudge out is the channel not
+ * answering idle while it is up, and today a session of 0.159.0 has no channel
+ * at all: it is not a verified version (a block below reads the profile for
+ * that). Admitting it is what would open this hole.
  *
  * The settling hold (#2059) does not take a pane off this list. It delays the
  * nudge by one monitor interval after a launch's first idle answer and judges
@@ -143,8 +182,7 @@ const ON_FRESH_IDLE = {
  * about what a whole read of that version holds.
  */
 const KNOWN_UNSAFE_IF_CHANNEL_IDLE = {
-  '0.159.0': ['startScreen'],
-  '0.161.0': ['startScreen']
+  '0.159.0': ['startScreen']
 };
 
 /**
@@ -377,7 +415,7 @@ describe('the wake gate over every Codex engine state, per captured version (#20
         if (pane.provenance !== 'live-capture') continue;
         if (knownUnsafe(set.cliVersion, paneName)) {
           it(`KNOWN UNSAFE IF CHANNEL IDLE: ${paneName} pane, channel idle: the pane gate does not refuse it and a nudge is typed`, async () => {
-            const out = await judge(pane.lines, CHANNEL_ANSWERS.idle);
+            const out = await judge(pane.lines, channelFor(set.cliVersion, 'idle'));
             // `injected: 1` DOCUMENTS what the gate does today when handed an
             // idle answer over this pane. It is not acceptance of that
             // behaviour, and it is not evidence that a live channel can answer
@@ -389,7 +427,7 @@ describe('the wake gate over every Codex engine state, per captured version (#20
         const expected = ON_FRESH_IDLE[paneName];
         it(`${paneName} pane, channel idle: ${expected === null ? 'nudged once' : `held as ${expected}`}`, async () => {
           assert.ok(paneName in ON_FRESH_IDLE, 'a new live pane needs an expected outcome here');
-          const out = await judge(pane.lines, CHANNEL_ANSWERS.idle);
+          const out = await judge(pane.lines, channelFor(set.cliVersion, 'idle'));
           assert.deepEqual(out, expected === null ? { injected: 1, held: null } : { injected: 0, held: expected });
         });
       }
@@ -419,7 +457,7 @@ describe('the first idle answer of a launch is held, whatever the pane shows (#2
   for (const set of CODEX_FIXTURE_SETS) {
     for (const [paneName, pane] of Object.entries(set.panes)) {
       it(`codex-cli ${set.cliVersion}: ${paneName} pane, first idle answer: held as engine-thread-settling, nothing typed`, async () => {
-        const out = await judge(pane.lines, CHANNEL_ANSWERS.idle, { ticks: 2 });
+        const out = await judge(pane.lines, channelFor(set.cliVersion, 'idle'), { ticks: 2 });
         assert.deepEqual(out, { injected: 0, held: 'engine-thread-settling' });
       });
     }
@@ -444,7 +482,7 @@ describe('what refuses a Codex pane when no channel has spoken (#2059)', () => {
 
   it('the start screen is captured for every version it was seen on', () => {
     const withStart = CODEX_FIXTURE_SETS.filter((set) => 'startScreen' in set.panes).map((set) => set.cliVersion);
-    assert.deepEqual(withStart, ['0.156.1', '0.159.0', '0.161.0']);
+    assert.deepEqual(withStart, ['0.156.1', '0.159.0', '0.161.0', '0.162.0']);
   });
 
   for (const [version, , lines] of LIVE_PANES.filter(([, name]) => name === 'startScreen')) {
@@ -472,6 +510,15 @@ describe('what refuses a Codex pane when no channel has spoken (#2059)', () => {
     idleDefaultLayout: 'idle',
     idleRunState: 'idle',
     startScreen: 'idle',
+    // With no version named the declared footer is not asked about, so the
+    // resuming screen reads as the opening screen does.
+    resumingScreen: 'idle',
+    idleThreeItemStatus: 'idle',
+    idleSingleItemStatus: 'idle',
+    idleEmptyStatus: 'idle',
+    idleAfterTurn: 'idle',
+    idleAfterUpdateSkipped: 'idle',
+    idleAfterResume: 'idle',
     busy: 'turn-in-flight',
     busyDefaultLayout: 'turn-in-flight',
     busyRunState: 'turn-in-flight',
@@ -559,6 +606,149 @@ describe('a captured Codex version is woken only if the profile verified it (#20
   // matrix above: held as engine-channel-absent on every pane of every set.
 });
 
+describe('the opening and resuming screens of a version that declares its footer, over the launch path TangleClaw uses (#2059)', () => {
+  const { CODEX_CHANNEL_VERSIONS, CODEX_CHANNEL_FIXTURES } = require('./_codex-visible-pane-fixtures');
+  const shipped = () => wake.ENGINE_WAKE_PROFILES.codex;
+  /** The channel's idle answer, naming `version` or none. */
+  const idleNaming = (version) => ({ open: true, answer: () => Promise.resolve(version ? { ...IDLE, version } : IDLE) });
+  /** The pane gate's own verdict for a version, the engine's thread reported idle. */
+  const verdictAt = (lines, version, profile = shipped(), cursor = null) => {
+    const verdict = wake._assessPane(lines, profile, cursor, true, version);
+    return verdict.idle ? 'idle' : verdict.reason;
+  };
+  const OPENING = ['startScreen', 'resumingScreen'];
+  const AT_REST = ['idleDefaultLayout', 'idleThreeItemStatus', 'idleSingleItemStatus', 'idleAfterTurn', 'idleAfterUpdateSkipped', 'idleAfterResume'];
+
+  let saved;
+  beforeEach(() => {
+    saved = { ...wake._internal };
+    wake.stop();
+  });
+  afterEach(() => {
+    wake.stop();
+    Object.assign(wake._internal, saved);
+  });
+
+  it('the declared versions are the captured ones, each from its own file', () => {
+    assert.deepEqual(DECLARED_VERSIONS, [...CODEX_CHANNEL_VERSIONS]);
+    for (const version of CODEX_CHANNEL_VERSIONS) assert.equal(CODEX_CHANNEL_FIXTURES[version].version, version);
+    assert.equal(shipped().restRows['0.156.1'], undefined, 'nothing is declared for 0.156.1');
+    assert.equal(shipped().restRows['0.159.0'], undefined, 'nor for 0.159.0, which was not measured over this launch path');
+  });
+
+  for (const version of CODEX_CHANNEL_VERSIONS) {
+    const fx = CODEX_CHANNEL_FIXTURES[version];
+
+    for (const name of OPENING) {
+      it(`codex-cli ${version} ${name}: held as pane-engine-starting through the gate, the thread reported idle, nothing typed`, async () => {
+        assert.deepEqual(await judge([...fx.lines[name]], idleNaming(version)), { injected: 0, held: 'pane-engine-starting' });
+      });
+
+      it(`codex-cli ${version} ${name}: the refusal is the declared footer's, not the header's, the at-rest marker's or the cursor's`, () => {
+        const lines = [...fx.lines[name]];
+        assert.equal(verdictAt(lines, version), 'engine-starting');
+        const { headerRe, startingRe, ...headerless } = shipped();
+        assert.ok(headerRe && startingRe, 'the shipped profile declares a starting header');
+        assert.equal(verdictAt(lines, version, headerless), 'engine-starting', 'with no header pattern at all');
+        assert.equal(verdictAt(lines, version, { ...shipped(), idleMarker: null }), 'engine-starting', 'with no at-rest marker required');
+        const pane = fx.panes[name];
+        assert.equal(verdictAt(lines, version, shipped(), { x: pane.x, line: pane.rows[pane.y] }), 'engine-starting', 'with the cursor on the empty composer');
+      });
+
+      it(`codex-cli ${version} ${name}: refused only for the version the channel named`, () => {
+        const lines = [...fx.lines[name]];
+        assert.equal(verdictAt(lines, null), 'idle', 'no version named');
+        assert.equal(verdictAt(lines, '0.156.1'), 'idle', 'a version with no declaration');
+        assert.equal(verdictAt(lines, '0.159.0'), 'idle');
+        assert.equal(verdictAt(lines, `${version}0`), 'idle', 'a version that is not exactly a declared one');
+        assert.equal(verdictAt(lines, 'constructor'), 'idle', 'a name every object has is not a declared version');
+      });
+    }
+
+    for (const name of AT_REST) {
+      it(`codex-cli ${version} ${name}: a usable composer does not get this refusal, and is nudged once`, async () => {
+        assert.equal(verdictAt([...fx.lines[name]], version), 'idle');
+        assert.deepEqual(await judge([...fx.lines[name]], idleNaming(version)), { injected: 1, held: null });
+      });
+    }
+
+    it(`codex-cli ${version}: a footer that differs by one character is not the declared footer`, () => {
+      const lines = [...fx.lines.startScreen];
+      const at = lines.lastIndexOf('  ? for shortcuts');
+      assert.ok(at > 0);
+      for (const other of ['  ? for shortcut', '  ? for shortcuts.', '   ? for shortcuts', '  ← for agents · ? for shortcuts']) {
+        const changed = [...lines];
+        changed[at] = other;
+        assert.equal(verdictAt(changed, version), 'idle', other);
+      }
+      const padded = [...lines];
+      padded[at] = '  ? for shortcuts   ';
+      assert.equal(verdictAt(padded, version), 'engine-starting', 'trailing space on the row is not part of it');
+    });
+
+    it(`codex-cli ${version}: an empty status line is held while it opens and not once it is at rest`, () => {
+      const rest = [...fx.lines.idleEmptyStatus];
+      assert.match(rest[rest.length - 1], /^ {2}\? for shortcuts {2,}100% context left$/);
+      assert.equal(verdictAt(rest, version), 'idle', 'the footer with a context item beside it is not the declared footer');
+      const opening = [...rest];
+      opening[opening.length - 1] = '  ? for shortcuts';
+      assert.equal(verdictAt(opening, version), 'engine-starting');
+    });
+
+    it(`codex-cli ${version}: the dialogs, typed text and a drawn busy row keep their own refusals under the declaration`, () => {
+      assert.equal(verdictAt([...fx.lines.trustDialog], version), 'no-prompt');
+      assert.equal(verdictAt([...fx.lines.updateDialog], version), 'no-prompt');
+      assert.equal(verdictAt([...fx.lines.typing], version), 'no-prompt');
+      assert.equal(verdictAt([...fx.lines.busyDefaultLayout], version), 'turn-in-flight');
+    });
+
+    it(`codex-cli ${version}: a streaming turn draws no busy row, and is held by the channel's answer and by the transcript moving`, async () => {
+      const { streamingFirst, streamingNext } = fx.turnFrames;
+      for (const frame of [streamingFirst, streamingNext]) {
+        assert.ok(!frame.lines.join('\n').includes(shipped().busyMarker), 'no busy marker is drawn while the answer streams');
+        // The limit, stated: read alone, with an idle answer nothing real would
+        // give while this is up, the pane gate does not refuse this frame.
+        assert.equal(verdictAt([...frame.lines], version), 'idle');
+      }
+      assert.equal(fx.threads.userActive.status.type, 'active', 'the thread reports the turn');
+      assert.deepEqual(await judge([...streamingFirst.lines], CHANNEL_ANSWERS.busy), { injected: 0, held: 'engine-thread-busy' });
+      // Even under an idle answer, two reads of a transcript that moved are not at rest.
+      const moving = wake.assessSessionIdle({ lines: [...streamingFirst.lines], profile: shipped(), cursor: null, engineIdle: true, engineVersion: version });
+      const next = wake.assessSessionIdle({ lines: [...streamingNext.lines], profile: shipped(), cursor: null, engineIdle: true, engineVersion: version, prevDigest: moving.digest, idleTicks: moving.idleTicks });
+      assert.deepEqual({ idle: next.idle, reason: next.reason, idleTicks: next.idleTicks }, { idle: false, reason: 'pane-writing', idleTicks: 0 });
+    });
+  }
+
+  it('an opening screen is held for as long as it is up and nudged once the status row is drawn above the footer', async () => {
+    for (const version of CODEX_CHANNEL_VERSIONS) {
+      const fx = CODEX_CHANNEL_FIXTURES[version];
+      const world = { clock: 1_000_000, injected: [], recorded: [], pane: [...fx.lines.startScreen] };
+      const s = installSeams(world, {
+        pane: () => world.pane,
+        channelOpen: true,
+        observe: () => Promise.resolve({ ...IDLE, version }),
+        onDelivery: (entry) => { world.recorded.push(entry); },
+        onInject: (command) => { world.injected.push(command); }
+      });
+      const run = async (ticks) => {
+        for (let i = 0; i < ticks; i++) {
+          s.tick();
+          world.clock += ANSWER_LAG_MS;
+          await settle();
+          world.clock += INTERVAL_MS - ANSWER_LAG_MS;
+        }
+      };
+      await run(SETTLED_TICKS);
+      assert.equal(world.injected.length, 0, `${version}: nothing typed while it opens`);
+      assert.equal(world.recorded[world.recorded.length - 1].skipReason, 'pane-engine-starting', version);
+      world.pane = [...fx.lines.idleDefaultLayout];
+      await run(SETTLED_TICKS);
+      assert.equal(world.injected.length, 1, `${version}: nudged once at rest`);
+      wake.stop();
+    }
+  });
+});
+
 /** The startup dialogs a version can draw before a session is usable. */
 const DIALOG_PANES = ['trustDialog', 'updateDialog'];
 
@@ -587,7 +777,8 @@ describe('the startup dialogs are whole reads that say which screen drew them (#
     assert.deepEqual(captured.map((set) => [set.cliVersion, DIALOG_PANES.filter((name) => name in set.panes)]), [
       ['0.156.1', DIALOG_PANES],
       ['0.159.0', DIALOG_PANES],
-      ['0.161.0', DIALOG_PANES]
+      ['0.161.0', DIALOG_PANES],
+      ['0.162.0', DIALOG_PANES]
     ]);
   });
 
@@ -774,12 +965,26 @@ describe('the folder hold, the settling hold and the pane refusals act in that o
   });
 });
 
-describe('the known-unsafe list is the opening screen of the two versions that draw no starting header (#2059, #2187)', () => {
+describe('the known-unsafe list is the opening screen of the one version with neither a starting header nor a declared footer (#2059, #2187)', () => {
   it('names nothing else, so another hole cannot be added quietly', () => {
     assert.deepEqual(KNOWN_UNSAFE_IF_CHANNEL_IDLE, {
-      '0.159.0': ['startScreen'],
-      '0.161.0': ['startScreen']
+      '0.159.0': ['startScreen']
     });
+  });
+
+  it('0.161.0\'s opening screen left the list only because the gate now refuses it under 0.161.0\'s own declaration', async () => {
+    const lines = CODEX_FIXTURE_SETS.find((set) => set.cliVersion === '0.161.0').panes.startScreen.lines;
+    const saved = { ...wake._internal };
+    wake.stop();
+    try {
+      assert.deepEqual(await judge(lines, channelFor('0.161.0', 'idle')), { injected: 0, held: 'pane-engine-starting' });
+      // The same pane under an idle answer that names no version is typed
+      // into, as it was while it was listed: the refusal is the declaration's.
+      assert.deepEqual(await judge(lines, CHANNEL_ANSWERS.idle), { injected: 1, held: null });
+    } finally {
+      wake.stop();
+      Object.assign(wake._internal, saved);
+    }
   });
 
   it('every entry names a live pane of a captured set', () => {
@@ -793,11 +998,11 @@ describe('the known-unsafe list is the opening screen of the two versions that d
     }
   });
 
-  it('a listed opening screen is one with no header row for the starting marker to read', () => {
+  it('a listed opening screen is one with no header row for the starting marker to read and no declared footer', () => {
     const { headerRe } = wake.ENGINE_WAKE_PROFILES.codex;
     for (const set of CODEX_FIXTURE_SETS.filter((candidate) => 'startScreen' in candidate.panes)) {
       const hasHeader = set.panes.startScreen.lines.some((row) => headerRe.test(row));
-      assert.equal(knownUnsafe(set.cliVersion, 'startScreen'), !hasHeader, set.cliVersion);
+      assert.equal(knownUnsafe(set.cliVersion, 'startScreen'), !hasHeader && !DECLARED_VERSIONS.includes(set.cliVersion), set.cliVersion);
     }
   });
 

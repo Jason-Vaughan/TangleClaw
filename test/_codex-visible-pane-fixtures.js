@@ -1,5 +1,8 @@
 'use strict';
 
+const fs = require('node:fs');
+const path = require('node:path');
+
 /**
  * Codex's startup screens as one visible-pane read gives them: the pane's
  * height, the cursor's column and row, and every visible row from the top,
@@ -508,4 +511,48 @@ const CODEX_VISIBLE_PANES = Object.freeze({
   })
 });
 
-module.exports = { CODEX_VISIBLE_PANES };
+/** The Codex versions whose screens were captured over the launch path TangleClaw uses. */
+const CODEX_CHANNEL_VERSIONS = Object.freeze(['0.161.0', '0.162.0']);
+
+/**
+ * One version's captures over the `--remote` channel, from its own file under
+ * `test/fixtures/codex-panes/`: signed-in codex-cli of exactly that version,
+ * one `codex app-server` per launch with the pane's TUI attached to it, a
+ * throwaway CODEX_HOME and a private tmux server, 2026-10-12. Nothing here is
+ * shared between the two versions or copied from one to the other.
+ *
+ * `panes` are whole visible reads with the cursor, in the shape
+ * `CODEX_VISIBLE_PANES` has. `lines` are the same reads as plain rows, as the
+ * wake's pane read returns them. `turnFrames` are frames of one real turn:
+ * two consecutive frames while its answer streamed, and on 0.162.0 the one
+ * frame that drew the status row with no footer. `threads` are whole
+ * `thread/read` answers (and one `thread/started` notification) of the
+ * launch's own thread and of the title helper Codex starts after a first
+ * turn, with ids and paths replaced.
+ *
+ * The 0.161.0 file also holds an older set under `panes`, taken from a plain
+ * launch on the shared daemon. That is another launch path, with another
+ * footer row, and is not returned here.
+ * @param {string} version - Exact codex-cli version.
+ * @returns {Readonly<{version: string, panes: object, lines: object, turnFrames: object, threads: object}>}
+ */
+function loadChannelFixtures(version) {
+  const file = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'codex-panes', `codex-${version}.json`), 'utf8'));
+  const captured = file.channelPanes || file.panes;
+  const panes = {};
+  const lines = {};
+  for (const [name, pane] of Object.entries(captured)) {
+    panes[name] = Object.freeze({ ...pane.visible, rows: Object.freeze([...pane.visible.rows]) });
+    lines[name] = Object.freeze([...pane.lines]);
+  }
+  const turnFrames = {};
+  for (const [name, pane] of Object.entries(file.turnFrames)) {
+    turnFrames[name] = Object.freeze({ ...pane.visible, rows: Object.freeze([...pane.visible.rows]), lines: Object.freeze([...pane.lines]) });
+  }
+  return Object.freeze({ version: file.cliVersion, panes: Object.freeze(panes), lines: Object.freeze(lines), turnFrames: Object.freeze(turnFrames), threads: file.threads });
+}
+
+/** @type {Readonly<Record<string, ReturnType<typeof loadChannelFixtures>>>} */
+const CODEX_CHANNEL_FIXTURES = Object.freeze(Object.fromEntries(CODEX_CHANNEL_VERSIONS.map((version) => [version, loadChannelFixtures(version)])));
+
+module.exports = { CODEX_VISIBLE_PANES, CODEX_CHANNEL_VERSIONS, CODEX_CHANNEL_FIXTURES };

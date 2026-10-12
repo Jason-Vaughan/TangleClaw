@@ -198,6 +198,17 @@ describe('the wake signature is declared in the engine profile (#1255)', () => {
       const derived = wake.ENGINE_WAKE_PROFILES[id];
       for (const [field, value] of Object.entries(declared)) {
         if (field === 'evidence') continue;
+        if (field === 'restRows') {
+          // A table of patterns, one per exact version, compiled entry by
+          // entry; an entry's own evidence is provenance and is not derived.
+          assert.deepEqual(Object.keys(derived.restRows), Object.keys(value), `${id}.restRows must keep exactly the declared versions`);
+          for (const [version, entry] of Object.entries(value)) {
+            assert.deepEqual(Object.keys(derived.restRows[version]), ['footerRe'], `${id}.restRows.${version} derives the compiled footer and nothing else`);
+            assert.ok(derived.restRows[version].footerRe instanceof RegExp);
+            assert.equal(derived.restRows[version].footerRe.source, entry.footerPattern, `${id}.restRows.${version}: the compiled pattern must be the declared one`);
+          }
+          continue;
+        }
         if (field.endsWith('Pattern')) {
           const re = derived[compiledName(field)];
           assert.ok(re instanceof RegExp, `${id}.${field} must be compiled to ${compiledName(field)}`);
