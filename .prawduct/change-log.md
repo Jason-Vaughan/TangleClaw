@@ -59,6 +59,31 @@ Visual change: no
 
 **Limits.** No read of GitHub, no wake, no alarm at the due time, no expiry: a watch reads `waiting` until its due time and `unknown` after it. Nothing checks that the pull request exists or that the commit is its head. A held lane can register and cancel. `derive` is unchanged, so the `past-due` point carried from chunk 01's review is still open.
 
+## 2026-10-12 — #2321: the check reader says which app made a run, and which workflow run it belongs to
+
+<!-- prawduct: type=feature | scope=2321-ci-as-suite-evidence -->
+
+#2321 Chunk 02a. Branch `feat/2321-02a-check-app`, from `origin/main` `fd53bbea`. The issue stays open: one chunk follows, and the lane rule it asks for is not in force.
+
+Visual change: no
+
+**Why.** Any app with write access to checks can post a run named `test`. Before a reading of CI can be evidence, the reader has to say whose run it read. `readCheck` kept the conclusion and dropped the app.
+
+**What changed.**
+
+- `lib/github-checks.js`: a `running` or `concluded` answer now carries `app`, the slug of the app that made the newest run of that name, and `workflowRunId` when that run is a GitHub Actions job. The request's projection gains `.app.slug` and `details_url`; it is still one request.
+- A run that does not say which app made it reads `unavailable`, so no answer names a run without its app. Only the newest run of the name is read for it, as for everything else.
+- `workflowRunId` comes from the run's own `details_url`, only when the app is `github-actions`, the link has exactly the shape `https://github.com/<repo>/actions/runs/<id>/job/<id>`, `<repo>` is the repository asked about (compared without regard to case) and the job it names is the check run itself, as it is for a real job. That link is written by whoever made the run, so another app's run gets no workflow run whatever its link says. Any other link leaves the field out and is not an error.
+- The reader reports the app and does not judge it: a `test` run made by another app is answered with that app's slug. Refusing it is the evidence command's, in the next chunk.
+- `ACTIONS_APP` is exported. `interpret` takes the repository as a fourth argument; without it no workflow run is read.
+- `test/github-checks.test.js`: the app and workflow-run cases, and the whole-answer assertions gain the two fields. `test/fixtures/github-checks/`: `commit-with-actions-run.json` and `workflow-run.json` are real answers captured for this repository's commit `06ac528f`; `named-check-projected.json` was captured again through the reader's own request, which now asks for the two fields.
+
+**What an operator sees.** Nothing.
+
+**Callers.** `lib/check-watch-store.js` and `lib/merge-queue-api.js` copy the fields they use out of the answer and neither compares a whole one; `lib/merge-queue-github.js` uses only `invalidRequest`. None was edited and their tests pass as they were.
+
+**Limits.** Neither field proves a run is a workflow's own job: a workflow step holding `checks: write` can post a check run of its own, which GitHub attributes to `github-actions` too, with a link it chooses. The id is what the link says. Read on 2026-10-12: `repos/<repo>/actions/jobs/<check run id>` answers a real job with its `run_id` and answers 404 for a check run that is no job; the evidence command in the next chunk makes that read before it calls a run CI's. A check run whose app GitHub leaves out now reads `unavailable` where it read its conclusion before; the real answers captured here all carry one.
+
 ## 2026-10-12 — #2321: one command runs the tests CI skips on your own machine, and fails unless every one owed there passed
 
 <!-- prawduct: type=feature | scope=2321-ci-as-suite-evidence -->
