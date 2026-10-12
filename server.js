@@ -8415,9 +8415,9 @@ controlRoute('POST', '/api/control/assignments/:id/exchange-closed', (req, param
 controlRoute('GET', '/api/control/mine', (req) => controlApi.mine(req));
 controlRoute('GET', '/api/control/check', (req) => controlApi.check(parseQuery(reqUrl(req).search)));
 
-// ── Merge queue (#2322): make a queue, submit, read, withdraw, record the Operator gate ──
+// ── Merge queue (#2322): make a queue, submit, read, withdraw, advance, record the Operator gate ──
 //
-// The handlers live in lib/merge-queue-api.js. Nothing here lands anything.
+// The handlers live in lib/merge-queue-api.js. Only an advance by the queue's owner lands anything.
 
 /**
  * Register one merge queue route.
@@ -8447,6 +8447,7 @@ mergeQueueRoute('GET', '/api/merge-queue', (req) => mergeQueueApi.listQueues(req
 mergeQueueRoute('GET', '/api/merge-queue/entries/:id', (req, params) => mergeQueueApi.getEntry(req, params));
 mergeQueueRoute('POST', '/api/merge-queue/entries', (req, _params, body) => mergeQueueApi.submit(req, body));
 mergeQueueRoute('POST', '/api/merge-queue/entries/:id/withdraw', (req, params, body) => mergeQueueApi.withdraw(req, params, body));
+mergeQueueRoute('POST', '/api/merge-queue/advance', (req, _params, body) => mergeQueueApi.advance(req, body));
 mergeQueueRoute('POST', '/api/merge-queue/entries/:id/operator-gate', (req, params, body) => mergeQueueApi.recordOperatorGate(req, params, body));
 // ── Check watches (#2323): register, read and cancel a watch on a named check ──
 //

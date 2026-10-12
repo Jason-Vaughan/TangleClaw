@@ -1,8 +1,8 @@
 # The merge queue
 
-*Being built (#2322). A queue can be made, submitted to, read and withdrawn from, and the Operator
-gate can be recorded. **Nothing lands yet:** no route assembles a candidate or merges a pull
-request, and there is no screen. This page grows with each part as it lands.*
+*(#2322.) A queue can be made, submitted to, read, withdrawn from and advanced, and the Operator
+gate can be recorded. **Nothing lands by itself:** a pull request lands only when the queue's owner
+advances the queue, one step a call, and there is no timer. There is no screen.*
 
 ## Using the queue
 
@@ -12,14 +12,14 @@ request at one exact head commit.
 | Who | May |
 |---|---|
 | The Operator | make a queue and name its owner; record an entry's Operator gate; read |
-| A verified live launch of the owner project | submit an entry; withdraw an entry; read |
+| A verified live launch of the owner project | submit an entry; withdraw an entry; advance the queue; read |
 | A project that shares a group with the owner | read |
 | Anyone else | nothing. A queue they may not read does not exist for them (`404`) |
 
 "Verified live launch" means the request carries `x-tangleclaw-project-id` and
 `x-tangleclaw-launch-id` of that project's active session; `tc` sends them. The Operator is not the
-owner and cannot submit or withdraw. The owner cannot record the Operator gate: a session saying
-the Operator agreed is not the Operator.
+owner and cannot submit, withdraw or advance. The owner cannot record the Operator gate: a session
+saying the Operator agreed is not the Operator.
 
 ### Making the queue (the Operator, once)
 
@@ -51,6 +51,7 @@ GET  /api/merge-queue/entries/:id                  one entry, its queue and its 
 POST /api/merge-queue/entries                      {prNumber, headSha, gates: {review, test, base},
                                                     operatorGate: "required"|"none", queueId?}   the owner
 POST /api/merge-queue/entries/:id/withdraw         {reason}                                the owner
+POST /api/merge-queue/advance                      {queueId?}                              the owner
 POST /api/merge-queue/entries/:id/operator-gate    {reference}                             Operator only
 ```
 
@@ -64,6 +65,7 @@ tc queue status
 tc queue submit <pr> --head <sha> --review <ref> --test <ref> --base <ref> [--operator-gate required|none] [--queue <id>]
 tc queue show <entry>
 tc queue withdraw <entry> --reason <text>
+tc queue advance [--queue <id>]
 ```
 
 `status` shows each queue's entries in order, each entry's state and each gate, and whose word each
@@ -71,16 +73,20 @@ one is. `--operator-gate` is `none` unless given. The verb is not in the list ev
 with: `tc` with no verb lists it.
 
 **How long `tc` waits.** `tc queue submit` and `tc queue withdraw` each wait 60 seconds for the
-answer; `status` and `show` wait the 10 seconds every other `tc` call waits. A submit ordinarily
-answers in a few seconds: the server reads GitHub several times for it, each read bounded at 10
-seconds, and a withdrawal deletes up to two branches, each bounded at 20.
+answer and `tc queue advance` waits 180; `status` and `show` wait the 10 seconds every other `tc`
+call waits. Each ordinarily answers in a few seconds: the server reads GitHub several times for a
+submit, each read bounded at 10 seconds, and a withdrawal deletes up to two branches, each bounded
+at 20. An advance does one step and no more, so its longest case is bounded too: making a candidate
+is at most 170 seconds (three reads, the candidate at up to 90, and removing what a failed attempt
+left at up to 40), and landing is at most 170 when the merge's answer has to be read back.
 
-**When the wait runs out.** The server goes on working after `tc` stops waiting, so a submit or a
-withdrawal that got no answer **may still be running, or may have finished**. `tc` says so, exits
-2, and does not say the API is unreachable. Read `tc queue status` before repeating: the entry is
-there or it is not. Repeating a submit that did go through is refused `DUPLICATE_PR`, naming the
-entry; repeating a withdrawal is harmless. A `status` or `show` that got no answer changed nothing
-and is repeated.
+**When the wait runs out.** The server goes on working after `tc` stops waiting, so a submit, a
+withdrawal or an advance that got no answer **may still be running, or may have finished**. `tc`
+says so, exits 2, and does not say the API is unreachable. Read `tc queue status` before repeating:
+the entry is there or it is not, and its state says how far an advance got. Repeating a submit that
+did go through is refused `DUPLICATE_PR`, naming the entry; repeating a withdrawal is harmless;
+repeating an advance does the next step, and never asks for a merge that was already asked for. A
+`status` or `show` that got no answer changed nothing and is repeated.
 
 ### What a submit records, and what the queue reads itself
 
@@ -108,8 +114,109 @@ could not be read whole, or is at GitHub's cap, is a refusal and never "no such 
 version bump is merged by hand under [release-process.md](release-process.md), outside the queue.
 The paths are one list, `RELEASE_TRIGGER_PATHS` in `lib/merge-queue-state.js`, and
 `test/merge-queue-release-guard.test.js` fails if the release workflow comes to watch a path that
-list does not name. The same refusal at landing time, against the candidate itself, comes with the
-part that lands.
+list does not name. The same refusal is made again at landing time, against the candidate itself:
+in the call that merges, after the base branch is read unchanged and before the merge is asked for,
+the queue reads what the candidate changes on the base branch, and a release-trigger path, a list
+that could not be read or a list at GitHub's cap fails the entry and nothing is merged.
+
+## Advancing: how a pull request lands
+
+`tc queue advance` (`POST /api/merge-queue/advance`) moves the entry at the front of the owner's
+queue **one step** and answers what it did: a `step` word, whether anything was `changed`, a
+sentence, and the entry as the queue now holds it. Only the owner's verified live launch may call
+it. Nothing else advances a queue: there is no timer, so with the owner away nothing lands.
+
+### The procedure, for the owner
+
+1. `tc queue submit` each reviewed pull request at its exact head, in the order they should land.
+2. `tc queue advance`. The front entry's candidate is made: its head merged into the tip of the base
+   branch, on the branch `tc-queue/<entry id>`, where CI tests it. The entry is `testing`.
+3. Wait for the candidate's `test` check. `tc queue advance` while it runs answers `waiting` and
+   changes nothing, so asking early costs nothing.
+4. `tc queue advance` once it has concluded. Everything in the table below is read again, and if all
+   of it holds the pull request is merged and the entry is `landed`.
+5. `tc queue advance` again for the next entry. Its candidate is made on the base branch as it is
+   after that landing, with nothing for its author to do.
+
+One entry at a time holds the queue: a second entry is never assembled while the first is
+`assembling`, `testing` or `landing`.
+
+### What one call does
+
+| The front entry is | The call | Then the entry is |
+|---|---|---|
+| `queued` | reads the pull request, the base branch's tip and its `test` check, then makes the candidate | `testing` |
+| `assembling` (an earlier call was cut short) | the same, starting over | `testing` |
+| `testing`, base branch moved since the candidate was made | deletes the candidate's branches; not a failure | `assembling` |
+| `testing`, candidate's check not concluded | nothing (`waiting`) | `testing` |
+| `testing`, everything holds | merges the pull request, compares trees, deletes the candidate's branches | `landed` |
+| `landing` (a merge was asked for and its outcome was not recorded) | reads the pull request and records what happened; never merges | `landed` or `testing` |
+| nothing waiting | nothing (`idle`) | |
+
+Two more steps keep GitHub clean. If a landing's branches could not be deleted, the next call
+deletes them and does nothing else (`cleaned-up`); the server remembers which landings are clean
+only in memory, so the first advance after a restart may repeat that removal once, harmlessly. If a
+branch is already there when a candidate is to be made, the call deletes it and makes no candidate
+(`assembly-retry`); if it is there again on the next call, that call stops for a person
+(`CANDIDATE_REF_EXISTS`).
+
+### What a landing rests on, and what happens when it does not hold
+
+Each of these is read from GitHub or the queue's own records **in the call that merges**. Nothing is
+taken from the caller, and nothing lands on a read that was not made.
+
+| What is read | If it does not hold |
+|---|---|
+| The caller is the owner's live launch, admitted by its coordinator rotation, and not held | refused; nothing changed |
+| The pull request is open, not a draft, on the queue's base, at the submitted head | the entry **fails** (`PR_NOT_OPEN`, `PR_DRAFT`, `PR_WRONG_BASE`, `PR_HEAD_MOVED`) |
+| The base branch is where it was when the candidate was made | the candidate is discarded and made again; not a failure |
+| The candidate's `test` check, as run for the candidate branch, concluded `success` | still running or not started: `waiting`. Any other conclusion: the entry **fails** (`CANDIDATE_NOT_GREEN`) |
+| The base branch's own `test` check, as run for that branch, is not red | red: refused `BASE_NOT_GREEN`, nothing changed. Still running: `waiting`, unless the base is this queue's own landing of a tree its candidate's check passed on |
+| Every gate is recorded, the Operator gate included when the entry needs it | refused `GATES_NOT_MET`, naming each; nothing changed |
+| Landing changes no release-trigger path | the entry **fails** (`RELEASE_TRIGGER_CHANGED`), also when the list could not be read whole |
+| Any of those reads could not be made | refused `503 GITHUB_UNAVAILABLE` with the reader's own reason; nothing changed |
+
+A check is judged only by runs made for the branch being judged (`readBranchCheck`): a run another
+branch's push made on the same commit never stands in, whatever it concluded, and a list of runs or
+suites that could not be read whole is `GITHUB_UNAVAILABLE`, never "no run" and never a result. The
+base branch is also checked before a candidate is made: none is made on a red base.
+
+The merge is a true merge commit pinned to the submitted head. Afterwards the merge commit's tree is
+compared with the candidate's. **If they differ the landing is still recorded, because the merge
+happened, and the queue halts itself:** every further advance is refused `QUEUE_HALTED` until the
+Operator clears the halt, because the base branch then holds a tree no test passed.
+
+### A failed entry, and a candidate's branches
+
+A failed entry is out of the queue and the next one is at the front; its pull request is untouched
+and can be submitted again. An entry that has or may have a candidate loses both branches **before**
+it is failed. If either could not be deleted the entry stays as it is and the call is refused
+`503 CANDIDATE_NOT_DISCARDED`, saying what happened to each branch; the next advance tries again. A
+landing is recorded first and its branches deleted after, so a landing whose branches could not be
+deleted is still a landing, and what waits is the next entry's candidate.
+
+### A merge whose answer was not read
+
+Asking GitHub to merge can time out after the merge was made. The entry is marked `landing` before
+the request is sent, and from then on no call sends a second one: the pull request is read, and the
+entry is recorded as what it became. Merged: `landed`, with the tree compared. Still open: back to
+`testing` with its candidate (`landing-not-made`), for the next advance to check everything anew.
+When that read also fails the entry stays `landing` and the answer says so (`landing-unknown`); the
+next advance starts by reading it again. An entry that is `landing` cannot be withdrawn.
+
+### Four separate facts
+
+A landing is one of four things that are easy to say as one and are not:
+
+| Fact | Who makes it true | What the queue says about it |
+|---|---|---|
+| **Merged**: the pull request's commits are on the base branch | this queue, by a landing | `landed`, with the merge commit and whether its tree is the tested one |
+| **Batch complete**: every pull request of a batch is merged and its records are written | the batch's coordinator | nothing: the queue knows entries, not batches |
+| **Deployed**: an install is running the merged code | whoever deploys, by the deploy procedure | nothing: a landing starts no deploy and restarts nothing |
+| **Released**: a version is tagged and published | the release process ([release-process.md](release-process.md)) | nothing: a landing cannot change a release-trigger path, so it is never a release |
+
+A landing writes one record, the merge. `tc queue status` showing `landed` means merged and nothing
+more.
 
 ### Withdrawing
 
@@ -117,28 +224,28 @@ The owner withdraws an entry with a reason of at most 1000 characters. **The rea
 first:** one that is missing or too long is refused `400 INVALID_INPUT` before any branch is
 touched, so nothing is deleted for a withdrawal that could not then be recorded.
 
-**One at a time per queue.** A withdrawal holds its queue's slot from reading the entry's state to
-recording it withdrawn. One that arrives while another call holds the slot changes nothing, deletes
-nothing and is refused `409 QUEUE_CALL_IN_FLIGHT`: read `tc queue status`, then withdraw again if
-the entry is still there. A submit does not take the slot (it only adds to the end), and two queues
-do not block each other. The slot is held in the server's memory, so a restart frees it; every call
+**One at a time per queue.** A withdrawal and an advance each hold their queue's slot from reading
+the entry's state to recording the change. One that arrives while another call holds the slot
+changes nothing, deletes nothing and is refused `409 QUEUE_CALL_IN_FLIGHT`: read `tc queue status`,
+then repeat it if it is still wanted. A submit does not take the slot (it only adds to the end), and
+two queues do not block each other. The slot is held in the server's memory, so a restart frees it; every call
 that takes it is harmless to repeat.
 
 An entry whose candidate exists, or is being made, has
 both of its branches deleted on GitHub first (`discardCandidate`). If either could not be removed
 the entry **stays in the queue** and the answer says what happened to each branch
 (`503 CANDIDATE_NOT_DISCARDED`); withdraw again, which is harmless. An entry whose merge has been
-asked for cannot be withdrawn: the merge's outcome is read first. Withdrawing is the only thing
-these routes change on GitHub, and only those two branches.
+asked for cannot be withdrawn: the merge's outcome is read first. A withdrawal changes nothing on
+GitHub but those two branches.
 
 ### An owner in a context rotation
 
-A submit and a withdrawal are the owner acting as a coordinator, so both are judged by the
-coordinator epoch gate ([coordinator-rotation.md](coordinator-rotation.md)) exactly as a control
+A submit, a withdrawal and an advance are the owner acting as a coordinator, so each is judged by
+the coordinator epoch gate ([coordinator-rotation.md](coordinator-rotation.md)) exactly as a control
 command is. Launch binding proves the owner's launch is live; the gate adds that the calling
 context is the one the owner's rotation bound.
 
-| The owner's latest rotation | Submit and withdraw |
+| The owner's latest rotation | Submit, withdraw and advance |
 |---|---|
 | none, or `abandoned` | accepted as before: the project is not judged |
 | `fenced` or `rebinding` | refused, `409 COORDINATOR_FENCED`: no replacement context is bound yet |
@@ -146,15 +253,29 @@ context is the one the owner's rotation bound.
 | `active` | accepted only from the bound replacement; a stale or other thread of the same live launch is refused `409 COORDINATOR_EPOCH_MISMATCH` |
 
 - **The gate is asked more than once.** At the start of the request, and again after every wait,
-  immediately before the queue is written or a branch is deleted. A rotation that begins while a
-  submit is reading GitHub queues nothing. One that begins while a withdrawal is deleting branches
-  leaves the entry in the queue: the replacement context withdraws it again, which is harmless.
+  immediately before the queue is written, a branch is deleted or a merge is asked for. A rotation
+  that begins while a submit is reading GitHub queues nothing. One that begins while a withdrawal
+  is deleting branches leaves the entry in the queue: the replacement context withdraws it again,
+  which is harmless. One that begins while an advance is reading for a landing prevents the merge:
+  it is never asked for and the entry is unchanged.
+- **A merge that was asked for is finished, whoever is asking by then.** Nothing waits between the
+  gate's last answer and the merge request. If a rotation begins after the request was sent, its
+  outcome is still read and recorded, so a merge that happened is never left out of the queue. No
+  branch is deleted for the replaced context and no second merge is asked for; the replacement's
+  next advance deletes the candidate's branches.
+- **A refusal is logged.** The server log gets `Coordinator epoch gate refused a mutation` with the
+  owner project, the action `merge-queue-mutate`, the code and the rotation, as for every other
+  gated command.
 - **Call through `tc`.** `tc` forwards the engine thread (`x-tangleclaw-engine-thread`, from
   Codex's `CODEX_THREAD_ID`). While an epoch is active, a call without that header is refused and
   says so.
 - **What is not gated.** Reading (`tc queue status`, `tc queue show`), and everything the Operator
-  does: making a queue and recording the Operator gate. Any other refusal a caller would get
-  (`NOT_OWNER`, a missing launch) is answered first.
+  does: making a queue and recording the Operator gate.
+- **Which refusal comes first.** Who the caller is and whether it owns the queue are settled before
+  the gate is asked: a caller that is not a verified launch, or not the owner, gets that refusal
+  (`CALLER_NOT_VERIFIED`, `NOT_OWNER`, a queue or entry it may not read as `404`) whatever the
+  rotation says. Every other refusal comes after the gate: `CONTROL_HELD`, `QUEUE_RETIRED`,
+  `INVALID_INPUT`, `DUPLICATE_PR`, and what an entry's state does not allow.
 
 ### Refusals
 
@@ -165,20 +286,24 @@ Every refusal carries a `code` and says what to do next.
 | `CALLER_NOT_VERIFIED` | 403 | not the Operator and not a verified launch |
 | `OPERATOR_UNVERIFIABLE` | 503 | an operator-shaped request this install cannot verify; sign in |
 | `OPERATOR_ONLY` | 403 | making a queue or recording the Operator gate, by anyone else |
-| `NOT_OWNER` | 403 | submitting or withdrawing, by anyone but the owner's launch |
-| `CONTROL_HELD`, `CONTROL_STOPPED` | 423 | the owner's lane is held or stopped; it cannot submit |
-| `COORDINATOR_FENCED`, `COORDINATOR_EPOCH_MISMATCH` | 409 | the owner's context rotation does not admit this caller for a submit or a withdrawal (`rotationId`); nothing was changed, except that a withdrawal overtaken while deleting may have removed the candidate's branches |
+| `NOT_OWNER` | 403 | submitting, withdrawing or advancing, by anyone but the owner's launch |
+| `CONTROL_HELD`, `CONTROL_STOPPED` | 423 | the owner's lane is held or stopped; it cannot submit or advance |
+| `COORDINATOR_FENCED`, `COORDINATOR_EPOCH_MISMATCH` | 409 | the owner's context rotation does not admit this caller for a submit, a withdrawal or an advance (`rotationId`); nothing was changed, except that a call overtaken while deleting may have removed the candidate's branches, and an advance overtaken while a candidate was being made leaves that branch for the next advance to remove |
 | `INVALID_INPUT`, `GATE_REFERENCE_MISSING` | 400 | a malformed request, a withdrawal's reason over 1000 characters included; a gate with no reference (`gate` names it) |
 | `QUEUE_NOT_FOUND`, `ENTRY_NOT_FOUND`, `PROJECT_NOT_FOUND` | 404 | no such thing, or not readable by this caller |
 | `QUEUE_AMBIGUOUS` | 400 | the owner has more than one queue; send `queueId` |
-| `QUEUE_EXISTS`, `QUEUE_RETIRED` | 409 | a second queue for the same base; a queue that takes nothing new |
+| `QUEUE_EXISTS`, `QUEUE_RETIRED` | 409 | a second queue for the same base; a queue that takes nothing new and advances nothing |
+| `QUEUE_HALTED` | 409 | the queue halted itself on a landed tree that was not the tested one (`halt`); nothing advances until the Operator clears it |
 | `DUPLICATE_PR` | 409 | the pull request already has an unfinished entry (`entryId`) |
 | `PR_NOT_OPEN`, `PR_WRONG_BASE`, `PR_HEAD_MOVED`, `PR_DRAFT` | 409 | what GitHub says of the pull request |
 | `HEAD_CHECK_NOT_GREEN` | 409 | the head's `test` check is missing, running or not `success` |
 | `RELEASE_TRIGGER_CHANGED` | 409 | the pull request changes a release-trigger path (`paths`) |
-| `GITHUB_UNAVAILABLE` | 503 | a read from GitHub failed; nothing was queued |
-| `CANDIDATE_NOT_DISCARDED` | 503 | a withdrawal could not remove both branches; the entry stays |
-| `QUEUE_CALL_IN_FLIGHT` | 409 | another withdrawal of this queue is running; nothing was changed. Read the queue, then repeat |
+| `GITHUB_UNAVAILABLE` | 503 | a read from GitHub failed (`reason`); nothing was queued, and an advance moved nothing. From an advance it also means a candidate could not be made: what it may have left was removed (`branches`) and the entry is `assembling` |
+| `BASE_NOT_GREEN` | 409 | the base branch's own `test` check concluded something other than `success` (`check`); nothing is assembled or landed, nothing was changed |
+| `GATES_NOT_MET` | 409 | a green entry has a gate that is not recorded (`problems` names each); nothing was changed |
+| `CANDIDATE_REF_EXISTS` | 409 | a candidate branch was there again after the queue removed it (`ref`, `existing`); nothing was changed, and it needs a person |
+| `CANDIDATE_NOT_DISCARDED` | 503 | a withdrawal or an advance could not remove both of a candidate's branches (`candidate`, `stage`); the entry stays as it was |
+| `QUEUE_CALL_IN_FLIGHT` | 409 | another withdrawal or advance of this queue is running; nothing was changed. Read the queue, then repeat |
 | `ENTRY_FINISHED`, `TRANSITION_NOT_ALLOWED` | 409 | the entry is done, or its merge has been asked for |
 | `OPERATOR_GATE_NOT_REQUIRED`, `OPERATOR_GATE_ALREADY_RECORDED` | 409 | the Operator gate has nothing to record |
 | `ENTRY_ID_UNUSABLE` | 500 | a defect: the queue made an id no branch can be named after. `withdrawn` says whether it took the entry back out; if not, the entry is still queued and these routes cannot reach it |
@@ -188,12 +313,24 @@ Three refusals come from the layers in front of every route and are not the queu
 `403 LAUNCH_BINDING_REQUIRED` or `LAUNCH_BINDING_INVALID` (a write with no launch headers, or with
 those of a launch that has ended or been replaced), `403 CSRF_TOKEN_INVALID` (a signed-in write
 without the session's token) and `503 CONTROL_STATE_UNAVAILABLE` (the HOLD state could not be read,
-so a submit is refused).
+so a submit or an advance is refused).
 
 ### Limits
 
 - **A held owner can still withdraw.** The durable HOLD ([control-state.md](control-state.md))
-  refuses a submit; a withdrawal takes work out of the queue and is not held.
+  refuses a submit and an advance; a withdrawal takes work out of the queue and is not held. A hold
+  stored after a merge was asked for does not stop that merge's outcome being recorded.
+- **A halt has no route to clear it.** The queue halts itself when a landed tree is not the tested
+  one, and only the Operator may clear a halt, but no route does it yet: until one exists a halted
+  queue stays halted.
+- **A landing whose merge answer was lost is found only at the base branch's tip.** When the merge
+  request's answer was not read and the pull request reads back merged, the queue takes the base
+  branch's tip as the landing only if it is exactly the merge of the submitted head into the base
+  the candidate was made on. If something else reached the base branch first, the entry stays
+  `landing`, each advance says the pull request is merged and its commit is not known, and nothing
+  behind it advances.
+- **Nothing has been landed on GitHub by this code.** Every test of an advance runs against a faked
+  GitHub. The first real landing is the check after the deploy.
 - **No answer carries a launch id.** An entry shows which project submitted it, not which launch.
 - **Making the queue from the browser console has not been run in a browser.** A test makes a
   queue as a signed-in Operator with the session's token; the console command itself is first run
@@ -220,8 +357,8 @@ the queue talks to GitHub, so this table is the whole of what the queue can chan
 
 A commit's check runs are also read by `lib/github-checks.js` (`GET /repos/{repo}/commits/{sha}/check-runs`),
 which changes nothing and answers the newest run of a name on the commit, whichever branch it was
-made for. `readBranchCheck` answers the newest run made for one branch, and nothing in the queue
-calls it yet.
+made for. `readBranchCheck` answers the newest run made for one branch, and is what an advance
+judges the base branch and a candidate by.
 
 ### The limits each write is held to
 
