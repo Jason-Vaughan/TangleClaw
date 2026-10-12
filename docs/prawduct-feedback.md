@@ -189,3 +189,71 @@ never asking for a count in prose at all.
 - **Writing the plan re-scope BEFORE the code** caught that two of the chunk's three
   planned legs were already shipped and a third was built on a disproven hypothesis.
   Had I coded first, I would have re-implemented shipped work.
+
+---
+
+## 2026-10-12 — DRAFT: accept a CI evidence file as suite evidence (TangleClaw #2321)
+
+**NOT SENT.** This is a draft. Sending it upstream is the Operator's to approve
+(`/prawduct:report-bug` shows the exact outbound bytes first). Nothing in TangleClaw
+depends on it having been sent.
+
+### 7. `test-status` has no way to accept a CI run on the exact commit as the suite
+
+**What happened.** In a lane, a chunk is ready when `prawduct-hook test-status` is
+current, and the only way to make it current is a local run of the declared suite
+(about fifteen minutes here, one at a time per host). The same commit is also tested
+by CI, on a clean runner, and that result is not usable: `test-evidence record` takes
+a local junit report or counts, so recording CI's result would mean a person stamping
+it by hand, which is exactly what evidence is meant to rule out.
+
+**Expected.** A way to record evidence whose source is a CI check on the exact
+commit, which `test-status` accepts only after checking it, and which a session
+cannot produce by typing.
+
+**What TangleClaw now writes.** `node scripts/ci-evidence.js` writes
+`.prawduct/lane-evidence/ci-<sha>.json` for HEAD, or refuses. The fields and what the
+command checks before writing are in `docs/lane-ci-evidence.md`. The file is written
+only from what the command itself read from GitHub and git, and from a run it made.
+
+**What `test-status` would have to check before accepting such a file.** Reading the
+file is not enough: a file is bytes anyone can write. Each of these would need to be
+re-read or re-derived by the gate, not taken from the file:
+
+- **Repository.** The file's `repository` is the repository of the checkout's remote.
+- **Check identity and app.** The named check is the one the project declares as its
+  required CI check, and the run was made by the CI provider's own app (here
+  `github-actions`), confirmed as a real job of a workflow run and not a check run
+  posted under the same name.
+- **Conclusion.** The check concluded with success. Running, missing, unreadable and
+  every other conclusion are not evidence.
+- **Exact head and tree.** The file's `head` is the commit the gate is asked about and
+  `tree` is that commit's tree. Evidence for a parent, or for the same commit before a
+  rebase, is not evidence.
+- **The run's own base.** A pull request's CI run tests the head merged into that
+  pull request's base branch. The run is a push of the head, or a pull request of the
+  head into the base the file names; a run for a pull request into another branch
+  tested a different merge.
+- **Base inside head.** The base branch's tip is an ancestor of the head, so the merge
+  CI tested has the head's own tree and not one with a base that has since moved.
+  This and the item above are both needed; neither stands in for the other.
+- **The skip ledger's digest.** CI is allowed to skip a listed set of tests. The file
+  carries the digest of that list; the gate would check it against the list at the
+  commit.
+- **The complement's verdict, made in the same run.** The tests CI skips were run
+  locally by the same command, between two reads of the tree, and were green. A
+  verdict supplied from anywhere else is not this.
+
+**A simpler shape Prawduct could offer instead.** Let a project declare a
+`ci_evidence_command:` beside `test_command:`. The gate runs it for the tree it is
+asked about and accepts its exit code, the way it accepts the suite's. Then the gate
+trusts a command the project controls and reviews, and no file has to be believed.
+
+**Where the line would stay.** A project would still declare when the full local
+suite is required regardless (here: a change to the ledger or to the test and
+evidence machinery, schema, shared test helpers, the last chunk of an issue, once
+before a deploy).
+
+**Cost.** One local suite per chunk per lane, serialized per host, while CI has
+already run the same tests on the same commit.
+

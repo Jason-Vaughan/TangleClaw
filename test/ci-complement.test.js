@@ -472,6 +472,77 @@ describe('ci-complement — the run, end to end through its seams', () => {
     assert.doesNotMatch(r.out, /COMPLEMENT GREEN/);
   });
 
+  /**
+   * Run `runComplement` and `main` against the same ledger and the same fake run.
+   *
+   * @param {import('node:test').TestContext} t - The test, for cleanup
+   * @param {Array<object>|string} entries - Ledger entries, or raw ledger text
+   * @param {string|null} report - What the fake run writes, or null to write nothing
+   * @param {string|null} [stopped] - What the fake run answers
+   * @returns {{verdict: object, printed: {code: number, out: string}}}
+   */
+  function bothWays(t, entries, report, stopped = null) {
+    const printed = runMain({ entries, report, stopped });
+    t.after(() => fs.rmSync(printed.dir, { recursive: true, force: true }));
+    const verdict = complement.runComplement({
+      ledgerPath: path.join(printed.dir, 'ledger.json'),
+      measurements: { 'platform:darwin': () => true, 'filesystem:case-sensitive': () => false },
+      junitPath: path.join(printed.dir, 'value.xml'),
+      run: (_patterns, junitPath) => {
+        if (report !== null) fs.writeFileSync(junitPath, report);
+        return stopped;
+      }
+    });
+    return { verdict, printed };
+  }
+
+  it('runComplement answers with the verdict main prints: green, with each entry and what the host measured', (t) => {
+    const { verdict, printed } = bothWays(t, [PTY, CASE], ONE_PASSED);
+    assert.equal(printed.code, 0);
+    assert.equal(verdict.ok, true);
+    assert.deepEqual(verdict.problems, []);
+    assert.equal(verdict.stopped, null);
+    assert.deepEqual(verdict.strayFailures, []);
+    assert.deepEqual(verdict.results.map((r) => [r.id, r.verdict, r.ran]), [['pty', 'passed', true], ['case-only', 'not-expected', false]]);
+    assert.deepEqual(verdict.entries.map((e) => [e.id, e.requires]), [['pty', ['platform:darwin']], ['case-only', ['filesystem:case-sensitive']]]);
+    assert.equal(verdict.host.get('platform:darwin'), true);
+    assert.equal(verdict.host.get('filesystem:case-sensitive'), false);
+    assert.equal(verdict.junitPath, path.join(printed.dir, 'value.xml'));
+    assert.ok(printed.out.endsWith(complement.formatRun(verdict)), 'main prints the same verdict');
+  });
+
+  it('runComplement answers red when main is red, with the same lines', (t) => {
+    const { verdict, printed } = bothWays(t, [PTY], junit(suite('watcher', testcase('reads the real ps output', SKIPPED))));
+    assert.equal(printed.code, 1);
+    assert.equal(verdict.ok, false);
+    assert.deepEqual(verdict.problems, []);
+    assert.equal(verdict.results[0].verdict, 'skipped');
+    assert.ok(printed.out.endsWith(complement.formatRun(verdict)));
+  });
+
+  it('runComplement is never ok when nothing was judged, and says why in the words main prints', (t) => {
+    for (const [entries, report, stopped] of [
+      ['{ not json', ONE_PASSED, null],
+      [[], ONE_PASSED, null],
+      [[PTY], null, null],
+      [[PTY], junit(''), null],
+      [[PTY], null, 'the test run could not start: spawn ENOENT'],
+      [[PTY], ONE_PASSED, 'the test run was killed by SIGTERM']
+    ]) {
+      const { verdict, printed } = bothWays(t, entries, report, stopped);
+      assert.equal(printed.code, 1);
+      assert.equal(verdict.ok, false);
+      assert.deepEqual(verdict.results, []);
+      assert.ok(verdict.problems.length > 0);
+      // The report's path differs between the two runs; every other word is the same.
+      const words = (text, file) => text.split(file).join('<report>');
+      assert.equal(
+        words(`${verdict.problems.join('\n')}\n`, verdict.junitPath || ''),
+        words(printed.out, printed.runs[0] ? printed.runs[0].junitPath : '')
+      );
+    }
+  });
+
   it('--list prints each entry with what it requires and what this host measures, and runs nothing', (t) => {
     const r = runMain({ entries: [PTY, CASE], argv: ['--list'] });
     t.after(() => fs.rmSync(r.dir, { recursive: true, force: true }));
