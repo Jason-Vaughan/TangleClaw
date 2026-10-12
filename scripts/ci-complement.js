@@ -480,66 +480,106 @@ function parseArgs(argv) {
 }
 
 /**
+ * Read the ledger and measure this host against it.
+ *
+ * @param {object} [io] - Injection seams, as `runComplement` takes them
+ * @returns {{entries: Array<object>, host: Map<string, *>}|{problem: string}}
+ *   The compiled entries and the measured host, or why the ledger gives nothing to run
+ */
+function survey(io = {}) {
+  let entries;
+  try {
+    entries = compileLedger(JSON.parse(fs.readFileSync(io.ledgerPath || DEFAULT_LEDGER, 'utf8')));
+  } catch (err) {
+    return { problem: err.message };
+  }
+  if (entries.length === 0) {
+    return { problem: 'the skip ledger has no entries, so there is nothing to run and nothing was certified' };
+  }
+  return { entries, host: measureHost(io.measurements || MEASUREMENTS) };
+}
+
+/**
+ * Run the ledger's tests on this host and judge them, answering with the
+ * verdict as a value.
+ *
+ * `main` prints this verdict; a caller that has to bind the verdict to
+ * something else takes it from here, in the same process, and never from lines
+ * or a report somebody could have placed.
+ *
+ * @param {object} [io] - Injection seams
+ * @param {string} [io.ledgerPath] - The ledger to read
+ * @param {Object<string, function(): *>} [io.measurements] - value → measurement
+ * @param {function(string[], string): (string|null|void)} [io.run] - Runs the tests and writes the report; answers why it stopped early, if it did
+ * @param {string|null} [io.junitPath] - Where the report goes; a new temporary folder when absent
+ * @returns {{ok: boolean, results: Array<object>, strayFailures: Array<object>, host: (Map<string, *>|null),
+ *   entries: Array<object>, junitPath: (string|null), stopped: (string|null), problems: string[]}}
+ *   `ok` is true only when the run was judged and is green. `problems` holds, in
+ *   order, each reason nothing was judged; it is empty when the run was judged.
+ */
+function runComplement(io = {}) {
+  const run = io.run || runTests;
+  const verdict = { ok: false, results: [], strayFailures: [], host: null, entries: [], junitPath: null, stopped: null, problems: [] };
+  const surveyed = survey(io);
+  if (surveyed.problem) return { ...verdict, problems: [surveyed.problem] };
+  Object.assign(verdict, surveyed);
+
+  // Resolved once, here: the run's working folder is the repository's, not the caller's, and a
+  // relative path read in one and written in the other would lose the report.
+  const junitPath = io.junitPath
+    ? path.resolve(io.junitPath)
+    : path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ci-complement-')), 'ci-complement.xml');
+  verdict.junitPath = junitPath;
+  // A report left by an earlier run must never be read as this one's.
+  fs.rmSync(junitPath, { force: true });
+  verdict.stopped = run(verdict.entries.map(namePattern), junitPath) || null;
+  if (verdict.stopped) verdict.problems.push(verdict.stopped);
+  if (!fs.existsSync(junitPath)) {
+    verdict.problems.push(`report not found: ${junitPath}. The run wrote no junit output, so nothing was certified`);
+    return verdict;
+  }
+  if (verdict.stopped) {
+    verdict.problems.push(`the run did not reach its end, so ${junitPath} is not a whole report and nothing was certified`);
+    return verdict;
+  }
+  const cases = parseCases(fs.readFileSync(junitPath, 'utf8'));
+  if (cases.length === 0) {
+    verdict.problems.push(`no test cases in ${junitPath}: nothing was certified`);
+    return verdict;
+  }
+  return { ...verdict, ...judgeRun(verdict.entries, verdict.host, cases) };
+}
+
+/**
  * Run the complement end to end and return the process exit code.
  *
  * The seams exist for the tests: a caller on the command line reaches none of
  * them, so nothing typed can change the ledger, the measurements or the run.
  *
  * @param {string[]} argv - Arguments after the script name
- * @param {object} [io] - Injection seams
+ * @param {object} [io] - Injection seams, as `runComplement` takes them
  * @param {{write: function(string): any}} [io.stdout] - Where the lines go
- * @param {string} [io.ledgerPath] - The ledger to read
- * @param {Object<string, function(): *>} [io.measurements] - value → measurement
- * @param {function(string[], string): (string|null|void)} [io.run] - Runs the tests and writes the report; answers why it stopped early, if it did
  * @returns {number} 0 when the complement is green, 1 otherwise
  */
 function main(argv, io = {}) {
   const out = io.stdout || process.stdout;
-  const run = io.run || runTests;
   let parsed;
-  let entries;
   try {
     parsed = parseArgs(argv);
-    entries = compileLedger(JSON.parse(fs.readFileSync(io.ledgerPath || DEFAULT_LEDGER, 'utf8')));
   } catch (err) {
     out.write(`${err.message}\n`);
     return 1;
   }
-  if (entries.length === 0) {
-    out.write('the skip ledger has no entries, so there is nothing to run and nothing was certified\n');
-    return 1;
-  }
-  const host = measureHost(io.measurements || MEASUREMENTS);
   if (parsed.list) {
-    out.write(formatList(entries, host));
-    return 0;
+    const surveyed = survey(io);
+    out.write(surveyed.problem ? `${surveyed.problem}\n` : formatList(surveyed.entries, surveyed.host));
+    return surveyed.problem ? 1 : 0;
   }
-
-  // Resolved once, here: the run's working folder is the repository's, not the caller's, and a
-  // relative path read in one and written in the other would lose the report.
-  const junitPath = parsed.junitPath
-    ? path.resolve(parsed.junitPath)
-    : path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ci-complement-')), 'ci-complement.xml');
-  // A report left by an earlier run must never be read as this one's.
-  fs.rmSync(junitPath, { force: true });
-  const stopped = run(entries.map(namePattern), junitPath);
-  if (stopped) out.write(`${stopped}\n`);
-  if (!fs.existsSync(junitPath)) {
-    out.write(`report not found: ${junitPath}. The run wrote no junit output, so nothing was certified\n`);
-    return 1;
-  }
-  if (stopped) {
-    out.write(`the run did not reach its end, so ${junitPath} is not a whole report and nothing was certified\n`);
-    return 1;
-  }
-  const cases = parseCases(fs.readFileSync(junitPath, 'utf8'));
-  if (cases.length === 0) {
-    out.write(`no test cases in ${junitPath}: nothing was certified\n`);
-    return 1;
-  }
-  const verdict = judgeRun(entries, host, cases);
+  const verdict = runComplement({ ...io, junitPath: parsed.junitPath });
+  for (const problem of verdict.problems) out.write(`${problem}\n`);
+  if (verdict.problems.length > 0) return 1;
   // The report's path first: the summary is the run's last line.
-  out.write(`junit report: ${junitPath}\n`);
+  out.write(`junit report: ${verdict.junitPath}\n`);
   out.write(formatRun(verdict));
   return verdict.ok ? 0 : 1;
 }
@@ -547,7 +587,7 @@ function main(argv, io = {}) {
 module.exports = {
   UNMEASURABLE, PER_TEST_ENGINE, MEASUREMENTS,
   measureHost, readEngines, namePattern, parseCases, belongsTo, judgeEntry, judgeRun,
-  formatRun, formatList, parseArgs, main
+  formatRun, formatList, parseArgs, runComplement, main
 };
 
 if (require.main === module) {
