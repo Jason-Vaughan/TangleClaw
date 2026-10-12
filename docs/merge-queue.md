@@ -27,12 +27,15 @@ There is no screen and no first-caller ownership. On the signed-in dashboard, op
 console and run, with the owner project's numeric id (`tc whoami` in that project's pane prints it):
 
 ```js
-fetch('/api/merge-queue', {
+tcFetch('/api/merge-queue', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ repo: 'Jason-Vaughan/TangleClaw', baseBranch: 'main', ownerProjectId: 12 /* the owner project's id */ })
 }).then((r) => r.json()).then(console.log);
 ```
+
+`tcFetch` is the dashboard's own request function and sends the signed-in session's CSRF token. A
+bare `fetch` does not, and a signed-in install refuses it (`403 CSRF_TOKEN_INVALID`).
 
 The answer is the queue with its id. The Operator's proof tier is recorded with it, as for a control
 command ([control-state.md](control-state.md), "Operator proof tier"): a signed-in session, or an
@@ -128,8 +131,14 @@ Every refusal carries a `code` and says what to do next.
 | `CANDIDATE_NOT_DISCARDED` | 503 | a withdrawal could not remove both branches; the entry stays |
 | `ENTRY_FINISHED`, `TRANSITION_NOT_ALLOWED` | 409 | the entry is done, or its merge has been asked for |
 | `OPERATOR_GATE_NOT_REQUIRED`, `OPERATOR_GATE_ALREADY_RECORDED` | 409 | the Operator gate has nothing to record |
-| `ENTRY_ID_UNUSABLE` | 500 | a defect: the queue made an id no branch can be named after, and withdrew the entry |
+| `ENTRY_ID_UNUSABLE` | 500 | a defect: the queue made an id no branch can be named after. `withdrawn` says whether it took the entry back out; if not, the entry is still queued and these routes cannot reach it |
 | `MERGE_QUEUE_UNAVAILABLE` | 503 | the queue could not answer; read it before repeating |
+
+Three refusals come from the layers in front of every route and are not the queue's own:
+`403 LAUNCH_BINDING_REQUIRED` or `LAUNCH_BINDING_INVALID` (a write with no launch headers, or with
+those of a launch that has ended or been replaced), `403 CSRF_TOKEN_INVALID` (a signed-in write
+without the session's token) and `503 CONTROL_STATE_UNAVAILABLE` (the HOLD state could not be read,
+so a submit is refused).
 
 ### Limits
 
@@ -138,8 +147,9 @@ Every refusal carries a `code` and says what to do next.
 - **A coordinator in a context rotation is not fenced from these routes.** The rotation gate does
   not know them.
 - **No answer carries a launch id.** An entry shows which project submitted it, not which launch.
-- **Making the queue from the browser console has not been run against a live install.** The first
-  use is the Operator's, after the deploy.
+- **Making the queue from the browser console has not been run in a browser.** A test makes a
+  queue as a signed-in Operator with the session's token; the console command itself is first run
+  by the Operator, after the deploy.
 
 ## What the queue does on GitHub
 

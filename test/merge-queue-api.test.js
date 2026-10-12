@@ -21,7 +21,21 @@ const queueStore = require('../lib/merge-queue-store');
 const state = require('../lib/merge-queue-state');
 const { GATE_STATES, standsDown } = require('../lib/auth-gate');
 const { createServer } = require('../server');
-const { operatorHeaders, bindProject, sendAs } = require('./_shared-docs-callers');
+const { operatorHeaders, bindProject, signInOperator, sendAs: sendRaw } = require('./_shared-docs-callers');
+
+/** Every refusal a request in this file was answered with, for the last test to read. */
+const REFUSED = [];
+
+/**
+ * Send a request as `sendAs` does, keeping each refusal's body.
+ * @param {...*} args - As `sendAs` takes them
+ * @returns {Promise<{status: number, headers: object, data: any}>}
+ */
+async function sendAs(...args) {
+  const res = await sendRaw(...args);
+  if (res.status >= 400) REFUSED.push({ request: `${args[1]} ${args[2]}`, status: res.status, body: res.data });
+  return res;
+}
 
 const REPO = 'Jason-Vaughan/TangleClaw';
 const HEAD = 'a'.repeat(40);
@@ -73,6 +87,35 @@ describe('/api/merge-queue (#2322)', () => {
     const res = await sendAs(server, 'POST', '/api/merge-queue/entries', submitBody(nextPr(), over), bOwner.headers);
     assert.equal(res.status, 201, JSON.stringify(res.data));
     return res.data.entry;
+  };
+
+  let ownerAssignmentId = null;
+
+  /**
+   * Put the owner's lane on HOLD, under one control assignment made on first use.
+   * @returns {Promise<object>} The hold's answer
+   */
+  const holdOwner = async () => {
+    if (!ownerAssignmentId) {
+      const made = await sendAs(server, 'POST', '/api/control/assignments', { projectId: owner.id, requestId: `mq-asg-${nextPr()}`, issueRef: '#2322' }, op);
+      assert.equal(made.status, 201, JSON.stringify(made.data));
+      ownerAssignmentId = made.data.assignment.assignmentId;
+    }
+    const hold = await sendAs(server, 'POST', `/api/control/assignments/${ownerAssignmentId}/hold`, { requestId: `mq-hold-${nextPr()}`, reasonCode: 'boundary' }, op);
+    assert.equal(hold.status, 201, JSON.stringify(hold.data));
+    return hold.data;
+  };
+
+  /**
+   * Release a hold {@link holdOwner} placed.
+   * @param {object} hold - Its answer
+   * @returns {Promise<void>}
+   */
+  const releaseOwner = async (hold) => {
+    const released = await sendAs(server, 'POST', `/api/control/assignments/${ownerAssignmentId}/release`, {
+      requestId: `mq-rel-${nextPr()}`, reasonCode: 'resolved', holdIds: [hold.holdId], expectedGeneration: hold.assignment.stateGeneration
+    }, op);
+    assert.equal(released.status, 200, JSON.stringify(released.data));
   };
 
   /** The owner's launch as the store's actor. */
@@ -408,24 +451,38 @@ describe('/api/merge-queue (#2322)', () => {
     });
 
     it('a held owner cannot submit', async () => {
-      const made = await sendAs(server, 'POST', '/api/control/assignments', { projectId: owner.id, requestId: `mq-hold-${nextPr()}`, issueRef: '#2322' }, op);
-      assert.equal(made.status, 201, JSON.stringify(made.data));
-      const assignmentId = made.data.assignment.assignmentId;
-      const hold = await sendAs(server, 'POST', `/api/control/assignments/${assignmentId}/hold`, { requestId: `mq-hold-${nextPr()}`, reasonCode: 'boundary' }, op);
-      assert.equal(hold.status, 201, JSON.stringify(hold.data));
+      const hold = await holdOwner();
       try {
         const res = await sendAs(server, 'POST', '/api/merge-queue/entries', submitBody(nextPr()), bOwner.headers);
         assert.equal(res.status, 423);
         assert.equal(res.data.code, 'CONTROL_HELD');
         assert.equal(gh.calls.length, 0);
       } finally {
-        const released = await sendAs(server, 'POST', `/api/control/assignments/${assignmentId}/release`, {
-          requestId: `mq-hold-${nextPr()}`, reasonCode: 'resolved', holdIds: [hold.data.holdId], expectedGeneration: hold.data.assignment.stateGeneration
-        }, op);
-        assert.equal(released.status, 200, JSON.stringify(released.data));
+        await releaseOwner(hold);
       }
       const after = await sendAs(server, 'POST', '/api/merge-queue/entries', submitBody(nextPr()), bOwner.headers);
       assert.equal(after.status, 201);
+    });
+  });
+
+  describe('a hold stored while GitHub is being read', () => {
+    it('still stops the entry: the gate is asked again immediately before the write', async () => {
+      const before = queueStore.listEntries(queueId).length;
+      let hold;
+      const readFiles = api._internal.readPullFiles;
+      api._internal.readPullFiles = async (repo, number) => {
+        hold = await holdOwner();
+        return readFiles(repo, number);
+      };
+      try {
+        const res = await sendAs(server, 'POST', '/api/merge-queue/entries', submitBody(nextPr()), bOwner.headers);
+        assert.equal(res.status, 423, JSON.stringify(res.data));
+        assert.equal(res.data.code, 'CONTROL_HELD');
+        assert.deepEqual(gh.calls.map((c) => c[0]), ['readPull', 'readCheck', 'readPullFiles'], 'every read was made: the hold arrived during the last');
+        assert.equal(queueStore.listEntries(queueId).length, before);
+      } finally {
+        await releaseOwner(hold);
+      }
     });
   });
 
@@ -640,15 +697,6 @@ describe('/api/merge-queue (#2322)', () => {
   });
 
   describe('what a refusal says', () => {
-    it('every refusal this API words itself names a code and ends in what to do next', () => {
-      const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'merge-queue-api.js'), 'utf8');
-      const thrown = src.match(/new QueueError\(\s*\d{3},/g) || [];
-      assert.ok(thrown.length > 15, `found ${thrown.length} worded refusals`);
-      for (const code of Object.values(api.API_REFUSALS)) {
-        assert.ok(src.includes(`API_REFUSALS.${code}`), `${code} is used`);
-      }
-    });
-
     it('a store failure is a 503 that says to read before repeating, never an accepted answer', async () => {
       const real = api._internal.readPull;
       api._internal.readPull = async () => { throw new Error('boom'); };
@@ -661,5 +709,109 @@ describe('/api/merge-queue (#2322)', () => {
         api._internal.readPull = real;
       }
     });
+
+    it('every refusal answered in this file carries a code and a sentence that says what to do next', () => {
+      const queueRefusals = REFUSED.filter((r) => r.request.includes('/api/merge-queue'));
+      assert.ok(queueRefusals.length > 60, `only ${queueRefusals.length} refusals were recorded`);
+      // What "what to do next" looks like in a sentence: an instruction, a
+      // condition to wait for, or who can do it. A refusal with none of these
+      // only says no.
+      const NEXT = /\b(Send|send|Sign in|sign in|Ask|ask|Read|read|Submit|submit|Withdraw|withdraw|Retire|Retarget|Review|Mark|Name|Only|only|until|before|report|makes|needs|must|again|merged by hand|cannot change|not needing|already recorded|act as|release)\b/;
+      // The queue words its own refusals. Those of the layers in front of it
+      // (the launch binding, the HOLD gate) are theirs, and are held here only
+      // to carrying a code and a sentence.
+      const ownCodes = new Set([...Object.values(api.API_REFUSALS), ...Object.values(state.REFUSALS), 'MERGE_QUEUE_UNAVAILABLE']);
+      let own = 0;
+      for (const r of queueRefusals) {
+        const where = `${r.status} ${r.request}: ${JSON.stringify(r.body)}`;
+        assert.equal(typeof r.body.code, 'string', where);
+        assert.match(r.body.code, /^[A-Z][A-Z_]+$/, where);
+        assert.equal(typeof r.body.error, 'string', where);
+        assert.ok(r.body.error.trim().length > 10, where);
+        if (!ownCodes.has(r.body.code)) continue;
+        own += 1;
+        assert.match(r.body.error, /\.$/, where);
+        assert.match(r.body.error, NEXT, where);
+      }
+      assert.ok(own > 50, `only ${own} of the queue's own refusals were recorded`);
+      const seen = new Set(queueRefusals.map((r) => r.body.code));
+      const unreachedOverHttp = ['OPERATOR_UNVERIFIABLE', 'QUEUE_AMBIGUOUS'];
+      for (const code of Object.values(api.API_REFUSALS)) {
+        if (!unreachedOverHttp.includes(code)) assert.ok(seen.has(code), `${code} was never answered in this file`);
+      }
+      for (const code of ['OPERATOR_ONLY', 'NOT_OWNER', 'INVALID_INPUT', 'GATE_REFERENCE_MISSING', 'QUEUE_NOT_FOUND', 'ENTRY_NOT_FOUND',
+        'QUEUE_EXISTS', 'DUPLICATE_PR', 'RELEASE_TRIGGER_CHANGED', 'ENTRY_FINISHED', 'TRANSITION_NOT_ALLOWED',
+        'OPERATOR_GATE_NOT_REQUIRED', 'OPERATOR_GATE_ALREADY_RECORDED', 'CONTROL_HELD', 'MERGE_QUEUE_UNAVAILABLE']) {
+        assert.ok(seen.has(code), `${code} was never answered in this file`);
+      }
+    });
+
+    it('an owner of two queues is asked which one, and told their ids', async () => {
+      const second = await sendAs(server, 'POST', '/api/merge-queue', { repo: 'Jason-Vaughan/Second', baseBranch: 'main', ownerProjectId: owner.id }, op);
+      assert.equal(second.status, 201, JSON.stringify(second.data));
+      try {
+        const res = await sendAs(server, 'POST', '/api/merge-queue/entries', submitBody(nextPr()), bOwner.headers);
+        assert.equal(res.status, 400);
+        assert.equal(res.data.code, 'QUEUE_AMBIGUOUS');
+        assert.deepEqual([...res.data.queueIds].sort(), [queueId, second.data.queue.queueId].sort());
+        assert.match(res.data.error, /Name the one you mean with queueId/);
+        const named = await sendAs(server, 'POST', '/api/merge-queue/entries', submitBody(nextPr(), { queueId: second.data.queue.queueId }), bOwner.headers);
+        assert.equal(named.status, 201, JSON.stringify(named.data));
+        assert.equal(named.data.entry.queueId, second.data.queue.queueId);
+        assert.equal(queueStore.withdrawEntry(named.data.entry.entryId, { reason: 'test cleanup', actor: ownerActor() }).ok, true);
+      } finally {
+        assert.equal(queueStore.retireQueue(second.data.queue.queueId, { actor: { kind: 'operator', operatorProof: 'ambient-open' } }).ok, true);
+      }
+    });
+  });
+});
+
+describe('/api/merge-queue on a signed-in install (#2322)', () => {
+  let tmpDir;
+  let server;
+  let project;
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-merge-queue-signed-in-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    const dir = path.join(tmpDir, 'integrator');
+    fs.mkdirSync(dir);
+    project = store.projects.create({ name: 'integrator', path: dir, engine: 'claude' });
+    // An install with a login: its gate enforces, and its operator signs in.
+    const config = store.config.load();
+    config.authEnabled = true;
+    config.basicAuthUser = 'admin';
+    config.basicAuthHash = '$2a$14$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0';
+    store.config.save(config);
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('the Operator makes a queue with the session\'s token, and the proof on record is the session', async () => {
+    const signedIn = await signInOperator(server);
+    const body = { repo: 'Jason-Vaughan/TangleClaw', baseBranch: 'main', ownerProjectId: project.id };
+    // What a bare `fetch` from the dashboard sends: the session and no token.
+    const { 'x-csrf-token': _token, ...bare } = signedIn;
+    const refused = await sendRaw(server, 'POST', '/api/merge-queue', body, bare);
+    assert.equal(refused.status, 403);
+    assert.equal(refused.data.code, 'CSRF_TOKEN_INVALID');
+    assert.equal(queueStore.listQueues().length, 0);
+    // The dashboard header alone, with no session, is not the Operator here.
+    const forged = await sendRaw(server, 'POST', '/api/merge-queue', body, { ...operatorHeaders(server), 'x-tangleclaw-client': 'dashboard' });
+    assert.ok([401, 403].includes(forged.status), `answered ${forged.status}`);
+    assert.equal(queueStore.listQueues().length, 0);
+    const made = await sendRaw(server, 'POST', '/api/merge-queue', body, signedIn);
+    assert.equal(made.status, 201, JSON.stringify(made.data));
+    assert.equal(made.data.queue.createdBy.operatorProof, 'verified-session');
+    const read = await sendRaw(server, 'GET', '/api/merge-queue', undefined, signedIn);
+    assert.equal(read.status, 200);
+    assert.equal(read.data.queues.length, 1);
   });
 });
