@@ -1637,7 +1637,18 @@ channel's version is proved to be one that declares `capabilities.wake.restRows`
 
 A recorded thread stays the launch's and is never replaced by this filtering; a recorded thread that
 is no longer loaded does not fall back to another. The compare-and-set and the fresh read after it
-are unchanged, and now require the same sole thread of the launch's kind. On those versions the
+are unchanged, and now require the same sole thread of the launch's kind. The launch gate and a
+fire bind the same way on those versions, and not by a plain write: the bind is a compare-and-set on
+the launch's own open channel with no thread recorded, a write that fails or that another writer won
+binds nothing and sends nothing, and the threads are then listed and read again and must be the same
+threads with the same sole thread of the launch's kind (a second user thread, a title helper or an
+unreadable thread that appeared in between refuses that look; reading only the chosen thread again
+would not show them). Before either answers for a thread, bound just now or recorded earlier, the
+channel row is read once more: still open, the same launch, the same thread. A bind made in a look
+that then refuses stays recorded, as the wake's does. And where the gate or a fire reads the pane, what
+is read afterwards on those versions is this whole answer again for the recorded thread (every loaded
+thread, the others' activity, the channel row), not that one thread alone: a thread that started
+working, or stopped being readable, while the pane was being witnessed refuses the look. On those versions the
 answer also carries `version`, the exact version proved, which the wake's pane gate reads the pane
 by; an answer for 0.156.1 carries none, and its candidate rule is the one above, unchanged.
 

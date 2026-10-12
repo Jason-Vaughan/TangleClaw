@@ -3540,6 +3540,224 @@ describe('Codex startupControl adapter', () => {
             assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-ambiguous', version }, 'the fresh read after the write no longer shows one sole launch thread');
           });
 
+          describe('the gate and the fire bind as the wake does: compare-and-set, then the same sole thread read again', () => {
+            /** Every way this launch can be asked for its thread and then act on the answer. */
+            const ASKERS = [
+              ['the launch gate', async () => { const { answer } = await gate(screenOf(fx.panes.idleAfterTurn), 1000); return answer.ready === true ? null : answer.observation; }],
+              ['the operator\'s fire', async () => { const row = await fireOn(screenOf(fx.panes.idleAfterTurn), false); return row.outcome === 'blocked' ? row.reason : null; }],
+              ['the automatic fire', async () => { const row = await fireOn(screenOf(fx.panes.idleAfterTurn), true); return row.outcome === 'blocked' ? row.reason : null; }]
+            ];
+            /**
+             * Run `body` with one method of the channel store replaced.
+             * @param {string} name - The method.
+             * @param {Function} make - Given the real method, returns the stand-in.
+             * @param {Function} body - What to run.
+             * @returns {Promise<void>}
+             */
+            const withStore = async (name, make, body) => {
+              const real = store.startupControlChannels[name];
+              store.startupControlChannels[name] = make(real.bind(store.startupControlChannels));
+              try {
+                await body();
+              } finally {
+                store.startupControlChannels[name] = real;
+              }
+            };
+            const fresh = async (threads, stateOver = {}, handlers = {}) => {
+              if (server) { server.close(); server = null; }
+              store.getDb().prepare('DELETE FROM startup_control_channels').run();
+              return world(threads, stateOver, handlers);
+            };
+
+            for (const [who, ask] of ASKERS) {
+              it(`${who}: the bind is a compare-and-set on the launch's own open, unbound channel, and is not written any other way`, async () => {
+                await fresh([userAfterTurn(), titleIdle()]);
+                const seen = [];
+                let plainWrites = 0;
+                await withStore('setAdapterState', (real) => (id, patch) => { if ('threadId' in patch) plainWrites += 1; return real(id, patch); }, async () => {
+                  await withStore('updateAdapterStateIf', (real) => (id, expect, patch) => {
+                    const row = store.startupControlChannels.get(id);
+                    seen.push({
+                      patch,
+                      genuine: expect(row),
+                      closed: expect({ ...row, state: 'closed' }),
+                      otherLaunch: expect({ ...row, sequenceId: row.sequenceId + 1 }),
+                      alreadyBound: expect({ ...row, adapterState: { ...row.adapterState, threadId: SECOND } })
+                    });
+                    return real(id, expect, patch);
+                  }, async () => {
+                    assert.equal(await ask(), null, 'bound and answered');
+                  });
+                });
+                assert.equal(seen.length, 1, 'one conditional write');
+                assert.deepEqual(seen[0], { patch: { threadId: THREAD }, genuine: true, closed: false, otherLaunch: false, alreadyBound: false });
+                assert.equal(plainWrites, 0, 'the thread is never written unconditionally');
+                assert.equal(threadOf(), THREAD);
+              });
+
+              it(`${who}: a bind that another writer won, that a changed generation refused, or that failed, binds nothing and sends nothing`, async () => {
+                const lost = [
+                  ['another thread was bound first', () => (id) => ({ written: false, channel: { ...store.startupControlChannels.get(id), adapterState: { threadId: SECOND } } }), /was bound to another thread, or was replaced, while this one was being chosen/],
+                  ['the channel is no longer this launch\'s', () => (id) => ({ written: false, channel: store.startupControlChannels.get(id) }), /was bound to another thread, or was replaced, while this one was being chosen/],
+                  ['the write answered nothing', () => () => null, /was bound to another thread, or was replaced, while this one was being chosen/],
+                  ['the write threw', () => () => { throw new Error('database is locked'); }, /could not be recorded on its channel, so it is not bound and nothing is sent on it/]
+                ];
+                for (const [name, make, expected] of lost) {
+                  await fresh([userAfterTurn(), titleIdle()]);
+                  await withStore('updateAdapterStateIf', make, async () => {
+                    const reason = await ask();
+                    assert.match(String(reason), expected, name);
+                    assert.doesNotMatch(String(reason), /database is locked/, 'the fault\'s own text stays in the log');
+                  });
+                  assert.equal(threadOf(), null, name);
+                  assert.equal(server.calls('turn/start').length, 0, name);
+                }
+              });
+
+              it(`${who}: a second user thread, a title helper or an unreadable thread appearing after the first list refuses`, async () => {
+                const arrivals = [
+                  ['a second user thread', () => captured('userIdleAfterTurn', SECOND), [userAfterTurn()], /changed while the launch's thread was being bound/],
+                  ['an idle title helper', () => titleIdle(), [userAfterTurn()], /changed while the launch's thread was being bound/],
+                  ['an active title helper', () => titleActive(), [userAfterTurn()], /changed while the launch's thread was being bound/],
+                  ['an unidentified thread', () => titleIdle({ threadSource: 'review' }), [userAfterTurn()], /changed while the launch's thread was being bound/],
+                  // The gate says a read was not made in its own words; a fire gives the adapter's.
+                  ['a thread that cannot be read', () => unreadable(TITLE), [userAfterTurn()], /a loaded thread could not be read|the loaded threads could not all be read over the channel/],
+                  ['the title helper leaving', () => null, [userAfterTurn(), titleIdle()], /changed while the launch's thread was being bound/]
+                ];
+                for (const [name, arriving, start, expected] of arrivals) {
+                  let lists = 0;
+                  const { table } = await fresh(start, {}, {
+                    'thread/loaded/list': () => {
+                      lists += 1;
+                      if (lists === 2) {
+                        const t = arriving();
+                        if (t === null) table.delete(TITLE);
+                        else table.set(t instanceof Error ? t.threadId : t.id, t);
+                      }
+                      return { data: [...table.keys()], nextCursor: null };
+                    }
+                  });
+                  const reason = await ask();
+                  assert.match(String(reason), expected, name);
+                  assert.ok(lists >= 2, `${name}: the threads were listed again after the bind`);
+                  assert.equal(server.calls('turn/start').length, 0, name);
+                }
+              });
+
+              it(`${who}: the launch's thread turning into another kind between the two reads refuses, although its id is the same`, async () => {
+                let lists = 0;
+                const { table } = await fresh([userAfterTurn(), titleIdle()], {}, {
+                  'thread/loaded/list': () => {
+                    lists += 1;
+                    if (lists === 2) table.set(THREAD, userAfterTurn({ ephemeral: true }));
+                    return { data: [...table.keys()], nextCursor: null };
+                  }
+                });
+                assert.match(String(await ask()), /changed while the launch's thread was being bound/);
+                assert.equal(server.calls('turn/start').length, 0);
+              });
+
+              it(`${who}: a channel closed, replaced or rebound while its thread was being read is not answered for, bound here or recorded before`, async () => {
+                const changes = [
+                  ['closed', (row) => ({ ...row, state: 'closed' })],
+                  ['another launch\'s', (row) => ({ ...row, sequenceId: row.sequenceId + 1 })],
+                  ['bound to another thread', (row) => ({ ...row, adapterState: { ...row.adapterState, threadId: SECOND } })],
+                  ['gone', () => null],
+                  ['unreadable', () => { throw new Error('database is locked'); }]
+                ];
+                for (const recorded of [null, THREAD]) {
+                  for (const [name, change] of changes) {
+                    await fresh([userAfterTurn(), titleIdle()], { threadId: recorded });
+                    await withStore('get', (real) => (id) => change(real(id)), async () => {
+                      // Unbound, the conditional write reads the same row and refuses first; either way nothing is answered for it.
+                      const expected = recorded === null
+                        ? /the launch's channel changed while its thread was being read|was bound to another thread, or was replaced, while this one was being chosen|could not be recorded on its channel/
+                        : /the launch's channel changed while its thread was being read/;
+                      assert.match(String(await ask()), expected, `${name}, recorded ${recorded}`);
+                    });
+                    assert.equal(server.calls('turn/start').length, 0, name);
+                  }
+                }
+              });
+            }
+
+            it('the thread answered for is the one read AFTER the bind, not the one read before it', async () => {
+              let lists = 0;
+              const { table } = await fresh([userAfterTurn()], {}, {
+                'thread/loaded/list': () => {
+                  lists += 1;
+                  if (lists === 2) table.set(THREAD, captured('userActive', THREAD));
+                  return { data: [...table.keys()], nextCursor: null };
+                }
+              });
+              const screen = screenOf(fx.panes.idleAfterTurn);
+              const { answer } = await gate(screen, 1000);
+              assert.equal(answer.ready, false);
+              assert.match(answer.observation, /the launch's thread was active, not idle/);
+              assert.equal(screen.asked.length, 0, 'the pane is not consulted for a thread that is working');
+            });
+
+            it('a recorded thread is not bound again: it is listed once before the pane and once after it', async () => {
+              await fresh([userAfterTurn(), titleIdle()], { threadId: THREAD });
+              let conditional = 0;
+              const screen = screenOf(fx.panes.idleAfterTurn);
+              let listsAtWitness = null;
+              screen.afterWitness = () => { listsAtWitness = server.calls('thread/loaded/list').length; };
+              await withStore('updateAdapterStateIf', (real) => (...a) => { conditional += 1; return real(...a); }, async () => {
+                assert.deepEqual((await gate(screen, 1000)).answer, { ready: true });
+              });
+              assert.equal(conditional, 0);
+              assert.equal(listsAtWitness, 1);
+              assert.equal(server.calls('thread/loaded/list').length, 2);
+            });
+
+            for (const [who, automatic] of [['the launch gate', null], ['the automatic fire', true]]) {
+              it(`${who}: what changed WHILE the pane was being witnessed refuses, where reading the chosen thread again would not show it`, async () => {
+                const during = [
+                  ['a second user thread appears and is working', (table) => table.set(SECOND, captured('userActive', SECOND)), /another thread loaded for the project directory is working/],
+                  ['the title helper starts working', (table) => table.set(TITLE, titleActive()), /another thread loaded for the project directory is working/],
+                  ['the title helper cannot be read', (table) => table.set(TITLE, unreadable(TITLE)), /a loaded thread could not be read/],
+                  ['the title helper reports a status the protocol does not promise', (table) => table.set(TITLE, titleIdle({ status: { type: 'somethingNew' } })), /is in a state the protocol does not promise/],
+                  ['the launch\'s own thread is no longer loaded', (table) => table.delete(THREAD), /the launch's recorded thread is not loaded for the project directory/]
+                ];
+                for (const [name, change, expected] of during) {
+                  const { table } = await fresh([userAfterTurn(), titleIdle()], { threadId: THREAD });
+                  const screen = screenOf(fx.panes.idleAfterTurn);
+                  screen.afterWitness = () => change(table);
+                  let reason;
+                  if (automatic) {
+                    const row = await fireOn(screen, true);
+                    assert.equal(row.outcome, 'blocked', name);
+                    assert.equal(row.reasonCode, 'pane_not_ready', name);
+                    reason = row.reason;
+                  } else {
+                    const { answer } = await gate(screen, 1000);
+                    assert.equal(answer.ready, false, name);
+                    reason = answer.observation;
+                  }
+                  assert.equal(screen.answers[0].shown, true, `${name}: the pane itself passed`);
+                  // The launch's own thread read idle throughout, except where it left.
+                  assert.match(reason, expected, name);
+                  assert.equal(server.calls('turn/start').length, 0, name);
+                }
+              });
+
+              it(`${who}: a channel that stops being this launch's while the pane is witnessed refuses`, async () => {
+                await fresh([userAfterTurn(), titleIdle()], { threadId: THREAD });
+                const screen = screenOf(fx.panes.idleAfterTurn);
+                const real = store.startupControlChannels.get;
+                screen.afterWitness = () => { store.startupControlChannels.get = (id) => ({ ...real.call(store.startupControlChannels, id), sequenceId: 999 }); };
+                try {
+                  const reason = automatic ? (await fireOn(screen, true)).reason : (await gate(screen, 1000)).answer.observation;
+                  assert.match(String(reason), /the launch's channel changed while its thread was being read/);
+                } finally {
+                  store.startupControlChannels.get = real;
+                }
+                assert.equal(server.calls('turn/start').length, 0);
+              });
+            }
+          });
+
           it('a channel replaced while the answer was being read is not answered idle', async () => {
             await world([userAfterTurn(), titleIdle()], { threadId: THREAD });
             const stale = store.startupControlChannels.getOpenBySession(session.id);
