@@ -309,6 +309,11 @@ describe('observeActivity: the generic facade over the optional adapter method (
     assert.deepEqual(await sc.observeActivity(target(), adapters), { channel: 'present', state: 'unknown', reasonCode: 'adapter-answer-malformed' });
   });
 
+  it('an adapter that answers held is passed through as held, with its reason code (#2186)', async () => {
+    const { adapters } = answering({ state: 'held', reasonCode: 'folder-untrusted' });
+    assert.deepEqual(await sc.observeActivity(target(), adapters), { channel: 'present', state: 'held', reasonCode: 'folder-untrusted' });
+  });
+
   it('the Codex adapter implements it', () => {
     assert.equal(typeof sc.ADAPTERS.codex.observeActivity, 'function');
   });

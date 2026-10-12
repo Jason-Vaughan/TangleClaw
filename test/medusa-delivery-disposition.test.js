@@ -83,6 +83,15 @@ describe('delivery disposition — every reason the monitor can give has a class
       'a stopped monitor ends no hold, this one included');
   });
 
+  it('a folder the engine was told not to trust is its operator\'s to review, and waiting does not end it (#2186)', () => {
+    const held = d.classifyReason('engine-folder-untrusted');
+    assert.deepEqual([held.class, held.nextAction, held.known], ['configuration', 'review-folder-trust', true]);
+    assert.match(held.nextActionMeaning, /trusted/);
+    assert.match(held.nextActionMeaning, /by hand/);
+    assert.equal(d.classifyForSender('engine-folder-untrusted', { monitorRunning: true }).nextAction, 'review-folder-trust');
+    assert.equal(d.classifyForSender('engine-folder-untrusted', { monitorRunning: false }).nextAction, 'investigate');
+  });
+
   it('a listener that is off needs someone; one that is reconnecting does not', () => {
     assert.equal(d.classifyReason('listener-off').class, 'configuration');
     assert.equal(d.classifyReason('listener-connecting').class, 'actionable');

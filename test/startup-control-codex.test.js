@@ -886,15 +886,166 @@ describe('Codex startupControl adapter', () => {
       assert.equal(server.calls('initialize').length, 0);
     });
 
-    it('idle and active map to idle and busy, and nothing is spent, trusted or checked for quota', async () => {
+    it('idle and active map to idle and busy, and nothing is spent or checked for account or quota', async () => {
       await serve();
       channel({ threadId: THREAD });
       assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle' });
       server.state.threadStatus = { type: 'active', activeFlags: ['waitingOnApproval'] };
       assert.deepEqual(await observe(), { state: 'busy', reasonCode: 'thread-active' });
-      for (const m of ['turn/start', 'config/read', 'account/read', 'account/rateLimits/read', 'thread/resume']) {
+      for (const m of ['turn/start', 'account/read', 'account/rateLimits/read', 'thread/resume']) {
         assert.equal(server.calls(m).length, 0, `${m} is never called by an observation`);
       }
+    });
+
+    describe('a folder Codex was told not to trust (#2186)', () => {
+      /** A `config/read` handler answering with the given projects table. */
+      const projects = (table) => ({ 'config/read': () => ({ config: { projects: table }, origins: {} }) });
+      /**
+       * Run `fn` with warnings captured.
+       * @param {(lines: string[]) => Promise<void>} fn - The body.
+       * @returns {Promise<void>}
+       */
+      async function withWarnings(fn) {
+        const logger = require('../lib/logger');
+        const lines = [];
+        logger.setLevel('warn');
+        logger.setConsoleStream({ write: (line) => { lines.push(String(line)); return true; } });
+        try {
+          await fn(lines);
+        } finally {
+          logger.setConsoleStream(null);
+          setLevel('error');
+        }
+      }
+      const unreadWarnings = (lines) => lines.filter((l) => l.includes('trust for the project directory is not established')).length;
+
+      beforeEach(() => codex._internal._trustUnreadWarned.clear());
+
+      it('an idle thread in a folder with an entry that is not trusted is held, under its own code', async () => {
+        await serve(projects({ [PROJECT_PATH]: { trust_level: 'untrusted' } }));
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'held', reasonCode: 'folder-untrusted' });
+        assert.equal(server.calls('turn/start').length, 0);
+      });
+
+      it('an entry with any value but trusted, or with none, is held as well', async () => {
+        for (const entry of [{ trust_level: 'on-request' }, {}, null]) {
+          await serve(projects({ [PROJECT_PATH]: entry }));
+          store.getDb().prepare('DELETE FROM startup_control_channels').run();
+          channel({ threadId: THREAD });
+          assert.deepEqual(await observe(), { state: 'held', reasonCode: 'folder-untrusted' }, JSON.stringify(entry));
+          server.close();
+        }
+      });
+
+      it('a trusted entry, no entry for the folder, and a null table are all idle', async () => {
+        for (const table of [{ [PROJECT_PATH]: { trust_level: 'trusted' } }, { '/somewhere/else': { trust_level: 'untrusted' } }, {}, null]) {
+          await serve(projects(table));
+          store.getDb().prepare('DELETE FROM startup_control_channels').run();
+          channel({ threadId: THREAD });
+          assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle' }, JSON.stringify(table));
+          server.close();
+        }
+      });
+
+      it('the entry is matched by the canonical directory, as the fire matches it', async () => {
+        await serve(projects({ [`${PROJECT_PATH}/`]: { trust_level: 'untrusted' } }));
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'held', reasonCode: 'folder-untrusted' });
+      });
+
+      it('a read that fails is idle, not held, and is warned about once per launch', async () => {
+        await withWarnings(async (lines) => {
+          await serve({ 'config/read': () => { throw Object.assign(new Error('config is locked'), { code: -32603 }); } });
+          channel({ threadId: THREAD });
+          assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle' });
+          assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle' });
+          assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle' });
+          assert.equal(unreadWarnings(lines), 1, 'one warning for the launch, not one per observation');
+          assert.ok(lines.some((l) => l.includes('config is locked')), 'the warning carries why the read failed');
+        });
+      });
+
+      it('an answer with no readable projects table is idle and warned about; a later launch is warned about again', async () => {
+        await withWarnings(async (lines) => {
+          await serve({ 'config/read': () => ({ config: { projects: 'not a table' }, origins: {} }) });
+          channel({ threadId: THREAD });
+          assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle' });
+          assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle' });
+          assert.equal(unreadWarnings(lines), 1);
+          store.getDb().prepare('DELETE FROM startup_control_channels').run();
+          channel({ threadId: THREAD });
+          assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle' });
+          assert.equal(unreadWarnings(lines), 2, 'a new channel is a new launch');
+        });
+      });
+
+      it('a readable answer is not warned about, held or not', async () => {
+        await withWarnings(async (lines) => {
+          await serve(projects({ [PROJECT_PATH]: { trust_level: 'untrusted' } }));
+          channel({ threadId: THREAD });
+          assert.deepEqual(await observe(), { state: 'held', reasonCode: 'folder-untrusted' });
+          server.close();
+          await serve(projects(null));
+          store.getDb().prepare('DELETE FROM startup_control_channels').run();
+          channel({ threadId: THREAD });
+          assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle' });
+          assert.equal(unreadWarnings(lines), 0);
+        });
+      });
+
+      it('a busy thread, an unknown one and a working second thread are answered without reading the config', async () => {
+        const untrusted = projects({ [PROJECT_PATH]: { trust_level: 'untrusted' } });
+        await serve(untrusted);
+        channel({ threadId: THREAD });
+        server.state.threadStatus = { type: 'active' };
+        assert.deepEqual(await observe(), { state: 'busy', reasonCode: 'thread-active' });
+        server.state.threadStatus = { type: 'systemError' };
+        assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-status-unknown' });
+        assert.equal(server.calls('config/read').length, 0, 'the folder\'s trust cannot change these answers, so it is not asked');
+        server.close();
+        await serve({
+          ...untrusted,
+          'thread/loaded/list': () => ({ data: [THREAD, 'other'] }),
+          'thread/read': (p) => ({ thread: { id: p.threadId, cwd: PROJECT_PATH, status: { type: p.threadId === THREAD ? 'idle' : 'active' }, parentThreadId: null, source: 'cli' } })
+        });
+        store.getDb().prepare('DELETE FROM startup_control_channels').run();
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'busy', reasonCode: 'other-thread-active' });
+        assert.equal(server.calls('config/read').length, 0);
+      });
+
+      it('one read per idle observation, and the answer follows an entry changed while the session runs', async () => {
+        let table = null;
+        await serve({ 'config/read': () => ({ config: { projects: table }, origins: {} }) });
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle' });
+        assert.equal(server.calls('config/read').length, 1);
+        table = { [PROJECT_PATH]: { trust_level: 'untrusted' } };
+        assert.deepEqual(await observe(), { state: 'held', reasonCode: 'folder-untrusted' });
+        table = { [PROJECT_PATH]: { trust_level: 'trusted' } };
+        assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle' });
+        assert.equal(server.calls('config/read').length, 3);
+      });
+
+      it('a held answer is withheld, like an idle one, when the channel changed under the read', async () => {
+        await serve({
+          'config/read': () => {
+            // The launch's channel is closed while the observation reads the config.
+            store.getDb().prepare("UPDATE startup_control_channels SET state = 'closed'").run();
+            return { config: { projects: { [PROJECT_PATH]: { trust_level: 'untrusted' } } }, origins: {} };
+          }
+        });
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'channel-changed' });
+      });
+
+      it('a thread bound by this observation in an untrusted folder is held, and stays bound', async () => {
+        await serve(projects({ [PROJECT_PATH]: { trust_level: 'untrusted' } }));
+        channel();
+        assert.deepEqual(await observe(), { state: 'held', reasonCode: 'folder-untrusted' });
+        assert.equal(store.startupControlChannels.getOpenBySession(session.id).adapterState.threadId, THREAD);
+      });
     });
 
     it('any other status is unknown', async () => {
