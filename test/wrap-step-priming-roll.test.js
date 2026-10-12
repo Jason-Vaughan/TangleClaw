@@ -1836,7 +1836,7 @@ describe('wrap-step priming-roll — a coordinated project is not rolled (#2320)
     assert.deepEqual(staged, {}, 'nothing is staged for the commit step to write');
     assert.equal(fs.readFileSync(primingPath, 'utf8'), PRIMING, 'the priming file is byte-identical');
     assert.equal(result.output.detail, result.output.reason, 'the drawer prints a skipped row\'s detail');
-    assert.match(result.output.reason, /^Priming roll skipped: /);
+    assert.match(result.output.reason, /the shared priming file is not rewritten from one checkout's plan/);
     return result.output;
   }
 
@@ -1844,8 +1844,8 @@ describe('wrap-step priming-roll — a coordinated project is not rolled (#2320)
     settings(JSON.stringify({ workloadNudge: { coordinatorProject: 'lane-int' } }));
     const output = assertNotRolled(await roll());
     assert.deepEqual(output.mergeAuthority, { authority: 'integrator', integrator: 'lane-int', source: 'coordinator' });
-    assert.match(output.reason, /this project works under lane-int, the coordinator its settings name/);
-    assert.match(output.reason, /the shared priming file is not rewritten/);
+    // The row is cut to one line in the wrap drawer, so the name comes first.
+    assert.match(output.reason, /^Works under lane-int, the coordinator this project's settings name, so /);
     assert.match(output.reason, /belongs in the handoff/);
     assert.deepEqual(execCalls, ['git remote get-url origin', 'git symbolic-ref --short -q HEAD'],
       'the answer is keyed on the repository and the branch the wrap fired from');
@@ -1886,15 +1886,15 @@ describe('wrap-step priming-roll — a coordinated project is not rolled (#2320)
   it('skips with its own sentence when the project is the coordinator itself', async () => {
     settings(JSON.stringify({ workloadNudge: { coordinatorProject: 'lane-int' } }));
     const output = assertNotRolled(await roll('lane-int'));
-    assert.match(output.reason, /^Priming roll skipped: lane-int coordinates a lane, so the shared priming file is not rewritten/);
-    assert.doesNotMatch(output.reason, /works under/);
+    assert.match(output.reason, /^lane-int coordinates a lane, so the shared priming file is not rewritten/);
+    assert.doesNotMatch(output.reason, /works under/i);
   });
 
   it('skips and says what could not be read when the settings file is not readable JSON', async () => {
     settings('{ "workloadNudge": { "coordinatorProject": "lane-');
     const output = assertNotRolled(await roll());
     assert.equal(output.mergeAuthority.authority, 'unknown');
-    assert.match(output.reason, /could not be established \(this project's settings \(\.tangleclaw\/project\.json\) could not be read\)/);
+    assert.match(output.reason, /^Coordinator not established \(this project's settings \(\.tangleclaw\/project\.json\) could not be read\), so /);
     assert.match(output.reason, /until it can be\.$/);
   });
 

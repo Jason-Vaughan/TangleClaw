@@ -1193,6 +1193,64 @@ describe('wrap-drawer helpers — #638 wrap-PR reporting', () => {
       assert.doesNotMatch(b.detail, /Nothing more to do/i);
       assert.match(b.detail, /lands when its checks pass/);
     });
+    // #2320 — a coordinated project's wrap PR is open and unarmed on purpose:
+    // passing checks land nothing, so the hedge above would be a false sentence.
+    describe('pending, in a project whose merges are not its own to decide (#2320)', () => {
+      const SAID = "This project's merges belong to lane-int, the coordinator its settings name: lane-int merges this pull request, and nothing arms auto-merge on it.";
+
+      it('says the PR waits to be merged and who merges it, and never that it lands when its checks pass', () => {
+        const b = H.prOutcomeBanner({ outcome: 'pending' }, false, { authority: 'integrator', integrator: 'lane-int', said: SAID });
+        assert.equal(b.tone, 'provisional');
+        assert.equal(b.label, 'Wrap committed — PR open, waiting to be merged');
+        assert.equal(b.detail, `auto-merge was not armed, so passing checks will not land it. ${SAID}`);
+        assert.doesNotMatch(`${b.label} ${b.detail}`, /lands when its checks pass|pending checks|Nothing more to do/i);
+      });
+
+      it('still says it waits when the answer carries no sentence', () => {
+        const b = H.prOutcomeBanner({ outcome: 'pending' }, false, { authority: 'unknown' });
+        assert.equal(b.detail, 'auto-merge was not armed, so passing checks will not land it. It waits for whoever merges for this project.');
+      });
+
+      it('reads exactly as before when the wrap carries no merge authority', () => {
+        const hedge = { label: 'Wrap committed — release pending checks', tone: 'provisional', detail: 'the PR has not merged yet; it lands when its checks pass' };
+        // Spread into this realm: the helpers' objects come from the drawer's own.
+        assert.deepEqual({ ...H.prOutcomeBanner({ outcome: 'pending' }, false) }, hedge);
+        assert.deepEqual({ ...H.prOutcomeBanner({ outcome: 'pending' }, false, null) }, hedge);
+        assert.deepEqual({ ...H.prOutcomeBanner({ outcome: 'pending' }, false, undefined) }, hedge);
+      });
+
+      it('leaves every other outcome byte for byte as it is', () => {
+        const authority = { authority: 'integrator', integrator: 'lane-int', said: SAID };
+        for (const [status, armed] of [
+          [{ outcome: 'merged' }, false],
+          [{ outcome: 'blocked', state: 'CLOSED' }, false],
+          [{ outcome: 'blocked', state: 'OPEN', mergeStateStatus: 'DIRTY' }, false],
+          [{ outcome: 'blocked', state: 'OPEN', mergeStateStatus: 'BLOCKED' }, false],
+          [{ outcome: 'pending' }, true],
+          [{ outcome: 'unknown', reason: 'gh not found' }, false],
+          [null, false]
+        ]) {
+          assert.deepEqual(H.prOutcomeBanner(status, armed, authority), H.prOutcomeBanner(status, armed), JSON.stringify(status));
+        }
+      });
+
+      it('reaches the banner from the wrap\'s own result: wrapPrInfo carries it and composeReleaseBanner passes it', () => {
+        const result = { results: [{ stepId: 'commit', output: { autoPr: { prUrl: 'https://github.com/o/r/pull/7', autoMergeArmed: false, mergeAuthority: { authority: 'integrator', integrator: 'lane-int', said: SAID } } } }] };
+        const pr = H.wrapPrInfo(result);
+        assert.equal(pr.mergeAuthority.said, SAID);
+        const banner = H.composeReleaseBanner({ label: 'Wrap committed — release pending PR merge', tone: 'provisional', detail: null, pr }, { outcome: 'pending' });
+        assert.equal(banner.label, 'Wrap committed — PR open, waiting to be merged');
+        assert.ok(banner.detail.includes(SAID));
+        // A merged PR is a merged PR, whoever merged it.
+        assert.equal(H.composeReleaseBanner({ tone: 'provisional', pr }, { outcome: 'merged' }).label, 'Wrap shipped — PR merged');
+      });
+
+      it('adds no field to the handle of a wrap PR that carries no merge authority', () => {
+        const pr = H.wrapPrInfo({ results: [{ stepId: 'commit', output: { autoPr: { prUrl: 'u', autoMergeArmed: true } } }] });
+        assert.equal(Object.prototype.hasOwnProperty.call(pr, 'mergeAuthority'), false);
+      });
+    });
+
     it('unknown → provisional with the probe reason', () => {
       const b = H.prOutcomeBanner({ outcome: 'unknown', reason: 'gh not found' });
       assert.equal(b.tone, 'provisional');

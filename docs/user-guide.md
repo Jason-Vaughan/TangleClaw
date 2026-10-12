@@ -585,6 +585,7 @@ If a `deletePassword` is configured, you'll need to enter it to wrap.
 
 - **Wrap shipped — PR merged** — the release landed.
 - **Release pending checks** — the PR hasn't merged yet; it lands when its checks pass. A PR whose required check is still *running* shows this, not "blocked" — armed auto-merge will land it once the check goes green.
+- **PR open, waiting to be merged** — the PR hasn't merged and passing checks will not land it: the project works under a coordinator (see protected branches below), so the wrap armed no auto-merge and the banner says who merges it.
 - **Release BLOCKED, did not ship** — a required check actually *failed*, or the branch has merge conflicts. **This is a failure**: the wrap's version bump is stranded on an unmerged branch. Fix the PR, then merge it.
 - **Release not confirmed** — TangleClaw couldn't reach GitHub (no `gh`, not signed in). The outcome is genuinely unknown, not assumed good.
 

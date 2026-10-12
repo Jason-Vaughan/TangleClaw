@@ -835,8 +835,12 @@
    * reading `Wrap committed` in plain success tone, which is how one sat
    * unnoticed for five days.
    *
+   * `mergeAuthority` is present only when the commit step left the PR unarmed
+   * because the project's merges are not its own to decide: the release banner
+   * must then say who the PR waits for, not that it lands when its checks pass.
+   *
    * @param {object} pipelineResult - Runner return.
-   * @returns {{prUrl: string|null, armed: boolean, error: string|null, skippedReason: string|null, stranded: boolean}|null}
+   * @returns {{prUrl: string|null, armed: boolean, error: string|null, skippedReason: string|null, stranded: boolean, mergeAuthority?: object}|null}
    */
   function wrapPrInfo(pipelineResult) {
     const results = pipelineResult && Array.isArray(pipelineResult.results) ? pipelineResult.results : [];
@@ -848,7 +852,8 @@
           armed: ap.autoMergeArmed === true,
           error: ap.error || null,
           skippedReason: ap.skippedReason || null,
-          stranded: isStrandedWrap(ap)
+          stranded: isStrandedWrap(ap),
+          ...(ap.mergeAuthority ? { mergeAuthority: ap.mergeAuthority } : {})
         };
       }
     }
@@ -868,9 +873,13 @@
    *   the instant checks pass, no operator action — so the copy says so rather
    *   than implying a manual step (#700). When false/unknown, the honest hedge
    *   stands: arming is not something the read-only probe can see on its own.
+   * @param {{said?: string}|null} [mergeAuthority] - Set when the commit step left
+   *   the PR unarmed because this project's merges are another's to decide (or
+   *   could not be established). A pending release is then waiting for that
+   *   merge, and checks passing lands nothing, so the hedge above would be false.
    * @returns {{label: string, tone: 'success'|'error'|'provisional', detail: string}}
    */
-  function prOutcomeBanner(status, armed) {
+  function prOutcomeBanner(status, armed, mergeAuthority) {
     const outcome = status && status.outcome;
     if (outcome === 'merged') {
       return { label: 'Wrap shipped — PR merged', tone: 'success', detail: 'the release landed on the base branch' };
@@ -897,6 +906,12 @@
       // an unknown/unarmed pending keeps the honest hedge.
       if (armed) {
         return { label: 'Wrap committed — release pending checks', tone: 'provisional', detail: 'auto-merge is armed — the PR lands on its own when its checks pass. Nothing more to do; you can close this.' };
+      }
+      if (mergeAuthority) {
+        const said = typeof mergeAuthority.said === 'string' && mergeAuthority.said.trim()
+          ? mergeAuthority.said.trim()
+          : 'It waits for whoever merges for this project.';
+        return { label: 'Wrap committed — PR open, waiting to be merged', tone: 'provisional', detail: `auto-merge was not armed, so passing checks will not land it. ${said}` };
       }
       return { label: 'Wrap committed — release pending checks', tone: 'provisional', detail: 'the PR has not merged yet; it lands when its checks pass' };
     }
@@ -930,7 +945,7 @@
     // pass the pipeline's own arming knowledge (the probe can't see it) so the
     // banner can say "lands on its own" instead of implying a manual step.
     const armed = !!(base.pr && base.pr.armed);
-    const release = prOutcomeBanner(prStatus, armed);
+    const release = prOutcomeBanner(prStatus, armed, base.pr ? base.pr.mergeAuthority : null);
     // #1675 — a blocked release is the more severe fact and takes the banner,
     // but the next launch still will not resume from this wrap, so that stays.
     if (release.tone === 'error') {

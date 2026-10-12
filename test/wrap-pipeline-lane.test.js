@@ -224,7 +224,7 @@ describe('wrap pipeline — a project that works under a coordinator (#2320)', (
       assert.equal(git('diff', '--name-only', 'main', 'HEAD', '--', PRIMING_REL), '', 'the wrap commit does not carry it');
       assert.ok(!filesIn(git, 'HEAD').includes(PRIMING_REL));
       const primingRow = rowOf(priming);
-      assert.match(primingRow.detail, new RegExp(`this project works under ${COORDINATOR}`));
+      assert.match(primingRow.detail, new RegExp(`^Works under ${COORDINATOR}, `), 'the row is cut to one line: the name comes first');
       assert.match(primingRow.detail, /the shared priming file is not rewritten/);
 
       // The arming guard, at the wrap's own pull request.
