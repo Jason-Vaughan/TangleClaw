@@ -750,16 +750,18 @@ describe('Codex startupControl adapter', () => {
           assert.equal(server.calls('turn/start').length, 0);
         });
 
-        it('as shipped, the same composer does not get the fire: the profile lists no measured version', async () => {
+        it('as shipped, the same composer gets the fire on the one measured version', async () => {
           await serve(NO_ENTRY);
+          completeTheTurn();
           channel(LAUNCH_PANE);
           const tmuxLog = [];
           const shipped = codexProfile.capabilities.startupControl.remoteTrustPrompt.absentOn;
-          assert.deepEqual(shipped, []);
+          assert.deepEqual(shipped, ['0.156.1']);
           const settled = await fireWith(pendingFire(), { absentOn: shipped, witness: witnessOver('composer', tmuxLog) }).settled;
-          assert.equal(settled.reasonCode, 'trust_required');
-          assert.deepEqual(tmuxLog, [], 'the pane is not even read');
-          assert.equal(server.calls('turn/start').length, 0);
+          assert.equal(settled.outcome, 'applied');
+          assert.deepEqual(tmuxLog, ['pin-pane', 'read-visible-pane %7', 'read-visible-pane %7'], 'the witness read the pane, twice');
+          assert.equal(server.calls('turn/start').length, 1);
+          assert.match(settled.dispatchNote, /TangleClaw did not grant trust\./);
         });
       });
 
