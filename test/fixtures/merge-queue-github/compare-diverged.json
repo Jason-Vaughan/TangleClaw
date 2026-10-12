@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-10-12T07:18:21.550Z",
+  "args": [
+    "api",
+    "-i",
+    "repos/Jason-Vaughan/TangleClaw/compare/29354a4674cc207ca89205dadaab40aaf845dffc...cc3e8364398a4f68bf3e7fc03ce5993e43954ace",
+    "--jq",
+    "{status: .status, base: .base_commit.sha, merge_base: .merge_base_commit.sha, files: [.files[] | {filename: .filename, previous_filename: .previous_filename}]}"
+  ],
+  "exitCode": 0,
+  "statusLine": "HTTP/2.0 200 OK",
+  "body": "{\"base\":\"29354a4674cc207ca89205dadaab40aaf845dffc\",\"files\":[{\"filename\":\"CHANGELOG.md\",\"previous_filename\":null},{\"filename\":\"test/changelog-unreleased-size.test.js\",\"previous_filename\":null}],\"merge_base\":\"c5c05a70351725ef9219accea181b29c18155614\",\"status\":\"diverged\"}\n",
+  "stderr": ""
+}

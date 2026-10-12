@@ -1,0 +1,20 @@
+{
+  "capturedAt": "2026-10-12T07:18:26.739Z",
+  "args": [
+    "api",
+    "-i",
+    "-X",
+    "POST",
+    "repos/Jason-Vaughan/TangleClaw/git/refs",
+    "-f",
+    "ref=refs/heads/tc-queue/probe-20261012-000000",
+    "-f",
+    "sha=6ee1f14ba03071bdae8056ca8d0f793df2f85cc5",
+    "--jq",
+    "{ref: .ref, sha: .object.sha, type: .object.type}"
+  ],
+  "exitCode": 1,
+  "statusLine": "HTTP/2.0 422 Unprocessable Entity",
+  "body": "{\"message\":\"Reference already exists\",\"documentation_url\":\"https://docs.github.com/rest/git/refs#create-a-reference\",\"status\":\"422\"}",
+  "stderr": "gh: Reference already exists (HTTP 422)\n"
+}

@@ -1,0 +1,23 @@
+{
+  "captured": false,
+  "note": "NOT a captured response. Merging a pull request cannot be probed without merging one into main, so these three answers are written from GitHub's REST documentation for PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge (https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request, read 2026-10-12). Replace each with the real exchange from the merge queue's first live landing (#2322).",
+  "merged": {
+    "args": ["api", "-i", "-X", "PUT", "repos/Jason-Vaughan/TangleClaw/pulls/2331/merge", "-f", "merge_method=merge", "-f", "sha=1aa8f5de0941e64d171f655c0e00822e6577ba9f", "--jq", "{sha: .sha, merged: .merged}"],
+    "exitCode": 0,
+    "statusLine": "HTTP/2.0 200 OK",
+    "body": "{\"merged\":true,\"sha\":\"29354a4674cc207ca89205dadaab40aaf845dffc\"}\n",
+    "stderr": ""
+  },
+  "notMergeable": {
+    "exitCode": 1,
+    "statusLine": "HTTP/2.0 405 Method Not Allowed",
+    "body": "{\"message\":\"Pull Request is not mergeable\",\"documentation_url\":\"https://docs.github.com/rest/pulls/pulls#merge-a-pull-request\",\"status\":\"405\"}",
+    "stderr": "gh: Pull Request is not mergeable (HTTP 405)\n"
+  },
+  "headMoved": {
+    "exitCode": 1,
+    "statusLine": "HTTP/2.0 409 Conflict",
+    "body": "{\"message\":\"Head branch was modified. Review and try the merge again.\",\"documentation_url\":\"https://docs.github.com/rest/pulls/pulls#merge-a-pull-request\",\"status\":\"409\"}",
+    "stderr": "gh: Head branch was modified. Review and try the merge again. (HTTP 409)\n"
+  }
+}

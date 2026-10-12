@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-10-12T07:18:20.412Z",
+  "args": [
+    "api",
+    "-i",
+    "repos/Jason-Vaughan/TangleClaw/compare/6ee1f14ba03071bdae8056ca8d0f793df2f85cc5...29354a4674cc207ca89205dadaab40aaf845dffc",
+    "--jq",
+    "{status: .status, base: .base_commit.sha, merge_base: .merge_base_commit.sha, files: [.files[] | {filename: .filename, previous_filename: .previous_filename}]}"
+  ],
+  "exitCode": 0,
+  "statusLine": "HTTP/2.0 200 OK",
+  "body": "{\"base\":\"6ee1f14ba03071bdae8056ca8d0f793df2f85cc5\",\"files\":[{\"filename\":\".prawduct/change-log.md\",\"previous_filename\":null},{\"filename\":\"test/fixtures/codex-panes/codex-0.156.1.json\",\"previous_filename\":null},{\"filename\":\"test/fixtures/codex-panes/codex-0.159.0.json\",\"previous_filename\":null},{\"filename\":\"test/fixtures/codex-panes/codex-0.161.0.json\",\"previous_filename\":null},{\"filename\":\"test/medusa-wake-codex-fixtures.test.js\",\"previous_filename\":null}],\"merge_base\":\"6ee1f14ba03071bdae8056ca8d0f793df2f85cc5\",\"status\":\"ahead\"}\n",
+  "stderr": ""
+}

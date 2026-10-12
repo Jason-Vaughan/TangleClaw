@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-10-12T07:18:18.681Z",
+  "args": [
+    "api",
+    "-i",
+    "repos/Jason-Vaughan/TangleClaw/git/ref/heads/tc-queue/nope",
+    "--jq",
+    "{ref: .ref, sha: .object.sha, type: .object.type}"
+  ],
+  "exitCode": 1,
+  "statusLine": "HTTP/2.0 404 Not Found",
+  "body": "{\"message\":\"Not Found\",\"documentation_url\":\"https://docs.github.com/rest/git/refs#get-a-reference\",\"status\":\"404\"}",
+  "stderr": "gh: Not Found (HTTP 404)\n"
+}

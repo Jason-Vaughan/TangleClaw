@@ -1,0 +1,20 @@
+{
+  "capturedAt": "2026-10-12T07:18:28.073Z",
+  "args": [
+    "api",
+    "-i",
+    "-X",
+    "POST",
+    "repos/Jason-Vaughan/TangleClaw/merges",
+    "-f",
+    "base=tc-queue/probe-20261012-000000",
+    "-f",
+    "head=cc3e8364398a4f68bf3e7fc03ce5993e43954ace",
+    "-f",
+    "commit_message=probe: a conflicting merge"
+  ],
+  "exitCode": 1,
+  "statusLine": "HTTP/2.0 409 Conflict",
+  "body": "{\"message\":\"Merge conflict\",\"documentation_url\":\"https://docs.github.com/rest/branches/branches#merge-a-branch\",\"status\":\"409\"}",
+  "stderr": "gh: Merge conflict (HTTP 409)\n"
+}

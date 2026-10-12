@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-10-12T07:18:19.983Z",
+  "args": [
+    "api",
+    "-i",
+    "repos/Jason-Vaughan/TangleClaw/pulls/2331/files?per_page=100&page=1",
+    "--jq",
+    "[.[] | {filename: .filename, previous_filename: .previous_filename}]"
+  ],
+  "exitCode": 0,
+  "statusLine": "HTTP/2.0 200 OK",
+  "body": "[{\"filename\":\".prawduct/change-log.md\",\"previous_filename\":null},{\"filename\":\"test/fixtures/codex-panes/codex-0.156.1.json\",\"previous_filename\":null},{\"filename\":\"test/fixtures/codex-panes/codex-0.159.0.json\",\"previous_filename\":null},{\"filename\":\"test/fixtures/codex-panes/codex-0.161.0.json\",\"previous_filename\":null},{\"filename\":\"test/medusa-wake-codex-fixtures.test.js\",\"previous_filename\":null}]\n",
+  "stderr": ""
+}

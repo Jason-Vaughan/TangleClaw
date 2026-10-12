@@ -1,0 +1,20 @@
+{
+  "capturedAt": "2026-10-12T07:18:27.295Z",
+  "args": [
+    "api",
+    "-i",
+    "-X",
+    "POST",
+    "repos/Jason-Vaughan/TangleClaw/merges",
+    "-f",
+    "base=tc-queue/probe-20261012-000000",
+    "-f",
+    "head=1aa8f5de0941e64d171f655c0e00822e6577ba9f",
+    "-f",
+    "commit_message=probe: the same merge twice"
+  ],
+  "exitCode": 0,
+  "statusLine": "HTTP/2.0 204 No Content",
+  "body": "",
+  "stderr": ""
+}

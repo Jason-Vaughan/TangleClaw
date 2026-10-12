@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-10-12T07:18:19.025Z",
+  "args": [
+    "api",
+    "-i",
+    "repos/Jason-Vaughan/TangleClaw/git/commits/29354a4674cc207ca89205dadaab40aaf845dffc",
+    "--jq",
+    "{sha: .sha, tree: .tree.sha, parents: [.parents[].sha]}"
+  ],
+  "exitCode": 0,
+  "statusLine": "HTTP/2.0 200 OK",
+  "body": "{\"parents\":[\"6ee1f14ba03071bdae8056ca8d0f793df2f85cc5\",\"1aa8f5de0941e64d171f655c0e00822e6577ba9f\"],\"sha\":\"29354a4674cc207ca89205dadaab40aaf845dffc\",\"tree\":\"a09b4f590cde4061cf24456ff55244fe1739ebee\"}\n",
+  "stderr": ""
+}
