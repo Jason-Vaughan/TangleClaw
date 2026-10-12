@@ -3,7 +3,7 @@
 // #2323: /api/tc/check-watches over an in-process server and a scratch store.
 // Only a verified launch registers or cancels a watch, and only for its own
 // project; the project, the Operator and its group read it; the repository is
-// read from the project's own folder and never taken from the caller; and the
+// read from the project's own folder and not taken from the request; and the
 // state in every answer is derived from the record at the time of the read.
 
 const { describe, it, before, after, beforeEach } = require('node:test');
@@ -312,6 +312,7 @@ describe('/api/tc/check-watches (#2323)', () => {
         const res = await sendAs(server, 'POST', ROOT, watchBody(), bOwner.headers);
         assert.equal(res.status, 503, JSON.stringify(answer));
         assert.equal(res.data.code, 'CHECK_WATCH_REPO_UNREADABLE');
+        assert.equal(/; repeat the request/.test(res.data.error), answer.errorCode !== 'ENOENT', res.data.error);
       }
       origin = () => { throw new Error('the seam itself broke'); };
       const thrown = await sendAs(server, 'POST', ROOT, watchBody(), bOwner.headers);
@@ -339,6 +340,8 @@ describe('/api/tc/check-watches (#2323)', () => {
       const res = await sendAs(server, 'POST', ROOT, watchBody(), bGone.headers);
       assert.equal(res.status, 503, JSON.stringify(res.data));
       assert.equal(res.data.code, 'CHECK_WATCH_REPO_UNREADABLE');
+      assert.match(res.data.error, /folder \(.*folder-gone\) or git itself is missing, so repeating the request will not help/);
+      assert.ok(!/; repeat the request/.test(res.data.error));
     });
   });
 

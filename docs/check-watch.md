@@ -18,9 +18,11 @@ pull request. It records:
 The watch belongs to the **project**, not to the launch that registered it, so it is still there
 after the session is cleared or relaunched, and after the server restarts.
 
-The repository is never taken from the caller. It is the `origin` remote of the project's own
+The repository is not taken from the request. It is the `origin` remote of the project's own
 folder, read by the server with `git`, and it must be on github.com. A project whose folder has no
-such remote cannot register a watch (`CHECK_WATCH_REPO_UNKNOWN`).
+such remote cannot register a watch (`CHECK_WATCH_REPO_UNKNOWN`). This is not a boundary against
+the project's own session: a session can write its folder's git config, so it can change which
+repository its next watch records.
 
 ## The four states
 
@@ -106,7 +108,8 @@ it.
   fact of its history. The limit of 20 bounds open watches only, so the tables grow with use.
 - **Registering reads the project folder's `origin` with `git`**, bounded at four seconds. A read
   that does not finish refuses the registration (`503 CHECK_WATCH_REPO_UNREADABLE`); nothing was
-  registered, and it can be repeated.
+  registered, and it can be repeated. The same code answers when the folder or `git` itself is
+  missing, and says that repeating will not help.
 - **Nothing checks that the pull request exists, that the commit is its head, or that a check of
   that name ever runs.** A watch on a name GitHub never reports reads `waiting` until its due time.
 
@@ -120,7 +123,7 @@ it.
 | `CHECK_WATCH_MALFORMED` | 400 | A pull request number, commit, check name, project id or watch id that is not one |
 | `CHECK_WATCH_DUE_OUT_OF_RANGE` | 400 | `dueInMinutes` missing, not a whole number, under 1 or over 1440 |
 | `CHECK_WATCH_REPO_UNKNOWN` | 409 | The project's folder has no `origin` remote on github.com |
-| `CHECK_WATCH_REPO_UNREADABLE` | 503 | The folder's `origin` could not be read in time, or at all |
+| `CHECK_WATCH_REPO_UNREADABLE` | 503 | The folder's `origin` could not be read in time, or the folder or `git` is missing |
 | `CHECK_WATCH_DUPLICATE` | 409 | The project already has an open watch on that check of that commit; `watchId` names it |
 | `CHECK_WATCH_LIMIT` | 409 | The project already has 20 open watches |
 | `CHECK_WATCH_PROJECT_NOT_FOUND` | 404 | No such project, or none whose watches the caller may read |
