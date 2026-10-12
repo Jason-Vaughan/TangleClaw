@@ -965,8 +965,6 @@ describe('Codex startupControl adapter', () => {
     // captures of these screens are the fixtures file's own entries.
     const TYPED = composerWith(0, '\u001b[1m›\u001b[0m hello', 7);
     const BUSY = composerWith(-2, '• Working (3s • esc to interrupt)');
-    const CUSTOM_STATUS = composerWith(2, '  gpt-6-astra · 12% used · ~/work/site');
-    const SINGLE_ITEM_STATUS = composerWith(2, '  GPT-6-Astra');
     const MOVED = composerWith(-3, '  Tip: a different tip is drawn here now');
 
     /**
@@ -1036,7 +1034,9 @@ describe('Codex startupControl adapter', () => {
       });
 
       it('ready on every measured composer at rest, and on a custom status line that never says Ready', async () => {
-        for (const [name, frame] of [['composerAfterUpdateSkipped', PANES.composerAfterUpdateSkipped], ['composerOperatorStatus', PANES.composerOperatorStatus], ['composerWarningStatus', PANES.composerWarningStatus], ['a custom status line', CUSTOM_STATUS]]) {
+        assert.ok(!PANES.composerCustomStatus.rows.join('\n').includes('Ready'));
+        for (const name of ['composerDefaultStatusSignedIn', 'composerCustomStatus', 'composerAfterUpdateSkipped', 'composerOperatorStatus', 'composerWarningStatus']) {
+          const frame = PANES[name];
           await serve();
           store.getDb().prepare('DELETE FROM startup_control_channels').run();
           channel(LAUNCH_PANE);
@@ -1063,7 +1063,7 @@ describe('Codex startupControl adapter', () => {
           ['the opening screen', PANES.openingScreen, /the pane was not at an empty composer: the engine is still starting/],
           ['typed text', TYPED, /the pane was not at an empty composer: /],
           ['a running turn', BUSY, /the pane was not at an empty composer: a turn is running/],
-          ['a status line of one item', SINGLE_ITEM_STATUS, /something other than a status row is drawn below the composer/]
+          ['a status line of one item (measured)', PANES.composerSingleItemStatus, /something other than a status row is drawn below the composer/]
         ];
         for (const [name, frame, said] of cases) {
           await serve();
@@ -1118,7 +1118,37 @@ describe('Codex startupControl adapter', () => {
         r = await gate(screen);
         assert.equal(r.answer.unavailable, false);
         assert.match(r.answer.observation, /has not opened a thread for the project directory yet/);
-        assert.deepEqual(screen.log, []);
+        assert.ok(screen.log.every((kind) => kind === 'read-once'), 'one read a look, only to name a dialog');
+        assert.equal(r.answer.ready, false, 'a composer with no thread behind it is not ready');
+      });
+
+      it('the probe-update shape: no thread yet because a startup dialog is up: the row names the dialog and what to do, read from the pane', async () => {
+        for (const [frame, id, action] of [[PANES.updatePrompt, 'update', /Escape skips it/], [PANES.trustPrompt, 'folder-trust', /Answer Codex's folder-trust prompt/]]) {
+          await serve({ 'thread/loaded/list': () => ({ data: [], nextCursor: null }) });
+          store.getDb().prepare('DELETE FROM startup_control_channels').run();
+          channel(LAUNCH_PANE);
+          const screen = pane(frame);
+          const { answer, looks } = await gate(screen);
+          assert.equal(answer.ready, false, id);
+          assert.equal(answer.unavailable, false, id);
+          assert.match(answer.observation, new RegExp(`Codex was showing its ${id} prompt in the pane \\(read from the pane\\)`));
+          assert.match(answer.remedy, action);
+          assert.match(answer.remedy, /Then press Fire startup prompt\.$/);
+          assert.equal(looks, 4, 'a dialog can be answered, so the gate keeps looking');
+          assert.equal(server.calls('turn/start').length, 0);
+          server.close();
+          server = null;
+        }
+      });
+
+      it('with no thread and a pane that cannot be read, the thread is what is reported: the pane read was only for a dialog\'s name', async () => {
+        await serve({ 'thread/loaded/list': () => ({ data: [], nextCursor: null }) });
+        channel(LAUNCH_PANE);
+        for (const screen of [pane(new Error('no server running')), null]) {
+          const { answer } = await gate(screen);
+          assert.equal(answer.ready, false);
+          assert.match(answer.observation, /has not opened a thread for the project directory yet/);
+        }
       });
 
       it('becomes ready when the pane does: the opening screen, then the composer', async () => {
