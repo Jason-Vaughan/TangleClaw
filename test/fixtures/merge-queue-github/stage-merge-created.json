@@ -1,0 +1,22 @@
+{
+  "capturedAt": "2026-10-12T09:26:15.071Z",
+  "args": [
+    "api",
+    "-i",
+    "-X",
+    "POST",
+    "repos/Jason-Vaughan/TangleClaw/merges",
+    "-f",
+    "base=tc-queue-stage/probe-20261012-092611",
+    "-f",
+    "head=ccfe717f1d1b68c7e94d38b10d95a014f9f97694",
+    "-f",
+    "commit_message=Merge ccfe717f1d1b68c7e94d38b10d95a014f9f97694 into tc-queue-stage/probe-20261012-092611",
+    "--jq",
+    "{sha: .sha, tree: .commit.tree.sha, parents: [.parents[].sha]}"
+  ],
+  "exitCode": 0,
+  "statusLine": "HTTP/2.0 201 Created",
+  "body": "{\"parents\":[\"43e13e785c112787a0e63407a8c6906a45f30b5f\",\"ccfe717f1d1b68c7e94d38b10d95a014f9f97694\"],\"sha\":\"48774bab0c809a933699f74b9965a5eb86e5e40e\",\"tree\":\"380674d09bf71d91eb9d3dafa2683fbaa67af4e6\"}\n",
+  "stderr": ""
+}

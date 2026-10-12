@@ -35,6 +35,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-12 — #2322: a candidate is merged on a stage branch, so only the candidate push starts CI
+
+<!-- prawduct: type=feature | scope=2322-integrator-merge-queue -->
+
+#2322 Chunk 02b, built after chunk 03 and before chunk 04. Branch `feat/2322-02b-stage-prefix`, from `origin/main` `b66190cb`. The issue stays open.
+
+Visual change: no
+
+**Why.** `createCandidate` created the `tc-queue/` branch at the base and then merged into it. Since chunk 03 the `test` workflow runs on every push under `tc-queue/`, and the first of those two pushes is on a commit that is `main`'s own. Seen on the real repository after chunk 03 merged: a `tc-queue/` branch created at `main`'s tip put a second `test` run on that commit, and a branch at the same commit under `tc-queue-stage/` started nothing. So every entry would have cost two suite runs and changed what the `test` check on `main`'s tip reads. The decider ruled two prefixes.
+
+**What changed.**
+
+- `lib/merge-queue-github.js`: `createCandidate(repo, ref, baseSha, headSha)` keeps its signature. It now creates `tc-queue-stage/<name>` at the base, merges the head into it, reads the merge commit back and requires the same tree and parents, creates `tc-queue/<name>` at that commit (the only write under `tc-queue/`), and deletes the stage branch. `created` is answered only when all of that was read and the stage branch is known gone. After a conflict or nothing to merge the stage branch is deleted and no candidate branch exists. `ref-exists` says which name was taken (`existing`). Every answer carries `refCreated` and new `stageLeft`; a stage branch that could not be deleted turns any answer into `unavailable`. New `discardCandidate(repo, ref)` deletes both branches, always attempts both, and says what happened to each. `deleteRef` accepts one name under either prefix and nothing else. New `STAGE_PREFIX`, `isStageRef` and `stageRefFor`, the one place the stage name is built.
+- `test/merge-queue-github.test.js`: the candidate cases rewritten for the sequence, each step failing alone by refusal and by timeout, the two name collisions, the read-back disagreeing, `discardCandidate`, and the two-prefix limit of `deleteRef`. The earlier cases that pinned a branch left at the base after a conflict are replaced, because that behaviour is the thing removed: a conflict now leaves no branch.
+- `test/fixtures/merge-queue-github/`: seven exchanges recorded from one real candidate made and discarded by the module itself; the two recordings of calls the module no longer makes are removed. The README says which sitting each file is from.
+- `test/workflow-queue-trigger.test.js`: one added case. No name under `STAGE_PREFIX` is matched by the workflow's push list.
+- `docs/merge-queue.md`: the call table, the limits, what an answer means, what was checked against GitHub (now with what the two later sittings saw), and how a candidate is tested, moved below it.
+
+**What an operator sees.** Nothing: still no route, verb or screen.
+
+**Checked against GitHub.** One sitting on 2026-10-12, allowed once by the decider, through the module's own functions: base `43e13e78`, head `ccfe717f`, branches `tc-queue-stage/probe-20261012-092611` and `tc-queue/probe-20261012-092611`. One `Tests` run started, a push run for the candidate branch on the candidate commit `48774bab`; none on the base, on the head or for the stage branch, read for 70 seconds; the run was still in progress after the stage branch was deleted; the candidate's tree equals the tree of `main`'s own merge of the same two commits. The run was cancelled, both branches were deleted and read back gone, and `main` was not written.
+
+**Not verified.** A candidate's run through to its end (the one run was cancelled once read). Merging a pull request, as before. Other apps installed on the repository recorded check suites against the stage branch; none is named `test`, and what they do with a stage branch was not looked into.
+
 ## 2026-10-12 — #2230: the two-installs case is a test on every Codex launch path
 
 <!-- prawduct: type=chore | scope=codex-probe-path-2230 -->
