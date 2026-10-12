@@ -588,6 +588,22 @@ describe('medusa-wake — the settling hold after a launch\'s thread first repor
     assert.deepEqual(skips(world), []);
   });
 
+  it('a sender asking about the peer while it settles gets the code, its meaning and that waiting fixes it', async () => {
+    const world = installWorld();
+    wake._internal.masterKey = () => 'master';
+    wake._internal.readRegistry = () => [];
+    await ticks(2);
+    const answer = wake.peerReachability(world.status.workspaceId);
+    assert.equal(answer.local, true);
+    assert.equal(answer.reason, 'engine-thread-settling');
+    assert.equal(answer.meaning, wake.peerReasonMeaning('engine-thread-settling'));
+    // The monitor's timer is not running in a hand-driven test, and a stopped
+    // monitor never tells a sender to wait; the disposition tests pin the reason's own class.
+    assert.equal(answer.monitorRunning, false);
+    await ticks(wake.IDLE_TICKS_REQUIRED);
+    assert.equal(wake.peerReachability(world.status.workspaceId).reason, 'nudged', 'and the verdict moves on once the session is woken');
+  });
+
   it('a sender reading the verdict is told it is brief and why', () => {
     assert.match(wake.peerReasonMeaning('engine-thread-settling'), /only just reported/);
     assert.match(wake.peerReasonMeaning('engine-thread-settling'), /one monitor interval/);
