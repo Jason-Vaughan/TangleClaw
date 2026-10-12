@@ -910,6 +910,12 @@ describe('startup prompt service: the launch gate, its sentence and the automati
       assert.equal(w.gates.length, 0);
     });
 
+    it('with no window configured the adapter is still given one: the facade\'s 90 seconds', async () => {
+      const w = world();
+      await svc.launchGate({ sessionId: 10, sequenceId: 100, engineId: 'codex' }, w.d);
+      assert.equal(w.gates[0].input.windowMs, 90000);
+    });
+
     it('a session with no pane is asked with no witness, which the adapter must refuse on', async () => {
       const w = world({ getSession: () => ({ ...SESSION, tmuxSession: null }) });
       await svc.launchGate({ sessionId: 10, sequenceId: 100, engineId: 'codex' }, w.d);

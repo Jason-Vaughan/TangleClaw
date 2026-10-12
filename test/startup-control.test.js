@@ -413,6 +413,17 @@ describe('awaitLaunchReady: the generic facade over the optional launch-readines
     await new Promise((r2) => setTimeout(r2, 30));
   });
 
+  it('the window is the facade\'s: 90 seconds unless the caller says otherwise, handed to the adapter, and the answer is always bounded by it', async () => {
+    assert.equal(sc.LAUNCH_READY_WINDOW_MS, 90000);
+    assert.equal(sc.LAUNCH_READY_WINDOW_MS, sc.ADAPTERS.codex._internal.LAUNCH_READY_WINDOW_MS, 'the Codex adapter\'s own default is the same number');
+    const seen = [];
+    const adapter = { awaitLaunchReady: async (input) => { seen.push(input.windowMs); return { ready: true }; } };
+    await ask(adapter);
+    await ask(adapter, { windowMs: 1234 });
+    await ask(adapter, { windowMs: 'soon' });
+    assert.deepEqual(seen, [90000, 1234, 90000]);
+  });
+
   it('the adapter is found by name, not by the version probe: an unverified version is still asked', async () => {
     const adapter = { installedVersion: () => '9.9.9', awaitLaunchReady: async () => ({ ready: true }) };
     assert.deepEqual(await ask(adapter), { answer: 'ready' });
