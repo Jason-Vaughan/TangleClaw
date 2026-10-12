@@ -18,6 +18,10 @@
  *   5. the protocol is asked only for a live, opted-in session with fresh
  *      mail, never twice at once for one channel, and nothing is ever typed
  *      from the read's callback.
+ *
+ * And the settling hold (#2059): the first `idle` a launch's thread reports
+ * holds the nudge for one monitor interval, under its own code, whatever the
+ * pane shows and whatever the idle streak is set to.
  */
 
 const { describe, it, beforeEach, afterEach, after } = require('node:test');
@@ -37,6 +41,24 @@ const {
 } = require('./_wake-fixtures');
 
 const CODEX = wake.ENGINE_WAKE_PROFILES.codex;
+/** The monitor's cadence: the settling hold lasts one interval of it. */
+const INTERVAL_MS = wake.ENGINE_SETTLING_MS;
+
+/**
+ * How long after a tick the channel's answer lands. The one overlap recorded
+ * on Codex 0.156.1 had the idle answer 10 ms ahead of the pane sample.
+ */
+const ANSWER_LAG_MS = 10;
+
+/**
+ * Ticks from fresh mail to a nudge on a Codex session at rest: one to ask the
+ * channel, one held while its first idle answer settles, then the idle streak.
+ */
+const TICKS_TO_NUDGE = 2 + wake.IDLE_TICKS_REQUIRED;
+
+/** The world the last `installWorld` built: `ticks` moves its clock. */
+let current = null;
+
 const CHANNEL = { id: 7, sessionId: 1, sequenceId: 70, engineId: 'codex', adapter: 'codex', state: 'open', adapterState: { threadId: 't-1' } };
 const SEQUENCE = { id: 70, sessionId: 1 };
 
@@ -87,6 +109,7 @@ function installWorld(overrides = {}) {
     return typeof world.activity === 'function' ? world.activity() : Promise.resolve(world.activity);
   };
   wake._internal.now = () => world.clock;
+  current = world;
   return world;
 }
 
@@ -94,15 +117,17 @@ function installWorld(overrides = {}) {
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 /**
- * Run `n` ticks, letting each tick's observation land before the next — the
- * order a real five-second timer gives them.
+ * Run `n` ticks as the monitor's timer runs them: a tick, the channel's answer
+ * a moment later, and the next tick one interval after the last.
  * @param {number} n - Tick count.
  * @returns {Promise<void>}
  */
 async function ticks(n) {
   for (let i = 0; i < n; i++) {
     wake._internal.tick();
+    current.clock += ANSWER_LAG_MS;
     await settle();
+    current.clock += INTERVAL_MS - ANSWER_LAG_MS;
   }
 }
 
@@ -123,8 +148,8 @@ describe('medusa-wake — engine activity from the native channel (#1628)', () =
   describe('idle from the protocol', () => {
     it('wakes the clipped-status-row pane that held mail for hours', async () => {
       const world = installWorld();
-      await ticks(1 + wake.IDLE_TICKS_REQUIRED);
-      assert.equal(world.injected.length, 1, 'one nudge once the observation has landed and the streak is met');
+      await ticks(TICKS_TO_NUDGE);
+      assert.equal(world.injected.length, 1, 'one nudge once the observation has landed and settled and the streak is met');
       assert.equal(world.lastObserved.channel, CHANNEL);
       assert.equal(world.lastObserved.project, world.project);
       assert.equal(world.lastObserved.session, world.session);
@@ -135,7 +160,7 @@ describe('medusa-wake — engine activity from the native channel (#1628)', () =
       for (const pane of [CX_IDLE_PANE, CX_IDLE_WITH_NEIGHBOUR_PANE]) {
         wake.stop();
         const world = installWorld({ pane });
-        await ticks(1 + wake.IDLE_TICKS_REQUIRED);
+        await ticks(TICKS_TO_NUDGE);
         assert.equal(world.injected.length, 1);
       }
     });
@@ -384,6 +409,212 @@ describe('medusa-wake — engine activity from the native channel (#1628)', () =
   });
 });
 
+describe('medusa-wake — the settling hold after a launch\'s thread first reports idle (#2059)', () => {
+  let saved;
+  beforeEach(() => {
+    saved = { ...wake._internal };
+    wake.stop();
+  });
+  afterEach(() => {
+    wake.stop();
+    Object.assign(wake._internal, saved);
+  });
+
+  const { CODEX_FIXTURE_SETS } = require('./_wake-fixtures');
+  const CX_0156 = CODEX_FIXTURE_SETS.find((set) => set.cliVersion === '0.156.1').panes;
+
+  /**
+   * The overlap recorded on Codex 0.156.1 after its update prompt was skipped:
+   * the channel answered idle 4.16 s into the launch, a pane sample 10 ms
+   * later still drew the `model: loading` header over an empty composer, and
+   * the sample 0.19 s after that was the usable composer.
+   */
+  const OVERLAP = { idleAnswerAt: 4160, loadingPaneAt: 4170, usablePaneAt: 4360 };
+  const LOADING_PANE = CX_0156.startScreen.lines;
+  const USABLE_PANE = CX_0156.idleDefaultLayout.lines;
+
+  /** Every skip reason the ledger holds, in order. */
+  const skips = (world) => world.recorded.filter((r) => r.outcome === 'skipped').map((r) => r.skipReason);
+
+  /**
+   * A second message arriving for a session already nudged for the first.
+   * @param {object} world - The world.
+   */
+  function moreMail(world) {
+    world.inbox = [...world.inbox, { id: `m${world.inbox.length + 1}`, from: 'peer', message: 'again' }];
+    world.recorded.length = 0;
+  }
+
+  it('the recorded overlap is held: an idle answer over the loading screen types nothing, with no streak to lean on', async () => {
+    const launchedAt = 1_000_000;
+    const world = installWorld({ pane: LOADING_PANE, clock: launchedAt + OVERLAP.idleAnswerAt - ANSWER_LAG_MS });
+    wake._internal.idleTicksRequired = () => 1;
+    assert.equal(wake._assessPane(LOADING_PANE, CODEX, null, true).idle, true,
+      'precondition: handed an idle answer, the pane gate does not refuse the loading screen');
+
+    wake._internal.tick(); // asks the channel
+    world.clock = launchedAt + OVERLAP.idleAnswerAt;
+    await settle(); // the idle answer lands
+    world.clock = launchedAt + OVERLAP.loadingPaneAt;
+    wake._internal.tick(); // the recorded sample: idle answer in hand, loading header on the pane
+    assert.equal(world.injected.length, 0);
+    assert.equal(lastSkip(world), 'engine-thread-settling');
+
+    world.pane = USABLE_PANE;
+    world.clock = launchedAt + OVERLAP.usablePaneAt;
+    await settle();
+    wake._internal.tick(); // the next recorded sample: usable, and still inside the interval
+    assert.equal(world.injected.length, 0, 'a usable composer does not end the hold early');
+    assert.equal(lastSkip(world), 'engine-thread-settling');
+
+    world.clock = launchedAt + OVERLAP.idleAnswerAt + INTERVAL_MS;
+    await settle();
+    wake._internal.tick();
+    assert.equal(world.injected.length, 1, 'one interval after the first idle answer the session is woken');
+  });
+
+  it('the hold is one full interval from the first idle answer: a millisecond short still holds', async () => {
+    const world = installWorld();
+    wake._internal.idleTicksRequired = () => 1;
+    wake._internal.tick();
+    await settle(); // first idle answer, at the starting clock
+    world.clock += INTERVAL_MS - 1;
+    wake._internal.tick();
+    await settle();
+    assert.equal(world.injected.length, 0);
+    assert.equal(lastSkip(world), 'engine-thread-settling');
+    world.clock += 1;
+    wake._internal.tick();
+    assert.equal(world.injected.length, 1);
+  });
+
+  it('a thread idle for longer than the interval is not held: later mail is nudged on the streak alone', async () => {
+    const world = installWorld();
+    await ticks(TICKS_TO_NUDGE);
+    assert.equal(world.injected.length, 1);
+    assert.deepEqual(skips(world), ['engine-thread-unknown', 'engine-thread-settling'], 'held once, for the first idle answer');
+
+    moreMail(world);
+    await ticks(wake.IDLE_TICKS_REQUIRED);
+    assert.equal(world.injected.length, 2, 'no tick is spent settling again');
+    assert.deepEqual(skips(world), []);
+  });
+
+  it('a turn that ends does not start the hold again: busy then idle on the same channel is not a launch', async () => {
+    const world = installWorld();
+    await ticks(TICKS_TO_NUDGE);
+    assert.equal(world.injected.length, 1);
+
+    moreMail(world);
+    world.activity = { channel: 'present', state: 'busy', reasonCode: 'thread-active' };
+    await ticks(3);
+    assert.equal(lastSkip(world), 'engine-thread-busy');
+    world.activity = { channel: 'present', state: 'idle', reasonCode: 'thread-idle' };
+    await ticks(1 + wake.IDLE_TICKS_REQUIRED);
+    assert.equal(world.injected.length, 2);
+    assert.ok(!skips(world).includes('engine-thread-settling'));
+  });
+
+  it('a channel replaced by a relaunch starts the hold again', async () => {
+    const world = installWorld();
+    await ticks(TICKS_TO_NUDGE);
+    assert.equal(world.injected.length, 1);
+
+    moreMail(world);
+    world.channel = { ...CHANNEL, id: 8, sequenceId: 71 };
+    await ticks(2);
+    assert.equal(world.injected.length, 1, 'the new channel\'s first idle answer is held');
+    assert.deepEqual(skips(world), ['engine-thread-unknown', 'engine-thread-settling']);
+    await ticks(wake.IDLE_TICKS_REQUIRED);
+    assert.equal(world.injected.length, 2, 'and the session is woken once it has settled');
+  });
+
+  it('a channel that goes away and comes back starts the hold again', async () => {
+    const world = installWorld();
+    await ticks(TICKS_TO_NUDGE);
+    moreMail(world);
+    world.channel = null;
+    await ticks(1);
+    assert.equal(lastSkip(world), 'engine-channel-absent');
+    world.channel = CHANNEL;
+    await ticks(2);
+    assert.equal(world.injected.length, 1);
+    assert.equal(lastSkip(world), 'engine-thread-settling');
+  });
+
+  for (const required of [1, wake.IDLE_TICKS_REQUIRED, wake.IDLE_TICKS_REQUIRED + 3]) {
+    it(`changing the idle streak to ${required} does not remove the hold`, async () => {
+      const world = installWorld();
+      wake._internal.idleTicksRequired = () => required;
+      await ticks(2);
+      assert.equal(world.injected.length, 0, 'the first idle answer never produces a nudge');
+      assert.equal(lastSkip(world), 'engine-thread-settling');
+      await ticks(required);
+      assert.equal(world.injected.length, 1, 'and the streak, whatever it is, is counted from after the hold');
+    });
+  }
+
+  it('the hold is time, not ticks: with the clock standing still no number of ticks ends it', async () => {
+    const world = installWorld();
+    wake._internal.idleTicksRequired = () => 1;
+    for (let i = 0; i < 10; i++) {
+      wake._internal.tick();
+      await settle();
+    }
+    assert.equal(world.injected.length, 0);
+    assert.equal(lastSkip(world), 'engine-thread-settling');
+  });
+
+  it('a clock that steps backwards holds rather than types', async () => {
+    const world = installWorld();
+    wake._internal.idleTicksRequired = () => 1;
+    wake._internal.tick();
+    await settle();
+    world.clock -= 60 * 1000;
+    wake._internal.tick();
+    assert.equal(world.injected.length, 0);
+    assert.equal(lastSkip(world), 'engine-thread-settling');
+  });
+
+  it('an engine not judged by a channel is never held to settle', async () => {
+    const { IDLE_PANE } = require('./_wake-fixtures');
+    const world = installWorld({
+      channel: null,
+      session: { id: 1, projectId: 10, sessionMode: 'tmux', tmuxSession: 'tc-1', engineId: 'claude' },
+      pane: IDLE_PANE
+    });
+    await ticks(wake.IDLE_TICKS_REQUIRED);
+    assert.equal(world.injected.length, 1);
+    assert.deepEqual(skips(world), []);
+  });
+
+  it('a sender asking about the peer while it settles gets the code, its meaning and that waiting fixes it', async () => {
+    const world = installWorld();
+    wake._internal.masterKey = () => 'master';
+    wake._internal.readRegistry = () => [];
+    await ticks(2);
+    const answer = wake.peerReachability(world.status.workspaceId);
+    assert.equal(answer.local, true);
+    assert.equal(answer.reason, 'engine-thread-settling');
+    assert.equal(answer.meaning, wake.peerReasonMeaning('engine-thread-settling'));
+    // The monitor's timer is not running in a hand-driven test, and a stopped
+    // monitor never tells a sender to wait; the disposition tests pin the reason's own class.
+    assert.equal(answer.monitorRunning, false);
+    await ticks(wake.IDLE_TICKS_REQUIRED);
+    assert.equal(wake.peerReachability(world.status.workspaceId).reason, 'nudged', 'and the verdict moves on once the session is woken');
+  });
+
+  it('a sender reading the verdict is told it is brief and why', () => {
+    assert.match(wake.peerReasonMeaning('engine-thread-settling'), /only just reported/);
+    assert.match(wake.peerReasonMeaning('engine-thread-settling'), /one monitor interval/);
+  });
+
+  it('the hold lasts one monitor interval', () => {
+    assert.equal(wake.ENGINE_SETTLING_MS, 5000);
+    assert.ok(wake.ENGINE_SETTLING_MS < wake.ENGINE_ACTIVITY_MAX_AGE_MS, 'an answer outlives its own settling, or no session would ever be woken');
+  });
+});
+
 describe('medusa-wake — assessSessionIdle takes the engine\'s answer as an input (#1628)', () => {
   it('engineIdle lifts only the at-rest marker', () => {
     const lifted = wake.assessSessionIdle({ lines: CX_CLIPPED_PANE, profile: CODEX, engineIdle: true, ticksRequired: 1 });
@@ -414,16 +645,14 @@ describe('medusa-wake — a prolonged engine-thread-unknown alerts the operator 
   const UNKNOWN = { channel: 'present', state: 'unknown', reasonCode: 'thread-ambiguous' };
 
   /**
-   * Tick through `ms` of server time in five-second steps, the monitor's own cadence.
-   * @param {object} world - The world whose clock advances.
+   * Tick through `ms` of server time at the monitor's own cadence.
+   * @param {object} world - The world whose clock `ticks` advances.
    * @param {number} ms - How long to run.
    * @returns {Promise<void>}
    */
   async function runFor(world, ms) {
-    for (let t = 0; t < ms; t += 5000) {
-      world.clock += 5000;
-      await ticks(1);
-    }
+    assert.equal(world, current, 'the clock that moves is the installed world\'s');
+    for (let t = 0; t < ms; t += INTERVAL_MS) await ticks(1);
   }
 
   it('says nothing before the threshold, then names the stalled session, its adapter reason and its age', async () => {

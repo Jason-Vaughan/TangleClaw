@@ -35,6 +35,31 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-12 — #2059: the wake holds for one monitor interval after a launch's thread first reports idle
+
+<!-- prawduct: type=bugfix | scope=codex-wake-2059 -->
+
+#2059 Chunk 01 of two. Branch `feat/2059-01-wake-settling-hold`, from `origin/main` `3d7ef5fe`. The Architect's D2 (A123, 2026-10-07), built first by its later ruling (A175 R9). #2059 stays open: this chunk verifies no Codex version and does not make a Codex newer than 0.156.1 wakeable.
+
+Visual change: no
+
+**Why.** A Codex session is woken on its app-server's word that its thread is idle, and that word can arrive a moment before the TUI has drawn the screen it will rest on. Measured on Codex 0.156.1 (the cold-start probe A123 ruled on, finding F4): the channel answered idle 4.16 s into a launch and a pane sample 10 ms later still drew the `model: loading` header over an empty composer, a screen the pane gate does not refuse once it is handed idle. What kept a nudge out of that screen was the idle streak, a debounce on the pane that exists for another reason and may be retuned. The Architect ruled that the debounce constant is not to be the only thing closing the overlap.
+
+**What changed.**
+
+- `lib/medusa-wake.js`: the first idle answer for a session's channel and launch is timestamped where the answer is stored, under the same key the answer carries. Until `ENGINE_SETTLING_MS` (one monitor interval) has passed since then, `_judgeSession` holds as `engine-thread-settling` before the pane is read, on the ledger and on the peer route like its sibling codes, and in observe-only mode as a `wake_blocked` fact. A relaunch's new channel, or a channel that went away and came back, starts the hold again. A later busy or unknown answer on the same channel does not: a turn ending is not a launch. A clock that steps backwards holds.
+- The idle streak the pane gate asks for is read through a seam (`_internal.idleTicksRequired`), so a test can change it and show the hold does not lean on it. Its value is unchanged.
+- `PEER_REASON_MEANINGS` gains the code's meaning; `lib/medusa-delivery-disposition.js` classes it `actionable`, `wait`.
+- `docs/engine-guide.md` and `docs/user-guide.md` describe the hold and the code.
+
+**What an operator sees.** The first mail a Codex session gets after its launch, or after a server restart, is announced one monitor interval (five seconds) later than before; a sender asking in that interval is told `engine-thread-settling`. Later mail is not delayed. Engines not judged by a native channel are unaffected.
+
+**What it does not do.** It refuses no screen. Codex 0.156.1's opening screen, trust prompt and update prompt, and the opening screens of 0.159.0 and 0.161.0, stay on the known-unsafe list in `test/medusa-wake-codex-fixtures.test.js`: a nudge is still typed into one that is up when the interval has passed, if the channel answers idle over it. Refusing them is #2187's next chunk. Nothing in the launch's own pane gate (`_awaitPaneReady`) changes, and this is not evidence about the automatic startup fire.
+
+**Tests.** `test/medusa-wake-engine-activity.test.js`: the recorded overlap replayed at its measured times with the streak set to one, so only the hold is in the way; one full interval and not a millisecond less; a thread idle for longer is nudged on the streak alone; busy then idle does not restart it; a replaced channel and a returned channel do; three values of the streak, none of which removes it; a standing clock and a backward one hold; a Claude session is never held to settle. The file's ticks now move the clock as the timer does, and its Codex nudges take one more tick. `test/medusa-wake-codex-fixtures.test.js`: its fresh-idle cells are fed a settled answer and keep their outcomes, the known-unsafe ones included; a new block holds every pane of every captured version on the first idle answer. `test/medusa-delivery-disposition.test.js`: the code's row. `test/medusa-watchdog.test.js`, added to the chunk's files by the Integrator for one case's setup: that case drives a Codex session through the real wake on a clock that stood still, which never ends a timed hold, so its ticks now move the clock by `ENGINE_SETTLING_MS`. No assertion in it changed and `lib/medusa-watchdog.js` is untouched.
+
+**Not verified.** The plan's look at the reason on the peer route from a scratch server was not done: the code is reached only by a Codex session with a live native channel and waiting mail, which a scratch server gets only by launching Codex and sending it mail, the wake experiment the Architect's ruling does not permit on fake-key evidence. In its place a test reads the held verdict through `peerReachability`, the function the peer route answers from. The hold on a real cold Codex launch: by the Architect's ruling nothing is woken on fake-key evidence, so this is tests only until the deploy. No screen shows a wake reason's meaning (`public/` was searched), so there was no browser look.
+
 ## 2026-10-12 — #2322: the merge queue's reads and writes on GitHub, checked against the real repository
 
 <!-- prawduct: type=feature | scope=2322-integrator-merge-queue -->

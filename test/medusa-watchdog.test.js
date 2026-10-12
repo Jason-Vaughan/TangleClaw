@@ -481,7 +481,9 @@ describe('medusa-watchdog (#1839)', () => {
     });
 
     /**
-     * Tick, letting each observation land before the next.
+     * Tick, letting each observation land before the next, one monitor
+     * interval apart: the wake's settling hold is timed, so a clock that
+     * stands still never ends it.
      * @param {number} n - Tick count
      * @returns {Promise<void>}
      */
@@ -489,6 +491,7 @@ describe('medusa-watchdog (#1839)', () => {
       for (let i = 0; i < n; i++) {
         wake._internal.tick();
         await new Promise((resolve) => setImmediate(resolve));
+        world.clock += wake.ENGINE_SETTLING_MS;
       }
     };
 

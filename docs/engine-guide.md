@@ -850,6 +850,17 @@ profile names an adapter that can observe it (`declaresObserver`; today, Codex):
 - `idle` goes on to the pane gate, where it excuses the at-rest marker and nothing else. The busy
   marker, the fleet block, a dialog, a draft in the composer and a transcript that is still moving all
   still hold, because the protocol cannot see the TUI's composer.
+- The first `idle` a launch's thread reports holds as `engine-thread-settling` for one monitor
+  interval (`ENGINE_SETTLING_MS`, five seconds), whatever the pane shows, and the pane is not read
+  while it holds (#2059). An engine can answer idle a moment before it has finished drawing the screen
+  it will rest on: Codex 0.156.1 was measured answering idle 10 ms before a pane sample that still
+  showed its `model: loading` header. The hold is timed from the first idle answer for the session's
+  channel and launch, so a relaunch, or a channel that closed and reopened, starts it again; a turn
+  that ends does not. The timestamp is in memory, so a server restart costs the first mail afterwards
+  one interval. It is a rule of its own and does not depend on the idle streak
+  (`IDLE_TICKS_REQUIRED`), which is counted from after it. The hold delays a nudge and refuses no
+  screen: a startup screen or dialog still up when the interval has passed is judged by the pane gate
+  alone.
 - `busy` holds as `engine-thread-busy`, whatever the pane shows.
 - With a channel present, anything unproven (not asked yet, stale, failed, `unknown`) holds as
   `engine-thread-unknown`. It never falls back to the pane.

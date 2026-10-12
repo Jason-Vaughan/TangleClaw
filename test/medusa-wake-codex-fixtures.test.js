@@ -125,6 +125,11 @@ const ON_FRESH_IDLE = {
  * version here, the verified one included, and no fixture could: it is a
  * question about a live channel.
  *
+ * The settling hold (#2059) does not take a pane off this list. It delays the
+ * nudge by one monitor interval after a launch's first idle answer and judges
+ * no pane, so a screen that is still up when the interval has passed is typed
+ * into exactly as before.
+ *
  * An empty composer cannot be the refusal, because a usable session shows the
  * same one. When the gate refuses one of these panes, its name leaves this
  * list and its hold is pinned in `ON_FRESH_IDLE`.
@@ -182,15 +187,34 @@ function copiedPanes(sets) {
 /** Let pending observation promises settle. @returns {Promise<void>} */
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
+/** The monitor's cadence: the settling hold lasts one interval of it. */
+const INTERVAL_MS = wake.ENGINE_SETTLING_MS;
+
+/**
+ * How long after a tick the channel's answer lands. The one overlap recorded
+ * on Codex 0.156.1 had the idle answer 10 ms ahead of the pane sample.
+ */
+const ANSWER_LAG_MS = 10;
+
+/** Ticks enough for a settled idle answer to reach a nudge, with two to spare. */
+const SETTLED_TICKS = 2 + wake.IDLE_TICKS_REQUIRED + 2;
+
 let nextSession = 1;
 
 /**
  * Judge one Codex pane under one channel answer through the real gate.
+ *
+ * Time moves as the monitor's timer moves it: a tick, the channel's answer a
+ * moment later, the next tick one interval after the last. So an idle answer
+ * is a SETTLED one by the time the pane decides, unless `opts.ticks` stops the
+ * run before the settling hold has passed.
  * @param {string[]} pane - Pane lines
  * @param {object} channel - An entry of `CHANNEL_ANSWERS`
+ * @param {object} [opts]
+ * @param {number} [opts.ticks] - Ticks to run; defaults to `SETTLED_TICKS`.
  * @returns {Promise<{injected: number, held: (string|null)}>}
  */
-async function judge(pane, channel) {
+async function judge(pane, channel, opts = {}) {
   const sessionId = nextSession++;
   const world = { clock: 1_000_000, injected: [], recorded: [], reads: 0 };
   const s = wake._internal;
@@ -227,9 +251,11 @@ async function judge(pane, channel) {
     await settle();
     world.clock += wake.ENGINE_ACTIVITY_MAX_AGE_MS + 1;
   }
-  for (let i = 0; i < 2 + wake.IDLE_TICKS_REQUIRED + 2; i++) {
+  for (let i = 0; i < (opts.ticks || SETTLED_TICKS); i++) {
     s.tick();
+    world.clock += ANSWER_LAG_MS;
     await settle();
+    world.clock += INTERVAL_MS - ANSWER_LAG_MS;
   }
   const last = world.recorded.length ? world.recorded[world.recorded.length - 1] : null;
   return { injected: world.injected.length, held: last && last.outcome === 'skipped' ? last.skipReason : null };
@@ -348,6 +374,30 @@ describe('the wake gate over every Codex engine state, per captured version (#20
 const LIVE_PANES = CODEX_FIXTURE_SETS.flatMap((set) => Object.entries(set.panes)
   .filter(([, pane]) => pane.provenance === 'live-capture')
   .map(([name, pane]) => [set.cliVersion, name, pane.lines]));
+
+describe('the first idle answer of a launch is held, whatever the pane shows (#2059)', () => {
+  let saved;
+  beforeEach(() => {
+    saved = { ...wake._internal };
+    wake.stop();
+  });
+  afterEach(() => {
+    wake.stop();
+    Object.assign(wake._internal, saved);
+  });
+
+  // Two ticks: the first asks the channel, the second is the first to hold its
+  // idle answer. The pane is not read on either, so a derived pane proves this
+  // as well as a captured one.
+  for (const set of CODEX_FIXTURE_SETS) {
+    for (const [paneName, pane] of Object.entries(set.panes)) {
+      it(`codex-cli ${set.cliVersion}: ${paneName} pane, first idle answer: held as engine-thread-settling, nothing typed`, async () => {
+        const out = await judge(pane.lines, CHANNEL_ANSWERS.idle, { ticks: 2 });
+        assert.deepEqual(out, { injected: 0, held: 'engine-thread-settling' });
+      });
+    }
+  }
+});
 
 /**
  * The pane gate's own verdict, with no channel involved.
