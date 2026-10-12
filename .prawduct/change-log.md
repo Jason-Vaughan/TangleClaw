@@ -59,6 +59,8 @@ Visual change: yes
 - [DECISION: the version is listed although the automatic launch fire was not exercised signed-in. | Both probed sends were the operator's Fire: on a Codex home with the default status line the launch's pane gate never saw its at-rest marker and recorded `pane_not_ready` before the allowance was reached. The two callers share one rule and the existing tests cover both; the marker is #2059's subject. The evidence text and both guides say so.]
 - [DECISION: the guide's sample `startupControl` block keeps `"absentOn": []`. | It is the shape for any engine, not Codex's profile.]
 
+**Browser look.** Done before the merge by an automated browser run, not yet seen by the Operator: on a scratch server on the branch's head, the Launch readiness panel's applied fire row shows the note and wraps with no sideways overflow at desktop, 375 and 320. The two narrow widths were the page in a same-origin frame, because the browser window would not shrink. Recorded as VRF-004; the Operator's own look is owed after the deploy.
+
 **Not covered.** What a wake does in a folder with a not-trusted entry (it needs the Medusa Bridge, and a scratch server would register on the live one). The automatic fire, as above. One real launch into a new folder on the live install, after the deploy.
 ## 2026-10-11 — #2322: the merge queue's records and its state machine (schema v64)
 
