@@ -74,6 +74,8 @@ node --test --test-reporter=junit --test-reporter-destination=test-results.xml '
 node scripts/test-skip-audit.js test-results.xml
 ```
 
+To run the tests the ledger names on your own machine, and see which of them it is expected to run, use `node scripts/ci-complement.js`; [docs/lane-ci-evidence.md](docs/lane-ci-evidence.md) says how to read its lines.
+
 ### Strict assertions
 
 Tests use `node:assert/strict`. A test in the suite fails when any `*.test.js` file under `test/`, at any depth, requires bare `node:assert` (or `assert`, the same module), and names each file and line. To ask outside the suite:

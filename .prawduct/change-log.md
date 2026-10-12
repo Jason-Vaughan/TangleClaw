@@ -35,6 +35,29 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-12 — #2321: one command runs the tests CI skips on your own machine, and fails unless every one owed there passed
+
+<!-- prawduct: type=feature | scope=2321-ci-as-suite-evidence -->
+
+#2321 Chunk 01b. Branch `feat/2321-01b-ci-complement`, from `origin/main` `037083de`. The issue stays open: one chunk follows, and the lane rule it asks for is not in force.
+
+Visual change: no
+
+**Why.** A green `test` check never claims the tests `test/skip-ledger.json` names. Before CI can stand in for a full local suite, something has to run exactly those tests on a Builder's machine and refuse to read a skip as a pass. The decider ruled that what is run and what is expected come from the ledger and from measurements of the host, and from nothing a caller types.
+
+**What changed.**
+
+- New `scripts/ci-complement.js`. It reads the ledger through the audit's `compileLedger`, measures every value on `LEDGER_REQUIREMENTS` on this host, runs `test/*.test.js` with one `--test-name-pattern` for each entry (the last ` > ` segment of its `match`), and judges the junit report against each whole `match`. One line for each entry: ran and passed; ran and failed; expected here and skipped, with the test's own reason; matched nothing; not expected here, naming the value that is false; unmeasurable, naming the value. The last line counts the entries that ran here and names each that did not, with why. `--list` prints what each entry requires and what the host measures, and runs nothing. `--junit <path>` says where the report goes. No option leaves an entry out or reads another ledger.
+- A case belongs to an entry when the pattern matches its own path or the path of a suite enclosing it, read from the report's nesting. Four entries name a suite that the runner skips whole; where it runs, the report holds its tests under it (the Integrator's ruling on the first step's finding).
+- `engine-cli:each` is judged per test: a skip is accepted only for an engine measured absent.
+- A listed value with no measurement is unmeasurable, never true, and a test pins that the complement measures exactly the audit's list.
+- `test/api-uploads.test.js` (added to the chunk by the Integrator, two tests): each now makes the `.uploads` folder it sets to mode 000. Selected alone they failed with `ENOENT`, because an earlier upload test in the file had made the folder. No assertion changed.
+- New `test/ci-complement.test.js`. `docs/lane-ci-evidence.md` gains how to run the complement, how it selects and judges, how to read each line, and how each value is measured. `CONTRIBUTING.md` (added by the Integrator, one sentence) points at it.
+
+**What an operator sees.** Nothing in the product. A Builder has `node scripts/ci-complement.js`.
+
+**Limits.** It is a wide run: every test file is loaded. It changes nothing a gate accepts; no rule lets it, with CI, stand in for the suite yet. `scripts/test-skip-audit.js` and the ledger are unchanged. `caddyfile:live` reads the install's own home, so it measures the machine's live install and not a scratch one.
+
 ## 2026-10-12 — #2321: every skip-ledger entry says what a host must have, and the audit refuses one that does not
 
 <!-- prawduct: type=feature | scope=2321-ci-as-suite-evidence -->
