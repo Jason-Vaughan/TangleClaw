@@ -871,6 +871,69 @@
           "  \u001b[1m?\u001b[0m for shortcuts"
         ]
       }
+    },
+    "streamingDefaultLayout": {
+      "provenance": "live-capture",
+      "launchPath": "remote-channel",
+      "capturedOn": "2026-10-12",
+      "note": "One real streaming turn, signed in, 2026-10-12, 80 columns by 24 rows, over the launch path TangleClaw uses. This is the frame the pane showed for the whole time its renderer was stopped mid-answer (SIGSTOP to the pane's codex process; the app-server left running): an empty composer with the cursor on it, the status row and the footer below, the answer cut mid-line above, no busy row. The thread read active under it and later idle. Read without styling (`capture-pane -p`), so `visible.rows` are the plain rows. Only the scratch project path was replaced.",
+      "lines": [
+        "› Write the numbers 1 to 150, one per line, each followed by a six word phrase…",
+        "  8 Small steps bring steady progress daily",
+        "  9 Small steps bring steady progress daily",
+        "  10 Small steps bring steady progress daily",
+        "  11 Small steps bring steady progress daily",
+        "  12 Small steps bring steady progress daily",
+        "  13 Small steps bring steady progress daily",
+        "  14 Small steps bring steady progress daily",
+        "  15 Small steps bring steady progress daily",
+        "  16 Small steps bring steady progress daily",
+        "  17 Small steps bring steady progress daily",
+        "  18 Small steps bring steady progress daily",
+        "  19 Small steps bring steady progress daily",
+        "  20 Small steps bring steady progress daily",
+        "  21 Small steps bring steady progress daily",
+        "  22 Small steps bring steady progress daily",
+        "  23 Small steps bring steady progress daily",
+        "  25",
+        "",
+        "",
+        "› Ask Codex to do anything",
+        "",
+        "  GPT-6.1-Sol default · /private/tmp/cx2059/t-0.162.0 · Reply OK",
+        "  ? for shortcuts"
+      ],
+      "visible": {
+        "height": 24,
+        "x": 2,
+        "y": 20,
+        "rows": [
+          "› Write the numbers 1 to 150, one per line, each followed by a six word phrase…",
+          "  8 Small steps bring steady progress daily",
+          "  9 Small steps bring steady progress daily",
+          "  10 Small steps bring steady progress daily",
+          "  11 Small steps bring steady progress daily",
+          "  12 Small steps bring steady progress daily",
+          "  13 Small steps bring steady progress daily",
+          "  14 Small steps bring steady progress daily",
+          "  15 Small steps bring steady progress daily",
+          "  16 Small steps bring steady progress daily",
+          "  17 Small steps bring steady progress daily",
+          "  18 Small steps bring steady progress daily",
+          "  19 Small steps bring steady progress daily",
+          "  20 Small steps bring steady progress daily",
+          "  21 Small steps bring steady progress daily",
+          "  22 Small steps bring steady progress daily",
+          "  23 Small steps bring steady progress daily",
+          "  25",
+          "",
+          "",
+          "› Ask Codex to do anything",
+          "",
+          "  GPT-6.1-Sol default · /private/tmp/cx2059/t-0.162.0 · Reply OK",
+          "  ? for shortcuts"
+        ]
+      }
     }
   },
   "turnFrames": {
