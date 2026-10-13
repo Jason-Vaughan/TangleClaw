@@ -102,10 +102,16 @@ describe('GET /api/launch/isolation (#2233)', () => {
       [paneName(binding, claude)]: sessions._withPathFloor('claude'),
       [paneName(codexBinding, codexProject)]: sessions._withPathFloor(`${BIN} --sandbox workspace-write`)
     });
+    const launchId = codexBinding.headers['x-tangleclaw-launch-id'];
     sessions._logOverriddenLaunch(
       { engineId: 'codex', enginePath: BIN, refusal: 'version_unverified', versionRead: '0.170.0', scope: 'project', setAt: 't', setBy: null },
-      { projectId: codexProject.id, sessionId: codexBinding.sessionId }
+      { projectId: codexProject.id, sessionId: codexBinding.sessionId, launchRef: sessions._overrideLaunchRef(launchId) }
     );
+    // The pane holds the launch id the launch gave it, as tmux would report it.
+    const realEnv = tmux.readSessionEnv;
+    let paneLaunchId = launchId;
+    tmux.readSessionEnv = () => ({ value: paneLaunchId, answered: true, cause: null });
+    try {
     // A verified session reads it, as the operator does; the route has no caller-specific answer.
     for (const headers of [codexBinding.headers, binding.headers, operatorHeaders(server)]) {
       const res = await sendAs(server, 'GET', '/api/launch/isolation', undefined, headers);
@@ -132,7 +138,18 @@ describe('GET /api/launch/isolation (#2233)', () => {
     assert.ok(line.includes('refusal overridden: version_unverified; this project\'s override'), line);
     assert.ok(line.endsWith('That does not show this shell is that launch.'), line);
     assert.ok(verbs.renderIsolation(inv).includes('The operator\'s override allowed this launch'), 'and the fleet listing prints it under the row');
-    // The same pane once the launch's record is gone: not called overridden.
+    // The record is still there, and the tmux session was replaced by hand
+    // under the same name: the pane holds another launch id, or none.
+    for (const held of ['a-launch-id-nobody-recorded', null]) {
+      paneLaunchId = held;
+      const replaced = (await sendAs(server, 'GET', '/api/launch/isolation', undefined, codexBinding.headers)).data
+        .sessions.find((s) => s.sessionId === codexBinding.sessionId);
+      assert.equal(replaced.verdict, 'not-isolated');
+      assert.equal(replaced.override, null, `pane holds ${held}`);
+      assert.equal(replaced.overrideUnproved, true);
+    }
+    // The same pane, its own launch id back, once the launch's record is gone: not called overridden.
+    paneLaunchId = launchId;
     store.getDb().prepare('DELETE FROM activity_log WHERE event_type = ?').run(sessions.ISOLATION_OVERRIDDEN_EVENT);
     const later = (await sendAs(server, 'GET', '/api/launch/isolation', undefined, codexBinding.headers)).data;
     const unproved = later.sessions.find((s) => s.sessionId === codexBinding.sessionId);
@@ -142,6 +159,9 @@ describe('GET /api/launch/isolation (#2233)', () => {
     const laterLine = verbs.renderServerIsolationRecord({ state: 'verified', role: 'project', sessionId: codexBinding.sessionId }, later, null);
     assert.ok(laterLine.includes('holds no record that this launch was started under it'), laterLine);
     assert.ok(!laterLine.includes('allowed this launch to start'), laterLine);
+    } finally {
+      tmux.readSessionEnv = realEnv;
+    }
   });
 
   it('answers the operator\'s dashboard', async () => {

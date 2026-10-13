@@ -312,7 +312,7 @@ describe('the mark on a launch that ran under the operator\'s override (#2229)',
   const fleet = (over = {}) => deps({
     live: [row(1, 'codex'), row(2, 'codex'), row(3, 'codex'), row(4, 'claude')],
     panes: { s1: [OVERRIDDEN], s2: [`${FLOOR}${BIN} --no-daemon`], s3: [`${FLOOR}codex`], s4: [`${FLOOR}claude`] },
-    overrideRecord: (sessionId) => (sessionId === 1
+    overrideRecord: ({ sessionId }) => (sessionId === 1
       ? event({ role: 'project', engineId: 'codex', versionRead: '0.170.0', refusal: 'version_unverified', scope: 'project', setBy: null, setAt: 't' })
       : event({ role: 'project', versionRead: '9.9.9', refusal: 'version_unknown', scope: 'install' })),
     ...over
@@ -373,8 +373,8 @@ describe('the mark on a launch that ran under the operator\'s override (#2229)',
 
   it('a record is asked for only where the command is the overridden one', async () => {
     const asked = [];
-    await inventory.inventory(fleet({ overrideRecord: (sessionId) => { asked.push(sessionId); return null; } }));
-    assert.deepEqual(asked, [1]);
+    await inventory.inventory(fleet({ overrideRecord: (who) => { asked.push(who); return null; } }));
+    assert.deepEqual(asked, [{ sessionId: 1, tmuxSession: 's1' }], 'with the tmux session whose pane was judged');
   });
 
   it('a session with a second pane that reads worse keeps that pane\'s verdict; the mark follows the pane that was judged', async () => {
@@ -390,9 +390,9 @@ describe('the mark on a launch that ran under the operator\'s override (#2229)',
       live: [],
       master: { tmuxSession: 'tangleclaw-master', engineId: 'codex' },
       panes: { 'tangleclaw-master': [sessions._withPathFloor(bridgeHandoff.wrapLaunchCommand(BIN, '/Users/x/.tangleclaw/bridge-handoff/handoff-abc'))] },
-      overrideRecord: (sessionId) => { asked.push(sessionId); return event({ role: 'master', versionRead: null, refusal: 'version_unknown', scope: 'install' }); }
+      overrideRecord: (who) => { asked.push(who); return event({ role: 'master', versionRead: null, refusal: 'version_unknown', scope: 'install' }); }
     }));
-    assert.deepEqual(asked, [null]);
+    assert.deepEqual(asked, [{ sessionId: null, tmuxSession: 'tangleclaw-master' }]);
     assert.equal(inv.sessions[0].role, 'master');
     assert.equal(inv.sessions[0].verdict, 'not-isolated');
     assert.deepEqual(inv.sessions[0].override, { launchedUnderOverride: true, scope: 'install', refusal: 'version_unknown', versionRead: null, recordedAt: '2026-10-12 20:00:00' });
@@ -410,42 +410,108 @@ describe('the mark on a launch that ran under the operator\'s override (#2229)',
     assert.equal(inv.sessions[0].overrideUnproved, true);
   });
 
-  it('the stored reads: a session\'s own event by its id; for the Master only the event whose reference matches the live Master\'s launch id', () => {
+  describe('the stored reads: an event is a pane\'s only when its reference matches the launch id that pane holds', () => {
     const store = require('../lib/store');
+    const tmuxLib = require('../lib/tmux');
     const master = require('../lib/master');
-    const realQuery = store.activity.query;
-    const realLive = master.liveMasterLaunchId;
-    const asked = [];
-    const mine = sessions._overrideLaunchRef('live-master-launch-id');
-    store.activity.query = (options) => {
+    const real = { query: store.activity.query, env: tmuxLib.readSessionEnv, live: master.liveMasterLaunchId };
+    const ref = (id) => sessions._overrideLaunchRef(id);
+    let asked;
+    let envAsked;
+    /** The stored events: one project launch's, and two Master launches'. */
+    const stored = (options) => {
       asked.push(options);
       return options.sessionId
-        ? [event({ role: 'project', scope: 'project' })]
-        : [event({ role: 'project', scope: 'project', launchRef: mine }), event({ role: 'master', scope: 'older', launchRef: sessions._overrideLaunchRef('an-earlier-master') }), event({ role: 'master', scope: 'install', launchRef: mine })];
+        ? [event({ role: 'project', scope: 'project', launchRef: ref('the-launch-that-was-overridden') })]
+        : [event({ role: 'project', scope: 'project', launchRef: ref('live-master-launch-id') }), event({ role: 'master', scope: 'older', launchRef: ref('an-earlier-master') }), event({ role: 'master', scope: 'install', launchRef: ref('live-master-launch-id') })];
     };
-    try {
-      assert.equal(inventory.DEFAULT_DEPS.overrideRecord(12).detail.role, 'project');
-      master.liveMasterLaunchId = () => ({ launchId: 'live-master-launch-id', answered: true, cause: null });
-      assert.equal(inventory.DEFAULT_DEPS.overrideRecord(null).detail.scope, 'install', 'the running Master\'s own event, not an earlier Master\'s and not a project\'s');
-      master.liveMasterLaunchId = () => ({ launchId: 'a-master-with-no-event', answered: true, cause: null });
-      assert.equal(inventory.DEFAULT_DEPS.overrideRecord(null), null, 'another Master\'s event is not this one\'s');
-      for (const live of [{ launchId: null, answered: true, cause: null }, { launchId: 'live-master-launch-id', answered: false, cause: 'read-timed-out' }]) {
-        master.liveMasterLaunchId = () => live;
-        assert.equal(inventory.DEFAULT_DEPS.overrideRecord(null), null, 'with no live launch id to match, no event is the Master\'s');
+    const paneHolds = (answer) => { tmuxLib.readSessionEnv = (name, key) => { envAsked.push([name, key]); return answer; }; };
+    const read = (who) => inventory.DEFAULT_DEPS.overrideRecord(who);
+
+    it('a project row: the event with its session id, when the pane holds that launch\'s id', () => {
+      asked = []; envAsked = [];
+      store.activity.query = stored;
+      try {
+        paneHolds({ value: 'the-launch-that-was-overridden', answered: true, cause: null });
+        assert.equal(read({ sessionId: 12, tmuxSession: 's12' }).detail.scope, 'project');
+        assert.deepEqual(envAsked, [['s12', 'TANGLECLAW_LAUNCH_ID']]);
+        assert.deepEqual(asked, [{ sessionId: 12, eventType: 'launch.isolation_overridden', limit: 1 }]);
+      } finally {
+        store.activity.query = real.query; tmuxLib.readSessionEnv = real.env;
       }
-      store.activity.query = () => [];
-      assert.equal(inventory.DEFAULT_DEPS.overrideRecord(12), null);
-    } finally {
-      store.activity.query = realQuery;
-      master.liveMasterLaunchId = realLive;
-    }
-    assert.deepEqual(asked.slice(0, 2), [
-      { sessionId: 12, eventType: 'launch.isolation_overridden', limit: 1 },
-      { eventType: 'launch.isolation_overridden', limit: 50 }
-    ]);
-    assert.equal(sessions._overrideLaunchRef(''), null);
-    assert.equal(sessions._overrideLaunchRef(undefined), null);
-    assert.ok(/^[0-9a-f]{16}$/.test(mine) && !mine.includes('live-master'), 'the reference is one-way: the launch id is not in the record');
+    });
+
+    it('the event is present and the pane was replaced: a tmux session made by hand under the same name holds another launch id, or none, and gets no record', async () => {
+      asked = []; envAsked = [];
+      store.activity.query = stored;
+      try {
+        for (const held of [
+          { value: 'some-other-launch-id', answered: true, cause: null },
+          { value: null, answered: true, cause: null },
+          { value: 'the-launch-that-was-overridden', answered: false, cause: 'read-timed-out' }
+        ]) {
+          paneHolds(held);
+          assert.equal(read({ sessionId: 12, tmuxSession: 's12' }), null, JSON.stringify(held));
+          // Through the inventory itself: the row for that pane reads unproved, not overridden.
+          const inv = await inventory.inventory({
+            ...deps({ live: [row(12, 'codex')], panes: { s12: [`${FLOOR}${BIN}`] } }),
+            overrideRecord: inventory.DEFAULT_DEPS.overrideRecord
+          });
+          assert.equal(inv.sessions[0].verdict, 'not-isolated');
+          assert.equal(inv.sessions[0].override, null, JSON.stringify(held));
+          assert.equal(inv.sessions[0].overrideUnproved, true);
+          assert.ok(inv.sessions[0].reason.includes('its pane is not the one that launch started'));
+        }
+        // And the same row once the pane holds the launch's own id.
+        paneHolds({ value: 'the-launch-that-was-overridden', answered: true, cause: null });
+        const inv = await inventory.inventory({
+          ...deps({ live: [row(12, 'codex')], panes: { s12: [`${FLOOR}${BIN}`] } }),
+          overrideRecord: () => inventory.DEFAULT_DEPS.overrideRecord({ sessionId: 12, tmuxSession: 's12' }) && event({ role: 'project', scope: 'project', refusal: 'version_unverified', versionRead: '0.170.0' })
+        });
+        assert.equal(inv.sessions[0].override.launchedUnderOverride, true);
+      } finally {
+        store.activity.query = real.query; tmuxLib.readSessionEnv = real.env;
+      }
+    });
+
+    it('an event that carries no reference, or a Master\'s event, is never a project pane\'s', () => {
+      try {
+        paneHolds({ value: 'x', answered: true, cause: null });
+        store.activity.query = () => [event({ role: 'project', scope: 'project' })];
+        assert.equal(read({ sessionId: 12, tmuxSession: 's12' }), null, 'no reference on the event');
+        store.activity.query = () => [event({ role: 'master', scope: 'install', launchRef: ref('x') })];
+        assert.equal(read({ sessionId: 12, tmuxSession: 's12' }), null, 'a Master\'s event');
+        store.activity.query = () => [];
+        assert.equal(read({ sessionId: 12, tmuxSession: 's12' }), null);
+      } finally {
+        store.activity.query = real.query; tmuxLib.readSessionEnv = real.env;
+      }
+    });
+
+    it('the Project Master: only the event whose reference matches the live Master\'s launch id', () => {
+      asked = []; envAsked = [];
+      store.activity.query = stored;
+      try {
+        master.liveMasterLaunchId = () => ({ launchId: 'live-master-launch-id', answered: true, cause: null });
+        assert.equal(read({ sessionId: null, tmuxSession: 'tangleclaw-master' }).detail.scope, 'install', 'the running Master\'s own event, not an earlier Master\'s and not a project\'s');
+        assert.deepEqual(asked, [{ eventType: 'launch.isolation_overridden', limit: 50 }]);
+        master.liveMasterLaunchId = () => ({ launchId: 'a-master-with-no-event', answered: true, cause: null });
+        assert.equal(read({ sessionId: null, tmuxSession: 'tangleclaw-master' }), null, 'another Master\'s event is not this one\'s');
+        for (const live of [{ launchId: null, answered: true, cause: null }, { launchId: 'live-master-launch-id', answered: false, cause: 'read-timed-out' }]) {
+          master.liveMasterLaunchId = () => live;
+          assert.equal(read({ sessionId: null, tmuxSession: 'tangleclaw-master' }), null, 'with no live launch id to match, no event is the Master\'s');
+        }
+      } finally {
+        store.activity.query = real.query; master.liveMasterLaunchId = real.live;
+      }
+    });
+
+    it('the reference is one-way: the launch id is not in it, and nothing refers to no id', () => {
+      const mine = ref('live-master-launch-id');
+      assert.ok(/^[0-9a-f]{16}$/.test(mine) && !mine.includes('live-master'));
+      assert.equal(ref(''), null);
+      assert.equal(ref(undefined), null);
+    });
   });
 });
 

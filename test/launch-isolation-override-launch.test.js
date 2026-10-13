@@ -69,7 +69,7 @@ describe('a launch under the operator\'s launch-isolation override (#2229)', () 
     tmux.sendKeys = () => true;
     tmux.hasSession = () => false;
     tmux.killSession = () => true;
-    tmux.createSession = (name, opts) => { created.push({ name, command: opts.command }); return true; };
+    tmux.createSession = (name, opts) => { created.push({ name, command: opts.command, env: opts.env }); return true; };
     enginesModule.detectEngine = () => ({ available: true, path: CODEX_BIN });
     // The deferred bootstrap would wait on a pane that does not exist.
     launchBootstrap.bootstrap = () => Promise.resolve('fired');
@@ -195,10 +195,16 @@ describe('a launch under the operator\'s launch-isolation override (#2229)', () 
       const events = overriddenEvents(project.id);
       assert.equal(events.length, 1);
       assert.equal(events[0].sessionId, result.session.id);
+      // The event is tied to this launch by a one-way reference to the launch
+      // id the pane was given, never the id itself.
+      const launchId = created[created.length - 1].env.TANGLECLAW_LAUNCH_ID;
+      assert.ok(typeof launchId === 'string' && launchId.length > 0);
       assert.deepEqual(events[0].detail, {
         role: 'project', engineId: 'codex', versionRead: UNLISTED, refusal: 'version_unverified',
-        scope: 'project', setBy: 'jason', setAt: overrides.list().projects[0].setAt
+        scope: 'project', setBy: 'jason', setAt: overrides.list().projects[0].setAt,
+        launchRef: sessions._overrideLaunchRef(launchId)
       });
+      assert.ok(!JSON.stringify(events[0]).includes(launchId), 'the launch id itself is not in the activity log');
       const warning = logged.find((line) => line.includes('WITHOUT isolation'));
       assert.ok(warning, 'the server log carries a warning');
       for (const part of [`project "${name}"`, UNLISTED, 'version_unverified', 'may borrow another project']) {
@@ -396,7 +402,7 @@ describe('a launch under the operator\'s launch-isolation override (#2229)', () 
       await new Promise((resolve) => server.close(resolve));
     });
 
-    it('POST /api/sessions/:project answers 201 with what the launch ran under, and the inventory row for it carries the mark and the words tc prints', async () => {
+    it('POST /api/sessions/:project answers 201 with what the launch ran under, and the inventory row for it carries the mark and the words tc prints', async (t) => {
       overrides.set({ projectId: null });
       counter += 1;
       const name = `ovr-${counter}`;
@@ -413,6 +419,11 @@ describe('a launch under the operator\'s launch-isolation override (#2229)', () 
       const started = created[created.length - 1];
       const line = `${started.name}:"${started.command.replace(/(["$\\])/g, '\\$1')}"`;
       tmux._async.execFile = (_bin, _args, _opts, cb) => setImmediate(() => cb(null, `${line}\n`));
+      // And, as tmux would, the launch id each session's environment holds.
+      const realEnv = tmux.readSessionEnv;
+      const held = new Map([[started.name, started.env.TANGLECLAW_LAUNCH_ID]]);
+      tmux.readSessionEnv = (name) => ({ value: held.get(name) || null, answered: true, cause: null });
+      t.after(() => { tmux.readSessionEnv = realEnv; });
       const inv = await inventory.inventory();
       const row = inv.sessions.find((r) => r.sessionId === res.data.sessionId);
       assert.ok(row, 'the launch is listed');
@@ -451,6 +462,18 @@ describe('a launch under the operator\'s launch-isolation override (#2229)', () 
       assert.equal(plain.overrideUnproved, true);
       assert.ok(plain.reason.endsWith(inventory.OVERRIDE_UNPROVED));
       assert.equal(both.sessions.find((r) => r.sessionId === res.data.sessionId).override.launchedUnderOverride, true, 'the launch with its own record still is');
+
+      // The overridden launch's own tmux session, replaced by hand under the
+      // same name while its session row stays active: the event is still
+      // there, the pane holds another launch id, and the row is not called
+      // overridden.
+      held.set(started.name, 'a-launch-id-nobody-recorded');
+      const replaced = (await inventory.inventory()).sessions.find((r) => r.sessionId === res.data.sessionId);
+      assert.equal(store.activity.query({ sessionId: res.data.sessionId, eventType: sessions.ISOLATION_OVERRIDDEN_EVENT }).length, 1, 'the event is present');
+      assert.equal(replaced.verdict, 'not-isolated');
+      assert.equal(replaced.override, null);
+      assert.equal(replaced.overrideUnproved, true);
+      assert.ok(replaced.reason.endsWith(inventory.OVERRIDE_UNPROVED));
     });
   });
 });

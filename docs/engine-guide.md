@@ -1464,15 +1464,18 @@ every version it names was measured; the remedy that names no version does not.
     `NOT ISOLATED`: the mark says how the launch was allowed to start, and is never a verdict.
     A relaunch isolates it only on a Codex version TangleClaw has verified; on the same version it
     starts the same way while the override stands, and is refused once the override is cleared.
-  - **The mark is claimed only on the launch's own record.** A row says its launch was overridden
-    only when TangleClaw reads the activity event that launch wrote: for a project session, the event
-    carrying its session id; for the Project Master, the event carrying a one-way reference to the
-    launch id its live pane holds. A pane's start command alone is not proof. The command an
-    overridden launch runs (the exact executable, neither isolation flag) is also what a profile
-    naming Codex by absolute path ran before launches were checked, and a tmux session can be made
-    by hand under a project's name. A row with that command and no record says so in words ("holds
-    no record that this launch was started under it") and carries `overrideUnproved`; it is not
-    called overridden.
+  - **The mark is claimed only on the launch's own record, for the pane that launch started.** A row
+    says its launch was overridden only when TangleClaw reads the activity event that launch wrote
+    AND the event's one-way reference to the launch id matches the launch id the live tmux session
+    holds (for a project session the event is also the one with its session id). Neither a pane's
+    start command nor a session id is proof alone. The command an overridden launch runs (the exact
+    executable, neither isolation flag) is also what a profile naming Codex by absolute path ran
+    before launches were checked, and a tmux session can be replaced by hand under a project's name
+    while its session row stays active. A row with that command and no matching record says so in
+    words ("holds no record that this launch was started under it") and carries `overrideUnproved`;
+    it is not called overridden. This is attribution, not a defence against the session itself: a
+    session knows its own launch id and could copy it into a tmux session it rebuilds. Either way
+    the row reads `NOT ISOLATED`.
   - **A limit of the mark.** The activity log keeps only its 500 newest events for the whole
     install. On a busy install an overridden session's event ages out while the session runs, and
     its row then reads unproved, not overridden. The log warning written at the launch does not age
