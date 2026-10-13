@@ -96,6 +96,30 @@ describe('_buildLaunchCommand assembles Codex modes (#731)', () => {
   });
 });
 
+describe('each Codex mode under the operator\'s launch-isolation override (#2229)', () => {
+  const BIN = '/opt/fake/bin/codex';
+  const refusal = { allowed: false, reasonCode: 'version_unverified', reason: 'r.', recovery: 'c.', overridable: true };
+  const allowed = { effectiveFor: () => ({ allowed: true, scope: 'install', setAt: '2026-10-12T00:00:00.000Z', setBy: null }) };
+
+  for (const [mode, args] of [
+    ['default', ''],
+    ['fullAuto', ' --ask-for-approval never --sandbox workspace-write'],
+    ['bypassPermissions', ' --dangerously-bypass-approvals-and-sandbox']
+  ]) {
+    it(`${mode}: the exact executable, the mode's own flags, and no isolation flag`, () => {
+      const attempt = sessions._overrideRefusedLaunch('codex', refusal, {
+        launchCmd: sessions._buildLaunchCommand(codex, null, mode), engineProfile: codex, enginePath: BIN, probe: { version: '0.170.0', enginePath: BIN }
+      }, null, allowed);
+      assert.equal(attempt.allowed, true);
+      assert.equal(attempt.command, `${BIN}${args}`);
+      assert.deepEqual(attempt.record, {
+        engineId: 'codex', enginePath: BIN, refusal: 'version_unverified', versionRead: '0.170.0',
+        scope: 'install', setAt: '2026-10-12T00:00:00.000Z', setBy: null
+      });
+    });
+  }
+});
+
 describe('honorsLaunchMode is the single definition of "the engine will run this" (#731)', () => {
   const engines = require('../lib/engines');
 

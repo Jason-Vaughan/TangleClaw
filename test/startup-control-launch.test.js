@@ -359,6 +359,11 @@ describe('startupControl at launch and teardown (codex)', () => {
       assert.match(result.error, /0\.156\.1 or 0\.157\.1/);
       assert.match(result.error, /Nothing was started/);
       assert.equal(result.isolation.recovery.includes('launch again'), true);
+      // The answer's shape is unchanged by the override (#2229): what the
+      // adapter marks for the launch path's own use does not leave it.
+      assert.deepEqual(Object.keys(result.isolation), ['reasonCode', 'recovery']);
+      assert.equal('isolationOverride' in result, false);
+      assert.match(result.isolation.recovery, /An operator can instead allow this launch without isolation, with the launch-isolation override\./);
       assert.equal(calls.spawn.length, 0, 'no app-server was started for it');
       assert.equal(store.getDb().prepare('SELECT COUNT(*) AS n FROM sessions').get().n, before, 'no session row was written');
     });
