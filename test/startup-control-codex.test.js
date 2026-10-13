@@ -2598,8 +2598,12 @@ describe('Codex startupControl adapter', () => {
         const two = judge({ command, native: { ...native, engineVersion: '0.157.1' }, nativeVerifiedVersions: ['0.160.0', '0.156.1'] });
         assert.match(two.recovery, /\(0\.160\.0 or 0\.156\.1\)/, 'the list named is the native one, as the profile records it');
         assert.ok(two.recovery.includes('@openai/codex@0.160.0'));
+        assert.match(refused.recovery, /check_for_update_on_startup = false/, 'the named version is one the setting was measured on, so the remedy says how to stay on it');
+        assert.match(refused.recovery, /\(measured on Codex 0\.156\.1\)/, 'and says so of that version alone');
+        assert.doesNotMatch(two.recovery, /check_for_update_on_startup/, 'no advice where a named version (0.160.0) was not measured');
         const none = judge({ command, native, nativeVerifiedVersions: null });
         assert.doesNotMatch(none.recovery, /Install a Codex version/, 'with no verified native version, no install is the remedy');
+        assert.doesNotMatch(none.recovery, /check_for_update_on_startup|config\.toml/, 'staying on a version fixes nothing when no version is the remedy');
         assert.doesNotMatch(none.recovery, /0\.15\d\.\d/);
         assert.match(none.recovery, /restore or update TangleClaw/);
         // The legacy list does not vouch for the native channel: 0.157.1 accepts --no-daemon and is not verified to attach.
@@ -2648,6 +2652,22 @@ describe('Codex startupControl adapter', () => {
           assert.ok(verdict.recovery.includes(codex._internal.INSTALL_COMMAND));
           assert.match(verdict.recovery, /Nothing was started/);
           assert.match(verdict.recovery, /already running are not changed/);
+        }
+      });
+
+      it('a version refusal says how to stop Codex offering to leave the version it names, and claims only the prompt', () => {
+        for (const verdict of [judge({ command: 'codex', probe: probe('0.161.0') }), judge({ command: 'codex', probe: null })]) {
+          const advice = verdict.recovery.slice(verdict.recovery.indexOf('then launch again.'));
+          assert.match(advice, /update prompt whose default choice \(Enter\) runs `npm install -g @openai\/codex`/, 'what the prompt does, as it was captured');
+          assert.match(advice, /`check_for_update_on_startup = false`/, 'the setting');
+          assert.match(advice, /`~\/\.codex\/config\.toml` unless `CODEX_HOME` is set/, 'the file');
+          assert.match(advice, /TangleClaw does not edit that file/);
+          assert.doesNotMatch(verdict.recovery, /updates itself|auto-?update/i, 'an update with no prompt was not measured');
+          // Every version this remedy names must be one the setting was measured on:
+          // admitting a version without that measurement drops the advice, and this fails.
+          const measured = /\(measured on Codex ([^)]+)\)/.exec(advice)[1];
+          for (const version of codex._internal.NO_DAEMON_VERSIONS) assert.ok(measured.includes(version), `the setting was measured on ${version}`);
+          assert.ok(advice.endsWith('Nothing was started. Sessions that were already running are not changed by this.'), 'the advice sits before the closing lines');
         }
       });
 

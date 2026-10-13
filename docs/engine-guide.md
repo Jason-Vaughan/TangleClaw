@@ -1408,7 +1408,15 @@ The server log has one warning for each launch that did not ask, naming the exec
 The two lists are separate and neither vouches for the other. A refusal on the `--remote` path
 (`native_version_unverified`) names only the first list, so it never suggests 0.157.1, which that path
 would refuse again. Codex's own update prompt offers to replace a pinned install with the newest version;
-the newest version does not launch, so skip it (Escape).
+the newest version does not launch, so skip it (Escape). Its default choice (Enter) runs
+`npm install -g @openai/codex`. To stop Codex drawing that prompt, set
+`check_for_update_on_startup = false` in Codex's `config.toml` (`~/.codex/config.toml` unless
+`CODEX_HOME` is set). Measured on 0.156.1 and 0.157.1, as `codex` and as `codex --no-daemon`, with no
+account: with the setting `true` and a home that knew of a newer version the prompt was the first
+screen, and with `false` it was not drawn. Not measured: a session attached with `--remote`, anything
+after sign-in, whether `false` also stops the check itself, and an update made with no prompt (none was
+seen). TangleClaw does not edit that file. A version refusal's remedy carries the same advice wherever
+every version it names was measured; the remedy that names no version does not.
 
 - **Sessions already running.** The check runs when a pane is created. A Codex session started before
   the upgrade keeps running on whatever command started it, isolated or not, and nothing ends it.
