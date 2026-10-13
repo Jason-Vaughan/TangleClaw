@@ -1166,6 +1166,40 @@ process running in the pane now. For a `--no-daemon` session, the Codex version 
 was launched and is not checked again. It does not read each pane's environment, so it takes a
 tmux session named for a project to be that project's current launch.
 
+**What a session is told about its own launch (#2228).** The inventory above is the operator's and
+the fleet's view. A session reads its own from `tc whoami` and `tc capabilities`, which print one
+`Launch isolation:` row, and from `tc start next` and `tc start review`, which print the same row
+in brackets above the state step. `tc` reads the command its pane was started with
+(`tmux display-message -p -t "$TMUX_PANE" '#{pane_start_command}'`, bounded at one second), takes
+TangleClaw's wrappers off it and judges it with the same rules as the inventory. Its own answer is
+one of three, and never `ISOLATED`:
+
+| Row | Meaning |
+|---|---|
+| `NOT ISOLATED` | The pane named by this shell's environment was started with a Codex command that plainly was not isolated: most often the bare name `codex`. The row gives the reason and says to ask the operator to end the session and launch it again. The Codex version reads `unknown`: `tc` does not read it. |
+| `NOT SHOWN ISOLATED` | Everything else `tc` cannot call a negative. That includes a command that would read `ISOLATED` in the inventory, a command attached with `--remote` (whether that server is the session's own is recorded only by TangleClaw), a command that names Codex in a form `tc` could not judge, a pane with no readable start command, and a shell with no pane at all, which is every Codex session on its native startup channel. |
+| `not applicable` | The pane was started with a command that names no engine sharing a background process. |
+
+There is no positive row because nothing a session holds proves which launch it is. `tc` finds its
+pane through `TMUX_PANE`, which a shell can inherit from another pane's process, and a verified
+launch binding is attribution, not authentication: a shared engine process can present another
+launch's live binding. A wrong `NOT ISOLATED` costs a relaunch. A wrong positive would tell a
+session on a shared process that its identity is its own.
+
+When the row is not `not applicable` and the launch binding is verified, a second line gives the
+server's record for the launch that binding names, from `GET /api/launch/isolation`, with the row
+chosen by the session the server verified and never by an id the shell supplies. It is worded as
+the server's fact ("recorded as isolated … That does not show this shell is that launch") and is
+not a verdict about the shell. With a binding that is not verified the server is not asked and the
+line says so. If the lookup fails the line reads `unavailable` and the verb still answers.
+
+Three limits. A session that never runs `tc` and never reads its launch steps is still not told.
+The row describes the command the pane was started with, not the process running in it now. And
+above the state step the notice is given only the room that page's own header and footer leave
+within the engine's tool-output limit: on `tc start review`, whose banner is longer, it is cut
+after the verdict and the advice and ends "… Run tc whoami for the rest." A session whose row
+would be `not applicable` gets no notice above the state step.
+
 #### Prime paste readiness
 
 When a project runs with `silentPrime` off (or the engine has no silent channel), the prime is
