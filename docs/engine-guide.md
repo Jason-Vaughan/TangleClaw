@@ -1475,6 +1475,23 @@ every version it names was measured; the remedy that names no version does not.
     another project's TangleClaw identity: its `tc` calls may fail, or act as that other launch. The
     project whose identity is borrowed did not opt in. The override does not make the launch isolated,
     and nothing softens what such a session may then be refused.
+  - **Where it is turned on and off.** On the dashboard, and only there: **Global Settings →
+    Launch isolation override** for the whole install, which says it covers every project and the
+    Project Master, and a project's **Settings → Launch isolation override** for that project, which
+    says when the install-wide one already covers it. Both carry the sentence under "What it risks".
+    Turning one on needs a signed-in operator: where no login is in force the switch stays off and
+    shows the refusal (`LOGIN_GATE_REQUIRED`: a login must be in force), and turning one off still
+    works. A launch refused for `version_unknown` or `version_unverified` carries an **Open launch
+    isolation settings** button that opens the project's Settings at its switch, for as long as
+    that message is shown (six seconds, #2339); the same switch is reached from the project's
+    Settings at any time. A session's own page and the Project Master's settings offer neither
+    switch.
+  - **Where a running one shows.** The project's Settings, under **Launch readiness**, has a line
+    for the project's running session when the isolation inventory marks it: "running under the
+    operator's launch isolation override", with the version read and the refusal set aside, or
+    "override unproved" when the pane runs that command and no record shows the launch was started
+    under an override. It says nothing for any other session, never calls one isolated, and has no
+    line for a launch that has ended.
   - **The Project Master** belongs to no project, so only the install-wide override starts it.
   - **Fail closed.** If the override cannot be read, the launch is refused as if none were set.
   - **What it leaves, each time.** A warning in the server log; a `launch.isolation_overridden`

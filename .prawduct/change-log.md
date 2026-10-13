@@ -35,6 +35,34 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-12 — #2229: the launch-isolation override's two switches, the way to them from a refused launch, and the line for a session running under one
+
+<!-- prawduct: type=feature | scope=codex-override-2229 -->
+
+#2229 Chunk 02, the issue's last: the override on screen. Branch `feat/2229-02-override-screens`, from `origin/main` `78b13a7e`, with `main` at `c7251728` (chunk 01c) merged in before the guides and this entry, on the Integrator's word.
+
+Visual change: yes. Two new switches, one button on a launch-failed message, one new line in Launch readiness.
+
+**Why.** Chunks 01a to 01c built the override, its launch path and `tc`'s wording, and left it settable only through its routes. Nothing on the dashboard offered it, and a refused launch named a setting the operator had no way to reach.
+
+**What changed.**
+
+- `public/ui.js`, Global Settings, "Launch isolation override": the install-wide switch. It says it covers every project and the Project Master.
+- `public/ui.js`, a project's Settings, "Launch isolation override": that project's switch. It says when the install-wide override already covers the project, whatever the switch reads.
+- Both switches read `GET /api/launch/isolation-overrides` and write its `PUT` and `DELETE` routes through the page's `api()`, with no body, and never a settings route. Each shows what the server answered and is read again after every change, the refused ones included. Settings that were not read are said to be unread, never shown as off. A page the server does not take as the operator's is told so and offered nothing.
+- Both carry the sentence each overridden launch's record carries. The screen holds its own copy (the override routes do not send it) and a test holds it equal to `sessions.ISOLATION_OVERRIDE_RISK`.
+- Turning one on where no login is in force: the server answers `403 LOGIN_GATE_REQUIRED`, and the switch stays off and says a login must be in force. The switch is still offered there, with a hint that says so before the click, because turning one off works without a login.
+- `public/landing.js`: a launch refused as `version_unknown` or `version_unverified` carries one button, "Open launch isolation settings", which opens the project's Settings with the switch in view and focused. A page that would not be offered the switch (signed out while a login is in force) is told who can instead. No other refusal carries it.
+- `public/ui.js`, Launch readiness: one line for the project's running session, read from `GET /api/launch/isolation`: "running under the operator's launch isolation override" with the version read and the refusal set aside, or "override unproved" with the server's reason. Nothing for any other row, and no session is called isolated.
+- `public/style.css`: the switch keeps its checkbox in the tab order under the house toggle's look (the existing settings toggles hide theirs), with a focus ring; the button on the message.
+- Docs: `docs/user-guide.md` (where the switches and the button are; the readiness line), `docs/engine-guide.md` (the same, under "The operator's override"). In `docs/user-guide.md` the sentence that told the reader a second time to skip Codex's update prompt is removed (a note from the review of #2377).
+
+**Limits.** The line is about a running session only: a launch that has ended has no row in the inventory and no line. The button lives as long as the launch-failed message, six seconds (#2339, open); the switch is reachable from the project's Settings at any time. The session page's relaunch refusal has no button: that page has no way into the dashboard's Project Settings, and the refusal's own text names the override. A session's own page and the Project Master's settings are offered no switch.
+
+**Tests.** New `test/launch-isolation-override-ui.test.js`, run against the shipped functions lifted from `public/`: what each switch says; who is offered it (signed in, no login, signed out, not the operator's page, settings unread); what each answer to a change is told; the request each switch sends and the re-read after it; the refusal's button for the two version refusals and no other; the wiring into both modals; no switch on the session page. `test/launch-readiness-panel.test.js`: the line for a marked row, an unproved row, every other row, another project's row, the Project Master's, and a failed read.
+
+**Browser check.** Done on `2c088fee`, 22:33 to 22:45 PDT on 2026-10-12, by an automated browser run; not yet seen by the Operator. Two scratch servers (no login; a login in force), desktop, 375 and 320. Not covered: a real phone, a screen reader, the button reached inside six seconds by a person, the signed-out and not-the-operator wording on screen.
+
 ## 2026-10-12 — #2229: `tc` names a session running under the operator's override, and stops advising a relaunch that would change nothing
 
 <!-- prawduct: type=feature | scope=2229-01c-tc-override-wording -->
