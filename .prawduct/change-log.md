@@ -35,6 +35,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-12 — #2059: Codex 0.161.0 and 0.162.0 stay unlisted, and the streaming frame that keeps them out is pinned
+
+<!-- prawduct: type=chore | scope=codex-wake-2059 -->
+
+#2059 Chunk 02b, the issue's last chunk in v5.33. Branch `feat/2059-02b-codex-streaming-known-unsafe`, from `origin/main` `355a946b`, with `f0020c4d` merged in. The issue is an outside contributor's and stays open, for v5.34. **No product code changes and no Codex version is added to `verifiedVersions`:** nothing here changes what an operator sees.
+
+Visual change: no
+
+**Why.** Each version was run signed in, in its own run, through a scratch TangleClaw whose own copy of the profile listed that one version (the tracked profile was never edited). The launch's automatic fire applied on the default and on a three-item status line; a folder with no trust entry was refused; the update prompt was held and named; and with real mail waiting the wake held on `engine-thread-busy` at every tick of a real streaming turn, including over a pane held still mid-answer. Then the case that decides it, asked for by the Architect and the decider: with the pane's TUI process stopped mid-answer and the turn then ending, the thread read idle under a pane still showing the answer cut off mid-line, the wake read that pane as `pane-at-prompt`, and it typed its nudge into it, on both versions (0.161.0: 15.6 s after the thread read idle, 38 s before the pane was redrawn; 0.162.0: 16.5 s and 37 s). Ruled by the decider on its own read of the recordings: both versions stay unlisted on the wake as merged, each measured streaming frame goes on the known-unsafe list, the list's guard is kept, the limit is stated.
+
+**What changed.**
+
+- `test/fixtures/codex-panes/codex-0.161.0.json`, `codex-0.162.0.json`: one pane added to each set's `panes`, `streamingDefaultLayout`: the frame that version's pane showed for the whole time its renderer was stopped (an empty composer with the cursor on it, the status row and the footer below, the answer cut mid-line above, no busy row), 80 columns by 24 rows, each version's own capture, labelled `remote-channel` (in 0.161.0's file the rest of `panes` is the other launch path). Read without styling, and the pane's note says so; only the scratch project path was replaced. Each file's note says which launch path each pane is and the new pane's size.
+- `test/medusa-wake-codex-fixtures.test.js`: `KNOWN_UNSAFE_IF_CHANNEL_IDLE` gains that pane for 0.161.0 and for 0.162.0, and its comment and its exact-contents test say the list now holds two kinds of hole. New, per version from its own pane: the pane is a channel capture drawn like rest; the pane gate alone calls it at the prompt once it has been still; a busy answer over it holds and types nothing; and the measured hole itself, the answer going from busy to idle over the one still frame, ends in a nudge after the settling tick. That last test is the red test a revised gate turns green. The guard that no listed version is one the profile verifies is unedited, and now covers both versions.
+- `test/startup-control-codex.test.js`: a channel row holding both a recorded and a provisional thread is refused by the gate, both fires and the wake's observation on every look, nothing is sent, and no reader rewrites the row. Pinned as a state; no path is known to write it.
+- `data/engines/codex.json`: evidence text only (why neither version is listed; that a streaming answer draws no busy row). No pattern, `verifiedVersions` and `remoteTrustPrompt.absentOn` untouched.
+- Docs: `docs/engine-guide.md`, `docs/user-guide.md`.
+
+**What remains, for v5.34.** A gate that refuses a pane which has not been redrawn since the turn ended, on positive evidence that it was redrawn (the absence of a busy row is not that evidence), for longer than the settling interval and with mail waiting; that still nudges a session at rest as promptly as now; that keeps holding a running turn on the thread's answer; proved signed in through a whole launch and wake for each version separately. Then that version's pane leaves the list for that reason, and the list's guard changes only with the Architect's acceptance.
+
+**Limits of the evidence.** Every still frame was made by stopping the renderer, not by a pause in the model; no natural pause longer than a wake tick was obtained, so how often a real session shows one is unknown. Nothing was typed while a thread read active. A resume was not run through a server (TangleClaw's launch does not start one). In a folder with no trust entry the startup fire refuses and the wake still nudged, on both versions: observed, not judged here.
+
+**Tests.** `test/medusa-wake-codex-fixtures.test.js`, `test/startup-control-codex.test.js`. One existing expectation changed, the list's exact contents; no other assertion was edited. `test/_wake-fixtures.js` and `test/_codex-visible-pane-fixtures.js` are unedited.
+
 ## 2026-10-12 — #2323: a watched check wakes its project, and each message's delivery is read back
 
 <!-- prawduct: type=feature | scope=2323-check-watch-wake -->
