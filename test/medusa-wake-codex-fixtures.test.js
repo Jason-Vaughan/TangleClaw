@@ -153,6 +153,8 @@ const ON_FRESH_IDLE = {
  * nothing may be typed into them. An entry here records a hole, not a safety
  * property, and a green test over it proves only that the hole is still there.
  *
+ * Two kinds of pane are listed.
+ *
  * The opening screen of 0.159.0. Codex draws its empty composer on the screen
  * it opens with, before the folder-trust or update prompt replaces it: no busy
  * marker, a bare prompt, a still transcript. On 0.156.1 that screen's header
@@ -174,6 +176,18 @@ const ON_FRESH_IDLE = {
  * no pane, so a screen that is still up when the interval has passed is typed
  * into exactly as before.
  *
+ * A streaming answer on 0.161.0 and on 0.162.0. While the answer streams,
+ * each draws no busy row: an empty composer with the cursor on it, the status
+ * row and the declared footer below, exactly as at rest. Only the transcript
+ * above the composer says a turn is running, and the gate does not read it.
+ * What keeps a nudge out of a running turn is the channel answering `busy`,
+ * and it did on every tick measured. But the thread's answer comes from the
+ * app-server and the pane from the TUI client, and they can disagree: with
+ * the client stopped mid-answer and the turn then ending, each version's
+ * thread read idle under this very frame, the gate called it at the prompt
+ * and the nudge was typed into it (signed in, 2026-10-12, each version in its
+ * own run). So neither version is verified, and a block below keeps it so.
+ *
  * An empty composer cannot be the refusal, because a usable session shows the
  * same one. When the gate refuses one of these panes, its name leaves this
  * list and its hold is pinned in `ON_FRESH_IDLE`.
@@ -182,8 +196,13 @@ const ON_FRESH_IDLE = {
  * about what a whole read of that version holds.
  */
 const KNOWN_UNSAFE_IF_CHANNEL_IDLE = {
-  '0.159.0': ['startScreen']
+  '0.159.0': ['startScreen'],
+  '0.161.0': ['streamingDefaultLayout'],
+  '0.162.0': ['streamingDefaultLayout']
 };
+
+/** The listed panes that are a streaming answer, not an opening screen. */
+const STREAMING_PANE = 'streamingDefaultLayout';
 
 /**
  * Whether a pane is on the known-unsafe list for its version.
@@ -519,6 +538,9 @@ describe('what refuses a Codex pane when no channel has spoken (#2059)', () => {
     idleAfterTurn: 'idle',
     idleAfterUpdateSkipped: 'idle',
     idleAfterResume: 'idle',
+    // A streaming answer draws no busy row, so with or without a marker rule
+    // the pane alone reads as rest.
+    streamingDefaultLayout: 'idle',
     busy: 'turn-in-flight',
     busyDefaultLayout: 'turn-in-flight',
     busyRunState: 'turn-in-flight',
@@ -965,10 +987,12 @@ describe('the folder hold, the settling hold and the pane refusals act in that o
   });
 });
 
-describe('the known-unsafe list is the opening screen of the one version with neither a starting header nor a declared footer (#2059, #2187)', () => {
+describe('the known-unsafe list is one opening screen with nothing to refuse it and the streaming answer of two versions (#2059, #2187)', () => {
   it('names nothing else, so another hole cannot be added quietly', () => {
     assert.deepEqual(KNOWN_UNSAFE_IF_CHANNEL_IDLE, {
-      '0.159.0': ['startScreen']
+      '0.159.0': ['startScreen'],
+      '0.161.0': ['streamingDefaultLayout'],
+      '0.162.0': ['streamingDefaultLayout']
     });
   });
 
@@ -1005,6 +1029,74 @@ describe('the known-unsafe list is the opening screen of the one version with ne
       assert.equal(knownUnsafe(set.cliVersion, 'startScreen'), !hasHeader && !DECLARED_VERSIONS.includes(set.cliVersion), set.cliVersion);
     }
   });
+
+  /** The versions whose streaming answer is listed. */
+  const STREAMING_VERSIONS = Object.keys(KNOWN_UNSAFE_IF_CHANNEL_IDLE).filter((cliVersion) => knownUnsafe(cliVersion, STREAMING_PANE));
+
+  /**
+   * Run `fn` with the monitor stopped and its seams put back afterwards.
+   * @param {function(): Promise<void>} fn - The body
+   * @returns {Promise<void>}
+   */
+  async function withGate(fn) {
+    const saved = { ...wake._internal };
+    wake.stop();
+    try {
+      await fn();
+    } finally {
+      wake.stop();
+      Object.assign(wake._internal, saved);
+    }
+  }
+
+  it('a streaming answer is listed for exactly the versions whose footer the profile declares', () => {
+    assert.deepEqual(STREAMING_VERSIONS, DECLARED_VERSIONS);
+  });
+
+  for (const cliVersion of STREAMING_VERSIONS) {
+    const pane = CODEX_FIXTURE_SETS.find((set) => set.cliVersion === cliVersion).panes[STREAMING_PANE];
+    const BUSY = { channel: 'present', state: 'busy', reasonCode: 'thread-active' };
+
+    it(`codex-cli ${cliVersion}: the listed streaming pane is a capture over the launch path TangleClaw uses, and is drawn like rest`, () => {
+      const profile = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8')).capabilities.wake;
+      assert.equal(pane.launchPath, 'remote-channel');
+      const { x, y, rows } = pane.visible;
+      assert.match(rows[y], new RegExp(profile.promptPattern), 'the cursor row is the empty composer');
+      assert.equal(x, 2);
+      const below = rows.slice(y + 1).filter((row) => row !== '');
+      assert.equal(below.length, 2, 'a status row, then the footer');
+      assert.match(below[0], /^ {2}\S.* · /);
+      assert.match(below[1], new RegExp(profile.restRows[cliVersion].footerPattern));
+      assert.ok(!rows.join('\n').includes(profile.busyMarker), 'no busy row is drawn while the answer streams');
+      const above = rows.slice(0, y).filter((row) => row !== '');
+      assert.doesNotMatch(above[above.length - 1], /^ {2}Worked for /, 'the answer is still being written: no end-of-turn row');
+    });
+
+    it(`codex-cli ${cliVersion}: the pane gate alone calls that frame at the prompt once it has been still for the required ticks`, () => {
+      const codex = wake.ENGINE_WAKE_PROFILES.codex;
+      const first = wake.assessSessionIdle({ lines: [...pane.lines], profile: codex, cursor: null, engineIdle: true, engineVersion: cliVersion });
+      const second = wake.assessSessionIdle({ lines: [...pane.lines], profile: codex, cursor: null, engineIdle: true, engineVersion: cliVersion, prevDigest: first.digest, idleTicks: first.idleTicks });
+      assert.deepEqual({ idle: second.idle, reason: second.reason }, { idle: true, reason: 'at-prompt' });
+    });
+
+    it(`codex-cli ${cliVersion}: while the thread answers busy over that frame, it is held and nothing is typed`, async () => {
+      await withGate(async () => {
+        const out = await timeline(pane.lines, [BUSY], SETTLED_TICKS + 4);
+        assert.deepEqual(out, { injected: 0, holds: ['engine-thread-unknown', 'engine-thread-busy'] });
+      });
+    });
+
+    // The measured hole, pinned so that closing it turns this red: the frame
+    // does not change, the thread's answer goes from busy to idle, and after
+    // the settling interval the nudge is typed into a pane still showing an
+    // answer being written.
+    it(`KNOWN UNSAFE: codex-cli ${cliVersion}: the turn ends under the same still frame: settles, then is typed into`, async () => {
+      await withGate(async () => {
+        const out = await timeline(pane.lines, [BUSY, BUSY, BUSY, { ...IDLE, version: cliVersion }], 3 + SETTLED_TICKS);
+        assert.deepEqual(out, { injected: 1, holds: ['engine-thread-unknown', 'engine-thread-busy', 'engine-thread-settling'] }, 'if nothing is typed now, the hole is closed for this version: take its pane off the list and pin its hold');
+      });
+    });
+  }
 
   it('no listed version is one the profile verifies, so no session of it has a channel to answer idle', () => {
     const profile = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));

@@ -823,7 +823,10 @@ never read by another version's entry. Two readers:
   two in the other order are all refused.
 
 Declaring a version here does **not** admit it: a launch gets a channel only on a version in
-`capabilities.startupControl.verifiedVersions`, and neither 0.161.0 nor 0.162.0 is listed.
+`capabilities.startupControl.verifiedVersions`, and neither 0.161.0 nor 0.162.0 is listed. Each was
+run signed in through a whole launch and wake (2026-10-12, each in its own run), and each is kept
+off the list by one measured case: see *A streaming answer is drawn like rest* under the wake's
+limits below.
 
 | Field | What it is |
 |-------|------------|
@@ -950,6 +953,23 @@ profile names an adapter that can observe it (`declaresObserver`; today, Codex):
     with the cursor on it, the status row and the footer, as at rest. What holds a nudge then is
     the engine's own answer (`engine-thread-busy`, decided before any pane is read) and the
     transcript still moving (`pane-writing`), not this rule or the busy marker.
+  - **A streaming answer is drawn like rest, and that is why neither 0.161.0 nor 0.162.0 is
+    listed.** Measured signed in, each version in its own run, with real mail waiting. While the
+    turn ran, the wake held on `engine-thread-busy` at every tick, including over a pane held still
+    in the middle of the answer. But the thread's answer comes from the app-server and the pane
+    from the TUI client, which are separate processes. With the client stopped mid-answer and the
+    turn then ending, the thread read idle while the pane still showed the answer cut off
+    mid-line; the wake waited its settling interval, read that pane as `pane-at-prompt`, and typed
+    the nudge into it, on both versions. Nothing was typed while a thread read active. The still
+    pane was made by stopping the client process, not by a pause in the model, and how often a
+    real session shows one is not known. So on these versions the wake's protection during an
+    answer rests wholly on the app-server's `thread/read` status, and nothing ties the pane it
+    reads to the turn that just ended. Each version's captured frame is in the wake's fixture
+    tests as a known hole. Before either version is listed, a revised gate has to refuse a pane
+    that has not been redrawn since the turn ended, on positive evidence that it was redrawn (the
+    absence of a busy row is not that evidence), for longer than the settling interval, and still
+    nudge a session at rest as promptly as now; proved signed in for that version, not inferred
+    from the other.
 - The first `idle` a launch's thread reports holds as `engine-thread-settling` for one monitor
   interval (`ENGINE_SETTLING_MS`, five seconds), whatever the pane shows, and the pane is not read
   while it holds (#2059). An engine can answer idle a moment before it has finished drawing the screen
