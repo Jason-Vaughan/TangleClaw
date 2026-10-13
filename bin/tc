@@ -32,7 +32,7 @@
  */
 
 const path = require('node:path');
-const { VERB_ROSTER, renderUsage, receiptVerbLabel, renderBodyTooLarge, renderControlBanner, bridgeCredentialHeader, readPaneEnvironment, judgePaneIdentity, renderPaneMismatch, requestTimeoutMs } = require(path.join(__dirname, '..', 'lib', 'tc-verbs.js'));
+const { VERB_ROSTER, renderUsage, receiptVerbLabel, renderBodyTooLarge, renderControlBanner, bridgeCredentialHeader, readPaneEnvironment, judgePaneIdentity, readPaneStartCommand, renderPaneMismatch, requestTimeoutMs } = require(path.join(__dirname, '..', 'lib', 'tc-verbs.js'));
 
 async function main() {
   const verb = process.argv[2];
@@ -195,6 +195,9 @@ async function main() {
     env: process.env,
     argv,
     paneCheck,
+    // Read only when a verb asks: most verbs print no isolation row, and each
+    // read is one more tmux call.
+    paneStartCommand: () => readPaneStartCommand(process.env),
     getJson: (apiPath, opts) => requestJson('GET', apiPath, undefined, opts),
     postJson: (apiPath, body, opts) => requestJson('POST', apiPath, body, opts)
   };
