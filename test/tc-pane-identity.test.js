@@ -737,6 +737,73 @@ describe('tc: the launch-isolation lines (#2228)', () => {
     assert.match((await verbs.ownIsolationLines(odd.ctx, answer(VERIFIED_140)))[1], /recorded as not shown isolated/);
   });
 
+  describe('a launch the operator\'s override let start (#2229)', () => {
+    const MARK = { launchedUnderOverride: true, scope: 'project', refusal: 'version_unknown', versionRead: null, recordedAt: null };
+    const ADVICE = 'started under the operator\'s override (a relaunch isolates it only on a Codex version TangleClaw has verified, or with the override cleared)';
+
+    /**
+     * The inventory answer with one not-isolated project row carrying this `override`.
+     * @param {*} override - The row's `override` field
+     * @param {string} [verdict] - The row's verdict
+     * @returns {{sessions: object[]}}
+     */
+    function overridden(override, verdict = 'not-isolated') {
+      return { sessions: [{ ...inventoryOf(140, verdict).sessions[0], override }] };
+    }
+
+    it('the server\'s line says so before the row\'s reason, in the server\'s attributed words', async () => {
+      const { ctx } = isolationCtx({ read: started('codex'), inventory: overridden(MARK) });
+      const [, server] = await verbs.ownIsolationLines(ctx, answer(VERIFIED_140));
+      assert.equal(server, `  Server's record (not a verdict about this shell): the launch this shell's binding names (session 140) is recorded as not isolated, ${ADVICE}. Row 140 reason. That does not show this shell is that launch.`);
+    });
+
+    it('tc\'s own line is the same bytes with and without the mark, for every reading of the pane', async () => {
+      // The binding may be another launch's: its row must not change what tc
+      // says about the pane this shell names.
+      for (const read of [started('codex'), started('/opt/bin/codex'), started('/opt/bin/codex --no-daemon'), started('/opt/bin/codex --remote unix:///tmp/s'), started(null), { read: 'no-pane' }]) {
+        const lines = async (inventory) => verbs.ownIsolationLines(isolationCtx({ read, inventory }).ctx, answer(VERIFIED_140));
+        const [ownWith, serverWith] = await lines(overridden(MARK));
+        const [ownWithout, serverWithout] = await lines(overridden(null));
+        assert.equal(ownWith, ownWithout, JSON.stringify(read));
+        assert.notEqual(serverWith, serverWithout);
+        assert.doesNotMatch(ownWith, /override/);
+      }
+      const own = (await verbs.ownIsolationLines(isolationCtx({ read: started('codex'), inventory: overridden(MARK) }).ctx, answer(VERIFIED_140)))[0];
+      assert.match(own, /ask the operator to end this session and launch it again\.$/, 'the own advice is what the pane\'s command earns, whatever the binding\'s row says');
+    });
+
+    it('the Project Master\'s row carries it too', async () => {
+      const master = { role: 'master', binding: { state: 'verified', role: 'master', projectId: null, sessionId: null }, api: { origin: 'x' }, operator: { host: null, note: 'n' } };
+      const inventory = { sessions: [{ sessionId: null, role: 'master', verdict: 'not-isolated', reason: 'Master reason.', override: { ...MARK, scope: 'install' } }, ...overridden(null).sessions] };
+      const lines = await verbs.ownIsolationLines(isolationCtx({ read: started('codex'), inventory }).ctx, master);
+      assert.ok(lines[1].includes(`(the Project Master) is recorded as not isolated, ${ADVICE}. Master reason.`), lines[1]);
+    });
+
+    it('reads nothing but a true mark on a not-isolated row', async () => {
+      const cases = [[null], [undefined], [{}], [{ launchedUnderOverride: false }], [{ launchedUnderOverride: 'true' }], ['install'], [true],
+        [MARK, 'isolated'], [MARK, 'unknown'], [MARK, 'not-applicable'], [MARK, 'brand-new']];
+      for (const [override, verdict] of cases) {
+        const { ctx } = isolationCtx({ read: started('codex'), inventory: overridden(override, verdict) });
+        const lines = await verbs.ownIsolationLines(ctx, answer(VERIFIED_140));
+        assert.doesNotMatch(lines.join('\n'), /override/, JSON.stringify([override, verdict]));
+      }
+    });
+
+    it('never reads as a pass, and a notice cut to the page\'s room loses the reason before it loses the override', async () => {
+      const { ctx } = isolationCtx({ read: started('codex'), inventory: overridden(MARK) });
+      const identity = answer(VERIFIED_140);
+      const lines = await verbs.ownIsolationLines(ctx, identity);
+      for (const text of [lines.join('\n'), verbs.renderWhoami(identity, undefined, lines), verbs.renderIsolationNotice(lines)]) {
+        assert.doesNotMatch(text, POSITIVE_VERDICT);
+      }
+      const whole = verbs.renderIsolationNotice(lines);
+      const cut = verbs.renderIsolationNotice(lines, whole.indexOf('Row 140 reason.') + 40);
+      assert.ok(cut.includes(ADVICE), cut);
+      assert.doesNotMatch(cut, /Row 140 reason\./);
+      assert.match(cut, /… Run tc whoami for the rest\.\]\n\n$/);
+    });
+  });
+
   it('gives the Project Master the Master\'s row, never a project\'s', async () => {
     const master = { role: 'master', binding: { state: 'verified', role: 'master', projectId: null, sessionId: null }, api: { origin: 'x' }, operator: { host: null, note: 'n' } };
     const inventory = { sessions: [{ sessionId: null, role: 'master', verdict: 'not-isolated', reason: 'Master reason.' }, ...inventoryOf(140, 'isolated').sessions] };
