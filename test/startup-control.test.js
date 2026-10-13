@@ -272,6 +272,21 @@ describe('observeActivity: the generic facade over the optional adapter method (
     assert.deepEqual(seen, [[channel, project]]);
   });
 
+  it('the engine version an adapter names is passed on unchanged, and only a non-empty string is one (#2059)', async () => {
+    const named = answering({ state: 'idle', reasonCode: 'thread-idle', version: '0.161.0' });
+    assert.deepEqual(await sc.observeActivity(target(), named.adapters), { channel: 'present', state: 'idle', reasonCode: 'thread-idle', version: '0.161.0' });
+    const busy = answering({ state: 'busy', reasonCode: 'other-thread-active', version: '0.162.0' });
+    assert.deepEqual(await sc.observeActivity(target(), busy.adapters), { channel: 'present', state: 'busy', reasonCode: 'other-thread-active', version: '0.162.0' });
+    for (const version of [undefined, null, '', 161, ['0.161.0'], { version: '0.161.0' }]) {
+      const { adapters } = answering({ state: 'idle', reasonCode: 'thread-idle', version });
+      assert.deepEqual(await sc.observeActivity(target(), adapters), { channel: 'present', state: 'idle', reasonCode: 'thread-idle' }, JSON.stringify(version));
+    }
+    // An answer the facade refuses is not given a version either.
+    const malformed = answering({ state: 'resting', version: '0.161.0' });
+    assert.deepEqual(await sc.observeActivity(target(), malformed.adapters), { channel: 'present', state: 'unknown', reasonCode: 'adapter-answer-malformed' });
+    assert.deepEqual(await sc.observeActivity(target({ channel: null }), named.adapters), { channel: 'absent', state: 'unknown', reasonCode: 'no-channel' });
+  });
+
   it('no channel, or one that is not open, is ABSENT — the one case a caller may treat as "no channel"', async () => {
     const { adapters } = answering({ state: 'idle', reasonCode: 'x' });
     for (const ch of [null, { ...channel, state: 'closed' }]) {

@@ -733,6 +733,18 @@ describe('medusa-wake — _assessPane: an engine whose header says it is still s
     assert.equal(typeof meaning, 'string');
     assert.match(meaning, /starting/);
   });
+
+  it('the meaning covers a screen held by the rows it opens or resumes with, not only one held by its header (#2059)', () => {
+    const meaning = wake.peerReasonMeaning('pane-engine-starting');
+    assert.match(meaning, /its header says so/);
+    assert.match(meaning, /the rows it opens or resumes with/);
+    assert.match(meaning, /the nudge waits/);
+    // One code for both producers: the disposition is the same wait.
+    const codex = wake.ENGINE_WAKE_PROFILES.codex;
+    const opening = ['\u203a Ask Codex to do anything', '', '  ? for shortcuts'];
+    assert.deepEqual(wake._assessPane(opening, codex, null, true, '0.161.0'), { idle: false, reason: 'engine-starting' });
+    assert.deepEqual(wake._assessPane(opening, codex, null, true), { idle: true, reason: 'at-prompt' });
+  });
 });
 
 describe('medusa-wake — nudge injection', () => {

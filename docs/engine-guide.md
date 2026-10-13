@@ -801,6 +801,30 @@ witness (`lib/pane-witness.js`), so the fire and the wake cannot disagree about 
 looks like. A Codex profile that declares neither leaves the witness with no header to ask about, so
 the trust-free fire is held as `pane_not_ready`, naming the two fields, until they are restored.
 
+`restRows` (and its `evidence` entry) only for an exact engine version measured to draw a **footer
+row beneath its status row** at rest, and that footer **alone** on the screen it opens and resumes
+with (#2059). It is a table keyed by exact version (`MAJOR.MINOR.PATCH`); each entry holds
+`footerPattern`, the regex source of that one row, and its own `evidence` (`verifiedOn`, `source`).
+Codex declares `0.161.0` and `0.162.0`, each from its own signed-in captures over the launch path
+TangleClaw uses: both draw the status row and then exactly `  ? for shortcuts`, and both open, and
+resume, with that footer alone under an empty composer that holds the cursor, with no header row
+that names a model. Nothing is declared for 0.156.1, which draws one row. A footer pattern must take
+one whole row: it is refused when the profile is read unless it starts with `^`, ends with `$`, holds
+no `|`, and needs some text to match, and an entry may hold nothing but those two keys. A version is
+never read by another version's entry. Two readers:
+
+- **The wake's pane gate** refuses the pane as `pane-engine-starting` when the footer is the first
+  row drawn below the last bare composer row, **and only for the exact version the session's own
+  channel proved** (the version its launch recorded and the one its app-server reports, equal). With
+  no version named, or one with no entry, this rule refuses nothing.
+- **The startup fire's pane witness**, given the compiled pattern by the Codex adapter, accepts
+  below the composer exactly one status row and then that footer, in that order (see *The pane
+  witness* under the startup channel). The footer first, the status row alone, a third row, and the
+  two in the other order are all refused.
+
+Declaring a version here does **not** admit it: a launch gets a channel only on a version in
+`capabilities.startupControl.verifiedVersions`, and neither 0.161.0 nor 0.162.0 is listed.
+
 | Field | What it is |
 |-------|------------|
 | `busyMarker` | Substring present iff a turn is in flight; its presence blocks a nudge |
@@ -813,8 +837,9 @@ the trust-free fire is held as `pane_not_ready`, naming the two fields, until th
 | `decorativePattern` | Optional — a regex source matching cells the engine ANIMATES at rest (decoration the operator did not type). Declare it only where you have watched an idle pane and seen it move |
 | `headerPattern` | Optional, declared with `startingPattern` or not at all — a regex source matching the header row that `startingPattern` is read on, whatever that row says |
 | `startingPattern` | Optional, declared with `headerPattern` or not at all — a regex source matching that header row while the engine is still starting |
+| `restRows` | Optional — a table keyed by exact engine version; each entry is `{footerPattern, evidence}`: the whole-row regex source of the footer that version draws beneath its status row at rest, and where it was measured |
 
-Every field except `pasteRejectedMarker`, `decorativePattern`, `headerPattern` and `startingPattern` is **required**, `null` included. An author who has not
+Every field except `pasteRejectedMarker`, `decorativePattern`, `headerPattern`, `startingPattern` and `restRows` is **required**, `null` included. An author who has not
 measured a value writes `null` and says so in `evidence`, which is a recorded gap; an omitted field
 would be the same gap with nobody able to tell it from an oversight.
 
@@ -899,15 +924,32 @@ profile names an adapter that can observe it (`declaresObserver`; today, Codex):
     newest row in the read to match, holds the pane as starting until it scrolls out of the read.
     The startup fire's pane witness has always read the same two expressions the same way, over the
     visible pane only; the wake's read also reaches 15 rows of history, so it holds a little longer.
-  - **What this covers, by version.** On Codex 0.156.1: the opening screen (`pane-engine-starting`)
-    and the dialogs drawn below it (`pane-no-prompt`). Codex 0.159.0 and 0.161.0 draw their dialogs on
-    the alternate screen, where the dialog is the whole pane and no row is a bare prompt, so those
-    were already held. **Their opening screen is not held by either rule:** it draws no `model:`
-    header row, so there is nothing for the starting pattern to read, and an idle answer from the
-    channel over that screen would be typed into. No session of those versions has a channel today,
-    because neither is in `verifiedVersions`, so no nudge reaches them; a refusal for each version's
-    opening screen, proved on whole captures with the cursor, is a precondition of admitting that
-    version.
+  - *The engine's screen shows the rows it opens with* (`restRows`, above) holds as the same
+    `pane-engine-starting`, for a version that draws no such header: the declared footer is the
+    first row below the composer, with no status row above it. It is asked only for the version the
+    channel's idle answer named, and it holds whatever the thread reports: on a resume, Codex
+    0.161.0's thread was read `idle` while the `Resuming session…` screen was still up.
+  - **What this covers, by version.** On Codex 0.156.1: the opening screen (`pane-engine-starting`,
+    by its header) and the dialogs drawn below it (`pane-no-prompt`). Codex 0.159.0, 0.161.0 and
+    0.162.0 draw their dialogs on the alternate screen, where the dialog is the whole pane and no
+    row is a bare prompt, so those were already held. On **0.161.0 and 0.162.0** the opening and
+    the resuming screen are held as `pane-engine-starting` by `restRows`, once a channel names the
+    version. **0.159.0's opening screen is not held by either rule:** it draws no `model:` header
+    row and nothing is declared for it, so an idle answer from a channel over that screen would be
+    typed into. No session of 0.159.0, 0.161.0 or 0.162.0 has a channel today, because none is in
+    `verifiedVersions`, so no nudge reaches them; a refusal of a version's opening screen, proved on
+    whole captures with the cursor, is a precondition of admitting it, and is not by itself what
+    admits it.
+  - **Two limits of the `restRows` refusal, both measured on 0.161.0 and 0.162.0.** With an
+    **empty status line** (`tui.status_line = []`) the opening frame is still the footer alone and
+    is held, but at rest those versions draw one row, the footer with `100% context left` at its
+    right. That is not the declared footer, so this rule does not refuse it (it is a composer in
+    use); the startup fire's witness does refuse it, having no status row to recognise. And **a
+    turn whose answer is streaming draws no busy row** on those versions: the `Working (… esc to
+    interrupt)` row is up for the first seconds only, after which the pane shows an empty composer
+    with the cursor on it, the status row and the footer, as at rest. What holds a nudge then is
+    the engine's own answer (`engine-thread-busy`, decided before any pane is read) and the
+    transcript still moving (`pane-writing`), not this rule or the busy marker.
 - The first `idle` a launch's thread reports holds as `engine-thread-settling` for one monitor
   interval (`ENGINE_SETTLING_MS`, five seconds), whatever the pane shows, and the pane is not read
   while it holds (#2059). An engine can answer idle a moment before it has finished drawing the screen
@@ -1413,7 +1455,11 @@ adapter needs all of: the app-server's `initialize` version equal to the install
 one; `config/read` naming the project directory as trusted, or the trust exception below;
 `account/read` naming an account; `account/rateLimits/read` explicitly allowing
 usage or reporting a usable credit balance; exactly one loaded thread whose canonical cwd is the
-project directory (the recorded one once seen); and that thread `idle`. An unknown answer fails
+project directory (the recorded one once seen); and that thread `idle`. On a version that declares
+`capabilities.wake.restRows` the launch's thread is chosen by identity, described under
+`observeActivity` below, and a fire, automatic or the operator's, is also refused
+(`engine_not_ready`) while any other thread loaded for the folder is working, in a status the
+protocol does not promise, or unreadable. An unknown answer fails
 closed as `readiness_unknown`; a blocker is `trust_required`, `auth_required`, `quota_exhausted`,
 `version_mismatch` or `engine_not_ready`, with nothing sent and the launch's fire slot released.
 
@@ -1477,7 +1523,23 @@ this holds:
   newest one (a session that has scrolled its header away passes this); no busy marker; and an
   unchanged pane. A read that does not come back with exactly the pane's height in rows is refused.
   A Codex status line configured down to a single item has no ` · ` and is refused: that fails
-  closed;
+  closed. **Which rows may follow the composer is chosen by the launch's exact proved version**
+  (the version the launch recorded and the one its app-server reports, equal; never the installed
+  binary's). A version with no `capabilities.wake.restRows` entry, which is 0.156.1, is read by the
+  one-row rule just described, under which any screen that draws a footer is refused. A version
+  with an entry (0.161.0, 0.162.0) must show exactly **one status row and then its declared footer
+  row**, in that order: the footer with no status row above it is refused as a screen still opening
+  or resuming, and so are the status row alone, two footers, the two rows in the other order and
+  any third row; both rows are read for key names. On such a version one single-item status row is
+  recognised: the launch thread's own **model**, as `thread/read` reports it, alone on the row and
+  compared without case (`  GPT-6.1-Sol` for `gpt-6.1-sol`); the thread must report the same model
+  again after the pane is read. No other single item is recognised, and an **empty status line**
+  is refused (its one row is the footer with a context item beside it), so on those versions the
+  operator's status line needs at least the model or two items, or the operator presses **Fire**.
+  A launch whose version cannot be proved is refused outright and says which two versions were
+  read; that does not clear by waiting. The pane alone does not show a streaming turn on those
+  versions (no busy row is drawn once the answer streams), so the last step below is what refuses
+  one;
 - the same thread, read again after the witness and immediately before `turn/start`, is still in
   the project directory and still `idle`.
 
@@ -1557,6 +1619,56 @@ inference from "the only one", in that same observation "the only one" is establ
 fresh read, and a second thread there answers `thread-ambiguous`. Given all that, the thread's `active` status is busy (an
 approval wait included) and `idle` is idle. Before an `idle` is returned, the channel row is read
 again: it must still be open, on the same launch, with the same thread.
+
+**On Codex 0.161.0 and 0.162.0 "the sole thread" is the sole thread identified as the launch's
+own** (#2059), because after a first turn those versions load a second thread in the same folder to
+name the session, and it stays loaded. Read from `thread/read` and nothing else, and only once the
+channel's version is proved to be one that declares `capabilities.wake.restRows`:
+
+- the launch's kind is `threadSource: "user"`, `ephemeral: false`, a non-empty rollout `path` and no
+  `parentThreadId`;
+- the title helper is exactly `threadSource: "thread_title"`, `ephemeral: true`, `path: null`. It is
+  never bound, even when it is the only thread loaded, and it never makes two. It is not treated as
+  a subagent and is not ignored: while it is `active` the answer is busy (`other-thread-active`), and
+  a fire is refused beside it;
+- any other thread for the folder, including either shape with a field missing or changed, cannot
+  be identified, and an unbound channel then answers `thread-ambiguous` and binds nothing. Two
+  threads of the launch's kind are ambiguous as before, and a thread that cannot be read refuses.
+
+A recorded thread stays the launch's and is never replaced by this filtering; a recorded thread that
+is no longer loaded does not fall back to another. The compare-and-set and the fresh read after it
+are unchanged, and now require the same sole thread of the launch's kind. On those versions the
+launch gate, a fire and this observation bind by one procedure, and an inferred binding is **not a
+record until it is proved**:
+
+1. the first list names exactly one thread of the launch's kind, and none that cannot be read or
+   identified;
+2. a compare-and-set, on the launch's own open channel with no thread of either kind on it, writes
+   the thread as **provisional**, in its own field (`adapterState.provisionalThreadId`), and leaves
+   `adapterState.threadId` empty. A write that fails, or that this look did not itself make
+   (`written: false`, even where the row then holds the same thread: another reader may still be
+   mid-check, or may fail it), binds nothing here and nothing is sent;
+3. the threads are listed and read **again** and must be the same threads with the same sole thread
+   of the launch's kind. A second user thread, a title helper or an unreadable thread that appeared
+   in between fails this; reading only the chosen thread again would not show them;
+4. a second conditional write, on that same thread while it is still the provisional one, moves
+   it to `threadId` and clears the provisional field. Only then is the thread recorded, and that
+   write too must be this look's own.
+
+A check that fails after step 2 withdraws the inference by a guarded write (only that thread, only
+while it is still the provisional one) and the look refuses, whether or not the withdrawal lands.
+Because the recorded field stays empty until step 4, every reader of the recorded thread, here and
+elsewhere (a fire's reconcile, a managed rotation's prior and successor thread, its rebind), sees a
+channel that is not yet bound while an inference is unproved. The next look proves a provisional
+thread again from step 1 (skipping only the first write) or withdraws it, so a second idle user
+thread cannot be stepped past on an id nobody validated. Before the gate or a fire answers for a thread, proved just
+now or recorded earlier, the channel row is read once more: still open, the same launch, the same
+thread, and no provisional thread beside it. And where the gate or a fire reads the pane, what
+is read afterwards on those versions is this whole answer again for the recorded thread (every loaded
+thread, the others' activity, the channel row), not that one thread alone: a thread that started
+working, or stopped being readable, while the pane was being witnessed refuses the look. On those versions the
+answer also carries `version`, the exact version proved, which the wake's pane gate reads the pane
+by; an answer for 0.156.1 carries none, and its candidate rule is the one above, unchanged.
 
 #### `privateTempRoot`
 

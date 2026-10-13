@@ -17,7 +17,7 @@ const os = require('node:os');
 const path = require('node:path');
 const store = require('../lib/store');
 const paneWitness = require('../lib/pane-witness');
-const { CODEX_VISIBLE_PANES: PANES } = require('./_codex-visible-pane-fixtures');
+const { CODEX_VISIBLE_PANES: PANES, CODEX_CHANNEL_VERSIONS, CODEX_CHANNEL_FIXTURES } = require('./_codex-visible-pane-fixtures');
 
 const codex = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));
 // What the Codex adapter hands the witness. The two header patterns are the
@@ -482,6 +482,193 @@ describe('the pane witness (#2186)', () => {
     it('a read that throws is asked once, not twice', async () => {
       await askOnce([new Error('gone'), PANES.composer]);
       assert.equal(reads.length, 1);
+    });
+  });
+  // #2059. Codex 0.161.0 and 0.162.0 draw a footer row beneath the status row
+  // at rest, and that footer ALONE on the screen they open and resume with.
+  // Every frame here is that version's own capture over the launch path
+  // TangleClaw uses, or that capture with the named rows changed.
+  describe('a declared footer row, per captured version (#2059)', () => {
+    /** The usable composers of a version, by fixture name. */
+    const AT_REST = ['idleDefaultLayout', 'idleThreeItemStatus', 'idleAfterTurn', 'idleAfterUpdateSkipped', 'idleAfterResume'];
+    const NOT_OPENING = 'something other than one status row and then the declared footer row is drawn below the composer';
+    const OPENING = 'the footer row is drawn with no status row above it, as on a screen that is still opening or resuming';
+    /** A captured row as the witness reads it: no styling, no trailing space. */
+    const text = (row) => row.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '').replace(/\s+$/, '');
+    /** The non-blank rows a capture draws below its cursor row, as text. */
+    const drawnBelow = (frame) => frame.rows.slice(frame.y + 1).map(text).filter((row) => row !== '');
+
+    for (const version of CODEX_CHANNEL_VERSIONS) {
+      describe(`codex-cli ${version}`, () => {
+        const fx = CODEX_CHANNEL_FIXTURES[version];
+        const footerRe = new RegExp(codex.capabilities.wake.restRows[version].footerPattern);
+        const model = fx.threads.userBeforeFirstTurn.model;
+        /** The status pattern the adapter builds for a thread whose model it read. */
+        const modelRe = new RegExp(`${STATUS_RE.source}|^ {2}${model.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+        /** Under this version's declaration: the footer option in place of a row count. */
+        const declared = (over = {}) => ({ footerRe, maxStatusRows: undefined, ...over });
+        /** One fresh read, as the send-time look takes it. */
+        const once = (frame, over = {}) => paneWitness.composerShownOnce({
+          tmuxName: 'tc-x', paneId: PANE_ID, paneServer: PANE_SERVER, engineProfile: codex, wakeProfile, headerRe: HEADER_RE, startingRe: STARTING_RE, statusRe: STATUS_RE, keyHintRe: KEY_HINT_RE, ...over
+        }, { pin: () => PANE_ID, read: () => ({ paneId: PANE_ID, ...frame, rows: [...frame.rows] }) });
+        /**
+         * A capture with the non-blank rows below its composer replaced.
+         * @param {object} frame - A captured pane.
+         * @param {string[]} below - The rows to draw there, top down.
+         * @returns {object}
+         */
+        const withBelow = (frame, below) => {
+          const rows = [...frame.rows];
+          for (let i = frame.y + 1; i < rows.length; i++) rows[i] = '';
+          below.forEach((row, n) => { rows[rows.length - below.length + n] = row; });
+          return { ...frame, rows };
+        };
+        const statusRow = drawnBelow(fx.panes.idleDefaultLayout)[0];
+        const FOOTER = '  ? for shortcuts';
+
+        it('the captures are this version\'s own and draw what the declaration says', () => {
+          assert.equal(fx.version, version);
+          for (const name of [...AT_REST, 'idleSingleItemStatus']) {
+            const drawn = drawnBelow(fx.panes[name]);
+            assert.equal(drawn.length, 2, `${name}: two rows below the composer`);
+            assert.match(drawn[1], footerRe, `${name}: the second is the declared footer`);
+          }
+          assert.match(statusRow, STATUS_RE);
+          assert.equal(drawnBelow(fx.panes.idleSingleItemStatus)[0].trim().toLowerCase(), model.toLowerCase(), 'the single-item row is the thread\'s model');
+        });
+
+        for (const name of AT_REST) {
+          it(`${name}: shown on two reads and on one under the declaration, refused under the one-row rule`, async () => {
+            assert.deepEqual(await ask([fx.panes[name]], declared()), { shown: true });
+            assert.deepEqual(await once(fx.panes[name], { footerRe }), { shown: true });
+            assert.deepEqual(await ask([fx.panes[name]]), { shown: false, dialog: null, why: 'something other than a status row is drawn below the composer' });
+            assert.equal((await ask([fx.panes[name]], { maxStatusRows: 2 })).shown, false, 'a count of two is not this rule, and does not pass it either');
+          });
+        }
+
+        it('the single-item status row is recognised only as the thread\'s own model, alone, without case', async () => {
+          const frame = fx.panes.idleSingleItemStatus;
+          assert.deepEqual(await ask([frame], declared({ statusRe: modelRe })), { shown: true });
+          assert.deepEqual(await once(frame, { footerRe, statusRe: modelRe }), { shown: true });
+          assert.deepEqual(await ask([frame], declared()), { shown: false, dialog: null, why: NOT_OPENING }, 'with no model to check it against it is refused');
+          assert.equal((await ask([frame])).shown, false, 'and under the one-row rule');
+          for (const other of ['  some-other-model', `  ${model} extra`, '  /private/tmp/cx2059/proj', `   ${model}`, `  ${model}x`]) {
+            assert.deepEqual(await ask([withBelow(frame, [other, FOOTER])], declared({ statusRe: modelRe })), { shown: false, dialog: null, why: NOT_OPENING }, other);
+          }
+          assert.deepEqual(await ask([withBelow(frame, [`  ${model.toUpperCase()}`, FOOTER])], declared({ statusRe: modelRe })), { shown: true }, 'case is not compared');
+        });
+
+        for (const name of ['startScreen', 'resumingScreen']) {
+          it(`${name}: refused as a screen still opening or resuming, by the footer's position and by nothing else`, async () => {
+            const frame = fx.panes[name];
+            assert.equal(frame.rows[frame.y].includes('Ask Codex to do anything'), true, 'an empty composer holds the cursor');
+            assert.deepEqual(await ask([frame], declared()), { shown: false, dialog: null, why: OPENING });
+            assert.deepEqual(await once(frame, { footerRe }), { shown: false, dialog: null, why: OPENING });
+            // Not the header rule: no header pattern is given at all.
+            assert.deepEqual(await ask([frame], declared({ headerRe: null, startingRe: null })), { shown: false, dialog: null, why: OPENING });
+            // Not the footer failing the status pattern: a pattern that takes the footer for a status row changes nothing.
+            assert.match(FOOTER, /^ {2}\S/);
+            assert.deepEqual(await ask([frame], declared({ statusRe: /^ {2}\S/ })), { shown: false, dialog: null, why: OPENING });
+          });
+        }
+
+        it('the empty status line at rest is refused: its one row is the footer with a context item beside it', async () => {
+          const drawn = drawnBelow(fx.panes.idleEmptyStatus);
+          assert.equal(drawn.length, 1);
+          assert.match(drawn[0], /^ {2}\? for shortcuts {2,}100% context left$/);
+          assert.deepEqual(await ask([fx.panes.idleEmptyStatus], declared()), { shown: false, dialog: null, why: NOT_OPENING });
+          assert.equal((await ask([fx.panes.idleEmptyStatus])).shown, false);
+        });
+
+        it('the startup dialogs are still named, and typed text and a drawn busy row still refuse', async () => {
+          assert.equal((await ask([fx.panes.trustDialog], declared())).dialog.id, 'folder-trust');
+          assert.equal((await ask([fx.panes.updateDialog], declared())).dialog.id, 'update');
+          assert.deepEqual(await ask([fx.panes.typing], declared()), { shown: false, dialog: null, why: 'no empty composer row is on screen' });
+          assert.match(fx.panes.busyDefaultLayout.rows.map(text).join('\n'), /esc to interrupt/);
+          assert.deepEqual(await ask([fx.panes.busyDefaultLayout], declared()), { shown: false, dialog: null, why: 'a turn is running' });
+        });
+
+        it('every other arrangement of rows below the composer is refused', async () => {
+          const rest = fx.panes.idleDefaultLayout;
+          const cases = [
+            ['the status row alone', [statusRow], NOT_OPENING],
+            ['the two rows in the other order', [FOOTER, statusRow], OPENING],
+            ['two footers', [FOOTER, FOOTER], OPENING],
+            ['a third row', [statusRow, FOOTER, FOOTER], NOT_OPENING],
+            ['a third row above', [statusRow, statusRow, FOOTER], NOT_OPENING],
+            ['a footer one character longer', [statusRow, `${FOOTER}s`], NOT_OPENING],
+            ['a footer one character shorter', [statusRow, FOOTER.slice(0, -1)], NOT_OPENING],
+            ['a footer indented by one more column', [statusRow, ` ${FOOTER}`], NOT_OPENING],
+            ['the other launch path\'s footer', [statusRow, '  ← for agents · ? for shortcuts'], NOT_OPENING],
+            ['a status row that is not one', ['  not a status row', FOOTER], NOT_OPENING],
+            ['a status-shaped row that names keys', ['  enter continue · esc skip', FOOTER], 'a row below the composer names keys, as a dialog footer does']
+          ];
+          for (const [name, below, why] of cases) {
+            assert.deepEqual(await ask([withBelow(rest, below)], declared()), { shown: false, dialog: null, why }, name);
+            assert.deepEqual(await once(withBelow(rest, below), { footerRe }), { shown: false, dialog: null, why }, `${name}, on one read`);
+          }
+        });
+
+        it('a stale composer above a selector row is refused, whatever is drawn below it', async () => {
+          const rest = fx.panes.idleDefaultLayout;
+          const rows = [...rest.rows];
+          rows[rest.y + 1] = '› 1. Trust and continue';
+          assert.deepEqual(await ask([{ ...rest, rows }], declared()), { shown: false, dialog: null, why: 'a selector row is drawn below the composer' });
+        });
+
+        it('a footer that changes between the two reads, or is gone at the single read, is refused', async () => {
+          const rest = fx.panes.idleDefaultLayout;
+          const opening = withBelow(rest, [FOOTER]);
+          assert.deepEqual(await ask([rest, opening], declared()), { shown: false, dialog: null, why: OPENING });
+          assert.deepEqual(await ask([opening, rest], declared()), { shown: false, dialog: null, why: OPENING });
+          assert.deepEqual(await ask([rest, withBelow(rest, [statusRow, `${FOOTER}!`])], declared()), { shown: false, dialog: null, why: NOT_OPENING });
+          assert.deepEqual(await once(rest, { footerRe }), { shown: true }, 'seen at rest');
+          assert.deepEqual(await once(withBelow(rest, [statusRow]), { footerRe }), { shown: false, dialog: null, why: NOT_OPENING }, 'and not a moment later');
+        });
+
+        it('a streaming turn draws no busy row: one read cannot tell it from rest, two reads see the transcript move', async () => {
+          const { streamingFirst, streamingNext } = fx.turnFrames;
+          for (const frame of [streamingFirst, streamingNext]) {
+            assert.doesNotMatch(frame.rows.map(text).join('\n'), /esc to interrupt/, 'no busy marker is drawn while the answer streams');
+            assert.equal(frame.rows[frame.y].includes('Ask Codex to do anything'), true, 'the composer is empty and holds the cursor');
+          }
+          // The limit, stated: this frame alone has the shape of a composer at
+          // rest. The thread read that follows the pane is what refuses it, and
+          // that is pinned with the adapter.
+          assert.deepEqual(await once(streamingFirst, { footerRe }), { shown: true });
+          assert.deepEqual(await ask([streamingFirst, streamingNext], declared()), { shown: false, dialog: null, why: 'the pane changed between two reads a second apart' });
+        });
+
+        it('without the option the witness is the one-row rule, for this version\'s panes as for any other', async () => {
+          for (const name of Object.keys(fx.panes)) {
+            const plain = await ask([fx.panes[name]]);
+            if (name === 'typing') continue;
+            assert.equal(plain.shown, false, `${name} is not shown under the one-row rule`);
+          }
+          const typing = fx.panes.typing;
+          assert.equal((await ask([typing])).shown, false);
+        });
+      });
+    }
+
+    it('0.162.0 drew the status row with no footer for one frame as typing began: the one-row rule passes it, the declaration refuses it', async () => {
+      const frame = CODEX_CHANNEL_FIXTURES['0.162.0'].turnFrames.statusRowAlone;
+      const footerRe = new RegExp(codex.capabilities.wake.restRows['0.162.0'].footerPattern);
+      assert.deepEqual(await ask([frame]), { shown: true });
+      assert.deepEqual(await ask([frame], { footerRe, maxStatusRows: undefined }), { shown: false, dialog: null, why: NOT_OPENING });
+    });
+
+    it('the option changes nothing for 0.156.1\'s panes when it is not given', async () => {
+      for (const name of ['composer', 'composerAfterUpdateSkipped', 'composerOperatorStatus', 'composerWarningStatus']) {
+        assert.deepEqual(await ask([PANES[name]]), { shown: true }, name);
+        assert.deepEqual(await ask([PANES[name]], { footerRe: undefined }), { shown: true }, name);
+        assert.deepEqual(await ask([PANES[name]], { footerRe: null }), { shown: true }, name);
+      }
+    });
+
+    it('0.156.1\'s one-row composer is refused under a footer declaration: it draws no footer', async () => {
+      const footerRe = new RegExp(codex.capabilities.wake.restRows['0.161.0'].footerPattern);
+      assert.deepEqual(await ask([PANES.composer], { footerRe, maxStatusRows: undefined }), { shown: false, dialog: null, why: NOT_OPENING });
     });
   });
 });

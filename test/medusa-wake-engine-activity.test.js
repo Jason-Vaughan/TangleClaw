@@ -948,3 +948,81 @@ describe('medusa-wake — a prolonged engine-thread-unknown alerts the operator 
     assert.equal(wake.wakeStallSummary(), null);
   });
 });
+
+describe('medusa-wake — the engine version a channel names reaches the pane gate (#2059)', () => {
+  // The rows Codex 0.161.0 and 0.162.0 open and resume with: an empty composer
+  // and the footer alone. Their own whole captures are judged in
+  // `medusa-wake-codex-fixtures.test.js`; these three rows are enough to show
+  // where the version comes from and where it does not.
+  const OPENING = ['› Ask Codex to do anything', '', '', '  ? for shortcuts'];
+  const AT_REST = ['› Ask Codex to do anything', '', '  GPT-6.1-Sol default · /tmp/proj-cx', '  ? for shortcuts'];
+  const idle = (version) => ({ channel: 'present', state: 'idle', reasonCode: 'thread-idle', ...(version === undefined ? {} : { version }) });
+  let saved;
+  beforeEach(() => {
+    saved = { ...wake._internal };
+    wake.stop();
+  });
+  afterEach(() => {
+    wake.stop();
+    Object.assign(wake._internal, saved);
+  });
+
+  it('an idle answer naming a declared version holds its opening screen as pane-engine-starting, and nudges once it is at rest', async () => {
+    const world = installWorld({ pane: OPENING, activity: idle('0.161.0') });
+    await ticks(TICKS_TO_NUDGE + 2);
+    assert.equal(world.injected.length, 0);
+    assert.equal(lastSkip(world), 'pane-engine-starting');
+    world.pane = AT_REST;
+    await ticks(TICKS_TO_NUDGE);
+    assert.equal(world.injected.length, 1);
+  });
+
+  it('an answer that names no version, or one that is not a string, or one nothing is declared for, adds no refusal', async () => {
+    for (const version of [undefined, null, 161, { toString: () => '0.161.0' }, '0.156.1', '0.161', ' 0.161.0']) {
+      wake.stop();
+      const world = installWorld({ pane: OPENING, activity: idle(version) });
+      await ticks(TICKS_TO_NUDGE);
+      assert.equal(world.injected.length, 1, `version ${JSON.stringify(version)}`);
+    }
+  });
+
+  it('the version is the current channel\'s answer: a relaunch onto another version is not read by the old one', async () => {
+    const world = installWorld({ pane: OPENING, activity: idle('0.161.0') });
+    await ticks(TICKS_TO_NUDGE + 1);
+    assert.equal(lastSkip(world), 'pane-engine-starting');
+    // A new launch: a new channel, whose answers name no version.
+    world.channel = { ...CHANNEL, id: 8, sequenceId: 71 };
+    world.sequence = { id: 71, sessionId: 1 };
+    world.activity = idle(undefined);
+    await ticks(TICKS_TO_NUDGE + 1);
+    assert.equal(world.injected.length, 1, 'the pane is judged with no version, as the new channel\'s answer says');
+  });
+
+  it('a version is not carried from an idle answer into a later one that omits it', async () => {
+    const world = installWorld({ pane: OPENING, activity: idle('0.162.0') });
+    await ticks(TICKS_TO_NUDGE + 1);
+    assert.equal(world.injected.length, 0);
+    world.activity = idle(undefined);
+    await ticks(TICKS_TO_NUDGE + 1);
+    assert.equal(world.injected.length, 1);
+  });
+
+  it('assessSessionIdle and _assessPane take the version as an input and ask the declared footer only of it', () => {
+    const at = (lines, engineVersion) => wake.assessSessionIdle({ lines, profile: CODEX, engineIdle: true, ticksRequired: 1, ...(engineVersion === undefined ? {} : { engineVersion }) });
+    assert.deepEqual([at(OPENING, '0.161.0').idle, at(OPENING, '0.161.0').reason], [false, 'engine-starting']);
+    assert.deepEqual([at(OPENING, '0.162.0').idle, at(OPENING, '0.162.0').reason], [false, 'engine-starting']);
+    assert.equal(at(OPENING).idle, true);
+    assert.equal(at(OPENING, '0.156.1').idle, true);
+    assert.equal(at(AT_REST, '0.161.0').idle, true);
+    // A notifier does not type, and is not asked whether the composer is in use.
+    assert.equal(wake.assessSessionIdle({ lines: OPENING, profile: CODEX, engineIdle: true, mustBeTypeable: false, ticksRequired: 1, engineVersion: '0.161.0' }).idle, true);
+    // The footer is the FIRST drawn row below the LAST bare composer row.
+    const stale = ['› Ask Codex to do anything', '  ? for shortcuts', '', ...AT_REST];
+    assert.equal(wake._assessPane(stale, CODEX, null, true, '0.161.0').idle, true, 'an older opening screen above a composer at rest says nothing about now');
+    const noComposer = ['  some text', '  ? for shortcuts'];
+    assert.equal(wake._assessPane(noComposer, CODEX, null, true, '0.161.0').reason, 'no-prompt', 'with no composer row the rule has nothing to anchor on');
+    const { restRows, ...undeclared } = CODEX;
+    assert.ok(restRows['0.161.0']);
+    assert.equal(wake._assessPane(OPENING, undeclared, null, true, '0.161.0').idle, true, 'a profile that declares nothing refuses nothing by it');
+  });
+});

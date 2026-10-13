@@ -198,6 +198,17 @@ describe('the wake signature is declared in the engine profile (#1255)', () => {
       const derived = wake.ENGINE_WAKE_PROFILES[id];
       for (const [field, value] of Object.entries(declared)) {
         if (field === 'evidence') continue;
+        if (field === 'restRows') {
+          // A table of patterns, one per exact version, compiled entry by
+          // entry; an entry's own evidence is provenance and is not derived.
+          assert.deepEqual(Object.keys(derived.restRows), Object.keys(value), `${id}.restRows must keep exactly the declared versions`);
+          for (const [version, entry] of Object.entries(value)) {
+            assert.deepEqual(Object.keys(derived.restRows[version]), ['footerRe'], `${id}.restRows.${version} derives the compiled footer and nothing else`);
+            assert.ok(derived.restRows[version].footerRe instanceof RegExp);
+            assert.equal(derived.restRows[version].footerRe.source, entry.footerPattern, `${id}.restRows.${version}: the compiled pattern must be the declared one`);
+          }
+          continue;
+        }
         if (field.endsWith('Pattern')) {
           const re = derived[compiledName(field)];
           assert.ok(re instanceof RegExp, `${id}.${field} must be compiled to ${compiledName(field)}`);
@@ -779,6 +790,107 @@ describe('an engine that animates decoration at rest is still readable as idle (
   it('actually typed input is still input', () => {
     assert.equal(wake._composerEmpty({ line: '› hello', x: 7 }, codex()), false,
       'a typed word must never read as an empty composer');
+  });
+});
+
+describe('restRows: what an exact engine version draws below its composer (#2059)', () => {
+  const FOOTER = '^  \\? for shortcuts$';
+  const EVIDENCE = { verifiedOn: '2026-10-12', source: 'a live capture' };
+  /**
+   * A well-formed block declaring `restRows`.
+   * @param {*} table - The `restRows` value.
+   * @returns {object}
+   */
+  const withRows = (table) => {
+    const b = wellFormed();
+    b.restRows = table;
+    b.evidence.restRows = { verifiedOn: '2026-10-12', source: 'see each entry' };
+    return b;
+  };
+  const entry = (over = {}) => ({ footerPattern: FOOTER, evidence: { ...EVIDENCE }, ...over });
+
+  it('a well-formed table loads, compiled per exact version and frozen', () => {
+    const b = withRows({ '0.161.0': entry(), '0.162.0': entry({ footerPattern: '^  other footer$' }) });
+    assert.deepEqual(wake._wakeBlockErrors(b), []);
+    const rows = derive(b).probe.restRows;
+    assert.deepEqual(Object.keys(rows), ['0.161.0', '0.162.0']);
+    assert.equal(rows['0.161.0'].footerRe.source, FOOTER);
+    assert.equal(rows['0.162.0'].footerRe.source, '^  other footer$');
+    assert.ok(rows['0.161.0'].footerRe.test('  ? for shortcuts'));
+    assert.ok(Object.isFrozen(rows) && Object.isFrozen(rows['0.161.0']));
+    assert.equal(Object.prototype.hasOwnProperty.call(rows, '0.156.1'), false);
+  });
+
+  it('a block that declares none has none, and is not refused for it', () => {
+    assert.deepEqual(wake._wakeBlockErrors(wellFormed()), []);
+    assert.equal('restRows' in derive(wellFormed()).probe, false);
+  });
+
+  it('the bundled Codex profile declares exactly 0.161.0 and 0.162.0, each with its own dated measurement, and nothing for 0.156.1', () => {
+    const declared = block('codex').restRows;
+    assert.deepEqual(Object.keys(declared), ['0.161.0', '0.162.0']);
+    for (const [version, row] of Object.entries(declared)) {
+      assert.deepEqual(Object.keys(row), ['footerPattern', 'evidence']);
+      assert.match(row.evidence.verifiedOn, /^\d{4}-\d{2}-\d{2}$/);
+      assert.ok(row.evidence.source.includes(`codex-cli ${version}`), `${version}'s evidence is its own`);
+      assert.ok(row.evidence.source.includes('Not inferred from any other version'));
+    }
+    assert.notEqual(declared['0.161.0'].evidence.source, declared['0.162.0'].evidence.source);
+    // Declaring a version's rows is not admitting it.
+    const verified = bundled().find((b) => b.profile.id === 'codex').profile.capabilities.startupControl.verifiedVersions;
+    for (const version of Object.keys(declared)) assert.equal(verified.includes(version), false, `${version} is not a verified version`);
+  });
+
+  it('refuses a table that is not one, and leaves the engine unprofiled', () => {
+    for (const bad of [null, [], 'x', 3, {}, { '0.161.0': null }, { '0.161.0': [] }, { '0.161.0': 'x' }]) {
+      const b = withRows(bad);
+      assert.match(wake._wakeBlockErrors(b).join(' '), /restRows must be/, JSON.stringify(bad));
+      assert.equal(derive(b).probe, undefined, JSON.stringify(bad));
+    }
+  });
+
+  it('refuses a key that is not one exact version', () => {
+    for (const key of ['0.161', '0.161.x', 'v0.161.0', '0.161.0-beta', '>=0.161.0', '*', '', '0.161.0 ', '0.161.0,0.162.0']) {
+      const b = withRows({ [key]: entry() });
+      assert.match(wake._wakeBlockErrors(b).join(' '), /restRows must be/, JSON.stringify(key));
+      assert.equal(derive(b).probe, undefined);
+    }
+  });
+
+  it('refuses a footer pattern that could match less, or more, than one whole row', () => {
+    const loose = ['\\? for shortcuts', '^  \\? for shortcuts', '  \\? for shortcuts$', '^  \\? for shortcuts\\$', '^a$|b', '^(a|b)$', '^$', '^.*$', '^ *$', '^(unclosed$', '', null, 7];
+    for (const footerPattern of loose) {
+      const b = withRows({ '0.161.0': entry({ footerPattern }) });
+      assert.match(wake._wakeBlockErrors(b).join(' '), /restRows must be/, JSON.stringify(footerPattern));
+      assert.equal(derive(b).probe, undefined, JSON.stringify(footerPattern));
+    }
+  });
+
+  it('one bad entry refuses the whole table: a good neighbour does not carry it', () => {
+    const b = withRows({ '0.161.0': entry(), '0.162.0': entry({ footerPattern: 'unanchored' }) });
+    assert.match(wake._wakeBlockErrors(b).join(' '), /restRows must be/);
+    assert.equal(derive(b).probe, undefined);
+  });
+
+  it('refuses an entry with no provenance of its own, a bad date, or a key the gate does not read', () => {
+    const bad = [
+      entry({ evidence: undefined }), entry({ evidence: null }), entry({ evidence: [] }), entry({ evidence: { verifiedOn: '2026-10-12' } }),
+      entry({ evidence: { source: 'x' } }), entry({ evidence: { verifiedOn: null, source: 'x' } }), entry({ evidence: { verifiedOn: '12 Oct 2026', source: 'x' } }),
+      entry({ evidence: { verifiedOn: '2026-13-40', source: 'x' } }), entry({ evidence: { verifiedOn: '2026-10-12', source: '' } }),
+      entry({ maxStatusRows: 2 }), entry({ statusPattern: '^ .*$' })
+    ];
+    for (const row of bad) {
+      const b = withRows({ '0.161.0': row });
+      assert.match(wake._wakeBlockErrors(b).join(' '), /restRows must be/, JSON.stringify(row));
+      assert.equal(derive(b).probe, undefined);
+    }
+  });
+
+  it('the table needs the block\'s own evidence entry too, like every declared field', () => {
+    const b = withRows({ '0.161.0': entry() });
+    delete b.evidence.restRows;
+    assert.match(wake._wakeBlockErrors(b).join(' '), /evidence\.restRows is missing/);
+    assert.equal(derive(b).probe, undefined);
   });
 });
 

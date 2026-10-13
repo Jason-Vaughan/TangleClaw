@@ -118,6 +118,22 @@
       "decorativePattern": "[⠀-⣿]",
       "headerPattern": "\\bmodel:\\s+\\S",
       "startingPattern": "\\bmodel:\\s+loading\\b",
+      "restRows": {
+        "0.161.0": {
+          "footerPattern": "^  \\? for shortcuts$",
+          "evidence": {
+            "verifiedOn": "2026-10-12",
+            "source": "Signed-in codex-cli 0.161.0 over the launch path TangleClaw uses (a `codex app-server` per launch, the pane's TUI attached with `--remote`), throwaway CODEX_HOME, private tmux server, whole pane and cursor read together, 2026-10-12. At rest the composer has two rows below it: the status row, then exactly `  ? for shortcuts`, on the default status line, a three-item one and a single-item one, after a turn, after a skipped update prompt and after a resume. The screen it opens with, and the `Resuming session…` screen, draw that footer ALONE under an empty composer with the cursor on it (first seen 387 to 413 ms after launch over six launches, and at 427 ms on a resume, where the thread read idle at 625 to 634 ms while that screen was still up). No header row names a model. A plain `codex` launch on the shared daemon draws a different footer (`  ← for agents · ? for shortcuts`, captured 2026-10-07) and is not this launch path. Not inferred from any other version."
+          }
+        },
+        "0.162.0": {
+          "footerPattern": "^  \\? for shortcuts$",
+          "evidence": {
+            "verifiedOn": "2026-10-12",
+            "source": "Signed-in codex-cli 0.162.0 over the launch path TangleClaw uses (a `codex app-server` per launch, the pane's TUI attached with `--remote`), throwaway CODEX_HOME, private tmux server, whole pane and cursor read together, 2026-10-12. At rest the composer has two rows below it: the status row, then exactly `  ? for shortcuts`, on the default status line, a three-item one and a single-item one, after a turn, after a skipped update prompt and after a resume. The screen it opens with, and the `Resuming session…` screen, draw that footer ALONE under an empty composer with the cursor on it (first seen 702 to 1137 ms after launch over five launches, at 516 ms on a resume, and at 407 ms under an empty status line). No header row names a model. As typing began, one frame drew the status row with the footer absent. Not inferred from any other version."
+          }
+        }
+      },
       "evidence": {
         "busyMarker": {
           "verifiedOn": "2026-09-16",
@@ -154,6 +170,10 @@
         "startingPattern": {
           "verifiedOn": "2026-10-11",
           "source": "Live captures of codex-cli 0.156.1. The model row reads `loading` on the screen Codex opens with, where it already draws an empty composer, and on the folder-trust and update dialogs drawn before a thread exists: every opening screen and startup dialog of 40 runs on 2026-10-07 (28 in the TangleClaw launch shape, 12 in the legacy shape), and the whole dialog reads of 2026-10-11. With a fake API key the row still changed to the model's name when the thread started, so it follows the session and not the account. Read on the NEWEST matching row only: on the main screen the superseded `loading` box stays in the history above the box that names the model. Not established for any version but 0.156.1; see `headerPattern` for the two versions that draw no such row."
+        },
+        "restRows": {
+          "verifiedOn": "2026-10-12",
+          "source": "Each version's entry carries its own measurement; see `restRows.<version>.evidence`. With an EMPTY status line (`tui.status_line = []`) both versions draw one row at rest, the footer with `100% context left` at its right, which is not the declared footer: the launch gate refuses it and the operator's Fire is needed. While a turn streams its answer, both versions draw no busy row: an empty composer, the status row and the footer, as at rest; the thread's own status is what says a turn is running."
         }
       }
     },

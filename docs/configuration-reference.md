@@ -614,6 +614,12 @@ Engine profiles define how TangleClaw interacts with an AI engine. See the [Engi
       "pasteRejectedMarker": "string — the engine's own words when it discards a submission. Optional; declared only where that was observed.",
       "headerPattern": "string — OPTIONAL, declared with startingPattern or not at all. Regex source matching the header row startingPattern is read on, in any state. Must not match the empty string.",
       "startingPattern": "string — OPTIONAL, declared with headerPattern or not at all. Regex source matching that header row while the engine is still starting. The wake's pane gate holds the pane as pane-engine-starting while the NEWEST header row in the read matches it. A regex and not a substring because a header pads its value to its box's width, so the spaces between label and value vary (Codex: `model:     loading`). Must not match the empty string.",
+      "restRows": {
+        "<MAJOR.MINOR.PATCH>": {
+          "footerPattern": "string — regex source of the ONE footer row this exact engine version draws beneath its status row at rest. Must take a whole row: it starts with ^, ends with $, holds no |, and does not match the empty string.",
+          "evidence": { "verifiedOn": "string — ISO date this version was measured", "source": "string — where and how" }
+        }
+      },
       "evidence": {
         "<field>": {
           "verifiedOn": "string|null — ISO date this field was measured, or null for a value nobody has measured",
@@ -638,7 +644,19 @@ nothing (`startup_dialogs_unreadable`) until it is fixed. See `docs/engine-guide
 Capabilities for what a declared dialog does to a launch.
 
 Omit `headerPattern` and `startingPattern` and no pane of that engine is held as
-`pane-engine-starting`; every other wake rule applies as before.
+`pane-engine-starting` by its header; every other wake rule applies as before.
+
+`restRows` is OPTIONAL: a table keyed by exact engine version, for a version measured to draw a footer
+row beneath its status row at rest and that footer alone on the screen it opens and resumes with
+(#2059). The wake's pane gate then holds a pane as `pane-engine-starting` while that footer is the
+first row below the composer, for the exact version the session's channel proved and for no other;
+the Codex adapter hands the same compiled pattern to the startup fire's pane witness, which accepts
+below the composer exactly one status row and then that footer. An entry holds `footerPattern` and
+its own `evidence` and nothing else; a key that is not one exact version, a pattern that is not
+anchored at both ends, or an entry with no evidence refuses the whole `wake` block when the profile
+is read. A version with no entry is read exactly as before. Declaring a version here does not admit
+it: `startupControl.verifiedVersions` decides which versions get a channel. See
+`docs/engine-guide.md` → `wake`.
 
 Omit `wake` and the engine is never idle-judged or nudged (skipped and logged, never woken against
 a guessed signature). Its `evidence` map must cover the declared fields in both directions, and a
