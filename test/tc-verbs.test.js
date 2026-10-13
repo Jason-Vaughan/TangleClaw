@@ -1067,7 +1067,7 @@ describe('tc sessions isolation — a session under the operator\'s override (#2
     assert.ok(out.includes('      Reason 5.'), 'the server\'s reason is still printed under the row');
     assert.match(out, /^1 isolated, 2 not isolated \(1 of them under the operator's override\), 1 not shown isolated, 0 not applicable\.$/m);
     assert.match(out, /^Ask the operator to end and relaunch each session marked NOT ISOLATED or NOT SHOWN ISOLATED, except those marked \(operator's override\)\. Afterwards, check it took: tc sessions isolation --replaced 2,3$/m);
-    assert.match(out, /^Marked \(operator's override\): #5 p5\. The operator's override let each start although it could not be shown isolated\. Ending and relaunching one isolates it only on a Codex version TangleClaw has verified; on the same version it starts the same way while the override stands, and is refused once the override is cleared\.$/m);
+    assert.match(out, /^Marked \(operator's override\): #5 p5\. The operator's override let each start although it could not be shown isolated\. Ending and relaunching one can isolate it only on a Codex version TangleClaw has verified; on the same version it starts the same way while the override stands, and is refused once the override is cleared\.$/m);
   });
 
   it('gives no all-clear and no relaunch advice when the only sessions not isolated run under the override', () => {
@@ -1089,13 +1089,17 @@ describe('tc sessions isolation — a session under the operator\'s override (#2
   });
 
   it('reads nothing but a true mark on a not-isolated row: anything else is an ordinary session to relaunch', () => {
-    const notMarks = [undefined, null, true, 'install', 1, [], {}, { launchedUnderOverride: false }, { launchedUnderOverride: 'true' }, { scope: 'install' }];
+    const notMarks = [undefined, null, true, 'install', 1, [], {}, { launchedUnderOverride: false }, { launchedUnderOverride: 'true' }, { scope: 'install' },
+      // A launch the server could not prove was overridden is not one tc may leave out of the relaunch list.
+      { launchedUnderOverride: 'unproved' }, { launchedUnderOverride: null, unproved: true }, { state: 'unproved', scope: 'install' }, { launchedUnderOverride: false, unproved: true }];
     for (const override of notMarks) {
       const marked = row(5, 'not-isolated', override);
       if (override === undefined) delete marked.override;
       const out = renderIsolation(inventory([marked]));
       assert.doesNotMatch(out, /override/, JSON.stringify(override));
-      assert.match(out, /^1 not isolated|, 1 not isolated,/m);
+      assert.match(out, /^ {2}NOT ISOLATED {2}#5 p5 /m, JSON.stringify(override));
+      assert.match(out, /^0 isolated, 1 not isolated, 0 not shown isolated, 0 not applicable\.$/m);
+      assert.match(out, /^Ask the operator to end and relaunch each session marked NOT ISOLATED or NOT SHOWN ISOLATED\. Afterwards/m, JSON.stringify(override));
       assert.match(out, /--replaced 5$/m, JSON.stringify(override));
     }
     for (const verdict of ['unknown', 'brand-new']) {
