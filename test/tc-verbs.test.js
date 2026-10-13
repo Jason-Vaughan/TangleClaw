@@ -1025,3 +1025,211 @@ describe('renderBodyTooLarge — the 413 sentence tc prints (#1514)', () => {
     assert.equal(renderBodyTooLarge({ code: 'BODY_TOO_LARGE' }), null);
   });
 });
+
+// A session the operator's override let start is not isolated and stays so
+// across a relaunch while the override stands (#2229). The fleet list marks
+// it, and stops naming it as a session to relaunch.
+describe('tc sessions isolation — a session under the operator\'s override (#2229)', () => {
+  const { renderIsolation } = require('../lib/tc-verbs');
+  const MARK = { launchedUnderOverride: true, scope: 'install', refusal: 'version_unverified', versionRead: '0.170.0', recordedAt: '2026-10-12T20:00:00.000Z' };
+
+  /**
+   * One inventory row, in the shape `GET /api/launch/isolation` answers.
+   * @param {number|null} sessionId - The session; null for the Project Master
+   * @param {string} verdict - Its verdict
+   * @param {*} [override] - The row's `override` field
+   * @returns {object}
+   */
+  function row(sessionId, verdict, override = null) {
+    return {
+      sessionId, projectId: sessionId && sessionId * 10, projectName: sessionId ? `p${sessionId}` : null, engineId: 'codex',
+      role: sessionId ? 'project' : 'master', verdict, basis: verdict === 'isolated' ? 'no-daemon' : null,
+      reasonCode: verdict === 'not-isolated' ? 'command_unisolated' : null, reason: `Reason ${sessionId}.`, override
+    };
+  }
+
+  /**
+   * The inventory answer holding these rows.
+   * @param {object[]} sessions - The rows
+   * @returns {object}
+   */
+  function inventory(sessions) {
+    return { observedAt: '2026-10-12T21:00:00.000Z', tmux: { answered: true, cause: null }, sessions, summary: {} };
+  }
+
+  it('marks the row, lists it after the plain not-isolated ones, and keeps it out of the relaunch ids', () => {
+    const out = renderIsolation(inventory([row(5, 'not-isolated', MARK), row(2, 'not-isolated'), row(3, 'unknown'), row(1, 'isolated')]));
+    const lines = out.split('\n');
+    const at = (text) => lines.findIndex((line) => line.includes(text));
+    assert.match(out, /^ {2}NOT ISOLATED \(operator's override\) {2}#5 p5 — engine codex \[command_unisolated\]$/m);
+    assert.match(out, /^ {2}NOT ISOLATED {2}#2 p2 — engine codex \[command_unisolated\]$/m);
+    assert.ok(at('#2 p2') < at('#5 p5') && at('#5 p5') < at('NOT SHOWN ISOLATED'), out);
+    assert.ok(out.includes('      Reason 5.'), 'the server\'s reason is still printed under the row');
+    assert.match(out, /^1 isolated, 2 not isolated \(1 of them under the operator's override\), 1 not shown isolated, 0 not applicable\.$/m);
+    assert.match(out, /^Ask the operator to end and relaunch each session marked NOT ISOLATED or NOT SHOWN ISOLATED, except those marked \(operator's override\)\. Afterwards, check it took: tc sessions isolation --replaced 2,3$/m);
+    assert.match(out, /^Marked \(operator's override\): #5 p5\. The operator's override let each start although it could not be shown isolated\. Ending and relaunching one can isolate it only on a Codex version TangleClaw has verified; on the same version it starts the same way while the override stands, and is refused once the override is cleared\.$/m);
+  });
+
+  it('gives no all-clear and no relaunch advice when the only sessions not isolated run under the override', () => {
+    const out = renderIsolation(inventory([row(5, 'not-isolated', MARK), row(null, 'not-isolated', MARK), row(1, 'isolated'), row(4, 'not-applicable')]));
+    assert.doesNotMatch(out, /Ask the operator to end and relaunch/);
+    assert.doesNotMatch(out, /--replaced/);
+    assert.doesNotMatch(out, /^No live session needs relaunching/m);
+    assert.match(out, /^Apart from the sessions under the operator's override, no live session needs relaunching for isolation\.$/m);
+    assert.match(out, /^ {2}NOT ISOLATED \(operator's override\) {2}Project Master — engine codex/m);
+    assert.match(out, /^Marked \(operator's override\): #5 p5, Project Master\. /m);
+    assert.match(out, /2 not isolated \(2 of them under the operator's override\)/);
+  });
+
+  it('labels a row whose launch record has aged out, since the mark itself does not', () => {
+    const aged = { launchedUnderOverride: true, scope: null, refusal: null, versionRead: null, recordedAt: null };
+    const out = renderIsolation(inventory([row(5, 'not-isolated', aged)]));
+    assert.match(out, /NOT ISOLATED \(operator's override\) {2}#5 p5/);
+    assert.doesNotMatch(out, /--replaced/);
+  });
+
+  it('reads nothing but a true mark on a not-isolated row: anything else is an ordinary session to relaunch', () => {
+    const notMarks = [undefined, null, true, 'install', 1, [], {}, { launchedUnderOverride: false }, { launchedUnderOverride: 'true' }, { scope: 'install' },
+      // A launch the server could not prove was overridden is not one tc may leave out of the relaunch list.
+      { launchedUnderOverride: 'unproved' }, { launchedUnderOverride: null, unproved: true }, { state: 'unproved', scope: 'install' }, { launchedUnderOverride: false, unproved: true }];
+    for (const override of notMarks) {
+      const marked = row(5, 'not-isolated', override);
+      if (override === undefined) delete marked.override;
+      const out = renderIsolation(inventory([marked]));
+      assert.doesNotMatch(out, /override/, JSON.stringify(override));
+      assert.match(out, /^ {2}NOT ISOLATED {2}#5 p5 /m, JSON.stringify(override));
+      assert.match(out, /^0 isolated, 1 not isolated, 0 not shown isolated, 0 not applicable\.$/m);
+      assert.match(out, /^Ask the operator to end and relaunch each session marked NOT ISOLATED or NOT SHOWN ISOLATED\. Afterwards/m, JSON.stringify(override));
+      assert.match(out, /--replaced 5$/m, JSON.stringify(override));
+    }
+    for (const verdict of ['unknown', 'brand-new']) {
+      const out = renderIsolation(inventory([row(5, verdict, MARK)]));
+      assert.doesNotMatch(out, /override/, verdict);
+      assert.match(out, /--replaced 5$/m, verdict);
+    }
+    for (const verdict of ['isolated', 'not-applicable']) {
+      const out = renderIsolation(inventory([row(5, verdict, MARK)]));
+      assert.doesNotMatch(out, /override/, verdict);
+      assert.match(out, /^No live session needs relaunching for isolation\.$/m, verdict);
+    }
+  });
+
+  it('a launch the server holds no override record for is an ordinary session to relaunch, with its reason whole', () => {
+    // The pane's command has the overridden form but the launch's own record
+    // was not read: the server says so in the reason and attaches no mark.
+    const unproved = { ...row(5, 'not-isolated', null), overrideUnproved: true, reason: 'Started unisolated. TangleClaw holds no record this launch was started under the override.' };
+    const out = renderIsolation(inventory([unproved, { ...row(6, 'not-isolated', MARK), overrideUnproved: false }]));
+    assert.match(out, /^ {2}NOT ISOLATED {2}#5 p5 — engine codex \[command_unisolated\]$/m);
+    assert.ok(out.includes(`      ${unproved.reason}`));
+    assert.match(out, /--replaced 5$/m);
+    assert.match(out, /^Marked \(operator's override\): #6 p6\. /m);
+    assert.match(out, /2 not isolated \(1 of them under the operator's override\)/);
+    const alone = renderIsolation(inventory([unproved]));
+    assert.match(alone, /^Ask the operator to end and relaunch each session marked NOT ISOLATED or NOT SHOWN ISOLATED\. Afterwards, check it took: tc sessions isolation --replaced 5$/m);
+    assert.doesNotMatch(alone, /operator's override|Marked|Apart from/);
+  });
+
+  it('never prints an overridden session as a pass', () => {
+    const out = renderIsolation(inventory([row(5, 'not-isolated', MARK), row(null, 'not-isolated', MARK)]));
+    for (const line of out.split('\n')) assert.doesNotMatch(line, /(?<!NOT )(?<!NOT SHOWN )ISOLATED/, line);
+    assert.match(out, /^0 isolated, 2 not isolated/m);
+  });
+
+  it('prints a fleet with no session under an override exactly as before', () => {
+    const plain = [row(2, 'not-isolated'), row(3, 'unknown'), row(1, 'isolated'), row(4, 'not-applicable'), row(null, 'not-applicable')];
+    assert.equal(renderIsolation(inventory(plain)), [
+      'Launch isolation of 5 live session(s), from the command each pane was started with (read 2026-10-12T21:00:00.000Z):',
+      '  NOT ISOLATED  #2 p2 — engine codex [command_unisolated]',
+      '      Reason 2.',
+      '  NOT SHOWN ISOLATED  #3 p3 — engine codex',
+      '      Reason 3.',
+      '  ISOLATED (no-daemon)  #1 p1 — engine codex',
+      '      Reason 1.',
+      '  not applicable  #4 p4 — engine codex',
+      '      Reason 4.',
+      '  not applicable  Project Master — engine codex',
+      '      Reason null.',
+      '',
+      '1 isolated, 1 not isolated, 1 not shown isolated, 2 not applicable.',
+      'Ask the operator to end and relaunch each session marked NOT ISOLATED or NOT SHOWN ISOLATED. Afterwards, check it took: tc sessions isolation --replaced 2,3',
+      'Read-only. Nothing here ends or restarts a session.',
+      ''
+    ].join('\n'));
+    assert.equal(renderIsolation(inventory([row(1, 'isolated')])).split('\n').at(-3), 'No live session needs relaunching for isolation.');
+  });
+});
+
+// The rows above are built by hand. These come from the inventory itself, so
+// the field `tc` reads is the one the server writes.
+describe('tc and the launch-isolation inventory\'s own rows for an override (#2229)', () => {
+  const verbs = require('../lib/tc-verbs');
+  const inventory = require('../lib/launch-isolation-inventory');
+  const sessions = require('../lib/sessions');
+  const codex = require('../lib/startup-control-codex');
+
+  const BIN = '/opt/fake/bin/codex';
+  const OVERRIDDEN_FORM = sessions._withPathFloor(`${BIN} --ask-for-approval never`);
+  const RECORD = { id: 1, eventType: sessions.ISOLATION_OVERRIDDEN_EVENT, createdAt: '2026-10-12 20:00:00' };
+
+  /**
+   * The inventory of a fleet of four project sessions and the Project Master:
+   * session 1 and the Master started under the override with their record
+   * kept, session 2 with the same command and no record, session 3 by the
+   * bare command name, session 4 isolated.
+   * @returns {Promise<object>}
+   */
+  function realInventory() {
+    const live = [1, 2, 3, 4].map((id) => ({ id, projectId: id * 10, engineId: 'codex', tmuxSession: `s${id}`, sessionMode: 'tmux', status: 'active' }));
+    return inventory.inventory({
+      listPanes: async () => ({ answered: true, cause: null, sessions: new Map(Object.entries({
+        s1: [OVERRIDDEN_FORM], s2: [OVERRIDDEN_FORM], s3: [sessions._withPathFloor('codex')], s4: [sessions._withPathFloor(`${BIN} --no-daemon`)], 'tangleclaw-master': [OVERRIDDEN_FORM]
+      })) }),
+      liveSessions: () => live,
+      project: (id) => ({ id, name: `project-${id}` }),
+      engineProfile: () => ({ id: 'codex', launch: { shellCommand: 'codex' }, capabilities: { startupControl: { verifiedVersions: ['0.156.1'] } } }),
+      openChannel: () => null,
+      session: (id) => live.find((s) => s.id === id) || null,
+      currentSession: (projectId) => live.find((s) => s.projectId === projectId) || null,
+      master: () => ({ tmuxSession: 'tangleclaw-master', engineId: 'codex' }),
+      overrideRecord: ({ sessionId }) => {
+        if (sessionId === 1) return { ...RECORD, detail: { role: 'project', versionRead: '0.170.0', refusal: 'version_unverified', scope: 'project' } };
+        if (sessionId === null) return { ...RECORD, detail: { role: 'master', versionRead: null, refusal: 'version_unknown', scope: 'install' } };
+        return null;
+      },
+      adapters: { codex },
+      now: () => new Date('2026-10-12T21:00:00.000Z')
+    });
+  }
+
+  it('the inventory writes the mark and the unproved flag where these tests expect them', async () => {
+    const inv = await realInventory();
+    assert.deepEqual(inv.sessions.map((s) => [s.role === 'master' ? 'master' : s.sessionId, s.verdict, Boolean(s.override && s.override.launchedUnderOverride === true), s.overrideUnproved]), [
+      [1, 'not-isolated', true, false], [2, 'not-isolated', false, true], [3, 'not-isolated', false, false], [4, 'isolated', false, false], ['master', 'not-isolated', true, false]
+    ]);
+  });
+
+  it('tc sessions isolation marks the two launches with a record, and asks for the unproved one to be relaunched', async () => {
+    const out = verbs.renderIsolation(await realInventory());
+    assert.match(out, /^ {2}NOT ISOLATED \(operator's override\) {2}#1 project-10 — engine codex \[command_unisolated\]$/m);
+    assert.match(out, /^ {2}NOT ISOLATED \(operator's override\) {2}Project Master — engine codex \[command_unisolated\]$/m);
+    assert.match(out, /^ {2}NOT ISOLATED {2}#2 project-20 — engine codex \[command_unisolated\]$/m);
+    assert.match(out, /^ {2}NOT ISOLATED {2}#3 project-30 — engine codex \[command_not_pinned\]$/m);
+    assert.match(out, /^1 isolated, 4 not isolated \(2 of them under the operator's override\), 0 not shown isolated, 0 not applicable\.$/m);
+    assert.match(out, /, except those marked \(operator's override\)\. Afterwards, check it took: tc sessions isolation --replaced 2,3$/m);
+    assert.match(out, /^Marked \(operator's override\): #1 project-10, Project Master\. /m);
+    assert.ok(out.includes(inventory.OVERRIDE_UNPROVED), 'the unproved row\'s reason is printed whole');
+    assert.ok(out.includes(sessions.ISOLATION_OVERRIDE_RISK), 'and so is the risk the server attaches to a marked row');
+  });
+
+  it('the server\'s line carries the override for a marked row and only the server\'s reason for an unproved one', async () => {
+    const inv = await realInventory();
+    const line = (binding) => verbs.renderServerIsolationRecord(binding, inv, null);
+    const marked = line({ state: 'verified', role: 'project', sessionId: 1 });
+    assert.match(marked, /\(session 1\) is recorded as not isolated, started under the operator's override \(a relaunch can isolate it only on a Codex version TangleClaw has verified; /);
+    assert.ok(marked.indexOf('started under the operator\'s override') < marked.indexOf(inv.sessions[0].reason));
+    assert.match(line({ state: 'verified', role: 'master', sessionId: null }), /\(the Project Master\) is recorded as not isolated, started under the operator's override /);
+    const unproved = line({ state: 'verified', role: 'project', sessionId: 2 });
+    assert.equal(unproved, `Server's record (not a verdict about this shell): the launch this shell's binding names (session 2) is recorded as not isolated. ${inv.sessions[1].reason} That does not show this shell is that launch.`);
+    assert.ok(unproved.includes(inventory.OVERRIDE_UNPROVED));
+  });
+});

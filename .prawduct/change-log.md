@@ -35,6 +35,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-12 — #2229: `tc` names a session running under the operator's override, and stops advising a relaunch that would change nothing
+
+<!-- prawduct: type=feature | scope=2229-01c-tc-override-wording -->
+
+#2229 Chunk 01c: what `tc` prints for a row of the isolation inventory that carries chunk 01b's mark. Branch `feat/2229-01c-tc-override-wording`, from `origin/main` `9b803ae9`, with `main` at `78b13a7e` (chunk 01b) merged in before the docs and the final tree. The code and its first tests were built beside 01b against the field its plan fixed; the two guides and this entry waited for 01b's merge, on the Integrator's word.
+
+Visual change: no. No file under `public/` changes; what changes is text `tc` prints in a pane.
+
+**Why.** A session the override let start is not isolated, and a relaunch starts it the same way while the override stands. `tc sessions isolation` told the operator to end and relaunch exactly those sessions and offered their ids to `--replaced`. Under `tc whoami` the server's line named the override only at the end of the row's reason, which is the part a notice cut to a page's room loses.
+
+**What changed.**
+
+- `lib/tc-verbs.js`, `tc sessions isolation`: a row with the mark prints `NOT ISOLATED (operator's override)`, after the plain `NOT ISOLATED` rows. The count line says how many of the not-isolated run under the override, and nothing of it when none do. Such a row is left out of the relaunch sentence and of the `--replaced` ids; when both kinds are present the sentence adds "except those marked (operator's override)". One closing sentence names the marked sessions and says what a relaunch does. When only marked sessions are not isolated the list says "Apart from the sessions under the operator's override, no live session needs relaunching", never a bare all-clear.
+- `lib/tc-verbs.js`, the server's attributed line under `tc whoami`, `tc capabilities` and the state step: for a marked row it reads "recorded as not isolated, started under the operator's override (a relaunch can isolate it only on a Codex version TangleClaw has verified; on the same version it starts the same way while the override stands, and is refused once the override is cleared)", before the row's reason.
+- `tc`'s own `Launch isolation:` line is unchanged. It is read from the pane alone, and a binding can be another launch's, so nothing in the server's row alters `tc`'s own advice (queue Rulings items 11, 13 and 56).
+- `tc` reads one thing of the row: verdict `not-isolated` and `override.launchedUnderOverride === true`. Any other shape of the field, a mark beside another verdict, and a row carrying `overrideUnproved` keep the ordinary label and the ordinary advice to relaunch.
+- Docs: `docs/engine-guide.md` (the cutover steps, and the server's second line), `docs/user-guide.md` (the `NOT ISOLATED` row).
+
+**Corrected at the build.** The release's wording said a relaunch isolates such a session "only on a verified Codex or with the override cleared". Clearing the override isolates nothing: on the same Codex version the next launch is then refused. Found by the cumulative review and by the decider, and reworded before anything was pushed.
+
+**Limits.** The mark is the server's, and ages out with the activity log (chunk 01b's limit): a long-lived overridden session then reads unproved and is listed for relaunch again. Not run against a real overridden Codex pane: that waits for the deploy.
+
+**Tests.** `test/tc-verbs.test.js`: the fleet list with a marked row, with only marked rows, with a mark whose detail is null, with malformed and unproved marker shapes, with a mark beside each other verdict; no positive verdict; a fleet with no mark printed exactly as before; and the same renderers over rows written by the real `lib/launch-isolation-inventory.js` for a marked project session, a marked Project Master, an unproved session and a plain one. `test/tc-pane-identity.test.js`: the server's line, the Project Master's row, `tc`'s own line the same bytes with and without the mark for six readings of the pane, an unproved row, and the cut notice keeping the override.
+
 ## 2026-10-12 — #2229: a Codex launch the operator's override covers starts unisolated, and says so four ways
 
 <!-- prawduct: type=feature | scope=codex-override-2229 -->

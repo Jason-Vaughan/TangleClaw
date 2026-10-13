@@ -1161,6 +1161,18 @@ Cutover after an upgrade, or after installing a different Codex version:
    no shared background process, or its new session has no local pane. `unknown-session` means
    TangleClaw has no session with that id: check the number.
 
+A session marked `NOT ISOLATED (operator's override)` is left out of step 1 (#2229). It was started
+under the launch-isolation override, with that launch's own record read (see "The operator's
+override" below), and `tc sessions isolation` counts it ("2 not isolated (1 of them under the
+operator's override)"), lists it after the plain `NOT ISOLATED` rows, keeps its id out of the
+`--replaced` ids it offers and names it in one closing sentence instead. A relaunch can isolate it
+only on a Codex version TangleClaw has verified; on the same version it starts the same way while
+the override stands, and is refused once the override is cleared. So after installing a verified
+Codex version, end and relaunch these sessions too, and add their ids to step 3 yourself: `tc` does
+not read the installed version and goes on leaving them out. A row whose reason says
+TangleClaw holds no record that the launch was started under the override carries no such mark: it
+is an ordinary `NOT ISOLATED` session and is in step 1.
+
 The inventory ends and restarts nothing. It judges the command a pane was started with, not the
 process running in the pane now. For a `--no-daemon` session, the Codex version was checked when it
 was launched and is not checked again. It does not read each pane's environment, so it takes a
@@ -1192,6 +1204,14 @@ chosen by the session the server verified and never by an id the shell supplies.
 the server's fact ("recorded as isolated … That does not show this shell is that launch") and is
 not a verdict about the shell. With a binding that is not verified the server is not asked and the
 line says so. If the lookup fails the line reads `unavailable` and the verb still answers.
+
+For a launch the server marks as started under the operator's override (#2229), that second line
+says so before the row's reason: "recorded as not isolated, started under the operator's override
+(a relaunch can isolate it only on a Codex version TangleClaw has verified; on the same version it
+starts the same way while the override stands, and is refused once the override is cleared)". The
+session's own row above it does not change. It is read from the pane alone, and a binding can be
+another launch's, so the server's record never softens `tc`'s own advice to relaunch. A launch with
+no override record gets the ordinary second line, with the server's reason whole.
 
 Three limits. A session that never runs `tc` and never reads its launch steps is still not told.
 The row describes the command the pane was started with, not the process running in it now. And
