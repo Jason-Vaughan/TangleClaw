@@ -5757,6 +5757,115 @@ route('GET', '/api/launch/isolation', async (req, res) => {
   }
 });
 
+/**
+ * The launch-isolation override settings as the operator's routes answer
+ * them: the install-wide override, and each project whose own is on.
+ * @returns {{install: {allowed: boolean, setAt: (string|null), setBy: (string|null)}, projects: Array<{projectId: number, projectName: (string|null), allowed: boolean, setAt: string, setBy: (string|null)}>}}
+ */
+function _launchIsolationOverrideSettings() {
+  const { install, projects } = store.launchIsolationOverrides.list();
+  return {
+    install: { allowed: Boolean(install), setAt: install ? install.setAt : null, setBy: install ? install.setBy : null },
+    projects: projects.map((row) => {
+      const project = store.projects.get(row.projectId);
+      return { projectId: row.projectId, projectName: project ? project.name : null, allowed: true, setAt: row.setAt, setBy: row.setBy };
+    })
+  };
+}
+
+/**
+ * Turn a launch-isolation override on or off for the operator and answer the
+ * settings as they then stand. The caller has already been admitted as the
+ * operator. A store fault answers 500 and names nothing as changed.
+ * @param {http.IncomingMessage} req - The request
+ * @param {http.ServerResponse} res - The response
+ * @param {number|null} projectId - The project, or null for the install-wide override
+ * @param {boolean} on - Whether to turn it on
+ * @returns {void}
+ */
+function _writeLaunchIsolationOverride(req, res, projectId, on) {
+  const by = (req.tcSession && req.tcSession.username) || null;
+  try {
+    const result = on
+      ? store.launchIsolationOverrides.set({ projectId, setBy: by })
+      : store.launchIsolationOverrides.clear({ projectId, clearedBy: by });
+    if (result.changed) {
+      log.warn(on ? 'Launch-isolation override turned on' : 'Launch-isolation override turned off', {
+        scope: projectId === null ? 'install' : 'project', projectId, by
+      });
+    }
+    jsonResponse(res, 200, _launchIsolationOverrideSettings());
+  } catch (err) { // prawduct:allow prawduct/broad-except -- a store fault answers 500 with nothing reported as changed, never a settings answer that may not be what is stored
+    if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');
+    log.error('A launch-isolation override could not be written', {
+      scope: projectId === null ? 'install' : 'project', projectId, on, error: err.message
+    });
+    errorResponse(res, 500, 'The launch-isolation override could not be saved just now. Nothing was changed; read the settings again before retrying.', 'INTERNAL_ERROR');
+  }
+}
+
+/**
+ * The project a launch-isolation override route names, after the operator has
+ * been admitted: 400 for a segment that is not a numeric id, 404 for an id no
+ * project has.
+ * @param {http.ServerResponse} res - The response, written only on refusal
+ * @param {string} segment - The `:id` path segment
+ * @returns {number|null} The project id, or null when the request was answered
+ */
+function _launchIsolationOverrideProject(res, segment) {
+  if (!/^[1-9]\d{0,15}$/.test(String(segment))) {
+    errorResponse(res, 400, 'A project is named here by its numeric id, for example /api/launch/isolation-overrides/projects/12', 'BAD_REQUEST');
+    return null;
+  }
+  const projectId = Number(segment);
+  if (!store.projects.get(projectId)) {
+    errorResponse(res, 404, `No project has the id ${projectId}.`, 'NOT_FOUND');
+    return null;
+  }
+  return projectId;
+}
+
+// The launch-isolation overrides (#2229): the operator's allowance to start an
+// engine that could not be shown to be kept off its shared background process,
+// for the whole install or for one project. Such a launch may borrow another
+// project's identity, so who may grant it is the whole design: every route
+// here, the read included, admits the operator alone and refuses before any
+// lookup. A session reads what applies to it from the launch record
+// (`GET /api/launch/isolation`), never from these settings.
+route('GET', '/api/launch/isolation-overrides', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'read the launch-isolation overrides')) return;
+  try {
+    jsonResponse(res, 200, _launchIsolationOverrideSettings());
+  } catch (err) { // prawduct:allow prawduct/broad-except -- a store fault answers 500, never a partial list that reads as every override that is on
+    log.error('The launch-isolation overrides could not be read', { error: err.message });
+    errorResponse(res, 500, 'The launch-isolation overrides could not be read just now.', 'INTERNAL_ERROR');
+  }
+});
+
+route('PUT', '/api/launch/isolation-overrides/install', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'turn on the install-wide launch-isolation override')) return;
+  _writeLaunchIsolationOverride(req, res, null, true);
+});
+
+route('DELETE', '/api/launch/isolation-overrides/install', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'turn off the install-wide launch-isolation override')) return;
+  _writeLaunchIsolationOverride(req, res, null, false);
+});
+
+route('PUT', '/api/launch/isolation-overrides/projects/:id', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'turn on a project\'s launch-isolation override')) return;
+  const projectId = _launchIsolationOverrideProject(res, params.id);
+  if (projectId === null) return;
+  _writeLaunchIsolationOverride(req, res, projectId, true);
+});
+
+route('DELETE', '/api/launch/isolation-overrides/projects/:id', (req, res, params) => {
+  if (!operatorProjectCaller(req, res, 'turn off a project\'s launch-isolation override')) return;
+  const projectId = _launchIsolationOverrideProject(res, params.id);
+  if (projectId === null) return;
+  _writeLaunchIsolationOverride(req, res, projectId, false);
+});
+
 // GET /api/checkouts — the fleet's checkouts in one answer (#1678, #993): one
 // row per project with a live session, from the same `projectCheckout` the
 // project route, the prime and the session chip read, so the PM, the Master, a

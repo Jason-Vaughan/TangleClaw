@@ -113,6 +113,17 @@ describe('launch-binding guard: every mutating route is guarded or listed (#2233
     for (const watchRoute of watchRoutes) assert.ok(!admitted.includes(watchRoute), `${watchRoute} must not be reachable unidentified`);
   });
 
+  it('guards every state-changing launch-isolation override route: an unidentified caller reaches none (#2229)', () => {
+    const overrideRoutes = MUTATING.filter((r) => r.pattern.startsWith('/api/launch/isolation-overrides')).map(key).sort();
+    assert.deepEqual(overrideRoutes, [
+      'DELETE /api/launch/isolation-overrides/install',
+      'DELETE /api/launch/isolation-overrides/projects/:id',
+      'PUT /api/launch/isolation-overrides/install',
+      'PUT /api/launch/isolation-overrides/projects/:id'
+    ]);
+    for (const overrideRoute of overrideRoutes) assert.ok(!admitted.includes(overrideRoute), `${overrideRoute} must not be reachable unidentified`);
+  });
+
   it('keeps the audit heartbeat guarded: it has no credential of its own', () => {
     assert.ok(MUTATING.some((r) => key(r) === 'POST /api/audit/heartbeat'));
     assert.ok(!admitted.includes('POST /api/audit/heartbeat'));
