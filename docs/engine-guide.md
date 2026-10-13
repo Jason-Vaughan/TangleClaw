@@ -1462,13 +1462,21 @@ every version it names was measured; the remedy that names no version does not.
     `tc sessions isolation` and `GET /api/launch/isolation`. Each names the project (or the Project
     Master), the version read and the refusal that was set aside. The row still reads
     `NOT ISOLATED`: the mark says how the launch was allowed to start, and is never a verdict.
-    Ending and relaunching such a session isolates it only on a verified Codex version, or refuses
-    it once the override is cleared.
-  - **A limit of the mark.** That a launch was overridden is read from its pane's start command and
-    lasts as long as the pane. Which refusal and which version come from the activity event, and the
-    activity log keeps only its 500 newest events for the whole install: on a busy install an old
-    session's row then says its launch was overridden and that its record is no longer kept. For the
-    Project Master the detail is the newest Master override on record.
+    A relaunch isolates it only on a Codex version TangleClaw has verified; on the same version it
+    starts the same way while the override stands, and is refused once the override is cleared.
+  - **The mark is claimed only on the launch's own record.** A row says its launch was overridden
+    only when TangleClaw reads the activity event that launch wrote: for a project session, the event
+    carrying its session id; for the Project Master, the event carrying a one-way reference to the
+    launch id its live pane holds. A pane's start command alone is not proof. The command an
+    overridden launch runs (the exact executable, neither isolation flag) is also what a profile
+    naming Codex by absolute path ran before launches were checked, and a tmux session can be made
+    by hand under a project's name. A row with that command and no record says so in words ("holds
+    no record that this launch was started under it") and carries `overrideUnproved`; it is not
+    called overridden.
+  - **A limit of the mark.** The activity log keeps only its 500 newest events for the whole
+    install. On a busy install an overridden session's event ages out while the session runs, and
+    its row then reads unproved, not overridden. The log warning written at the launch does not age
+    out with it.
 
 The channel ends with the
 session: kill, a wrap that ends the session, a

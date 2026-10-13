@@ -112,6 +112,7 @@ describe('GET /api/launch/isolation (#2233)', () => {
       assert.equal(res.status, 200);
       const byId = new Map(res.data.sessions.map((s) => [s.sessionId, s]));
       assert.equal(byId.get(binding.sessionId).override, null);
+      assert.ok(res.data.sessions.every((s) => s.overrideUnproved === false), 'no row is unproved: the one overridden launch has its record');
       const marked = byId.get(codexBinding.sessionId);
       assert.equal(marked.verdict, 'not-isolated');
       assert.equal(marked.reasonCode, 'command_unisolated');
@@ -131,7 +132,16 @@ describe('GET /api/launch/isolation (#2233)', () => {
     assert.ok(line.includes('refusal overridden: version_unverified; this project\'s override'), line);
     assert.ok(line.endsWith('That does not show this shell is that launch.'), line);
     assert.ok(verbs.renderIsolation(inv).includes('The operator\'s override allowed this launch'), 'and the fleet listing prints it under the row');
+    // The same pane once the launch's record is gone: not called overridden.
     store.getDb().prepare('DELETE FROM activity_log WHERE event_type = ?').run(sessions.ISOLATION_OVERRIDDEN_EVENT);
+    const later = (await sendAs(server, 'GET', '/api/launch/isolation', undefined, codexBinding.headers)).data;
+    const unproved = later.sessions.find((s) => s.sessionId === codexBinding.sessionId);
+    assert.equal(unproved.verdict, 'not-isolated');
+    assert.equal(unproved.override, null);
+    assert.equal(unproved.overrideUnproved, true);
+    const laterLine = verbs.renderServerIsolationRecord({ state: 'verified', role: 'project', sessionId: codexBinding.sessionId }, later, null);
+    assert.ok(laterLine.includes('holds no record that this launch was started under it'), laterLine);
+    assert.ok(!laterLine.includes('allowed this launch to start'), laterLine);
   });
 
   it('answers the operator\'s dashboard', async () => {

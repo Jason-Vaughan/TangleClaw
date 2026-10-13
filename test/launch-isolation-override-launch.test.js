@@ -424,6 +424,7 @@ describe('a launch under the operator\'s launch-isolation override (#2229)', () 
       assert.equal(row.override.refusal, 'version_unverified');
       assert.equal(row.override.versionRead, UNLISTED);
       assert.equal(typeof row.override.recordedAt, 'string');
+      assert.equal(row.overrideUnproved, false);
       assert.match(row.reason, new RegExp(`The operator's override allowed this launch to start although it could not be shown isolated \\(engine version read: ${UNLISTED.replace(/\./g, '\\.')}; refusal overridden: version_unverified; install-wide override\\)`));
       assert.ok(row.reason.endsWith(sessions.ISOLATION_OVERRIDE_RISK));
       assert.equal(inv.summary['not-isolated'] >= 1, true);
@@ -434,6 +435,22 @@ describe('a launch under the operator\'s launch-isolation override (#2229)', () 
       assert.match(printed, /is recorded as not isolated/i);
       assert.ok(printed.includes('The operator\'s override allowed this launch'), printed);
       assert.ok(printed.endsWith('That does not show this shell is that launch.'), printed);
+
+      // A pane running the same command for a session that left no such record
+      // (a profile that names Codex by absolute path, started before launches
+      // were judged) is not called overridden.
+      const dir2 = path.join(projectsDir, 'ovr-hand-made');
+      fs.mkdirSync(dir2, { recursive: true });
+      const other = store.projects.create({ name: 'ovr-hand-made', path: dir2, engine: 'codex' });
+      const bare = store.sessions.start({ projectId: other.id, engineId: 'codex', tmuxSession: 'ovr-hand-made' });
+      tmux._async.execFile = (_bin, _args, _opts, cb) => setImmediate(() => cb(null, `${line}\novr-hand-made:"${CODEX_BIN}"\n`));
+      const both = await inventory.inventory();
+      const plain = both.sessions.find((r) => r.sessionId === bare.id);
+      assert.equal(plain.verdict, 'not-isolated');
+      assert.equal(plain.override, null);
+      assert.equal(plain.overrideUnproved, true);
+      assert.ok(plain.reason.endsWith(inventory.OVERRIDE_UNPROVED));
+      assert.equal(both.sessions.find((r) => r.sessionId === res.data.sessionId).override.launchedUnderOverride, true, 'the launch with its own record still is');
     });
   });
 });
