@@ -5776,7 +5776,8 @@ function _launchIsolationOverrideSettings() {
 /**
  * Turn a launch-isolation override on or off for the operator and answer the
  * settings as they then stand. The caller has already been admitted as the
- * operator. A store fault answers 500 and names nothing as changed.
+ * operator. A store fault answers 500 with no settings, and does not say
+ * whether the write landed: the caller reads them again.
  * @param {http.IncomingMessage} req - The request
  * @param {http.ServerResponse} res - The response
  * @param {number|null} projectId - The project, or null for the install-wide override
@@ -5795,12 +5796,12 @@ function _writeLaunchIsolationOverride(req, res, projectId, on) {
       });
     }
     jsonResponse(res, 200, _launchIsolationOverrideSettings());
-  } catch (err) { // prawduct:allow prawduct/broad-except -- a store fault answers 500 with nothing reported as changed, never a settings answer that may not be what is stored
+  } catch (err) { // prawduct:allow prawduct/broad-except -- a store fault answers 500 with no settings, never an answer that may not be what is stored
     if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');
     log.error('A launch-isolation override could not be written', {
       scope: projectId === null ? 'install' : 'project', projectId, on, error: err.message
     });
-    errorResponse(res, 500, 'The launch-isolation override could not be saved just now. Nothing was changed; read the settings again before retrying.', 'INTERNAL_ERROR');
+    errorResponse(res, 500, 'The launch-isolation override could not be saved or read back just now. Read the settings again before retrying.', 'INTERNAL_ERROR');
   }
 }
 
@@ -5825,12 +5826,36 @@ function _launchIsolationOverrideProject(res, segment) {
   return projectId;
 }
 
+/**
+ * Admit only a signed-in operator to turning a launch-isolation override on.
+ * `operatorProjectCaller` has already admitted the caller, but while no login
+ * is enforced it admits by the request's shape (a browser's headers, the
+ * dashboard's marker), which any process on the host can send. That is not
+ * authorization to allow an unisolated launch, so turning one on asks for the
+ * one thing a shape cannot carry: a session the login gate issued.
+ * @param {http.IncomingMessage} req - The request
+ * @param {http.ServerResponse} res - The response, written only on refusal
+ * @returns {boolean} true when the request carries the operator's signed-in session
+ */
+function _signedInForIsolationOverride(req, res) {
+  if (req.tcSession) return true;
+  log.warn('Turning a launch-isolation override on was refused: no signed-in operator', {
+    code: 'LOGIN_GATE_REQUIRED', method: req.method, path: reqUrl(req).pathname, gateState: req.tcGateState || null
+  });
+  errorResponse(res, 403, 'A launch-isolation override can be turned on only by a signed-in operator, and this request '
+    + 'carries no sign-in: with no login in force nothing would establish that the sender is the operator. Turn '
+    + 'TangleClaw\'s login on, sign in, and turn the override on again. Nothing was changed. Reading the overrides '
+    + 'and turning one off need no sign-in.', 'LOGIN_GATE_REQUIRED');
+  return false;
+}
+
 // The launch-isolation overrides (#2229): the operator's allowance to start an
 // engine that could not be shown to be kept off its shared background process,
 // for the whole install or for one project. Such a launch may borrow another
 // project's identity, so who may grant it is the whole design: every route
 // here, the read included, admits the operator alone and refuses before any
-// lookup. A session reads what applies to it from the launch record
+// lookup, and turning one on also needs the operator to be signed in. A
+// session reads what applies to it from the launch record
 // (`GET /api/launch/isolation`), never from these settings.
 route('GET', '/api/launch/isolation-overrides', (req, res) => {
   if (!operatorProjectCaller(req, res, 'read the launch-isolation overrides')) return;
@@ -5844,6 +5869,7 @@ route('GET', '/api/launch/isolation-overrides', (req, res) => {
 
 route('PUT', '/api/launch/isolation-overrides/install', (req, res) => {
   if (!operatorProjectCaller(req, res, 'turn on the install-wide launch-isolation override')) return;
+  if (!_signedInForIsolationOverride(req, res)) return;
   _writeLaunchIsolationOverride(req, res, null, true);
 });
 
@@ -5854,6 +5880,7 @@ route('DELETE', '/api/launch/isolation-overrides/install', (req, res) => {
 
 route('PUT', '/api/launch/isolation-overrides/projects/:id', (req, res, params) => {
   if (!operatorProjectCaller(req, res, 'turn on a project\'s launch-isolation override')) return;
+  if (!_signedInForIsolationOverride(req, res)) return;
   const projectId = _launchIsolationOverrideProject(res, params.id);
   if (projectId === null) return;
   _writeLaunchIsolationOverride(req, res, projectId, true);
@@ -7812,7 +7839,10 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
     strandedUnchecked: result.strandedUnchecked || null,
     // #1904: whether the engine got its private socket root, and if not, which
     // path failed and the hand-run fix. Null for an engine that declares none.
-    privateTempRoot: result.privateTempRoot || null
+    privateTempRoot: result.privateTempRoot || null,
+    // #2229: the launch-isolation override this launch ran under, as the
+    // launch reports it. Null for a launch that needed none.
+    isolationOverride: result.isolationOverride || null
   });
 });
 

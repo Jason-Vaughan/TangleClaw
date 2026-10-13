@@ -224,11 +224,22 @@ describe('store: launch-isolation overrides schema (v66, #2229)', () => {
     assert.equal(stampedOnDisk(), BEFORE_VERSION);
   });
 
-  it('refuses to advance over an install index that is not unique: several install-wide rows would fit', () => {
+  it('refuses to advance over a table that would take a project id below one', () => {
     const db = freshStore();
     backToBefore(db);
     db.exec(`CREATE TABLE ${TABLE} (override_id INTEGER PRIMARY KEY AUTOINCREMENT, scope TEXT NOT NULL CHECK (scope IN ('install', 'project')), `
       + "project_id INTEGER, set_at TEXT NOT NULL, set_by TEXT, CHECK ((scope = 'install') = (project_id IS NULL)))");
+    store.close();
+    store._setBasePath(tmpDir);
+    assert.throws(() => store.init(), /v65→v66 left launch_isolation_overrides without the CHECK that a project id is positive\. Refusing/);
+    assert.equal(stampedOnDisk(), BEFORE_VERSION);
+  });
+
+  it('refuses to advance over an install index that is not unique: several install-wide rows would fit', () => {
+    const db = freshStore();
+    backToBefore(db);
+    db.exec(`CREATE TABLE ${TABLE} (override_id INTEGER PRIMARY KEY AUTOINCREMENT, scope TEXT NOT NULL CHECK (scope IN ('install', 'project')), `
+      + "project_id INTEGER CHECK (project_id IS NULL OR project_id > 0), set_at TEXT NOT NULL, set_by TEXT, CHECK ((scope = 'install') = (project_id IS NULL)))");
     db.exec(`CREATE INDEX idx_launch_isolation_overrides_install ON ${TABLE}(scope) WHERE scope = 'install'`);
     store.close();
     store._setBasePath(tmpDir);

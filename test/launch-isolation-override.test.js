@@ -7,7 +7,7 @@
  * anything: no launch reads the setting in this file.
  */
 
-const { describe, it, before, after, beforeEach, mock } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -15,6 +15,7 @@ const path = require('node:path');
 
 const store = require('../lib/store');
 const master = require('../lib/master');
+const sessions = require('../lib/sessions');
 const logger = require('../lib/logger');
 const { createServer } = require('../server');
 const { operatorHeaders, bindProject, sendAs, signInOperator, attemptUnidentified, DEFAULT_OPERATOR } = require('./_shared-docs-callers');
@@ -232,87 +233,86 @@ describe('launch-isolation overrides (#2229)', () => {
     });
   });
 
-  describe('the operator\'s routes', () => {
+  describe('on an install with no login, where a request\'s shape is all that says "operator"', () => {
     const OFF = { install: { allowed: false, setAt: null, setBy: null }, projects: [] };
+    // Each is admitted as the operator by `operatorProjectCaller` while no
+    // login is enforced, and each can be sent by any process on the host.
+    const SHAPES = {
+      'the dashboard\'s marker alone': () => ({ 'x-tangleclaw-client': 'dashboard' }),
+      'a Sec-Fetch-Site header alone': () => ({ 'Sec-Fetch-Site': 'same-origin' }),
+      'a whole same-origin browser shape': () => operatorHeaders(server)
+    };
 
-    it('reads the settings: all off by default', async () => {
+    for (const [name, headers] of Object.entries(SHAPES)) {
+      it(`refuses to turn an override on for ${name}: 403 LOGIN_GATE_REQUIRED, and no row changes`, async () => {
+        overrides.set({ projectId: beta.id, setBy: null, at: AT });
+        const was = { list: overrides.list(), events: overrideEvents() };
+        logger.setConsoleStream({ write: () => true });
+        try {
+          for (const urlPath of [`${BASE}/install`, `${BASE}/projects/${alpha.id}`, `${BASE}/projects/${beta.id}`, `${BASE}/projects/987654`, `${BASE}/projects/not-an-id`]) {
+            const res = await sendAs(server, 'PUT', urlPath, undefined, headers());
+            assert.equal(res.status, 403, urlPath);
+            assert.equal(res.data.code, 'LOGIN_GATE_REQUIRED', urlPath);
+            assert.match(res.data.error, /only by a signed-in operator/);
+            assert.match(res.data.error, /Turn TangleClaw's login on, sign in/);
+            assert.ok(!('install' in res.data) && !('projects' in res.data), 'the refusal carries no settings');
+          }
+        } finally {
+          logger.setConsoleStream(null);
+        }
+        assert.deepEqual({ list: overrides.list(), events: overrideEvents() }, was);
+        assert.deepEqual(overrides.effectiveFor(alpha.id), NOT_ALLOWED('not_set'));
+        assert.deepEqual(overrides.effectiveFor(null), NOT_ALLOWED('not_set'));
+      });
+    }
+
+    it('still reads the settings: all off by default', async () => {
       const res = await sendAs(server, 'GET', BASE, undefined, operatorHeaders(server));
       assert.equal(res.status, 200);
       assert.deepEqual(res.data, OFF);
     });
 
-    it('turns a project\'s override on and off, answering the settings as they then stand', async () => {
-      const on = await sendAs(server, 'PUT', `${BASE}/projects/${alpha.id}`, undefined, operatorHeaders(server));
-      assert.equal(on.status, 200);
-      assert.equal(on.data.install.allowed, false);
-      assert.equal(on.data.projects.length, 1);
-      const [row] = on.data.projects;
-      assert.deepEqual({ ...row, setAt: null }, { projectId: alpha.id, projectName: 'override-alpha', allowed: true, setAt: null, setBy: null });
-      assert.ok(!Number.isNaN(Date.parse(row.setAt)));
-      assert.equal(overrides.effectiveFor(alpha.id).scope, 'project');
-
-      const read = await sendAs(server, 'GET', BASE, undefined, operatorHeaders(server));
-      assert.deepEqual(read.data, on.data);
-
-      const again = await sendAs(server, 'PUT', `${BASE}/projects/${alpha.id}`, undefined, operatorHeaders(server));
-      assert.equal(again.status, 200);
-      assert.deepEqual(again.data, on.data, 'a second set keeps the first time');
-
-      const off = await sendAs(server, 'DELETE', `${BASE}/projects/${alpha.id}`, undefined, operatorHeaders(server));
-      assert.equal(off.status, 200);
-      assert.deepEqual(off.data, OFF);
-      assert.equal(overrides.effectiveFor(alpha.id).allowed, false);
-
-      const offAgain = await sendAs(server, 'DELETE', `${BASE}/projects/${alpha.id}`, undefined, operatorHeaders(server));
-      assert.equal(offAgain.status, 200);
-      assert.deepEqual(offAgain.data, OFF);
-    });
-
-    it('turns the install-wide override on and off', async () => {
-      const on = await sendAs(server, 'PUT', `${BASE}/install`, undefined, operatorHeaders(server));
-      assert.equal(on.status, 200);
-      assert.equal(on.data.install.allowed, true);
-      assert.ok(!Number.isNaN(Date.parse(on.data.install.setAt)));
-      assert.deepEqual(on.data.projects, []);
-      assert.equal(overrides.effectiveFor(null).scope, 'install');
-      assert.equal(overrides.effectiveFor(beta.id).scope, 'install');
-
-      const off = await sendAs(server, 'DELETE', `${BASE}/install`, undefined, operatorHeaders(server));
-      assert.equal(off.status, 200);
-      assert.deepEqual(off.data, OFF);
-      assert.equal(overrides.effectiveFor(null).allowed, false);
-    });
-
-    it('answers 400 for a project segment that is not a numeric id, and 404 for an id no project has', async () => {
-      for (const method of ['PUT', 'DELETE']) {
-        for (const bad of ['override-alpha', '0', '-3', '1.5', '7x']) {
-          const res = await sendAs(server, method, `${BASE}/projects/${bad}`, undefined, operatorHeaders(server));
-          assert.equal(res.status, 400, `${method} ${bad}`);
-          assert.equal(res.data.code, 'BAD_REQUEST');
-        }
-        const missing = await sendAs(server, method, `${BASE}/projects/987654`, undefined, operatorHeaders(server));
-        assert.equal(missing.status, 404, method);
-        assert.equal(missing.data.code, 'NOT_FOUND');
-      }
-      assert.deepEqual(overrides.list(), { install: null, projects: [] });
-    });
-
-    it('answers 500 and stores nothing when the store cannot be written or read', async () => {
-      const db = store.getDb();
-      db.exec('ALTER TABLE launch_isolation_overrides RENAME TO launch_isolation_overrides_away');
+    it('still turns off an override that is on, for the install and for a project', async () => {
+      overrides.set({ projectId: null, setBy: 'operator', at: AT });
+      overrides.set({ projectId: alpha.id, setBy: 'operator', at: AT });
       logger.setConsoleStream({ write: () => true });
       try {
-        for (const [method, urlPath] of [['GET', BASE], ['PUT', `${BASE}/install`], ['DELETE', `${BASE}/install`], ['PUT', `${BASE}/projects/${alpha.id}`]]) {
-          const res = await sendAs(server, method, urlPath, undefined, operatorHeaders(server));
-          assert.equal(res.status, 500, `${method} ${urlPath}`);
-          assert.equal(res.data.code, 'INTERNAL_ERROR');
-        }
+        const read = await sendAs(server, 'GET', BASE, undefined, operatorHeaders(server));
+        assert.deepEqual(read.data, {
+          install: { allowed: true, setAt: AT, setBy: 'operator' },
+          projects: [{ projectId: alpha.id, projectName: 'override-alpha', allowed: true, setAt: AT, setBy: 'operator' }]
+        });
+        const first = await sendAs(server, 'DELETE', `${BASE}/install`, undefined, operatorHeaders(server));
+        assert.equal(first.status, 200);
+        assert.equal(first.data.install.allowed, false);
+        assert.equal(first.data.projects.length, 1);
+        const second = await sendAs(server, 'DELETE', `${BASE}/projects/${alpha.id}`, undefined, operatorHeaders(server));
+        assert.equal(second.status, 200);
+        assert.deepEqual(second.data, OFF);
+        const again = await sendAs(server, 'DELETE', `${BASE}/projects/${alpha.id}`, undefined, operatorHeaders(server));
+        assert.equal(again.status, 200);
+        assert.deepEqual(again.data, OFF);
       } finally {
         logger.setConsoleStream(null);
-        db.exec('ALTER TABLE launch_isolation_overrides_away RENAME TO launch_isolation_overrides');
       }
-      assert.deepEqual(overrides.list(), { install: null, projects: [] });
-      assert.deepEqual(overrideEvents(), []);
+      assert.equal(overrides.effectiveFor(alpha.id).allowed, false);
+      assert.deepEqual(overrideEvents().map((e) => [e.eventType, e.detail]), [
+        ['launch.isolation_override_set', { scope: 'install', setBy: 'operator' }],
+        ['launch.isolation_override_set', { scope: 'project', setBy: 'operator' }],
+        ['launch.isolation_override_cleared', { scope: 'install', clearedBy: null }],
+        ['launch.isolation_override_cleared', { scope: 'project', clearedBy: null }]
+      ]);
+    });
+
+    it('answers 400 and 404 on a clear for a project that is not named by an id, or does not exist', async () => {
+      for (const bad of ['override-alpha', '0', '-3', '1.5', '7x']) {
+        const res = await sendAs(server, 'DELETE', `${BASE}/projects/${bad}`, undefined, operatorHeaders(server));
+        assert.equal(res.status, 400, bad);
+        assert.equal(res.data.code, 'BAD_REQUEST');
+      }
+      const missing = await sendAs(server, 'DELETE', `${BASE}/projects/987654`, undefined, operatorHeaders(server));
+      assert.equal(missing.status, 404);
+      assert.equal(missing.data.code, 'NOT_FOUND');
     });
   });
 
@@ -404,7 +404,9 @@ describe('launch-isolation overrides (#2229)', () => {
     });
   });
 
-  describe('on an install whose login gate is on', () => {
+  describe('on an install whose login gate is on: the signed-in operator\'s routes', () => {
+    const OFF = { install: { allowed: false, setAt: null, setBy: null }, projects: [] };
+    const NAME = DEFAULT_OPERATOR.username;
     let restore;
     let session;
 
@@ -422,22 +424,84 @@ describe('launch-isolation overrides (#2229)', () => {
       store.getDb().prepare('DELETE FROM users').run();
     });
 
-    it('records the signed-in operator\'s name on the override it turns on, and in the activity log on the clear', async () => {
-      logger.setConsoleStream({ write: () => true });
-      try {
-        const on = await sendAs(server, 'PUT', `${BASE}/install`, undefined, session);
-        assert.equal(on.status, 200);
-        assert.equal(on.data.install.setBy, DEFAULT_OPERATOR.username);
-        assert.equal(overrides.effectiveFor(alpha.id).setBy, DEFAULT_OPERATOR.username);
-        const off = await sendAs(server, 'DELETE', `${BASE}/install`, undefined, session);
-        assert.equal(off.status, 200);
-      } finally {
-        logger.setConsoleStream(null);
-      }
+    beforeEach(() => logger.setConsoleStream({ write: () => true }));
+    afterEach(() => logger.setConsoleStream(null));
+
+    it('turns a project\'s override on and off, answering the settings as they then stand, with the operator\'s name', async () => {
+      const on = await sendAs(server, 'PUT', `${BASE}/projects/${alpha.id}`, undefined, session);
+      assert.equal(on.status, 200);
+      assert.equal(on.data.install.allowed, false);
+      assert.equal(on.data.projects.length, 1);
+      const [row] = on.data.projects;
+      assert.deepEqual({ ...row, setAt: null }, { projectId: alpha.id, projectName: 'override-alpha', allowed: true, setAt: null, setBy: NAME });
+      assert.ok(!Number.isNaN(Date.parse(row.setAt)));
+      assert.equal(overrides.effectiveFor(alpha.id).scope, 'project');
+      assert.equal(overrides.effectiveFor(alpha.id).setBy, NAME);
+      assert.equal(overrides.effectiveFor(beta.id).allowed, false);
+
+      const read = await sendAs(server, 'GET', BASE, undefined, session);
+      assert.deepEqual(read.data, on.data);
+
+      const again = await sendAs(server, 'PUT', `${BASE}/projects/${alpha.id}`, undefined, session);
+      assert.equal(again.status, 200);
+      assert.deepEqual(again.data, on.data, 'a second set keeps the first time');
+
+      const off = await sendAs(server, 'DELETE', `${BASE}/projects/${alpha.id}`, undefined, session);
+      assert.equal(off.status, 200);
+      assert.deepEqual(off.data, OFF);
+      assert.equal(overrides.effectiveFor(alpha.id).allowed, false);
+    });
+
+    it('turns the install-wide override on and off, and the activity log names who did each', async () => {
+      const on = await sendAs(server, 'PUT', `${BASE}/install`, undefined, session);
+      assert.equal(on.status, 200);
+      assert.equal(on.data.install.allowed, true);
+      assert.equal(on.data.install.setBy, NAME);
+      assert.ok(!Number.isNaN(Date.parse(on.data.install.setAt)));
+      assert.deepEqual(on.data.projects, []);
+      assert.equal(overrides.effectiveFor(null).scope, 'install');
+      assert.equal(overrides.effectiveFor(beta.id).scope, 'install');
+
+      const off = await sendAs(server, 'DELETE', `${BASE}/install`, undefined, session);
+      assert.equal(off.status, 200);
+      assert.deepEqual(off.data, OFF);
+      assert.equal(overrides.effectiveFor(null).allowed, false);
       assert.deepEqual(overrideEvents().map((e) => [e.eventType, e.detail]), [
-        ['launch.isolation_override_set', { scope: 'install', setBy: DEFAULT_OPERATOR.username }],
-        ['launch.isolation_override_cleared', { scope: 'install', clearedBy: DEFAULT_OPERATOR.username }]
+        ['launch.isolation_override_set', { scope: 'install', setBy: NAME }],
+        ['launch.isolation_override_cleared', { scope: 'install', clearedBy: NAME }]
       ]);
+    });
+
+    it('answers 400 for a project segment that is not a numeric id, and 404 for an id no project has', async () => {
+      for (const method of ['PUT', 'DELETE']) {
+        for (const bad of ['override-alpha', '0', '-3', '1.5', '7x']) {
+          const res = await sendAs(server, method, `${BASE}/projects/${bad}`, undefined, session);
+          assert.equal(res.status, 400, `${method} ${bad}`);
+          assert.equal(res.data.code, 'BAD_REQUEST');
+        }
+        const missing = await sendAs(server, method, `${BASE}/projects/987654`, undefined, session);
+        assert.equal(missing.status, 404, method);
+        assert.equal(missing.data.code, 'NOT_FOUND');
+      }
+      assert.deepEqual(overrides.list(), { install: null, projects: [] });
+    });
+
+    it('answers 500 with no settings, and stores nothing, when the store cannot be written or read', async () => {
+      const db = store.getDb();
+      db.exec('ALTER TABLE launch_isolation_overrides RENAME TO launch_isolation_overrides_away');
+      try {
+        for (const [method, urlPath] of [['GET', BASE], ['PUT', `${BASE}/install`], ['DELETE', `${BASE}/install`], ['PUT', `${BASE}/projects/${alpha.id}`]]) {
+          const res = await sendAs(server, method, urlPath, undefined, session);
+          assert.equal(res.status, 500, `${method} ${urlPath}`);
+          assert.equal(res.data.code, 'INTERNAL_ERROR');
+          assert.ok(!('install' in res.data), `${method} ${urlPath}`);
+          assert.doesNotMatch(res.data.error, /Nothing was changed/, 'a write that may have landed is not called unchanged');
+        }
+      } finally {
+        db.exec('ALTER TABLE launch_isolation_overrides_away RENAME TO launch_isolation_overrides');
+      }
+      assert.deepEqual(overrides.list(), { install: null, projects: [] });
+      assert.deepEqual(overrideEvents(), []);
     });
 
     it('a browser holding no session and a bare request are both refused every route, and nothing is stored', async () => {
@@ -448,6 +512,39 @@ describe('launch-isolation overrides (#2229)', () => {
         assert.equal(machine.data.code, method === 'GET' ? 'OPERATOR_ONLY' : 'LAUNCH_BINDING_REQUIRED', `${method} ${urlPath}`);
       }
       assert.deepEqual(overrides.list(), { install: null, projects: [] });
+    });
+
+    it('a project session reads 403 OPERATOR_ONLY on a set, never the sign-in refusal: who it is comes first', async () => {
+      const bound = bindProject(beta);
+      for (const urlPath of [`${BASE}/install`, `${BASE}/projects/${beta.id}`]) {
+        const res = await sendAs(server, 'PUT', urlPath, undefined, bound.headers);
+        assert.equal(res.status, 403, urlPath);
+        assert.equal(res.data.code, 'OPERATOR_ONLY', urlPath);
+      }
+      assert.deepEqual(overrides.list(), { install: null, projects: [] });
+    });
+  });
+
+  describe('the launch route\'s answer carries the override a launch ran under', () => {
+    const realLaunch = sessions.launchSession;
+    const session = { id: 99, engineId: 'codex', sessionMode: 'tmux', tmuxSession: 'x', startedAt: 'now' };
+    const launched = { session, primePrompt: null, ttydUrl: '/terminal/', error: null, strandedUnchecked: null };
+
+    after(() => { sessions.launchSession = realLaunch; });
+
+    it('is null on an ordinary launch, and is what the launch reports when it reports one', async () => {
+      const urlPath = `/api/sessions/${encodeURIComponent(alpha.name)}`;
+      sessions.launchSession = () => ({ ...launched });
+      let res = await sendAs(server, 'POST', urlPath, {}, operatorHeaders(server));
+      assert.equal(res.status, 201);
+      assert.ok('isolationOverride' in res.data, 'the key is in the answer, not left out');
+      assert.equal(res.data.isolationOverride, null);
+
+      const ranUnder = { scope: 'project', reasonCode: 'version_unverified' };
+      sessions.launchSession = () => ({ ...launched, isolationOverride: ranUnder });
+      res = await sendAs(server, 'POST', urlPath, {}, operatorHeaders(server));
+      assert.equal(res.status, 201);
+      assert.deepEqual(res.data.isolationOverride, ranUnder);
     });
   });
 });
