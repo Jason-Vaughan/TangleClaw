@@ -1475,7 +1475,7 @@ every version it names was measured; the remedy that names no version does not.
     another project's TangleClaw identity: its `tc` calls may fail, or act as that other launch. The
     project whose identity is borrowed did not opt in. The override does not make the launch isolated,
     and nothing softens what such a session may then be refused.
-  - **Where it is turned on and off.** On the dashboard, and only there: **Global Settings →
+  - **Where it is turned on and off.** On the dashboard: **Global Settings →
     Launch isolation override** for the whole install, which says it covers every project and the
     Project Master, and a project's **Settings → Launch isolation override** for that project, which
     says when the install-wide one already covers it. Both carry the sentence under "What it risks".

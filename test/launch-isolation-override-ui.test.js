@@ -59,7 +59,7 @@ const UI_FUNCTIONS = [
  * @returns {object} The context
  */
 function sandbox(extra) {
-  const ctx = { window: {}, ...(extra || {}) };
+  const ctx = { window: {}, state: { projects: [{ id: 7, name: 'alpha' }] }, ...(extra || {}) };
   vm.createContext(ctx);
   vm.runInContext(liftFunction(LANDING_SRC, 'function esc(str)'), ctx);
   vm.runInContext('let isolationOverrideNotice = null; let isolationOverrideReveal = false; let projectRulesTargetId = null;', ctx);
@@ -400,6 +400,62 @@ describe('A refused launch leads to the override (#2229)', () => {
       assert.deepEqual(opened, ['alpha']);
       assert.equal(vm.runInContext('isolationOverrideReveal', ctx), true);
       assert.equal(toast.classList.contains('visible'), false);
+      assert.equal(toast.childNodes.some((c) => c.tagName === 'BUTTON'), false, 'the hidden message keeps no button in the tab order');
+    }
+  });
+
+  it('does not ask the next Settings to move for a project the page does not list', () => {
+    const opened = [];
+    const ctx = sandbox({ openSettings: (name) => opened.push(name) });
+    ctx.openIsolationOverrideSettings('gone');
+    assert.deepEqual(opened, ['gone']);
+    assert.equal(vm.runInContext('isolationOverrideReveal', ctx), false);
+  });
+
+  /**
+   * Run the page's own `doLaunchProject` against a launch the server refuses.
+   * @param {object} refusal - The refusal body
+   * @returns {Promise<{toast: object, timers: Function[], asked: string[]}>}
+   */
+  async function refusedLaunch(refusal) {
+    const { doc } = makeDocument(['toast']);
+    const toast = doc.getElementById('toast');
+    const timers = [];
+    const api = fakeApi(() => ({ data: ME.signedIn }));
+    const ctx = sandbox({
+      api,
+      document: { querySelector: () => null, getElementById: () => toast, createElement: (tag) => doc.createElement(tag) },
+      tcFetch: async () => ({ ok: false, status: 409, json: async () => refusal }),
+      setTimeout: (fn) => { timers.push(fn); },
+      openSettings: () => {},
+      strandedLaunch: null
+    });
+    for (const decl of ['function launchRefusalIsOverridable', 'function appendLaunchIsolationPointer', 'async function doLaunchProject']) {
+      vm.runInContext(liftFunction(LANDING_SRC, decl), ctx);
+    }
+    await ctx.doLaunchProject('alpha', 'default');
+    return { toast, timers, asked: api.calls.map((c) => c.url) };
+  }
+
+  it('the launch screen adds the button to a version refusal, and takes it away when the message is hidden', async () => {
+    const { toast, timers, asked } = await refusedLaunch({ error: 'refused', code: 'LAUNCH_ISOLATION_UNVERIFIED', reasonCode: 'version_unverified' });
+    assert.match(toast.text, /^Launch failed: refused/);
+    assert.equal(toast.classList.contains('visible'), true);
+    assert.equal(toast.childNodes.filter((c) => c.tagName === 'BUTTON').length, 1);
+    assert.deepEqual(asked, ['/api/auth/me']);
+    assert.equal(timers.length, 1);
+    timers[0]();
+    assert.equal(toast.classList.contains('visible'), false);
+    assert.equal(toast.childNodes.some((c) => c.tagName === 'BUTTON'), false, 'nothing focusable is left in a message moved off screen');
+  });
+
+  it('the launch screen adds nothing to any other refused launch, and does not ask who is signed in', async () => {
+    for (const refusal of [{ error: 'busy', code: 'CONFLICT' }, { error: 'refused', code: 'LAUNCH_ISOLATION_UNVERIFIED', reasonCode: 'wrapper_executable' }]) {
+      const { toast, timers, asked } = await refusedLaunch(refusal);
+      assert.equal(toast.childNodes.length, 0, refusal.code);
+      assert.deepEqual(asked, []);
+      timers[0]();
+      assert.equal(toast.classList.contains('visible'), false);
     }
   });
 
@@ -432,6 +488,46 @@ describe('The override\'s screens are wired into the two Settings modals (#2229)
     assert.match(UI_SRC, /<div class="form-label">Launch isolation override<\/div>/);
     assert.match(UI_SRC, /id="projIsolationOverride" aria-live="polite"/);
     assert.match(liftFunction(UI_SRC, 'async function loadProjectRules'), /await refreshProjectIsolationOverride\(projectId\);/);
+  });
+
+  it('Project Settings loads the Launch readiness line and the switch for the project it opened', async () => {
+    const calls = [];
+    const ctx = sandbox();
+    ctx.PROJECT_RULE_KINDS = [];
+    ctx.refreshProjectRuleDeliveries = async () => true;
+    ctx.refreshProjectLaunchSequences = async () => true;
+    ctx.refreshProjectLaunchIsolationLine = async (id) => { calls.push(`line ${id}`); };
+    ctx.refreshProjectIsolationOverride = async (id) => { calls.push(`switch ${id}`); };
+    vm.runInContext('let projectRulesTargetName = null; let projectRecoveryModeNotice = null;'
+      + liftFunction(UI_SRC, 'async function loadProjectRules'), ctx);
+    await ctx.loadProjectRules(7, 'alpha');
+    assert.deepEqual(calls, ['line 7', 'switch 7']);
+    assert.match(UI_SRC, /id="projLaunchIsolationLine" aria-live="polite"/);
+  });
+
+  it('the Launch readiness line is read from the isolation inventory, for the project Settings is showing', async () => {
+    const row = {
+      sessionId: 12, projectId: 7, role: 'project', verdict: 'not-isolated', reason: 'r', overrideUnproved: false,
+      override: { launchedUnderOverride: true, scope: 'install', refusal: 'version_unknown', versionRead: null, recordedAt: null }
+    };
+    const box = { innerHTML: '' };
+    const api = fakeApi((url) => (url === '/api/launch/isolation' ? { data: { sessions: [row] } } : { data: null, error: 'unexpected' }));
+    const ctx = sandbox({
+      api,
+      document: { getElementById: (id) => (id === 'projLaunchIsolationLine' ? box : null) },
+      state: { projects: [{ id: 7, name: 'alpha', session: { active: true } }] }
+    });
+    vm.runInContext(liftFunction(UI_SRC, 'function launchIsolationOverrideLineHtml'), ctx);
+    vm.runInContext(liftFunction(UI_SRC, 'async function refreshProjectLaunchIsolationLine'), ctx);
+    vm.runInContext('projectRulesTargetId = 7;', ctx);
+    await ctx.refreshProjectLaunchIsolationLine(7);
+    assert.deepEqual(api.calls.map((c) => `${c.method} ${c.url}`), ['GET /api/launch/isolation']);
+    assert.match(box.innerHTML, /<strong>12<\/strong>: .*running under the operator's launch isolation override/);
+    assert.match(box.innerHTML, /under the install-wide override/);
+    box.innerHTML = 'kept';
+    vm.runInContext('projectRulesTargetId = 8;', ctx);
+    await ctx.refreshProjectLaunchIsolationLine(7);
+    assert.equal(box.innerHTML, 'kept', 'a read that lands after Settings moved on writes nothing');
   });
 
   it('Global Settings holds the install-wide switch\'s box and loads it on open', () => {

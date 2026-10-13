@@ -1933,11 +1933,13 @@ async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStra
         return;
       }
       toast.textContent = `Launch failed: ${data.error || `HTTP ${res.status}`}`;
-      if (launchRefusalIsOverridable(data)) {
-        appendLaunchIsolationPointer(toast, name, await api('/api/auth/me'));
-      }
+      const pointer = launchRefusalIsOverridable(data)
+        ? appendLaunchIsolationPointer(toast, name, await api('/api/auth/me'))
+        : null;
       toast.className = 'toast toast-warn visible';
-      setTimeout(() => { toast.classList.remove('visible'); }, 6000);
+      // The message is hidden by moving it off screen, which leaves a button
+      // inside it in the tab order: the pointer goes when the message does.
+      setTimeout(() => { toast.classList.remove('visible'); if (pointer) pointer.remove(); }, 6000);
       return;
     }
 
@@ -1984,7 +1986,7 @@ function launchRefusalIsOverridable(data) {
  * @param {HTMLElement} toast - The launch-failed message, its text already set
  * @param {string} name - The project's name
  * @param {object|null} me - The answer of `GET /api/auth/me`, or null when the read failed
- * @returns {void}
+ * @returns {HTMLElement} What was added, for the caller to remove when the message is hidden
  */
 function appendLaunchIsolationPointer(toast, name, me) {
   const offer = typeof recoveryModeControlOffer === 'function' ? recoveryModeControlOffer(me) : { offered: true };
@@ -1993,7 +1995,7 @@ function appendLaunchIsolationPointer(toast, name, me) {
     note.className = 'toast-note';
     note.textContent = ' Only a signed-in operator can turn on the launch isolation override, in this project\'s Settings: sign in first.';
     toast.appendChild(note);
-    return;
+    return note;
   }
   const btn = document.createElement('button');
   btn.type = 'button';
@@ -2001,9 +2003,11 @@ function appendLaunchIsolationPointer(toast, name, me) {
   btn.textContent = 'Open launch isolation settings';
   btn.addEventListener('click', () => {
     toast.classList.remove('visible');
+    btn.remove();
     openIsolationOverrideSettings(name);
   });
   toast.appendChild(btn);
+  return btn;
 }
 
 // ── Stranded Wraps Launch Modal (#1539) ──

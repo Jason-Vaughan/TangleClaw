@@ -3282,7 +3282,9 @@ async function refreshProjectIsolationOverride(projectId) {
  * @returns {void}
  */
 function openIsolationOverrideSettings(name) {
-  isolationOverrideReveal = true;
+  // Only for a project Settings will open for: a flag left set by a project
+  // the page no longer lists would move the next Settings that is opened.
+  isolationOverrideReveal = state.projects.some((p) => p.name === name);
   openSettings(name);
 }
 
