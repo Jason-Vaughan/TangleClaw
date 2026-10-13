@@ -1256,7 +1256,7 @@ end the session. The session status shows the blocker `trust_required` while it 
 - **`NOT SHOWN ISOLATED`**: `tc` could not show a problem and could not rule one out. This is the ordinary row for a healthy Codex session, because `tc` never reports its own session as isolated: nothing a session holds proves which launch it is. Read the indented `Server's record` line under it, or run `tc sessions isolation`, for TangleClaw's own record of that launch.
 - **`not applicable`**: the engine shares no background process. Nothing to do.
 
-The `Server's record` line is TangleClaw's fact about the launch the session's binding names. It appears only when that binding is verified, and it is not a statement about the shell that printed it. Above a launch step the row may be cut short and end "Run tc whoami for the rest"; `tc whoami` always prints it whole. Details: [engine guide](engine-guide.md), "What a session is told about its own launch".
+The `Server's record` line is TangleClaw's fact about the launch the session's binding names. With a verified binding it gives that record; with a binding that is not verified the server is not asked, and the line says so. Either way it is not a statement about the shell that printed it. Above a launch step the row may be cut short and end "Run tc whoami for the rest"; `tc whoami` always prints it whole. Details: [engine guide](engine-guide.md), "What a session is told about its own launch".
 
 ### Chime Not Working on Mobile
 

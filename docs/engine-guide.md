@@ -1177,7 +1177,7 @@ one of three, and never `ISOLATED`:
 | Row | Meaning |
 |---|---|
 | `NOT ISOLATED` | The pane named by this shell's environment was started with a Codex command that plainly was not isolated: most often the bare name `codex`. The row gives the reason and says to ask the operator to end the session and launch it again. The Codex version reads `unknown`: `tc` does not read it. |
-| `NOT SHOWN ISOLATED` | Everything else `tc` cannot call a negative. That includes a command that would read `ISOLATED` in the inventory, a command attached with `--remote` (whether that server is the session's own is recorded only by TangleClaw), a command that names Codex in a form `tc` could not judge, a pane with no readable start command, and a shell with no pane at all, which is every Codex session on its native startup channel. |
+| `NOT SHOWN ISOLATED` | Everything else `tc` cannot call a negative. That includes a command that would read `ISOLATED` in the inventory, a command attached with `--remote` (whether that server is the session's own is recorded only by TangleClaw), a command that names Codex in a form `tc` could not judge, a pane with no readable start command, and a shell with no pane at all, which is every Codex session on its native startup channel. By itself the row shows nothing either way: take the server's line under it, or `tc sessions isolation`, as the record, and treat the session as not isolated unless that record reads isolated. |
 | `not applicable` | The pane was started with a command that names no engine sharing a background process. |
 
 There is no positive row because nothing a session holds proves which launch it is. `tc` finds its
