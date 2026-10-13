@@ -95,7 +95,7 @@ describe('lib/medusa — service layer', () => {
   });
 
   it('getStatus(null) and unknown session return an off status', () => {
-    const off = { state: 'off', workspaceId: null, unread: 0, lastError: null, lastErrorCode: null };
+    const off = { state: 'off', listeningSince: null, workspaceId: null, unread: 0, lastError: null, lastErrorCode: null };
     assert.deepEqual(medusa.getStatus(null), off);
     assert.deepEqual(medusa.getStatus('no-such-session'), off);
   });
@@ -151,7 +151,7 @@ describe('lib/medusa — service layer', () => {
     medusa.startSession({ projectPath: tempDir, sessionId: sid, name: 'Svc Three', wsFactory: (u) => new FakeWS(u) });
     assert.notEqual(medusa.getStatus(sid).state, 'off');
     medusa.stopSession(sid);
-    assert.deepEqual(medusa.getStatus(sid), { state: 'off', workspaceId: null, unread: 0, lastError: null, lastErrorCode: null });
+    assert.deepEqual(medusa.getStatus(sid), { state: 'off', listeningSince: null, workspaceId: null, unread: 0, lastError: null, lastErrorCode: null });
   });
 
   it('reuses the same workspace id across restarts (registry persistence)', () => {
@@ -169,7 +169,7 @@ describe('lib/medusa — service layer', () => {
     assert.notEqual(medusa.getStatus(sid).state, 'off');
     medusa.forgetSession({ projectPath: tempDir, sessionId: sid });
     // Listener stopped...
-    assert.deepEqual(medusa.getStatus(sid), { state: 'off', workspaceId: null, unread: 0, lastError: null, lastErrorCode: null });
+    assert.deepEqual(medusa.getStatus(sid), { state: 'off', listeningSince: null, workspaceId: null, unread: 0, lastError: null, lastErrorCode: null });
     // ...and the id forgotten — unlike stopSession, a fresh start mints a NEW id.
     const b = medusa.startSession({ projectPath: tempDir, sessionId: sid, name: 'Forget Me', wsFactory: (u) => new FakeWS(u) });
     started.push(sid);
@@ -658,7 +658,7 @@ describe('API — GET /api/sessions/:project/medusa/status', () => {
     // `messageLimitBytes` joined it in #1514 (the body cap a compose box counts
     // against — served even when off, since it is a property of the routes).
     assert.deepEqual(data, {
-      state: 'off', workspaceId: null, unread: 0, lastError: null, lastErrorCode: null, loops: [],
+      state: 'off', listeningSince: null, workspaceId: null, unread: 0, lastError: null, lastErrorCode: null, loops: [],
       outbound: { allowed: true, reason: null }, enabled: false, messageLimitBytes: 64 * 1024
     });
   });
@@ -774,7 +774,7 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
     assert.equal(medusa.getStatus(active.id).state, 'listening');
     const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: false }, dashboard());
     assert.equal(status, 200);
-    assert.deepEqual(data, { state: 'off', workspaceId: null, unread: 0, lastError: null, lastErrorCode: null });
+    assert.deepEqual(data, { state: 'off', listeningSince: null, workspaceId: null, unread: 0, lastError: null, lastErrorCode: null });
   });
 
   it('toggle {enabled:true} does NOT refuse when the Bridge is absent — it starts, and says why', async () => {
@@ -1697,6 +1697,18 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     assert.equal(data.loops[0].id, open.data.loop.id);
     assert.equal(data.loops[0].role, 'initiator');
     assert.equal(data.loopsError, undefined);
+  });
+
+  it('status route says since when the listener has been listening, and null once it is off', async () => {
+    const on = await req('/api/sessions/sender/medusa/status', 'GET');
+    assert.equal(on.status, 200);
+    assert.equal(on.data.state, 'listening');
+    assert.equal(new Date(on.data.listeningSince).toISOString(), on.data.listeningSince, 'an ISO time while listening');
+    assert.equal(on.data.listeningSince, medusa.getStatus(active.id).listeningSince);
+    medusa.stopSession(active.id);
+    const off = await req('/api/sessions/sender/medusa/status', 'GET');
+    assert.equal(off.data.state, 'off');
+    assert.equal(off.data.listeningSince, null);
   });
 
   it('status route degrades honestly when the Bridge is unreachable mid-poll (loops:[] + loopsError, listener status intact)', async () => {
