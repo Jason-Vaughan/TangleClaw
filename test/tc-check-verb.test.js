@@ -121,19 +121,16 @@ describe('tc check (#2323)', () => {
     assert.match(out.stdout, /tc check show cw_111111111111111111111111/);
   });
 
-  it('says, on every answer from a server that wakes nobody for a watch, that nobody will be woken', async () => {
+  it('no answer says a watch is not monitored: the server wakes the project itself', async () => {
     const answers = [
-      [['watch', '2341', '--sha', SHA, '--name', 'test', '--due', '45'], { post: { watch: watch(), monitored: false } }],
-      [['list'], { get: listOf([watch()]) }],
-      [['show', 'cw_1'], { get: { watch: watch(), projectName: 'builder-a', facts: [], monitored: false } }]
+      [['watch', '2341', '--sha', SHA, '--name', 'test', '--due', '45'], { post: { watch: watch(), monitored: true } }],
+      [['list'], { get: listOf([watch()], { monitored: true }) }],
+      [['show', 'cw_1'], { get: { watch: watch(), projectName: 'builder-a', facts: [], monitored: true } }]
     ];
     for (const [argv, answer] of answers) {
       const out = await check.run(fakeCtx(argv, answer).ctx);
-      assert.match(out.stdout, /NOT MONITORED: .*reads GitHub for a watch and records the result, but wakes nobody\. Read the check yourself/, argv[0]);
+      assert.ok(!/NOT MONITORED/.test(out.stdout), argv[0]);
     }
-    // A server that does read it is not said to be silent.
-    assert.ok(!/NOT MONITORED/.test(renderCheckList(listOf([watch()], { monitored: true }))));
-    assert.ok(!/NOT MONITORED/.test(renderCheckWatch({ watch: watch(), projectName: 'builder-a', facts: [], monitored: true })));
   });
 
   it('list renders each state, and unknown with its reason, never as failed or done', async () => {
@@ -196,6 +193,19 @@ describe('tc check (#2323)', () => {
     const unread = renderCheckWatch({ watch: watch(), projectName: null, facts: [], monitored: false });
     assert.match(unread, /GitHub has not been read for it\./);
     assert.match(unread, /project unknown \(7\)/);
+  });
+
+  it('show says what became of each message, a second attempt, and why one had nobody to go to', () => {
+    const blank = { state: 'not-owed', secondAttempt: false, attempts: [], undeliverable: null };
+    const said = (delivery) => renderCheckWatch({ watch: watch({ delivery }), projectName: 'builder-a', facts: [] });
+    assert.match(said({ wake: { ...blank, state: 'arrived' }, alarm: blank }), /\n {2}wake: arrived\n {2}alarm: not-owed\n {2}History:\n/);
+    assert.match(said({ wake: { ...blank, state: 'unconfirmed', secondAttempt: true }, alarm: blank }), /\n {2}wake: unconfirmed, second attempt made\n/);
+    const nobody = { ...blank, state: 'undeliverable', undeliverable: { code: 'no-live-session', at: '2026-10-12T12:11:00.000Z' } };
+    assert.match(said({ wake: nobody, alarm: blank }), /\n {2}wake: undeliverable \(no-live-session\)\n/);
+    // Sent since: the old reason is history, not the message's state.
+    assert.match(said({ wake: { ...nobody, state: 'read' }, alarm: blank }), /\n {2}wake: read\n/);
+    // An answer with no delivery in it is rendered as before.
+    assert.ok(!/wake:|alarm:/.test(renderCheckWatch({ watch: watch(), projectName: 'builder-a', facts: [] })));
   });
 
   it('show and cancel put an id they cannot trust into the path encoded', async () => {

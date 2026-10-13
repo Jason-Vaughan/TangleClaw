@@ -8351,6 +8351,11 @@ medusa.setArrivalObserver(({ sessionKey, workspaceId, message }) => {
           log.warn('Operator bridge could not process an arrival', { error: err.message });
         }
       }
+      // #2323: a check watch message names its own send on its last line, and
+      // reaches its recipient before the Hub has answered that send, so the
+      // monitor binds it here. After the arrival is recorded, so the bind
+      // adopts that record. It never throws.
+      checkWatch.noteArrival({ sessionKey, workspaceId, message });
     }
   } finally {
     // #2086: mail has arrived, so the wake monitor looks at this session now
@@ -13253,8 +13258,10 @@ if (require.main === module) {
     // at rest.
     workloadNudge.start({ observer: activityObserver });
     // Start the check watch monitor (#2323): reads each open watch's check
-    // from GitHub about once a minute and records its result. It records
-    // only; it messages nobody and types into nothing.
+    // from GitHub about once a minute, records its result, and sends the
+    // watch's project a switchboard message. Its own listener is started by
+    // its passes, only while there is a watch to send for, and stopped by
+    // `stop()`. It types into nothing.
     checkWatch.start();
     // Re-sync Medusa listeners for live sessions (TC#550, MED-2K9P v2 T4) —
     // listeners are in-memory, so without this a server restart silently
