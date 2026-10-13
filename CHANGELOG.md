@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.33.0] - 2026-10-13
+
 ### Added
 
 - **An operator can let a Codex that TangleClaw cannot verify launch anyway (#2229).** Global Settings has a launch isolation override for the whole install and each project's Settings has its own, both off by default; turning one on needs a signed-in operator. With one on, a launch refused only for its Codex version starts without isolation and may borrow another project's identity. It is recorded as such in the log, the activity log, the launch's answer, Launch readiness and `tc sessions isolation`, which labels the session `NOT ISOLATED (operator's override)` and no longer lists it for relaunch: a relaunch can isolate it only on a verified Codex version, and is refused on the same version once the override is cleared. The server's line under `tc whoami` says the same; `tc`'s own verdict is unchanged. A launch refused for an unverified Codex carries a button to the switch. Limits: the mark ages out with the activity log; `tc` reads no installed Codex version, so after a verified version is installed it still leaves marked sessions out of its relaunch list and the operator relaunches those too; the button goes after six seconds or when used, and an earlier message's timer can hide it first, still keyboard-focusable (#2339).
