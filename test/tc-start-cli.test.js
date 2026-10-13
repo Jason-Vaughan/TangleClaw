@@ -659,7 +659,7 @@ describe('tc start (car 21.3)', () => {
         argv: ['review', '--step', '3', '--page', '1'],
         env: {},
         getJson: (url) => {
-          asked = url;
+          asked = asked || url;
           return Promise.resolve({
             step: { index: 2, id: 'state', of: 4 }, page: { index: 1, of: 2, continued: false }, revision: 1,
             content: 'state page two', review: { readyAt: '2026-09-24 21:58:21' }, nextRef: null

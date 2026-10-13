@@ -35,6 +35,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-12 — #2228: tc tells a session when its pane was not started isolated, and never calls it isolated
+
+<!-- prawduct: type=feature | scope=codex-told-2228 -->
+
+#2228 Chunk 01, the issue's only chunk. Branch `feat/2228-tc-told-not-isolated`, from `origin/main` `f0020c4d`. Built to the decider's rulings (queue Rulings items 11, 13 and 56): no unbound lookup, no positive from the environment or from a binding, the existing judgment loaded on demand, the state step's row printed by `tc`.
+
+Visual change: no
+
+**Why.** A Codex session started on Codex's shared background process may send `tc` calls under another launch's identity. The operator was told (#2222, #2233); the session was not. The issue's premise (a launch that warns and starts anyway) is not in the tree, since an unisolated launch is refused, so the sessions this reaches are those started before that check and still running.
+
+**What changed.**
+
+- `lib/tc-verbs.js`: `tc whoami`, `tc capabilities` and the state step of `tc start next` / `tc start review` print a `Launch isolation:` row.
+  - `readPaneStartCommand` reads `#{pane_start_command}` of the pane `TMUX_PANE` names; `judgeOwnPaneCommand` takes the PATH floor and the credential handoff off it and hands it to `lib/startup-control-codex.js#judgeRecordedCommand`. The answer is `not-isolated`, `not-shown` or `not-applicable`. A command that reads isolated, one attached with `--remote`, one that names Codex in a form not judged, an unreadable one and no pane at all are all `not-shown`. There is no positive.
+  - `renderServerIsolationRecord`: with a verified binding and a local reading that applies, one aux `GET /api/launch/isolation`; the row is chosen by the binding's verified session id (the Master's row for a verified Master) and printed as the server's record, lower case, ending "That does not show this shell is that launch." Not asked for an unverified binding; `unavailable` on a failed lookup; an answer in an unknown shape reads as no record.
+  - The state step: the row is printed above the page by `tc`, in brackets, marked as read now and no part of the step. The served content and its digest are untouched. It takes only the room the page's own decorations leave of `lib/launch-page.js#pageOverhead`, so a full page still fits the engine's limit; cut, it keeps the verdict and ends "… Run tc whoami for the rest." On `tc start review` the ordinary notice is cut. A `not-applicable` reading prints nothing there, and no failure of the notice costs the page.
+  - `_requireQuietly`: the Codex module reaches `lib/store.js`, and node prints its SQLite `ExperimentalWarning` when that loads. That one warning is dropped for the length of the load; every other passes; `emitWarning` is restored on a throw. `tc` opens no database. `_withoutPathFloor` repeats `lib/sessions.js`'s pattern, which `tc` cannot load; a test holds the two to the same answers. Both go away with #2375.
+- `bin/tc`: hands the verbs a reader of the pane's start command, called only by the verbs that print the row.
+- `docs/engine-guide.md`, `docs/user-guide.md`: the row, what each answer means to the session reading it, the server's line, and the limits.
+
+**Tests.** `test/tc-pane-identity.test.js`: each command shape, wrapped and malformed, fails closed; a borrowed live verified binding whose row is isolated leaves the caller NOT SHOWN ISOLATED; the row is never picked by a claimed id; no output holds `ISOLATED` as the caller's verdict over every reading, binding and server answer; `next` and `review` both carry the notice and only on the state step; a full state page with the longest reasons fits the limit; the warning filter; three cases through the real binary. `test/tc-start-cli.test.js`: one stub keeps the first url asked, because the state step now makes a side lookup after it.
+
+**Not covered.** A real Codex pane on the live install (after the deploy). A session that never runs `tc` is still not told. No route was added and no guard changed; `server.js` is not in the diff, and no route-table test was added.
+
 ## 2026-10-12 — #2059: Codex 0.161.0 and 0.162.0 stay unlisted, and the streaming frame that keeps them out is pinned
 
 <!-- prawduct: type=chore | scope=codex-wake-2059 -->

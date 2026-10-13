@@ -444,10 +444,526 @@ describe('bin/tc refuses to speak for a pane that recorded a different identity 
     });
   }
 
+  /**
+   * A `tmux` stand-in that answers the pane's identity and its start command.
+   * @param {string} startCommand - What `#{pane_start_command}` prints
+   * @returns {string}
+   */
+  const paneStartedWith = (startCommand) => 'case "$*" in '
+    + '"show-environment -t %7") echo "TANGLECLAW_LAUNCH_ID=L-aaa"; echo "TANGLECLAW_PROJECT_ID=14";; '
+    + `"-u display-message -p -t %7 #{pane_start_command}") printf '%s\\n' '${startCommand}';; `
+    + '*) exit 1;; esac';
+
+  it('whoami and capabilities warn when the pane was started with the bare Codex name, and say whose the server\'s record is (#2228)', async () => {
+    stubTmux(paneStartedWith('"export PATH=\\"/x/bin:\\$PATH\\"; codex --yolo"'));
+    for (const verb of ['whoami', 'capabilities']) {
+      requests.length = 0;
+      const res = await tc([verb], PANE);
+      assert.equal(res.code, 0, res.stderr);
+      assert.match(res.stdout, /Launch isolation: NOT ISOLATED\. The pane named by this shell's environment was not started isolated/, verb);
+      assert.match(res.stdout, /Server's record \(not a verdict about this shell\): the server lists no isolation record/, verb);
+      assert.equal(res.stderr, '', `${verb}: loading the engine judgment printed something`);
+      assert.deepEqual(requests.map((r) => r.split('?')[0]).filter((r) => r !== 'GET /api/control/mine'), ['GET /api/tc/whoami', 'GET /api/launch/isolation'], verb);
+    }
+  });
+
+  it('whoami never calls a pane started with --no-daemon isolated, and asks the server nothing for another engine (#2228)', async () => {
+    stubTmux(paneStartedWith('/opt/bin/codex --no-daemon'));
+    const codex = await tc(['whoami'], PANE);
+    assert.match(codex.stdout, /Launch isolation: NOT SHOWN ISOLATED\./);
+    assert.doesNotMatch(codex.stdout, /(?<!NOT )(?<!NOT SHOWN )ISOLATED/);
+    stubTmux(paneStartedWith('claude --dangerously-skip-permissions'));
+    requests.length = 0;
+    const claude = await tc(['whoami'], PANE);
+    assert.match(claude.stdout, /Launch isolation: not applicable\./);
+    assert.deepEqual(requests.map((r) => r.split('?')[0]).filter((r) => r !== 'GET /api/control/mine'), ['GET /api/tc/whoami']);
+  });
+
+  it('a verb that prints no isolation row does not read the pane\'s start command (#2228)', async () => {
+    stubTmux('case "$1" in show-environment) echo "TANGLECLAW_LAUNCH_ID=L-aaa"; echo "TANGLECLAW_PROJECT_ID=14";; *) echo asked >> "$0.asked"; exit 1;; esac');
+    const res = await tc(['sessions'], PANE);
+    assert.equal(res.code, 0, res.stderr);
+    assert.equal(fs.existsSync(path.join(stubDir, 'tmux.asked')), false);
+  });
+
   it('still answers help without asking tmux anything', async () => {
     stubTmux('echo "TANGLECLAW_LAUNCH_ID=L-other"');
     const res = await tc(['--help'], PANE);
     assert.equal(res.code, 0);
     assert.match(res.stdout, /whoami/);
+  });
+});
+
+// What `tc` tells a session about its launch's isolation (#2228): a reading of
+// the start command of the pane its environment names, which is only ever
+// negative or unknown, and beside it the server's record for the launch a
+// verified binding names, worded as the server's.
+
+/** Matches `ISOLATED` printed as a verdict, which is any that neither `NOT ` nor `NOT SHOWN ` leads. */
+const POSITIVE_VERDICT = /(?<!NOT )(?<!NOT SHOWN )ISOLATED/;
+
+/**
+ * A start command as `readPaneStartCommand` answers it.
+ * @param {string|null} command - The command
+ * @returns {{read: 'ok', command: (string|null)}}
+ */
+function started(command) {
+  return { read: 'ok', command };
+}
+
+/**
+ * The `/api/launch/isolation` answer with one project row.
+ * @param {number} sessionId - The row's session
+ * @param {string} verdict - Its verdict
+ * @returns {{sessions: object[]}}
+ */
+function inventoryOf(sessionId, verdict) {
+  return { sessions: [{ sessionId, role: 'project', verdict, reason: `Row ${sessionId} reason.` }] };
+}
+
+/**
+ * A `tc` context that records the paths asked of it.
+ * @param {object} options
+ * @param {object} options.read - What the pane's start command reads as
+ * @param {object} [options.identity] - The whoami answer; omitted, the identity lookup fails
+ * @param {object|Error} [options.inventory] - The inventory answer, or the error it fails with
+ * @param {object} [options.envelope] - The `tc start` answer
+ * @param {string[]} [options.argv] - Arguments after the verb
+ * @returns {{ctx: object, asked: string[]}}
+ */
+function isolationCtx({ read, identity, inventory, envelope, argv = [] }) {
+  const asked = [];
+  const getJson = async (apiPath, opts) => {
+    asked.push(`GET ${apiPath}${opts && opts.aux ? ' aux' : ''}`);
+    if (apiPath.startsWith('/api/tc/whoami')) {
+      if (!identity) throw new Error('no identity');
+      return identity;
+    }
+    if (apiPath.startsWith('/api/launch/isolation')) {
+      if (inventory instanceof Error) throw inventory;
+      return inventory;
+    }
+    return envelope;
+  };
+  const ctx = {
+    api: 'http://localhost:1', env: {}, argv, paneCheck: { verdict: 'match', reason: null },
+    paneStartCommand: () => read,
+    getJson,
+    postJson: async (apiPath) => { asked.push(`POST ${apiPath}`); return envelope; }
+  };
+  return { ctx, asked };
+}
+
+describe('tc: the start command of the pane this shell names (#2228)', () => {
+  const ENV = { TMUX: '/tmp/tmux-501/default,1,2', TMUX_PANE: '%7' };
+
+  describe('readPaneStartCommand', () => {
+    it('asks tmux for that pane\'s start command, as UTF-8 and with a bound on the wait', () => {
+      const calls = [];
+      const read = verbs.readPaneStartCommand(ENV, (file, args, options) => {
+        calls.push({ file, args, options });
+        return '/opt/bin/codex --no-daemon\n';
+      });
+      assert.deepEqual(read, { read: 'ok', command: '/opt/bin/codex --no-daemon' });
+      assert.equal(calls[0].file, 'tmux');
+      assert.deepEqual(calls[0].args, ['-u', 'display-message', '-p', '-t', '%7', '#{pane_start_command}']);
+      assert.ok(calls[0].options.timeout > 0);
+    });
+
+    it('undoes the quoting tmux prints a command in', () => {
+      const read = verbs.readPaneStartCommand(ENV, () => '"export PATH=\\"/x/bin:\\$PATH\\"; codex"\n');
+      assert.deepEqual(read, { read: 'ok', command: 'export PATH="/x/bin:$PATH"; codex' });
+    });
+
+    it('answers no command, not a guess, for one that cannot be read back exactly', () => {
+      assert.deepEqual(verbs.readPaneStartCommand(ENV, () => '"codex \\q"\n'), { read: 'ok', command: null });
+      assert.deepEqual(verbs.readPaneStartCommand(ENV, () => 'codex\nsecond line\n'), { read: 'ok', command: null });
+    });
+
+    it('does not ask tmux at all without both TMUX and TMUX_PANE, or with a pane id that is not one', () => {
+      const exec = () => { throw new Error('tmux was asked'); };
+      assert.deepEqual(verbs.readPaneStartCommand({ TMUX_PANE: '%7' }, exec), { read: 'no-pane' });
+      assert.deepEqual(verbs.readPaneStartCommand({ TMUX: 'x' }, exec), { read: 'no-pane' });
+      assert.equal(verbs.readPaneStartCommand({ TMUX: 'x', TMUX_PANE: '7; rm' }, exec).read, 'unreadable');
+    });
+
+    for (const [label, err, said] of [
+      ['tmux is not installed', Object.assign(new Error('spawn tmux ENOENT'), { code: 'ENOENT' }), /not on PATH/],
+      ['tmux does not answer in time', Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }), /did not answer/],
+      ['tmux knows no such pane', Object.assign(new Error('exit 1'), { status: 1 }), /could not read/]
+    ]) {
+      it(`reports unreadable, with why, when ${label}`, () => {
+        const read = verbs.readPaneStartCommand(ENV, () => { throw err; });
+        assert.equal(read.read, 'unreadable');
+        assert.match(read.detail, said);
+      });
+    }
+  });
+
+  describe('judgeOwnPaneCommand', () => {
+    const bridgeHandoff = require('../lib/bridge-handoff');
+    const FLOOR = 'export PATH="/x/bin:$PATH"; ';
+
+    for (const [label, command] of [
+      ['the bare command name', 'codex'],
+      ['the bare name with arguments', 'codex --yolo'],
+      ['the bare name behind the PATH floor', `${FLOOR}codex --yolo`],
+      ['the bare name behind the credential handoff and the PATH floor', FLOOR + bridgeHandoff.wrapLaunchCommand('codex', '/tmp/f.fifo', { nodePath: '/usr/bin/node', receiverPath: '/x/receive.js' })],
+      ['an exact executable with no isolation flag', '/opt/bin/codex --yolo'],
+      ['an exact executable that repeats its isolation flag', '/opt/bin/codex --no-daemon --no-daemon'],
+      ['an exact executable with the flag in a form Codex may not read', '/opt/bin/codex --no-daemon=1']
+    ]) {
+      it(`not-isolated: ${label}`, () => {
+        const own = verbs.judgeOwnPaneCommand(started(command));
+        assert.equal(own.verdict, 'not-isolated', own.reason);
+        assert.doesNotMatch(own.reason, /this session/i, 'the reason is about the pane, not this process');
+      });
+    }
+
+    for (const [label, read, said] of [
+      ['an exact executable with --no-daemon, which a borrowed pane could equally show', started('/opt/bin/codex --no-daemon'), /Nothing ties this shell/],
+      ['the same behind both wrappers', started(`${FLOOR}/opt/bin/codex --no-daemon`), /Nothing ties this shell/],
+      ['a command attached with --remote, whose channel record tc does not hold', started('/opt/bin/codex --remote unix:///tmp/s.sock'), /recorded only by TangleClaw/],
+      ['a command that carries --remote beside a contradicting flag', started('/opt/bin/codex --no-daemon --remote unix:///tmp/s.sock'), /recorded only by TangleClaw/],
+      ['a PATH floor in a form tc does not take off', started('export PATH=/x/bin:$PATH; codex'), /could not judge/],
+      ['a floor with a character the launch path never writes', started('export PATH="/x/`id`:$PATH"; codex'), /could not judge/],
+      ['a wrapper that names Codex and is not it', started('/opt/bin/codex-wrap --no-daemon'), /could not judge/],
+      ['Codex run through another program', started('env FOO=1 /opt/bin/codex --no-daemon'), /could not judge/],
+      ['a command that could not be read back', started(null), /read back from tmux exactly/],
+      ['a pane with no start command', started(''), /records no start command/],
+      ['no pane', { read: 'no-pane' }, /names no tmux pane/],
+      ['tmux not answering', { read: 'unreadable', detail: 'tmux did not answer within 1000 ms' }, /could not be read \(tmux did not answer/],
+      ['nothing read at all', undefined, /names no tmux pane/]
+    ]) {
+      it(`not-shown, never a pass: ${label}`, () => {
+        const own = verbs.judgeOwnPaneCommand(read);
+        assert.equal(own.verdict, 'not-shown', own.reason);
+        assert.match(own.reason, said);
+      });
+    }
+
+    it('not-applicable: a command that names no engine with a shared background process', () => {
+      assert.equal(verbs.judgeOwnPaneCommand(started('claude --dangerously-skip-permissions')).verdict, 'not-applicable');
+      assert.equal(verbs.judgeOwnPaneCommand(started(`${FLOOR}claude`)).verdict, 'not-applicable');
+    });
+
+    it('not-shown when the judgment itself fails, or answers something it should not', () => {
+      const thrown = verbs.judgeOwnPaneCommand(started('claude'), () => { throw new Error('boom'); });
+      assert.equal(thrown.verdict, 'not-shown');
+      assert.match(thrown.reason, /could not be judged \(boom\)/);
+      assert.equal(verbs.judgeOwnPaneCommand(started('claude'), () => null).verdict, 'not-shown');
+      assert.equal(verbs.judgeOwnPaneCommand(started('claude'), () => ({ applies: true, verdict: 'something-new' })).verdict, 'not-shown');
+    });
+
+    it('has no positive answer, whatever the judgment says', () => {
+      const isolated = () => ({ applies: true, verdict: 'isolated', basis: 'no-daemon', reason: 'r' });
+      for (const command of ['codex', '/opt/bin/codex --no-daemon', 'claude']) {
+        assert.equal(verbs.judgeOwnPaneCommand(started(command), isolated).verdict, 'not-shown');
+      }
+    });
+  });
+});
+
+describe('tc: the launch-isolation lines (#2228)', () => {
+  const VERIFIED_140 = { state: 'verified', reason: null, role: 'project', projectId: 14, sessionId: 140, cause: null, recovery: null };
+
+  it('NOT ISOLATED is said about the pane the environment names, with the reason, the version and what to do', () => {
+    const [row] = verbs.renderOwnIsolation(verbs.judgeOwnPaneCommand(started('codex')), null);
+    assert.match(row, /^Launch isolation: NOT ISOLATED\. The pane named by this shell's environment was not started isolated/);
+    assert.match(row, /started with `codex`, not with an exact Codex executable path/);
+    assert.match(row, /Codex version: unknown/);
+    assert.match(row, /ask the operator to end this session and launch it again/);
+  });
+
+  it('NOT SHOWN ISOLATED gives no relaunch advice, because no negative was read', () => {
+    const [row] = verbs.renderOwnIsolation(verbs.judgeOwnPaneCommand(started('/opt/bin/codex --no-daemon')), null);
+    assert.match(row, /^Launch isolation: NOT SHOWN ISOLATED\. Nothing ties this shell/);
+    assert.match(row, /tc never reports its own session as isolated/);
+    assert.doesNotMatch(row, /launch it again/);
+  });
+
+  it('a borrowed but live verified binding whose row is isolated does not make the caller isolated', async () => {
+    // The pane the environment names was started isolated and the launch the
+    // binding names is recorded isolated: both true of some other session.
+    const { ctx } = isolationCtx({ read: started('/opt/bin/codex --no-daemon'), inventory: inventoryOf(140, 'isolated') });
+    const lines = await verbs.ownIsolationLines(ctx, answer(VERIFIED_140));
+    assert.match(lines[0], /^Launch isolation: NOT SHOWN ISOLATED\./);
+    assert.equal(lines.length, 2);
+    assert.match(lines[1], /Server's record \(not a verdict about this shell\): the launch this shell's binding names \(session 140\) is recorded as isolated\. Row 140 reason\. That does not show this shell is that launch\./);
+    assert.doesNotMatch(lines.join('\n'), POSITIVE_VERDICT);
+  });
+
+  it('picks the server\'s row by the session the binding verified, never by one the answer claims', async () => {
+    const claimed = { ...answer(VERIFIED_140), sessionId: 999 };
+    const inventory = { sessions: [...inventoryOf(999, 'isolated').sessions, ...inventoryOf(140, 'not-isolated').sessions] };
+    const { ctx } = isolationCtx({ read: started('codex'), inventory });
+    const lines = await verbs.ownIsolationLines(ctx, claimed);
+    assert.match(lines[1], /\(session 140\) is recorded as not isolated\. Row 140 reason\./);
+    assert.doesNotMatch(lines.join('\n'), /999/);
+  });
+
+  it('does not ask the server for a binding that is not verified, and says it did not', async () => {
+    for (const binding of [STALE, { state: 'unbound' }, { state: 'weird' }, undefined]) {
+      const { ctx, asked } = isolationCtx({ read: started('codex'), inventory: inventoryOf(140, 'isolated') });
+      const lines = await verbs.ownIsolationLines(ctx, answer(binding));
+      assert.deepEqual(asked, [], 'no request for an unverified binding');
+      assert.match(lines[0], /NOT ISOLATED/);
+      assert.match(lines[1], /Server's record \(not a verdict about this shell\): not asked, because this shell's launch binding is not verified\./);
+    }
+  });
+
+  it('does not ask the server at all when the local reading is not applicable', async () => {
+    const { ctx, asked } = isolationCtx({ read: started('claude'), inventory: inventoryOf(140, 'isolated') });
+    const lines = await verbs.ownIsolationLines(ctx, answer(VERIFIED_140));
+    assert.deepEqual(asked, []);
+    assert.deepEqual(lines, ['Launch isolation: not applicable. The pane this shell\'s environment names was not started with an engine that shares a background process between sessions.']);
+  });
+
+  it('says the record is unavailable when the lookup fails, and still answers', async () => {
+    const refused = Object.assign(new Error('the TangleClaw API answered 403'), { code: 'LAUNCH_BINDING_INVALID' });
+    for (const [failure, said] of [[refused, /unavailable \(LAUNCH_BINDING_INVALID\)/], [new Error('socket hang up'), /unavailable \(the request failed\)/]]) {
+      const { ctx, asked } = isolationCtx({ read: started('codex'), inventory: failure });
+      const lines = await verbs.ownIsolationLines(ctx, answer(VERIFIED_140));
+      assert.deepEqual(asked, ['GET /api/launch/isolation aux']);
+      assert.match(lines[0], /NOT ISOLATED/);
+      assert.match(lines[1], said);
+    }
+  });
+
+  it('says so when the server lists no row for the verified session, and for a verdict it does not know reads not shown', async () => {
+    const none = isolationCtx({ read: started('codex'), inventory: inventoryOf(7, 'isolated') });
+    assert.match((await verbs.ownIsolationLines(none.ctx, answer(VERIFIED_140)))[1], /lists no isolation record for the launch this shell's binding names \(session 140\)/);
+    const odd = isolationCtx({ read: started('codex'), inventory: inventoryOf(140, 'brand-new') });
+    assert.match((await verbs.ownIsolationLines(odd.ctx, answer(VERIFIED_140)))[1], /recorded as not shown isolated/);
+  });
+
+  it('gives the Project Master the Master\'s row, never a project\'s', async () => {
+    const master = { role: 'master', binding: { state: 'verified', role: 'master', projectId: null, sessionId: null }, api: { origin: 'x' }, operator: { host: null, note: 'n' } };
+    const inventory = { sessions: [{ sessionId: null, role: 'master', verdict: 'not-isolated', reason: 'Master reason.' }, ...inventoryOf(140, 'isolated').sessions] };
+    const { ctx } = isolationCtx({ read: started('codex'), inventory });
+    const lines = await verbs.ownIsolationLines(ctx, master);
+    assert.match(lines[1], /\(the Project Master\) is recorded as not isolated\. Master reason\./);
+  });
+
+  it('never prints ISOLATED as the caller\'s own verdict, for any reading, binding or server answer', async () => {
+    const reads = [started('codex'), started('/opt/bin/codex --no-daemon'), started('/opt/bin/codex --remote unix:///tmp/s'), started('claude'),
+      started(null), started(''), { read: 'no-pane' }, { read: 'unreadable', detail: 'd' }];
+    const inventories = ['isolated', 'not-isolated', 'unknown', 'not-applicable'].map((v) => inventoryOf(140, v)).concat([new Error('x'), { sessions: [] }]);
+    for (const read of reads) {
+      for (const binding of [VERIFIED_140, STALE, undefined]) {
+        for (const inventory of inventories) {
+          const { ctx } = isolationCtx({ read, inventory });
+          const identity = answer(binding);
+          const lines = await verbs.ownIsolationLines(ctx, identity);
+          for (const text of [lines.join('\n'), verbs.renderWhoami(identity, undefined, lines), verbs.renderIsolationNotice(lines)]) {
+            assert.doesNotMatch(text, POSITIVE_VERDICT);
+            assert.doesNotMatch(text, /(you are|this shell is|this session is) isolated/i);
+          }
+        }
+      }
+    }
+  });
+
+  it('a tc that was handed no pane reader says the command was not read', async () => {
+    const { ctx } = isolationCtx({ read: null });
+    delete ctx.paneStartCommand;
+    const lines = await verbs.ownIsolationLines(ctx, answer(STALE));
+    assert.match(lines[0], /NOT SHOWN ISOLATED\. .*could not be read \(this tc did not read the pane\)/);
+  });
+
+  describe('where it is printed', () => {
+    const run = (verb, ctx) => verbs.VERB_ROSTER.find((v) => v.id === verb).run(ctx);
+
+    it('tc whoami: after the pane check, before the API line', async () => {
+      const { ctx, asked } = isolationCtx({ read: started('codex'), identity: answer(VERIFIED_140), inventory: inventoryOf(140, 'not-isolated') });
+      const out = (await run('whoami', ctx)).stdout.split('\n');
+      const at = out.findIndex((l) => l.startsWith('Launch isolation: NOT ISOLATED.'));
+      assert.ok(out[at - 1].startsWith('Pane check:'), out.join('\n'));
+      assert.match(out[at + 1], /^ {2}Server's record/);
+      assert.ok(out[at + 2].startsWith('TangleClaw API'));
+      assert.deepEqual(asked, ['GET /api/tc/whoami', 'GET /api/launch/isolation aux'], 'the identity is fetched once and the record is a side lookup');
+    });
+
+    it('tc capabilities: after the roster', async () => {
+      const { ctx } = isolationCtx({ read: started('codex'), identity: answer(STALE) });
+      const out = (await run('capabilities', ctx)).stdout;
+      assert.match(out, /^Capabilities:\n[\s\S]*\nLaunch isolation: NOT ISOLATED\.[^\n]*\n {2}Server's record[^\n]*not asked[^\n]*\n$/);
+    });
+
+    const STATE_PAGE = {
+      step: { index: 2, id: 'state', of: 4 }, page: { index: 0, of: 1, continued: false }, revision: 1, content: 'STATE STEP TEXT\n',
+      ack: { digest: 'abc', command: 'tc start next --ack state:1:abc' }, review: { readyAt: '2026-01-01T00:00:00.000Z' }, nextRef: null
+    };
+
+    for (const [sub, asks] of [['next', 'POST /api/tc/start/next'], ['review', 'GET /api/tc/start/review']]) {
+      it(`tc start ${sub}: beside the state step, which is printed as served`, async () => {
+        const { ctx, asked } = isolationCtx({ read: started('codex'), identity: answer(VERIFIED_140), inventory: inventoryOf(140, 'isolated'), envelope: STATE_PAGE, argv: [sub] });
+        const out = (await run('start', ctx)).stdout;
+        const without = (await run('start', isolationCtx({ read: started('claude'), envelope: { ...STATE_PAGE, step: { index: 1, id: 'governance', of: 4 } }, argv: [sub] }).ctx)).stdout;
+        assert.match(out, /^\[read by tc now, not part of the step below — Launch isolation: NOT ISOLATED\..*ask the operator to end this session and launch it again\. Server's.*\]\n\n/);
+        // A review page carries a longer banner of its own, which leaves the notice less room: it is cut, and says so.
+        assert.match(out.slice(0, out.indexOf(']\n\n')), sub === 'next'
+          ? /Server's record \(not a verdict about this shell\): .*recorded as isolated\. Row 140 reason\. That does not show this shell is that launch\.$/
+          : /… Run tc whoami for the rest\.$/);
+        assert.ok(out.includes('STATE STEP TEXT\n---\n'), 'the step\'s own text is unchanged');
+        assert.equal(out.slice(out.indexOf(']\n\n') + 3), without.replace('governance', 'state').replace('step 2/4', 'step 3/4'), 'everything after the notice is the page as it is printed without one');
+        assert.doesNotMatch(out, POSITIVE_VERDICT);
+        assert.deepEqual(asked, [asks, 'GET /api/tc/whoami aux', 'GET /api/launch/isolation aux']);
+      });
+
+      it(`tc start ${sub}: nothing is added to any other step, and nothing is read for it`, async () => {
+        const { ctx, asked } = isolationCtx({ read: started('codex'), identity: answer(VERIFIED_140), inventory: inventoryOf(140, 'isolated'), envelope: { ...STATE_PAGE, step: { index: 3, id: 'task', of: 4 } }, argv: [sub] });
+        let reads = 0;
+        ctx.paneStartCommand = () => { reads += 1; return started('codex'); };
+        const out = (await run('start', ctx)).stdout;
+        assert.doesNotMatch(out, /Launch isolation/);
+        assert.deepEqual(asked, [asks]);
+        assert.equal(reads, 0, 'the pane was read for a step that prints no row');
+      });
+    }
+
+    for (const [sub, asks] of [['next', 'POST /api/tc/start/next'], ['review', 'GET /api/tc/start/review']]) {
+      it(`tc start ${sub}: a session whose engine shares no background process is told nothing, and nothing more is asked`, async () => {
+        const { ctx, asked } = isolationCtx({ read: started('claude --x'), identity: answer(VERIFIED_140), inventory: inventoryOf(140, 'isolated'), envelope: STATE_PAGE, argv: [sub] });
+        const out = (await run('start', ctx)).stdout;
+        assert.doesNotMatch(out, /Launch isolation|read by tc now/);
+        assert.ok(out.includes('STATE STEP TEXT'));
+        assert.deepEqual(asked, [asks]);
+      });
+
+      it(`tc start ${sub}: the state step is printed whatever becomes of the notice`, async () => {
+        const { ctx } = isolationCtx({ read: started('codex'), identity: answer(VERIFIED_140), inventory: { sessions: 'not a list' }, envelope: STATE_PAGE, argv: [sub] });
+        assert.match((await run('start', ctx)).stdout, /^\[read by tc now[\s\S]*STATE STEP TEXT/);
+        ctx.paneStartCommand = () => { throw new Error('tmux fell over'); };
+        const res = await run('start', ctx);
+        assert.equal(res.code, 0);
+        assert.doesNotMatch(res.stdout, /read by tc now/);
+        assert.ok(res.stdout.includes('STATE STEP TEXT'));
+      });
+
+      it(`tc start ${sub}: a state page cut to the engine's limit still fits it with the notice, however long the reasons`, async () => {
+        const launchSequence = require('../lib/launch-sequence');
+        // A limit large enough that the budget is the limit less the overhead, not the floor a page is never cut below.
+        const maxChars = 8000;
+        assert.equal(launchSequence.pageBudgetFor(maxChars), maxChars - require('../lib/launch-page').pageOverhead());
+        const content = 'word '.repeat(6000);
+        const long = 'A reason that runs on. '.repeat(60);
+        const inventory = { sessions: [{ sessionId: 140, role: 'project', verdict: 'not-isolated', reason: long }] };
+        let noticed = 0;
+        for (const [start, end] of launchSequence.paginate(content, launchSequence.pageBudgetFor(maxChars))) {
+          const envelope = {
+            step: { index: 2, id: 'state', of: 4 }, page: { index: 998, of: 999, continued: true }, revision: 999999, content: content.slice(start, end),
+            ack: { command: 'tc start next --ack state:999999:' + 'a'.repeat(16) },
+            revised: { code: 'SNAPSHOT_REVISED', reason: 'the project rules changed', revision: 999999 },
+            review: { readyAt: '9999-12-31 23:59:59' }, nextRef: { command: 'tc start review --step task --page 998' }
+          };
+          const { ctx } = isolationCtx({ read: started('codex'), identity: answer(VERIFIED_140), inventory, envelope, argv: [sub] });
+          ctx.judgeRecordedCommand = () => ({ applies: true, verdict: 'not-isolated', reason: long });
+          const out = (await run('start', ctx)).stdout;
+          assert.ok(out.length <= maxChars, `a printed state page fits: ${out.length} <= ${maxChars}`);
+          if (out.startsWith('[read by tc now')) {
+            noticed += 1;
+            assert.match(out, /^\[read by tc now, not part of the step below — Launch isolation: NOT ISOLATED\./, 'a cut notice keeps the verdict');
+            assert.match(out.slice(0, out.indexOf(']\n\n')), /… Run tc whoami for the rest\.$/);
+          }
+        }
+        assert.ok(noticed > 0, 'the notice was printed on a full page');
+      });
+    }
+
+    it('a notice with no room for its verdict is not printed in part', () => {
+      const lines = ['Launch isolation: NOT SHOWN ISOLATED. Some reason.', '  Server\'s record: x.'];
+      assert.equal(verbs.renderIsolationNotice(lines, 60), '');
+      assert.equal(verbs.renderIsolationNotice(lines).length, 119);
+      assert.equal(verbs.renderIsolationNotice(lines, 119).length, 119, 'a notice that fits exactly is whole');
+      const cut = verbs.renderIsolationNotice(lines, 118);
+      assert.equal(cut.length, 118);
+      assert.match(cut, /^\[read by tc now, not part of the step below — Launch isolation: NOT SHOWN ISOLATED.*… Run tc whoami for the rest\.\]\n\n$/);
+      assert.match(verbs.renderIsolationNotice(lines), /Server's record: x\.\]\n\n$/);
+    });
+
+    it('tc start next: the state step is still served when the identity cannot be read', async () => {
+      const { ctx } = isolationCtx({ read: started('codex'), envelope: STATE_PAGE, argv: ['next'] });
+      const res = await run('start', ctx);
+      assert.equal(res.code, 0);
+      assert.match(res.stdout, /NOT ISOLATED\..*not asked, because this shell's launch binding is not verified/);
+      assert.ok(res.stdout.includes('tc start next --ack state:1:abc'));
+    });
+  });
+});
+
+describe('tc: the PATH floor is read as the launch path writes it (#2228)', () => {
+  it('takes off exactly what lib/sessions.js takes off, and nothing it would not', () => {
+    const sessions = require('../lib/sessions');
+    for (const command of [
+      'export PATH="/x/bin:$PATH"; codex', 'export PATH="/Users/a b/bin:$PATH"; /opt/bin/codex --no-daemon', 'export PATH=":$PATH"; codex',
+      'export PATH="/x/bin:$PATH";codex', 'export PATH=/x/bin:$PATH; codex', 'export PATH="/x/`id`:$PATH"; codex', 'export PATH="/x/$HOME:$PATH"; codex',
+      ' export PATH="/x/bin:$PATH"; codex', 'export PATH="/x/bin:$PATH"; export PATH="/y:$PATH"; codex', 'codex', ''
+    ]) {
+      assert.equal(verbs._withoutPathFloor(command), sessions._withoutPathFloor(command), command);
+    }
+  });
+});
+
+describe('tc: loading the engine judgment prints nothing of its own (#2228)', () => {
+  /**
+   * Run a load under `_requireQuietly` and collect what reaches the process's own `emitWarning`.
+   * @param {function(): *} load - Stands in for `require`
+   * @returns {{heard: Array<Array<*>>, result: *, thrown: (Error|null), restored: boolean}}
+   */
+  function loadHearing(load) {
+    const real = process.emitWarning;
+    const heard = [];
+    const recorder = (...args) => { heard.push(args); };
+    process.emitWarning = recorder;
+    let result;
+    let thrown = null;
+    try {
+      result = verbs._requireQuietly('x', load);
+    } catch (err) {
+      thrown = err;
+    }
+    const restored = process.emitWarning === recorder;
+    process.emitWarning = real;
+    return { heard, result, thrown, restored };
+  }
+
+  const SQLITE = 'SQLite is an experimental feature and might change at any time';
+
+  it('drops node\'s SQLite ExperimentalWarning, in each form emitWarning takes it', () => {
+    const { heard, result, restored } = loadHearing(() => {
+      process.emitWarning(SQLITE, 'ExperimentalWarning');
+      process.emitWarning(SQLITE, { type: 'ExperimentalWarning' });
+      process.emitWarning(Object.assign(new Error(SQLITE), { name: 'ExperimentalWarning' }));
+      return 'loaded';
+    });
+    assert.deepEqual(heard, []);
+    assert.equal(result, 'loaded');
+    assert.equal(restored, true);
+  });
+
+  it('passes on every other warning raised while the module loads, as it was given', () => {
+    const deprecation = Object.assign(new Error('old thing'), { name: 'DeprecationWarning' });
+    const { heard } = loadHearing(() => {
+      process.emitWarning('Fetch is an experimental feature', 'ExperimentalWarning');
+      process.emitWarning(SQLITE, 'DeprecationWarning');
+      process.emitWarning(SQLITE);
+      process.emitWarning(deprecation);
+      process.emitWarning('custom', { type: 'CustomWarning', code: 'C1' });
+    });
+    assert.deepEqual(heard, [
+      ['Fetch is an experimental feature', 'ExperimentalWarning'],
+      [SQLITE, 'DeprecationWarning'],
+      [SQLITE],
+      [deprecation],
+      ['custom', { type: 'CustomWarning', code: 'C1' }]
+    ]);
+  });
+
+  it('puts the process\'s own emitWarning back when the load throws, and lets the throw out', () => {
+    const { thrown, restored, heard } = loadHearing(() => { throw new Error('cannot load'); });
+    assert.match(thrown.message, /cannot load/);
+    assert.equal(restored, true);
+    assert.deepEqual(heard, []);
   });
 });
