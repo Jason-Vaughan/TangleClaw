@@ -35,6 +35,38 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-12 — #2323: a watched check wakes its project, and each message's delivery is read back
+
+<!-- prawduct: type=feature | scope=2323-check-watch-wake -->
+
+#2323 Chunk 03b, the issue's last. Branch `feat/2323-03b-check-watch-wake`, from `origin/main` `355a946b`. Built to the ruled contract `2323 relax` (queue Rulings item 31): one marker per watch and message, ONE second send after two unbroken connected minutes, never a third; a duplicate is possible and is said. The issue stays open for its live check after the deploy.
+
+Visual change: no
+
+**Why.** A watch's result was recorded and nobody was told: a session had to read its watch. The issue asks that the session be woken when the check finishes or the due time passes, that the delivery be read back from the switchboard's own facts, and that it survive a restart of the server and a clear of the session.
+
+**What changed.**
+
+- `lib/check-watch.js`: after its reads, each pass sends what is owed, as a switchboard participant of its own (`check-watch`, shown as *Check Watch*), through `medusa-send#sendTracked` with `caller: { kind: 'system' }`. It declares itself the system owner of the request id prefix `check-watch:`.
+  - A **wake** when a result is recorded and an **alarm** when the due time passes with none, each under `check-watch:<kind>:<watch id>`. The message ends `ref: <request id>`.
+  - `noteArrival`: a received message binds a Hub id to an exchange only by that marker, and only when the exchange is the monitor's, the message came from the workspace it was sent from and reached the workspace it was addressed to. The measurement showed the arrival reaches the observer before the Hub's answer on every send, so this is the ordinary path and the answer's own bind then changes nothing.
+  - The recipient is the project's one active session with a connected listener. None, several, or one not connected records `wake-undeliverable` / `alarm-undeliverable` once, spends no request id, and the message is sent when there is one.
+  - `woke` / `alarmed` is recorded once when the send is made, with a code for how it stood then (`accepted`, `uncertain`, `refused`). A send the Hub refused is final.
+  - **The second attempt:** a first send with no Hub id and no refusal is sent once more under `...:2` when its recipient's listener has been connected without a break for two minutes, counted from the later of when the outcome became uncertain and when that listener last connected. Found from `medusa-exchanges#openSystemOwned`, so it survives a restart with no new record. Never a third.
+  - An alarm sent more than two minutes after its due time says it is late and names both times; for an expired watch it names the expiry.
+  - A delivered message nobody acknowledged has its exchange closed after 24 hours (a test shows a read and an acknowledgement made after the close are still recorded). A send with no Hub id is left open.
+  - **Its listener runs only while it has somebody to tell** (the Integrator's `2323 listen on work`): a watch that is open or owes a message for a project with a connected session, or a first send awaiting its second attempt. `lib/system-health.js` reads the listener count, and a listener that always ran would turn an install with no Hub from clear to fired.
+  - A pass waits 15 seconds for the Hub's answer to a send and at most 30 first sends are made in a pass. Carried from chunk 03a's review: the clock is read inside the guarded pass; a skipped pass is logged on a change of state.
+- `lib/medusa-listener.js`, `lib/medusa.js` (the Integrator's `2323 since A`, their own commit): a listener keeps `listeningSince`, the time it last reached `listening`, null in every other state, and its status carries it. **Three handlers answer with that status as it is, each under two prefixes, so six route answers gain the key:** `GET <prefix>/status`, `POST <prefix>/toggle`, `POST <prefix>/read`, under `/api/sessions/:project/medusa` and `/api/master/medusa`.
+- `server.js`: one call in the arrival observer, after the arrival is recorded, handing the message to `checkWatch.noteArrival`; the comment at the monitor's start.
+- `lib/check-watch-api.js`: `MONITORED` is `true`. Every watch in an answer carries `delivery.wake` and `delivery.alarm`: a state (`not-owed`, `owed`, `undeliverable`, `refused`, `unconfirmed`, `accepted`, `arrived`, `read`, `acknowledged`), each attempt, whether there was a second, and a recorded "nobody to tell". Derived from the exchanges' facts on every read; `read` and `acknowledged` count only from the recipient itself.
+- `lib/tc-verbs.js`: the NOT MONITORED line is gone.
+- `docs/check-watch.md`: the two messages, the marker, the second attempt, the delivery states and the limits.
+
+**Limits, all on the page.** A duplicate message is possible, and is certain in one case: the message arrived, the server stopped before the bind, and the Hub does not deliver it again. A wake can be lost if neither attempt was taken or delivered, or if the session the first send went to has ended (the second attempt goes only to the listener the first was addressed to). The Hub takes a sender as stated, so the marker holds against this install's sessions and not against something that talks to the Hub directly. A Hub that restarts loses what it holds: read from its code, not measured. A refusal is final (#2370 is one way to get one wrongly). Up to a pass late, two when *Check Watch* had to be started. `tc check show` prints the history and not the `delivery` states.
+
+**Not exercised.** No real Hub, no real session and no real GitHub check: the Hub is stood in for at `lib/medusa.js`'s wire calls, with the tracked send, the exchange rows, the bind and (in the API tests) this server's arrival observer the real ones. The live check after the deploy is the Integrator's: one real watch on a real PR's `test` check, woken when it finishes, the delivery read back.
+
 ## 2026-10-12 — #2059: Codex 0.161.0 and 0.162.0 are read by the rows each one draws, and by the thread that is the launch's own
 
 <!-- prawduct: type=feature | scope=codex-wake-2059 -->

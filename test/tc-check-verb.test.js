@@ -121,19 +121,16 @@ describe('tc check (#2323)', () => {
     assert.match(out.stdout, /tc check show cw_111111111111111111111111/);
   });
 
-  it('says, on every answer from a server that wakes nobody for a watch, that nobody will be woken', async () => {
+  it('no answer says a watch is not monitored: the server wakes the project itself', async () => {
     const answers = [
-      [['watch', '2341', '--sha', SHA, '--name', 'test', '--due', '45'], { post: { watch: watch(), monitored: false } }],
-      [['list'], { get: listOf([watch()]) }],
-      [['show', 'cw_1'], { get: { watch: watch(), projectName: 'builder-a', facts: [], monitored: false } }]
+      [['watch', '2341', '--sha', SHA, '--name', 'test', '--due', '45'], { post: { watch: watch(), monitored: true } }],
+      [['list'], { get: listOf([watch()], { monitored: true }) }],
+      [['show', 'cw_1'], { get: { watch: watch(), projectName: 'builder-a', facts: [], monitored: true } }]
     ];
     for (const [argv, answer] of answers) {
       const out = await check.run(fakeCtx(argv, answer).ctx);
-      assert.match(out.stdout, /NOT MONITORED: .*reads GitHub for a watch and records the result, but wakes nobody\. Read the check yourself/, argv[0]);
+      assert.ok(!/NOT MONITORED/.test(out.stdout), argv[0]);
     }
-    // A server that does read it is not said to be silent.
-    assert.ok(!/NOT MONITORED/.test(renderCheckList(listOf([watch()], { monitored: true }))));
-    assert.ok(!/NOT MONITORED/.test(renderCheckWatch({ watch: watch(), projectName: 'builder-a', facts: [], monitored: true })));
   });
 
   it('list renders each state, and unknown with its reason, never as failed or done', async () => {
