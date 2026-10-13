@@ -1374,7 +1374,7 @@ the command that installs one (`npm install -g @openai/codex@0.156.1`, which is 
 wizard offers); an unresolvable executable says where to install Codex; a command reason says to remove
 custom launch arguments, since another Codex version would not help. No pane, session row or bridge credential is created, and a per-launch server that was already
 started is stopped. Codex 0.154.0 rejects `--no-daemon` and is not verified for the native channel, so it
-no longer launches; neither does any version not yet tested. There is no override. The check applies to a
+no longer launches; neither does any version not yet tested, unless the operator's override allows it (see "The operator's override" below). The check applies to a
 launch whose engine id, profile (its id, launch command or detection target), resolved executable or
 command names `codex`. Such a launch is also refused (`no_judge`) when no check could run for it at all:
 the Codex adapter is not registered, lacks the check, or does not claim the launch. Every other engine
@@ -1445,7 +1445,8 @@ every version it names was measured; the remedy that names no version does not.
   - **What it covers.** Only the two refusals that are about the version: `version_unknown` (the
     version could not be read) and `version_unverified` (it is not a version TangleClaw has verified).
     Every other refusal stands with the override on: a wrapper or unnameable executable, launch
-    arguments that cannot be read, a command that attaches to a server the launch did not start, the
+    arguments that cannot be read, a command that attaches to a server the launch did not start, launch
+    arguments that themselves carry `--no-daemon` (the session would then be recorded as isolated), the
     native channel's own version refusal, and a fault in TangleClaw's own check. The overridden
     command is checked for those again, so a problem the version refusal was hiding still stops it.
   - **What starts.** The exact executable that was probed, with the launch's own arguments and

@@ -2809,7 +2809,9 @@ describe('Codex startupControl adapter', () => {
           [{ launchCmd: 'codex --config $(id)' }, 'command_unparseable'],
           [{ launchCmd: 'codex -- --no-daemon' }, 'command_unparseable'],
           [{ launchCmd: 'codex --remote unix:///tmp/x --no-daemon' }, 'command_unparseable'],
-          [{ launchCmd: 'codex --remote unix:///tmp/someone-elses.sock' }, 'command_unisolated']
+          [{ launchCmd: 'codex --remote unix:///tmp/someone-elses.sock' }, 'command_unisolated'],
+          [{ launchCmd: 'codex --no-daemon' }, 'command_unisolated'],
+          [{ launchCmd: 'codex --sandbox workspace-write --no-daemon' }, 'command_unisolated']
         ]) {
           const verdict = overridden(over);
           assert.equal(verdict.allowed, false, JSON.stringify(over));
@@ -2826,6 +2828,10 @@ describe('Codex startupControl adapter', () => {
         assert.equal(mine.verdict, 'not-isolated');
         assert.equal(mine.reasonCode, 'command_unisolated');
         assert.equal(mine.startedUnisolatedByPath, true);
+        // No command an overridden launch can run reads isolated afterwards.
+        for (const launchCmd of ['codex', 'codex --sandbox workspace-write', 'codex --ask-for-approval never']) {
+          assert.equal(recorded(overridden({ launchCmd }).command).verdict, 'not-isolated', launchCmd);
+        }
         for (const command of ['codex', 'codex --sandbox workspace-write', `${BIN} --no-daemon`, `${BIN} --remote unix:///tmp/x`, '/opt/fake/bin/codex-wrapper', `${BIN} --config $(id)`]) {
           assert.equal('startedUnisolatedByPath' in recorded(command), false, command);
         }

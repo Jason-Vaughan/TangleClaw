@@ -306,6 +306,7 @@ describe('a launch under the operator\'s launch-isolation override (#2229)', () 
     it('a refusal the version refusal was hiding is found on the overridden command, and stops the launch', () => {
       for (const [args, reasonCode] of [
         ['--remote unix:///tmp/someone-elses.sock', 'command_unisolated'],
+        ['--no-daemon', 'command_unisolated'],
         ['--config $(id)', 'command_unparseable'],
         ['-- --no-daemon', 'command_unparseable']
       ]) {
