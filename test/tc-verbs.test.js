@@ -1114,6 +1114,21 @@ describe('tc sessions isolation — a session under the operator\'s override (#2
     }
   });
 
+  it('a launch the server holds no override record for is an ordinary session to relaunch, with its reason whole', () => {
+    // The pane's command has the overridden form but the launch's own record
+    // was not read: the server says so in the reason and attaches no mark.
+    const unproved = { ...row(5, 'not-isolated', null), overrideUnproved: true, reason: 'Started unisolated. TangleClaw holds no record this launch was started under the override.' };
+    const out = renderIsolation(inventory([unproved, { ...row(6, 'not-isolated', MARK), overrideUnproved: false }]));
+    assert.match(out, /^ {2}NOT ISOLATED {2}#5 p5 — engine codex \[command_unisolated\]$/m);
+    assert.ok(out.includes(`      ${unproved.reason}`));
+    assert.match(out, /--replaced 5$/m);
+    assert.match(out, /^Marked \(operator's override\): #6 p6\. /m);
+    assert.match(out, /2 not isolated \(1 of them under the operator's override\)/);
+    const alone = renderIsolation(inventory([unproved]));
+    assert.match(alone, /^Ask the operator to end and relaunch each session marked NOT ISOLATED or NOT SHOWN ISOLATED\. Afterwards, check it took: tc sessions isolation --replaced 5$/m);
+    assert.doesNotMatch(alone, /operator's override|Marked|Apart from/);
+  });
+
   it('never prints an overridden session as a pass', () => {
     const out = renderIsolation(inventory([row(5, 'not-isolated', MARK), row(null, 'not-isolated', MARK)]));
     for (const line of out.split('\n')) assert.doesNotMatch(line, /(?<!NOT )(?<!NOT SHOWN )ISOLATED/, line);

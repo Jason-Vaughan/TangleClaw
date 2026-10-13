@@ -790,6 +790,12 @@ describe('tc: the launch-isolation lines (#2228)', () => {
       }
     });
 
+    it('a launch the server holds no override record for gets the plain line, with the server\'s reason whole', async () => {
+      const inventory = { sessions: [{ ...inventoryOf(140, 'not-isolated').sessions[0], override: null, overrideUnproved: true, reason: 'Row 140 reason. TangleClaw holds no record this launch was started under the override.' }] };
+      const [, server] = await verbs.ownIsolationLines(isolationCtx({ read: started('codex'), inventory }).ctx, answer(VERIFIED_140));
+      assert.equal(server, '  Server\'s record (not a verdict about this shell): the launch this shell\'s binding names (session 140) is recorded as not isolated. Row 140 reason. TangleClaw holds no record this launch was started under the override. That does not show this shell is that launch.');
+    });
+
     it('never reads as a pass, and a notice cut to the page\'s room loses the reason before it loses the override', async () => {
       const { ctx } = isolationCtx({ read: started('codex'), inventory: overridden(MARK) });
       const identity = answer(VERIFIED_140);
