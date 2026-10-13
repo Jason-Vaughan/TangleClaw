@@ -1167,7 +1167,9 @@ override" below), and `tc sessions isolation` counts it ("2 not isolated (1 of t
 operator's override)"), lists it after the plain `NOT ISOLATED` rows, keeps its id out of the
 `--replaced` ids it offers and names it in one closing sentence instead. A relaunch can isolate it
 only on a Codex version TangleClaw has verified; on the same version it starts the same way while
-the override stands, and is refused once the override is cleared. A row whose reason says
+the override stands, and is refused once the override is cleared. So after installing a verified
+Codex version, end and relaunch these sessions too, and add their ids to step 3 yourself: `tc` does
+not read the installed version and goes on leaving them out. A row whose reason says
 TangleClaw holds no record that the launch was started under the override carries no such mark: it
 is an ordinary `NOT ISOLATED` session and is in step 1.
 
