@@ -1145,7 +1145,7 @@ gives each live session and the Project Master one verdict:
 | Verdict | Meaning |
 |---|---|
 | `ISOLATED` | Codex was started from an exact executable path, either attached to the server TangleClaw started for that session (`native-app-server`) or with `--no-daemon` (`no-daemon`). |
-| `NOT ISOLATED` | A Codex session whose command does not show that: most often the bare name `codex`, which is how Codex was started before the launch check existed. |
+| `NOT ISOLATED` | A Codex session whose command does not show that: most often the bare name `codex`, which is how Codex was started before the launch check existed. A session started under the operator's override also reads this, and its reason says so (see "The operator's override" below). |
 | `NOT SHOWN ISOLATED` | The command could not be read or judged: tmux did not answer or failed, the pane records no start command, the command could not be read back exactly, or the session's tmux name could not be worked out. Treat it as not isolated. |
 | `not applicable` | An engine with no shared background process, a session that runs on another machine, or a session tmux has no pane for. The last is read only from a tmux that listed its panes, or that said it has no server running. |
 
@@ -1374,7 +1374,7 @@ the command that installs one (`npm install -g @openai/codex@0.156.1`, which is 
 wizard offers); an unresolvable executable says where to install Codex; a command reason says to remove
 custom launch arguments, since another Codex version would not help. No pane, session row or bridge credential is created, and a per-launch server that was already
 started is stopped. Codex 0.154.0 rejects `--no-daemon` and is not verified for the native channel, so it
-no longer launches; neither does any version not yet tested. There is no override. The check applies to a
+no longer launches; neither does any version not yet tested, unless the operator's override allows it (see "The operator's override" below). The check applies to a
 launch whose engine id, profile (its id, launch command or detection target), resolved executable or
 command names `codex`. Such a launch is also refused (`no_judge`) when no check could run for it at all:
 the Codex adapter is not registered, lacks the check, or does not claim the launch. Every other engine
@@ -1438,7 +1438,48 @@ every version it names was measured; the remedy that names no version does not.
   that is itself named `codex` (the name and the version it prints are the whole identity tested), Codex reached over
   SSH, an executable replaced between the version check and the launch, and whether a `--remote`
   client can ever consult the shared process (allowed on the evidence recorded for 0.156.1 only).
-- **No override.** No setting, flag or profile field allows an unverified Codex to launch.
+- **The operator's override (#2229).** One thing lets a Codex launch that could not be shown isolated
+  start anyway: the launch-isolation override, which only the operator can turn on, for the whole
+  install or for one project (the routes are in `docs/configuration-reference.md`). No flag, profile
+  field, `config.json` key or `project.json` key does it, and a session cannot grant itself one.
+  - **What it covers.** Only the two refusals that are about the version: `version_unknown` (the
+    version could not be read) and `version_unverified` (it is not a version TangleClaw has verified).
+    Every other refusal stands with the override on: a wrapper or unnameable executable, launch
+    arguments that cannot be read, a command that attaches to a server the launch did not start, launch
+    arguments that themselves carry `--no-daemon` (the session would then be recorded as isolated), the
+    native channel's own version refusal, and a fault in TangleClaw's own check. The overridden
+    command is checked for those again, so a problem the version refusal was hiding still stops it.
+  - **What starts.** The exact executable that was probed, with the launch's own arguments and
+    without `--no-daemon`: nothing shows that version accepts the flag.
+  - **What it risks.** The launch can use Codex's shared background process, so it may borrow
+    another project's TangleClaw identity: its `tc` calls may fail, or act as that other launch. The
+    project whose identity is borrowed did not opt in. The override does not make the launch isolated,
+    and nothing softens what such a session may then be refused.
+  - **The Project Master** belongs to no project, so only the install-wide override starts it.
+  - **Fail closed.** If the override cannot be read, the launch is refused as if none were set.
+  - **What it leaves, each time.** A warning in the server log; a `launch.isolation_overridden`
+    activity event; `isolationOverride` in the launch's answer; and a mark on that session's row of
+    `tc sessions isolation` and `GET /api/launch/isolation`. Each names the project (or the Project
+    Master), the version read and the refusal that was set aside. The row still reads
+    `NOT ISOLATED`: the mark says how the launch was allowed to start, and is never a verdict.
+    A relaunch isolates it only on a Codex version TangleClaw has verified; on the same version it
+    starts the same way while the override stands, and is refused once the override is cleared.
+  - **The mark is claimed only on the launch's own record, for the pane that launch started.** A row
+    says its launch was overridden only when TangleClaw reads the activity event that launch wrote
+    AND the event's one-way reference to the launch id matches the launch id the live tmux session
+    holds (for a project session the event is also the one with its session id). Neither a pane's
+    start command nor a session id is proof alone. The command an overridden launch runs (the exact
+    executable, neither isolation flag) is also what a profile naming Codex by absolute path ran
+    before launches were checked, and a tmux session can be replaced by hand under a project's name
+    while its session row stays active. A row with that command and no matching record says so in
+    words ("holds no record that this launch was started under it") and carries `overrideUnproved`;
+    it is not called overridden. This is attribution, not a defence against the session itself: a
+    session knows its own launch id and could copy it into a tmux session it rebuilds. Either way
+    the row reads `NOT ISOLATED`.
+  - **A limit of the mark.** The activity log keeps only its 500 newest events for the whole
+    install. On a busy install an overridden session's event ages out while the session runs, and
+    its row then reads unproved, not overridden. The log warning written at the launch does not age
+    out with it.
 
 The channel ends with the
 session: kill, a wrap that ends the session, a

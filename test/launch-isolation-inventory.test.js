@@ -162,6 +162,7 @@ function deps(fleet) {
     session: (id) => live.find((s) => s.id === id) || (fleet.ended && fleet.ended[id]) || null,
     currentSession: (projectId) => live.find((s) => s.projectId === projectId) || null,
     master: () => (fleet.master === undefined ? null : fleet.master),
+    ...(fleet.overrideRecord ? { overrideRecord: fleet.overrideRecord } : {}),
     adapters: fleet.adapters || { codex },
     now: () => new Date('2026-10-09T20:00:00.000Z')
   };
@@ -301,6 +302,215 @@ describe('the launch-isolation inventory', () => {
     it('is judged by its command when its engine could not be resolved', async () => {
       const inv = await inventory.inventory(deps({ live: [], master: { tmuxSession: 'tangleclaw-master', engineId: null }, panes: { 'tangleclaw-master': [sessions._withPathFloor('codex')] } }));
       assert.deepEqual([inv.sessions[0].verdict, inv.sessions[0].reasonCode], ['not-isolated', 'command_not_pinned']);
+    });
+  });
+});
+
+describe('the mark on a launch that ran under the operator\'s override (#2229)', () => {
+  const OVERRIDDEN = `${FLOOR}${BIN} --ask-for-approval never`;
+  const event = (detail) => ({ id: 1, eventType: sessions.ISOLATION_OVERRIDDEN_EVENT, createdAt: '2026-10-12 20:00:00', detail });
+  const fleet = (over = {}) => deps({
+    live: [row(1, 'codex'), row(2, 'codex'), row(3, 'codex'), row(4, 'claude')],
+    panes: { s1: [OVERRIDDEN], s2: [`${FLOOR}${BIN} --no-daemon`], s3: [`${FLOOR}codex`], s4: [`${FLOOR}claude`] },
+    overrideRecord: ({ sessionId }) => (sessionId === 1
+      ? event({ role: 'project', engineId: 'codex', versionRead: '0.170.0', refusal: 'version_unverified', scope: 'project', setBy: null, setAt: 't' })
+      : event({ role: 'project', versionRead: '9.9.9', refusal: 'version_unknown', scope: 'install' })),
+    ...over
+  });
+
+  it('is on the overridden launch\'s row only, changes no verdict and no count, and never sits beside isolated', async () => {
+    const inv = await inventory.inventory(fleet());
+    assert.deepEqual(inv.sessions.map((s) => [s.sessionId, s.verdict, s.reasonCode, s.override && s.override.launchedUnderOverride, s.overrideUnproved]), [
+      [1, 'not-isolated', 'command_unisolated', true, false],
+      [2, 'isolated', null, null, false],
+      [3, 'not-isolated', 'command_not_pinned', null, false],
+      [4, 'not-applicable', null, null, false]
+    ]);
+    assert.deepEqual(inv.summary, (await inventory.inventory(fleet({ overrideRecord: undefined }))).summary);
+    assert.deepEqual(inv.sessions[0].override, {
+      launchedUnderOverride: true, scope: 'project', refusal: 'version_unverified', versionRead: '0.170.0', recordedAt: '2026-10-12 20:00:00'
+    });
+    assert.equal(inv.sessions[0].reason,
+      'This session was started without `--no-daemon` and without a server of its own, so it uses Codex\'s shared background process.'
+      + ' The operator\'s override allowed this launch to start although it could not be shown isolated'
+      + ' (engine version read: 0.170.0; refusal overridden: version_unverified; this project\'s override). '
+      + sessions.ISOLATION_OVERRIDE_RISK);
+    for (const s of inv.sessions.slice(1)) assert.ok(!s.reason.includes('override'), `row ${s.sessionId} says nothing of an override`);
+    assert.ok(inv.sessions.every((s) => 'override' in s && 'overrideUnproved' in s && !('startedUnisolatedByPath' in s)), 'every row carries both fields, and none the adapter\'s own flag');
+  });
+
+  // The command alone proves nothing: a profile naming Codex by absolute path
+  // ran it before launches were judged, and a tmux session can be made by hand.
+  for (const [label, overrideRecord] of [
+    ['no record of the launch is kept', () => null],
+    ['the record cannot be read', () => { throw new Error('database is locked'); }],
+    ['the record holds no detail', () => ({ id: 1, createdAt: null, detail: null })],
+    ['the record names a scope the override does not have', () => event({ scope: 'fleet', refusal: 'version_unverified', versionRead: '0.170.0' })],
+    ['the record names no refusal', () => event({ scope: 'install', refusal: 7, versionRead: '0.170.0' })],
+    ['nothing reads records at all', undefined]
+  ]) {
+    it(`a pane running the overridden command is NOT called overridden when ${label}: it reads unproved, in words`, async () => {
+      const inv = await inventory.inventory(fleet({ overrideRecord }));
+      const first = inv.sessions[0];
+      assert.equal(first.verdict, 'not-isolated');
+      assert.equal(first.reasonCode, 'command_unisolated');
+      assert.equal(first.override, null);
+      assert.equal(first.overrideUnproved, true);
+      assert.ok(first.reason.endsWith(inventory.OVERRIDE_UNPROVED), first.reason);
+      assert.match(first.reason, /holds no record that this launch was started under it/);
+      assert.ok(!first.reason.includes('allowed this launch to start'), 'it does not say the override allowed it');
+      assert.ok(!first.reason.includes(sessions.ISOLATION_OVERRIDE_RISK), 'and does not attach the override\'s risk as fact');
+      assert.deepEqual(inv.summary, (await inventory.inventory(fleet())).summary);
+    });
+  }
+
+  it('a record that read no version is still the launch\'s record: marked, and the version said to be not read', async () => {
+    const inv = await inventory.inventory(fleet({ overrideRecord: () => event({ scope: 'install', refusal: 'version_unknown', versionRead: '' }) }));
+    assert.deepEqual(inv.sessions[0].override, { launchedUnderOverride: true, scope: 'install', refusal: 'version_unknown', versionRead: null, recordedAt: '2026-10-12 20:00:00' });
+    assert.equal(inv.sessions[0].overrideUnproved, false);
+    assert.ok(inv.sessions[0].reason.includes('(engine version read: not read; refusal overridden: version_unknown; install-wide override)'));
+  });
+
+  it('a record is asked for only where the command is the overridden one', async () => {
+    const asked = [];
+    await inventory.inventory(fleet({ overrideRecord: (who) => { asked.push(who); return null; } }));
+    assert.deepEqual(asked, [{ sessionId: 1, tmuxSession: 's1' }], 'with the tmux session whose pane was judged');
+  });
+
+  it('a session with a second pane that reads worse keeps that pane\'s verdict; the mark follows the pane that was judged', async () => {
+    const inv = await inventory.inventory(fleet({ panes: { s1: [`${FLOOR}${BIN} --no-daemon`, OVERRIDDEN], s2: [null, OVERRIDDEN] } }));
+    assert.equal(inv.sessions[0].verdict, 'not-isolated');
+    assert.equal(inv.sessions[0].override.launchedUnderOverride, true);
+    assert.equal(inv.sessions[1].verdict, 'not-isolated');
+  });
+
+  it('the Project Master\'s row is marked from its own command, with the Master\'s record asked for by no session id', async () => {
+    const asked = [];
+    const inv = await inventory.inventory(deps({
+      live: [],
+      master: { tmuxSession: 'tangleclaw-master', engineId: 'codex' },
+      panes: { 'tangleclaw-master': [sessions._withPathFloor(bridgeHandoff.wrapLaunchCommand(BIN, '/Users/x/.tangleclaw/bridge-handoff/handoff-abc'))] },
+      overrideRecord: (who) => { asked.push(who); return event({ role: 'master', versionRead: null, refusal: 'version_unknown', scope: 'install' }); }
+    }));
+    assert.deepEqual(asked, [{ sessionId: null, tmuxSession: 'tangleclaw-master' }]);
+    assert.equal(inv.sessions[0].role, 'master');
+    assert.equal(inv.sessions[0].verdict, 'not-isolated');
+    assert.deepEqual(inv.sessions[0].override, { launchedUnderOverride: true, scope: 'install', refusal: 'version_unknown', versionRead: null, recordedAt: '2026-10-12 20:00:00' });
+    assert.ok(inv.sessions[0].reason.includes('(engine version read: not read; refusal overridden: version_unknown; install-wide override)'));
+  });
+
+  it('the Project Master\'s row with that command and no record of its own reads unproved', async () => {
+    const inv = await inventory.inventory(deps({
+      live: [],
+      master: { tmuxSession: 'tangleclaw-master', engineId: 'codex' },
+      panes: { 'tangleclaw-master': [sessions._withPathFloor(BIN)] },
+      overrideRecord: () => null
+    }));
+    assert.equal(inv.sessions[0].override, null);
+    assert.equal(inv.sessions[0].overrideUnproved, true);
+  });
+
+  describe('the stored reads: an event is a pane\'s only when its reference matches the launch id that pane holds', () => {
+    const store = require('../lib/store');
+    const tmuxLib = require('../lib/tmux');
+    const master = require('../lib/master');
+    const real = { query: store.activity.query, env: tmuxLib.readSessionEnv, live: master.liveMasterLaunchId };
+    const ref = (id) => sessions._overrideLaunchRef(id);
+    let asked;
+    let envAsked;
+    /** The stored events: one project launch's, and two Master launches'. */
+    const stored = (options) => {
+      asked.push(options);
+      return options.sessionId
+        ? [event({ role: 'project', scope: 'project', launchRef: ref('the-launch-that-was-overridden') })]
+        : [event({ role: 'project', scope: 'project', launchRef: ref('live-master-launch-id') }), event({ role: 'master', scope: 'older', launchRef: ref('an-earlier-master') }), event({ role: 'master', scope: 'install', launchRef: ref('live-master-launch-id') })];
+    };
+    const paneHolds = (answer) => { tmuxLib.readSessionEnv = (name, key) => { envAsked.push([name, key]); return answer; }; };
+    const read = (who) => inventory.DEFAULT_DEPS.overrideRecord(who);
+
+    it('a project row: the event with its session id, when the pane holds that launch\'s id', () => {
+      asked = []; envAsked = [];
+      store.activity.query = stored;
+      try {
+        paneHolds({ value: 'the-launch-that-was-overridden', answered: true, cause: null });
+        assert.equal(read({ sessionId: 12, tmuxSession: 's12' }).detail.scope, 'project');
+        assert.deepEqual(envAsked, [['s12', 'TANGLECLAW_LAUNCH_ID']]);
+        assert.deepEqual(asked, [{ sessionId: 12, eventType: 'launch.isolation_overridden', limit: 1 }]);
+      } finally {
+        store.activity.query = real.query; tmuxLib.readSessionEnv = real.env;
+      }
+    });
+
+    it('the event is present and the pane was replaced: a tmux session made by hand under the same name holds another launch id, or none, and gets no record', async () => {
+      asked = []; envAsked = [];
+      store.activity.query = stored;
+      try {
+        for (const held of [
+          { value: 'some-other-launch-id', answered: true, cause: null },
+          { value: null, answered: true, cause: null },
+          { value: 'the-launch-that-was-overridden', answered: false, cause: 'read-timed-out' }
+        ]) {
+          paneHolds(held);
+          assert.equal(read({ sessionId: 12, tmuxSession: 's12' }), null, JSON.stringify(held));
+          // Through the inventory itself: the row for that pane reads unproved, not overridden.
+          const inv = await inventory.inventory({
+            ...deps({ live: [row(12, 'codex')], panes: { s12: [`${FLOOR}${BIN}`] } }),
+            overrideRecord: inventory.DEFAULT_DEPS.overrideRecord
+          });
+          assert.equal(inv.sessions[0].verdict, 'not-isolated');
+          assert.equal(inv.sessions[0].override, null, JSON.stringify(held));
+          assert.equal(inv.sessions[0].overrideUnproved, true);
+          assert.ok(inv.sessions[0].reason.includes('its pane is not the one that launch started'));
+        }
+        // And the same row once the pane holds the launch's own id.
+        paneHolds({ value: 'the-launch-that-was-overridden', answered: true, cause: null });
+        const inv = await inventory.inventory({
+          ...deps({ live: [row(12, 'codex')], panes: { s12: [`${FLOOR}${BIN}`] } }),
+          overrideRecord: () => inventory.DEFAULT_DEPS.overrideRecord({ sessionId: 12, tmuxSession: 's12' }) && event({ role: 'project', scope: 'project', refusal: 'version_unverified', versionRead: '0.170.0' })
+        });
+        assert.equal(inv.sessions[0].override.launchedUnderOverride, true);
+      } finally {
+        store.activity.query = real.query; tmuxLib.readSessionEnv = real.env;
+      }
+    });
+
+    it('an event that carries no reference, or a Master\'s event, is never a project pane\'s', () => {
+      try {
+        paneHolds({ value: 'x', answered: true, cause: null });
+        store.activity.query = () => [event({ role: 'project', scope: 'project' })];
+        assert.equal(read({ sessionId: 12, tmuxSession: 's12' }), null, 'no reference on the event');
+        store.activity.query = () => [event({ role: 'master', scope: 'install', launchRef: ref('x') })];
+        assert.equal(read({ sessionId: 12, tmuxSession: 's12' }), null, 'a Master\'s event');
+        store.activity.query = () => [];
+        assert.equal(read({ sessionId: 12, tmuxSession: 's12' }), null);
+      } finally {
+        store.activity.query = real.query; tmuxLib.readSessionEnv = real.env;
+      }
+    });
+
+    it('the Project Master: only the event whose reference matches the live Master\'s launch id', () => {
+      asked = []; envAsked = [];
+      store.activity.query = stored;
+      try {
+        master.liveMasterLaunchId = () => ({ launchId: 'live-master-launch-id', answered: true, cause: null });
+        assert.equal(read({ sessionId: null, tmuxSession: 'tangleclaw-master' }).detail.scope, 'install', 'the running Master\'s own event, not an earlier Master\'s and not a project\'s');
+        assert.deepEqual(asked, [{ eventType: 'launch.isolation_overridden', limit: 50 }]);
+        master.liveMasterLaunchId = () => ({ launchId: 'a-master-with-no-event', answered: true, cause: null });
+        assert.equal(read({ sessionId: null, tmuxSession: 'tangleclaw-master' }), null, 'another Master\'s event is not this one\'s');
+        for (const live of [{ launchId: null, answered: true, cause: null }, { launchId: 'live-master-launch-id', answered: false, cause: 'read-timed-out' }]) {
+          master.liveMasterLaunchId = () => live;
+          assert.equal(read({ sessionId: null, tmuxSession: 'tangleclaw-master' }), null, 'with no live launch id to match, no event is the Master\'s');
+        }
+      } finally {
+        store.activity.query = real.query; master.liveMasterLaunchId = real.live;
+      }
+    });
+
+    it('the reference is one-way: the launch id is not in it, and nothing refers to no id', () => {
+      const mine = ref('live-master-launch-id');
+      assert.ok(/^[0-9a-f]{16}$/.test(mine) && !mine.includes('live-master'));
+      assert.equal(ref(''), null);
+      assert.equal(ref(undefined), null);
     });
   });
 });

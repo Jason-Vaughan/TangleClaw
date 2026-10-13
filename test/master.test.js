@@ -3335,7 +3335,7 @@ describe('ensureMasterSession — Codex daemon isolation (#1895)', () => {
    * Ensure a Master pinned to `engine`, with every engine installed at a known
    * path, and return the tmux launch command.
    * @param {object} masterBlock - Stored master settings over the defaults.
-   * @returns {{result: object, command: (string|null)}}
+   * @returns {{result: object, command: (string|null), env: (object|null)}} `env` is the environment tmux was handed for the pane.
    */
   function ensureWith(masterBlock) {
     const config = store.config.load();
@@ -3349,7 +3349,7 @@ describe('ensureMasterSession — Codex daemon isolation (#1895)', () => {
       store.config.save(config);
       const tmuxLib = fakeTmux({ alive: false });
       const result = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib, enginesLib });
-      return { result, command: tmuxLib.calls.length ? tmuxLib.calls[0].opts.command : null };
+      return { result, command: tmuxLib.calls.length ? tmuxLib.calls[0].opts.command : null, env: tmuxLib.calls.length ? tmuxLib.calls[0].opts.env : null };
     } finally {
       config.master = saved;
       store.config.save(config);
@@ -3433,6 +3433,100 @@ describe('ensureMasterSession — Codex daemon isolation (#1895)', () => {
       assert.equal(command, null, 'no tmux session was created');
     });
   }
+
+  describe('under the operator\'s launch-isolation override (#2229)', () => {
+    let project;
+    const sessions = require('../lib/sessions');
+    const overrides = store.launchIsolationOverrides;
+    const events = () => store.activity.query({ eventType: sessions.ISOLATION_OVERRIDDEN_EVENT }).filter((e) => e.detail && e.detail.role === 'master');
+    const clearAll = () => {
+      overrides.clear({ projectId: null });
+      for (const row of overrides.list().projects) overrides.clear({ projectId: row.projectId });
+    };
+
+    beforeEach(() => {
+      clearAll();
+      store.getDb().prepare('DELETE FROM activity_log WHERE event_type = ?').run(sessions.ISOLATION_OVERRIDDEN_EVENT);
+      if (!project) {
+        const dir = path.join(tmpDir, 'override-master-project');
+        fs.mkdirSync(dir, { recursive: true });
+        project = store.projects.create({ name: 'override-master-project', path: dir, engine: 'codex' });
+      }
+    });
+
+    afterEach(clearAll);
+
+    it('a project\'s override does not start the Master: it belongs to no project', () => {
+      codexAnswers('codex-cli 0.170.0\n');
+      overrides.set({ projectId: project.id });
+      const { result, command } = ensureWith({ engine: 'codex' });
+      assert.equal(result.created, false);
+      assert.equal(result.code, 'LAUNCH_ISOLATION_UNVERIFIED');
+      assert.equal(result.isolation.reasonCode, 'version_unverified');
+      assert.match(result.isolation.recovery, /An operator can instead allow this launch without isolation/);
+      assert.equal(command, null, 'no tmux session was created');
+      assert.deepEqual(events(), []);
+    });
+
+    for (const [label, output, refusal, versionRead] of [
+      ['an unlisted version', 'codex-cli 0.170.0\n', 'version_unverified', '0.170.0'],
+      ['a version that cannot be read', null, 'version_unknown', null]
+    ]) {
+      it(`the install-wide override starts the Master on ${label}: the exact executable, no isolation flag, and its records`, () => {
+        codexAnswers(output);
+        overrides.set({ projectId: null, setBy: 'jason' });
+        const { result, command, env } = ensureWith({ engine: 'codex', launchMode: 'fullAuto' });
+        assert.equal(result.created, true, result.error);
+        assert.ok(command.endsWith(`; ${CODEX_BIN} --ask-for-approval never --sandbox workspace-write`), command);
+        assert.ok(!command.includes('--no-daemon') && !command.includes('--remote'), command);
+        assert.deepEqual(result.isolationOverride, { refusal, versionRead, scope: 'install', risk: sessions.ISOLATION_OVERRIDE_RISK });
+        const written = events();
+        assert.equal(written.length, 1);
+        assert.equal(written[0].projectId, null);
+        assert.equal(written[0].sessionId, null);
+        // The Master has no session row: its event is tied to this launch by a
+        // one-way reference to the launch id its pane was given, never the id.
+        const launchId = env.TANGLECLAW_LAUNCH_ID;
+        assert.ok(typeof launchId === 'string' && launchId.length > 0);
+        assert.deepEqual(written[0].detail, {
+          role: 'master', engineId: 'codex', versionRead, refusal, scope: 'install', setBy: 'jason', setAt: overrides.list().install.setAt,
+          launchRef: sessions._overrideLaunchRef(launchId)
+        });
+        assert.ok(!JSON.stringify(written[0]).includes(launchId), 'the launch id itself is not in the activity log');
+      });
+    }
+
+    it('the install-wide override does not start a Master whose executable is a wrapper', () => {
+      codexAnswers('codex-cli 0.170.0\n');
+      overrides.set({ projectId: null });
+      const config = store.config.load();
+      const saved = config.master;
+      try {
+        config.master = { accessLevel: 'read-only', scope: 'all', autoStart: false, engine: 'codex' };
+        store.config.save(config);
+        const tmuxLib = fakeTmux({ alive: false });
+        const enginesLib = { detectEngine: () => ({ available: true, path: '/opt/fake/bin/codex-wrapper' }), resolveDefaultEngine: () => 'codex' };
+        const result = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib, enginesLib });
+        assert.equal(result.created, false);
+        assert.equal(result.isolation.reasonCode, 'executable_unverified');
+        assert.deepEqual(tmuxLib.calls, []);
+      } finally {
+        config.master = saved;
+        store.config.save(config);
+      }
+      assert.deepEqual(events(), []);
+    });
+
+    it('a Master on a verified version starts isolated and carries no mark, whatever the override says', () => {
+      codexAnswers('codex-cli 0.157.1\n');
+      overrides.set({ projectId: null });
+      const { result, command } = ensureWith({ engine: 'codex' });
+      assert.equal(result.created, true);
+      assert.ok(command.endsWith(`; ${CODEX_BIN} --no-daemon`), command);
+      assert.equal('isolationOverride' in result, false);
+      assert.deepEqual(events(), []);
+    });
+  });
 
   it('issues no bridge credential for a Master it refuses to start', () => {
     codexAnswers('codex-cli 0.158.0\n');
