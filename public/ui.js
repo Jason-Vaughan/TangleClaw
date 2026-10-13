@@ -2335,6 +2335,7 @@ function renderLaunchModeSettings(engineId, preserveMode, preserveShow, resetFro
 function closeSettings() {
   document.getElementById('settingsModal').classList.remove('open');
   settingsTarget = null;
+  isolationOverrideReveal = false;
   projectRulesTargetId = null;
   projectRulesTargetName = null;
 }
@@ -2418,7 +2419,13 @@ function renderProjectRulesSection(project) {
         <div class="form-label">Launch readiness</div>
         <div class="form-hint">The last five launches' own evidence, kept separate because the three answer different questions: which <strong>rules channel</strong> the prime used and what became of it, how much of the launch sequence was <strong>served</strong>, and how much the session <strong>acknowledged</strong> and attested.</div>
         <div class="session-rules-list" id="projRecoveryMode" aria-live="polite"></div>
+        <div class="session-rules-list" id="projLaunchIsolationLine" aria-live="polite"></div>
         <div class="session-rules-list" id="projLaunchSequencesList" aria-live="polite"></div>
+      </div>
+      <div class="form-group">
+        <div class="form-label">Launch isolation override</div>
+        <div class="form-hint">Whether this project's launches start when TangleClaw cannot show them isolated. Only the operator can change it.</div>
+        <div class="session-rules-list" id="projIsolationOverride" aria-live="polite" tabindex="-1"></div>
       </div>
       <div id="projRulesPwGroup" class="form-group hidden">
         <label class="form-label" for="projRulesPw">Delete password (required to approve or retire a rule)</label>
@@ -2512,12 +2519,15 @@ async function loadProjectRules(projectId, projectName) {
   // A save's outcome belongs to the sitting it was made in. Opening the modal
   // again must not repeat "saved" for a save nobody just made.
   projectRecoveryModeNotice = null;
+  isolationOverrideNotice = null;
   for (const { kind } of PROJECT_RULE_KINDS) {
     if ((await refreshProjectRulesList(projectId, kind)) === null) return;
   }
 
   await refreshProjectRuleDeliveries(projectId);
   await refreshProjectLaunchSequences(projectId);
+  await refreshProjectLaunchIsolationLine(projectId);
+  await refreshProjectIsolationOverride(projectId);
 }
 
 /**
@@ -3022,6 +3032,317 @@ function wireProjectRecoveryMode(box) {
       if (projectRulesTargetId === projectId) await refreshProjectLaunchSequences(projectId);
     });
   }
+}
+
+/**
+ * What a launch under a launch-isolation override risks (#2229).
+ *
+ * The screen's own copy of `ISOLATION_OVERRIDE_RISK` in `lib/sessions.js`,
+ * which is what each overridden launch's record carries. The routes that hold
+ * the override do not send it, so the switches cannot read it from an answer;
+ * `test/launch-isolation-override-ui.test.js` holds the two copies equal.
+ * @returns {string} The sentence, not escaped
+ */
+function isolationOverrideRiskText() {
+  return 'This launch can use the engine\'s shared background process, so it may borrow another project\'s TangleClaw identity: '
+    + 'its `tc` calls may fail, or act as that other launch. The override does not make it isolated.';
+}
+
+/**
+ * What the last launch-isolation override change in this sitting was told, and
+ * for which switch. Kept beside the switch for the reason
+ * `projectRecoveryModeNotice` states: a refusal says what was left unchanged,
+ * and the modal's status line is gone in three seconds.
+ * @type {{scope: string, projectId: (number|null), text: string, ok: boolean}|null}
+ */
+let isolationOverrideNotice = null;
+
+/**
+ * Whether Project Settings was opened to show the project's launch-isolation
+ * override, by the pointer on a refused launch. Read once, when the switch
+ * next renders.
+ */
+let isolationOverrideReveal = false;
+
+/**
+ * Whether an override reads on in the settings the server answered.
+ * @param {object} settings - The answer of `GET /api/launch/isolation-overrides`
+ * @param {string} scope - `install` or `project`
+ * @param {number|null} projectId - The project, for the `project` scope
+ * @returns {boolean}
+ */
+function isolationOverrideStands(settings, scope, projectId) {
+  if (scope === 'install') return settings.install.allowed === true;
+  return settings.projects.some((row) => row.projectId === projectId && row.allowed === true);
+}
+
+/**
+ * One launch-isolation override switch: the install-wide one in Global
+ * Settings, or one project's in Project Settings (#2229).
+ *
+ * The switch shows what the server answered and nothing else. Settings that
+ * were not read are said to be unread, never shown as off; a page the server
+ * does not take as the operator's is told so and offered no control. Where no
+ * login is in force the switch is still offered, because turning an override
+ * off works there: turning one on is refused by the server, and the hint says
+ * so before the click.
+ * @param {object} view
+ * @param {string} view.scope - `install` or `project`
+ * @param {number|null} view.projectId - The project, for the `project` scope
+ * @param {object|null} view.settings - The answer of `GET /api/launch/isolation-overrides`, or null
+ * @param {{error: (string|null), code: (string|null)}} [view.failure] - Why the read failed
+ * @param {{offered: boolean, loginInForce: (boolean|null)}} [view.offer] - From `recoveryModeControlOffer`
+ * @param {{text: string, ok: boolean}|null} [view.notice] - The last change's outcome, for this switch
+ * @returns {string} Markup, already escaped
+ */
+function isolationOverrideHtml(view) {
+  const install = view.scope === 'install';
+  const item = (inner) => `<div class="session-rule-item"><div class="session-rule-content">${inner}</div></div>`;
+  const notice = view.notice
+    ? item(`<small role="status" class="session-rule-meta${view.notice.ok ? '' : ' rules-status-err'}">${esc(view.notice.text)}</small>`)
+    : '';
+  const settings = view.settings;
+  if (!settings || !settings.install || !Array.isArray(settings.projects)) {
+    const failure = view.failure || {};
+    if (failure.code === 'OPERATOR_ONLY') {
+      return notice + item('<small class="session-rule-meta">The launch isolation override is the operator\'s to read '
+        + 'and to change, and the server did not take this page as the operator\'s dashboard. Nothing is offered here.</small>');
+    }
+    return notice + item('<small class="session-rule-meta rules-status-err">The launch isolation override could not be '
+      + `read${failure.error ? ` (${esc(failure.error)})` : ''}, so this page does not say whether it is on. `
+      + 'Close and reopen Settings to retry.</small>');
+  }
+  const on = isolationOverrideStands(settings, view.scope, view.projectId);
+  const own = install ? settings.install : settings.projects.find((row) => row.projectId === view.projectId);
+  const id = install ? 'isolationOverrideInstall' : 'isolationOverrideProject';
+  const covers = install
+    ? 'in every project on this install, and for the Project Master'
+    : 'in this project only';
+  const lines = [
+    `<small class="session-rule-meta" id="${id}What">TangleClaw refuses to start an engine it cannot show is kept off `
+      + 'the engine\'s shared background process. Today that is a Codex whose version it has not measured, or cannot '
+      + `read. With this on, such a launch starts anyway, not isolated, ${covers}. No other refusal is set aside.</small>`,
+    `<small class="session-rule-meta isolation-override-risk" id="${id}Risk">What each launch under it risks: `
+      + `${esc(isolationOverrideRiskText())} The projects it may borrow from have not agreed to that.</small>`
+  ];
+  if (on && own && own.setAt) {
+    lines.push(`<small class="session-rule-meta">Turned on ${esc(own.setAt)}${own.setBy ? `, recorded as by "${esc(own.setBy)}"` : ''}.</small>`);
+  }
+  if (!install && settings.install.allowed === true) {
+    lines.push('<small class="session-rule-meta isolation-override-risk">The install-wide override is on, so this '
+      + 'project is already covered by it, whatever this switch says. It is turned off in Global Settings.</small>');
+  }
+  const offer = view.offer || null;
+  if (offer && offer.offered !== true) {
+    return notice + item(`<strong>Launch isolation override: ${on ? 'on' : 'off'}</strong><br>${lines.join('<br>')}`
+      + '<br><small class="session-rule-meta">It cannot be changed from this page right now: it is not signed in, and '
+      + 'the server takes this only from a signed-in operator. Sign in, then reopen Settings.</small>');
+  }
+  if (offer && offer.loginInForce === false) {
+    lines.push('<small class="session-rule-meta">TangleClaw\'s login is not in force on this install. The server turns '
+      + 'an override on only for a signed-in operator, so it will refuse to turn this on until a login is in force '
+      + 'and you are signed in. Turning it off works without one.</small>');
+  }
+  const label = install
+    ? 'Start launches that cannot be shown isolated, for every project and the Project Master'
+    : 'Start this project\'s launches that cannot be shown isolated';
+  return notice + item('<label class="isolation-override-switch">'
+    + `<input type="checkbox" role="switch" id="${id}" data-isolation-override="${install ? 'install' : 'project'}" `
+    + `aria-describedby="${id}What ${id}Risk"${on ? ' checked' : ''}>`
+    + '<span class="toggle-switch" aria-hidden="true"></span>'
+    + `<span><strong>${label}</strong> <span class="session-rule-meta">(${on ? 'on' : 'off'})</span></span></label>`
+    + lines.join('<br>'));
+}
+
+/**
+ * What the operator is told after turning a launch-isolation override on or
+ * off, by what the server answered (#2229).
+ *
+ * A write answers the settings as they then stand, so a success is read from
+ * them and not from the status. Each refusal is worded for what it left
+ * behind: every one of them changed nothing, and a request that got no answer
+ * may have done either.
+ * @param {{scope: string, projectId: (number|null), on: boolean}} asked - The switch and what it was set to
+ * @param {object|null} answer - The answer of the `PUT` or `DELETE`, or null
+ * @param {{error: (string|null), code: (string|null)}} failure - `api.lastError` and `api.lastErrorCode`
+ * @returns {{text: string, ok: boolean}}
+ */
+function isolationOverrideOutcome(asked, answer, failure) {
+  const which = asked.scope === 'install' ? 'The install-wide launch isolation override' : 'This project\'s launch isolation override';
+  if (answer && answer.install && Array.isArray(answer.projects)) {
+    if (isolationOverrideStands(answer, asked.scope, asked.projectId) !== asked.on) {
+      return { text: `${which} was not changed: the server answered, and its settings still read the other way.`, ok: false };
+    }
+    return asked.on
+      ? { text: `${which} is on. It applies from the next launch that would otherwise be refused.`, ok: true }
+      : { text: `${which} is off. A session already started under it keeps running, not isolated, until it is ended.`, ok: true };
+  }
+  if (answer) {
+    return { text: 'The server answered without the override settings. The switch shows what is recorded now.', ok: false };
+  }
+  const said = failure.error ? ` The server said: ${failure.error}` : '';
+  if (failure.code === 'LOGIN_GATE_REQUIRED') {
+    return {
+      text: `${which} was not turned on, and nothing was changed: the server turns an override on only for a signed-in `
+        + 'operator, and this page carries no TangleClaw sign-in. A login must be in force: turn TangleClaw\'s login on, '
+        + 'sign in, and turn this on again. Turning an override off needs no sign-in.',
+      ok: false
+    };
+  }
+  if (failure.code === 'OPERATOR_ONLY') {
+    return { text: `${which} was not changed: the server takes this only from the operator's dashboard.${said}`, ok: false };
+  }
+  if (failure.code === 'UNAUTHENTICATED' || failure.code === 'CSRF_TOKEN_INVALID' || failure.code === 'ACCOUNT_REQUIRED') {
+    return { text: `${which} was not changed: this page is not signed in. Sign in, reopen Settings and try again.${said}`, ok: false };
+  }
+  if (failure.code) {
+    return { text: `${which} was not changed.${said}`, ok: false };
+  }
+  return {
+    text: 'The change got no answer from the server, so whether it was recorded is not known. The switch shows what '
+      + `is recorded now.${failure.error ? ` (${failure.error})` : ''}`,
+    ok: false
+  };
+}
+
+/**
+ * Read the launch-isolation overrides and render one switch into its box
+ * (#2229). Read through the page's `api()`: the routes admit the dashboard by
+ * the marker it adds, and a bare `fetch` is refused as not the operator's.
+ * @param {HTMLElement|null} box - The switch's container
+ * @param {string} scope - `install` or `project`
+ * @param {number|null} projectId - The project, for the `project` scope
+ * @returns {Promise<boolean|null>} `true` when the switch rendered from a real
+ *   read, `false` when the read failed, `null` when the modal moved on meanwhile.
+ */
+async function refreshIsolationOverride(box, scope, projectId) {
+  if (!box) return null;
+  const settings = await api('/api/launch/isolation-overrides');
+  const failure = { error: api.lastError, code: api.lastErrorCode };
+  const me = await api('/api/auth/me');
+  if (scope === 'project' && projectRulesTargetId !== projectId) return null;
+  const notice = isolationOverrideNotice && isolationOverrideNotice.scope === scope
+    && isolationOverrideNotice.projectId === projectId ? isolationOverrideNotice : null;
+  box.innerHTML = isolationOverrideHtml({ scope, projectId, settings, failure, offer: recoveryModeControlOffer(me), notice });
+  wireIsolationOverride(box, scope, projectId);
+  return Boolean(settings);
+}
+
+/**
+ * Wire the launch-isolation override switch a box just rendered (#2229).
+ *
+ * The request names the override by its route and carries no body. The switch
+ * is re-read after every answer, the refusals included, so it shows what is
+ * recorded and not what was asked for; focus is put back on it, because the
+ * re-render replaced the element the keyboard was on.
+ * @param {HTMLElement} box - The switch's container
+ * @param {string} scope - `install` or `project`
+ * @param {number|null} projectId - The project, for the `project` scope
+ * @returns {void}
+ */
+function wireIsolationOverride(box, scope, projectId) {
+  for (const input of box.querySelectorAll('[data-isolation-override]')) {
+    input.addEventListener('change', async () => {
+      if (input.disabled) return;
+      const on = input.checked === true;
+      input.disabled = true;
+      const path = scope === 'install'
+        ? '/api/launch/isolation-overrides/install'
+        : `/api/launch/isolation-overrides/projects/${encodeURIComponent(projectId)}`;
+      const answer = await api(path, { method: on ? 'PUT' : 'DELETE' });
+      const outcome = isolationOverrideOutcome({ scope, projectId, on }, answer, { error: api.lastError, code: api.lastErrorCode });
+      isolationOverrideNotice = { scope, projectId, text: outcome.text, ok: outcome.ok };
+      if ((await refreshIsolationOverride(box, scope, projectId)) === null) return;
+      const again = box.querySelector('[data-isolation-override]');
+      if (again) again.focus();
+    });
+  }
+}
+
+/**
+ * Render the project's launch-isolation override switch in Project Settings,
+ * and bring it into view when the modal was opened to show it (#2229).
+ * @param {number} projectId - DB project id
+ * @returns {Promise<void>}
+ */
+async function refreshProjectIsolationOverride(projectId) {
+  const box = document.getElementById('projIsolationOverride');
+  if ((await refreshIsolationOverride(box, 'project', projectId)) === null) return;
+  if (!isolationOverrideReveal) return;
+  isolationOverrideReveal = false;
+  const target = box.querySelector('[data-isolation-override]') || box;
+  if (typeof box.scrollIntoView === 'function') box.scrollIntoView({ block: 'center' });
+  if (typeof target.focus === 'function') target.focus();
+}
+
+/**
+ * Open a project's Settings at its launch-isolation override (#2229): where
+ * the pointer on a refused launch leads.
+ * @param {string} name - The project's name
+ * @returns {void}
+ */
+function openIsolationOverrideSettings(name) {
+  isolationOverrideReveal = true;
+  openSettings(name);
+}
+
+/**
+ * The Launch readiness line for a session started under a launch-isolation
+ * override (#2229).
+ *
+ * It is about the project's LIVE session only, read from the isolation
+ * inventory, which judges running panes: an ended launch has no row there and
+ * this line says nothing of it. A session the inventory marks overridden is
+ * said to be; one whose pane only looks like an overridden launch's is said to
+ * be unproved; every other row says nothing here, so no session is called
+ * isolated by this line.
+ * @param {object|null} inventory - The answer of `GET /api/launch/isolation`, or null
+ * @param {number} projectId - DB project id
+ * @param {{live: boolean, error: (string|null)}} read - Whether the project has a running session, and why the read failed
+ * @returns {string} Markup, already escaped; empty when there is nothing to say
+ */
+function launchIsolationOverrideLineHtml(inventory, projectId, read) {
+  const item = (inner) => `<div class="session-rule-item isolation-override-line"><div class="session-rule-content">${inner}</div></div>`;
+  if (!inventory || !Array.isArray(inventory.sessions)) {
+    if (!read || read.live !== true) return '';
+    return item('<small class="session-rule-meta rules-status-err">Whether this project\'s running session was started '
+      + `under a launch isolation override could not be read${read.error ? ` (${esc(read.error)})` : ''}, so this panel does not say.</small>`);
+  }
+  const row = inventory.sessions.find((r) => r && r.role === 'project' && r.projectId === projectId);
+  if (!row) return '';
+  const override = row.override && row.override.launchedUnderOverride === true ? row.override : null;
+  if (override) {
+    const scope = override.scope === 'install' ? 'the install-wide override' : 'this project\'s override';
+    return item(`<strong>${esc(row.sessionId)}</strong>: <span class="isolation-override-risk">running under the operator's launch isolation override</span>`
+      + `<br><small class="session-rule-meta">Started although it could not be shown isolated, under ${scope}. `
+      + `Engine version read: ${esc(override.versionRead || 'not read')} | refusal set aside: <code>${esc(override.refusal)}</code>`
+      + `${override.recordedAt ? ` | recorded ${esc(override.recordedAt)}` : ''}</small>`
+      + `<br><small class="session-rule-meta">${esc(isolationOverrideRiskText())}</small>`);
+  }
+  if (row.overrideUnproved === true) {
+    return item(`<strong>${esc(row.sessionId)}</strong>: <span class="isolation-override-risk">override unproved</span>`
+      + '<br><small class="session-rule-meta">This session\'s pane runs the command an overridden launch runs, but no '
+      + 'record TangleClaw can read shows this pane was started under the operator\'s override. It is not called '
+      + `overridden.</small><br><small class="session-rule-meta">${esc(row.reason || '')}</small>`);
+  }
+  return '';
+}
+
+/**
+ * Read the isolation inventory and render the override line for this
+ * project's running session (#2229).
+ * @param {number} projectId - DB project id
+ * @returns {Promise<void>}
+ */
+async function refreshProjectLaunchIsolationLine(projectId) {
+  const inventory = await api('/api/launch/isolation');
+  const error = api.lastError;
+  if (projectRulesTargetId !== projectId) return;
+  const box = document.getElementById('projLaunchIsolationLine');
+  if (!box) return;
+  const project = state.projects.find((p) => p.id === projectId);
+  const live = Boolean(project && project.session && project.session.active);
+  box.innerHTML = launchIsolationOverrideLineHtml(inventory, projectId, { live, error });
 }
 
 /**
@@ -4526,6 +4847,14 @@ function openGlobalSettings() {
       <div class="form-hint">Checking the operator bridge…</div>
     </div>
 
+    <div class="gs-section-label">Launch isolation override</div>
+    <div class="form-group">
+      <div class="form-hint">Whether launches start, in every project and for the Project Master, when TangleClaw cannot show them isolated. Each project also has its own, in its Settings.</div>
+      <div class="session-rules-list" id="gsIsolationOverrideSection" aria-live="polite">
+        <div class="form-hint">Reading the override…</div>
+      </div>
+    </div>
+
     <div class="gs-section-label">Diagnostics</div>
     <div class="form-group">
       <button type="button" class="btn" id="gsRestartBtn"
@@ -4592,6 +4921,11 @@ function openGlobalSettings() {
   if (typeof window.tcMountOperatorBridge === 'function') {
     window.tcMountOperatorBridge(document.getElementById('gsOperatorBridgeSection'), { api, apiMutate });
   }
+
+  // #2229: the install-wide launch-isolation override. A change's outcome
+  // belongs to the sitting it was made in, as in Project Settings.
+  isolationOverrideNotice = null;
+  refreshIsolationOverride(document.getElementById('gsIsolationOverrideSection'), 'install', null);
 
   const revealTokenBtn = document.getElementById('gsRevealTokenBtn');
   if (revealTokenBtn) {

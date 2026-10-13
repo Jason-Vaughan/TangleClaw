@@ -1403,11 +1403,96 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
         ctx.PROJECT_RULE_KINDS = [];
         ctx.refreshProjectRuleDeliveries = async () => true;
         ctx.refreshProjectLaunchSequences = async () => true;
-        vm.runInContext('let projectRulesTargetId = null; let projectRulesTargetName = null;'
+        ctx.refreshProjectLaunchIsolationLine = async () => {};
+        ctx.refreshProjectIsolationOverride = async () => {};
+        vm.runInContext('let projectRulesTargetId = null; let projectRulesTargetName = null; let isolationOverrideNotice = null;'
           + liftFunction(UI_SRC, 'async function loadProjectRules'), ctx);
         await ctx.loadProjectRules(7, 'my project');
         assert.equal(ctx.getNotice(), null);
       });
     });
+  });
+});
+
+/**
+ * The Launch readiness line for a session running under a launch-isolation
+ * override (#2229), rendered from an isolation inventory.
+ * @param {object|null} inventory - The answer of `GET /api/launch/isolation`, or null
+ * @param {number} projectId - The project the panel is showing
+ * @param {{live: boolean, error: (string|null)}} [read] - Whether the project has a running session, and why the read failed
+ * @returns {string} Markup
+ */
+function overrideLine(inventory, projectId, read) {
+  const ctx = {};
+  vm.createContext(ctx);
+  vm.runInContext(liftFunction(LANDING_SRC, 'function esc(str)'), ctx);
+  vm.runInContext(liftFunction(UI_SRC, 'function isolationOverrideRiskText'), ctx);
+  vm.runInContext(liftFunction(UI_SRC, 'function launchIsolationOverrideLineHtml'), ctx);
+  return ctx.launchIsolationOverrideLineHtml(inventory, projectId, read || { live: true, error: null });
+}
+
+/**
+ * One inventory row for a project session.
+ * @param {object} fields - What differs from an isolated row
+ * @returns {object}
+ */
+function inventoryRow(fields) {
+  return {
+    sessionId: 1410, projectId: 7, projectName: 'alpha', engineId: 'codex', role: 'project',
+    verdict: 'isolated', basis: 'flag', reasonCode: null, reason: 'Started with --no-daemon.',
+    override: null, overrideUnproved: false, ...fields
+  };
+}
+
+describe('Launch readiness: the line for a session under a launch-isolation override (#2229)', () => {
+  const overridden = inventoryRow({
+    verdict: 'not-isolated', reasonCode: 'no_flag', reason: 'The pane was started without --no-daemon.',
+    override: { launchedUnderOverride: true, scope: 'project', refusal: 'version_unverified', versionRead: '0.199.0', recordedAt: '2026-10-12 21:40:00' }
+  });
+
+  it('says a session the inventory marks overridden is running under the override, with what was set aside', () => {
+    const out = overrideLine({ sessions: [overridden] }, 7);
+    assert.match(out, /<strong>1410<\/strong>: <span class="isolation-override-risk">running under the operator's launch isolation override<\/span>/);
+    assert.match(out, /under this project's override\. Engine version read: 0\.199\.0 \| refusal set aside: <code>version_unverified<\/code> \| recorded 2026-10-12 21:40:00/);
+    assert.match(out, /The override does not make it isolated\./);
+    const install = overrideLine({ sessions: [{ ...overridden, override: { ...overridden.override, scope: 'install', versionRead: null, recordedAt: null } }] }, 7);
+    assert.match(install, /under the install-wide override\. Engine version read: not read \| refusal set aside: <code>version_unverified<\/code><\/small>/);
+  });
+
+  it('says a pane that only looks like an overridden launch is unproved, and does not call it overridden', () => {
+    const out = overrideLine({ sessions: [inventoryRow({
+      verdict: 'not-isolated', reasonCode: 'no_flag', reason: 'No record shows this pane was started under it <x>.', overrideUnproved: true
+    })] }, 7);
+    assert.match(out, /<strong>1410<\/strong>: <span class="isolation-override-risk">override unproved<\/span>/);
+    assert.match(out, /It is not called overridden\./);
+    assert.match(out, /No record shows this pane was started under it &lt;x&gt;\./);
+    assert.doesNotMatch(out, /running under the operator/);
+  });
+
+  it('says nothing for an isolated row, an unjudged row, or a row with neither mark', () => {
+    for (const row of [inventoryRow({}), inventoryRow({ verdict: 'unknown', reason: 'tmux did not answer' }),
+      inventoryRow({ verdict: 'not-isolated', reason: 'started without the flag' }),
+      inventoryRow({ override: { launchedUnderOverride: false, scope: 'project', refusal: 'version_unknown' } })]) {
+      assert.equal(overrideLine({ sessions: [row] }, 7), '');
+    }
+  });
+
+  it('never calls a session isolated', () => {
+    for (const inv of [{ sessions: [inventoryRow({})] }, { sessions: [overridden] }]) {
+      assert.doesNotMatch(overrideLine(inv, 7), /(is|reads|was) isolated|ISOLATED/);
+    }
+  });
+
+  it('reads this project\'s own session, not another project\'s and not the Project Master\'s', () => {
+    assert.equal(overrideLine({ sessions: [{ ...overridden, projectId: 8 }] }, 7), '');
+    assert.equal(overrideLine({ sessions: [{ ...overridden, role: 'master', projectId: null, sessionId: null }] }, 7), '');
+    assert.equal(overrideLine({ sessions: [] }, 7), '', 'an ended launch has no row and the line says nothing');
+  });
+
+  it('says the mark could not be read when the project has a running session and the read failed', () => {
+    const out = overrideLine(null, 7, { live: true, error: 'Connection lost.' });
+    assert.match(out, /rules-status-err">Whether this project's running session was started under a launch isolation override could not be read \(Connection lost\.\), so this panel does not say\./);
+    assert.match(overrideLine({ nothing: true }, 7, { live: true, error: null }), /could not be read, so this panel does not say/);
+    assert.equal(overrideLine(null, 7, { live: false, error: 'Connection lost.' }), '', 'no running session: nothing to say');
   });
 });
