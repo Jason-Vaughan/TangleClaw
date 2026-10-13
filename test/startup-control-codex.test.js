@@ -2744,6 +2744,94 @@ describe('Codex startupControl adapter', () => {
       });
     });
 
+    describe('which refusals the operator\'s override may set aside, and the command an overridden launch runs (#2229)', () => {
+      const BIN = '/opt/fake/bin/codex';
+      const judge = (over) => codex.judgeLaunchCommand({ engineId: 'codex', enginePath: BIN, probe: null, native: null, nativeVerifiedVersions: ['0.156.1'], ...over });
+      const overridden = (over) => codex.judgeOverriddenLaunch({ engineId: 'codex', launchCmd: 'codex', shell: 'codex', enginePath: BIN, probe: { version: '0.170.0', enginePath: BIN }, ...over });
+      const ADVICE = 'An operator can instead allow this launch without isolation, with the launch-isolation override.';
+
+      it('marks the two version refusals overridable, and names the override in their remedy once', () => {
+        assert.deepEqual([...codex.OVERRIDABLE_REFUSALS], ['version_unknown', 'version_unverified']);
+        for (const verdict of [
+          judge({ command: 'codex' }),
+          judge({ command: 'codex', probe: { version: null, enginePath: BIN, retryInSeconds: 12 } }),
+          judge({ command: `${BIN} --no-daemon`, probe: { version: '0.170.0', enginePath: BIN } })
+        ]) {
+          assert.equal(verdict.allowed, false);
+          assert.ok(codex.OVERRIDABLE_REFUSALS.includes(verdict.reasonCode), verdict.reasonCode);
+          assert.equal(verdict.overridable, true);
+          assert.equal(verdict.recovery.split(ADVICE).length - 1, 1, 'the override is named once');
+          assert.ok(verdict.recovery.indexOf(ADVICE) < verdict.recovery.indexOf('update prompt'), 'before the advice on staying on a version');
+        }
+      });
+
+      it('marks every other refusal not overridable, and never names the override in its remedy', () => {
+        const native = { resolvedSocketPath: '/private/tmp/fake-daemon/abc', enginePath: BIN, engineVersion: '0.156.1' };
+        const verified = { version: '0.157.1', enginePath: BIN };
+        const refusals = [
+          judge({ command: 'codex-wrapper', enginePath: '/opt/fake/bin/codex-wrapper' }),
+          judge({ command: 'codex', enginePath: '/opt/it\'s/codex' }),
+          judge({ command: 'codex --no-daemon', probe: verified }),
+          judge({ command: `${BIN} --config $(id) --no-daemon`, probe: verified }),
+          judge({ command: BIN, probe: verified }),
+          judge({ command: `${BIN} --remote unix:///private/tmp/other`, native }),
+          judge({ command: `${BIN} --remote unix:///private/tmp/fake-daemon/abc`, native: { ...native, engineVersion: '0.170.0' } }),
+          judge({ command: `${BIN} --remote unix:///private/tmp/fake-daemon/abc`, native: { ...native, engineVersion: '0.170.0' }, nativeVerifiedVersions: [] })
+        ];
+        const codes = new Set();
+        for (const verdict of refusals) {
+          assert.equal(verdict.allowed, false);
+          assert.equal(verdict.overridable, false, verdict.reasonCode);
+          assert.ok(!verdict.recovery.includes('override'), `${verdict.reasonCode}: ${verdict.recovery}`);
+          codes.add(verdict.reasonCode);
+        }
+        assert.deepEqual([...codes].sort(), ['command_not_pinned', 'command_unisolated', 'command_unparseable', 'executable_unresolved', 'executable_unverified', 'native_version_unverified']);
+      });
+
+      it('builds the overridden command on the exact executable, with the launch\'s own arguments and no isolation flag', () => {
+        assert.deepEqual(overridden(), { applies: true, allowed: true, command: BIN, versionRead: '0.170.0' });
+        assert.deepEqual(
+          overridden({ launchCmd: 'codex --ask-for-approval never --sandbox workspace-write' }),
+          { applies: true, allowed: true, command: `${BIN} --ask-for-approval never --sandbox workspace-write`, versionRead: '0.170.0' }
+        );
+        const quoted = overridden({ enginePath: '/opt/my tools/codex', probe: null });
+        assert.equal(quoted.command, '\'/opt/my tools/codex\'');
+        assert.equal(quoted.versionRead, null);
+        assert.equal(overridden({ probe: { version: '0.170.0', enginePath: '/other/codex' } }).versionRead, null, 'a version read from another executable is not this one\'s');
+      });
+
+      it('refuses what the version refusal was hiding, and none of those refusals is overridable', () => {
+        for (const [over, reasonCode] of [
+          [{ enginePath: '/opt/fake/bin/codex-wrapper' }, 'executable_unverified'],
+          [{ enginePath: null }, 'executable_unresolved'],
+          [{ launchCmd: 'env X=1 codex' }, 'command_not_pinned'],
+          [{ shell: null }, 'command_not_pinned'],
+          [{ launchCmd: 'codex --config $(id)' }, 'command_unparseable'],
+          [{ launchCmd: 'codex -- --no-daemon' }, 'command_unparseable'],
+          [{ launchCmd: 'codex --remote unix:///tmp/x --no-daemon' }, 'command_unparseable'],
+          [{ launchCmd: 'codex --remote unix:///tmp/someone-elses.sock' }, 'command_unisolated']
+        ]) {
+          const verdict = overridden(over);
+          assert.equal(verdict.allowed, false, JSON.stringify(over));
+          assert.equal(verdict.reasonCode, reasonCode, JSON.stringify(over));
+          assert.equal(verdict.overridable, false);
+          assert.match(verdict.recovery, /Nothing was started/);
+        }
+        assert.deepEqual(overridden({ engineId: 'claude', launchCmd: 'claude', shell: 'claude', enginePath: '/opt/fake/bin/claude' }), { applies: false });
+      });
+
+      it('the recorded command of an overridden launch reads not isolated, and is the only one marked as started that way', () => {
+        const recorded = (command) => codex.judgeRecordedCommand({ engineId: 'codex', command, channel: null, nativeVerifiedVersions: ['0.156.1'] });
+        const mine = recorded(overridden({ launchCmd: 'codex --sandbox workspace-write' }).command);
+        assert.equal(mine.verdict, 'not-isolated');
+        assert.equal(mine.reasonCode, 'command_unisolated');
+        assert.equal(mine.startedUnisolatedByPath, true);
+        for (const command of ['codex', 'codex --sandbox workspace-write', `${BIN} --no-daemon`, `${BIN} --remote unix:///tmp/x`, '/opt/fake/bin/codex-wrapper', `${BIN} --config $(id)`]) {
+          assert.equal('startedUnisolatedByPath' in recorded(command), false, command);
+        }
+      });
+    });
+
     describe('admitExecutable: may this path be run as Codex at all (#2233)', () => {
       it('admits an executable named codex, refuses a wrapper and an unnameable path, and disclaims other engines', () => {
         assert.deepEqual(codex.admitExecutable({ engineId: 'codex', enginePath: '/opt/fake/bin/codex', command: 'codex' }), { applies: true, allowed: true });

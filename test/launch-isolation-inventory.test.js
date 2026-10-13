@@ -162,6 +162,7 @@ function deps(fleet) {
     session: (id) => live.find((s) => s.id === id) || (fleet.ended && fleet.ended[id]) || null,
     currentSession: (projectId) => live.find((s) => s.projectId === projectId) || null,
     master: () => (fleet.master === undefined ? null : fleet.master),
+    ...(fleet.overrideRecord ? { overrideRecord: fleet.overrideRecord } : {}),
     adapters: fleet.adapters || { codex },
     now: () => new Date('2026-10-09T20:00:00.000Z')
   };
@@ -302,6 +303,108 @@ describe('the launch-isolation inventory', () => {
       const inv = await inventory.inventory(deps({ live: [], master: { tmuxSession: 'tangleclaw-master', engineId: null }, panes: { 'tangleclaw-master': [sessions._withPathFloor('codex')] } }));
       assert.deepEqual([inv.sessions[0].verdict, inv.sessions[0].reasonCode], ['not-isolated', 'command_not_pinned']);
     });
+  });
+});
+
+describe('the mark on a launch that ran under the operator\'s override (#2229)', () => {
+  const OVERRIDDEN = `${FLOOR}${BIN} --ask-for-approval never`;
+  const event = (detail) => ({ id: 1, eventType: sessions.ISOLATION_OVERRIDDEN_EVENT, createdAt: '2026-10-12 20:00:00', detail });
+  const fleet = (over = {}) => deps({
+    live: [row(1, 'codex'), row(2, 'codex'), row(3, 'codex'), row(4, 'claude')],
+    panes: { s1: [OVERRIDDEN], s2: [`${FLOOR}${BIN} --no-daemon`], s3: [`${FLOOR}codex`], s4: [`${FLOOR}claude`] },
+    overrideRecord: (sessionId) => (sessionId === 1
+      ? event({ role: 'project', engineId: 'codex', versionRead: '0.170.0', refusal: 'version_unverified', scope: 'project', setBy: null, setAt: 't' })
+      : event({ role: 'project', versionRead: '9.9.9', refusal: 'version_unknown', scope: 'install' })),
+    ...over
+  });
+
+  it('is on the overridden launch\'s row only, changes no verdict and no count, and never sits beside isolated', async () => {
+    const inv = await inventory.inventory(fleet());
+    assert.deepEqual(inv.sessions.map((s) => [s.sessionId, s.verdict, s.reasonCode, s.override && s.override.launchedUnderOverride]), [
+      [1, 'not-isolated', 'command_unisolated', true],
+      [2, 'isolated', null, null],
+      [3, 'not-isolated', 'command_not_pinned', null],
+      [4, 'not-applicable', null, null]
+    ]);
+    assert.deepEqual(inv.summary, (await inventory.inventory(fleet({ overrideRecord: undefined }))).summary);
+    assert.deepEqual(inv.sessions[0].override, {
+      launchedUnderOverride: true, scope: 'project', refusal: 'version_unverified', versionRead: '0.170.0', recordedAt: '2026-10-12 20:00:00'
+    });
+    assert.equal(inv.sessions[0].reason,
+      'This session was started without `--no-daemon` and without a server of its own, so it uses Codex\'s shared background process.'
+      + ' The operator\'s override allowed this launch to start although it could not be shown isolated'
+      + ' (engine version read: 0.170.0; refusal overridden: version_unverified; this project\'s override). '
+      + sessions.ISOLATION_OVERRIDE_RISK);
+    for (const s of inv.sessions.slice(1)) assert.ok(!s.reason.includes('override'), `row ${s.sessionId} says nothing of an override`);
+    assert.ok(inv.sessions.every((s) => 'override' in s && !('startedUnisolatedByPath' in s)), 'every row carries the field, and none the adapter\'s own flag');
+  });
+
+  for (const [label, overrideRecord] of [
+    ['its record is no longer kept', () => null],
+    ['its record cannot be read', () => { throw new Error('database is locked'); }],
+    ['its record holds no detail', () => ({ id: 1, createdAt: null, detail: null })],
+    ['nothing reads records at all', undefined]
+  ]) {
+    it(`still marks the launch when ${label}, with nulls, and says the record is not kept`, async () => {
+      const inv = await inventory.inventory(fleet({ overrideRecord }));
+      const first = inv.sessions[0];
+      assert.equal(first.verdict, 'not-isolated');
+      assert.deepEqual(first.override, { launchedUnderOverride: true, scope: null, refusal: null, versionRead: null, recordedAt: null });
+      assert.ok(first.reason.includes('(the launch\'s own record is no longer kept)'), first.reason);
+      assert.ok(first.reason.endsWith(sessions.ISOLATION_OVERRIDE_RISK));
+    });
+  }
+
+  it('a record with a scope or a refusal of the wrong shape is not repeated as fact', async () => {
+    const inv = await inventory.inventory(fleet({ overrideRecord: () => event({ scope: 'fleet', refusal: 7, versionRead: '' }) }));
+    assert.deepEqual(inv.sessions[0].override, { launchedUnderOverride: true, scope: null, refusal: null, versionRead: null, recordedAt: '2026-10-12 20:00:00' });
+    assert.ok(inv.sessions[0].reason.includes('(engine version read: not read; refusal overridden: not recorded; override scope not recorded)'));
+  });
+
+  it('a session with a second pane that reads worse keeps that pane\'s verdict; the mark follows the pane that was judged', async () => {
+    const inv = await inventory.inventory(fleet({ panes: { s1: [`${FLOOR}${BIN} --no-daemon`, OVERRIDDEN], s2: [null, OVERRIDDEN] } }));
+    assert.equal(inv.sessions[0].verdict, 'not-isolated');
+    assert.equal(inv.sessions[0].override.launchedUnderOverride, true);
+    assert.equal(inv.sessions[1].verdict, 'not-isolated');
+  });
+
+  it('the Project Master\'s row is marked from its own command, with the Master\'s record asked for by no session id', async () => {
+    const asked = [];
+    const inv = await inventory.inventory(deps({
+      live: [],
+      master: { tmuxSession: 'tangleclaw-master', engineId: 'codex' },
+      panes: { 'tangleclaw-master': [sessions._withPathFloor(bridgeHandoff.wrapLaunchCommand(BIN, '/Users/x/.tangleclaw/bridge-handoff/handoff-abc'))] },
+      overrideRecord: (sessionId) => { asked.push(sessionId); return event({ role: 'master', versionRead: null, refusal: 'version_unknown', scope: 'install' }); }
+    }));
+    assert.deepEqual(asked, [null]);
+    assert.equal(inv.sessions[0].role, 'master');
+    assert.equal(inv.sessions[0].verdict, 'not-isolated');
+    assert.deepEqual(inv.sessions[0].override, { launchedUnderOverride: true, scope: 'install', refusal: 'version_unknown', versionRead: null, recordedAt: '2026-10-12 20:00:00' });
+    assert.ok(inv.sessions[0].reason.includes('(engine version read: not read; refusal overridden: version_unknown; install-wide override)'));
+  });
+
+  it('the stored reads: a session\'s own event by its id, and for the Master the newest one a Master launch wrote', () => {
+    const store = require('../lib/store');
+    const realQuery = store.activity.query;
+    const asked = [];
+    store.activity.query = (options) => {
+      asked.push(options);
+      return options.sessionId
+        ? [event({ role: 'project', scope: 'project' })]
+        : [event({ role: 'project', scope: 'project' }), event({ role: 'master', scope: 'install' }), event({ role: 'master', scope: 'older' })];
+    };
+    try {
+      assert.equal(inventory.DEFAULT_DEPS.overrideRecord(12).detail.role, 'project');
+      assert.equal(inventory.DEFAULT_DEPS.overrideRecord(null).detail.scope, 'install');
+      store.activity.query = () => [event({ role: 'project' })];
+      assert.equal(inventory.DEFAULT_DEPS.overrideRecord(null), null, 'a project\'s event is never the Master\'s');
+    } finally {
+      store.activity.query = realQuery;
+    }
+    assert.deepEqual(asked, [
+      { sessionId: 12, eventType: 'launch.isolation_overridden', limit: 1 },
+      { eventType: 'launch.isolation_overridden', limit: 50 }
+    ]);
   });
 });
 

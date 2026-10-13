@@ -96,6 +96,44 @@ describe('GET /api/launch/isolation (#2233)', () => {
     assert.doesNotMatch(JSON.stringify(res.data), /export PATH/, 'the command itself is not returned');
   });
 
+  it('every row carries the override mark: null, or on the one launch started under the override, what the launch recorded (#2229)', async () => {
+    const BIN = '/opt/fake/bin/codex';
+    tmuxReports({
+      [paneName(binding, claude)]: sessions._withPathFloor('claude'),
+      [paneName(codexBinding, codexProject)]: sessions._withPathFloor(`${BIN} --sandbox workspace-write`)
+    });
+    sessions._logOverriddenLaunch(
+      { engineId: 'codex', enginePath: BIN, refusal: 'version_unverified', versionRead: '0.170.0', scope: 'project', setAt: 't', setBy: null },
+      { projectId: codexProject.id, sessionId: codexBinding.sessionId }
+    );
+    // A verified session reads it, as the operator does; the route has no caller-specific answer.
+    for (const headers of [codexBinding.headers, binding.headers, operatorHeaders(server)]) {
+      const res = await sendAs(server, 'GET', '/api/launch/isolation', undefined, headers);
+      assert.equal(res.status, 200);
+      const byId = new Map(res.data.sessions.map((s) => [s.sessionId, s]));
+      assert.equal(byId.get(binding.sessionId).override, null);
+      const marked = byId.get(codexBinding.sessionId);
+      assert.equal(marked.verdict, 'not-isolated');
+      assert.equal(marked.reasonCode, 'command_unisolated');
+      assert.equal(typeof marked.override.recordedAt, 'string');
+      assert.deepEqual({ ...marked.override, recordedAt: null }, {
+        launchedUnderOverride: true, scope: 'project', refusal: 'version_unverified', versionRead: '0.170.0', recordedAt: null
+      });
+      assert.ok(marked.reason.includes('The operator\'s override allowed this launch to start although it could not be shown isolated'));
+      assert.ok(res.data.sessions.every((s) => 'override' in s && (s.override === null || s.verdict === 'not-isolated')), 'the mark never sits beside another verdict');
+      assert.equal(res.data.summary['not-isolated'], 1);
+      assert.equal(res.data.summary.isolated, 0);
+    }
+    // What tc prints for that launch, with no change to tc: the server's attributed line carries the words.
+    const inv = (await sendAs(server, 'GET', '/api/launch/isolation', undefined, codexBinding.headers)).data;
+    const line = verbs.renderServerIsolationRecord({ state: 'verified', role: 'project', sessionId: codexBinding.sessionId }, inv, null);
+    assert.match(line, /^Server's record \(not a verdict about this shell\): /);
+    assert.ok(line.includes('refusal overridden: version_unverified; this project\'s override'), line);
+    assert.ok(line.endsWith('That does not show this shell is that launch.'), line);
+    assert.ok(verbs.renderIsolation(inv).includes('The operator\'s override allowed this launch'), 'and the fleet listing prints it under the row');
+    store.getDb().prepare('DELETE FROM activity_log WHERE event_type = ?').run(sessions.ISOLATION_OVERRIDDEN_EVENT);
+  });
+
   it('answers the operator\'s dashboard', async () => {
     tmuxReports({});
     const res = await sendAs(server, 'GET', '/api/launch/isolation', undefined, operatorHeaders(server));
