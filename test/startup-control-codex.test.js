@@ -3923,6 +3923,27 @@ describe('Codex startupControl adapter', () => {
               assert.deepEqual(await codex.observeActivity(stale, project, ours), { state: 'unknown', reasonCode: 'channel-changed', version });
             });
 
+            // No path is known to write this row. It is pinned as a STATE: every
+            // reader refuses it, and no reader repairs it, so it stays refused.
+            it('a row holding BOTH a recorded and a provisional thread is refused by every reader on every look, nothing is sent, and the row is left as found', async () => {
+              for (const provisional of [THREAD, SECOND]) {
+                const both = { threadId: THREAD, provisionalThreadId: provisional };
+                for (const [who, ask] of ASKERS) {
+                  await fresh([userAfterTurn(), titleIdle()], both);
+                  for (const look of ['first', 'second']) {
+                    assert.match(String(await ask()), /the launch's channel changed while its thread was being read/, `${who}, ${look} look, provisional ${provisional}`);
+                    assert.deepEqual(binding(), { threadId: THREAD, provisional }, `${who}, ${look} look: neither field was rewritten`);
+                  }
+                  assert.equal(server.calls('turn/start').length, 0, who);
+                }
+                await fresh([userAfterTurn(), titleIdle()], both);
+                for (const look of ['first', 'second']) {
+                  assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'channel-changed', version }, `the wake, ${look} look`);
+                  assert.deepEqual(binding(), { threadId: THREAD, provisional });
+                }
+              }
+            });
+
             it('the thread answered for is the one read AFTER the bind, not the one read before it', async () => {
               let lists = 0;
               const { table } = await fresh([userAfterTurn()], {}, {
