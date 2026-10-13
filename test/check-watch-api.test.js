@@ -214,13 +214,13 @@ describe('/api/tc/check-watches (#2323)', () => {
       assert.equal(res.data.watch.repo, REPO);
     });
 
-    it('says in every answer that the watch is not monitored for waking', async () => {
+    it('says in every answer that the watch is monitored: the server wakes the project itself', async () => {
       const watch = await registered();
       const made = await sendAs(server, 'POST', ROOT, watchBody(), bOwner.headers);
       const one = await sendAs(server, 'GET', `${ROOT}/${watch.watchId}`, undefined, bOwner.headers);
       const all = await sendAs(server, 'GET', ROOT, undefined, bOwner.headers);
-      for (const res of [made, one, all]) assert.equal(res.data.monitored, false);
-      assert.equal(api.MONITORED, false);
+      for (const res of [made, one, all]) assert.equal(res.data.monitored, true);
+      assert.equal(api.MONITORED, true);
     });
 
     it('refuses a malformed pull request, commit or check name, by name, before any folder is read', async () => {
@@ -532,6 +532,268 @@ describe('/api/tc/check-watches (#2323)', () => {
         }, op);
         assert.equal(released.status, 200, JSON.stringify(released.data));
       }
+    });
+  });
+
+  // The monitor, the tracked send, the exchange rows and this server's own
+  // arrival observer are the real ones. Only the Hub is stood in for: each
+  // listener gets a socket the test drives, and a send is answered here.
+  describe('what became of a watch\'s messages', () => {
+    const medusa = require('../lib/medusa');
+    const monitor = require('../lib/check-watch');
+    const exchanges = require('../lib/medusa-exchanges');
+    const MESSAGES = '/api/sessions/builder-a/medusa';
+    const realSend = medusa.sendMessage;
+    const realMonitor = { ...monitor._internal };
+    const realStoreNow = watchStore._internal.now;
+    /** Each listener's socket and workspace, by listener key. */
+    const wires = new Map();
+    /** What the stand-in Hub does with the next sends: `deliver`, `lost` or `refuse`. */
+    let hubDoes = 'deliver';
+    let issued = 0;
+
+    /** A socket the test opens, registers and feeds frames to. */
+    class Socket {
+      /** Start closed, with nothing sent. */
+      constructor() { this.readyState = 0; this.handlers = {}; }
+      /**
+       * @param {string} type - Event name
+       * @param {Function} handler - Its handler
+       * @returns {void}
+       */
+      addEventListener(type, handler) { (this.handlers[type] || (this.handlers[type] = [])).push(handler); }
+      /** @returns {void} */
+      send() {}
+      /** @returns {void} */
+      close() { this.readyState = 3; }
+      /**
+       * @param {object} frame - A frame from the Hub
+       * @returns {void}
+       */
+      frame(frame) { for (const h of this.handlers.message || []) h({ data: JSON.stringify(frame) }); }
+      /**
+       * Open the socket and register it, so its listener is connected.
+       * @param {string} workspaceId - The workspace it registers as
+       * @returns {void}
+       */
+      up(workspaceId) {
+        this.readyState = 1;
+        for (const h of this.handlers.open || []) h({});
+        this.frame({ type: 'registered', workspaceId, connectionId: 'c-1' });
+      }
+    }
+
+    /**
+     * Start a listener on a socket of the test's, or answer for the one already there.
+     * @param {object} options - As `medusa.startSession` takes them
+     * @returns {object} The listener's status
+     */
+    const listen = (options) => {
+      const key = String(options.sessionId);
+      if (wires.has(key) && medusa.getStatus(key).state !== 'off') return medusa.getStatus(key);
+      let socket;
+      const status = medusa.startSession({ ...options, wsFactory: () => (socket = new Socket()) });
+      wires.set(key, { socket, workspaceId: status.workspaceId });
+      return status;
+    };
+
+    /**
+     * Bring a listener's connection up.
+     * @param {string|number} key - Listener key
+     * @returns {string} Its workspace id
+     */
+    const connect = (key) => {
+      const wire = wires.get(String(key));
+      wire.socket.up(wire.workspaceId);
+      return wire.workspaceId;
+    };
+
+    /**
+     * Give a watch its result, as the monitor's read of GitHub would.
+     * @param {object} watch - The watch
+     * @param {string} [conclusion] - How the check ended
+     * @returns {void}
+     */
+    const resolve = (watch, conclusion = 'success') => {
+      const out = watchStore.recordRead(watch.watchId, { status: 'concluded', conclusion, runId: '77', completedAt: '2026-10-12T05:13:25.000Z' });
+      assert.equal(out.ok, true, JSON.stringify(out));
+    };
+
+    /**
+     * What a read of a watch says became of its messages.
+     * @param {object} watch - The watch
+     * @param {object} [binding] - Whose launch reads
+     * @returns {Promise<{wake: object, alarm: object}>}
+     */
+    const delivery = async (watch, binding = bOwner) => {
+      const res = await sendAs(server, 'GET', `${ROOT}/${watch.watchId}`, undefined, binding.headers);
+      assert.equal(res.status, 200, JSON.stringify(res.data));
+      return res.data.watch.delivery;
+    };
+
+    /**
+     * One pass of the monitor that reads nothing new from GitHub.
+     * @param {number} [ahead] - How far past the real clock to judge it, in ms
+     * @returns {Promise<object>} The pass's summary
+     */
+    const pass = (ahead = 0) => monitor.tick(Date.now() + ahead);
+
+    before(() => {
+      monitor._internal.readCheck = async () => ({ status: 'running', runId: '1', app: 'github-actions' });
+      monitor._internal.medusa = () => ({ ...medusa, startSession: listen });
+      medusa.sendMessage = async ({ sessionId, to, message, beforeHub }) => {
+        const from = medusa.getStatus(sessionId).workspaceId;
+        if (!from) throw Object.assign(new Error('not listening'), { httpStatus: 409, code: 'NOT_LISTENING' });
+        beforeHub({ from });
+        if (hubDoes !== 'deliver') {
+          throw Object.assign(new Error(`hub ${hubDoes}`), { httpStatus: 502, code: 'SEND_REJECTED', hubOutcome: hubDoes === 'refuse' ? 'refused' : 'unknown' });
+        }
+        const id = `api-hub-${++issued}`;
+        const recipient = [...wires.values()].find((wire) => wire.workspaceId === to);
+        // The message is with the recipient before the Hub's answer is back.
+        recipient.socket.frame({ type: 'new_message', messageId: id, message: { id, from, to, message: message.trim() } });
+        return { status: 'received', id, to };
+      };
+      listen({ projectPath: owner.path, sessionId: bOwner.sessionId, name: owner.name });
+      connect(bOwner.sessionId);
+    });
+
+    beforeEach(() => { hubDoes = 'deliver'; });
+
+    after(async () => {
+      monitor.stop();
+      await monitor.settled();
+      medusa.stopSession(bOwner.sessionId);
+      medusa.sendMessage = realSend;
+      Object.assign(monitor._internal, realMonitor);
+      watchStore._internal.now = realStoreNow;
+    });
+
+    it('says not-owed before there is a result, and owed once there is one and nothing has been sent', async () => {
+      const watch = await registered();
+      const blank = { state: 'not-owed', secondAttempt: false, attempts: [], undeliverable: null };
+      assert.deepEqual(await delivery(watch), { wake: blank, alarm: blank });
+      resolve(watch);
+      assert.deepEqual(await delivery(watch), { wake: { ...blank, state: 'owed' }, alarm: blank });
+      for (const stateName of ['not-owed', 'owed']) assert.ok(api.DELIVERY_STATES.includes(stateName));
+    });
+
+    it('follows a wake from accepted and arrived to read and acknowledged, on the recipient\'s own word', async () => {
+      const watch = await registered();
+      resolve(watch);
+      // The monitor's own listener comes up on the first pass and is not connected yet, so nothing is sent.
+      assert.equal((await pass()).sent, 0);
+      assert.equal((await delivery(watch)).wake.state, 'owed');
+      connect(monitor.LISTENER_KEY);
+      // Every watch this file has resolved so far is owed its wake, so the pass sends more than this one.
+      assert.ok((await pass()).sent >= 1);
+
+      const arrived = (await delivery(watch)).wake;
+      assert.equal(arrived.state, 'arrived', 'this server\'s arrival observer bound it by its marker');
+      assert.equal(arrived.secondAttempt, false);
+      assert.equal(arrived.attempts.length, 1);
+      const [attempt] = arrived.attempts;
+      assert.deepEqual(
+        { attempt: attempt.attempt, state: attempt.state, to: attempt.to },
+        { attempt: 1, state: 'arrived', to: wires.get(String(bOwner.sessionId)).workspaceId }
+      );
+      const sent = store.medusaExchanges.get(attempt.exchangeId);
+      assert.equal(sent.request_id, `check-watch:wake:${watch.watchId}`);
+      assert.match(sent.hub_id, /^api-hub-\d+$/);
+
+      // A neighbour in the same group reads the same thing; the dashboard marking it handled is not the session.
+      assert.equal((await delivery(watch, bNeighbour)).wake.state, 'arrived');
+      exchanges.recordAcknowledged([sent.hub_id], attempt.to, { kind: 'operator-ui' });
+      assert.equal(store.medusaExchanges.get(attempt.exchangeId).terminal_code, 'acknowledged-in-dashboard');
+      assert.equal((await delivery(watch)).wake.state, 'arrived');
+
+      const inbox = await sendAs(server, 'GET', `${MESSAGES}/messages`, undefined, bOwner.headers);
+      assert.equal(inbox.status, 200, JSON.stringify(inbox.data));
+      const mine = inbox.data.messages.find((m) => m.id === sent.hub_id);
+      assert.equal(mine.message.split('\n').at(-1), `ref: check-watch:wake:${watch.watchId}`);
+      assert.equal((await delivery(watch)).wake.state, 'read');
+
+      const acked = await sendAs(server, 'POST', `${MESSAGES}/read`, { ids: [sent.hub_id] }, bOwner.headers);
+      assert.equal(acked.status, 200, JSON.stringify(acked.data));
+      assert.equal((await delivery(watch)).wake.state, 'acknowledged');
+
+      const shown = await sendAs(server, 'GET', `${ROOT}/${watch.watchId}`, undefined, bOwner.headers);
+      const woke = shown.data.facts.find((f) => f.kind === 'woke');
+      assert.deepEqual({ code: woke.code, exchangeId: woke.exchangeId }, { code: 'accepted', exchangeId: attempt.exchangeId });
+      const listed = await sendAs(server, 'GET', ROOT, undefined, bOwner.headers);
+      assert.equal(listed.data.watches.find((w) => w.watchId === watch.watchId).delivery.wake.state, 'acknowledged');
+    });
+
+    it('says undeliverable, with why, for a project with nobody to tell', async () => {
+      const watch = await registered({}, bNeighbour);
+      resolve(watch);
+      await pass();
+      const wake = (await delivery(watch, bNeighbour)).wake;
+      assert.equal(wake.state, 'undeliverable');
+      assert.equal(wake.undeliverable.code, 'no-switchboard-session');
+      assert.deepEqual(wake.attempts, []);
+    });
+
+    it('says refused for a send the Hub declined', async () => {
+      const watch = await registered();
+      resolve(watch, 'failure');
+      hubDoes = 'refuse';
+      assert.equal((await pass()).sent, 1);
+      const wake = (await delivery(watch)).wake;
+      assert.equal(wake.state, 'refused');
+      assert.deepEqual(wake.attempts.map((a) => a.state), ['refused']);
+      assert.equal(wake.secondAttempt, false);
+      hubDoes = 'deliver';
+      assert.equal((await pass(10 * 60000)).secondAttempts, 0);
+      assert.equal((await delivery(watch)).wake.state, 'refused');
+    });
+
+    it('says unconfirmed while no attempt is proven, shows the second attempt, and reads as far as either got', async () => {
+      const watch = await registered();
+      resolve(watch);
+      hubDoes = 'lost';
+      assert.equal((await pass()).sent, 1);
+      let wake = (await delivery(watch)).wake;
+      assert.deepEqual([wake.state, wake.secondAttempt, wake.attempts.map((a) => a.state)], ['unconfirmed', false, ['unconfirmed']]);
+
+      assert.equal((await pass(monitor.SECOND_ATTEMPT_AFTER_MS + 1000)).secondAttempts, 1);
+      wake = (await delivery(watch)).wake;
+      assert.deepEqual([wake.state, wake.secondAttempt, wake.attempts.map((a) => a.state)], ['unconfirmed', true, ['unconfirmed', 'unconfirmed']]);
+      assert.deepEqual(wake.attempts.map((a) => a.attempt), [1, 2]);
+
+      // A second attempt the Hub takes is what the message reads as; the first stays unproven.
+      const other = await registered();
+      resolve(other);
+      assert.equal((await pass()).sent, 1);
+      hubDoes = 'deliver';
+      assert.equal((await pass(monitor.SECOND_ATTEMPT_AFTER_MS + 1000)).secondAttempts, 1);
+      wake = (await delivery(other)).wake;
+      assert.deepEqual([wake.state, wake.secondAttempt, wake.attempts.map((a) => a.state)], ['arrived', true, ['unconfirmed', 'arrived']]);
+    });
+
+    it('reads the alarm the same way, apart from the wake', async () => {
+      const watch = await registered({ dueInMinutes: 1 });
+      const later = Date.now() + 2 * 60000;
+      clock = later;
+      watchStore._internal.now = () => new Date(later).toISOString();
+      try {
+        assert.equal((await delivery(watch)).alarm.state, 'owed');
+        assert.equal((await monitor.tick(later)).sent, 1);
+        const both = await delivery(watch);
+        assert.equal(both.alarm.state, 'arrived');
+        assert.equal(both.wake.state, 'not-owed');
+        assert.equal(store.medusaExchanges.get(both.alarm.attempts[0].exchangeId).request_id, `check-watch:alarm:${watch.watchId}`);
+      } finally {
+        watchStore._internal.now = realStoreNow;
+      }
+    });
+
+    it('a cancelled watch owes nothing', async () => {
+      const watch = await registered();
+      resolve(watch);
+      const cancelled = await sendAs(server, 'POST', `${ROOT}/${watch.watchId}/cancel`, {}, bOwner.headers);
+      assert.equal(cancelled.status, 200);
+      assert.equal(cancelled.data.watch.delivery.wake.state, 'not-owed');
     });
   });
 

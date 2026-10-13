@@ -567,6 +567,47 @@ describe('MedusaListener', () => {
     l.stop();
   });
 
+  it('says since when it has been listening, and nothing in any other state', () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-1', wsFactory: factory, backoffBaseMs: 1 });
+    const seen = [];
+    l.on('state', (s) => seen.push([s, l.getStatus().listeningSince]));
+    assert.equal(l.getStatus().listeningSince, null);
+    l.start();
+    assert.equal(l.getStatus().listeningSince, null, 'connecting is not listening');
+    const before = Date.now();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1', connectionId: 'conn-x' });
+    const since = l.getStatus().listeningSince;
+    assert.equal(new Date(since).toISOString(), since, 'an ISO time');
+    assert.ok(Date.parse(since) >= before && Date.parse(since) <= Date.now());
+    // A handler told of the change already reads the time that goes with it.
+    assert.deepEqual(seen, [['connecting', null], ['listening', since]]);
+    sockets[0]._closeEvent(1006);
+    assert.equal(l.getStatus().state, 'connecting');
+    assert.equal(l.getStatus().listeningSince, null, 'a dropped connection is no longer listening since anything');
+    l.stop();
+    assert.equal(l.getStatus().listeningSince, null);
+  });
+
+  it('a connection that comes back is listening since it came back, not since the first time', async () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-1', wsFactory: factory, backoffBaseMs: 1 });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1', connectionId: 'conn-x' });
+    const first = l.getStatus().listeningSince;
+    sockets[0]._closeEvent(1006);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(sockets.length, 2, 'it reconnected');
+    assert.equal(l.getStatus().listeningSince, null, 'not until it has registered again');
+    sockets[1]._open();
+    sockets[1]._message({ type: 'registered', workspaceId: 'ws-1', connectionId: 'conn-y' });
+    const second = l.getStatus().listeningSince;
+    assert.ok(Date.parse(second) > Date.parse(first), `${second} is after ${first}`);
+    l.stop();
+  });
+
   it('pushes a new_message onto the inbox and increments unread', () => {
     const { factory, sockets } = makeFactory();
     const received = [];
@@ -877,7 +918,7 @@ describe('MedusaListener', () => {
     const status = l.getStatus();
     assert.deepEqual(
       Object.keys(status).sort(),
-      ['lastError', 'lastErrorCode', 'state', 'unread', 'workspaceId']
+      ['lastError', 'lastErrorCode', 'listeningSince', 'state', 'unread', 'workspaceId']
     );
     assert.equal(status.state, 'off');
     assert.equal(status.workspaceId, 'ws-9');
