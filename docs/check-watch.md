@@ -124,7 +124,9 @@ more. It does so only when the recipient's listener has been connected for **two
 break**, counted from the later of the moment the outcome became uncertain and the moment that
 listener last connected, and no marked arrival has tied the first send to a Hub message in that
 time. Any disconnection starts the two minutes again. The second message says it is a second
-attempt. A send the Hub **refused** is final and is never sent again.
+attempt. A send the Hub **refused** is final and is never sent again. An alarm gets no second
+attempt once its watch has a result: the wake for that result says what the check did. A second
+attempt of an alarm is called late only if the first was, and then names when the first was sent.
 
 The two minutes are measured from `listeningSince`, the time a listener last reached `listening`.
 It is one more key in a listener's status, an ISO time while listening and `null` otherwise, and so
@@ -160,8 +162,9 @@ With two attempts the state is the furthest either got. `read` and `acknowledged
 the recipient session itself did it: the dashboard marking a message handled leaves it `arrived`.
 The watch's history also keeps `woke` or `alarmed`, once, when the first send was made, with a code
 for how that send stood at that moment (`accepted`, `uncertain` or `refused`); what became of the
-message afterwards is in `delivery`, not in that code. `tc check show` prints the history; the
-`delivery` states are in the route's answer.
+message afterwards is in `delivery`, not in that code. `tc check show` prints one line for each
+message (`wake: arrived`, `alarm: not-owed`, with `second attempt made` when there was one) above
+the history; each attempt's own state is in the route's answer.
 
 ## Who may do what
 
@@ -206,8 +209,8 @@ tc check cancel <watch>
 ```
 
 `watch` prints the new watch's id. `list` shows the pane's own project's watches, or those of the
-project named, if this project shares a group with it. `show` adds the last read of GitHub and the
-watch's history. A refusal exits 2 with the server's code and words; a malformed command exits 1
+project named, if this project shares a group with it. `show` adds the last read of GitHub, what
+became of each message and the watch's history. A refusal exits 2 with the server's code and words; a malformed command exits 1
 before any request. The verb is not in the list every pane is primed with: `tc` with no verb lists
 it.
 

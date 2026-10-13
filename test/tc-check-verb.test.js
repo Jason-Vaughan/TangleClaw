@@ -195,6 +195,19 @@ describe('tc check (#2323)', () => {
     assert.match(unread, /project unknown \(7\)/);
   });
 
+  it('show says what became of each message, a second attempt, and why one had nobody to go to', () => {
+    const blank = { state: 'not-owed', secondAttempt: false, attempts: [], undeliverable: null };
+    const said = (delivery) => renderCheckWatch({ watch: watch({ delivery }), projectName: 'builder-a', facts: [] });
+    assert.match(said({ wake: { ...blank, state: 'arrived' }, alarm: blank }), /\n {2}wake: arrived\n {2}alarm: not-owed\n {2}History:\n/);
+    assert.match(said({ wake: { ...blank, state: 'unconfirmed', secondAttempt: true }, alarm: blank }), /\n {2}wake: unconfirmed, second attempt made\n/);
+    const nobody = { ...blank, state: 'undeliverable', undeliverable: { code: 'no-live-session', at: '2026-10-12T12:11:00.000Z' } };
+    assert.match(said({ wake: nobody, alarm: blank }), /\n {2}wake: undeliverable \(no-live-session\)\n/);
+    // Sent since: the old reason is history, not the message's state.
+    assert.match(said({ wake: { ...nobody, state: 'read' }, alarm: blank }), /\n {2}wake: read\n/);
+    // An answer with no delivery in it is rendered as before.
+    assert.ok(!/wake:|alarm:/.test(renderCheckWatch({ watch: watch(), projectName: 'builder-a', facts: [] })));
+  });
+
   it('show and cancel put an id they cannot trust into the path encoded', async () => {
     const shown = fakeCtx(['show', '../../sessions?x=1'], { get: { watch: watch(), projectName: 'p', facts: [], monitored: false } });
     await check.run(shown.ctx);

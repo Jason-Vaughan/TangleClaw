@@ -1215,6 +1215,44 @@ describe('check-watch monitor: the alarm (#2323)', () => {
     assert.match(hub.sent[0].message, /second attempt for the same watch and result/);
     for (let i = 0; i < 5; i++) assert.equal((await pass(MINUTE)).secondAttempts, 0);
   });
+
+  it('a second attempt of an alarm that was on time is not called late, and one that was late says when it was first sent', async () => {
+    const a = live('alpha');
+    watchFor(a, 1);
+    hub.behave = () => 'lost';
+    await pass(HOUR);
+    hub.behave = () => 'deliver';
+    assert.equal((await pass(10 * MINUTE)).secondAttempts, 1);
+    assert.match(hub.sent[0].message, /second attempt for the same watch and result/);
+    assert.ok(!/This alarm is late/.test(hub.sent[0].message), 'ten minutes after a first send that was on time');
+
+    const project = store.projects.create({ name: 'quiet', path: path.join(tmpDir, 'quiet') });
+    const late = watch(2, { projectId: project.id });
+    await pass(2 * HOUR);
+    another(project);
+    hub.behave = () => 'lost';
+    await pass(MINUTE);
+    const firstSent = exchangeOf(late, 'alarm').created_at;
+    hub.behave = () => 'deliver';
+    assert.equal((await pass(10 * MINUTE)).secondAttempts, 1);
+    const again = hub.sent.at(-1).message;
+    assert.equal(again.split('\n').at(-1), `ref: check-watch:alarm:${late}:2`);
+    assert.ok(again.includes(`was first sent at ${firstSent}: until then it could not be sent`), again);
+    assert.ok(!/is sent at/.test(again));
+  });
+
+  it('an alarm whose watch has its result by then gets no second attempt: the wake says what the check did', async () => {
+    const a = live('alpha');
+    const id = watchFor(a, 1);
+    hub.behave = () => 'lost';
+    await pass(HOUR);
+    hub.behave = () => 'deliver';
+    answers.set(sha(1), concluded());
+    assert.deepEqual(await pass(MINUTE), counts({ open: 1, read: 1, resolved: 1, sent: 1 }));
+    for (let i = 0; i < 5; i++) assert.equal((await pass(MINUTE)).secondAttempts, 0);
+    assert.deepEqual(hub.sent.map((copy) => copy.message.split('\n').at(-1)), [`ref: check-watch:wake:${id}`]);
+    assert.equal(exchangeOf(id, 'alarm', 2), null);
+  });
 });
 
 describe('check-watch monitor: its own listener, only while it has somebody to tell (#2323)', () => {
