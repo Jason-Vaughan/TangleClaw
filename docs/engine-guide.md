@@ -1482,9 +1482,10 @@ every version it names was measured; the remedy that names no version does not.
     Turning one on needs a signed-in operator: where no login is in force the switch stays off and
     shows the refusal (`LOGIN_GATE_REQUIRED`: a login must be in force), and turning one off still
     works. A launch refused for `version_unknown` or `version_unverified` carries an **Open launch
-    isolation settings** button that opens the project's Settings at its switch, for as long as
-    that message is shown (six seconds, #2339); the same switch is reached from the project's
-    Settings at any time. A session's own page and the Project Master's settings offer neither
+    isolation settings** button that opens the project's Settings at its switch. The button is
+    removed by the refusal's own six-second timer or when used; an earlier toast timer can hide
+    the message sooner while the button remains keyboard-focusable until its timer fires (#2339).
+    The same switch is reached from the project's Settings at any time. A session's own page and the Project Master's settings offer neither
     switch.
   - **Where a running one shows.** The project's Settings, under **Launch readiness**, has a line
     for the project's running session when the isolation inventory marks it: "running under the
