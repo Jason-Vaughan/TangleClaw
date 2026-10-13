@@ -1637,15 +1637,33 @@ channel's version is proved to be one that declares `capabilities.wake.restRows`
 
 A recorded thread stays the launch's and is never replaced by this filtering; a recorded thread that
 is no longer loaded does not fall back to another. The compare-and-set and the fresh read after it
-are unchanged, and now require the same sole thread of the launch's kind. The launch gate and a
-fire bind the same way on those versions, and not by a plain write: the bind is a compare-and-set on
-the launch's own open channel with no thread recorded, a write that fails or that another writer won
-binds nothing and sends nothing, and the threads are then listed and read again and must be the same
-threads with the same sole thread of the launch's kind (a second user thread, a title helper or an
-unreadable thread that appeared in between refuses that look; reading only the chosen thread again
-would not show them). Before either answers for a thread, bound just now or recorded earlier, the
-channel row is read once more: still open, the same launch, the same thread. A bind made in a look
-that then refuses stays recorded, as the wake's does. And where the gate or a fire reads the pane, what
+are unchanged, and now require the same sole thread of the launch's kind. On those versions the
+launch gate, a fire and this observation bind by one procedure, and an inferred binding is **not a
+record until it is proved**:
+
+1. the first list names exactly one thread of the launch's kind, and none that cannot be read or
+   identified;
+2. a compare-and-set, on the launch's own open channel with no thread of either kind on it, writes
+   the thread as **provisional**, in its own field (`adapterState.provisionalThreadId`), and leaves
+   `adapterState.threadId` empty. A write that fails, or that this look did not itself make
+   (`written: false`, even where the row then holds the same thread: another reader may still be
+   mid-check, or may fail it), binds nothing here and nothing is sent;
+3. the threads are listed and read **again** and must be the same threads with the same sole thread
+   of the launch's kind. A second user thread, a title helper or an unreadable thread that appeared
+   in between fails this; reading only the chosen thread again would not show them;
+4. a second conditional write, on that same thread while it is still the provisional one, moves
+   it to `threadId` and clears the provisional field. Only then is the thread recorded, and that
+   write too must be this look's own.
+
+A check that fails after step 2 withdraws the inference by a guarded write (only that thread, only
+while it is still the provisional one) and the look refuses, whether or not the withdrawal lands.
+Because the recorded field stays empty until step 4, every reader of the recorded thread, here and
+elsewhere (a fire's reconcile, a managed rotation's prior and successor thread, its rebind), sees a
+channel that is not yet bound while an inference is unproved. The next look proves a provisional
+thread again from step 1 (skipping only the first write) or withdraws it, so a second idle user
+thread cannot be stepped past on an id nobody validated. Before the gate or a fire answers for a thread, proved just
+now or recorded earlier, the channel row is read once more: still open, the same launch, the same
+thread, and no provisional thread beside it. And where the gate or a fire reads the pane, what
 is read afterwards on those versions is this whole answer again for the recorded thread (every loaded
 thread, the others' activity, the channel row), not that one thread alone: a thread that started
 working, or stopped being readable, while the pane was being witnessed refuses the look. On those versions the

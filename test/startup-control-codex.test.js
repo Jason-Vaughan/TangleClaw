@@ -3012,6 +3012,11 @@ describe('Codex startupControl adapter', () => {
     };
     const OPENING_WHY = /the footer row is drawn with no status row above it, as on a screen that is still opening or resuming/;
     const threadOf = () => store.startupControlChannels.getOpenBySession(session.id).adapterState.threadId;
+    /** The recorded thread on the channel row, and the provisional one beside it. */
+    const binding = () => {
+      const state = store.startupControlChannels.getOpenBySession(session.id).adapterState;
+      return { threadId: state.threadId || null, provisional: state.provisionalThreadId || null };
+    };
     const observe = () => codex.observeActivity(store.startupControlChannels.getOpenBySession(session.id), project, ours);
 
     /**
@@ -3570,36 +3575,53 @@ describe('Codex startupControl adapter', () => {
             };
 
             for (const [who, ask] of ASKERS) {
-              it(`${who}: the bind is a compare-and-set on the launch's own open, unbound channel, and is not written any other way`, async () => {
+              it(`${who}: the bind is two conditional writes on the launch's own open channel, provisional and then proved, and is not written any other way`, async () => {
                 await fresh([userAfterTurn(), titleIdle()]);
                 const seen = [];
                 let plainWrites = 0;
-                await withStore('setAdapterState', (real) => (id, patch) => { if ('threadId' in patch) plainWrites += 1; return real(id, patch); }, async () => {
+                let listsAtFirstWrite = null;
+                let listsAtSecondWrite = null;
+                await withStore('setAdapterState', (real) => (id, patch) => { if ('threadId' in patch || 'provisionalThreadId' in patch) plainWrites += 1; return real(id, patch); }, async () => {
                   await withStore('updateAdapterStateIf', (real) => (id, expect, patch) => {
                     const row = store.startupControlChannels.get(id);
+                    if (seen.length === 0) listsAtFirstWrite = server.calls('thread/loaded/list').length;
+                    if (seen.length === 1) listsAtSecondWrite = server.calls('thread/loaded/list').length;
                     seen.push({
                       patch,
                       genuine: expect(row),
                       closed: expect({ ...row, state: 'closed' }),
                       otherLaunch: expect({ ...row, sequenceId: row.sequenceId + 1 }),
-                      alreadyBound: expect({ ...row, adapterState: { ...row.adapterState, threadId: SECOND } })
+                      otherThread: expect({ ...row, adapterState: { ...row.adapterState, threadId: SECOND } }),
+                      unbound: expect({ ...row, adapterState: { ...row.adapterState, threadId: null, provisionalThreadId: null } }),
+                      proved: expect({ ...row, adapterState: { ...row.adapterState, threadId: THREAD, provisionalThreadId: null } }),
+                      otherProvisional: expect({ ...row, adapterState: { ...row.adapterState, threadId: null, provisionalThreadId: SECOND } }),
+                      bothFields: expect({ ...row, adapterState: { ...row.adapterState, threadId: THREAD, provisionalThreadId: THREAD } })
                     });
                     return real(id, expect, patch);
                   }, async () => {
-                    assert.equal(await ask(), null, 'bound and answered');
+                    assert.equal(await ask(), null, 'bound, proved and answered');
                   });
                 });
-                assert.equal(seen.length, 1, 'one conditional write');
-                assert.deepEqual(seen[0], { patch: { threadId: THREAD }, genuine: true, closed: false, otherLaunch: false, alreadyBound: false });
+                assert.equal(seen.length, 2, 'two conditional writes: the inference, then its proof');
+                // The inference: only onto this launch's open channel with no thread of either kind on it, and never into `threadId`.
+                assert.deepEqual(seen[0], { patch: { provisionalThreadId: THREAD }, genuine: true, closed: false, otherLaunch: false, otherThread: false, unbound: true, proved: false, otherProvisional: false, bothFields: false });
+                // The proof: only while that same thread is the provisional one and nothing is recorded.
+                assert.deepEqual(seen[1], { patch: { threadId: THREAD, provisionalThreadId: null }, genuine: true, closed: false, otherLaunch: false, otherThread: false, unbound: false, proved: false, otherProvisional: false, bothFields: false });
+                assert.equal(listsAtFirstWrite, 1, 'the inference is written after the first list');
+                assert.equal(listsAtSecondWrite, 2, 'and proved only after the threads were listed again');
                 assert.equal(plainWrites, 0, 'the thread is never written unconditionally');
-                assert.equal(threadOf(), THREAD);
+                assert.deepEqual(binding(), { threadId: THREAD, provisional: null });
               });
 
               it(`${who}: a bind that another writer won, that a changed generation refused, or that failed, binds nothing and sends nothing`, async () => {
+                const LOST = /was bound to another thread, or by another reader, or was replaced, while this one was being chosen/;
                 const lost = [
-                  ['another thread was bound first', () => (id) => ({ written: false, channel: { ...store.startupControlChannels.get(id), adapterState: { threadId: SECOND } } }), /was bound to another thread, or was replaced, while this one was being chosen/],
-                  ['the channel is no longer this launch\'s', () => (id) => ({ written: false, channel: store.startupControlChannels.get(id) }), /was bound to another thread, or was replaced, while this one was being chosen/],
-                  ['the write answered nothing', () => () => null, /was bound to another thread, or was replaced, while this one was being chosen/],
+                  ['another thread was bound first', () => (id) => ({ written: false, channel: { ...store.startupControlChannels.get(id), adapterState: { threadId: SECOND } } }), LOST],
+                  ['the channel is no longer this launch\'s', () => (id) => ({ written: false, channel: store.startupControlChannels.get(id) }), LOST],
+                  // Another reader persisted the SAME thread first: this caller lost the write and did not make that inference.
+                  ['another reader bound the same thread first', () => (id) => ({ written: false, channel: { ...store.startupControlChannels.get(id), adapterState: { provisionalThreadId: THREAD } } }), LOST],
+                  ['another reader bound and proved the same thread first', () => (id) => ({ written: false, channel: { ...store.startupControlChannels.get(id), adapterState: { threadId: THREAD, provisionalThreadId: null } } }), LOST],
+                  ['the write answered nothing', () => () => null, LOST],
                   ['the write threw', () => () => { throw new Error('database is locked'); }, /could not be recorded on its channel, so it is not bound and nothing is sent on it/]
                 ];
                 for (const [name, make, expected] of lost) {
@@ -3663,7 +3685,8 @@ describe('Codex startupControl adapter', () => {
                   ['another launch\'s', (row) => ({ ...row, sequenceId: row.sequenceId + 1 })],
                   ['bound to another thread', (row) => ({ ...row, adapterState: { ...row.adapterState, threadId: SECOND } })],
                   ['gone', () => null],
-                  ['unreadable', () => { throw new Error('database is locked'); }]
+                  ['unreadable', () => { throw new Error('database is locked'); }],
+                  ['holding a provisional thread beside it', (row) => ({ ...row, adapterState: { ...row.adapterState, provisionalThreadId: SECOND } })]
                 ];
                 for (const recorded of [null, THREAD]) {
                   for (const [name, change] of changes) {
@@ -3671,7 +3694,7 @@ describe('Codex startupControl adapter', () => {
                     await withStore('get', (real) => (id) => change(real(id)), async () => {
                       // Unbound, the conditional write reads the same row and refuses first; either way nothing is answered for it.
                       const expected = recorded === null
-                        ? /the launch's channel changed while its thread was being read|was bound to another thread, or was replaced, while this one was being chosen|could not be recorded on its channel/
+                        ? /the launch's channel changed while its thread was being read|was bound to another thread, or by another reader, or was replaced, while this one was being chosen|could not be recorded on its channel|could not be recorded as proved/
                         : /the launch's channel changed while its thread was being read/;
                       assert.match(String(await ask()), expected, `${name}, recorded ${recorded}`);
                     });
@@ -3680,6 +3703,225 @@ describe('Codex startupControl adapter', () => {
                 }
               });
             }
+
+            for (const [who, ask] of ASKERS) {
+              // One case per test: each ends in a fire that is applied, and a launch has one such fire.
+              const FAILED_CHECKS = [
+                ['a second user thread appeared after the write', (table) => table.set(SECOND, captured('userIdleAfterTurn', SECOND)), (table) => table.delete(SECOND), /threads are loaded for the project directory and none is recorded as this launch's/],
+                ['a thread became unreadable after the write', (table) => table.set(TITLE, unreadable(TITLE)), (table) => table.set(TITLE, titleIdle()), /a loaded thread could not be read|the loaded threads could not all be read over the channel/]
+              ];
+              for (const [name, spoil, mend, second] of FAILED_CHECKS) {
+                it(`${who}: ${name}: the inference is withdrawn, the next look cannot be ready or send on that id, and a later clean look binds`, async () => {
+                  let lists = 0;
+                  const { table } = await fresh([userAfterTurn(), titleIdle()], {}, {
+                    'thread/loaded/list': () => {
+                      lists += 1;
+                      if (lists === 2) spoil(table);
+                      return { data: [...table.keys()], nextCursor: null };
+                    }
+                  });
+                  // Look one: bound provisionally, then the second list differs.
+                  assert.notEqual(await ask(), null, 'the first look refuses');
+                  assert.deepEqual(binding(), { threadId: null, provisional: null }, 'the inference was withdrawn');
+                  // Look two, the change still in place: the first candidate is NOT a recorded thread.
+                  assert.match(String(await ask()), second, 'the second look refuses too');
+                  assert.deepEqual(binding(), { threadId: null, provisional: null });
+                  assert.equal(server.calls('turn/start').length, 0, 'nothing was sent on the unvalidated id');
+                  // Look three, the folder clean again: bound and proved.
+                  mend(table);
+                  assert.equal(await ask(), null, 'a later clean look binds');
+                  assert.deepEqual(binding(), { threadId: THREAD, provisional: null });
+                });
+              }
+
+              it(`${who}: where the withdrawal does not land, the id stays provisional and is still not acted on`, async () => {
+                for (const failing of ['throws', 'answers written: false', 'answers nothing']) {
+                  let lists = 0;
+                  const { table } = await fresh([userAfterTurn(), titleIdle()], {}, {
+                    'thread/loaded/list': () => {
+                      lists += 1;
+                      if (lists === 2) table.set(SECOND, captured('userIdleAfterTurn', SECOND));
+                      return { data: [...table.keys()], nextCursor: null };
+                    }
+                  });
+                  let writes = 0;
+                  await withStore('updateAdapterStateIf', (real) => (id, expect, patch) => {
+                    writes += 1;
+                    if (writes === 1) return real(id, expect, patch);
+                    if (failing === 'throws') throw new Error('database is locked');
+                    return failing === 'answers nothing' ? null : { written: false, channel: store.startupControlChannels.get(id) };
+                  }, async () => {
+                    assert.notEqual(await ask(), null, `${failing}: the first look refuses whether or not the withdrawal landed`);
+                  });
+                  assert.deepEqual(binding(), { threadId: null, provisional: THREAD }, `${failing}: the id is still on the row, marked provisional`);
+                  // The second user thread is still loaded and idle. A recorded thread would be answered for here; a provisional one is not.
+                  assert.match(String(await ask()), /threads are loaded for the project directory and none is recorded as this launch's/, failing);
+                  assert.deepEqual(binding(), { threadId: null, provisional: null }, `${failing}: and it is withdrawn now that the write lands`);
+                  assert.equal(server.calls('turn/start').length, 0, failing);
+                }
+              });
+
+              it(`${who}: a provisional id found on the row is proved from the start or withdrawn, never taken as recorded`, async () => {
+                // Alone of its kind: proved on two fresh lists and then recorded, with no new first write.
+                await fresh([userAfterTurn(), titleIdle()], { provisionalThreadId: THREAD });
+                const patches = [];
+                await withStore('updateAdapterStateIf', (real) => (id, expect, patch) => { patches.push(patch); return real(id, expect, patch); }, async () => {
+                  assert.equal(await ask(), null);
+                });
+                assert.deepEqual(patches[0], { threadId: THREAD, provisionalThreadId: null }, 'no second inference is written over the first');
+                assert.deepEqual(binding(), { threadId: THREAD, provisional: null });
+
+                const notProved = [
+                  ['beside a second user thread', [userAfterTurn(), captured('userIdleAfterTurn', SECOND)]],
+                  ['beside an unidentified thread', [userAfterTurn(), titleIdle({ threadSource: 'review' })]],
+                  ['beside a thread that cannot be read', [userAfterTurn(), unreadable(TITLE)]],
+                  ['no longer loaded', [titleIdle()]],
+                  ['no longer the sole launch thread, another being it', [captured('userIdleAfterTurn', SECOND)]]
+                ];
+                for (const [name, threads] of notProved) {
+                  await fresh(threads, { provisionalThreadId: THREAD });
+                  assert.notEqual(await ask(), null, name);
+                  assert.deepEqual(binding(), { threadId: null, provisional: null }, `${name}: withdrawn`);
+                  assert.equal(server.calls('turn/start').length, 0, name);
+                }
+              });
+
+              it(`${who}: a proof that cannot be recorded leaves the id provisional, and the next look proves it`, async () => {
+                await fresh([userAfterTurn(), titleIdle()]);
+                let writes = 0;
+                await withStore('updateAdapterStateIf', (real) => (id, expect, patch) => {
+                  writes += 1;
+                  if (writes === 2) throw new Error('database is locked');
+                  return real(id, expect, patch);
+                }, async () => {
+                  const reason = await ask();
+                  assert.match(String(reason), /was chosen but could not be recorded as proved, so it is not bound and nothing is sent on it/);
+                  assert.doesNotMatch(String(reason), /database is locked/);
+                });
+                assert.deepEqual(binding(), { threadId: null, provisional: THREAD });
+                assert.equal(server.calls('turn/start').length, 0);
+                assert.equal(await ask(), null, 'the next look proves the same id and records it');
+                assert.deepEqual(binding(), { threadId: THREAD, provisional: null });
+              });
+            }
+
+            for (const [who, ask] of ASKERS) {
+              it(`${who}: the withdrawal clears only its own unproved inference, never a thread that was proved or changed meanwhile`, async () => {
+                const meanwhile = [
+                  ['another reader proved the same thread', { threadId: THREAD, provisionalThreadId: null }, { threadId: THREAD, provisional: null }],
+                  ['another thread was recorded', { threadId: SECOND, provisionalThreadId: null }, { threadId: SECOND, provisional: null }],
+                  ['another thread was bound provisionally', { provisionalThreadId: SECOND }, { threadId: null, provisional: SECOND }]
+                ];
+                for (const [name, patch, left] of meanwhile) {
+                  let lists = 0;
+                  const { table } = await fresh([userAfterTurn(), titleIdle()], {}, {
+                    'thread/loaded/list': () => {
+                      lists += 1;
+                      if (lists === 2) {
+                        // The check is about to fail, and the row has moved on under this look.
+                        table.set(SECOND, captured('userIdleAfterTurn', SECOND));
+                        store.startupControlChannels.setAdapterState(store.startupControlChannels.getOpenBySession(session.id).id, patch);
+                      }
+                      return { data: [...table.keys()], nextCursor: null };
+                    }
+                  });
+                  assert.notEqual(await ask(), null, `${name}: this look refuses`);
+                  assert.deepEqual(binding(), left, `${name}: and leaves the row as the other writer left it`);
+                }
+              });
+
+              it(`${who}: a proof this look did not write is not a proof, although the row then reads proved with the same thread`, async () => {
+                await fresh([userAfterTurn(), titleIdle()]);
+                let writes = 0;
+                await withStore('updateAdapterStateIf', (real) => (id, expect, patch) => {
+                  writes += 1;
+                  if (writes !== 2) return real(id, expect, patch);
+                  return { written: false, channel: { ...store.startupControlChannels.get(id), adapterState: { ...store.startupControlChannels.get(id).adapterState, threadId: THREAD, provisionalThreadId: null } } };
+                }, async () => {
+                  assert.match(String(await ask()), /was chosen but could not be recorded as proved, so it is not bound and nothing is sent on it/);
+                });
+                assert.equal(server.calls('turn/start').length, 0);
+              });
+
+              it(`${who}: after a bind lost to another reader of the same thread, a later look proceeds only once that binding is proved`, async () => {
+                // Look one: the conditional write answers written: false with this look's own candidate on the row.
+                const { table } = await fresh([userAfterTurn(), titleIdle()]);
+                await withStore('updateAdapterStateIf', () => (id) => {
+                  // The other reader's write, as the store would then hold it.
+                  store.startupControlChannels.setAdapterState(id, { provisionalThreadId: THREAD });
+                  return { written: false, channel: store.startupControlChannels.get(id) };
+                }, async () => {
+                  assert.match(String(await ask()), /was bound to another thread, or by another reader, or was replaced/);
+                });
+                assert.equal(server.calls('turn/start').length, 0, 'this look sends nothing');
+                assert.deepEqual(binding(), { threadId: null, provisional: THREAD }, 'the other reader\'s inference is still unproved');
+                // Look two, a second user thread now loaded: the matching id is not a validation.
+                table.set(SECOND, captured('userIdleAfterTurn', SECOND));
+                assert.match(String(await ask()), /threads are loaded for the project directory and none is recorded as this launch's/);
+                assert.deepEqual(binding(), { threadId: null, provisional: null }, 'the failed inference is cleared');
+                assert.equal(server.calls('turn/start').length, 0);
+              });
+
+              it(`${who}: a binding another reader has PROVED is a recorded thread, and the next look proceeds on it`, async () => {
+                await fresh([userAfterTurn(), titleIdle(), captured('userIdleAfterTurn', SECOND)], { threadId: THREAD });
+                assert.equal(await ask(), null, 'a second idle user thread does not unseat a proved binding');
+                assert.deepEqual(binding(), { threadId: THREAD, provisional: null });
+              });
+            }
+
+            it('an unproved thread is never in the field a recorded thread is read from, so no other reader can take it for one', async () => {
+              // Mid-proof: the row as it stands between the two writes of a look.
+              let lists = 0;
+              let between = null;
+              await fresh([userAfterTurn(), titleIdle()], {}, {
+                'thread/loaded/list': () => {
+                  lists += 1;
+                  if (lists === 2) between = { ...store.startupControlChannels.getOpenBySession(session.id).adapterState };
+                  return { data: [THREAD, TITLE], nextCursor: null };
+                }
+              });
+              assert.deepEqual((await gate(screenOf(fx.panes.idleAfterTurn), 1000)).answer, { ready: true });
+              assert.equal(between.provisionalThreadId, THREAD);
+              assert.ok(!between.threadId, 'nothing is recorded until the proof');
+              // A row left provisional: the rotation's rebind, which moves a RECORDED thread, finds none to move.
+              await fresh([userAfterTurn(), titleIdle()], { provisionalThreadId: THREAD });
+              const row = store.startupControlChannels.getOpenBySession(session.id);
+              assert.ok(!row.adapterState.threadId);
+              const moved = codex.rebindThread(row, { priorThreadId: THREAD, replacementThreadId: SECOND });
+              assert.deepEqual({ written: moved.written, bound: moved.bound }, { written: false, bound: false });
+              assert.deepEqual(binding(), { threadId: null, provisional: THREAD });
+            });
+
+            it('the wake binds by the same procedure: a failed check withdraws its inference, and a provisional id is never answered idle', async () => {
+              let lists = 0;
+              const { table } = await fresh([userAfterTurn(), titleIdle()], {}, {
+                'thread/loaded/list': () => {
+                  lists += 1;
+                  if (lists === 2) table.set(SECOND, captured('userIdleAfterTurn', SECOND));
+                  return { data: [...table.keys()], nextCursor: null };
+                }
+              });
+              assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-ambiguous', version });
+              assert.deepEqual(binding(), { threadId: null, provisional: null }, 'withdrawn');
+              assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-ambiguous', version }, 'the second observation is not idle on that id');
+              table.delete(SECOND);
+              assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle', version });
+              assert.deepEqual(binding(), { threadId: THREAD, provisional: null });
+
+              // A provisional id left on the row, beside a second idle user thread.
+              await fresh([userAfterTurn(), captured('userIdleAfterTurn', SECOND)], { provisionalThreadId: THREAD });
+              assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-ambiguous', version });
+              assert.deepEqual(binding(), { threadId: null, provisional: null });
+              // And alone of its kind: proved, then idle.
+              await fresh([userAfterTurn(), titleIdle()], { provisionalThreadId: THREAD });
+              assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle', version });
+              assert.deepEqual(binding(), { threadId: THREAD, provisional: null });
+              // A row that turns provisional while the answer is being read is not answered idle.
+              await fresh([userAfterTurn(), titleIdle()], { threadId: THREAD });
+              const stale = store.startupControlChannels.getOpenBySession(session.id);
+              store.startupControlChannels.setAdapterState(stale.id, { provisionalThreadId: SECOND });
+              assert.deepEqual(await codex.observeActivity(stale, project, ours), { state: 'unknown', reasonCode: 'channel-changed', version });
+            });
 
             it('the thread answered for is the one read AFTER the bind, not the one read before it', async () => {
               let lists = 0;
