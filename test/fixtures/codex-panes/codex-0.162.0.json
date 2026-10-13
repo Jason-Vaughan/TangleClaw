@@ -3,7 +3,7 @@
   "cliVersion": "0.162.0",
   "capturedOn": "2026-10-12",
   "launchPath": "remote-channel",
-  "note": "Signed-in codex-cli 0.162.0, captured 2026-10-12 over the launch path TangleClaw uses: one `codex app-server` per launch on a unix socket, the pane's TUI attached with `--remote`, a throwaway CODEX_HOME, a private tmux server. Each pane is one whole visible read with its cursor (`visible`: height, cursor column and row, every row as tmux returned it with trailing spaces removed), and the same rows as plain text (`lines`: control sequences removed, trailing empty rows dropped). The scratch folder's paths and every thread id were replaced; nothing else was changed. Panes are 100 columns by 30 rows, or by 24 rows for the reads taken in the second sitting.",
+  "note": "Signed-in codex-cli 0.162.0, captured 2026-10-12 over the launch path TangleClaw uses: one `codex app-server` per launch on a unix socket, the pane's TUI attached with `--remote`, a throwaway CODEX_HOME, a private tmux server. Each pane is one whole visible read with its cursor (`visible`: height, cursor column and row, every row as tmux returned it with trailing spaces removed), and the same rows as plain text (`lines`: control sequences removed, trailing empty rows dropped). The scratch folder's paths and every thread id were replaced; nothing else was changed. Panes are 100 columns by 30 rows, or by 24 rows for the reads taken in the second sitting; `streamingDefaultLayout` is 80 columns by 24 rows.",
   "panes": {
     "startScreen": {
       "provenance": "live-capture",
