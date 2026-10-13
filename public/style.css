@@ -1301,6 +1301,35 @@ html[data-tc-keyboard] body {
 }
 .rules-status-ok { color: var(--primary); }
 .rules-status-err { color: var(--danger); }
+
+/* The launch-isolation override switches (#2229). The checkbox stays in the
+   tab order and takes the focus ring: it is laid over its own track instead of
+   being removed, so the switch works from a keyboard and a screen reader. */
+.isolation-override-switch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  cursor: pointer;
+  white-space: normal;
+}
+.isolation-override-switch input[type="checkbox"] {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.isolation-override-switch input:checked + .toggle-switch { background: var(--amber); }
+.isolation-override-switch input:checked + .toggle-switch::after { transform: translateX(18px); }
+.isolation-override-switch input:focus-visible + .toggle-switch { outline: 2px solid var(--primary); outline-offset: 2px; }
+.isolation-override-switch input:disabled + .toggle-switch { opacity: 0.55; }
+.isolation-override-risk { color: var(--amber); }
+.isolation-override-line { border-color: var(--amber); }
 /* 'unverified' (#1063): sent, nothing confirmed it landed — neither ok nor err. */
 .rules-status-warn { color: var(--warning, #ffb300); }
 
@@ -2491,6 +2520,15 @@ html[data-tc-keyboard] body {
 .toast.visible { transform: translateY(0); }
 .toast-warn { background: var(--amber); color: #000; }
 .toast-ok { background: var(--primary); color: #000; }
+/* The one action a launch-failed message may carry (#2229). */
+.toast .toast-action {
+  margin: 6px 0 0 8px;
+  min-height: 44px;
+  background: #000;
+  color: var(--amber);
+  border: 1px solid #000;
+}
+.toast .toast-action:focus-visible { outline: 2px solid #000; outline-offset: 2px; }
 
 /* ── Modal Backdrop ── */
 .modal-backdrop {

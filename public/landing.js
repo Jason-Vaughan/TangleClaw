@@ -1933,8 +1933,13 @@ async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStra
         return;
       }
       toast.textContent = `Launch failed: ${data.error || `HTTP ${res.status}`}`;
+      const pointer = launchRefusalIsOverridable(data)
+        ? appendLaunchIsolationPointer(toast, name, await api('/api/auth/me'))
+        : null;
       toast.className = 'toast toast-warn visible';
-      setTimeout(() => { toast.classList.remove('visible'); }, 6000);
+      // The message is hidden by moving it off screen, which leaves a button
+      // inside it in the tab order: the pointer goes when the message does.
+      setTimeout(() => { toast.classList.remove('visible'); if (pointer) pointer.remove(); }, 6000);
       return;
     }
 
@@ -1954,6 +1959,55 @@ async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStra
     toast.className = 'toast toast-warn visible';
     setTimeout(() => { toast.classList.remove('visible'); }, 6000);
   }
+}
+
+/**
+ * Whether a refused launch is one the operator's launch-isolation override
+ * would let start (#2229): the two refusals that mean the engine's version
+ * could not be shown isolated, and no other. The server spreads the refusal's
+ * `reasonCode` beside `code`.
+ * @param {object|null} data - The refusal body of `POST /api/sessions/:project`
+ * @returns {boolean}
+ */
+function launchRefusalIsOverridable(data) {
+  return Boolean(data) && data.code === 'LAUNCH_ISOLATION_UNVERIFIED'
+    && (data.reasonCode === 'version_unknown' || data.reasonCode === 'version_unverified');
+}
+
+/**
+ * Add to a launch-failed message the way to the project's launch-isolation
+ * override (#2229).
+ *
+ * A page that would be offered the switch gets one button that opens the
+ * project's Settings at it. A page that would not (signed out while a login
+ * is in force) is told who can, in place of a button that leads to a control
+ * it cannot use. The message keeps its own lifetime: the button is there only
+ * while the message is.
+ * @param {HTMLElement} toast - The launch-failed message, its text already set
+ * @param {string} name - The project's name
+ * @param {object|null} me - The answer of `GET /api/auth/me`, or null when the read failed
+ * @returns {HTMLElement} What was added, for the caller to remove when the message is hidden
+ */
+function appendLaunchIsolationPointer(toast, name, me) {
+  const offer = typeof recoveryModeControlOffer === 'function' ? recoveryModeControlOffer(me) : { offered: true };
+  if (offer.offered !== true || typeof openIsolationOverrideSettings !== 'function') {
+    const note = document.createElement('span');
+    note.className = 'toast-note';
+    note.textContent = ' Only a signed-in operator can turn on the launch isolation override, in this project\'s Settings: sign in first.';
+    toast.appendChild(note);
+    return note;
+  }
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn btn-small toast-action';
+  btn.textContent = 'Open launch isolation settings';
+  btn.addEventListener('click', () => {
+    toast.classList.remove('visible');
+    btn.remove();
+    openIsolationOverrideSettings(name);
+  });
+  toast.appendChild(btn);
+  return btn;
 }
 
 // ── Stranded Wraps Launch Modal (#1539) ──
