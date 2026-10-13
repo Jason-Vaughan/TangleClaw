@@ -35,6 +35,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-12 — #2222: a Codex version refusal says how to stop the update prompt moving Codex off a verified version
+
+<!-- prawduct: type=feature | scope=codex-isolation-2222 -->
+
+#2222 Chunk 02, the issue's only chunk in v5.33. Branch `feat/2222-02-update-prompt-advice`, from `origin/main` `fa029c0d`, with `d5c5a491` merged in. Chunk 01 (admitting newer Codex versions) is not built in this release, by ruling; the plan is not complete and #2222 stays open for v5.34. **No Codex version is admitted and no list changes.**
+
+Visual change: yes — the launch-failed banner carries a longer text.
+
+**Why.** A version refusal tells the operator to install a verified Codex. A verified Codex that knows of a newer release opens on a prompt whose default choice (Enter) runs `npm install -g @openai/codex`, the newest version, which TangleClaw refuses: the operator is back where they started.
+
+**What was measured.** On 0.156.1 and on 0.157.1, each alone, as `codex` and as `codex --no-daemon`, a fake key, no account, a throwaway home whose `version.json` named a newer version: with `check_for_update_on_startup = true` in Codex's `config.toml` the update prompt was the first screen; with `false`, the home otherwise the same, it was not drawn.
+
+**What changed.**
+
+- `lib/startup-control-codex.js`: `_recoveryFor` adds one passage to the two remedies that name a version to install (`version_unknown` / `version_unverified`, and `native_version_unverified` when it names versions): what the prompt's default does, the setting, the file, the versions it was measured on, and that TangleClaw does not edit that file. The third wording ("no Codex version fixes this") is left alone: staying on a version fixes nothing there. New `_updatePromptAdvice` returns the passage only when every version the remedy names is in `UPDATE_PROMPT_MEASURED_ON`, and names only those versions, so a version listed later without this measurement gets no advice and a remedy never mentions a version its own path refuses.
+- `data/engines/codex.json`: the `update` guarded dialog's evidence records the measurement and what was not measured. No pattern or list changed.
+- Docs: `docs/engine-guide.md`, `docs/user-guide.md`.
+
+**Limits.** The passage is about the prompt. Not measured: an update made with no prompt; anything after sign-in; whether `false` also stops the check itself. The launch-failed banner is a toast that leaves after six seconds (#2339, open): the text, now longer, cannot in practice be read there in time; it is also in the API's answer and both guides. At 320 px a long executable path in the reason clips (#2339).
+
+**Tests.** `test/startup-control-codex.test.js`: the passage on both version refusals (prompt, setting, file, no claim of a silent update, every named version measured, placed before the closing lines); on the native path, present for a measured version and naming it alone, absent when a named version was not measured, absent when no version is the remedy. No existing assertion was edited.
+
+**Browser check.** Checked by an automated browser run; not yet seen by the Operator. A scratch server on loopback behind a tailnet-only forwarder, a fake `codex` reporting 0.161.0: the whole text read at desktop and 375; at 320 as above.
+
 ## 2026-10-12 — #2228: tc tells a session when its pane was not started isolated, and never calls it isolated
 
 <!-- prawduct: type=feature | scope=codex-told-2228 -->
