@@ -1067,7 +1067,7 @@ describe('tc sessions isolation — a session under the operator\'s override (#2
     assert.ok(out.includes('      Reason 5.'), 'the server\'s reason is still printed under the row');
     assert.match(out, /^1 isolated, 2 not isolated \(1 of them under the operator's override\), 1 not shown isolated, 0 not applicable\.$/m);
     assert.match(out, /^Ask the operator to end and relaunch each session marked NOT ISOLATED or NOT SHOWN ISOLATED, except those marked \(operator's override\)\. Afterwards, check it took: tc sessions isolation --replaced 2,3$/m);
-    assert.match(out, /^Marked \(operator's override\): #5 p5\. The operator's override let each start although it could not be shown isolated\. Ending and relaunching one isolates it only on a Codex version TangleClaw has verified, or with the override cleared; otherwise it starts the same way\.$/m);
+    assert.match(out, /^Marked \(operator's override\): #5 p5\. The operator's override let each start although it could not be shown isolated\. Ending and relaunching one isolates it only on a Codex version TangleClaw has verified; on the same version it starts the same way while the override stands, and is refused once the override is cleared\.$/m);
   });
 
   it('gives no all-clear and no relaunch advice when the only sessions not isolated run under the override', () => {

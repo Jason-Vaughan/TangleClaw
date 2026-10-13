@@ -739,7 +739,7 @@ describe('tc: the launch-isolation lines (#2228)', () => {
 
   describe('a launch the operator\'s override let start (#2229)', () => {
     const MARK = { launchedUnderOverride: true, scope: 'project', refusal: 'version_unknown', versionRead: null, recordedAt: null };
-    const ADVICE = 'started under the operator\'s override (a relaunch isolates it only on a Codex version TangleClaw has verified, or with the override cleared)';
+    const ADVICE = 'started under the operator\'s override (a relaunch isolates it only on a Codex version TangleClaw has verified; on the same version it starts the same way while the override stands, and is refused once the override is cleared)';
 
     /**
      * The inventory answer with one not-isolated project row carrying this `override`.
