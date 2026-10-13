@@ -800,7 +800,11 @@ describe('tc: the launch-isolation lines (#2228)', () => {
         const { ctx, asked } = isolationCtx({ read: started('codex'), identity: answer(VERIFIED_140), inventory: inventoryOf(140, 'isolated'), envelope: STATE_PAGE, argv: [sub] });
         const out = (await run('start', ctx)).stdout;
         const without = (await run('start', isolationCtx({ read: started('claude'), envelope: { ...STATE_PAGE, step: { index: 1, id: 'governance', of: 4 } }, argv: [sub] }).ctx)).stdout;
-        assert.match(out, /^\[read by tc now, not part of the step below — Launch isolation: NOT ISOLATED\..* Server's record \(not a verdict about this shell\): .*recorded as isolated\..*\]\n\n/);
+        assert.match(out, /^\[read by tc now, not part of the step below — Launch isolation: NOT ISOLATED\..*ask the operator to end this session and launch it again\. Server's.*\]\n\n/);
+        // A review page carries a longer banner of its own, which leaves the notice less room: it is cut, and says so.
+        assert.match(out.slice(0, out.indexOf(']\n\n')), sub === 'next'
+          ? /Server's record \(not a verdict about this shell\): .*recorded as isolated\. Row 140 reason\. That does not show this shell is that launch\.$/
+          : /… Run tc whoami for the rest\.$/);
         assert.ok(out.includes('STATE STEP TEXT\n---\n'), 'the step\'s own text is unchanged');
         assert.equal(out.slice(out.indexOf(']\n\n') + 3), without.replace('governance', 'state').replace('step 2/4', 'step 3/4'), 'everything after the notice is the page as it is printed without one');
         assert.doesNotMatch(out, POSITIVE_VERDICT);
@@ -809,12 +813,74 @@ describe('tc: the launch-isolation lines (#2228)', () => {
 
       it(`tc start ${sub}: nothing is added to any other step, and nothing is read for it`, async () => {
         const { ctx, asked } = isolationCtx({ read: started('codex'), identity: answer(VERIFIED_140), inventory: inventoryOf(140, 'isolated'), envelope: { ...STATE_PAGE, step: { index: 3, id: 'task', of: 4 } }, argv: [sub] });
-        ctx.paneStartCommand = () => { throw new Error('the pane was read for a step that prints no row'); };
+        let reads = 0;
+        ctx.paneStartCommand = () => { reads += 1; return started('codex'); };
         const out = (await run('start', ctx)).stdout;
         assert.doesNotMatch(out, /Launch isolation/);
         assert.deepEqual(asked, [asks]);
+        assert.equal(reads, 0, 'the pane was read for a step that prints no row');
       });
     }
+
+    for (const [sub, asks] of [['next', 'POST /api/tc/start/next'], ['review', 'GET /api/tc/start/review']]) {
+      it(`tc start ${sub}: a session whose engine shares no background process is told nothing, and nothing more is asked`, async () => {
+        const { ctx, asked } = isolationCtx({ read: started('claude --x'), identity: answer(VERIFIED_140), inventory: inventoryOf(140, 'isolated'), envelope: STATE_PAGE, argv: [sub] });
+        const out = (await run('start', ctx)).stdout;
+        assert.doesNotMatch(out, /Launch isolation|read by tc now/);
+        assert.ok(out.includes('STATE STEP TEXT'));
+        assert.deepEqual(asked, [asks]);
+      });
+
+      it(`tc start ${sub}: the state step is printed whatever becomes of the notice`, async () => {
+        const { ctx } = isolationCtx({ read: started('codex'), identity: answer(VERIFIED_140), inventory: { sessions: 'not a list' }, envelope: STATE_PAGE, argv: [sub] });
+        assert.match((await run('start', ctx)).stdout, /^\[read by tc now[\s\S]*STATE STEP TEXT/);
+        ctx.paneStartCommand = () => { throw new Error('tmux fell over'); };
+        const res = await run('start', ctx);
+        assert.equal(res.code, 0);
+        assert.doesNotMatch(res.stdout, /read by tc now/);
+        assert.ok(res.stdout.includes('STATE STEP TEXT'));
+      });
+
+      it(`tc start ${sub}: a state page cut to the engine's limit still fits it with the notice, however long the reasons`, async () => {
+        const launchSequence = require('../lib/launch-sequence');
+        // A limit large enough that the budget is the limit less the overhead, not the floor a page is never cut below.
+        const maxChars = 8000;
+        assert.equal(launchSequence.pageBudgetFor(maxChars), maxChars - require('../lib/launch-page').pageOverhead());
+        const content = 'word '.repeat(6000);
+        const long = 'A reason that runs on. '.repeat(60);
+        const inventory = { sessions: [{ sessionId: 140, role: 'project', verdict: 'not-isolated', reason: long }] };
+        let noticed = 0;
+        for (const [start, end] of launchSequence.paginate(content, launchSequence.pageBudgetFor(maxChars))) {
+          const envelope = {
+            step: { index: 2, id: 'state', of: 4 }, page: { index: 998, of: 999, continued: true }, revision: 999999, content: content.slice(start, end),
+            ack: { command: 'tc start next --ack state:999999:' + 'a'.repeat(16) },
+            revised: { code: 'SNAPSHOT_REVISED', reason: 'the project rules changed', revision: 999999 },
+            review: { readyAt: '9999-12-31 23:59:59' }, nextRef: { command: 'tc start review --step task --page 998' }
+          };
+          const { ctx } = isolationCtx({ read: started('codex'), identity: answer(VERIFIED_140), inventory, envelope, argv: [sub] });
+          ctx.judgeRecordedCommand = () => ({ applies: true, verdict: 'not-isolated', reason: long });
+          const out = (await run('start', ctx)).stdout;
+          assert.ok(out.length <= maxChars, `a printed state page fits: ${out.length} <= ${maxChars}`);
+          if (out.startsWith('[read by tc now')) {
+            noticed += 1;
+            assert.match(out, /^\[read by tc now, not part of the step below — Launch isolation: NOT ISOLATED\./, 'a cut notice keeps the verdict');
+            assert.match(out.slice(0, out.indexOf(']\n\n')), /… Run tc whoami for the rest\.$/);
+          }
+        }
+        assert.ok(noticed > 0, 'the notice was printed on a full page');
+      });
+    }
+
+    it('a notice with no room for its verdict is not printed in part', () => {
+      const lines = ['Launch isolation: NOT SHOWN ISOLATED. Some reason.', '  Server\'s record: x.'];
+      assert.equal(verbs.renderIsolationNotice(lines, 60), '');
+      assert.equal(verbs.renderIsolationNotice(lines).length, 119);
+      assert.equal(verbs.renderIsolationNotice(lines, 119).length, 119, 'a notice that fits exactly is whole');
+      const cut = verbs.renderIsolationNotice(lines, 118);
+      assert.equal(cut.length, 118);
+      assert.match(cut, /^\[read by tc now, not part of the step below — Launch isolation: NOT SHOWN ISOLATED.*… Run tc whoami for the rest\.\]\n\n$/);
+      assert.match(verbs.renderIsolationNotice(lines), /Server's record: x\.\]\n\n$/);
+    });
 
     it('tc start next: the state step is still served when the identity cannot be read', async () => {
       const { ctx } = isolationCtx({ read: started('codex'), envelope: STATE_PAGE, argv: ['next'] });
