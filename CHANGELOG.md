@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Internal
+
+- `docs/releases/v5.33-status.md` now says what is true after the release: v5.33.0 is tagged, published and running on the live install. Four of its sixteen checks on the live install have passed, two are made in part and ten are owed.
+
 ## [5.33.0] - 2026-10-13
 
 ### Added
