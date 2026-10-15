@@ -4,6 +4,16 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Host check** (#1380, #2142): `node scripts/host-check.js` reports whether this machine's tailnet name, configured names, Caddy sites, certificates, serve routes and local trust agree, each row ok/drift/ambiguous/observed/unknown. Read-only; redacted unless `--reveal`. Exit 0, 3 (drift) or 4 (unmeasured).
+- **A guide to moving TangleClaw to another machine** (#1380). `docs/host-migration.md` separates a planned move from recovering a copied machine. It shows how to read the host check, and gives each fix with its trigger, snapshot and exact rollback. It is a checklist: it changes nothing by itself.
+
+### Fixed
+
+- **The host check no longer prints raw config or command values, or error messages.** `ingressMode`, the topology marker, Tailscale state and error codes pass through closed sets, so an unexpected value prints as `unsupported`. `--reveal` shows a failed row's error class, never its message. (#1380, #2142)
+- **The host check prints an error code only if it is a known one.** `node scripts/host-check.js` no longer passes an unlisted error code into a reason, the `--reveal` diagnostic or its failure line, however code-like it is spelled; such errors read `internal-error` or `lookup-failed`. Normal output is unchanged.
+
 ### Internal
 
 - `docs/releases/v5.33.1-status.md` now says what is true after the release: v5.33.1 is tagged, published and running on the live install, with the backups and recovery evidence of the deploy. Two checks stay owed: the #2403 fix's own boot case (the Master survived the restart) and reachability from off the host.
