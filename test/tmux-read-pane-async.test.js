@@ -20,6 +20,14 @@ const logger = require('../lib/logger');
 
 const tmux = require('../lib/tmux');
 
+/**
+ * The time given to a read whose assertions are about what it answers, not
+ * how fast. Generous on purpose: a stand-in that has to start a shell can take
+ * seconds to answer on a heavily loaded machine, and that must not read as tmux
+ * giving no answer. The cases that test a timeout pass their own short bound.
+ */
+const ANSWER_TIMEOUT = 60000;
+
 let dir;
 let fake;
 const saved = { ...tmux._async };
@@ -59,10 +67,11 @@ before(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-read-pane-'));
   fake = path.join(dir, 'fake-tmux');
   // A stand-in for tmux. `mode` picks how it behaves; every call appends its
-  // pid and its arguments, one per line, to the log.
+  // pid and its arguments, one per line, to the log. The pid goes first, before
+  // reading the mode costs a fork, so a call killed early still leaves its line.
   fs.writeFileSync(fake, `#!/bin/sh
-mode=$(cat "${dir}/mode" 2>/dev/null)
 echo "pid $$" >> "${dir}/log"
+mode=$(cat "${dir}/mode" 2>/dev/null)
 for a in "$@"; do echo "arg $a" >> "${dir}/log"; done
 case "$mode" in
   hang) exec sleep 30 ;;
@@ -111,7 +120,7 @@ const logLines = () => (fs.existsSync(path.join(dir, 'log')) ? fs.readFileSync(p
 
 describe('readPaneAsync — what it answers', () => {
   it('returns the pane tail and the cursor from four commands', async () => {
-    const got = await tmux.readPaneAsync('proj', { lines: 15 });
+    const got = await tmux.readPaneAsync('proj', { lines: 15, timeout: ANSWER_TIMEOUT });
     assert.deepEqual(got.cap, { lines: ['line one', 'line two'], alternateScreen: false });
     // This stand-in reports no cursor flag, so whether the cursor is shown is "not known".
     assert.deepEqual(got.cursor, { x: 3, y: 1, line: 'line one\nline two', visible: null });
@@ -121,29 +130,29 @@ describe('readPaneAsync — what it answers', () => {
 
   it('says whether the cursor is shown, from the same display-message, and never guesses', async () => {
     mode('cursor-shown');
-    assert.equal((await tmux.readPaneAsync('proj')).cursor.visible, true);
+    assert.equal((await tmux.readPaneAsync('proj', { timeout: ANSWER_TIMEOUT })).cursor.visible, true);
     mode('cursor-hidden');
-    assert.equal((await tmux.readPaneAsync('proj')).cursor.visible, false);
+    assert.equal((await tmux.readPaneAsync('proj', { timeout: ANSWER_TIMEOUT })).cursor.visible, false);
     mode('cursor-flag-odd');
-    assert.equal((await tmux.readPaneAsync('proj')).cursor.visible, null, 'anything but 1 or 0 is not known');
+    assert.equal((await tmux.readPaneAsync('proj', { timeout: ANSWER_TIMEOUT })).cursor.visible, null, 'anything but 1 or 0 is not known');
     assert.ok(logLines().includes('arg #{alternate_on},#{cursor_x},#{cursor_y},#{cursor_flag}'), 'asked in the one query, not a fifth command');
   });
 
   it('rejects for a session tmux says is absent, and that is not a timeout', async () => {
     mode('absent');
-    await assert.rejects(tmux.readPaneAsync('gone'), (err) => /does not exist/.test(err.message) && !err.tcTimedOut);
+    await assert.rejects(tmux.readPaneAsync('gone', { timeout: ANSWER_TIMEOUT }), (err) => /does not exist/.test(err.message) && !err.tcTimedOut);
   });
 
   it('answers with no cursor when tmux reports none, and still returns the pane', async () => {
     mode('no-cursor');
-    const got = await tmux.readPaneAsync('proj');
+    const got = await tmux.readPaneAsync('proj', { timeout: ANSWER_TIMEOUT });
     assert.equal(got.cursor, null);
     assert.deepEqual(got.cap.lines, ['line one', 'line two']);
   });
 
   it('answers with no lines when the capture fails, as capturePane does', async () => {
     mode('capture-fails');
-    const got = await tmux.readPaneAsync('proj');
+    const got = await tmux.readPaneAsync('proj', { timeout: ANSWER_TIMEOUT });
     assert.deepEqual(got.cap.lines, []);
   });
 });
@@ -152,19 +161,36 @@ describe('readPaneAsync — no shell is involved', () => {
   it('a session name full of shell syntax reaches the program as one argument', async () => {
     const marker = path.join(dir, 'pwned');
     const name = `x'; touch ${marker}; echo '$(touch ${marker})`;
-    await tmux.readPaneAsync(name).catch(() => {});
+    await tmux.readPaneAsync(name, { timeout: ANSWER_TIMEOUT }).catch(() => {});
     assert.equal(fs.existsSync(marker), false, 'nothing in the name was executed');
     assert.ok(logLines().includes(`arg =${name}:`), 'the name arrived whole, as an exact-match target');
   });
 });
 
+/**
+ * Record the pid of every child the read spawns, from the spawn itself. A
+ * wedged read is killed on a deadline, and on a loaded machine that can come
+ * before the stand-in has run far enough to log anything, so what was started
+ * is counted here and not from the stand-in's log. `afterEach` restores the seam.
+ * @returns {number[]} The pids, filled in as children start.
+ */
+function countSpawns() {
+  const pids = [];
+  tmux._async.execFile = (...args) => {
+    const child = saved.execFile(...args);
+    pids.push(child.pid);
+    return child;
+  };
+  return pids;
+}
+
 describe('readPaneAsync — a wedged tmux', () => {
   it('rejects as timed out, and the child is killed and gone', async () => {
     mode('hang');
+    const pids = countSpawns();
     const started = Date.now();
     await assert.rejects(tmux.readPaneAsync('proj', { timeout: 300 }), (err) => err.tcTimedOut === true);
     assert.ok(Date.now() - started < 10000, 'it did not wait for the program to finish');
-    const pids = logLines().filter((l) => l.startsWith('pid ')).map((l) => Number(l.slice(4)));
     assert.equal(pids.length, 1, 'the read stopped at the first command');
     assert.ok(await eventually(() => !alive(pids[0]), 5000), `process ${pids[0]} is still running`);
   });
@@ -178,13 +204,13 @@ describe('readPaneAsync — a wedged tmux', () => {
 
   it('twenty wedged reads leave the event loop turning while they are waited on', async () => {
     mode('hang');
+    const pids = countSpawns();
     let turns = 0;
     const timer = setInterval(() => { turns += 1; }, 10);
     const results = await Promise.allSettled(Array.from({ length: 20 }, (_, i) => tmux.readPaneAsync(`proj${i}`, { timeout: 600 })));
     clearInterval(timer);
     assert.ok(results.every((r) => r.status === 'rejected' && r.reason.tcTimedOut === true));
     assert.ok(turns >= 5, `the loop turned ${turns} times during the wait`);
-    const pids = logLines().filter((l) => l.startsWith('pid ')).map((l) => Number(l.slice(4)));
     assert.equal(pids.length, 20);
     assert.ok(await eventually(() => pids.every((p) => !alive(p)), 5000), 'a wedged child outlived its read');
   });
@@ -192,12 +218,12 @@ describe('readPaneAsync — a wedged tmux', () => {
 
 describe('probeSessionAsync — the three answers', () => {
   it('says live for a session tmux has', async () => {
-    assert.deepEqual(await tmux.probeSessionAsync('proj', 2000), { live: true, answered: true, cause: null });
+    assert.deepEqual(await tmux.probeSessionAsync('proj', ANSWER_TIMEOUT), { live: true, answered: true, cause: null });
   });
 
   it('says not live, and answered, for one tmux says is absent', async () => {
     mode('absent');
-    assert.deepEqual(await tmux.probeSessionAsync('gone', 2000), { live: false, answered: true, cause: null });
+    assert.deepEqual(await tmux.probeSessionAsync('gone', ANSWER_TIMEOUT), { live: false, answered: true, cause: null });
   });
 
   it('says not answered when tmux says nothing in time', async () => {
