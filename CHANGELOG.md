@@ -11,7 +11,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
-- **The host check no longer prints raw config or command values, or error messages.** `ingressMode`, the topology marker, Tailscale state and error codes pass through closed sets, so an unexpected value prints as `unsupported`. `--reveal` shows a failed row's error class, never its message. (#1380, #2142)
+- **The host check no longer prints raw config or command values, or error messages.** `ingressMode`, the topology marker, Tailscale state and error codes pass through closed sets, and an unexpected value prints fixed safe fallback text, never the value itself. `--reveal` shows a failed row's error class, never its message. (#1380, #2142)
 - **The host check prints an error code only if it is a known one.** `node scripts/host-check.js` no longer passes an unlisted error code into a reason, the `--reveal` diagnostic or its failure line, however code-like it is spelled; such errors read `internal-error` or `lookup-failed`. Normal output is unchanged.
 
 ### Internal
