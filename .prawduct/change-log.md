@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-14 — #1380/#2142: the host check prints an error code only when it is on a finite list of known codes
+
+<!-- prawduct: type=bugfix | scope=host-check-error-codes-1380 -->
+
+#1380/#2142, the second redaction follow-up to chunk H, required by the Architect's A23 before H is called share-safe, released or deployed. Branch `fix/1380-host-check-error-code-allowlist`. References #1380 and #2142 without closing either: chunk G remains. Merges only on the Architect's acceptance of its exact head.
+
+**Why.** The entry below kept an error's `code` when it matched `/^E[A-Z0-9_]{1,63}$/`. That is a spelling filter, not a list: a thrower can set any `code`, and a secret spelled like one (`ERR_TOKEN_SECRET123`) passed it into the internal-error reason, the `--reveal` diagnostic, the local-resolution result and the CLI's failure line. Root cause: "shaped like an errno code" was treated as "is a known errno code", and every sentinel the tests seeded was lower case or held a path, so none passed the filter.
+
+**What changed.** `lib/host-check.js` replaces the pattern with `KNOWN_ERROR_CODES`, a finite list of the codes this check's own calls can raise: file reads (`ENOENT`, `EACCES`, `EPERM`, …), `dns.lookup` (`ENOTFOUND`, `ENODATA`, `EAI_AGAIN`, …), the local ports request (`ECONNREFUSED`, `ETIMEDOUT`, …), running a command (`ERR_CHILD_PROCESS_STDIO_MAXBUFFER`) and Node's argument checks (`ERR_INVALID_ARG_TYPE`, …). Any other code, however it is spelled, gives the same fixed text as no code: `internal-error`, `lookup-failed`, or a diagnostic of the error class alone. The module header, `safeErrorCode`'s JSDoc and the CLI's comment no longer call a shape a closed set. An operator sees no change unless a code outside the list was thrown.
+
+**Tests.** `test/host-check.test.js`: three synthetic secrets spelled exactly like codes (`ERR_TOKEN_SECRET_QX7`, `ESECRETQX7`, `EAI_QX7`) go through every path that prints a code: a thrown row (reason and `--reveal` diagnostic), a lookup failure (default and `--reveal`), the CLI's failure line, and `safeErrorCode` itself, which also now refuses `EFIXTURE`. The CLI's positive case uses `EACCES`, a real code. Run against the module as merged in #2410, the four new or extended cases fail and the rest pass.
+
 ## 2026-10-14 — #1380/#2142: the host check prints no raw value from a file or a command, and no error message even under `--reveal`
 
 <!-- prawduct: type=bugfix | scope=host-check-redaction-1380 -->
@@ -48,7 +60,8 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 - `ingressMode`: `direct` or `caddy` (the set `server.js` accepts; absent means `direct`). Anything else prints `unsupported`, and the config row is `unknown: ingressMode-unsupported`. With no Caddyfile, that row reads `unknown: absent; ingressMode unsupported` rather than `observed`.
 - The topology marker: only `v1` is kept. Any other version prints `marker of an unsupported version` and is never stored in the parse result.
 - `BackendState`: Tailscale's own states map to `daemon-<state>`. Any other value gives `daemon-unrecognized-state`.
-- Error codes (`internal-error:<code>`, the local-resolution result, the CLI's top-level failure line in `scripts/host-check.js`): kept only when shaped like a Node or errno code (`safeErrorCode`), else `internal-error` or `lookup-failed`.
+- Error codes (`internal-error:<code>`, the local-resolution result, the CLI's top-level failure line in `scripts/host-check.js`): kept only when shaped like a Node or errno code (`safeErrorCode`), else `internal-error` or `lookup-failed`. (Not a closed set: the entry above replaces the shape with a list.)
+- The `/api/ports` row's reason for an unexpected HTTP status is `status-<n>` only when the status is an integer, else `status-other`.
 - The diagnostic a thrown row keeps for `--reveal` is now its built-in error class and safe code (`TypeError EACCES`; a custom class prints as `Error`; a thrown non-error prints `non-error-value`). It never holds the message or a stack frame.
 
 **Contract change, by ruling.** H's test "keeps the message for `--reveal` only" asserted `diagnostic: boom at /private/fixture/path` in the revealed output. A22 ruled that contract wrong, so the test now asserts the opposite: the message and stack never appear, and the diagnostic is the error class. This is not a weakened test.
