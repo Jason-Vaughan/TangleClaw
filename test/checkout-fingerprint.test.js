@@ -184,6 +184,8 @@ describe('a git the deadline ended is stopped before the fingerprint returns', (
   // A stand-in for git, run through the real runner: at `status` it does what
   // the `mode` file says, after logging its pid; every other call is real git.
   // So the checkout is real, and what the deadline ends is a real process.
+  // The writer uses only shell built-ins: a child it forked would not get the
+  // signal sent to the shell, and could go on writing after the shell was gone.
   const STALL_DEADLINE_MS = 3000;
   let dir;
   let tools;
@@ -198,7 +200,7 @@ case " $* " in
     case "$(cat "${tools}/mode")" in
       hang) exec sleep 30 ;;
       deaf) trap '' TERM; while :; do sleep 0.05; done ;;
-      writer) i=0; while :; do i=$((i+1)); mkdir -p "$2/.git/late/$i" && echo x > "$2/.git/late/$i/f"; done ;;
+      writer) i=0; while :; do i=$((i+1)); echo x > "$2/.git/late_$i"; done ;;
     esac ;;
 esac
 exec git "$@"
