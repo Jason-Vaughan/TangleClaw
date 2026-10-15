@@ -8,8 +8,9 @@ has no direct posting authority by default: its active rules govern routing.
 
 On the project's own install, whose rule store numbers them, Rule #188 was activated at
 2026-10-06 04:14:43Z and Rule #145, the direct procedure's rule, was retired at
-2026-10-15 20:50:39Z. Those numbers are that installation's historical identifiers; another install
-has no rules by those ids. Outbound posts through the bridge are proved there; one fresh operator
+2026-10-15 20:50:39Z. Those numbers are that installation's historical identifiers: these
+identifiers are installation-local and must not be assumed on another install. Outbound posts
+through the bridge are proved there; one fresh operator
 message carried through to the Project Master and answered back is not yet (#1836), and an
 incomplete verification does not revive a retired rule. See [operator-bridge.md](operator-bridge.md)
 for what is built.
