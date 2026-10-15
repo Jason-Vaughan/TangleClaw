@@ -104,10 +104,12 @@ macOS's `security` may consult trust services. The output says so.
 
 **A direct-mode HTTPS install reads `unknown` on its routes row.** The routes row compares Tailscale's
 serve routes with TangleClaw's port leases, which it reads with one loopback request to `127.0.0.1`. The
-check verifies that request's certificate as usual, and a certificate issued for your host names does
-not verify for `127.0.0.1`. So on a direct-mode HTTPS install the row reads
+check verifies that request's certificate against Node's own trusted roots, which do not include the
+local mkcert root that issued TangleClaw's certificate. So on a direct-mode HTTPS install the row reads
 `[unknown] Observed routes: lease comparison: tls-unverified`. That is the check refusing to read lease
-data over an unverified connection, not a broken install. The routes themselves are still listed.
+data over a connection it cannot verify, not a broken install, and not a sign the certificate lacks
+`127.0.0.1` (it already carries it). Do not re-mint because of this row. The routes themselves are
+still listed.
 
 ## On the new machine: diagnose first, then change only what a row shows
 

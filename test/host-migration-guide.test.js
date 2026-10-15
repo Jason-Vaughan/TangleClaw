@@ -66,6 +66,12 @@ function lintGuide(text) {
     if (!labels.every((l) => /^<[a-z0-9-]+>$/.test(l))) add('tailnet-name', m[0]);
   }
 
+  // A machine's mDNS name, which every certificate carries and which often holds a person's name.
+  for (const m of text.matchAll(/[A-Za-z0-9<>_-]+(?:\.[A-Za-z0-9<>_-]+)*\.local\b/gi)) {
+    const labels = m[0].slice(0, -'.local'.length).split('.');
+    if (!labels.every((l) => /^<[a-z0-9-]+>$/.test(l))) add('mdns-name', m[0]);
+  }
+
   for (const m of text.matchAll(/\/(?:Users|home)\/[^\s/`'")<]+|[A-Za-z]:\\Users\\[^\s\\`'")]+/g)) add('home-path', m[0]);
 
   for (const m of text.matchAll(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi)) add('uuid', m[0]);
@@ -86,6 +92,7 @@ describe('host-migration guide privacy linter (#1380)', () => {
       'private-ipv4': ['100.101.102.103', '10.0.0.5', '172.20.1.1', '192.168.1.20', '169.254.10.20', '100.64.0.11'],
       'private-ipv6': ['fd7a:115c:a1e0::1', 'fc00::abcd'],
       'tailnet-name': ['studio.tailabc123.ts.net', 'studio.<tailnet>.ts.net', 'tailabc123.ts.net'],
+      'mdns-name': ['someones-mac.local', 'Studio-2.local'],
       'home-path': ['/Users/someone/.tangleclaw', '/home/someone/x', 'C:\\Users\\someone\\x'],
       uuid: ['0f8e2a9c-1b3d-4e5f-8a7b-6c5d4e3f2a1b'],
       'launch-id': ['Ab3dEf6hIj9lMn2pQr5tUv'],
@@ -105,6 +112,7 @@ describe('host-migration guide privacy linter (#1380)', () => {
       '<tailnet>.ts.net',
       '<service-name>.<tailnet>.ts.net',
       '`<old-name>.<tailnet>.ts.net`',
+      '<machine-name>.local',
       '~/.tangleclaw/Caddyfile',
       'https://localhost:8443 and 127.0.0.1',
       'v5.33.0 and node scripts/host-check.js --reveal',
