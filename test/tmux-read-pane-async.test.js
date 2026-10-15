@@ -20,6 +20,14 @@ const logger = require('../lib/logger');
 
 const tmux = require('../lib/tmux');
 
+/**
+ * The time given to a read whose assertions are about what it answers, not
+ * how fast. Generous on purpose: a stand-in that has to start a shell can take
+ * seconds to answer on a heavily loaded machine, and that must not read as tmux
+ * giving no answer. The cases that test a timeout pass their own short bound.
+ */
+const ANSWER_TIMEOUT = 60000;
+
 let dir;
 let fake;
 const saved = { ...tmux._async };
@@ -112,7 +120,7 @@ const logLines = () => (fs.existsSync(path.join(dir, 'log')) ? fs.readFileSync(p
 
 describe('readPaneAsync — what it answers', () => {
   it('returns the pane tail and the cursor from four commands', async () => {
-    const got = await tmux.readPaneAsync('proj', { lines: 15 });
+    const got = await tmux.readPaneAsync('proj', { lines: 15, timeout: ANSWER_TIMEOUT });
     assert.deepEqual(got.cap, { lines: ['line one', 'line two'], alternateScreen: false });
     // This stand-in reports no cursor flag, so whether the cursor is shown is "not known".
     assert.deepEqual(got.cursor, { x: 3, y: 1, line: 'line one\nline two', visible: null });
@@ -122,29 +130,29 @@ describe('readPaneAsync — what it answers', () => {
 
   it('says whether the cursor is shown, from the same display-message, and never guesses', async () => {
     mode('cursor-shown');
-    assert.equal((await tmux.readPaneAsync('proj')).cursor.visible, true);
+    assert.equal((await tmux.readPaneAsync('proj', { timeout: ANSWER_TIMEOUT })).cursor.visible, true);
     mode('cursor-hidden');
-    assert.equal((await tmux.readPaneAsync('proj')).cursor.visible, false);
+    assert.equal((await tmux.readPaneAsync('proj', { timeout: ANSWER_TIMEOUT })).cursor.visible, false);
     mode('cursor-flag-odd');
-    assert.equal((await tmux.readPaneAsync('proj')).cursor.visible, null, 'anything but 1 or 0 is not known');
+    assert.equal((await tmux.readPaneAsync('proj', { timeout: ANSWER_TIMEOUT })).cursor.visible, null, 'anything but 1 or 0 is not known');
     assert.ok(logLines().includes('arg #{alternate_on},#{cursor_x},#{cursor_y},#{cursor_flag}'), 'asked in the one query, not a fifth command');
   });
 
   it('rejects for a session tmux says is absent, and that is not a timeout', async () => {
     mode('absent');
-    await assert.rejects(tmux.readPaneAsync('gone'), (err) => /does not exist/.test(err.message) && !err.tcTimedOut);
+    await assert.rejects(tmux.readPaneAsync('gone', { timeout: ANSWER_TIMEOUT }), (err) => /does not exist/.test(err.message) && !err.tcTimedOut);
   });
 
   it('answers with no cursor when tmux reports none, and still returns the pane', async () => {
     mode('no-cursor');
-    const got = await tmux.readPaneAsync('proj');
+    const got = await tmux.readPaneAsync('proj', { timeout: ANSWER_TIMEOUT });
     assert.equal(got.cursor, null);
     assert.deepEqual(got.cap.lines, ['line one', 'line two']);
   });
 
   it('answers with no lines when the capture fails, as capturePane does', async () => {
     mode('capture-fails');
-    const got = await tmux.readPaneAsync('proj');
+    const got = await tmux.readPaneAsync('proj', { timeout: ANSWER_TIMEOUT });
     assert.deepEqual(got.cap.lines, []);
   });
 });
@@ -153,7 +161,7 @@ describe('readPaneAsync — no shell is involved', () => {
   it('a session name full of shell syntax reaches the program as one argument', async () => {
     const marker = path.join(dir, 'pwned');
     const name = `x'; touch ${marker}; echo '$(touch ${marker})`;
-    await tmux.readPaneAsync(name).catch(() => {});
+    await tmux.readPaneAsync(name, { timeout: ANSWER_TIMEOUT }).catch(() => {});
     assert.equal(fs.existsSync(marker), false, 'nothing in the name was executed');
     assert.ok(logLines().includes(`arg =${name}:`), 'the name arrived whole, as an exact-match target');
   });
@@ -210,12 +218,12 @@ describe('readPaneAsync — a wedged tmux', () => {
 
 describe('probeSessionAsync — the three answers', () => {
   it('says live for a session tmux has', async () => {
-    assert.deepEqual(await tmux.probeSessionAsync('proj', 2000), { live: true, answered: true, cause: null });
+    assert.deepEqual(await tmux.probeSessionAsync('proj', ANSWER_TIMEOUT), { live: true, answered: true, cause: null });
   });
 
   it('says not live, and answered, for one tmux says is absent', async () => {
     mode('absent');
-    assert.deepEqual(await tmux.probeSessionAsync('gone', 2000), { live: false, answered: true, cause: null });
+    assert.deepEqual(await tmux.probeSessionAsync('gone', ANSWER_TIMEOUT), { live: false, answered: true, cause: null });
   });
 
   it('says not answered when tmux says nothing in time', async () => {
