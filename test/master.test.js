@@ -483,17 +483,30 @@ describe('ensureMasterSession', () => {
     assert.match(r2.error, /tmux error: boom/);
   });
 
-  it('server boot honors master.autoStart (structural pin — boot code is not unit-launchable)', () => {
+  it('server boot honors master.autoStart, and a launch that throws is never fatal', () => {
+    // The boot sequence lives in `bootMaster`, which server startup calls, so
+    // the setting and the catch are exercised rather than matched in source.
     const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-    assert.match(src, /master\.masterSettings\(config\)\.autoStart/,
-      'server startup must consult the autoStart setting');
+    assert.match(src, /master\.bootMaster\(\)/, 'server startup must run the Master boot sequence');
+
+    let launched = 0;
+    const counting = () => { launched += 1; return { created: true }; };
+    const quiet = { tmuxLib: fakeTmux(), ensureMasterSession: counting };
+    master.bootMaster({ ...quiet, config: { master: { autoStart: false } } });
+    assert.equal(launched, 0, 'auto-start off launches nothing');
+    master.bootMaster({ ...quiet, config: { master: { autoStart: true } } });
+    assert.equal(launched, 1, 'auto-start on launches the Master');
+
     // "Never fatal" needs a real catch: ensureMasterSession types tmux/engine
     // failures into result.error but THROWS on fs faults — an uncaught throw
     // here is self-locking (autoStart is only disablable via the crashed
     // server's own API).
-    const block = src.slice(src.indexOf('Project Master auto-start'), src.indexOf('Master auto-start failed'));
-    assert.match(block, /try \{/,
-      'the auto-start block must catch throws, not just typed errors');
+    const boot = master.bootMaster({
+      tmuxLib: fakeTmux(),
+      config: { master: { autoStart: true } },
+      ensureMasterSession: () => { throw new Error('home unwritable'); }
+    });
+    assert.match(boot.autoStart.error, /home unwritable/, 'a throw is caught and reported');
   });
 
   it('never records a sessions-table row — the master is not a project session', () => {
