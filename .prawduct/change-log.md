@@ -35,6 +35,28 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-14 — #2403: the Master's bridge credential is reconciled before boot can create a Master
+
+<!-- prawduct: type=bugfix | scope=master-boot-credential-order-2403 -->
+
+#2403, one chunk. Branch `fix/2403-master-boot-credential-order`, from `origin/main` `add3a9ea`, on the PM's dispatch and the Architect's approval with corrections.
+
+**Why.** At boot the Master auto-start ran before `listen`. It minted a pending credential and handed it to the pane in the background. Then the server reconciled the previous process's credentials in `onListening`, which revokes every pending row. That included the auto-started Master's own credential while it was mid-handoff. The Master ran, and every bridge call it made was refused with `BRIDGE_CREDENTIAL_REQUIRED`.
+
+**What changed.**
+
+- `lib/master.js`: `bootMaster()` runs the reconciliation, unconditionally, and then the auto-start if it is on. It is never fatal. A failed reconciliation is logged, reported as `error` on its result, and auto-start still runs: minting supersedes every live row in one transaction.
+- `server.js`: the auto-start block is one call to `bootMaster()`, still before `listen`. The reconciliation in `onListening` is deleted. Every other way to create a Master is a request or the gateway's pass, and neither starts before `listen`.
+- `docs/operator-bridge.md`: says when the boot check runs.
+- Revocation semantics in `bridge-principal` and `bridge-store` are unchanged.
+
+**Tests.** `test/master-boot-order.test.js` drives `bootMaster` with the real store and FIFO handoff:
+- The pane reads only after boot returns. The old order is kept as a failing negative control.
+- Cases: prior pending, active survivor (and tmux silent), a Master that did not survive, auto-start off, a handoff never taken (read through `settled()`), superseded, a failed reconciliation, a throwing launch.
+- Two structural guards pin the callers that can create a Master and `server.js`'s placement. They pin positions in source, not run-time order.
+- Swapping the order inside `bootMaster` turns 6 of the 13 red.
+- `test/master.test.js`: the auto-start pin matched the old inline block's source text. Its contract (boot honours `autoStart`, and a throwing launch is never fatal) moved with the code into `bootMaster`. The test now exercises `bootMaster` and pins that `server.js` calls it, so the guarantee is the same and the check is stronger.
+
 ## 2026-10-12 — #2229: the launch-isolation override's two switches, the way to them from a refused launch, and the line for a session running under one
 
 <!-- prawduct: type=feature | scope=codex-override-2229 -->

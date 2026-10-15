@@ -13069,24 +13069,13 @@ if (require.main === module) {
     log.warn('Master identity refresh failed', { error: err.message });
   }
 
-  // Project Master auto-start: launch the reserved master session at boot
-  // when the operator opted in (master.autoStart). Failure is logged, never
-  // fatal — the brain icon's on-demand ensure remains the fallback path.
-  // ensureMasterSession types tmux/engine failures into result.error but can
-  // still THROW on filesystem faults (home/memory/guardrail writes), so the
-  // never-fatal claim needs the catch, matching the neighboring boot blocks.
-  if (master.masterSettings(config).autoStart) {
-    try {
-      const result = master.ensureMasterSession();
-      if (result.error) {
-        log.warn('Master auto-start failed', { error: result.error });
-      } else {
-        log.info('Master auto-start', { created: result.created, engine: result.engine });
-      }
-    } catch (err) {
-      log.warn('Master auto-start failed', { error: err.message });
-    }
-  }
+  // The Master at boot (ADR 0023): settle the bridge credential the previous
+  // process left, then auto-start the Master if the operator turned that on
+  // (master.autoStart). One call, so the reconciliation can never run after a
+  // launch and revoke that launch's credential mid-handoff. Before `listen`, so
+  // no request or gateway pass can create a Master first. Never fatal — the
+  // brain icon's on-demand ensure remains the fallback path.
+  master.bootMaster();
 
   // Drift detector (#595): TangleClaw's own CLAUDE.md is hand-maintained because
   // the Prawduct plugin governs this repo. Compare it against data/global-rules.md
@@ -13414,9 +13403,6 @@ if (require.main === module) {
     // a TangleClaw restart would otherwise drop off the switchboard until its
     // next ensure. Probes tmux and starts nothing when tmux does not answer.
     master.resyncMasterMedusa();
-    // The Master's bridge credential (ADR 0023): a handoff the restart
-    // interrupted is revoked, and so is a credential whose Master is gone.
-    master.reconcileBridgeCredential();
     // The gateway listens exactly while the bridge is enabled, and its pass
     // carries on any route a restart interrupted. Both do nothing while it is off.
     try {

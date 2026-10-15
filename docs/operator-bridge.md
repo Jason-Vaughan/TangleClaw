@@ -475,7 +475,9 @@ project launch can prove a request is the Master's. The bridge gives it a creden
   role header and launch id do not stand in for it, and it grants no other access.
 - **Revoked when the Master ends.** Killing the Master revokes it. After a server restart, a
   handoff the restart interrupted is revoked, and an active credential is revoked when tmux
-  reports no Master. If tmux does not answer, a running Master keeps its credential.
+  reports no Master. If tmux does not answer, a running Master keeps its credential. This check
+  runs first at boot, before the Master auto-start and before the server takes a request, so a
+  Master started by this server keeps the credential it is being handed.
 - **A Master that was already running has none.** It must be relaunched to hold one.
 
 ### How it reaches the pane
