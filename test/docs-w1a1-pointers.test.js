@@ -115,10 +115,11 @@ describe('entry pages point to the Discord operator bridge (#2417)', () => {
     assert.match(status, /set-secret bot/, 'a fresh install is told to store the bot token');
   });
 
-  it('no bridge page still says it has not been run against Discord or that cutover has not started', () => {
+  it('no bridge page still says it has not been run against Discord, that cutover has not started, or that the direct procedure is in force everywhere', () => {
     for (const page of ['docs/operator-bridge-helper.md', 'docs/operator-bridge.md', 'docs/discord-operator-notifications.md']) {
       const text = read(page);
-      for (const stale of [/has not been\s+run against Discord/, /cutover has not happened/, /Cutover \| Not started/, /Built; not yet run against Discord/]) {
+      for (const stale of [/has not been\s+run against Discord/, /cutover has not happened/, /Cutover \| Not started/, /Built; not yet run against Discord/,
+        /stays in\s+force/, /still in\s+force/, /keeps the direct procedure/]) {
         assert.doesNotMatch(text, stale, `${page} no longer says ${stale}`);
       }
     }

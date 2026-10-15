@@ -5,8 +5,10 @@ back in the same conversation. [ADR 0023](adr/0023-master-mediated-operator-brid
 the design: a durable gateway on the server carries each message, the Project Master session
 decides where it goes and what the operator reads, and neither is authority.
 
-This page describes what is built. The older direct Discord procedure, which an install follows
-until its own cutover, is in [discord-operator-notifications.md](discord-operator-notifications.md).
+This page describes what is built. The older direct Discord procedure, which applies only on an
+install with an existing, explicitly authorized direct procedure, is in
+[discord-operator-notifications.md](discord-operator-notifications.md). A fresh install has no
+direct posting authority by default.
 
 ## Status
 
@@ -23,7 +25,7 @@ until its own cutover, is in [discord-operator-notifications.md](discord-operato
 | Two more types, `gateway-down` and `gateway-recovered` (#2272) | Built. Raised from the helper's own report of its connection. Neither has been seen to arrive on a live install: staging one means holding the live helper off Discord for five minutes |
 | Discord helper (`bin/tc-bridge-helper`) | Shipped in v5.31.0. Run against Discord on the project's own install. See [operator-bridge-helper.md](operator-bridge-helper.md) |
 | The operator's dashboard panel (global settings, Operator bridge) | Shipped in v5.31.0. Configured by the operator on the project's own install |
-| Cutover | Per install, by [Activate the operator bridge](runbooks/activate-the-operator-bridge.md). On the project's own install, Rule #188 was activated at 2026-10-06 04:14:43Z and Rule #145 was retired at 2026-10-15 20:50:39Z. One fresh operator message carried through to the Project Master and answered back is not yet proved there (#1836) |
+| Cutover | Per install, by [Activate the operator bridge](runbooks/activate-the-operator-bridge.md). On the project's own install, Rule #188 was activated at 2026-10-06 04:14:43Z and Rule #145 was retired at 2026-10-15 20:50:39Z (that installation's own rule ids, not ids another install has). One fresh operator message carried through to the Project Master and answered back is not yet proved there (#1836) |
 
 The bridge is **disabled by default**. Only the operator can enable it, signed in with an
 account session, and only after setting the allowlist and creating the helper token. The
@@ -39,9 +41,11 @@ implementation, assigns no schema number and does not activate cutover.
   the Architect's rulings of 2026-10-04.
 - **Merge.** Each change merges only after an exact-head independent security review, and is
   never set to merge automatically.
-- **Cutover.** Not part of any change so far. It needs the security review, a live round trip
-  and the operator's approval to replace Rule #145. Enabling the bridge on a live install is
-  part of cutover, not something to do because the switch exists.
+- **Cutover.** Not part of any code change. It needs the security review and a live round trip,
+  and, where an older direct rule exists, the operator's approval to replace it: the historical
+  migration case, which on the project's own install was Rule #145. The installation's active rules
+  are the policy. Enabling the bridge on a live install is part of cutover, not something to do
+  because the switch exists.
 
 ## How a message travels
 
@@ -508,7 +512,8 @@ isolation between sessions running as the same user is claimed.
   not to; nothing structural prevents it.
 
 Whether this boundary is acceptable for cutover is decided by the security review that precedes
-cutover. If it is not, the bridge stays disabled and the interim procedure stays in force.
+cutover. If it is not, the bridge stays disabled, and an install keeps only the notification path
+its active rules authorize.
 
 ## `tc bridge`
 
@@ -1013,8 +1018,8 @@ queued stays queued, exactly as it was.
 The episode's notice cannot be posted, since nothing is handed over. It is on the record and
 shows in `tc bridge status`, in `GET /api/bridge/operator/status` (`configurationCircuit`), in
 the audit, and as a warning in the server log, so the operator learns of it without the chat.
-The dashboard's Operator Bridge panel shows it too, with the two ways to reset it. Until cutover
-the interim Discord procedure is also still in force.
+The dashboard's Operator Bridge panel shows it too, with the two ways to reset it. On an install whose
+active rules still authorize the direct Discord procedure, that path is available too.
 
 The gateway tells the Project Master of an open episode through the Master's Medusa listener,
 at once and then every five minutes, until the Master acknowledges it with
