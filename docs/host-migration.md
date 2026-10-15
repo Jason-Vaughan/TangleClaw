@@ -4,8 +4,8 @@ This guide is for moving a TangleClaw install to a new machine, and for recoveri
 copied by accident. It is a checklist for the operator. Nothing in it runs by itself, and TangleClaw
 makes none of these changes for you.
 
-It uses placeholders only: `<service-name>`, `<old-name>`, `<tailnet>.ts.net`, `100.64.0.10` and
-`<project-route>`. Put your own values in a private copy, never in a public one.
+It uses placeholders only: `<service-name>`, `<old-name>`, `<tailnet>.ts.net`, `100.64.0.10`,
+`<project-route>` and `<backup-dir>`. Put your own values in a private copy, never in a public one.
 
 What this guide does **not** cover:
 - timed recovery, locking and atomic certificate activation. Those belong to a later ingress
@@ -34,6 +34,8 @@ same identity. There is no re-key afterwards, because no key was copied.
 **Recovery after an accidental clone.** If the new machine was made from a full copy of the old one,
 both carry the same Tailscale identity:
 - keep the source machine **offline**, and keep its recovery path;
+- **never log the source out of Tailscale, and never revoke it, while it shares the destination's node
+  identity.** Keep the source offline until it is wiped;
 - re-key the destination only as an attended, approved step, and only **after** the source is wiped
   and cannot rejoin.
 
@@ -45,16 +47,31 @@ shortcut for a planned move.
 1. Choose the permanent service name and record it as the migration target.
 2. Prepare the destination's fresh identity (above), unless you are recovering from a clone.
 3. Make a checkpoint of the work in flight: active sessions, control state, port leases, messages,
-   Git state, and the next safe action.
-4. Back up the configuration, the ingress configuration, the certificates, the service definitions,
-   the recovery notes and the local CA's private key. Use encrypted storage with access control. Never
-   put secrets in the migration notes or in this guide.
-5. Record the active Tailscale serve routes and any machine-wide ingress entries.
-6. Record active worktrees. Sort generated files, temporary files, operational documents and history
+   Git state, and the next safe action. A checkpoint records what was in flight. It is **not** a
+   backup of the database.
+4. Back up TangleClaw's database: `tangleclaw.db` in TangleClaw's base directory, and any other
+   database file there. Never copy the live file while TangleClaw runs: a plain file copy of a database
+   in use can be inconsistent. Use SQLite's own online backup, then check the copy:
+
+   The commands assume the default base directory, `~/.tangleclaw`; use `TANGLECLAW_HOME` if you set it.
+
+   ```sh
+   sqlite3 ~/.tangleclaw/tangleclaw.db ".backup '<backup-dir>/tangleclaw.db'"
+   sqlite3 '<backup-dir>/tangleclaw.db' "PRAGMA integrity_check;"   # must print: ok
+   sqlite3 '<backup-dir>/tangleclaw.db' ".tables"                   # must list the tables
+   ```
+
+   Keep the copy encrypted, with access restricted to the operator, for as long as the migration can
+   still be rolled back.
+5. Back up the configuration, the ingress configuration, the certificates, the service definitions,
+   the recovery notes and the local CA's private key, with the database copy. Use encrypted storage
+   with access control. Never put secrets in the migration notes or in this guide.
+6. Record the active Tailscale serve routes and any machine-wide ingress entries.
+7. Record active worktrees. Sort generated files, temporary files, operational documents and history
    apart before moving anything.
-7. Confirm a recovery path that does not depend on the destination's new name or on a browser session
+8. Confirm a recovery path that does not depend on the destination's new name or on a browser session
    you are about to move.
-8. Run the host check on the source machine and keep its output **privately** (see below).
+9. Run the host check on the source machine and keep its output **privately** (see below).
 
 ## The host check
 
@@ -102,14 +119,23 @@ macOS's `security` may consult trust services. The output says so.
 | `4` | At least one row could not be measured, or the check itself failed |
 | `2` | A usage error |
 
-**A direct-mode HTTPS install reads `unknown` on its routes row.** The routes row compares Tailscale's
-serve routes with TangleClaw's port leases, which it reads with one loopback request to `127.0.0.1`. The
-check verifies that request's certificate against Node's own trusted roots, which do not include the
-local mkcert root that issued TangleClaw's certificate. So on a direct-mode HTTPS install the row reads
-`[unknown] Observed routes: lease comparison: tls-unverified`. That is the check refusing to read lease
-data over a connection it cannot verify, not a broken install, and not a sign the certificate lacks
-`127.0.0.1` (it already carries it). Do not re-mint because of this row. The routes themselves are
-still listed.
+**A direct-mode HTTPS install may read `unknown` on its routes row.** The routes row compares
+Tailscale's serve routes with TangleClaw's port leases, which it reads with one loopback request to
+`127.0.0.1`. The check verifies that request's certificate as Node does, with no insecure retry. When
+Node cannot validate it, the row reads `[unknown] Observed routes: lease comparison: tls-unverified`,
+and the routes themselves are still listed. This is the check refusing to read lease data over a
+connection it cannot verify. On its own it is not a diagnosis.
+
+`tls-unverified` means only that validation failed. Common causes include:
+- Node not trusting the root that issued the certificate;
+- an expired certificate;
+- a certificate that does not carry `127.0.0.1`;
+- another validation failure.
+
+Diagnose which one before acting: check the certificate's trust, its validity dates, and the names
+it carries. The host check reads certificates only through the Caddyfile's sites, so on a direct-mode
+install with no Caddyfile it shows none of these. Check them by hand on the certificate TangleClaw
+serves, the file `httpsCertPath` names in the configuration. Do not re-mint because of this row alone.
 
 ## On the new machine: diagnose first, then change only what a row shows
 
@@ -138,7 +164,14 @@ How each change is made:
   In Caddy mode, Caddy picks the new certificate up on a Caddy-only restart. In direct mode, TangleClaw
   serves the certificate it loaded when it started, and this guide prescribes no TangleClaw restart:
   that restart is a separate, approved step.
-- **Caddyfile:** check the edited file, then restart Caddy alone:
+- **Caddyfile:** before any Caddy-only restart, have three things in place:
+  - a tested recovery path that does not depend on TangleClaw or on Caddy answering (for example, a
+    terminal on the machine itself);
+  - a plan for checking the result, both on the machine and from another device;
+  - a plan for restoring the snapshot if either check fails.
+
+  `caddy validate` only checks that the file parses. It does not prove that you will still be able to
+  reach the service after the restart. Then check the edited file, and restart Caddy alone:
 
   ```sh
   caddy validate --config ~/.tangleclaw/Caddyfile --adapter caddyfile
@@ -178,7 +211,13 @@ cannot do it (see "Two layers"). This guide names those options but does not pre
 
 ## After the move
 
-1. Confirm that only one machine holds the Tailscale identity.
+1. Confirm the Tailscale identity:
+   - **After a planned move:** the source and the destination are different nodes. Confirm the
+     destination is the one meant to serve the service name.
+   - **During clone recovery:** only one machine holding the shared identity may be **online**. The
+     source stays offline; nothing is logged out or revoked.
+   - **At the end of clone recovery:** after the source is wiped and the destination is re-keyed,
+     confirm that exactly one machine holds the identity, and that the source is gone from the tailnet.
 2. Confirm the service name resolves the same way from every network you intend to use.
 3. Check service status and logs for start-up failures, trust errors, stale paths and port conflicts.
 4. Reconcile worktrees without deleting a branch or a file until its owner confirms it can go.
@@ -213,7 +252,8 @@ Then run the host check and the proof again before retrying.
 
 ## Safety rules
 
-- Do not rename, or log out of, a shared Tailscale identity casually.
+- Never log out of, or revoke, a Tailscale identity that two machines share. Do not rename a shared
+  identity casually either.
 - Do not delete old configuration or generated records just because they mention the old name.
 - Treat ingress, credentials, service restarts and account changes as explicit approval gates.
 
