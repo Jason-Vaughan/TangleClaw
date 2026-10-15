@@ -70,8 +70,8 @@ if (require.main === module) {
     process.exit(code);
   }, (err) => {
     // A failure outside every row: nothing was measured. Only the error's code
-    // is printed, and only when it has a code's shape: its message, or a code
-    // that is not one, can carry paths the report would redact.
+    // is printed, and only when it is one the check knows: its message, or a
+    // code set by whatever threw, can carry values the report would redact.
     process.stderr.write(`host-check failed: ${hostCheck.safeErrorCode(err) || 'internal-error'}\n`);
     process.exit(hostCheck.EXIT_UNKNOWN);
   });

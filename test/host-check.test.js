@@ -155,6 +155,11 @@ function fakeLookup(failures = {}) {
   };
 }
 
+// Synthetic secrets spelled exactly like Node and errno codes: upper case,
+// `E` or `ERR_` first, nothing but letters, digits and underscores. Each holds
+// `QX7`, which no known code contains.
+const CODE_SHAPED_SECRETS = ['ERR_TOKEN_SECRET_QX7', 'ESECRETQX7', 'EAI_QX7'];
+
 /**
  * Run the check against a home with stubbed dependencies.
  * @param {object} h - From makeHome.
@@ -704,7 +709,7 @@ describe('host-check: a row that throws', () => {
     } finally { h.cleanup(); }
   });
 
-  it('keeps a code only when it has the shape of a Node or errno code', async () => {
+  it('keeps a code only when it is a known one', async () => {
     const h = makeHome();
     try {
       const coded = await run(h, { hostname: () => { throw Object.assign(new TypeError('x'), { code: 'EACCES' }); } });
@@ -713,6 +718,13 @@ describe('host-check: a row that throws', () => {
       const shaped = await run(h, { hostname: () => { throw Object.assign(new Error('x'), { code: 'sentinel-code /tmp/qx7' }); } });
       assert.equal(row(shaped, 'proposed').reason, 'internal-error');
       assert.ok(!hostCheck.formatReport(shaped, { reveal: true }).includes('qx7'));
+      for (const secret of CODE_SHAPED_SECRETS) {
+        const spelled = await run(h, { hostname: () => { throw Object.assign(new TypeError('x'), { code: secret }); } });
+        assert.equal(row(spelled, 'proposed').reason, 'internal-error', secret);
+        const revealed = hostCheck.formatReport(spelled, { reveal: true });
+        assert.ok(revealed.includes('    diagnostic: TypeError\n'), secret);
+        for (const text of [hostCheck.formatReport(spelled), revealed]) assert.ok(!text.includes('QX7'), `${secret} leaks`);
+      }
     } finally { h.cleanup(); }
   });
 
@@ -811,21 +823,29 @@ describe('host-check: values read from files and commands reach codes and reason
     } finally { h.cleanup(); }
   });
 
-  it('a lookup error code that is not code-shaped is lookup-failed; an errno code is kept', async () => {
+  it('a lookup error code that is not a known one is lookup-failed, however it is spelled; a known code is kept', async () => {
     const h = makeHome();
     try {
       const odd = await run(h, { dnsLookup: fakeLookup({ 'alias.example.com': 'sentinel dns /qx7' }) });
       const r = row(odd, 'resolution');
       assert.ok(r.facts.some((f) => f.label === '  result' && f.value === 'lookup-failed'));
       assert.ok(!both(odd).revealed.includes('qx7'));
+      for (const secret of CODE_SHAPED_SECRETS) {
+        const spelled = await run(h, { dnsLookup: fakeLookup({ 'alias.example.com': secret }) });
+        assert.ok(row(spelled, 'resolution').facts.some((f) => f.label === '  result' && f.value === 'lookup-failed'), secret);
+        const { plain, revealed } = both(spelled);
+        assert.ok(!plain.includes('QX7') && !revealed.includes('QX7'), `${secret} leaks`);
+      }
       const errno = await run(h, { dnsLookup: fakeLookup({ 'alias.example.com': 'EAI_AGAIN' }) });
       assert.ok(row(errno, 'resolution').facts.some((f) => f.label === '  result' && f.value === 'EAI_AGAIN'));
     } finally { h.cleanup(); }
   });
 
-  it('safeErrorCode keeps Node and errno codes and nothing else', () => {
-    for (const code of ['ENOENT', 'EAI_AGAIN', 'ERR_INVALID_ARG_TYPE']) assert.equal(hostCheck.safeErrorCode({ code }), code);
-    for (const code of ['enoent', 'E', 'EACCES /tmp/x', 'token=abc', 'NOT_E_PREFIXED', 'E'.repeat(65), 9]) {
+  it('safeErrorCode keeps the codes on its list and nothing else, however code-like', () => {
+    for (const code of ['ENOENT', 'EACCES', 'EAI_AGAIN', 'ECONNREFUSED', 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER', 'ERR_INVALID_ARG_TYPE']) {
+      assert.equal(hostCheck.safeErrorCode({ code }), code);
+    }
+    for (const code of [...CODE_SHAPED_SECRETS, 'EFIXTURE', 'enoent', 'E', 'EACCES /tmp/x', 'token=abc', 'NOT_E_PREFIXED', 'E'.repeat(65), 9]) {
       assert.equal(hostCheck.safeErrorCode({ code }), null, String(code));
     }
     assert.equal(hostCheck.safeErrorCode(null), null);
@@ -932,18 +952,27 @@ describe('host-check: the command line', () => {
   }
 
   it('a failure outside every row exits 4 with one line naming only the error code', async () => {
-    const { code, stdout, stderr, lines } = await runFailing('EFIXTURE');
+    const { code, stdout, stderr, lines } = await runFailing('EACCES');
     assert.equal(code, 4);
-    assert.deepEqual(lines, ['host-check failed: EFIXTURE']);
+    assert.deepEqual(lines, ['host-check failed: EACCES']);
     assert.ok(!`${stdout}${stderr}`.includes('SECRET-ERROR-TEXT'));
     assert.ok(!`${stdout}${stderr}`.includes('/private/fixture/path'));
   });
 
-  it('a failure whose code is not code-shaped prints internal-error, never the code', async () => {
+  it('a failure whose code is not a known one prints internal-error, never the code', async () => {
     const { code, stdout, stderr, lines } = await runFailing('sentinel-code /private/qx7');
     assert.equal(code, 4);
     assert.deepEqual(lines, ['host-check failed: internal-error']);
     assert.ok(!`${stdout}${stderr}`.includes('qx7'));
+  });
+
+  it('a failure whose code is spelled like an errno code but is not a known one prints internal-error', async () => {
+    for (const secret of CODE_SHAPED_SECRETS) {
+      const { code, stdout, stderr, lines } = await runFailing(secret);
+      assert.equal(code, 4, secret);
+      assert.deepEqual(lines, ['host-check failed: internal-error'], secret);
+      assert.ok(!`${stdout}${stderr}`.includes('QX7'), `${secret} leaks`);
+    }
   });
 
   it('a usage error exits 2', async () => {
