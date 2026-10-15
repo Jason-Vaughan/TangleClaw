@@ -1,0 +1,1 @@
+{"TCP":{"443":{"HTTPS":true},"8444":{"HTTPS":true}},"Web":{"box.tailexample.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3101"}}},"box.tailexample.ts.net:8444":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3999/?token=fixture-route-secret"}}}}}

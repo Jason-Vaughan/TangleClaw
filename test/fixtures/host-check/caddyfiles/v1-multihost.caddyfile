@@ -1,0 +1,25 @@
+{
+	https_port 8443
+	admin off
+}
+# tangleclaw-topology v1 primary=https://box.tailexample.ts.net:8443 aliases=alias.example.com:redirect
+
+localhost {
+	tls /fixture/home/certs/leaf-a.pem /fixture/home/certs/key-decoy.pem
+	reverse_proxy 127.0.0.1:3101
+}
+
+box.tailexample.ts.net {
+	tls /fixture/home/certs/leaf-a.pem /fixture/home/certs/key-decoy.pem
+	reverse_proxy 127.0.0.1:3101
+}
+
+alias.example.com {
+	tls /fixture/home/certs/leaf-b.pem /fixture/home/certs/key-decoy.pem
+	header Cache-Control "no-store"
+	redir https://box.tailexample.ts.net:8443{uri} 307
+}
+
+http://box.tailexample.ts.net {
+	redir https://box.tailexample.ts.net:8443{uri}
+}

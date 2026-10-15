@@ -1,0 +1,8 @@
+(common) {
+	reverse_proxy 127.0.0.1:3101
+}
+
+box.tailexample.ts.net {
+	import common
+	tls /fixture/home/certs/leaf-a.pem /fixture/home/certs/key-decoy.pem
+}
