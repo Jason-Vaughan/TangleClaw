@@ -35,6 +35,26 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-14 — #1380/#2142: the host check prints no raw value from a file or a command, and no error message even under `--reveal`
+
+<!-- prawduct: type=bugfix | scope=host-check-redaction-1380 -->
+
+#1380/#2142, the redaction follow-up to chunk H, required by the Architect's A22 before H is called share-safe, released or deployed. Branch `fix/1380-host-check-redaction`. References #1380 and #2142 without closing either: chunk G remains.
+
+**Why.** The redactor shows a value of kind `code` verbatim, and a row's reason is printed as written. H labelled some values `code` that came straight from a hand-editable file or a command: `config.ingressMode`, the topology marker's version, Tailscale's `BackendState`, and an error's `code`. Those values could carry a name, path or secret past redaction. And `--reveal` printed a thrown error's message and stack frame, which breaks its promise never to show credentials. Root cause: redaction was decided by the field's label, not by where the value came from. H's redaction test seeded sentinels only in the fields H already redacted.
+
+**What changed.** In `lib/host-check.js` every value read from outside reaches a code or a reason only through a closed set:
+
+- `ingressMode`: `direct` or `caddy` (the set `server.js` accepts; absent means `direct`). Anything else prints `unsupported`, and the config row is `unknown: ingressMode-unsupported`. With no Caddyfile, that row reads `unknown: absent; ingressMode unsupported` rather than `observed`.
+- The topology marker: only `v1` is kept. Any other version prints `marker of an unsupported version` and is never stored in the parse result.
+- `BackendState`: Tailscale's own states map to `daemon-<state>`. Any other value gives `daemon-unrecognized-state`.
+- Error codes (`internal-error:<code>`, the local-resolution result, the CLI's top-level failure line in `scripts/host-check.js`): kept only when shaped like a Node or errno code (`safeErrorCode`), else `internal-error` or `lookup-failed`.
+- The diagnostic a thrown row keeps for `--reveal` is now its built-in error class and safe code (`TypeError EACCES`; a custom class prints as `Error`; a thrown non-error prints `non-error-value`). It never holds the message or a stack frame.
+
+**Contract change, by ruling.** H's test "keeps the message for `--reveal` only" asserted `diagnostic: boom at /private/fixture/path` in the revealed output. A22 ruled that contract wrong, so the test now asserts the opposite: the message and stack never appear, and the diagnostic is the error class. This is not a weakened test.
+
+**Tests.** `test/host-check.test.js`: each closed set with a sentinel value, checked against the default and the `--reveal` output. One run seeds a sentinel in every input at once (config fields, Caddyfile marker, hosts, tls paths, `basic_auth`, redirect query, Tailscale status and serve routes, lease project, lookup error, `security` output, hostname, home). The default output must contain none of them, and `--reveal` none of the ones that reach codes or reasons. A further case covers the CLI's failure line with a code that is not code-shaped. Run against the module as merged in H, every new case fails except the one pinning the default `direct`, which H already got right.
+
 ## 2026-10-14 — #1380/#2142: a read-only host check says what this machine's names, Caddyfile, certificates and trust actually are
 
 <!-- prawduct: type=feature | scope=host-migration-check-1380 -->

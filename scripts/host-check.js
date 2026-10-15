@@ -56,7 +56,7 @@ async function main(argv) {
   // Silenced here, in this standalone process only, before any helper runs:
   // library log lines can carry raw paths, which would defeat redaction. The
   // diagnostics are not lost: each row carries a reason code, and a row that
-  // throws keeps its message for `--reveal`.
+  // throws keeps its error class and code for `--reveal`.
   logger.setConsoleStream({ write() {} });
   const result = await hostCheck.runHostCheck();
   process.stdout.write(hostCheck.formatReport(result, { reveal: opts.reveal }));
@@ -70,8 +70,9 @@ if (require.main === module) {
     process.exit(code);
   }, (err) => {
     // A failure outside every row: nothing was measured. Only the error's code
-    // is printed, because its message can carry paths the report would redact.
-    process.stderr.write(`host-check failed: ${err && typeof err.code === 'string' ? err.code : 'internal-error'}\n`);
+    // is printed, and only when it has a code's shape: its message, or a code
+    // that is not one, can carry paths the report would redact.
+    process.stderr.write(`host-check failed: ${hostCheck.safeErrorCode(err) || 'internal-error'}\n`);
     process.exit(hostCheck.EXIT_UNKNOWN);
   });
 }
