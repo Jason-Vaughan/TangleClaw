@@ -59,10 +59,11 @@ before(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-read-pane-'));
   fake = path.join(dir, 'fake-tmux');
   // A stand-in for tmux. `mode` picks how it behaves; every call appends its
-  // pid and its arguments, one per line, to the log.
+  // pid and its arguments, one per line, to the log. The pid goes first, before
+  // reading the mode costs a fork, so a call killed early still leaves its line.
   fs.writeFileSync(fake, `#!/bin/sh
-mode=$(cat "${dir}/mode" 2>/dev/null)
 echo "pid $$" >> "${dir}/log"
+mode=$(cat "${dir}/mode" 2>/dev/null)
 for a in "$@"; do echo "arg $a" >> "${dir}/log"; done
 case "$mode" in
   hang) exec sleep 30 ;;
@@ -158,13 +159,30 @@ describe('readPaneAsync — no shell is involved', () => {
   });
 });
 
+/**
+ * Record the pid of every child the read spawns, from the spawn itself. A
+ * wedged read is killed on a deadline, and on a loaded machine that can come
+ * before the stand-in has run far enough to log anything, so what was started
+ * is counted here and not from the stand-in's log. `afterEach` restores the seam.
+ * @returns {number[]} The pids, filled in as children start.
+ */
+function countSpawns() {
+  const pids = [];
+  tmux._async.execFile = (...args) => {
+    const child = saved.execFile(...args);
+    pids.push(child.pid);
+    return child;
+  };
+  return pids;
+}
+
 describe('readPaneAsync — a wedged tmux', () => {
   it('rejects as timed out, and the child is killed and gone', async () => {
     mode('hang');
+    const pids = countSpawns();
     const started = Date.now();
     await assert.rejects(tmux.readPaneAsync('proj', { timeout: 300 }), (err) => err.tcTimedOut === true);
     assert.ok(Date.now() - started < 10000, 'it did not wait for the program to finish');
-    const pids = logLines().filter((l) => l.startsWith('pid ')).map((l) => Number(l.slice(4)));
     assert.equal(pids.length, 1, 'the read stopped at the first command');
     assert.ok(await eventually(() => !alive(pids[0]), 5000), `process ${pids[0]} is still running`);
   });
@@ -178,13 +196,13 @@ describe('readPaneAsync — a wedged tmux', () => {
 
   it('twenty wedged reads leave the event loop turning while they are waited on', async () => {
     mode('hang');
+    const pids = countSpawns();
     let turns = 0;
     const timer = setInterval(() => { turns += 1; }, 10);
     const results = await Promise.allSettled(Array.from({ length: 20 }, (_, i) => tmux.readPaneAsync(`proj${i}`, { timeout: 600 })));
     clearInterval(timer);
     assert.ok(results.every((r) => r.status === 'rejected' && r.reason.tcTimedOut === true));
     assert.ok(turns >= 5, `the loop turned ${turns} times during the wait`);
-    const pids = logLines().filter((l) => l.startsWith('pid ')).map((l) => Number(l.slice(4)));
     assert.equal(pids.length, 20);
     assert.ok(await eventually(() => pids.every((p) => !alive(p)), 5000), 'a wedged child outlived its read');
   });
