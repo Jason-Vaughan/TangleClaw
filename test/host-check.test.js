@@ -689,15 +689,195 @@ describe('host-check: size bounds', () => {
 });
 
 describe('host-check: a row that throws', () => {
-  it('reports internal-error by default and keeps the message for --reveal only', async () => {
+  it('reports internal-error, and --reveal shows only the error class, never its message or stack', async () => {
     const h = makeHome();
     try {
       const result = await run(h, { hostname: () => { throw new Error('boom at /private/fixture/path'); } });
       const r = row(result, 'proposed');
       assert.equal(r.state, 'unknown');
-      assert.match(r.reason, /^internal-error/);
+      assert.equal(r.reason, 'internal-error');
+      const revealed = hostCheck.formatReport(result, { reveal: true });
       assert.ok(!hostCheck.formatReport(result).includes('boom at'));
-      assert.ok(hostCheck.formatReport(result, { reveal: true }).includes('diagnostic: boom at /private/fixture/path'));
+      assert.ok(!revealed.includes('boom at'), 'the message never reaches --reveal');
+      assert.ok(!revealed.includes('host-check.test.js'), 'no stack frame reaches --reveal');
+      assert.ok(revealed.includes('    diagnostic: Error\n'));
+    } finally { h.cleanup(); }
+  });
+
+  it('keeps a code only when it has the shape of a Node or errno code', async () => {
+    const h = makeHome();
+    try {
+      const coded = await run(h, { hostname: () => { throw Object.assign(new TypeError('x'), { code: 'EACCES' }); } });
+      assert.equal(row(coded, 'proposed').reason, 'internal-error:EACCES');
+      assert.ok(hostCheck.formatReport(coded, { reveal: true }).includes('    diagnostic: TypeError EACCES\n'));
+      const shaped = await run(h, { hostname: () => { throw Object.assign(new Error('x'), { code: 'sentinel-code /tmp/qx7' }); } });
+      assert.equal(row(shaped, 'proposed').reason, 'internal-error');
+      assert.ok(!hostCheck.formatReport(shaped, { reveal: true }).includes('qx7'));
+    } finally { h.cleanup(); }
+  });
+
+  it('never names a custom error class or prints a thrown non-error value', async () => {
+    class SentinelQx7Error extends Error {}
+    const h = makeHome();
+    try {
+      const custom = await run(h, { hostname: () => { throw new SentinelQx7Error('x'); } });
+      assert.ok(hostCheck.formatReport(custom, { reveal: true }).includes('    diagnostic: Error\n'));
+      const thrownString = await run(h, { hostname: () => { throw 'sentinel-thrown-qx7'; } });
+      const text = hostCheck.formatReport(thrownString, { reveal: true });
+      assert.ok(!text.includes('qx7'));
+      assert.ok(text.includes('    diagnostic: non-error-value\n'));
+    } finally { h.cleanup(); }
+  });
+});
+
+describe('host-check: values read from files and commands reach codes and reasons only through closed sets', () => {
+  /**
+   * Both renderings of a run.
+   * @param {{rows: object[], exitCode: number}} result - A run.
+   * @returns {{plain: string, revealed: string}}
+   */
+  function both(result) {
+    return { plain: hostCheck.formatReport(result), revealed: hostCheck.formatReport(result, { reveal: true }) };
+  }
+
+  it('an unsupported ingressMode is unknown, printed as a fixed word in both outputs', async () => {
+    const h = makeHome({ config: { ingressMode: 'SENTINEL-INGRESS-qx7', caddyTailnetHost: TS, serverPort: 3101 } });
+    try {
+      const result = await run(h);
+      const r = row(result, 'config');
+      assert.equal(r.state, 'unknown');
+      assert.equal(r.reason, 'ingressMode-unsupported');
+      assert.deepEqual(r.facts.find((f) => f.label === 'ingressMode'), { label: 'ingressMode', value: 'unsupported', kind: 'code' });
+      assert.equal(result.exitCode, 4);
+      const { plain, revealed } = both(result);
+      assert.ok(!plain.includes('qx7') && !revealed.includes('qx7'));
+    } finally { h.cleanup(); }
+  });
+
+  it('an ingressMode that is not a string is unsupported too', async () => {
+    const h = makeHome({ config: { ingressMode: { mode: 'sentinel-qx7' }, caddyTailnetHost: TS } });
+    try {
+      const result = await run(h);
+      assert.equal(row(result, 'config').reason, 'ingressMode-unsupported');
+      assert.ok(!both(result).revealed.includes('qx7'));
+    } finally { h.cleanup(); }
+  });
+
+  it('with no Caddyfile, an unsupported ingressMode is unknown, not observed, and its value is not printed', async () => {
+    const h = makeHome({ caddyfile: null, config: { ingressMode: 'SENTINEL-INGRESS-qx7' } });
+    try {
+      const result = await run(h);
+      const r = row(result, 'caddyfile');
+      assert.equal(r.state, 'unknown');
+      assert.equal(r.reason, 'absent; ingressMode unsupported');
+      const { plain, revealed } = both(result);
+      assert.ok(!plain.includes('qx7') && !revealed.includes('qx7'));
+    } finally { h.cleanup(); }
+  });
+
+  it('an absent ingressMode is the default, direct', async () => {
+    const h = makeHome({ caddyfile: null, config: { caddyTailnetHost: TS } });
+    try {
+      const result = await run(h);
+      assert.equal(row(result, 'config').facts[0].value, 'direct');
+      assert.equal(row(result, 'caddyfile').reason, 'absent (ingressMode direct)');
+    } finally { h.cleanup(); }
+  });
+
+  it('an unsupported topology marker version is unknown and never printed or kept', async () => {
+    const h = makeHome();
+    try {
+      const file = path.join(h.home, 'Caddyfile');
+      fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/tangleclaw-topology v1/, 'tangleclaw-topology SENTINEL-MARKER-qx7'));
+      const result = await run(h);
+      const r = row(result, 'caddyfile');
+      assert.equal(r.state, 'unknown');
+      assert.match(r.reason, /topology-version/);
+      assert.equal(r.facts.find((f) => f.label === 'topology').value, 'marker of an unsupported version');
+      const { plain, revealed } = both(result);
+      assert.ok(!plain.includes('qx7') && !revealed.includes('qx7'));
+      assert.ok(!JSON.stringify(hostCheck.parseCaddyfile(fs.readFileSync(file, 'utf8'))).includes('qx7'));
+    } finally { h.cleanup(); }
+  });
+
+  it('a BackendState outside Tailscale\'s set is daemon-unrecognized-state; a missing one is daemon-unknown', async () => {
+    const h = makeHome();
+    try {
+      const odd = await run(h, { execFile: fakeExec(healthyCommands({ 'tailscale status --json': JSON.stringify({ BackendState: 'SENTINEL-BACKEND-qx7' }) })) });
+      assert.equal(row(odd, 'tailnet').reason, 'daemon-unrecognized-state');
+      assert.ok(!both(odd).revealed.includes('qx7') && !both(odd).revealed.toLowerCase().includes('sentinel-backend'));
+      const missing = await run(h, { execFile: fakeExec(healthyCommands({ 'tailscale status --json': '{}' })) });
+      assert.equal(row(missing, 'tailnet').reason, 'daemon-unknown');
+    } finally { h.cleanup(); }
+  });
+
+  it('a lookup error code that is not code-shaped is lookup-failed; an errno code is kept', async () => {
+    const h = makeHome();
+    try {
+      const odd = await run(h, { dnsLookup: fakeLookup({ 'alias.example.com': 'sentinel dns /qx7' }) });
+      const r = row(odd, 'resolution');
+      assert.ok(r.facts.some((f) => f.label === '  result' && f.value === 'lookup-failed'));
+      assert.ok(!both(odd).revealed.includes('qx7'));
+      const errno = await run(h, { dnsLookup: fakeLookup({ 'alias.example.com': 'EAI_AGAIN' }) });
+      assert.ok(row(errno, 'resolution').facts.some((f) => f.label === '  result' && f.value === 'EAI_AGAIN'));
+    } finally { h.cleanup(); }
+  });
+
+  it('safeErrorCode keeps Node and errno codes and nothing else', () => {
+    for (const code of ['ENOENT', 'EAI_AGAIN', 'ERR_INVALID_ARG_TYPE']) assert.equal(hostCheck.safeErrorCode({ code }), code);
+    for (const code of ['enoent', 'E', 'EACCES /tmp/x', 'token=abc', 'NOT_E_PREFIXED', 'E'.repeat(65), 9]) {
+      assert.equal(hostCheck.safeErrorCode({ code }), null, String(code));
+    }
+    assert.equal(hostCheck.safeErrorCode(null), null);
+    assert.equal(hostCheck.safeErrorCode('ENOENT'), null);
+  });
+
+  it('with a sentinel in every input at once, the default output holds none of them, and --reveal none of the code-channel ones', async () => {
+    const h = makeHome({
+      caddyfile: null,
+      config: {
+        ingressMode: 'SENTINEL-INGRESS-qx7',
+        caddyTailnetHost: 'th-qx7.tailexample.ts.net',
+        primaryUrl: 'https://pu-qx7.example.com:8443/?token=tok-qx7',
+        urlAliases: ['al-qx7.example.com', { host: 'al2-qx7.example.com' }, 'not a name qx7'],
+        publicDomain: 'pd-qx7.example.com',
+        serverPort: 3101
+      }
+    });
+    try {
+      fs.writeFileSync(path.join(h.home, 'Caddyfile'), [
+        '# tangleclaw-topology SENTINEL-MARKER-qx7',
+        'site-qx7.example.com {',
+        `  tls ${h.home}/certs/leaf-a.pem ${h.home}/certs/key-qx7.pem`,
+        '  basic_auth {',
+        '    user-qx7 HASH-qx7',
+        '  }',
+        '  reverse_proxy 127.0.0.1:3101',
+        '}',
+        'http://site-qx7.example.com {',
+        '  redir https://rd-qx7.example.com{uri}?k=tok3-qx7',
+        '}',
+        ''
+      ].join('\n'));
+      const serve = { Web: { 'srv-qx7.tailexample.ts.net:443': { Handlers: { '/p-qx7': { Proxy: 'http://127.0.0.1:3101/?k=tok2-qx7' } } } }, TCP: { 4430: { TCPForward: '127.0.0.1:4430' } } };
+      const status = { BackendState: 'Running', CurrentTailnet: { MagicDNSEnabled: true }, Self: { DNSName: 'self-qx7.tailexample.ts.net.' } };
+      const result = await run(h, {
+        execFile: fakeExec(healthyCommands({
+          'tailscale status --json': JSON.stringify(status),
+          'tailscale serve status --json': JSON.stringify(serve),
+          'security verify-cert': Object.assign(new Error('verify-qx7'), { code: 9, stderr: 'stderr-qx7' })
+        })),
+        http: fakeHttp(answer(200, { leases: [{ port: 3101, host: 'localhost', project: 'proj-qx7', service: 'svc-qx7' }] })),
+        dnsLookup: fakeLookup({ 'pd-qx7.example.com': 'lookupcode-qx7' }),
+        hostname: () => 'mdns-qx7',
+        homedir: () => '/home-qx7'
+      });
+      const { plain, revealed } = both(result);
+      assert.ok(!plain.toLowerCase().includes('qx7'), `default output leaks a sentinel:\n${plain}`);
+      for (const secret of ['SENTINEL-INGRESS', 'SENTINEL-MARKER', 'tok-qx7', 'tok2-qx7', 'tok3-qx7', 'lookupcode-qx7', 'verify-qx7', 'stderr-qx7', 'user-qx7', 'HASH-qx7', 'key-qx7']) {
+        assert.ok(!revealed.includes(secret), `--reveal leaks ${secret}`);
+      }
+      assert.ok(revealed.includes('self-qx7.tailexample.ts.net'), '--reveal still shows the names it is for');
     } finally { h.cleanup(); }
   });
 });
@@ -731,21 +911,39 @@ describe('host-check: the Caddyfile reader', () => {
 describe('host-check: the command line', () => {
   const script = path.join(__dirname, '..', 'scripts', 'host-check.js');
 
-  it('a failure outside every row exits 4 with one line naming only the error code', async () => {
+  /**
+   * Run the script with `runHostCheck` replaced by one that rejects with an
+   * error carrying `code`.
+   * @param {*} errorCode - The rejected error's `code`.
+   * @returns {Promise<{code: number, stdout: string, stderr: string, lines: string[]}>}
+   */
+  async function runFailing(errorCode) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'host-check-fail-'));
     try {
       const preload = path.join(dir, 'reject.js');
       fs.writeFileSync(preload, `const hc = require(${JSON.stringify(path.join(__dirname, '..', 'lib', 'host-check.js'))});\n`
-        + "hc.runHostCheck = async () => { throw Object.assign(new Error('SECRET-ERROR-TEXT at /private/fixture/path'), { code: 'EFIXTURE' }); };\n");
+        + `hc.runHostCheck = async () => { throw Object.assign(new Error('SECRET-ERROR-TEXT at /private/fixture/path'), { code: ${JSON.stringify(errorCode)} }); };\n`);
       const { code, stdout, stderr } = await new Promise((resolve) => {
         execFile(process.execPath, ['-r', preload, script], (err, out, errOut) => resolve({ code: err ? err.code : 0, stdout: out, stderr: errOut }));
       });
-      assert.equal(code, 4);
       const lines = stderr.split('\n').filter((l) => l && !/ExperimentalWarning|--trace-warnings/.test(l));
-      assert.deepEqual(lines, ['host-check failed: EFIXTURE']);
-      assert.ok(!`${stdout}${stderr}`.includes('SECRET-ERROR-TEXT'));
-      assert.ok(!`${stdout}${stderr}`.includes('/private/fixture/path'));
+      return { code, stdout, stderr, lines };
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  }
+
+  it('a failure outside every row exits 4 with one line naming only the error code', async () => {
+    const { code, stdout, stderr, lines } = await runFailing('EFIXTURE');
+    assert.equal(code, 4);
+    assert.deepEqual(lines, ['host-check failed: EFIXTURE']);
+    assert.ok(!`${stdout}${stderr}`.includes('SECRET-ERROR-TEXT'));
+    assert.ok(!`${stdout}${stderr}`.includes('/private/fixture/path'));
+  });
+
+  it('a failure whose code is not code-shaped prints internal-error, never the code', async () => {
+    const { code, stdout, stderr, lines } = await runFailing('sentinel-code /private/qx7');
+    assert.equal(code, 4);
+    assert.deepEqual(lines, ['host-check failed: internal-error']);
+    assert.ok(!`${stdout}${stderr}`.includes('qx7'));
   });
 
   it('a usage error exits 2', async () => {
