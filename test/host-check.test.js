@@ -174,6 +174,8 @@ function run(h, deps = {}, options = {}) {
       platform: 'darwin',
       homedir: () => '/fixture-user-home',
       hostname: () => 'fixturehost',
+      // Never this machine's real launchd plist: the port comes from the fixture config.
+      serverPlistPath: '/nonexistent/host-check-test.plist',
       ...deps
     }
   });
@@ -315,6 +317,40 @@ describe('host-check T-H1: states and exit codes', () => {
     } finally { h.cleanup(); }
   });
 
+  it('agrees with the product\'s reader: two blocks for ONE host, or a ported header, are not ambiguous', async () => {
+    const h = makeHome({ caddyfile: 'two-tls-sites.caddyfile' });
+    try {
+      const same = fixture('caddyfiles', 'two-tls-sites.caddyfile').replaceAll('/fixture/home', h.home).replace('old.tailexample.ts.net {', `${TS} {`);
+      fs.writeFileSync(path.join(h.home, 'Caddyfile'), same);
+      assert.notEqual(row(await run(h), 'caddyfile').state, 'ambiguous');
+      const ported = fixture('caddyfiles', 'two-tls-sites.caddyfile').replaceAll('/fixture/home', h.home).replace('old.tailexample.ts.net {', 'old.tailexample.ts.net:8443 {');
+      fs.writeFileSync(path.join(h.home, 'Caddyfile'), ported);
+      assert.notEqual(row(await run(h), 'caddyfile').state, 'ambiguous');
+    } finally { h.cleanup(); }
+  });
+
+  it('the journal row claims nothing it did not check', async () => {
+    const h = makeHome();
+    try {
+      const r = row(await run(h), 'journal');
+      assert.equal(r.state, 'observed');
+      assert.equal(r.reason, 'journal inspection unsupported in this version; not checked');
+    } finally { h.cleanup(); }
+  });
+
+  it('an undeclared tailnet name with no Caddy site is observed, and says nothing else was checked', async () => {
+    const h = makeHome({ config: { ingressMode: 'caddy' }, caddyfile: 'per-site-certs.caddyfile' });
+    try {
+      fs.writeFileSync(path.join(h.home, 'Caddyfile'), `localhost {\n\ttls ${h.home}/certs/leaf-a.pem ${h.home}/certs/key-decoy.pem\n}\n`);
+      const r = row(await run(h), 'coverage');
+      const f = r.facts.find((x) => x.value === TS);
+      assert.ok(f);
+      assert.match(f.label, /undeclared tailnet name/);
+      assert.match(f.label, /not checked elsewhere/);
+      assert.equal(r.state, 'ok');
+    } finally { h.cleanup(); }
+  });
+
   it('a name that does not resolve locally is drift, labelled local-only', async () => {
     const h = makeHome();
     try {
@@ -338,10 +374,14 @@ describe('host-check T-H2: per-site coverage', () => {
     } finally { h.cleanup(); }
   });
 
-  it('matches a wildcard SAN by exactly one label', () => {
-    assert.equal(hostCheck.sanCovers(['*.example.com'], 'a.example.com'), true);
-    assert.equal(hostCheck.sanCovers(['*.example.com'], 'a.b.example.com'), false);
-    assert.equal(hostCheck.sanCovers(['*.example.com'], 'example.com'), false);
+  it('matches an IP site address against the certificate\'s IP SANs', async () => {
+    const h = makeHome({ caddyfile: 'per-site-certs.caddyfile' });
+    try {
+      fs.writeFileSync(path.join(h.home, 'Caddyfile'), `127.0.0.1 {\n\ttls ${h.home}/certs/leaf-a.pem ${h.home}/certs/key-decoy.pem\n}\n10.9.9.9 {\n\ttls ${h.home}/certs/leaf-a.pem ${h.home}/certs/key-decoy.pem\n}\n`);
+      const r = row(await run(h), 'coverage');
+      assert.ok(r.facts.some((f) => f.label === 'site 1 covered' && f.value === '127.0.0.1'));
+      assert.ok(r.facts.some((f) => f.label === 'site 2 NOT covered by its own certificate' && f.value === '10.9.9.9'));
+    } finally { h.cleanup(); }
   });
 });
 
@@ -551,6 +591,117 @@ describe('host-check T-H7: carry-ins', () => {
   });
 });
 
+describe('host-check: the /api/ports read over HTTPS keeps TLS verification', () => {
+  const httpsConfig = { ingressMode: 'direct', httpsEnabled: true, httpsCertPath: '/x/cert.pem', httpsKeyPath: '/x/key.pem', serverPort: 3101 };
+
+  it('a TLS verification failure is unknown, with one attempt and no insecure retry', async () => {
+    const h = makeHome({ config: httpsConfig });
+    try {
+      const tlsFail = fakeHttp((o, req) => req.emit('error', Object.assign(new Error('self-signed SECRET-ERROR-TEXT'), { code: 'DEPTH_ZERO_SELF_SIGNED_CERT' })));
+      const plain = fakeHttp(answer(200, LEASES));
+      const result = await run(h, { https: tlsFail, http: plain });
+      const r = row(result, 'routes');
+      assert.equal(r.state, 'unknown');
+      assert.match(r.reason, /tls-unverified/);
+      assert.equal(tlsFail.calls.length, 1);
+      assert.equal(plain.calls.length, 0, 'no fallback to plain HTTP');
+      assert.notEqual(tlsFail.calls[0].rejectUnauthorized, false);
+      assert.ok(!r.facts.some((f) => f.label === '  leased by'), 'no lease data from an unverified read');
+    } finally { h.cleanup(); }
+  });
+
+  it('the module never turns certificate verification off', () => {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'lib', 'host-check.js'), 'utf8');
+    assert.ok(!/rejectUnauthorized/.test(source));
+    assert.ok(!/NODE_TLS_REJECT_UNAUTHORIZED/.test(source));
+  });
+});
+
+describe('host-check: the server port is the installed server\'s, not this process\'s', () => {
+  it('reads the port from the launchd plist when one exists, over config and TANGLECLAW_PORT', async () => {
+    const h = makeHome();
+    const plist = path.join(path.dirname(h.home), 'server.plist');
+    fs.writeFileSync(plist, '<plist><dict><key>TANGLECLAW_PORT</key>\n<string>4567</string></dict></plist>');
+    try {
+      const fake = fakeHttp(answer(200, LEASES));
+      await run(h, { http: fake, serverPlistPath: plist, env: { CAROOT: h.caroot, TANGLECLAW_PORT: '3999' } });
+      assert.equal(fake.calls[0].port, 4567);
+    } finally { h.cleanup(); }
+  });
+
+  it('falls back to config when there is no plist', async () => {
+    const h = makeHome({ config: { ingressMode: 'caddy', caddyTailnetHost: TS, serverPort: 3555 } });
+    try {
+      const fake = fakeHttp(answer(200, LEASES));
+      await run(h, { http: fake });
+      assert.equal(fake.calls[0].port, 3555);
+    } finally { h.cleanup(); }
+  });
+});
+
+describe('host-check: size bounds', () => {
+  const big = (n) => `${'#'.repeat(n)}\n`;
+
+  it('a config.json over 1 MiB is unknown: config-too-large', async () => {
+    const h = makeHome();
+    try {
+      fs.writeFileSync(path.join(h.home, 'config.json'), `{"pad":"${'x'.repeat(hostCheck.LIMITS.configBytes)}"}`);
+      assert.equal(row(await run(h), 'config').reason, 'config-too-large');
+    } finally { h.cleanup(); }
+  });
+
+  it('a Caddyfile over 1 MiB is unknown: caddyfile-too-large', async () => {
+    const h = makeHome();
+    try {
+      fs.writeFileSync(path.join(h.home, 'Caddyfile'), big(hostCheck.LIMITS.caddyfileBytes));
+      const r = row(await run(h), 'caddyfile');
+      assert.equal(r.state, 'unknown');
+      assert.equal(r.reason, 'caddyfile-too-large');
+    } finally { h.cleanup(); }
+  });
+
+  it('a certificate file over 64 KiB is unknown and is not parsed', async () => {
+    const h = makeHome();
+    try {
+      fs.writeFileSync(path.join(h.home, 'certs', 'leaf-a.pem'), CERTS.leafA + big(hostCheck.LIMITS.certificateBytes));
+      const r = row(await run(h), 'certificates');
+      assert.equal(r.state, 'unknown');
+      assert.ok(r.facts.some((f) => f.label === 'unreadable' && f.value === 'too-large'));
+    } finally { h.cleanup(); }
+  });
+
+  it('an /api/ports body over 1 MiB is unknown: output-too-large', async () => {
+    const h = makeHome();
+    try {
+      const huge = fakeHttp((o, req, cb) => {
+        const res = new EventEmitter();
+        res.statusCode = 200;
+        res.resume = () => {};
+        cb(res);
+        res.emit('data', Buffer.alloc(hostCheck.LIMITS.portsBodyBytes + 1, 32));
+        res.emit('end');
+      });
+      const r = row(await run(h, { http: huge }), 'routes');
+      assert.equal(r.state, 'unknown');
+      assert.match(r.reason, /output-too-large/);
+    } finally { h.cleanup(); }
+  });
+});
+
+describe('host-check: a row that throws', () => {
+  it('reports internal-error by default and keeps the message for --reveal only', async () => {
+    const h = makeHome();
+    try {
+      const result = await run(h, { hostname: () => { throw new Error('boom at /private/fixture/path'); } });
+      const r = row(result, 'proposed');
+      assert.equal(r.state, 'unknown');
+      assert.match(r.reason, /^internal-error/);
+      assert.ok(!hostCheck.formatReport(result).includes('boom at'));
+      assert.ok(hostCheck.formatReport(result, { reveal: true }).includes('diagnostic: boom at /private/fixture/path'));
+    } finally { h.cleanup(); }
+  });
+});
+
 describe('host-check: the Caddyfile reader', () => {
   it('reads sites, tls files, redirects and the topology marker', () => {
     const parsed = hostCheck.parseCaddyfile(fixture('caddyfiles', 'v1-multihost.caddyfile'));
@@ -579,6 +730,23 @@ describe('host-check: the Caddyfile reader', () => {
 
 describe('host-check: the command line', () => {
   const script = path.join(__dirname, '..', 'scripts', 'host-check.js');
+
+  it('a failure outside every row exits 4 with one line naming only the error code', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'host-check-fail-'));
+    try {
+      const preload = path.join(dir, 'reject.js');
+      fs.writeFileSync(preload, `const hc = require(${JSON.stringify(path.join(__dirname, '..', 'lib', 'host-check.js'))});\n`
+        + "hc.runHostCheck = async () => { throw Object.assign(new Error('SECRET-ERROR-TEXT at /private/fixture/path'), { code: 'EFIXTURE' }); };\n");
+      const { code, stdout, stderr } = await new Promise((resolve) => {
+        execFile(process.execPath, ['-r', preload, script], (err, out, errOut) => resolve({ code: err ? err.code : 0, stdout: out, stderr: errOut }));
+      });
+      assert.equal(code, 4);
+      const lines = stderr.split('\n').filter((l) => l && !/ExperimentalWarning|--trace-warnings/.test(l));
+      assert.deepEqual(lines, ['host-check failed: EFIXTURE']);
+      assert.ok(!`${stdout}${stderr}`.includes('SECRET-ERROR-TEXT'));
+      assert.ok(!`${stdout}${stderr}`.includes('/private/fixture/path'));
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
 
   it('a usage error exits 2', async () => {
     const code = await new Promise((resolve) => {
@@ -612,7 +780,9 @@ describe('host-check T-H0: a real run under spies writes nothing and runs nothin
     port = server.address().port;
     fs.writeFileSync(path.join(h.home, 'config.json'), JSON.stringify({ ingressMode: 'caddy', caddyTailnetHost: TS, serverPort: port }));
     const reportPath = path.join(path.dirname(h.home), 'spy-report.json');
-    const env = { ...process.env, TANGLECLAW_HOME: h.home, CAROOT: h.caroot, HOST_CHECK_SPY_REPORT: reportPath, PATH: `${bin}:${process.env.PATH}` };
+    // HOME points at the temporary root, so the installed-server plist lookup
+    // finds nothing real and the port comes from this test's config.
+    const env = { ...process.env, HOME: path.dirname(h.home), TANGLECLAW_HOME: h.home, CAROOT: h.caroot, HOST_CHECK_SPY_REPORT: reportPath, PATH: `${bin}:${process.env.PATH}` };
     delete env.TANGLECLAW_PORT;
     const listingBefore = fs.readdirSync(h.home, { recursive: true }).sort();
     ({ stdout, exitCode } = await new Promise((resolve) => {
