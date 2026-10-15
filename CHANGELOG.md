@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.33.1] - 2026-10-14
+
 ### Fixed
 
 - **Master keeps its bridge credential after an auto-start (#2403).** A Master started at boot could run with no bridge credential and get `BRIDGE_CREDENTIAL_REQUIRED` on every bridge call. Boot now settles the previous run's credential before it starts the Master. Nothing for the operator to do.
