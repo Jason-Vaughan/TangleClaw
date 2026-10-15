@@ -16,6 +16,8 @@ the historical behavior.
 chokepoint in front of the HTTP API, WebSockets, ttyd, and the proxied gateway).
 AUTH-1 adds **no authentication** — only the ingress.
 
+Moving an install to another machine, or recovering a copied one: see [docs/host-migration.md](../docs/host-migration.md).
+
 ## Activate / roll back (macOS)
 
 ```sh

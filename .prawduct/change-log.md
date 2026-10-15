@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-15 — #1380/#2142: a public guide to moving TangleClaw to another machine
+
+<!-- prawduct: type=feature | scope=host-migration-guide-1380 -->
+
+#1380/#2142 chunk G, the second of two (H, the host check, merged first). Branch `docs/1380-host-migration-guide`. References #1380 and #2142 without closing either. The contract is chunk G of the host-migration follow-ups packet (TC-Lane-A's plan for #1380, not in the repository), as corrected by the Architect's A11 and accepted in A12; its source is the ProjectManager's reviewed draft guide.
+
+**Why.** A real migration showed that moving an install mixes two layers (a name that resolves, and a name TangleClaw answers to) and two different procedures (a planned move with a fresh identity, and recovery from an accidental clone). Nothing in the repository said how to tell them apart, or how to change only what was diagnosed and undo it exactly.
+
+**What changed.** New `docs/host-migration.md`: the two layers; the two migrations as separate sections (clone recovery never logs out or revokes the source while it shares the identity); a before-the-move checklist with a consistent, verified SQLite backup of the database (`.backup`, `PRAGMA integrity_check`), never a live-file copy; how to run `node scripts/host-check.js [--reveal]`, its row states and exit codes, what it never prints, that it is not network-silent, and why a direct-mode HTTPS install may read `unknown` on its routes row (`lease comparison: tls-unverified` means only that validation failed: diagnose trust, validity and names, and never re-mint on that row alone); then each change (re-trust, mint, serve route, Caddyfile hand edit, the last only with a tested recovery path independent of TangleClaw and a restore plan) with the row that triggers it, the snapshot taken first and the exact state its rollback restores; proof per name from another device; renaming; rollback triggers; today's limits. Placeholders only. One link line each in `docs/recovery.md` and `deploy/INGRESS.md`.
+
+**Tests.** New `test/host-migration-guide.test.js`: a shape-based privacy linter (private, CGNAT and unique-local addresses other than the `100.64.0.10` placeholder; `*.ts.net` and `*.local` names other than all-placeholder ones; absolute home paths; UUID, launch-id and workspace-id shapes), run against synthetic sentinels so a rule that stops matching fails, and against the guide. It also checks the guide's exit codes and row states against `lib/host-check.js`, and that every script it names exists. No deny-list of real values is in the repository; the private scan ran outside it.
+
 ## 2026-10-14 — #1380/#2142: the host check prints an error code only when it is on a finite list of known codes
 
 <!-- prawduct: type=bugfix | scope=host-check-error-codes-1380 -->

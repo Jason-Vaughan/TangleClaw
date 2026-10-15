@@ -183,6 +183,7 @@ curl -s http://127.0.0.1:<port>/api/health          # TangleClaw itself: expect 
   usually cannot read its certificate. Certificates must live outside `~/Documents`, which macOS
   blocks background services from reading.
 - **Pages load but terminals do not connect**: `launchctl kickstart -k gui/$(id -u)/com.tangleclaw.ttyd`.
+- **Nothing loads after moving TangleClaw to another machine**: see [Moving TangleClaw to another machine](host-migration.md).
 
 ## Turning the login off
 
