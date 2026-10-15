@@ -4,6 +4,12 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Internal
+
+- `docs/releases/v5.33.1-status.md` now says what is true after the release: v5.33.1 is tagged, published and running on the live install, with the backups and recovery evidence of the deploy. Two checks stay owed: the #2403 fix's own boot case (the Master survived the restart) and reachability from off the host.
+
+## [5.33.1] - 2026-10-14
+
 ### Fixed
 
 - **Master keeps its bridge credential after an auto-start (#2403).** A Master started at boot could run with no bridge credential and get `BRIDGE_CREDENTIAL_REQUIRED` on every bridge call. Boot now settles the previous run's credential before it starts the Master. Nothing for the operator to do.
