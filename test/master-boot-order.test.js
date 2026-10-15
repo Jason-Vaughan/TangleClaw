@@ -158,8 +158,12 @@ describe('Master boot order (#2403)', () => {
   });
 
   it('an auto-started Master keeps the credential it is handed after boot has moved on', async () => {
+    // No credential rows at all and no Master: a first boot, or one after the
+    // last credential was revoked. Reconciliation finds nothing to settle.
+    assert.deepEqual(rows(), []);
     const t = fakeTmux();
     const boot = master.bootMaster(bootOptions(t, true));
+    assert.deepEqual(boot.reconciled, { pendingRevoked: 0, activeRevoked: 0, live: false });
     assert.equal(boot.autoStart.attempted, true);
     assert.equal(boot.autoStart.created, true);
     assert.equal(t.created.length, 1);
