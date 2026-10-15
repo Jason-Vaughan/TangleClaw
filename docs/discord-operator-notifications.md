@@ -1,29 +1,41 @@
 # Discord operator notifications
 
-Status: **interim procedure in force.** The permanent transport is built and is disabled: it has
-not been run against Discord and cutover has not happened. See
-[operator-bridge.md](operator-bridge.md) for what is built.
+Status: **the bridge shipped in v5.31.0; cutover is per install.** The Master-mediated bridge is
+off by default; the operator enables it by completing
+[Activate the operator bridge](runbooks/activate-the-operator-bridge.md). The direct procedure below
+applies only on an install with an existing, explicitly authorized direct procedure. A fresh install
+has no direct posting authority by default: its active rules govern routing.
+
+On the project's own install, whose rule store numbers them, Rule #188 was activated at
+2026-10-06 04:14:43Z and Rule #145, the direct procedure's rule, was retired at
+2026-10-15 20:50:39Z. Those numbers are that installation's historical identifiers: these
+identifiers are installation-local and must not be assumed on another install. Outbound posts
+through the bridge are proved there; one fresh operator
+message carried through to the Project Master and answered back is not yet (#1836), and an
+incomplete verification does not revive a retired rule. See [operator-bridge.md](operator-bridge.md)
+for what is built.
 
 There are two ways an operational message reaches the operator's Discord. They are sequential,
 not parallel: the first is retired when the second goes live.
 
-| | Interim (in force now) | Future (built, disabled until cutover) |
+| | Direct (only where an existing rule authorizes it) | The bridge (shipped in v5.31.0, off until the operator enables it) |
 |---|---|---|
 | What it is | The Architect session posts to Discord by hand | The Master-mediated bridge |
-| Governed by | The operator's Rule #145 | [ADR 0023](adr/0023-master-mediated-operator-bridge.md), and the rule that replaces Rule #145 |
+| Governed by | The operator's rule for it (Rule #145 on the project's own install, now retired) | [ADR 0023](adr/0023-master-mediated-operator-bridge.md), and the installation's active rule for it |
 | Who decides what is sent | The Architect | The Project Master session |
 | Who posts | The Architect, and nobody else | The Discord helper, a local process |
 | Direction | Outbound only | Both ways |
 | Tracked in | #2040 | #2031, #1956, #1799 |
 
-If you are a session with something the operator should see in Discord today, read "Interim
-procedure". Do not read "Future path" as something you can use: it is disabled until the operator enables
-it at cutover.
+If you are a session with something the operator should see in Discord: on an existing install,
+continue only the notification path its active rules authorize; on a fresh install, configure and
+authorize the bridge before using it. Do not treat this page as permission to post directly.
 
-## Interim procedure — until the Master-mediated bridge ships
+## Interim procedure — only where an existing rule authorizes it
 
-This is the direct path under Rule #145. Rule #145 is an operator rule in TangleClaw's rule
-store, held on the Architect's project, and it is the authority. This page describes it so the
+This is the direct path as Rule #145 set it out on the project's own install, where that rule was
+held on the Architect's project and was the authority until it was retired. On an install whose
+active rules still authorize a direct path, that rule is the authority. This page describes it so the
 procedure survives a session clear. If the two disagree, the rule wins and this page is the bug.
 
 ### Who may send
@@ -73,8 +85,8 @@ Milestones and real operator actions are sent. Routine chatter is not.
    a `GET` of that exact message from the designated channel shows the content and the mention
    the Architect intended.
 
-The designated channel id and the operator's Discord user id are stated in Rule #145 and in
-#2040. They are deliberately not repeated in this file.
+The designated channel id and the operator's Discord user id are stated in the authorizing rule
+(Rule #145 on the project's own install) and in #2040. They are deliberately not repeated in this file.
 
 ### When the operator says nothing arrived
 
@@ -89,7 +101,7 @@ nonce.
 - **It is not an authority channel.** Nothing written in Discord approves a merge, a release, a
   deletion or a credential change.
 
-## Future path — the Master-mediated bridge
+## The Master-mediated bridge
 
 [ADR 0023](adr/0023-master-mediated-operator-bridge.md) records the rulings. In outline:
 
@@ -115,9 +127,9 @@ fall back to the Architect.
 Neither the gateway nor the Master session is authority, and Discord still cannot approve a
 reserved action.
 
-### What a session with news for the operator will do then
+### What a session with news for the operator does through it
 
-Much the same as today, with Master in the Architect's place. A verified session submits a
+Much the same as the direct procedure, with Master in the Architect's place. A verified session submits a
 candidate `milestone` or `operator-action-required` item to Master, with its facts and receipts.
 Only Master validates it, consolidates it and turns it into something the gateway may send. No
 project session posts to Discord directly.
@@ -142,22 +154,25 @@ the consent for an inbound Discord message to start the Master session.
 
 Cutover happens only when both of these are true:
 
-1. **Rule #145 has been replaced, with the operator's approval.** Rules are changed through the
-   rule store, not by editing this page. Until then Rule #145's text stays as it is and stays in
-   force, including its references to PR #2003, which was closed as superseded on 2026-10-04.
+1. **Where an older direct rule exists, it has been replaced, with the operator's approval.** This
+   is the historical migration case: on the project's own install the rule was Rule #145, which
+   referred to PR #2003 (closed as superseded on 2026-10-04). Rules are changed through the rule
+   store, not by editing this page, and the installation's active rules are the policy. A fresh
+   install has no older rule to replace.
 2. **The new transport has passed a live round trip and its security verification.**
 
 At cutover:
 
-- **After a rollback, one narrow fallback.** The rule that replaces Rule #145 says so itself:
-  while the bridge is disabled or rolled back the helper sends nothing, and the Architect alone
-  may use the former direct route for milestones and genuine operator-action-required notices
-  until the bridge is enabled again. That uses the send steps of the interim section below,
+- **After a rollback, one narrow fallback.** The rule that replaces an older direct rule (Rule #145 on
+  the project's own install) says so itself: while the bridge is disabled or rolled back the helper sends nothing, and the
+  Architect alone may use the former direct route for milestones and genuine
+  operator-action-required notices until the bridge is enabled again. That uses the send steps of
+  the interim section above,
   under the new rule's number. No rule is edited to roll back.
 - **The interim procedure is retired, not merged into the new path.** This page's interim section
   is kept for one use only: the rollback fallback above.
 - **The Architect leaves the routine delivery path** and keeps architectural and governance
   oversight. Master becomes the sole filter and router, and the helper the sole Discord sender.
 
-Until cutover, nothing here changes who may post. A helper that exists on a branch is not a live
-transport.
+Until an install cuts over, nothing here changes who may post on it. A helper that is installed but
+not enabled is not a live transport.
