@@ -1,13 +1,17 @@
 # Discord operator notifications
 
-Status: **interim procedure in force.** The permanent transport is built and is disabled: it has
-not been run against Discord and cutover has not happened. See
-[operator-bridge.md](operator-bridge.md) for what is built.
+Status: **the bridge shipped in v5.31.0; cutover is per install.** The Master-mediated bridge is
+off by default, and an install keeps the direct procedure below until the operator completes
+[Activate the operator bridge](runbooks/activate-the-operator-bridge.md). On the project's own
+install, Rule #188 was activated at 2026-10-06 04:14:43Z and Rule #145, the direct procedure's
+rule, was retired at 2026-10-15 20:50:39Z. Outbound posts through the bridge are proved there; one
+fresh operator message carried through to the Project Master and answered back is not yet (#1836).
+See [operator-bridge.md](operator-bridge.md) for what is built.
 
 There are two ways an operational message reaches the operator's Discord. They are sequential,
 not parallel: the first is retired when the second goes live.
 
-| | Interim (in force now) | Future (built, disabled until cutover) |
+| | Interim (until an install's cutover) | The bridge (shipped in v5.31.0, off until the operator enables it) |
 |---|---|---|
 | What it is | The Architect session posts to Discord by hand | The Master-mediated bridge |
 | Governed by | The operator's Rule #145 | [ADR 0023](adr/0023-master-mediated-operator-bridge.md), and the rule that replaces Rule #145 |
@@ -16,11 +20,12 @@ not parallel: the first is retired when the second goes live.
 | Direction | Outbound only | Both ways |
 | Tracked in | #2040 | #2031, #1956, #1799 |
 
-If you are a session with something the operator should see in Discord today, read "Interim
-procedure". Do not read "Future path" as something you can use: it is disabled until the operator enables
-it at cutover.
+If you are a session with something the operator should see in Discord, the rules in force on your
+install decide which path you use: the direct procedure below on an install that has not cut over,
+the bridge's candidate lane on one that has. Do not read "Future path" as something you can use
+until the operator has enabled the bridge on your install.
 
-## Interim procedure — until the Master-mediated bridge ships
+## Interim procedure — until an install's cutover
 
 This is the direct path under Rule #145. Rule #145 is an operator rule in TangleClaw's rule
 store, held on the Architect's project, and it is the authority. This page describes it so the

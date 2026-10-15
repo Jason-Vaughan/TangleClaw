@@ -5,8 +5,8 @@ back in the same conversation. [ADR 0023](adr/0023-master-mediated-operator-brid
 the design: a durable gateway on the server carries each message, the Project Master session
 decides where it goes and what the operator reads, and neither is authority.
 
-This page describes what is built. The interim Discord procedure that is in force until cutover
-is in [discord-operator-notifications.md](discord-operator-notifications.md).
+This page describes what is built. The older direct Discord procedure, which an install follows
+until its own cutover, is in [discord-operator-notifications.md](discord-operator-notifications.md).
 
 ## Status
 
@@ -21,9 +21,9 @@ is in [discord-operator-notifications.md](discord-operator-notifications.md).
 | The candidate lane: a session offers, the Master decides | Built |
 | The four typed server notifications | Built. The fourth, `lane-silent` (#2262), has not yet been seen to arrive on a live install |
 | Two more types, `gateway-down` and `gateway-recovered` (#2272) | Built. Raised from the helper's own report of its connection. Neither has been seen to arrive on a live install: staging one means holding the live helper off Discord for five minutes |
-| Discord helper (`bin/tc-bridge-helper`) | Built; not yet run against Discord. See [operator-bridge-helper.md](operator-bridge-helper.md) |
-| The operator's dashboard panel (global settings, Operator bridge) | Built; not yet used by a person on a live install |
-| Cutover | Not started; Rule #145 is unchanged and in force |
+| Discord helper (`bin/tc-bridge-helper`) | Shipped in v5.31.0. Run against Discord on the project's own install. See [operator-bridge-helper.md](operator-bridge-helper.md) |
+| The operator's dashboard panel (global settings, Operator bridge) | Shipped in v5.31.0. Configured by the operator on the project's own install |
+| Cutover | Per install, by [Activate the operator bridge](runbooks/activate-the-operator-bridge.md). On the project's own install, Rule #188 was activated at 2026-10-06 04:14:43Z and Rule #145 was retired at 2026-10-15 20:50:39Z. One fresh operator message carried through to the Project Master and answered back is not yet proved there (#1836) |
 
 The bridge is **disabled by default**. Only the operator can enable it, signed in with an
 account session, and only after setting the allowlist and creating the helper token. The

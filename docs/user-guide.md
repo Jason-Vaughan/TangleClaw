@@ -180,7 +180,7 @@ TangleClaw tells each session who it is through four environment variables: `TAN
 
 Nothing needs doing for TangleClaw's own sessions: every launch sets each of the four variables itself, so no pane TangleClaw launches inherits one from the global environment. Removing a stray variable matters for sessions on that tmux server that TangleClaw did not launch.
 
-The banner has no dismiss button. The read is made only when the server starts, so after you remove the variables the banner stays until the next server restart. The same report is on `GET /api/server-info` as `launchIdentityNotice`; see the pane-check section of the [engine guide](engine-guide.md).
+The banner has no dismiss button. The read is made only when the server starts, so after you remove the variables the banner stays until the next server restart. The same report is on `GET /api/server-info` as `launchIdentityNotice`; see [The ambient-awareness floor (`tc` on PATH)](engine-guide.md#the-ambient-awareness-floor-tc-on-path) in the engine guide.
 
 ### Fleet Workload
 
@@ -784,6 +784,19 @@ Every plan or design doc a session writes to `<project>/.tangleclaw/plans/<name>
   - Times are in Pacific time (PDT/PST), never UTC. Each card says when it was last refreshed and gives both windows' names and dates.
   - If no scorecard has been published, or it cannot be read or is malformed, the card says so and shows no numbers. If it is past its refresh deadline, the numbers are shown under a **Stale** warning. Nothing publishes the scorecard yet, so until a later release adds that, both cards say that no scorecard has been published.
 - Table cells never break a word, so issue numbers like `#1234` stay on one line; a wide table scrolls sideways instead.
+
+## Discord operator bridge
+
+TangleClaw can carry messages between the operator's Discord channel and the fleet: the Project
+Master session routes what the operator sends and decides what is posted back. It shipped in
+v5.31.0 and is **off by default**. Only the operator can enable it, from the dashboard's global
+settings, and enabling it is a cutover each install makes for itself.
+
+- [The operator bridge](operator-bridge.md): what it is, what is built and its status.
+- [The Discord helper](operator-bridge-helper.md): the local process that talks to
+  Discord, with a quick start for a fresh install.
+- [Activate the operator bridge](runbooks/activate-the-operator-bridge.md): the cutover
+  runbook.
 
 ## Mobile Tips
 
