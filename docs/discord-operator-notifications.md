@@ -101,7 +101,7 @@ nonce.
 - **It is not an authority channel.** Nothing written in Discord approves a merge, a release, a
   deletion or a credential change.
 
-## Future path — the Master-mediated bridge
+## The Master-mediated bridge
 
 [ADR 0023](adr/0023-master-mediated-operator-bridge.md) records the rulings. In outline:
 
@@ -127,9 +127,9 @@ fall back to the Architect.
 Neither the gateway nor the Master session is authority, and Discord still cannot approve a
 reserved action.
 
-### What a session with news for the operator will do then
+### What a session with news for the operator does through it
 
-Much the same as today, with Master in the Architect's place. A verified session submits a
+Much the same as the direct procedure, with Master in the Architect's place. A verified session submits a
 candidate `milestone` or `operator-action-required` item to Master, with its facts and receipts.
 Only Master validates it, consolidates it and turns it into something the gateway may send. No
 project session posts to Discord directly.
@@ -174,5 +174,5 @@ At cutover:
 - **The Architect leaves the routine delivery path** and keeps architectural and governance
   oversight. Master becomes the sole filter and router, and the helper the sole Discord sender.
 
-Until cutover, nothing here changes who may post. A helper that exists on a branch is not a live
-transport.
+Until an install cuts over, nothing here changes who may post on it. A helper that is installed but
+not enabled is not a live transport.
