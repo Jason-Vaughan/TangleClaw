@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-15 — #2417, #2365, #2312: the bridge's status pages say what shipped, and three doc pointers are corrected
+
+<!-- prawduct: type=docs | scope=w1-a1-docs-2417-2365-2312 -->
+
+v5.34.0 Wave 1 chunk W1-A1, the only chunk of its plan. Branch `docs/w1a1-bridge-status-pointers`. Closes #2417, #2365 and #2312. The status wording is a public statement, accepted by the Architect (A60 limits, A62 corrections, A63 acceptance) before the suite; the cutover facts are the ProjectManager's.
+
+**Why.** The operator bridge and its Discord helper shipped in v5.31.0, but three pages still said the helper had never run against Discord and that cutover had not started, and no entry page led to the bridge (#2417). `docs/merge-queue.md` listed four of the six codes an entry fails with (#2365). The user guide sent readers to a "pane-check section" of the engine guide that does not exist (#2312).
+
+**What changed.** `docs/operator-bridge-helper.md`, `docs/operator-bridge.md` and `docs/discord-operator-notifications.md`: shipped in v5.31.0 as a fact about the release; off by default; cutover per install; the direct procedure applies only where an existing rule explicitly authorizes it, and a fresh install has none; Rule #188 and #145 dates given only as the project's own install's identifiers; the fresh inbound round trip (#1836) and the live `lane-silent` / `gateway-down` / `gateway-recovered` notifications (#2262, #2272) still unproved. The helper page gains a fresh-install quick start that links its own steps, and its bot-token paragraph tells a fresh install to use `set-secret bot`. `README.md`, `docs/setup-guide.md` and `docs/user-guide.md` each gain a short "Discord operator bridge" section. `docs/merge-queue.md` names `CANDIDATE_CONFLICT` and `NOTHING_TO_MERGE`. The user guide links the engine guide's "The ambient-awareness floor (`tc` on PATH)". One wrong cross-reference fixed on the way: the rollback bullet's interim section is above it, not below. The older #2363 entry that #2365 also mentions is left as written.
+
+**Tests.** New `test/docs-w1a1-pointers.test.js`: each entry page has exactly one bridge section linking all three bridge pages; every relative link and anchor in those sections, the helper's status and the user guide's pointer resolves to a file and heading that exist; no bridge page keeps the stale claims or says a direct procedure is in force everywhere; no page says "supported since v5.31"; `docs/merge-queue.md` names every code in `FAILURES`. Run against `origin/main`'s pages, 7 of its 8 cases fail; the eighth is a guard those pages already met.
+
 ## 2026-10-15 — #1380/#2142: a public guide to moving TangleClaw to another machine
 
 <!-- prawduct: type=feature | scope=host-migration-guide-1380 -->
