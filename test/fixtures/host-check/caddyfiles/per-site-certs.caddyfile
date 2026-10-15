@@ -1,0 +1,13 @@
+{
+	https_port 8443
+}
+
+box.tailexample.ts.net {
+	tls /fixture/home/certs/leaf-a.pem /fixture/home/certs/key-decoy.pem
+	reverse_proxy 127.0.0.1:3101
+}
+
+localhost, alias.example.com {
+	tls /fixture/home/certs/leaf-b.pem /fixture/home/certs/key-decoy.pem
+	reverse_proxy 127.0.0.1:3101
+}

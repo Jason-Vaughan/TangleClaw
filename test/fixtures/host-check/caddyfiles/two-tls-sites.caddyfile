@@ -1,0 +1,22 @@
+{
+	https_port 8443
+	admin off
+}
+
+localhost {
+	tls /fixture/home/certs/leaf-a.pem /fixture/home/certs/key-decoy.pem
+	reverse_proxy 127.0.0.1:3101
+}
+
+box.tailexample.ts.net {
+	tls /fixture/home/certs/leaf-a.pem /fixture/home/certs/key-decoy.pem
+	basic_auth {
+		fixtureuser $2a$14$FIXTUREHASHFIXTUREHASHFIXTUREHASHFIXTUREHASHFIXTUREHA
+	}
+	reverse_proxy 127.0.0.1:3101
+}
+
+old.tailexample.ts.net {
+	tls /fixture/home/certs/leaf-a.pem /fixture/home/certs/key-decoy.pem
+	reverse_proxy 127.0.0.1:3101
+}

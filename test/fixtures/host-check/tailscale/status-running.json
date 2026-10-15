@@ -1,0 +1,1 @@
+{"BackendState":"Running","Self":{"DNSName":"box.tailexample.ts.net.","HostName":"box","TailscaleIPs":["100.64.0.7"]},"CurrentTailnet":{"Name":"user@example.com","MagicDNSSuffix":"tailexample.ts.net","MagicDNSEnabled":true}}

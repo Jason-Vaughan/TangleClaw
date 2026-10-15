@@ -35,6 +35,24 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-14 — #1380/#2142: a read-only host check says what this machine's names, Caddyfile, certificates and trust actually are
+
+<!-- prawduct: type=feature | scope=host-migration-check-1380 -->
+
+#1380/#2142 chunk H, of two (H, then G, the migration guide). Branch `feat/1380-host-check`, from `origin/main` `29e97d73`. The contract is the host-migration packet's chunk H (`/Users/jasonvaughan/Documents/Projects/TC-Lane-A/.tangleclaw/plans/host-migration-followups-packet.md` §1), as corrected by the Architect's A11 and accepted in A12.
+
+**Why.** After a host migration nothing reports the host's actual ingress facts side by side: the tailnet name, the configured names, which Caddy site answers which name, whether each site's own certificate carries it, which serve routes exist, and whether the local root is trusted. Operators found the gaps one broken link at a time.
+
+**What changed.**
+
+- `scripts/host-check.js` (new): `node scripts/host-check.js [--reveal]`. A standalone process, so it works right after a deploy with no restart.
+- `lib/host-check.js` (new): ten rows (tailnet identity, configured names, Caddyfile sites, certificates, advisory proposed names, per-site coverage, serve routes against PortHub leases, local trust, local-only resolution, the transaction journal). Each row is `ok`, `drift`, `ambiguous`, `observed` or `unknown` with a reason. Exit 0, 3 (drift/ambiguous), 4 (unknown), 2 (usage).
+- Read-only by construction: three allow-listed commands through `execFile` with no shell; one loopback GET of `/api/ports` with no credentials and no redirects; `config.json` read directly, never through the store. Bounded: 5 s and 1 MiB per command, 20 s per run, file size caps, at most 64 names (more → `names` unknown, non-zero exit).
+- Redacted by default with stable tokens; `--reveal` adds a PRIVATE banner and still never shows credentials, `basic_auth` hashes, key bytes or query strings, because they are never collected.
+- The journal row says no transaction exists in this version. No version writes one yet.
+
+**Tests.** `test/host-check.test.js` with synthetic fixtures under `test/fixtures/host-check/` (Tailscale field names checked against a live `tailscale` 1.102.3, keys only). T-H0 runs the real script under a preloaded spy (`spy-preload.js`) and asserts no file write, no database open, no `store.init` or file logging, only allow-listed commands, one credential-free loopback request, and no key file read. T-H1 to T-H7 cover every state and reason, per-site coverage, redaction both ways, leases, trust, the budget and the three A12 carry-ins. The certificates are kept as PEM text inside `certs.json`, because `.gitignore` excludes `*.pem` and `*.crt`; their signing keys were discarded.
+
 ## 2026-10-14 — #2403: the Master's bridge credential is reconciled before boot can create a Master
 
 <!-- prawduct: type=bugfix | scope=master-boot-credential-order-2403 -->
