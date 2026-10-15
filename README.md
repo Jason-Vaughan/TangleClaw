@@ -262,6 +262,19 @@ Quick answers, with links into the full docs:
 | Fix something that's broken | [User Guide — Troubleshooting](docs/user-guide.md#troubleshooting), or [Service Management](#service-management) below |
 | Set it up safely, or get back in when locked out | [Setup Guide](docs/setup-guide.md) |
 
+## Discord operator bridge
+
+TangleClaw can carry messages between the operator's Discord channel and the fleet: the Project
+Master session routes what the operator sends and decides what is posted back. It shipped in
+v5.31.0 and is **off by default**. Only the operator can enable it, from the dashboard's global
+settings, and enabling it is a cutover each install makes for itself.
+
+- [The operator bridge](docs/operator-bridge.md): what it is, what is built and its status.
+- [The Discord helper](docs/operator-bridge-helper.md): the local process that talks to
+  Discord, with a quick start for a fresh install.
+- [Activate the operator bridge](docs/runbooks/activate-the-operator-bridge.md): the cutover
+  runbook.
+
 ## Documentation
 
 - **[Setup Guide](docs/setup-guide.md)** — setting up safely with no prior background: what the login protects, reaching it from another device, checking it worked, getting back in if you are locked out

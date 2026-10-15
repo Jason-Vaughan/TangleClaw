@@ -171,6 +171,7 @@ taken from the caller, and nothing lands on a read that was not made.
 | The caller is the owner's live launch, admitted by its coordinator rotation, and not held | refused; nothing changed |
 | The pull request is open, not a draft, on the queue's base, at the submitted head | the entry **fails** (`PR_NOT_OPEN`, `PR_DRAFT`, `PR_WRONG_BASE`, `PR_HEAD_MOVED`) |
 | The base branch is where it was when the candidate was made | the candidate is discarded and made again; not a failure |
+| The submitted head merges cleanly into the base branch, and adds something to it, when the candidate is made | it conflicts: the entry **fails** (`CANDIDATE_CONFLICT`). The base branch already holds that head: the entry **fails** (`NOTHING_TO_MERGE`). Either way no candidate branch is left, and the next entry is at the front |
 | The candidate's `test` check, as run for the candidate branch, concluded `success` | still running or not started: `waiting`. Any other conclusion: the entry **fails** (`CANDIDATE_NOT_GREEN`) |
 | The base branch's own `test` check, as run for that branch, is not red | red: refused `BASE_NOT_GREEN`, nothing changed. Still running: `waiting`, unless the base is this queue's own landing of a tree its candidate's check passed on |
 | Every gate is recorded, the Operator gate included when the entry needs it | refused `GATES_NOT_MET`, naming each; nothing changed |

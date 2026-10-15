@@ -14,12 +14,37 @@ has a path to Discord: an answer reaches the helper only after the Project Maste
 
 ## Status
 
-Built and tested against the real bridge routes and a stand-in for Discord. **It has not been
-run against Discord.** The bridge is disabled by default and Rule #145's interim procedure
-([discord-operator-notifications.md](discord-operator-notifications.md)) is still the only
-Discord path in force. Installing the helper is part of cutover, which needs the security
-review, a live round trip and the operator's approval. Do not set it up on a live install
-because this page exists.
+The helper shipped in v5.31.0 (2026-10-06), with the [operator bridge](operator-bridge.md). Both
+are **off by default**. Nothing reaches Discord until the operator enables the bridge in global
+settings and completes [Activate the operator bridge](runbooks/activate-the-operator-bridge.md).
+Cutover happens per install: a release that ships the bridge changes no install's Discord path by
+itself.
+
+On the project's own install it has run against Discord: the dashboard panel was configured, the
+helper connected and resumed its Gateway session, an operator message was accepted, and candidate
+posts were delivered and acknowledged. Not yet proved there: one fresh operator message carried
+through to the Project Master and answered back (#1836), and the `lane-silent`, `gateway-down` and
+`gateway-recovered` notifications arriving on a live install (#2262, #2272). What the automated
+tests cannot prove is listed in [What is not proven here](#what-is-not-proven-here).
+
+### Quick start for a fresh install
+
+Each step links to where it is done in full; this list adds nothing to them.
+
+1. Run v5.31.0 or later.
+2. Create the Discord application and its bot: [1. The Discord application](#1-the-discord-application).
+3. In the dashboard, set the bridge's allowlist and create the helper token
+   ([The operator's routes](operator-bridge.md#the-operators-routes)).
+4. Write the helper's config: [2. The helper's config](#2-the-helpers-config).
+5. Store both secrets: [3. The two secrets, in the Keychain](#3-the-two-secrets-in-the-keychain).
+   On a fresh install there is no older Keychain item for the bot token, so store it with
+   `bin/tc-bridge-helper set-secret bot` as well as the helper token with `set-secret helper`.
+6. Check it without posting anything, then run it under launchd:
+   [4.](#4-check-it-without-posting-anything) and [5.](#5-run-it-under-launchd)
+7. Enable the bridge and prove a round trip:
+   [Phase C of the activation runbook](runbooks/activate-the-operator-bridge.md#phase-c-switch-on-and-prove).
+   That runbook was written for an install that already posted to Discord under an older operator
+   rule. Its steps that replace that rule apply only where one exists.
 
 ## What it will and will not do
 
@@ -117,10 +142,11 @@ The helper token comes from the dashboard: global settings, **Operator bridge (D
 panel, paste at the prompt, then press **I have stored it**. It is never written to a file or
 given on a command line.
 
-The helper reads two Keychain items. The **Discord bot token** is the item this install
-already keeps it in (service `tangleclaw-discord-helper`, account `discord-bot-token`): the
-helper uses it where it is, so there is nothing to copy. Run `set-secret bot` only if the bot
-token itself has changed. The **helper token** is the helper's own (service
+The helper reads two Keychain items. The **Discord bot token** is service
+`tangleclaw-discord-helper`, account `discord-bot-token`. An install that already keeps it there,
+from the older direct posting procedure, has nothing to copy: the helper uses it where it is, and
+`set-secret bot` is needed only if the bot token itself has changed. A fresh install has no such
+item, so store it with `set-secret bot`. The **helper token** is the helper's own (service
 `tangleclaw-bridge-helper`, account `bridge-helper-token`).
 
 `set-secret` reads the token from standard input, with echo off at a terminal, stores it in
