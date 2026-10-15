@@ -264,6 +264,17 @@ describe('Master boot order (#2403)', () => {
     assert.deepEqual(rows().map((r) => r.reason), ['superseded', 'master-absent']);
   });
 
+  it('a first boot with auto-start off and no credential rows reconciles nothing, and launches nothing', () => {
+    assert.deepEqual(rows(), []);
+    const t = fakeTmux({ alive: false });
+    const boot = master.bootMaster(bootOptions(t, false));
+
+    assert.deepEqual(boot.reconciled, { pendingRevoked: 0, activeRevoked: 0, live: false });
+    assert.deepEqual(boot.autoStart, { attempted: false, created: false, error: null });
+    assert.equal(t.created.length, 0);
+    assert.deepEqual(rows(), []);
+  });
+
   it('reports a handoff the pane never took as its eventual outcome, not as boot\'s', async () => {
     const t = fakeTmux();
     const boot = master.bootMaster(bootOptions(t, true, { bridgeHandoffTimeoutMs: NEVER_READ_TIMEOUT_MS }));
