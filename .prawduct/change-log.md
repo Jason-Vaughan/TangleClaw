@@ -39,7 +39,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- prawduct: type=feature | scope=host-migration-check-1380 -->
 
-#1380/#2142 chunk H, of two (H, then G, the migration guide). Branch `feat/1380-host-check`, from `origin/main` `29e97d73`. The contract is the host-migration packet's chunk H (`/Users/jasonvaughan/Documents/Projects/TC-Lane-A/.tangleclaw/plans/host-migration-followups-packet.md` §1), as corrected by the Architect's A11 and accepted in A12.
+#1380/#2142 chunk H, of two (H, then G, the migration guide). Branch `feat/1380-host-check`. The contract is chunk H of the host-migration follow-ups packet (TC-Lane-A's plan for #1380, not in the repository), as corrected by the Architect's A11 and accepted in A12.
 
 **Why.** After a host migration nothing reports the host's actual ingress facts side by side: the tailnet name, the configured names, which Caddy site answers which name, whether each site's own certificate carries it, which serve routes exist, and whether the local root is trusted. Operators found the gaps one broken link at a time.
 
