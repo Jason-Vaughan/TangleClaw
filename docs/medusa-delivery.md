@@ -550,8 +550,9 @@ binding commits with them), and only then is anything sent, outside the doc's qu
 cannot be recorded notifies nobody. The watcher sees the bytes, and later an attestation binds an
 author. Each resolves only projects not already resolved for that revision, whatever their first
 outcome, so nobody is told twice. Each call sends only the intents it inserted. Before each send
-the intent is rechecked: a doc re-registered or deleted, a project that left the group or stopped
-subscribing (`withdrawn`), or a new mute (`muted`) is not sent. Then the session's listening state
+the intent is rechecked: a doc re-registered, a project that left the group or stopped subscribing
+(`withdrawn`), or a new mute (`muted`) is not sent. Deleting the doc deletes its revisions and their
+intents, so nothing of it is sent and no row remains. Then the session's listening state
 (`offline`), then coalescing on an un-handled notice for the same doc (`coalesced`), then the send
 (`sent` or `failed`). A project with no live session gets one `offline` row; a muted one a `muted` row.
 The events route shows each revision's outcomes counted per outcome, never a delivery count as a wake:

@@ -34,6 +34,9 @@ const docDebounceTimers = new Map();
  */
 const SHARED_DOC_DEBOUNCE_MS = 500;
 
+/** @type {number} How long shutdown waits for shared-doc notices already being sent. */
+const SHUTDOWN_NOTICE_DRAIN_MS = 5000;
+
 /**
  * Close and forget a shared doc's fs.watch handle and any pending debounce
  * timer. Called on delete, and on retarget (before opening the watcher on
@@ -10448,18 +10451,16 @@ route('GET', '/api/shared-docs/:id/events', (req, res, params) => {
  * @returns {Array<{projectId: number, name: (string|null), doc: (string|null), group: (string|null), effective: (string|null)}>}
  */
 function noticeSettingsView(group, doc) {
-  const prefs = store.sharedDocNoticePrefs.listForGroup(group.id);
-  return store.projectGroups.listMembers(group.id).map((projectId) => {
+  // The same resolution the delivery rule routes on, so what is shown is what applies.
+  const settings = sharedDocRecord.memberSettings(group.id, doc ? doc.id : null);
+  return [...settings].map(([projectId, s]) => {
     const project = store.projects.get(projectId);
-    const own = prefs.filter((p) => p.projectId === projectId);
-    const groupSetting = (own.find((p) => p.scope === 'group') || {}).setting || null;
-    const docSetting = doc ? ((own.find((p) => p.scope === 'doc' && p.docId === doc.id) || {}).setting || null) : null;
     return {
       projectId,
       name: project ? project.name : null,
-      doc: doc ? docSetting : undefined,
-      group: groupSetting,
-      effective: doc ? (docSetting || groupSetting) : groupSetting
+      doc: doc ? s.doc : undefined,
+      group: s.group,
+      effective: s.effective
     };
   });
 }
@@ -10478,8 +10479,9 @@ function putNoticeSetting(res, access, scope, body) {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
   const setting = body.setting;
-  if (!['mute', 'subscribe', 'default'].includes(setting)) {
-    return errorResponse(res, 400, 'setting must be one of mute, subscribe, default', 'BAD_REQUEST');
+  const allowed = [...store.SHARED_DOC_NOTICE_SETTINGS, 'default'];
+  if (!allowed.includes(setting)) {
+    return errorResponse(res, 400, `setting must be one of ${allowed.join(', ')}`, 'BAD_REQUEST');
   }
   let projectId = access.projectId;
   if (body.projectId !== undefined) {
@@ -13537,21 +13539,24 @@ if (require.main === module) {
     // profile, which is unbounded work that must not happen on the event loop
     // inside a route. Fire-and-forget: detection falls back to this process's
     // own PATH until it lands, which is exactly what it did before.
-    // A shared-doc delivery the last process stopped during is marked
-    // `interrupted` before any watcher can record a new revision, and is never
-    // resent: a partial send cannot be told apart from none.
-    try {
-      const swept = store.sharedDocDeliveries.interruptPending();
-      if (swept.revisions > 0) log.warn('Shared-doc deliveries interrupted by the last stop: not resent', swept);
-    } catch (err) {
-      log.warn('Could not sweep interrupted shared-doc deliveries', { error: err.message });
-    }
     refreshSharedDocWatchers();
     engines.refreshDetectionPath().catch((err) => {
       log.warn('Could not resolve the login PATH at boot; engine detection will see only '
         + 'the PATH launchd gave this service', { error: err && err.message });
     });
   };
+
+  // A shared-doc delivery the last process stopped during is marked
+  // `interrupted` before the server accepts a request or a watcher records a
+  // revision, so the sweep can only ever find the last process's pending
+  // deliveries, never this one's. They are never resent: a partial send cannot
+  // be told apart from none.
+  try {
+    const swept = store.sharedDocDeliveries.interruptPending();
+    if (swept.revisions > 0) log.warn('Shared-doc deliveries interrupted by the last stop: not resent', swept);
+  } catch (err) {
+    log.warn('Could not sweep interrupted shared-doc deliveries', { error: err.message });
+  }
 
   // Loopback unless something is guarding the door — see lib/bind-policy.js.
   // A null host is Node's "every interface", reached only via the explicit opt-in.
@@ -13591,8 +13596,13 @@ if (require.main === module) {
     }
     clearInterval(_lockExpiryInterval);
     server.close();
-    store.close();
-    process.exit(0);
+    // Shared-doc notices already on their way are given a bounded moment to
+    // settle, so a planned restart does not leave them `interrupted`; one that
+    // outlasts it is swept at the next boot, as a crash would leave it.
+    sharedDocRecord.drain(SHUTDOWN_NOTICE_DRAIN_MS).finally(() => {
+      store.close();
+      process.exit(0);
+    });
   };
 
   process.on('SIGTERM', shutdown);

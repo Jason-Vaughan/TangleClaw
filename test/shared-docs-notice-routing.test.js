@@ -346,6 +346,17 @@ describe('shared-doc notices by the delivery rule (#2389)', () => {
       assert.equal(sharedDocs.effectiveSettings(doc).get(alpha.project.id), 'subscribe');
       out = await call(['mute']);
       assert.equal(out.code, 1, 'a form with no target is a usage error');
+      const failing = await docsVerb.run({
+        argv: [], env: { TANGLECLAW_PROJECT_ID: String(alpha.project.id) },
+        getJson: async (p) => {
+          if (p.endsWith('/notices')) throw new Error('500 SERVER_ERROR');
+          return (await sendAs(server, 'GET', p, undefined, alpha.headers)).data;
+        },
+        postJson: async () => { throw new Error('listing must not POST'); }
+      });
+      assert.equal(failing.code, 0, 'one doc\'s setting failing to load does not lose the listing');
+      assert.match(failing.stdout, /BOARD \(id /);
+      assert.doesNotMatch(failing.stdout, /notices:/);
       await done();
     });
 
@@ -557,6 +568,38 @@ describe('shared-doc notices by the delivery rule (#2389)', () => {
       assert.equal(revision.authorSource, 'attested');
       assert.equal(revision.routing, 'interrupted');
       assert.equal(store.sharedDocDeliveries.listForEvent(revision.id).length, 1, 'the row owner is not resolved: the delivery is never extended');
+      await done();
+    });
+
+    it('the store itself refuses to extend an interrupted delivery, whatever route its caller passes', async () => {
+      setting(sub, 'subscribe');
+      bridge.defer = true;
+      const out = await unattested({}, 'Interrupted prose.');
+      await until(() => bridge.waiting.length === 1);
+      store.sharedDocDeliveries.interruptPending();
+      let ids = null;
+      const bound = store.sharedDocEvents.attest(out.revision.id, {
+        projectId: alpha.project.id, sessionId: alpha.sessionId, attestedAt: new Date().toISOString()
+      }, {
+        route: () => [{ projectId: bravo.project.id, sessionId: bravo.sessionId, reason: 'owner', outcome: 'pending' }],
+        onRouted: (got) => { ids = got; }
+      });
+      assert.equal(bound, true, 'the author still binds');
+      assert.deepEqual(ids, []);
+      assert.equal(store.sharedDocEvents.get(out.revision.id).routing, 'interrupted');
+      assert.equal(store.sharedDocDeliveries.listForEvent(out.revision.id).length, 1);
+      await done();
+    });
+
+    it('drain gives up at its bound and says so, leaving the send in flight', async () => {
+      setting(sub, 'subscribe');
+      bridge.defer = true;
+      await unattested({}, 'Slow bridge.');
+      await until(() => bridge.waiting.length === 1);
+      assert.equal(await sharedDocs.drain(20), false);
+      bridge.defer = false;
+      bridge.release();
+      assert.equal(await sharedDocs.drain(1000), true);
       await done();
     });
   });
