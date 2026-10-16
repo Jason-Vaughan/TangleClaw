@@ -35,6 +35,31 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-16 — #2299, #2384 (refs): a `tc` command reference, and the sixteen auto-stubbed FEATURES.md files described
+
+<!-- prawduct: type=docs | scope=w3-a2-tc-reference-and-features-stubs-2299-2384 -->
+
+v5.34.0 Wave 3 chunk W3-A2, records / public docs. Branch `docs/w3a2-tc-reference-features-stubs`. Refs #2299, #2384 (`Fixes` only if the Integrator agrees). Plan: `.tangleclaw/plans/w3-a2-tc-reference-and-features-stubs-2299-2384.md`. `FEATURES.md` is edited under the narrow exception to rule #262 cl.3 (charter v2.3 §3, A106 item 4, Architect A107): the stub block and the sections its descriptions land in, nothing else. `CHANGELOG.md` is not touched; its line and this page's Features line are in the PR body.
+
+**Why.** #2299: `tc` had no single page; a reader rebuilt it from `tc --help` and from chapters about single features, and nothing failed when the roster moved. #2384: the wrap's `## TODO (auto-stubbed 2026-10-11)` block held sixteen undescribed files, and `test/features-index.test.js` turns `main` red on it from 2026-10-25 00:00 local.
+
+**What changed.** `docs/tc-cli-reference.md` (new) is #2299's draft (from `8cbaf34b`) re-checked against `bin/tc --help` and `lib/tc-verbs.js` on this head. It gains what the draft lacked: `tc queue`, `tc check`, the `tc docs` `base`, `attest`, notice and `--group` forms, and exit 2 when the shell's launch identity differs from the pane's. It avoids a verb count and names no machine, path, hosted link or session. `docs/user-guide.md` gets a short "The `tc` command" section under Sessions that links it. `test/tc-cli-reference.test.js` (new) reads the verbs from `tc --help`, run with an empty environment, and fails when one has no table row, when a row names a verb `tc` does not have, or when the help parse misses a roster verb. In `FEATURES.md`, fourteen files are described in Tests, CLI / Tooling and Governance / Engines. `lib/bridge-helper/bridge-client.js` is removed because the Discord helper entry already names it, and `docs/releases/v5.32-status.md` because a release record has no entry, like the other status files. The block's heading goes with it.
+
+**Proved once, not committed.** With every `tc queue` row deleted from the page, the new test fails naming `tc queue`; the page was restored byte for byte. By script on the page: every relative link and anchor resolves, every table row has its header's column count, every flag is in the code, and every subcommand is in that verb's `tc --help` usage. The one script failure was the user guide's existing external link to prawduct, which is not a relative link.
+
+**Review.** Critic (cumulative, inferred by the coordinator, one reviewer over `32a25c9d`): 0 blocking, 2 warnings, 2 notes. The page's sentence on which verbs are left out of the primed list now says `candidate` is primed once the operator tells every session about candidates (R-4).
+
+**rev-20261016T184951Z-5afddbf0** — 2026-10-16T18:51:16Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | The full suite runs once on the final tree in the queue's suite slot (rule #262 cl.4) and is recorded then. Narrow on the working tree: test/tc-cli-reference.test.js and test/features-index.test.js, 27/27. |
+| R-2 | warning | fixed-unreviewed | fixed in `.prawduct/change-log.md` |
+| R-3 | note | accepted | Deliberate (plan deliverable 1, #2299's Expected): the page ships in 5.34.0 and says tc --help is the authority on any other install. |
+| R-4 | note | fixed-unreviewed | fixed in `docs/tc-cli-reference.md` |
+
+**4 findings** (2 warning, 2 note) — accepted: 2, fixed-unreviewed: 2.
+
 ## 2026-10-16 — #2175, #2349 (refs): one clock for the two-clone summary comparison, and the guard sees a returned git wrapper
 
 <!-- prawduct: type=chore | scope=w3-a1-test-determinism-2175-2349 -->

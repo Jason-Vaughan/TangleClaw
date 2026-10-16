@@ -18,7 +18,7 @@ tc --help
 
 ## Command families at a glance
 
-This page lists every top-level verb `tc --help` shows, including the restricted ones. The tables below say what each command does. Three verbs, `queue`, `check` and `candidate`, are left out of the verb list a launched session is primed with; `tc --help` still lists them.
+This page lists every top-level verb `tc --help` shows, including the restricted ones. The tables below say what each command does. `queue` and `check` are left out of the verb list a launched session is primed with, and so is `candidate` unless the operator has the bridge on and has told every session about candidates; `tc --help` lists all three either way.
 
 | Family | Purpose |
 | --- | --- |
