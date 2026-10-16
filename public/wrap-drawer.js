@@ -124,13 +124,14 @@
     if (!mergeAuthority || typeof mergeAuthority !== 'object') return null;
     const integrator = typeof mergeAuthority.integrator === 'string' ? mergeAuthority.integrator.trim() : '';
     if (mergeAuthority.authority === 'self') return null;
+    // The detail line is cut to one line on screen, so who merges comes first.
     if (mergeAuthority.authority === 'integrator') {
-      return `wrap PR opened for ${integrator || 'its coordinator'} to merge`;
+      return `${integrator || 'its coordinator'} merges this wrap PR; auto-merge not armed`;
     }
     const reason = typeof mergeAuthority.reason === 'string' && mergeAuthority.reason.trim()
       ? mergeAuthority.reason.trim()
       : 'no reason was given';
-    return `wrap PR opened; who merges could not be established: ${reason}`;
+    return `who merges this wrap PR is unknown: ${reason}`;
   }
 
   /**

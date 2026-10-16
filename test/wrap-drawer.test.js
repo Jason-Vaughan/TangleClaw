@@ -1156,35 +1156,35 @@ describe('wrap-drawer helpers — who merges a wrap PR (#2366)', () => {
 
   it('says the coordinator merges, and shows nothing under "How to fix this"', () => {
     const row = H.buildStepRow(unarmedFor({ authority: 'integrator', integrator: 'TC-Lane-INT', source: 'coordinator' }), {});
-    assert.equal(row.detail, 'abc123def456 · wrap PR opened for TC-Lane-INT to merge');
+    assert.equal(row.detail, 'abc123def456 · TC-Lane-INT merges this wrap PR; auto-merge not armed');
     assert.equal(row.remediation, null);
   });
 
   it('says the same on the coordinator\'s own wrap', () => {
     const row = H.buildStepRow(unarmedFor({ authority: 'integrator', integrator: 'TC-Lane-B', source: 'coordinator-and-queue' }), {});
-    assert.equal(row.detail, 'abc123def456 · wrap PR opened for TC-Lane-B to merge');
+    assert.equal(row.detail, 'abc123def456 · TC-Lane-B merges this wrap PR; auto-merge not armed');
     assert.equal(row.remediation, null);
   });
 
-  it('says who merges could not be established, and why', () => {
+  it('says who merges is unknown, and why', () => {
     const row = H.buildStepRow(unarmedFor({ authority: 'unknown', reason: 'the project settings could not be read' }), {});
     assert.equal(row.detail,
-      'abc123def456 · wrap PR opened; who merges could not be established: the project settings could not be read');
+      'abc123def456 · who merges this wrap PR is unknown: the project settings could not be read');
     assert.equal(row.remediation, null);
   });
 
   it('names no coordinator it was not given, and invents no reason', () => {
     const detail = (ma) => H.buildStepRow(closeLoop({ prUrl: 'https://x/pull/1', mergeAuthority: ma }), {}).detail;
-    assert.equal(detail({ authority: 'integrator' }), 'abc123def456 · wrap PR opened for its coordinator to merge');
+    assert.equal(detail({ authority: 'integrator' }), 'abc123def456 · its coordinator merges this wrap PR; auto-merge not armed');
     assert.equal(detail({ authority: 'unknown' }),
-      'abc123def456 · wrap PR opened; who merges could not be established: no reason was given');
+      'abc123def456 · who merges this wrap PR is unknown: no reason was given');
   });
 
   it('keeps the release suffix after the who-merges phrase', () => {
     const r = unarmedFor({ authority: 'integrator', integrator: 'TC-Lane-INT', source: 'coordinator' });
     r.output.releasePrepare = { status: 'skipped', reason: 'no command configured' };
     assert.equal(H.buildStepRow(r, {}).detail,
-      'abc123def456 · wrap PR opened for TC-Lane-INT to merge · releasePrepareCommand not run: no command configured');
+      'abc123def456 · TC-Lane-INT merges this wrap PR; auto-merge not armed · releasePrepareCommand not run: no command configured');
   });
 
   it('shows a failed push\'s close-loop remediation under "How to fix this"', () => {

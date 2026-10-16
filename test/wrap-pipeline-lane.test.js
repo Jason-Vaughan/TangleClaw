@@ -240,8 +240,8 @@ describe('wrap pipeline — a project that works under a coordinator (#2320)', (
       const bareRefs = execFileSync('git', ['for-each-ref', '--format=%(refname)'], { cwd: bare, encoding: 'utf8' });
       assert.match(bareRefs, /refs\/heads\/wrap\//, 'the work is preserved on the remote');
       const commitRow = rowOf(commit);
-      assert.match(commitRow.remediation, /auto-merge was deliberately not armed/);
-      assert.match(commitRow.remediation, new RegExp(`${COORDINATOR} merges this pull request`));
+      assert.match(commitRow.detail, new RegExp(` · ${COORDINATOR} merges this wrap PR; auto-merge not armed$`), 'the row is cut to one line: the name comes first');
+      assert.equal(commitRow.remediation, null, 'nothing needs fixing, so nothing is under "How to fix this" (#2366)');
 
       // One answer, stated on both rows.
       assert.deepEqual(
