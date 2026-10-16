@@ -365,7 +365,13 @@ describe('API /api/shared-docs/:id/lock', () => {
   });
 });
 
-describe('shared-doc broadcast never notifies the project that owns the file (#998)', () => {
+// #998 kept a project from being told of a write to a file in its own
+// directory, because the broadcast could not know the writer. Since #2389 (A1b)
+// a notice follows the delivery rule: the ATTESTED author is never told, and a
+// member that subscribed is told of every change, an unattested write to its
+// own file included, because it asked. Both are pinned here through real
+// listeners.
+describe('shared-doc notices never reach the attested author; a subscribing owner hears an unattested write (#998, #2389)', () => {
   const medusa = require('../lib/medusa');
   const OPEN = 1;
 
@@ -391,7 +397,11 @@ describe('shared-doc broadcast never notifies the project that owns the file (#9
   let server;
   let ownerSessionId;
   let peerSessionId;
+  let ownerId;
+  let peerId;
+  let groupId;
   let docId;
+  let docPath;
 
   before(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-shareddoc-self-'));
@@ -404,7 +414,7 @@ describe('shared-doc broadcast never notifies the project that owns the file (#9
     // that project editing its own file broadcasts a message back to itself.
     const ownerPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-doc-owner-'));
     const peerPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-doc-peer-'));
-    const docPath = path.join(ownerPath, 'ROADMAP_STATE.md');
+    docPath = path.join(ownerPath, 'ROADMAP_STATE.md');
     fs.writeFileSync(docPath, '# state\n');
 
     // Membership through `addMember`, the way the API establishes it. Passing
@@ -418,6 +428,9 @@ describe('shared-doc broadcast never notifies the project that owns the file (#9
     const peer = store.projects.create({ name: 'doc-peer', path: peerPath, engine: 'claude' });
     store.projectGroups.addMember(group.id, owner.id);
     store.projectGroups.addMember(group.id, peer.id);
+    ownerId = owner.id;
+    peerId = peer.id;
+    groupId = group.id;
 
     const doc = store.sharedDocs.create({
       groupId: group.id, name: 'ROADMAP_STATE', filePath: docPath,
@@ -440,6 +453,8 @@ describe('shared-doc broadcast never notifies the project that owns the file (#9
     docId = doc.id;
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    // The baseline every test below changes.
+    await request(server, 'POST', `/api/shared-docs/${docId}/notify`);
   });
 
   after(async () => {
@@ -452,16 +467,47 @@ describe('shared-doc broadcast never notifies the project that owns the file (#9
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('attempts the peer session and skips the owning project entirely', async () => {
-    const { status, data } = await request(server, 'POST', `/api/shared-docs/${docId}/notify`);
-    assert.equal(status, 200);
+  // No Bridge is up in tests, so every ATTEMPTED send fails and names its
+  // session — which makes the error list an honest record of who was tried.
 
-    // No Bridge is up in tests, so every ATTEMPTED send fails and names its
-    // session — which makes the error list an honest record of who was tried.
-    // That is the discriminator: the owning session must not appear at all.
-    const tried = (data.errors || []).join(' ');
-    assert.ok(tried.includes(`session ${peerSessionId}`), 'the peer must still be notified');
-    assert.ok(!tried.includes(`session ${ownerSessionId}`),
-      'the project whose directory holds the file must never be told about its own write');
+  it('the attested author is never tried, even when its directory holds the file and it subscribed', async () => {
+    const sharedDocRecord = require('../lib/shared-docs');
+    for (const projectId of [ownerId, peerId]) {
+      store.sharedDocNoticePrefs.set({ projectId, groupId, setting: 'subscribe' });
+    }
+    try {
+      const base = (await sharedDocRecord.captureBase(docId)).sha256;
+      const content = '# state\n\nthe owner\'s attested edit\n';
+      fs.writeFileSync(docPath, content);
+      const outcome = await sharedDocRecord.attest(docId, {
+        baseSha256: base, sha256: sharedDocRecord.sha256(Buffer.from(content)),
+        projectId: ownerId, sessionId: ownerSessionId, recheck: () => null
+      });
+      assert.equal(outcome.status, 200);
+      const tried = (await outcome.delivery).errors.join(' ');
+      assert.ok(tried.includes(`session ${peerSessionId}`), 'the subscribing peer must still be told');
+      assert.ok(!tried.includes(`session ${ownerSessionId}`),
+        'the attested author must never be told about its own write, whatever it subscribed to');
+    } finally {
+      for (const projectId of [ownerId, peerId]) {
+        store.sharedDocNoticePrefs.set({ projectId, groupId, setting: 'default' });
+      }
+    }
+  });
+
+  it('the project whose directory holds the file IS tried for an unattested write when it subscribed, and the peer that did not is not', async () => {
+    store.sharedDocNoticePrefs.set({ projectId: ownerId, groupId, setting: 'subscribe' });
+    try {
+      fs.appendFileSync(docPath, 'an unattested write\n');
+      const { status, data } = await request(server, 'POST', `/api/shared-docs/${docId}/notify`);
+      assert.equal(status, 200);
+      const tried = (data.errors || []).join(' ');
+      assert.ok(tried.includes(`session ${ownerSessionId}`),
+        'the writer is unknown, and a subscriber asked for every change, its own included');
+      assert.ok(!tried.includes(`session ${peerSessionId}`),
+        'a member that did not subscribe is not told of an unknown author\'s write');
+    } finally {
+      store.sharedDocNoticePrefs.set({ projectId: ownerId, groupId, setting: 'default' });
+    }
   });
 });
