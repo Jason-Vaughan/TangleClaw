@@ -1479,6 +1479,12 @@ html[data-tc-keyboard] body {
    The settings modal carries far more controls than the other (confirmation)
    modals, so it gets its own width + a set of responsive grids. Each grid uses
    auto-fit/minmax so it collapses to a single column on narrow viewports.
+   Each track minimum is written `min(<n>px, 100%)`, never a bare `<n>px`: a
+   grid track never shrinks below its minimum, so on a phone whose modal body
+   is narrower than <n> the one remaining column would stick out of it and the
+   whole body would scroll sideways (#2361). The
+   `100%` caps the minimum at the body's width; a wide modal is laid out
+   exactly as before.
    NOTE: the selector is `.modal-content.settings-modal` (two classes) on
    purpose — the base `.modal-content { max-width: 380px }` rule lives LATER in
    this file, so an equal-specificity `.settings-modal` would lose on source
@@ -1511,7 +1517,7 @@ html[data-tc-keyboard] body {
    0-height cell. */
 .settings-toggles-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(290px, 100%), 1fr));
   gap: 0 22px;
   align-items: start;
 }
@@ -1521,7 +1527,7 @@ html[data-tc-keyboard] body {
 /* The 8 wrap-summary pills — three-up on a wide modal (was 8 stacked rows). */
 .wrap-section-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(165px, 100%), 1fr));
   gap: 0 18px;
   margin-top: 4px;
 }
@@ -1531,7 +1537,7 @@ html[data-tc-keyboard] body {
 /* The three rule editors (Startup / Wrap / Mode) — side by side when they fit. */
 .project-rules-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr));
   gap: 4px 18px;
 }
 .project-rules-grid .project-rules-block {
@@ -2721,7 +2727,7 @@ html[data-tc-keyboard] body {
   margin-top: 4px;
   /* #1271 — hints carry <code> paths (`package.json`, `<project-root>/FEATURES.md`)
      that the line-breaker sees as one word. `.settings-toggles-grid` packs
-     `minmax(290px, 1fr)` tracks into a modal with a fixed ceiling and
+     `minmax(min(290px, 100%), 1fr)` tracks into a modal with a fixed ceiling and
      `overflow: hidden`, so at two columns there is no slack: an unbreakable token
      overflows its cell and is clipped rather than wrapped.
      `anywhere` rather than `break-word` deliberately: only `anywhere` shrinks the

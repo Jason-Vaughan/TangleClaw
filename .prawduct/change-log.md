@@ -35,6 +35,20 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-15 — #2361 and #2366: Project Settings fits a phone; the wrap drawer says who merges a coordinated wrap PR
+
+<!-- prawduct: type=bugfix | scope=w2b1-settings-narrow-and-wrap-drawer-merge-authority -->
+
+v5.34.0 Wave 2 chunk W2-B1, its one chunk. Branch `fix/w2b1-settings-narrow-wrap-drawer`. Closes #2361 and #2366. Plan: `.tangleclaw/plans/build-plan-w2b1-settings-narrow-and-wrap-drawer-merge-authority.md` (approved by TC-Lane-INT; the PM's `b2 w2 files ok`; `test/settings-hint-wrapping.test.js` added for one assertion by the Integrator's `w2b1 add hint test`).
+
+**Why.** (#2361) At a 320 px viewport Project Settings scrolled sideways: the toggles grid's track minimum was a bare `290px`, a grid track never shrinks below its minimum, and the modal body there is narrower (measured 39 px past the edge, the Silent prime cell). (#2366) A wrap PR left unarmed because a coordinator merges it read on the commit row as a failure to arm, and its sentence sat under "How to fix this" although nothing needs fixing; meanwhile every other close-loop remediation (a failed push or PR create, a hold, the methodology withhold), written under `autoPr`, was never shown at all.
+
+**What changed.** `public/style.css`: the three settings grids' track minimums become `min(<n>px, 100%)`, with the reason beside them; the `.form-hint` comment follows. `public/wrap-drawer.js`: the commit row says `wrap PR opened for <coordinator> to merge`, or `wrap PR opened; who merges could not be established: <reason>`, and shows no fix heading for that case (`stepRemediation`, `mergeAuthorityPhrase`); otherwise a commit row with no remediation of its own shows `autoPr.remediation`; the `pr-merge` and `priming-roll` tooltips name the coordinated project. The skipped `pr-merge` row already printed its reason through the shared skip path; a test now pins it. `lib/` is unchanged: the commit step still repeats the sentence as its own remediation, and the drawer ignores it for that case.
+
+**Tests.** `test/wrap-drawer.test.js` (a new describe, fixtures shaped as `lib/wrap-steps/commit.js` returns them, sentences from `lib/merge-authority.js`'s own `describe`); the new `test/settings-narrow-overflow.test.js` (each grid's block scoped, the capped floor present and no bare pixel minimum left); the hint test's geometry pin moved to the new floor, its gap and ceiling pins unchanged. Run against the base code, the new cases fail (9 drawer, 6 grid).
+
+**Browser.** An automated run under the Browser slot, not yet seen by the Operator: before and after at 320 and 375 (frames, overlay and forced 8 px scrollbars), desktop two-up with a saved toggle surviving a reload, the drawer from fixtures at 900, 375 and 320. Record: `.prawduct/lane-evidence/w2b1/browser/browser-check.md` (git-ignored). Limit seen: the drawer's one-line row detail (`public/session.css`) cuts the new sentence on screen; the banner carries it whole once the PR status reads pending.
+
 ## 2026-10-15 — #2364: the Operator settles a merge queue entry stuck in landing
 
 <!-- prawduct: type=feature | scope=w1-a2-merge-queue-2372-2364 -->
