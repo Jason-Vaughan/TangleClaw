@@ -112,6 +112,24 @@ describe('shared-doc revisions: classification (#2389)', () => {
     assert.deepEqual(diff(prior, reordered).classes, ['formatting']);
   });
 
+  it('a row moved between two tables with the same header under different headings: that key changes', () => {
+    const doc = (activeA) => [
+      '## Active', '', '| Lane | State |', '|---|---|',
+      ...(activeA ? ['| TC-Lane-A | building |'] : []), '| TC-Lane-B | planning |', '',
+      '## Done', '', '| Lane | State |', '|---|---|',
+      ...(activeA ? [] : ['| TC-Lane-A | building |']), ''
+    ].join('\n');
+    const r = diff(doc(true), doc(false));
+    assert.ok(r.classes.includes('row'), 'a lane moved from Active to Done is a change to that lane, never formatting');
+    assert.deepEqual(r.changedProjectIds, [11]);
+  });
+
+  it('renaming a heading over a keyed table over-reports its rows rather than hiding anything', () => {
+    const r = diff(laneDoc(), laneDoc().replace('## Lanes', '## Lane states'));
+    assert.deepEqual(r.classes, ['row', 'unknown']);
+    assert.deepEqual(r.changedProjectIds, [11, 12]);
+  });
+
   it('a new row added under a key with several rows: only that key changes', () => {
     const next = laneDoc({ clears: ['| TC-Lane-A | 19:22 |', '| TC-Lane-A | 18:59 |', '| TC-Lane-A | 20:01 |', '| TC-Lane-B | 18:40 |'] });
     const r = diff(laneDoc(), next);
