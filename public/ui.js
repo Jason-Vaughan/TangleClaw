@@ -5272,10 +5272,7 @@ async function submitCreate() {
 
   // Show warnings from partial failures (scaffolding, git init, hooks)
   if (result.warnings && result.warnings.length > 0) {
-    const toast = document.getElementById('toast');
-    toast.textContent = `Warning: ${result.warnings.join('; ')}`;
-    toast.className = 'toast toast-warn visible';
-    setTimeout(() => { toast.classList.remove('visible'); }, 8000);
+    showToast(`Warning: ${result.warnings.join('; ')}`, 'warn', 8000);
   }
 
   closeCreateModal();
@@ -5373,16 +5370,79 @@ async function importLeaseProjects(names) {
 /**
  * Show a message in the page toast, which is `role="alert"`, so a screen
  * reader announces it as well as showing it.
+ *
+ * This is the only writer of the toast on the dashboard. The page has one
+ * toast element, so each message replaces the one before it: the earlier
+ * message's timer is cancelled and anything it added (a button, a note) is
+ * removed, so no timer can hide a message it was not set for and no control
+ * outlives its message. The timer and the added nodes are kept on the element
+ * itself rather than in module state, and a timed message hides itself without
+ * calling out, so the function can be lifted alone.
  * @param {string} text - Message text
  * @param {'ok'|'warn'} kind - Toast style
- * @param {number} ms - How long it stays visible
+ * @param {number} [ms] - How long it stays visible; 0 or absent leaves it up
+ *   until the next message replaces it
+ * @param {object} [opts]
+ * @param {boolean} [opts.sticky] - Stays until dismissed or replaced, with a
+ *   Dismiss button; Escape while focus is in the message dismisses it too.
+ *   `ms` is ignored.
+ * @param {function(HTMLElement): (Node|null)} [opts.action] - Adds to the
+ *   message after its text; returns what it added, so it is removed with the message
  */
-function showToast(text, kind, ms) {
+function showToast(text, kind, ms, opts) {
   const t = document.getElementById('toast');
   if (!t) return;
+  const o = opts || {};
+  if (t._tcHideTimer) clearTimeout(t._tcHideTimer);
+  t._tcHideTimer = null;
+  for (const node of t._tcAdded || []) node.remove();
   t.textContent = text;
   t.className = `toast toast-${kind} visible`;
-  setTimeout(() => { t.classList.remove('visible'); }, ms);
+  const added = [];
+  if (typeof o.action === 'function') {
+    const node = o.action(t);
+    if (node) added.push(node);
+  }
+  if (o.sticky) {
+    const dismiss = document.createElement('button');
+    dismiss.type = 'button';
+    dismiss.className = 'btn btn-small toast-action';
+    dismiss.textContent = 'Dismiss';
+    dismiss.addEventListener('click', () => hideToast());
+    t.appendChild(dismiss);
+    added.push(dismiss);
+    if (!t._tcEscapeWired) {
+      t._tcEscapeWired = true;
+      t.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && t._tcSticky) hideToast();
+      });
+    }
+  }
+  t._tcAdded = added;
+  t._tcSticky = Boolean(o.sticky);
+  if (!o.sticky && ms > 0) {
+    t._tcHideTimer = setTimeout(() => {
+      t._tcHideTimer = null;
+      t.classList.remove('visible');
+      for (const node of added) node.remove();
+      t._tcAdded = null;
+    }, ms);
+  }
+}
+
+/**
+ * Hide the page toast and remove what its message added, so nothing
+ * focusable stays in a message that has moved off screen.
+ */
+function hideToast() {
+  const t = document.getElementById('toast');
+  if (!t) return;
+  if (t._tcHideTimer) clearTimeout(t._tcHideTimer);
+  t._tcHideTimer = null;
+  t.classList.remove('visible');
+  for (const node of t._tcAdded || []) node.remove();
+  t._tcAdded = null;
+  t._tcSticky = false;
 }
 
 /**
@@ -6003,13 +6063,10 @@ async function copyOpenclawSSH(connId) {
   if (!conn) return;
 
   const sshCmd = `ssh -i ${conn.sshKeyPath} ${conn.sshUser}@${conn.host}`;
-  const toast = document.getElementById('toast');
 
   const ok = await tcCopyToClipboard(sshCmd);
   // On failure show the command itself so it can be hand-selected.
-  toast.textContent = ok ? `Copied: ${sshCmd}` : sshCmd;
-  toast.className = 'toast toast-ok visible';
-  setTimeout(() => toast.classList.remove('visible'), 5000);
+  showToast(ok ? `Copied: ${sshCmd}` : sshCmd, 'ok', 5000);
 }
 
 /**
@@ -6036,11 +6093,8 @@ function closeOpenclawSetupModal() {
  */
 async function copyOpenclawSetupPrompt() {
   const prompt = (document.getElementById('ocSetupPrompt')?.textContent || '').trim();
-  const toast = document.getElementById('toast');
   const ok = await tcCopyToClipboard(prompt);
-  toast.textContent = ok ? 'Setup prompt copied to clipboard' : 'Copy failed — select the prompt text manually';
-  toast.className = ok ? 'toast toast-ok visible' : 'toast toast-warn visible';
-  setTimeout(() => toast.classList.remove('visible'), 5000);
+  showToast(ok ? 'Setup prompt copied to clipboard' : 'Copy failed — select the prompt text manually', ok ? 'ok' : 'warn', 5000);
 }
 
 /**
@@ -6054,12 +6108,7 @@ async function detectOcInstanceDir() {
   const sshKeyPath = document.getElementById('ocSshKeyPath').value.trim();
   const btn = document.getElementById('ocDetectBtn');
   const input = document.getElementById('ocInstanceDir');
-  const toast = document.getElementById('toast');
-  const flash = (msg, kind) => {
-    toast.textContent = msg;
-    toast.className = `toast toast-${kind} visible`;
-    setTimeout(() => toast.classList.remove('visible'), 5000);
-  };
+  const flash = (msg, kind) => showToast(msg, kind, 5000);
 
   if (!host || !sshUser || !sshKeyPath) {
     flash('Fill Host, SSH User, and SSH Key Path first, then Detect', 'warn');
@@ -6106,19 +6155,15 @@ async function killOpenclawTunnel(connId) {
     method: 'DELETE'
   });
 
-  const toast = document.getElementById('toast');
   if (res.ok) {
     const data = await res.json();
-    toast.textContent = `Tunnel killed${data.killedPid ? ` (PID ${data.killedPid})` : ''} — port ${data.localPort} released`;
-    toast.className = 'toast toast-ok visible';
+    showToast(`Tunnel killed${data.killedPid ? ` (PID ${data.killedPid})` : ''} — port ${data.localPort} released`, 'ok', 5000);
     delete state.openclawTunnelStatus[connId];
     renderOpenclawConnections();
   } else {
     const data = await res.json().catch(() => ({}));
-    toast.textContent = data.error || 'Failed to kill tunnel';
-    toast.className = 'toast toast-err visible';
+    showToast(data.error || 'Failed to kill tunnel', 'warn', 5000);
   }
-  setTimeout(() => toast.classList.remove('visible'), 5000);
 }
 
 // ── OpenClaw Connection Modal ──

@@ -862,14 +862,20 @@ reading of now and not a record: nothing is stored, and after a server restart t
 `never-reported` until the helper's next pass, seconds later.
 
 **The reading.** `GET /api/bridge/operator/status` and `GET /api/bridge/master/status` both
-carry `discordGateway`: `{reading, state, since, fatalCloseCode, reportedAt}`.
+carry `discordGateway`: `{reading, state, since, fatalCloseCode, reportedAt, sinceText, reportedAtText}`.
+`since` and `reportedAt` are ISO times, as the helper and the bridge write them, for a script to
+read. `sinceText` and `reportedAtText` are the same two times for a person: this host's local
+time with its zone, as the bridge's notices word a time (`22:03 PDT on 2026-10-10`; in UTC, and
+saying so, where the zone cannot be named), and null where the ISO time is null. The bridge
+panel and `tc bridge status` print these words; from a server older than them, which sends
+only the ISO times, they print the ISO time.
 
 | `reading` | Means | `tc bridge status` prints |
 |---|---|---|
-| `connected` | The helper's last report said `ready`, and is no older than three minutes. | `Discord connection: connected since <since> (the helper's report of <reportedAt>).` |
-| `down` | The last report said anything else, and is no older than three minutes. `state` says what the helper is doing about it; `fatal` means Discord refused the connection (`fatalCloseCode` says how) and the helper will not retry. | `Discord connection: NOT CONNECTED since <since>: the helper reports <state> ...` and, for `fatal`, the close code and that it will not retry until it is put right and restarted. |
-| `not-reported` | The last report is older than three minutes, whatever it said. `state` and `since` are what it said then; `reportedAt` is when the helper was last heard. Whether Discord is connected is not known. | `Discord connection: NOT REPORTED since <reportedAt>: the helper last said <state> ...` |
-| `never-reported` | No report since this server started: `state`, `since`, `fatalCloseCode` and `reportedAt` are null. The helper is not running, has not yet asked for work, or predates the report. | `Discord connection: never reported since this server started: ...` |
+| `connected` | The helper's last report said `ready`, and is no older than three minutes. | `Discord connection: connected since <sinceText> (the helper's report of <reportedAtText>).` |
+| `down` | The last report said anything else, and is no older than three minutes. `state` says what the helper is doing about it; `fatal` means Discord refused the connection (`fatalCloseCode` says how) and the helper will not retry. | `Discord connection: NOT CONNECTED since <sinceText>: the helper reports <state> ...` and, for `fatal`, the close code and that it will not retry until it is put right and restarted. |
+| `not-reported` | The last report is older than three minutes, whatever it said. `state` and `since` are what it said then; `reportedAt` is when the helper was last heard. Whether Discord is connected is not known. | `Discord connection: NOT REPORTED since <reportedAtText>: the helper last said <state> ...` |
+| `never-reported` | No report since this server started: `state`, `since`, `fatalCloseCode`, `reportedAt`, `sinceText` and `reportedAtText` are null. The helper is not running, has not yet asked for work, or predates the report. | `Discord connection: never reported since this server started: ...` |
 
 Three minutes, because a helper that died still said `ready` in its last report. The helper
 claims every `pollSeconds` (5 to 300, 15 by default), and backs off to as much as five minutes
@@ -1081,15 +1087,17 @@ it has to sign in, and nothing of the bridge.
 Among its status lines, after **To post**, the panel has one line with no control,
 **Discord connection**, drawn from the status's `discordGateway` (see
 [The helper's Discord connection](#the-helpers-discord-connection)). It says what
-`tc bridge status` says, and shows the times exactly as the server gave them, as the panel
-shows every other time.
+`tc bridge status` says. Its two times are the server's own words for a person, `sinceText`
+and `reportedAtText`: this host's local time with its zone. The panel does not format them
+itself; a script reads the raw ISO `since` and `reportedAt` from the same status instead. From
+a server older than those words, which sends only the ISO times, the line shows the ISO times.
 
 | `reading` | The line says |
 |---|---|
-| `connected` | `connected since <since> (the helper's report of <reportedAt>)` |
-| `down`, any state but `fatal` | **NOT CONNECTED** `since <since>: the helper reports <state> (its report of <reportedAt>). Nothing you write in the chat arrives meanwhile.` |
-| `down`, state `fatal` | **REFUSED by Discord** `since <since> (close code <code>: <what it means>). The helper will not retry until it is put right and restarted (its report of <reportedAt>). Nothing you write in the chat arrives meanwhile.` The meaning is given for the two refusals the operator can put right: 4004, `bad bot token`, and 4014, `Message Content Intent is off`. Any other code is shown as its number alone. A refusal is never worded as a connection that is retrying. |
-| `not-reported` | **not reported** `since <reportedAt>: the helper last said <state> and has not reported since. It may not be running; whether Discord is connected is not known.` |
+| `connected` | `connected since <sinceText> (the helper's report of <reportedAtText>)` |
+| `down`, any state but `fatal` | **NOT CONNECTED** `since <sinceText>: the helper reports <state> (its report of <reportedAtText>). Nothing you write in the chat arrives meanwhile.` |
+| `down`, state `fatal` | **REFUSED by Discord** `since <sinceText> (close code <code>: <what it means>). The helper will not retry until it is put right and restarted (its report of <reportedAtText>). Nothing you write in the chat arrives meanwhile.` The meaning is given for the two refusals the operator can put right: 4004, `bad bot token`, and 4014, `Message Content Intent is off`. Any other code is shown as its number alone. A refusal is never worded as a connection that is retrying. |
+| `not-reported` | **not reported** `since <reportedAtText>: the helper last said <state> and has not reported since. It may not be running; whether Discord is connected is not known.` |
 | `never-reported` | `never reported since this server started: the helper is not running, has not yet asked for work, or predates the report. Restart the helper after an update.` |
 
 While the bridge is disabled, the `not-reported` and `never-reported` lines end with `The bridge

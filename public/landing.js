@@ -107,8 +107,7 @@ const reconnectPolicy = tcCreateReconnectPolicy({
  * applies, so the only navigation out of this state is the operator's.
  */
 function renderUnreachableState() {
-  const toast = document.getElementById('toast');
-  if (toast) toast.classList.remove('visible');
+  hideToast();
   let el = document.getElementById('unreachableState');
   if (!el) {
     el = document.createElement('div');
@@ -168,17 +167,13 @@ async function retryConnectionNow() {
 function setConnected(connected) {
   if (state.connected === connected) return;
   state.connected = connected;
-  const toast = document.getElementById('toast');
   if (!connected) {
-    toast.textContent = 'Connection lost. Retrying\u2026';
-    toast.className = 'toast toast-warn visible';
+    showToast('Connection lost. Retrying\u2026', 'warn');
     reconnectPolicy.begin();
   } else {
     // `end()` dismisses the unreachable state through `onRecover`.
     reconnectPolicy.end();
-    toast.textContent = 'Reconnected';
-    toast.className = 'toast toast-ok visible';
-    setTimeout(() => { toast.classList.remove('visible'); }, 3000);
+    showToast('Reconnected', 'ok', 3000);
   }
 }
 
@@ -961,11 +956,7 @@ function renderAuthUser(user) {
         btn.disabled = true;
         if (await tcSignOut(api)) return;
         btn.disabled = false;
-        const toast = document.getElementById('toast');
-        if (toast) {
-          toast.textContent = `Could not sign out: ${api.lastError || 'unknown error'}`;
-          toast.className = 'toast toast-warn visible';
-        }
+        showToast(`Could not sign out: ${api.lastError || 'unknown error'}`, 'warn');
       });
     }
   }
@@ -1789,31 +1780,21 @@ async function repairAllOrphanHooks() {
   if (list.length === 0) return;
   const names = list.map((p) => p.name).join(', ');
   if (!window.confirm(`Strip orphan hook entries from ${list.length} project(s)?\n\n${names}\n\nNon-orphan hooks and all other settings keys are preserved.`)) return;
-  const toast = document.getElementById('toast');
   // Gate the polling-driven scan refresh so it can't race the in-flight repair
   // POST and briefly flash the pre-repair banner state back (Critic N3).
   state.orphanHooksRepairInFlight = true;
   try {
     const data = await apiMutate('/api/projects/repair-orphan-hooks', 'POST', {});
     if (!data) {
-      if (toast) {
-        toast.textContent = `Repair failed: ${api.lastError || 'unknown error'}`;
-        toast.className = 'toast toast-warn visible';
-        setTimeout(() => { toast.className = 'toast'; }, 4000);
-      }
+      showToast(`Repair failed: ${api.lastError || 'unknown error'}`, 'warn', 4000);
       return;
     }
     const repairedN = Array.isArray(data.repaired) ? data.repaired.length : 0;
     const errorN = Array.isArray(data.errors) ? data.errors.length : 0;
-    if (toast) {
-      if (errorN > 0) {
-        toast.textContent = `Repaired ${repairedN}, ${errorN} error${errorN > 1 ? 's' : ''}`;
-        toast.className = 'toast toast-warn visible';
-      } else {
-        toast.textContent = `Repaired ${repairedN} project(s)`;
-        toast.className = 'toast toast-ok visible';
-      }
-      setTimeout(() => { toast.className = 'toast'; }, 3000);
+    if (errorN > 0) {
+      showToast(`Repaired ${repairedN}, ${errorN} error${errorN > 1 ? 's' : ''}`, 'warn', 3000);
+    } else {
+      showToast(`Repaired ${repairedN} project(s)`, 'ok', 3000);
     }
     await loadProjects();
   } finally {
@@ -1842,12 +1823,7 @@ function wireOrphanHooksBanner() {
       repairAllOrphanHooks().catch((err) => {
         // eslint-disable-next-line no-console
         console.error('orphan-hooks repair failed', err);
-        const toast = document.getElementById('toast');
-        if (toast) {
-          toast.textContent = `Repair failed: ${err && err.message ? err.message : 'unknown error'}`;
-          toast.className = 'toast toast-warn visible';
-          setTimeout(() => { toast.className = 'toast'; }, 4000);
-        }
+        showToast(`Repair failed: ${err && err.message ? err.message : 'unknown error'}`, 'warn', 4000);
       });
     });
   }
@@ -2043,7 +2019,6 @@ async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStra
     btn.disabled = true;
   }
 
-  const toast = document.getElementById('toast');
   const body = {};
   if (launchMode) body.launchMode = launchMode;
   if (continuityMode) body.continuityMode = continuityMode;
@@ -2071,14 +2046,15 @@ async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStra
         showStrandedLaunchError(data.error || `HTTP ${res.status}`);
         return;
       }
-      toast.textContent = `Launch failed: ${data.error || `HTTP ${res.status}`}`;
-      const pointer = launchRefusalIsOverridable(data)
-        ? appendLaunchIsolationPointer(toast, name, await api('/api/auth/me'))
-        : null;
-      toast.className = 'toast toast-warn visible';
-      // The message is hidden by moving it off screen, which leaves a button
-      // inside it in the tab order: the pointer goes when the message does.
-      setTimeout(() => { toast.classList.remove('visible'); if (pointer) pointer.remove(); }, 6000);
+      // A refusal is long and is the only place the page says why nothing
+      // started, so it stays until the operator dismisses it or a newer
+      // message replaces it; either removes the pointer with it.
+      const overridable = launchRefusalIsOverridable(data);
+      const me = overridable ? await api('/api/auth/me') : null;
+      showToast(`Launch failed: ${data.error || `HTTP ${res.status}`}`, 'warn', 0, {
+        sticky: true,
+        action: overridable ? (toast) => appendLaunchIsolationPointer(toast, name, me) : null
+      });
       return;
     }
 
@@ -2094,9 +2070,7 @@ async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStra
       showStrandedLaunchError(`Launch failed: ${err.message}`);
       return;
     }
-    toast.textContent = `Launch failed: ${err.message}`;
-    toast.className = 'toast toast-warn visible';
-    setTimeout(() => { toast.classList.remove('visible'); }, 6000);
+    showToast(`Launch failed: ${err.message}`, 'warn', 0, { sticky: true });
   }
 }
 
@@ -2120,12 +2094,13 @@ function launchRefusalIsOverridable(data) {
  * A page that would be offered the switch gets one button that opens the
  * project's Settings at it. A page that would not (signed out while a login
  * is in force) is told who can, in place of a button that leads to a control
- * it cannot use. The message keeps its own lifetime: the button is there only
- * while the message is.
+ * it cannot use. The message keeps its own lifetime: the button goes when the
+ * message is dismissed or replaced, or when the button is used.
  * @param {HTMLElement} toast - The launch-failed message, its text already set
  * @param {string} name - The project's name
  * @param {object|null} me - The answer of `GET /api/auth/me`, or null when the read failed
- * @returns {HTMLElement} What was added, for the caller to remove when the message is hidden
+ * @returns {HTMLElement} What was added, for the message's owner (`showToast`)
+ *   to remove when the message is dismissed or replaced
  */
 function appendLaunchIsolationPointer(toast, name, me) {
   const offer = typeof recoveryModeControlOffer === 'function' ? recoveryModeControlOffer(me) : { offered: true };
@@ -2141,8 +2116,7 @@ function appendLaunchIsolationPointer(toast, name, me) {
   btn.className = 'btn btn-small toast-action';
   btn.textContent = 'Open launch isolation settings';
   btn.addEventListener('click', () => {
-    toast.classList.remove('visible');
-    btn.remove();
+    hideToast();
     openIsolationOverrideSettings(name);
   });
   toast.appendChild(btn);

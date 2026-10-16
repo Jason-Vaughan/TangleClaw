@@ -85,9 +85,9 @@ describe('Dashboard orphan-hooks banner (#145, chunk 2)', () => {
       // Without an explicit errorN check, a server response with errors[] but
       // no thrown exception would land silently — banner left stale, no user
       // feedback. The structural lock-in: a `Array.isArray(data.errors)`
-      // branch must drive a `toast-warn` class.
+      // branch must show a warn message.
       assert.match(js, /Array\.isArray\(data\.errors\)/);
-      assert.match(js, /toast-warn visible/);
+      assert.match(js, /if \(errorN > 0\) \{\s*showToast\(`Repaired \$\{repairedN\}, \$\{errorN\} error[^`]*`, 'warn', \d+\);/);
     });
 
     it('repair path surfaces no-response failure separately from successful empty repair (Critic M1)', () => {

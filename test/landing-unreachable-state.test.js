@@ -38,6 +38,8 @@ const SW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'sw.js'), 'utf8');
 const RECONNECT_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'reconnect-policy.js'), 'utf8');
+const UI_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
 
 /**
  * Slice a top-level function (declaration + body) out of source text by
@@ -129,6 +131,10 @@ function installConnectionState(sandbox, extra) {
   vm.runInContext(RECONNECT_SRC, sandbox);
   vm.runInContext([
     liftFunction(LANDING_SRC, 'function esc(str)'),
+    // The page's one writer of the toast, which setConnected and the
+    // unreachable state show and hide it through.
+    liftFunction(UI_SRC, 'function showToast('),
+    liftFunction(UI_SRC, 'function hideToast('),
     liftFunction(LANDING_SRC, 'function renderUnreachableState()'),
     liftFunction(LANDING_SRC, 'function hideUnreachableState()'),
     ...extra,

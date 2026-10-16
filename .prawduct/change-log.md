@@ -35,6 +35,23 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-16 — #2339, #2313: a refused launch's message stays until dismissed; the bridge's Discord times in host-local time
+
+<!-- prawduct: type=bugfix | scope=w3b1-refused-launch-toast-and-bridge-local-times -->
+
+v5.34.0 Wave 3 chunk W3-B1, its one chunk. Branch `fix/w3b1-refused-launch-toast-and-bridge-times`. Fixes #2339. Refs #2313, which stays OPEN until one signed-in screen check after the deploy (the PM's deferral, below). Plan: `.tangleclaw/plans/build-plan-w3b1-refused-launch-toast-and-bridge-local-times.md` (rev 6, sha256 `e3f5dd80…cb2720c`; charter v2.7, sha256 `5b7d2550…912a1bc1`; Architect A110, A111, A116, A117, A120, A121 and the R-2 Escape correction). Exactly 23 files.
+
+**Why (#2339).** The dashboard shows every message in one toast, and each site set its own hide timer that nothing cancelled. A refused launch was hidden after six seconds, or sooner by an earlier message's timer, and in that case its "Open launch isolation settings" button stayed in the off-screen message, in the tab order. Refusals are long sentences carrying an absolute path, and the toast did not break a long word.
+
+**What changed (#2339).** `showToast` in `public/ui.js` is the toast's one owner, with a new `hideToast`: each message cancels the timer of the one before and removes what it added; a timed message hides itself without calling out, so it can still be lifted alone. Every direct toast write in `public/landing.js` and `public/ui.js` calls it. Both launch-failure branches are sticky: no timer, a Dismiss button, Escape with focus in the message; a newer message replaces one (the Integrator's ruling). The pointer's wordings (the decider's rulings item 61) now say the button goes when the message is dismissed or replaced. `.toast` gains `overflow-wrap: anywhere` in `public/style.css` and `public/session.css`; the message's buttons take their own line. The session page's message lifetimes are not changed.
+
+**Why and what (#2313).** The bridge panel and `tc bridge status` printed the helper's Discord times as raw UTC ISO. Both status routes in `lib/bridge-api.js` now add `sinceText` and `reportedAtText` to `discordGateway`, worded by the notices' own formatter (`lib/bridge-notify.js` exports `_when` as `when`, unchanged): `22:03 PDT on 2026-10-10`. The ISO fields are unchanged for scripts. `public/operator-bridge-panel.js` and `lib/tc-verbs.js` print the words and fall back to the ISO time from an older server. The configuration circuit's times stay raw ISO, out of scope by ruling.
+
+**Docs.** Three docs described the old behaviour and are corrected (charter v2.6 and v2.7): `docs/operator-bridge.md` (the status's field list, the `tc bridge status` line templates, and the dashboard panel's table and the paragraph above it), `docs/user-guide.md` (the Codex refusal entry no longer says the message shows for six seconds only) and `docs/engine-guide.md` (the override's pointer-button sentence).
+
+**Deferred, not a blocker (the PM's approval, rule 264.3).** The signed-in Operator Bridge panel's Discord line in host-local time was not seen on screen: the scratch server's bridge routes need a signed-in account and no credential is entered on a non-local host. Before the merge it is held by tests (the real panel against the real status route, and the real `tc bridge status`, zone pinned). Owed after the next deploy, owner TC-Lane-B, in LANE_QUEUE "Waiting on the next deploy".
+
+**Tests.** New: `test/launch-refusal-toast.test.js` (the real functions with held timers: both branches stay, Dismiss and Escape, the overlap case, replacement, the source layout) and `test/bridge-status-timestamps.test.js` (the formatter, the real `bin/tc` against a stub server, the ISO fallback). Changed only as the plan's exact list says: sandboxes or pins that gain the owner (`launch-isolation-override-ui`, `landing-unreachable-state`, `error-string-parity`, `account-self-service-ui`, `orphan-hooks-banner`, `stranded-wraps-ui`), and bridge tests that expect the text fields with a pinned zone (`operator-bridge-panel`, `api-bridge-gateway`, `api-bridge`). `import-banner-buttons` and `port-owner-kind-panel` pass unchanged.
 ## 2026-10-16 — #2299, #2384 (refs): a `tc` command reference, and the sixteen auto-stubbed FEATURES.md files described
 
 <!-- prawduct: type=docs | scope=w3-a2-tc-reference-and-features-stubs-2299-2384 -->

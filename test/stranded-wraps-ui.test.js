@@ -232,10 +232,13 @@ describe('dashboard: acknowledge and launch (#1539)', () => {
 
   it('opens the dialog with the items instead of a failure toast', async () => {
     const sb = sandboxFor([refusal]);
+    // The dashboard's one writer of the toast, so a refusal that did reach the toast would show there.
+    vm.runInContext(liftFunction(UI_SRC, 'function showToast('), sb);
     await sb.doLaunchProject('proj', 'yolo', 'continue');
     assert.ok(sb.els.strandedLaunchModal._classes.has('open'));
     assert.match(sb.els.strandedLaunchList.innerHTML, /wrap\/1-x/);
-    assert.equal(sb.els.toast.textContent, '', 'no failure toast for a refusal the dialog handles');
+    // The fake document makes an element only when code looks it up: absent means the toast was never written.
+    assert.equal(sb.els.toast ? sb.els.toast.textContent : '', '', 'no failure toast for a refusal the dialog handles');
     assert.deepEqual(sb.navigated, []);
   });
 

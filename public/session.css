@@ -112,6 +112,8 @@ html[data-tc-keyboard] body {
   font-size: 13px;
   font-weight: 600;
   text-align: center;
+  /* A refusal can carry a long absolute path; break it inside the padding. */
+  overflow-wrap: anywhere;
   transform: translateY(-100%);
   transition: transform 0.3s ease;
 }
