@@ -5379,7 +5379,7 @@ async function importLeaseProjects(names) {
  * itself rather than in module state, and a timed message hides itself without
  * calling out, so the function can be lifted alone.
  * @param {string} text - Message text
- * @param {'ok'|'warn'|'err'} kind - Toast style
+ * @param {'ok'|'warn'} kind - Toast style
  * @param {number} [ms] - How long it stays visible; 0 or absent leaves it up
  *   until the next message replaces it
  * @param {object} [opts]
@@ -6162,7 +6162,7 @@ async function killOpenclawTunnel(connId) {
     renderOpenclawConnections();
   } else {
     const data = await res.json().catch(() => ({}));
-    showToast(data.error || 'Failed to kill tunnel', 'err', 5000);
+    showToast(data.error || 'Failed to kill tunnel', 'warn', 5000);
   }
 }
 

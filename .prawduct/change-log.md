@@ -39,7 +39,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- prawduct: type=bugfix | scope=w3b1-refused-launch-toast-and-bridge-local-times -->
 
-v5.34.0 Wave 3 chunk W3-B1, its one chunk. Branch `fix/w3b1-refused-launch-toast-and-bridge-times`. Fixes #2339 and #2313. Plan: `.tangleclaw/plans/build-plan-w3b1-refused-launch-toast-and-bridge-local-times.md` (rev 3, charter v2.5, A110/A111).
+v5.34.0 Wave 3 chunk W3-B1, its one chunk. Branch `fix/w3b1-refused-launch-toast-and-bridge-times`. Fixes #2339. Refs #2313, which stays OPEN until one signed-in screen check after the deploy (the PM's deferral, below). Plan: `.tangleclaw/plans/build-plan-w3b1-refused-launch-toast-and-bridge-local-times.md` (rev 3, charter v2.5, A110/A111).
 
 **Why (#2339).** The dashboard shows every message in one toast, and each site set its own hide timer that nothing cancelled. A refused launch was hidden after six seconds, or sooner by an earlier message's timer, and in that case its "Open launch isolation settings" button stayed in the off-screen message, in the tab order. Refusals are long sentences carrying an absolute path, and the toast did not break a long word.
 
