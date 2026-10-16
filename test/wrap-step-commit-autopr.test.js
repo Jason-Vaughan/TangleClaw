@@ -329,8 +329,11 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
       // asserted on the row it builds, not only on the result.
       assert.equal(result.output.remediation, ap.remediation);
       const row = drawer.buildStepRow({ stepId: 'commit', kind: 'commit', status: result.status, output: result.output, blockers: result.blockers }, {});
-      assert.match(row.detail, /wrap PR opened \(auto-merge NOT armed\)/);
-      assert.ok(row.remediation.includes(ap.mergeAuthority.said), 'the drawer row carries who merges, under "How to fix this"');
+      const whoMerges = ap.mergeAuthority.authority === 'integrator'
+        ? `${ap.mergeAuthority.integrator} merges this wrap PR; auto-merge not armed`
+        : `who merges this wrap PR is unknown: ${ap.mergeAuthority.reason}`;
+      assert.ok(row.detail.includes(whoMerges), `the drawer row names who merges first (#2366): ${row.detail}`);
+      assert.equal(row.remediation, null, 'nothing needs fixing, so nothing is under "How to fix this" (#2366)');
       assert.equal(row.isBlocker, false);
       assert.equal(row.warning, false);
       return ap;

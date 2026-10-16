@@ -50,7 +50,7 @@ describe('settings hint wrapping (#1271)', () => {
     // third silently invalidate the rationale beside the rule.
     const grid = css.match(/\.settings-toggles-grid\s*\{[^}]*\}/);
     assert.ok(grid, 'the toggles grid rule must exist');
-    assert.match(grid[0], /minmax\(290px,\s*1fr\)/);
+    assert.match(grid[0], /minmax\(min\(290px,\s*100%\),\s*1fr\)/);
     assert.match(grid[0], /gap:\s*0\s+22px/);
     assert.match(css, /\.modal-content\.settings-modal\s*\{[^}]*max-width:\s*680px/);
   });
