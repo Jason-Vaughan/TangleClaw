@@ -74,6 +74,8 @@ v5.34.0 Wave 3 chunk W3-A2, records / public docs. Branch `docs/w3a2-tc-referenc
 
 **1 finding** (1 note) — fixed-unreviewed: 1.
 
+**Third review.** Critic (cumulative, `rev-20261016T190012Z-11df5057`, over `2ce595f9`): no findings.
+
 ## 2026-10-16 — #2175, #2349 (refs): one clock for the two-clone summary comparison, and the guard sees a returned git wrapper
 
 <!-- prawduct: type=chore | scope=w3-a1-test-determinism-2175-2349 -->
