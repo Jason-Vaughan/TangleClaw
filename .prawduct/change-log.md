@@ -35,6 +35,20 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-15 — #2414: the host check reads a direct-mode install's served certificate, and says whether its own Node process trusts the local root
+
+<!-- prawduct: type=bugfix | scope=w2b2-host-check-direct-trust-and-override-indicator -->
+
+v5.34.0 Wave 2 chunk W2-B2 chunk 01 of 2. Branch `fix/w2b2a-host-check-direct-trust`. Fixes #2414. Plan: `.tangleclaw/plans/build-plan-w2b2-host-check-direct-trust-and-override-indicator.md` (revision 2, accepted by the Architect's A85, whose clarifications override the plan where they differ; released by TC-Lane-INT).
+
+**Why.** On a direct-mode HTTPS install there is no Caddyfile, and the check read certificates only through Caddyfile sites, so its certificate, coverage and trust rows said nothing about the certificate the server is configured to serve. A routes row reading `tls-unverified` there could not be followed up from the check's own output. The comment beside the loopback request also read as if the only failure were a name mismatch for `127.0.0.1`.
+
+**What changed.** `lib/host-check.js`: in direct mode over HTTPS (and only then), row 4 reads the configured `httpsCertPath` through the same size-capped read, labelled `served certificate (configured)`; a missing, too-large, non-file or non-certificate file is `unknown` with its code. Coverage says whether it carries `127.0.0.1` and each configured name. Trust covers it with the existing issued-by-root check and adds one fact, `local root in this check's Node default CA set`: `yes`, `no` (only when every entry of a valid set was inspected), or `unknown (<code>)` (not measurable on this Node, read failed, too many, invalid shape, or incomplete with the parse count). The set comes from an injected, feature-detected `tls.getCACertificates('default')`; the fact never changes the row's state. The routes reason is unchanged; a `possible cause (not confirmed)` fact naming the configured certificate is added only when TLS failed, the local root issued that certificate, and the root measured `no`. The loopback comment is neutral about the cause. The module header lists the files read and the runtime CA-set retrieval. Caddy mode, plain HTTP and an unsupported ingress mode read nothing new. `docs/host-migration.md`: the paragraph that said the check cannot see a direct-mode certificate.
+
+**Tests.** `test/host-check.test.js`: a new describe (direct reads and labels; caddy-mode rows identical with HTTPS fields set; plain HTTP and an unsupported mode read nothing new; missing, too-large, garbage, directory and permission-denied served certificates; coverage of `127.0.0.1` and configured names; ten CA-set cases; the hint with all three conditions and its absence when any one is missing; redaction; a read spy showing no file read beyond the caddy-mode set plus `httpsCertPath`, and no key). The existing tests pass unedited. Against the base code 21 of the new cases fail; the rest are guards that pass there by design.
+
+**Evidence.** Step 0 (not network-isolated, labelled with its endpoints and process scope): `.prawduct/lane-evidence/w2b2/step0-before.txt` and `step0-after.txt` (git-ignored).
+
 ## 2026-10-15 — #2361 and #2366: Project Settings fits a phone; the wrap drawer says who merges a coordinated wrap PR
 
 <!-- prawduct: type=bugfix | scope=w2b1-settings-narrow-and-wrap-drawer-merge-authority -->

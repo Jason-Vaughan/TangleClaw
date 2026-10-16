@@ -133,9 +133,15 @@ connection it cannot verify. On its own it is not a diagnosis.
 - another validation failure.
 
 Diagnose which one before acting: check the certificate's trust, its validity dates, and the names
-it carries. The host check reads certificates only through the Caddyfile's sites, so on a direct-mode
-install with no Caddyfile it shows none of these. Check them by hand on the certificate TangleClaw
-serves, the file `httpsCertPath` names in the configuration. Do not re-mint because of this row alone.
+it carries. On a direct-mode HTTPS install the host check reads the certificate the configuration says
+TangleClaw serves, the file `httpsCertPath` names, and reports what it measured there: its names and
+dates (Certificates, actual), whether it carries `127.0.0.1` and the configured names (Coverage),
+whether the local mkcert root issued it, and whether that root is in this check's own Node default
+CA set (Local trust). That last fact describes the check's own process only: not the server's, not a
+browser's, and not the certificate the server actually presented, which the check does not read. When
+the routes row reads `tls-unverified`, the configured certificate was issued by the local root, and
+that root was measured absent from the CA set, the routes row adds a `possible cause (not confirmed)`
+line. It is a lead to check, not a diagnosis. Do not re-mint because of this row alone.
 
 ## On the new machine: diagnose first, then change only what a row shows
 
