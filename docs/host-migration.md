@@ -157,9 +157,12 @@ approximation of it.
 | Change a Tailscale serve route | The routes row lists a route that is wrong for this machine | The full output of `tailscale serve status --json` | That exact configuration, checked by reading it back |
 | Change the Caddyfile (today, a hand edit) | The Caddyfile or coverage row is `drift` or `ambiguous` | The file, byte for byte | That file, then a Caddy-only restart and a health check |
 
-The certificate, coverage and trust rows read certificates through the Caddyfile's sites. On a
-direct-mode install with no Caddyfile they report `observed` (nothing to compare), so these triggers
-never fire there.
+The certificate, coverage and trust rows read the certificates the Caddyfile's sites name and, on a
+direct-mode HTTPS install, the served certificate `httpsCertPath` names, so these triggers can fire
+there too: the coverage row reads `drift` when the served certificate does not carry `127.0.0.1` or a
+configured name, the certificate row when it has expired, and the trust row when the keychain does
+not trust its root. A direct-mode install over plain HTTP, with no Caddyfile, has no certificate to
+read, and these rows report `observed` (nothing to compare).
 
 How each change is made:
 - **Re-trust:** `mkcert -install` in a terminal. It asks for an administrator password. Then restart

@@ -1262,6 +1262,76 @@ describe('host-check: a direct-mode HTTPS install reads its served certificate (
     } finally { h.cleanup(); }
   });
 
+  /**
+   * A direct-mode HTTPS home that still holds a Caddyfile (one left over from
+   * caddy mode), serving `servedFile` under its certs directory.
+   * @param {string} servedFile - File name under `certs/`.
+   * @param {string} [contents] - Write this certificate there first.
+   * @returns {object} From makeHome, plus `served`.
+   */
+  function directHomeWithCaddyfile(servedFile, contents) {
+    const h = makeHome({ config: null });
+    const served = path.join(h.home, 'certs', servedFile);
+    if (contents) fs.writeFileSync(served, contents);
+    fs.writeFileSync(path.join(h.home, 'config.json'), JSON.stringify({ ingressMode: 'direct', httpsEnabled: true, httpsCertPath: served, httpsKeyPath: path.join(h.home, 'certs', 'key-decoy.pem'), serverPort: 3101 }));
+    return { ...h, served };
+  }
+
+  it('with a leftover Caddyfile whose site names the same file: read once, coverage of both, and the hint', async () => {
+    const h = directHomeWithCaddyfile('leaf-a.pem');
+    try {
+      const result = await run(h, { https: tlsFailure(), caCertificates: () => [CERTS.leafB] });
+      const c = row(result, 'certificates');
+      assert.equal(c.facts.filter((f) => f.value === h.served).length, 2, 'once as a site certificate, once as the served one');
+      assert.ok(c.facts.some((f) => f.label === hostCheck.SERVED_CERT_LABEL && f.value === h.served));
+      assert.ok(c.facts.some((f) => f.label === '  same file as' && f.value === 'a Caddyfile site\'s certificate'));
+      const cov = row(result, 'coverage');
+      assert.ok(cov.facts.some((f) => f.label === `${hostCheck.SERVED_CERT_LABEL} covers` && f.value === '127.0.0.1'));
+      assert.ok(cov.facts.some((f) => f.label === 'site 2 covered' && f.value === TS), 'the site facts are still there');
+      assert.equal(caFact(row(result, 'trust')).value, 'no');
+      assert.ok(hintFact(row(result, 'routes')), 'the served certificate was issued by the root, so the hint appears');
+    } finally { h.cleanup(); }
+  });
+
+  it('with a leftover Caddyfile and a different served file: both are read and judged', async () => {
+    const h = directHomeWithCaddyfile('served-copy.pem', CERTS.leafA);
+    try {
+      const result = await run(h, { https: tlsFailure(), caCertificates: () => [CERTS.leafB] });
+      const c = row(result, 'certificates');
+      assert.ok(c.facts.some((f) => f.label === hostCheck.SERVED_CERT_LABEL && f.value === h.served));
+      assert.ok(c.facts.some((f) => f.label === 'certificate' && f.value === path.join(h.home, 'certs', 'leaf-a.pem')));
+      assert.ok(!c.facts.some((f) => f.label === '  same file as'));
+      const cov = row(result, 'coverage');
+      assert.ok(cov.facts.some((f) => f.label === `${hostCheck.SERVED_CERT_LABEL} covers` && f.value === '127.0.0.1'));
+      assert.ok(cov.facts.some((f) => f.label === 'site 1 covered'));
+      assert.ok(row(result, 'trust').facts.some((f) => f.label === 'issued by the local root' && f.value === h.served));
+      assert.ok(hintFact(row(result, 'routes')));
+    } finally { h.cleanup(); }
+  });
+
+  it('with a leftover Caddyfile whose certificates the root issued, a served certificate it did not issue gives no hint', async () => {
+    const h = directHomeWithCaddyfile('served-other.pem', CERTS.leafOther);
+    try {
+      const result = await run(h, { https: tlsFailure(), caCertificates: () => [CERTS.leafB] });
+      const t = row(result, 'trust');
+      assert.ok(t.facts.some((f) => f.label === 'issued by the local root'), 'a site certificate was issued by the root');
+      assert.ok(t.facts.some((f) => f.label === 'NOT issued by the local root' && f.value === h.served));
+      assert.equal(hintFact(row(result, 'routes')), undefined);
+    } finally { h.cleanup(); }
+  });
+
+  it('runs only the three allow-listed commands in direct HTTPS mode too', async () => {
+    const h = directHome();
+    try {
+      const exec = fakeExec(healthyCommands());
+      await run(h, { execFile: exec, https: tlsFailure(), caCertificates: () => [CERTS.leafB] });
+      assert.ok(exec.calls.length > 0);
+      for (const c of exec.calls) assert.ok(hostCheck.isAllowedCommand(c.cmd, c.args), `${c.cmd} ${c.args.join(' ')}`);
+      assert.deepEqual([...new Set(exec.calls.map((c) => `${c.cmd} ${c.args.slice(0, 2).join(' ')}`))].sort(),
+        ['security verify-cert -c', 'tailscale serve status', 'tailscale status --json']);
+    } finally { h.cleanup(); }
+  });
+
   it('reads no file beyond what a caddy-mode run reads, except the served certificate, and never a key', async () => {
     const h = directHome();
     const reads = [];
