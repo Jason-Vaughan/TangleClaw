@@ -515,22 +515,63 @@ rollback does not clear open exchanges, and a re-upgrade resumes supervising
 them. Setting `medusaWatchdog.enabled: false` stops re-arms and escalation
 without a rollback.
 
-## Shared-document revisions
+## Shared-document revisions and notices
 
-A shared document's "this doc changed" notice (`shared_doc_updated`, from `system`) is still the
-broadcast to every live member session but the doc's owner, coalesced per reader, exactly as before.
-Beside it, TangleClaw now records each distinct content digest it observes of the doc as one
-revision (`shared_doc_events`, read through `GET /api/shared-docs/:id/events`): the file watcher, the
-notify route, a writer's base capture and an attestation all observe through one queue per doc, and a
-revision is classified against the persisted baseline as `row` (member rows changed, with every
-changed project), `unknown` (anything else changed), `formatting` or `first-seen`. A doc over the
-8 MB baseline cap, or compared with one, is digest-only: `unknown`, with no changed rows claimed.
+TangleClaw records each distinct content digest it observes of a shared doc as one revision
+(`shared_doc_events`, read through `GET /api/shared-docs/:id/events`): the file watcher, the notify
+route, a writer's base capture and an attestation all observe through one queue per doc, and a revision
+is classified against the persisted baseline as `row` (member rows changed, with every changed project),
+`unknown` (anything else changed), `formatting` or `first-seen`. A doc over the 8 MB baseline cap, or
+compared with one, is digest-only: `unknown`, with no changed rows claimed.
 
 A revision's author is `unknown` unless a session attests it (`tc docs base`, edit, `tc docs attest`,
 under the doc's lock). That is attested authorship in a cooperative-writer model, not proof of who
-wrote the bytes: bytes overwritten before any observation are never seen. Each revision carries
-`shadowWouldSelect`, the owners of the changed rows other than an attested author: a shadow of a
-row-aware rule that delivers nothing. A shadow selection is never a measured wake reduction.
+wrote the bytes: bytes overwritten before any observation are never seen.
+
+**Who is told** (`shared_doc_updated`, from `system`) is derived from the revision, not broadcast:
+
+- **R1.** An attested author is never told of its own revision.
+- **R2.** With an attested author and a complete comparison, the owners of the changed rows (a row
+  whose first cell is a member project's name) are told.
+- **R3.** A member that subscribed is told of every `row` or `unknown` revision, whoever wrote it. With
+  the author unknown that can include the writer itself: it asked for every change.
+- **R4.** Nobody else. An unattested write, a prose edit, `formatting` and `first-seen` reach
+  subscribers at most, and there is no fallback to telling everyone.
+
+A project may `mute` or `subscribe` per doc or per group (`tc docs mute|subscribe|default <doc>`, or
+`--group <group>`; `POST /api/shared-docs/:id/notices`, `POST /api/groups/:id/notices`). The doc scope
+overrides the group scope. Only current members' settings count, and leaving a group drops them. Any
+member can read every member's settings (`GET .../notices`). A mute touches these notices only: direct
+mail, exchange replies, HOLD/STOP and urgent messages never pass through this rule.
+
+**Order.** The revision is recorded first. In the same transaction its recipients are resolved and
+persisted as one intent per (project, live session) in `shared_doc_deliveries` (an attestation's author
+binding commits with them), and only then is anything sent, outside the doc's queue. A revision that
+cannot be recorded notifies nobody. The watcher sees the bytes, and later an attestation binds an
+author. Each resolves only projects not already resolved for that revision, whatever their first
+outcome, so nobody is told twice. Each call sends only the intents it inserted. Before each send
+the intent is rechecked: a doc re-registered, a project that left the group or stopped subscribing
+(`withdrawn`), or a new mute (`muted`) is not sent. Deleting the doc deletes its revisions and their
+intents, so nothing of it is sent and no row remains. Then the session's listening state
+(`offline`), then coalescing on an un-handled notice for the same doc (`coalesced`), then the send
+(`sent` or `failed`). A project with no live session gets one `offline` row; a muted one a `muted` row.
+The events route shows each revision's outcomes counted per outcome, never a delivery count as a wake:
+a wake is the wake monitor's.
+
+**A delivery the server stopped during** is marked `interrupted` at the next boot, its pending intents
+`unknown`, and it is never resent or extended, not even by a later first attestation, because a partial
+send cannot be told apart from none. The sweep runs at boot before the server is built, listens or starts
+a watcher. If it fails, the server refuses to start (exit 1), and routing stays closed in that process,
+so an unrecovered revision is never extended. A recipient that missed it catches up through the events route.
+Bridge sends can be slow, so this window is not negligible.
+
+`POST /api/shared-docs/:id/notify` observes the file like the watcher. Unchanged bytes are a duplicate
+and notify nobody: direct mail is the explicit nudge. It answers `success`, `notifiedCount`,
+`coalescedCount` (this call's sends only) and `errors` as before, plus `seq` and `duplicate`. When the
+revision cannot be recorded (an unreadable file), nothing is sent, and `errors` says so.
+
+`shadowWouldSelect` is still recorded per revision as a shadow of R2 alone. Neither it nor a delivery
+count is a measured wake reduction.
 
 Limits: the 500 ms debounce means a save overwritten within it is not observed; revisions are kept
 1000 per doc or 30 days, whichever keeps more, and a reader behind the oldest retained revision is
@@ -547,10 +588,13 @@ told `gap: true`.
 `test/medusa-exchanges.test.js`, `test/api-medusa-exchanges.test.js`,
 `test/medusa-watchdog.test.js`, `test/medusa-escalation.test.js`,
 `test/medusa-watchdog-e2e.test.js`, `test/store-medusa-exchange-migration.test.js`.
-Shared-document revisions: `lib/shared-docs.js`, `lib/store.js` (`sharedDocEvents`, v67), `server.js`
-(`POST /api/shared-docs/:id/attest`, `GET /api/shared-docs/:id/events`), `lib/tc-verbs.js` (`tc docs`);
-tests `test/shared-docs-events.test.js`, `test/shared-docs-attest-route.test.js`,
-`test/store-shared-doc-events-migration.test.js`.
+Shared-document revisions and notices: `lib/shared-docs.js`, `lib/store.js` (`sharedDocEvents`, v67;
+`sharedDocNoticePrefs`, `sharedDocDeliveries`, v68), `server.js` (`POST /api/shared-docs/:id/attest`,
+`/notify`, `GET /api/shared-docs/:id/events`, the `notices` routes, the boot sweep), `lib/tc-verbs.js`
+(`tc docs`); tests `test/shared-docs-events.test.js`, `test/shared-docs-attest-route.test.js`,
+`test/shared-docs-notice-routing.test.js`, `test/shared-doc-broadcast-scope.test.js`,
+`test/shared-doc-broadcast-coalesce.test.js`, `test/store-shared-doc-events-migration.test.js`,
+`test/store-shared-doc-prefs-migration.test.js`.
 
 What each wake tick and watchdog pass cost is recorded in memory by `lib/tick-meter.js`
 (`medusaWake.tickMetrics()`, `medusaWatchdog.tickMetrics()`); it observes and decides nothing.

@@ -130,6 +130,13 @@ describe('launch-binding guard: every mutating route is guarded or listed (#2233
     assert.ok(!admitted.includes('POST /api/shared-docs/:id/attest'), 'the attest route must not be reachable unidentified');
   });
 
+  it('guards both notice-setting routes: an unidentified caller can mute or subscribe no one (#2389)', () => {
+    for (const noticeRoute of ['POST /api/shared-docs/:id/notices', 'POST /api/groups/:id/notices']) {
+      assert.ok(MUTATING.some((r) => key(r) === noticeRoute), `${noticeRoute} is registered as mutating`);
+      assert.ok(!admitted.includes(noticeRoute), `${noticeRoute} must not be reachable unidentified`);
+    }
+  });
+
   it('keeps the audit heartbeat guarded: it has no credential of its own', () => {
     assert.ok(MUTATING.some((r) => key(r) === 'POST /api/audit/heartbeat'));
     assert.ok(!admitted.includes('POST /api/audit/heartbeat'));

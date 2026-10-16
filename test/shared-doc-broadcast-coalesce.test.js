@@ -1,7 +1,12 @@
 'use strict';
 
 /*
- * #1108, half one — one broadcast per reader per quiet period.
+ * #1108, half one — one notice per reader per quiet period.
+ *
+ * Since #2389 (A1b) a notice goes only to the readers the delivery rule
+ * selects: here every reader SUBSCRIBES to the group, and every notify follows
+ * a real change to the file, because unchanged bytes are a duplicate and
+ * notify nobody. The per-reader coalescing contract below is unchanged.
  *
  * `server.js` debounces the `fs.watch` broadcast per DOCUMENT at 500 ms, which
  * collapses one atomic save (write + rename) and nothing more. The thing that
@@ -81,6 +86,8 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
   let realGetStatus;
   let realGetMessages;
   let nextEnvelopeId;
+  const docPaths = new Map();
+  let edits = 0;
 
   before(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-doc-coalesce-'));
@@ -110,21 +117,33 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
 
     group = store.projectGroups.create({ name: 'coalesce-group' });
     for (const p of [readerA, readerB, owner]) store.projectGroups.addMember(group.id, p.id);
+    // The readers asked for every change; the owner did not, and is told of
+    // nobody's unattested write.
+    for (const p of [readerA, readerB]) {
+      store.sharedDocNoticePrefs.set({ projectId: p.id, groupId: group.id, setting: 'subscribe' });
+    }
 
     const docPath = path.join(owner.path, 'BOARD.md');
     fs.writeFileSync(docPath, '# board\n');
     docId = store.sharedDocs.create({ groupId: group.id, name: 'BOARD', filePath: docPath }).id;
+    docPaths.set(docId, docPath);
 
     // A SECOND doc deliberately sharing nothing but its group. Coalescing must
     // be per `(doc, reader)`; a check that only asked "does this reader have any
     // un-handled system notice" would suppress this one and pass every other
     // test in this file.
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+
     const otherPath = path.join(owner.path, 'NOTES.md');
     fs.writeFileSync(otherPath, '# notes\n');
     otherDocId = store.sharedDocs.create({ groupId: group.id, name: 'NOTES', filePath: otherPath }).id;
+    docPaths.set(otherDocId, otherPath);
 
-    server = createServer();
-    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    // Each doc's first observation is `first-seen`, which tells no one; taken
+    // here so every test starts from a recorded baseline.
+    for (const id of [docId, otherDocId]) await post(server, `/api/shared-docs/${id}/notify`);
+
   });
 
   after(async () => {
@@ -186,8 +205,18 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
    */
   const handleAll = (project) => { inboxes.set(wsFor(project), []); };
 
+  /**
+   * Change a doc's bytes, then notify: a revision a subscriber is told of.
+   * @param {string} id - Doc id
+   * @returns {Promise<{status: number, body: object}>} The notify response.
+   */
+  const change = (id) => {
+    fs.appendFileSync(docPaths.get(id), `edit ${++edits}\n`);
+    return post(server, `/api/shared-docs/${id}/notify`);
+  };
+
   it('five writes across a quiet period notify each reader once, not five times', async () => {
-    for (let i = 0; i < 5; i++) await post(server, `/api/shared-docs/${docId}/notify`);
+    for (let i = 0; i < 5; i++) await change(docId);
 
     assert.equal(depth(readerA), 1,
       'a reader still holding an un-handled notice for this doc learns nothing from a second');
@@ -195,23 +224,30 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
       'and the cost is per participant — the multiplier is the whole defect');
     assert.equal(sent.length, 2,
       'exactly one send per reader left the process; the other eight never reached the Bridge');
+    assert.deepEqual(store.sharedDocDeliveries.summary(store.sharedDocEvents.latest(docId).id), { coalesced: 2 },
+      'and the record says why: the fifth revision was coalesced for both readers');
   });
 
-  it('the same bytes notified again are one recorded revision, and coalescing is unchanged (#2389)', async () => {
-    const drain = () => sharedDocRecord.serialize(docId, async () => {});
-    await post(server, `/api/shared-docs/${docId}/notify`);
-    await drain();
+  it('unchanged bytes notified again are one recorded revision and notify nobody (#2389)', async () => {
+    const first = await change(docId);
+    assert.equal(first.body.notifiedCount, 2);
     const before = store.sharedDocEvents.latest(docId);
-    for (let i = 0; i < 5; i++) await post(server, `/api/shared-docs/${docId}/notify`);
-    await drain();
+    handleAll(readerA);
+    handleAll(readerB);
+    for (let i = 0; i < 5; i++) {
+      const res = await post(server, `/api/shared-docs/${docId}/notify`);
+      assert.equal(res.body.duplicate, true);
+      assert.equal(res.body.seq, before.seq);
+      assert.equal(res.body.notifiedCount, 0, 'a notify of an unchanged file is not a nudge: direct mail is');
+    }
     const after = store.sharedDocEvents.latest(docId);
     assert.equal(after.seq, before.seq, 'unchanged bytes are a duplicate observation, never a new revision');
     assert.equal(after.duplicateObservations - before.duplicateObservations, 5);
-    assert.equal(sent.length, 2, 'one send per reader, exactly as before the record existed');
+    assert.equal(sent.length, 2, 'one send per reader for the one change, and none for the duplicates');
   });
 
   it('each reader gets its own notice — coalescing is per reader, not global', async () => {
-    await post(server, `/api/shared-docs/${docId}/notify`);
+    await change(docId);
 
     assert.deepEqual(
       sent.map((m) => m.to).sort(),
@@ -221,9 +257,9 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
   });
 
   it('a reader that handles its mail is notified again — the quiet period ENDS', async () => {
-    await post(server, `/api/shared-docs/${docId}/notify`);
+    await change(docId);
     handleAll(readerA);
-    await post(server, `/api/shared-docs/${docId}/notify`);
+    await change(docId);
 
     assert.equal(depth(readerA), 1,
       'the reader consumed the first notice, so the next change is news again');
@@ -234,8 +270,8 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
   });
 
   it('a pending notice for one doc does not suppress a different doc', async () => {
-    await post(server, `/api/shared-docs/${docId}/notify`);
-    await post(server, `/api/shared-docs/${otherDocId}/notify`);
+    await change(docId);
+    await change(otherDocId);
 
     assert.equal(depth(readerA), 2,
       'two documents changed; a reader holding news about one has heard nothing about the other');
@@ -245,7 +281,7 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
   });
 
   it('the notice names the doc by id as well as by name', async () => {
-    await post(server, `/api/shared-docs/${docId}/notify`);
+    await change(docId);
 
     const payload = JSON.parse(sent[0].message);
     assert.equal(payload.event, 'shared_doc_updated');
@@ -265,18 +301,18 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
       message: JSON.stringify({ type: 'system', event: 'shared_doc_updated', doc: 'BOARD', docId })
     }]);
 
-    await post(server, `/api/shared-docs/${docId}/notify`);
+    await change(docId);
 
     assert.ok(sent.some((m) => m.to === wsFor(readerA)),
       'the peer\'s lookalike is not a broadcast this reader already has');
   });
 
   it('the route reports what was coalesced, so a zero notify is not read as a failure', async () => {
-    const first = await post(server, `/api/shared-docs/${docId}/notify`);
+    const first = await change(docId);
     assert.equal(first.body.notifiedCount, 2);
     assert.equal(first.body.coalescedCount, 0);
 
-    const second = await post(server, `/api/shared-docs/${docId}/notify`);
+    const second = await change(docId);
     assert.equal(second.body.notifiedCount, 0,
       'nobody needed telling');
     assert.equal(second.body.coalescedCount, 2,
@@ -292,7 +328,7 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
     const broken = medusa.getStatus;
     medusa.getStatus = () => { throw new Error('status read exploded'); };
     try {
-      const res = await post(server, `/api/shared-docs/${docId}/notify`);
+      const res = await change(docId);
       assert.equal(res.status, 200);
       assert.ok(Object.prototype.hasOwnProperty.call(res.body, 'coalescedCount'),
         'a client using key presence as capability detection reads a failure as an older TangleClaw');
@@ -313,10 +349,10 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
     const realGet = store.sharedDocs.get;
     store.sharedDocs.get = (id) => ({ ...realGet.call(store.sharedDocs, id), groupId: null });
     try {
-      const res = await post(server, `/api/shared-docs/${docId}/notify`);
+      const res = await change(docId);
       assert.equal(res.status, 200);
       assert.ok(Object.prototype.hasOwnProperty.call(res.body, 'coalescedCount'),
-        'all three of the helper\'s exits carry the field, or the contract is a lie');
+        'every exit carries the field, or the contract is a lie');
       assert.equal(res.body.coalescedCount, 0);
       assert.equal(res.body.notifiedCount, 0);
       assert.deepEqual(sent, [], 'a doc with no group reaches nobody, which is the point of the exit');
@@ -336,7 +372,7 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
       message: JSON.stringify({ type: 'system', event: 'shared_doc_updated', doc: 'BOARD' })
     }]);
 
-    await post(server, `/api/shared-docs/${docId}/notify`);
+    await change(docId);
 
     assert.ok(sent.some((m) => m.to === wsFor(readerA)),
       'an un-matchable notice must not be treated as a match');

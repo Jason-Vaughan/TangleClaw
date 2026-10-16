@@ -29,177 +29,13 @@ const docDebounceTimers = new Map();
  *
  * Sized for ONE atomic save — a write followed by a rename arrives as two
  * events milliseconds apart — and deliberately not for an editing session.
- * Widening it is a per-document answer to a per-participant cost; the
- * coalescing in `broadcastSharedDocUpdate` is the one that scales.
+ * Who is told of a change, and how often, is the delivery rule's and the
+ * per-reader coalescing's in `lib/shared-docs.js`, not this window's.
  */
 const SHARED_DOC_DEBOUNCE_MS = 500;
 
-/**
- * The shared doc a Medusa inbox entry is an un-handled "this doc changed"
- * notice for, or `null` if it is anything else.
- *
- * Only a message whose envelope `from` is `system` qualifies. A peer could type
- * the same JSON into its own body, and a peer message has a sender waiting on
- * it — treating one as a redundant broadcast would let this suppress a message
- * somebody is blocked on.
- *
- * What enforces that is TangleClaw, not the Bridge: `/medusa/send` reads only
- * `to` and `message`, and `lib/medusa.js#sendMessage` derives `from` from the
- * sending listener's own workspace id, so no caller going through TC can label
- * itself `system`. The Bridge copies the value it is given, so a process that
- * reaches its loopback endpoint directly can set anything — the guarantee is
- * exactly as strong as "every sender goes through TC", and keying another
- * decision on `from` inherits that limit.
- *
- * Reads `docId`, not the display name: two groups may each register a doc
- * called `ROADMAP`, and matching on the name would suppress a notice about a
- * genuinely different file. A notice with no `docId` — one queued Hub-side
- * before this field existed, redelivered after a restart — matches nothing and
- * simply costs one duplicate, which is what every broadcast cost before.
- *
- * @param {object} entry - A message body from `medusa.getMessages`.
- * @returns {string|null} The doc id the notice is about, or null.
- */
-function sharedDocNoticeId(entry) {
-  if (!entry || entry.from !== 'system') return null;
-  let payload = entry.message;
-  if (typeof payload === 'string') {
-    try { payload = JSON.parse(payload); } catch { return null; }
-  }
-  if (!payload || typeof payload !== 'object') return null;
-  if (payload.event !== 'shared_doc_updated') return null;
-  return payload.docId != null ? String(payload.docId) : null;
-}
-
-/**
- * Notify every live session whose project shares the doc's group. Shared by
- * the fs.watch debounce path and `POST /api/shared-docs/:id/notify` — the two
- * used to reimplement this lookup/filter/broadcast sequence separately and
- * had already drifted (#990 review).
- *
- * @param {string} docId - Shared doc id
- * @returns {Promise<{notified: number, coalesced: number, errors: string[]}>}
- *   count of sessions actually notified, count skipped because they already
- *   hold an un-handled notice for this doc, plus one message per failed
- *   notification. All three fields are present on every exit — the route
- *   serialises them, and a field that disappears on the failure path is a field
- *   a client reads as an older TangleClaw.
- */
-async function broadcastSharedDocUpdate(docId) {
-  try {
-    const doc = store.sharedDocs.get(docId);
-    if (!doc || !doc.groupId) return { notified: 0, coalesced: 0, errors: [] };
-
-    // Membership from the join table that actually holds it. `projects.list()`
-    // takes `archived`, `engine` and `tag` and SILENTLY IGNORES every other
-    // key, so `list({ groupId })` returned every non-archived project on the
-    // machine and this broadcast reached every live session in every project,
-    // in every group (#1222). It read as scoped — the variable said
-    // `projectsInGroup`, and the owner exclusion below is real and works — so
-    // the only session it visibly withheld from was the doc's own owner.
-    // `groups.listMembers` is what `GET /api/groups/:id` uses, which is why
-    // that endpoint reported the right members all along.
-    const memberIds = new Set(store.projectGroups.listMembers(doc.groupId));
-    // Resolved by id rather than by filtering `projects.list()`: that call
-    // defaults to excluding archived projects, and an archived member whose
-    // directory holds the doc would then miss the owner exclusion below and be
-    // notified about its own file — the #998 defect, through a new door.
-    const projectsInGroup = [...memberIds]
-      .map(id => store.projects.get(id))
-      .filter(Boolean);
-
-    // Never tell a project about a change to a file it owns (#998). A shared doc
-    // can live INSIDE a member project — `ROADMAP_STATE.md` sits in
-    // `TangleClaw-Roadmap`, which is a member of the group watching it — so that
-    // project editing its own file, which is its job, broadcast a message back
-    // to itself. The nudge path does not stop at a badge: `medusa-wake` types
-    // into the pane, so a routine write turned into TangleClaw typing into a
-    // live session while the operator was mid-keystroke.
-    //
-    // Ownership by containment rather than by "who wrote it": `fs.watch` reports
-    // no actor, so the writer is genuinely unknown. The project whose directory
-    // holds the file is the one that cannot learn anything from being told.
-    //
-    // Symlinks are deliberately NOT followed here, unlike every other consumer
-    // of this predicate. Those ask "where would a write LAND", so they must
-    // resolve; this asks "whose directory holds this file", and the answer is
-    // about where it is registered. A project that keeps `<project>/DOC.md` as a
-    // symlink into the group's shared directory still wrote the file when it
-    // edits through that path — resolving would put the doc outside the project
-    // and notify its own author, which is the loop this filter exists to stop.
-    const owningProjectIds = new Set(
-      projectsInGroup
-        .filter(p => p.path && doc.filePath
-          && isInsideProject(p.path, doc.filePath, { followSymlinks: false }))
-        .map(p => p.id)
-    );
-
-    const liveSessions = store.sessions.listLiveAll();
-    const targetSessions = liveSessions.filter(
-      s => memberIds.has(s.projectId) && !owningProjectIds.has(s.projectId)
-    );
-
-    // `docId` rides alongside the display name so a reader — and the coalescing
-    // check below — can tell two same-named docs apart. Additive: `doc` is
-    // still what an agent reads.
-    const payload = JSON.stringify({
-      type: 'system', event: 'shared_doc_updated', doc: doc.name, docId: doc.id
-    });
-
-    let notified = 0;
-    let coalesced = 0;
-    const errors = [];
-    for (const session of targetSessions) {
-      const status = medusa.getStatus(session.id);
-      if (status && status.state === 'listening' && status.workspaceId) {
-        // One notice per reader per quiet period, where the READER defines the
-        // period: while an un-handled "this doc changed" for this doc is still
-        // sitting in their inbox, a second one carries no information the first
-        // did not. The `fs.watch` debounce below is per DOCUMENT and sized by
-        // `SHARED_DOC_DEBOUNCE_MS` for one atomic save (write + rename), so it
-        // collapses that and nothing more — every
-        // intra-burst gap in the four incidents on #1108 was 1.3-4.7 s, so each
-        // edit in an agent's minutes-long editing session became its own
-        // broadcast to every live participant. Widening that window would be a
-        // search for a number none of the evidence supports, and would still pay
-        // the per-participant multiplier; this needs no number at all.
-        //
-        // Deliberately fail-open: the notice reaches the inbox over a round trip
-        // through the Bridge, so a burst tight enough to outrun it sends a
-        // duplicate rather than suppressing a real change. A duplicate is what
-        // every broadcast was before this; a suppressed change would be new harm.
-        const pending = medusa.getMessages(session.id)
-          .some(m => sharedDocNoticeId(m) === String(doc.id));
-        if (pending) {
-          coalesced++;
-          continue;
-        }
-        try {
-          await medusa.sendSystemMessage({
-            to: status.workspaceId,
-            message: payload
-          });
-          notified++;
-        } catch (e) {
-          const msg = `Failed for session ${session.id}: ${e.message}`;
-          errors.push(msg);
-          log.warn('Failed to notify session', { sessionId: session.id, error: e.message });
-        }
-      }
-    }
-    if (notified > 0 || coalesced > 0) {
-      // `coalesced` is reported even when it is the whole story (notified 0):
-      // a broadcast that reached nobody because everybody already knew looks
-      // identical in the logs to one that reached nobody at all, and only the
-      // second is a defect.
-      log.info('Broadcasted shared doc update', { docId: doc.id, notified, coalesced });
-    }
-    return { notified, coalesced, errors };
-  } catch (err) {
-    log.error('Broadcast failed', { error: err.stack });
-    return { notified: 0, coalesced: 0, errors: [err.message] };
-  }
-}
+/** @type {number} How long shutdown waits for shared-doc notices already being sent. */
+const SHUTDOWN_NOTICE_DRAIN_MS = 5000;
 
 /**
  * Close and forget a shared doc's fs.watch handle and any pending debounce
@@ -245,11 +81,11 @@ function refreshSharedDocWatchers() {
         if (eventType === 'change') {
           if (docDebounceTimers.has(doc.id)) clearTimeout(docDebounceTimers.get(doc.id));
           docDebounceTimers.set(doc.id, setTimeout(() => {
-            // Recorded alongside, never in front of, the broadcast: delivery
-            // does not wait on the record or depend on it succeeding.
+            // Who is told is derived from the recorded revision, so a write that
+            // cannot be recorded notifies nobody: there is no broadcast to fall
+            // back to.
             sharedDocRecord.observe(doc.id, { source: 'watch' })
-              .catch((err) => log.warn('Shared doc revision not recorded', { docId: doc.id, source: 'watch', error: err.message }));
-            broadcastSharedDocUpdate(doc.id);
+              .catch((err) => log.warn('Shared doc revision not recorded: nobody was notified', { docId: doc.id, source: 'watch', error: err.message }));
           }, SHARED_DOC_DEBOUNCE_MS));
         }
       });
@@ -265,7 +101,6 @@ const system = require('./lib/system');
 const systemHealth = require('./lib/system-health');
 const ptyActivity = require('./lib/pty-activity');
 const engines = require('./lib/engines');
-const { isInsideProject } = require('./lib/project-paths');
 const gitHooks = require('./lib/git-hooks');
 const gitTemplate = require('./lib/git-template');
 const tmux = require('./lib/tmux');
@@ -10414,22 +10249,43 @@ route('POST', '/api/shared-docs/:id/notify', async (req, res, params) => {
       return errorResponse(res, 404, `Shared document "${params.id}" not found`, 'NOT_FOUND');
     }
 
-    // The notify caller is never made the author: this records an `unknown`
-    // revision when the bytes are new. Not awaited: the notice never waits on
-    // the record, which may be queued behind other reads of the doc, and a
-    // failed record does not stop it.
-    sharedDocRecord.observe(params.id, { source: 'notify' })
-      .catch((err) => log.warn('Shared doc revision not recorded', { docId: params.id, source: 'notify', error: err.message }));
-    const { notified, coalesced, errors } = await broadcastSharedDocUpdate(params.id);
-    // `coalescedCount` is reported so a zero `notifiedCount` is never mistaken
-    // for a failed notify: every recipient already holding an un-handled notice
-    // for this doc is a successful outcome, and it is the only way to tell that
-    // apart from a broadcast that reached nobody.
+    // The notify caller is never made the author: new bytes are an `unknown`
+    // revision, which the delivery rule sends to subscribers only. Unchanged
+    // bytes are a duplicate and notify nobody: direct mail is the nudge path.
+    // A revision that cannot be recorded notifies nobody. That is reported the
+    // way this route has always reported a delivery failure: in `errors`, with
+    // both counts present and zero.
+    /**
+     * Answer a notify whose revision was not recorded: nothing was sent.
+     * @param {string} why - Why it was not recorded
+     * @returns {void}
+     */
+    const notRecorded = (why) => {
+      log.warn('Shared doc revision not recorded: nobody was notified', { docId: params.id, source: 'notify', error: why });
+      jsonResponse(res, 200, {
+        success: true, notifiedCount: 0, coalescedCount: 0,
+        errors: [`The revision was not recorded, so nobody was notified: ${why}`]
+      });
+    };
+    let observed;
+    try {
+      observed = await sharedDocRecord.observe(params.id, { source: 'notify' });
+    } catch (err) {
+      if (err.code !== 'UNREADABLE') throw err;
+      return notRecorded(err.message);
+    }
+    if (!observed) return notRecorded('the document was re-registered or removed while its file was read');
+    // The counts are THIS call's sends: another caller's sends of the same
+    // revision are its own. `coalescedCount` is reported so a zero
+    // `notifiedCount` is never mistaken for a failed notify.
+    const { notified, coalesced, errors } = await observed.delivery;
     jsonResponse(res, 200, {
       success: true,
       notifiedCount: notified,
       coalescedCount: coalesced,
-      errors: errors.length > 0 ? errors : undefined
+      errors: errors.length > 0 ? errors : undefined,
+      seq: observed.revision.seq,
+      duplicate: observed.duplicate
     });
   } catch (err) {
     log.error('Failed to notify shared-doc update', { error: err.stack });
@@ -10576,6 +10432,131 @@ route('GET', '/api/shared-docs/:id/events', (req, res, params) => {
     return errorResponse(res, 400, 'since must be a non-negative integer and limit an integer from 1 to 500', 'BAD_REQUEST');
   }
   jsonResponse(res, 200, { docId: doc.id, ...store.sharedDocEvents.list(doc.id, { sinceSeq: since, limit }) });
+});
+
+// ── Shared Document Notice Settings (#2389) ──
+//
+// A project may mute a doc or a group (never told by the delivery rule), or
+// subscribe to one (told of every change, whoever made it); `default` clears
+// the setting. A doc-scope setting overrides a group-scope one. A project may
+// set only its own, for a doc or group it belongs to; the operator may set
+// any member's. Any member may read every member's, so a coordinator can see
+// that a peer is muted. Muting touches nothing but these notices: direct
+// mail, exchange replies, HOLD/STOP and urgent messages are not routed here.
+
+/**
+ * Every current member's notice setting for a group, or for one doc in it.
+ * @param {{id: string}} group - The group
+ * @param {{id: string, groupId: string}|null} doc - The doc, or null for the group scope
+ * @returns {Array<{projectId: number, name: (string|null), doc: (string|null), group: (string|null), effective: (string|null)}>}
+ */
+function noticeSettingsView(group, doc) {
+  // The same resolution the delivery rule routes on, so what is shown is what applies.
+  const settings = sharedDocRecord.memberSettings(group.id, doc ? doc.id : null);
+  return [...settings].map(([projectId, s]) => {
+    const project = store.projects.get(projectId);
+    return {
+      projectId,
+      name: project ? project.name : null,
+      doc: doc ? s.doc : undefined,
+      group: s.group,
+      effective: s.effective
+    };
+  });
+}
+
+/**
+ * Set one member's notice setting at a group or doc scope, answering the
+ * request. The caller is already resolved and may write the group.
+ * @param {object} res - Response
+ * @param {object} access - The resolved caller
+ * @param {{group: {id: string}, doc: ({id: string, groupId: string}|null)}} scope - Where
+ * @param {*} body - `{setting, projectId?}`
+ * @returns {void}
+ */
+function putNoticeSetting(res, access, scope, body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
+  }
+  const setting = body.setting;
+  const allowed = [...store.SHARED_DOC_NOTICE_SETTINGS, 'default'];
+  if (!allowed.includes(setting)) {
+    return errorResponse(res, 400, `setting must be one of ${allowed.join(', ')}`, 'BAD_REQUEST');
+  }
+  let projectId = access.projectId;
+  if (body.projectId !== undefined) {
+    projectId = Number(body.projectId);
+    if (!Number.isInteger(projectId)) return errorResponse(res, 400, 'projectId must be an integer', 'BAD_REQUEST');
+  }
+  if (projectId == null) return errorResponse(res, 400, 'projectId is required for the operator', 'BAD_REQUEST');
+  if (!sharedDocsAccess.canChangeProject(access, projectId)) {
+    return errorResponse(res, 403, 'A project may change only its own notice settings', 'NOT_OWN_PROJECT');
+  }
+  if (!store.projectGroups.listMembers(scope.group.id).includes(projectId)) {
+    return errorResponse(res, 404, `Project ${projectId} is not a member of this group`, 'NOT_A_MEMBER');
+  }
+  const setBy = access.kind === sharedDocsAccess.KINDS.OPERATOR ? 'operator' : `session:${access.sessionId}`;
+  const saved = store.sharedDocNoticePrefs.set({
+    projectId,
+    groupId: scope.doc ? undefined : scope.group.id,
+    docId: scope.doc ? scope.doc.id : undefined,
+    setting,
+    setBy
+  });
+  const view = noticeSettingsView(scope.group, scope.doc).find((m) => m.projectId === projectId);
+  jsonResponse(res, 200, {
+    scope: scope.doc ? 'doc' : 'group',
+    groupId: scope.group.id,
+    docId: scope.doc ? scope.doc.id : undefined,
+    projectId,
+    setting: saved ? saved.setting : null,
+    effective: view ? view.effective : null
+  });
+}
+
+// GET /api/shared-docs/:id/notices
+route('GET', '/api/shared-docs/:id/notices', (req, res, params) => {
+  const access = sharedDocsCaller(req, res);
+  if (!access) return;
+  const doc = store.sharedDocs.get(params.id);
+  if (!doc || !sharedDocsAccess.canSeeGroup(access, doc.groupId)) {
+    return errorResponse(res, 404, `Shared document "${params.id}" not found`, 'NOT_FOUND');
+  }
+  const group = store.projectGroups.get(doc.groupId);
+  jsonResponse(res, 200, { scope: 'doc', docId: doc.id, groupId: doc.groupId, members: noticeSettingsView(group, doc) });
+});
+
+// POST /api/shared-docs/:id/notices
+route('POST', '/api/shared-docs/:id/notices', (req, res, params, body) => {
+  const access = sharedDocsCaller(req, res, sharedDocsAccess.NEEDS.WRITE);
+  if (!access) return;
+  const doc = store.sharedDocs.get(params.id);
+  if (!doc || !sharedDocsAccess.canWriteGroup(access, doc.groupId)) {
+    return errorResponse(res, 404, `Shared document "${params.id}" not found`, 'NOT_FOUND');
+  }
+  putNoticeSetting(res, access, { group: store.projectGroups.get(doc.groupId), doc }, body);
+});
+
+// GET /api/groups/:id/notices
+route('GET', '/api/groups/:id/notices', (req, res, params) => {
+  const access = sharedDocsCaller(req, res);
+  if (!access) return;
+  const group = store.projectGroups.get(params.id);
+  if (!group || !sharedDocsAccess.canSeeGroup(access, group.id)) {
+    return errorResponse(res, 404, `Group "${params.id}" not found`, 'NOT_FOUND');
+  }
+  jsonResponse(res, 200, { scope: 'group', groupId: group.id, members: noticeSettingsView(group, null) });
+});
+
+// POST /api/groups/:id/notices
+route('POST', '/api/groups/:id/notices', (req, res, params, body) => {
+  const access = sharedDocsCaller(req, res, sharedDocsAccess.NEEDS.WRITE);
+  if (!access) return;
+  const group = store.projectGroups.get(params.id);
+  if (!group || !sharedDocsAccess.canWriteGroup(access, group.id)) {
+    return errorResponse(res, 404, `Group "${params.id}" not found`, 'NOT_FOUND');
+  }
+  putNoticeSetting(res, access, { group, doc: null }, body);
 });
 
 // ── Document Locks API ──
@@ -13030,6 +13011,22 @@ if (require.main === module) {
     setLevel(config.logLevel);
   }
 
+  // Recover the last process's shared-doc deliveries before a server exists:
+  // every delivery it left `pending` becomes `interrupted`, never resent or
+  // extended. A failed sweep refuses the start here, before anything listens,
+  // a watcher starts or boot touches tmux or the ttyd job, and leaves routing
+  // closed in this process: an unrecovered revision could otherwise be
+  // extended by a later attestation. After the PID file is written, so the
+  // refusal removes only this process's own.
+  try {
+    const swept = sharedDocRecord.recoverDeliveries();
+    if (swept.revisions > 0) log.warn('Shared-doc deliveries interrupted by the last stop: not resent', swept);
+  } catch (err) {
+    log.error('Refusing to start: interrupted shared-doc deliveries could not be recovered', { error: err.message });
+    pidfile.remove();
+    process.exit(1);
+  }
+
   // #397 credential durability (2026-07-03 lockout): in caddy mode, if the live
   // Caddyfile carries a basic_auth credential that the canonical config doesn't,
   // adopt it into config at boot — READ-ONLY on the Caddyfile. Makes the working
@@ -13603,8 +13600,13 @@ if (require.main === module) {
     }
     clearInterval(_lockExpiryInterval);
     server.close();
-    store.close();
-    process.exit(0);
+    // Shared-doc notices already on their way are given a bounded moment to
+    // settle, so a planned restart does not leave them `interrupted`; one that
+    // outlasts it is swept at the next boot, as a crash would leave it.
+    sharedDocRecord.drain(SHUTDOWN_NOTICE_DRAIN_MS).finally(() => {
+      store.close();
+      process.exit(0);
+    });
   };
 
   process.on('SIGTERM', shutdown);
