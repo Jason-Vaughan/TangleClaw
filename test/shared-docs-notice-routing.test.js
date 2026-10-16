@@ -693,8 +693,19 @@ describe('recovery comes before the server is built: a failed sweep refuses to s
     const inject = `import { createRequire } from 'node:module';
 const require = createRequire(${JSON.stringify(serverPath)});
 require('./lib/store').sharedDocDeliveries.interruptPending = () => { throw new Error('injected boot sweep failure'); };`;
+    // Pinned stubs ahead of the real PATH: the boot under test must never reach
+    // the operator's live tmux, launchd, ttyd, Caddy or Tailscale, and CI has
+    // none of them. A boot that wrongly carries on runs into these no-ops.
+    const stubs = path.join(home, 'stub-bin');
+    fs.mkdirSync(stubs);
+    for (const tool of ['tmux', 'launchctl', 'ttyd', 'caddy', 'tailscale']) {
+      fs.writeFileSync(path.join(stubs, tool), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    }
     const child = spawn(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(inject)}`, serverPath], {
-      env: { ...process.env, TANGLECLAW_HOME: home, TANGLECLAW_PORT: String(port), TANGLECLAW_LOG_LEVEL: 'info' },
+      env: {
+        ...process.env, PATH: `${stubs}${path.delimiter}${process.env.PATH}`,
+        TANGLECLAW_HOME: home, TANGLECLAW_PORT: String(port), TANGLECLAW_LOG_LEVEL: 'info'
+      },
       stdio: ['ignore', 'pipe', 'pipe']
     });
     let output = '';

@@ -13011,6 +13011,22 @@ if (require.main === module) {
     setLevel(config.logLevel);
   }
 
+  // Recover the last process's shared-doc deliveries before a server exists:
+  // every delivery it left `pending` becomes `interrupted`, never resent or
+  // extended. A failed sweep refuses the start here, before anything listens,
+  // a watcher starts or boot touches tmux or the ttyd job, and leaves routing
+  // closed in this process: an unrecovered revision could otherwise be
+  // extended by a later attestation. After the PID file is written, so the
+  // refusal removes only this process's own.
+  try {
+    const swept = sharedDocRecord.recoverDeliveries();
+    if (swept.revisions > 0) log.warn('Shared-doc deliveries interrupted by the last stop: not resent', swept);
+  } catch (err) {
+    log.error('Refusing to start: interrupted shared-doc deliveries could not be recovered', { error: err.message });
+    pidfile.remove();
+    process.exit(1);
+  }
+
   // #397 credential durability (2026-07-03 lockout): in caddy mode, if the live
   // Caddyfile carries a basic_auth credential that the canonical config doesn't,
   // adopt it into config at boot — READ-ONLY on the Caddyfile. Makes the working
@@ -13146,19 +13162,6 @@ if (require.main === module) {
   // lib/bind-policy.js's call, and is no longer implied by the ingress mode.
   const caddyMode = config.ingressMode === 'caddy';
   const effectiveHttps = caddyMode ? false : !!config.httpsEnabled;
-  // Recover the last process's shared-doc deliveries before a server exists:
-  // every delivery it left `pending` becomes `interrupted`, never resent or
-  // extended. A failed sweep refuses the start here, before anything listens
-  // or a watcher starts, and leaves routing closed in this process: an
-  // unrecovered revision could otherwise be extended by a later attestation.
-  try {
-    const swept = sharedDocRecord.recoverDeliveries();
-    if (swept.revisions > 0) log.warn('Shared-doc deliveries interrupted by the last stop: not resent', swept);
-  } catch (err) {
-    log.error('Refusing to start: interrupted shared-doc deliveries could not be recovered', { error: err.message });
-    pidfile.remove();
-    process.exit(1);
-  }
   const server = createServer({
     httpsEnabled: effectiveHttps,
     certPath: config.httpsCertPath || null,
