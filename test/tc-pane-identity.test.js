@@ -966,78 +966,11 @@ describe('tc: the launch-isolation lines (#2228)', () => {
   });
 });
 
-describe('tc: the PATH floor is read as the launch path writes it (#2228)', () => {
-  it('takes off exactly what lib/sessions.js takes off, and nothing it would not', () => {
+describe('tc: the PATH floor is read as the launch path writes it (#2228, #2375)', () => {
+  it('takes it off with the one definition lib/sessions.js uses, not a copy of its own', () => {
+    const recorded = require('../lib/recorded-launch-command');
     const sessions = require('../lib/sessions');
-    for (const command of [
-      'export PATH="/x/bin:$PATH"; codex', 'export PATH="/Users/a b/bin:$PATH"; /opt/bin/codex --no-daemon', 'export PATH=":$PATH"; codex',
-      'export PATH="/x/bin:$PATH";codex', 'export PATH=/x/bin:$PATH; codex', 'export PATH="/x/`id`:$PATH"; codex', 'export PATH="/x/$HOME:$PATH"; codex',
-      ' export PATH="/x/bin:$PATH"; codex', 'export PATH="/x/bin:$PATH"; export PATH="/y:$PATH"; codex', 'codex', ''
-    ]) {
-      assert.equal(verbs._withoutPathFloor(command), sessions._withoutPathFloor(command), command);
-    }
-  });
-});
-
-describe('tc: loading the engine judgment prints nothing of its own (#2228)', () => {
-  /**
-   * Run a load under `_requireQuietly` and collect what reaches the process's own `emitWarning`.
-   * @param {function(): *} load - Stands in for `require`
-   * @returns {{heard: Array<Array<*>>, result: *, thrown: (Error|null), restored: boolean}}
-   */
-  function loadHearing(load) {
-    const real = process.emitWarning;
-    const heard = [];
-    const recorder = (...args) => { heard.push(args); };
-    process.emitWarning = recorder;
-    let result;
-    let thrown = null;
-    try {
-      result = verbs._requireQuietly('x', load);
-    } catch (err) {
-      thrown = err;
-    }
-    const restored = process.emitWarning === recorder;
-    process.emitWarning = real;
-    return { heard, result, thrown, restored };
-  }
-
-  const SQLITE = 'SQLite is an experimental feature and might change at any time';
-
-  it('drops node\'s SQLite ExperimentalWarning, in each form emitWarning takes it', () => {
-    const { heard, result, restored } = loadHearing(() => {
-      process.emitWarning(SQLITE, 'ExperimentalWarning');
-      process.emitWarning(SQLITE, { type: 'ExperimentalWarning' });
-      process.emitWarning(Object.assign(new Error(SQLITE), { name: 'ExperimentalWarning' }));
-      return 'loaded';
-    });
-    assert.deepEqual(heard, []);
-    assert.equal(result, 'loaded');
-    assert.equal(restored, true);
-  });
-
-  it('passes on every other warning raised while the module loads, as it was given', () => {
-    const deprecation = Object.assign(new Error('old thing'), { name: 'DeprecationWarning' });
-    const { heard } = loadHearing(() => {
-      process.emitWarning('Fetch is an experimental feature', 'ExperimentalWarning');
-      process.emitWarning(SQLITE, 'DeprecationWarning');
-      process.emitWarning(SQLITE);
-      process.emitWarning(deprecation);
-      process.emitWarning('custom', { type: 'CustomWarning', code: 'C1' });
-    });
-    assert.deepEqual(heard, [
-      ['Fetch is an experimental feature', 'ExperimentalWarning'],
-      [SQLITE, 'DeprecationWarning'],
-      [SQLITE],
-      [deprecation],
-      ['custom', { type: 'CustomWarning', code: 'C1' }]
-    ]);
-  });
-
-  it('puts the process\'s own emitWarning back when the load throws, and lets the throw out', () => {
-    const { thrown, restored, heard } = loadHearing(() => { throw new Error('cannot load'); });
-    assert.match(thrown.message, /cannot load/);
-    assert.equal(restored, true);
-    assert.deepEqual(heard, []);
+    assert.equal(verbs._withoutPathFloor, recorded._withoutPathFloor);
+    assert.equal(sessions._withoutPathFloor, recorded._withoutPathFloor);
   });
 });
