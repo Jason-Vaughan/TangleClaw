@@ -393,6 +393,16 @@ Tap the **Launch** button on a project card. TangleClaw:
 4. Injects the prime prompt (if the engine supports it)
 5. Redirects you to the session wrapper
 
+### The `tc` command
+
+`tc` is the command a session uses to talk to TangleClaw from inside its own terminal. The AI
+engine running in the session uses it, not you: to read its launch context, see who it is, send and
+read switchboard messages, report what it is doing, and check whether a branch is safe to delete.
+TangleClaw normally puts it on the session's `PATH` and exports the variables it needs. `tc` does
+not guess those variables, so it works only in a session TangleClaw launched. `tc --help` lists
+every verb on the install you are running, and the [`tc` command reference](tc-cli-reference.md)
+describes each one.
+
 ### The Session Wrapper
 
 The session wrapper is your interface to the running AI session.
