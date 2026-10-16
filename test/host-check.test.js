@@ -1063,3 +1063,297 @@ describe('host-check T-H0: a real run under spies writes nothing and runs nothin
     assert.ok(!report.reads.some((p) => p.endsWith('key-decoy.pem') || p.endsWith('rootCA-key.pem')));
   });
 });
+
+describe('host-check: a direct-mode HTTPS install reads its served certificate (#2414)', () => {
+  /**
+   * A direct-mode home with no Caddyfile, serving the certificate at `certFile`
+   * (under the home's certs directory) over HTTPS.
+   * @param {object} [opts]
+   * @param {string} [opts.certFile] - File name under `certs/` (default leaf-a.pem).
+   * @param {object} [opts.extra] - Extra config fields.
+   * @param {string} [opts.leafA] - Contents of leaf-a.pem.
+   * @returns {object} From makeHome, plus `served`, the configured path.
+   */
+  function directHome(opts = {}) {
+    const h = makeHome({ caddyfile: null, config: null, leafA: opts.leafA });
+    const served = path.join(h.home, 'certs', opts.certFile || 'leaf-a.pem');
+    const config = { ingressMode: 'direct', httpsEnabled: true, httpsCertPath: served, httpsKeyPath: path.join(h.home, 'certs', 'key-decoy.pem'), serverPort: 3101, ...(opts.extra || {}) };
+    fs.writeFileSync(path.join(h.home, 'config.json'), JSON.stringify(config));
+    return { ...h, served };
+  }
+
+  const tlsFailure = () => fakeHttp((o, req) => req.emit('error', Object.assign(new Error('x SECRET-ERROR-TEXT'), { code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' })));
+  const caFact = (r) => r.facts.find((f) => f.label === hostCheck.CA_SET_LABEL);
+  const hintFact = (r) => r.facts.find((f) => f.label === 'possible cause (not confirmed)');
+
+  it('reads the served certificate, with its names and dates, when there is no Caddyfile', async () => {
+    const h = directHome();
+    try {
+      const result = await run(h, { https: fakeHttp(answer(200, LEASES)), caCertificates: () => [CERTS.rootCA] });
+      const r = row(result, 'certificates');
+      assert.equal(r.state, 'ok');
+      assert.ok(r.facts.some((f) => f.label === hostCheck.SERVED_CERT_LABEL && f.value === h.served));
+      assert.ok(r.facts.some((f) => f.label === '  carries' && f.value === '127.0.0.1'));
+      assert.ok(r.facts.some((f) => f.label === '  expires'));
+      const t = row(result, 'trust');
+      assert.ok(t.facts.some((f) => f.label === 'issued by the local root' && f.value === h.served));
+      assert.equal(t.state, 'ok');
+    } finally { h.cleanup(); }
+  });
+
+  it('caddy mode with HTTPS fields set reads no served certificate, and its rows are unchanged', async () => {
+    const h = makeHome();
+    try {
+      const baseline = await run(h);
+      fs.writeFileSync(path.join(h.home, 'config.json'), JSON.stringify({ ingressMode: 'caddy', caddyTailnetHost: TS, serverPort: 3101, httpsEnabled: true, httpsCertPath: path.join(h.home, 'certs', 'leaf-b.pem'), httpsKeyPath: path.join(h.home, 'certs', 'key-decoy.pem') }));
+      const result = await run(h, { https: fakeHttp(answer(200, LEASES)), caCertificates: () => { throw new Error('must not be asked'); } });
+      for (const id of ['certificates', 'coverage', 'trust']) {
+        assert.deepEqual(row(result, id).facts, row(baseline, id).facts, id);
+        assert.equal(row(result, id).state, row(baseline, id).state, id);
+      }
+      assert.ok(!JSON.stringify(result.rows).includes(hostCheck.SERVED_CERT_LABEL));
+    } finally { h.cleanup(); }
+  });
+
+  it('an unsupported ingress mode reads no served certificate, though its HTTPS fields are set', async () => {
+    const h = directHome({ extra: { ingressMode: 'tunnel-of-love' } });
+    try {
+      const result = await run(h, { https: tlsFailure(), caCertificates: () => { throw new Error('must not be asked'); } });
+      assert.ok(!JSON.stringify(result.rows).includes(hostCheck.SERVED_CERT_LABEL));
+      assert.ok(!JSON.stringify(result.rows).includes(hostCheck.CA_SET_LABEL));
+      assert.equal(row(result, 'trust').reason, 'no certificate to check');
+    } finally { h.cleanup(); }
+  });
+
+  it('direct mode over plain HTTP reads no served certificate', async () => {
+    const h = directHome({ extra: { httpsEnabled: false } });
+    try {
+      const result = await run(h, { caCertificates: () => { throw new Error('must not be asked'); } });
+      const r = row(result, 'certificates');
+      assert.equal(r.state, 'observed');
+      assert.equal(r.reason, 'no Caddyfile read');
+      assert.equal(row(result, 'trust').reason, 'no certificate to check');
+      assert.equal(row(result, 'coverage').reason, 'no Caddyfile, so no Caddy site to check');
+    } finally { h.cleanup(); }
+  });
+
+  for (const [name, setup, code] of [
+    ['missing', () => {}, 'absent'],
+    ['too large', (h) => fs.writeFileSync(h.served, 'x'.repeat(hostCheck.LIMITS.certificateBytes + 1)), 'too-large'],
+    ['not a certificate', (h) => fs.writeFileSync(h.served, 'garbage, not PEM'), 'not a certificate'],
+    ['a directory', (h) => fs.mkdirSync(h.served), 'not-a-file']
+  ]) {
+    it(`a ${name} served certificate is unknown (${code}), with no coverage, trust or CA facts claimed`, async () => {
+      const h = directHome({ certFile: 'served-under-test.pem' });
+      try {
+        setup(h);
+        const result = await run(h, { https: tlsFailure(), caCertificates: () => [] });
+        const r = row(result, 'certificates');
+        assert.equal(r.state, 'unknown');
+        assert.ok(r.facts.some((f) => f.label === hostCheck.SERVED_CERT_LABEL && f.value === h.served));
+        assert.ok(r.facts.some((f) => f.label === 'unreadable' && f.value === code));
+        const c = row(result, 'coverage');
+        assert.equal(c.state, 'unknown');
+        assert.ok(c.facts.some((f) => f.label === hostCheck.SERVED_CERT_LABEL && f.value === 'unreadable'));
+        const t = row(result, 'trust');
+        assert.equal(caFact(t), undefined);
+        assert.equal(hintFact(row(result, 'routes')), undefined);
+      } finally { h.cleanup(); }
+    });
+  }
+
+  it('an unreadable served certificate (permission denied) is unknown, never ok', async () => {
+    const h = directHome();
+    try {
+      const denied = { ...fs, statSync: (p, ...rest) => (p === h.served ? (() => { throw Object.assign(new Error('x'), { code: 'EACCES' }); })() : fs.statSync(p, ...rest)) };
+      const r = row(await run(h, { fs: denied, caCertificates: () => [] }), 'certificates');
+      assert.equal(r.state, 'unknown');
+      assert.ok(r.facts.some((f) => f.label === 'unreadable' && f.value === 'unreadable'));
+    } finally { h.cleanup(); }
+  });
+
+  it('coverage: the served certificate carries 127.0.0.1 and each configured name, or says it does not', async () => {
+    const h = directHome({ extra: { primaryUrl: `https://${TS}:3101`, urlAliases: ['alias.example.com'] } });
+    try {
+      const r = row(await run(h, { https: fakeHttp(answer(200, LEASES)), caCertificates: () => [CERTS.rootCA] }), 'coverage');
+      assert.equal(r.state, 'drift');
+      assert.ok(r.facts.some((f) => f.label === `${hostCheck.SERVED_CERT_LABEL} covers` && f.value === '127.0.0.1'));
+      assert.ok(r.facts.some((f) => f.label === `${hostCheck.SERVED_CERT_LABEL} covers` && f.value === TS));
+      assert.ok(r.facts.some((f) => f.label === `${hostCheck.SERVED_CERT_LABEL} does NOT cover` && f.value === 'alias.example.com'));
+    } finally { h.cleanup(); }
+  });
+
+  it('coverage: a served certificate without 127.0.0.1 is drift on that name', async () => {
+    const h = directHome({ certFile: 'leaf-b.pem' });
+    try {
+      const r = row(await run(h, { https: fakeHttp(answer(200, LEASES)), caCertificates: () => [CERTS.rootCA] }), 'coverage');
+      assert.equal(r.state, 'drift');
+      assert.ok(r.facts.some((f) => f.label === `${hostCheck.SERVED_CERT_LABEL} does NOT cover` && f.value === '127.0.0.1'));
+    } finally { h.cleanup(); }
+  });
+
+  for (const [name, ca, expected] of [
+    ['the root is in the set', () => [CERTS.leafB, CERTS.rootCA], 'yes'],
+    ['the root is found even when another entry does not parse', () => ['garbage', CERTS.rootCA], 'yes'],
+    ['every entry parsed and none is the root', () => [CERTS.leafB, CERTS.leafOther], 'no'],
+    ['an empty, valid set', () => [], 'no'],
+    ['this Node has no getCACertificates', null, 'unknown (not-measurable-on-this-node)'],
+    ['reading the set throws', () => { throw new Error('SECRET-ERROR-TEXT'); }, 'unknown (ca-read-failed)'],
+    ['the set is over the cap', () => Array(hostCheck.LIMITS.caCertificates + 1).fill(CERTS.leafB), 'unknown (too-many)'],
+    ['the set is not an array', () => CERTS.rootCA, 'unknown (invalid-shape)'],
+    ['an entry is not a string', () => [CERTS.leafB, 42], 'unknown (incomplete: 1 of 2 entries parsed)'],
+    ['an entry does not parse and none matches', () => [CERTS.leafB, 'garbage', CERTS.leafOther], 'unknown (incomplete: 2 of 3 entries parsed)']
+  ]) {
+    it(`CA set: ${name} reads ${expected}`, async () => {
+      const h = directHome();
+      try {
+        const t = row(await run(h, { https: fakeHttp(answer(200, LEASES)), caCertificates: ca }), 'trust');
+        assert.equal(caFact(t).value, expected);
+        assert.equal(caFact(t).kind, 'code');
+        assert.equal(t.state, 'ok', 'the fact never changes the keychain row state');
+      } finally { h.cleanup(); }
+    });
+  }
+
+  it('the routes hint appears when TLS failed, the root issued the served certificate, and the root is measured absent', async () => {
+    const h = directHome();
+    try {
+      const result = await run(h, { https: tlsFailure(), caCertificates: () => [CERTS.leafB] });
+      const r = row(result, 'routes');
+      assert.equal(r.state, 'unknown');
+      assert.equal(r.reason, 'lease comparison: tls-unverified');
+      const hint = hintFact(r);
+      assert.ok(hint, 'hint present');
+      assert.equal(hint.value, hostCheck.ROUTES_TLS_HINT);
+      assert.match(hint.value, /configured served certificate/);
+      assert.match(hint.value, /presented was not measured/);
+      assert.equal(caFact(row(result, 'trust')).value, 'no');
+    } finally { h.cleanup(); }
+  });
+
+  for (const [name, opts, deps] of [
+    ['the served certificate was not issued by the local root', { leafA: CERTS.leafOther }, { https: tlsFailure(), caCertificates: () => [CERTS.leafB] }],
+    ['the root is in the set', {}, { https: tlsFailure(), caCertificates: () => [CERTS.rootCA] }],
+    ['the set was read only in part', {}, { https: tlsFailure(), caCertificates: () => [CERTS.leafB, 'garbage'] }],
+    ['the set is not measurable', {}, { https: tlsFailure(), caCertificates: null }],
+    ['the lease read failed for another reason', {}, { https: fakeHttp((o, req) => req.emit('error', Object.assign(new Error('x'), { code: 'ECONNREFUSED' }))), caCertificates: () => [CERTS.leafB] }]
+  ]) {
+    it(`no routes hint when ${name}`, async () => {
+      const h = directHome(opts);
+      try {
+        const r = row(await run(h, deps), 'routes');
+        assert.equal(r.state, 'unknown');
+        assert.equal(hintFact(r), undefined);
+      } finally { h.cleanup(); }
+    });
+  }
+
+  it('the new facts are redacted by default: no path, name or error text', async () => {
+    const h = directHome({ extra: { primaryUrl: `https://${TS}:3101` } });
+    try {
+      const result = await run(h, { https: tlsFailure(), caCertificates: () => [CERTS.leafB] });
+      const text = hostCheck.formatReport(result);
+      for (const secret of [h.home, os.tmpdir(), 'tailexample', 'SECRET-ERROR-TEXT', KEY_MATERIAL]) {
+        assert.ok(!text.includes(secret), `leaked ${secret}`);
+      }
+      assert.match(text, new RegExp(`${hostCheck.SERVED_CERT_LABEL.replace(/[()]/g, '\\$&')}: <path-\\d+>`));
+      assert.ok(text.includes(`${hostCheck.CA_SET_LABEL}: no`));
+      assert.ok(text.includes(`possible cause (not confirmed): ${hostCheck.ROUTES_TLS_HINT}`));
+    } finally { h.cleanup(); }
+  });
+
+  /**
+   * A direct-mode HTTPS home that still holds a Caddyfile (one left over from
+   * caddy mode), serving `servedFile` under its certs directory.
+   * @param {string} servedFile - File name under `certs/`.
+   * @param {string} [contents] - Write this certificate there first.
+   * @returns {object} From makeHome, plus `served`.
+   */
+  function directHomeWithCaddyfile(servedFile, contents) {
+    const h = makeHome({ config: null });
+    const served = path.join(h.home, 'certs', servedFile);
+    if (contents) fs.writeFileSync(served, contents);
+    fs.writeFileSync(path.join(h.home, 'config.json'), JSON.stringify({ ingressMode: 'direct', httpsEnabled: true, httpsCertPath: served, httpsKeyPath: path.join(h.home, 'certs', 'key-decoy.pem'), serverPort: 3101 }));
+    return { ...h, served };
+  }
+
+  it('with a leftover Caddyfile whose site names the same file: read once, coverage of both, and the hint', async () => {
+    const h = directHomeWithCaddyfile('leaf-a.pem');
+    try {
+      const result = await run(h, { https: tlsFailure(), caCertificates: () => [CERTS.leafB] });
+      const c = row(result, 'certificates');
+      assert.equal(c.facts.filter((f) => f.value === h.served).length, 2, 'once as a site certificate, once as the served one');
+      assert.ok(c.facts.some((f) => f.label === hostCheck.SERVED_CERT_LABEL && f.value === h.served));
+      assert.ok(c.facts.some((f) => f.label === '  same file as' && f.value === 'a Caddyfile site\'s certificate'));
+      const cov = row(result, 'coverage');
+      assert.ok(cov.facts.some((f) => f.label === `${hostCheck.SERVED_CERT_LABEL} covers` && f.value === '127.0.0.1'));
+      assert.ok(cov.facts.some((f) => f.label === 'site 2 covered' && f.value === TS), 'the site facts are still there');
+      assert.equal(caFact(row(result, 'trust')).value, 'no');
+      assert.ok(hintFact(row(result, 'routes')), 'the served certificate was issued by the root, so the hint appears');
+    } finally { h.cleanup(); }
+  });
+
+  it('with a leftover Caddyfile and a different served file: both are read and judged', async () => {
+    const h = directHomeWithCaddyfile('served-copy.pem', CERTS.leafA);
+    try {
+      const result = await run(h, { https: tlsFailure(), caCertificates: () => [CERTS.leafB] });
+      const c = row(result, 'certificates');
+      assert.ok(c.facts.some((f) => f.label === hostCheck.SERVED_CERT_LABEL && f.value === h.served));
+      assert.ok(c.facts.some((f) => f.label === 'certificate' && f.value === path.join(h.home, 'certs', 'leaf-a.pem')));
+      assert.ok(!c.facts.some((f) => f.label === '  same file as'));
+      const cov = row(result, 'coverage');
+      assert.ok(cov.facts.some((f) => f.label === `${hostCheck.SERVED_CERT_LABEL} covers` && f.value === '127.0.0.1'));
+      assert.ok(cov.facts.some((f) => f.label === 'site 1 covered'));
+      assert.ok(row(result, 'trust').facts.some((f) => f.label === 'issued by the local root' && f.value === h.served));
+      assert.ok(hintFact(row(result, 'routes')));
+    } finally { h.cleanup(); }
+  });
+
+  it('with a leftover Caddyfile whose certificates the root issued, a served certificate it did not issue gives no hint', async () => {
+    const h = directHomeWithCaddyfile('served-other.pem', CERTS.leafOther);
+    try {
+      const result = await run(h, { https: tlsFailure(), caCertificates: () => [CERTS.leafB] });
+      const t = row(result, 'trust');
+      assert.ok(t.facts.some((f) => f.label === 'issued by the local root'), 'a site certificate was issued by the root');
+      assert.ok(t.facts.some((f) => f.label === 'NOT issued by the local root' && f.value === h.served));
+      assert.equal(hintFact(row(result, 'routes')), undefined);
+    } finally { h.cleanup(); }
+  });
+
+  it('runs only the three allow-listed commands in direct HTTPS mode too', async () => {
+    const h = directHome();
+    try {
+      const exec = fakeExec(healthyCommands());
+      await run(h, { execFile: exec, https: tlsFailure(), caCertificates: () => [CERTS.leafB] });
+      assert.ok(exec.calls.length > 0);
+      for (const c of exec.calls) assert.ok(hostCheck.isAllowedCommand(c.cmd, c.args), `${c.cmd} ${c.args.join(' ')}`);
+      assert.deepEqual([...new Set(exec.calls.map((c) => `${c.cmd} ${c.args.slice(0, 2).join(' ')}`))].sort(),
+        ['security verify-cert -c', 'tailscale serve status', 'tailscale status --json']);
+    } finally { h.cleanup(); }
+  });
+
+  it('reads no file beyond what a caddy-mode run reads, except the served certificate, and never a key', async () => {
+    const h = directHome();
+    const reads = [];
+    const spy = { ...fs,
+      statSync: (p, ...rest) => { reads.push(String(p)); return fs.statSync(p, ...rest); },
+      readFileSync: (p, ...rest) => { reads.push(String(p)); return fs.readFileSync(p, ...rest); } };
+    const realRead = fs.readFileSync;
+    // https-setup's certSanHosts and certCoversHost read through the real module.
+    fs.readFileSync = (p, ...rest) => { reads.push(String(p)); return realRead(p, ...rest); };
+    try {
+      await run(h, { fs: spy, https: tlsFailure(), caCertificates: () => [CERTS.leafB] });
+    } finally {
+      fs.readFileSync = realRead;
+      h.cleanup();
+    }
+    const allowed = new Set([
+      path.join(h.home, 'config.json'), path.join(h.home, 'Caddyfile'), path.join(h.home, 'certs', 'cert.pem'),
+      path.join(h.caroot, 'rootCA.pem'), '/nonexistent/host-check-test.plist', h.served
+    ]);
+    // The run helper builds its stub command table from the fixture directory: test-side reads.
+    for (const p of reads.filter((x) => !x.startsWith(FIXTURES + path.sep))) assert.ok(allowed.has(p), `unexpected read: ${p}`);
+    assert.ok(reads.includes(h.served));
+    assert.ok(!reads.some((p) => /key/.test(path.basename(p))), 'no key file read');
+  });
+});

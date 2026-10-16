@@ -133,9 +133,15 @@ connection it cannot verify. On its own it is not a diagnosis.
 - another validation failure.
 
 Diagnose which one before acting: check the certificate's trust, its validity dates, and the names
-it carries. The host check reads certificates only through the Caddyfile's sites, so on a direct-mode
-install with no Caddyfile it shows none of these. Check them by hand on the certificate TangleClaw
-serves, the file `httpsCertPath` names in the configuration. Do not re-mint because of this row alone.
+it carries. On a direct-mode HTTPS install the host check reads the certificate the configuration says
+TangleClaw serves, the file `httpsCertPath` names, and reports what it measured there: its names and
+dates (Certificates, actual), whether it carries `127.0.0.1` and the configured names (Coverage),
+whether the local mkcert root issued it, and whether that root is in this check's own Node default
+CA set (Local trust). That last fact describes the check's own process only: not the server's, not a
+browser's, and not the certificate the server actually presented, which the check does not read. When
+the routes row reads `tls-unverified`, the configured certificate was issued by the local root, and
+that root was measured absent from the CA set, the routes row adds a `possible cause (not confirmed)`
+line. It is a lead to check, not a diagnosis. Do not re-mint because of this row alone.
 
 ## On the new machine: diagnose first, then change only what a row shows
 
@@ -151,9 +157,12 @@ approximation of it.
 | Change a Tailscale serve route | The routes row lists a route that is wrong for this machine | The full output of `tailscale serve status --json` | That exact configuration, checked by reading it back |
 | Change the Caddyfile (today, a hand edit) | The Caddyfile or coverage row is `drift` or `ambiguous` | The file, byte for byte | That file, then a Caddy-only restart and a health check |
 
-The certificate, coverage and trust rows read certificates through the Caddyfile's sites. On a
-direct-mode install with no Caddyfile they report `observed` (nothing to compare), so these triggers
-never fire there.
+The certificate, coverage and trust rows read the certificates the Caddyfile's sites name and, on a
+direct-mode HTTPS install, the served certificate `httpsCertPath` names, so these triggers can fire
+there too: the coverage row reads `drift` when the served certificate does not carry `127.0.0.1` or a
+configured name, the certificate row when it has expired, and the trust row when the keychain does
+not trust its root. A direct-mode install over plain HTTP, with no Caddyfile, has no certificate to
+read, and these rows report `observed` (nothing to compare).
 
 How each change is made:
 - **Re-trust:** `mkcert -install` in a terminal. It asks for an administrator password. Then restart
