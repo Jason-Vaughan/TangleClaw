@@ -245,7 +245,11 @@ function refreshSharedDocWatchers() {
         if (eventType === 'change') {
           if (docDebounceTimers.has(doc.id)) clearTimeout(docDebounceTimers.get(doc.id));
           docDebounceTimers.set(doc.id, setTimeout(() => {
-             broadcastSharedDocUpdate(doc.id);
+            // Recorded alongside, never in front of, the broadcast: delivery
+            // does not wait on the record or depend on it succeeding.
+            sharedDocRecord.observe(doc.id, { source: 'watch' })
+              .catch((err) => log.warn('Shared doc revision not recorded', { docId: doc.id, source: 'watch', error: err.message }));
+            broadcastSharedDocUpdate(doc.id);
           }, SHARED_DOC_DEBOUNCE_MS));
         }
       });
@@ -276,6 +280,7 @@ const launchRecoveryHeld = require('./lib/launch-recovery-held');
 const recoveryDefault = require('./lib/recovery-default');
 const master = require('./lib/master');
 const sharedDocsAccess = require('./lib/shared-docs-access');
+const sharedDocRecord = require('./lib/shared-docs');
 const launchBindingGuard = require('./lib/launch-binding-guard');
 const workload = require('./lib/workload');
 const coordinatorRotation = require('./lib/coordinator-rotation');
@@ -10409,6 +10414,10 @@ route('POST', '/api/shared-docs/:id/notify', async (req, res, params) => {
       return errorResponse(res, 404, `Shared document "${params.id}" not found`, 'NOT_FOUND');
     }
 
+    // The notify caller is never made the author: this records an `unknown`
+    // revision when the bytes are new. A failed record does not stop the notice.
+    await sharedDocRecord.observe(params.id, { source: 'notify' })
+      .catch((err) => log.warn('Shared doc revision not recorded', { docId: params.id, source: 'notify', error: err.message }));
     const { notified, coalesced, errors } = await broadcastSharedDocUpdate(params.id);
     // `coalescedCount` is reported so a zero `notifiedCount` is never mistaken
     // for a failed notify: every recipient already holding an un-handled notice
@@ -10439,6 +10448,124 @@ route('DELETE', '/api/shared-docs/:id', (req, res, params) => {
     }
     throw err;
   }
+});
+
+// ── Shared Document Revisions (#2389) ──
+
+/** @type {RegExp} A lowercase hex sha256. */
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/** @type {number} Body cap of the attest route: two digests and a flag. */
+const ATTEST_BODY_LIMIT_BYTES = 1024;
+
+/**
+ * Whether a project caller holds a doc's lock right now: present, unexpired,
+ * taken by the caller's own verified session and project, and (when
+ * `lockedAt` is given) the same acquisition the caller started with. The
+ * lock route records whatever session id its body names, so the comparison
+ * is with the session the launch binding verified, never with the body.
+ * @param {string} docId - Shared doc id
+ * @param {{sessionId: number}} access - A project caller
+ * @param {string} projectName - The caller's project name
+ * @param {string} [lockedAt] - The acquisition the attestation began under
+ * @returns {{status: number, code: string, message: string}|null} The refusal, or null.
+ */
+function attestLockRefusal(docId, access, projectName, lockedAt) {
+  const lock = store.documentLocks.check(docId);
+  const refuse = (why) => ({ status: 409, code: 'NOT_LOCK_HOLDER', message: `Attestation needs this session to hold the document's lock: ${why}` });
+  if (!lock) return refuse('the document is not locked');
+  if (lock.expiresAt && new Date(lock.expiresAt) <= new Date()) return refuse('the lock has expired');
+  if (Number(lock.lockedBySession) !== access.sessionId || lock.lockedByProject !== projectName) {
+    return refuse('the lock is held by another session');
+  }
+  if (lockedAt !== undefined && lock.lockedAt !== lockedAt) return refuse('the lock changed while the file was read');
+  return null;
+}
+
+// POST /api/shared-docs/:id/attest
+//
+// `{"base": true}` is a writer's base capture: observe the file into the
+// record and answer the digest to save. `{"baseSha256", "sha256"}` attests
+// that the newest revision is this session's edit of that base. Attested
+// authorship is authenticated attestation by a lock holder in a
+// cooperative-writer model, not proof of who wrote the bytes.
+route('POST', '/api/shared-docs/:id/attest', async (req, res, params, body) => {
+  const access = sharedDocsCaller(req, res, sharedDocsAccess.NEEDS.WRITE);
+  if (!access) return;
+  const doc = store.sharedDocs.get(params.id);
+  if (!doc || !sharedDocsAccess.canWriteGroup(access, doc.groupId)) {
+    return errorResponse(res, 404, `Shared document "${params.id}" not found`, 'NOT_FOUND');
+  }
+  // An attestation binds a verified session and its project; the operator and
+  // the Project Master have neither.
+  if (access.kind !== sharedDocsAccess.KINDS.PROJECT) {
+    return errorResponse(res, 403, 'Only a bound project session can capture a base or attest a revision', 'PROJECT_ONLY');
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
+  }
+  try {
+    if (body.base === true) {
+      const base = await sharedDocRecord.captureBase(doc.id);
+      if (!base) return errorResponse(res, 404, `Shared document "${params.id}" not found`, 'NOT_FOUND');
+      return jsonResponse(res, 200, { docId: doc.id, base: true, seq: base.seq, sha256: base.sha256 });
+    }
+    if (!SHA256_HEX.test(body.baseSha256 || '') || !SHA256_HEX.test(body.sha256 || '')) {
+      return errorResponse(res, 400, 'baseSha256 and sha256 must each be a lowercase hex sha256, or send {"base": true}', 'BAD_REQUEST');
+    }
+    const project = store.projects.get(access.projectId);
+    const projectName = project ? project.name : null;
+    const first = attestLockRefusal(doc.id, access, projectName);
+    if (first) return errorResponse(res, first.status, first.message, first.code);
+    const lockedAt = store.documentLocks.check(doc.id).lockedAt;
+    const outcome = await sharedDocRecord.attest(doc.id, {
+      baseSha256: body.baseSha256,
+      sha256: body.sha256,
+      projectId: access.projectId,
+      sessionId: access.sessionId,
+      // Re-read after the file read: the binding, the group access and the
+      // lock may each have changed while it was in flight.
+      recheck: () => {
+        const now = sharedDocsAccess.resolveAccess(req);
+        if (now.kind !== sharedDocsAccess.KINDS.PROJECT || now.sessionId !== access.sessionId
+          || now.projectId !== access.projectId) {
+          return { status: 403, code: 'LAUNCH_BINDING_INVALID', message: 'The caller\'s launch binding changed during the attestation' };
+        }
+        if (!sharedDocsAccess.canWriteGroup(now, doc.groupId)) {
+          return { status: 404, code: 'NOT_FOUND', message: `Shared document "${params.id}" not found` };
+        }
+        return attestLockRefusal(doc.id, now, projectName, lockedAt);
+      }
+    });
+    if (outcome.code) return errorResponse(res, outcome.status, outcome.message, outcome.code);
+    jsonResponse(res, 200, { docId: doc.id, attested: true, already: outcome.already, revision: outcome.revision });
+  } catch (err) {
+    if (err.code === 'UNREADABLE') return errorResponse(res, 409, err.message, 'UNREADABLE');
+    log.error('Shared-doc attestation failed', { docId: doc.id, error: err.stack });
+    errorResponse(res, 500, err.message, 'SERVER_ERROR');
+  }
+}, { maxBodySize: ATTEST_BODY_LIMIT_BYTES });
+
+// GET /api/shared-docs/:id/events
+//
+// The doc's recorded revisions after `since` (a seq), oldest first, with the
+// newest revision, the oldest one retained, and `gap` when revisions after
+// `since` were pruned. `shadowWouldSelect` is a shadow: nobody was notified
+// by it.
+route('GET', '/api/shared-docs/:id/events', (req, res, params) => {
+  const access = sharedDocsCaller(req, res);
+  if (!access) return;
+  const doc = store.sharedDocs.get(params.id);
+  if (!doc || !sharedDocsAccess.canSeeGroup(access, doc.groupId)) {
+    return errorResponse(res, 404, `Shared document "${params.id}" not found`, 'NOT_FOUND');
+  }
+  const query = parseQuery(reqUrl(req).search);
+  const since = query.since === undefined ? 0 : Number(query.since);
+  const limit = query.limit === undefined ? 100 : Number(query.limit);
+  if (!Number.isInteger(since) || since < 0 || !Number.isInteger(limit) || limit < 1 || limit > 500) {
+    return errorResponse(res, 400, 'since must be a non-negative integer and limit an integer from 1 to 500', 'BAD_REQUEST');
+  }
+  jsonResponse(res, 200, { docId: doc.id, ...store.sharedDocEvents.list(doc.id, { sinceSeq: since, limit }) });
 });
 
 // ── Document Locks API ──

@@ -233,6 +233,33 @@ describe('shared-doc broadcasts stay inside the doc\'s group (#1222)', () => {
     }
   });
 
+  it('a notify records the revision (#2389) and sends exactly the notice it always sent', async () => {
+    const res = await post(server, `/api/shared-docs/${docId}/notify`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(Object.keys(res.body).sort(), ['coalescedCount', 'notifiedCount', 'success'],
+      'the route answers the fields it always answered');
+    assert.deepEqual(sent, [{
+      to: wsFor(inGroup),
+      message: JSON.stringify({ type: 'system', event: 'shared_doc_updated', doc: 'SHARED', docId })
+    }], 'delivery is byte-identical: recording is beside the broadcast, never in front of it');
+    const revision = store.sharedDocEvents.latest(docId);
+    assert.equal(revision.authorSource, 'unknown', 'the notify caller is never made the author');
+    assert.deepEqual(revision.shadowWouldSelect, [], 'and an unknown author selects no one, even as a shadow');
+  });
+
+  it('a revision that cannot be recorded does not stop the notice (#2389)', async () => {
+    const docPath = store.sharedDocs.get(docId).filePath;
+    const saved = fs.readFileSync(docPath);
+    fs.rmSync(docPath);
+    try {
+      const res = await post(server, `/api/shared-docs/${docId}/notify`);
+      assert.equal(res.status, 200);
+      assert.deepEqual(sent.map((m) => m.to), [wsFor(inGroup)]);
+    } finally {
+      fs.writeFileSync(docPath, saved);
+    }
+  });
+
   it('a doc whose group has no members notifies nobody, rather than everybody', async () => {
     const empty = store.projectGroups.create({ name: 'empty-group' });
     const docPath = path.join(tmpDir, 'ORPHAN.md');
