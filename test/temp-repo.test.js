@@ -142,6 +142,14 @@ describe('test/ — every `git init` and `git clone` goes through the helper (th
     /\bgit['"],\s*\[(?:\s*['"](?:-[^'"]*|[^'"]*=[^'"]*)['"]\s*,)*\s*['"](init|clone)['"]/,
     // a local wrapper: const git = (cmd) => execSync(`git ${cmd}`); git('init -q')
     /\bgit\s*\(\s*['"`](init|clone)(\s|['"`])/,
+    // a wrapper returned by a call and called at once, whatever its name:
+    // const at = (cwd) => (...args) => execFileSync('git', args, { cwd });
+    // at(dir)('init', '--bare', remote)
+    // A line scanner still cannot see a wrapper with another name called
+    // directly (run('init') in test/cache-bump-guard.test.js) or a subcommand
+    // held in a variable; matching every call whose first argument is 'init'
+    // also hits a temp directory named 'clone', so those stay out of this list.
+    /\)\s*\(\s*['"`](init|clone)(\s|['"`])/,
     // the workaround the helper replaces: a second isolation path is a second
     // place to forget
     /init\.templateDir=/
@@ -185,15 +193,17 @@ describe('test/ — every `git init` and `git clone` goes through the helper (th
     }
   });
 
-  it('the scanner recognises every shape — string, argv (with -c prefix), wrapper, clone, templateDir — and ignores comments and titles', () => {
+  it('the scanner recognises every shape — string, argv (with -c prefix), wrapper, returned wrapper, clone, templateDir — and ignores comments and titles', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-scan-'));
     try {
       const f = path.join(dir, 'x.js');
-      fs.writeFileSync(f, [
+      const ignored = [
         '// a comment about `git init` is fine',
         ' * so is a JSDoc line mentioning git init',
         "it('runs `git init` somewhere', () => {",
-        "describe('git init picks up the hook', () => {",
+        "describe('git init picks up the hook', () => {"
+      ];
+      const matches = [
         "execSync('git init -q', { cwd });",
         "execFileSync('git', ['init', '--template=', '-q'], { cwd });",
         'execFileSync("git", ["init"], { cwd });',
@@ -203,13 +213,20 @@ describe('test/ — every `git init` and `git clone` goes through the helper (th
         "git(`clone ${src} dest`);",
         "execSync(`git clone -q ${JSON.stringify(remote)} cloned`);",
         "execFileSync('git', ['clone', '--quiet', '--depth', '1', src, dest]);",
+        "at(dir)('init', '--quiet', '--bare', '--initial-branch=main', remote);",
+        "at(dir)('clone', '--quiet', remote, clone);"
+      ];
+      const clean = [
+        "at(dir)('config', 'user.name', 't');",
+        "at(dir)('status');",
         "execSync('git status');",
         "execSync('git initialise-nothing');",
         "git('config user.name t');",
         "execFileSync('git', ['-c', 'user.name=t', 'commit', '-m', 'x']);",
         "execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: repo });"
-      ].join('\n'));
-      assert.equal(gitInitInvocations(f).length, 9);
+      ];
+      fs.writeFileSync(f, [...ignored, ...matches, ...clean].join('\n'));
+      assert.deepEqual(gitInitInvocations(f), matches);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

@@ -48,6 +48,33 @@ v5.34.0 Wave 3 chunk W3-B1, its one chunk. Branch `fix/w3b1-refused-launch-toast
 **Why and what (#2313).** The bridge panel and `tc bridge status` printed the helper's Discord times as raw UTC ISO. Both status routes in `lib/bridge-api.js` now add `sinceText` and `reportedAtText` to `discordGateway`, worded by the notices' own formatter (`lib/bridge-notify.js` exports `_when` as `when`, unchanged): `22:03 PDT on 2026-10-10`. The ISO fields are unchanged for scripts. `public/operator-bridge-panel.js` and `lib/tc-verbs.js` print the words and fall back to the ISO time from an older server. The configuration circuit's times stay raw ISO, out of scope by ruling.
 
 **Tests.** New: `test/launch-refusal-toast.test.js` (the real functions with held timers: both branches stay, Dismiss and Escape, the overlap case, replacement, the source layout) and `test/bridge-status-timestamps.test.js` (the formatter, the real `bin/tc` against a stub server, the ISO fallback). Changed only as the plan's exact list says: sandboxes or pins that gain the owner (`launch-isolation-override-ui`, `landing-unreachable-state`, `error-string-parity`, `account-self-service-ui`, `orphan-hooks-banner`, `stranded-wraps-ui`), and bridge tests that expect the text fields with a pinned zone (`operator-bridge-panel`, `api-bridge-gateway`, `api-bridge`). `import-banner-buttons` and `port-owner-kind-panel` pass unchanged.
+## 2026-10-16 — #2175, #2349 (refs): one clock for the two-clone summary comparison, and the guard sees a returned git wrapper
+
+<!-- prawduct: type=chore | scope=w3-a1-test-determinism-2175-2349 -->
+
+v5.34.0 Wave 3 chunk W3-A1, test-only. Branch `fix/2175-2349-test-determinism`. Fixes #2175; Refs #2349, whose direct-wrapper survivor the Integrator logged on the issue for follow-up (the PM's ruling: the narrow shape, inside the row). Plan: `.tangleclaw/plans/w3-a1-test-determinism-2175-2349.md`.
+
+**Why.** #2175: `test/checkout-freshness.test.js`'s two-clone case compared `ca.summary`, rendered inside `projectCheckout`, with `cf.describe(ca)`, rendered later. Both say the observation's age through `lib/checkout-summary.js`'s `_internal.now`, which read the real clock, so a second boundary between the two renders changed "observed Ns ago" and failed the `deepEqual`. #2349: the #831 guard in `test/temp-repo.test.js` stayed green over a wrapper returned by a call and called at once, `at(dir)('init', …)`, because its wrapper shape keys on the name `git`.
+
+**What changed.** No production code. The two-clone case installs a clock that freezes on its first read (the first render, after the observation), so both renders read one instant, and asserts the age the pinned clock gives. The guard's `SHAPES` gains `)( 'init' | 'clone' …`, with a comment naming what a line scanner still cannot see: a wrapper with another name called directly (`run('init')` in `test/cache-bump-guard.test.js`, left for #2349) and a subcommand held in a variable. The scanner fixture adds the issue's two lines and two clean `at(dir)(…)` neighbours, and is checked line by line against the expected matches instead of a copied count.
+
+**Proved once, not committed.** With the real clock advanced 1 s between the renders, the fixed case passes and `origin/main`'s fails on "the chip and the prime read one wording". On a clean extract of `origin/main`'s `test/` with the issue's lines added, `main`'s guard passes (the issue reproduced) and the fixed guard fails, naming both lines; with the lines removed it passes. The sanctioned counts (2 and 1) are unchanged.
+
+**Review.** Critic (verify-resolutions, the mode the coordinator inferred, one pass over `e3236ad7`): 0 findings, 2 observations.
+
+**rev-20261016T181447Z-2ea085de** — 2026-10-16T18:16:08Z
+
+_No findings._
+
+_Observations — read, not owed. Answering one is optional._
+
+| Observation | State | Detail |
+|---|---|---|
+| O-1 | accepted | The full suite runs once on the final tree in the queue's suite slot (rule #262 cl.4), after the change-log entry and before the draft PR. Both edited files already pass narrow: checkout-freshness 18/18, temp-repo 10/10. |
+| O-2 | accepted | Added in the next commit, before the suite (charter 1.5 freeze order: Critic, then change-log, then suite). |
+
+**No findings** — a clean pass.
+**2 observations demoted** — 2 answered. An observation gates nothing; answering one is optional.
 
 ## 2026-10-15 — #2358 (refs): a measured Antigravity pane holding a stranded nudge, pinned test-only
 
