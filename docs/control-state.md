@@ -220,6 +220,17 @@ HTTPS install, below) and is never committed.
   - with no `caFile` (a plain `http:` origin, or a certificate TangleClaw cannot tie to the local
     root), uses Node's default verification, as before.
 
+  When an `https:` origin has no anchor, the server log names each CAROOT directory tried and what
+  was wrong with it (#2142): not set, no `rootCA.pem`, `rootCA.pem` unreadable, not a certificate,
+  did not issue the served certificate, the same directory as an earlier source, or mkcert not found.
+  A hook refusing an untrusted certificate points the operator at this line. It is logged at `warn`
+  the first time a given served certificate and set of reasons is seen by this server process, and
+  at `debug` on every later launch. A different certificate or a changed reason warns again. The
+  level is the only thing that repeats differently: the search, the marker and the trust decision
+  are computed fresh at every launch. `$CAROOT` and mkcert's default directory are re-read each
+  time. The `mkcert -CAROOT` answer is asked once per server process, so installing mkcert or
+  changing the server's PATH afterwards is seen only after a **server restart**.
+
   *Threat rationale.* This trusts nothing the operator's own browser and `tc` do not already trust,
   and only for a request that cannot leave the machine. It trusts the root rather than pinning the
   leaf because a certificate regeneration from the same root would otherwise break every hook until

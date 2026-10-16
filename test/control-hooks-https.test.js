@@ -8,7 +8,7 @@
 // full verification. Everything here uses a throwaway CA made with openssl in
 // a temp dir: no mkcert, and never the live service.
 
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -47,18 +47,22 @@ function makeCa(dir, cn) {
 }
 
 /**
- * Issue a localhost leaf (localhost, 127.0.0.1, ::1 — mkcert's defaults) from a CA.
+ * Issue a leaf from a CA: by default for localhost, 127.0.0.1 and ::1 (mkcert's defaults).
  * @param {{cert: string, key: string}} ca - Issuer
- * @param {string} dir - Destination
+ * @param {string} dir - Destination (created)
+ * @param {string} [san] - The subjectAltName value, when not mkcert's defaults
+ * @param {string} [cn] - Subject common name. A leaf with no DNS name in its
+ *   SAN is checked against its CN, so a single-name leaf needs one that names nothing.
  * @returns {{cert: string, key: string}}
  */
-function makeLeaf(ca, dir) {
+function makeLeaf(ca, dir, san = 'DNS:localhost,IP:127.0.0.1,IP:::1', cn = 'localhost') {
+  fs.mkdirSync(dir, { recursive: true });
   const key = path.join(dir, 'key.pem');
   const csr = path.join(dir, 'leaf.csr');
   const cert = path.join(dir, 'cert.pem');
   const ext = path.join(dir, 'leaf.ext');
-  fs.writeFileSync(ext, 'subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1\nextendedKeyUsage=serverAuth\n');
-  execFileSync('openssl', ['req', '-newkey', 'rsa:2048', '-nodes', '-subj', '/CN=localhost', '-keyout', key, '-out', csr], { stdio: 'ignore' });
+  fs.writeFileSync(ext, `subjectAltName=${san}\nextendedKeyUsage=serverAuth\n`);
+  execFileSync('openssl', ['req', '-newkey', 'rsa:2048', '-nodes', '-subj', `/CN=${cn}`, '-keyout', key, '-out', csr], { stdio: 'ignore' });
   execFileSync('openssl', ['x509', '-req', '-in', csr, '-CA', ca.cert, '-CAkey', ca.key, '-CAcreateserial',
     '-days', '2', '-extfile', ext, '-out', cert], { stdio: 'ignore' });
   return { cert, key };
@@ -72,7 +76,7 @@ function makeLeaf(ca, dir) {
  */
 const STUB_API = `
 const https = require('https'); const fs = require('fs');
-const [answers, hits, cert, key] = process.argv.slice(1);
+const [answers, hits, cert, key, host = '127.0.0.1'] = process.argv.slice(1);
 const srv = https.createServer({ cert: fs.readFileSync(cert), key: fs.readFileSync(key) }, (req, res) => {
   fs.appendFileSync(hits, req.url + '\\n');
   const id = new URL(req.url, 'https://x').searchParams.get('assignmentId');
@@ -81,8 +85,28 @@ const srv = https.createServer({ cert: fs.readFileSync(cert), key: fs.readFileSy
   res.writeHead(body ? 200 : 404, { 'content-type': 'application/json' });
   res.end(JSON.stringify(body || { code: 'ASSIGNMENT_NOT_FOUND' }));
 });
-srv.listen(0, '127.0.0.1', () => process.stdout.write(String(srv.address().port) + '\\n'));
+srv.on('error', (err) => { process.stdout.write('LISTEN_FAILED ' + err.code + '\\n'); process.exit(1); });
+srv.listen(0, host, () => process.stdout.write(String(srv.address().port) + '\\n'));
 `;
+
+/**
+ * Start a stub control API serving `leaf` on `host`. A stub that cannot listen
+ * rejects with the reason, so a test that needs one fails rather than hangs.
+ * @param {{cert: string, key: string}} leaf - Served certificate
+ * @param {string} [host] - Listen address (default 127.0.0.1)
+ * @returns {Promise<{proc: import('node:child_process').ChildProcess, port: string}>}
+ */
+function startStub(leaf, host = '127.0.0.1') {
+  const proc = spawn(process.execPath, ['-e', STUB_API, stub.answers, stub.hits, leaf.cert, leaf.key, host], { stdio: ['ignore', 'pipe', 'inherit'] });
+  return new Promise((resolve, reject) => {
+    proc.stdout.once('data', (d) => {
+      const out = String(d).trim();
+      if (out.startsWith('LISTEN_FAILED')) reject(new Error(`stub could not listen on ${host}: ${out}`));
+      else resolve({ proc, port: out });
+    });
+    proc.once('error', reject);
+  });
+}
 
 /**
  * Set what the stub answers for an assignment.
@@ -158,11 +182,7 @@ describe('control hooks over direct-mode HTTPS (#1947)', () => {
     stub = { answers: path.join(tmpDir, 'answers.json'), hits: path.join(tmpDir, 'hits.log') };
     fs.writeFileSync(stub.answers, '{}');
     fs.writeFileSync(stub.hits, '');
-    stub.proc = spawn(process.execPath, ['-e', STUB_API, stub.answers, stub.hits, pki.leaf.cert, pki.leaf.key], { stdio: ['ignore', 'pipe', 'inherit'] });
-    stub.port = await new Promise((resolve, reject) => {
-      stub.proc.stdout.once('data', (d) => resolve(String(d).trim()));
-      stub.proc.once('error', reject);
-    });
+    ({ proc: stub.proc, port: stub.port } = await startStub(pki.leaf));
     localApi = `https://localhost:${stub.port}`;
   });
 
@@ -250,6 +270,71 @@ describe('control hooks over direct-mode HTTPS (#1947)', () => {
     });
   });
 
+  describe('the hostname check (#2142)', () => {
+    // mkcert's default leaf names localhost, 127.0.0.1 AND ::1, so it passes
+    // whichever name the hook checks. A leaf naming only one of them shows
+    // which name is checked.
+    const stubs = {};
+
+    before(async () => {
+      const dnsOnly = makeLeaf(pki.ca, path.join(tmpDir, 'leaf-dns-only'), 'DNS:localhost', 'single-name test leaf');
+      const ipOnly = makeLeaf(pki.ca, path.join(tmpDir, 'leaf-ip-only'), 'IP:127.0.0.1', 'single-name test leaf');
+      stubs.dnsOnly = await startStub(dnsOnly);
+      stubs.ipOnly = await startStub(ipOnly);
+      // A failure to bind ::1 fails these cases: the [::1] arm is never skipped.
+      stubs.v6 = await startStub(pki.leaf, '::1');
+      stubs.v6DnsOnly = await startStub(dnsOnly, '::1');
+    });
+
+    after(() => {
+      for (const s of Object.values(stubs)) s.proc.kill();
+    });
+
+    it('https://localhost checks the name localhost: a leaf naming only 127.0.0.1 is refused', () => {
+      // Without `servername: 'localhost'` the hook would check 127.0.0.1, the
+      // address it connects to, and this leaf would pass.
+      const dir = governed('ip-only', `https://localhost:${stubs.ipOnly.port}`, pki.ca.cert);
+      setState('asg_ip-only', 'active');
+      const r = tryCommit(dir);
+      assert.equal(r.ok, false);
+      assert.match(r.stderr, /is not trusted \(ERR_TLS_CERT_ALTNAME_INVALID\)/);
+    });
+
+    it('a leaf naming only localhost is accepted at https://localhost, so the refusal above is the name check', () => {
+      const dir = governed('dns-only-ok', `https://localhost:${stubs.dnsOnly.port}`, pki.ca.cert);
+      setState('asg_dns-only-ok', 'active');
+      assert.equal(tryCommit(dir).ok, true);
+    });
+
+    it('https://127.0.0.1 checks the address: a leaf naming only localhost is refused', () => {
+      // A hook that skipped the identity check would accept it: the root signed it.
+      const dir = governed('dns-only', `https://127.0.0.1:${stubs.dnsOnly.port}`, pki.ca.cert);
+      setState('asg_dns-only', 'active');
+      const r = tryCommit(dir);
+      assert.equal(r.ok, false);
+      assert.match(r.stderr, /is not trusted \(ERR_TLS_CERT_ALTNAME_INVALID\)/);
+    });
+
+    it('https://[::1] trusts the local root: an ACTIVE lane commits, a HELD one is refused', () => {
+      const dir = governed('v6', `https://[::1]:${stubs.v6.port}`, pki.ca.cert);
+      setState('asg_v6', 'active');
+      const r = tryCommit(dir);
+      assert.equal(r.ok, true, r.stderr);
+      setState('asg_v6', 'held');
+      const held = tryCommit(dir);
+      assert.equal(held.ok, false);
+      assert.match(held.stderr, /this lane is CONTROL_HELD/);
+    });
+
+    it('https://[::1] checks the address: a leaf naming only localhost is refused', () => {
+      const dir = governed('v6-dns-only', `https://[::1]:${stubs.v6DnsOnly.port}`, pki.ca.cert);
+      setState('asg_v6-dns-only', 'active');
+      const r = tryCommit(dir);
+      assert.equal(r.ok, false);
+      assert.match(r.stderr, /is not trusted \(ERR_TLS_CERT_ALTNAME_INVALID\)/);
+    });
+  });
+
   describe('the marker', () => {
     it('records caFile only when one is given', () => {
       const withAnchor = governed('marker-a', localApi, pki.ca.cert);
@@ -273,6 +358,109 @@ describe('control hooks over direct-mode HTTPS (#1947)', () => {
       assert.equal(httpsSetup.localTrustAnchor({ httpsEnabled: false }, { caroots: [pki.ca.dir] }), null);
       assert.equal(httpsSetup.localTrustAnchor({ ...httpsConfig(), ingressMode: 'caddy' }, { caroots: [pki.ca.dir] }), null);
       assert.equal(httpsSetup.localTrustAnchor({ ...httpsConfig(), httpsCertPath: path.join(tmpDir, 'none.pem') }, { caroots: [pki.ca.dir] }), null);
+    });
+  });
+
+  describe('localTrustAnchorSearch (#2142)', () => {
+    const httpsConfig = () => ({ httpsEnabled: true, httpsCertPath: pki.leaf.cert, httpsKeyPath: pki.leaf.key });
+    const noMkcert = () => ({ dir: null, error: 'mkcert not found' });
+    let bad;
+
+    before(() => {
+      bad = {
+        empty: path.join(tmpDir, 'caroot-empty'),
+        unreadable: path.join(tmpDir, 'caroot-unreadable'),
+        garbage: path.join(tmpDir, 'caroot-garbage')
+      };
+      fs.mkdirSync(bad.empty);
+      // A directory where the file should be: unreadable on every platform and as any user.
+      fs.mkdirSync(path.join(bad.unreadable, 'rootCA.pem'), { recursive: true });
+      fs.mkdirSync(bad.garbage);
+      fs.writeFileSync(path.join(bad.garbage, 'rootCA.pem'), 'not a certificate\n');
+    });
+
+    beforeEach(() => httpsSetup._resetMkcertCarootMemo());
+
+    it('names each directory tried and what was wrong with it', () => {
+      const r = httpsSetup.localTrustAnchorSearch(httpsConfig(), { caroots: [bad.empty, bad.unreadable, bad.garbage, pki.other.dir] });
+      assert.equal(r.caFile, null);
+      assert.deepEqual(r.tried, [
+        { source: 'caroots[0]', dir: bad.empty, reason: 'no rootCA.pem' },
+        { source: 'caroots[1]', dir: bad.unreadable, reason: 'rootCA.pem unreadable (EISDIR)' },
+        { source: 'caroots[2]', dir: bad.garbage, reason: 'rootCA.pem is not a certificate' },
+        { source: 'caroots[3]', dir: pki.other.dir, reason: 'did not issue the served certificate' }
+      ]);
+      assert.equal(r.fingerprint, new (require('node:crypto').X509Certificate)(fs.readFileSync(pki.leaf.cert)).fingerprint256);
+    });
+
+    it('stops at the issuing root, which it returns with no reason', () => {
+      const r = httpsSetup.localTrustAnchorSearch(httpsConfig(), { caroots: [pki.other.dir, pki.ca.dir, bad.empty] });
+      assert.equal(r.caFile, pki.ca.cert);
+      assert.deepEqual(r.tried.map((t) => t.reason), ['did not issue the served certificate', null]);
+    });
+
+    it('by default tries $CAROOT, the mkcert default, then `mkcert -CAROOT`, saying which was unset or a repeat', () => {
+      const unset = httpsSetup.localTrustAnchorSearch(httpsConfig(), { env: {}, mkcertCaroot: noMkcert });
+      assert.deepEqual(unset.tried[0], { source: '$CAROOT', dir: null, reason: 'not set' });
+      assert.equal(unset.tried[1].source, 'the mkcert default');
+      assert.deepEqual(unset.tried.at(-1), { source: '`mkcert -CAROOT`', dir: null, reason: 'mkcert not found' });
+
+      const repeat = httpsSetup.localTrustAnchorSearch(httpsConfig(), { env: { CAROOT: pki.other.dir }, mkcertCaroot: () => ({ dir: pki.other.dir, error: null }) });
+      assert.deepEqual(repeat.tried[0], { source: '$CAROOT', dir: pki.other.dir, reason: 'did not issue the served certificate' });
+      assert.deepEqual(repeat.tried.at(-1), { source: '`mkcert -CAROOT`', dir: pki.other.dir, reason: 'same directory as $CAROOT' });
+    });
+
+    it('says why the served certificate could not be read, and tries nothing', () => {
+      const r = httpsSetup.localTrustAnchorSearch({ ...httpsConfig(), httpsCertPath: path.join(tmpDir, 'none.pem') }, { caroots: [pki.ca.dir] });
+      assert.equal(r.caFile, null);
+      assert.deepEqual(r.tried, []);
+      assert.match(r.certError, /ENOENT/);
+    });
+
+    it('asks `mkcert -CAROOT` once across repeated misses, and reads $CAROOT fresh on every call', () => {
+      let asked = 0;
+      const mkcertCaroot = () => { asked += 1; return { dir: bad.empty, error: null }; };
+      // The injected lookup stands in for the per-process one, so this proves
+      // the search uses its answer; the memo itself is the next case.
+      const env = { CAROOT: pki.other.dir };
+      const first = httpsSetup.localTrustAnchorSearch(httpsConfig(), { env, mkcertCaroot });
+      assert.equal(first.caFile, null);
+      assert.equal(first.tried.at(-1).reason, 'no rootCA.pem');
+      env.CAROOT = pki.ca.dir;
+      const second = httpsSetup.localTrustAnchorSearch(httpsConfig(), { env, mkcertCaroot });
+      assert.equal(second.caFile, pki.ca.cert, 'a $CAROOT changed between calls is honoured at once');
+      assert.equal(asked, 1, 'the second search found its anchor before the fallback');
+    });
+
+    it('remembers the default `mkcert -CAROOT` answer for the process, until reset', () => {
+      // A stand-in mkcert first on PATH counts how often it is asked.
+      const bin = path.join(tmpDir, 'fake-mkcert-bin');
+      const calls = path.join(bin, 'caroot-calls');
+      fs.mkdirSync(bin, { recursive: true });
+      fs.writeFileSync(calls, '');
+      fs.writeFileSync(path.join(bin, 'mkcert'), `#!/bin/sh\nif [ "$1" = "-CAROOT" ]; then echo x >> '${calls}'; echo '${bad.empty}'; fi\nexit 0\n`, { mode: 0o755 });
+      const asked = () => fs.readFileSync(calls, 'utf8').split('\n').filter(Boolean).length;
+      const savedPath = process.env.PATH;
+      process.env.PATH = `${bin}${path.delimiter}${savedPath}`;
+      try {
+        const env = { CAROOT: pki.other.dir };
+        const a = httpsSetup.localTrustAnchorSearch(httpsConfig(), { env });
+        const b = httpsSetup.localTrustAnchorSearch(httpsConfig(), { env });
+        assert.deepEqual(a.tried.at(-1), { source: '`mkcert -CAROOT`', dir: bad.empty, reason: 'no rootCA.pem' });
+        assert.deepEqual(b.tried, a.tried);
+        assert.equal(asked(), 1, 'mkcert was asked once for two misses');
+        httpsSetup._resetMkcertCarootMemo();
+        httpsSetup.localTrustAnchorSearch(httpsConfig(), { env });
+        assert.equal(asked(), 2, 'a reset asks again');
+      } finally {
+        process.env.PATH = savedPath;
+        httpsSetup._resetMkcertCarootMemo();
+      }
+    });
+
+    it('gives localTrustAnchor its answer', () => {
+      const opts = { caroots: [pki.other.dir, pki.ca.dir] };
+      assert.equal(httpsSetup.localTrustAnchor(httpsConfig(), opts), httpsSetup.localTrustAnchorSearch(httpsConfig(), opts).caFile);
     });
   });
 
@@ -362,6 +550,12 @@ describe('control hooks over direct-mode HTTPS (#1947)', () => {
       fs.rmSync(storeDir, { recursive: true, force: true });
     });
 
+    // Both memos are per process: start each case from neither.
+    beforeEach(() => {
+      require('../lib/sessions')._resetTrustAnchorWarnings();
+      httpsSetup._resetMkcertCarootMemo();
+    });
+
     /**
      * A JSON request to the HTTPS test instance, trusting the throwaway root.
      * @param {string} method - HTTP method
@@ -439,8 +633,101 @@ describe('control hooks over direct-mode HTTPS (#1947)', () => {
       }
       assert.match(out, /no local root CA issued the served certificate/);
       assert.match(out, /mkcert -CAROOT/);
+      // #2142: each directory tried, and what was wrong with it.
+      assert.ok(out.includes(`$CAROOT ${pki.other.dir}: did not issue the served certificate`), out);
+      assert.match(out, /the mkcert default/);
+      assert.match(out, /`mkcert -CAROOT`[^"]*: /);
+      assert.match(out, /project=e2e-https-noroot/);
       const marker = JSON.parse(fs.readFileSync(path.join(dir, '.git', hooks.MARKER_FILE), 'utf8'));
       assert.equal('caFile' in marker, false);
+    });
+
+    describe('a repeated miss (#2142)', () => {
+      const MISS = 'no local root CA issued the served certificate';
+      let project;
+      let dir;
+
+      before(async () => {
+        dir = repo('e2e-repeat');
+        project = store.projects.create({ name: 'e2e-https-repeat', path: dir, engine: 'claude' });
+        const created = await send('POST', '/api/control/assignments', { projectId: project.id, requestId: 'https-e2e-repeat', issueRef: '#2142' });
+        assert.equal(created.status, 201, created.raw);
+      });
+
+      afterEach(() => { process.env.CAROOT = pki.ca.dir; });
+
+      /**
+       * Sync the project's hooks once, returning the miss lines it logged by
+       * level and what the marker then holds.
+       * @returns {{warn: string[], debug: string[], marker: object}}
+       */
+      function sync() {
+        let out = '';
+        setConsoleStream({ write: (line) => { out += line; } });
+        setLevel('debug');
+        try {
+          require('../lib/sessions').syncControlHooks(project);
+        } finally {
+          setLevel('error');
+          setConsoleStream(null);
+        }
+        const lines = out.split('\n').filter((l) => l.includes(MISS));
+        return {
+          warn: lines.filter((l) => l.includes('[WARN]')),
+          debug: lines.filter((l) => l.includes('[DEBUG]')),
+          marker: JSON.parse(fs.readFileSync(path.join(dir, '.git', hooks.MARKER_FILE), 'utf8'))
+        };
+      }
+
+      it('warns once, then logs the same miss at debug, saying so; the marker and the search are the same both times', () => {
+        process.env.CAROOT = pki.other.dir;
+        const config = store.config.load();
+        const firstAnchor = httpsSetup.localTrustAnchor(config);
+        const first = sync();
+        const second = sync();
+        assert.equal(first.warn.length, 1);
+        assert.equal(first.debug.length, 0);
+        assert.match(first.warn[0], /project=e2e-https-repeat/);
+        assert.match(first.warn[0], /once per certificate and reasons for this server process; later launches repeat it at debug/);
+        assert.equal(second.warn.length, 0);
+        assert.equal(second.debug.length, 1);
+        // The memo decides the log level only.
+        assert.equal('caFile' in first.marker, false);
+        assert.deepEqual(second.marker, first.marker);
+        assert.equal(firstAnchor, null);
+        assert.equal(httpsSetup.localTrustAnchor(config), firstAnchor);
+      });
+
+      it('warns again when a reason changes', () => {
+        process.env.CAROOT = pki.other.dir;
+        assert.equal(sync().warn.length, 1);
+        process.env.CAROOT = path.join(tmpDir, 'caroot-empty');
+        const changed = sync();
+        assert.equal(changed.warn.length, 1);
+        assert.match(changed.warn[0], /no rootCA\.pem/);
+      });
+
+      it('warns again for a different served certificate with the same reasons', () => {
+        process.env.CAROOT = pki.other.dir;
+        assert.equal(sync().warn.length, 1);
+        const config = store.config.load();
+        const second = makeLeaf(pki.ca, path.join(tmpDir, 'leaf-second'));
+        store.config.save({ ...config, httpsCertPath: second.cert, httpsKeyPath: second.key });
+        try {
+          assert.equal(sync().warn.length, 1);
+        } finally {
+          store.config.save(config);
+        }
+      });
+
+      it('finds the issuing root at once after a miss: the warning memo hides nothing', () => {
+        process.env.CAROOT = pki.other.dir;
+        assert.equal('caFile' in sync().marker, false);
+        process.env.CAROOT = pki.ca.dir;
+        const hit = sync();
+        assert.equal(hit.marker.caFile, pki.ca.cert);
+        assert.equal(hit.warn.length + hit.debug.length, 0);
+      });
     });
   });
 });
