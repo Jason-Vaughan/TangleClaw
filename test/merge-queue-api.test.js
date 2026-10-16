@@ -168,10 +168,15 @@ describe('/api/merge-queue (#2322)', () => {
    * submit: `main` at BASE_SHA and green, a candidate that is made and whose
    * check is green, ordinary changed files, and a merge that lands. A field of
    * `gh` replaces one answer: `tip`, `create`, `merge`, `commit`, `compare`, or
-   * `branchCheck` as a function of the branch.
+   * `branchCheck` as a function of the branch. The owner's session listens and
+   * its inbox holds what `gh.inbox` holds, nothing when it is not set; each
+   * read of either is logged in `gh.inboxReads` with the session it was for.
    * @returns {void}
    */
   const githubForAdvance = () => {
+    gh.inboxReads = [];
+    api._internal.listenerStatus = (sessionId) => { gh.inboxReads.push(['listenerStatus', sessionId]); return gh.listener || { state: 'listening' }; };
+    api._internal.inbox = (sessionId) => { gh.inboxReads.push(['inbox', sessionId]); return gh.inbox || []; };
     const seam = (name, answer) => {
       api._internal[name] = async (...args) => {
         gh.calls.push([name, ...args]);
@@ -1144,6 +1149,182 @@ describe('/api/merge-queue (#2322)', () => {
         queueStore.clearHalt(halting, { actor, reference: 'test teardown' });
         assert.equal(queueStore.retireQueue(halting, { actor }).ok, true);
       }
+    });
+  });
+
+  describe('the owner\'s inbox at landing (#2372)', () => {
+    beforeEach(() => {
+      emptyQueue();
+      githubForAdvance();
+    });
+
+    /**
+     * Submit an entry and advance it once, to testing with its candidate.
+     * @returns {Promise<object>} The entry
+     */
+    const atTesting = async () => {
+      const entry = await submitted();
+      const assembled = await advanceAs();
+      assert.equal(assembled.data.step, 'assembled', JSON.stringify(assembled.data));
+      gh.calls.length = 0;
+      return entry;
+    };
+
+    /**
+     * Assert a refused landing left everything as it was.
+     * @param {object} entry - The entry
+     * @param {number} events - The queue's event count before the call
+     * @returns {void}
+     */
+    const unchanged = (entry, events) => {
+      const after = queueStore.getEntry(entry.entryId);
+      assert.equal(after.state, 'testing');
+      assert.equal(after.candidate.sha, CANDIDATE_SHA);
+      assert.equal(queueStore.listEvents(queueId).length, events, 'no event is appended');
+      assert.deepEqual(githubWrites(), [], 'no merge request and no branch deletion');
+    };
+
+    /**
+     * A message as the in-memory inbox holds it.
+     * @param {string} id - Its id
+     * @param {string} from - The envelope's sender
+     * @param {*} message - Its body
+     * @returns {object}
+     */
+    const mail = (id, from, message) => ({ id, from, to: 'tc-owner', message, timestamp: '2026-10-15T23:00:00.000Z' });
+
+    it('a session with no listener cannot land: AUTHORIZER_INBOX_UNREADABLE, nothing changed', async () => {
+      const entry = await atTesting();
+      api._internal.listenerStatus = original.listenerStatus;
+      api._internal.inbox = original.inbox;
+      const events = queueStore.listEvents(queueId).length;
+      const res = await advanceAs();
+      assert.equal(res.status, 409, JSON.stringify(res.data));
+      assert.equal(res.data.code, 'AUTHORIZER_INBOX_UNREADABLE');
+      assert.match(res.data.error, /listener is off/);
+      unchanged(entry, events);
+    });
+
+    it('a listener that is not listening cannot land either, whatever its inbox holds', async () => {
+      for (const state of ['connecting', 'error', 'off']) {
+        const entry = await atTesting();
+        gh.listener = { state };
+        const events = queueStore.listEvents(queueId).length;
+        const res = await advanceAs();
+        assert.equal(res.data.code, 'AUTHORIZER_INBOX_UNREADABLE', state);
+        assert.ok(!gh.inboxReads.some((r) => r[0] === 'inbox'), `${state}: an inbox that is not being filled is not read as empty`);
+        unchanged(entry, events);
+        emptyQueue();
+        gh.listener = null;
+      }
+    });
+
+    it('reads the inbox of the session behind the verified launch, and of no other', async () => {
+      const entry = await atTesting();
+      gh.inboxReads.length = 0;
+      const res = await sendAs(server, 'POST', '/api/merge-queue/advance', { sessionId: bNeighbour.sessionId }, bOwner.headers);
+      assert.equal(res.data.step, 'landed', JSON.stringify(res.data));
+      assert.deepEqual(gh.inboxReads, [['listenerStatus', bOwner.sessionId], ['inbox', bOwner.sessionId]]);
+      assert.equal(queueStore.getEntry(entry.entryId).state, 'landed');
+    });
+
+    it('an unhandled second approval of the same head refuses AUTHORIZER_MESSAGE_UNREAD, and says nothing about authorization', async () => {
+      const entry = await atTesting();
+      gh.inbox = [mail('msg-approve', 'tc-pm-1', `merge ok ${entry.prNumber} ${HEAD}`)];
+      const events = queueStore.listEvents(queueId).length;
+      const res = await advanceAs();
+      assert.equal(res.status, 409);
+      assert.equal(res.data.code, 'AUTHORIZER_MESSAGE_UNREAD');
+      assert.deepEqual(res.data.messages, [{ id: 'msg-approve', from: 'tc-pm-1' }]);
+      assert.doesNotMatch(JSON.stringify(res.data), /merge ok/, 'no message text is answered');
+      assert.doesNotMatch(res.data.error, /authoriz/i);
+      unchanged(entry, events);
+    });
+
+    it('an objection that arrives while the landing is being checked refuses it before the merge request', async () => {
+      const entry = await atTesting();
+      gh.during = { readCompareFiles: async () => { gh.inbox = [mail('msg-object', 'tc-architect-1', 'HOLD: do not land this')]; } };
+      const events = queueStore.listEvents(queueId).length;
+      const res = await advanceAs();
+      assert.equal(res.data.code, 'AUTHORIZER_MESSAGE_UNREAD', JSON.stringify(res.data));
+      assert.deepEqual(res.data.messages, [{ id: 'msg-object', from: 'tc-architect-1' }]);
+      assert.ok(gh.calls.some((c) => c[0] === 'readCompareFiles'), 'the objection arrived after the landing\'s reads began');
+      unchanged(entry, events);
+    });
+
+    it('a system notice alone does not block, and is counted; a peer whose body says it is a system message does block', async () => {
+      const entry = await atTesting();
+      const notice = mail('msg-sys', 'system', { type: 'system', event: 'shared_doc_updated', docId: 'd1' });
+      const posing = mail('msg-posing', 'tc-builder-9', { type: 'system', event: 'shared_doc_updated', docId: 'd1' });
+      gh.inbox = [notice, posing];
+      const events = queueStore.listEvents(queueId).length;
+      const refused = await advanceAs();
+      assert.equal(refused.data.code, 'AUTHORIZER_MESSAGE_UNREAD');
+      assert.deepEqual(refused.data.messages, [{ id: 'msg-posing', from: 'tc-builder-9' }]);
+      unchanged(entry, events);
+
+      gh.inbox = [notice];
+      const landed = await advanceAs();
+      assert.equal(landed.data.step, 'landed', JSON.stringify(landed.data));
+      const started = queueStore.listEvents(queueId, { entryId: entry.entryId }).find((e) => e.event === 'landing-started');
+      assert.deepEqual(started.detail.inboxCheck.binding, { projectId: owner.id, launchId: bOwner.launchId, sessionId: bOwner.sessionId });
+      assert.equal(started.detail.inboxCheck.listenerState, 'listening');
+      assert.equal(started.detail.inboxCheck.systemExcluded, 1);
+      assert.ok(!Number.isNaN(Date.parse(started.detail.inboxCheck.checkedAt)));
+      assert.equal(started.detail.headSha, HEAD);
+      assert.equal(started.detail.baseSha, BASE_SHA);
+      assert.equal(started.detail.candidateSha, CANDIDATE_SHA);
+      assert.doesNotMatch(JSON.stringify(started.detail), /shared_doc_updated|msg-sys/, 'no message is recorded');
+    });
+
+    it('after the owner handles the message, the next advance lands', async () => {
+      const entry = await atTesting();
+      gh.inbox = [mail('msg-1', 'tc-pm-1', 'a question')];
+      assert.equal((await advanceAs()).data.code, 'AUTHORIZER_MESSAGE_UNREAD');
+      gh.inbox = [];
+      const landed = await advanceAs();
+      assert.equal(landed.data.step, 'landed', JSON.stringify(landed.data));
+      assert.equal(queueStore.getEntry(entry.entryId).state, 'landed');
+      assert.equal(gh.calls.filter((c) => c[0] === 'mergePull').length, 1);
+    });
+
+    it('assembly is not held up by an unhandled message, and reads no inbox', async () => {
+      await submitted();
+      gh.inbox = [mail('msg-1', 'tc-pm-1', 'a question')];
+      const assembled = await advanceAs();
+      assert.equal(assembled.data.step, 'assembled', JSON.stringify(assembled.data));
+      assert.deepEqual(gh.inboxReads, []);
+    });
+
+    it('a launch that ends, and is replaced, while the landing is being checked cannot land it', async () => {
+      const rotating = mkProject('inbox-rotating-owner');
+      const first = bindProject(rotating);
+      const made = await sendAs(server, 'POST', '/api/merge-queue', { repo: 'Jason-Vaughan/InboxRotating', baseBranch: 'main', ownerProjectId: rotating.id }, op);
+      assert.equal(made.status, 201, JSON.stringify(made.data));
+      const ownQueue = made.data.queue.queueId;
+      const queued = await sendAs(server, 'POST', '/api/merge-queue/entries', submitBody(nextPr()), first.headers);
+      assert.equal(queued.status, 201, JSON.stringify(queued.data));
+      const assembled = await sendAs(server, 'POST', '/api/merge-queue/advance', {}, first.headers);
+      assert.equal(assembled.data.step, 'assembled', JSON.stringify(assembled.data));
+      gh.calls.length = 0;
+      gh.during = {
+        readCompareFiles: async () => {
+          const ended = require('../lib/sessions').completeWrap(rotating.name, 'ended for a test', first.sessionId);
+          assert.equal(ended.error, null);
+          bindProject(rotating);
+        }
+      };
+      const events = queueStore.listEvents(ownQueue).length;
+      const res = await sendAs(server, 'POST', '/api/merge-queue/advance', {}, first.headers);
+      assert.equal(res.data.code, 'AUTHORIZER_INBOX_UNREADABLE', JSON.stringify(res.data));
+      assert.match(res.data.error, /ended or been replaced/);
+      assert.ok(!gh.inboxReads.some((r) => r[0] === 'inbox'), 'the ended session\'s inbox is not read');
+      assert.deepEqual(githubWrites(), []);
+      assert.equal(queueStore.getEntry(queued.data.entry.entryId).state, 'testing');
+      assert.equal(queueStore.listEvents(ownQueue).length, events);
+      const actor = { kind: 'project', projectId: rotating.id, launchId: first.launchId };
+      assert.equal(queueStore.withdrawEntry(queued.data.entry.entryId, { reason: 'clearing the queue for a test', actor }).ok, true);
+      assert.equal(queueStore.retireQueue(ownQueue, { actor: { kind: 'operator', operatorProof: 'ambient-open' } }).ok, true);
     });
   });
 

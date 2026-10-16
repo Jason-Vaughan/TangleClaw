@@ -699,3 +699,52 @@ describe('merge queue store: a change and its event land together (#2322)', () =
     assert.equal(store.getDb().isTransaction, false);
   });
 });
+
+describe('merge queue store: the owner\'s inbox check a landing records (#2372)', () => {
+  const INBOX = {
+    binding: { projectId: 7, launchId: 'launch-owner', sessionId: 41 },
+    checkedAt: '2026-10-15T23:00:00.000Z', listenerState: 'listening', systemExcluded: 1
+  };
+
+  /**
+   * The detail of an entry's `landing-started` event.
+   * @param {string} entryId - The entry
+   * @returns {object|undefined}
+   */
+  function startedDetail(entryId) {
+    const started = queues.listEvents(queues.getEntry(entryId).queueId, { entryId }).find((e) => e.event === 'landing-started');
+    return started && started.detail;
+  }
+
+  it('records the check with the head, the candidate\'s base and the candidate', () => {
+    const { entry } = submit(1);
+    toTesting(entry.entryId);
+    const answer = queues.beginLanding(entry.entryId, { candidateCheck: { runId: 9001, conclusion: 'success' }, inboxCheck: INBOX, actor: OWNER });
+    assert.equal(answer.ok, true, JSON.stringify(answer));
+    assert.deepEqual(startedDetail(entry.entryId), {
+      headSha: entry.headSha, baseSha: sha('b'), candidateSha: sha('c'), candidateCheck: { runId: '9001', conclusion: 'success' }, inboxCheck: INBOX
+    });
+  });
+
+  it('keeps only the named fields of a check, so nothing else it carries reaches the record', () => {
+    const { entry } = submit(1);
+    toTesting(entry.entryId);
+    const carried = { ...INBOX, blocking: [{ id: 'msg-1', from: 'tc-pm-1', message: 'do not merge' }], binding: { ...INBOX.binding, extra: 'x' } };
+    assert.equal(queues.beginLanding(entry.entryId, { candidateCheck: { runId: 1, conclusion: 'success' }, inboxCheck: carried, actor: OWNER }).ok, true);
+    assert.deepEqual(startedDetail(entry.entryId).inboxCheck, INBOX);
+  });
+
+  it('refuses a check that is not well formed, and changes nothing', () => {
+    const { entry } = submit(1);
+    toTesting(entry.entryId);
+    const before = queues.listEvents(queues.getEntry(entry.entryId).queueId).length;
+    for (const bad of [null, 'clear', {}, { ...INBOX, binding: null }, { ...INBOX, binding: { ...INBOX.binding, sessionId: '41' } },
+      { ...INBOX, binding: { ...INBOX.binding, launchId: '' } }, { ...INBOX, checkedAt: '' }, { ...INBOX, listenerState: undefined },
+      { ...INBOX, systemExcluded: -1 }, { ...INBOX, systemExcluded: 1.5 }]) {
+      const answer = queues.beginLanding(entry.entryId, { candidateCheck: { runId: 1, conclusion: 'success' }, inboxCheck: bad, actor: OWNER });
+      assert.equal(answer.code, REFUSALS.INVALID_INPUT, JSON.stringify(bad));
+    }
+    assert.equal(queues.getEntry(entry.entryId).state, 'testing');
+    assert.equal(queues.listEvents(queues.getEntry(entry.entryId).queueId).length, before);
+  });
+});
