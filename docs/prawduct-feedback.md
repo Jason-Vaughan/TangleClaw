@@ -282,8 +282,8 @@ Three different kinds of number, kept apart:
   strictly one at a time. A fifth, started in that window, was killed by a host power loss and is
   not counted. Two chunks each waited about 16 minutes for the suite slot. The two heads that
   merged were also tested by CI on their pull requests (one example: 14m41s). The other two
-  completed runs were on heads that did not merge because the base moved during the run; CI
-  evidence would not save those, since a moved base needs a new run either way.
+  completed runs were on heads that did not merge because the base moved before they could
+  merge; CI evidence would not save those, since a moved base needs a new run either way.
 - **Target, not established:** 30–40% faster turnaround per chunk. The saving we expect is the
   local suite and the wait for its slot on chunks outside the exceptions above. We will measure
   it on one eligible chunk and report the number, not the target.
@@ -295,9 +295,11 @@ Three different kinds of number, kept apart:
   charter cites it (A186.1, 2026-10-13). The 2026-10-15 figures are the Integrator's entries in
   the lane queue's log (each suite's start and end as the Integrator read them; the CI time from
   W1-B1's PR check). Cutoff: runs started 15:00 to 16:50 PDT on 2026-10-15. Completed: `813699ea`
-  r2 15:30:46-15:48:12 (merged, #2418); `981f2c41` 15:50:12-16:07:25 (base moved 15:57, not
-  merged); `356ba49c` 16:09:39-16:26:23 (merged, #2419); `7988df46` 16:27:48-16:45:19 (base moved
-  16:46, not merged; no CI run ever started for it). Killed: `813699ea` started 15:06:59, host
+  r2 15:30:46-15:48:12 (merged, #2418; its PR's `test` check success, read by the Integrator at
+  its 15:50 merge gate); `981f2c41` 15:50:12-16:07:25 (base moved 15:57, during the run; not
+  merged; no PR, so no CI run); `356ba49c` 16:09:39-16:26:23 (merged, #2419; PR `test` success,
+  14m41s); `7988df46` 16:27:48-16:45:19 (base moved 16:46, after the run ended and before it could
+  merge; not merged; no CI run ever started for it). Killed: `813699ea` started 15:06:59, host
   power loss about 15:19. Slot waits: W1-B1 asked 15:34, started 15:50:12; W1-A2 asked 16:11:19,
   started 16:27:48. A later run (`1443c0a2`, started 16:51:07, killed 16:56:56 when host git
   broke) falls after the cutoff. The target is the charter's. Re-read them before the send: a later run can

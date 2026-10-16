@@ -344,7 +344,7 @@ and current-base checks, the browser check, and a ready report made void when `m
 
 ### Where it would change the lane rules
 
-Two clauses of the Builder overlay and two of the Integrator overlay; nothing else in either, and
+One clause of the Builder overlay and two of the Integrator overlay; nothing else in either, and
 nothing in the common core.
 
 - **Builder overlay, clause 4 (Suite & Ready):** the named pilot, when every condition and no
