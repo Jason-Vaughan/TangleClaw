@@ -215,6 +215,14 @@ describe('tc verb roster (lib/tc-verbs)', () => {
         renderDocs({ docs: [{ id: 1, name: 'NETWORK', groupId: 'g1', filePath: '/x/NETWORK.md' }] }),
         /NETWORK \(id 1, group g1\)/
       );
+      // With this pane's notice settings, each doc says what the pane will be told (#2389).
+      const withNotices = renderDocs(
+        { docs: [{ id: 'd1', name: 'QUEUE', groupId: 'g1', filePath: '/x/QUEUE.md' }, { id: 'd2', name: 'NOTES', groupId: 'g1', filePath: '/x/NOTES.md' }] },
+        new Map([['d1', { doc: 'mute', group: 'subscribe', effective: 'mute' }], ['d2', { doc: null, group: null, effective: null }]])
+      );
+      assert.match(withNotices, /QUEUE[^\n]*\n {4}notices: muted \(never told\) \(set on this doc\)/);
+      assert.match(withNotices, /NOTES[^\n]*\n {4}notices: default \(told of changes to your rows by an attested author\)/);
+      assert.match(withNotices, /A mute never touches direct mail, replies or HOLD\/STOP/);
       assert.match(renderLearnings({ learnings: [] }), /No learnings are recorded/);
       assert.match(
         renderLearnings({ learnings: [{ tier: 2, confirmedCount: 3, content: 'grep is ugrep' }] }),
