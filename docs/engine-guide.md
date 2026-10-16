@@ -1483,7 +1483,8 @@ every version it names was measured; the remedy that names no version does not.
     shows the refusal (`LOGIN_GATE_REQUIRED`: a login must be in force), and turning one off still
     works. A launch refused for `version_unknown` or `version_unverified` carries an **Open launch
     isolation settings** button that opens the project's Settings at its switch. The refusal stays
-    visible until it is dismissed with Dismiss or Escape, or a newer message replaces it. Its
+    visible until it is dismissed with Dismiss, or with Escape while one of its buttons has focus,
+    or a newer message replaces it. Its
     settings button is removed when the refusal is dismissed or replaced, or when the button is
     used.
     The same switch is reached from the project's Settings at any time. A session's own page and the Project Master's settings offer neither
