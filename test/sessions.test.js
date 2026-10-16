@@ -139,7 +139,7 @@ describe('sessions', () => {
       assert.match(onClaude, /## Rule sources in force/);
       assert.match(onClaude, /2 binding rule sources reach this session/, 'global + project rules; this fixture is ungoverned');
       assert.match(onClaude, /1\. TangleClaw global rules — `data\/global-rules.md`, carried in the managed block of `CLAUDE\.md`\./);
-      assert.match(onClaude, /2\. TangleClaw project rules — none active for this project\./);
+      assert.match(onClaude, /2\. TangleClaw project rules — none were active when this session launched; a \*\*Project Rules\*\* block in your context, if present, is in force\./);
       assert.match(onClaude, /when two disagree, say so rather than pick one silently/);
       assert.doesNotMatch(onClaude, /methodology/i, 'an ungoverned project has no third source');
 
@@ -149,7 +149,7 @@ describe('sessions', () => {
       assert.match(sessions.generatePrimePrompt(project, nameless), /carried in the managed block of the engine's config file\./);
     });
 
-    it('counts the project rules and names their channel (#796)', () => {
+    it('names the project rules\' channel and states no count, which a clear would make stale (#796, #2317)', () => {
       const dir = path.join(projectsDir, 'prime-counted');
       fs.mkdirSync(dir, { recursive: true });
       store.projects.create({ name: 'prime-counted', path: dir, engine: 'claude' });
@@ -159,12 +159,12 @@ describe('sessions', () => {
 
       store.projectConfig.save(dir, { engine: 'claude', silentPrime: false });
       assert.match(sessions.generatePrimePrompt(project, claude),
-        /2\. TangleClaw project rules — 1 startup rule for this project, delivered in this prime\./);
+        /2\. TangleClaw project rules — startup rules for this project, as the rules block lists them, delivered in this prime\./);
 
       store.sessionRules.create({ content: 'two', projectId: project.id });
       store.projectConfig.save(dir, { engine: 'claude', silentPrime: true });
       assert.match(sessions.generatePrimePrompt(project, claude),
-        /2\. TangleClaw project rules — 2 startup rules for this project, delivered through the rules hook\./);
+        /2\. TangleClaw project rules — startup rules for this project, as the rules block lists them, delivered through the rules hook\./);
     });
 
     it('on a plugin-governed Claude project the plugin is a source and the global rules are said NOT to reach it by file (#796)', () => {

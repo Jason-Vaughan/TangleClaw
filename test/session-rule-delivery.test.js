@@ -162,7 +162,10 @@ describe('startup session-rule delivery (#595)', () => {
       const manifest = section.lines.join('\n');
       assert.match(manifest, /## Rules delivery/,
         'the manifest is headed differently from the block it describes, so it cannot\n         satisfy its own absence check');
-      assert.match(manifest, /2 operator-authored rules/);
+      assert.match(manifest, /Operator-authored rules govern this session/);
+      // No count: after a clear this manifest is printed again beside a rules
+      // block read at that moment, which the count would contradict (#2317).
+      assert.doesNotMatch(manifest, /\d/);
       assert.doesNotMatch(manifest, /Always run lint/,
         'rule bodies must not ride the prime — that is what put them in competition with it');
     });
