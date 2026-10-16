@@ -605,6 +605,120 @@ describe('shared-doc notices by the delivery rule (#2389)', () => {
   });
 });
 
+describe('recovery comes before the server is built: a failed sweep refuses to start (#2389, A90 H1)', () => {
+  let tmpDir;
+  let docId;
+  let subscriber;
+  let realSweep;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-notice-recovery-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    const group = store.projectGroups.create({ name: 'recovery-group' });
+    const dir = path.join(tmpDir, 'sub');
+    fs.mkdirSync(dir);
+    const project = store.projects.create({ name: 'sub', path: dir, engine: 'claude' });
+    store.projectGroups.addMember(group.id, project.id);
+    subscriber = { project, ...bindProject(project) };
+    store.sharedDocNoticePrefs.set({ projectId: project.id, groupId: group.id, setting: 'subscribe' });
+    const file = path.join(tmpDir, 'DOC.md');
+    fs.writeFileSync(file, '# doc\n');
+    docId = store.sharedDocs.create({ groupId: group.id, name: 'DOC', filePath: file }).id;
+    realSweep = store.sharedDocDeliveries.interruptPending;
+  });
+
+  after(() => {
+    store.sharedDocDeliveries.interruptPending = realSweep;
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('a failed sweep closes routing: an unrecovered revision is never bound or extended, and nothing new is recorded', async () => {
+    // What the last process left behind: an unknown-author revision of the
+    // file's current bytes whose delivery was still pending when it stopped.
+    const file = store.sharedDocs.get(docId).filePath;
+    const baseline = (await sharedDocs.observe(docId, { source: 'watch' })).revision;
+    const leftBytes = '# doc\n\nleft by the last process\n';
+    fs.writeFileSync(file, leftBytes);
+    const left = store.sharedDocEvents.recordRevision({
+      docId, observedAt: new Date().toISOString(), sha256: sharedDocs.sha256(Buffer.from(leftBytes)),
+      priorSha256: baseline.sha256, classes: ['unknown'], attribution: 'complete', baseline: 'full',
+      changedProjectIds: [], changedRowCount: 0, source: 'watch'
+    }, { content: leftBytes, byteLength: Buffer.byteLength(leftBytes) }, {
+      route: () => [{ projectId: subscriber.project.id, sessionId: subscriber.sessionId, reason: 'subscriber', outcome: 'pending' }]
+    });
+    assert.equal(left.routing, 'pending');
+
+    store.sharedDocDeliveries.interruptPending = () => { throw new Error('injected sweep failure'); };
+    assert.throws(() => sharedDocs.recoverDeliveries(), /injected sweep failure/);
+    assert.equal(sharedDocs.deliveryRecovery(), 'failed');
+
+    // A later first attestation of the unrecovered revision is refused whole:
+    // its binding and its routing are one transaction, and the gate fails it.
+    await assert.rejects(sharedDocs.attest(docId, {
+      baseSha256: baseline.sha256, sha256: left.sha256,
+      projectId: subscriber.project.id, sessionId: subscriber.sessionId, recheck: () => null
+    }), (err) => err.code === 'ROUTING_UNRECOVERED');
+    assert.equal(store.sharedDocEvents.get(left.id).authorSource, 'unknown', 'the unrecovered revision was not bound');
+    assert.equal(store.sharedDocEvents.get(left.id).routing, 'pending');
+    assert.equal(store.sharedDocDeliveries.listForEvent(left.id).length, 1, 'and no owner or subscriber was added');
+
+    // New bytes are not recorded or routed either while the gate is closed.
+    fs.writeFileSync(file, '# doc\n\nnew bytes while unrecovered\n');
+    await assert.rejects(sharedDocs.observe(docId, { source: 'watch' }), (err) => err.code === 'ROUTING_UNRECOVERED');
+    assert.equal(store.sharedDocEvents.latest(docId).id, left.id, 'nothing was recorded while routing was closed');
+
+    // Recovery succeeds on the next attempt: the old delivery is interrupted, terminal.
+    store.sharedDocDeliveries.interruptPending = realSweep;
+    assert.deepEqual(sharedDocs.recoverDeliveries(), { revisions: 1, deliveries: 1 });
+    assert.equal(sharedDocs.deliveryRecovery(), 'recovered');
+    assert.equal(store.sharedDocEvents.get(left.id).routing, 'interrupted');
+    assert.deepEqual(store.sharedDocDeliveries.summary(left.id), { unknown: 1 });
+  });
+
+  it('the real boot exits before listening when the sweep fails', async () => {
+    const http = require('node:http');
+    const { spawn } = require('node:child_process');
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-notice-boot-'));
+    const port = await new Promise((resolve) => {
+      const probe = http.createServer().listen(0, '127.0.0.1', () => {
+        const p = probe.address().port;
+        probe.close(() => resolve(p));
+      });
+    });
+    const serverPath = path.join(__dirname, '..', 'server.js');
+    // Preloaded before server.js runs, into the same module cache: the store
+    // server.js loads is the one whose sweep fails.
+    const inject = `import { createRequire } from 'node:module';
+const require = createRequire(${JSON.stringify(serverPath)});
+require('./lib/store').sharedDocDeliveries.interruptPending = () => { throw new Error('injected boot sweep failure'); };`;
+    const child = spawn(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(inject)}`, serverPath], {
+      env: { ...process.env, TANGLECLAW_HOME: home, TANGLECLAW_PORT: String(port), TANGLECLAW_LOG_LEVEL: 'info' },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let output = '';
+    child.stdout.on('data', (d) => { output += d; });
+    child.stderr.on('data', (d) => { output += d; });
+    const exited = await new Promise((resolve) => {
+      const timer = setTimeout(() => { child.kill('SIGKILL'); resolve({ code: 'timeout' }); }, 30000);
+      child.on('exit', (code) => { clearTimeout(timer); resolve({ code }); });
+    });
+    try {
+      assert.equal(exited.code, 1, `the boot must refuse, not carry on:\n${output.slice(-2000)}`);
+      assert.match(output, /Refusing to start: interrupted shared-doc deliveries could not be recovered/);
+      const refused = await new Promise((resolve) => {
+        const req = http.get({ host: '127.0.0.1', port, path: '/' }, () => resolve(false));
+        req.on('error', (err) => resolve(err.code === 'ECONNREFUSED'));
+      });
+      assert.equal(refused, true, 'nothing listens on the port it was given');
+      assert.equal(fs.existsSync(path.join(home, 'tangleclaw.pid')), false, 'and it leaves no PID file behind');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('what a shared-doc mute never touches (#2389 criteria 8 and 9)', () => {
   let tmpDir;
   let hub;

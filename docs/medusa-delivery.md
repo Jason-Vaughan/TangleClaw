@@ -560,7 +560,9 @@ a wake is the wake monitor's.
 
 **A delivery the server stopped during** is marked `interrupted` at the next boot, its pending intents
 `unknown`, and it is never resent or extended, not even by a later first attestation, because a partial
-send cannot be told apart from none. A recipient that missed it catches up through the events route.
+send cannot be told apart from none. The sweep runs at boot before the server is built, listens or starts
+a watcher. If it fails, the server refuses to start (exit 1), and routing stays closed in that process,
+so an unrecovered revision is never extended. A recipient that missed it catches up through the events route.
 Bridge sends can be slow, so this window is not negligible.
 
 `POST /api/shared-docs/:id/notify` observes the file like the watcher. Unchanged bytes are a duplicate

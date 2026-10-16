@@ -13146,6 +13146,19 @@ if (require.main === module) {
   // lib/bind-policy.js's call, and is no longer implied by the ingress mode.
   const caddyMode = config.ingressMode === 'caddy';
   const effectiveHttps = caddyMode ? false : !!config.httpsEnabled;
+  // Recover the last process's shared-doc deliveries before a server exists:
+  // every delivery it left `pending` becomes `interrupted`, never resent or
+  // extended. A failed sweep refuses the start here, before anything listens
+  // or a watcher starts, and leaves routing closed in this process: an
+  // unrecovered revision could otherwise be extended by a later attestation.
+  try {
+    const swept = sharedDocRecord.recoverDeliveries();
+    if (swept.revisions > 0) log.warn('Shared-doc deliveries interrupted by the last stop: not resent', swept);
+  } catch (err) {
+    log.error('Refusing to start: interrupted shared-doc deliveries could not be recovered', { error: err.message });
+    pidfile.remove();
+    process.exit(1);
+  }
   const server = createServer({
     httpsEnabled: effectiveHttps,
     certPath: config.httpsCertPath || null,
@@ -13545,18 +13558,6 @@ if (require.main === module) {
         + 'the PATH launchd gave this service', { error: err && err.message });
     });
   };
-
-  // A shared-doc delivery the last process stopped during is marked
-  // `interrupted` before the server accepts a request or a watcher records a
-  // revision, so the sweep can only ever find the last process's pending
-  // deliveries, never this one's. They are never resent: a partial send cannot
-  // be told apart from none.
-  try {
-    const swept = store.sharedDocDeliveries.interruptPending();
-    if (swept.revisions > 0) log.warn('Shared-doc deliveries interrupted by the last stop: not resent', swept);
-  } catch (err) {
-    log.warn('Could not sweep interrupted shared-doc deliveries', { error: err.message });
-  }
 
   // Loopback unless something is guarding the door — see lib/bind-policy.js.
   // A null host is Node's "every interface", reached only via the explicit opt-in.
