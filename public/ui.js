@@ -3279,8 +3279,8 @@ function wireIsolationOverride(box, scope, projectId) {
       const outcome = isolationOverrideOutcome({ scope, projectId, on }, answer, { error: api.lastError, code: api.lastErrorCode });
       isolationOverrideNotice = { scope, projectId, text: outcome.text, ok: outcome.ok };
       const rendered = await refreshIsolationOverride(box, scope, projectId);
-      // After the switch's read, not beside it: the two would race on the
-      // page's one `api.lastError`, and a refusal could be read as a failure.
+      // After the switch's read, so the notice is read no earlier than the
+      // switch beside it and never shows an older state than the switch does.
       if (typeof refreshIsolationOverrideBanner === 'function') await refreshIsolationOverrideBanner();
       if (rendered === null) return;
       const again = box.querySelector('[data-isolation-override]');
