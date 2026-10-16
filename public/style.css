@@ -283,6 +283,28 @@ html[data-tc-keyboard] body {
    that diverged, without disappearing - it is still on the list. */
 .caddy-drift-unmeasured { opacity: 0.75; font-style: italic; }
 .orphan-banner-text { flex: 1; }
+/* Launch-isolation override notice (#2393). The base amber: an override is a
+   standing choice the operator made, reported rather than alarmed. One row per
+   override, so a long project name wraps on a phone, and each row's button
+   meets the 44px touch floor. Info tone when the overrides could not be read. */
+.isolation-override-banner { align-items: flex-start; }
+.isolation-override-banner-list {
+  margin: 6px 0 0 0;
+  padding-left: 18px;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.isolation-override-banner-list li { margin: 2px 0; }
+.isolation-override-banner-open {
+  margin-left: 8px;
+  min-height: 44px;
+  min-width: 44px;
+}
+.isolation-override-banner.isolation-override-banner-unread {
+  background: var(--root-accent, #4a9eff);
+  color: #fff;
+}
+.isolation-override-banner.isolation-override-banner-unread .orphan-banner-text { color: inherit; }
 /* Settings-save warnings (#1148): one warning per line, and a plist path must
    wrap rather than push the Dismiss button off a phone screen. */
 .settings-warnings-text { white-space: pre-line; overflow-wrap: anywhere; }

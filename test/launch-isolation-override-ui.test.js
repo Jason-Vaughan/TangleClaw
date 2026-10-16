@@ -50,16 +50,19 @@ function liftFunction(src, decl) {
 const UI_FUNCTIONS = [
   'function recoveryModeControlOffer', 'function isolationOverrideRiskText', 'function isolationOverrideStands',
   'function isolationOverrideHtml', 'function isolationOverrideOutcome', 'async function refreshIsolationOverride',
-  'function wireIsolationOverride', 'async function refreshProjectIsolationOverride', 'function openIsolationOverrideSettings'
+  'function wireIsolationOverride', 'async function refreshProjectIsolationOverride', 'function openIsolationOverrideSettings',
+  'function isolationOverrideConfirmText'
 ];
 
 /**
- * A sandbox holding the page's own override functions.
- * @param {object} [extra] - Globals the case supplies (`api`, `document`, `openSettings`)
+ * A sandbox holding the page's own override functions. Its `confirm()` says
+ * yes unless the case supplies one, so a case about what a change sends is
+ * about the change the operator confirmed (#2393).
+ * @param {object} [extra] - Globals the case supplies (`api`, `document`, `openSettings`, `confirm`)
  * @returns {object} The context
  */
 function sandbox(extra) {
-  const ctx = { window: {}, state: { projects: [{ id: 7, name: 'alpha' }] }, ...(extra || {}) };
+  const ctx = { window: {}, state: { projects: [{ id: 7, name: 'alpha' }] }, confirm: () => true, ...(extra || {}) };
   vm.createContext(ctx);
   vm.runInContext(liftFunction(LANDING_SRC, 'function esc(str)'), ctx);
   vm.runInContext('let isolationOverrideNotice = null; let isolationOverrideReveal = false; let projectRulesTargetId = null;', ctx);
@@ -352,6 +355,97 @@ describe('The launch-isolation override: what the switch sends (#2229)', () => {
   });
 });
 
+describe('The launch-isolation override: turning one on asks first (#2393)', () => {
+  /**
+   * A page that records each `confirm()` and answers it as the case says.
+   * @param {boolean} answer - What the operator answers
+   * @param {object} [answers] - Overrides for the `api` table
+   * @returns {{ctx: object, api: Function, asked: string[]}}
+   */
+  function page(answer, answers) {
+    const api = fakeApi((url) => (url === '/api/auth/me' ? { data: ME.signedIn } : { data: (answers && answers[url]) || settings(false) }));
+    const asked = [];
+    const ctx = sandbox({ api, confirm: (text) => { asked.push(text); return answer; } });
+    vm.runInContext('projectRulesTargetId = 7;', ctx);
+    return { ctx, api, asked };
+  }
+
+  for (const scope of ['install', 'project']) {
+    it(`asks before turning the ${scope} override on, naming whom it covers and what it risks`, async () => {
+      const p = page(true);
+      const sw = switchBox(true);
+      p.ctx.wireIsolationOverride(sw.box, scope, scope === 'install' ? null : 7);
+      await sw.change();
+      assert.equal(p.asked.length, 1);
+      const text = p.asked[0];
+      assert.match(text, scope === 'install'
+        ? /^Turn on the launch isolation override for every project on this install, and for the Project Master\?/
+        : /^Turn on the launch isolation override for this project only \("alpha"\)\?/);
+      assert.ok(text.includes(p.ctx.isolationOverrideRiskText()), 'the confirmation carries the shared risk sentence');
+      assert.match(text, /The projects it may borrow from have not agreed to that\.$/);
+      assert.equal(p.api.calls[0].method, 'PUT', 'the write goes only after a yes');
+    });
+
+    it(`sends nothing, and puts the switch back off, when turning the ${scope} override on is cancelled`, async () => {
+      const p = page(false);
+      const sw = switchBox(true);
+      p.ctx.wireIsolationOverride(sw.box, scope, scope === 'install' ? null : 7);
+      await sw.change();
+      assert.equal(p.asked.length, 1);
+      assert.deepEqual(p.api.calls, [], 'no request at all, the re-read included');
+      assert.equal(sw.input.checked, false);
+      assert.equal(sw.input.disabled, false, 'the switch can be used again');
+      assert.equal(sw.box.innerHTML, '', 'nothing re-rendered and no outcome claimed');
+      assert.equal(vm.runInContext('isolationOverrideNotice', p.ctx), null);
+    });
+
+    it(`asks nothing before turning the ${scope} override off`, async () => {
+      const p = page(false);
+      const sw = switchBox(false);
+      p.ctx.wireIsolationOverride(sw.box, scope, scope === 'install' ? null : 7);
+      await sw.change();
+      assert.deepEqual(p.asked, []);
+      assert.equal(p.api.calls[0].method, 'DELETE');
+    });
+  }
+
+  it('names no project in the question when the page does not list it', () => {
+    const ctx = sandbox({ state: { projects: [] } });
+    assert.match(ctx.isolationOverrideConfirmText('project', 7), /^Turn on the launch isolation override for this project only\?/);
+  });
+
+  it('re-reads the dashboard notice after every change, a refused or unanswered one included', async () => {
+    for (const write of [{ data: settings(false, [7]) }, { data: null, error: 'carries no sign-in', code: 'LOGIN_GATE_REQUIRED' },
+      { data: null, error: 'Connection lost.', code: null }]) {
+      const order = [];
+      const api = fakeApi((url, opts) => {
+        order.push(`${(opts && opts.method) || 'GET'} ${url}`);
+        if (url === '/api/auth/me') return { data: ME.signedIn };
+        return opts && opts.method ? write : { data: settings(false, [7]) };
+      });
+      const ctx = sandbox({ api, refreshIsolationOverrideBanner: async () => { order.push('notice'); return true; } });
+      vm.runInContext('projectRulesTargetId = 7;', ctx);
+      const sw = switchBox(true);
+      ctx.wireIsolationOverride(sw.box, 'project', 7);
+      await sw.change();
+      assert.deepEqual(order, ['PUT /api/launch/isolation-overrides/projects/7', 'GET /api/launch/isolation-overrides',
+        'GET /api/auth/me', 'notice'], 'the notice is read after the switch, never beside it');
+    }
+  });
+
+  it('re-reads the dashboard notice even when Settings has moved to another project', async () => {
+    let read = 0;
+    const api = fakeApi((url) => (url === '/api/auth/me' ? { data: ME.signedIn } : { data: settings(false, [7]) }));
+    const ctx = sandbox({ api, refreshIsolationOverrideBanner: async () => { read++; return true; } });
+    vm.runInContext('projectRulesTargetId = 8;', ctx);
+    const sw = switchBox(true);
+    ctx.wireIsolationOverride(sw.box, 'project', 7);
+    await sw.change();
+    assert.equal(read, 1);
+    assert.equal(sw.focused(), false, 'focus is not moved into a modal that has moved on');
+  });
+});
+
 describe('A refused launch leads to the override (#2229)', () => {
   /**
    * The launch-failed message after the pointer was added.
@@ -546,8 +640,13 @@ describe('The override\'s screens are wired into the two Settings modals (#2229)
   it('no screen writes the override through a settings route', () => {
     for (const file of fs.readdirSync(PUB).filter((f) => f.endsWith('.js'))) {
       const src = fs.readFileSync(path.join(PUB, file), 'utf8');
-      if (!src.includes('isolation-overrides')) continue;
-      assert.equal(file, 'ui.js', `${file} names the override routes`);
+      if (!src.includes('isolation-overrides') || file === 'ui.js') continue;
+      // The dashboard's notice (#2393) reads the overrides, through the one
+      // read route and with no method, so it can only ever GET them.
+      assert.equal(file, 'landing.js', `${file} names the override routes`);
+      const code = src.match(/[^\n]*isolation-overrides[^\n]*/g).map((line) => line.trim())
+        .filter((line) => !line.startsWith('*') && !line.startsWith('//'));
+      assert.deepEqual(code, ['const settings = await api(\'/api/launch/isolation-overrides\');'], 'landing.js only reads the overrides');
     }
     const wire = liftFunction(UI_SRC, 'function wireIsolationOverride');
     assert.doesNotMatch(wire, /\/api\/config|apiMutate|\bfetch\(/);

@@ -3229,12 +3229,34 @@ async function refreshIsolationOverride(box, scope, projectId) {
 }
 
 /**
+ * What the operator is asked before turning a launch-isolation override on
+ * (#2393): which launches it covers, and what each one risks, in the same
+ * sentence the switch and every overridden launch's record carry.
+ * @param {string} scope - `install` or `project`
+ * @param {number|null} projectId - The project, for the `project` scope
+ * @returns {string} Plain text for `confirm()`
+ */
+function isolationOverrideConfirmText(scope, projectId) {
+  const project = scope === 'project' ? state.projects.find((p) => p.id === projectId) : null;
+  const where = scope === 'install'
+    ? 'for every project on this install, and for the Project Master'
+    : `for this project only${project ? ` ("${project.name}")` : ''}`;
+  return `Turn on the launch isolation override ${where}?\n\n`
+    + 'A launch it covers that TangleClaw cannot show is kept off the engine\'s shared background process will start '
+    + `anyway, not isolated. ${isolationOverrideRiskText()} The projects it may borrow from have not agreed to that.`;
+}
+
+/**
  * Wire the launch-isolation override switch a box just rendered (#2229).
  *
- * The request names the override by its route and carries no body. The switch
- * is re-read after every answer, the refusals included, so it shows what is
- * recorded and not what was asked for; focus is put back on it, because the
- * re-render replaced the element the keyboard was on.
+ * Turning an override on asks first (#2393), and a Cancel puts the switch back
+ * and sends nothing. Turning one off asks nothing: it only takes an allowance
+ * away. The request names the override by its route and carries no body. The
+ * switch is re-read after every answer, the refusals included, so it shows
+ * what is recorded and not what was asked for; focus is put back on it,
+ * because the re-render replaced the element the keyboard was on. The
+ * dashboard's notice is re-read after every answer too, even when Settings has
+ * moved on, since the write may have landed whatever the answer said.
  * @param {HTMLElement} box - The switch's container
  * @param {string} scope - `install` or `project`
  * @param {number|null} projectId - The project, for the `project` scope
@@ -3245,6 +3267,10 @@ function wireIsolationOverride(box, scope, projectId) {
     input.addEventListener('change', async () => {
       if (input.disabled) return;
       const on = input.checked === true;
+      if (on && !confirm(isolationOverrideConfirmText(scope, projectId))) {
+        input.checked = false;
+        return;
+      }
       input.disabled = true;
       const path = scope === 'install'
         ? '/api/launch/isolation-overrides/install'
@@ -3252,7 +3278,11 @@ function wireIsolationOverride(box, scope, projectId) {
       const answer = await api(path, { method: on ? 'PUT' : 'DELETE' });
       const outcome = isolationOverrideOutcome({ scope, projectId, on }, answer, { error: api.lastError, code: api.lastErrorCode });
       isolationOverrideNotice = { scope, projectId, text: outcome.text, ok: outcome.ok };
-      if ((await refreshIsolationOverride(box, scope, projectId)) === null) return;
+      const rendered = await refreshIsolationOverride(box, scope, projectId);
+      // After the switch's read, not beside it: the two would race on the
+      // page's one `api.lastError`, and a refusal could be read as a failure.
+      if (typeof refreshIsolationOverrideBanner === 'function') await refreshIsolationOverrideBanner();
+      if (rendered === null) return;
       const again = box.querySelector('[data-isolation-override]');
       if (again) again.focus();
     });
