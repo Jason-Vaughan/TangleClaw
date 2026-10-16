@@ -62,6 +62,8 @@ v5.34.0 Wave 3 chunk W3-A2, records / public docs. Branch `docs/w3a2-tc-referenc
 
 **4 findings** (2 warning, 2 note) — accepted: 2, fixed-unreviewed: 2.
 
+**Architect re-review (A113).** The bridge preamble was still too strong: `--request-id` is optional on every bridge write but `circuit ack`, and `tc` generates one when it is left out. The preamble now says so. It tells a caller who may need to retry to give its own `--request-id` and reuse it, and keeps the `--version` requirement on route and candidate decisions as a separate sentence.
+
 **Second review.** Critic (cumulative, over `401b3c01`): 0 blocking, 0 warnings, 1 note. The page's bridge preamble now says every bridge write except `circuit ack` takes `--request-id`, as `tc --help` does.
 
 **rev-20261016T185620Z-8f95fa3b** — 2026-10-16T18:57:05Z

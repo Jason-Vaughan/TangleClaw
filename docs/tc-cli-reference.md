@@ -128,7 +128,7 @@ Get `<seq>` from `tc workload show`. Repeat `--receipt workload:<seq>` to cite m
 
 ## Operator bridge (Project Master only)
 
-These commands require the live Project Master's bridge credential. The bridge itself is described in [the operator bridge guide](operator-bridge.md). A project session uses `tc candidate submit` for a notice and `tc message` for a peer; it does not route or post through `tc bridge`. Read a route or candidate to get its current version before changing it. Every bridge write except `circuit ack` takes `--request-id <id>` for safe retries; route and candidate decisions also take `--version <n>` unless a row states otherwise.
+These commands require the live Project Master's bridge credential. The bridge itself is described in [the operator bridge guide](operator-bridge.md). A project session uses `tc candidate submit` for a notice and `tc message` for a peer; it does not route or post through `tc bridge`. Read a route or candidate to get its current version before changing it. Route and candidate decisions require `--version <n>`, the version you last read, unless a row states otherwise. Separately, every bridge write except `circuit ack` accepts an optional `--request-id <id>`: the route and candidate decisions, the nickname changes, `requeue`, `withdraw` and `reset`. When it is left out, `tc` generates one. To retry a write whose result was uncertain, give your own `--request-id` and reuse the same one on the retry. `circuit ack` takes no `--request-id`.
 
 | Command | What it does |
 | --- | --- |
