@@ -35,6 +35,7 @@ const store = require('../lib/store');
 const medusa = require('../lib/medusa');
 const { createServer } = require('../server');
 const { operatorHeaders } = require('./_shared-docs-callers');
+const sharedDocRecord = require('../lib/shared-docs');
 
 /**
  * POST to the test server as the operator's dashboard and resolve its parsed
@@ -241,10 +242,24 @@ describe('shared-doc broadcasts stay inside the doc\'s group (#1222)', () => {
     assert.deepEqual(sent, [{
       to: wsFor(inGroup),
       message: JSON.stringify({ type: 'system', event: 'shared_doc_updated', doc: 'SHARED', docId })
-    }], 'delivery is byte-identical: recording is beside the broadcast, never in front of it');
+    }], 'delivery is byte-identical');
+    await sharedDocRecord.serialize(docId, async () => {});
     const revision = store.sharedDocEvents.latest(docId);
     assert.equal(revision.authorSource, 'unknown', 'the notify caller is never made the author');
     assert.deepEqual(revision.shadowWouldSelect, [], 'and an unknown author selects no one, even as a shadow');
+  });
+
+  it('a notice does not wait for a record still queued behind another read of the doc (#2389)', async () => {
+    let release;
+    const blocked = sharedDocRecord.observe(docId, {
+      source: 'watch', read: () => new Promise((resolve) => { release = resolve; })
+    });
+    const res = await post(server, `/api/shared-docs/${docId}/notify`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(sent.map((m) => m.to), [wsFor(inGroup)], 'the notice went out while the record was still pending');
+    release(fs.readFileSync(store.sharedDocs.get(docId).filePath));
+    await blocked;
+    await sharedDocRecord.serialize(docId, async () => {});
   });
 
   it('a revision that cannot be recorded does not stop the notice (#2389)', async () => {
@@ -255,6 +270,8 @@ describe('shared-doc broadcasts stay inside the doc\'s group (#1222)', () => {
       const res = await post(server, `/api/shared-docs/${docId}/notify`);
       assert.equal(res.status, 200);
       assert.deepEqual(sent.map((m) => m.to), [wsFor(inGroup)]);
+      // Let the failed read finish before the file is put back.
+      await sharedDocRecord.serialize(docId, async () => {});
     } finally {
       fs.writeFileSync(docPath, saved);
     }

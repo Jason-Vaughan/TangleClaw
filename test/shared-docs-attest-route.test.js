@@ -26,6 +26,7 @@ setLevel('error');
 const store = require('../lib/store');
 const medusa = require('../lib/medusa');
 const tcVerbs = require('../lib/tc-verbs');
+const sharedDocRecord = require('../lib/shared-docs');
 const { createServer } = require('../server');
 const { operatorHeaders, bindProject, sendAs } = require('./_shared-docs-callers');
 
@@ -114,7 +115,13 @@ describe('shared-doc attestation route (#2389)', () => {
   const unlock = (who) => sendAs(server, 'DELETE', `/api/shared-docs/${docId}/lock`, undefined, who.headers);
   const base = (who, id = docId) => sendAs(server, 'POST', `/api/shared-docs/${id}/attest`, { base: true }, who.headers);
   const attest = (who, baseSha256, sha256, id = docId) => sendAs(server, 'POST', `/api/shared-docs/${id}/attest`, { baseSha256, sha256 }, who.headers);
-  const notify = () => sendAs(server, 'POST', `/api/shared-docs/${docId}/notify`, undefined, operatorHeaders(server));
+  // Notify answers without waiting for its record, so a test reading the
+  // record drains the doc's queue first.
+  const notify = async () => {
+    const res = await sendAs(server, 'POST', `/api/shared-docs/${docId}/notify`, undefined, operatorHeaders(server));
+    await sharedDocRecord.serialize(docId, async () => {});
+    return res;
+  };
   const events = (who, query = '') => sendAs(server, 'GET', `/api/shared-docs/${docId}/events${query}`, undefined, who.headers);
   const write = (text) => { fs.writeFileSync(file, text); return sha(text); };
   const latest = () => store.sharedDocEvents.latest(docId);

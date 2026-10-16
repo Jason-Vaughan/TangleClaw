@@ -339,6 +339,75 @@ describe('shared-doc revisions: the record (#2389)', () => {
     assert.equal(store.sharedDocEvents.latest(docId).source, 'base');
   });
 
+  describe('a registration changed while its file is read (H1)', () => {
+    /**
+     * A read that, while in flight, applies `change` to the registration.
+     * @param {function(object): void} change - What the operator does mid-read
+     * @returns {function(object): Promise<Buffer>}
+     */
+    const readThen = (change) => async (doc) => {
+      const bytes = fs.readFileSync(doc.filePath);
+      change(doc);
+      return bytes;
+    };
+    const retarget = () => {
+      const other = path.join(tmpDir, `OTHER-${Math.random().toString(36).slice(2)}.md`);
+      fs.writeFileSync(other, laneDoc({ a: 'elsewhere' }));
+      store.sharedDocs.update(docId, { filePath: other });
+    };
+
+    it('an observation whose path was replaced records nothing: no revision, no baseline', async () => {
+      assert.equal(await sharedDocs.observe(docId, { source: 'watch', read: readThen(retarget) }), null);
+      assert.equal(store.sharedDocEvents.latest(docId), null);
+      assert.equal(store.sharedDocEvents.getBaseline(docId), null);
+    });
+
+    it('an observation whose doc was unregistered records nothing', async () => {
+      assert.equal(await sharedDocs.observe(docId, { source: 'watch', read: readThen(() => store.sharedDocs.delete(docId)) }), null);
+      assert.equal(store.sharedDocEvents.latest(docId), null);
+    });
+
+    it('a base capture whose path was replaced is refused DOC_CHANGED and records nothing', async () => {
+      const out = await sharedDocs.captureBase(docId, { read: readThen(retarget), recheck: () => null });
+      assert.equal(out.code, 'DOC_CHANGED');
+      assert.equal(store.sharedDocEvents.latest(docId), null);
+    });
+
+    it('a base capture re-authorizes after the read, against the current registration, and a revoked caller records nothing', async () => {
+      let given = null;
+      const out = await sharedDocs.captureBase(docId, {
+        recheck: (current) => { given = current; return { status: 404, code: 'NOT_FOUND', message: 'membership revoked' }; }
+      });
+      assert.equal(out.code, 'NOT_FOUND');
+      assert.equal(given.id, docId);
+      assert.equal(store.sharedDocEvents.latest(docId), null);
+    });
+
+    it('an attestation whose path was replaced is refused DOC_CHANGED: no binding, nothing recorded', async () => {
+      const base = await sharedDocs.captureBase(docId);
+      fs.writeFileSync(file, laneDoc({ a: 'ready' }));
+      const out = await sharedDocs.attest(docId, {
+        projectId: projects[2].id, sessionId: 777, baseSha256: base.sha256,
+        sha256: sharedDocs.sha256(fs.readFileSync(file)), read: readThen(retarget), recheck: () => null
+      });
+      assert.equal(out.code, 'DOC_CHANGED');
+      const latest = store.sharedDocEvents.latest(docId);
+      assert.equal(latest.seq, base.seq, 'the old path\'s bytes were not recorded');
+      assert.equal(latest.authorSource, 'unknown');
+    });
+
+    it('an attestation\'s recheck is given the registration as it stands after the read', async () => {
+      const base = await sharedDocs.captureBase(docId);
+      fs.writeFileSync(file, laneDoc({ a: 'ready' }));
+      let given = null;
+      await sharedDocs.attest(docId, {
+        projectId: projects[2].id, sessionId: 777, baseSha256: base.sha256,
+        sha256: sharedDocs.sha256(fs.readFileSync(file)), recheck: (current) => { given = current; return null; }
+      });
+      assert.equal(given.filePath, file);
+    });
+  });
+
   describe('attestation, below the route', () => {
     const caller = () => ({ projectId: projects[2].id, sessionId: 777 });
 

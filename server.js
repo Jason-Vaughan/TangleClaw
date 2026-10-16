@@ -10415,8 +10415,10 @@ route('POST', '/api/shared-docs/:id/notify', async (req, res, params) => {
     }
 
     // The notify caller is never made the author: this records an `unknown`
-    // revision when the bytes are new. A failed record does not stop the notice.
-    await sharedDocRecord.observe(params.id, { source: 'notify' })
+    // revision when the bytes are new. Not awaited: the notice never waits on
+    // the record, which may be queued behind other reads of the doc, and a
+    // failed record does not stop it.
+    sharedDocRecord.observe(params.id, { source: 'notify' })
       .catch((err) => log.warn('Shared doc revision not recorded', { docId: params.id, source: 'notify', error: err.message }));
     const { notified, coalesced, errors } = await broadcastSharedDocUpdate(params.id);
     // `coalescedCount` is reported so a zero `notifiedCount` is never mistaken
@@ -10504,10 +10506,28 @@ route('POST', '/api/shared-docs/:id/attest', async (req, res, params, body) => {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
+  /**
+   * Re-authorize the caller after the file read, against the registration as
+   * it stands then: the binding and the group access may each have changed
+   * while the read was in flight.
+   * @param {{groupId: string}} current - The doc as registered after the read
+   * @returns {{status: number, code: string, message: string}|null} The refusal, or null.
+   */
+  const reauthorize = (current) => {
+    const now = sharedDocsAccess.resolveAccess(req);
+    if (now.kind !== sharedDocsAccess.KINDS.PROJECT || now.sessionId !== access.sessionId
+      || now.projectId !== access.projectId) {
+      return { status: 403, code: 'LAUNCH_BINDING_INVALID', message: 'The caller\'s launch binding changed during the read' };
+    }
+    if (!sharedDocsAccess.canWriteGroup(now, current.groupId)) {
+      return { status: 404, code: 'NOT_FOUND', message: `Shared document "${params.id}" not found` };
+    }
+    return null;
+  };
   try {
     if (body.base === true) {
-      const base = await sharedDocRecord.captureBase(doc.id);
-      if (!base) return errorResponse(res, 404, `Shared document "${params.id}" not found`, 'NOT_FOUND');
+      const base = await sharedDocRecord.captureBase(doc.id, { recheck: reauthorize });
+      if (base.code) return errorResponse(res, base.status, base.message, base.code);
       return jsonResponse(res, 200, { docId: doc.id, base: true, seq: base.seq, sha256: base.sha256 });
     }
     if (!SHA256_HEX.test(body.baseSha256 || '') || !SHA256_HEX.test(body.sha256 || '')) {
@@ -10525,17 +10545,7 @@ route('POST', '/api/shared-docs/:id/attest', async (req, res, params, body) => {
       sessionId: access.sessionId,
       // Re-read after the file read: the binding, the group access and the
       // lock may each have changed while it was in flight.
-      recheck: () => {
-        const now = sharedDocsAccess.resolveAccess(req);
-        if (now.kind !== sharedDocsAccess.KINDS.PROJECT || now.sessionId !== access.sessionId
-          || now.projectId !== access.projectId) {
-          return { status: 403, code: 'LAUNCH_BINDING_INVALID', message: 'The caller\'s launch binding changed during the attestation' };
-        }
-        if (!sharedDocsAccess.canWriteGroup(now, doc.groupId)) {
-          return { status: 404, code: 'NOT_FOUND', message: `Shared document "${params.id}" not found` };
-        }
-        return attestLockRefusal(doc.id, now, projectName, lockedAt);
-      }
+      recheck: (current) => reauthorize(current) || attestLockRefusal(current.id, access, projectName, lockedAt)
     });
     if (outcome.code) return errorResponse(res, outcome.status, outcome.message, outcome.code);
     jsonResponse(res, 200, { docId: doc.id, attested: true, already: outcome.already, revision: outcome.revision });
