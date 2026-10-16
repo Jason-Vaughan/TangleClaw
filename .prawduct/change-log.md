@@ -62,6 +62,16 @@ v5.34.0 Wave 3 chunk W3-A2, records / public docs. Branch `docs/w3a2-tc-referenc
 
 **4 findings** (2 warning, 2 note) — accepted: 2, fixed-unreviewed: 2.
 
+**Second review.** Critic (cumulative, over `401b3c01`): 0 blocking, 0 warnings, 1 note. The page's bridge preamble now says every bridge write except `circuit ack` takes `--request-id`, as `tc --help` does.
+
+**rev-20261016T185620Z-8f95fa3b** — 2026-10-16T18:57:05Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | note | fixed-unreviewed | fixed in `docs/tc-cli-reference.md` |
+
+**1 finding** (1 note) — fixed-unreviewed: 1.
+
 ## 2026-10-16 — #2175, #2349 (refs): one clock for the two-clone summary comparison, and the guard sees a returned git wrapper
 
 <!-- prawduct: type=chore | scope=w3-a1-test-determinism-2175-2349 -->
