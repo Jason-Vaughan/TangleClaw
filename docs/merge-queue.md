@@ -177,11 +177,26 @@ taken from the caller, and nothing lands on a read that was not made.
 | Every gate is recorded, the Operator gate included when the entry needs it | refused `GATES_NOT_MET`, naming each; nothing changed |
 | Landing changes no release-trigger path | the entry **fails** (`RELEASE_TRIGGER_CHANGED`), also when the list could not be read whole |
 | Any of those reads could not be made | refused `503 GITHUB_UNAVAILABLE` with the reader's own reason; nothing changed |
+| The owner's inbox holds no unhandled message: read last, from the in-memory inbox of the session behind the launch this call was verified as, with nothing waited on between it, the caller's admission and the merge request | an unhandled message: refused `AUTHORIZER_MESSAGE_UNREAD`, naming each by id and sender; an inbox that cannot be read: refused `AUTHORIZER_INBOX_UNREADABLE`. Nothing changed either way |
 
 A check is judged only by runs made for the branch being judged (`readBranchCheck`): a run another
 branch's push made on the same commit never stands in, whatever it concluded, and a list of runs or
 suites that could not be read whole is `GITHUB_UNAVAILABLE`, never "no run" and never a result. The
 base branch is also checked before a candidate is made: none is made on a red base.
+
+**The owner's inbox.** A message blocks because nobody has handled it, whatever it says: an approval
+nobody read is not an approval, and an objection nobody read still stands. Read each message in full,
+answer it where an answer is owed, mark it handled (`tc message ack`), then advance again. Handling a
+message is not an authorization and resolves no HOLD; every other gate stays. Server-origin notices
+(an envelope from `system`, such as a shared document's update notice) are counted and do not block,
+and the test is the envelope's sender, never what the body says. The inbox cannot be read, and the
+landing is refused, when the session's Medusa listener is not listening (an inbox nobody is filling
+reads as empty) or when the launch the call was verified as has since ended or been replaced. An owner
+project without the switchboard therefore cannot land through the queue. Only a landing reads the
+inbox: making a candidate, discarding one, failing an entry and removing a landing's branches do not.
+The `landing-started` event records whose inbox was read (project, launch, session), when, the
+listener's state, how many system notices were left out, and the head, base and candidate; it records
+no message.
 
 The merge is a true merge commit pinned to the submitted head. Afterwards the merge commit's tree is
 compared with the candidate's. **If they differ the landing is still recorded, because the merge
@@ -335,6 +350,8 @@ Every refusal carries a `code` and says what to do next.
 | `GITHUB_UNAVAILABLE` | 503 | a read from GitHub failed (`reason`); nothing was queued, and an advance moved nothing. From an advance it also means a candidate could not be made: what it may have left was removed (`branches`) and the entry is `assembling` |
 | `BASE_NOT_GREEN` | 409 | the base branch's own `test` check concluded something other than `success` (`check`); nothing is assembled or landed, nothing was changed |
 | `GATES_NOT_MET` | 409 | a green entry has a gate that is not recorded (`problems` names each); nothing was changed |
+| `AUTHORIZER_MESSAGE_UNREAD` | 409 | the owner's inbox holds an unhandled message (`messages`, each by `id` and `from`, never its text); nothing was changed. Handle it, then advance again |
+| `AUTHORIZER_INBOX_UNREADABLE` | 409 | the owner's inbox could not be read (`reason`): the session's listener is not listening, or the launch has ended or been replaced; nothing was changed |
 | `CANDIDATE_REF_EXISTS` | 409 | a candidate branch was there again after the queue removed it (`ref`, `existing`); nothing was changed, and it needs a person |
 | `CANDIDATE_NOT_DISCARDED` | 503 | a withdrawal or an advance could not remove both of a candidate's branches (`candidate`, `stage`); the entry stays as it was |
 | `QUEUE_CALL_IN_FLIGHT` | 409 | another withdrawal or advance of this queue is running; nothing was changed. Read the queue, then repeat |
@@ -358,6 +375,16 @@ so a submit or an advance is refused).
   merge commit, or with one that is not a merge of the submitted head, the entry stays `landing`,
   every advance says so, and nothing behind it advances. No route moves such an entry; it needs a
   person and, today, a change to the records by hand.
+- **The inbox check guards the queue's merge only.** A pull request merged by hand (`gh pr merge`, the
+  GitHub page) passes no check of this queue, and nothing here can guard a shell command.
+- **The inbox check is a snapshot of the local inbox.** It sees what has reached this server's
+  listener when it is read. A message still in transit, or one that arrives after the merge request
+  was sent, is not seen.
+- **A sender that reaches the Bridge directly can pass as a system notice.** TangleClaw fills a
+  message's `from` from the sending session's own workspace id, so no sender routed through
+  TangleClaw can call itself `system`. A process that reaches the Bridge's loopback endpoint directly
+  can set `from`, and its message would be counted as a notice; the inbox's own drain of system
+  notices accepts the same boundary.
 - **Nothing has been landed on GitHub by this code.** Every test of an advance runs against a faked
   GitHub. The first real landing is the check after the deploy.
 - **Clearing a halt from the browser console has not been run in a browser.** A test clears one as

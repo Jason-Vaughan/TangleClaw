@@ -99,14 +99,30 @@ function fakeGithub(over = {}) {
   return { github: fake, calls, names: () => calls.map((c) => c[0]), set: (name, answer) => { answers[name] = answer; } };
 }
 
+/** The verified binding the owner's inbox is read for. */
+const BINDING = { projectId: 7, launchId: 'launch-owner', sessionId: 41 };
+
+/**
+ * An inbox check as the API answers it, read and holding nothing unhandled.
+ * A field of `over` replaces one of its fields.
+ * @param {object} [over] - Fields to replace
+ * @returns {() => object} The check
+ */
+function inboxReads(over = {}) {
+  return () => ({
+    readable: true, binding: BINDING, checkedAt: '2026-10-15T23:00:00.000Z', listenerState: 'listening', blocking: [], systemExcluded: 0, ...over
+  });
+}
+
 /**
  * Advance the test queue once.
  * @param {object} gh - From {@link fakeGithub}
  * @param {() => void} [guard] - The caller's guard
+ * @param {(() => object)|undefined} [inboxCheck] - The owner's inbox check; a clear inbox when not given
  * @returns {Promise<object>} The advance's answer
  */
-function step(gh, guard = () => {}) {
-  return advance(queues.getQueue(queueId), { actor: OWNER, guard, github: gh.github });
+function step(gh, guard = () => {}, inboxCheck = inboxReads()) {
+  return advance(queues.getQueue(queueId), { actor: OWNER, guard, inboxCheck, github: gh.github });
 }
 
 /**
@@ -114,12 +130,13 @@ function step(gh, guard = () => {}) {
  * @param {object} gh - From {@link fakeGithub}
  * @param {string} code - The refusal's code
  * @param {() => void} [guard] - The caller's guard
+ * @param {() => object} [inboxCheck] - The owner's inbox check
  * @returns {Promise<AdvanceRefusal>}
  */
-async function refusedStep(gh, code, guard) {
+async function refusedStep(gh, code, guard, inboxCheck) {
   let caught = null;
   try {
-    await step(gh, guard);
+    await step(gh, guard, inboxCheck);
   } catch (err) { // prawduct:allow prawduct/broad-except -- the test asserts on whatever was thrown, on the next lines
     caught = err;
   }
@@ -1147,5 +1164,122 @@ describe('merge queue advance: a caller that may no longer act (#2322)', () => {
     await assert.rejects(() => step(gh, guardUntil(() => gh.names().includes('readBranchCheck')).guard), Fenced);
     assert.ok(!gh.names().includes('discardCandidate'));
     assert.equal(queues.getEntry(entry.entryId).state, 'testing');
+  });
+});
+
+describe('merge queue advance: an unhandled message in the owner\'s inbox refuses the landing (#2372)', () => {
+  /**
+   * Assert a refused landing changed nothing: the entry is still testing on its
+   * candidate, no event was added, and nothing was written to GitHub.
+   * @param {object} entry - The entry
+   * @param {object} candidate - Its candidate before the call
+   * @param {number} before - The event count before the call
+   * @param {object} gh - From {@link fakeGithub}
+   * @returns {void}
+   */
+  function unchanged(entry, candidate, before, gh) {
+    const after = queues.getEntry(entry.entryId);
+    assert.equal(after.state, 'testing');
+    assert.deepEqual(after.candidate, candidate);
+    assert.equal(eventCount(), before, 'no event is appended');
+    assert.deepEqual(gh.names().filter((n) => WRITES.includes(n)), [], 'no merge request and no branch deletion');
+  }
+
+  for (const [label, check] of [
+    ['an inbox that could not be read', inboxReads({ readable: false, reason: 'the session\'s Medusa listener is off, not listening' })],
+    ['an advance given no inbox check at all', undefined],
+    ['an inbox check that answers nothing', () => null]
+  ]) {
+    it(`${label} refuses AUTHORIZER_INBOX_UNREADABLE and changes nothing`, async () => {
+      const entry = await testing();
+      const candidate = queues.getEntry(entry.entryId).candidate;
+      const before = eventCount();
+      const gh = fakeGithub();
+      const ctx = { actor: OWNER, guard: () => {}, github: gh.github };
+      if (check !== undefined) ctx.inboxCheck = check;
+      let caught = null;
+      try {
+        await advance(queues.getQueue(queueId), ctx);
+      } catch (err) { // prawduct:allow prawduct/broad-except -- the test asserts on whatever was thrown, on the next lines
+        caught = err;
+      }
+      assert.ok(caught instanceof AdvanceRefusal, String(caught && caught.stack));
+      assert.equal(caught.code, ADVANCE_REFUSALS.AUTHORIZER_INBOX_UNREADABLE);
+      assert.equal(caught.details.entryId, entry.entryId);
+      unchanged(entry, candidate, before, gh);
+    });
+  }
+
+  it('an unhandled message refuses AUTHORIZER_MESSAGE_UNREAD, naming its id and sender only, and changes nothing', async () => {
+    const entry = await testing();
+    const candidate = queues.getEntry(entry.entryId).candidate;
+    const before = eventCount();
+    const gh = fakeGithub();
+    const blocking = [{ id: 'msg-approve-2', from: 'tc-pm-1' }, { id: 'msg-object-1', from: 'tc-architect-1' }];
+    const refused = await refusedStep(gh, ADVANCE_REFUSALS.AUTHORIZER_MESSAGE_UNREAD, undefined, inboxReads({ blocking }));
+    assert.deepEqual(refused.details.messages, blocking);
+    assert.match(refused.message, /msg-approve-2 from tc-pm-1/);
+    assert.match(refused.message, /Nothing was changed/);
+    unchanged(entry, candidate, before, gh);
+  });
+
+  it('once the message is handled, the next advance lands and records the check without any message', async () => {
+    const entry = await testing();
+    await refusedStep(fakeGithub(), ADVANCE_REFUSALS.AUTHORIZER_MESSAGE_UNREAD, undefined,
+      inboxReads({ blocking: [{ id: 'msg-1', from: 'tc-pm-1' }] }));
+    const landed = await step(fakeGithub(), undefined, inboxReads({ systemExcluded: 2 }));
+    assert.equal(landed.step, STEPS.LANDED);
+    const started = queues.listEvents(queueId, { entryId: entry.entryId }).find((e) => e.event === 'landing-started');
+    assert.deepEqual(started.detail, {
+      headSha: HEAD, baseSha: BASE, candidateSha: CANDIDATE, candidateCheck: { runId: '501', conclusion: 'success' },
+      inboxCheck: { binding: BINDING, checkedAt: '2026-10-15T23:00:00.000Z', listenerState: 'listening', systemExcluded: 2 }
+    });
+    assert.ok(!JSON.stringify(started.detail).includes('msg-1'), 'no message id or text is recorded');
+  });
+
+  it('reads the inbox, then asks the guard, then sends the merge request, with nothing awaited between them', async () => {
+    await testing();
+    const order = [];
+    const gh = fakeGithub();
+    for (const name of Object.keys(gh.github)) {
+      const call = gh.github[name];
+      gh.github[name] = (...args) => { order.push(name); return call(...args); };
+    }
+    const check = inboxReads();
+    await step(gh, () => order.push('guard'), () => { order.push('inbox'); return check(); });
+    const merge = order.indexOf('mergePull');
+    assert.deepEqual(order.slice(merge - 2, merge + 1), ['inbox', 'guard', 'mergePull'], order.join(' '));
+    assert.equal(order.filter((n) => n === 'inbox').length, 1, 'the inbox is read once, for the landing');
+  });
+
+  it('a guard that refuses after a clear inbox still prevents the merge', async () => {
+    const entry = await testing();
+    const candidate = queues.getEntry(entry.entryId).candidate;
+    const before = eventCount();
+    const gh = fakeGithub();
+    let read = false;
+    const fenced = new Error('fenced');
+    await assert.rejects(() => step(gh, () => { if (read) throw fenced; }, () => { read = true; return inboxReads()(); }), (err) => err === fenced);
+    unchanged(entry, candidate, before, gh);
+  });
+
+  it('does not stop the steps that merge nothing: assembly, a discard on a moved base, a failure, and cleanup', async () => {
+    const blocked = inboxReads({ blocking: [{ id: 'msg-1', from: 'tc-pm-1' }] });
+    let asked = 0;
+    const counting = () => { asked += 1; return blocked(); };
+
+    const first = submit();
+    assert.equal((await step(fakeGithub(), undefined, counting)).step, STEPS.ASSEMBLED);
+    assert.equal((await step(fakeGithub({ readRefTip: { status: 'read', sha: MOVED } }), undefined, counting)).step, STEPS.REASSEMBLING);
+    assert.equal((await step(fakeGithub({ readRefTip: { status: 'read', sha: MOVED } }), undefined, counting)).step, STEPS.ASSEMBLED);
+    const red = fakeGithub({ readRefTip: { status: 'read', sha: MOVED }, readBranchCheck: (repo, branch) => (branch === 'main' ? concluded('success') : concluded('failure')) });
+    assert.equal((await step(red, undefined, counting)).step, STEPS.FAILED);
+    assert.equal(queues.getEntry(first.entryId).state, 'failed');
+
+    await testing();
+    const kept = fakeGithub({ discardCandidate: { status: 'unavailable', reason: 'gh api timed out after 10000ms', candidate: 'left', stage: 'not-found' } });
+    assert.equal((await step(kept, undefined, inboxReads())).cleanup.code, ADVANCE_REFUSALS.CANDIDATE_NOT_DISCARDED);
+    assert.equal((await step(fakeGithub({ readRefTip: { status: 'read', sha: LANDED } }), undefined, counting)).step, STEPS.CLEANED_UP);
+    assert.equal(asked, 0, 'only a landing reads the inbox');
   });
 });

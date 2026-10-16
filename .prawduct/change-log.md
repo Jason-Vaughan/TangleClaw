@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-15 — #2372: the merge queue will not land while its owner has an unhandled message
+
+<!-- prawduct: type=feature | scope=w1-a2-merge-queue-2372-2364 -->
+
+v5.34.0 Wave 1 chunk W1-A2 part A2a, the first of two (A2b, #2364, stays design-held). Branch `fix/2372-merge-queue-unread-guard`. Closes #2372. Governance class: the design is the Architect's A60, and the code is accepted by the Architect at its exact head before the merge.
+
+**Why.** On 2026-10-12 a pull request was merged while its authorizer had an unread message objecting to it. Nothing in the queue looked at the owner's inbox, so an approval nobody had read could be acted on and an objection nobody had read could be passed over.
+
+**What changed.** `lib/merge-queue.js`: a landing reads the owner's inbox last, then asks the caller's guard, then records `landing-started` and sends the merge request, with nothing awaited between them. Any message still unhandled refuses it `AUTHORIZER_MESSAGE_UNREAD`, naming each by id and sender and never its text; an inbox that cannot be read refuses it `AUTHORIZER_INBOX_UNREADABLE`; an advance given no inbox check lands nothing. Either refusal changes nothing: the entry stays `testing` with its candidate. Assembly, discards, failures and branch cleanup read no inbox. `lib/merge-queue-api.js`: the inbox is that of the session behind the launch the request was verified as, never one the request names; the binding is resolved again at the read, so a launch that has ended or been replaced cannot land, and a listener that is not listening reads as unreadable, never as empty. A message whose envelope `from` is `system` is counted and does not block; the body is never judged. `lib/merge-queue-store.js`: `landing-started` records the head, base and candidate, and the check's binding (project, launch, session), time, listener state and count of system notices left out, keeping only those fields; a malformed check is refused. `docs/merge-queue.md`: the landing table, a paragraph on the inbox, two refusals, and three limits (a hand merge is not guarded; the check is a snapshot that misses mail in transit; a process reaching the Bridge directly can pass as `system`). An owner project without the switchboard can no longer land through the queue.
+
+**Tests.** `test/merge-queue-advance.test.js` (8 cases): unreadable, absent and empty checks, an unhandled message, the record after handling, the order inbox, guard, merge request, a guard refusing after a clear inbox, and the steps that merge nothing. `test/merge-queue-api.test.js` (9 cases, through the route with bound callers): no listener, a listener not listening, the bound session's inbox only, an unread approval, an objection arriving mid-landing, a system notice against a peer posing as one, landing after handling, assembly unaffected, and a launch ended and replaced mid-landing. `test/merge-queue-store.test.js` (3 cases): the record, field stripping, malformed checks. The existing API advance tests' shared setup now gives the owner a listening, empty inbox; no existing assertion changed. Run against `origin/main`'s code, 18 of the 20 new cases fail; the other two check that steps which merge nothing read no inbox, which was already so.
+
 ## 2026-10-15 — #2304/#2408 (refs #2412): a checkout fingerprint leaves no git running when its deadline ends, and the wedged-tmux test counts what it started
 
 <!-- prawduct: type=bugfix | scope=w1b1-fingerprint-and-tmux-test-races -->
