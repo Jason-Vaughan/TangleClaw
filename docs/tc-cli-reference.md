@@ -14,7 +14,7 @@ tc --help
 
 `tc --help` prints the roster and exits 0. `tc` with no verb prints the same roster as a usage error and exits 1.
 
-`tc` depends on the identity and API variables TangleClaw exports into every session it launches (`TANGLECLAW_API`, `TANGLECLAW_PROJECT_ID`, `TANGLECLAW_LAUNCH_ID` and others). It deliberately does not guess those values when run outside a session TangleClaw launched. It is normally on `PATH` in a launched pane.
+`tc --help`, and `tc` with no verb, answer before reading the environment, so they work anywhere. Every verb depends on the identity and API variables TangleClaw exports into every session it launches (`TANGLECLAW_API`, `TANGLECLAW_PROJECT_ID`, `TANGLECLAW_LAUNCH_ID` and others), and `tc` deliberately does not guess those values when run outside a session TangleClaw launched. It is normally on `PATH` in a launched pane.
 
 ## Command families at a glance
 
