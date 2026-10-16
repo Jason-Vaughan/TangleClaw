@@ -8,15 +8,30 @@ All notable changes to TangleClaw are documented in this file.
 
 - **Host check** (#1380, #2142): `node scripts/host-check.js` reports whether this machine's tailnet name, configured names, Caddy sites, certificates, serve routes and local trust agree, each row ok/drift/ambiguous/observed/unknown. Read-only; redacted unless `--reveal`. Exit 0, 3 (drift) or 4 (unmeasured).
 - **A guide to moving TangleClaw to another machine** (#1380). `docs/host-migration.md` separates a planned move from recovering a copied machine. It shows how to read the host check, and gives each fix with its trigger, snapshot and exact rollback. It is a checklist: it changes nothing by itself.
+- **The merge queue will not land while its owner has an unhandled message** (#2372). `tc queue advance` refuses with `AUTHORIZER_MESSAGE_UNREAD`, naming each by id and sender; nothing changes. Handle them, then advance again. It refuses with `AUTHORIZER_INBOX_UNREADABLE` when its listener is not listening or its launch was replaced. System notices do not block; a hand merge is not guarded.
+- The Operator can settle a merge queue entry stuck in `landing` (`POST /api/merge-queue/entries/:id/settle-landing`): `landed` on a commit proved reachable from the base tip, or `failed`, which halts the queue for reconciliation unless the merge request is disposed of as unsuccessful (#2364).
+- Shared documents keep a record of every observed revision (`GET /api/shared-docs/:id/events`): which member rows changed (a row moved between tables counts), and who attested the edit (`tc docs base` / `tc docs attest`, lock holder only). Attested authorship is not proof of who wrote the bytes (#2389).
+- Turning a launch-isolation override on asks first, naming whom it covers and the risk; the dashboard's main view says while one is on, naming each, with a button to its switch (#2393).
+
+### Changed
+
+- The wrap drawer's commit row says who merges a wrap PR left for a coordinator, name first, with nothing under *How to fix this*; other auto-PR failures now show their fix there (#2366).
+- Shared-doc change notices go only to the owners of rows an attested author changed and to subscribers, never the author; `tc docs mute|subscribe|default` and the `notices` routes set it per doc or group. A notify of unchanged bytes notifies nobody (#2389).
 
 ### Fixed
 
 - **The host check no longer prints raw config or command values, or error messages.** `ingressMode`, the topology marker, Tailscale state and error codes pass through closed sets, and an unexpected value prints fixed safe fallback text, never the value itself. `--reveal` shows a failed row's error class, never its message. (#1380, #2142)
 - **The host check prints an error code only if it is a known one.** `node scripts/host-check.js` no longer passes an unlisted error code into a reason, the `--reveal` diagnostic or its failure line, however code-like it is spelled; such errors read `internal-error` or `lookup-failed`. Normal output is unchanged.
+- A checkout fingerprint whose deadline ends now stops and reaps the git it started, so no git is left running in a live checkout to hold `index.lock` after a rotation's fingerprint times out (#2304). Test-only: the wedged-tmux read test counts children from the spawn (#2408).
+- Project Settings no longer scrolls sideways on a narrow phone: the settings grids' columns shrink to the modal instead of holding a fixed minimum width (#2361).
+- The host check reads a direct-mode HTTPS install's served certificate: names, dates, coverage, whether the local root issued it, and whether that root is in the check's own Node CA set, with a qualified lead for `tls-unverified` (#2414).
 
 ### Internal
 
 - `docs/releases/v5.33.1-status.md` now says what is true after the release: v5.33.1 is tagged, published and running on the live install, with the backups and recovery evidence of the deploy. Two checks stay owed: the #2403 fix's own boot case (the Master survived the restart) and reachability from off the host.
+- Docs: the operator bridge pages now say it shipped in v5.31.0, is off by default and is cut over per install; README, setup and user guides link to it; the merge queue page names `CANDIDATE_CONFLICT` and `NOTHING_TO_MERGE`; a user-guide link to the engine guide is fixed (#2417, #2365, #2312).
+- #2371: the CI-as-suite governance packet. The upstream Prawduct report is drafted as one scrubbed block, NOT SENT. The lane-rule proposal is brought to the current rules with Prawduct's own acceptance as its first condition, NOT IN FORCE. Nothing changes for the lanes yet.
+- #2358 (refs): a measured Antigravity pane is now a wake-gate test. A live capture (agy 1.3.6, 179x44) shows the engine word-wraps, so no row started with `>`. Its composer is recognised as the monitor's nudge; on the REDACTED fixture, which has no idle marker, the pane gate refuses it as `not-at-rest`. This does not establish the original live pane's verdict. Test-only; #2358 stays open.
 
 ## [5.33.1] - 2026-10-14
 
