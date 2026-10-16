@@ -148,6 +148,13 @@ describe('checkout-freshness', () => {
       [a.path]: { status: statusOut(SHA_A, 'main'), origin: 'git@github.com:O/R.git\n', has: [SHA_A, SHA_B], lsRemote: `${SHA_B}\trefs/heads/main\n`, leftRight: '0\t1\n' },
       [b.path]: { status: statusOut(SHA_B, 'feat/x'), origin: 'https://github.com/O/R\n', has: [SHA_B], lsRemote: `${SHA_B}\trefs/heads/main\n` }
     });
+    // The summary is rendered twice, inside projectCheckout and again by
+    // describe() below, and each render says the observation's age. A clock
+    // that freezes on its first read (the first render, after the
+    // observation) gives both renders one instant, so a second boundary
+    // between them cannot change the wording.
+    let frozen = null;
+    summary._internal.now = () => (frozen === null ? (frozen = Date.now()) : frozen);
     const ca = await warmAndRead(a, fake);
     const cb = await warmAndRead(b, fake);
     assert.equal(ca.upstream.identity, 'github.com/O/R');
@@ -164,6 +171,8 @@ describe('checkout-freshness', () => {
     assert.deepEqual(Object.keys(ca.localRef).sort(), ['ahead', 'behind', 'incomplete', 'ref', 'relation', 'sha']);
     assert.deepEqual(ca.summary, cf.describe(ca), 'the chip and the prime read one wording');
     assert.match(ca.summary[0], /1 behind origin\/main @bbbbbbb/);
+    const ageS = Math.max(0, Math.round((frozen - Date.parse(ca.upstream.observedAt)) / 1000));
+    assert.ok(ca.summary[0].includes(`(observed ${ageS}s ago`), 'the age is the one the pinned clock gives');
   });
 
   it('reasons about the local origin/main ref ride localRef, not the checkout\'s own incomplete list', async () => {
