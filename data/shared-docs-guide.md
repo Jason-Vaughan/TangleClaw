@@ -42,8 +42,15 @@ DELETE /api/shared-docs/<doc-id>/lock
 
 # Re-scan a group's shared directory for new files
 POST /api/groups/<group-id>/sync
+
+# Read a document's recorded revisions after a seq (author, changed rows, latest, gap)
+GET /api/shared-docs/<doc-id>/events?since=<seq>
 ```
 
 ### Lock Etiquette
 
 Lock before editing a shared doc's contents and unlock after, so other sessions can access it. Locks expire after **30 minutes** if not released; sessions auto-release all locks on wrap or kill.
+
+### Attested Edits
+
+TangleClaw records every revision it observes of a shared document. A revision's author is `unknown` unless the writer attests it: lock, `tc docs base <doc>` (save the digest it prints), edit the file as usual, `tc docs attest <doc> --base <saved digest>`, unlock. The attestation is refused (`409`) unless your session holds the lock and the edit followed your saved base with nothing observed in between; never re-take a base to make it pass. Attested authorship proves the lock holder named its base, not who typed the bytes. Notices are unchanged by the record.

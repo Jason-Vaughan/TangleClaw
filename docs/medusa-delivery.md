@@ -515,6 +515,27 @@ rollback does not clear open exchanges, and a re-upgrade resumes supervising
 them. Setting `medusaWatchdog.enabled: false` stops re-arms and escalation
 without a rollback.
 
+## Shared-document revisions
+
+A shared document's "this doc changed" notice (`shared_doc_updated`, from `system`) is still the
+broadcast to every live member session but the doc's owner, coalesced per reader, exactly as before.
+Beside it, TangleClaw now records each distinct content digest it observes of the doc as one
+revision (`shared_doc_events`, read through `GET /api/shared-docs/:id/events`): the file watcher, the
+notify route, a writer's base capture and an attestation all observe through one queue per doc, and a
+revision is classified against the persisted baseline as `row` (member rows changed, with every
+changed project), `unknown` (anything else changed), `formatting` or `first-seen`. A doc over the
+8 MB baseline cap, or compared with one, is digest-only: `unknown`, with no changed rows claimed.
+
+A revision's author is `unknown` unless a session attests it (`tc docs base`, edit, `tc docs attest`,
+under the doc's lock). That is attested authorship in a cooperative-writer model, not proof of who
+wrote the bytes: bytes overwritten before any observation are never seen. Each revision carries
+`shadowWouldSelect`, the owners of the changed rows other than an attested author: a shadow of a
+row-aware rule that delivers nothing. A shadow selection is never a measured wake reduction.
+
+Limits: the 500 ms debounce means a save overwritten within it is not observed; revisions are kept
+1000 per doc or 30 days, whichever keeps more, and a reader behind the oldest retained revision is
+told `gap: true`.
+
 ## Code
 
 `lib/medusa-exchanges.js` (rules and projection), `lib/medusa-watchdog.js`
@@ -526,6 +547,10 @@ without a rollback.
 `test/medusa-exchanges.test.js`, `test/api-medusa-exchanges.test.js`,
 `test/medusa-watchdog.test.js`, `test/medusa-escalation.test.js`,
 `test/medusa-watchdog-e2e.test.js`, `test/store-medusa-exchange-migration.test.js`.
+Shared-document revisions: `lib/shared-docs.js`, `lib/store.js` (`sharedDocEvents`, v67), `server.js`
+(`POST /api/shared-docs/:id/attest`, `GET /api/shared-docs/:id/events`), `lib/tc-verbs.js` (`tc docs`);
+tests `test/shared-docs-events.test.js`, `test/shared-docs-attest-route.test.js`,
+`test/store-shared-doc-events-migration.test.js`.
 
 What each wake tick and watchdog pass cost is recorded in memory by `lib/tick-meter.js`
 (`medusaWake.tickMetrics()`, `medusaWatchdog.tickMetrics()`); it observes and decides nothing.
