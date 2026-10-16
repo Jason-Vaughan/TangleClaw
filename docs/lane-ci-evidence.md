@@ -301,21 +301,32 @@ records CI's result as suite evidence by hand.
    round that are a waiver per chunk or a hand-recorded result. If Prawduct declines, the reason
    is recorded and nothing below happens; a refusal waives no gate.
 2. **The rule text is accepted, then activated.** The Architect accepts the exact text; the
-   Operator activates it. Then each lane reads it back.
-3. **The complement is verified** on the host the lanes use.
-4. **One eligible chunk is measured** under the rule, against the baseline the batch charter
-   names. The number is reported, not the target.
+   Operator activates it; each lane reads it back. The rule names this page by the digest of the
+   revision accepted with it, so a later edit here changes nothing the rule allows until the rule
+   is accepted again.
+3. **The complement is verified** on the host the lanes use, before any chunk relies on it.
+4. **One bounded pilot.** Exactly one chunk, named in the lane queue when its plan is approved
+   (before any result exists), stands on CI as the suite. The batch charter's pre-suite order
+   holds the local suite until all of steps 1 to 3 are done and one chunk is measured, so the
+   pilot needs that order amended by name to allow this one chunk; it is not a way round it.
+5. **Broader use is decided separately**, from the pilot's measurement: its time and its safety
+   failures (a defect the pilot let through, a complement entry that did not run, an evidence
+   refusal) alike. Until then, every other chunk runs the full local suite.
 
 ### The rule text proposed
 
-> **CI as the suite.** For a chunk, the required CI check stands as the full suite when all of
-> these hold, and `node scripts/ci-evidence.js` is what establishes them: Prawduct's own
-> `test-status` accepts the evidence; the `test` check concluded successfully on the exact head
-> commit; GitHub Actions made it, as a job of that commit; the command itself read it; its run was
-> a push of that commit or a pull request of it into the base branch; the base branch's tip is
-> inside the head; the complement was green on the same tree in the same run; and the chunk's own
-> narrow tests passed. The evidence is the file the command writes. Nobody writes or edits one by
-> hand, and nobody records CI's result as suite evidence by hand.
+> **CI as the suite, for one pilot chunk.** The chunk named in the lane queue as the CI-as-suite
+> pilot, at its plan approval, may stand on the required CI check instead of the full local suite
+> when all of these hold, and `node scripts/ci-evidence.js` is what establishes them: Prawduct's
+> own `test-status` accepts the evidence; the complement has been verified on this host; the
+> `test` check concluded successfully on the exact head commit; GitHub Actions made it, as a job of
+> that commit; the command itself read it; its run was a push of that commit or a pull request of it
+> into the base branch; the base branch's tip is inside the head; the complement was green on the
+> same tree in the same run; the chunk's own narrow tests passed; and the reviewer has read the
+> workflow at the exact commit and confirmed that its `test` job runs the full suite and the skip
+> audit, because a successful job of that name proves neither. The evidence is the file the
+> command writes. Nobody writes or edits one by hand, and nobody records CI's result as suite
+> evidence by hand.
 >
 > **The full local suite is still required** for: any edit to `test/skip-ledger.json` (add, remove
 > or change); any change to the test runner, the audit or evidence machinery or its configuration;
@@ -325,6 +336,8 @@ records CI's result as suite evidence by hand.
 >
 > **A green badge never claims the ledger's tests.** They are covered only by the complement, on a
 > machine that has what they need.
+>
+> **The conditions are this page's at the revision accepted with the rule**, named by its digest.
 
 Every other gate stays as it is: the Critic, `check-cumulative-critic`, CI itself, the exact-head
 and current-base checks, the browser check, and a ready report made void when `main` moves.
@@ -334,17 +347,18 @@ and current-base checks, the browser check, and a ready report made void when `m
 Two clauses of the Builder overlay and two of the Integrator overlay; nothing else in either, and
 nothing in the common core.
 
-- **Builder overlay, clause 4 (Suite & Ready):** a chunk that stands on CI as the suite takes no
-  suite slot; its ready report names the evidence file; when `main` moves it reruns CI and the
-  evidence instead of the suite.
-- **Integrator overlay, clause 1:** a chunk standing on CI as the suite takes no slot.
-- **Integrator overlay, clause 2(d):** such a chunk also needs its evidence file for the exact
-  head, naming the fetched `origin/main` tip as its base, and must be outside the exceptions.
+- **Builder overlay, clause 4 (Suite & Ready):** the named pilot, when every condition and no
+  exception holds, takes no suite slot; the exceptions are written into the clause itself, and
+  the clause names this page by digest; the ready report names the evidence file; when `main`
+  moves the pilot reruns CI and the evidence instead of the suite.
+- **Integrator overlay, clause 1:** the pilot takes no slot.
+- **Integrator overlay, clause 2(d):** the pilot also needs its evidence file for the exact head,
+  naming the fetched `origin/main` tip as its base, and the Integrator reads the workflow at the
+  exact head to confirm the `test` job runs the full suite and the skip audit.
 
 Each replacement text is made by replacing only those sentences in the rule as it stands, so every
 other clause is unchanged; the exact texts are accepted and proposed against the rules as they are
-at that time, not copied here, where they would go stale. The batch charter's pre-suite order
-already says the local suite stays until all four steps above are done.
+at that time, not copied here, where they would go stale.
 
 ### A local suite does not cover everything CI does
 

@@ -277,11 +277,13 @@ Three different kinds of number, kept apart:
 - **Historical baseline** (our previous batch, as its review recorded): 64% of sampled pull
   request CI runs, and at least nine local full suites of about fifteen minutes, ran on heads that
   did not merge.
-- **Measured now** (one day, two lanes sharing one host): five local full suites completed, each
-  between 16m44s and 17m31s, run strictly one at a time. Two chunks waited about 16 and 17 minutes
-  for the suite slot. Every one of those heads was also tested by CI on its pull request (one
-  example: 14m41s). Two of the five ran on heads that did not merge because the base moved during
-  the run; CI evidence would not save those, since a moved base needs a new run either way.
+- **Measured now** (one day, two lanes sharing one host; runs that started between 15:00 and
+  16:50 local time): four local full suites ran to completion, each between 16m44s and 17m31s,
+  strictly one at a time. A fifth, started in that window, was killed by a host power loss and is
+  not counted. Two chunks each waited about 16 minutes for the suite slot. The two heads that
+  merged were also tested by CI on their pull requests (one example: 14m41s). The other two
+  completed runs were on heads that did not merge because the base moved during the run; CI
+  evidence would not save those, since a moved base needs a new run either way.
 - **Target, not established:** 30–40% faster turnaround per chunk. The saving we expect is the
   local suite and the wait for its slot on chunks outside the exceptions above. We will measure
   it on one eligible chunk and report the number, not the target.
@@ -292,7 +294,13 @@ Three different kinds of number, kept apart:
 - **Where the figures come from.** The baseline is the Batch 4 Observer report as the v5.34.0
   charter cites it (A186.1, 2026-10-13). The 2026-10-15 figures are the Integrator's entries in
   the lane queue's log (each suite's start and end as the Integrator read them; the CI time from
-  W1-B1's PR check). The target is the charter's. Re-read them before the send: a later run can
+  W1-B1's PR check). Cutoff: runs started 15:00 to 16:50 PDT on 2026-10-15. Completed: `813699ea`
+  r2 15:30:46-15:48:12 (merged, #2418); `981f2c41` 15:50:12-16:07:25 (base moved 15:57, not
+  merged); `356ba49c` 16:09:39-16:26:23 (merged, #2419); `7988df46` 16:27:48-16:45:19 (base moved
+  16:46, not merged; no CI run ever started for it). Killed: `813699ea` started 15:06:59, host
+  power loss about 15:19. Slot waits: W1-B1 asked 15:34, started 15:50:12; W1-A2 asked 16:11:19,
+  started 16:27:48. A later run (`1443c0a2`, started 16:51:07, killed 16:56:56 when host git
+  broke) falls after the cutoff. The target is the charter's. Re-read them before the send: a later run can
   change "measured now".
 - **The trace** was made on the installed plugin, `bin/prawduct-hook` sha256
   `16c7c8e09cfb40f642a66eec2eaaa3d88708fde6032aee48d9abd3b265c805a4`, reading each gate's code to
