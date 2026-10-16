@@ -124,6 +124,28 @@ describe('shared-doc revisions: classification (#2389)', () => {
     assert.deepEqual(r.changedProjectIds, [11]);
   });
 
+  it('a row moved between same-header tables that share heading text is still a change', () => {
+    const table = (rows) => ['| Lane | State |', '|---|---|', ...rows, ''];
+    const a = '| TC-Lane-A | building |';
+    const b = '| TC-Lane-B | planning |';
+    const layouts = {
+      'repeated heading text under different parents': (first, second) => [
+        '## Sprint 1', '', '### Active', '', ...table(first), '## Sprint 2', '', '### Active', '', ...table(second)
+      ],
+      'two tables under one heading, prose between': (first, second) => [
+        '## Lanes', '', ...table(first), 'Parked lanes:', '', ...table(second)
+      ],
+      'setext headings': (first, second) => [
+        'Active', '======', '', ...table(first), 'Done', '----', '', ...table(second)
+      ]
+    };
+    for (const [name, layout] of Object.entries(layouts)) {
+      const r = diff(layout([a, b], [b]).join('\n'), layout([b], [a, b]).join('\n'));
+      assert.ok(r.classes.includes('row'), `${name}: a lane moved between tables is never formatting`);
+      assert.deepEqual(r.changedProjectIds, [11], name);
+    }
+  });
+
   it('renaming a heading over a keyed table over-reports its rows rather than hiding anything', () => {
     const r = diff(laneDoc(), laneDoc().replace('## Lanes', '## Lane states'));
     assert.deepEqual(r.classes, ['row', 'unknown']);
