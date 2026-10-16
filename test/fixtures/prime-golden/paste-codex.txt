@@ -29,7 +29,7 @@ Operator-authored rules for this project. They apply for the whole session:
 ## Rule sources in force
 2 binding rule sources reach this session. A directive can come from any of them; when two disagree, say so rather than pick one silently.
 1. TangleClaw global rules — `data/global-rules.md`, carried in the managed block of `.codex.yaml`.
-2. TangleClaw project rules — 1 startup rule for this project, delivered in this prime.
+2. TangleClaw project rules — startup rules for this project, as the rules block lists them, delivered in this prime.
 
 ## TangleClaw Ecosystem
 Operating basics for any session in this ecosystem — standing context, not a task list:

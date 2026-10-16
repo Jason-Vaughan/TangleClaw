@@ -35,6 +35,24 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-16 — #2317, #2375: the prime states no rule count a clear would make stale; the recorded-launch-command judgment moves to a store-free module
+
+<!-- prawduct: type=bugfix | scope=w3b2-prime-rule-count-and-recorded-command-module -->
+
+v5.34.0 Wave 3 chunk W3-B2, its one chunk. Branch `fix/w3b2-prime-rule-count-and-recorded-command-module` from `fb7f79fa`. Refs #2317, #2375 (the PR body carries the closing keywords). Plan: `.tangleclaw/plans/build-plan-w3b2-prime-rule-count-and-recorded-command-module.md` (rev 3, sha256 `0ef9f962…70ec18`; charter v2.8, sha256 `f563e277…69b67`; Architect A109 and the rev 3 acceptance, Option A). Exactly the 22 locked files, of which 18 change; items 10, 12 and 13 (`session-rules-channel`, `session-rules-refresh` and `self-improvement-loop` tests) and `bin/tc` needed no change.
+
+**Why (#2317).** The prime is written once at launch, and a `clear` or `compact` fire prints it again as written, beside a rules block read at the fire. Its manifest, its pull pointer and its rule-sources line carried the launch's rule count, so the two disagreed once a rule was activated or retired. A launch with no rules said "none active for this project", which a later rule would contradict in the same way.
+
+**What (#2317).** `lib/sessions.js`: the manifest and the pull pointer say "Operator-authored rules govern this session" and name the **Project Rules** block as stating which rules are in force and how many. The rule-sources line reads "startup rules for this project, as the rules block lists them, delivered <channel>.", and with no rules "none were active when this session launched; a **Project Rules** block in your context, if present, is in force." The absence checks, the inline floor, the delivery ledger and digest, and the launch step's governance text are unchanged.
+
+**Why (#2375).** `tc` judged its own pane by lazily requiring `lib/startup-control-codex.js`, which loads the store. So it hid node's `node:sqlite` ExperimentalWarning with a wrapper, `_requireQuietly`, and kept its own copy of `_withoutPathFloor`, because `lib/sessions.js` loads the store too.
+
+**What (#2375).** New `lib/recorded-launch-command.js` (requires only `node:path`) holds `judgeRecordedCommand`, the helpers it uses (`_leadingExecutable`, `_readArguments`, `_launchesCodex`, `_shellWord`, `SAFE_PATH`, `ENGINE_BINARY`, `PLAIN_ARGUMENT`) and `_withoutPathFloor`. The nine blocks are byte-identical to `fb7f79fa`, with only JSDoc links to their old neighbours spelled as paths. `lib/startup-control-codex.js` and `lib/sessions.js` require and re-export them, so the launch judgment and every caller use one definition. `lib/tc-verbs.js` requires the module at the top; its copy, its lazy require and `_requireQuietly` are gone.
+
+**Tests.** New `test/recorded-launch-command.test.js`: the module loads no other `lib/` file and `tc`'s judgment path loads neither the store nor the adapter, both checked in a fresh process; one definition throughout; the judgment's answers; and the floor cases from the removed copy test, with their expected outputs. New `test/prime-rule-count-after-clear.test.js`: no count on the hook, pull and inline channels; a `clear` re-delivery of a 3-rule prime beside a 7-rule block states no disagreeing number; the no-rules wording. It fails all five on `fb7f79fa`. `test/tc-pane-identity.test.js`: the two-copies test becomes one-definition, and the `_requireQuietly` tests go with the function. Sentence pins are updated in `test/sessions.test.js` and `test/session-rule-delivery.test.js`. Length-dependent setups, with no assertion changed (rev 3): the seven prime goldens regenerated, with the diff confined to the three sentences; the #1888 cap-fill loop in `test/prime-hook-output.test.js` given a finer step (its old ~263-char steps jumped past the cap once the floor grew); `TIGHT_BUDGET` 3000 → 3100 (floor 2951 → 3034); and the #557 trim case moved onto its own project, because earlier cases leave stranded-wrap state on the shared `prime-test` project. Its room is now 1078 in full-file order and 1081 isolated, against a 966 trim threshold.
+
+**Not checked:** a live clear on the deployed install with a changed rule set (owed after the deploy, owner TC-Lane-B); `tc` start-up time saved, not measured.
+
 ## 2026-10-16 — #2339, #2313: a refused launch's message stays until dismissed; the bridge's Discord times in host-local time
 
 <!-- prawduct: type=bugfix | scope=w3b1-refused-launch-toast-and-bridge-local-times -->

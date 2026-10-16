@@ -528,53 +528,66 @@ describe('sessions', () => {
       });
 
       it('#557 regression: directive sections survive the prime cap — the contract yields, honestly', () => {
-        // An oversized contract: alone it exceeds the prime's token cap
-        // several times over. Pre-fix, the
-        // blind tail truncation cut the Resume wait-guard and the wrap
-        // instructions out of the prime — the #557 live regression.
-        const contractFile = path.join(projDir, 'fixture-contract.md');
-        fs.writeFileSync(contractFile, '# Big Consumer Contract\n' + 'protocol detail line\n'.repeat(1500));
-        process.env.MEDUSA_CONTRACT_PATH = contractFile;
-        store.projectConfig.save(projDir, { medusaEnabled: true });
-        const continuityDir = path.join(projDir, '.tangleclaw', 'continuity');
-        fs.mkdirSync(continuityDir, { recursive: true });
-        fs.writeFileSync(path.join(continuityDir, 'index.md'), [
-          '# Continuity Index — prime-test',
-          '',
-          '## Current state',
-          'Mid-build on the fixture feature.',
-          '',
-          '## Next action',
-          '- finish the fixture feature',
-          ''
-        ].join('\n'));
+        // Its own project, not the shared prime-test: earlier cases leave state on
+        // that one (an acknowledged stranded wrap, a GitHub check) whose lines take
+        // room from the contract, so the trim this case asserts would depend on
+        // which cases ran before it.
+        const ownDir = path.join(projectsDir, 'prime-557');
+        fs.mkdirSync(ownDir, { recursive: true });
+        const project = store.projects.getByName('prime-557')
+          || store.projects.create({ name: 'prime-557', path: ownDir, engine: 'claude' });
+        try {
+          // An oversized contract: alone it exceeds the prime's token cap
+          // several times over. Pre-fix, the
+          // blind tail truncation cut the Resume wait-guard and the wrap
+          // instructions out of the prime — the #557 live regression.
+          const contractFile = path.join(ownDir, 'fixture-contract.md');
+          fs.writeFileSync(contractFile, '# Big Consumer Contract\n' + 'protocol detail line\n'.repeat(1500));
+          process.env.MEDUSA_CONTRACT_PATH = contractFile;
+          store.projectConfig.save(ownDir, { medusaEnabled: true });
+          const continuityDir = path.join(ownDir, '.tangleclaw', 'continuity');
+          fs.mkdirSync(continuityDir, { recursive: true });
+          fs.writeFileSync(path.join(continuityDir, 'index.md'), [
+            '# Continuity Index — prime-557',
+            '',
+            '## Current state',
+            'Mid-build on the fixture feature.',
+            '',
+            '## Next action',
+            '- finish the fixture feature',
+            ''
+          ].join('\n'));
 
-        const project = store.projects.getByName('prime-test');
-        const engine = store.engines.get('claude');
-        const prompt = sessions.generatePrimePrompt(project, engine, { medusaWorkspaceId: 'prime-test-cafe0123' });
+          const engine = store.engines.get('claude');
+          const prompt = sessions.generatePrimePrompt(project, engine, { medusaWorkspaceId: 'prime-test-cafe0123' });
 
-        // Every load-bearing directive survives the cap.
-        assert.ok(prompt.includes('## Resume'), 'Resume block survives the cap');
-        assert.ok(prompt.includes('MUST NOT start the work'), 'the wait-for-confirmation guard survives the cap');
-        assert.ok(prompt.includes('## Wrapping this session'), 'wrap instructions survive the cap');
-        assert.ok(prompt.includes(WRAP_DIRECTIVE_TAIL), 'the wrap directive survives the cap');
-        assert.ok(prompt.includes('`prime-test-cafe0123`'), 'the workspace identity survives the cap');
-        // The contract yields — trimmed with an honest note, never a blind slice.
-        assert.ok(
-          prompt.includes('truncated to fit the prime size budget'),
-          'the contract trim is announced honestly'
-        );
-        assert.ok(prompt.includes(contractFile), 'the trim note names the source doc');
-        assert.equal(
-          prompt.includes('[Prime prompt truncated]'), false,
-          'the blind tail truncation must not fire on the medusa path'
-        );
-        // Against the budget the ENGINE declares, not the fallback constant —
-        // measuring against 16,000 while claude declares 10,000 leaves 6,000
-        // characters unasserted on the path that actually ships.
-        const declared = sessions._resolvePrimeBudget(engine, { viaStartupHook: true });
-        assert.ok(prompt.length <= declared,
-          `prime length ${prompt.length} must fit the declared budget ${declared}`);
+          // Every load-bearing directive survives the cap.
+          assert.ok(prompt.includes('## Resume'), 'Resume block survives the cap');
+          assert.ok(prompt.includes('MUST NOT start the work'), 'the wait-for-confirmation guard survives the cap');
+          assert.ok(prompt.includes('## Wrapping this session'), 'wrap instructions survive the cap');
+          assert.ok(prompt.includes(WRAP_DIRECTIVE_TAIL), 'the wrap directive survives the cap');
+          assert.ok(prompt.includes('`prime-test-cafe0123`'), 'the workspace identity survives the cap');
+          // The contract yields — trimmed with an honest note, never a blind slice.
+          assert.ok(
+            prompt.includes('truncated to fit the prime size budget'),
+            'the contract trim is announced honestly'
+          );
+          assert.ok(prompt.includes(contractFile), 'the trim note names the source doc');
+          assert.equal(
+            prompt.includes('[Prime prompt truncated]'), false,
+            'the blind tail truncation must not fire on the medusa path'
+          );
+          // Against the budget the ENGINE declares, not the fallback constant —
+          // measuring against 16,000 while claude declares 10,000 leaves 6,000
+          // characters unasserted on the path that actually ships.
+          const declared = sessions._resolvePrimeBudget(engine, { viaStartupHook: true });
+          assert.ok(prompt.length <= declared,
+            `prime length ${prompt.length} must fit the declared budget ${declared}`);
+        } finally {
+          store.projectConfig.save(ownDir, {});
+          fs.rmSync(path.join(ownDir, '.tangleclaw'), { recursive: true, force: true });
+          fs.rmSync(path.join(ownDir, 'fixture-contract.md'), { force: true });
+        }
       });
 
       it('#557: contract body is omitted (with a pointer) when the budget cannot hold a useful fragment', () => {
@@ -1261,8 +1274,10 @@ describe('sessions', () => {
         // (2400, was 1800: the #1122 ecosystem primer joined every prime, and
         // its yield pointer is part of the non-yielding floor this scenario
         // must accommodate. 3000, was 2400: the #796 "Rule sources in force"
-        // directive joined the floor — ~500 chars that never yield.)
-        const TIGHT_BUDGET = 3000;
+        // directive joined the floor — ~500 chars that never yield. 3100, was
+        // 3000: the no-rules source line says what was true at launch and where
+        // a later rules block would be (#2317), 83 more chars that never yield.)
+        const TIGHT_BUDGET = 3100;
         const tight = {
           ...base,
           capabilities: { ...base.capabilities, startupInjection: { maxChars: TIGHT_BUDGET } }

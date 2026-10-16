@@ -26,7 +26,7 @@ Heal: hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh
 ## Rule sources in force
 2 binding rule sources reach this session. A directive can come from any of them; when two disagree, say so rather than pick one silently.
 1. TangleClaw global rules — `data/global-rules.md`, carried in the managed block of `CLAUDE.md`.
-2. TangleClaw project rules — none active for this project.
+2. TangleClaw project rules — none were active when this session launched; a **Project Rules** block in your context, if present, is in force.
 
 _(Ecosystem primer omitted for budget. TC API <API_ORIGIN>; numeric project id is 3; run `tc capabilities` for the live capability roster before assuming anything is missing.)_
 
