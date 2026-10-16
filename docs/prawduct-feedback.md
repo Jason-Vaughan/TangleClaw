@@ -192,68 +192,114 @@ never asking for a count in prose at all.
 
 ---
 
-## 2026-10-12 — DRAFT: accept a CI evidence file as suite evidence (TangleClaw #2321)
+## 2026-10-15 — DRAFT: accept CI evidence on the exact commit as the suite (TangleClaw #2371; first drafted 2026-10-12 for #2321)
 
-**NOT SENT.** This is a draft. Sending it upstream is the Operator's to approve
-(`/prawduct:report-bug` shows the exact outbound bytes first). Nothing in TangleClaw
-depends on it having been sent.
+**NOT SENT.** This is a draft. Sending it upstream is the Operator's to approve, on the exact
+bytes, after the Architect has accepted them. It goes through `/prawduct:report-bug`, which shows
+the outbound bytes before sending anything. Nothing in TangleClaw depends on it having been sent,
+and a reply that declines it waives no gate here.
 
-### 7. `test-status` has no way to accept a CI run on the exact commit as the suite
+**What would be sent is the fenced block below, and only that.** It names no path, host, account
+or log of this install: the reader is Prawduct's maintainers, who have none of them. The notes
+after the block stay here.
 
-**What happened.** In a lane, a chunk is ready when `prawduct-hook test-status` is
-current, and the only way to make it current is a local run of the declared suite
-(about fifteen minutes here, one at a time per host). The same commit is also tested
-by CI, on a clean runner, and that result is not usable: `test-evidence record` takes
-a local junit report or counts, so recording CI's result would mean a person stamping
-it by hand, which is exactly what evidence is meant to rule out.
+````markdown
+# `test-status` cannot accept a CI run on the exact commit as the suite
 
-**Expected.** A way to record evidence whose source is a CI check on the exact
-commit, which `test-status` accepts only after checking it, and which a session
-cannot produce by typing.
+**Prawduct version:** 3.6.1, installed as the Claude Code plugin.
 
-**What TangleClaw now writes.** `node scripts/ci-evidence.js` writes
-`.prawduct/lane-evidence/ci-<sha>.json` for HEAD, or refuses. The fields and what the
-command checks before writing are in `docs/lane-ci-evidence.md`. The file is written
-only from what the command itself read from GitHub and git, and from a run it made.
+## What happens
 
-**What `test-status` would have to check before accepting such a file.** Reading the
-file is not enough: a file is bytes anyone can write. Each of these would need to be
-re-read or re-derived by the gate, not taken from the file:
+In our setup a unit of work is ready only when `prawduct-hook test-status` exits 0. The same
+commit is also tested by CI, on a clean runner, by a required check. That CI result cannot reach
+`test-status`, so every chunk also runs the full suite locally, one run at a time per host.
 
-- **Repository.** The file's `repository` is the repository of the checkout's remote.
-- **Check identity and app.** The named check is the one the project declares as its
-  required CI check, and the run was made by the CI provider's own app (here
-  `github-actions`), confirmed as a real job of a workflow run and not a check run
-  posted under the same name.
-- **Conclusion.** The check concluded with success. Running, missing, unreadable and
-  every other conclusion are not evidence.
-- **Exact head and tree.** The file's `head` is the commit the gate is asked about and
-  `tree` is that commit's tree. Evidence for a parent, or for the same commit before a
-  rebase, is not evidence.
-- **The run's own base.** A pull request's CI run tests the head merged into that
-  pull request's base branch. The run is a push of the head, or a pull request of the
-  head into the base the file names; a run for a pull request into another branch
-  tested a different merge.
-- **Base inside head.** The base branch's tip is an ancestor of the head, so the merge
-  CI tested has the head's own tree and not one with a base that has since moved.
-  This and the item above are both needed; neither stands in for the other.
-- **The skip ledger's digest.** CI is allowed to skip a listed set of tests. The file
-  carries the digest of that list; the gate would check it against the list at the
-  commit.
-- **The complement's verdict, made in the same run.** The tests CI skips were run
-  locally by the same command, between two reads of the tree, and were green. A
-  verdict supplied from anywhere else is not this.
+What we traced in 3.6.1 (the readers, not a keyword search):
 
-**A simpler shape Prawduct could offer instead.** Let a project declare a
-`ci_evidence_command:` beside `test_command:`. The gate runs it for the tree it is
-asked about and accepts its exit code, the way it accepts the suite's. Then the gate
-trusts a command the project controls and reviews, and no file has to be believed.
+- `test-status` is `lib/gates.tests_are_current`. It is current only from
+  `.prawduct/.test-evidence.json` or from the evidence store's `test-run` facts.
+- Every other reader of suite evidence goes through the same two sources: the PR reviewer's
+  payload (`tests_are_current`), release readiness (`tests_are_current`), the Critic's
+  `test-status` probe, and the base-advance transfer that both the Stop gate's review verdict and
+  `check-cumulative-critic` use (`suite_vouches_for_tree`).
+- Both sources are written only by `test-evidence record`: a run of the declared
+  `test_command:`, `--from-junit`, `--from-counts` (refused when a `test_command:` is declared,
+  as ours is) or `--no-rerun`.
+- None of these reads where a report came from. `--from-junit` stamps the *local* working tree as
+  the run's `evidence_tree`. So the only way a CI result reaches the gates today is a person
+  downloading CI's report and passing it to `--from-junit`, which records a run the gate never saw
+  against a tree it never checked. That is the hand-stamping evidence exists to rule out, and we
+  do not do it.
 
-**Where the line would stay.** A project would still declare when the full local
-suite is required regardless (here: a change to the ledger or to the test and
-evidence machinery, schema, shared test helpers, the last chunk of an issue, once
-before a deploy).
+## What we are asking for
 
-**Cost.** One local suite per chunk per lane, serialized per host, while CI has
-already run the same tests on the same commit.
+**Preferred: a `ci_evidence_command:` beside `test_command:`.** The project declares a command;
+the gate runs it for the tree it is asked about and accepts its exit code, the way it accepts the
+suite's, recording the run as it records a suite run. The gate then trusts a command the project
+controls and reviews, and no file has to be believed. Our command already exists: for the commit
+checked out it reads the CI result from the forge, runs locally the tests CI is allowed to skip,
+and exits 0 only when every check below holds.
 
+**Alternative: accept an evidence file, but only after re-deriving each fact in it.** Reading the
+file is not enough; it is bytes anyone can write. The gate would re-read or re-derive:
+
+- **Repository:** the file's repository is the checkout remote's.
+- **Check identity and app:** the check is the one the project declares as its required CI check,
+  made by the CI provider's own app, and is a real job of a workflow run, not a check run posted
+  under the same name.
+- **Conclusion:** success. Running, missing, unreadable and every other conclusion are not
+  evidence.
+- **Exact head and tree:** the file's head is the commit the gate is asked about, and its tree is
+  that commit's tree. Evidence for a parent, or for the same work before a rebase, is not evidence.
+- **The run's own base:** a pull request's run tests the head merged into that pull request's base
+  branch, so the run is a push of the head or a pull request of the head into the base the file
+  names.
+- **Base inside head:** the base branch's tip is an ancestor of the head, so the merge CI tested
+  has the head's own tree. This and the item above are both needed; neither stands in for the
+  other.
+- **The skip list's digest:** CI may skip a declared set of tests; the file carries that list's
+  digest, which the gate checks against the list at the commit.
+- **The complement's verdict, from the same run:** the tests CI skips were run locally by the same
+  command, between two reads of the tree, and were green.
+
+## Where the line stays
+
+The project would still declare when the full local suite is required regardless. Ours: any edit
+to the skip list; the test runner or the audit and evidence machinery; schema; the store module;
+the server entry point; shared test helpers; the last chunk of an issue; once before a deploy; and
+whenever exact-head, current-base evidence cannot be established. Nothing here asks for any other
+gate to be relaxed.
+
+## Cost
+
+Three different kinds of number, kept apart:
+
+- **Historical baseline** (our previous batch, as its review recorded): 64% of sampled pull
+  request CI runs, and at least nine local full suites of about fifteen minutes, ran on heads that
+  did not merge.
+- **Measured now** (one day, two lanes sharing one host): five local full suites completed, each
+  between 16m44s and 17m31s, run strictly one at a time. Two chunks waited about 16 and 17 minutes
+  for the suite slot. Every one of those heads was also tested by CI on its pull request (one
+  example: 14m41s). Two of the five ran on heads that did not merge because the base moved during
+  the run; CI evidence would not save those, since a moved base needs a new run either way.
+- **Target, not established:** 30–40% faster turnaround per chunk. The saving we expect is the
+  local suite and the wait for its slot on chunks outside the exceptions above. We will measure
+  it on one eligible chunk and report the number, not the target.
+````
+
+**Notes kept here, not sent.**
+
+- **Where the figures come from.** The baseline is the Batch 4 Observer report as the v5.34.0
+  charter cites it (A186.1, 2026-10-13). The 2026-10-15 figures are the Integrator's entries in
+  the lane queue's log (each suite's start and end as the Integrator read them; the CI time from
+  W1-B1's PR check). The target is the charter's. Re-read them before the send: a later run can
+  change "measured now".
+- **The trace** was made on the installed plugin, `bin/prawduct-hook` sha256
+  `16c7c8e09cfb40f642a66eec2eaaa3d88708fde6032aee48d9abd3b265c805a4`, reading each gate's code to
+  its source of evidence; the line-by-line record is in #2371's governance packet (a lane plan,
+  not tracked in this repository).
+- **Our command** is `node scripts/ci-evidence.js`; what it checks, in order, is
+  `docs/lane-ci-evidence.md`. The report describes it without naming it, because its reader cannot
+  open this repository's files from a description alone and should not need to.
+- **Cost of the 2026-10-12 draft that this replaces:** it said "about fifteen minutes" with no
+  date and no source; the figures above are measured and dated.
