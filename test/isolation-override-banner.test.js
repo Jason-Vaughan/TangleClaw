@@ -70,21 +70,30 @@ function noticeDocument() {
 }
 
 /**
- * A page `api()` that records each call and answers from a table.
+ * A page `api()` that records each call and answers from a table, with
+ * `create()` standing in for `window.tcCreateApi`: each instance it makes
+ * keeps its own failure fields, as the factory's do, and logs into the same
+ * `calls`.
  * @param {function(string, object=): {data: (object|null), error?: string, code?: string}} answer - What each call is told
- * @returns {Function} The `api`, with `calls`
+ * @returns {Function} The `api`, with `calls` and `create`
  */
 function fakeApi(answer) {
-  const api = async (url, opts) => {
-    api.calls.push({ url, method: (opts && opts.method) || 'GET' });
-    const a = await answer(url, opts);
-    api.lastError = a.error || null;
-    api.lastErrorCode = a.code || null;
-    return a.data;
+  const calls = [];
+  const make = () => {
+    const api = async (url, opts) => {
+      calls.push({ url, method: (opts && opts.method) || 'GET' });
+      const a = await answer(url, opts);
+      api.lastError = a.error || null;
+      api.lastErrorCode = a.code || null;
+      return a.data;
+    };
+    api.lastError = null;
+    api.lastErrorCode = null;
+    return api;
   };
-  api.calls = [];
-  api.lastError = null;
-  api.lastErrorCode = null;
+  const api = make();
+  api.calls = calls;
+  api.create = make;
   return api;
 }
 
@@ -110,7 +119,13 @@ function settings(install, projects) {
  */
 function sandbox(extra) {
   const { doc, banner, textEl } = noticeDocument();
-  const ctx = { document: doc, ...(extra || {}) };
+  const given = extra || {};
+  const ctx = {
+    document: doc,
+    setConnected: () => {},
+    window: { tcCreateApi: () => (given.api ? given.api.create() : null) },
+    ...given
+  };
   vm.createContext(ctx);
   vm.runInContext('let isolationOverrideBannerRead = 0;', ctx);
   for (const decl of ['async function refreshIsolationOverrideBanner', 'function renderIsolationOverrideBanner',
@@ -293,6 +308,104 @@ describe('The dashboard notice: overlapping reads, latest wins (#2393)', () => {
   });
 });
 
+describe('The dashboard notice: its failure is its own, whatever else the page is reading (#2393)', () => {
+  const loadApiHelperGlobals = require('./_api-helper-globals');
+
+  /**
+   * The real `public/api-helper.js`, over a `fetch` that holds every response
+   * until the case lets them all go at once, in the order the requests were
+   * made. Both answers are then ready together, so the later request's `api()`
+   * finishes, and writes its failure fields, before the earlier request's
+   * caller resumes: the window in which the page's one `api()` is overwritten.
+   * @param {object} answers - `{<url>: {status, body}}`
+   * @returns {{helper: object, release: function(): void, seen: Array<object>}}
+   */
+  function heldHelper(answers) {
+    const helper = loadApiHelperGlobals();
+    let open;
+    const gate = new Promise((resolve) => { open = resolve; });
+    const seen = [];
+    helper.fetch = (url, opts) => {
+      const headers = (opts && opts.headers) || {};
+      seen.push({ url: String(url), client: headers['X-TangleClaw-Client'] || null });
+      const a = answers[String(url)];
+      const response = {
+        status: a.status,
+        ok: a.status >= 200 && a.status < 300,
+        headers: { get: (name) => (name.toLowerCase() === 'content-type' ? 'application/json' : null) },
+        json: async () => a.body,
+        clone() { return response; }
+      };
+      return gate.then(() => response);
+    };
+    return { helper, release: () => open(), seen };
+  }
+
+  /**
+   * The notice's functions, given the real factory, beside a page `api()`
+   * from the same factory that the unrelated request goes through.
+   * @param {object} helper - From {@link heldHelper}
+   * @returns {object} The sandbox, with `pageApi`
+   */
+  function pageWith(helper) {
+    const s = sandbox({ openGlobalSettings: () => {}, openIsolationOverrideSettings: () => {} });
+    s.ctx.window = { tcCreateApi: helper.tcCreateApi };
+    s.pageApi = helper.tcCreateApi({});
+    s.ctx.api = s.pageApi;
+    return s;
+  }
+
+  const REFUSED = { status: 403, body: { error: 'Only the operator can read the launch-isolation overrides.', code: 'OPERATOR_ONLY' } };
+  const FAILED = { status: 500, body: { error: 'The launch-isolation overrides could not be read just now.', code: 'INTERNAL_ERROR' } };
+
+  it('a refusal still hides, and takes the names down, when an unrelated read fails meanwhile', async () => {
+    const h = heldHelper({ '/api/launch/isolation-overrides': REFUSED, '/api/stats': { status: 500, body: { error: 'stats broke', code: 'INTERNAL_ERROR' } } });
+    const s = pageWith(h.helper);
+    s.ctx.renderIsolationOverrideBanner(settings(true, [[7, 'alpha']]), null);
+    const notice = s.ctx.refreshIsolationOverrideBanner();
+    const other = s.pageApi('/api/stats');
+    h.release();
+    await Promise.all([notice, other]);
+    assert.equal(s.pageApi.lastErrorCode, 'INTERNAL_ERROR', 'the page\'s shared slot holds the unrelated failure');
+    assert.equal(s.banner.classList.contains('hidden'), true);
+    assert.equal(s.textEl.childNodes.length, 0);
+  });
+
+  it('a refusal still hides when an unrelated read succeeds meanwhile and clears the shared slot', async () => {
+    const h = heldHelper({ '/api/launch/isolation-overrides': REFUSED, '/api/stats': { status: 200, body: { ok: true } } });
+    const s = pageWith(h.helper);
+    s.ctx.renderIsolationOverrideBanner(settings(false, [[7, 'alpha']]), null);
+    const notice = s.ctx.refreshIsolationOverrideBanner();
+    const other = s.pageApi('/api/stats');
+    h.release();
+    await Promise.all([notice, other]);
+    assert.equal(s.pageApi.lastErrorCode, null, 'the page\'s shared slot was cleared');
+    assert.equal(s.banner.classList.contains('hidden'), true);
+    assert.doesNotMatch(s.textEl.text, /alpha|could not be read/);
+  });
+
+  it('a genuine failure still shows when another overrides read is refused meanwhile', async () => {
+    const h = heldHelper({ '/api/launch/isolation-overrides': FAILED, '/api/other-overrides-read': REFUSED });
+    const s = pageWith(h.helper);
+    const notice = s.ctx.refreshIsolationOverrideBanner();
+    const other = s.pageApi('/api/other-overrides-read');
+    h.release();
+    await Promise.all([notice, other]);
+    assert.equal(s.pageApi.lastErrorCode, 'OPERATOR_ONLY', 'the page\'s shared slot holds someone else\'s refusal');
+    assert.equal(s.banner.classList.contains('hidden'), false);
+    assert.match(s.textEl.text, /could not be read \(The launch-isolation overrides could not be read just now\.\)/);
+  });
+
+  it('goes out with the dashboard marker, through the same factory as the page', async () => {
+    const h = heldHelper({ '/api/launch/isolation-overrides': { status: 200, body: settings(false) } });
+    const s = pageWith(h.helper);
+    const notice = s.ctx.refreshIsolationOverrideBanner();
+    h.release();
+    await notice;
+    assert.deepEqual(h.seen.map((x) => ({ ...x })), [{ url: '/api/launch/isolation-overrides', client: 'dashboard' }]);
+  });
+});
+
 describe('The dashboard notice leads to each override\'s switch (#2393)', () => {
   it('opens a project\'s Settings at its override, through the existing pointer', () => {
     const opened = [];
@@ -352,7 +465,6 @@ describe('The dashboard notice and the switches, run together (#2393)', () => {
     const s = sandbox({
       api,
       confirm: (text) => { asked.push(text); return answer; },
-      window: {},
       state: { projects: [{ id: 7, name: 'alpha' }] },
       openGlobalSettings: () => {},
       openIsolationOverrideSettings: () => {},
@@ -428,5 +540,7 @@ describe('The dashboard notice is on the main view and read at load (#2393)', ()
       + liftFunction(LANDING_SRC, 'function renderIsolationOverrideBanner');
     assert.deepEqual(body.match(/\/api\/[\w/-]+/g), ['/api/launch/isolation-overrides']);
     assert.doesNotMatch(body, /innerHTML/);
+    assert.match(body, /const once = window\.tcCreateApi\(\{ setConnected \}\);/, 'the read has an api() of its own, from the page\'s factory');
+    assert.doesNotMatch(body, /\bapi\.last/, 'the page\'s shared failure fields are never read');
   });
 });

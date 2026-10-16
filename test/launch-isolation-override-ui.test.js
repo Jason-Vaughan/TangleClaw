@@ -646,7 +646,7 @@ describe('The override\'s screens are wired into the two Settings modals (#2229)
       assert.equal(file, 'landing.js', `${file} names the override routes`);
       const code = src.match(/[^\n]*isolation-overrides[^\n]*/g).map((line) => line.trim())
         .filter((line) => !line.startsWith('*') && !line.startsWith('//'));
-      assert.deepEqual(code, ['const settings = await api(\'/api/launch/isolation-overrides\');'], 'landing.js only reads the overrides');
+      assert.deepEqual(code, ['const settings = await once(\'/api/launch/isolation-overrides\');'], 'landing.js only reads the overrides');
     }
     const wire = liftFunction(UI_SRC, 'function wireIsolationOverride');
     assert.doesNotMatch(wire, /\/api\/config|apiMutate|\bfetch\(/);

@@ -759,15 +759,24 @@ let isolationOverrideBannerRead = 0;
 
 /**
  * Read the launch-isolation overrides and paint the dashboard's notice of them
- * (#2393). Read through the page's `api()`, as the switches read them: the
- * route admits the dashboard by the marker that adds, and the operator alone.
+ * (#2393).
+ *
+ * Each read gets an `api()` of its own from the same factory as the page's, so
+ * it goes out with the same dashboard marker, sign-in and CSRF handling (the
+ * route admits the dashboard by that marker, and the operator alone). The
+ * page's `api()` keeps the last failure in two fields every request it makes
+ * writes or clears, and the dashboard has many in flight at load: read from
+ * there, another request's answer could make a refusal look like a failure, or
+ * hide a failure behind someone else's refusal. An instance that makes one
+ * request holds only that request's failure.
  * @returns {Promise<boolean>} true when this read painted the notice, false
  *   when a newer read had started meanwhile and this answer was dropped
  */
 async function refreshIsolationOverrideBanner() {
   const read = ++isolationOverrideBannerRead;
-  const settings = await api('/api/launch/isolation-overrides');
-  const failure = { error: api.lastError, code: api.lastErrorCode };
+  const once = window.tcCreateApi({ setConnected });
+  const settings = await once('/api/launch/isolation-overrides');
+  const failure = { error: once.lastError, code: once.lastErrorCode };
   if (read !== isolationOverrideBannerRead) return false;
   renderIsolationOverrideBanner(settings, failure);
   return true;
