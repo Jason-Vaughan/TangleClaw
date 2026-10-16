@@ -33,12 +33,12 @@ Stranded wraps: none recorded for this project.
 
 ## Rules delivery
 
-1 operator-authored rule governs this session. They are binding, and they are NOT in this prime: they arrive in the **governance** step of your launch sequence, in a block headed exactly **"Project Rules"**. Run `tc start next` and read every step. **If you reach the end of the sequence without having seen that block, say so before you act on anything else**: it means delivery failed and you are working without rules the operator believes are in force.
+Operator-authored rules govern this session. They are binding, and they are NOT in this prime: they arrive in the **governance** step of your launch sequence, in a block headed exactly **"Project Rules"**, which states which rules are in force and how many. Run `tc start next` and read every step. **If you reach the end of the sequence without having seen that block, say so before you act on anything else**: it means delivery failed and you are working without rules the operator believes are in force.
 
 ## Rule sources in force
 2 binding rule sources reach this session. A directive can come from any of them; when two disagree, say so rather than pick one silently.
 1. TangleClaw global rules — `data/global-rules.md`, carried in the managed block of `.codex.yaml`.
-2. TangleClaw project rules — 1 startup rule for this project, delivered in the governance step of this session's launch sequence (`tc start next`).
+2. TangleClaw project rules — startup rules for this project, as the rules block lists them, delivered in the governance step of this session's launch sequence (`tc start next`).
 
 ## TangleClaw Ecosystem
 Operating basics for any session in this ecosystem — standing context, not a task list:

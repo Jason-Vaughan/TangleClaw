@@ -25,12 +25,12 @@ Launch heal: moved one leftover file.
 
 ## Rules delivery
 
-2 operator-authored rules govern this session. They are binding, and they arrive on a separate channel — look for a heading reading exactly **"Project Rules"** in your context. **If no such block is present, say so before you act on anything else**: it means delivery failed and you are working without rules the operator believes are in force.
+Operator-authored rules govern this session. They are binding, and they arrive on a separate channel — look for a heading reading exactly **"Project Rules"** in your context; that block states which rules are in force and how many. **If no such block is present, say so before you act on anything else**: it means delivery failed and you are working without rules the operator believes are in force.
 
 ## Rule sources in force
 2 binding rule sources reach this session. A directive can come from any of them; when two disagree, say so rather than pick one silently.
 1. TangleClaw global rules — `data/global-rules.md`, carried in the managed block of `CLAUDE.md`.
-2. TangleClaw project rules — 2 startup rules for this project, delivered through the rules hook.
+2. TangleClaw project rules — startup rules for this project, as the rules block lists them, delivered through the rules hook.
 
 _(Ecosystem primer omitted for budget. TC API <API_ORIGIN>; numeric project id is 1; run `tc capabilities` for the live capability roster before assuming anything is missing.)_
 

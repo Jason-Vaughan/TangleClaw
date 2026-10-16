@@ -129,12 +129,14 @@ describe('#1888 regression: a maximum Medusa prime fits the cap on every fire', 
     // Grow the project's own state until the Medusa contract is squeezed and
     // the unreserved prime fills the cap. That is the maximum payload: the
     // contract expands into whatever room the rest of the prime leaves.
+    // Each learning is short, so a step cannot jump from below the cap's last
+    // hundred characters to past the cap, which would make the prime yield.
     const cap = claude.capabilities.startupInjection.maxChars;
     store.projectConfig.save(project.path, { engine: 'claude', silentPrime: true, medusaEnabled: true });
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 200; i++) {
       const prime = sessions.generatePrimePrompt(project, claude, { medusaWorkspaceId: 'medusa-max-0000abcd' });
       if (prime.length > cap - 100) break;
-      store.learnings.create({ projectId: project.id, content: `Learning ${i}: ${'state the project accumulated. '.repeat(8)}`, tier: 'active' });
+      store.learnings.create({ projectId: project.id, content: `Learning ${i}: ${'state the project accumulated. '.repeat(1)}`, tier: 'active' });
     }
   });
 

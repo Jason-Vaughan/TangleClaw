@@ -24,7 +24,7 @@ Stranded wraps: none recorded for this project.
 ## Rule sources in force
 2 binding rule sources reach this session. A directive can come from any of them; when two disagree, say so rather than pick one silently.
 1. TangleClaw global rules — `data/global-rules.md`, carried in the managed block of `AGENTS.md`.
-2. TangleClaw project rules — none active for this project.
+2. TangleClaw project rules — none were active when this session launched; a **Project Rules** block in your context, if present, is in force.
 
 ## TangleClaw Ecosystem
 Operating basics for any session in this ecosystem — standing context, not a task list:
