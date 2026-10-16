@@ -48,6 +48,7 @@ v5.34.0 Wave 2 chunk W2-B2 chunk 01 of 2. Branch `fix/w2b2a-host-check-direct-tr
 **Tests.** `test/host-check.test.js`: a new describe (direct reads and labels; caddy-mode rows identical with HTTPS fields set; plain HTTP and an unsupported mode read nothing new; missing, too-large, garbage, directory and permission-denied served certificates; coverage of `127.0.0.1` and configured names; ten CA-set cases; the hint with all three conditions and its absence when any one is missing; redaction; a read spy showing no file read beyond the caddy-mode set plus `httpsCertPath`, and no key; a direct-mode install with a leftover Caddyfile, where the served file is a site's own, a different one, or one the root did not issue, which must give no hint; the three allowed commands in direct mode). The existing tests pass unedited. Against the base code 21 of the new cases fail; the rest are guards that pass there by design.
 
 **Evidence.** Step 0 (not network-isolated, labelled with its endpoints and process scope): `.prawduct/lane-evidence/w2b2/step0-before.txt` and `step0-after.txt` (git-ignored).
+
 ## 2026-10-15 — #2389 (refs): an exact record of every shared-doc revision, with attested authorship; delivery unchanged
 
 <!-- prawduct: type=feature | scope=w2-a1-shared-doc-notices-2389 -->
