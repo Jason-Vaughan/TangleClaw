@@ -432,6 +432,9 @@ describe('the Operator Bridge panel (#2031)', () => {
     });
     const SINCE = '2026-10-11T05:00:02.000Z';
     const HEARD = '2026-10-11T05:00:10.000Z';
+    // The server's words for those two times in a host on Pacific time (#2313).
+    const SINCE_TEXT = '22:00 PDT on 2026-10-10';
+    const HEARD_TEXT = '22:00 PDT on 2026-10-10';
 
     /**
      * What the panel draws for a status, and the one line this is about.
@@ -446,25 +449,37 @@ describe('the Operator Bridge panel (#2031)', () => {
       return { drawn, line: found ? found[1] : null };
     }
 
-    it('draws each reading in its own words, with the times as the server gave them', async () => {
-      const reading = (reading, state, fatalCloseCode = null) => ({ discordGateway: { reading, state, since: SINCE, fatalCloseCode, reportedAt: HEARD } });
+    it('draws each reading in its own words, with the times in the host\'s local words the server gave', async () => {
+      const reading = (reading, state, fatalCloseCode = null) => ({
+        discordGateway: { reading, state, since: SINCE, fatalCloseCode, reportedAt: HEARD, sinceText: SINCE_TEXT, reportedAtText: HEARD_TEXT }
+      });
       assert.equal((await draw(reading('connected', 'ready'))).line,
-        `connected since ${SINCE} (the helper's report of ${HEARD})`);
+        `connected since ${SINCE_TEXT} (the helper's report of ${HEARD_TEXT})`);
       assert.equal((await draw(reading('down', 'reconnecting'))).line,
-        `<strong>NOT CONNECTED</strong> since ${SINCE}: the helper reports reconnecting (its report of ${HEARD}). Nothing you write in the chat arrives meanwhile.`);
+        `<strong>NOT CONNECTED</strong> since ${SINCE_TEXT}: the helper reports reconnecting (its report of ${HEARD_TEXT}). Nothing you write in the chat arrives meanwhile.`);
       assert.equal((await draw(reading('down', 'fatal', 4004))).line,
-        `<strong>REFUSED by Discord</strong> since ${SINCE} (close code 4004: bad bot token). The helper will not retry until it is put right and restarted (its report of ${HEARD}). Nothing you write in the chat arrives meanwhile.`);
+        `<strong>REFUSED by Discord</strong> since ${SINCE_TEXT} (close code 4004: bad bot token). The helper will not retry until it is put right and restarted (its report of ${HEARD_TEXT}). Nothing you write in the chat arrives meanwhile.`);
       assert.equal((await draw(reading('down', 'fatal', 4014))).line,
-        `<strong>REFUSED by Discord</strong> since ${SINCE} (close code 4014: Message Content Intent is off). The helper will not retry until it is put right and restarted (its report of ${HEARD}). Nothing you write in the chat arrives meanwhile.`);
+        `<strong>REFUSED by Discord</strong> since ${SINCE_TEXT} (close code 4014: Message Content Intent is off). The helper will not retry until it is put right and restarted (its report of ${HEARD_TEXT}). Nothing you write in the chat arrives meanwhile.`);
       // A refusal the page has no words for is shown by its number, and still as a refusal.
-      assert.match((await draw(reading('down', 'fatal', 4012))).line, /^<strong>REFUSED by Discord<\/strong> since \S+ \(close code 4012\)\. The helper will not retry/);
+      assert.match((await draw(reading('down', 'fatal', 4012))).line, /^<strong>REFUSED by Discord<\/strong> since 22:00 PDT on 2026-10-10 \(close code 4012\)\. The helper will not retry/);
       assert.equal((await draw(reading('not-reported', 'ready'))).line,
-        `<strong>not reported</strong> since ${HEARD}: the helper last said ready and has not reported since. It may not be running; whether Discord is connected is not known.`);
+        `<strong>not reported</strong> since ${HEARD_TEXT}: the helper last said ready and has not reported since. It may not be running; whether Discord is connected is not known.`);
       assert.equal((await draw({ discordGateway: { reading: 'never-reported', state: null, since: null, fatalCloseCode: null, reportedAt: null } })).line,
         'never reported since this server started: the helper is not running, has not yet asked for work, or predates the report. Restart the helper after an update.');
       // A connection that is retrying is never described as refused, nor a refusal as retrying.
       assert.ok(!/REFUSED|will not retry/.test((await draw(reading('down', 'connecting'))).line));
       assert.ok(!/NOT CONNECTED|the helper reports/.test((await draw(reading('down', 'fatal', 4004))).line));
+    });
+
+    it('gives each time where the server gave it, and the ISO time from a server older than the words', async () => {
+      const g = { reading: 'down', state: 'reconnecting', since: SINCE, fatalCloseCode: null, reportedAt: HEARD };
+      assert.equal((await draw({ discordGateway: { ...g, sinceText: 'since-words', reportedAtText: 'heard-words' } })).line,
+        '<strong>NOT CONNECTED</strong> since since-words: the helper reports reconnecting (its report of heard-words). Nothing you write in the chat arrives meanwhile.');
+      const older = (await draw({ discordGateway: g })).line;
+      assert.equal(older,
+        `<strong>NOT CONNECTED</strong> since ${SINCE}: the helper reports reconnecting (its report of ${HEARD}). Nothing you write in the chat arrives meanwhile.`);
+      assert.ok(!/undefined|null/.test(older), 'a missing word is never printed as a missing value');
     });
 
     it('draws no line for a status without the field or with a reading it does not know, and moves nothing else', async () => {
@@ -489,11 +504,13 @@ describe('the Operator Bridge panel (#2031)', () => {
     it('treats every value in the reading as text, never markup', async () => {
       const hostile = '<img src=x onerror=1>';
       for (const [reading, state] of [['connected', 'ready'], ['down', hostile], ['down', 'fatal'], ['not-reported', hostile]]) {
-        const { line } = await draw({ discordGateway: { reading, state, since: hostile, fatalCloseCode: hostile, reportedAt: '"><script>' } });
-        assert.ok(line, `${reading} is drawn`);
-        assert.ok(!/<img|<script/.test(line), `${reading}, ${state}: nothing from the server becomes an element`);
-        assert.match(line, /&lt;img src=x onerror=1&gt;|&quot;&gt;&lt;script&gt;/);
-        assert.deepEqual([...line.matchAll(/<\/?([a-z]+)/g)].map((m) => m[1]).filter((tag) => tag !== 'strong'), [], 'the only markup is the page\'s own emphasis');
+        for (const words of [{}, { sinceText: hostile, reportedAtText: '"><script>' }]) {
+          const { line } = await draw({ discordGateway: { reading, state, since: hostile, fatalCloseCode: hostile, reportedAt: '"><script>', ...words } });
+          assert.ok(line, `${reading} is drawn`);
+          assert.ok(!/<img|<script/.test(line), `${reading}, ${state}: nothing from the server becomes an element`);
+          assert.match(line, /&lt;img src=x onerror=1&gt;|&quot;&gt;&lt;script&gt;/);
+          assert.deepEqual([...line.matchAll(/<\/?([a-z]+)/g)].map((m) => m[1]).filter((tag) => tag !== 'strong'), [], 'the only markup is the page\'s own emphasis');
+        }
       }
     });
 
@@ -515,21 +532,26 @@ describe('the Operator Bridge panel (#2031)', () => {
       const lineOf = () => /<span class="ob-label">Discord connection<\/span> <span class="ob-value">([\s\S]*?)<\/span>/.exec(panel.html())[1];
       await panel.load();
       assert.match(lineOf(), /^never reported since this server started: [\s\S]* this says nothing about the helper\.$/, 'the bridge is disabled here');
+      const bridgeNotify = require('../lib/bridge-notify');
       const now = gateway._deps.now;
+      const zone = bridgeNotify._deps.timeZone;
       try {
+        // The host's zone, pinned so the words do not depend on the machine running this.
+        bridgeNotify._deps.timeZone = () => 'America/Los_Angeles';
         gateway._deps.now = () => HEARD;
         gateway.recordDiscordReport(gateway.discordReport({ state: 'ready', since: SINCE }));
         await panel.act('refresh');
-        assert.equal(lineOf(), `connected since ${SINCE} (the helper's report of ${HEARD})`);
+        assert.equal(lineOf(), `connected since ${SINCE_TEXT} (the helper's report of ${HEARD_TEXT})`);
         gateway.recordDiscordReport(gateway.discordReport({ state: 'fatal', since: SINCE, fatalCloseCode: 4014 }));
         await panel.act('refresh');
-        assert.match(lineOf(), /^<strong>REFUSED by Discord<\/strong> since 2026-10-11T05:00:02\.000Z \(close code 4014: Message Content Intent is off\)/);
+        assert.match(lineOf(), /^<strong>REFUSED by Discord<\/strong> since 22:00 PDT on 2026-10-10 \(close code 4014: Message Content Intent is off\)/);
         // Three minutes and a second later the same report is one the bridge has not heard since.
         gateway._deps.now = () => '2026-10-11T05:03:11.000Z';
         await panel.act('refresh');
-        assert.match(lineOf(), new RegExp(`^<strong>not reported</strong> since ${HEARD.replace(/\./g, '\\.')}: the helper last said fatal`));
+        assert.match(lineOf(), new RegExp(`^<strong>not reported</strong> since ${HEARD_TEXT}: the helper last said fatal`));
       } finally {
         gateway._deps.now = now;
+        bridgeNotify._deps.timeZone = zone;
       }
     });
   });

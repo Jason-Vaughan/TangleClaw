@@ -457,10 +457,11 @@ describe('A refused launch leads to the override (#2229)', () => {
     const opened = [];
     const ctx = sandbox({ document: doc, openSettings: (name) => opened.push(name) });
     vm.runInContext(liftFunction(LANDING_SRC, 'function appendLaunchIsolationPointer'), ctx);
+    // The dashboard's one writer of the toast, which owns what a message adds.
+    vm.runInContext(liftFunction(UI_SRC, 'function showToast('), ctx);
+    vm.runInContext(liftFunction(UI_SRC, 'function hideToast('), ctx);
     const toast = doc.getElementById('toast');
-    toast.textContent = 'Launch failed: refused';
-    toast.classList.add('visible');
-    ctx.appendLaunchIsolationPointer(toast, 'alpha', me);
+    ctx.showToast('Launch failed: refused', 'warn', 0, { sticky: true, action: (t) => ctx.appendLaunchIsolationPointer(t, 'alpha', me) });
     return { toast, opened, ctx };
   }
 
@@ -488,6 +489,7 @@ describe('A refused launch leads to the override (#2229)', () => {
       const { toast, opened, ctx } = pointer(me);
       const btn = toast.childNodes.find((c) => c.tagName === 'BUTTON');
       assert.ok(btn, 'a button is added');
+      assert.equal(toast.childNodes.filter((c) => c.tagName === 'BUTTON').length, 2, 'beside the message\'s own Dismiss');
       assert.equal(btn.textContent, 'Open launch isolation settings');
       assert.equal(btn.type, 'button');
       btn.dispatch('click');
@@ -527,35 +529,46 @@ describe('A refused launch leads to the override (#2229)', () => {
     for (const decl of ['function launchRefusalIsOverridable', 'function appendLaunchIsolationPointer', 'async function doLaunchProject']) {
       vm.runInContext(liftFunction(LANDING_SRC, decl), ctx);
     }
+    vm.runInContext(liftFunction(UI_SRC, 'function showToast('), ctx);
+    vm.runInContext(liftFunction(UI_SRC, 'function hideToast('), ctx);
     await ctx.doLaunchProject('alpha', 'default');
     return { toast, timers, asked: api.calls.map((c) => c.url) };
   }
 
-  it('the launch screen adds the button to a version refusal, and takes it away when the message is hidden', async () => {
+  /**
+   * The message's buttons, by their words.
+   * @param {object} toast - The toast element
+   * @returns {string[]}
+   */
+  const buttons = (toast) => toast.childNodes.filter((c) => c.tagName === 'BUTTON').map((c) => c.textContent);
+
+  it('the launch screen adds the button to a version refusal, which stays until dismissed and takes the button with it', async () => {
     const { toast, timers, asked } = await refusedLaunch({ error: 'refused', code: 'LAUNCH_ISOLATION_UNVERIFIED', reasonCode: 'version_unverified' });
     assert.match(toast.text, /^Launch failed: refused/);
     assert.equal(toast.classList.contains('visible'), true);
-    assert.equal(toast.childNodes.filter((c) => c.tagName === 'BUTTON').length, 1);
+    assert.deepEqual(buttons(toast), ['Open launch isolation settings', 'Dismiss']);
     assert.deepEqual(asked, ['/api/auth/me']);
-    assert.equal(timers.length, 1);
-    timers[0]();
+    assert.equal(timers.length, 0, 'no timer hides a refusal');
+    toast.childNodes.find((c) => c.textContent === 'Dismiss').dispatch('click');
     assert.equal(toast.classList.contains('visible'), false);
     assert.equal(toast.childNodes.some((c) => c.tagName === 'BUTTON'), false, 'nothing focusable is left in a message moved off screen');
   });
 
-  it('the launch screen adds nothing to any other refused launch, and does not ask who is signed in', async () => {
+  it('the launch screen adds only Dismiss to any other refused launch, and does not ask who is signed in', async () => {
     for (const refusal of [{ error: 'busy', code: 'CONFLICT' }, { error: 'refused', code: 'LAUNCH_ISOLATION_UNVERIFIED', reasonCode: 'wrapper_executable' }]) {
       const { toast, timers, asked } = await refusedLaunch(refusal);
-      assert.equal(toast.childNodes.length, 0, refusal.code);
+      assert.deepEqual(buttons(toast), ['Dismiss'], refusal.code);
       assert.deepEqual(asked, []);
-      timers[0]();
+      assert.equal(timers.length, 0, refusal.code);
+      toast.childNodes[0].dispatch('click');
       assert.equal(toast.classList.contains('visible'), false);
+      assert.equal(toast.childNodes.length, 0, refusal.code);
     }
   });
 
   it('tells a signed-out page who can, in place of a button it could not use', () => {
     const { toast, opened } = pointer(ME.signedOut);
-    assert.equal(toast.childNodes.some((c) => c.tagName === 'BUTTON'), false);
+    assert.deepEqual(toast.childNodes.filter((c) => c.tagName === 'BUTTON').map((c) => c.textContent), ['Dismiss'], 'the message\'s own Dismiss, and no way to the switch');
     assert.match(toast.text, /Only a signed-in operator can turn on the launch isolation override, in this project's Settings: sign in first\./);
     assert.deepEqual(opened, []);
   });

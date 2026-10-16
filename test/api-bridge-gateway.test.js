@@ -3185,7 +3185,27 @@ describe('bridge API: the round trip (#2031)', () => {
   });
 
   describe('how the helper\'s Discord connection reads (#2272)', () => {
-    const NEVER = { reading: 'never-reported', state: null, since: null, fatalCloseCode: null, reportedAt: null };
+    const bridgeNotify = require('../lib/bridge-notify');
+    const NEVER = { reading: 'never-reported', state: null, since: null, fatalCloseCode: null, reportedAt: null, sinceText: null, reportedAtText: null };
+
+    // The status routes also word each time in the host's own zone (#2313).
+    // The zone is pinned so the words do not depend on the machine running this.
+    let realZone;
+    before(() => { realZone = bridgeNotify._deps.timeZone; bridgeNotify._deps.timeZone = () => 'America/Los_Angeles'; });
+    after(() => { bridgeNotify._deps.timeZone = realZone; });
+    const LOCAL = {
+      '2026-10-11T04:50:00.000Z': '21:50 PDT on 2026-10-10',
+      '2026-10-11T05:00:02.000Z': '22:00 PDT on 2026-10-10',
+      '2026-10-11T05:00:10.000Z': '22:00 PDT on 2026-10-10',
+      '2026-10-11T05:03:00.000Z': '22:03 PDT on 2026-10-10',
+      '2026-10-11T05:09:00.000Z': '22:09 PDT on 2026-10-10'
+    };
+    /**
+     * A reading as the status routes give it: its ISO times, and each also in the pinned zone's words.
+     * @param {object} r - The reading without the words.
+     * @returns {object}
+     */
+    const worded = (r) => ({ ...r, sinceText: LOCAL[r.since], reportedAtText: LOCAL[r.reportedAt] });
 
     // Whatever the cases above left waiting is leased here, so each case below
     // is handed only what it queued itself. Nothing in this block moves the
@@ -3266,23 +3286,23 @@ describe('bridge API: the round trip (#2031)', () => {
       assert.deepEqual(answer.body.items.map((item) => [item.text, item.leaseState]), [['hi', 'live']], 'and what waited is handed over under a lease, as before');
 
       await at('2026-10-11T05:00:20.000Z', async () => {
-        const connected = { reading: 'connected', ...ready, reportedAt: '2026-10-11T05:00:10.000Z' };
+        const connected = worded({ reading: 'connected', ...ready, reportedAt: '2026-10-11T05:00:10.000Z' });
         assert.deepEqual(await readings(), [connected, connected]);
-        assert.equal(await tcLine(), 'Discord connection: connected since 2026-10-11T05:00:02.000Z (the helper\'s report of 2026-10-11T05:00:10.000Z).');
+        assert.equal(await tcLine(), 'Discord connection: connected since 22:00 PDT on 2026-10-10 (the helper\'s report of 22:00 PDT on 2026-10-10).');
       });
 
       // Down, and trying: counted from when it stopped being ready, which is the time the helper sends.
       await at('2026-10-11T05:09:00.000Z', async () => {
         assert.equal((await claimWith({ discordGateway: { state: 'reconnecting', since: '2026-10-11T05:03:00.000Z' } })).status, 200, 'a close code left out is one that is null');
-        const down = { reading: 'down', state: 'reconnecting', since: '2026-10-11T05:03:00.000Z', fatalCloseCode: null, reportedAt: '2026-10-11T05:09:00.000Z' };
+        const down = worded({ reading: 'down', state: 'reconnecting', since: '2026-10-11T05:03:00.000Z', fatalCloseCode: null, reportedAt: '2026-10-11T05:09:00.000Z' });
         assert.deepEqual(await readings(), [down, down]);
-        assert.equal(await tcLine(), 'Discord connection: NOT CONNECTED since 2026-10-11T05:03:00.000Z: the helper reports reconnecting (its report of 2026-10-11T05:09:00.000Z). Nothing the operator writes arrives meanwhile.');
+        assert.equal(await tcLine(), 'Discord connection: NOT CONNECTED since 22:03 PDT on 2026-10-10: the helper reports reconnecting (its report of 22:09 PDT on 2026-10-10). Nothing the operator writes arrives meanwhile.');
 
         // Refused by Discord: not retrying, and the line must not read like a connection that is.
         assert.equal((await claimWith({ discordGateway: { state: 'fatal', since: '2026-10-11T05:03:00.000Z', fatalCloseCode: 4014 } })).status, 200);
         assert.deepEqual((await readings())[1], { ...down, state: 'fatal', fatalCloseCode: 4014 });
-        assert.equal(await tcLine(), 'Discord connection: NOT CONNECTED since 2026-10-11T05:03:00.000Z: the helper reports fatal (close code 4014): '
-          + 'Discord refused the connection and the helper will not retry until it is put right and restarted (its report of 2026-10-11T05:09:00.000Z). Nothing the operator writes arrives meanwhile.');
+        assert.equal(await tcLine(), 'Discord connection: NOT CONNECTED since 22:03 PDT on 2026-10-10: the helper reports fatal (close code 4014): '
+          + 'Discord refused the connection and the helper will not retry until it is put right and restarted (its report of 22:09 PDT on 2026-10-10). Nothing the operator writes arrives meanwhile.');
 
         // A report still current when the bridge is switched off is still what the helper said: nothing is added to it.
         const fatalLine = await tcLine();
@@ -3294,7 +3314,7 @@ describe('bridge API: the round trip (#2031)', () => {
     it('a report that is not one refuses the whole claim: nothing is leased, and the last good report stays', async () => {
       const good = { state: 'ready', since: '2026-10-11T05:00:02.000Z', fatalCloseCode: null };
       await at('2026-10-11T05:00:10.000Z', () => claimWith({ discordGateway: good }));
-      const before = { reading: 'connected', ...good, reportedAt: '2026-10-11T05:00:10.000Z' };
+      const before = worded({ reading: 'connected', ...good, reportedAt: '2026-10-11T05:00:10.000Z' });
       const text = 'waits through every refused claim';
       const id = bridgeStore.outbound.enqueue({
         idemKey: `notify:operator-needed:report-${++seq}`, kind: 'notification', notifyType: 'operator-needed', sourceLabel: 'TangleClaw', text, digest: bridgeStore.digest(text)
@@ -3361,14 +3381,14 @@ describe('bridge API: the round trip (#2031)', () => {
           assert.deepEqual((await readings()).map((r) => r.reading), [fresh, fresh], 'three minutes exactly is still a report of now');
         });
         await at('2026-10-11T05:03:10.001Z', async () => {
-          const stale = { reading: 'not-reported', ...report, reportedAt: '2026-10-11T05:00:10.000Z' };
+          const stale = worded({ reading: 'not-reported', ...report, reportedAt: '2026-10-11T05:00:10.000Z' });
           assert.deepEqual(await readings(), [stale, stale]);
-          assert.equal(await tcLine(), `Discord connection: NOT REPORTED since 2026-10-11T05:00:10.000Z: the helper last said ${report.state} and has not reported since. `
+          assert.equal(await tcLine(), `Discord connection: NOT REPORTED since 22:00 PDT on 2026-10-10: the helper last said ${report.state} and has not reported since. `
             + 'It may not be running; whether Discord is connected is not known.');
           // Switched off, the bridge stops reading reports, so going quiet is its own doing and the line says so.
           assert.equal((await asOperator('POST', '/api/bridge/operator/disable')).status, 200);
           const off = (await tc(['bridge', 'status'])).stdout.split('\n').find((line) => line.startsWith('Discord connection: '));
-          assert.ok(off.startsWith('Discord connection: NOT REPORTED since 2026-10-11T05:00:10.000Z: ')
+          assert.ok(off.startsWith('Discord connection: NOT REPORTED since 22:00 PDT on 2026-10-10: ')
             && off.endsWith(' The bridge is disabled, and a disabled bridge does not read the helper\'s reports: this says nothing about the helper.'), off);
           assert.equal((await asOperator('POST', '/api/bridge/operator/enable')).status, 200);
         });
@@ -3392,7 +3412,7 @@ describe('bridge API: the round trip (#2031)', () => {
       const blocked = await at('2026-10-11T05:00:10.000Z', () => claimWith({ discordGateway: report }));
       assert.deepEqual([blocked.status, blocked.body.code], [409, 'BRIDGE_CONFIGURATION_BLOCKED']);
       await at('2026-10-11T05:00:11.000Z', async () => {
-        assert.deepEqual((await readings())[0], { reading: 'connected', ...report, reportedAt: '2026-10-11T05:00:10.000Z' });
+        assert.deepEqual((await readings())[0], worded({ reading: 'connected', ...report, reportedAt: '2026-10-11T05:00:10.000Z' }));
       });
       // The circuit is closed again, and its item withdrawn, so the cases after this one find the bridge as they expect it.
       const reset = await call('POST', '/api/bridge/master/circuit/reset', { headers: asMaster(), body: { requestId: `req-r-${++seq}-0000`, decision: 'withdraw' } });

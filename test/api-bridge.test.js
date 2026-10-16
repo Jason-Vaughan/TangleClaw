@@ -173,7 +173,7 @@ describe('bridge API: the Master surface (#2031)', () => {
     assert.deepEqual(status.body, {
       enabled: false, masterGeneration: generation, proof: 'master-launch', scope: { kind: 'all' }, openRoutes: before, configurationCircuit: null,
       // No helper has reported in this file: the reading says so in as many words (#2272).
-      discordGateway: { reading: 'never-reported', state: null, since: null, fatalCloseCode: null, reportedAt: null }
+      discordGateway: { reading: 'never-reported', state: null, since: null, fatalCloseCode: null, reportedAt: null, sinceText: null, reportedAtText: null }
     });
     assert.ok(before >= 1);
     // The Master can still see what is open, and read one, so that it can close it (Architect ruling, 2026-10-04).

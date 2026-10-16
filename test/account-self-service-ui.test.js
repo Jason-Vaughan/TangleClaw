@@ -144,7 +144,8 @@ describe('the dashboard header: Sign out beside the chip (#1463)', () => {
         return !!res;
       }
     });
-    vm.runInContext(`${extract(LANDING_SRC, 'renderAuthUser')}\nthis.renderAuthUser = renderAuthUser;`, ctx);
+    // showToast is the dashboard's one writer of the toast, which a failed sign-out reports through.
+    vm.runInContext(`${extract(LANDING_SRC, 'renderAuthUser')}\n${extract(UI_SRC, 'showToast')}\nthis.renderAuthUser = renderAuthUser;`, ctx);
     ctx.renderAuthUser(user);
     return { els, ctx, visits, api };
   }

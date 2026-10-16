@@ -90,21 +90,26 @@
    * A status without the field, or with a reading this page does not know,
    * gets no words: a server that predates the report says nothing of the
    * connection, and the panel must not invent a reading for it.
-   * @param {*} gateway - The status's `discordGateway`: `{reading, state, since, fatalCloseCode, reportedAt}`.
+   * Each time is the server's host-local wording (`sinceText`,
+   * `reportedAtText`), or the ISO time where a server older than that wording
+   * sends only that.
+   * @param {*} gateway - The status's `discordGateway`: `{reading, state, since, sinceText, fatalCloseCode, reportedAt, reportedAtText}`.
    * @param {boolean} enabled - Whether the bridge is enabled.
    * @returns {string} Safe markup, or '' for no line.
    */
   function discordWords(gateway, enabled) {
     const g = gateway && typeof gateway === 'object' ? gateway : {};
+    const since = g.sinceText || g.since;
+    const reportedAt = g.reportedAtText || g.reportedAt;
     const said = {
-      connected: () => `connected since ${escapeHtml(g.since)} (the helper's report of ${escapeHtml(g.reportedAt)})`,
+      connected: () => `connected since ${escapeHtml(since)} (the helper's report of ${escapeHtml(reportedAt)})`,
       down: () => (g.state === 'fatal'
-        ? `<strong>REFUSED by Discord</strong> since ${escapeHtml(g.since)} (close code ${escapeHtml(g.fatalCloseCode)}`
+        ? `<strong>REFUSED by Discord</strong> since ${escapeHtml(since)} (close code ${escapeHtml(g.fatalCloseCode)}`
           + `${Object.prototype.hasOwnProperty.call(REFUSALS, g.fatalCloseCode) ? `: ${REFUSALS[g.fatalCloseCode]}` : ''}). `
           + 'The helper will not retry until it is put right and restarted'
-        : `<strong>NOT CONNECTED</strong> since ${escapeHtml(g.since)}: the helper reports ${escapeHtml(g.state)}`)
-        + ` (its report of ${escapeHtml(g.reportedAt)}). Nothing you write in the chat arrives meanwhile.`,
-      'not-reported': () => `<strong>not reported</strong> since ${escapeHtml(g.reportedAt)}: the helper last said ${escapeHtml(g.state)} and has not reported since. `
+        : `<strong>NOT CONNECTED</strong> since ${escapeHtml(since)}: the helper reports ${escapeHtml(g.state)}`)
+        + ` (its report of ${escapeHtml(reportedAt)}). Nothing you write in the chat arrives meanwhile.`,
+      'not-reported': () => `<strong>not reported</strong> since ${escapeHtml(reportedAt)}: the helper last said ${escapeHtml(g.state)} and has not reported since. `
         + 'It may not be running; whether Discord is connected is not known.',
       'never-reported': () => 'never reported since this server started: the helper is not running, has not yet asked for work, '
         + 'or predates the report. Restart the helper after an update.'

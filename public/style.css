@@ -2542,15 +2542,19 @@ html[data-tc-keyboard] body {
   font-size: 13px;
   font-weight: 600;
   text-align: center;
+  /* A refusal can carry a long absolute path; break it inside the padding. */
+  overflow-wrap: anywhere;
   transform: translateY(-100%);
   transition: transform 0.3s ease;
 }
 .toast.visible { transform: translateY(0); }
 .toast-warn { background: var(--amber); color: #000; }
 .toast-ok { background: var(--primary); color: #000; }
-/* The one action a launch-failed message may carry (#2229). */
+/* A message's buttons (Dismiss, and a launch refusal's way to the override)
+   each take their own line under the text, so they never push it aside. */
 .toast .toast-action {
-  margin: 6px 0 0 8px;
+  display: block;
+  margin: 6px auto 0;
   min-height: 44px;
   background: #000;
   color: var(--amber);

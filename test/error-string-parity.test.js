@@ -356,6 +356,8 @@ describe('#83 — form handlers render the server reason, not a guess', () => {
         window: { confirm: () => true },
         loadProjects: async () => {}
       });
+      // The dashboard's one writer of the toast, which the repair reports through.
+      vm.runInContext(functionSource(SRC.ui, 'function showToast('), ctx);
       await ctx.repairAllOrphanHooks();
       assert.equal(el('toast').textContent, 'Repair failed: settings.json is not valid JSON');
     });
