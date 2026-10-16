@@ -166,9 +166,10 @@ describe('/api/merge-queue (#2322)', () => {
   /**
    * GitHub as an advance wants it, beside what `beforeEach` set up for a
    * submit: `main` at BASE_SHA and green, a candidate that is made and whose
-   * check is green, ordinary changed files, and a merge that lands. A field of
-   * `gh` replaces one answer: `tip`, `create`, `merge`, `commit`, `compare`, or
-   * `branchCheck` as a function of the branch. The owner's session listens and
+   * check is green, ordinary changed files, a merge that lands, and any commit
+   * reachable from `main`. A field of `gh` replaces one answer: `tip`, `create`,
+   * `merge`, `commit`, `compare`, `ancestry`, or `branchCheck` as a function of
+   * the branch. The owner's session listens and
    * its inbox holds what `gh.inbox` holds, nothing when it is not set; each
    * read of either is logged in `gh.inboxReads` with the session it was for.
    * @returns {void}
@@ -192,6 +193,7 @@ describe('/api/merge-queue (#2322)', () => {
     seam('readCompareFiles', () => gh.compare || { status: 'read', paths: ['lib/thing.js'] });
     seam('mergePull', () => gh.merge || { status: 'merged', sha: LANDED_SHA });
     seam('readCommit', (repo, sha) => gh.commit || { status: 'read', sha, tree: TREE, parents: [BASE_SHA, HEAD] });
+    seam('readAncestry', () => gh.ancestry || { status: 'reachable', compareStatus: 'ahead' });
   };
 
   /**
@@ -1681,6 +1683,356 @@ describe('/api/merge-queue (#2322)', () => {
       assert.equal(queueByOperator.status, 201, JSON.stringify(queueByOperator.data));
       assert.equal(queueStore.retireQueue(queueByOperator.data.queue.queueId, { actor: { kind: 'operator', operatorProof: 'ambient-open' } }).ok, true);
       assert.equal(queueStore.getEntry(entry.entryId).state, 'queued');
+    });
+  });
+
+  describe('the Operator settles an entry stuck in landing (#2364)', () => {
+    const SETTLED_SHA = '1'.repeat(40);
+    const OPERATOR_WORDS = { reference: 'main read by hand at 1111111', attestation: 'commit 1111111 is the merge of this pull request, made by hand' };
+
+    beforeEach(() => {
+      emptyQueue();
+      githubForAdvance();
+    });
+
+    /**
+     * An entry left in landing, with its candidate recorded on its own branch.
+     * @returns {Promise<object>} The entry
+     */
+    const stuck = async () => {
+      const entry = await withCandidate(true);
+      assert.equal(queueStore.beginLanding(entry.entryId, { candidateCheck: { runId: '9100', conclusion: 'success' }, actor: ownerActor() }).ok, true);
+      gh.calls.length = 0;
+      return entry;
+    };
+
+    /**
+     * Ask for a settlement.
+     * @param {string} entryId - The entry
+     * @param {object} [body] - The body, a landed settlement on SETTLED_SHA when not given
+     * @param {object} [headers] - The caller, the Operator when not given
+     * @returns {Promise<{status: number, data: any}>}
+     */
+    const settleAs = (entryId, body = { outcome: 'landed', sha: SETTLED_SHA, ...OPERATOR_WORDS }, headers = op) =>
+      sendAs(server, 'POST', `/api/merge-queue/entries/${entryId}/settle-landing`, body, headers);
+
+    /** @returns {number} The queue's events so far */
+    const eventCount = () => queueStore.listEvents(queueId, { limit: 2000 }).length;
+
+    /**
+     * The terminal events an entry has.
+     * @param {string} entryId - The entry
+     * @returns {string[]}
+     */
+    const terminal = (entryId) => queueStore.listEvents(queueId, { entryId }).map((e) => e.event).filter((e) => e === 'landed' || e === 'failed');
+
+    /**
+     * Halt the test queue directly, as an earlier landing would have.
+     * @returns {object} The halt
+     */
+    const haltDirectly = () => {
+      store.getDb().prepare('UPDATE merge_queues SET halted_at = ?, halt_code = ?, halt_detail = ? WHERE queue_id = ?')
+        .run('2026-10-15T01:00:00.000Z', 'TREE_MISMATCH', 'an earlier landing', queueId);
+      return queueStore.getQueue(queueId).halt;
+    };
+
+    /** Clear any halt a test left. */
+    const unhalt = () => {
+      if (queueStore.getQueue(queueId).halt) queueStore.clearHalt(queueId, { actor: { kind: 'operator', operatorProof: 'ambient-open' }, reference: 'test teardown' });
+    };
+
+    afterEach(unhalt);
+
+    it('settles the issue\'s first case: GitHub names no merge commit, the Operator names one on main, and the next entry advances', async () => {
+      const entry = await stuck();
+      gh.pull = { state: 'closed', merged: true, mergeCommitSha: null };
+      const unknown = await advanceAs();
+      assert.equal(unknown.data.step, 'landing-unknown', JSON.stringify(unknown.data));
+      assert.equal(queueStore.getEntry(entry.entryId).state, 'landing');
+
+      gh.calls.length = 0;
+      const settled = await settleAs(entry.entryId);
+      assert.equal(settled.status, 200, JSON.stringify(settled.data));
+      assert.equal(settled.data.entry.state, 'landed');
+      assert.deepEqual(settled.data.entry.landed && settled.data.entry.landed.sha, SETTLED_SHA);
+      assert.equal(settled.data.settlement.case, 'landed-tree-matches');
+      assert.equal(settled.data.settlement.queueHalted, false);
+      assert.equal(settled.data.queue.halt, null);
+      const p = settled.data.settlement.provenance;
+      assert.equal(p.baseTip, BASE_SHA);
+      assert.equal(p.compareStatus, 'ahead');
+      assert.deepEqual(p.commit, { sha: SETTLED_SHA, tree: TREE, parents: [BASE_SHA, HEAD] });
+      assert.equal(p.parentIsSubmittedHead, true);
+      assert.deepEqual(p.pull, { merged: true, state: 'closed', mergeCommitSha: null });
+      assert.deepEqual(gh.calls.map((c) => c[0]), ['readCommit', 'readPull', 'readRefTip', 'readAncestry', 'discardCandidate']);
+      assert.deepEqual(gh.calls.find((c) => c[0] === 'readAncestry'), ['readAncestry', REPO, SETTLED_SHA, BASE_SHA]);
+      assert.deepEqual(settled.data.cleanup, { status: 'removed', ref: `tc-queue/${entry.entryId}`, candidate: 'deleted', stage: 'not-found' });
+      assert.match(settled.data.message, /SETTLED as landed at 1{40}, which is on main at c{40}; its tree is the tested candidate's\. No halt stands\./);
+      assert.match(settled.data.message, /Nothing was merged, deployed or released by this call\.$/);
+      const event = queueStore.listEvents(queueId, { entryId: entry.entryId }).pop();
+      assert.equal(event.event, 'landed');
+      assert.equal(event.actor.kind, 'operator');
+      assert.equal(event.detail.settledBy, 'operator');
+      assert.equal(event.detail.reference, OPERATOR_WORDS.reference);
+      assert.equal(event.detail.attestation, OPERATOR_WORDS.attestation);
+      assert.equal(event.detail.provenance.baseTip, BASE_SHA);
+
+      gh.pull = {};
+      const next = await submitted();
+      const advanced = await advanceAs();
+      assert.equal(advanced.status, 200, JSON.stringify(advanced.data));
+      assert.equal(advanced.data.step, 'assembled', 'the settled entry no longer holds the queue, and owes no cleanup');
+      assert.equal(advanced.data.entry.entryId, next.entryId);
+    });
+
+    it('settles the issue\'s second case: the named commit is not a merge of the head, and a tree that is not the tested one halts the queue', async () => {
+      const entry = await stuck();
+      gh.pull = { state: 'closed', merged: true, mergeCommitSha: LANDED_SHA };
+      gh.commit = { status: 'read', sha: LANDED_SHA, tree: TREE, parents: [BASE_SHA] };
+      const unknown = await advanceAs();
+      assert.equal(unknown.data.step, 'landing-unknown');
+      assert.match(unknown.data.message, /This needs a person\./);
+
+      gh.commit = { status: 'read', sha: SETTLED_SHA, tree: OTHER_HEAD, parents: [BASE_SHA, OTHER_HEAD] };
+      const settled = await settleAs(entry.entryId);
+      assert.equal(settled.status, 200, JSON.stringify(settled.data));
+      assert.equal(settled.data.entry.state, 'landed');
+      assert.equal(settled.data.settlement.case, 'landed-tree-mismatch');
+      assert.equal(settled.data.settlement.treeMatches, false);
+      assert.equal(settled.data.settlement.provenance.parentIsSubmittedHead, false);
+      assert.deepEqual(settled.data.settlement.provenance.pull, { merged: true, state: 'closed', mergeCommitSha: LANDED_SHA });
+      assert.equal(settled.data.queue.halt.code, 'TREE_MISMATCH');
+      assert.match(settled.data.message, /ITS TREE IS NOT THE TESTED CANDIDATE'S\. The queue is now HALTED/);
+      gh.pull = {};
+      await submitted();
+      assert.equal((await advanceAs()).data.code, 'QUEUE_HALTED');
+    });
+
+    it('refuses a commit that is not on the base, and every read that fails, changing nothing', async () => {
+      const entry = await stuck();
+      const before = eventCount();
+      const cases = [
+        [{ ancestry: { status: 'not-reachable', compareStatus: 'diverged' } }, 409, 'SETTLE_NOT_ON_BASE', /answers "diverged"\. Nothing was changed\./],
+        [{ ancestry: { status: 'not-reachable', compareStatus: 'behind' } }, 409, 'SETTLE_NOT_ON_BASE', /answers "behind"/],
+        [{ ancestry: { status: 'unavailable', reason: 'gh api timed out after 10000ms' } }, 503, 'GITHUB_UNAVAILABLE', /Whether 1{40} is on main at c{40} could not be read/],
+        [{ commit: { status: 'unavailable', reason: 'GitHub answered HTTP 404: Not Found' } }, 503, 'SETTLE_COMMIT_UNREADABLE', /Commit 1{40} could not be read from GitHub \(GitHub answered HTTP 404: Not Found\)\. Nothing was changed/],
+        [{ tip: { status: 'unavailable', reason: 'gh api timed out after 10000ms' } }, 503, 'GITHUB_UNAVAILABLE', /The tip of main could not be read/],
+        [{ tip: { status: 'not-found' } }, 503, 'GITHUB_UNAVAILABLE', /no such branch exists/]
+      ];
+      for (const [over, status, code, message] of cases) {
+        Object.assign(gh, { ancestry: null, commit: null, tip: null }, over);
+        gh.calls.length = 0;
+        const res = await settleAs(entry.entryId);
+        assert.equal(res.status, status, JSON.stringify(res.data));
+        assert.equal(res.data.code, code);
+        assert.match(res.data.error, message);
+        assert.deepEqual(githubWrites(), [], 'no branch is touched');
+      }
+      Object.assign(gh, { ancestry: null, commit: null, tip: null });
+      for (const outcome of [{ outcome: 'landed', sha: SETTLED_SHA }, { outcome: 'failed', mergeAttempt: 'unsuccessful' }]) {
+        const real = api._internal.readPull;
+        api._internal.readPull = async () => ({ status: 'unavailable', reason: 'gh api timed out after 10000ms' });
+        try {
+          const res = await settleAs(entry.entryId, { ...outcome, ...OPERATOR_WORDS });
+          assert.equal(res.status, 503, JSON.stringify(res.data));
+          assert.equal(res.data.code, 'GITHUB_UNAVAILABLE', 'an unreadable pull request is never taken as not merged');
+          assert.match(res.data.error, /^Pull request \d+ could not be read from GitHub/);
+        } finally {
+          api._internal.readPull = real;
+        }
+      }
+      assert.equal(queueStore.getEntry(entry.entryId).state, 'landing');
+      assert.equal(eventCount(), before);
+      assert.equal(queueStore.getQueue(queueId).halt, null);
+      assert.equal(isQueueSlotTaken(queueId), false);
+    });
+
+    it('lets only the Operator settle, asks for the reference and the attestation, and reads nothing for a request it refuses', async () => {
+      const entry = await stuck();
+      for (const b of [bOwner, bNeighbour, bOutsider]) {
+        const res = await settleAs(entry.entryId, undefined, b.headers);
+        assert.equal(res.status, 403, JSON.stringify(res.data));
+        assert.equal(res.data.code, 'OPERATOR_ONLY');
+        assert.match(res.data.error, /A session saying the Operator agreed is not the Operator: ask them to settle it\.$/);
+      }
+      assert.equal((await settleAs(entry.entryId, undefined, {})).data.code, 'LAUNCH_BINDING_REQUIRED');
+      const bodies = [
+        {}, { outcome: 'landed', sha: SETTLED_SHA, reference: 'r' }, { outcome: 'landed', sha: SETTLED_SHA, attestation: 'a' },
+        { outcome: 'landed', ...OPERATOR_WORDS }, { outcome: 'landed', sha: 'abc', ...OPERATOR_WORDS },
+        { outcome: 'landed', sha: SETTLED_SHA, mergeAttempt: 'unsuccessful', ...OPERATOR_WORDS },
+        { outcome: 'failed', sha: SETTLED_SHA, ...OPERATOR_WORDS }, { outcome: 'failed', mergeAttempt: 'yes', ...OPERATOR_WORDS },
+        { outcome: 'withdrawn', ...OPERATOR_WORDS }, { outcome: 'failed', reference: 'r', attestation: 'x'.repeat(1001) }
+      ];
+      for (const body of bodies) {
+        const res = await settleAs(entry.entryId, body);
+        assert.equal(res.status, 400, JSON.stringify([body, res.data]));
+        assert.equal(res.data.code, 'INVALID_INPUT');
+      }
+      assert.equal((await settleAs('mqe_nosuch')).status, 404);
+      assert.equal(gh.calls.length, 0, 'no refused request reads GitHub');
+      assert.equal(queueStore.getEntry(entry.entryId).state, 'landing');
+    });
+
+    it('settles only an entry in landing, and a repeated settlement records nothing a second time and removes nothing', async () => {
+      const waiting = await withCandidate(true);
+      const notLanding = await settleAs(waiting.entryId);
+      assert.equal(notLanding.status, 409, JSON.stringify(notLanding.data));
+      assert.equal(notLanding.data.code, 'TRANSITION_NOT_ALLOWED');
+      assert.match(notLanding.data.error, /is testing\. Nothing was read or changed/);
+      assert.equal(gh.calls.length, 0);
+
+      const entry = await stuck();
+      assert.equal((await settleAs(entry.entryId)).status, 200);
+      gh.calls.length = 0;
+      const again = await settleAs(entry.entryId, { outcome: 'failed', mergeAttempt: 'unsuccessful', ...OPERATOR_WORDS });
+      assert.equal(again.status, 409, JSON.stringify(again.data));
+      assert.equal(again.data.code, 'ENTRY_FINISHED');
+      assert.equal(gh.calls.length, 0, 'nothing read and no cleanup');
+      assert.deepEqual(terminal(entry.entryId), ['landed']);
+    });
+
+    it('a settlement while an advance holds the slot is refused, with no event and no cleanup', async () => {
+      const entry = await stuck();
+      const before = eventCount();
+      await withQueueSlot(queueId, async () => {
+        const res = await settleAs(entry.entryId);
+        assert.equal(res.status, 409, JSON.stringify(res.data));
+        assert.equal(res.data.code, 'QUEUE_CALL_IN_FLIGHT');
+        assert.match(res.data.error, /so this settlement read and changed nothing/);
+      });
+      assert.equal(gh.calls.length, 0);
+      assert.equal(eventCount(), before);
+      assert.equal(queueStore.getEntry(entry.entryId).state, 'landing');
+    });
+
+    it('of two settlements at once exactly one is recorded, and the other is refused', async () => {
+      const entry = await stuck();
+      gh.during = { readCommit: () => new Promise((resolve) => setTimeout(resolve, 30)) };
+      const [first, second] = await Promise.all([
+        settleAs(entry.entryId),
+        settleAs(entry.entryId, { outcome: 'failed', mergeAttempt: 'unsuccessful', ...OPERATOR_WORDS })
+      ]);
+      gh.during = null;
+      assert.equal(first.status, 200, JSON.stringify(first.data));
+      assert.equal(second.status, 409, JSON.stringify(second.data));
+      assert.equal(second.data.code, 'QUEUE_CALL_IN_FLIGHT');
+      assert.deepEqual(terminal(entry.entryId), ['landed']);
+      assert.deepEqual(githubWrites(), ['discardCandidate'], 'one cleanup, for the settlement that was recorded');
+    });
+
+    it('an entry that leaves landing while the settlement reads GitHub is refused at the write, with no second event and no cleanup', async () => {
+      const entry = await stuck();
+      gh.during = {
+        readAncestry: async () => {
+          const elsewhere = queueStore.settleLanding(entry.entryId, {
+            actor: { kind: 'operator', operatorProof: 'ambient-open' }, outcome: 'failed', mergeAttempt: 'unsuccessful', reference: 'r', attestation: 'a',
+            readBack: { merged: false }, provenance: { readAt: 'now' }
+          });
+          assert.equal(elsewhere.ok, true);
+        }
+      };
+      const res = await settleAs(entry.entryId);
+      gh.during = null;
+      assert.equal(res.status, 409, JSON.stringify(res.data));
+      assert.equal(res.data.code, 'ENTRY_FINISHED');
+      assert.deepEqual(terminal(entry.entryId), ['failed']);
+      assert.deepEqual(githubWrites(), []);
+      mergeQueue._internal.branchesGone.add(entry.entryId);
+    });
+
+    it('keeps an existing halt: untouched for a matching tree, and kept with a second event for one that does not match', async () => {
+      const matching = await stuck();
+      const halt = haltDirectly();
+      const kept = await settleAs(matching.entryId);
+      assert.equal(kept.status, 200, JSON.stringify(kept.data));
+      assert.equal(kept.data.settlement.haltKept, true);
+      assert.equal(kept.data.settlement.haltReasonRecorded, false);
+      assert.deepEqual(kept.data.queue.halt, halt);
+      assert.match(kept.data.message, /The queue was already halted and stays halted, unchanged; this settlement adds no halt reason of its own\./);
+      assert.doesNotMatch(kept.data.message, /recorded beside it/, 'no halt reason is claimed that the history does not hold');
+      assert.notEqual(queueStore.listEvents(queueId).pop().event, 'queue-halted');
+      unhalt();
+
+      const mismatched = await stuck();
+      const halt2 = haltDirectly();
+      gh.commit = { status: 'read', sha: SETTLED_SHA, tree: OTHER_HEAD, parents: [BASE_SHA, HEAD] };
+      const added = await settleAs(mismatched.entryId);
+      assert.equal(added.status, 200, JSON.stringify(added.data));
+      assert.deepEqual(added.data.queue.halt, halt2);
+      assert.equal(added.data.settlement.haltReasonRecorded, true);
+      assert.match(added.data.message, /The queue was already halted and its halt is kept; this settlement's halt reason is recorded beside it as a further event\./);
+      const events = queueStore.listEvents(queueId, { entryId: mismatched.entryId });
+      assert.equal(events.at(-1).event, 'queue-halted');
+      assert.equal(events.at(-1).detail.code, 'TREE_MISMATCH');
+      assert.deepEqual(events.at(-1).detail.haltKept, { code: 'TREE_MISMATCH', at: '2026-10-15T01:00:00.000Z' });
+    });
+
+    it('a failure on a pull request read back merged holds the queue for reconciliation until the Operator clears the halt', async () => {
+      const entry = await stuck();
+      gh.pull = { state: 'closed', merged: true, mergeCommitSha: LANDED_SHA };
+      const res = await settleAs(entry.entryId, { outcome: 'failed', ...OPERATOR_WORDS });
+      assert.equal(res.status, 200, JSON.stringify(res.data));
+      assert.equal(res.data.entry.state, 'failed');
+      assert.equal(res.data.entry.failure.code, 'LANDING_SETTLED_FAILED');
+      assert.equal(res.data.settlement.case, 'failed-pull-merged');
+      assert.equal(res.data.settlement.reconciliationHalt, true);
+      assert.equal(res.data.queue.halt.code, 'LANDING_SETTLED_UNRECONCILED');
+      assert.match(res.data.message, /GitHub reported the pull request MERGED at .*unreconciled\. The queue is now HALTED/);
+      assert.deepEqual(gh.calls.map((c) => c[0]), ['readPull', 'readRefTip', 'discardCandidate']);
+      gh.pull = {};
+      await submitted();
+      assert.equal((await advanceAs()).data.code, 'QUEUE_HALTED');
+      const cleared = await sendAs(server, 'POST', `/api/merge-queue/${queueId}/clear-halt`, { reference: 'main reconciled by hand' }, op);
+      assert.equal(cleared.status, 200, JSON.stringify(cleared.data));
+      assert.equal(cleared.data.cleared.code, 'LANDING_SETTLED_UNRECONCILED');
+      assert.equal((await advanceAs()).data.step, 'assembled');
+    });
+
+    it('a failure read back unmerged adds no halt only with the Operator\'s disposition of the merge request, and calls the read a snapshot either way', async () => {
+      const disposed = await stuck();
+      const quiet = await settleAs(disposed.entryId, { outcome: 'failed', mergeAttempt: 'unsuccessful', ...OPERATOR_WORDS });
+      assert.equal(quiet.status, 200, JSON.stringify(quiet.data));
+      assert.equal(quiet.data.settlement.case, 'failed-attempt-unsuccessful');
+      assert.equal(quiet.data.settlement.reconciliationHalt, false);
+      assert.equal(quiet.data.queue.halt, null);
+      assert.match(quiet.data.message, /GitHub reported the pull request unmerged at \d{4}-\d\d-\d\dT[^,]+, which is a snapshot and not proof/);
+      assert.match(quiet.data.message, /No halt stands\./);
+      assert.equal(quiet.data.settlement.haltReasonRecorded, false);
+
+      const undisposed = await stuck();
+      const held = await settleAs(undisposed.entryId, { outcome: 'failed', ...OPERATOR_WORDS });
+      assert.equal(held.status, 200, JSON.stringify(held.data));
+      assert.equal(held.data.settlement.case, 'failed-attempt-undisposed');
+      assert.equal(held.data.queue.halt.code, 'LANDING_SETTLED_UNRECONCILED');
+      assert.match(held.data.message, /not disposed of as unsuccessful, so the outcome is unreconciled\. The queue is now HALTED/);
+      for (const res of [quiet, held]) assert.doesNotMatch(JSON.stringify(res.data), /\bprove[sd]?\b/i, 'no answer calls the unmerged read proof');
+      await submitted();
+      assert.equal((await advanceAs()).data.code, 'QUEUE_HALTED');
+    });
+
+    it('removes only the recorded candidate branch, never one the queue does not own, and a removal that fails leaves the settlement standing for the next advance to finish', async () => {
+      const foreign = await stuck();
+      store.getDb().prepare('UPDATE merge_queue_entries SET candidate_ref = ? WHERE entry_id = ?').run('feature/x', foreign.entryId);
+      const skipped = await settleAs(foreign.entryId);
+      assert.equal(skipped.status, 200, JSON.stringify(skipped.data));
+      assert.equal(skipped.data.entry.state, 'landed');
+      assert.deepEqual(skipped.data.cleanup, { status: 'skipped', reason: 'not-queue-owned', ref: 'feature/x' });
+      assert.match(skipped.data.message, /were NOT removed \[not-queue-owned\]/);
+      assert.deepEqual(githubWrites(), []);
+      mergeQueue._internal.branchesGone.add(foreign.entryId);
+
+      const entry = await stuck();
+      gh.discard = { status: 'unavailable', reason: 'gh api timed out after 20000ms', candidate: 'unknown', stage: 'deleted' };
+      const settled = await settleAs(entry.entryId, { outcome: 'failed', mergeAttempt: 'unsuccessful', ...OPERATOR_WORDS });
+      assert.equal(settled.status, 200, JSON.stringify(settled.data));
+      assert.equal(settled.data.entry.state, 'failed');
+      assert.equal(settled.data.cleanup.status, 'failed');
+      assert.match(settled.data.message, /the settlement stands, and the next advance removes them/);
+      gh.discard = { status: 'discarded', candidate: 'deleted', stage: 'not-found' };
+      gh.calls.length = 0;
+      const retried = await advanceAs();
+      assert.equal(retried.data.step, 'cleaned-up', JSON.stringify(retried.data));
+      assert.deepEqual(gh.calls, [['discardCandidate', REPO, `tc-queue/${entry.entryId}`]]);
     });
   });
 

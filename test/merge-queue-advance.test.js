@@ -19,7 +19,7 @@ const store = require('../lib/store');
 const queues = require('../lib/merge-queue-store');
 const github = require('../lib/merge-queue-github');
 const { REFUSALS } = require('../lib/merge-queue-state');
-const { advance, AdvanceRefusal, ADVANCE_REFUSALS, FAILURES, STEPS, _internal } = require('../lib/merge-queue');
+const { advance, AdvanceRefusal, ADVANCE_REFUSALS, FAILURES, STEPS, cleanupRefFor, cleanupFinished, _internal } = require('../lib/merge-queue');
 
 const OPERATOR = { kind: 'operator', operatorProof: 'verified-session' };
 const OWNER = { kind: 'project', projectId: 7, launchId: 'launch-owner' };
@@ -1281,5 +1281,128 @@ describe('merge queue advance: an unhandled message in the owner\'s inbox refuse
     assert.equal((await step(kept, undefined, inboxReads())).cleanup.code, ADVANCE_REFUSALS.CANDIDATE_NOT_DISCARDED);
     assert.equal((await step(fakeGithub({ readRefTip: { status: 'read', sha: LANDED } }), undefined, counting)).step, STEPS.CLEANED_UP);
     assert.equal(asked, 0, 'only a landing reads the inbox');
+  });
+});
+
+describe('merge queue advance: an entry stuck in landing, and the cleanup a settlement leaves (#2364)', () => {
+  /**
+   * An entry in landing whose candidate is recorded on `ref`, made by the
+   * store's own calls so the ref can be one the queue would never make.
+   * @param {string} [ref] - The candidate branch to record, the entry's own when not given
+   * @returns {object} The entry
+   */
+  function landingOn(ref) {
+    const entry = submit();
+    assert.equal(queues.beginAssembly(entry.entryId, { actor: OWNER }).ok, true);
+    const recorded = queues.recordCandidate(entry.entryId, { ref: ref || `tc-queue/${entry.entryId}`, baseSha: BASE, sha: CANDIDATE, tree: TREE, actor: OWNER });
+    assert.equal(recorded.ok, true, JSON.stringify(recorded));
+    assert.equal(queues.beginLanding(entry.entryId, { candidateCheck: { runId: '501', conclusion: 'success' }, actor: OWNER }).ok, true);
+    return entry;
+  }
+
+  /**
+   * Settle an entry as failed, disposing of its merge request, by the store's own call.
+   * @param {string} entryId - The entry
+   * @returns {object} The store's answer
+   */
+  function settleFailed(entryId) {
+    const done = queues.settleLanding(entryId, {
+      actor: OPERATOR, outcome: 'failed', mergeAttempt: 'unsuccessful', reference: 'r', attestation: 'a',
+      readBack: { merged: false, state: 'closed', mergeCommitSha: null }, provenance: { readAt: 'now' }
+    });
+    assert.equal(done.ok, true, JSON.stringify(done));
+    return done;
+  }
+
+  it('no advance takes an entry from landing to failed, whatever the merge\'s outcome reads as: only the Operator\'s settlement does', async () => {
+    const outcomes = [
+      ['the pull request unreadable', { readPull: TIMED_OUT }],
+      ['read back open', {}],
+      ['read back closed and not merged', { readPull: (repo, number) => ({ status: 'read', number, state: 'closed', merged: false, draft: false, mergeable: null, baseRef: 'main', headSha: HEAD, changedFiles: 2, mergeCommitSha: null }) }],
+      ['merged with no commit named', { readPull: (repo, number) => ({ status: 'read', number, state: 'closed', merged: true, draft: false, mergeable: null, baseRef: 'main', headSha: HEAD, changedFiles: 2, mergeCommitSha: null }) }],
+      ['merged as a commit that cannot be read', { readPull: (repo, number) => ({ status: 'read', number, state: 'closed', merged: true, draft: false, mergeable: null, baseRef: 'main', headSha: HEAD, changedFiles: 2, mergeCommitSha: LANDED }), readCommit: TIMED_OUT }],
+      ['merged as a commit that is not a merge of the head', { readPull: (repo, number) => ({ status: 'read', number, state: 'closed', merged: true, draft: false, mergeable: null, baseRef: 'main', headSha: HEAD, changedFiles: 2, mergeCommitSha: LANDED }), readCommit: (repo, commit) => ({ status: 'read', sha: commit, tree: TREE, parents: [BASE] }) }]
+    ];
+    for (const [what, over] of outcomes) {
+      const entry = landingOn();
+      const answer = await step(fakeGithub(over));
+      const now = queues.getEntry(entry.entryId);
+      assert.notEqual(now.state, 'failed', what);
+      assert.ok(!history(entry.entryId).includes('failed'), what);
+      assert.notEqual(answer.step, STEPS.FAILED, what);
+      if (now.state === 'landing') settleFailed(entry.entryId);
+      else if (now.state === 'testing') assert.equal(queues.withdrawEntry(entry.entryId, { reason: 'next case', actor: OWNER }).ok, true);
+      _internal.branchesGone.add(entry.entryId);
+    }
+  });
+
+  it('retries a settled entry\'s cleanup that did not finish, on its recorded branch, before anything else', async () => {
+    const entry = landingOn();
+    settleFailed(entry.entryId);
+    const next = submit();
+    const gh = fakeGithub();
+    const cleaned = await step(gh);
+    assert.equal(cleaned.step, STEPS.CLEANED_UP);
+    assert.equal(cleaned.entryId, entry.entryId);
+    assert.deepEqual(gh.calls, [['discardCandidate', REPO, `tc-queue/${entry.entryId}`]]);
+    assert.match(cleaned.message, /^The candidate's branches of failed entry /);
+    assert.equal(queues.getEntry(next.entryId).state, 'queued', 'no entry moved');
+    assert.equal((await step(gh)).step, STEPS.ASSEMBLED, 'and once is enough');
+  });
+
+  it('never deletes a recorded branch the queue does not own, on any retry, never falls back to the entry\'s own name, and reports the skip', async () => {
+    for (const ref of ['main', 'feature/x', 'tc-queue-stage/x', 'tc-queue/a/b', 'tc-queue/.hidden']) {
+      const entry = landingOn(ref);
+      settleFailed(entry.entryId);
+      for (let retry = 0; retry < 2; retry += 1) {
+        const gh = fakeGithub();
+        const answer = await step(gh);
+        assert.ok(!gh.names().includes('discardCandidate'), `${ref}, retry ${retry}`);
+        assert.equal(answer.step, STEPS.IDLE, ref);
+        assert.deepEqual(answer.cleanupSkipped, { entryId: entry.entryId, reason: 'not-queue-owned', ref }, ref);
+        assert.match(answer.message, /was NOT removed \[not-queue-owned\]/, ref);
+      }
+    }
+  });
+
+  it('never removes a recorded branch that an unfinished entry also records', async () => {
+    const shared = 'tc-queue/shared-name';
+    const settled = landingOn(shared);
+    settleFailed(settled.entryId);
+    const holder = submit();
+    assert.equal(queues.beginAssembly(holder.entryId, { actor: OWNER }).ok, true);
+    assert.equal(queues.recordCandidate(holder.entryId, { ref: shared, baseSha: BASE, sha: CANDIDATE, tree: TREE, actor: OWNER }).ok, true);
+    const gh = fakeGithub({ readBranchCheck: (repo, branch) => (branch === 'main' ? concluded('success', '500') : { status: 'running', runId: '502' }) });
+    const answer = await step(gh);
+    assert.ok(!gh.names().includes('discardCandidate'));
+    assert.equal(answer.step, STEPS.WAITING);
+    assert.deepEqual(answer.cleanupSkipped, { entryId: settled.entryId, reason: 'held-by-another-entry', ref: shared, heldBy: holder.entryId });
+    assert.equal(queues.getEntry(holder.entryId).candidate.ref, shared);
+  });
+
+  it('names the branch a finished entry\'s cleanup may remove, or why none', () => {
+    const own = { entryId: 'mqe_1', state: 'failed', candidate: { ref: 'tc-queue/mqe_1' } };
+    const holder = { entryId: 'mqe_2', state: 'testing', candidate: { ref: 'tc-queue/mqe_1' } };
+    const finishedHolder = { ...holder, state: 'withdrawn' };
+    assert.deepEqual(cleanupRefFor(own, [own]), { ref: 'tc-queue/mqe_1' });
+    assert.deepEqual(cleanupRefFor(own, [own, finishedHolder]), { ref: 'tc-queue/mqe_1' }, 'a finished entry holds nothing');
+    assert.deepEqual(cleanupRefFor(own, [own, holder]), { skip: 'held-by-another-entry', ref: 'tc-queue/mqe_1', heldBy: 'mqe_2' });
+    assert.deepEqual(cleanupRefFor({ ...own, candidate: null }, []), { skip: 'no-recorded-ref', ref: null });
+    assert.deepEqual(cleanupRefFor({ ...own, candidate: { ref: 'main' } }, []), { skip: 'not-queue-owned', ref: 'main' });
+  });
+
+  it('a cleanup that removes nothing it may not, and a removal that fails, both leave the entry owed or settled as it was', async () => {
+    const queue = queues.getQueue(queueId);
+    const entry = { entryId: 'mqe_x', state: 'failed', candidate: { ref: 'tc-queue/mqe_x' } };
+    const calls = [];
+    const failing = async (repo, ref) => { calls.push(ref); return { status: 'unavailable', reason: 'gh api timed out', candidate: 'unknown', stage: 'deleted' }; };
+    assert.deepEqual(await cleanupFinished(queue, entry, [entry], failing),
+      { status: 'failed', ref: 'tc-queue/mqe_x', reason: 'gh api timed out', candidate: 'unknown', stage: 'deleted' });
+    assert.ok(!_internal.branchesGone.has('mqe_x'), 'still owed to the next advance');
+    const working = async (repo, ref) => { calls.push(ref); return { status: 'discarded', candidate: 'deleted', stage: 'not-found' }; };
+    assert.deepEqual(await cleanupFinished(queue, entry, [entry], working), { status: 'removed', ref: 'tc-queue/mqe_x', candidate: 'deleted', stage: 'not-found' });
+    assert.ok(_internal.branchesGone.has('mqe_x'));
+    assert.deepEqual(await cleanupFinished(queue, { ...entry, candidate: { ref: 'feature/x' } }, [], working), { status: 'skipped', reason: 'not-queue-owned', ref: 'feature/x' });
+    assert.deepEqual(calls, ['tc-queue/mqe_x', 'tc-queue/mqe_x']);
   });
 });

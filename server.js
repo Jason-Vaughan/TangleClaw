@@ -8594,6 +8594,7 @@ mergeQueueRoute('POST', '/api/merge-queue/entries/:id/withdraw', (req, params, b
 mergeQueueRoute('POST', '/api/merge-queue/advance', (req, _params, body) => mergeQueueApi.advance(req, body));
 mergeQueueRoute('POST', '/api/merge-queue/:id/clear-halt', (req, params, body) => mergeQueueApi.clearHalt(req, params, body));
 mergeQueueRoute('POST', '/api/merge-queue/entries/:id/operator-gate', (req, params, body) => mergeQueueApi.recordOperatorGate(req, params, body));
+mergeQueueRoute('POST', '/api/merge-queue/entries/:id/settle-landing', (req, params, body) => mergeQueueApi.settleLanding(req, params, body));
 // ── Check watches (#2323): register, read and cancel a watch on a named check ──
 //
 // The handlers live in lib/check-watch-api.js. Nothing here reads GitHub.
