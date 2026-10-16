@@ -450,6 +450,14 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
     <div id="launchIdentityBanner" class="orphan-banner launch-identity-banner hidden" role="status">
       <span class="orphan-banner-text" id="launchIdentityBannerText"></span>
     </div>
+    <!-- Launch-isolation override notice (#2393). Hidden until GET
+         /api/launch/isolation-overrides answers that one is on, or fails; a
+         read the server refuses keeps it hidden, since that page cannot know.
+         Painted by landing.js with text nodes; each override links to its
+         switch. role=status: it reports a standing choice, it is not an alarm. -->
+    <div id="isolationOverrideBanner" class="orphan-banner isolation-override-banner hidden" role="status">
+      <span class="orphan-banner-text" id="isolationOverrideBannerText"></span>
+    </div>
     <!-- Recovery-code notice (#1420). Hidden until /api/server-info reports a
          recoveryNotice: this account's password was reset with a recovery code.
          It stays until the account acknowledges it or generates new codes — an

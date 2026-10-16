@@ -748,6 +748,145 @@ function renderLaunchIdentityBanner(notice) {
 }
 
 /**
+ * The number of the latest read of the launch-isolation overrides this page
+ * started (#2393). Reads overlap: the page load, and a switch change in a
+ * Settings modal, can each have one in flight. Only the latest one paints, so
+ * an older answer arriving late can neither overwrite a newer one nor put back
+ * names that a later refusal took off the page.
+ * @type {number}
+ */
+let isolationOverrideBannerRead = 0;
+
+/**
+ * Read the launch-isolation overrides and paint the dashboard's notice of them
+ * (#2393).
+ *
+ * Each read gets an `api()` of its own from the same factory as the page's, so
+ * it goes out with the same dashboard marker, sign-in and CSRF handling (the
+ * route admits the dashboard by that marker, and the operator alone). The
+ * page's `api()` keeps the last failure in two fields every request it makes
+ * writes or clears, and the dashboard has many in flight at load: read from
+ * there, another request's answer could make a refusal look like a failure, or
+ * hide a failure behind someone else's refusal. An instance that makes one
+ * request holds only that request's failure.
+ * @returns {Promise<boolean>} true when this read painted the notice, false
+ *   when a newer read had started meanwhile and this answer was dropped
+ */
+async function refreshIsolationOverrideBanner() {
+  const read = ++isolationOverrideBannerRead;
+  const once = window.tcCreateApi({ setConnected });
+  const settings = await once('/api/launch/isolation-overrides');
+  const failure = { error: once.lastError, code: once.lastErrorCode };
+  if (read !== isolationOverrideBannerRead) return false;
+  renderIsolationOverrideBanner(settings, failure);
+  return true;
+}
+
+/**
+ * Show or hide the notice that a launch-isolation override is on (#2393).
+ *
+ * An override lets a launch that cannot be shown isolated start anyway, and it
+ * is set in a Settings modal the operator may not open again for weeks, so
+ * while one is on the main view says so, naming the install-wide one and each
+ * project, each with the way to its switch.
+ *
+ * The notice shows only what the server answered. A read the server refused
+ * (the route is the operator's alone) hides it, and says nothing either way:
+ * a page that may not read the overrides cannot know none is on. A read that
+ * failed says it failed, so silence is never the failure's answer. Names are
+ * set as text, never as markup.
+ * @param {object|null} settings - The answer of `GET /api/launch/isolation-overrides`, or null
+ * @param {{error: (string|null), code: (string|null)}} [failure] - Why the read failed
+ * @returns {void}
+ */
+function renderIsolationOverrideBanner(settings, failure) {
+  const banner = document.getElementById('isolationOverrideBanner');
+  const textEl = document.getElementById('isolationOverrideBannerText');
+  if (!banner || !textEl) return;
+  const text = (s) => document.createTextNode(s);
+  const show = (...nodes) => {
+    textEl.replaceChildren(...nodes);
+    banner.classList.remove('hidden');
+  };
+
+  const read = settings && settings.install && typeof settings.install === 'object' && Array.isArray(settings.projects);
+  if (!read) {
+    const why = failure || {};
+    if (!settings && why.code === 'OPERATOR_ONLY') {
+      textEl.replaceChildren();
+      banner.classList.add('hidden');
+      return;
+    }
+    banner.classList.add('isolation-override-banner-unread');
+    const strong = document.createElement('strong');
+    strong.textContent = 'The launch isolation overrides could not be read';
+    const said = settings ? ': the server answered without them' : (why.error ? ` (${why.error})` : '');
+    show(strong, text(`${said}, so this page does not say whether one is on. They are read again when the page is `
+      + 'reloaded, or when an override is changed in Settings.'));
+    return;
+  }
+
+  const items = [];
+  if (settings.install.allowed === true) {
+    items.push({ what: 'every project on this install, and the Project Master', label: 'Global Settings',
+      aria: 'Open Global Settings at the install-wide launch isolation override',
+      open: typeof openGlobalSettings === 'function' ? openInstallOverrideSettings : null });
+  }
+  for (const row of settings.projects) {
+    if (!row || row.allowed !== true) continue;
+    const name = typeof row.projectName === 'string' && row.projectName ? row.projectName : null;
+    items.push(name
+      ? { what: name, label: 'Settings', aria: `Open ${name}'s Settings at its launch isolation override`,
+        open: typeof openIsolationOverrideSettings === 'function' ? () => openIsolationOverrideSettings(name) : null }
+      : { what: `the project with id ${String(row.projectId)}, which this install no longer names` });
+  }
+  if (items.length === 0) {
+    textEl.replaceChildren();
+    banner.classList.add('hidden');
+    return;
+  }
+
+  banner.classList.remove('isolation-override-banner-unread');
+  const strong = document.createElement('strong');
+  strong.textContent = 'A launch isolation override is on.';
+  const list = document.createElement('ul');
+  list.className = 'isolation-override-banner-list';
+  for (const item of items) {
+    const li = document.createElement('li');
+    li.appendChild(text(item.what));
+    if (item.open) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'orphan-banner-details isolation-override-banner-open';
+      btn.textContent = item.label;
+      btn.setAttribute('aria-label', item.aria);
+      btn.addEventListener('click', item.open);
+      li.appendChild(btn);
+    }
+    list.appendChild(li);
+  }
+  show(strong, text(' A launch it covers that cannot be shown isolated starts anyway, and may borrow another '
+    + 'project\'s TangleClaw identity. It covers:'), list);
+}
+
+/**
+ * Open Global Settings at the install-wide launch-isolation override: where
+ * the dashboard's notice of it leads (#2393). The switch inside renders when
+ * its own read answers, so the focus goes to its section, which is there at
+ * once: a keyboard or screen reader starts at the override, not at the top of
+ * Global Settings, and the next Tab reaches the switch.
+ * @returns {void}
+ */
+function openInstallOverrideSettings() {
+  openGlobalSettings();
+  const section = document.getElementById('gsIsolationOverrideSection');
+  if (!section) return;
+  if (typeof section.scrollIntoView === 'function') section.scrollIntoView({ block: 'center' });
+  section.setAttribute('tabindex', '-1');
+  section.focus();
+}
+
+/**
  * Show or hide the notice that this account's password was reset with a
  * recovery code (#1420).
  *
@@ -2577,6 +2716,9 @@ async function init() {
   // asked, and answered from memory. Throttled server-side, so a reload loop
   // costs one check per window rather than one per load.
   await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadStartupPrompt(), loadModelStatus(), loadGroups(), loadOpenclawConnections(),
+    // #2393: whether a launch-isolation override is on. Read once here and
+    // again after each override change in this tab; it never rejects.
+    refreshIsolationOverrideBanner(),
     // `.catch` rather than bare: a rejection inside Promise.all would abandon
     // the rest of init — checkPortImports, maybeShowFilter,
     // updateUnregisteredToggle and startPolling all sit after this await, so a
