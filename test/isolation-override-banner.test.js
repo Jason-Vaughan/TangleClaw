@@ -320,6 +320,8 @@ describe('The dashboard notice leads to each override\'s switch (#2393)', () => 
     btn.dispatch('click');
     assert.equal(opened, 1);
     assert.equal(scrolled && scrolled.block, 'center');
+    assert.equal(s.doc.activeElement, section, 'the focus starts at the override, not at the top of Global Settings');
+    assert.equal(section.getAttribute('tabindex'), '-1');
   });
 
   it('offers no button on a page that has no Settings to open', () => {

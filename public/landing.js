@@ -862,13 +862,19 @@ function renderIsolationOverrideBanner(settings, failure) {
 
 /**
  * Open Global Settings at the install-wide launch-isolation override: where
- * the dashboard's notice of it leads (#2393).
+ * the dashboard's notice of it leads (#2393). The switch inside renders when
+ * its own read answers, so the focus goes to its section, which is there at
+ * once: a keyboard or screen reader starts at the override, not at the top of
+ * Global Settings, and the next Tab reaches the switch.
  * @returns {void}
  */
 function openInstallOverrideSettings() {
   openGlobalSettings();
   const section = document.getElementById('gsIsolationOverrideSection');
-  if (section && typeof section.scrollIntoView === 'function') section.scrollIntoView({ block: 'center' });
+  if (!section) return;
+  if (typeof section.scrollIntoView === 'function') section.scrollIntoView({ block: 'center' });
+  section.setAttribute('tabindex', '-1');
+  section.focus();
 }
 
 /**
