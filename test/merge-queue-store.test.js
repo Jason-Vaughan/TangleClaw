@@ -748,3 +748,245 @@ describe('merge queue store: the owner\'s inbox check a landing records (#2372)'
     assert.equal(queues.listEvents(queues.getEntry(entry.entryId).queueId).length, before);
   });
 });
+
+describe('merge queue store: the Operator settles an entry stuck in landing (#2364)', () => {
+  const PROVENANCE = { readAt: '2026-10-15T23:00:00.000Z', baseBranch: 'main', baseTip: sha('9') };
+
+  /**
+   * Settle an entry as the Operator, with every field a settlement needs.
+   * @param {string} entryId - The entry
+   * @param {object} [over] - Fields to replace
+   * @returns {object} The store's answer
+   */
+  function settle(entryId, over = {}) {
+    const outcome = over.outcome || 'landed';
+    const base = outcome === 'landed'
+      ? { landedSha: sha('e'), landedTree: sha('d') }
+      : { readBack: { merged: false, state: 'closed', mergeCommitSha: null } };
+    return queues.settleLanding(entryId, {
+      actor: OPERATOR, outcome, reference: 'checked main by hand', attestation: 'the commit is the merge of PR 1',
+      provenance: PROVENANCE, ...base, ...over
+    });
+  }
+
+  /**
+   * Put a halt on the test queue directly, as one left by an earlier landing.
+   * @returns {object} The halt as the queue reads it
+   */
+  function haltQueue() {
+    store.getDb().prepare('UPDATE merge_queues SET halted_at = ?, halt_code = ?, halt_detail = ? WHERE queue_id = ?')
+      .run('2026-10-15T01:00:00.000Z', 'TREE_MISMATCH', 'an earlier landing', queueId);
+    return queues.getQueue(queueId).halt;
+  }
+
+  /**
+   * The terminal events of an entry.
+   * @param {string} entryId - The entry
+   * @returns {string[]}
+   */
+  function terminal(entryId) {
+    return history(entryId).filter((e) => e === 'landed' || e === 'failed');
+  }
+
+  it('records a landing on a commit whose tree is the candidate\'s, with what was read and the Operator\'s words, and frees the queue', () => {
+    const a = submit(1).entry;
+    const b = submit(2).entry;
+    assert.equal(toLanding(a.entryId).ok, true);
+    const done = settle(a.entryId);
+    assert.equal(done.ok, true, JSON.stringify(done));
+    assert.equal(done.outcome, 'landed');
+    assert.equal(done.treeMatches, true);
+    assert.equal(done.queueHalted, false);
+    assert.equal(done.entry.state, 'landed');
+    assert.deepEqual({ ...done.entry.landed, at: null }, { sha: sha('e'), tree: sha('d'), treeMatches: true, at: null });
+    assert.ok(done.entry.finishedAt);
+    const event = queues.listEvents(queueId, { entryId: a.entryId }).pop();
+    assert.equal(event.event, 'landed');
+    assert.deepEqual([event.from, event.to], ['landing', 'landed']);
+    assert.equal(event.actor.kind, 'operator');
+    assert.equal(event.actor.operatorProof, 'verified-session');
+    assert.equal(event.detail.settledBy, 'operator');
+    assert.equal(event.detail.reference, 'checked main by hand');
+    assert.equal(event.detail.attestation, 'the commit is the merge of PR 1');
+    assert.deepEqual(event.detail.provenance, PROVENANCE);
+    assert.equal(queues.getQueue(queueId).halt, null);
+    assert.equal(queues.beginAssembly(b.entryId, { actor: OWNER }).ok, true, 'the next entry advances');
+  });
+
+  it('records a landing on a commit whose tree is not the candidate\'s, and halts the queue in the same write', () => {
+    const a = submit(1).entry;
+    toLanding(a.entryId);
+    const done = settle(a.entryId, { landedTree: sha('f') });
+    assert.equal(done.ok, true);
+    assert.equal(done.entry.state, 'landed');
+    assert.equal(done.treeMatches, false);
+    assert.equal(done.queueHalted, true);
+    assert.equal(done.haltKept, false);
+    assert.equal(queues.getQueue(queueId).halt.code, queues.HALT_TREE_MISMATCH);
+    assert.deepEqual(history(a.entryId).slice(-2), ['landed', 'queue-halted']);
+  });
+
+  it('settling while halted with a matching tree leaves the halt exactly as it was', () => {
+    const a = submit(1).entry;
+    toLanding(a.entryId);
+    const before = haltQueue();
+    const done = settle(a.entryId);
+    assert.equal(done.ok, true);
+    assert.equal(done.queueHalted, true);
+    assert.equal(done.haltKept, true);
+    assert.deepEqual(queues.getQueue(queueId).halt, before);
+    assert.ok(!history().includes('queue-halted'), 'no new halt is recorded');
+  });
+
+  it('settling while halted with a tree that does not match keeps the halt\'s code and records the new reason as a second event', () => {
+    const a = submit(1).entry;
+    toLanding(a.entryId);
+    const before = haltQueue();
+    const done = settle(a.entryId, { landedTree: sha('f') });
+    assert.equal(done.ok, true);
+    assert.equal(done.haltKept, true);
+    assert.deepEqual(queues.getQueue(queueId).halt, before);
+    const halted = queues.listEvents(queueId).pop();
+    assert.equal(halted.event, 'queue-halted');
+    assert.equal(halted.detail.code, queues.HALT_TREE_MISMATCH);
+    assert.deepEqual(halted.detail.haltKept, { code: 'TREE_MISMATCH', at: '2026-10-15T01:00:00.000Z' });
+  });
+
+  it('a failure on a pull request read back merged halts the queue for reconciliation until the Operator clears it', () => {
+    const a = submit(1).entry;
+    const b = submit(2).entry;
+    toLanding(a.entryId);
+    const done = settle(a.entryId, { outcome: 'failed', readBack: { merged: true, state: 'closed', mergeCommitSha: sha('7') } });
+    assert.equal(done.ok, true, JSON.stringify(done));
+    assert.equal(done.entry.state, 'failed');
+    assert.equal(done.entry.failure.code, 'LANDING_SETTLED_FAILED');
+    assert.equal(done.reconciliationHalt, true);
+    assert.equal(done.queueHalted, true);
+    assert.equal(queues.getQueue(queueId).halt.code, 'LANDING_SETTLED_UNRECONCILED');
+    assert.match(queues.getQueue(queueId).halt.detail, /reads back MERGED/);
+    const failed = queues.listEvents(queueId, { entryId: a.entryId }).find((e) => e.event === 'failed');
+    assert.deepEqual(failed.detail.readBack, { merged: true, state: 'closed', mergeCommitSha: sha('7') });
+    assert.equal(failed.detail.mergeAttempt, null);
+    assert.equal(queues.beginAssembly(b.entryId, { actor: OWNER }).code, REFUSALS.QUEUE_HALTED);
+    assert.equal(queues.clearHalt(queueId, { actor: OPERATOR, reference: 'reconciled main by hand' }).ok, true);
+    assert.equal(queues.beginAssembly(b.entryId, { actor: OWNER }).ok, true);
+  });
+
+  it('a failure on a pull request read back unmerged, with the merge request disposed of as unsuccessful, adds no halt', () => {
+    const a = submit(1).entry;
+    const b = submit(2).entry;
+    toLanding(a.entryId);
+    const done = settle(a.entryId, { outcome: 'failed', mergeAttempt: 'unsuccessful' });
+    assert.equal(done.ok, true, JSON.stringify(done));
+    assert.equal(done.reconciliationHalt, false);
+    assert.equal(done.queueHalted, false);
+    assert.equal(queues.getQueue(queueId).halt, null);
+    assert.equal(queues.listEvents(queueId, { entryId: a.entryId }).pop().detail.mergeAttempt, 'unsuccessful');
+    assert.equal(queues.beginAssembly(b.entryId, { actor: OWNER }).ok, true);
+  });
+
+  it('a failure on a pull request read back unmerged WITHOUT that disposition halts the queue for reconciliation', () => {
+    const a = submit(1).entry;
+    const b = submit(2).entry;
+    toLanding(a.entryId);
+    const done = settle(a.entryId, { outcome: 'failed' });
+    assert.equal(done.ok, true);
+    assert.equal(done.entry.state, 'failed');
+    assert.equal(done.reconciliationHalt, true);
+    assert.equal(queues.getQueue(queueId).halt.code, 'LANDING_SETTLED_UNRECONCILED');
+    assert.match(queues.getQueue(queueId).halt.detail, /may still complete/);
+    assert.equal(queues.beginAssembly(b.entryId, { actor: OWNER }).code, REFUSALS.QUEUE_HALTED);
+  });
+
+  it('a failure on a halted queue keeps the halt, whether or not it would add one', () => {
+    for (const over of [{ outcome: 'failed' }, { outcome: 'failed', mergeAttempt: 'unsuccessful' }]) {
+      const { entry } = submit(10 + (over.mergeAttempt ? 1 : 0));
+      toLanding(entry.entryId);
+      const before = haltQueue();
+      const done = settle(entry.entryId, over);
+      assert.equal(done.ok, true, JSON.stringify(done));
+      assert.equal(done.haltKept, true);
+      assert.deepEqual(queues.getQueue(queueId).halt, before);
+      const last = queues.listEvents(queueId).pop();
+      if (over.mergeAttempt) {
+        assert.equal(last.event, 'failed', 'a disposed failure adds no halt event');
+      } else {
+        assert.equal(last.event, 'queue-halted');
+        assert.equal(last.detail.code, 'LANDING_SETTLED_UNRECONCILED');
+        assert.equal(last.detail.haltKept.code, 'TREE_MISMATCH');
+      }
+      store.getDb().prepare('UPDATE merge_queues SET halted_at = NULL, halt_code = NULL, halt_detail = NULL WHERE queue_id = ?').run(queueId);
+    }
+  });
+
+  it('lets only the Operator settle, and refuses what a settlement cannot record, changing nothing', () => {
+    const { entry } = submit(1);
+    toLanding(entry.entryId);
+    const before = counts();
+    const refusals = [
+      [{ actor: OWNER }, REFUSALS.OPERATOR_ONLY],
+      [{ actor: OTHER }, REFUSALS.OPERATOR_ONLY],
+      [{ actor: { kind: 'operator' } }, REFUSALS.OPERATOR_ONLY],
+      [{ outcome: 'withdrawn' }, REFUSALS.INVALID_INPUT],
+      [{ reference: '  ' }, REFUSALS.INVALID_INPUT],
+      [{ reference: 'x'.repeat(301) }, REFUSALS.INVALID_INPUT],
+      [{ attestation: undefined }, REFUSALS.INVALID_INPUT],
+      [{ attestation: 'x'.repeat(1001) }, REFUSALS.INVALID_INPUT],
+      [{ provenance: null }, REFUSALS.INVALID_INPUT],
+      [{ landedSha: 'abc' }, REFUSALS.INVALID_INPUT],
+      [{ landedTree: sha('D') }, REFUSALS.INVALID_INPUT],
+      [{ mergeAttempt: 'unsuccessful' }, REFUSALS.INVALID_INPUT],
+      [{ outcome: 'failed', mergeAttempt: 'maybe' }, REFUSALS.INVALID_INPUT],
+      [{ outcome: 'failed', readBack: null }, REFUSALS.INVALID_INPUT],
+      [{ outcome: 'failed', readBack: { merged: 'no' } }, REFUSALS.INVALID_INPUT],
+      [{ outcome: 'failed', landedSha: sha('e') }, REFUSALS.INVALID_INPUT]
+    ];
+    for (const [over, code] of refusals) {
+      const answer = settle(entry.entryId, over);
+      assert.equal(answer.ok, false, JSON.stringify(over));
+      assert.equal(answer.code, code, JSON.stringify(over));
+    }
+    assert.deepEqual(counts(), before);
+    assert.equal(queues.getEntry(entry.entryId).state, 'landing');
+    assert.equal(queues.settleLanding('mqe_nope', { actor: OPERATOR, outcome: 'failed', reference: 'r', attestation: 'a', provenance: {}, readBack: { merged: false } }).code,
+      REFUSALS.ENTRY_NOT_FOUND);
+  });
+
+  it('settles only an entry in landing, so a repeated settlement records nothing a second time', () => {
+    const a = submit(1).entry;
+    const b = submit(2).entry;
+    toTesting(a.entryId);
+    const before = counts();
+    assert.equal(settle(a.entryId).code, REFUSALS.TRANSITION_NOT_ALLOWED);
+    assert.equal(settle(b.entryId, { outcome: 'failed' }).code, REFUSALS.TRANSITION_NOT_ALLOWED);
+    assert.deepEqual(counts(), before);
+    assert.equal(queues.beginLanding(a.entryId, { candidateCheck: { runId: 9001, conclusion: 'success' }, actor: OWNER }).ok, true);
+    assert.equal(settle(a.entryId).ok, true);
+    const settled = counts();
+    for (const over of [{}, { outcome: 'failed' }, { outcome: 'failed', mergeAttempt: 'unsuccessful' }]) {
+      const again = settle(a.entryId, over);
+      assert.equal(again.code, REFUSALS.ENTRY_FINISHED, JSON.stringify(over));
+      assert.match(again.message, /Only an entry in landing is settled; this one is landed, and nothing was changed\./);
+    }
+    assert.deepEqual(counts(), settled);
+    assert.deepEqual(terminal(a.entryId), ['landed'], 'exactly one terminal event');
+  });
+
+  it('judges the Operator\'s request before anything is read: the outcome, the commit, the words and the disposition', () => {
+    const ok = { outcome: 'landed', sha: sha('e'), reference: 'r', attestation: 'a' };
+    assert.equal(queues.settleRequestRefusal(ok), null);
+    assert.equal(queues.settleRequestRefusal({ outcome: 'failed', reference: 'r', attestation: 'a' }), null);
+    assert.equal(queues.settleRequestRefusal({ outcome: 'failed', reference: 'r', attestation: 'a', mergeAttempt: 'unsuccessful' }), null);
+    for (const bad of [
+      { ...ok, outcome: undefined }, { ...ok, sha: undefined }, { ...ok, sha: sha('E') }, { ...ok, reference: '' },
+      { ...ok, attestation: 7 }, { ...ok, mergeAttempt: 'unsuccessful' },
+      { outcome: 'failed', reference: 'r', attestation: 'a', sha: sha('e') },
+      { outcome: 'failed', reference: 'r', attestation: 'a', mergeAttempt: 'successful' },
+      null
+    ]) {
+      const refused = queues.settleRequestRefusal(bad);
+      assert.equal(refused && refused.code, REFUSALS.INVALID_INPUT, JSON.stringify(bad));
+      assert.match(refused.message, /Send|send/, JSON.stringify(bad));
+    }
+  });
+});

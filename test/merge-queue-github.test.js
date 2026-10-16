@@ -409,13 +409,62 @@ describe('merge-queue-github — the files between two commits', () => {
   });
 });
 
+describe('merge-queue-github — whether a commit is on a branch (#2364)', () => {
+  it('reads the recorded comparison as reachable: main before the merge is an ancestor of main after it, with the same call', async () => {
+    const fx = recorded('compare-main-merge');
+    gh(fx);
+    assert.deepEqual(await gq.readAncestry(REPO, BASE, MAIN_MERGE), { status: 'reachable', compareStatus: 'ahead' });
+    assert.deepEqual(calls[0].args, fx.args, 'the same compare call readCompareFiles makes, from the commit to the tip');
+    assert.equal(calls[0].timeoutMs, gq.READ_TIMEOUT_MS);
+  });
+
+  it('reads a commit that is the tip as reachable', async () => {
+    gh(recorded('compare-identical'));
+    assert.deepEqual(await gq.readAncestry(REPO, BASE, BASE), { status: 'reachable', compareStatus: 'identical' });
+  });
+
+  it('reads the recorded diverged comparison as not reachable, and says so', async () => {
+    gh(recorded('compare-diverged'));
+    assert.deepEqual(await gq.readAncestry(REPO, MAIN_MERGE, 'cc3e8364398a4f68bf3e7fc03ce5993e43954ace'),
+      { status: 'not-reachable', compareStatus: 'diverged' });
+  });
+
+  it('reads a tip behind the commit as not reachable', async () => {
+    gh(ok(comparison({ status: 'behind', base: BASE, merge_base: MAIN_MERGE })));
+    assert.deepEqual(await gq.readAncestry(REPO, BASE, MAIN_MERGE), { status: 'not-reachable', compareStatus: 'behind' });
+  });
+
+  it('never answers reachable for a comparison from another commit, through another merge base, or with no status', async () => {
+    for (const fields of [{ base: HEAD }, { merge_base: HEAD }, { status: undefined }, { status: 'weird' }, { base: undefined }]) {
+      gh(ok(comparison(fields)));
+      const r = await gq.readAncestry(REPO, BASE, MAIN_MERGE);
+      assert.equal(r.status, 'unavailable', JSON.stringify(fields));
+      assert.match(r.reason, /comparison this server cannot read/);
+    }
+  });
+
+  it('answers unavailable for a commit GitHub does not have, and asks nothing for ids that are not commit ids', async () => {
+    gh(refused(404, 'Not Found'));
+    const gone = await gq.readAncestry(REPO, BASE, MAIN_MERGE);
+    assert.equal(gone.status, 'unavailable');
+    assert.match(gone.reason, /HTTP 404: Not Found/);
+    for (const [sha, tip] of [['abc', MAIN_MERGE], [BASE, 'main'], [BASE.toUpperCase(), MAIN_MERGE], [undefined, MAIN_MERGE]]) {
+      calls = [];
+      gh();
+      assert.equal((await gq.readAncestry(REPO, sha, tip)).status, 'unavailable');
+      assert.equal(calls.length, 0);
+    }
+  });
+});
+
 describe('merge-queue-github — a read that fails', () => {
   const READS = {
     readPull: () => gq.readPull(REPO, 7),
     readRefTip: () => gq.readRefTip(REPO, 'main'),
     readCommit: () => gq.readCommit(REPO, BASE),
     readPullFiles: () => gq.readPullFiles(REPO, 7),
-    readCompareFiles: () => gq.readCompareFiles(REPO, BASE, MAIN_MERGE)
+    readCompareFiles: () => gq.readCompareFiles(REPO, BASE, MAIN_MERGE),
+    readAncestry: () => gq.readAncestry(REPO, BASE, MAIN_MERGE)
   };
 
   for (const [name, read] of Object.entries(READS)) {

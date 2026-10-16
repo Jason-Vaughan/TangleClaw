@@ -99,6 +99,7 @@ describe('launch-binding guard: every mutating route is guarded or listed (#2233
       'POST /api/merge-queue/advance',
       'POST /api/merge-queue/entries',
       'POST /api/merge-queue/entries/:id/operator-gate',
+      'POST /api/merge-queue/entries/:id/settle-landing',
       'POST /api/merge-queue/entries/:id/withdraw'
     ]);
     for (const queueRoute of queueRoutes) assert.ok(!admitted.includes(queueRoute), `${queueRoute} must not be reachable unidentified`);

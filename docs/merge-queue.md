@@ -54,6 +54,8 @@ POST /api/merge-queue/entries/:id/withdraw         {reason}                     
 POST /api/merge-queue/advance                      {queueId?}                              the owner
 POST /api/merge-queue/:id/clear-halt               {reference}                             Operator only
 POST /api/merge-queue/entries/:id/operator-gate    {reference}                             Operator only
+POST /api/merge-queue/entries/:id/settle-landing   {outcome: "landed"|"failed", sha?,
+                                                    mergeAttempt?, reference, attestation}  Operator only
 ```
 
 They are part of the unversioned `/api` family and refuse with its `{error, code}` body. `queueId`
@@ -253,6 +255,63 @@ was made is still this entry's landing and is recorded; the tree comparison then
 the queue when the base branch does not hold the tested tree, and the answer says which base it was
 merged onto.
 
+### Settling a stuck landing (the Operator)
+
+A merged pull request that GitHub will not name a landing for (no merge commit, or one that is not a
+merge of the submitted head) leaves its entry `landing`, and nothing behind it advances. The Operator
+settles it, and nobody else can: a project launch is refused `403 OPERATOR_ONLY`, the owner
+included. There is no screen. On the signed-in dashboard, in the browser's console:
+
+```js
+tcFetch('/api/merge-queue/entries/mqe_0123456789abcdef/settle-landing', {  // the landing entry's id
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    outcome: 'landed',                 // or 'failed'
+    sha: '<the full 40-character commit on the base branch>',  // landed only
+    reference: 'what was checked or decided, in at most 300 characters',
+    attestation: 'how the commit, or the failure, relates to this pull request, in at most 1000 characters'
+  })
+}).then((r) => r.json()).then(console.log);
+```
+
+Only an entry in `landing` is settled; any other is refused `409` with nothing read. A settlement
+holds the queue's slot, as an advance and a withdrawal do, so it never runs beside either: one that
+finds the slot taken is refused `409 QUEUE_CALL_IN_FLIGHT`. Inside the slot the entry is read again,
+and the store checks it is still `landing` in the write itself, so of two settlements one is recorded.
+Every GitHub read a settlement needs is required: one that fails refuses it `503` and changes nothing.
+
+**`landed`.** The named commit is read (`503 SETTLE_COMMIT_UNREADABLE` when it cannot be), the base
+branch's tip is read now, and the commit must be reachable from that tip (`readAncestry`): the tip is
+the commit or a descendant of it. A commit that has diverged from the base or is ahead of it is
+refused `409 SETTLE_NOT_ON_BASE`. The tip never stands in for the commit. The entry is recorded
+`landed` at that commit, with what was read: the tip, the comparison's status, the commit's tree and
+parents, whether a parent is the submitted head, and the pull request's `merge_commit_sha` as read
+now. The tree is a separate check: the candidate's tree clears no halt; any other tree halts the
+queue `TREE_MISMATCH`.
+
+**`failed`** is a disposition the Operator makes on evidence; no advance ever records it. The pull
+request is read now and recorded. A pull request read back unmerged shows only what GitHub reported
+at that read, not that the merge request cannot still complete, so the queue is halted
+`LANDING_SETTLED_UNRECONCILED` unless the Operator sends `mergeAttempt: 'unsuccessful'`, disposing
+of the merge request. A pull request read back merged always halts it so. The entry's failure code
+is `LANDING_SETTLED_FAILED`. Nothing advances on that halt until the Operator, having reconciled the
+base branch, clears it ("Clearing a halt").
+
+A queue that is already halted keeps its halt, code and detail unchanged either way; a new reason is
+recorded as a further `queue-halted` event that names the halt it left in place.
+
+**The candidate's branches** are removed only after the settlement is recorded, and only the entry's
+own recorded candidate branch: one name directly under `tc-queue/`, and its stage branch, never a name
+made from the entry's id, never a branch another unfinished entry records. Anything else is reported
+in `cleanup` as `skipped` and left alone. A removal that fails (`cleanup.status: 'failed'`) leaves the
+settlement standing, and the next advance retries it under the same checks.
+
+The answer is the entry, the queue, `settlement` (its `case`, whether a halt stands and whether an
+earlier one was kept, what was read) and `cleanup`. The history gets the entry's `landed` or `failed`
+event with the Operator's proof tier, `settledBy: 'operator'`, the reference, the attestation and what
+was read. Settling merges, deploys and releases nothing.
+
 ### Four separate facts
 
 A landing is one of four things that are easy to say as one and are not:
@@ -334,7 +393,7 @@ Every refusal carries a `code` and says what to do next.
 |---|---|---|
 | `CALLER_NOT_VERIFIED` | 403 | not the Operator and not a verified launch |
 | `OPERATOR_UNVERIFIABLE` | 503 | an operator-shaped request this install cannot verify; sign in |
-| `OPERATOR_ONLY` | 403 | making a queue, recording the Operator gate or clearing a halt, by anyone else |
+| `OPERATOR_ONLY` | 403 | making a queue, recording the Operator gate, clearing a halt or settling a stuck landing, by anyone else |
 | `NOT_OWNER` | 403 | submitting, withdrawing or advancing, by anyone but the owner's launch |
 | `CONTROL_HELD`, `CONTROL_STOPPED` | 423 | the owner's lane is held or stopped; it cannot submit or advance |
 | `COORDINATOR_FENCED`, `COORDINATOR_EPOCH_MISMATCH` | 409 | the owner's context rotation does not admit this caller for a submit, a withdrawal or an advance (`rotationId`); nothing was changed, except that a call overtaken while deleting may have removed the candidate's branches, and an advance overtaken while a candidate was being made leaves that branch for the next advance to remove |
@@ -342,20 +401,22 @@ Every refusal carries a `code` and says what to do next.
 | `QUEUE_NOT_FOUND`, `ENTRY_NOT_FOUND`, `PROJECT_NOT_FOUND` | 404 | no such thing, or not readable by this caller |
 | `QUEUE_AMBIGUOUS` | 400 | the owner has more than one queue; send `queueId` |
 | `QUEUE_EXISTS`, `QUEUE_RETIRED` | 409 | a second queue for the same base; a queue that takes nothing new and advances nothing |
-| `QUEUE_HALTED`, `QUEUE_NOT_HALTED` | 409 | the queue halted itself on a landed tree that was not the tested one (`halt`), and nothing advances until the Operator clears it; clearing a queue that is not halted |
+| `QUEUE_HALTED`, `QUEUE_NOT_HALTED` | 409 | the queue is halted (`halt`): on a landed tree that was not the tested one (`TREE_MISMATCH`), or on a settled failure whose merge may have happened (`LANDING_SETTLED_UNRECONCILED`), and nothing advances until the Operator clears it; clearing a queue that is not halted |
 | `DUPLICATE_PR` | 409 | the pull request already has an unfinished entry (`entryId`) |
 | `PR_NOT_OPEN`, `PR_WRONG_BASE`, `PR_HEAD_MOVED`, `PR_DRAFT` | 409 | what GitHub says of the pull request |
 | `HEAD_CHECK_NOT_GREEN` | 409 | the head's `test` check is missing, running or not `success` |
 | `RELEASE_TRIGGER_CHANGED` | 409 | the pull request changes a release-trigger path (`paths`) |
-| `GITHUB_UNAVAILABLE` | 503 | a read from GitHub failed (`reason`); nothing was queued, and an advance moved nothing. From an advance it also means a candidate could not be made: what it may have left was removed (`branches`) and the entry is `assembling` |
+| `GITHUB_UNAVAILABLE` | 503 | a read from GitHub failed (`reason`); nothing was queued, an advance moved nothing, and a settlement changed nothing. From an advance it also means a candidate could not be made: what it may have left was removed (`branches`) and the entry is `assembling` |
 | `BASE_NOT_GREEN` | 409 | the base branch's own `test` check concluded something other than `success` (`check`); nothing is assembled or landed, nothing was changed |
 | `GATES_NOT_MET` | 409 | a green entry has a gate that is not recorded (`problems` names each); nothing was changed |
 | `AUTHORIZER_MESSAGE_UNREAD` | 409 | the owner's inbox holds an unhandled message (`messages`, each by `id` and `from`, never its text); nothing was changed. Handle it, then advance again |
 | `AUTHORIZER_INBOX_UNREADABLE` | 409 | the owner's inbox could not be read (`reason`): the session's listener is not listening, or the launch has ended or been replaced; nothing was changed |
 | `CANDIDATE_REF_EXISTS` | 409 | a candidate branch was there again after the queue removed it (`ref`, `existing`); nothing was changed, and it needs a person |
 | `CANDIDATE_NOT_DISCARDED` | 503 | a withdrawal or an advance could not remove both of a candidate's branches (`candidate`, `stage`); the entry stays as it was |
-| `QUEUE_CALL_IN_FLIGHT` | 409 | another withdrawal or advance of this queue is running; nothing was changed. Read the queue, then repeat |
-| `ENTRY_FINISHED`, `TRANSITION_NOT_ALLOWED` | 409 | the entry is done, or its merge has been asked for |
+| `QUEUE_CALL_IN_FLIGHT` | 409 | another withdrawal, advance or settlement of this queue is running; nothing was changed. Read the queue, then repeat |
+| `SETTLE_NOT_ON_BASE` | 409 | the commit a settlement names is not reachable from the base branch's tip (`compareStatus`); nothing was changed |
+| `SETTLE_COMMIT_UNREADABLE` | 503 | the commit a settlement names could not be read (`reason`); nothing was changed |
+| `ENTRY_FINISHED`, `TRANSITION_NOT_ALLOWED` | 409 | the entry is done, or its merge has been asked for; a settlement's entry is not `landing` |
 | `OPERATOR_GATE_NOT_REQUIRED`, `OPERATOR_GATE_ALREADY_RECORDED` | 409 | the Operator gate has nothing to record |
 | `ENTRY_ID_UNUSABLE` | 500 | a defect: the queue made an id no branch can be named after. `withdrawn` says whether it took the entry back out; if not, the entry is still queued and these routes cannot reach it |
 | `MERGE_QUEUE_UNAVAILABLE` | 503 | the queue could not answer; read it before repeating |
@@ -371,10 +432,12 @@ so a submit or an advance is refused).
 - **A held owner can still withdraw.** The durable HOLD ([control-state.md](control-state.md))
   refuses a submit and an advance; a withdrawal takes work out of the queue and is not held. A hold
   stored after a merge was asked for does not stop that merge's outcome being recorded.
-- **A landing GitHub will not name stays `landing`.** If a merged pull request is read back with no
-  merge commit, or with one that is not a merge of the submitted head, the entry stays `landing`,
-  every advance says so, and nothing behind it advances. No route moves such an entry; it needs a
-  person and, today, a change to the records by hand.
+- **A landing GitHub will not name stays `landing` until the Operator settles it.** No advance moves
+  such an entry; the Operator does ("Settling a stuck landing"). A settlement proves where a commit
+  is, never that a merge request can no longer complete, which is why a settled failure halts the
+  queue unless the Operator disposes of the merge request.
+- **Settling from the browser console has not been run in a browser.** Tests settle as the Operator
+  over HTTP against a faked GitHub; the console command itself is first run by the Operator.
 - **The inbox check guards the queue's merge only.** A pull request merged by hand (`gh pr merge`, the
   GitHub page) passes no check of this queue, and nothing here can guard a shell command.
 - **The inbox check is a snapshot of the local inbox.** It sees what has reached this server's
@@ -407,6 +470,7 @@ the queue talks to GitHub, so this table is the whole of what the queue can chan
 | `readRefTip` | `GET /repos/{repo}/git/ref/heads/{branch}` | nothing |
 | `readCommit` | `GET /repos/{repo}/git/commits/{sha}` | nothing |
 | `readCompareFiles` | `GET /repos/{repo}/compare/{base}...{head}` | nothing |
+| `readAncestry` | `GET /repos/{repo}/compare/{sha}...{tip}`, the same call | nothing |
 | `createCandidate` | `POST /repos/{repo}/git/refs`, `POST /repos/{repo}/merges`, `GET /repos/{repo}/git/commits/{sha}`, `POST /repos/{repo}/git/refs`, `DELETE /repos/{repo}/git/refs/heads/{branch}` | creates one branch under `tc-queue-stage/`, puts one merge commit on it, creates one branch under `tc-queue/` at that commit, and deletes the first branch |
 | `discardCandidate` | `DELETE /repos/{repo}/git/refs/heads/{branch}`, twice | deletes one branch under `tc-queue/` and the branch of the same name under `tc-queue-stage/` |
 | `deleteRef` | `DELETE /repos/{repo}/git/refs/heads/{branch}` | deletes one branch under `tc-queue/` or `tc-queue-stage/` |
