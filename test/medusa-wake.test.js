@@ -675,6 +675,72 @@ describe('medusa-wake — _assessPane: a row that starts with the prompt glyph b
   });
 });
 
+describe('medusa-wake — a measured Antigravity pane holding a stranded nudge (#2358)', () => {
+  // MEASURED, not constructed: a read-only `tmux capture-pane -p -e -S -40` of
+  // a live Antigravity session at rest, agy 1.3.6, pane 179x44 (text width 177),
+  // cursor x 56 / y 39. Every row above the composer's upper border was replaced
+  // with `<redacted row>` before it was written. The composer held the monitor's
+  // own switchboard nudge, which the engine wrapped at WORD boundaries over four
+  // rows indented by two. Each `>` in the nudge sits inside a word starting `<`
+  // or `"`, so in this one configuration no continuation row starts with the
+  // glyph: the hard-cut case pinned above is not what this capture shows. Whether
+  // a pane narrower than such a word hard-breaks it at a `>` is unmeasured.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const crypto = require('node:crypto');
+  const FIXTURE = path.join(__dirname, 'fixtures', 'antigravity-composer-m1-stranded-nudge.txt');
+  const FIXTURE_SHA256 = '4fb32949a522bc217891616e5d7c3fcb5fea1e99f73bbaa3ea33143eb77cd0ec';
+  const PANE_HEIGHT = 44;
+  const CURSOR = { x: 56, y: 39 };
+  const raw = fs.readFileSync(FIXTURE, 'utf8').replace(/\n$/, '').split('\n');
+  // The monitor reads the pane without styling and the cursor's own row with it
+  // (`tmux.capturePane` and `tmux.cursorInfo`), so the test feeds it the same way.
+  const lines = raw.map((row) => row.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, ''));
+  const cursorRow = raw.length - PANE_HEIGHT + CURSOR.y;
+  const cursor = { x: CURSOR.x, line: raw[cursorRow] };
+  const upperBorder = lines.findLastIndex((row, i) => i < cursorRow && /^─+$/.test(row));
+
+  it('is the redacted capture, unchanged', () => {
+    assert.equal(crypto.createHash('sha256').update(fs.readFileSync(FIXTURE)).digest('hex'), FIXTURE_SHA256);
+    assert.ok(lines.slice(0, upperBorder).every((row) => row === '<redacted row>'), 'nothing above the composer survives');
+  });
+
+  it('(a) the composer reading recognises all four wrapped rows and the exact own nudge', () => {
+    // The expected text comes from the fixture's rows, not from the reader:
+    // the glyph and its separator off the first row, the two-column indent off
+    // the rest, one row per line.
+    const composerRows = lines.slice(upperBorder + 1, cursorRow + 1);
+    assert.equal(composerRows.length, 4);
+    assert.ok(composerRows.slice(1).every((row) => /^ {2}\S/.test(row) && !row.trimStart().startsWith('>')), 'indented continuations, none glyph-led');
+    const expected = [composerRows[0].slice(2), ...composerRows.slice(1).map((row) => row.slice(2))].join('\n');
+
+    const located = wake.locateComposer(lines, cursor, ANTIGRAVITY);
+    assert.equal(located.located, true);
+    assert.equal(located.rows[0], lines[upperBorder + 1], 'its first row is the glyph row under the upper border');
+    assert.equal(located.cursorIndex, 3);
+
+    const draft = wake.readComposerDraft(lines, cursor, ANTIGRAVITY);
+    assert.deepEqual({ state: draft.state, rows: draft.rows, complete: draft.complete }, { state: 'draft', rows: 4, complete: true });
+    assert.equal(draft.text, expected);
+    assert.equal(wake.isOwnNudge(draft.text), true);
+  });
+
+  it('(b) CHARACTERIZATION, not the desired behaviour: the production pane gate refuses it as not-at-rest', () => {
+    // What the live Antigravity path answers today for this input. That path has
+    // no engine channel, so no `engineIdle` is passed, and the profile's at-rest
+    // marker is not on any row of this capture. This pins current conservative
+    // behaviour and marks a lead to investigate. It is not evidence the engine
+    // was working. It does not say why the marker is absent (version, draft,
+    // task or something else), nor what any earlier live tick saw.
+    assert.ok(!lines.some((row) => row.includes(ANTIGRAVITY.idleMarker)), 'the idle marker is absent');
+    assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, cursor), { idle: false, reason: 'not-at-rest' });
+  });
+
+  it('diagnostic only: excusing the marker is the whole difference, which no live Antigravity path does', () => {
+    assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, cursor, true), { idle: true, reason: 'at-prompt' });
+  });
+});
+
 describe('medusa-wake — _assessPane: an engine whose header says it is still starting (#2187)', () => {
   const CODEX = wake.ENGINE_WAKE_PROFILES.codex;
   const LOADING = ['╭──────────────────────────────────╮', '│ >_ OpenAI Codex (v0.156.1)       │', '│ model:     loading   /model to change │', '╰──────────────────────────────────╯'];

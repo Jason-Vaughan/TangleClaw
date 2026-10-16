@@ -1,0 +1,84 @@
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+<redacted row>
+[90m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[94m>[39m [TangleClaw Switchboard] You have 1 unread Medusa message(s): tc message read. Reply where an answer is needed, BEFORE marking it handled: tc message send --in-reply-to
+  <message-id> <sender-workspace-id> "<reply>"; then tc message ack <message-id>. The initiator closes the exchange, so no answer leaves them blocked; tc message owed lists what
+  you owe. Never use /clear as an acknowledgement. Without tc: API at http://localhost:3102/api/sessions/TangleClaw-ProjectManager/medusa: GET /messages; POST /send (inReplyTo)
+  and /read need launch headers. (wake ref 8acd88e1ee27)
+[90m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m  [33m●[39m [23:00:32] [94mtc workload set waiting-external --clearance do-not-clear --wait peer --wait-detail "Waiting on W2-A2b (#2358) M1 capture/build & Wave 1/2 records PR" --...[39m [33mrunning
+[90m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m                                                                                                                                       [2mGemini 4 Argon · medium · 1 task(s) · /tasks
