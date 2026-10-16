@@ -1,9 +1,10 @@
 # What a green CI run does and does not say
 
-*Being built (#2321). Today this page covers what CI leaves out, how the list of it is kept, the
-command that runs that list on your own machine, and the command that writes down what CI and that
-run together covered for one commit. No rule lets a CI run stand in for the full local suite: a
-lane still runs the suite as its rules say. The rule at the end of this page is a proposal.*
+*Built for #2321. This page covers what CI leaves out, how the list of it is kept, the command that
+runs that list on your own machine, and the command that writes down what CI and that run together
+covered for one commit. No rule lets a CI run stand in for the full local suite: a lane still runs
+the suite as its rules say. Putting one in force is #2371, and the rule at the end of this page is
+its proposal.*
 
 ## What CI runs
 
@@ -196,6 +197,14 @@ itself, and writes one file saying what each covered. If any fact does not hold 
 rule names it, and the command never touches `.prawduct/.test-evidence.json`. Today it is a record
 a person can read.
 
+That is true of every Prawduct gate, not only `test-status`. In Prawduct 3.6.1 each reader of suite
+evidence (`test-status`, the PR reviewer's payload, release readiness, the Critic's `test-status`
+probe, and the base-advance transfer behind the Stop gate and `check-cumulative-critic`) reads
+only `.prawduct/.test-evidence.json` and the evidence store's `test-run` facts, and only
+`prawduct-hook test-evidence record` writes those. None of them asks where a report came from:
+`--from-junit` stamps the local working tree as the tree the run covered. So passing CI's report
+to it would record a run the gate never saw against a tree it never checked. Nobody does that.
+
 It runs the complement, so it is a wide run: in a lane, do not start it while a full suite is
 running on the same host.
 
@@ -282,15 +291,42 @@ reports ready against (`prawduct-hook test-status`) is Prawduct's and does not r
 file. Until both change, a lane runs the full local suite as its rules say today, and nobody
 records CI's result as suite evidence by hand.
 
-The text proposed for the lane's Builder rule:
+### What has to happen, in this order
 
-> **CI as the suite.** For a chunk, the required CI check stands as the full suite when all of
-> these hold, and `node scripts/ci-evidence.js` is what establishes them: the `test` check
-> concluded successfully on the exact head commit; GitHub Actions made it, as a job of that commit;
-> the command itself read it; its run was a push of that commit or a pull request of it into the
-> base branch; the base branch's tip is inside the head; the complement was green on
-> the same tree in the same run; and the chunk's own narrow tests passed. The evidence is the file
-> the command writes. Nobody writes or edits one by hand.
+1. **Prawduct accepts the evidence itself.** Its `test-status` accepts CI evidence for the exact
+   commit, after checking it, through a change of its own. The draft report in
+   `docs/prawduct-feedback.md` asks for that and says what the gate would have to check. A rule
+   cannot come first: every Prawduct gate reads only the local suite's record (above), so a rule
+   that accepted CI without it would leave `test-status` red on every chunk, and the only ways
+   round that are a waiver per chunk or a hand-recorded result. If Prawduct declines, the reason
+   is recorded and nothing below happens; a refusal waives no gate.
+2. **The rule text is accepted, then activated.** The Architect accepts the exact text; the
+   Operator activates it; each lane reads it back. The rule names this page by the digest of the
+   revision accepted with it, so a later edit here changes nothing the rule allows until the rule
+   is accepted again.
+3. **The complement is verified** on the host the lanes use, before any chunk relies on it.
+4. **One bounded pilot.** Exactly one chunk, named in the lane queue when its plan is approved
+   (before any result exists), stands on CI as the suite. The batch charter's pre-suite order
+   holds the local suite until all of steps 1 to 3 are done and one chunk is measured, so the
+   pilot needs that order amended by name to allow this one chunk; it is not a way round it.
+5. **Broader use is decided separately**, from the pilot's measurement: its time and its safety
+   failures (a defect the pilot let through, a complement entry that did not run, an evidence
+   refusal) alike. Until then, every other chunk runs the full local suite.
+
+### The rule text proposed
+
+> **CI as the suite, for one pilot chunk.** The chunk named in the lane queue as the CI-as-suite
+> pilot, at its plan approval, may stand on the required CI check instead of the full local suite
+> when all of these hold, and `node scripts/ci-evidence.js` is what establishes them: Prawduct's
+> own `test-status` accepts the evidence; the complement has been verified on this host; the
+> `test` check concluded successfully on the exact head commit; GitHub Actions made it, as a job of
+> that commit; the command itself read it; its run was a push of that commit or a pull request of it
+> into the base branch; the base branch's tip is inside the head; the complement was green on the
+> same tree in the same run; the chunk's own narrow tests passed; and the reviewer has read the
+> workflow at the exact commit and confirmed that its `test` job runs the full suite and the skip
+> audit, because a successful job of that name proves neither. The evidence is the file the
+> command writes. Nobody writes or edits one by hand, and nobody records CI's result as suite
+> evidence by hand.
 >
 > **The full local suite is still required** for: any edit to `test/skip-ledger.json` (add, remove
 > or change); any change to the test runner, the audit or evidence machinery or its configuration;
@@ -300,7 +336,34 @@ The text proposed for the lane's Builder rule:
 >
 > **A green badge never claims the ledger's tests.** They are covered only by the complement, on a
 > machine that has what they need.
+>
+> **The conditions are this page's at the revision accepted with the rule**, named by its digest.
 
-What it would take to put it in force: Prawduct accepting the file as test evidence (the draft
-report in `docs/prawduct-feedback.md` says what it would have to check), then the Operator's
-approval of the rule text.
+Every other gate stays as it is: the Critic, `check-cumulative-critic`, CI itself, the exact-head
+and current-base checks, the browser check, and a ready report made void when `main` moves.
+
+### Where it would change the lane rules
+
+One clause of the Builder overlay and two of the Integrator overlay; nothing else in either, and
+nothing in the common core.
+
+- **Builder overlay, clause 4 (Suite & Ready):** the named pilot, when every condition and no
+  exception holds, takes no suite slot; the exceptions are written into the clause itself, and
+  the clause names this page by digest; the ready report names the evidence file; when `main`
+  moves the pilot reruns CI and the evidence instead of the suite.
+- **Integrator overlay, clause 1:** the pilot takes no slot.
+- **Integrator overlay, clause 2(d):** the pilot also needs its evidence file for the exact head,
+  naming the fetched `origin/main` tip as its base, and the Integrator reads the workflow at the
+  exact head to confirm the `test` job runs the full suite and the skip audit.
+
+Each replacement text is made by replacing only those sentences in the rule as it stands, so every
+other clause is unchanged; the exact texts are accepted and proposed against the rules as they are
+at that time, not copied here, where they would go stale.
+
+### A local suite does not cover everything CI does
+
+The ledger lists what CI skips. The other way round is not listed anywhere, and is real: a test
+can skip on a lane host and run on the runner. On a host whose `/tmp` is world-writable without
+the sticky bit, the real-filesystem cases in `test/engine-temp-root.test.js` skip, while the
+runner's `/tmp` is sticky and runs them. So the skip audit, given a lane host's report instead of
+CI's, can fail on skips the ledger never needed to name: its contract is CI's report.

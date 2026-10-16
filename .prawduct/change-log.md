@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-15 — #2371 (refs): the CI-as-suite governance packet, for the Architect's acceptance; nothing put in force
+
+<!-- prawduct: type=docs | scope=w1b2-ci-as-suite-activation -->
+
+v5.34.0 Wave 1, chunk W1-B2, its one chunk (doc-only, as the Architect's A61 scoped it). Branch `docs/w1b2-ci-as-suite-packet`. References #2371 without closing it: the packet is not activation.
+
+**Why.** #2321 built the evidence tooling; what #2371 still needs is not code here but three decisions outside this repository: Prawduct accepting CI evidence, the Operator activating a lane rule, and one measured chunk. A61 asked for the packet those decisions are made on, with the Prawduct claim traced rather than searched for. The trace of the installed 3.6.1 shows every gate that reads suite evidence reads only `.prawduct/.test-evidence.json` and the store's `test-run` facts, written only by `test-evidence record`, whose `--from-junit` stamps the local tree whatever the report's origin. So a rule cannot come first.
+
+**What changed.** The packet itself is a lane plan, `.tangleclaw/plans/w1b2-ci-as-suite-packet.md`, untracked and served at its plan link: the trace (readers, the one writer, line references, the executable's digest); the upstream report's bytes by digest; the replacement Builder (#262/#264, clause 4) and Integrator (#266, clauses 1 and 2(d)) texts, each made by replacing only the named sentences, with full texts and digests; the measurement protocol with the measured Wave 1 suite times; the live tooling check, two parts done and two owed. `docs/prawduct-feedback.md`: the upstream draft rewritten as one fenced block (the only bytes that would be sent; scrubbed of paths, hosts, accounts, numbers of this install), with the 3.6.1 trace, `ci_evidence_command:` as the preferred ask, and baseline, measured and target figures kept apart (measured: runs started 15:00 to 16:50 PDT on 2026-10-15, four completed and one killed, with each run's receipts in the notes outside the block); still NOT SENT. `docs/lane-ci-evidence.md`: the opening and the "changes nothing a gate accepts" paragraph state the trace; the proposed section gives the activation order (Prawduct, then the rule bound to this page's accepted revision by digest, then the complement verified before first use, then exactly one pilot chunk named at plan approval, which needs the charter's pre-suite order amended by name, then broader use decided separately from the pilot's time and safety results), makes Prawduct's acceptance the rule's first condition, requires the reviewer to read the workflow at the exact commit, bans recording CI's result by hand, keeps the nine exceptions, names the four rule sentences it would change, and records that a lane host can skip tests CI runs (`test/engine-temp-root.test.js` on a host whose `/tmp` is not sticky); still NOT IN FORCE.
+
+**Tests.** No code changed. `test/ci-evidence.test.js`'s four document assertions (the NOT IN FORCE heading, the opening, the nine exceptions, NOT SENT) pass on the edited files.
+
 ## 2026-10-15 — #2372: the merge queue will not land while its owner has an unhandled message
 
 <!-- prawduct: type=feature | scope=w1-a2-merge-queue-2372-2364 -->
