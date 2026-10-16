@@ -1108,6 +1108,143 @@ describe('wrap-drawer helpers — remediation surfacing (#223)', () => {
   });
 });
 
+// #2366 — a wrap PR left for the coordinator to merge needs no fixing. The
+// commit step repeats its sentence as the step's own `remediation` (#2320), so
+// the row has to say who merges and keep it out of "How to fix this"; every
+// other close-loop remediation, which IS something to do, is shown.
+describe('wrap-drawer helpers — who merges a wrap PR (#2366)', () => {
+  const H = loadHelpers();
+  const mergeAuthority = require('../lib/merge-authority');
+
+  /**
+   * A commit step result shaped as `lib/wrap-steps/commit.js` returns it when
+   * the close-loop left the PR unarmed for `answer`.
+   * @param {object} answer - A `mergeAuthority.forProject` answer
+   * @returns {object}
+   */
+  function unarmedFor(answer) {
+    const said = mergeAuthority.describe(answer, { name: 'TC-Lane-B' });
+    const autoPr = {
+      attempted: true, pushed: true, prUrl: 'https://github.com/o/r/pull/9',
+      autoMergeArmed: false, autoMergeWithheld: null,
+      mergeAuthority: { ...answer, said },
+      skippedReason: null, error: null,
+      remediation: `The PR is open and auto-merge was deliberately not armed. ${said}`
+    };
+    return {
+      stepId: 'commit', kind: 'commit', status: 'done',
+      output: { commitSha: 'abc123def4567', autoPr, remediation: autoPr.remediation },
+      blockers: []
+    };
+  }
+
+  /**
+   * A commit step result whose close-loop failed with `autoPr` fields.
+   * @param {object} autoPr - Close-loop fields over a not-armed default
+   * @returns {object}
+   */
+  function closeLoop(autoPr) {
+    return {
+      stepId: 'commit', kind: 'commit', status: 'done',
+      output: {
+        commitSha: 'abc123def4567',
+        autoPr: { autoMergeArmed: false, prUrl: null, error: null, skippedReason: null, mergeAuthority: null, ...autoPr }
+      },
+      blockers: []
+    };
+  }
+
+  it('says the coordinator merges, and shows nothing under "How to fix this"', () => {
+    const row = H.buildStepRow(unarmedFor({ authority: 'integrator', integrator: 'TC-Lane-INT', source: 'coordinator' }), {});
+    assert.equal(row.detail, 'abc123def456 · wrap PR opened for TC-Lane-INT to merge');
+    assert.equal(row.remediation, null);
+  });
+
+  it('says the same on the coordinator\'s own wrap', () => {
+    const row = H.buildStepRow(unarmedFor({ authority: 'integrator', integrator: 'TC-Lane-B', source: 'coordinator-and-queue' }), {});
+    assert.equal(row.detail, 'abc123def456 · wrap PR opened for TC-Lane-B to merge');
+    assert.equal(row.remediation, null);
+  });
+
+  it('says who merges could not be established, and why', () => {
+    const row = H.buildStepRow(unarmedFor({ authority: 'unknown', reason: 'the project settings could not be read' }), {});
+    assert.equal(row.detail,
+      'abc123def456 · wrap PR opened; who merges could not be established: the project settings could not be read');
+    assert.equal(row.remediation, null);
+  });
+
+  it('names no coordinator it was not given, and invents no reason', () => {
+    const detail = (ma) => H.buildStepRow(closeLoop({ prUrl: 'https://x/pull/1', mergeAuthority: ma }), {}).detail;
+    assert.equal(detail({ authority: 'integrator' }), 'abc123def456 · wrap PR opened for its coordinator to merge');
+    assert.equal(detail({ authority: 'unknown' }),
+      'abc123def456 · wrap PR opened; who merges could not be established: no reason was given');
+  });
+
+  it('keeps the release suffix after the who-merges phrase', () => {
+    const r = unarmedFor({ authority: 'integrator', integrator: 'TC-Lane-INT', source: 'coordinator' });
+    r.output.releasePrepare = { status: 'skipped', reason: 'no command configured' };
+    assert.equal(H.buildStepRow(r, {}).detail,
+      'abc123def456 · wrap PR opened for TC-Lane-INT to merge · releasePrepareCommand not run: no command configured');
+  });
+
+  it('shows a failed push\'s close-loop remediation under "How to fix this"', () => {
+    const fix = 'The wrap commit is safe on local branch wrap/x. Push it and open a PR manually: git push -u origin wrap/x && gh pr create --base main --head wrap/x';
+    const row = H.buildStepRow(closeLoop({ error: 'git push failed', remediation: fix }), {});
+    assert.equal(row.detail, 'abc123def456 · wrap PR failed — branch dangling');
+    assert.equal(row.remediation, fix);
+  });
+
+  it('shows a hold refusal\'s and the methodology withhold\'s remediation too', () => {
+    const held = 'The wrap branch is pushed; no PR was opened, because this lane is held. Open it only after the hold is released: gh pr create --base main --head wrap/x';
+    assert.equal(H.buildStepRow(closeLoop({ pushed: true, skippedReason: 'CONTROL_HOLD: held', remediation: held }), {}).remediation, held);
+    const withheld = 'The PR is open and auto-merge was deliberately not armed: no methodology. Merge it from a session that can run the methodology.';
+    const row = H.buildStepRow(closeLoop({ prUrl: 'https://x/pull/1', autoMergeWithheld: 'no methodology.', remediation: withheld }), {});
+    assert.equal(row.detail, 'abc123def456 · wrap PR opened, auto-merge withheld: this engine cannot run the methodology');
+    assert.equal(row.remediation, withheld);
+  });
+
+  it('prefers the step\'s own remediation, and shows none when the close-loop gave none', () => {
+    const r = closeLoop({ error: 'git push failed', remediation: '  from the loop  ' });
+    assert.equal(H.buildStepRow(r, {}).remediation, 'from the loop', 'trimmed');
+    r.output.remediation = 'from the step';
+    assert.equal(H.buildStepRow(r, {}).remediation, 'from the step');
+    assert.equal(H.buildStepRow(closeLoop({ error: 'git push failed', remediation: '   ' }), {}).remediation, null);
+    assert.equal(H.buildStepRow(closeLoop({ prUrl: 'https://x/pull/1' }), {}).remediation, null);
+  });
+
+  it('reads `autoPr.remediation` only on the commit row', () => {
+    const row = H.buildStepRow({
+      stepId: 't', kind: 'test', status: 'blocked',
+      output: { autoPr: { remediation: 'not this step\'s' } }, blockers: ['red']
+    }, {});
+    assert.equal(row.remediation, null);
+  });
+
+  it('leaves the two older not-armed lines as they were', () => {
+    const detail = (ap) => H.buildStepRow(closeLoop(ap), {}).detail;
+    assert.equal(detail({ prUrl: 'https://x/pull/1', error: 'merge arm failed' }),
+      'abc123def456 · wrap PR opened (auto-merge NOT armed)');
+    assert.equal(detail({ prUrl: 'https://x/pull/1', autoMergeWithheld: 'x' }),
+      'abc123def456 · wrap PR opened, auto-merge withheld: this engine cannot run the methodology');
+  });
+
+  it('the skipped pr-merge row says why nothing was enqueued, with nothing to fix', () => {
+    const reason = 'merge not enqueued for PR #9: This project\'s merges belong to TC-Lane-INT, the coordinator its settings name: TC-Lane-INT merges this pull request, and nothing arms auto-merge on it. The wrap commit is on the local branch and was not pushed.';
+    const row = H.buildStepRow({
+      stepId: 'pr-merge', kind: 'pr-merge', status: 'skipped',
+      output: { reason, mergeAuthority: { 9: { authority: 'integrator', integrator: 'TC-Lane-INT' } }, notEnqueued: ['9'], pushed: false },
+      blockers: []
+    }, {});
+    assert.equal(row.detail, reason);
+    assert.equal(row.remediation, null);
+  });
+
+  it('the pr-merge and priming-roll tooltips name the coordinated project', () => {
+    assert.match(H.KIND_DESCRIPTIONS['pr-merge'], /merges belong to a coordinator, nothing is enqueued/);
+    assert.match(H.KIND_DESCRIPTIONS['priming-roll'], /works under a coordinator/);
+  });
+});
+
 // #638 — a blocked wrap PR must not render as success. The commit step arms
 // auto-merge and returns; the release lands only when the PR merges, so the
 // drawer treats an armed-but-unmerged PR as provisional and resolves the true

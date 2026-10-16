@@ -39,14 +39,14 @@
     'preflight': 'Asks prawduct for its session-end verdict before the wrap writes to any file: in a prawduct-governed project it runs the Stop hook and shows the block text if a gate (Critic review, reflection) is unmet. Advisory by default — the wrap continues; a project can make it blocking in its wrap step settings. Skips in projects without .prawduct/.',
     'session-files': 'Finds uncommitted files this session did not change (already uncommitted when it launched), and files whose contents match a credential pattern — including files this session DID change — and asks whether to include each in the wrap commit or leave it uncommitted. The wrap commits only files changed since the session launched, files the wrap writes, and files you include. A file that matches a secret rule is held out of the commit until you choose, and only the rule name is ever shown, never the matched text. Blocks until every listed file has a choice.',
     'pr-check': 'Checks for open GitHub PRs on this branch and asks you to resolve each one (merge, defer, or ignore). Blocks the wrap until you decide; skips silently when GitHub can\u2019t be reached.',
-    'pr-merge': 'Applies the PR decisions you made earlier \u2014 each PR you marked \u201cmerge\u201d gets GitHub auto-merge enabled, so it lands once its checks pass. Runs after the wrap commit. Never blocks.',
+    'pr-merge': 'Applies the PR decisions you made earlier \u2014 each PR you marked \u201cmerge\u201d gets GitHub auto-merge enabled, so it lands once its checks pass. In a project whose merges belong to a coordinator, nothing is enqueued and the coordinator merges. Runs after the wrap commit. Never blocks.',
     'lint': 'Runs the project’s linter over the working tree.',
     'test': 'Runs the full test suite. A failure here can block the wrap.',
     'version-bump': 'Bumps version.json from the CHANGELOG’s [Unreleased] entries (Added/Changed → minor, Fixed-only → patch, BREAKING → major) and promotes them to a dated release. Whether it cuts follows the project’s release mode and readiness, or your Release choice. Skips when there is nothing to promote or the version is not semver, and stops to ask you when the release decision is yours.',
     'ai-content': 'The AI captures a piece of wrap content — a changelog line, session learnings, or session memory — into the wrap. Skips when there is nothing to capture.',
     'learnings-db-write': 'Persists the session’s captured learnings to the project’s learnings store.',
     'rule-proposal': 'Proposes rules from recurring learnings. Proposals govern nothing until you approve them.',
-    'priming-roll': 'Rolls the build-plan chunk pointer forward so the next session resumes at the current chunk. Skips when there is no chunked plan to roll; if several in-progress plans exist it asks you to pick one.',
+    'priming-roll': 'Rolls the build-plan chunk pointer forward so the next session resumes at the current chunk. Skips when there is no chunked plan to roll, or when the project works under a coordinator that merges its pull requests; if several in-progress plans exist it asks you to pick one.',
     'features-toc': 'Refreshes FEATURES.md — stubs entries for files touched this session and prunes entries for deleted files.',
     'project-map': 'Refreshes the continuity Map (the feature/component index) from the files touched this session.',
     'index-describe': 'Fills in one-line descriptions for empty index stubs so the index stays readable.',
@@ -113,6 +113,53 @@
   };
 
   /**
+   * The commit row's phrase for a wrap PR left unarmed because of who merges
+   * (#2366), from the close-loop's `autoPr.mergeAuthority`. Null when there is
+   * none, so the row falls through to its other outcomes.
+   *
+   * @param {{authority?: string, integrator?: string, reason?: string}|null|undefined} mergeAuthority
+   * @returns {string|null}
+   */
+  function mergeAuthorityPhrase(mergeAuthority) {
+    if (!mergeAuthority || typeof mergeAuthority !== 'object') return null;
+    const integrator = typeof mergeAuthority.integrator === 'string' ? mergeAuthority.integrator.trim() : '';
+    if (mergeAuthority.authority === 'self') return null;
+    if (mergeAuthority.authority === 'integrator') {
+      return `wrap PR opened for ${integrator || 'its coordinator'} to merge`;
+    }
+    const reason = typeof mergeAuthority.reason === 'string' && mergeAuthority.reason.trim()
+      ? mergeAuthority.reason.trim()
+      : 'no reason was given';
+    return `wrap PR opened; who merges could not be established: ${reason}`;
+  }
+
+  /**
+   * What goes under the row's "How to fix this", or null for nothing.
+   *
+   * A step's own `output.remediation` (#223) is the default. The commit step
+   * has two more cases, because its auto-PR close-loop writes its fix under
+   * `output.autoPr.remediation`, which the row does not otherwise read:
+   * - A PR left unarmed because another project merges it, or because who
+   *   merges could not be read, needs no fixing; the row's detail line says
+   *   who merges, so nothing is shown here even though the step repeats the
+   *   sentence as its own remediation.
+   * - Every other close-loop remediation (a hold refusal, a failed push or PR
+   *   create, the methodology withhold) is something to do, and is shown when
+   *   the step gave none of its own.
+   *
+   * @param {string} kind - The step kind
+   * @param {object|null} output - The step's output object
+   * @returns {string|null}
+   */
+  function stepRemediation(kind, output) {
+    if (!output) return null;
+    const text = (value) => (typeof value === 'string' && value.trim() ? value.trim() : null);
+    const ap = kind === 'commit' && output.autoPr && typeof output.autoPr === 'object' ? output.autoPr : null;
+    if (ap && ap.mergeAuthority) return null;
+    return text(output.remediation) || (ap ? text(ap.remediation) : null);
+  }
+
+  /**
    * Translate one `pipelineResult.results[i]` entry plus optional
    * pipeline-wide context into a view-model the renderer consumes.
    *
@@ -153,9 +200,7 @@
     // string for a blocked step (#223). Absent/blank falls through to the
     // existing raw-blocker rendering (back-compat with handlers that don't
     // emit it yet).
-    const remediation = output && typeof output.remediation === 'string' && output.remediation.trim()
-      ? output.remediation.trim()
-      : null;
+    const remediation = stepRemediation(stepResult.kind, output);
     const reuse = reuseMeta(stepResult, status, output);
     return {
       id: stepResult.stepId,
@@ -408,6 +453,10 @@
         const ap = output.autoPr;
         if (!ap) return sha + release;
         if (ap.autoMergeArmed) return `${sha} · wrap PR auto-merge armed` + release;
+        // #2366 — left unarmed because the merge is not this project's to make:
+        // said as who merges, so the row does not read as a failure to arm.
+        const merger = mergeAuthorityPhrase(ap.mergeAuthority);
+        if (merger) return `${sha} · ${merger}` + release;
         // A deliberate withhold, not a failure to arm: said as the reason.
         if (ap.prUrl && ap.autoMergeWithheld) return `${sha} · wrap PR opened, auto-merge withheld: this engine cannot run the methodology` + release;
         if (ap.prUrl) return `${sha} · wrap PR opened (auto-merge NOT armed)` + release;
