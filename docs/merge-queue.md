@@ -438,6 +438,12 @@ so a submit or an advance is refused).
   such an entry; the Operator does ("Settling a stuck landing"). A settlement proves where a commit
   is, never that a merge request can no longer complete, which is why a settled failure halts the
   queue unless the Operator disposes of the merge request.
+- **A skipped branch is reported, never recorded or promised a retry.** When a settlement's cleanup,
+  or an advance's retry of it, finds a recorded branch the queue may not delete, the skip appears in
+  that call's answer (`cleanup`, or `cleanupSkipped`) and in the server's log, and nowhere in the
+  queue's history. An advance reports it only while that entry is the latest one owing cleanup; once
+  a later entry lands, nothing reports it again. The branch is left as it is, and nothing says it was
+  cleaned: a person removes it if it should go.
 - **Settling from the browser console has not been run in a browser.** Tests settle as the Operator
   over HTTP against a faked GitHub; the console command itself is first run by the Operator.
 - **The inbox check guards the queue's merge only.** A pull request merged by hand (`gh pr merge`, the
