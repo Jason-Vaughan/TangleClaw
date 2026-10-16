@@ -298,8 +298,10 @@ of the merge request. A pull request read back merged always halts it so. The en
 is `LANDING_SETTLED_FAILED`. Nothing advances on that halt until the Operator, having reconciled the
 base branch, clears it ("Clearing a halt").
 
-A queue that is already halted keeps its halt, code and detail unchanged either way; a new reason is
-recorded as a further `queue-halted` event that names the halt it left in place.
+A queue that is already halted keeps its halt, code and detail unchanged either way. A settlement
+that would itself halt the queue (a tree that is not the tested one, or an unreconciled failure)
+records its reason as a further `queue-halted` event that names the halt it left in place; one that
+would not adds nothing, and the answer's `settlement.haltReasonRecorded` says which.
 
 **The candidate's branches** are removed only after the settlement is recorded, and only the entry's
 own recorded candidate branch: one name directly under `tc-queue/`, and its stage branch, never a name

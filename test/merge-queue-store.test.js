@@ -834,6 +834,7 @@ describe('merge queue store: the Operator settles an entry stuck in landing (#23
     assert.equal(done.ok, true);
     assert.equal(done.queueHalted, true);
     assert.equal(done.haltKept, true);
+    assert.equal(done.haltReasonRecorded, false);
     assert.deepEqual(queues.getQueue(queueId).halt, before);
     assert.ok(!history().includes('queue-halted'), 'no new halt is recorded');
   });
@@ -845,6 +846,7 @@ describe('merge queue store: the Operator settles an entry stuck in landing (#23
     const done = settle(a.entryId, { landedTree: sha('f') });
     assert.equal(done.ok, true);
     assert.equal(done.haltKept, true);
+    assert.equal(done.haltReasonRecorded, true);
     assert.deepEqual(queues.getQueue(queueId).halt, before);
     const halted = queues.listEvents(queueId).pop();
     assert.equal(halted.event, 'queue-halted');
@@ -906,6 +908,7 @@ describe('merge queue store: the Operator settles an entry stuck in landing (#23
       const done = settle(entry.entryId, over);
       assert.equal(done.ok, true, JSON.stringify(done));
       assert.equal(done.haltKept, true);
+      assert.equal(done.haltReasonRecorded, !over.mergeAttempt);
       assert.deepEqual(queues.getQueue(queueId).halt, before);
       const last = queues.listEvents(queueId).pop();
       if (over.mergeAttempt) {

@@ -1946,8 +1946,10 @@ describe('/api/merge-queue (#2322)', () => {
       const kept = await settleAs(matching.entryId);
       assert.equal(kept.status, 200, JSON.stringify(kept.data));
       assert.equal(kept.data.settlement.haltKept, true);
+      assert.equal(kept.data.settlement.haltReasonRecorded, false);
       assert.deepEqual(kept.data.queue.halt, halt);
-      assert.match(kept.data.message, /The queue was already halted and its halt is kept/);
+      assert.match(kept.data.message, /The queue was already halted and stays halted, unchanged; this settlement adds no halt reason of its own\./);
+      assert.doesNotMatch(kept.data.message, /recorded beside it/, 'no halt reason is claimed that the history does not hold');
       assert.notEqual(queueStore.listEvents(queueId).pop().event, 'queue-halted');
       unhalt();
 
@@ -1957,6 +1959,8 @@ describe('/api/merge-queue (#2322)', () => {
       const added = await settleAs(mismatched.entryId);
       assert.equal(added.status, 200, JSON.stringify(added.data));
       assert.deepEqual(added.data.queue.halt, halt2);
+      assert.equal(added.data.settlement.haltReasonRecorded, true);
+      assert.match(added.data.message, /The queue was already halted and its halt is kept; this settlement's halt reason is recorded beside it as a further event\./);
       const events = queueStore.listEvents(queueId, { entryId: mismatched.entryId });
       assert.equal(events.at(-1).event, 'queue-halted');
       assert.equal(events.at(-1).detail.code, 'TREE_MISMATCH');
@@ -1993,6 +1997,7 @@ describe('/api/merge-queue (#2322)', () => {
       assert.equal(quiet.data.queue.halt, null);
       assert.match(quiet.data.message, /GitHub reported the pull request unmerged at \d{4}-\d\d-\d\dT[^,]+, which is a snapshot and not proof/);
       assert.match(quiet.data.message, /No halt stands\./);
+      assert.equal(quiet.data.settlement.haltReasonRecorded, false);
 
       const undisposed = await stuck();
       const held = await settleAs(undisposed.entryId, { outcome: 'failed', ...OPERATOR_WORDS });
