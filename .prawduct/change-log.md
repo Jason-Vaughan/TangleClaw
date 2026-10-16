@@ -39,11 +39,22 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- prawduct: type=chore | scope=w2-a2-listener-reconnect-and-wrapped-nudge-2370-2358 -->
 
-v5.34.0 Wave 2 chunk W2-A2 part A2b, test-only (Architect A100 `a2b a test-only`, A101 `a2b 1`). Branch `fix/2358-a2b-wrapped-nudge`. Refs #2358; whether it closes or the rest is deferred is the PM's call. Part A2a (#2370) is deferred out of this batch (the PM's `2370 defer`). Plan: `.tangleclaw/plans/w2-a2-listener-reconnect-and-wrapped-nudge-2370-2358.md`, section "M1 recorded".
+v5.34.0 Wave 2 chunk W2-A2 part A2b, test-only (Architect A100 `a2b a test-only`, A101 `a2b 1`). Branch `fix/2358-a2b-wrapped-nudge`. Refs #2358, which stays OPEN after this merges, deferred to the next batch (the PM's ruling `2358 stays open`). Part A2a (#2370) is deferred out of this batch (the PM's `2370 defer`). Plan: `.tangleclaw/plans/w2-a2-listener-reconnect-and-wrapped-nudge-2370-2358.md`, section "M1 recorded".
 
 **Why.** #2358 says a stranded nudge is not recognised when a wrap starts a continuation row with Antigravity's glyph `>`, and was reproduced only on a constructed frame cut at a fixed column. A read-only capture of a live Antigravity pane (agy 1.3.6, 179x44, text width 177, 2026-10-15 23:01:28 PDT; every row above the composer redacted; sha256 `4fb32949…cd0ec`) held the monitor's own nudge. The engine had wrapped it at word boundaries (rows of 168, 175, 174 and 54 text characters, each break where the next word would not fit). Every `>` in the nudge is inside a word starting `<` or `"`, so this ONE configuration did not reproduce the condition. A pane narrower than such a word hard-breaking it at a `>` is unmeasured and stays unresolved.
 
-**What changed.** No production code. `test/fixtures/antigravity-composer-m1-stranded-nudge.txt` (new) is the redacted capture, byte for byte. `test/medusa-wake.test.js` adds a block that feeds it the way the monitor reads a pane: (a) the composer reading recognises all four wrapped rows (`locateComposer`, `readComposerDraft` complete to the lower border, the text compared whole with what the fixture's rows give) and `isOwnNudge` accepts it; (b) the production pane gate, with no `engineIdle` (the live Antigravity path has no engine channel), refuses it as `not-at-rest`, because the profile's idle marker `? for shortcuts` is on no row of the capture. (b) is a characterization of current conservative behaviour and an investigation lead, not desired behaviour and not evidence the engine was working. It does not establish why the marker is absent, nor what any earlier live tick saw. A diagnostic case shows `engineIdle` true reading `at-prompt`, to explain the gate difference only. The synthetic hard-cut test is unchanged. The idle-marker investigation is the PM's to dedupe and file or defer.
+**What changed.** No production code. `test/fixtures/antigravity-composer-m1-stranded-nudge.txt` (new) is the redacted capture, byte for byte. `test/medusa-wake.test.js` adds a block that feeds it the way the monitor reads a pane: (a) the composer reading recognises all four wrapped rows (`locateComposer`, `readComposerDraft` complete to the lower border, the text compared whole with what the fixture's rows give) and `isOwnNudge` accepts it; (b) the production pane gate, with no `engineIdle` (the live Antigravity path has no engine channel), refuses it as `not-at-rest`, because the profile's idle marker `? for shortcuts` is on no row of the capture. (b) is a characterization of current conservative behaviour and an investigation lead, not desired behaviour and not evidence the engine was working. It does not establish why the marker is absent, nor what any earlier live tick saw. A diagnostic case shows `engineIdle` true reading `at-prompt`, to explain the gate difference only. The synthetic hard-cut test is unchanged. After a dedupe, the PM put the idle-marker lead on #2358 as a comment rather than a new issue.
+
+**Review.** Critic (cumulative, one pass): 0 blocking.
+
+**rev-20261016T061159Z-e330e030** — 2026-10-16T06:12:32Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | The suite runs once on the final tree in the Integrator's slot (rule #262 cl.4), before the PR. The narrow ring already covers the new cases: node --test test/medusa-wake*.test.js gave 940/940, the four new cases included. |
+| R-2 | note | accepted | Tracked: after a dedupe of 388 open issues (charter 1.3(h)), the PM ruled '2358 stays open' (d52a374e, queue log 23:10). The idle-marker lead goes onto #2358 as a comment, and #2358 stays OPEN, deferred to the next batch. The PR is Refs #2358 only. |
+
+**2 findings** (1 warning, 1 note) — accepted: 2.
 
 ## 2026-10-15 — #2393: turning a launch-isolation override on asks first, and the dashboard says while one is on
 
